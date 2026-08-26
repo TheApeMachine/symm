@@ -150,7 +150,10 @@ func NewPlanner(
 		bus.Wire(types.ChannelMeasurements, "", func(value any) any {
 			if m, ok := value.(*nmtypes.Measurement); ok {
 				_ = planner.StepMeasurement(m)
-			} else if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
+				return nil
+			}
+
+			if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
 				_ = planner.StepMeasurement(m.ToTypesMeasurement())
 			}
 

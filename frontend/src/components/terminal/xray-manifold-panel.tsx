@@ -9,7 +9,7 @@ const num = (value: number | undefined, digits: number): string =>
 	value === undefined ? "—" : value.toFixed(digits);
 
 const alphaOf = (row: ResonanceFrame): number | undefined => {
-	const alpha = (row as Record<string, unknown>).alpha;
+	const alpha = row.alpha;
 
 	return typeof alpha === "number" ? alpha : undefined;
 };
@@ -46,17 +46,25 @@ export const XrayManifoldPanel = () => {
 	const root = useSubscribe(resonanceStore, (state) => {
 		const row = state.resonance[focusSymbol]?.latest();
 
-		if (row === undefined) {
-			return;
-		}
-
 		const set = (q: string, value: string) => {
-			const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
+			const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
 
 			if (el instanceof HTMLElement) {
 				el.textContent = value;
 			}
 		};
+
+		if (row === undefined) {
+			for (const [index] of ROWS.entries()) {
+				set(`r${index}`, "—");
+			}
+
+			for (const [index] of DYNAMICS_FIELDS.entries()) {
+				set(`d${index}`, "—");
+			}
+
+			return;
+		}
 
 		for (const [index, entry] of ROWS.entries()) {
 			set(`r${index}`, entry.read(row));

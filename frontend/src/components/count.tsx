@@ -13,7 +13,11 @@ export const Count = () => {
 			return;
 		}
 
-		value.textContent = String(Object.keys(state.positions).length);
+		const open = Object.values(state.positions)
+			.map((buffer) => buffer.latest())
+			.filter((row) => row !== undefined && row.status === "open");
+
+		value.textContent = String(open.length);
 	});
 
 	return (

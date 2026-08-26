@@ -52,11 +52,13 @@ export const CognitiveBeam = () => {
 		const row = state.cognition[symbol]?.latest() ?? null;
 
 		const set = (q: string, value: string) => {
-			const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
+			const els = root.current?.querySelectorAll<HTMLElement>(`[data-f=${q}]`);
 
-			if (el instanceof HTMLElement) {
-				el.textContent = value;
-			}
+			els?.forEach((el) => {
+				if (el instanceof HTMLElement) {
+					el.textContent = value;
+				}
+			});
 		};
 
 		set("cohort", row?.cohort === undefined ? "—" : String(row.cohort));

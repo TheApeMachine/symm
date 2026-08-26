@@ -56,15 +56,7 @@ const palette = (canvas: HTMLCanvasElement): StreamPalette => {
 	};
 };
 
-const metricName = (path: string | undefined, required: boolean): string | undefined => {
-	if (path === undefined && required) {
-		throw new Error("stream renderer requires a metrics.<name>.raw value path");
-	}
-
-	if (path === undefined) {
-		return undefined;
-	}
-
+const parseMetricName = (path: string): string => {
 	const match = /^metrics\.(.+)\.raw$/.exec(path);
 
 	if (match === null) {
@@ -80,9 +72,39 @@ const metricName = (path: string | undefined, required: boolean): string | undef
 	return name;
 };
 
+/*
+requiredMetricName returns the parsed metric name for a required path, throwing
+when the path is absent.
+*/
+const requiredMetricName = (path: string | undefined): string => {
+	if (path === undefined) {
+		throw new Error("stream renderer requires a metrics.<name>.raw value path");
+	}
+
+	return parseMetricName(path);
+};
+
+/*
+optionalMetricName returns the parsed metric name for an optional path,
+preserving undefined when the path is absent.
+*/
+const optionalMetricName = (path: string | undefined): string | undefined => {
+	if (path === undefined) {
+		return undefined;
+	}
+
+	return parseMetricName(path);
+};
+
 const metric = (dataset: StreamDataset): StreamMetric => {
+	const filter = dataset.streamFilter;
+
+	if (filter === undefined) {
+		throw new Error("stream renderer requires a data-stream-filter attribute");
+	}
+
 	const filters = Object.fromEntries(
-		(dataset.streamFilter ?? "").split(",").map((condition) => {
+		filter.split(",").map((condition) => {
 			const [name, value] = condition.split("=");
 
 			if (!name || value === undefined) {
@@ -97,18 +119,12 @@ const metric = (dataset: StreamDataset): StreamMetric => {
 		throw new Error("stream renderer requires source and symbol filters");
 	}
 
-	const value = metricName(dataset.streamValue, true);
-
-	if (value === undefined) {
-		throw new Error("stream renderer requires a value metric");
-	}
-
 	return {
 		source: filters.source,
 		symbol: filters.symbol,
-		value,
-		baseline: metricName(dataset.streamBaseline, false),
-		decay: metricName(dataset.streamDecay, false),
+		value: requiredMetricName(dataset.streamValue),
+		baseline: optionalMetricName(dataset.streamBaseline),
+		decay: optionalMetricName(dataset.streamDecay),
 	};
 };
 

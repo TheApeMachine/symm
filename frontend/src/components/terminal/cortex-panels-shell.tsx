@@ -10,7 +10,7 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => {
 		const row = state.cognition[symbol]?.latest() ?? null;
 
 		const set = (q: string, value: string) => {
-			const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
+			const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
 
 			if (el instanceof HTMLElement) {
 				el.textContent = value;
@@ -25,6 +25,32 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => {
 		set("remFrom", row?.remFrom === undefined ? "—" : String(row.remFrom));
 		set("remThrough", row?.remThrough === undefined ? "—" : String(row.remThrough));
 		set("remReplays", String(row?.remReplays ?? "—"));
+
+		const replays = root.current?.querySelector<HTMLElement>("[data-replays]");
+
+		if (replays instanceof HTMLElement) {
+			replays.textContent = String(row?.remReplays ?? "—");
+		}
+
+		const basin = root.current?.querySelector<HTMLElement>("[data-basin]");
+
+		if (basin instanceof HTMLElement) {
+			const value = row?.confidence;
+			basin.style.width =
+				typeof value === "number"
+					? `${Math.min(100, Math.max(0, value * 100)).toFixed(1)}%`
+					: "0%";
+		}
+
+		const entropy = root.current?.querySelector<HTMLElement>("[data-entropy]");
+
+		if (entropy instanceof HTMLElement) {
+			const value = row?.entropyBits;
+			entropy.style.width =
+				typeof value === "number"
+					? `${Math.min(100, Math.max(0, value * 100)).toFixed(1)}%`
+					: "0%";
+		}
 
 	}, [symbol]);
 

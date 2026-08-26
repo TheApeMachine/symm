@@ -11,7 +11,7 @@ export const CortexBeamShell = ({ symbol }: { symbol: string }) => {
 		for (const [path, prediction] of Object.entries(predictions)) {
 			const cell = root.current?.querySelector<HTMLElement>(`[data-path="${path}"]`);
 
-			if (cell === null || cell === undefined) {
+			if (!(cell instanceof HTMLElement)) {
 				continue;
 			}
 

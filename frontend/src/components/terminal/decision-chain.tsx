@@ -1,5 +1,5 @@
 import { type MouseEvent, useRef } from "react";
-import type { Decision } from "#/types/thesis";
+import { useSelector } from "@tanstack/react-store";
 import {
 	EvidenceStage,
 	ExecutionStage,
@@ -25,7 +25,8 @@ const selectRow = (row: HTMLElement, symbol: string): void => {
 export const DecisionChain = ({ index }: { index: number }) => {
 	const rowRef = useRef<HTMLButtonElement>(null);
 
-	const decision = strategyStore.state?.decisions[index] as Decision | undefined;
+	const decisions = useSelector(strategyStore, (state) => state?.decisions);
+	const decision = decisions?.[index];
 
 	useSubscribe(strategyStore, (state) => {
 		const current = state?.decisions[index];

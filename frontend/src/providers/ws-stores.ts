@@ -1,4 +1,5 @@
 import { createStore } from "@tanstack/store";
+import { useSelector } from "@tanstack/react-store";
 import { useLayoutEffect, useRef } from "react";
 import { appStore } from "#/collections/app";
 import { latestOf, latestValues } from "#/collections/circular";
@@ -75,7 +76,7 @@ export const journalStore = createKeyedStore<Position>()("journal", JOURNAL_ENTR
 const symbolIdentity = (row: { symbol?: unknown }): string =>
 	typeof row.symbol === "string" ? row.symbol : "";
 
-const measurementIdentity = (row: Measurement): string =>
+export const measurementIdentity = (row: Pick<Measurement, "source" | "symbol">): string =>
 	typeof row.source === "string" && typeof row.symbol === "string"
 		? `${row.source}\u0000${row.symbol}`
 		: "";
@@ -239,9 +240,12 @@ const ingestResonance: Sink = (update) => {
 		resonanceStore.state.resonance[appStore.state.focusSymbol],
 	);
 
-	if (focused !== undefined) {
-		resonanceFocusStore.setState(() => focused);
+	if (focused === undefined) {
+		resonanceFocusStore.setState(() => null);
+		return;
 	}
+
+	resonanceFocusStore.setState(() => focused);
 };
 
 const ingestStrategy: Sink = (update) => {
@@ -309,13 +313,18 @@ export const attach = (worker: Worker): void => {
 		const frames = pendingFrames;
 		pendingFrames = [];
 
-		try {
-			for (const frame of frames) {
+		for (const frame of frames) {
+			// Each frame runs in its own boundary so one malformed payload
+			// cannot abort later frames in the batch or escape the
+			// requestAnimationFrame callback.
+			try {
 				applyFrame(frame);
+			} catch (error) {
+				console.error("ws-stores: dropped malformed frame", error);
 			}
-		} finally {
-			worker.postMessage({ type: "PAINTED", acknowledgeBackend: false });
 		}
+
+		worker.postMessage({ type: "PAINTED", acknowledgeBackend: false });
 	};
 
 	const schedule = () => {
@@ -348,14 +357,17 @@ imperatively on every advance and once for the current value. React never
 re-renders on these updates — the writer writes DOM directly. Returns a ref for
 the root element.
 */
-export const useSubscribe = <T>(
+export const useSubscribe = <T, E extends HTMLElement = HTMLDivElement>(
 	store: { state: T; subscribe: (fn: (state: T) => void) => { unsubscribe(): void } },
 	writer: (state: T) => void,
 	deps: readonly unknown[] = [],
-): React.RefObject<HTMLDivElement | null> => {
-	const ref = useRef<HTMLDivElement | null>(null);
+): React.RefObject<E | null> => {
+	const ref = useRef<E | null>(null);
 	const writerRef = useRef(writer);
-	writerRef.current = writer;
+
+	useLayoutEffect(() => {
+		writerRef.current = writer;
+	});
 
 	useLayoutEffect(() => {
 		writerRef.current(store.state);
@@ -367,3 +379,11 @@ export const useSubscribe = <T>(
 
 	return ref;
 };
+
+/*
+useDecisions returns the live strategy decision list reactively so components
+that key row membership off it re-render when decision frames arrive. It layers
+over useSubscribe, which stays reserved for high-frequency field-text updates.
+*/
+export const useDecisions = (): Decision[] =>
+	useSelector(strategyStore, (state) => state?.decisions ?? []);

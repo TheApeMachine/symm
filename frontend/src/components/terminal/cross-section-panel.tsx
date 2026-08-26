@@ -34,7 +34,11 @@ export const CrossSectionPanel = () => {
 		set("scarcity", fmt(metric(row, "scarcity_score"), 3));
 		set("symbol", focusSymbol.length === 0 ? "no focus" : focusSymbol);
 		set("rel", fmt(metric(row, "relative_touch_depth"), 3));
-		set("at", row?.at === undefined ? "—" : new Date(row.at).toISOString().slice(11, 19));
+		set("at", (() => {
+			if (row?.at === undefined) return "—";
+			const parsed = new Date(row.at);
+			return Number.isNaN(parsed.getTime()) ? "—" : parsed.toISOString().slice(11, 19);
+		})());
 		set("norm", fmt(row?.metrics?.executable_touch_depth?.normalized, 2));
 
 		for (const stat of STATS) {
@@ -45,9 +49,17 @@ export const CrossSectionPanel = () => {
 		const depth = metric(row, "executable_touch_depth");
 		const median = metric(row, "executable_touch_depth_median");
 		const bar = root.current?.querySelector<HTMLElement>("[data-depth-bar]");
+		const progressbar = root.current?.querySelector<HTMLElement>('[role="progressbar"]');
 
-		if (bar instanceof HTMLElement && depth !== undefined && median !== undefined && median > 0) {
-			bar.style.width = `${Math.min(100, Math.max(0, (depth / median) * 100)).toFixed(3)}%`;
+		if (bar instanceof HTMLElement) {
+			if (depth !== undefined && median !== undefined && median > 0) {
+				const clamped = Math.min(100, Math.max(0, (depth / median) * 100));
+				bar.style.width = `${clamped.toFixed(3)}%`;
+				progressbar?.setAttribute("aria-valuenow", String(clamped));
+			} else {
+				bar.style.width = "0%";
+				progressbar?.setAttribute("aria-valuenow", "0");
+			}
 		}
 	}, [focusSymbol]);
 

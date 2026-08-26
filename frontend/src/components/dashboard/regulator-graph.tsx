@@ -1,3 +1,4 @@
+import { useSelector } from "@tanstack/react-store";
 import { Panel } from "#/components/ui/panel";
 import { Flex } from "#/components/ui/flex";
 import { cn } from "@/lib/utils";
@@ -35,15 +36,25 @@ const STATUS_LABEL: Record<string, string> = {
 	strained: "Adverse Return Forecast",
 };
 
-const VerdictTile = ({ title, children }: { title: string; children?: React.ReactNode }) => {
-	const tone = HEALTH_TONE.observing;
+const VerdictTile = ({
+	title,
+	value,
+	health = "observing",
+	children,
+}: {
+	title: string;
+	value: React.ReactNode;
+	health?: string;
+	children?: React.ReactNode;
+}) => {
+	const tone = HEALTH_TONE[health] ?? HEALTH_TONE.observing;
 
 	return (
 		<div className={cn("flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2")}>
 			<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">{title}</div>
 			<div className="flex items-baseline gap-2">
 				<span className={cn("size-1.5 shrink-0 self-center rounded-full", tone.dot)} />
-				<span className="truncate font-mono text-[13px] uppercase tracking-wide text-(--f2)">{title}</span>
+				<span className="truncate font-mono text-[13px] uppercase tracking-wide text-(--f2)">{value}</span>
 			</div>
 			{children}
 		</div>
@@ -53,7 +64,7 @@ const VerdictTile = ({ title, children }: { title: string; children?: React.Reac
 const ScalarMetric = ({ label, which, tone = "text-(--f1)" }: { label: string; which: string; tone?: string }) => (
 	<div className="bg-[#0a0907] px-2 py-1.5">
 		<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">{label}</div>
-		<div data-metric={which} className={cn("mt-0.5 font-mono text-[11px] tabular-nums", tone)}>—</div>
+		<div data-r={which} className={cn("mt-0.5 font-mono text-[11px] tabular-nums", tone)}>—</div>
 	</div>
 );
 
@@ -102,16 +113,16 @@ const SparklineSVG = ({ points }: { points: number[] }) => {
 };
 
 const METRICS = [
-	{ which: "predictedReturn", label: "predicted return" },
-	{ which: "predictionScale", label: "prediction scale" },
-	{ which: "predictedActive", label: "next-interval activity" },
-	{ which: "activityScale", label: "activity scale" },
-	{ which: "samples", label: "resolved outcomes" },
-	{ which: "markSamples", label: "position marks" },
-	{ which: "intervalMarks", label: "interval marks" },
-	{ which: "lastMarkReturn", label: "last move" },
-	{ which: "lastMarkDrawdown", label: "peak drawdown" },
-	{ which: "lastMarkFloorDistance", label: "floor distance" },
+	{ which: "predictedReturn", label: "predicted return", digits: 3 },
+	{ which: "predictionScale", label: "prediction scale", digits: 3 },
+	{ which: "predictedActive", label: "next-interval activity", digits: 3 },
+	{ which: "activityScale", label: "activity scale", digits: 3 },
+	{ which: "samples", label: "resolved outcomes", digits: 0 },
+	{ which: "markSamples", label: "position marks", digits: 0 },
+	{ which: "intervalMarks", label: "interval marks", digits: 0 },
+	{ which: "lastMarkReturn", label: "last move", digits: 3 },
+	{ which: "lastMarkDrawdown", label: "peak drawdown", digits: 3 },
+	{ which: "lastMarkFloorDistance", label: "floor distance", digits: 3 },
 ] as const;
 
 const num = (value: unknown, digits: number): string =>
@@ -133,7 +144,7 @@ export const RegulatorPredictiveCoding = () => {
 		set("energy", num(frame.energy, 3));
 
 		for (const metric of METRICS) {
-			set(metric.which, num(frame[metric.which], metric.which === "samples" || metric.which === "markSamples" || metric.which === "intervalMarks" ? 0 : 3));
+			set(metric.which, num(frame[metric.which], metric.digits));
 		}
 
 		set("status", STATUS_LABEL[frame.status ?? "observing"] ?? frame.status ?? "Observing / Resolving");
@@ -147,20 +158,37 @@ export const RegulatorPredictiveCoding = () => {
 		}
 	});
 
-	const subsystems = ((regulatorStore.state ?? {}) as RegulatorFrame).subsystems ?? [];
-	const sparkline = ((regulatorStore.state ?? {}) as RegulatorFrame).sparkline ?? [];
+	const subsystems = useSelector(
+		regulatorStore,
+		(state) => ((state ?? {}) as RegulatorFrame).subsystems ?? [],
+	);
+	const sparkline = useSelector(
+		regulatorStore,
+		(state) => ((state ?? {}) as RegulatorFrame).sparkline ?? [],
+	);
+	const status = ((regulatorStore.state ?? {}) as RegulatorFrame).status;
+	const verdictHealth = status === "healthy" || status === "strained" ? status : "observing";
+
 	return (
 		<div ref={root} className="flex h-full min-w-275 flex-col overflow-auto bg-(--bg) p-5 gap-5">
 			<div className="font-mono text-[13px] font-semibold text-(--f1) uppercase tracking-[0.13em]">
 				Global Predictive-Coding Regulator
 			</div>
 			<Panel className="grid grid-cols-3 gap-px border border-(--line) bg-(--line)">
-				<VerdictTile title="residual model">
-					<span data-r="surprise" className="mt-0.5 truncate font-mono text-[11px] text-(--warning)">—</span>
-				</VerdictTile>
-				<VerdictTile title="direction skill">
-					<span data-r="energy" className="mt-0.5 truncate font-mono text-[11px] text-(--info)">—</span>
-				</VerdictTile>
+				<VerdictTile
+					title="residual model"
+					health={verdictHealth}
+					value={
+						<span data-r="surprise" className="mt-0.5 truncate font-mono text-[11px] text-(--warning)">—</span>
+					}
+				/>
+				<VerdictTile
+					title="direction skill"
+					health={verdictHealth}
+					value={
+						<span data-r="energy" className="mt-0.5 truncate font-mono text-[11px] text-(--info)">—</span>
+					}
+				/>
 				<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
 					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">entry gate</div>
 					<div className="flex items-baseline gap-2">

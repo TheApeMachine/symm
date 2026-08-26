@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import { DecisionChain } from "#/components/terminal/decision-chain";
 import { DecisionSideRail } from "#/components/terminal/decision-side-rail";
 import { LiveDecisionsEntryLine } from "#/components/terminal/decisions-entry-line";
@@ -5,7 +6,14 @@ import { Panel } from "@/components/ui/panel";
 import { strategyStore } from "#/providers/ws-stores";
 
 export const DecisionsSurface = () => {
-	const decisions = strategyStore.state?.decisions ?? [];
+	const decisions = useSyncExternalStore(
+		(onStoreChange) => {
+			const subscription = strategyStore.subscribe(onStoreChange);
+			return () => subscription.unsubscribe();
+		},
+		() => strategyStore.state?.decisions ?? [],
+		() => strategyStore.state?.decisions ?? [],
+	);
 
 	return (
 		<div className="grid h-full min-h-0 min-w-260 grid-cols-[minmax(640px,1fr)_332px]">

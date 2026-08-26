@@ -66,7 +66,6 @@ require (
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
-	github.com/theapemachine/qpool v1.2.6 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
@@ -92,7 +91,7 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/spf13/viper v1.21.0
-	github.com/theapemachine/datura v1.2.10
+	github.com/theapemachine/datura v1.2.11
 	github.com/theapemachine/errnie v1.2.7
 	golang.design/x/lockfree v0.1.0
 )

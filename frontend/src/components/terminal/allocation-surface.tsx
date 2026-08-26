@@ -1,5 +1,6 @@
 import { Typography } from "@/components/ui/typography";
 import { equityStore, useSubscribe } from "#/providers/ws-stores";
+import { num } from "./number";
 import { AllocationMain } from "./allocation-main";
 import { AllocationSidePanel } from "./allocation-side-panel";
 
@@ -9,7 +10,7 @@ export const AllocationSurface = () => {
 			const el = root.current?.querySelector<HTMLElement>(`[data-eq=${which}]`);
 
 			if (el instanceof HTMLElement) {
-				el.textContent = (state === null ? "—" : String(state[which]));
+				el.textContent = state === null ? "—" : num(state[which], 2);
 			}
 		}
 	});

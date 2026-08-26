@@ -1,13 +1,5 @@
 import { equityStore, strategyStore, useSubscribe } from "#/providers/ws-stores";
-
-const num = (v: unknown, d: number): string =>
-	typeof v === "number"
-		? v.toFixed(d)
-		: typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))
-			? Number(v).toFixed(d)
-			: "—";
-
-
+import { num } from "./number";
 export const AllocationSidePanel = () => {
 	const equity = useSubscribe(equityStore, (state) => {
 		const set = (which: string, value: string) => {
@@ -28,8 +20,12 @@ export const AllocationSidePanel = () => {
 		const eqN = typeof equityValue === "number" ? equityValue : Number(equityValue);
 		const bar = equity.current?.querySelector<HTMLElement>("[data-eq-bar]");
 
-		if (bar instanceof HTMLElement && Number.isFinite(cashN) && Number.isFinite(eqN) && eqN > 0) {
-			bar.style.width = `${Math.min(100, Math.max(0, (cashN / eqN) * 100)).toFixed(3)}%`;
+		if (bar instanceof HTMLElement) {
+			if (Number.isFinite(cashN) && Number.isFinite(eqN) && eqN > 0) {
+				bar.style.width = `${Math.min(100, Math.max(0, (cashN / eqN) * 100)).toFixed(3)}%`;
+			} else {
+				bar.style.width = "0%";
+			}
 		}
 	});
 

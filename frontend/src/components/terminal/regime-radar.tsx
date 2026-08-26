@@ -19,10 +19,10 @@ export const RadarPanel = () => {
 		for (const axis of radarAxes) {
 			const row = state.measurements[`${axis.source}\u0000${focusSymbol}`]?.latest();
 			const value = row?.metrics?.[axis.metric]?.normalized ?? 0;
-			const arm = root.current?.querySelector<HTMLElement>(`[data-axis="${axis.label}"]`);
+			const arm = root.current?.querySelector<SVGElement>(`[data-axis="${axis.label}"]`);
 
-			if (arm instanceof HTMLElement) {
-				arm.style.setProperty("--axis", String(typeof value === "number" ? Math.min(1, Math.max(0, value)) : 0));
+			if (arm instanceof SVGElement) {
+				arm.style.setProperty("--axis", String(Math.min(1, Math.max(0, value))));
 			}
 		}
 	}, [focusSymbol]);

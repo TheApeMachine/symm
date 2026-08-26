@@ -47,14 +47,14 @@ func NewErrorBridge(
 	ready func() bool,
 	onError func(source string, message string, caller string),
 ) log.Writer {
-	if hub == nil || hub.bus == nil {
+	if hub == nil || hub.workspace == nil {
 		return log.WriterFunc(func(*log.Entry) (int, error) {
 			return 0, nil
 		})
 	}
 
 	return log.IOWriter{Writer: &ErrorBridge{
-		bus:     hub.bus,
+		bus:     hub.workspace,
 		ready:   ready,
 		onError: onError,
 	}}

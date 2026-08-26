@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { appStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
@@ -51,15 +51,37 @@ const XrayPaintBridge = () => {
 };
 
 const XrayCarrierBar = () => {
+	const rowsCache = useRef<{ version: number; rows: ReturnType<typeof resonanceRows> }>({
+		version: -1,
+		rows: [],
+	});
+
+	const rows = useSyncExternalStore(
+		(onStoreChange) => {
+			const subscription = resonanceStore.subscribe(onStoreChange);
+			return () => subscription.unsubscribe();
+		},
+		() => {
+			const version = resonanceStore.state.version;
+
+			if (rowsCache.current.version !== version) {
+				rowsCache.current = { version, rows: resonanceRows() };
+			}
+
+			return rowsCache.current.rows;
+		},
+		() => rowsCache.current.rows,
+	);
+
 	return (
 		<div className="flex h-11.5 shrink-0 items-center gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5">
 			<span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
 				Inspect symbol
 			</span>
-			{resonanceRows().length === 0 ? (
+			{rows.length === 0 ? (
 				<span className="font-mono text-[10px] text-(--f4)">waiting for resonance carriers</span>
 			) : null}
-			{resonanceRows().map((row) => (
+			{rows.map((row) => (
 				<button
 					key={row.symbol}
 					type="button"

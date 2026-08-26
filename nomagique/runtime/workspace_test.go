@@ -5,7 +5,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -209,17 +208,19 @@ func BenchmarkWorkspacePublish(b *testing.B) {
 	}()
 
 	var counter atomic.Int64
+	var waitGroup sync.WaitGroup
 	workspace.Wire("bench", "", func(_ any) any {
 		counter.Add(1)
+		waitGroup.Done()
 		return nil
 	})
 
 	b.ReportAllocs()
 
 	for b.Loop() {
+		waitGroup.Add(1)
 		workspace.Publish("bench", int64(1))
 	}
 
-	// Allow pending messages to drain
-	time.Sleep(10 * time.Millisecond)
+	waitGroup.Wait()
 }

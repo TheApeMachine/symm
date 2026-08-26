@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { useSelector } from "@tanstack/react-store";
 import { terminalStore } from "#/collections/terminal";
 import type { Position } from "#/collections/types";
 import { List } from "#/components/ui/list";
@@ -10,12 +12,15 @@ import { PositionStopGeometry } from "./position-stop-geometry";
 const f = (value: unknown, digits: number): string =>
 	typeof value === "number" ? value.toFixed(digits) : String(value ?? "—");
 
-const openPositions = (): Position[] =>
-	Object.values(positionsStore.state.positions)
+const openPositionsOf = (state: typeof positionsStore.state): Position[] =>
+	Object.values(state.positions)
 		.map((buffer) => buffer.latest())
 		.filter((row): row is Position => row !== undefined && row.status === "open");
 
 export const Positions = () => {
+	const [pendingExits, setPendingExits] = useState<ReadonlySet<string>>(new Set());
+	const openPositions = useSelector(positionsStore, openPositionsOf);
+
 	const root = useSubscribe(positionsStore, (state) => {
 		const rows = Object.values(state.positions)
 			.map((buffer) => buffer.latest())
@@ -48,9 +53,39 @@ export const Positions = () => {
 		}
 	});
 
+	// Clear pending-exit markers once the store no longer reports the position
+	// as open, so a re-submitted symbol can be exited again.
+	useSubscribe(positionsStore, (state) => {
+		const openSymbols = new Set(
+			Object.values(state.positions)
+				.map((buffer) => buffer.latest())
+				.filter((row): row is Position => row !== undefined && row.status === "open")
+				.map((row) => row.holding.symbol),
+		);
+
+		if (pendingExits.size === 0) {
+			return;
+		}
+
+		const next = new Set([...pendingExits].filter((symbol) => openSymbols.has(symbol)));
+
+		if (next.size !== pendingExits.size) {
+			setPendingExits(next);
+		}
+	});
+
+	const requestExit = (symbol: string) => {
+		if (pendingExits.has(symbol)) {
+			return;
+		}
+
+		setPendingExits((current) => new Set(current).add(symbol));
+		publishPositionExit(symbol);
+	};
+
 	return (
 		<List ref={root} className="min-h-0 flex-1 p-1.5">
-			{openPositions().map((position) => (
+			{openPositions.map((position) => (
 				<button
 					type="button"
 					data-pos={position.holding.symbol}
@@ -71,15 +106,16 @@ export const Positions = () => {
 								<Typography.Span data-f="pnl" className="text-right font-semibold text-[11.5px] text-(--pnl)" />
 								<button
 									type="button"
+									disabled={pendingExits.has(position.holding.symbol)}
 									onClick={(event) => {
 										event.preventDefault();
 										event.stopPropagation();
-										publishPositionExit(position.holding.symbol);
+										requestExit(position.holding.symbol);
 									}}
 									title="Exit this position immediately"
 									className="rounded-xs border border-(--down) px-1.5 py-px text-[8px] font-semibold text-(--down) uppercase tracking-wide hover:bg-[color-mix(in_srgb,var(--down)_12%,transparent)] disabled:cursor-wait disabled:opacity-60"
 								>
-									EXIT
+									{pendingExits.has(position.holding.symbol) ? "EXITING" : "EXIT"}
 								</button>
 							</Flex.Row>
 						</Flex.Row>

@@ -42,8 +42,12 @@ export const XrayHawkesPanel = () => {
 		const etaBar = root.current?.querySelector<HTMLElement>("[data-eta-bar]");
 		const eta = row?.metrics?.spectral_radius?.raw;
 
-		if (etaBar instanceof HTMLElement && typeof eta === "number") {
-			etaBar.style.width = `calc(${Math.min(1, Math.max(0, eta))} * 100%)`;
+		if (etaBar instanceof HTMLElement) {
+			if (typeof eta === "number") {
+				etaBar.style.width = `calc(${Math.min(1, Math.max(0, eta))} * 100%)`;
+			} else {
+				etaBar.style.width = "0%";
+			}
 		}
 	}, [focusSymbol]);
 

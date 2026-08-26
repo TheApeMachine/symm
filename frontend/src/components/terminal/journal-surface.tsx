@@ -1,3 +1,4 @@
+import type { Position } from "#/collections/types";
 import { Panel } from "@/components/ui/panel";
 import { Section } from "@/components/ui/section";
 import { journalStore, positionsStore, useSubscribe } from "#/providers/ws-stores";
@@ -7,14 +8,17 @@ const fmt = (value: unknown, digits: number): string =>
 const time = (value: unknown): string =>
 	typeof value === "string" && value !== "" ? new Date(value).toISOString().slice(11, 19) : "—";
 
+const openPositions = (state: typeof positionsStore.state): Position[] =>
+	Object.values(state.positions)
+		.map((buffer) => buffer.latest())
+		.filter((row): row is Position => row !== undefined && row.status === "open");
+
 /*
 JournalSurface is the record of what the desk actually did.
 */
 export const JournalSurface = () => {
 	const lifecycle = useSubscribe(positionsStore, (state) => {
-		const open = Object.values(state.positions)
-			.map((buffer) => buffer.latest())
-			.filter((row): row is import("#/collections/types").Position => row !== undefined && row.status === "open");
+		const open = openPositions(state);
 
 		for (const position of open) {
 			const cell = lifecycle.current?.querySelector<HTMLElement>(`[data-life="${position.holding.symbol}"]`);
@@ -57,7 +61,7 @@ export const JournalSurface = () => {
 			set("entry", fmt(entry.holding.entry_price, 6));
 			set("exit", fmt(entry.holding.exit_price, 6));
 			set("qty", fmt(entry.holding.qty, 6));
-			set("return", `${fmt(entry.holding.return_pct, 2)}%`);
+			set("return", fmt(entry.holding.return_pct, 2));
 			set("entryFee", fmt(entry.holding.entry_fee, 4));
 			set("exitFee", fmt(entry.holding.exit_fee, 4));
 			set("trigger", entry.holding.stoploss?.trigger_reason ?? "—");
@@ -73,9 +77,7 @@ export const JournalSurface = () => {
 		}
 	});
 
-	const open = Object.values(positionsStore.state.positions)
-		.map((buffer) => buffer.latest())
-		.filter((row): row is import("#/collections/types").Position => row !== undefined && row.status === "open");
+	const open = openPositions(positionsStore.state);
 	const entries = journalStore.state.journal.values();
 
 	return (

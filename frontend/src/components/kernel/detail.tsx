@@ -18,15 +18,15 @@ export const SignalDetail = () => {
 	const selected = useSelector(terminalStore, (state) => state.selectedSource);
 
 	const source = selected || kernels[0] || "";
-	const copy = kernelCopy(source, "");
-	const metrics = sourceMetrics(source);
-	const headline = sourceHeadlineMetric(source);
+	const copy = source === "" ? { name: "Signal detail", sub: "", blurb: "" } : kernelCopy(source, "");
+	const metrics = source === "" ? [] : sourceMetrics(source);
+	const headline = source === "" ? "" : sourceHeadlineMetric(source);
 
 	const root = useSubscribe(measurementsStore, (state) => {
 		const row = source === "" ? undefined : state.measurements[`${source}\u0000${focusSymbol}`]?.latest();
 
 		const set = (q: string, value: string) => {
-			const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
+			const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
 
 			if (el instanceof HTMLElement) {
 				el.textContent = value;
@@ -52,6 +52,17 @@ export const SignalDetail = () => {
 			}
 		}
 	}, [source, focusSymbol, metrics]);
+
+	if (source === "") {
+		return (
+			<Flex.Column className="min-h-0 px-5 py-4.5">
+				<Typography.Display size="xl">{copy.name}</Typography.Display>
+				<Typography.Paragraph className="mt-3.5 text-[12px] text-(--f3)">
+					Select a kernel to inspect its live measurements.
+				</Typography.Paragraph>
+			</Flex.Column>
+		);
+	}
 
 	return (
 		<Flex.Column key={`${source}:${focusSymbol}`} ref={root} className="min-h-0 overflow-auto px-5 py-4.5">

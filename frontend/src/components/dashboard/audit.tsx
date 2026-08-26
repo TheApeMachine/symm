@@ -1,11 +1,19 @@
+import { useSelector } from "@tanstack/react-store";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
+import type { Position } from "#/collections/types";
 import { positionsStore, useSubscribe } from "#/providers/ws-stores";
 
 const fmt = (value: unknown, digits: number): string =>
 	typeof value === "number" ? value.toFixed(digits) : String(value ?? "—");
 
 export const AuditTrail = () => {
+	const positions = useSelector(positionsStore, (state) =>
+		Object.values(state.positions)
+			.map((buffer) => buffer.latest())
+			.filter((row): row is Position => row !== undefined),
+	);
+
 	const root = useSubscribe(positionsStore, (state) => {
 		const rows = Object.values(state.positions).map((buffer) => buffer.latest());
 
@@ -33,7 +41,7 @@ export const AuditTrail = () => {
 			set("status", position.holding.status ?? "—");
 			set("symbol", position.holding.symbol);
 			set("pnl", fmt(position.holding.pnl, 4));
-			set("return", `${fmt(position.holding.return_pct, 4)}%`);
+			set("return", fmt(position.holding.return_pct, 4));
 		}
 	});
 
@@ -43,9 +51,7 @@ export const AuditTrail = () => {
 				Audit trail
 			</Typography.Span>
 			<List className="min-h-0 border-(--line) border-b">
-				{Object.values(positionsStore.state.positions)
-					.map((buffer) => buffer.latest())
-					.filter((row) => row !== undefined)
+				{positions
 					.map((position) => (
 						<List.Item key={position.holding.symbol} className="justify-between" data-pos={position.holding.symbol}>
 							<Typography.Span data-f="status" />

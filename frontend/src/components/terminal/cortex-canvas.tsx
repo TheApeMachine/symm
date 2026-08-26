@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import type { CognitiveReading } from "#/collections/types";
 import {
 	CortexLeafRoster,
 	drawCortexTree,
@@ -72,29 +73,19 @@ export const CortexCanvas = ({
 			re-read this tick, so a frame that omits this one leaves the last tree on
 			screen instead of blanking it.
 		*/
-		const paint = (updates: unknown) => {
-			if (updates === null || typeof updates !== "object") {
-				return;
-			}
-
-			const reading = (updates as Record<string, unknown>)[symbol];
-
-			if (reading === undefined || reading === null) {
-				return;
-			}
-
-			readingRef.current = reading as Record<string, unknown>;
+		const paint = (reading: CognitiveReading): void => {
+			readingRef.current = reading as unknown as Record<string, unknown>;
 			draw();
 		};
 
-		const unregister = cognitionStore.subscribe((state) => {
+		const subscription = cognitionStore.subscribe((state) => {
 			const reading = state.cognition?.[symbol]?.latest();
 
 			if (reading === undefined) {
 				return;
 			}
 
-			paint({ [symbol]: reading });
+			paint(reading);
 		});
 
 		const observer = new ResizeObserver(draw);
@@ -114,13 +105,13 @@ export const CortexCanvas = ({
 		const seed = cognitionStore.state.cognition?.[symbol]?.latest();
 
 		if (seed !== undefined) {
-			paint({ [symbol]: seed });
+			paint(seed);
 		} else {
 			draw();
 		}
 
 		return () => {
-			unregister.unsubscribe();
+			subscription.unsubscribe();
 			observer.disconnect();
 		};
 	}, [symbol]);

@@ -1,3 +1,4 @@
+import { useLayoutEffect, useState } from "react";
 import { resonanceFocusStore, useSubscribe } from "#/providers/ws-stores";
 
 export const vectorSlotTransform = (slot: number, slotCount: number): string =>
@@ -136,6 +137,21 @@ const VectorLane = ({
 	color: string;
 	read: (state: ReturnType<typeof resonanceFocusStore.get>) => number[] | undefined;
 }) => {
+	const [slotCount, setSlotCount] = useState(() => read(resonanceFocusStore.state)?.length ?? 0);
+
+	useLayoutEffect(() => {
+		const apply = (state: ReturnType<typeof resonanceFocusStore.get>) => {
+			const next = read(state)?.length ?? 0;
+			setSlotCount((current) => (current === next ? current : next));
+		};
+
+		apply(resonanceFocusStore.state);
+		const subscription = resonanceFocusStore.subscribe(apply);
+
+		return () => subscription.unsubscribe();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [read]);
+
 	const root = useSubscribe(resonanceFocusStore, (state) => {
 		const values = read(state) ?? [];
 
@@ -148,8 +164,6 @@ const VectorLane = ({
 		});
 	});
 
-	const values = read(resonanceFocusStore.state) ?? [];
-
 	return (
 		<div ref={root} className="flex min-h-0 flex-1 items-stretch gap-3">
 			<div className="flex w-36 shrink-0 flex-col justify-center gap-0.5 font-mono text-[9px] leading-tight">
@@ -157,13 +171,13 @@ const VectorLane = ({
 				<span className="text-(--f4)">{meta}</span>
 			</div>
 			<div className="relative min-h-0 flex-1 overflow-hidden border border-(--line) bg-[linear-gradient(to_bottom,transparent_calc(50%-0.5px),var(--line2)_calc(50%-0.5px),var(--line2)_calc(50%+0.5px),transparent_calc(50%+0.5px))]">
-				{values.map((_, slot) => (
+				{Array.from({ length: slotCount }, (_, slot) => (
 					<div
 						// biome-ignore lint/suspicious/noArrayIndexKey: one fixed-geometry slot per vector component; the index is the slot's identity and the vector never reorders.
 						key={`slot-${slot}`}
 						data-slot
 						className="absolute inset-y-0 right-1 left-1 origin-left"
-						style={{ transform: vectorSlotTransform(slot, values.length) }}
+						style={{ transform: vectorSlotTransform(slot, slotCount) }}
 					>
 						<div
 							className={`absolute top-1/2 right-1.5 left-1 h-[calc(50%-1px)] origin-top ${color}`}

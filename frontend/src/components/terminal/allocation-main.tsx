@@ -1,19 +1,14 @@
-import { strategyStore, useSubscribe } from "#/providers/ws-stores";
-
-const num = (v: unknown, d: number): string =>
-	typeof v === "number"
-		? v.toFixed(d)
-		: typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))
-			? Number(v).toFixed(d)
-			: "—";
-
+import { strategyStore, useDecisions, useSubscribe } from "#/providers/ws-stores";
+import { num } from "./number";
 
 export const AllocationMain = () => {
-	const root = useSubscribe(strategyStore, (state) => {
-		const decisions = state?.decisions ?? [];
+	const decisions = useDecisions();
 
-		for (let index = 0; index < decisions.length; index += 1) {
-			const decision = decisions[index];
+	const root = useSubscribe(strategyStore, (state) => {
+		const frameDecisions = state?.decisions ?? [];
+
+		for (let index = 0; index < frameDecisions.length; index += 1) {
+			const decision = frameDecisions[index];
 
 			if (decision === undefined) {
 				continue;
@@ -55,7 +50,7 @@ export const AllocationMain = () => {
 				<span className="text-(--f3)">cross-section</span>
 				<span className="text-(--f4)">
 					candidates{" "}
-					<span className="text-(--f2)">{(strategyStore.state?.decisions ?? []).length}</span>
+					<span className="text-(--f2)">{decisions.length}</span>
 				</span>
 				<span className="ml-auto text-(--f4)">
 					sized from current asks · ranked by structural thesis
@@ -71,12 +66,12 @@ export const AllocationMain = () => {
 			</div>
 
 			<div className="flex flex-col">
-				{(strategyStore.state?.decisions ?? []).length === 0 ? (
+				{decisions.length === 0 ? (
 					<div className="py-24 text-center font-mono text-[11px] text-(--f4)">
 						waiting for backend decision frames
 					</div>
 				) : (
-					(strategyStore.state?.decisions ?? []).map((decision, index) => (
+					decisions.map((decision, index) => (
 						<div
 							key={decision.id}
 							data-i={index}

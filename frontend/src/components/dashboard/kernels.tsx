@@ -2,7 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import { appStore } from "#/collections/app";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
-import { measurementsStore, useSubscribe } from "#/providers/ws-stores";
+import { measurementsStore, useSubscribe, measurementIdentity } from "#/providers/ws-stores";
 import { Flex } from "@/components/ui/flex";
 
 export const KernelList = () => {
@@ -14,7 +14,9 @@ export const KernelList = () => {
 		(state) => {
 			for (const kernel of kernels) {
 				const row =
-					state.measurements[`${kernel}\u0000${focusSymbol}`]?.latest();
+					state.measurements[
+						measurementIdentity({ source: kernel, symbol: focusSymbol })
+					]?.latest();
 
 				if (row === undefined || row === null || typeof row !== "object") {
 					continue;

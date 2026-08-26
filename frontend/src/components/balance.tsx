@@ -32,18 +32,13 @@ const Reading = ({
 
 export const Balance = () => {
 	const root = useSubscribe(equityStore, (state) => {
-		const record =
-			state !== null && typeof state === "object"
-				? (state as Record<string, unknown>)
-				: null;
-
-		for (const which of ["cash", "unrealized", "equity"]) {
+		for (const which of ["cash", "unrealized", "equity"] as const) {
 			const el = root.current?.querySelector<HTMLElement>(
 				`[data-balance="${which}"]`,
 			);
 
 			if (el instanceof HTMLElement) {
-				el.textContent = fmt(record?.[which]);
+				el.textContent = fmt(state?.[which]);
 			}
 		}
 	});

@@ -1,3 +1,4 @@
+import { useSelector } from "@tanstack/react-store";
 import { terminalStore } from "#/collections/terminal";
 import {
 	setDecisionsPendingFocus,
@@ -28,13 +29,13 @@ export const Decisions = () => {
 			};
 
 			set("symbol", decision.symbol);
-			set("thesisScore", decision.thesisScore.toFixed(4));
+			set("thesisScore", typeof decision.thesisScore === "number" ? decision.thesisScore.toFixed(4) : "—");
 			set("action", decision.action);
 			set("reason", decision.reason ?? "No rejection reason published");
 		}
 	});
 
-	const decisions = strategyStore.state?.decisions ?? [];
+	const decisions = useSelector(strategyStore, (state) => state?.decisions ?? []);
 
 	const inspectDecision = (symbol: string) => {
 		setDecisionsScopeSymbol(symbol);

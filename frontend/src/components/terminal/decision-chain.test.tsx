@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import type { Decision } from "#/types/thesis";
 import { strategyStore } from "#/providers/ws-stores";
 import { DecisionChain } from "./decision-chain";
@@ -79,6 +79,10 @@ const decision: Decision = {
 describe("DecisionChain", () => {
 	beforeEach(() => {
 		strategyStore.setState(() => ({ outcome: "decisions", decisions: [decision] }));
+	});
+
+	afterAll(() => {
+		strategyStore.setState(() => null);
 	});
 
 	it("starts compact while retaining the full structural decision trace", () => {

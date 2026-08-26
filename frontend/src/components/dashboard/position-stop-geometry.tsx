@@ -12,10 +12,6 @@ export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
 	const root = useSubscribe(positionsStore, (state) => {
 		const position = state.positions[symbol]?.latest();
 
-		if (position === undefined) {
-			return;
-		}
-
 		const set = (q: string, value: string) => {
 			const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
 
@@ -24,26 +20,23 @@ export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
 			}
 		};
 
-		set("floor", fmt(position.holding.stoploss?.floor, 6));
-		set("peak", fmt(position.holding.stoploss?.peak, 6));
-		set("profit", fmt(position.holding.stoploss?.profit_line, 6));
-		set("arm", fmt(position.holding.stoploss?.arm_at, 6));
-		set("lock", fmt(position.holding.stoploss?.lock_floor, 6));
-		set("surge", String(position.holding.stoploss?.surge_armed ?? false));
-		set("momentum", fmt(position.holding.stoploss?.momentum_floor, 6));
-		set("lastmove", fmt(position.holding.stoploss?.last_move, 6));
-		set("trigger", position.holding.stoploss?.trigger_reason ?? "—");
-		set("locked", String(position.holding.stoploss?.locked ?? false));
-		set("threshold", fmt(position.holding.profit_threshold, 6));
-		set("stopstatus", position.holding.stoploss?.status ?? "—");
+		set("floor", fmt(position?.holding.stoploss?.floor, 6));
+		set("peak", fmt(position?.holding.stoploss?.peak, 6));
+		set("profit", fmt(position?.holding.stoploss?.profit_line, 6));
+		set("arm", fmt(position?.holding.stoploss?.arm_at, 6));
+		set("lock", fmt(position?.holding.stoploss?.lock_floor, 6));
+		set("surge", String(position?.holding.stoploss?.surge_armed ?? false));
+		set("momentum", fmt(position?.holding.stoploss?.momentum_floor, 6));
+		set("lastmove", fmt(position?.holding.stoploss?.last_move, 6));
+		set("trigger", position?.holding.stoploss?.trigger_reason ?? "—");
+		set("locked", String(position?.holding.stoploss?.locked ?? false));
+		set("threshold", fmt(position?.holding.profit_threshold, 6));
+		set("stopstatus", position?.holding.stoploss?.status ?? "—");
 	});
 
 	return (
 		<div ref={root}>
-			<div className="relative mt-2 h-1 overflow-visible rounded-full bg-[linear-gradient(90deg,color-mix(in_srgb,var(--down)_12%,transparent),color-mix(in_srgb,var(--f4)_18%,transparent)_42%,color-mix(in_srgb,var(--up)_12%,transparent))]">
-				<div className="pointer-events-none absolute top-1/2 left-1/2 h-3.5 w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-(--acc)" />
-				<div className="pointer-events-none absolute top-1/2 left-2/3 h-3 w-px -translate-x-1/2 -translate-y-1/2 bg-(--up)" />
-			</div>
+			<div className="relative mt-2 h-1 overflow-visible rounded-full bg-[linear-gradient(90deg,color-mix(in_srgb,var(--down)_12%,transparent),color-mix(in_srgb,var(--f4)_18%,transparent)_42%,color-mix(in_srgb,var(--up)_12%,transparent))]" />
 
 			<Flex.Row className="mt-1.25 items-center justify-between gap-2 text-[8.5px]">
 				<Typography.Span className="text-(--acc)">

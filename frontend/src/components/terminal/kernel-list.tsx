@@ -24,6 +24,7 @@ export const KernelList = ({
 	sources?: string[];
 }) => {
 	const focusSymbol = useSelector(appStore, (state) => state.focusSymbol);
+	const sourcesKey = sources.join("\u0000");
 
 	const root = useSubscribe(measurementsStore, (state) => {
 		for (const source of sources) {
@@ -47,7 +48,7 @@ export const KernelList = ({
 			set("snr1", snr === undefined ? "" : snr.toFixed(1));
 			set("symbol", row?.symbol ?? "");
 		}
-	}, [focusSymbol, sources]);
+	}, [focusSymbol, sourcesKey]);
 
 	return (
 		<div ref={root} className="min-h-0 overflow-auto">

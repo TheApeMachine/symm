@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"errors"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -10,222 +9,138 @@ import (
 	"github.com/theapemachine/errnie"
 )
 
+// TaskHandlerFunc[T] is the function the pool invokes for every submitted task.
 type TaskHandlerFunc[T any] func(task T)
 
+// poolWorker is a single reusable goroutine with an elastic lifecycle. It parks
+// when there is nothing to do and retires itself after an idle period.
+type poolWorker struct {
+	// wake carries the single signal a submitter sends to hand this parked
+	// worker a fresh task. Capacity one keeps the send non-blocking even when
+	// the worker is already committed to retiring.
+	wake chan struct{}
+	// idleTimer is reused across parks to time the scale-down decision.
+	idleTimer *time.Timer
+}
+
+/*
+Pool is a configuration-free elastic worker pool.
+
+It carries no minimum or maximum for shards, workers, or queue depth. The pool
+grows and shrinks purely from measured pressure:
+
+  - Scale up: a new worker is spawned exactly when an arriving task finds no
+    parked worker to hand it to AND outstanding work (queued plus in-flight)
+    exceeds the number of live workers. Spawns therefore track real backlog
+    demand instead of a configured ceiling.
+  - Scale down: a parked worker that receives no task within idleWorkerLifetime
+    retires itself, so employment is proportional to demand and collapses back to
+    zero once the queue drains.
+
+The task buffer is unbounded by design: elasticity is expressed through worker
+concurrency, not through a cap that would force callers to pick a drop policy.
+*/
 type Pool[T any] struct {
 	handlerFunc        TaskHandlerFunc[T]
 	idleWorkerLifetime time.Duration
-	numShards          int
-	maxWorkers         int
-	queueSize          int
-	shardMinWorkers    int
-	shardMaxWorkers    int
-	shards             []*poolShard[T]
-	notify             chan struct{}
-	stopChan           chan struct{}
-	doneChan           chan struct{}
-	doneOnce           sync.Once
-	mutex              sync.Mutex
-	started            bool
-	stopped            int32
 
-	spawnedWorkers uint64
-	_              [56]byte
+	workMu sync.Mutex
+	// pending is the unbounded backlog awaiting a worker.
+	pending []T
+	// parked holds LIFO workers that are idle and waiting for a task.
+	parked []*poolWorker
+	// live is the number of worker goroutines currently spawned.
+	live int
+	// inflight is the number of workers currently executing a task.
+	inflight int
 
-	waiters uint64
+	stopChan chan struct{}
+	doneChan chan struct{}
+	doneOnce sync.Once
+
+	mutex   sync.Mutex
+	started atomic.Bool
+	stopped atomic.Bool
 }
 
-type poolShard[T any] struct {
-	wp        *Pool[T]
-	tqLock    sync.RWMutex
-	taskQueue chan T
-	workers   int64
-}
-
-const defaultIdleWorkerLifetime = time.Second
-const maxShards = 128
-const defaultQueueSize = 1024
-const defaultShardMinWorkers = 2
-const defaultNumShardsMin = 2
-const defaultNumShardsMax = 48
-
-// defaultShardMaxWorkers scales the per-shard worker ceiling with the CPU so a
-// burst can grow the pool but can never spawn tens of thousands of goroutines.
-func defaultShardMaxWorkers() int {
-	n := runtime.GOMAXPROCS(0) * 8
-	if n < 16 {
-		n = 16
-	}
-	return n
-}
-
-// defaultMaxWorkers is the global ceiling across all shards. It bounds total
-// workers at a small multiple of the CPU instead of the old "0 = unbounded".
-func defaultMaxWorkers() int {
-	return defaultNumShards() * defaultShardMaxWorkers()
-}
-
-// defaultNumShards returns GOMAXPROCS/2, clamped to [defaultNumShardsMin, defaultNumShardsMax].
-func defaultNumShards() int {
-	n := runtime.GOMAXPROCS(0) / 2
-	if n < defaultNumShardsMin {
-		n = defaultNumShardsMin
-	}
-	if n > defaultNumShardsMax {
-		n = defaultNumShardsMax
-	}
-	if (n % 2) != 0 {
-		n++
-	}
-
-	return n
-}
-
-// Creates a new Pool with the given task handling function
+// NewPool creates a new elastic Pool for the given task handling function. Call
+// Start before submitting tasks.
 func NewPool[T any](handlerFunc TaskHandlerFunc[T]) *Pool[T] {
-	wp := &Pool[T]{
+	return &Pool[T]{
 		handlerFunc:        handlerFunc,
-		idleWorkerLifetime: defaultIdleWorkerLifetime,
-		numShards:          defaultNumShards(),
-		maxWorkers:         defaultMaxWorkers(),
-		queueSize:          defaultQueueSize,
-		shardMinWorkers:    defaultShardMinWorkers,
-		shardMaxWorkers:    defaultShardMaxWorkers(),
+		idleWorkerLifetime: time.Second,
 	}
-
-	return wp
 }
 
-// Sets the maximum number of workers that may exist concurrently.
-func (wp *Pool[T]) SetMaxWorkers(n int) {
-	if n < 0 {
-		n = 0
-	}
-	wp.maxWorkers = n
-}
-
-// Sets the per-shard task queue capacity. Values below 16 are clamped to 16.
-func (wp *Pool[T]) SetQueueSize(size int) {
-	if size < 16 {
-		size = 16
-	}
-	wp.queueSize = size
-}
-
-// Sets the minimum number of workers per shard that are kept alive when idle.
-// Also used as the initial worker count per shard at Start().
-func (wp *Pool[T]) SetShardMinWorkers(n int) {
-	if n < 1 {
-		n = 1
-	}
-	wp.shardMinWorkers = n
-}
-
-// Sets the maximum number of workers that may be spawned per shard.
-// Acts as a per-shard backpressure cap independent of (and additional to)
-// the global SetMaxWorkers cap. Values <= 0 reset to defaultShardMaxWorkers.
-func (wp *Pool[T]) SetShardMaxWorkers(n int) {
-	if n <= 0 {
-		n = defaultShardMaxWorkers
-	}
-	wp.shardMaxWorkers = n
-}
-
-// Sets number of shards. Values <= 0 reset to the runtime-derived default
-// (GOMAXPROCS/4, clamped to [defaultNumShardsMin, defaultNumShardsMax]).
-func (wp *Pool[T]) SetNumShards(numShards int) {
-	if numShards <= 0 {
-		numShards = defaultNumShards()
-	}
-	if numShards > maxShards {
-		numShards = maxShards
-	}
-	wp.numShards = numShards
-}
-
-// Sets the idle worker lifetime
+// SetIdleWorkerLifetime sets how long a parked worker stays before retiring,
+// which governs how quickly pressure from a drained queue scales the pool down.
 func (wp *Pool[T]) SetIdleWorkerLifetime(d time.Duration) {
+	if d <= 0 {
+		d = time.Second
+	}
+
 	wp.idleWorkerLifetime = d
 }
 
-// Returns the number of currently spawned workers
+// GetSpawnedWorkers returns the number of live worker goroutines, which is
+// exactly the pool's current auto-scaled pressure level.
 func (wp *Pool[T]) GetSpawnedWorkers() int {
-	return int(atomic.LoadUint64(&wp.spawnedWorkers))
+	wp.workMu.Lock()
+	defer wp.workMu.Unlock()
+
+	return wp.live
 }
 
-// Returns the number of shards
-func (wp *Pool[T]) GetNumShards() int {
-	return wp.numShards
-}
-
-// Starts the worker pool
+// Start makes the pool ready to accept tasks. It is idempotent.
 func (wp *Pool[T]) Start() {
 	wp.mutex.Lock()
 	defer wp.mutex.Unlock()
 
-	if wp.started {
+	if wp.started.Load() {
 		return
 	}
 
-	if wp.numShards <= 0 {
-		wp.numShards = defaultNumShards()
+	if wp.idleWorkerLifetime <= 0 {
+		wp.idleWorkerLifetime = time.Second
 	}
 
-	wp.notify = make(chan struct{}, 1)
 	wp.stopChan = make(chan struct{})
 	wp.doneChan = make(chan struct{})
 	wp.doneOnce = sync.Once{}
-
-	for i := 0; i < wp.numShards; i++ {
-		shard := &poolShard[T]{
-			wp:        wp,
-			taskQueue: make(chan T, wp.queueSize),
-		}
-		wp.shards = append(wp.shards, shard)
-
-		// Start initial workers per shard
-		for j := 0; j < wp.shardMinWorkers; j++ {
-			shard.spawnWorker()
-		}
-	}
-
-	wp.started = true
+	wp.stopped.Store(false)
+	wp.started.Store(true)
 }
 
-// Stops the worker pool
+// Stop stops submission and lets workers drain queued work before exiting.
+// Returns once the shutdown signal has been sent.
 func (wp *Pool[T]) Stop() {
-	wp.mutex.Lock()
-	defer wp.mutex.Unlock()
-
-	if !wp.started || atomic.LoadInt32(&wp.stopped) != 0 {
+	if !wp.started.Load() {
 		return
 	}
 
-	atomic.StoreInt32(&wp.stopped, 1)
+	wp.stopped.CompareAndSwap(false, true)
 	close(wp.stopChan)
 
-	// Close each shard's taskQueue under tqLock. Lock waits for any in-flight
-	// dispatcher's RLock to release, so no send can race the close. Late
-	// dispatchers acquire RLock after this point and see wp.stopped == 1, so
-	// they bail with ErrPoolStopped before touching the channel. Workers
-	// drain buffered tasks and then see !ok on their next receive and exit.
-	for _, shard := range wp.shards {
-		shard.tqLock.Lock()
-		close(shard.taskQueue)
-		shard.tqLock.Unlock()
+	// If every worker already retired while idle before this Stop, nobody
+	// remains to close the shutdown barrier, so do it here.
+	wp.workMu.Lock()
+	if wp.live == 0 {
+		wp.doneOnce.Do(func() { close(wp.doneChan) })
 	}
+	wp.workMu.Unlock()
 }
 
-// Stops the worker pool and blocks until all workers have exited.
+// StopAndWait stops the pool and blocks until every worker has exited.
 func (wp *Pool[T]) StopAndWait() {
 	wp.Stop()
 	<-wp.doneChan
 }
 
-// Stops the worker pool and waits up to timeout for all workers to exit.
-// Returns true if all workers exited, false on timeout.
+// StopWithTimeout stops the pool and waits up to timeout for all workers to
+// exit. Returns true if every worker exited, false on timeout.
 func (wp *Pool[T]) StopWithTimeout(timeout time.Duration) bool {
 	wp.Stop()
+
 	select {
 	case <-wp.doneChan:
 		return true
@@ -234,9 +149,14 @@ func (wp *Pool[T]) StopWithTimeout(timeout time.Duration) bool {
 	}
 }
 
-// Adds a new task
+// AddTask enqueues a task and, when pressure demands it, spawns a worker to
+// keep up. The unbounded backlog means a running pool always accepts a task; it
+// can only fail while not started or after a Stop.
 func (wp *Pool[T]) AddTask(task T) *errnie.ErrnieError {
-	if !wp.started {
+	wp.workMu.Lock()
+
+	if !wp.started.Load() || wp.stopped.Load() {
+		wp.workMu.Unlock()
 		return errnie.Err(
 			errnie.NotFound,
 			"runtime: pool stopped",
@@ -244,282 +164,149 @@ func (wp *Pool[T]) AddTask(task T) *errnie.ErrnieError {
 		)
 	}
 
-	if atomic.LoadInt32(&wp.stopped) != 0 {
-		return errnie.Err(
-			errnie.NotFound,
-			"runtime: pool stopped",
-			nil,
-		)
+	wp.pending = append(wp.pending, task)
+
+	// Hand work to a parked worker first: cheaper than spawning a goroutine and
+	// the natural scale-down path.
+	if parked := len(wp.parked); parked > 0 {
+		poolWorker := wp.parked[parked-1]
+		wp.parked = wp.parked[:parked-1]
+		select {
+		case poolWorker.wake <- struct{}{}:
+		default:
+		}
+		wp.workMu.Unlock()
+		return nil
 	}
 
-	shard := wp.shards[randInt()%wp.numShards]
-	return shard.dispatch(task)
+	// No parked worker is available. Spawn only when outstanding work is beyond
+	// what live workers can already absorb, so transient single-task submits
+	// do not balloon concurrency.
+	outstanding := len(wp.pending) + wp.inflight
+	if outstanding > wp.live {
+		wp.live++
+		go wp.runWorker(&poolWorker{wake: make(chan struct{}, 1)})
+	}
+
+	wp.workMu.Unlock()
+	return nil
 }
 
-// Adds a new task and blocks until submitted
+// AddTaskWithBlocking queues task. The unbounded queue admits it immediately;
+// it only blocks long enough to respect a concurrent Stop before reporting the
+// shutdown as an error.
 func (wp *Pool[T]) AddTaskWithBlocking(task T) error {
-	err := wp.AddTask(task)
-
-	if err == nil || err.Kind != errnie.TooManyRequests {
-		return err
+	if err := wp.AddTask(task); err == nil {
+		return nil
 	}
 
-	atomic.AddUint64(&wp.waiters, 1)
-
 	for {
-		err = wp.AddTask(task)
+		select {
+		case <-wp.stopChan:
+			return errors.New("runtime: pool stopped")
+		case <-time.After(time.Millisecond):
+		}
 
-		if err == nil {
-			n := atomic.AddUint64(&wp.waiters, ^uint64(0))
-
-			if n > 0 {
-				select {
-				case wp.notify <- struct{}{}:
-				default:
-				}
-			}
-
+		if err := wp.AddTask(task); err == nil {
 			return nil
 		}
+	}
+}
 
-		if err.Kind != errnie.TooManyRequests {
-			atomic.AddUint64(&wp.waiters, ^uint64(0))
-			return err
+// fetchTask returns the next task for this worker, or false when the worker
+// should exit (pool stopping, or scaled back down after an idle lifetime). It
+// parks itself in wp.parked whenever the queue is empty.
+func (wp *Pool[T]) fetchTask(poolWorker *poolWorker) (task T, ok bool) {
+	wp.workMu.Lock()
+
+	for {
+		if len(wp.pending) > 0 {
+			task = wp.pending[0]
+			wp.pending = wp.pending[1:]
+			wp.inflight++
+			wp.workMu.Unlock()
+			return task, true
 		}
 
+		if wp.stopped.Load() {
+			wp.removeParked(poolWorker)
+			wp.workMu.Unlock()
+			return task, false
+		}
+
+		// Discard any stale wake left from a task we already fetched, so a
+		// future wake cannot shadow a fresh one.
 		select {
-		case <-wp.notify:
-		case <-wp.stopChan:
-			atomic.AddUint64(&wp.waiters, ^uint64(0))
-			return errors.New("worker pool stopped")
-		}
-	}
-}
-
-// dispatch enqueues a task and spawns a worker on visible backlog.
-// The RLock fences the entire critical section (both send attempts and the
-// spawn calls) against Stop's close of taskQueue. Late dispatchers re-check
-// wp.stopped under the lock to close the TOCTOU window between AddTask's
-// fast-path check and the actual send. A non-zero len() after a successful
-// send means no idle worker grabbed the task directly, so it would have to
-// wait — spawn one (capped).
-func (shard *poolShard[T]) dispatch(task T) *errnie.ErrnieError {
-	if len(shard.taskQueue) > 0 {
-		//shard.trySpawnWorker()
-	}
-
-	shard.tqLock.RLock()
-
-	if atomic.LoadInt32(&shard.wp.stopped) != 0 {
-		shard.tqLock.RUnlock()
-		return errnie.Err(
-			errnie.NotFound,
-			"runtime: pool stopped",
-			nil,
-		)
-	}
-
-	select {
-	case shard.taskQueue <- task:
-		if len(shard.taskQueue) > 0 {
-			shard.trySpawnWorker()
+		case <-poolWorker.wake:
+		default:
 		}
 
-		shard.tqLock.RUnlock()
-		return nil
-	default:
-	}
+		wp.parked = append(wp.parked, poolWorker)
+		wp.workMu.Unlock()
 
-	// buffer full — spawn and retry once
-	shard.trySpawnWorker()
-
-	// retry a non-blocking enqueue; a worker may have drained the buffer after trySpawnWorker.
-	select {
-	case shard.taskQueue <- task:
-		shard.tqLock.RUnlock()
-		return nil
-	default:
-		shard.tqLock.RUnlock()
-		return errnie.Err(
-			errnie.TooManyRequests,
-			"runtime: pool overloaded",
-			nil,
-		)
-	}
-}
-
-// trySpawnWorker attempts to spawn a new worker for this shard, respecting both
-// the per-shard cap (shardMaxWorkers) and the global cap (wp.maxWorkers).
-// Both bounds are enforced atomically via CAS to prevent TOCTOU over-spawn
-// when many dispatchers race the spawn decision.
-func (shard *poolShard[T]) trySpawnWorker() bool {
-	wp := shard.wp
-	shardMax := int64(wp.shardMaxWorkers)
-	// Reserve a per-shard slot atomically.
-	for {
-		cur := atomic.LoadInt64(&shard.workers)
-		if cur >= shardMax {
-			return false
-		}
-		if atomic.CompareAndSwapInt64(&shard.workers, cur, cur+1) {
-			break
-		}
-	}
-
-	// Reserve a global slot atomically (or unconditional add when no cap).
-	if wp.maxWorkers > 0 {
-		for {
-			cur := atomic.LoadUint64(&wp.spawnedWorkers)
-			if cur >= uint64(wp.maxWorkers) {
-				// Roll back the per-shard reservation.
-				atomic.AddInt64(&shard.workers, -1)
-				return false
-			}
-			if atomic.CompareAndSwapUint64(&wp.spawnedWorkers, cur, cur+1) {
-				break
-			}
-		}
-	} else {
-		atomic.AddUint64(&wp.spawnedWorkers, 1)
-	}
-
-	go shard.workerLoop()
-	return true
-}
-
-// spawnWorker is used by Start() for initial worker creation; it bypasses
-// the per-shard cap check (Start owns the bookkeeping itself).
-func (shard *poolShard[T]) spawnWorker() {
-	atomic.AddUint64(&shard.wp.spawnedWorkers, 1)
-	atomic.AddInt64(&shard.workers, 1)
-	go shard.workerLoop()
-}
-
-// workerLoop is the main worker goroutine. It reads from its shard's
-// taskQueue. Workers above the per-shard floor exit after idleWorkerLifetime
-// without receiving a task. On Stop, taskQueue is closed: buffered values
-// drain first, then receives return !ok and the worker exits.
-func (shard *poolShard[T]) workerLoop() {
-	wp := shard.wp
-	idleTimeout := wp.idleWorkerLifetime
-	var idleTimer *time.Timer
-
-	for {
-		// Run queued work first; without any timer overhead. A closed channel
-		// drains buffered values before returning !ok, so this naturally
-		// handles "drain remaining tasks before exiting" on Stop.
-		for {
-			select {
-			case task, ok := <-shard.taskQueue:
-				if !ok {
-					goto exit
-				}
-				wp.handlerFunc(task)
-			default:
-				goto idle
-			}
-		}
-
-	idle:
-		wp.notifyWaiter()
-
-		// Floor workers wait indefinitely to keep the shard warm. Plain
-		// chanrecv (the compiler skips selectgo for a single-case receive).
-		if atomic.LoadInt64(&shard.workers) <= int64(wp.shardMinWorkers) {
-			task, ok := <-shard.taskQueue
-			if !ok {
-				goto exit
-			}
-			wp.handlerFunc(task)
-			continue
-		}
-
-		// Workers above the floor may retire after an idle timeout.
-		if idleTimer == nil {
-			idleTimer = time.NewTimer(idleTimeout)
+		if poolWorker.idleTimer == nil {
+			poolWorker.idleTimer = time.NewTimer(wp.idleWorkerLifetime)
 		} else {
-			idleTimer.Reset(idleTimeout)
+			poolWorker.idleTimer.Reset(wp.idleWorkerLifetime)
 		}
 
 		select {
-		case task, ok := <-shard.taskQueue:
-			if !idleTimer.Stop() {
-				// drain stale value (not required for Go 1.23+)
-				select {
-				case <-idleTimer.C:
-				default:
-				}
+		case <-poolWorker.wake:
+			// A submitter claimed this worker; loop and drain the queue.
+		case <-wp.stopChan:
+			wp.workMu.Lock()
+			wp.removeParked(poolWorker)
+			wp.workMu.Unlock()
+			return task, false
+		case <-poolWorker.idleTimer.C:
+			wp.workMu.Lock()
+			retire := wp.removeParked(poolWorker)
+			wp.workMu.Unlock()
+
+			if retire {
+				return task, false
 			}
-			if !ok {
-				goto exit
-			}
-			wp.handlerFunc(task)
-		case <-idleTimer.C:
-			for {
-				workers := atomic.LoadInt64(&shard.workers)
-				if workers <= int64(wp.shardMinWorkers) {
-					break
-				}
-				// Only exit if the decrement keeps the shard at or above its floor.
-				if atomic.CompareAndSwapInt64(&shard.workers, workers, workers-1) {
-					goto exit2
-				}
-			}
+			// Claimed between the wake and the timeout: loop and take the work.
+		}
+
+		wp.workMu.Lock()
+	}
+}
+
+// removeParked drops the worker from the parked stack, returning true if it was
+// parked there. It returns false when the worker was already handed a task by a
+// submitter, in which case it must not retire.
+func (wp *Pool[T]) removeParked(poolWorker *poolWorker) bool {
+	for index, parkedWorker := range wp.parked {
+		if parkedWorker == poolWorker {
+			wp.parked = append(wp.parked[:index], wp.parked[index+1:]...)
+			return true
 		}
 	}
 
-exit:
-	atomic.AddInt64(&shard.workers, -1)
-exit2:
-	atomic.AddUint64(&wp.spawnedWorkers, ^uint64(0))
-	wp.notifyWaiter()
-	if atomic.LoadInt32(&wp.stopped) != 0 && atomic.LoadUint64(&wp.spawnedWorkers) == 0 {
-		wp.doneOnce.Do(func() { close(wp.doneChan) })
+	return false
+}
+
+// runWorker is the elastic lifecycle of one goroutine: it processes tasks until
+// it retires, then releases its liveness slot and, once the pool is fully
+// drained and stopped, signals the shutdown barrier.
+func (wp *Pool[T]) runWorker(poolWorker *poolWorker) {
+	for {
+		task, ok := wp.fetchTask(poolWorker)
+		if !ok {
+			wp.workMu.Lock()
+			wp.live--
+			if wp.stopped.Load() && wp.live == 0 {
+				wp.doneOnce.Do(func() { close(wp.doneChan) })
+			}
+			wp.workMu.Unlock()
+			return
+		}
+
+		wp.handlerFunc(task)
+
+		wp.workMu.Lock()
+		wp.inflight--
+		wp.workMu.Unlock()
 	}
-}
-
-func (wp *Pool[T]) notifyWaiter() {
-	if atomic.LoadUint64(&wp.waiters) == 0 {
-		return
-	}
-	select {
-	case wp.notify <- struct{}{}:
-	default:
-	}
-}
-
-// SplitMix64 style random pseudo number generator
-type splitMix64 struct {
-	state uint64
-}
-
-func (sm64 *splitMix64) Init(seed int64) {
-	sm64.state = uint64(seed)
-}
-
-func (sm64 *splitMix64) Uint64() uint64 {
-	sm64.state = sm64.state + uint64(0x9E3779B97F4A7C15)
-	z := sm64.state
-	z = (z ^ (z >> 30)) * uint64(0xBF58476D1CE4E5B9)
-	z = (z ^ (z >> 27)) * uint64(0x94D049BB133111EB)
-	return z ^ (z >> 31)
-}
-
-func (sm64 *splitMix64) Int63() int64 {
-	return int64(sm64.Uint64() & (1<<63 - 1))
-}
-
-var splitMix64Pool = sync.Pool{
-	New: func() any {
-		sm64 := &splitMix64{}
-		sm64.Init(time.Now().UnixNano())
-		return sm64
-	},
-}
-
-func randInt() (r int) {
-	sm64 := splitMix64Pool.Get().(*splitMix64)
-	r = int(sm64.Int63())
-	splitMix64Pool.Put(sm64)
-	return
 }

@@ -30,7 +30,7 @@ export const KernelInspector = () => {
 			: undefined;
 
 		const set = (q: string, value: string) => {
-			const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
+			const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
 
 			if (el instanceof HTMLElement) {
 				el.textContent = value;
