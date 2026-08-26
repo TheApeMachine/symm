@@ -8,7 +8,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -58,21 +57,11 @@ func NewSolver(
 
 	if workspace != nil {
 		workspace.Wire(
-			types.ChannelMeasurements,
+			types.ChannelHawkes,
 			"",
 			func(value any) any {
-				if m, ok := value.(*data.Measurement[float64]); ok && m != nil && m.Source == "hawkes" {
+				if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
 					_ = solver.Step(m)
-					return nil
-				}
-
-				if m, ok := value.(*nmtypes.Measurement); ok && m != nil && m.Source == "hawkes" {
-					_ = solver.Step(&data.Measurement[float64]{
-						Source: m.Source,
-						Label:  m.Symbol,
-						At:     m.At,
-					})
-					return nil
 				}
 
 				return nil

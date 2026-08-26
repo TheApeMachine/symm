@@ -1291,7 +1291,10 @@ const StageNode = ({
 	return (
 		<button
 			type="button"
-			onClick={() => onSelect({ kind: "stage", name: placement.id })}
+			onClick={(event) => {
+				event.stopPropagation();
+				onSelect({ kind: "stage", name: placement.id });
+			}}
 			aria-label={`Inspect ${placement.label}`}
 			className={cn(
 				"diag-node absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-xs border bg-(--surface) px-2 py-1.5 text-left transition-all hover:bg-(--raised)",
@@ -1489,7 +1492,10 @@ const QueueNode = ({
 	return (
 		<button
 			type="button"
-			onClick={() => onSelect({ kind: "queue", name: placement.id })}
+			onClick={(event) => {
+				event.stopPropagation();
+				onSelect({ kind: "queue", name: placement.id });
+			}}
 			aria-label={`Inspect queue ${queue.name}`}
 			title={queue.name}
 			className={cn(
@@ -1697,7 +1703,7 @@ export type DiagnosticsGraphProps = {
 	queueDeltas: Map<string, number>;
 	hopDeltas: Map<string, number>;
 	selection: DiagnosticsSelection | null;
-	onSelect: (selection: DiagnosticsSelection) => void;
+	onSelect: (selection: DiagnosticsSelection | null) => void;
 };
 
 /*
@@ -1737,7 +1743,10 @@ export const DiagnosticsGraph = ({
 	}
 
 	return (
-		<div className="relative h-full w-full overflow-hidden select-none">
+		<div
+			className="relative h-full w-full overflow-hidden select-none"
+			onClick={() => onSelect(null)}
+		>
 			<style>{`
 				@keyframes diag-dash-flow {
 					from { stroke-dashoffset: 0; }

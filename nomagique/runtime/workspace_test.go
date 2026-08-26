@@ -766,3 +766,55 @@ func BenchmarkWorkspace640Symbols(b *testing.B) {
 
 	_ = workspace.WaitForQuiescence(10 * time.Second)
 }
+
+/*
+BenchmarkWorkspaceFanout measures the production signal fan-out shape: N keyed
+subscribers all consuming the same ticker topic with a no-op Step, so the
+broadcast-handler-group cost (every handler scanning every sequence range) is
+isolated from signal mathematics. This is the empty-runtime regression boundary:
+it must comfortably exceed 1,000 events/sec — by orders of magnitude — before
+any signal work is considered.
+*/
+func BenchmarkWorkspaceFanout(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	workspace := NewWorkspace(ctx)
+
+	defer func() {
+		workspace.Close()
+		cancel()
+	}()
+
+	const symbolCount = 640
+	const subscriberCount = 8
+
+	symbols := make([]string, symbolCount)
+	for index := 0; index < symbolCount; index++ {
+		symbols[index] = fmt.Sprintf("SYM_%d", index)
+	}
+
+	var processed atomic.Int64
+
+	for subscriber := 0; subscriber < subscriberCount; subscriber++ {
+		WireKeyed[testKeyedEvent, any](
+			workspace,
+			"fanout_tickers",
+			"",
+			func(event testKeyedEvent) string { return event.Symbol },
+			func(event testKeyedEvent) any {
+				processed.Add(1)
+				return nil
+			},
+		)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		for index := 0; index < symbolCount; index++ {
+			workspace.Publish("fanout_tickers", testKeyedEvent{Symbol: symbols[index], Seq: index})
+		}
+	}
+
+	_ = workspace.WaitForQuiescence(10 * time.Second)
+}

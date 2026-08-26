@@ -45,18 +45,31 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 
 	if workspace != nil {
 		hawkesSignal := hawkes.NewSignal(ctx)
-		runtime.WireFunc[kraken.TradeData, *data.Measurement[float64]](
-			workspace, types.ChannelTrades, types.ChannelMeasurements, func(trade kraken.TradeData) *data.Measurement[float64] {
+		// Hawkes is the manifold forcing term: it publishes once onto the
+		// dedicated Hawkes topic (raw), and a pass-through forwards that same
+		// measurement onto ChannelMeasurements so Category/Graph/Planner keep
+		// receiving it without Hawkes computing twice.
+		runtime.WireKeyed[kraken.TradeData, *data.Measurement[float64]](
+			workspace, types.ChannelTrades, types.ChannelHawkes,
+			func(trade kraken.TradeData) string { return trade.Symbol },
+			func(trade kraken.TradeData) *data.Measurement[float64] {
 				started := time.Now()
 				measurement := hawkesSignal.Step(trade)
 				runner.timeStep("hawkes", time.Since(started))
 				return measurement
 			},
 		)
+		runtime.WireFunc[*data.Measurement[float64], *data.Measurement[float64]](
+			workspace, types.ChannelHawkes, types.ChannelMeasurements, func(m *data.Measurement[float64]) *data.Measurement[float64] {
+				return m
+			},
+		)
 
 		correlationSignal := correlation.NewSignal(ctx, workspace)
-		runtime.WireFunc[kraken.TickerData, *data.Measurement[float64]](
-			workspace, types.ChannelTickers, types.ChannelMeasurements, func(ticker kraken.TickerData) *data.Measurement[float64] {
+		runtime.WireKeyed[kraken.TickerData, *data.Measurement[float64]](
+			workspace, types.ChannelTickers, types.ChannelMeasurements,
+			func(ticker kraken.TickerData) string { return ticker.Symbol },
+			func(ticker kraken.TickerData) *data.Measurement[float64] {
 				started := time.Now()
 				measurement := correlationSignal.Step(ticker)
 				runner.timeStep("correlation", time.Since(started))
@@ -65,8 +78,10 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		cvdSignal := cvd.NewSignal(ctx, workspace)
-		runtime.WireFunc[kraken.TradeData, *data.Measurement[float64]](
-			workspace, types.ChannelTrades, types.ChannelMeasurements, func(trade kraken.TradeData) *data.Measurement[float64] {
+		runtime.WireKeyed[kraken.TradeData, *data.Measurement[float64]](
+			workspace, types.ChannelTrades, types.ChannelMeasurements,
+			func(trade kraken.TradeData) string { return trade.Symbol },
+			func(trade kraken.TradeData) *data.Measurement[float64] {
 				started := time.Now()
 				measurement := cvdSignal.Step(trade)
 				runner.timeStep("cvd", time.Since(started))
@@ -75,8 +90,10 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		depthflowSignal := depthflow.NewSignal(ctx, workspace)
-		runtime.WireFunc[kraken.Level3Data, *data.Measurement[float64]](
-			workspace, types.ChannelLevel3, types.ChannelMeasurements, func(frame kraken.Level3Data) *data.Measurement[float64] {
+		runtime.WireKeyed[kraken.Level3Data, *data.Measurement[float64]](
+			workspace, types.ChannelLevel3, types.ChannelMeasurements,
+			func(frame kraken.Level3Data) string { return frame.Symbol },
+			func(frame kraken.Level3Data) *data.Measurement[float64] {
 				started := time.Now()
 				measurement := depthflowSignal.Step(frame.Symbol, frame.Timestamp)
 				runner.timeStep("depthflow", time.Since(started))
@@ -85,16 +102,20 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		derivativesSignal := derivatives.NewSignal(ctx, workspace)
-		runtime.WireFunc[kraken.FuturesTickerData, *data.Measurement[float64]](
-			workspace, types.ChannelFuturesTickers, types.ChannelMeasurements, func(ticker kraken.FuturesTickerData) *data.Measurement[float64] {
+		runtime.WireKeyed[kraken.FuturesTickerData, *data.Measurement[float64]](
+			workspace, types.ChannelFuturesTickers, types.ChannelMeasurements,
+			func(ticker kraken.FuturesTickerData) string { return ticker.Symbol },
+			func(ticker kraken.FuturesTickerData) *data.Measurement[float64] {
 				started := time.Now()
 				measurement := derivativesSignal.StepTicker(ticker)
 				runner.timeStep("derivatives", time.Since(started))
 				return measurement
 			},
 		)
-		runtime.WireFunc[kraken.FuturesTradeData, *data.Measurement[float64]](
-			workspace, types.ChannelFuturesTrades, types.ChannelMeasurements, func(trade kraken.FuturesTradeData) *data.Measurement[float64] {
+		runtime.WireKeyed[kraken.FuturesTradeData, *data.Measurement[float64]](
+			workspace, types.ChannelFuturesTrades, types.ChannelMeasurements,
+			func(trade kraken.FuturesTradeData) string { return trade.Symbol },
+			func(trade kraken.FuturesTradeData) *data.Measurement[float64] {
 				started := time.Now()
 				measurement := derivativesSignal.StepTrade(trade)
 				runner.timeStep("derivatives", time.Since(started))
@@ -103,8 +124,10 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		exhaustSignal := exhaust.NewSignal(ctx)
-		runtime.WireFunc[kraken.TickerData, *data.Measurement[float64]](
-			workspace, types.ChannelTickers, types.ChannelMeasurements, func(ticker kraken.TickerData) *data.Measurement[float64] {
+		runtime.WireKeyed[kraken.TickerData, *data.Measurement[float64]](
+			workspace, types.ChannelTickers, types.ChannelMeasurements,
+			func(ticker kraken.TickerData) string { return ticker.Symbol },
+			func(ticker kraken.TickerData) *data.Measurement[float64] {
 				started := time.Now()
 				measurement := exhaustSignal.Step(ticker)
 				runner.timeStep("exhaustion", time.Since(started))
@@ -113,8 +136,10 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		leadlagSignal := leadlag.NewSignal(ctx, workspace)
-		runtime.WireFunc[kraken.TickerData, *data.Measurement[float64]](
-			workspace, types.ChannelTickers, types.ChannelMeasurements, func(ticker kraken.TickerData) *data.Measurement[float64] {
+		runtime.WireKeyed[kraken.TickerData, *data.Measurement[float64]](
+			workspace, types.ChannelTickers, types.ChannelMeasurements,
+			func(ticker kraken.TickerData) string { return ticker.Symbol },
+			func(ticker kraken.TickerData) *data.Measurement[float64] {
 				started := time.Now()
 				measurement := leadlagSignal.Step(ticker)
 				runner.timeStep("leadlag", time.Since(started))
@@ -123,8 +148,10 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		liquiditySignal := liquidity.NewSignal(ctx)
-		runtime.WireFunc[kraken.TickerData, *data.Measurement[float64]](
-			workspace, types.ChannelTickers, types.ChannelMeasurements, func(ticker kraken.TickerData) *data.Measurement[float64] {
+		runtime.WireKeyed[kraken.TickerData, *data.Measurement[float64]](
+			workspace, types.ChannelTickers, types.ChannelMeasurements,
+			func(ticker kraken.TickerData) string { return ticker.Symbol },
+			func(ticker kraken.TickerData) *data.Measurement[float64] {
 				started := time.Now()
 				measurement := liquiditySignal.Step(ticker)
 				runner.timeStep("liquidity", time.Since(started))
@@ -133,16 +160,20 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		pumpdumpSignal := pumpdump.NewSignal(ctx, workspace)
-		runtime.WireFunc[kraken.TickerData, *data.Measurement[float64]](
-			workspace, types.ChannelTickers, types.ChannelMeasurements, func(ticker kraken.TickerData) *data.Measurement[float64] {
+		runtime.WireKeyed[kraken.TickerData, *data.Measurement[float64]](
+			workspace, types.ChannelTickers, types.ChannelMeasurements,
+			func(ticker kraken.TickerData) string { return ticker.Symbol },
+			func(ticker kraken.TickerData) *data.Measurement[float64] {
 				started := time.Now()
 				measurement := pumpdumpSignal.StepTicker(ticker)
 				runner.timeStep("pumpdump", time.Since(started))
 				return measurement
 			},
 		)
-		runtime.WireFunc[kraken.TradeData, *data.Measurement[float64]](
-			workspace, types.ChannelTrades, types.ChannelMeasurements, func(trade kraken.TradeData) *data.Measurement[float64] {
+		runtime.WireKeyed[kraken.TradeData, *data.Measurement[float64]](
+			workspace, types.ChannelTrades, types.ChannelMeasurements,
+			func(trade kraken.TradeData) string { return trade.Symbol },
+			func(trade kraken.TradeData) *data.Measurement[float64] {
 				started := time.Now()
 				measurement := pumpdumpSignal.StepTrade(trade)
 				runner.timeStep("pumpdump", time.Since(started))
@@ -151,8 +182,10 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		sentimentSignal := sentiment.NewSignal(ctx, workspace)
-		runtime.WireFunc[kraken.TickerData, *data.Measurement[float64]](
-			workspace, types.ChannelTickers, types.ChannelMeasurements, func(ticker kraken.TickerData) *data.Measurement[float64] {
+		runtime.WireKeyed[kraken.TickerData, *data.Measurement[float64]](
+			workspace, types.ChannelTickers, types.ChannelMeasurements,
+			func(ticker kraken.TickerData) string { return ticker.Symbol },
+			func(ticker kraken.TickerData) *data.Measurement[float64] {
 				started := time.Now()
 				measurement := sentimentSignal.Step(ticker)
 				runner.timeStep("sentiment", time.Since(started))
@@ -161,8 +194,10 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		toxicitySignal := toxicity.NewSignal(ctx, workspace)
-		runtime.WireFunc[kraken.TradeData, *data.Measurement[float64]](
-			workspace, types.ChannelTrades, types.ChannelMeasurements, func(trade kraken.TradeData) *data.Measurement[float64] {
+		runtime.WireKeyed[kraken.TradeData, *data.Measurement[float64]](
+			workspace, types.ChannelTrades, types.ChannelMeasurements,
+			func(trade kraken.TradeData) string { return trade.Symbol },
+			func(trade kraken.TradeData) *data.Measurement[float64] {
 				started := time.Now()
 				measurement := toxicitySignal.StepTrade(trade)
 				runner.timeStep("toxicity", time.Since(started))
