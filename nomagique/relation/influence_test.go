@@ -323,12 +323,15 @@ func TestZeroVsUnavailable(t *testing.T) {
 		})
 
 		Convey("an observed zero coordinate is retained and distinct from missing", func() {
-			history := store.History(fixtureCoordinate("z", "zero"))
-			So(len(history), ShouldEqual, count)
+			visited := 0
 
-			for _, observation := range history {
+			store.RangeHistory(fixtureCoordinate("z", "zero"), func(observation Observation) bool {
 				So(observation.Raw, ShouldEqual, 0)
-			}
+				visited++
+				return true
+			})
+
+			So(visited, ShouldEqual, count)
 		})
 
 		Convey("a missing source coordinate yields no_source_history, not a zero relation", func() {
@@ -371,3 +374,46 @@ func TestZeroVsUnavailable(t *testing.T) {
 	})
 }
 
+var benchmarkEstimateSink FitStatus
+
+/*
+BenchmarkInfluenceEstimate measures the full prequential Estimate path over
+resident ring views: alignment and regression accumulation are fused into a
+single per-lag walk, so no history copy and no aligned-row materialization
+remains in the loop.
+*/
+func BenchmarkInfluenceEstimate(b *testing.B) {
+	random := rand.New(rand.NewSource(42))
+	count := 256
+	x := gaussianSequence(random, count)
+	y := make([]float64, count)
+
+	for index := 1; index < count; index++ {
+		y[index] = 0.3*y[index-1] + 0.5*x[index-1] + random.NormFloat64()
+	}
+
+	store := buildFixtureStore([]seriesFixture{
+		{coordinate: fixtureCoordinate("z", "x"), values: x, start: time.Unix(0, 0), step: time.Second},
+		{coordinate: fixtureCoordinate("z", "y"), values: y, start: time.Unix(0, 0), step: time.Second},
+	})
+
+	estimator := NewInfluenceEstimator("bench-v1")
+	request := InfluenceRequest{
+		Source: fixtureCoordinate("z", "x"),
+		Target: fixtureCoordinate("z", "y"),
+		Lag:    LagDomain{MinLag: time.Second, MaxLag: 10 * time.Second},
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for iteration := 0; iteration < b.N; iteration++ {
+		result, err := estimator.Estimate(store, request)
+
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		benchmarkEstimateSink = result.Status
+	}
+}

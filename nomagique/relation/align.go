@@ -3,15 +3,12 @@ package relation
 import "time"
 
 /*
-LaggedSeries is one predictor series with its own explicit alignment lag.
-
-Precondition: Observations must be in non-decreasing chronological order;
-the cursor-based alignment relies on this and on non-decreasing target
-cutoffs to scan each series exactly once.
+SeriesView is one predictor series viewed as a resident ring with its own
+explicit alignment lag.
 */
-type LaggedSeries struct {
-	// Observations is the chronological series (non-decreasing At).
-	Observations []Observation
+type SeriesView struct {
+	// History is the read-locked resident ring view (chronological).
+	History RingView
 	// Lag is the as-of lag: the newest observation used is the newest one
 	// available no later than target time minus Lag.
 	Lag time.Duration
@@ -26,41 +23,40 @@ type AlignedRow struct {
 }
 
 /*
-AlignLagged aligns target observations with lagged predictor series. For a
-target observation at time t and a predictor series with lag τ, the aligned
-predictor is the newest observation available no later than t - τ. Future
-observations never enter a row. Only target observations with every
-predictor aligned are retained, in chronological target order.
+AlignViews aligns target observations with lagged predictor series, all read
+in place from resident rings. For a target observation at time t and a
+predictor series with lag τ, the aligned predictor is the newest observation
+available no later than t - τ. Future observations never enter a row. Only
+target observations with every predictor aligned are retained, in
+chronological target order.
 
-Precondition: targets and every LaggedSeries.Observations slice must be in
-non-decreasing chronological order; the per-series cursor alignment relies
-on this, scanning each series once across the whole call. A later call on
-the same series (or a continued scan) requires non-decreasing cutoffs.
-
-Alignment is generic: it is used by the Relation estimator (TargetPast +
-ControlsPast + SourcePast) and by the causal market transition model (self
-history + schema-authorized parents), so event-time causality is implemented
-once.
+Preconditions: the target ring and every series ring must be in
+non-decreasing chronological order (resident rings are by construction); the
+per-series cursor alignment scans each series once across the whole call,
+and a later call on the same series (or a continued scan) requires
+non-decreasing cutoffs.
 */
-func AlignLagged(targets []Observation, series []LaggedSeries) []AlignedRow {
-	if len(targets) == 0 || len(series) == 0 {
+func AlignViews(targets RingView, series []SeriesView) []AlignedRow {
+	if targets.Len() == 0 || len(series) == 0 {
 		return nil
 	}
 
 	cursors := make([]int, len(series))
+
 	for index := range cursors {
 		cursors[index] = -1
 	}
 
-	rows := make([]AlignedRow, 0, len(targets))
+	rows := make([]AlignedRow, 0, targets.Len())
 
-	for _, target := range targets {
+	for targetIndex := 0; targetIndex < targets.Len(); targetIndex++ {
+		target := targets.At(targetIndex)
 		predictors := make([]Observation, len(series))
 		complete := true
 
 		for index, predictorSeries := range series {
 			cutoff := target.At.Add(-predictorSeries.Lag)
-			predictor, found := newestAtOrBefore(predictorSeries.Observations, &cursors[index], cutoff)
+			predictor, found := newestAtOrBeforeView(predictorSeries.History, &cursors[index], cutoff)
 
 			if !found {
 				complete = false
@@ -81,4 +77,42 @@ func AlignLagged(targets []Observation, series []LaggedSeries) []AlignedRow {
 	}
 
 	return rows
+}
+
+/*
+newestAtOrBeforeView returns the newest observation in a resident ring view
+at or before cutoff. The cursor remains positioned on the last matched
+observation (a negative value means no match has ever been recorded):
+repeated calls with non-decreasing cutoffs re-scan only entries after the
+previous match, and a call whose cutoff reaches no newer entry returns the
+previously matched observation. When no observation has ever matched, the
+result is not-found. The precondition is that the ring is chronological and
+cutoffs are non-decreasing across calls, which the alignment paths
+guarantee.
+*/
+func newestAtOrBeforeView(history RingView, cursor *int, cutoff time.Time) (Observation, bool) {
+	best := -1
+	start := 0
+
+	if cursor != nil && *cursor >= 0 {
+		start = *cursor
+	}
+
+	for index := start; index < history.Len() && !history.At(index).At.After(cutoff); index++ {
+		best = index
+	}
+
+	if best >= 0 {
+		if cursor != nil {
+			*cursor = best
+		}
+
+		return history.At(best), true
+	}
+
+	if cursor == nil || *cursor < 0 {
+		return Observation{}, false
+	}
+
+	return history.At(*cursor), true
 }

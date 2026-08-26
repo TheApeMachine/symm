@@ -136,7 +136,16 @@ coordinate; this is structural availability, not evidence. A missing exact
 control makes the Relation unavailable rather than silently changing the
 model.
 */
-func (plan *RelationPlan) ResolveControls(symbol string, coordinates []Coordinate) ([]Control, bool) {
+/*
+ResolveControls resolves the plan's control selectors against the resident
+coordinates available for the symbol, returning explicit controls in selector
+order. The boolean reports whether every exact control selector resolved to a
+registered coordinate. A wildcard selector resolves to every matching
+resident coordinate; this is structural availability, not evidence. A missing
+exact control makes the Relation unavailable rather than silently changing
+the model.
+*/
+func (plan *RelationPlan) ResolveControls(symbol string, store *ObservationStore) ([]Control, bool) {
 	if plan == nil {
 		return nil, true
 	}
@@ -146,22 +155,23 @@ func (plan *RelationPlan) ResolveControls(symbol string, coordinates []Coordinat
 	for _, selector := range plan.Controls {
 		matched := false
 
-		for _, coordinate := range coordinates {
+		store.RangeCoordinates(func(coordinate Coordinate) bool {
 			if coordinate.Symbol != symbol {
-				continue
+				return true
 			}
 
 			if plan.Peer != "" && coordinate.Peer != plan.Peer {
-				continue
+				return true
 			}
 
 			if !selector.Matches(coordinate) {
-				continue
+				return true
 			}
 
 			controls = append(controls, Control{Coordinate: coordinate, Lag: selector.Lag})
 			matched = true
-		}
+			return true
+		})
 
 		// An exact selector (any identity component populated) with no
 		// matching coordinate is a missing control: the Relation is
@@ -190,13 +200,13 @@ type CompiledCandidate struct {
 
 /*
 CompilePlansForSymbol precompiles the relation candidates across all active plans
-for a symbol given the currently available coordinates.
+for a symbol against the store's resident coordinates.
 */
 func CompilePlansForSymbol(
 	plans []*RelationPlan,
 	symbol string,
 	epoch uint64,
-	coordinates []Coordinate,
+	store *ObservationStore,
 ) []CompiledCandidate {
 	var candidates []CompiledCandidate
 
@@ -205,11 +215,11 @@ func CompilePlansForSymbol(
 			continue
 		}
 
-		controls, controlsComplete := plan.ResolveControls(symbol, coordinates)
+		controls, controlsComplete := plan.ResolveControls(symbol, store)
 
 		for _, pair := range plan.PairsForSymbol(symbol) {
-			sources := resolveSelectorsForSymbol(pair.Source, symbol, plan.Peer, epoch, coordinates)
-			targets := resolveSelectorsForSymbol(pair.Target, symbol, plan.Peer, epoch, coordinates)
+			sources := resolveSelectorsForSymbol(pair.Source, symbol, plan.Peer, epoch, store)
+			targets := resolveSelectorsForSymbol(pair.Target, symbol, plan.Peer, epoch, store)
 
 			for _, source := range sources {
 				for _, target := range targets {
@@ -238,25 +248,26 @@ func resolveSelectorsForSymbol(
 	symbol string,
 	peer string,
 	epoch uint64,
-	coordinates []Coordinate,
+	store *ObservationStore,
 ) []Coordinate {
 	matches := make([]Coordinate, 0)
 
-	for _, coordinate := range coordinates {
+	store.RangeCoordinates(func(coordinate Coordinate) bool {
 		if coordinate.Symbol != symbol || coordinate.Epoch != epoch {
-			continue
+			return true
 		}
 
 		if peer != "" && coordinate.Peer != peer {
-			continue
+			return true
 		}
 
 		if !selector.Matches(coordinate) {
-			continue
+			return true
 		}
 
 		matches = append(matches, coordinate)
-	}
+		return true
+	})
 
 	return matches
 }

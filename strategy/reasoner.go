@@ -235,8 +235,7 @@ updateRelations estimates every planned pair for one symbol and records the
 Influence edges using precompiled candidate topology.
 */
 func (reasoner *Reasoner) updateRelations(symbol string) {
-	coordinates := reasoner.store.Coordinates()
-	coordinateCount := len(coordinates)
+	coordinateCount := reasoner.store.CoordinateCount()
 
 	var candidates []relation.CompiledCandidate
 
@@ -249,7 +248,7 @@ func (reasoner *Reasoner) updateRelations(symbol string) {
 	}
 
 	if candidates == nil {
-		candidates = relation.CompilePlansForSymbol(reasoner.plans, symbol, reasoner.epoch, coordinates)
+		candidates = relation.CompilePlansForSymbol(reasoner.plans, symbol, reasoner.epoch, reasoner.store)
 		reasoner.compiledPlans.Store(symbol, reasonerCompiledPlanEntry{
 			coordinateCount: coordinateCount,
 			candidates:      candidates,
@@ -342,9 +341,10 @@ func (reasoner *Reasoner) Symbols() []string {
 
 	seen := make(map[string]bool)
 
-	for _, coordinate := range reasoner.store.Coordinates() {
+	reasoner.store.RangeCoordinates(func(coordinate relation.Coordinate) bool {
 		seen[coordinate.Symbol] = true
-	}
+		return true
+	})
 
 	symbols := make([]string, 0, len(seen))
 
@@ -457,21 +457,24 @@ func (reasoner *Reasoner) buildMarketState(
 			continue
 		}
 
-		history := reasoner.store.History(coordinate)
+		history := make([]mcts.MarketSample, 0)
 
-		for _, observation := range history {
+		reasoner.store.RangeHistory(coordinate, func(observation relation.Observation) bool {
 			if observation.At.After(at) {
-				continue
+				return true
 			}
 
-			state.History[coordinate] = append(state.History[coordinate], mcts.MarketSample{
+			history = append(history, mcts.MarketSample{
 				At:    observation.At,
 				Value: observation.Raw,
 			})
-		}
 
-		if entries := state.History[coordinate]; len(entries) > 0 {
-			state.Current[coordinate] = entries[len(entries)-1].Value
+			return true
+		})
+
+		if len(history) > 0 {
+			state.History[coordinate] = history
+			state.Current[coordinate] = history[len(history)-1].Value
 		}
 	}
 

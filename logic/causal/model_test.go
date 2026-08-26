@@ -52,12 +52,20 @@ func buildStore() *relation.ObservationStore {
 }
 
 func valueAt(store *relation.ObservationStore, coordinate relation.Coordinate, at time.Time) float64 {
-	history := store.History(coordinate)
+	value := 0.0
+	found := false
 
-	for index := len(history) - 1; index >= 0; index-- {
-		if history[index].At.Equal(at) {
-			return history[index].Raw
+	store.RangeHistory(coordinate, func(observation relation.Observation) bool {
+		if observation.At.Equal(at) {
+			value = observation.Raw
+			found = true
 		}
+
+		return true
+	})
+
+	if found {
+		return value
 	}
 
 	return 0

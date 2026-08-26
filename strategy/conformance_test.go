@@ -162,30 +162,48 @@ func TestConformanceInformationPreservation(t *testing.T) {
 		ingestSeries(reasoner, 120, 5, 0)
 
 		Convey("all coordinates remain in observational history after one causal query", func() {
-			coordinates := reasoner.Store().Coordinates()
-			So(len(coordinates), ShouldBeGreaterThanOrEqualTo, 3)
+			countCoordinates := func() int {
+				count := 0
+
+				reasoner.Store().RangeCoordinates(func(relation.Coordinate) bool {
+					count++
+					return true
+				})
+
+				return count
+			}
+
+			before := countCoordinates()
+			So(before, ShouldBeGreaterThanOrEqualTo, 3)
 
 			state := reasoner.CausalState("TEST/USD", time.Unix(0, 119*int64(time.Second)))
 			So(state, ShouldNotBeNil)
 
-			after := reasoner.Store().Coordinates()
-			So(len(after), ShouldEqual, len(coordinates))
+			after := countCoordinates()
+			So(after, ShouldEqual, before)
 
-			for _, coordinate := range coordinates {
+			reasoner.Store().RangeCoordinates(func(coordinate relation.Coordinate) bool {
 				So(reasoner.Store().Count(coordinate), ShouldBeGreaterThan, 0)
-			}
+				return true
+			})
 		})
 
 		Convey("the unused gross-rate coordinate stays queryable", func() {
-			history := reasoner.Store().History(relation.Coordinate{
+			visited := 0
+
+			reasoner.Store().RangeHistory(relation.Coordinate{
 				Symbol:    "TEST/USD",
 				Source:    "cvd",
 				Metric:    "gross_notional_rate_zscore",
 				Unit:      nmtypes.UnitDimensionless,
 				Timescale: nmtypes.TimescaleInstantaneous,
 				Epoch:     1,
+			}, func(relation.Observation) bool {
+				visited++
+				return true
 			})
-			So(len(history), ShouldBeGreaterThan, 0)
+
+			So(visited, ShouldBeGreaterThan, 0)
 		})
 	})
 }

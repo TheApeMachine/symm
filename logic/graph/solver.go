@@ -854,8 +854,7 @@ estimate evaluates every planned pair for one symbol and records the Influence
 edges using precompiled candidate topology.
 */
 func (solver *Solver) estimate(symbol string) {
-	coordinates := solver.store.Coordinates()
-	coordinateCount := len(coordinates)
+	coordinateCount := solver.store.CoordinateCount()
 
 	var candidates []relation.CompiledCandidate
 
@@ -868,7 +867,7 @@ func (solver *Solver) estimate(symbol string) {
 	}
 
 	if candidates == nil {
-		candidates = relation.CompilePlansForSymbol(solver.plans, symbol, solver.epoch, coordinates)
+		candidates = relation.CompilePlansForSymbol(solver.plans, symbol, solver.epoch, solver.store)
 		solver.compiledPlans.Store(symbol, compiledPlanEntry{
 			coordinateCount: coordinateCount,
 			candidates:      candidates,

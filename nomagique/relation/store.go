@@ -1,7 +1,6 @@
 package relation
 
 import (
-	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -33,32 +32,26 @@ type StoreSnapshot struct {
 }
 
 /*
-ObservationStore is a typed observational coordinate store with coordinate-local
-locking. Each coordinate keeps its own bounded chronological ring; eviction
-follows the retention policy only. Observed zero is stored and remains distinct
-from missing.
-
-The coordinate universe changes only when a new coordinate is first observed,
-so the store also maintains an immutable sorted coordinate index (see
-Coordinates) that is rebuilt exactly once per new coordinate instead of on
-every read.
+ObservationStore is resident streaming state: one bounded chronological ring
+per Coordinate plus a resident ordered coordinate index. Coordinates are
+structural — registered once (see RegisterCoordinate) and traversed in place
+(see RangeCoordinates); measurements never discover, clone, snapshot, sort,
+or recreate the coordinate universe. Rings are traversed in place too (see
+RangeHistory): a ring is chronological by construction, so retained history
+is never copied or re-sorted on the hot path.
 */
 type ObservationStore struct {
-	policy     RetentionPolicy
-	rings      sync.Map
-	appended   atomic.Uint64
-	generation atomic.Uint64
-	index      atomic.Pointer[coordinateIndex]
-}
+	policy RetentionPolicy
 
-/*
-coordinateIndex is an immutable snapshot of the sorted coordinate universe
-captured at one generation. It is replaced, never mutated, so readers can hand
-it out without copying.
-*/
-type coordinateIndex struct {
-	generation  uint64
-	coordinates []Coordinate
+	rings sync.Map
+
+	// indexMu guards the resident ordered coordinate index. Structural
+	// registration is the only writer; readers iterate under RLock.
+	// Measurement traffic never touches it.
+	indexMu sync.RWMutex
+	order   []Coordinate
+
+	appended atomic.Uint64
 }
 
 type observationRing struct {
@@ -94,52 +87,74 @@ func (store *ObservationStore) Retention() RetentionPolicy {
 	return store.policy
 }
 
-func (store *ObservationStore) getOrCreateRing(coordinate Coordinate) *observationRing {
+/*
+RegisterCoordinate structurally registers one coordinate, creating its
+resident ring and inserting it into the resident ordered coordinate index. It
+is idempotent and is the only path that grows the coordinate universe;
+measurements for an unregistered coordinate take this same structural path
+exactly once. Registration is a slow structural mutation, never a hot-path
+operation, and no speculative ring is ever allocated by a concurrent loser.
+*/
+func (store *ObservationStore) RegisterCoordinate(coordinate Coordinate) {
+	if store == nil {
+		return
+	}
+
+	store.register(coordinate)
+}
+
+func (store *ObservationStore) register(coordinate Coordinate) *observationRing {
+	store.indexMu.Lock()
+	defer store.indexMu.Unlock()
+
 	if stored, found := store.rings.Load(coordinate); found {
 		return stored.(*observationRing)
 	}
 
-	candidate := &observationRing{
+	ring := &observationRing{
 		coordinate: coordinate,
 		entries:    make([]Observation, store.policy.Capacity),
 	}
-	actual, _ := store.rings.LoadOrStore(coordinate, candidate)
 
-	return actual.(*observationRing)
+	store.rings.Store(coordinate, ring)
+	store.insertOrdered(coordinate)
+
+	return ring
 }
 
-func (store *ObservationStore) getRing(coordinate Coordinate) *observationRing {
-	stored, found := store.rings.Load(coordinate)
+// insertOrdered inserts one coordinate into the resident canonical order.
+func (store *ObservationStore) insertOrdered(coordinate Coordinate) {
+	position := sort.Search(len(store.order), func(index int) bool {
+		return CompareCoordinate(store.order[index], coordinate) >= 0
+	})
 
-	if !found {
-		return nil
-	}
-
-	return stored.(*observationRing)
+	store.order = append(store.order, Coordinate{})
+	copy(store.order[position+1:], store.order[position:])
+	store.order[position] = coordinate
 }
 
 /*
 Append stores one observation for its coordinate, evicting the oldest
 retained observation when the ring is full. It never blocks and never drops
-because of a value threshold.
+because of a value threshold. A coordinate observed for the first time is
+structurally registered exactly once; concurrent first observations never
+allocate competing candidate rings.
 */
 func (store *ObservationStore) Append(observation Observation) {
 	if store == nil {
 		return
 	}
 
-	ring := store.getOrCreateRing(observation.Coordinate)
+	stored, found := store.rings.Load(observation.Coordinate)
+
+	if !found {
+		stored = store.register(observation.Coordinate)
+	}
+
+	ring := stored.(*observationRing)
 	ring.mu.Lock()
-	fresh := ring.size == 0
 	ring.push(observation)
 	ring.mu.Unlock()
-
-	if fresh {
-		// The coordinate entered the universe for the first time; the cached
-		// sorted coordinate index is stale and is rebuilt once on the next
-		// read. Ordinary appends never touch the index.
-		store.generation.Add(1)
-	}
 
 	store.appended.Add(1)
 }
@@ -158,41 +173,122 @@ func (store *ObservationStore) AppendObservations(observations []Observation) {
 }
 
 /*
-History returns the retained observations for one coordinate in
-chronological order. A coordinate that has never been observed returns an
-empty slice; that is missing, not zero.
+RangeCoordinates visits every registered coordinate in canonical
+CompareCoordinate order, in place, with zero allocation. The resident index
+is maintained at registration time, so no universe is ever enumerated,
+cloned, or sorted on the read path.
 */
-func (store *ObservationStore) History(coordinate Coordinate) []Observation {
+func (store *ObservationStore) RangeCoordinates(visit func(Coordinate) bool) {
 	if store == nil {
-		return nil
+		return
 	}
 
-	ring := store.getRing(coordinate)
+	store.indexMu.RLock()
+	defer store.indexMu.RUnlock()
 
-	if ring == nil {
-		return nil
+	for _, coordinate := range store.order {
+		if !visit(coordinate) {
+			return
+		}
+	}
+}
+
+/*
+CoordinateCount returns the number of resident coordinates.
+*/
+func (store *ObservationStore) CoordinateCount() int {
+	if store == nil {
+		return 0
 	}
 
+	store.indexMu.RLock()
+	defer store.indexMu.RUnlock()
+
+	return len(store.order)
+}
+
+/*
+RingView is a read-locked window over one resident observation ring. It is
+the estimation path's zero-copy access to resident history: Len and At read
+the ring in place in chronological order, and Close releases the read lock.
+A view must be closed exactly once and must not be used when ViewRing
+reports not found.
+*/
+type RingView struct {
+	ring   *observationRing
+	unlock func()
+}
+
+/*
+Len returns the number of retained observations in the ring.
+*/
+func (view RingView) Len() int {
+	return view.ring.size
+}
+
+/*
+At returns the observation at logical index 0..Len-1 in insertion order.
+*/
+func (view RingView) At(index int) Observation {
+	return view.ring.at(index)
+}
+
+/*
+Close releases the ring read lock. It must be called exactly once.
+*/
+func (view RingView) Close() {
+	view.unlock()
+}
+
+/*
+ViewRing returns a read-locked view of one coordinate's resident ring. The
+boolean reports whether the coordinate is registered. A missing coordinate
+is missing, not zero.
+*/
+func (store *ObservationStore) ViewRing(coordinate Coordinate) (RingView, bool) {
+	if store == nil {
+		return RingView{}, false
+	}
+
+	stored, found := store.rings.Load(coordinate)
+
+	if !found {
+		return RingView{}, false
+	}
+
+	ring := stored.(*observationRing)
 	ring.mu.RLock()
 
-	if ring.size == 0 {
-		ring.mu.RUnlock()
-		return nil
+	return RingView{ring: ring, unlock: ring.mu.RUnlock}, true
+}
+
+/*
+RangeHistory visits every retained observation of one coordinate in
+chronological order, in place, with zero allocation. The ring is
+chronological by construction, so nothing is copied or re-sorted. A
+coordinate that has never been observed visits nothing; that is missing,
+not zero.
+*/
+func (store *ObservationStore) RangeHistory(coordinate Coordinate, visit func(Observation) bool) {
+	if store == nil {
+		return
 	}
 
-	history := make([]Observation, ring.size)
+	stored, found := store.rings.Load(coordinate)
+
+	if !found {
+		return
+	}
+
+	ring := stored.(*observationRing)
+	ring.mu.RLock()
+	defer ring.mu.RUnlock()
 
 	for index := 0; index < ring.size; index++ {
-		history[index] = ring.at(index)
+		if !visit(ring.at(index)) {
+			return
+		}
 	}
-
-	ring.mu.RUnlock()
-
-	sort.Slice(history, func(left int, right int) bool {
-		return history[left].At.Before(history[right].At)
-	})
-
-	return history
 }
 
 /*
@@ -204,12 +300,13 @@ func (store *ObservationStore) Latest(coordinate Coordinate) (Observation, bool)
 		return Observation{}, false
 	}
 
-	ring := store.getRing(coordinate)
+	stored, found := store.rings.Load(coordinate)
 
-	if ring == nil {
+	if !found {
 		return Observation{}, false
 	}
 
+	ring := stored.(*observationRing)
 	ring.mu.RLock()
 	defer ring.mu.RUnlock()
 
@@ -228,68 +325,17 @@ func (store *ObservationStore) Count(coordinate Coordinate) int {
 		return 0
 	}
 
-	ring := store.getRing(coordinate)
+	stored, found := store.rings.Load(coordinate)
 
-	if ring == nil {
+	if !found {
 		return 0
 	}
 
+	ring := stored.(*observationRing)
 	ring.mu.RLock()
 	defer ring.mu.RUnlock()
 
 	return ring.size
-}
-
-/*
-Coordinates returns every coordinate with retained data in canonical
-coordinate order (see CompareCoordinate). The coordinate universe changes only
-when a new coordinate is first observed, so the store returns an immutable
-cached snapshot and rebuilds it only when the generation has advanced: a steady
-stream of ordinary observation appends never re-enumerates, reallocates, or
-re-sorts the universe. The returned slice is an immutable snapshot; callers
-must not modify it.
-*/
-func (store *ObservationStore) Coordinates() []Coordinate {
-	if store == nil {
-		return nil
-	}
-
-	generation := store.generation.Load()
-	cached := store.index.Load()
-
-	if cached != nil && cached.generation == generation {
-		return cached.coordinates
-	}
-
-	var coordinates []Coordinate
-
-	store.rings.Range(func(key, value any) bool {
-		coord, validCoord := key.(Coordinate)
-		ring, validRing := value.(*observationRing)
-
-		if !validCoord || !validRing {
-			return true
-		}
-
-		ring.mu.RLock()
-		hasData := ring.size > 0
-		ring.mu.RUnlock()
-
-		if hasData {
-			coordinates = append(coordinates, coord)
-		}
-
-		return true
-	})
-
-	slices.SortFunc(coordinates, CompareCoordinate)
-
-	store.index.Store(&coordinateIndex{
-		generation:  generation,
-		coordinates: coordinates,
-	})
-
-	return coordinates
 }
 
 /*
@@ -310,10 +356,12 @@ func (store *ObservationStore) Snapshot() StoreSnapshot {
 
 		if valid && ring != nil {
 			ring.mu.RLock()
+
 			if ring.size > 0 {
 				snapshot.Coordinates++
 				snapshot.Observations += ring.size
 			}
+
 			ring.mu.RUnlock()
 		}
 

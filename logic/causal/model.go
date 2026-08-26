@@ -197,12 +197,18 @@ func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *Tran
 		return transition
 	}
 
-	targetHistory := model.store.History(target.Coordinate)
+	targetView, targetFound := model.store.ViewRing(target.Coordinate)
 
-	if len(targetHistory) == 0 {
+	if !targetFound || targetView.Len() == 0 {
+		if targetFound {
+			targetView.Close()
+		}
+
 		transition.Status = IdentificationUndefined
 		return transition
 	}
+
+	defer targetView.Close()
 
 	// The schema authorizes the possibility of each parent direction; a
 	// parent becomes active only when the Influence Graph holds a defined
@@ -239,27 +245,33 @@ func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *Tran
 	transition.Parents = parents
 	transition.ExcludedParents = excluded
 
-	series := make([]relation.LaggedSeries, 0, 1+len(parents))
-	series = append(series, relation.LaggedSeries{
-		Observations: targetHistory,
-		Lag:          specification.SelfLag,
+	series := make([]relation.SeriesView, 0, 1+len(parents))
+	series = append(series, relation.SeriesView{
+		History: targetView,
+		Lag:     specification.SelfLag,
 	})
 
 	for _, parent := range parents {
-		parentHistory := model.store.History(parent.Parent.Coordinate)
+		parentView, parentFound := model.store.ViewRing(parent.Parent.Coordinate)
 
-		if len(parentHistory) == 0 {
+		if !parentFound || parentView.Len() == 0 {
+			if parentFound {
+				parentView.Close()
+			}
+
 			transition.Status = IdentificationInsufficientSupport
 			return transition
 		}
 
-		series = append(series, relation.LaggedSeries{
-			Observations: parentHistory,
-			Lag:          parent.Lag,
+		defer parentView.Close()
+
+		series = append(series, relation.SeriesView{
+			History: parentView,
+			Lag:     parent.Lag,
 		})
 	}
 
-	aligned := relation.AlignLagged(targetHistory, series)
+	aligned := relation.AlignViews(targetView, series)
 
 	if len(aligned) == 0 {
 		transition.Status = IdentificationInsufficientSupport
@@ -398,15 +410,22 @@ func (model *CausalModel) MarketState(at time.Time) map[relation.Coordinate]floa
 	state := make(map[relation.Coordinate]float64)
 
 	for _, marketVariable := range model.schema.MarketVariables {
-		history := model.store.History(marketVariable.Variable.Coordinate)
+		coordinate := marketVariable.Variable.Coordinate
+		latest := 0.0
+		found := false
 
-		for index := len(history) - 1; index >= 0; index-- {
-			if history[index].At.After(at) {
-				continue
+		model.store.RangeHistory(coordinate, func(observation relation.Observation) bool {
+			if observation.At.After(at) {
+				return true
 			}
 
-			state[marketVariable.Variable.Coordinate] = history[index].Raw
-			break
+			latest = observation.Raw
+			found = true
+			return true
+		})
+
+		if found {
+			state[coordinate] = latest
 		}
 	}
 

@@ -22,10 +22,14 @@ func TestStoreRetention(t *testing.T) {
 		}
 
 		Convey("retention is chronological and bounded by the infrastructure capacity", func() {
-			history := store.History(coordinate)
-			So(len(history), ShouldEqual, 3)
-			So(history[0].Raw, ShouldEqual, 7)
-			So(history[2].Raw, ShouldEqual, 9)
+			var raws []float64
+
+			store.RangeHistory(coordinate, func(observation Observation) bool {
+				raws = append(raws, observation.Raw)
+				return true
+			})
+
+			So(raws, ShouldResemble, []float64{7, 8, 9})
 		})
 
 		Convey("eviction is never value-based", func() {
@@ -56,31 +60,53 @@ func TestEpochSeparation(t *testing.T) {
 			So(store.Count(epochOne), ShouldEqual, 1)
 			So(store.Count(epochTwo), ShouldEqual, 1)
 
-			historyOne := store.History(epochOne)
-			historyTwo := store.History(epochTwo)
-			So(historyOne[0].Raw, ShouldEqual, 1)
-			So(historyTwo[0].Raw, ShouldEqual, 2)
+			firstRaw := 0.0
+			secondRaw := 0.0
+
+			store.RangeHistory(epochOne, func(observation Observation) bool {
+				firstRaw = observation.Raw
+				return false
+			})
+
+			store.RangeHistory(epochTwo, func(observation Observation) bool {
+				secondRaw = observation.Raw
+				return false
+			})
+
+			So(firstRaw, ShouldEqual, 1)
+			So(secondRaw, ShouldEqual, 2)
 		})
 	})
 }
 
-func TestCoordinates(t *testing.T) {
+func TestRangeCoordinates(t *testing.T) {
 	Convey("Given a store with several coordinates", t, func() {
 		store := NewObservationStore(64)
 		first := fixtureCoordinate("cvd", "signed_net_fraction_zscore")
 		second := fixtureCoordinate("hawkes", "arrival_rate_zscore")
 		third := fixtureCoordinate("cvd", "midpoint_log_return")
 
+		collect := func() []Coordinate {
+			var coordinates []Coordinate
+
+			store.RangeCoordinates(func(coordinate Coordinate) bool {
+				coordinates = append(coordinates, coordinate)
+				return true
+			})
+
+			return coordinates
+		}
+
 		Convey("an empty store has no coordinates", func() {
-			So(store.Coordinates(), ShouldBeEmpty)
+			So(collect(), ShouldBeEmpty)
 		})
 
 		store.Append(Observation{Coordinate: first, Raw: 1, At: time.Unix(1, 0)})
 		store.Append(Observation{Coordinate: second, Raw: 2, At: time.Unix(2, 0)})
 		store.Append(Observation{Coordinate: third, Raw: 3, At: time.Unix(3, 0)})
 
-		Convey("every observed coordinate is returned in canonical order", func() {
-			coordinates := store.Coordinates()
+		Convey("every observed coordinate is visited in canonical order", func() {
+			coordinates := collect()
 			So(coordinates, ShouldHaveLength, 3)
 
 			for index := 0; index+1 < len(coordinates); index++ {
@@ -89,33 +115,39 @@ func TestCoordinates(t *testing.T) {
 		})
 
 		Convey("ordinary appends neither grow nor reorder the universe", func() {
-			before := store.Coordinates()
+			before := collect()
 
 			for index := 0; index < 100; index++ {
 				store.Append(Observation{Coordinate: first, Raw: float64(index), At: time.Unix(int64(index), 0)})
 			}
 
-			after := store.Coordinates()
+			after := collect()
 			So(after, ShouldHaveLength, 3)
 			So(after[0], ShouldResemble, before[0])
 			So(after[1], ShouldResemble, before[1])
 			So(after[2], ShouldResemble, before[2])
 		})
 
-		Convey("a newly introduced coordinate appears in the index", func() {
+		Convey("a newly registered coordinate appears in the traversal", func() {
 			fourth := fixtureCoordinate("cvd", "gross_notional_rate_zscore")
-			So(store.Coordinates(), ShouldHaveLength, 3)
+			So(collect(), ShouldHaveLength, 3)
 
-			store.Append(Observation{Coordinate: fourth, Raw: 4, At: time.Unix(4, 0)})
+			store.RegisterCoordinate(fourth)
 
-			coordinates := store.Coordinates()
+			coordinates := collect()
 			So(coordinates, ShouldHaveLength, 4)
 			So(coordinates, ShouldContain, fourth)
 		})
 
-		Convey("repeated reads return a stable immutable snapshot", func() {
-			firstRead := store.Coordinates()
-			secondRead := store.Coordinates()
+		Convey("registration is idempotent", func() {
+			store.RegisterCoordinate(first)
+			store.RegisterCoordinate(first)
+			So(store.CoordinateCount(), ShouldEqual, 3)
+		})
+
+		Convey("repeated traversals return the same resident universe", func() {
+			firstRead := collect()
+			secondRead := collect()
 
 			So(len(firstRead), ShouldEqual, len(secondRead))
 
@@ -126,31 +158,72 @@ func TestCoordinates(t *testing.T) {
 	})
 }
 
+func TestRangeHistory(t *testing.T) {
+	Convey("Given a store with a bounded ring", t, func() {
+		store := NewObservationStore(3)
+		coordinate := fixtureCoordinate("s", "m")
+
+		for index := 0; index < 10; index++ {
+			store.Append(Observation{
+				Coordinate: coordinate,
+				Raw:        float64(index),
+				At:         time.Unix(0, int64(index)*int64(time.Second)),
+			})
+		}
+
+		Convey("the resident ring is visited chronologically without copying", func() {
+			var raws []float64
+
+			store.RangeHistory(coordinate, func(observation Observation) bool {
+				raws = append(raws, observation.Raw)
+				return true
+			})
+
+			So(raws, ShouldResemble, []float64{7, 8, 9})
+		})
+
+		Convey("an unknown coordinate visits nothing", func() {
+			count := 0
+
+			store.RangeHistory(fixtureCoordinate("s", "missing"), func(Observation) bool {
+				count++
+				return true
+			})
+
+			So(count, ShouldEqual, 0)
+		})
+
+		Convey("a ring view reads the same resident ring in place", func() {
+			view, found := store.ViewRing(coordinate)
+			So(found, ShouldBeTrue)
+			So(view.Len(), ShouldEqual, 3)
+
+			for index := 0; index < view.Len(); index++ {
+				So(view.At(index).Raw, ShouldEqual, float64(7+index))
+			}
+
+			view.Close()
+		})
+	})
+}
+
 var benchmarkStoreSink int
 
-func BenchmarkObservationStoreCoordinatesCached(b *testing.B) {
+func BenchmarkObservationStoreAppend(b *testing.B) {
 	store := NewObservationStore(2048)
-
-	for index := 0; index < 256; index++ {
-		store.Append(Observation{
-			Coordinate: fixtureCoordinate(fmt.Sprintf("source%d", index), fmt.Sprintf("metric%d", index)),
-			Raw:        float64(index),
-			At:         time.Unix(0, int64(index)*int64(time.Second)),
-		})
-	}
-
-	// Warm the immutable index once so the loop measures the cached read.
-	store.Coordinates()
+	coordinate := fixtureCoordinate("cvd", "signed_net_fraction_zscore")
+	store.RegisterCoordinate(coordinate)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for iteration := 0; iteration < b.N; iteration++ {
-		benchmarkStoreSink = len(store.Coordinates())
+		store.Append(Observation{Coordinate: coordinate, Raw: float64(iteration), At: time.Unix(0, int64(iteration)*int64(time.Second))})
+		benchmarkStoreSink++
 	}
 }
 
-func BenchmarkObservationStoreCoordinatesRebuild(b *testing.B) {
+func BenchmarkObservationStoreRangeCoordinates(b *testing.B) {
 	store := NewObservationStore(2048)
 
 	for index := 0; index < 256; index++ {
@@ -161,23 +234,45 @@ func BenchmarkObservationStoreCoordinatesRebuild(b *testing.B) {
 		})
 	}
 
-	observations := make([]Observation, b.N)
+	b.ReportAllocs()
+	b.ResetTimer()
 
-	for index := range observations {
-		observations[index] = Observation{
-			Coordinate: fixtureCoordinate(fmt.Sprintf("source%d", 256+index), fmt.Sprintf("metric%d", 256+index)),
-			Raw:        float64(index),
-			At:         time.Unix(0, int64(index)*int64(time.Second)),
-		}
+	for iteration := 0; iteration < b.N; iteration++ {
+		store.RangeCoordinates(func(coordinate Coordinate) bool {
+			benchmarkStoreSink = len(coordinate.Symbol)
+			return true
+		})
+	}
+}
+
+func BenchmarkObservationStoreRangeHistory(b *testing.B) {
+	store := NewObservationStore(2048)
+	coordinate := fixtureCoordinate("cvd", "signed_net_fraction_zscore")
+
+	for index := 0; index < 2048; index++ {
+		store.Append(Observation{Coordinate: coordinate, Raw: float64(index), At: time.Unix(0, int64(index)*int64(time.Second))})
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	// Each iteration introduces one brand-new coordinate, forcing exactly one
-	// index rebuild: the enumerated, reallocated, re-sorted universe rebuild.
 	for iteration := 0; iteration < b.N; iteration++ {
-		store.Append(observations[iteration])
-		benchmarkStoreSink = len(store.Coordinates())
+		store.RangeHistory(coordinate, func(observation Observation) bool {
+			benchmarkStoreSink = int(observation.Raw)
+			return true
+		})
+	}
+}
+
+func BenchmarkObservationStoreRegisterCoordinate(b *testing.B) {
+	store := NewObservationStore(2048)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	// Each iteration structurally registers one new coordinate: the resident
+	// ordered insert is the whole cost of a growing universe.
+	for iteration := 0; iteration < b.N; iteration++ {
+		store.RegisterCoordinate(fixtureCoordinate(fmt.Sprintf("source%d", iteration), "metric"))
 	}
 }
