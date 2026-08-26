@@ -28,13 +28,13 @@ const frameUniforms = /* wgsl */ `
 const fieldSampling = /* wgsl */ `
 	const PI: f32 = 3.141592653589793;
 
+	// Quantum domain coloring palette: vibrant iridescent phase wheel
 	fn phaseColor(phase: f32) -> vec3<f32> {
-		let offsets = vec3<f32>(0.0, 2.0 * PI / 3.0, 4.0 * PI / 3.0);
-		return 0.5 + 0.5 * cos(phase + offsets);
-	}
-
-	fn compress(normalized: f32) -> f32 {
-		return pow(clamp(normalized, 0.0, 1.0), 0.35);
+		let p = phase;
+		let r = 0.5 + 0.5 * cos(p);
+		let g = 0.5 + 0.5 * cos(p - 2.0 * PI / 3.0);
+		let b = 0.5 + 0.5 * cos(p - 4.0 * PI / 3.0);
+		return pow(vec3<f32>(r, g, b), vec3<f32>(1.2)) * 1.5;
 	}
 
 	struct FluidSample {
@@ -45,28 +45,39 @@ const fieldSampling = /* wgsl */ `
 
 	fn sampleFluid(coordinate: vec3<f32>) -> FluidSample {
 		var field: FluidSample;
-		field.gasColor = vec3<f32>(0.55, 0.22, 0.05);
+		field.gasColor = vec3<f32>(0.0);
 		field.gasExtinction = 0.0;
 		field.waveGlow = vec3<f32>(0.0);
 
 		if (uniforms.showGas > 0.5) {
 			let momRho = textureSampleLevel(momRhoTexture, fieldSampler, coordinate, 0.0);
 			let density = abs(momRho.a) * uniforms.densityScale;
-			let momentumMagnitude = length(momRho.rgb) * uniforms.momentumScale;
+			let momMag = length(momRho.rgb) * uniforms.momentumScale;
 			let energy = abs(textureSampleLevel(energyTexture, fieldSampler, coordinate, 0.0).r) * uniforms.energyScale;
-			let warmAmber = vec3<f32>(0.55, 0.22, 0.05);
-			let brightAmber = vec3<f32>(1.0, 0.68, 0.20);
-			field.gasColor = mix(warmAmber, brightAmber, clamp(compress(energy), 0.0, 1.0));
-			field.gasExtinction = compress(max(density, momentumMagnitude));
+
+			let rawSignal = max(density, momMag * 0.4);
+			
+			// Quadratic curve keeps gas whisper-thin and translucent instead of solid bricks
+			let gasExtinction = pow(clamp(rawSignal * 0.35, 0.0, 1.0), 1.8) * 0.12;
+
+			if (gasExtinction > 0.0001) {
+				let darkAmber = vec3<f32>(0.40, 0.16, 0.03);
+				let brightAmber = vec3<f32>(0.95, 0.55, 0.12);
+				field.gasColor = mix(darkAmber, brightAmber, clamp(energy * 0.7, 0.0, 1.0));
+				field.gasExtinction = gasExtinction;
+			}
 		}
 
 		if (uniforms.showWave > 0.5) {
 			let waveReal = textureSampleLevel(waveRealTexture, fieldSampler, coordinate, 0.0).r;
 			let waveImag = textureSampleLevel(waveImagTexture, fieldSampler, coordinate, 0.0).r;
-			let waveMagnitude = length(vec2<f32>(waveReal, waveImag)) * uniforms.waveScale;
-			let waveSignal = pow(clamp(waveMagnitude, 0.0, 1.0), 2.0);
-			let wavePhase = select(0.0, atan2(waveImag, waveReal), abs(waveReal) > 1e-6 || abs(waveImag) > 1e-6);
-			field.waveGlow = phaseColor(wavePhase) * waveSignal;
+			let mag = length(vec2<f32>(waveReal, waveImag)) * uniforms.waveScale;
+
+			if (mag > 0.001) {
+				let wavePhase = select(0.0, atan2(waveImag, waveReal), abs(waveReal) > 1e-6 || abs(waveImag) > 1e-6);
+				let caustic = pow(clamp(mag, 0.0, 1.0), 1.3) + 0.5 * pow(clamp(mag, 0.0, 1.0), 3.0);
+				field.waveGlow = phaseColor(wavePhase) * caustic * 0.8;
+			}
 		}
 
 		return field;
@@ -93,8 +104,8 @@ export const volumeShader = /* wgsl */ `
 	${fieldSampling}
 	${vertexWorld}
 
-	const GAS_OPACITY: f32 = 1.4;
-	const WAVE_BRIGHTNESS: f32 = 0.25;
+	const GAS_OPACITY: f32 = 0.45;
+	const WAVE_EMISSION: f32 = 0.9;
 	const MAX_STEPS: u32 = ${MAXIMUM_VOLUME_STEPS}u;
 
 	fn intersectUnitBox(origin: vec3<f32>, direction: vec3<f32>) -> vec2<f32> {
@@ -124,21 +135,36 @@ export const volumeShader = /* wgsl */ `
 		let sampleCount = max(ceil(length((finish - start) * uniforms.grid)), 1.0);
 		let stepCount = min(u32(sampleCount), MAX_STEPS);
 		let stepVector = (finish - start) / f32(stepCount);
-		var accumulated = vec3<f32>(0.0);
-		var accumulatedAlpha = 0.0;
-		var waveAccumulated = vec3<f32>(0.0);
+
+		var accumulatedGas = vec3<f32>(0.0);
+		var transmittance = 1.0;
+		var waveEmission = vec3<f32>(0.0);
 
 		for (var step = 0u; step < stepCount; step++) {
 			let coordinate = start + (f32(step) + 0.5) * stepVector;
 			let field = sampleFluid(coordinate);
-			let alpha = 1.0 - exp(-field.gasExtinction * uniforms.exposure * GAS_OPACITY);
-			accumulated += (1.0 - accumulatedAlpha) * alpha * field.gasColor;
-			accumulatedAlpha += (1.0 - accumulatedAlpha) * alpha;
-			waveAccumulated += field.waveGlow * uniforms.exposure * WAVE_BRIGHTNESS;
+			
+			if (field.gasExtinction > 0.0) {
+				let stepDensity = field.gasExtinction * uniforms.exposure * GAS_OPACITY;
+				let stepTransmittance = exp(-stepDensity);
+				let gasWeight = (1.0 - stepTransmittance) * transmittance;
+				
+				accumulatedGas += gasWeight * field.gasColor;
+				transmittance *= stepTransmittance;
+			}
+
+			if (length(field.waveGlow) > 0.0) {
+				waveEmission += transmittance * field.waveGlow * uniforms.exposure * WAVE_EMISSION * (1.0 / f32(stepCount)) * 14.0;
+			}
+
+			if (transmittance < 0.05) {
+				break;
+			}
 		}
 
-		let outputAlpha = clamp(max(accumulatedAlpha, length(waveAccumulated)), 0.0, 1.0);
-		return vec4<f32>(accumulated + waveAccumulated, outputAlpha);
+		let totalColor = accumulatedGas + waveEmission;
+		let totalAlpha = clamp((1.0 - transmittance) + length(waveEmission) * 0.5, 0.0, 1.0);
+		return vec4<f32>(totalColor, totalAlpha);
 	}
 `;
 
@@ -147,14 +173,11 @@ export const sliceShader = /* wgsl */ `
 	${fieldSampling}
 	${vertexWorld}
 
-	const GAS_OPACITY: f32 = 1.2;
-	const WAVE_BRIGHTNESS: f32 = 0.25;
-
 	@fragment
 	fn fs_main(input: VertexOut) -> @location(0) vec4<f32> {
 		let field = sampleFluid(clamp(input.world, vec3<f32>(0.0), vec3<f32>(1.0)));
-		let gasAlpha = clamp(field.gasExtinction * uniforms.exposure * GAS_OPACITY, 0.0, 1.0);
-		let waveColor = field.waveGlow * uniforms.exposure * WAVE_BRIGHTNESS;
+		let gasAlpha = clamp(field.gasExtinction * uniforms.exposure * 1.5, 0.0, 1.0);
+		let waveColor = field.waveGlow * uniforms.exposure * 0.5;
 		return vec4<f32>(
 			field.gasColor * gasAlpha + waveColor,
 			clamp(max(gasAlpha, length(waveColor)), 0.0, 1.0)
@@ -182,6 +205,7 @@ export const particleShader = /* wgsl */ `
 		@location(1) heat: f32,
 		@location(2) energy: f32,
 		@location(3) amp: f32,
+		@location(4) phase: f32,
 	};
 
 	@vertex
@@ -207,41 +231,43 @@ export const particleShader = /* wgsl */ `
 		output.heat = heat * uniforms.heatScale;
 		output.energy = energy * uniforms.energyScale;
 		output.amp = amp * uniforms.amplitudeScale;
+		output.phase = phase;
 		return output;
 	}
 
 	@fragment
 	fn fs_main(input: ParticleOut) -> @location(0) vec4<f32> {
 		let radius = length(input.uv - vec2<f32>(0.5));
-
 		if (radius > 0.5) {
 			discard;
 		}
 
 		let glow = smoothstep(0.5, 0.0, radius);
-		let core = smoothstep(0.3, 0.0, radius);
+		let core = smoothstep(0.25, 0.0, radius);
 		let heat = clamp(input.heat, 0.0, 1.0);
-		// Thermal identity only: the oscillator's matter state. The wave field
-		// owns the rainbow phase hue; particles never borrow it.
-		let cold = vec3<f32>(0.12, 0.42, 0.95);
-		let warm = vec3<f32>(1.0, 0.45, 0.08);
-		let hot = vec3<f32>(1.0, 0.97, 0.85);
+
+		// Thermal core: cold deep cyan -> warm orange -> hot incandescent white
+		let cold = vec3<f32>(0.15, 0.38, 0.95);
+		let warm = vec3<f32>(1.0, 0.42, 0.05);
+		let hot = vec3<f32>(1.0, 0.96, 0.88);
 		let thermoColor = select(
 			mix(cold, warm, heat * 2.0),
 			mix(warm, hot, (heat - 0.5) * 2.0),
 			heat >= 0.5
 		);
-		// The oscillator's wave amplitude reads as a cool halo around the
-		// thermal core — its wave-side character, kept out of the wave's hue.
+
+		// Kuramoto phase pulsing strobe ring
+		let phaseStrobe = 0.5 + 0.5 * cos(input.phase);
+		let pulseRing = smoothstep(0.48, 0.38, radius) * smoothstep(0.28, 0.38, radius) * phaseStrobe;
+
+		// Wave amplitude halo
 		let amp = clamp(input.amp, 0.0, 1.0);
 		let ampHalo = glow * amp * 0.5;
-		let energyRing = smoothstep(0.48, 0.38, radius)
-			* smoothstep(0.28, 0.38, radius)
-			* clamp(input.energy, 0.0, 1.0);
-		let brightness = mix(0.75, 1.4, pow(heat, 2.0)) * glow * 0.25;
-		let halo = vec3<f32>(0.45, 0.75, 1.0);
+		let haloColor = vec3<f32>(0.4, 0.85, 1.0);
+
+		let brightness = mix(0.7, 1.4, pow(heat, 2.0)) * (core * 0.8 + glow * 0.25);
 		return vec4<f32>(
-			thermoColor * brightness + halo * (ampHalo + energyRing * 1.5),
+			thermoColor * brightness + haloColor * (ampHalo + pulseRing * 1.5),
 			glow * 0.9 + core * 0.1
 		);
 	}
@@ -264,10 +290,6 @@ export const lineShader = /* wgsl */ `
 	}
 `;
 
-/*
-currentShader draws the phase-current stream markers: short bright streaks
-that flow along j = ψRe·∇ψIm − ψIm·∇ψRe, the pilot-wave guidance current.
-*/
 export const currentShader = /* wgsl */ `
 	struct CurrentUniforms {
 		viewProj: mat4x4<f32>,
@@ -277,20 +299,24 @@ export const currentShader = /* wgsl */ `
 	struct CurrentOut {
 		@builtin(position) position: vec4<f32>,
 		@location(0) t: f32,
+		@location(1) speed: f32,
 	};
 
 	@vertex
-	fn vs_main(@location(0) position: vec3<f32>, @location(1) tail: f32) -> CurrentOut {
+	fn vs_main(@location(0) position: vec3<f32>, @location(1) tailAndSpeed: vec2<f32>) -> CurrentOut {
 		var output: CurrentOut;
 		output.position = uniforms.viewProj * vec4<f32>(position, 1.0);
-		output.t = tail;
+		output.t = tailAndSpeed.x;
+		output.speed = tailAndSpeed.y;
 		return output;
 	}
 
 	@fragment
 	fn fs_main(input: CurrentOut) -> @location(0) vec4<f32> {
-		// Head brighter than tail; the streak reads as flowing along j.
-		let brightness = 0.35 + 0.65 * input.t;
-		return vec4<f32>(0.45, 0.8, 1.0, brightness * 0.6);
+		let brightness = 0.3 + 0.7 * input.t;
+		let slowColor = vec3<f32>(0.2, 0.7, 1.0);
+		let fastColor = vec3<f32>(1.0, 0.85, 0.3);
+		let streamColor = mix(slowColor, fastColor, clamp(input.speed * 2.0, 0.0, 1.0));
+		return vec4<f32>(streamColor * brightness * 1.5, brightness * 0.8);
 	}
 `;

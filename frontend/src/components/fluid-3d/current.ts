@@ -36,7 +36,7 @@ export class PhaseCurrent {
 		fieldsUniformBuffer: GPUBuffer,
 	) {
 		this.markers = new Float32Array(this.markerCount * 3);
-		this.vertices = new Float32Array(this.markerCount * 2 * 4);
+		this.vertices = new Float32Array(this.markerCount * 2 * 5);
 
 		for (let index = 0; index < this.markerCount; index++) {
 			this.markers[index * 3 + 0] = Math.random();
@@ -70,10 +70,10 @@ export class PhaseCurrent {
 				entryPoint: "vs_main",
 				buffers: [
 					{
-						arrayStride: 16,
+						arrayStride: 20,
 						attributes: [
 							{ shaderLocation: 0, offset: 0, format: "float32x3" },
-							{ shaderLocation: 1, offset: 12, format: "float32" },
+							{ shaderLocation: 1, offset: 12, format: "float32x2" },
 						],
 					},
 				],
@@ -249,15 +249,17 @@ export class PhaseCurrent {
 
 				// Zero-length streak at the new seed so no stale segment
 				// lingers where the current has died.
-				const reseedVertex = index * 8;
+				const reseedVertex = index * 10;
 				vertices[reseedVertex + 0] = markers[index * 3 + 0];
 				vertices[reseedVertex + 1] = markers[index * 3 + 1];
 				vertices[reseedVertex + 2] = markers[index * 3 + 2];
 				vertices[reseedVertex + 3] = 0;
-				vertices[reseedVertex + 4] = markers[index * 3 + 0];
-				vertices[reseedVertex + 5] = markers[index * 3 + 1];
-				vertices[reseedVertex + 6] = markers[index * 3 + 2];
-				vertices[reseedVertex + 7] = 0;
+				vertices[reseedVertex + 4] = 0;
+				vertices[reseedVertex + 5] = markers[index * 3 + 0];
+				vertices[reseedVertex + 6] = markers[index * 3 + 1];
+				vertices[reseedVertex + 7] = markers[index * 3 + 2];
+				vertices[reseedVertex + 8] = 0;
+				vertices[reseedVertex + 9] = 0;
 				continue;
 			}
 
@@ -278,16 +280,22 @@ export class PhaseCurrent {
 			const tailX = px - directionX * magnitude * lengthScale;
 			const tailY = py - directionY * magnitude * lengthScale;
 			const tailZ = pz - directionZ * magnitude * lengthScale;
-			const vertex = index * 8;
+			const normSpeed = magnitude / (this.jPeak + 1e-6);
+			const vertex = index * 10;
 
+			// Head vertex: position, tail = 1.0, normalized speed.
 			vertices[vertex + 0] = px;
 			vertices[vertex + 1] = py;
 			vertices[vertex + 2] = pz;
 			vertices[vertex + 3] = 1;
-			vertices[vertex + 4] = tailX;
-			vertices[vertex + 5] = tailY;
-			vertices[vertex + 6] = tailZ;
-			vertices[vertex + 7] = 0;
+			vertices[vertex + 4] = normSpeed;
+
+			// Tail vertex: position, tail = 0.0, normalized speed.
+			vertices[vertex + 5] = tailX;
+			vertices[vertex + 6] = tailY;
+			vertices[vertex + 7] = tailZ;
+			vertices[vertex + 8] = 0;
+			vertices[vertex + 9] = normSpeed;
 		}
 
 		if (this.vertexBuffer === null) {

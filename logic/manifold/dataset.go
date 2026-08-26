@@ -24,7 +24,8 @@ The mapping follows what the physics consumes directly:
   - Position Y: log order quantity, so liquidity spans orders of magnitude.
   - Position Z: queue age rank, oldest order at the front.
   - Mass:      one carrier unit per resting order; quantity lives in Y, not mass.
-  - Heat:      zero on injection — heat is earned from collision and relaxation.
+  - Heat:      a deterministic initial thermal store, the coupling fuel the
+    coherence broadcast spends; collisions and Planck relaxation sustain it.
   - Energy:    one unit per order; the Hawkes side self-excitation is the forcing
     term that lifts an excited side above unit energy.
   - Phase:     the bid/ask spread as a quantum boundary — bids [0, π), asks
@@ -268,7 +269,11 @@ func orderState(
 	state.Omega[0] = orderOmega(price, mid, scale)
 	state.Energy[0] = unitOscillatorEnergy
 	state.Mass[0] = unitCarrierMass
-	state.Heat[0] = 0
+	// Heat is the coupling fuel the coherence broadcast spends (Q in the
+	// kernel's homeostasis budget). Particles are born with a deterministic
+	// thermal store so Ψ(ω) has fuel to ignite immediately; collisions and
+	// Planck relaxation then sustain and redistribute it.
+	state.Heat[0] = 0.3 + 0.7*float32(orderHash(entry.order)&0xFF)/255
 	state.Amp[0] = float32(math.Sqrt(float64(unitOscillatorEnergy)))
 	state.Pos[0] = x
 	state.Pos[1] = y
