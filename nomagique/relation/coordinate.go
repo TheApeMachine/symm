@@ -55,6 +55,62 @@ type Coordinate struct {
 }
 
 /*
+CompareCoordinate orders two Coordinates field-wise without materializing any
+identity string. The lexicographic field order matches Coordinate.ID's render
+order (Symbol, Source, Metric, Side, Peer, Unit, Timescale, Epoch), so ordering
+and rendered identity agree. It is the allocation-free ordering primitive for
+every deterministic sort; computational comparators must never call
+Coordinate.ID, which allocates on every invocation.
+*/
+func CompareCoordinate(left Coordinate, right Coordinate) int {
+	if left.Symbol != right.Symbol {
+		return strings.Compare(left.Symbol, right.Symbol)
+	}
+
+	if left.Source != right.Source {
+		return strings.Compare(left.Source, right.Source)
+	}
+
+	if left.Metric != right.Metric {
+		return strings.Compare(left.Metric, right.Metric)
+	}
+
+	if left.Side != right.Side {
+		return strings.Compare(left.Side, right.Side)
+	}
+
+	if left.Peer != right.Peer {
+		return strings.Compare(left.Peer, right.Peer)
+	}
+
+	if left.Unit != right.Unit {
+		if left.Unit < right.Unit {
+			return -1
+		}
+
+		return 1
+	}
+
+	if left.Timescale != right.Timescale {
+		if left.Timescale < right.Timescale {
+			return -1
+		}
+
+		return 1
+	}
+
+	if left.Epoch != right.Epoch {
+		if left.Epoch < right.Epoch {
+			return -1
+		}
+
+		return 1
+	}
+
+	return 0
+}
+
+/*
 ID returns the rendered identity string. It is reversible via ParseCoordinate
 and is intended for logs, telemetry, and serialization — never as the sole
 internal identity.

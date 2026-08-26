@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"sort"
+	"slices"
 
 	"github.com/theapemachine/symm/logic/causal"
 	"github.com/theapemachine/symm/nomagique/mcts"
@@ -62,9 +62,7 @@ func (model *causalMarketModel) Step(current mcts.MarketState, random *rand.Rand
 		coordinates = append(coordinates, coordinate)
 	}
 
-	sort.Slice(coordinates, func(left int, right int) bool {
-		return coordinates[left].ID() < coordinates[right].ID()
-	})
+	slices.SortFunc(coordinates, relation.CompareCoordinate)
 
 	for _, coordinate := range coordinates {
 		transition := model.state.Transitions[coordinate]

@@ -3,7 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -130,46 +130,6 @@ type edgeData struct {
 }
 
 /*
-coordinateOrder is the strict weak order the network graph uses for
-relation.Coordinate identity. It compares the identity fields directly —
-never materializing a rendered ID string, because the lock-free map calls the
-comparator many times per operation on the hot path. The lexicographic field
-order matches Coordinate.ID's render order (Symbol, Source, Metric, Side, Peer,
-Unit, Timescale, Epoch), so ordering and rendered identity agree.
-*/
-func coordinateOrder(left relation.Coordinate, right relation.Coordinate) bool {
-	if left.Symbol != right.Symbol {
-		return left.Symbol < right.Symbol
-	}
-
-	if left.Source != right.Source {
-		return left.Source < right.Source
-	}
-
-	if left.Metric != right.Metric {
-		return left.Metric < right.Metric
-	}
-
-	if left.Side != right.Side {
-		return left.Side < right.Side
-	}
-
-	if left.Peer != right.Peer {
-		return left.Peer < right.Peer
-	}
-
-	if left.Unit != right.Unit {
-		return left.Unit < right.Unit
-	}
-
-	if left.Timescale != right.Timescale {
-		return left.Timescale < right.Timescale
-	}
-
-	return left.Epoch < right.Epoch
-}
-
-/*
 InfluenceGraph is a time-indexed observational relation graph over Measurement
 coordinates. It stores measured predictive structure; it is not a Structural
 Causal Model and never promotes Influence to causal truth automatically.
@@ -218,7 +178,11 @@ func NewInfluenceGraph(epoch uint64, schemaVersion uint64, planVersion uint64, h
 		planVersion:     planVersion,
 		historyCapacity: historyCapacity,
 		nodes: network.NewGraph[relation.Coordinate, InfluenceNode, struct{}](
-			coordinateOrder,
+			func(left relation.Coordinate, right relation.Coordinate) bool {
+				// CompareCoordinate is the allocation-free field-wise order;
+				// no rendered identity string is ever materialized here.
+				return relation.CompareCoordinate(left, right) < 0
+			},
 		),
 		edges: network.NewGraph[edgeKey, edgeData, struct{}](
 			edgeKeyOrder,
@@ -228,24 +192,16 @@ func NewInfluenceGraph(epoch uint64, schemaVersion uint64, planVersion uint64, h
 
 /*
 edgeKeyOrder is the strict weak order over edge keys: the two coordinates are
-compared field-wise (source first, then target), and ties break on the edge
-type. No string is materialized.
+compared field-wise via the allocation-free CompareCoordinate primitive (source
+first, then target), and ties break on the edge type. No string is materialized.
 */
 func edgeKeyOrder(left edgeKey, right edgeKey) bool {
-	if coordinateOrder(left.source, right.source) {
-		return true
+	if cmp := relation.CompareCoordinate(left.source, right.source); cmp != 0 {
+		return cmp < 0
 	}
 
-	if coordinateOrder(right.source, left.source) {
-		return false
-	}
-
-	if coordinateOrder(left.target, right.target) {
-		return true
-	}
-
-	if coordinateOrder(right.target, left.target) {
-		return false
+	if cmp := relation.CompareCoordinate(left.target, right.target); cmp != 0 {
+		return cmp < 0
 	}
 
 	return left.edgeType < right.edgeType
@@ -273,7 +229,7 @@ func (influenceGraph *InfluenceGraph) setEdge(key edgeKey, data edgeData) {
 
 /*
 maxCoordinate is a sentinel coordinate that sorts after every real coordinate
-under coordinateOrder. It is the full-walk upper bound for Range.
+under relation.CompareCoordinate. It is the full-walk upper bound for Range.
 */
 func maxCoordinate() relation.Coordinate {
 	return relation.Coordinate{
@@ -517,6 +473,56 @@ func (influenceGraph *InfluenceGraph) history(edgeType EdgeType, source relation
 }
 
 /*
+compareCandidateEdges orders CandidateEdge values by the graph's canonical
+edgeKey order (source, target, type) built on the allocation-free
+CompareCoordinate primitive. No identity string is ever materialized.
+*/
+func compareCandidateEdges(left CandidateEdge, right CandidateEdge) int {
+	if cmp := relation.CompareCoordinate(left.Source, right.Source); cmp != 0 {
+		return cmp
+	}
+
+	if cmp := relation.CompareCoordinate(left.Target, right.Target); cmp != 0 {
+		return cmp
+	}
+
+	if left.Type < right.Type {
+		return -1
+	}
+
+	if left.Type > right.Type {
+		return 1
+	}
+
+	return 0
+}
+
+/*
+compareInfluenceEdges orders InfluenceEdge pointers by the graph's canonical
+edgeKey order (source, target, type) built on the allocation-free
+CompareCoordinate primitive. No identity string is ever materialized.
+*/
+func compareInfluenceEdges(left *InfluenceEdge, right *InfluenceEdge) int {
+	if cmp := relation.CompareCoordinate(left.Source, right.Source); cmp != 0 {
+		return cmp
+	}
+
+	if cmp := relation.CompareCoordinate(left.Target, right.Target); cmp != 0 {
+		return cmp
+	}
+
+	if left.Type < right.Type {
+		return -1
+	}
+
+	if left.Type > right.Type {
+		return 1
+	}
+
+	return 0
+}
+
+/*
 Candidates returns every structurally scheduled edge with its lifecycle state.
 */
 func (influenceGraph *InfluenceGraph) Candidates() []CandidateEdge {
@@ -541,12 +547,7 @@ func (influenceGraph *InfluenceGraph) Candidates() []CandidateEdge {
 		})
 	}
 
-	sort.Slice(candidates, func(left int, right int) bool {
-		leftKey := candidates[left].Source.ID() + candidates[left].Target.ID()
-		rightKey := candidates[right].Source.ID() + candidates[right].Target.ID()
-
-		return leftKey < rightKey
-	})
+	slices.SortFunc(candidates, compareCandidateEdges)
 
 	return candidates
 }
@@ -603,12 +604,7 @@ func (influenceGraph *InfluenceGraph) currentEdges(predicate func(*InfluenceEdge
 		}
 	}
 
-	sort.Slice(edges, func(left int, right int) bool {
-		leftKey := edges[left].Source.ID() + edges[left].Target.ID()
-		rightKey := edges[right].Source.ID() + edges[right].Target.ID()
-
-		return leftKey < rightKey
-	})
+	slices.SortFunc(edges, compareInfluenceEdges)
 
 	return edges
 }

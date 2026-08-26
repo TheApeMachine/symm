@@ -1,6 +1,7 @@
 package relation
 
 import (
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -36,11 +37,28 @@ ObservationStore is a typed observational coordinate store with coordinate-local
 locking. Each coordinate keeps its own bounded chronological ring; eviction
 follows the retention policy only. Observed zero is stored and remains distinct
 from missing.
+
+The coordinate universe changes only when a new coordinate is first observed,
+so the store also maintains an immutable sorted coordinate index (see
+Coordinates) that is rebuilt exactly once per new coordinate instead of on
+every read.
 */
 type ObservationStore struct {
-	policy   RetentionPolicy
-	rings    sync.Map
-	appended atomic.Uint64
+	policy     RetentionPolicy
+	rings      sync.Map
+	appended   atomic.Uint64
+	generation atomic.Uint64
+	index      atomic.Pointer[coordinateIndex]
+}
+
+/*
+coordinateIndex is an immutable snapshot of the sorted coordinate universe
+captured at one generation. It is replaced, never mutated, so readers can hand
+it out without copying.
+*/
+type coordinateIndex struct {
+	generation  uint64
+	coordinates []Coordinate
 }
 
 type observationRing struct {
@@ -112,8 +130,16 @@ func (store *ObservationStore) Append(observation Observation) {
 
 	ring := store.getOrCreateRing(observation.Coordinate)
 	ring.mu.Lock()
+	fresh := ring.size == 0
 	ring.push(observation)
 	ring.mu.Unlock()
+
+	if fresh {
+		// The coordinate entered the universe for the first time; the cached
+		// sorted coordinate index is stale and is rebuilt once on the next
+		// read. Ordinary appends never touch the index.
+		store.generation.Add(1)
+	}
 
 	store.appended.Add(1)
 }
@@ -215,11 +241,24 @@ func (store *ObservationStore) Count(coordinate Coordinate) int {
 }
 
 /*
-Coordinates returns every coordinate with retained data.
+Coordinates returns every coordinate with retained data in canonical
+coordinate order (see CompareCoordinate). The coordinate universe changes only
+when a new coordinate is first observed, so the store returns an immutable
+cached snapshot and rebuilds it only when the generation has advanced: a steady
+stream of ordinary observation appends never re-enumerates, reallocates, or
+re-sorts the universe. The returned slice is an immutable snapshot; callers
+must not modify it.
 */
 func (store *ObservationStore) Coordinates() []Coordinate {
 	if store == nil {
 		return nil
+	}
+
+	generation := store.generation.Load()
+	cached := store.index.Load()
+
+	if cached != nil && cached.generation == generation {
+		return cached.coordinates
 	}
 
 	var coordinates []Coordinate
@@ -243,8 +282,11 @@ func (store *ObservationStore) Coordinates() []Coordinate {
 		return true
 	})
 
-	sort.Slice(coordinates, func(left int, right int) bool {
-		return coordinates[left].ID() < coordinates[right].ID()
+	slices.SortFunc(coordinates, CompareCoordinate)
+
+	store.index.Store(&coordinateIndex{
+		generation:  generation,
+		coordinates: coordinates,
 	})
 
 	return coordinates

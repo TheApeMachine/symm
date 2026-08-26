@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -488,9 +489,7 @@ func (reasoner *Reasoner) sortedPresentCoordinates(state mcts.MarketState) []rel
 		coordinates = append(coordinates, coordinate)
 	}
 
-	sort.Slice(coordinates, func(left int, right int) bool {
-		return coordinates[left].ID() < coordinates[right].ID()
-	})
+	slices.SortFunc(coordinates, relation.CompareCoordinate)
 
 	return coordinates
 }
