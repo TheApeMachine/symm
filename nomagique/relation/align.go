@@ -48,6 +48,10 @@ func AlignLagged(targets []Observation, series []LaggedSeries) []AlignedRow {
 	}
 
 	cursors := make([]int, len(series))
+	for index := range cursors {
+		cursors[index] = -1
+	}
+
 	rows := make([]AlignedRow, 0, len(targets))
 
 	for _, target := range targets {

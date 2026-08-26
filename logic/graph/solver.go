@@ -625,6 +625,8 @@ type Solver struct {
 	estimator *relation.InfluenceEstimator
 	influence *InfluenceGraph
 	plans     []*relation.RelationPlan
+	interval  time.Duration
+	lastRun   map[string]time.Time
 }
 
 /*
@@ -662,6 +664,8 @@ func NewSolver(
 		estimator: relation.NewInfluenceEstimator("prequential-linear-v1"),
 		influence: NewInfluenceGraph(epoch, schemaVersion, planVersion(plans), 64),
 		plans:     plans,
+		interval:  100 * time.Millisecond,
+		lastRun:   make(map[string]time.Time),
 	}
 
 	if bus != nil {
@@ -690,8 +694,26 @@ Error returns the subscription step failure, if any.
 func (solver *Solver) Error() error { return solver.err }
 
 /*
+due reports whether the Relation refresh interval has elapsed for a symbol.
+*/
+func (solver *Solver) due(symbol string, at time.Time) bool {
+	if solver.interval <= 0 {
+		return true
+	}
+
+	last, ran := solver.lastRun[symbol]
+
+	if !ran || at.Sub(last) >= solver.interval {
+		solver.lastRun[symbol] = at
+		return true
+	}
+
+	return false
+}
+
+/*
 Step appends one Measurement to the coordinate store, re-estimates the planned
-Relations for its symbol, and updates the Influence Graph in place. The workspace
+Relations for its symbol when due, and updates the Influence Graph in place. The workspace
 delivers values for one symbol in order, so the store and graph advance as data
 becomes available.
 */
@@ -707,7 +729,10 @@ func (solver *Solver) Step(measurement *nmtypes.Measurement) *GraphUpdate {
 	}
 
 	solver.store.AppendObservations(observations)
-	solver.estimate(measurement.Symbol)
+
+	if solver.due(measurement.Symbol, measurement.At) {
+		solver.estimate(measurement.Symbol)
+	}
 
 	return &GraphUpdate{
 		Symbol: measurement.Symbol,

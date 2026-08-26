@@ -85,7 +85,7 @@ func TestPipelineFrameInventory(t *testing.T) {
 				return nil
 			})
 
-			tickCount := 200
+			tickCount := 1000
 
 			if override := os.Getenv("PROBE_TICKS"); override != "" {
 				if parsed, err := strconv.Atoi(override); err == nil && parsed > 0 {
@@ -97,22 +97,7 @@ func TestPipelineFrameInventory(t *testing.T) {
 				market.Tick()
 			}
 
-			deadline := time.Now().Add(6 * time.Second)
-			for time.Now().Before(deadline) {
-				mu.Lock()
-				total := 0
-
-				for _, count := range counts {
-					total += count
-				}
-				mu.Unlock()
-
-				if total > 200 {
-					break
-				}
-
-				time.Sleep(10 * time.Millisecond)
-			}
+			_ = system.Bus.WaitForQuiescence(10 * time.Second)
 
 			mu.Lock()
 			t.Logf("UI frame type counts: %v", counts)

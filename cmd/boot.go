@@ -211,12 +211,12 @@ func BootWithHub(
 
 	systemCtx, cancel := context.WithCancel(ctx)
 
-	if live, ok := public.(*websocket.Live); ok {
+	if live, ok := public.(*websocket.Live); ok && live != nil {
 		live.SetThesis(thesis)
 		live.SetBus(bus)
 	}
 
-	if live, ok := private.(*websocket.Live); ok {
+	if live, ok := private.(*websocket.Live); ok && live != nil {
 		live.SetThesis(thesis)
 		live.SetBus(bus)
 	}

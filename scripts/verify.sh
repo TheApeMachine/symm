@@ -4,13 +4,20 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 export GOFLAGS="${GOFLAGS:--ldflags=-checklinkname=0}"
-export GOWORK="${GOWORK:-$ROOT/go.work}"
+if [[ -f "$ROOT/go.work" ]]; then
+	export GOWORK="${GOWORK:-$ROOT/go.work}"
+else
+	export GOWORK=off
+fi
 
-GO_MODULES=(
-	"$ROOT/../datura"
-	"$ROOT/../nomagique"
-	"$ROOT"
-)
+AVAILABLE_MODULES=()
+for mod in "$ROOT/../datura" "$ROOT/../nomagique" "$ROOT"; do
+	if [[ -f "$mod/go.mod" ]]; then
+		AVAILABLE_MODULES+=("$mod")
+	fi
+done
+
+GO_MODULES=("${AVAILABLE_MODULES[@]}")
 
 require_path() {
 	local path="$1"

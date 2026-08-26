@@ -688,6 +688,10 @@ func (live *Live) subscribeAccount(token string) error {
 }
 
 func (live *Live) Client() *spot.WebSocket {
+	if live == nil {
+		return nil
+	}
+
 	return live.client
 }
 

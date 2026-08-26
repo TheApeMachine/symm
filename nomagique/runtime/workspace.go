@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -11,48 +12,97 @@ import (
 	"golang.design/x/lockfree/lf"
 )
 
-const bufferCapacity uint32 = 64 * 1024
-const bufferMask int64 = int64(bufferCapacity - 1)
-
-type eventSlot struct {
-	topic string
-	value any
-}
-
+const subscriberCapacity uint32 = 64 * 1024
+const subscriberMask int64 = int64(subscriberCapacity - 1)
 
 /*
-Subscriber represents a connected processing step wired to the Workspace.
+SubscriberRuntime represents an independently executing processing stage backed by its own Disruptor input ring.
 */
-type Subscriber struct {
-	InTopic  string
-	OutTopic string
-	Step     func(any) any
+type SubscriberRuntime struct {
+	workspace  *Workspace
+	inTopic    string
+	outTopic   string
+	step       func(any) any
+	ring       []any
+	disruptor  disruptor.Disruptor
+	bufferMask int64
+	inFlight   atomic.Int64
 }
 
-type workspaceDisruptorHandler struct {
-	workspace *Workspace
+type subscriberDisruptorHandler struct {
+	runtime *SubscriberRuntime
 }
 
-func (handler *workspaceDisruptorHandler) Handle(lowerSequence, upperSequence int64) {
+func (handler *subscriberDisruptorHandler) Handle(lowerSequence, upperSequence int64) {
 	for sequence := lowerSequence; sequence <= upperSequence; sequence++ {
-		slot := handler.workspace.ring[sequence&bufferMask]
-		handler.workspace.dispatch(slot.topic, slot.value)
+		value := handler.runtime.ring[sequence&handler.runtime.bufferMask]
+		handler.runtime.process(value)
+		handler.runtime.inFlight.Add(-1)
+		handler.runtime.workspace.inFlight.Add(-1)
 	}
 }
 
+func (runtime *SubscriberRuntime) process(value any) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			var err error
+
+			if panicErr, ok := recovered.(error); ok {
+				err = panicErr
+			}
+
+			if err == nil {
+				err = fmt.Errorf("workspace: subscriber panic on %s: %v", runtime.inTopic, recovered)
+			}
+
+			if failureFn := runtime.workspace.failureHandler.Load(); failureFn != nil && *failureFn != nil {
+				(*failureFn)(err)
+			}
+
+			errnie.Error(errnie.Err(
+				errnie.Internal,
+				"workspace: subscriber panic",
+				err,
+			))
+		}
+	}()
+
+	output := runtime.step(value)
+
+	if output != nil && runtime.outTopic != "" {
+		runtime.workspace.Publish(runtime.outTopic, output)
+	}
+}
+
+func (runtime *SubscriberRuntime) Enqueue(value any) {
+	runtime.inFlight.Add(1)
+	sequence := runtime.disruptor.Reserve(1)
+	runtime.ring[sequence&runtime.bufferMask] = value
+	runtime.disruptor.Commit(sequence, sequence)
+}
+
+func (runtime *SubscriberRuntime) Close() error {
+	if runtime.disruptor != nil {
+		return runtime.disruptor.Close()
+	}
+
+	return nil
+}
+
 /*
-Workspace is the system-wide lock-free streaming bus and data-routing substrate.
+Workspace is the typed dataflow coordinator and routing substrate.
 */
 type Workspace struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	pool            *Pool[func()]
-	disruptor       disruptor.Disruptor
-	ring            []eventSlot
-	subscribers     *lf.SkipList[string, *atomic.Pointer[[]*Subscriber]]
-	shared          *lf.SkipList[string, any]
-	signals         *lf.SkipList[string, *atomic.Pointer[[]func()]]
-	failureHandler  atomic.Pointer[func(error)]
+	ctx            context.Context
+	cancel         context.CancelFunc
+	pool           *Pool[func()]
+	runtimesMu     sync.RWMutex
+	runtimes       []*SubscriberRuntime
+	subscribers    *lf.SkipList[string, *atomic.Pointer[[]*SubscriberRuntime]]
+	shared         *lf.SkipList[string, any]
+	signals        *lf.SkipList[string, *atomic.Pointer[[]func()]]
+	failureHandler atomic.Pointer[func(error)]
+	inFlight       atomic.Int64
 }
 
 func stringLess(first string, second string) bool {
@@ -75,29 +125,10 @@ func NewWorkspace(ctx context.Context) *Workspace {
 		ctx:         ctx,
 		cancel:      cancel,
 		pool:        workerPool,
-		ring:        make([]eventSlot, bufferCapacity),
-		subscribers: lf.NewSkipList[string, *atomic.Pointer[[]*Subscriber]](stringLess),
+		subscribers: lf.NewSkipList[string, *atomic.Pointer[[]*SubscriberRuntime]](stringLess),
 		shared:      lf.NewSkipList[string, any](stringLess),
 		signals:     lf.NewSkipList[string, *atomic.Pointer[[]func()]](stringLess),
 	}
-
-	handler := &workspaceDisruptorHandler{workspace: workspace}
-	disruptorInstance, err := disruptor.New(
-		disruptor.Options.BufferCapacity(bufferCapacity),
-		disruptor.Options.WriterCount(255),
-		disruptor.Options.NewHandlerGroup(handler),
-	)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"workspace: failed to initialize disruptor",
-			err,
-		))
-	}
-
-	workspace.disruptor = disruptorInstance
-	go disruptorInstance.Listen()
 
 	return workspace
 }
@@ -105,9 +136,11 @@ func NewWorkspace(ctx context.Context) *Workspace {
 func (workspace *Workspace) Close() error {
 	workspace.cancel()
 
-	if workspace.disruptor != nil {
-		_ = workspace.disruptor.Close()
+	workspace.runtimesMu.Lock()
+	for _, runtime := range workspace.runtimes {
+		_ = runtime.Close()
 	}
+	workspace.runtimesMu.Unlock()
 
 	if workspace.pool != nil {
 		workspace.pool.Stop()
@@ -125,62 +158,97 @@ func (workspace *Workspace) WaitForQuiescence(args ...any) error {
 		return nil
 	}
 
-	time.Sleep(20 * time.Millisecond)
-	return nil
+	maxWait := 5 * time.Second
+
+	for _, arg := range args {
+		if duration, ok := arg.(time.Duration); ok && duration > 0 {
+			maxWait = duration
+		}
+	}
+
+	deadline := time.Now().Add(maxWait)
+
+	for {
+		if workspace.inFlight.Load() <= 0 {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf(
+				"workspace: quiescence timeout with %d events in flight",
+				workspace.inFlight.Load(),
+			)
+		}
+
+		time.Sleep(500 * time.Microsecond)
+	}
 }
 
 func (workspace *Workspace) Publish(topic string, value any) {
-	sequence := workspace.disruptor.Reserve(1)
-	workspace.ring[sequence&bufferMask] = eventSlot{
-		topic: topic,
-		value: value,
-	}
-	workspace.disruptor.Commit(sequence, sequence)
-}
-
-func (workspace *Workspace) dispatch(topic string, value any) {
 	if subPtr, found := workspace.subscribers.Get(topic); found && subPtr != nil {
 		subList := subPtr.Load()
 
 		if subList != nil {
-			for _, subscriber := range *subList {
-				output := subscriber.Step(value)
-
-				if output != nil && subscriber.OutTopic != "" {
-					workspace.Publish(subscriber.OutTopic, output)
-				}
+			for _, runtime := range *subList {
+				workspace.inFlight.Add(1)
+				runtime.Enqueue(value)
 			}
 		}
 	}
 }
 
 func (workspace *Workspace) Wire(inTopic string, outTopic string, step func(any) any) {
-	subscriber := &Subscriber{
-		InTopic:  inTopic,
-		OutTopic: outTopic,
-		Step:     step,
+	runtime := &SubscriberRuntime{
+		workspace:  workspace,
+		inTopic:    inTopic,
+		outTopic:   outTopic,
+		step:       step,
+		ring:       make([]any, subscriberCapacity),
+		bufferMask: subscriberMask,
 	}
+
+	handler := &subscriberDisruptorHandler{runtime: runtime}
+	disruptorInstance, err := disruptor.New(
+		disruptor.Options.BufferCapacity(subscriberCapacity),
+		disruptor.Options.WriterCount(255),
+		disruptor.Options.NewHandlerGroup(handler),
+	)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"workspace: failed to initialize subscriber disruptor",
+			err,
+		))
+	}
+
+	runtime.disruptor = disruptorInstance
+	go disruptorInstance.Listen()
+
+	workspace.runtimesMu.Lock()
+	workspace.runtimes = append(workspace.runtimes, runtime)
+	workspace.runtimesMu.Unlock()
 
 	ptr, found := workspace.subscribers.Get(inTopic)
 
 	if !found || ptr == nil {
-		newPtr := &atomic.Pointer[[]*Subscriber]{}
+		newPtr := &atomic.Pointer[[]*SubscriberRuntime]{}
 		workspace.subscribers.Set(inTopic, newPtr)
 		ptr, _ = workspace.subscribers.Get(inTopic)
 	}
 
 	for {
 		current := ptr.Load()
-		var updated []*Subscriber
+		var updated []*SubscriberRuntime
 
 		if current == nil {
-			updated = []*Subscriber{subscriber}
+			updated = []*SubscriberRuntime{runtime}
 		}
 
 		if current != nil {
-			updated = make([]*Subscriber, len(*current)+1)
+			updated = make([]*SubscriberRuntime, len(*current)+1)
 			copy(updated, *current)
-			updated[len(*current)] = subscriber
+			updated[len(*current)] = runtime
 		}
 
 		if ptr.CompareAndSwap(current, &updated) {
@@ -212,8 +280,6 @@ func WireFunc[T any, U any](workspace *Workspace, inTopic string, outTopic strin
 		return step(typedInput)
 	})
 }
-
-
 
 func sharedKey(name string, ids []string) string {
 	key := fmt.Sprintf("%d:%s/", len(name), name)
@@ -306,14 +372,51 @@ func (workspace *Workspace) Snapshot() WorkspaceSnapshot {
 		return WorkspaceSnapshot{}
 	}
 
+	inFlight := workspace.inFlight.Load()
+
+	if inFlight < 0 {
+		inFlight = 0
+	}
+
+	workspace.runtimesMu.RLock()
+	laneCount := uint64(len(workspace.runtimes))
+	workspace.runtimesMu.RUnlock()
+
 	return WorkspaceSnapshot{
-		Pending:  0,
-		Capacity: uint64(bufferCapacity),
-		Lanes:    1,
+		Pending:  uint64(inFlight),
+		Capacity: uint64(subscriberCapacity),
+		Lanes:    laneCount,
 		Dropped:  0,
 	}
 }
 
 func (workspace *Workspace) TopicSnapshot(topic string) WorkspaceSnapshot {
+	if workspace == nil {
+		return WorkspaceSnapshot{}
+	}
+
+	if subPtr, found := workspace.subscribers.Get(topic); found && subPtr != nil {
+		subList := subPtr.Load()
+
+		if subList != nil {
+			pending := uint64(0)
+
+			for _, runtime := range *subList {
+				count := runtime.inFlight.Load()
+
+				if count > 0 {
+					pending += uint64(count)
+				}
+			}
+
+			return WorkspaceSnapshot{
+				Pending:  pending,
+				Capacity: uint64(subscriberCapacity),
+				Lanes:    uint64(len(*subList)),
+				Dropped:  0,
+			}
+		}
+	}
+
 	return workspace.Snapshot()
 }

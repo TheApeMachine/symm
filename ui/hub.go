@@ -44,6 +44,12 @@ type Hub struct {
 	clients         *sync.Map
 }
 
+type hubClient struct {
+	conn     *websocket.Conn
+	outbound chan []byte
+	done     chan struct{}
+}
+
 type diagnosticsToggleRequest struct {
 	Enabled bool `json:"enabled"`
 }
@@ -138,17 +144,50 @@ func NewHub(
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		key := uuid.NewString()
-		hub.clients.Store(key, conn)
+		client := &hubClient{
+			conn:     conn,
+			outbound: make(chan []byte, hub.maxBatchFrames*2),
+			done:     make(chan struct{}),
+		}
+		hub.clients.Store(key, client)
 
 		defer func() {
 			hub.clients.Delete(key)
+			close(client.done)
 			_ = conn.Conn.Close()
+		}()
+
+		go func() {
+			for {
+				select {
+				case <-client.done:
+					return
+				case payload, ok := <-client.outbound:
+					if !ok {
+						return
+					}
+
+					_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+					writeErr := conn.WriteMessage(websocket.BinaryMessage, payload)
+
+					if writeErr != nil {
+						_ = conn.Conn.Close()
+						return
+					}
+				}
+			}
 		}()
 
 		if balance := hub.balance(); balance != nil {
 			wallet := telemetry.EncodeBatch([]*types.UIFrame{balance.Wallet()})
-			_ = conn.WriteMessage(websocket.BinaryMessage, wallet.Bytes)
+			payload := make([]byte, len(wallet.Bytes))
+			copy(payload, wallet.Bytes)
 			wallet.Release()
+
+			select {
+			case client.outbound <- payload:
+			default:
+			}
 		}
 
 		for {
@@ -181,9 +220,20 @@ func (hub *Hub) Step(msg any) any {
 	batch := telemetry.EncodeBatch([]*types.UIFrame{frame})
 	defer batch.Release()
 
+	payload := make([]byte, len(batch.Bytes))
+	copy(payload, batch.Bytes)
+
 	hub.clients.Range(func(key, value any) bool {
-		conn := value.(*websocket.Conn)
-		_ = conn.WriteMessage(websocket.BinaryMessage, batch.Bytes)
+		client, valid := value.(*hubClient)
+
+		if !valid || client == nil {
+			return true
+		}
+
+		select {
+		case client.outbound <- payload:
+		default:
+		}
 
 		return true
 	})

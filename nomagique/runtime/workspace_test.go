@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -108,6 +109,59 @@ func WorkspaceWireTest(t *testing.T) {
 
 			waitGroup.Wait()
 			So(finalOutput.Load(), ShouldEqual, 52)
+		})
+		Convey("When publishing high volume cascading events across multiple stages", func() {
+			var stage3Received atomic.Int64
+			const totalEvents = 2000
+
+			workspace.Wire("stage1", "stage2", func(input any) any {
+				return input.(int64) + 1
+			})
+
+			workspace.Wire("stage2", "stage3", func(input any) any {
+				return input.(int64) * 2
+			})
+
+			workspace.Wire("stage3", "", func(input any) any {
+				stage3Received.Add(1)
+				return nil
+			})
+
+			for index := int64(0); index < totalEvents; index++ {
+				workspace.Publish("stage1", index)
+			}
+
+			err := workspace.WaitForQuiescence()
+			So(err, ShouldBeNil)
+			So(stage3Received.Load(), ShouldEqual, totalEvents)
+		})
+
+		Convey("When one subscriber is slow, fast subscriber continues independently", func() {
+			var fastCount atomic.Int64
+			var slowCount atomic.Int64
+			const eventCount = 100
+
+			workspace.Wire("shared_stream", "", func(input any) any {
+				time.Sleep(5 * time.Millisecond)
+				slowCount.Add(1)
+				return nil
+			})
+
+			workspace.Wire("shared_stream", "", func(input any) any {
+				fastCount.Add(1)
+				return nil
+			})
+
+			for index := 0; index < eventCount; index++ {
+				workspace.Publish("shared_stream", index)
+			}
+
+			time.Sleep(20 * time.Millisecond)
+			So(fastCount.Load(), ShouldEqual, int64(eventCount))
+
+			err := workspace.WaitForQuiescence(3 * time.Second)
+			So(err, ShouldBeNil)
+			So(slowCount.Load(), ShouldEqual, int64(eventCount))
 		})
 	})
 }

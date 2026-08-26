@@ -486,8 +486,8 @@ func alignAtLag(
 
 /*
 newestAtOrBefore returns the newest observation in history at or before
-cutoff. The cursor remains positioned on the last matched observation (its
-zero value means no match has ever been recorded): repeated calls with
+cutoff. The cursor remains positioned on the last matched observation (a
+negative value means no match has ever been recorded): repeated calls with
 non-decreasing cutoffs re-scan only entries after the previous match, and a
 call whose cutoff reaches no newer entry returns the previously matched
 observation. When no observation has ever matched, the result is not-found.
@@ -500,20 +500,25 @@ func newestAtOrBefore(
 	cutoff time.Time,
 ) (Observation, bool) {
 	best := -1
+	start := 0
 
-	for index := *cursor; index < len(history) && !history[index].At.After(cutoff); index++ {
+	if cursor != nil && *cursor >= 0 {
+		start = *cursor
+	}
+
+	for index := start; index < len(history) && !history[index].At.After(cutoff); index++ {
 		best = index
 	}
 
 	if best >= 0 {
-		*cursor = best
+		if cursor != nil {
+			*cursor = best
+		}
+
 		return history[best], true
 	}
 
-	// No entry at or after the previous match meets the cutoff. If the
-	// cursor is still at its zero value, nothing has ever matched; otherwise
-	// the previous match still satisfies the non-decreasing cutoff.
-	if *cursor == 0 {
+	if cursor == nil || *cursor < 0 {
 		return Observation{}, false
 	}
 

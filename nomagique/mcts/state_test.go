@@ -151,6 +151,12 @@ func TestEconomicReward(t *testing.T) {
 			entered, err := state.ApplyAction(Enter, nil)
 			So(err, ShouldBeNil)
 			So(entered.GetReward(), ShouldAlmostEqual, expectedEnter, 1e-9)
+
+			exited, err := entered.ApplyAction(Exit, nil)
+			So(err, ShouldBeNil)
+			expectedRoundTrip := -2 * (100 * 0.0015)
+			So(exited.GetReward(), ShouldAlmostEqual, expectedRoundTrip, 1e-9)
+			So(exited.(*EconomicState).Portfolio.Cash, ShouldAlmostEqual, 10000+expectedRoundTrip, 1e-9)
 		})
 
 		Convey("a positive expected return makes Enter the selected action", func() {

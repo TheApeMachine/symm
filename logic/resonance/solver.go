@@ -11,7 +11,6 @@ import (
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 
 	"github.com/theapemachine/errnie"
-	"golang.design/x/lockfree/lf"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
@@ -164,50 +163,6 @@ func (solver *Solver) Step(ticker kraken.TickerData) *types.ResonanceArtifact {
 	)
 }
 
-func (solver *Solver) onTicker(ticker any) {
-	if ticker == nil {
-		return
-	}
-
-	for _, tick := range ticker.(*kraken.Ticker).Data {
-		tickerQueue, _ := solver.queues.LoadOrStore(
-			tick.Symbol,
-			lf.NewQueue[Event](),
-		)
-
-		queue := tickerQueue.(*lf.Queue[Event])
-
-		queue.Enqueue(Event{
-			symbol: tick.Symbol,
-			at:     tick.Timestamp,
-			features: []float64{
-				tick.Ask.Float64(),
-				tick.Bid.Float64(),
-				tick.AskQty,
-				tick.BidQty,
-				tick.Change.Float64(),
-				tick.ChangePct,
-				tick.High.Float64(),
-				tick.Low.Float64(),
-				tick.Last.Float64(),
-				tick.Volume,
-				tick.Vwap,
-			},
-		})
-	}
-}
-
-/*
-Predictive coding runs on the ticker stream only. Trade and level3 carry
-order-by-order book microevents; they are not the multi-timescale sensory
-frame the coder settles, and their rows have no reference midpoint, so feeding
-them through the full settle+learn loop would burn manifold updates for no
-honest target. They are dropped here rather than enqueued.
-*/
-func (solver *Solver) onTrade(trade any) {}
-
-func (solver *Solver) onLevel3(level3 kraken.Level3Data) {}
-
 /*
 Update steps one feature detector for one symbol and publishes the settled
 output as the symbol-keyed resonance frame the frontend renders: the readout
@@ -266,7 +221,16 @@ func (solver *Solver) Update(
 		return nil
 	}
 
-	standardized := solver.standardize(symbolName, features)
+	standardized, stdErr := solver.standardize(symbolName, features)
+
+	if stdErr != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			fmt.Sprintf("resonance: standardization failed for %s", symbolName),
+			stdErr,
+		))
+		return nil
+	}
 
 	hasReference := priorMidpoint > 0
 
@@ -376,9 +340,9 @@ propagates as the frame's Err rather than a silent zero.
 func (solver *Solver) standardize(
 	symbolName string,
 	features []float64,
-) []float64 {
+) ([]float64, error) {
 	if len(features) == 0 {
-		return features
+		return features, nil
 	}
 
 	width := len(features)
@@ -403,15 +367,23 @@ func (solver *Solver) standardize(
 
 	output := number.Step(key, input)
 
+	if output.Err != nil {
+		return nil, output.Err
+	}
+
 	standardized := make([]float64, width)
 
 	for index := range features {
-		if score, found := output.Get(standardizerScoreSymbol(index)); found {
-			standardized[index] = score
+		score, found := output.Get(standardizerScoreSymbol(index))
+
+		if !found {
+			return nil, fmt.Errorf("resonance: standardizer missing score for feature %d", index)
 		}
+
+		standardized[index] = score
 	}
 
-	return standardized
+	return standardized, nil
 }
 
 /*

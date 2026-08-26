@@ -678,9 +678,8 @@ func (planner *Planner) deskMarketInputs(symbol string) marketInputs {
 		feeRate: fee.Fee.Float64() / 100,
 	}
 
-	// The fee-inclusive buy mark, matching broker.Price.Mark(BUY):
-	// ask * (1 + feeRate).
-	inputs.mark = tick.Ask.Float64() * (1 + inputs.feeRate)
+	// The ask mark for valuation in MCTS, with fee handled directly by CostModel.
+	inputs.mark = tick.Ask.Float64()
 
 	if tick.Bid != nil && tick.Bid.Float64() > 0 && tick.Ask.Float64() > tick.Bid.Float64() {
 		bid := tick.Bid.Float64()
