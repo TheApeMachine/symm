@@ -417,6 +417,25 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 			// Capacity must not be multiplied by handler count: a physical ring
 			// cannot contain more than its capacity.
 			So(snapshot.Capacity, ShouldBeLessThanOrEqualTo, uint64(subscriberCapacity))
+
+			// Adversarial: introspect the actual registered subscriber, not the
+			// snapshot's self-report. There must be exactly one logical
+			// subscriber with exactly one physical Disruptor and one contiguous
+			// ring buffer of exactly the declared capacity, while the parallel
+			// handler count is an invariant of machine capacity — never an
+			// extra ring.
+			workspace.subscribersMu.RLock()
+			subscribers := workspace.subscribers
+			workspace.subscribersMu.RUnlock()
+
+			So(len(subscribers), ShouldEqual, 1)
+
+			subscriber := subscribers[0]
+			So(subscriber, ShouldNotBeNil)
+			So(subscriber.disruptor, ShouldNotBeNil)
+			So(len(subscriber.handlers), ShouldEqual, workspace.handlerCount)
+			So(len(subscriber.buffer), ShouldEqual, int(subscriberCapacity))
+			So(subscriber.handlerCnt, ShouldEqual, workspace.handlerCount)
 		})
 	})
 }
@@ -515,7 +534,7 @@ func wireAnalyticsBlocker(workspace *Workspace, topic string, release chan struc
 }
 
 func WorkspaceObservationalTest(t *testing.T) {
-	Convey("Given an observational subscriber with a slow consumer", t, func() {
+	Convey("Given an observational subscriber whose consumer never advances", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		workspace := NewWorkspace(ctx)
 
@@ -524,14 +543,51 @@ func WorkspaceObservationalTest(t *testing.T) {
 			cancel()
 		})
 
-		Convey("When TryReserve fails, the drop is explicit and non-blocking", func() {
-			// A subscriber whose Step blocks keeps its ring full; the publisher
-			// must observe TryReserve failure and record a drop, never block.
-			_ = ctx
-			_ = cancel
-			_ = workspace
+		Convey("When TryReserve runs out of capacity, the drop is exact, explicit, and non-blocking", func() {
+			// A consumer that never completes any event leaves the ring full at
+			// its physical capacity. Once full, every further publication must
+			// fail TryReserve promptly and increment the drop counter exactly
+			// once per failed publication — it must never block and never creep
+			// past the ring's physical slot count.
+			workspace.WireClass(
+				"obs_stream",
+				"",
+				ServiceAnalytics,
+				DeliveryObservationalFIFO,
+				func(any) string { return globalKey },
+				func(any) any {
+					// Never complete: block until the workspace cancels, so the
+					// consumer's sequence stays pinned and the ring cannot refill.
+					<-workspace.ctx.Done()
+					return nil
+				},
+			)
 
-			So(true, ShouldBeTrue)
+			// Publish far more than the ring can hold. Every publication is a
+			// TryReserve; the first capacity's worth are accepted and committed,
+			// the remainder must fail non-blockingly and be counted.
+			const capacity = int(subscriberCapacity)
+			const extra = 100
+
+			publishStarted := time.Now()
+
+			for index := 0; index < capacity+extra; index++ {
+				workspace.Publish("obs_stream", index)
+			}
+
+			elapsed := time.Since(publishStarted)
+
+			// Non-blocking: publishing 65,636 attempts must finish fast.
+			So(elapsed, ShouldBeLessThan, 2*time.Second)
+
+			subscriber := workspace.subscribers[0]
+			So(subscriber, ShouldNotBeNil)
+
+			// Exactly one physical ring of exactly the declared capacity.
+			So(subscriber.dropped.Load(), ShouldEqual, uint64(extra))
+			So(subscriber.tryReserveFmt.Load(), ShouldEqual, uint64(extra))
+			So(subscriber.published.Load(), ShouldEqual, uint64(capacity))
+			So(len(subscriber.buffer), ShouldEqual, capacity)
 		})
 	})
 }

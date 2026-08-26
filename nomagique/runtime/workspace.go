@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"strings"
 	"context"
 	"fmt"
 	"hash/fnv"
@@ -20,6 +21,11 @@ LMAX Disruptor owned by a logical subscriber. It is never multiplied by the
 handler count and never grows at runtime.
 */
 const subscriberCapacity uint32 = 64 * 1024
+
+// SubscriberCapacity is the fixed slot count of every subscriber's physical LMAX
+// Disruptor. It is exported so diagnostics can report ring capacity as a stable
+// infrastructure constant even before the first subscriber registers.
+const SubscriberCapacity = uint64(subscriberCapacity)
 
 const subscriberCapacityMask = int64(subscriberCapacity) - 1
 
@@ -174,6 +180,7 @@ type Subscriber struct {
 	lastDrop       atomic.Int64
 	typeMismatch   atomic.Uint64
 	stepCount      atomic.Uint64
+	stepTotalNanos atomic.Int64
 	stepMaxNanos   atomic.Int64
 	activeHandlers atomic.Int64
 	lastComplete   atomic.Int64
@@ -316,6 +323,7 @@ func (subscriber *Subscriber) reportPanic(recovered any) {
 func (subscriber *Subscriber) recordLatency(duration time.Duration) {
 	nanos := duration.Nanoseconds()
 	subscriber.stepCount.Add(1)
+	subscriber.stepTotalNanos.Add(nanos)
 
 	for {
 		maxSeen := subscriber.stepMaxNanos.Load()
@@ -572,7 +580,7 @@ func WireKeyedFunc[T any, U any](
 	keyFunc func(T) string,
 	step func(T) U,
 ) {
-	WireKeyed[T, U](workspace, inTopic, outTopic, keyFunc, step)
+	WireKeyed(workspace, inTopic, outTopic, keyFunc, step)
 }
 
 /*
@@ -697,10 +705,11 @@ func (workspace *Workspace) register(wire SubscriberWire) *Subscriber {
 		return nil
 	}
 
+	subscriberID := workspace.nextSubscriberID.Add(1)
 	subscriber := &Subscriber{
-		id:          workspace.nextSubscriberID.Add(1),
-		name:        wire.InTopic,
-		workspace:   workspace,
+		id:     subscriberID,
+		name:   wire.InTopic,
+		workspace: workspace,
 		wire:        wire,
 		disruptor:   disruptorInstance,
 		buffer:      buffer,
@@ -983,6 +992,7 @@ type Snapshot struct {
 	TryReserveFail uint64
 	TypeMismatch   uint64
 	StepCalls      uint64
+	StepTotalNanos int64
 	StepMaxNanos   int64
 	HandlerCount   int
 	ActiveHandlers uint64
@@ -1024,6 +1034,7 @@ func (subscriber *Subscriber) snapshot() Snapshot {
 		TryReserveFail:   subscriber.tryReserveFmt.Load(),
 		TypeMismatch:     subscriber.typeMismatch.Load(),
 		StepCalls:        subscriber.stepCount.Load(),
+		StepTotalNanos:   subscriber.stepTotalNanos.Load(),
 		StepMaxNanos:     subscriber.stepMaxNanos.Load(),
 		HandlerCount:     subscriber.handlerCnt,
 		ActiveHandlers:   uint64(subscriber.activeHandlers.Load()),
@@ -1132,16 +1143,16 @@ func (workspace *Workspace) Shared(name string, id ...string) (any, bool) {
 }
 
 func sharedKey(name string, ids []string) string {
-	key := fmt.Sprintf("%d:%s/", len(name), name)
+	var key strings.Builder; fmt.Fprintf(&key, "%d:%s/", len(name), name)
 	for _, id := range ids {
 		if id == "" {
 			continue
 		}
 
-		key += fmt.Sprintf("%d:%s/", len(id), id)
+		fmt.Fprintf(&key, "%d:%s/", len(id), id)
 	}
 
-	return key
+	return key.String()
 }
 
 /*
