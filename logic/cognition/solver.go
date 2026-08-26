@@ -7,6 +7,8 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -65,6 +67,17 @@ func WithPrefixTreeShape(width, depth, maxNodes int) Option {
 	}
 }
 
+type symbolCognitionState struct {
+	activeTokens  []string
+	activeRegime  types.Category
+	reading       types.Cognition
+	hasReading    bool
+	branches      []types.CognitionBranch
+	branchesStamp uint64
+	classScratch  dmt.ClassificationScratch
+	beamScratch   dmt.BeamSearchScratch
+}
+
 /*
 Solver uses dmt.Tree to learn, score, and forecast market category transition sequences,
 classify macro regimes via attractor basins, and predict future category paths using beam search.
@@ -75,11 +88,12 @@ type Solver struct {
 	err            error
 	thesis         *types.Thesis
 	recorder       *audit.Recorder
+	treeMu         sync.RWMutex
 	tree           *dmt.Tree
-	sequences      map[string][]string // Active category token buffer per symbol
+	states         sync.Map // string (symbol) -> *symbolCognitionState
 	maxSeqLen      int
 	surprisalLimit float64
-	tickCounter    uint64
+	tickCounter    atomic.Uint64
 	ObserveModule  func(string, time.Duration)
 
 	// Beam search shape. Held as fields rather than call-site constants so the
@@ -93,10 +107,6 @@ type Solver struct {
 	branchWidth    int
 	branchDepth    int
 	maxBranchNodes int
-
-	// Reusable zero-allocation scratch buffers
-	classScratch dmt.ClassificationScratch
-	beamScratch  dmt.BeamSearchScratch
 
 	// Consolidation products, refreshed on the REM schedule rather than per
 	// tick, because they read weights only consolidation rewrites.
@@ -112,25 +122,28 @@ type Solver struct {
 	remOutcome dmt.REMConsolidationOutcome
 	remFrom    time.Time
 	remThrough time.Time
-
-	// regimes keeps the named radar regime attached to each active sequence.
-	// The DMT learns category paths under this existing market taxonomy instead
-	// of publishing anonymous internal concept identifiers as market regimes.
-	regimes map[string]types.Category
-
-	// readings retains the accepted named regime independently of the latest
-	// challenger so weak posterior reversals cannot make the state oscillate.
-	readings map[string]types.Cognition
-
-	// branches caches the exported prefix tree per symbol. Walking the trie
-	// costs orders more than the rest of a reading, and the walk can only
-	// change for a symbol when its own sequence transitions, so a rebuild is
-	// tied to transitions rather than run on every tick.
-	branches      map[string][]types.CognitionBranch
-	branchesStamp map[string]uint64
 }
 
 const categoryTokenSeparator = "\x1f"
+
+func (solver *Solver) getSymbolState(symbol string) *symbolCognitionState {
+	loaded, found := solver.states.Load(symbol)
+
+	if found {
+		return loaded.(*symbolCognitionState)
+	}
+
+	candidate := &symbolCognitionState{
+		beamScratch: dmt.BeamSearchScratch{
+			CurrentBeams: make([]dmt.BeamPath, 0, 4),
+			NextBeams:    make([]dmt.BeamPath, 0, 4),
+			LookupBuffer: make([]dmt.LookaheadPrediction, 0, 8),
+		},
+	}
+	actual, _ := solver.states.LoadOrStore(symbol, candidate)
+
+	return actual.(*symbolCognitionState)
+}
 
 /*
 NewSolver returns a new cognition solver bound to a radix tree.
@@ -157,16 +170,15 @@ func NewSolver(
 		}
 	}
 
+	if tree == nil {
+		tree, _ = dmt.NewTree("")
+	}
+
 	solver := &Solver{
 		ctx:            ctx,
 		cancel:         cancel,
 		thesis:         thesis,
 		tree:           tree,
-		sequences:      make(map[string][]string),
-		regimes:        make(map[string]types.Category),
-		readings:       make(map[string]types.Cognition),
-		branches:       make(map[string][]types.CognitionBranch),
-		branchesStamp:  make(map[string]uint64),
 		maxSeqLen:      6,   // Max 6 category transitions per sequence window
 		surprisalLimit: 3.5, // > 3.5 bits surprisal (P < 8.8%) indicates a regime break
 		beamWidth:      3,
@@ -174,11 +186,6 @@ func NewSolver(
 		branchWidth:    4,
 		branchDepth:    5,
 		maxBranchNodes: 192,
-		beamScratch: dmt.BeamSearchScratch{
-			CurrentBeams: make([]dmt.BeamPath, 0, 4),
-			NextBeams:    make([]dmt.BeamPath, 0, 4),
-			LookupBuffer: make([]dmt.LookaheadPrediction, 0, 8),
-		},
 	}
 
 	for _, opt := range opts {
@@ -254,6 +261,8 @@ func (solver *Solver) processBatch(
 		return nil
 	}
 
+	state := solver.getSymbolState(symbol)
+
 	// Select the dominant category for this symbol on this observation.
 	dominantCategory := solver.selectDominantCategory(categories)
 
@@ -263,8 +272,8 @@ func (solver *Solver) processBatch(
 
 	categoryToken := solver.encodeCategory(dominantCategory)
 	observedRegime := solver.selectRegime(categories)
-	activeTokens := solver.sequences[symbol]
-	activeRegime := solver.regimes[symbol]
+	activeTokens := state.activeTokens
+	activeRegime := state.activeRegime
 	transitioned := len(activeTokens) == 0 ||
 		activeTokens[len(activeTokens)-1] != categoryToken
 
@@ -273,7 +282,7 @@ func (solver *Solver) processBatch(
 	}
 
 	if len(rows) == 0 {
-		solver.tickCounter++
+		solver.tickCounter.Add(1)
 	}
 
 	// 2. Evaluate if appending this category causes a Sequence Break
@@ -284,6 +293,7 @@ func (solver *Solver) processBatch(
 		oldSequenceBytes := solver.sequenceBytes(activeTokens)
 
 		// Commit completed sequence to episodic buffer for REM replay
+		solver.treeMu.Lock()
 		_, _ = solver.tree.CommitToEpisodicBuffer(
 			uint64(solver.thesis.At.UnixNano()), oldSequenceBytes,
 		)
@@ -294,6 +304,7 @@ func (solver *Solver) processBatch(
 			)
 
 			if err != nil {
+				solver.treeMu.Unlock()
 				return errnie.Error(errnie.Err(
 					errnie.Internal,
 					fmt.Sprintf(
@@ -304,6 +315,7 @@ func (solver *Solver) processBatch(
 				))
 			}
 		}
+		solver.treeMu.Unlock()
 
 		// Start fresh sequence buffer with new category
 		activeTokens = []string{categoryToken}
@@ -320,20 +332,21 @@ func (solver *Solver) processBatch(
 		}
 	}
 
-	solver.sequences[symbol] = activeTokens
-	solver.regimes[symbol] = activeRegime
+	state.activeTokens = activeTokens
+	state.activeRegime = activeRegime
 
 	activeSequenceBytes := solver.sequenceBytes(activeTokens)
 
+	solver.treeMu.RLock()
 	// 4. Classify macro market regime / concept attractor basin
-	classResult := solver.tree.Classify(activeSequenceBytes, &solver.classScratch)
+	classResult := solver.tree.Classify(activeSequenceBytes, &state.classScratch)
 
 	// 5. Lookahead Beam Search: Predict next 2-3 likely category hops
 	beamPaths := solver.tree.ExecuteBeamSearch(
 		activeSequenceBytes,
 		solver.beamWidth,
 		solver.maxHops,
-		&solver.beamScratch,
+		&state.beamScratch,
 	)
 
 	/*
@@ -348,6 +361,8 @@ func (solver *Solver) processBatch(
 	ambiguity := solver.tree.MeasureBranchAmbiguity(
 		dmt.SensoryPrefixKey(activeSequenceBytes),
 	)
+	solver.treeMu.RUnlock()
+
 	var entropyBits *float64
 	var entropyThreshold *float64
 
@@ -384,18 +399,20 @@ func (solver *Solver) processBatch(
 		})
 	}
 
-	branches := solver.cachedPrefixTree(symbol, activeTokens, transitioned)
+	branches := solver.cachedPrefixTree(state, activeTokens, transitioned)
 
 	contrast := 0.0
 	contrastEvidence := 0.0
 
 	if len(classResult.Scores) > 1 {
 		contrast = classResult.Scores[0].Value - classResult.Scores[1].Value
+		solver.treeMu.RLock()
 		evidence := solver.tree.ComputeBasinContrastiveEvidence(
 			classResult.Scores[0].ClassName,
 			classResult.Scores[1].ClassName,
 			activeSequenceBytes,
 		)
+		solver.treeMu.RUnlock()
 		contrastEvidence = evidence.Divergence
 	}
 
@@ -418,7 +435,7 @@ func (solver *Solver) processBatch(
 	candidateWinner := winner
 	candidateConfidence := confidence
 	stabilized := solver.stabilizeReading(
-		symbol,
+		state,
 		candidateWinner,
 		candidateConfidence,
 		ambiguity.Ambiguous,
@@ -430,7 +447,11 @@ func (solver *Solver) processBatch(
 	confidence = stabilized.confidence
 	predictions = stabilized.predictions
 
+	solver.treeMu.RLock()
 	analysis := solver.tree.AnalyzeInterpolated(activeSequenceBytes)
+	sensoryWeight := solver.tree.GetSensoryWeight(activeSequenceBytes)
+	solver.treeMu.RUnlock()
+
 	contributions := make([]types.CognitionContribution, 0, len(analysis.Contributions))
 
 	for _, contribution := range analysis.Contributions {
@@ -464,7 +485,7 @@ func (solver *Solver) processBatch(
 		EntropyBits:      entropyBits,
 		EntropyThreshold: entropyThreshold,
 		Ambiguous:        ambiguity.Ambiguous,
-		Cohort:           solver.tree.GetSensoryWeight(activeSequenceBytes).Count,
+		Cohort:           sensoryWeight.Count,
 		LookaheadScore:   lookaheadScore,
 		LookaheadPaths:   len(beamPaths),
 		BeamWidth:        solver.beamWidth,
@@ -492,7 +513,8 @@ func (solver *Solver) processBatch(
 		REMConsolidating: false,
 	}
 
-	solver.readings[symbol] = cognition
+	state.reading = cognition
+	state.hasReading = true
 	rows[symbol] = cognition
 	return nil
 }
@@ -511,7 +533,7 @@ lookahead is suppressed so persistence cannot manufacture predictive evidence
 for the graph or planner.
 */
 func (solver *Solver) stabilizeReading(
-	symbol string,
+	state *symbolCognitionState,
 	candidate string,
 	candidateConfidence float64,
 	ambiguous bool,
@@ -519,7 +541,8 @@ func (solver *Solver) stabilizeReading(
 	predictions map[string]float64,
 	switchThreshold float64,
 ) stabilizedReading {
-	previous, hasPrevious := solver.readings[symbol]
+	previous := state.reading
+	hasPrevious := state.hasReading
 
 	if !hasPrevious || previous.Winner == "" {
 		return stabilizedReading{
@@ -774,20 +797,23 @@ cachedPrefixTree returns the exported prefix tree for a symbol, walking the trie
 only when that symbol's sequence moved or the cache has gone stale.
 */
 func (solver *Solver) cachedPrefixTree(
-	symbol string, activeTokens []string, transitioned bool,
+	state *symbolCognitionState, activeTokens []string, transitioned bool,
 ) []types.CognitionBranch {
-	cached, found := solver.branches[symbol]
-	stale := solver.tickCounter-solver.branchesStamp[symbol] >= branchRefreshTicks
+	cached := state.branches
+	currentTick := solver.tickCounter.Load()
+	stale := currentTick-state.branchesStamp >= branchRefreshTicks
 
-	if found && !transitioned && !stale {
+	if len(cached) > 0 && !transitioned && !stale {
 		return cached
 	}
 
+	solver.treeMu.RLock()
 	observed := solver.prefixTreeBranches(activeTokens)
+	solver.treeMu.RUnlock()
 
-	if !found {
-		solver.branches[symbol] = observed
-		solver.branchesStamp[symbol] = solver.tickCounter
+	if len(cached) == 0 {
+		state.branches = observed
+		state.branchesStamp = currentTick
 
 		return observed
 	}
@@ -828,8 +854,8 @@ func (solver *Solver) cachedPrefixTree(
 		cached = append(cached, branch)
 	}
 
-	solver.branches[symbol] = cached
-	solver.branchesStamp[symbol] = solver.tickCounter
+	state.branches = cached
+	state.branchesStamp = currentTick
 
 	return cached
 }
@@ -1027,8 +1053,10 @@ func (solver *Solver) formatLookaheadPredictions(
 Reset clears active sequence buffers for all symbols.
 */
 func (solver *Solver) Reset() {
-	solver.sequences = make(map[string][]string)
-	solver.regimes = make(map[string]types.Category)
+	solver.states.Range(func(key any, value any) bool {
+		solver.states.Delete(key)
+		return true
+	})
 }
 
 /*

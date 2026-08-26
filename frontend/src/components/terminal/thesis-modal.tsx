@@ -3,26 +3,25 @@ import { useSelector } from "@tanstack/react-store";
 import { terminalStore } from "#/collections/terminal";
 import { ModelScope } from "#/components/graph/component";
 import {
+	paintGraphSurface,
 	readGraphSurface,
 	subscribeGraphSurface,
 } from "#/components/terminal/graph-surface-store";
 import { MCTSTreeVisualizer } from "#/components/terminal/mcts-tree-visualizer";
 import { ThesisDetailRail } from "#/components/terminal/thesis-detail-rail";
-import { ThesisEvidenceCanvas } from "#/components/terminal/thesis-evidence-canvas";
 import { Typography } from "@/components/ui/typography";
-import { strategyStore, tickStore, useSubscribe } from "#/providers/ws-stores";
+import { graphStore, strategyStore, tickStore, useSubscribe } from "#/providers/ws-stores";
 import { cn } from "#/lib/utils";
 
-export type ModalViewMode = "mcts" | "graph3d" | "graph2d";
+export type ModalViewMode = "mcts" | "graph3d";
 
 /*
 ThesisModal is the carrier for one symbol's thesis and its full decision breakdown.
 
 It provides a comprehensive inspection window featuring:
 - Full visual breakdown of the MCTS/Pearl causal branching process
-- The new 3D WebGL WebGPU Causal Graph renderer
-- 2D Gonum evidence graph canvas
-- Live arbitration & entry decision rail
+- The 3D WebGL WebGPU Causal Graph renderer
+- Live arbitration & entry decision snapshot rail
 */
 const ThesisActionBadge = ({ symbol }: { symbol: string }) => {
 	const root = useSubscribe(strategyStore, (state) => {
@@ -72,9 +71,24 @@ export const ThesisModal = () => {
 	const [selectedNodeName, setSelectedNodeName] = useState<string | null>(null);
 
 	useEffect(() => {
-		return subscribeGraphSurface(() => {
+		if (graphStore.state) {
+			paintGraphSurface(graphStore.state);
+		}
+
+		const { unsubscribe: unregisterStore } = graphStore.subscribe((state) => {
+			if (state) {
+				paintGraphSurface(state);
+			}
+		});
+
+		const unregisterSurface = subscribeGraphSurface(() => {
 			setGraphState(readGraphSurface());
 		});
+
+		return () => {
+			unregisterStore();
+			unregisterSurface();
+		};
 	}, []);
 
 	if (symbol === null || symbol === "") {
@@ -99,7 +113,7 @@ export const ThesisModal = () => {
 				<div className="flex shrink-0 items-center justify-between gap-3 border-(--line) border-b px-5 py-3.5">
 					<div className="flex flex-wrap items-center gap-3">
 						<Typography.Display size="lg">{symbol}</Typography.Display>
-<ThesisActionBadge symbol={symbol} />
+						<ThesisActionBadge symbol={symbol} />
 
 						{/* View Switcher Tabs */}
 						<div className="ml-4 flex items-center rounded border border-(--line) bg-(--sunken) p-0.5 font-mono text-[10px]">
@@ -125,22 +139,11 @@ export const ThesisModal = () => {
 							>
 								3D Causal Graph
 							</button>
-							<button
-								type="button"
-								onClick={() => setViewMode("graph2d")}
-								className={`cursor-pointer rounded px-2.5 py-1 uppercase transition-all ${
-									viewMode === "graph2d"
-										? "bg-(--raised) text-(--acc) font-semibold shadow-xs"
-										: "text-(--f4) hover:text-(--f2)"
-								}`}
-							>
-								2D Evidence Graph
-							</button>
 						</div>
 					</div>
 
 					<div className="flex items-center gap-3">
-<ThesisTickCounter />
+						<ThesisTickCounter />
 						<button
 							type="button"
 							onClick={closeThesisShell}
@@ -189,20 +192,6 @@ export const ThesisModal = () => {
 									</div>
 									<div className="font-mono text-[9px] text-(--f4)">
 										WebGL · force simulation · interactive camera
-									</div>
-								</div>
-							</div>
-						)}
-
-						{viewMode === "graph2d" && (
-							<div className="relative h-full w-full">
-								<ThesisEvidenceCanvas symbol={symbol} />
-								<div className="pointer-events-none absolute top-3.5 left-4">
-									<div className="font-semibold text-[10px] text-(--f2) uppercase tracking-[0.13em]">
-										Evidence graph
-									</div>
-									<div className="mt-0.5 font-mono text-[9.5px] text-(--f4)">
-										measurement nodes · typed Gonum relationships
 									</div>
 								</div>
 							</div>

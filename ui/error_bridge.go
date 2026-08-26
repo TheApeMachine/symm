@@ -101,7 +101,7 @@ func (bridge *ErrorBridge) Write(payload []byte) (int, error) {
 
 	safe := safeErrorFields(fields)
 	if bridge.bus != nil {
-		bridge.bus.Publish(types.ChannelUI, &wire.FrameT{
+		bridge.bus.Publish(types.ChannelUI, &types.UIFrame{
 			Type: wire.FrameErrorFrame,
 			Value: &wire.ErrorFrameT{
 				Level: stringMapField(safe, "level"), Source: attributedErrorSource(fields),

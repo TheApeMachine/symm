@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"sync"
+	"time"
 
 	"github.com/pion/webrtc/v4"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -36,6 +37,7 @@ type FluidRTC struct {
 	consumerID    string
 	queueLimit    int
 	bufferedLimit uint64
+	ObserveModule func(string, time.Duration)
 }
 
 /*
@@ -292,6 +294,13 @@ func (fluidTransport *FluidRTC) remove(peerConnection *webrtc.PeerConnection) {
 }
 
 func (fluidTransport *FluidRTC) publish(channel string, payload []byte) error {
+	started := time.Now()
+	defer func() {
+		if fluidTransport.ObserveModule != nil {
+			fluidTransport.ObserveModule("webrtc-hub", time.Since(started))
+		}
+	}()
+
 	fluidTransport.peersMutex.RLock()
 	defer fluidTransport.peersMutex.RUnlock()
 

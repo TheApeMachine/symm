@@ -566,18 +566,21 @@ func BootWithHub(
 		hub = ui.NewHub(systemCtx, thesis, desk, price, balance, bus)
 	}
 
+	if hub != nil {
+		hub.SetObserver(crypto.ObserveModule())
+		hub.SetDiagnosticsControl(crypto)
+	}
+
 	observer := audit.NewConcurrentObserver(
 		planner.Stager(),
 		&bootPriceAdapter{price: price},
 		regulatorSolver,
 	)
+	observer.ObserveModule = crypto.ObserveModule()
 
 	go observer.Run(systemCtx)
 
 	attachDiagnosticsErrorBridge(hub, crypto)
-	if hub != nil {
-		hub.SetDiagnosticsControl(crypto)
-	}
 	systems := []Runnable{
 		api,
 		futures,

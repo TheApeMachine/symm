@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { decisionStore } from "#/collections/decisions";
-import type { DecisionMCTSTreeNode } from "#/types/thesis";
+import { positionsStore } from "#/providers/ws-stores";
+import type { Decision, DecisionMCTSTreeNode } from "#/types/thesis";
 import { Input } from "@/components/ui/input";
 import { Typography } from "@/components/ui/typography";
 
@@ -222,17 +223,23 @@ export const MCTSTreeVisualizer = ({ symbol, className }: MCTSTreeVisualizerProp
 	const [filterQuery, setFilterQuery] = useState("");
 	const [expandedMap, setExpandedMap] = useState<Map<string, boolean>>(new Map());
 
-	// Retrieve newest decision for symbol from decisionStore
+	// Retrieve decision snapshot: prioritize position's originating decision, then live decisionStore
+	const position = useSelector(positionsStore, (state) => state.positions[symbol]?.latest() ?? null);
+
 	const liveDecisions = useSelector(decisionStore, (state) => {
 		const storeState = state as unknown as { decisions?: Record<string, { values: () => unknown[] }> };
 		return storeState.decisions?.[symbol]?.values() ?? [];
 	});
 
-	const latestDecision = (liveDecisions && liveDecisions.length > 0
+	const latestStrategyDecision = (liveDecisions && liveDecisions.length > 0
 		? liveDecisions[liveDecisions.length - 1]
-		: null) as { trace?: { mcts?: { tree?: DecisionMCTSTreeNode; iterations?: number; maxDepth?: number; totalNodes?: number; recommendedAction?: string } } } | null;
+		: null) as Decision | null;
 
-	const trace = latestDecision?.trace;
+	const targetDecision = (position?.decision?.trace?.mcts?.tree
+		? position.decision
+		: latestStrategyDecision ?? position?.decision) as { trace?: { mcts?: { tree?: DecisionMCTSTreeNode; iterations?: number; maxDepth?: number; totalNodes?: number; recommendedAction?: string } } } | null;
+
+	const trace = targetDecision?.trace;
 	const mcts = trace?.mcts;
 	const treeRoot = mcts?.tree;
 

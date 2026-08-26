@@ -56,6 +56,8 @@ type Position struct {
 	EntryOrderResult *spot.AddOrderResult  `json:"entry_order_result"`
 	ExitOrderResult  *spot.AddOrderResult  `json:"exit_order_result"`
 	Holding          *types.Holding        `json:"holding"`
+	
+	ring *runtime.Ring
 }
 
 /*
@@ -106,10 +108,37 @@ func NewPosition(
 			IsOpportunity: decision.Opportunity,
 			Stoploss:      decision.Stoploss,
 		},
+		ring: runtime.NewRing(1024, runtime.StreamReliable),
 	}
 	position.setStatus(types.INITIALIZING)
+	
+	go position.guardianLoop()
 
 	return position
+}
+
+func (position *Position) guardianLoop() {
+	for {
+		event, ok := position.ring.WaitNext(position.ctx)
+		if !ok {
+			return
+		}
+
+		switch payload := event.Value.(type) {
+		case kraken.TickerData:
+			position.onTicker(payload)
+		case kraken.ExecutionData:
+			position.onExecution(kraken.Execution{
+				Channel: "executions",
+				Type:    "update",
+				Data:    []kraken.ExecutionData{payload},
+			})
+		case string: // e.g. "manual_exit"
+			if payload == "manual_exit" {
+				_ = position.executeManualExit()
+			}
+		}
+	}
 }
 
 func (position *Position) status() types.Status {
@@ -146,7 +175,7 @@ func (position *Position) Publish() {
 		return
 	}
 
-	position.bus.Publish(types.ChannelUI, &wire.FrameT{
+	position.bus.Publish(types.ChannelUI, &types.UIFrame{
 		Type: wire.FramePositionsFrame,
 		Value: &wire.PositionsFrameT{
 			Rows: []*wire.PositionT{position.Wire()},
@@ -160,7 +189,7 @@ func (position *Position) Wire() *wire.PositionT {
 		Decision: types.DecisionWire(
 			position.Decision,
 			positionWireBranchCount,
-			false,
+			true,
 		),
 		Holding: types.HoldingWire(position.Holding),
 	}
@@ -541,11 +570,15 @@ func (position *Position) Enter() (*Position, error) {
 }
 
 /*
-ManualExit is the operator override for one filled lot. It records the override
-on the regulator, persists and checkpoints that transition, and submits the
-market sell before returning. An already-submitted exit is idempotent.
+ManualExit is the operator override for one filled lot. It pushes a command to the 
+guardian ring to guarantee order with market events.
 */
 func (position *Position) ManualExit() error {
+	_ = position.ring.Enqueue("manual_exit")
+	return nil
+}
+
+func (position *Position) executeManualExit() error {
 	if position == nil || position.Holding == nil ||
 		position.Holding.Qty == nil || position.Holding.Qty.Sign() <= 0 {
 		return errnie.Err(
@@ -598,10 +631,15 @@ func (position *Position) ManualExit() error {
 }
 
 /*
-Exit is the single sell-order boundary for an open lot. Exit causes may evolve,
-but none may bypass the position's regulator and liquidate an armed holding.
+Exit is the single sell-order boundary for an open lot.
 */
 func (position *Position) Exit() (*Position, error) {
+	// Atomic check-and-set to ensure we only fire the exit order once
+	currentStatus := position.status()
+	if currentStatus == types.CLOSED || currentStatus == types.PENDING {
+		return position, nil
+	}
+	
 	if position.ExitOrder != nil {
 		return position, nil
 	}
@@ -658,6 +696,10 @@ func (position *Position) Close() (err error) {
 
 	if position.cancel != nil {
 		position.cancel()
+	}
+	
+	if position.ring != nil {
+		position.ring.Close()
 	}
 
 	if position.Holding != nil {

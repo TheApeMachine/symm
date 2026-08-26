@@ -830,11 +830,14 @@ func (crypto *Crypto) publishDiagnostics() {
 			timer.Stop()
 			return
 		case <-timer.C:
+			started := time.Now()
 			diag := crypto.Diagnostics()
 
 			if crypto.bus != nil {
 				crypto.bus.Publish(types.ChannelDiagnostics, diag)
 			}
+
+			crypto.diagnostics.applyModule("diagnostics", time.Since(started))
 		}
 	}
 }

@@ -1,12 +1,17 @@
 package sensorium
 
-import "github.com/theapemachine/errnie"
+import (
+	"sync"
+
+	"github.com/theapemachine/errnie"
+)
 
 /*
 Manifold is the original host: tokenize, merge a particle State, then
 thermo.step + wave.step.
 */
 type Manifold struct {
+	mu        sync.Mutex
 	work      *workspace
 	Tokenizer *Tokenizer
 	state     *State
@@ -51,6 +56,9 @@ func (manifold *Manifold) Close() {
 		return
 	}
 
+	manifold.mu.Lock()
+	defer manifold.mu.Unlock()
+
 	if manifold.work != nil {
 		manifold.work.Close()
 		manifold.work = nil
@@ -62,6 +70,9 @@ func (manifold *Manifold) State() *State {
 		return nil
 	}
 
+	manifold.mu.Lock()
+	defer manifold.mu.Unlock()
+
 	return manifold.state
 }
 
@@ -69,6 +80,9 @@ func (manifold *Manifold) Reading() Reading {
 	if manifold == nil {
 		return Reading{}
 	}
+
+	manifold.mu.Lock()
+	defer manifold.mu.Unlock()
 
 	return manifold.reading
 }
@@ -100,6 +114,9 @@ func (manifold *Manifold) AddBatch(incoming *State) {
 		return
 	}
 
+	manifold.mu.Lock()
+	defer manifold.mu.Unlock()
+
 	manifold.merge(incoming)
 }
 
@@ -107,7 +124,22 @@ func (manifold *Manifold) AddBatch(incoming *State) {
 Step merges an optional incoming batch then advances thermo + wave once.
 */
 func (manifold *Manifold) Step(incoming *State) (*State, error) {
-	if manifold == nil || manifold.work == nil {
+	if manifold == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"manifold: physics domain is not initialized",
+			nil,
+		))
+	}
+
+	manifold.mu.Lock()
+	defer manifold.mu.Unlock()
+
+	return manifold.stepLocked(incoming)
+}
+
+func (manifold *Manifold) stepLocked(incoming *State) (*State, error) {
+	if manifold.work == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Internal,
 			"manifold: physics domain is not initialized",
@@ -140,6 +172,9 @@ func (manifold *Manifold) PackFields(
 	if manifold == nil || manifold.work == nil {
 		return 0, 0, 0, 0
 	}
+
+	manifold.mu.Lock()
+	defer manifold.mu.Unlock()
 
 	scale := manifold.work.packFields(momRho, energy, waveReal, waveImag)
 	return scale.density, scale.momentum, scale.energy, scale.wave
@@ -192,8 +227,11 @@ func (manifold *Manifold) Load() error {
 
 	loader := NewLoader(manifold.Tokenizer)
 
+	manifold.mu.Lock()
+	defer manifold.mu.Unlock()
+
 	for _, batch := range loader.Stream() {
-		if _, err := manifold.Step(batch); err != nil {
+		if _, err := manifold.stepLocked(batch); err != nil {
 			return errnie.Error(errnie.Err(
 				errnie.Internal,
 				"manifold: failed to step",

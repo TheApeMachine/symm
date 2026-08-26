@@ -3,66 +3,55 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"reflect"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/smarty/go-disruptor"
 	"github.com/theapemachine/errnie"
 	"golang.design/x/lockfree/lf"
 )
 
-const subscriberCapacity uint32 = 64 * 1024
-const subscriberMask int64 = int64(subscriberCapacity - 1)
+const subscriberCapacity int64 = 64 * 1024
 
 /*
-SubscriberRuntime represents an independently executing processing stage backed by its own Disruptor input ring.
+Lane is one fixed, key-affine physical ring within a subscriber.
 */
-type SubscriberRuntime struct {
-	id                uint32
-	workspace         *Workspace
-	inTopic           string
-	outTopic          string
-	keyFunc           func(any) string
-	step              func(any) any
-	ring              []any
-	disruptor         disruptor.Disruptor
-	bufferMask        int64
-	inFlight          atomic.Int64
-	executorPending   atomic.Int64
-	completedEvents   atomic.Uint64
-	stepCount         atomic.Uint64
-	stepDurationNanos atomic.Int64
-	queueWaitNanos    atomic.Int64
-}
-
-type subscriberDisruptorHandler struct {
+type Lane struct {
+	id      int
+	ring    *Ring
 	runtime *SubscriberRuntime
 }
 
-func (handler *subscriberDisruptorHandler) Handle(lowerSequence, upperSequence int64) {
-	for sequence := lowerSequence; sequence <= upperSequence; sequence++ {
-		value := handler.runtime.ring[sequence&handler.runtime.bufferMask]
-		key := handler.runtime.keyFunc(value)
-		handler.runtime.workspace.executor.Submit(handler.runtime, key, value)
+func (lane *Lane) start(ctx context.Context) {
+	for {
+		event, ok := lane.ring.WaitNext(ctx)
+		if !ok {
+			return
+		}
+
+		lane.runtime.workspace.acquireAnalyticsToken(ctx)
+		lane.process(event)
+		lane.runtime.workspace.releaseAnalyticsToken()
 	}
 }
 
-func (runtime *SubscriberRuntime) process(value any) {
+func (lane *Lane) process(event RingEvent) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			var err error
 
 			if panicErr, ok := recovered.(error); ok {
-				err = panicErr
+				err = fmt.Errorf("workspace: subscriber panic on %s (out: %s): %w\n%s", lane.runtime.inTopic, lane.runtime.outTopic, panicErr, string(debug.Stack()))
 			}
 
 			if err == nil {
-				err = fmt.Errorf("workspace: subscriber panic on %s: %v", runtime.inTopic, recovered)
+				err = fmt.Errorf("workspace: subscriber panic on %s (out: %s): %v\n%s", lane.runtime.inTopic, lane.runtime.outTopic, recovered, string(debug.Stack()))
 			}
 
-			if failureFn := runtime.workspace.failureHandler.Load(); failureFn != nil && *failureFn != nil {
+			if failureFn := lane.runtime.workspace.failureHandler.Load(); failureFn != nil && *failureFn != nil {
 				(*failureFn)(err)
 			}
 
@@ -74,25 +63,49 @@ func (runtime *SubscriberRuntime) process(value any) {
 		}
 	}()
 
-	output := runtime.step(value)
+	started := time.Now()
+	output := lane.runtime.step(event.Value)
+	duration := time.Since(started)
 
-	if output != nil && runtime.outTopic != "" {
-		runtime.workspace.Publish(runtime.outTopic, output)
+	lane.runtime.stepDurationNanos.Add(duration.Nanoseconds())
+	lane.runtime.stepCount.Add(1)
+	lane.runtime.completedEvents.Add(1)
+
+	if output != nil && lane.runtime.outTopic != "" {
+		lane.runtime.workspace.Publish(lane.runtime.outTopic, output)
 	}
+}
+
+/*
+SubscriberRuntime represents an independently executing processing stage backed by its own bounded lanes.
+*/
+type SubscriberRuntime struct {
+	id                uint32
+	workspace         *Workspace
+	inTopic           string
+	outTopic          string
+	keyFunc           func(any) string
+	step              func(any) any
+	lanes             []*Lane
+	completedEvents   atomic.Uint64
+	stepCount         atomic.Uint64
+	stepDurationNanos atomic.Int64
 }
 
 func (runtime *SubscriberRuntime) Enqueue(value any) {
-	runtime.inFlight.Add(1)
-	sequence := runtime.disruptor.Reserve(1)
-	runtime.ring[sequence&runtime.bufferMask] = value
-	runtime.disruptor.Commit(sequence, sequence)
+	key := runtime.keyFunc(value)
+	hasher := fnv.New32a()
+	_, _ = hasher.Write([]byte(key))
+	laneIndex := int(hasher.Sum32()) % len(runtime.lanes)
+
+	lane := runtime.lanes[laneIndex]
+	_ = lane.ring.Enqueue(value) // Enqueue never blocks, it overwrites oldest if full for observational.
 }
 
 func (runtime *SubscriberRuntime) Close() error {
-	if runtime.disruptor != nil {
-		return runtime.disruptor.Close()
+	for _, lane := range runtime.lanes {
+		lane.ring.Close()
 	}
-
 	return nil
 }
 
@@ -167,7 +180,6 @@ Workspace is the typed dataflow coordinator and routing substrate.
 type Workspace struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
-	executor       *KeyedExecutor
 	pool           *Pool[func()]
 	nextRuntimeID  atomic.Uint32
 	runtimesMu     sync.RWMutex
@@ -176,7 +188,9 @@ type Workspace struct {
 	shared         *lf.SkipList[string, any]
 	signals        *lf.SkipList[string, *atomic.Pointer[[]func()]]
 	failureHandler atomic.Pointer[func(error)]
-	inFlight       atomic.Int64
+	
+	analyticsSem   chan struct{}
+	laneCount      int
 }
 
 func stringLess(first string, second string) bool {
@@ -199,14 +213,21 @@ func NewWorkspaceWithWorkers(ctx context.Context, maxWorkers int) *Workspace {
 	})
 	workerPool.Start()
 
+	if maxWorkers <= 0 {
+		maxWorkers = 32 // reasonable default for analytical concurrency budget
+	}
+	
+	laneCount := 16 // reasonable hash lanes per subscriber
+
 	workspace := &Workspace{
-		ctx:         ctx,
-		cancel:      cancel,
-		executor:    NewKeyedExecutor(ctx, maxWorkers),
-		pool:        workerPool,
-		subscribers: lf.NewSkipList[string, *atomic.Pointer[[]*SubscriberRuntime]](stringLess),
-		shared:      lf.NewSkipList[string, any](stringLess),
-		signals:     lf.NewSkipList[string, *atomic.Pointer[[]func()]](stringLess),
+		ctx:          ctx,
+		cancel:       cancel,
+		pool:         workerPool,
+		subscribers:  lf.NewSkipList[string, *atomic.Pointer[[]*SubscriberRuntime]](stringLess),
+		shared:       lf.NewSkipList[string, any](stringLess),
+		signals:      lf.NewSkipList[string, *atomic.Pointer[[]func()]](stringLess),
+		analyticsSem: make(chan struct{}, maxWorkers),
+		laneCount:    laneCount,
 	}
 
 	return workspace
@@ -214,10 +235,6 @@ func NewWorkspaceWithWorkers(ctx context.Context, maxWorkers int) *Workspace {
 
 func (workspace *Workspace) Close() error {
 	workspace.cancel()
-
-	if workspace.executor != nil {
-		_ = workspace.executor.Close()
-	}
 
 	workspace.runtimesMu.Lock()
 	for _, runtime := range workspace.runtimes {
@@ -232,8 +249,18 @@ func (workspace *Workspace) Close() error {
 	return nil
 }
 
-func (workspace *Workspace) Executor() *KeyedExecutor {
-	return workspace.executor
+func (workspace *Workspace) acquireAnalyticsToken(ctx context.Context) {
+	select {
+	case workspace.analyticsSem <- struct{}{}:
+	case <-ctx.Done():
+	}
+}
+
+func (workspace *Workspace) releaseAnalyticsToken() {
+	select {
+	case <-workspace.analyticsSem:
+	default:
+	}
 }
 
 func (workspace *Workspace) SetFailureHandler(handler func(error)) {
@@ -256,15 +283,23 @@ func (workspace *Workspace) WaitForQuiescence(args ...any) error {
 	deadline := time.Now().Add(maxWait)
 
 	for {
-		if workspace.inFlight.Load() <= 0 && (workspace.executor == nil || workspace.executor.Pending() <= 0) {
+		pending := int64(0)
+		workspace.runtimesMu.RLock()
+		for _, runtime := range workspace.runtimes {
+			for _, lane := range runtime.lanes {
+				pending += lane.ring.Occupancy()
+			}
+		}
+		workspace.runtimesMu.RUnlock()
+		
+		if pending <= 0 {
 			return nil
 		}
 
 		if time.Now().After(deadline) {
 			return fmt.Errorf(
-				"workspace: quiescence timeout with %d events in flight, %d executor pending",
-				workspace.inFlight.Load(),
-				workspace.executor.Pending(),
+				"workspace: quiescence timeout with %d events pending in rings",
+				pending,
 			)
 		}
 
@@ -278,7 +313,6 @@ func (workspace *Workspace) Publish(topic string, value any) {
 
 		if subList != nil {
 			for _, runtime := range *subList {
-				workspace.inFlight.Add(1)
 				runtime.Enqueue(value)
 			}
 		}
@@ -308,27 +342,18 @@ func (workspace *Workspace) WireWithKey(
 		outTopic:   outTopic,
 		keyFunc:    keyFunc,
 		step:       step,
-		ring:       make([]any, subscriberCapacity),
-		bufferMask: subscriberMask,
+		lanes:      make([]*Lane, workspace.laneCount),
 	}
 
-	handler := &subscriberDisruptorHandler{runtime: runtime}
-	disruptorInstance, err := disruptor.New(
-		disruptor.Options.BufferCapacity(subscriberCapacity),
-		disruptor.Options.WriterCount(255),
-		disruptor.Options.NewHandlerGroup(handler),
-	)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"workspace: failed to initialize subscriber disruptor",
-			err,
-		))
+	for i := 0; i < workspace.laneCount; i++ {
+		lane := &Lane{
+			id:      i,
+			ring:    NewRing(subscriberCapacity, StreamObservational),
+			runtime: runtime,
+		}
+		runtime.lanes[i] = lane
+		go lane.start(workspace.ctx)
 	}
-
-	runtime.disruptor = disruptorInstance
-	go disruptorInstance.Listen()
 
 	workspace.runtimesMu.Lock()
 	workspace.runtimes = append(workspace.runtimes, runtime)
@@ -515,31 +540,27 @@ func (workspace *Workspace) Snapshot() WorkspaceSnapshot {
 		return WorkspaceSnapshot{}
 	}
 
-	inFlight := workspace.inFlight.Load()
-
-	if inFlight < 0 {
-		inFlight = 0
-	}
-
+	pending := uint64(0)
+	dropped := uint64(0)
+	lanes := uint64(0)
+	
 	workspace.runtimesMu.RLock()
-	laneCount := uint64(len(workspace.runtimes))
+	for _, runtime := range workspace.runtimes {
+		lanes += uint64(len(runtime.lanes))
+		for _, lane := range runtime.lanes {
+			pending += uint64(lane.ring.Occupancy())
+			dropped += uint64(lane.ring.Dropped())
+		}
+	}
 	workspace.runtimesMu.RUnlock()
 
-	activeWorkers := uint64(0)
-	activeKeys := uint64(0)
-
-	if workspace.executor != nil {
-		activeWorkers = uint64(workspace.executor.Workers())
-		activeKeys = uint64(workspace.executor.ActiveKeys())
-	}
-
 	return WorkspaceSnapshot{
-		Pending:       uint64(inFlight),
-		Capacity:      uint64(subscriberCapacity),
-		Lanes:         laneCount,
-		Dropped:       0,
-		ActiveWorkers: activeWorkers,
-		ActiveKeys:    activeKeys,
+		Pending:       pending,
+		Capacity:      uint64(subscriberCapacity * int64(lanes)), // Total aggregate capacity across all lanes
+		Lanes:         lanes,
+		Dropped:       dropped,
+		ActiveWorkers: uint64(cap(workspace.analyticsSem) - len(workspace.analyticsSem)), // rough estimate
+		ActiveKeys:    0,
 	}
 }
 
@@ -553,20 +574,22 @@ func (workspace *Workspace) TopicSnapshot(topic string) WorkspaceSnapshot {
 
 		if subList != nil {
 			pending := uint64(0)
+			dropped := uint64(0)
+			lanes := uint64(0)
 
 			for _, runtime := range *subList {
-				count := runtime.inFlight.Load()
-
-				if count > 0 {
-					pending += uint64(count)
+				lanes += uint64(len(runtime.lanes))
+				for _, lane := range runtime.lanes {
+					pending += uint64(lane.ring.Occupancy())
+					dropped += uint64(lane.ring.Dropped())
 				}
 			}
 
 			return WorkspaceSnapshot{
 				Pending:  pending,
-				Capacity: uint64(subscriberCapacity),
-				Lanes:    uint64(len(*subList)),
-				Dropped:  0,
+				Capacity: uint64(subscriberCapacity * int64(lanes)),
+				Lanes:    lanes,
+				Dropped:  dropped,
 			}
 		}
 	}

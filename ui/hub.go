@@ -42,6 +42,7 @@ type Hub struct {
 	maxMessageBytes int
 	maxBatchFrames  int
 	clients         *sync.Map
+	ObserveModule   func(string, time.Duration)
 }
 
 type hubClient struct {
@@ -66,6 +67,14 @@ type DiagnosticsControl interface {
 
 func (hub *Hub) SetDiagnosticsControl(control DiagnosticsControl) {
 	hub.diagnostics = control
+}
+
+func (hub *Hub) SetObserver(observer func(string, time.Duration)) {
+	hub.ObserveModule = observer
+
+	if hub.fluid != nil {
+		hub.fluid.ObserveModule = observer
+	}
 }
 
 /*
@@ -211,6 +220,13 @@ func NewHub(
 }
 
 func (hub *Hub) Step(msg any) any {
+	started := time.Now()
+	defer func() {
+		if hub.ObserveModule != nil {
+			hub.ObserveModule("hub", time.Since(started))
+		}
+	}()
+
 	frame, ok := msg.(*types.UIFrame)
 
 	if !ok || frame == nil {

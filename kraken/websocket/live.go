@@ -349,7 +349,9 @@ func NewWithClient(
 		if observer != nil {
 			started := time.Now()
 			defer func() {
-				(*observer)("crypto", time.Since(started))
+				duration := time.Since(started)
+				(*observer)("crypto", duration)
+				(*observer)("websocket-api", duration)
 			}()
 		}
 

@@ -2,6 +2,7 @@ package manifold
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/nomagique/data"
@@ -31,6 +32,7 @@ the field once.
 type Solver struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
+	mu            sync.Mutex
 	err           error
 	workspace     *runtime.Workspace
 	physics       *sensorium.Manifold
@@ -95,6 +97,9 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *sensorium.St
 		return nil
 	}
 
+	solver.mu.Lock()
+	defer solver.mu.Unlock()
+
 	started := time.Now()
 	defer func() {
 		if solver.ObserveModule != nil {
@@ -121,6 +126,9 @@ func (solver *Solver) Close() error {
 	if solver == nil {
 		return nil
 	}
+
+	solver.mu.Lock()
+	defer solver.mu.Unlock()
 
 	if solver.cancel != nil {
 		solver.cancel()

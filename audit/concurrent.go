@@ -44,6 +44,7 @@ type ConcurrentObserver struct {
 	thresholdPct  float64
 	mu            sync.Mutex
 	priceHistory  map[string][]observedMark
+	ObserveModule func(string, time.Duration)
 }
 
 /*
@@ -76,8 +77,13 @@ func (co *ConcurrentObserver) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			started := time.Now()
 			co.samplePending()
 			co.evaluateMatured()
+
+			if co.ObserveModule != nil {
+				co.ObserveModule("audit", time.Since(started))
+			}
 		}
 	}
 }

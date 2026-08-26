@@ -227,10 +227,12 @@ func (desk *Desk) StepTicker(ticker kraken.TickerData) error {
 		return nil
 	}
 
-	position.onTicker(ticker)
-
-	if observer, observesMarks := desk.equityObserver.(MarkObserver); observesMarks {
-		return errnie.Error(observer.ObserveMark(position.MarkFeedback(ticker.Timestamp)))
+	if err := position.ring.Enqueue(ticker); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"desk: position priority ring full",
+			err,
+		))
 	}
 
 	return nil
@@ -250,13 +252,12 @@ func (desk *Desk) StepExecution(execution kraken.ExecutionData) error {
 		return nil
 	}
 
-	if position.onExecution(kraken.Execution{
-		Channel: "executions",
-		Type:    "update",
-		Data:    []kraken.ExecutionData{execution},
-	}) {
-		desk.foldPassage(position)
-		desk.positions.CompareAndDelete(execution.Symbol, position)
+	if err := position.ring.Enqueue(execution); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"desk: position priority ring full",
+			err,
+		))
 	}
 
 	return nil
