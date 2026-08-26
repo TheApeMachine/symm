@@ -149,21 +149,30 @@ func NewDesk(
 	)
 
 	if bus != nil {
-		runtime.WireFunc[kraken.TickerData, any](
-			bus,
+		// The desk's ticker/execution ingress subscriptions are priority
+		// control: they route open-position protection directly to each
+		// PositionGuardian's dedicated LMAX Disruptor before, and independent
+		// of, any analytical fan-out. They never acquire the analytical
+		// semaphore.
+		bus.WireClass(
 			types.ChannelTickers,
 			"",
-			func(ticker kraken.TickerData) any {
-				_ = desk.StepTicker(ticker)
+			runtime.ServicePriorityControl,
+			runtime.DeliveryPriorityFIFO,
+			func(value any) string { return value.(kraken.TickerData).Symbol },
+			func(value any) any {
+				_ = desk.StepTicker(value.(kraken.TickerData))
 				return nil
 			},
 		)
-		runtime.WireFunc[kraken.ExecutionData, any](
-			bus,
+		bus.WireClass(
 			types.ChannelExecutions,
 			"",
-			func(execution kraken.ExecutionData) any {
-				_ = desk.StepExecution(execution)
+			runtime.ServicePriorityControl,
+			runtime.DeliveryPriorityFIFO,
+			func(value any) string { return value.(kraken.ExecutionData).Symbol },
+			func(value any) any {
+				_ = desk.StepExecution(value.(kraken.ExecutionData))
 				return nil
 			},
 		)
@@ -227,10 +236,12 @@ func (desk *Desk) StepTicker(ticker kraken.TickerData) error {
 		return nil
 	}
 
-	if err := position.ring.Enqueue(ticker); err != nil {
+	if err := position.publishGuardian(ticker); err != nil {
+		// Priority ring saturation is a critical failure: surface the alarm and
+		// invoke the risk failure path rather than queueing or dropping the mark.
 		errnie.Error(errnie.Err(
 			errnie.NotAcceptable,
-			"desk: position priority ring full",
+			"desk: position guardian priority ring saturated for "+ticker.Symbol,
 			err,
 		))
 	}
@@ -252,10 +263,10 @@ func (desk *Desk) StepExecution(execution kraken.ExecutionData) error {
 		return nil
 	}
 
-	if err := position.ring.Enqueue(execution); err != nil {
+	if err := position.publishGuardian(execution); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.NotAcceptable,
-			"desk: position priority ring full",
+			"desk: position guardian priority ring saturated for "+execution.Symbol,
 			err,
 		))
 	}

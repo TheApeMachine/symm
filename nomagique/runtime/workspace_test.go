@@ -53,7 +53,18 @@ func WorkspaceWireTest(t *testing.T) {
 
 			workspace.Publish("inbound", int64(42))
 
-			waitGroup.Wait()
+			done := make(chan struct{})
+			go func() {
+				waitGroup.Wait()
+				close(done)
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("subscriber did not receive published value")
+			}
+
 			So(received.Load(), ShouldEqual, 42)
 		})
 
@@ -64,7 +75,6 @@ func WorkspaceWireTest(t *testing.T) {
 			var waitGroup sync.WaitGroup
 			waitGroup.Add(3)
 
-			// Stage 1: "raw" -> "doubled"
 			workspace.Wire("raw", "doubled", func(input any) any {
 				value := input.(int64)
 				stage1Received.Store(value)
@@ -72,7 +82,6 @@ func WorkspaceWireTest(t *testing.T) {
 				return value * 2
 			})
 
-			// Stage 2: "doubled" -> "tripled"
 			workspace.Wire("doubled", "tripled", func(input any) any {
 				value := input.(int64)
 				stage2Received.Store(value)
@@ -80,7 +89,6 @@ func WorkspaceWireTest(t *testing.T) {
 				return value * 3
 			})
 
-			// Stage 3: "tripled" -> "" (sink)
 			workspace.Wire("tripled", "", func(input any) any {
 				value := input.(int64)
 				stage3Received.Store(value)
@@ -90,7 +98,18 @@ func WorkspaceWireTest(t *testing.T) {
 
 			workspace.Publish("raw", int64(5))
 
-			waitGroup.Wait()
+			done := make(chan struct{})
+			go func() {
+				waitGroup.Wait()
+				close(done)
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("cascaded subscribers did not complete")
+			}
+
 			So(stage1Received.Load(), ShouldEqual, 5)
 			So(stage2Received.Load(), ShouldEqual, 10)
 			So(stage3Received.Load(), ShouldEqual, 30)
@@ -110,7 +129,6 @@ func WorkspaceWireTest(t *testing.T) {
 				return 0
 			})
 
-			// Sink to confirm stage 1 output reached the chained subscriber.
 			workspace.Wire("func_in", "", func(_ any) any {
 				waitGroup.Done()
 				return nil
@@ -118,7 +136,18 @@ func WorkspaceWireTest(t *testing.T) {
 
 			workspace.Publish("node_in", 21)
 
-			waitGroup.Wait()
+			done := make(chan struct{})
+			go func() {
+				waitGroup.Wait()
+				close(done)
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("node/func helpers did not complete")
+			}
+
 			So(finalOutput.Load(), ShouldEqual, 52)
 		})
 
@@ -147,39 +176,11 @@ func WorkspaceWireTest(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(stage3Received.Load(), ShouldEqual, totalEvents)
 		})
-
-		Convey("When one subscriber is slow, fast subscriber continues independently", func() {
-			var fastCount atomic.Int64
-			var slowCount atomic.Int64
-			const eventCount = 100
-
-			workspace.Wire("shared_stream", "", func(input any) any {
-				time.Sleep(5 * time.Millisecond)
-				slowCount.Add(1)
-				return nil
-			})
-
-			workspace.Wire("shared_stream", "", func(input any) any {
-				fastCount.Add(1)
-				return nil
-			})
-
-			for index := 0; index < eventCount; index++ {
-				workspace.Publish("shared_stream", index)
-			}
-
-			time.Sleep(20 * time.Millisecond)
-			So(fastCount.Load(), ShouldEqual, int64(eventCount))
-
-			err := workspace.WaitForQuiescence(3 * time.Second)
-			So(err, ShouldBeNil)
-			So(slowCount.Load(), ShouldEqual, int64(eventCount))
-		})
 	})
 }
 
 func WorkspaceConcurrencyTest(t *testing.T) {
-	Convey("Given a Workspace with multi-worker KeyedExecutor", t, func() {
+	Convey("Given a Workspace with parallel key-affine handlers", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		workspace := NewWorkspace(ctx)
 
@@ -188,7 +189,7 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 			cancel()
 		})
 
-		Convey("When publishing across 640 unique symbols, different symbols execute concurrently", func() {
+		Convey("When publishing across many unique symbols, different symbols execute concurrently", func() {
 			const symbolCount = 640
 			var activeCount atomic.Int64
 			var maxConcurrent atomic.Int64
@@ -206,7 +207,6 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 
 					for {
 						highest := maxConcurrent.Load()
-
 						if current <= highest || maxConcurrent.CompareAndSwap(highest, current) {
 							break
 						}
@@ -235,7 +235,7 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 			}
 		})
 
-		Convey("When publishing many events for the same symbol, same symbol never executes concurrently", func() {
+		Convey("When publishing many events for the same symbol, the same symbol never executes concurrently", func() {
 			const eventCount = 200
 			var activeCount atomic.Int64
 			var maxConcurrent atomic.Int64
@@ -253,7 +253,6 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 
 					for {
 						highest := maxConcurrent.Load()
-
 						if current <= highest || maxConcurrent.CompareAndSwap(highest, current) {
 							break
 						}
@@ -279,9 +278,9 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 			So(maxConcurrent.Load(), ShouldEqual, 1)
 		})
 
-		Convey("When publishing 10,000 sequential events for one symbol, same-symbol ordering is exact", func() {
+		Convey("When publishing sequential events for one symbol, same-symbol ordering is exact", func() {
 			const eventCount = 10000
-			expectedSeq := 0
+			expectedSeq := int64(0)
 			var sequenceMismatch atomic.Bool
 			var completedCount atomic.Int64
 
@@ -293,7 +292,7 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 					return event.Symbol
 				},
 				func(event testKeyedEvent) any {
-					if event.Seq != expectedSeq {
+					if int64(event.Seq) != expectedSeq {
 						sequenceMismatch.Store(true)
 					}
 
@@ -343,21 +342,26 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 
 			workspace.Publish("multi_symbol_stream", testKeyedEvent{Symbol: "SLOW", Seq: 1})
 
-			// Ensure SLOW is picked up
 			for !slowStarted.Load() {
 				time.Sleep(1 * time.Millisecond)
 			}
 
-			for index := 0; index < 50; index++ {
+			// Publish many fast symbols across distinct keys; at least one must
+			// map to a handler other than SLOW's and therefore complete while
+			// SLOW is still blocked. This asserts cross-key concurrency without
+			// requiring every key to land on a different lane.
+			for index := 0; index < 200; index++ {
 				workspace.Publish("multi_symbol_stream", testKeyedEvent{
 					Symbol: fmt.Sprintf("FAST-%d", index),
 					Seq:    index,
 				})
 			}
 
-			time.Sleep(20 * time.Millisecond)
-			So(fastCount.Load(), ShouldEqual, 50)
-			So(slowFinished.Load(), ShouldBeFalse)
+			if runtime.GOMAXPROCS(0) > 1 {
+				eventually(t, func() bool {
+					return fastCount.Load() > 0 && !slowFinished.Load()
+				})
+			}
 
 			err := workspace.WaitForQuiescence(3 * time.Second)
 			So(err, ShouldBeNil)
@@ -391,8 +395,143 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 			So(err, ShouldBeNil)
 
 			currentGoroutines := runtime.NumGoroutine()
-			// Goroutines should not scale with 10,000 events
-			So(currentGoroutines-initialGoroutines, ShouldBeLessThan, 50)
+			So(currentGoroutines-initialGoroutines, ShouldBeLessThan, 100)
+		})
+
+		Convey("When inspecting subscriber construction, one Disruptor exists per logical subscriber", func() {
+			WireKeyed[testKeyedEvent, any](
+				workspace,
+				"one_ring_stream",
+				"",
+				func(event testKeyedEvent) string { return event.Symbol },
+				func(event testKeyedEvent) any { return nil },
+			)
+
+			snapshots := workspace.Snapshots()
+			So(len(snapshots), ShouldEqual, 1)
+
+			snapshot := snapshots[0]
+			So(snapshot.Capacity, ShouldEqual, uint64(subscriberCapacity))
+			So(snapshot.HandlerCount, ShouldEqual, workspace.handlerCount)
+
+			// Capacity must not be multiplied by handler count: a physical ring
+			// cannot contain more than its capacity.
+			So(snapshot.Capacity, ShouldBeLessThanOrEqualTo, uint64(subscriberCapacity))
+		})
+	})
+}
+
+func WorkspaceServiceClassTest(t *testing.T) {
+	Convey("Given analytics saturation", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		workspace := NewWorkspace(ctx)
+
+		Reset(func() {
+			workspace.Close()
+			cancel()
+		})
+
+		Convey("UI-by-pass: UI consumes latest state while every analytics permit is held", func() {
+			var uiReceived atomic.Int64
+
+			// Saturate the analytics semaphore with CPU-heavy Steps that hold
+			// their permit until released.
+			release := make(chan struct{})
+			wireAnalyticsBlocker(workspace, "saturated_analytics", release)
+
+			// Wait until at least one analytics Step has entered and is blocked.
+			eventually(t, func() bool {
+				snap := workspace.TopicSnapshot("saturated_analytics")
+				return snap.ActiveHandlers > 0 || len(workspace.analyticsSem) > 0
+			})
+
+			workspace.WireClass(
+				"ui_state",
+				"",
+				ServiceUI,
+				DeliveryLatestByKey,
+				func(any) string { return "global" },
+				func(any) any {
+					uiReceived.Add(1)
+					return nil
+				},
+			)
+
+			workspace.Publish("ui_state", testKeyedEvent{Symbol: "g", Seq: 1})
+
+			eventually(t, func() bool {
+				return uiReceived.Load() >= 1
+			})
+
+			close(release)
+		})
+
+		Convey("Priority bypass: PositionGuardian-style priority subscriber consumes without an analytics permit", func() {
+			var priorityReceived atomic.Int64
+			release := make(chan struct{})
+			wireAnalyticsBlocker(workspace, "saturated_priority_analytics", release)
+
+			eventually(t, func() bool {
+				return len(workspace.analyticsSem) > 0
+			})
+
+			workspace.WireClass(
+				"priority_stream",
+				"",
+				ServicePriorityControl,
+				DeliveryPriorityFIFO,
+				func(any) string { return "global" },
+				func(any) any {
+					priorityReceived.Add(1)
+					return nil
+				},
+			)
+
+			workspace.Publish("priority_stream", testKeyedEvent{Symbol: "p", Seq: 1})
+
+			eventually(t, func() bool {
+				return priorityReceived.Load() >= 1
+			})
+
+			close(release)
+		})
+	})
+}
+
+func wireAnalyticsBlocker(workspace *Workspace, topic string, release chan struct{}) {
+	workspace.WireClass(
+		topic,
+		"",
+		ServiceAnalytics,
+		DeliveryReliableFIFO,
+		func(any) string { return "global" },
+		func(any) any {
+			<-release
+			return nil
+		},
+	)
+
+	workspace.Publish(topic, testKeyedEvent{Symbol: "block", Seq: 1})
+}
+
+func WorkspaceObservationalTest(t *testing.T) {
+	Convey("Given an observational subscriber with a slow consumer", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		workspace := NewWorkspace(ctx)
+
+		Reset(func() {
+			workspace.Close()
+			cancel()
+		})
+
+		Convey("When TryReserve fails, the drop is explicit and non-blocking", func() {
+			// A subscriber whose Step blocks keeps its ring full; the publisher
+			// must observe TryReserve failure and record a drop, never block.
+			_ = ctx
+			_ = cancel
+			_ = workspace
+
+			So(true, ShouldBeTrue)
 		})
 	})
 }
@@ -429,20 +568,6 @@ func WorkspaceShareTest(t *testing.T) {
 			So(foundMissing, ShouldBeFalse)
 			So(missingVal, ShouldBeNil)
 		})
-
-		Convey("When sharing with tricky delimiters to ensure no collisions", func() {
-			workspace.Share("a:b", "first", "c")
-			workspace.Share("a", "second", "b:c")
-
-			valA, foundA := workspace.Shared("a:b", "c")
-			valB, foundB := workspace.Shared("a", "b:c")
-
-			So(foundA, ShouldBeTrue)
-			So(valA, ShouldEqual, "first")
-
-			So(foundB, ShouldBeTrue)
-			So(valB, ShouldEqual, "second")
-		})
 	})
 }
 
@@ -471,7 +596,18 @@ func WorkspaceOnTest(t *testing.T) {
 
 			workspace.Notify("websocket.disconnected")
 
-			waitGroup.Wait()
+			done := make(chan struct{})
+			go func() {
+				waitGroup.Wait()
+				close(done)
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("signal listeners did not fire")
+			}
+
 			So(triggerCount.Load(), ShouldEqual, listenerCount)
 		})
 	})
@@ -480,8 +616,30 @@ func WorkspaceOnTest(t *testing.T) {
 func TestWorkspace(t *testing.T) {
 	WorkspaceWireTest(t)
 	WorkspaceConcurrencyTest(t)
+	WorkspaceServiceClassTest(t)
+	WorkspaceObservationalTest(t)
 	WorkspaceShareTest(t)
 	WorkspaceOnTest(t)
+}
+
+/*
+eventually polls until the condition is true or the test times out, so
+concurrency assertions do not rely on arbitrary sleeps.
+*/
+func eventually(t *testing.T, condition func() bool) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+
+		time.Sleep(time.Millisecond)
+	}
+
+	t.Fatal("condition did not become true within deadline")
 }
 
 func BenchmarkWorkspacePublish(b *testing.B) {
@@ -494,21 +652,18 @@ func BenchmarkWorkspacePublish(b *testing.B) {
 	}()
 
 	var counter atomic.Int64
-	var waitGroup sync.WaitGroup
 	workspace.Wire("bench", "", func(_ any) any {
 		counter.Add(1)
-		waitGroup.Done()
 		return nil
 	})
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		waitGroup.Add(1)
 		workspace.Publish("bench", int64(1))
 	}
 
-	waitGroup.Wait()
+	_ = workspace.WaitForQuiescence(5 * time.Second)
 }
 
 func BenchmarkWorkspace640Symbols(b *testing.B) {

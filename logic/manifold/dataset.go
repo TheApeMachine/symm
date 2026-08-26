@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -96,6 +95,11 @@ func NewDataset(workspace *runtime.Workspace) *Dataset {
 
 func (dataset *Dataset) Name() string { return "book" }
 
+type bookReader interface {
+	GetBooks() []string
+	Get(symbol string, read func(*mgrbook.Book))
+}
+
 /*
 Generate yields one State per resting order across every book the shared
 manager owns, ask side first then bid side, level by level, in queue order.
@@ -118,12 +122,12 @@ func (dataset *Dataset) Generate() iter.Seq[*sensorium.State] {
 			return
 		}
 
-		manager, ok := shared.(*spot.BookManager)
+		manager, ok := shared.(bookReader)
 
 		if !ok || manager == nil {
 			errnie.Error(errnie.Err(
 				errnie.Internal,
-				"manifold: shared books value is not a BookManager",
+				"manifold: shared books value is not a bookReader",
 				nil,
 			))
 
@@ -133,27 +137,29 @@ func (dataset *Dataset) Generate() iter.Seq[*sensorium.State] {
 		symbols := manager.GetBooks()
 
 		for _, symbol := range symbols {
-			book := manager.GetBook(symbol)
+			var entries []orderEntry
+			var mid float64
 
-			if book == nil {
-				continue
-			}
+			manager.Get(symbol, func(book *mgrbook.Book) {
+				if book == nil {
+					return
+				}
 
-			mid := midPrice(book)
+				mid = midPrice(book)
+				if mid <= 0 {
+					return
+				}
 
-			if mid <= 0 {
+				entries = sideEntries(book)
+			})
+
+			if mid <= 0 || len(entries) == 0 {
 				continue
 			}
 
 			symbolIndex, found := universeIndex(symbols, symbol)
 
 			if !found {
-				continue
-			}
-
-			entries := sideEntries(book)
-
-			if len(entries) == 0 {
 				continue
 			}
 

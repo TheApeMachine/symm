@@ -4,20 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"math"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	disruptor "github.com/smarty/go-disruptor"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
+
+/*
+guardianCapacity is the fixed, power-of-two slot count of one PositionGuardian's
+priority LMAX Disruptor. It is bounded, preallocated, and never grows.
+*/
+const guardianCapacity uint32 = 1024
+
+const guardianCapacityMask = int64(guardianCapacity) - 1
 
 // positionWireBranchCount matches the six ranked branch rows in the journal.
 const positionWireBranchCount = 6
@@ -56,8 +66,45 @@ type Position struct {
 	EntryOrderResult *spot.AddOrderResult  `json:"entry_order_result"`
 	ExitOrderResult  *spot.AddOrderResult  `json:"exit_order_result"`
 	Holding          *types.Holding        `json:"holding"`
-	
-	ring *runtime.Ring
+
+	/*
+		Priority transport: one dedicated LMAX Disruptor plus its contiguous
+		slot storage and a single guardian consumer handler. The guardian
+		bypasses Workspace analytics scheduling entirely.
+	*/
+	disruptor     disruptor.Disruptor
+	guardian      *guardianHandler
+	guardianSlot [guardianCapacity]guardianEvent
+
+	// exitSequence protects the OPEN → EXIT_REQUESTED → EXITING → CLOSED
+	// transition so that only one goroutine may claim and submit the exit.
+	exitMu    sync.Mutex
+	exitClaim atomic.Bool
+}
+
+/*
+guardianEvent is the payload a guardian priority ring slot carries: one typed
+market or control message. Sequence is its LMAX publication sequence.
+*/
+type guardianEvent struct {
+	sequence int64
+	value    any
+}
+
+/*
+guardianHandler is the single consumer handler of a PositionGuardian. It runs on
+the dedicated guardian goroutine driven by disruptor.Listen and never acquires
+an analytical semaphore.
+*/
+type guardianHandler struct {
+	position *Position
+}
+
+func (handler *guardianHandler) Handle(lower, upper int64) {
+	for sequence := lower; sequence <= upper; sequence++ {
+		event := &handler.position.guardianSlot[sequence&guardianCapacityMask]
+		handler.position.handleGuardian(event.value)
+	}
 }
 
 /*
@@ -108,35 +155,83 @@ func NewPosition(
 			IsOpportunity: decision.Opportunity,
 			Stoploss:      decision.Stoploss,
 		},
-		ring: runtime.NewRing(1024, runtime.StreamReliable),
 	}
-	position.setStatus(types.INITIALIZING)
-	
-	go position.guardianLoop()
 
+	guardian := &guardianHandler{position: position}
+	disruptorInstance, err := disruptor.New(
+		disruptor.Options.BufferCapacity(guardianCapacity),
+		disruptor.Options.WriterCount(64),
+		disruptor.Options.NewHandlerGroup(guardian),
+	)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"position: failed to construct guardian disruptor for "+pair.Symbol,
+			err,
+		))
+	} else {
+		position.guardian = guardian
+		position.disruptor = disruptorInstance
+		go disruptorInstance.Listen()
+	}
+
+	position.setStatus(types.INITIALIZING)
 	return position
 }
 
-func (position *Position) guardianLoop() {
-	for {
-		event, ok := position.ring.WaitNext(position.ctx)
-		if !ok {
-			return
-		}
+/*
+publishGuardian routes one priority message into this PositionGuardian's
+dedicated LMAX Disruptor using the library's native Reserve. Priority events are
+never silently lost: if the guardian has fallen catastrophically behind, the
+failure is surfaced to the caller, who must invoke the risk failure path rather
+than queue the mark elsewhere.
+*/
+func (position *Position) publishGuardian(value any) error {
+	if position == nil || position.disruptor == nil {
+		return errnie.Err(
+			errnie.NotFound,
+			"position: guardian transport unavailable",
+			nil,
+		)
+	}
 
-		switch payload := event.Value.(type) {
-		case kraken.TickerData:
-			position.onTicker(payload)
-		case kraken.ExecutionData:
-			position.onExecution(kraken.Execution{
-				Channel: "executions",
-				Type:    "update",
-				Data:    []kraken.ExecutionData{payload},
-			})
-		case string: // e.g. "manual_exit"
-			if payload == "manual_exit" {
-				_ = position.executeManualExit()
-			}
+	sequence := position.disruptor.Reserve(1)
+	if sequence < 0 {
+		return errnie.Err(
+			errnie.NotAcceptable,
+			"position: guardian priority ring saturated",
+			nil,
+		)
+	}
+
+	position.guardianSlot[sequence&guardianCapacityMask] = guardianEvent{
+		sequence: sequence,
+		value:    value,
+	}
+	position.disruptor.Commit(sequence, sequence)
+
+	return nil
+}
+
+/*
+handleGuardian dispatches one priority event on the dedicated guardian goroutine.
+It is the sole consumer of the guardian ring and runs without any analytical
+semaphore, so position protection can never be delayed by bulk analytics.
+*/
+func (position *Position) handleGuardian(value any) {
+	switch payload := value.(type) {
+	case kraken.TickerData:
+		position.onTicker(payload)
+	case kraken.ExecutionData:
+		position.onExecution(kraken.Execution{
+			Channel: "executions",
+			Type:    "update",
+			Data:    []kraken.ExecutionData{payload},
+		})
+	case string: // e.g. "manual_exit"
+		if payload == "manual_exit" {
+			_ = position.executeManualExit()
 		}
 	}
 }
@@ -237,6 +332,18 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 	}
 
 	stoploss := position.Holding.Stoploss
+
+	triggered := stoploss.Status == types.TRIGGERED
+
+	/*
+		Exit initiation happens first and independently of persistence, audit,
+		checkpoint, UI, diagnostics, model feedback, and logging. Only the
+		goroutine that atomically claims the exit may submit the initial order.
+	*/
+	if triggered && stoploss.Status == types.TRIGGERED {
+		position.initiateProtectiveExit()
+	}
+
 	changed := previousStatus != stoploss.Status ||
 		previousLocked != stoploss.Locked ||
 		previousFloor.Cmp(stoploss.Floor) != 0 ||
@@ -252,17 +359,34 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 		}
 	}
 
-	if stoploss.Status == types.TRIGGERED && position.ExitOrder == nil {
-		if position.checkpoint != nil {
-			position.checkpoint()
-		}
+	position.Publish()
+}
 
-		if _, err := position.Exit(); err != nil {
-			errnie.Error(err)
-		}
+/*
+initiateProtectiveExit claims the exit atomically and submits the initial exit
+order. It is idempotent: repeated triggering ticks before the exchange
+acknowledges cannot re-submit, and ordering with persistence is preserved by
+submitting the exit before any checkpoint or audit work.
+*/
+func (position *Position) initiateProtectiveExit() {
+	if position.ExitOrder != nil {
+		return
 	}
 
-	position.Publish()
+	position.exitMu.Lock()
+	defer position.exitMu.Unlock()
+
+	if position.exitClaim.Swap(true) {
+		return
+	}
+
+	if position.checkpoint != nil {
+		position.checkpoint()
+	}
+
+	if _, err := position.Exit(); err != nil {
+		errnie.Error(err)
+	}
 }
 
 /*
@@ -574,8 +698,7 @@ ManualExit is the operator override for one filled lot. It pushes a command to t
 guardian ring to guarantee order with market events.
 */
 func (position *Position) ManualExit() error {
-	_ = position.ring.Enqueue("manual_exit")
-	return nil
+	return position.publishGuardian("manual_exit")
 }
 
 func (position *Position) executeManualExit() error {
@@ -697,9 +820,9 @@ func (position *Position) Close() (err error) {
 	if position.cancel != nil {
 		position.cancel()
 	}
-	
-	if position.ring != nil {
-		position.ring.Close()
+
+	if position.disruptor != nil {
+		_ = position.disruptor.Close()
 	}
 
 	if position.Holding != nil {

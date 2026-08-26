@@ -48,7 +48,14 @@ func (book *Book) SetBus(bus *runtime.Workspace) {
 
 	// The manifold stage reads the whole universe through the manager, so the
 	// manager itself is shared once under a fixed key rather than per symbol.
-	bus.Share("books", book.manager)
+	// We share the book instance itself so consumers can use its locking methods.
+	bus.Share("books", book)
+}
+
+func (book *Book) GetBooks() []string {
+	book.mu.RLock()
+	defer book.mu.RUnlock()
+	return book.manager.GetBooks()
 }
 
 func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {

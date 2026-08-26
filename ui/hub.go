@@ -132,7 +132,14 @@ func NewHub(
 		hub.maxBatchFrames = 1
 	}
 
-	hub.workspace.Wire(types.ChannelUI, "", hub.Step)
+	hub.workspace.WireClass(
+		types.ChannelUI,
+		"",
+		runtime.ServiceUI,
+		runtime.DeliveryLatestByKey,
+		func(value any) string { return "global" },
+		hub.Step,
+	)
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {

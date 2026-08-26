@@ -4,259 +4,441 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
-	"reflect"
+	"runtime"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	disruptor "github.com/smarty/go-disruptor"
 	"github.com/theapemachine/errnie"
-	"golang.design/x/lockfree/lf"
 )
 
-const subscriberCapacity int64 = 64 * 1024
+/*
+subscriberCapacity is the fixed, power-of-two slot count of the one physical
+LMAX Disruptor owned by a logical subscriber. It is never multiplied by the
+handler count and never grows at runtime.
+*/
+const subscriberCapacity uint32 = 64 * 1024
+
+const subscriberCapacityMask = int64(subscriberCapacity) - 1
+
+const globalKey = "global"
 
 /*
-Lane is one fixed, key-affine physical ring within a subscriber.
+StepDurationBuckets splits Step latency into the histogram buckets diagnostics
+uses. p50/p95/p99 and max are derived from these counts on demand.
 */
-type Lane struct {
-	id      int
-	ring    *Ring
-	runtime *SubscriberRuntime
+var StepDurationBuckets = []float64{
+	1e3, 5e3, 1e4, 2.5e4, 5e4, 1e5, 2.5e5, 5e5,
+	1e6, 2.5e6, 5e6, 1e7, 2.5e7, 5e7, 1e8,
 }
 
-func (lane *Lane) start(ctx context.Context) {
-	for {
-		event, ok := lane.ring.WaitNext(ctx)
-		if !ok {
-			return
+/*
+ServiceClass is the explicit scheduling class every subscription declares. Only
+Analytics executes under the analytical semaphore; PriorityControl, Realtime,
+and UI always skip it.
+*/
+type ServiceClass int
+
+const (
+	ServicePriorityControl ServiceClass = iota
+	ServiceRealtime
+	ServiceAnalytics
+	ServiceUI
+)
+
+func (class ServiceClass) String() string {
+	switch class {
+	case ServicePriorityControl:
+		return "priority_control"
+	case ServiceRealtime:
+		return "realtime"
+	case ServiceAnalytics:
+		return "analytics"
+	case ServiceUI:
+		return "ui"
+	}
+
+	return "unknown"
+}
+
+/*
+DeliveryPolicy is the per-edge publication policy every subscription declares
+explicitly. There is no implicit default; callers must choose.
+*/
+type DeliveryPolicy int
+
+const (
+	DeliveryReliableFIFO DeliveryPolicy = iota
+	DeliveryObservationalFIFO
+	DeliveryLatestByKey
+	DeliveryPriorityFIFO
+)
+
+func (policy DeliveryPolicy) String() string {
+	switch policy {
+	case DeliveryReliableFIFO:
+		return "reliable_fifo"
+	case DeliveryObservationalFIFO:
+		return "observational_fifo"
+	case DeliveryLatestByKey:
+		return "latest_by_key"
+	case DeliveryPriorityFIFO:
+		return "priority_fifo"
+	}
+
+	return "unknown"
+}
+
+/*
+Event is the payload stored in a physical Disruptor slot together with its
+publication sequence. Sequence is the LMAX sequence, not a synthetic index.
+*/
+type Event struct {
+	Sequence int64
+	Value    any
+}
+
+/*
+ringBuffer is the contiguous slot array a Disruptor writes into and handlers
+read from. It is allocated once, sized exactly to subscriberCapacity, and never
+grows. The Disruptor is the queue; this array is only the storage it manages.
+*/
+type ringBuffer [subscriberCapacity]Event
+
+/*
+StepKind distinguishes a value-producing Step from a destructively-typed Step
+that returns an error, used only for the typed generic helpers.
+*/
+type StepKind int
+
+const (
+	kindStep StepKind = iota
+	kindStepFunc
+)
+
+/*
+SubscriberWire captures registration-time knowledge: explicit key extractor and
+step implementations, immutable class, delivery policy, and topic edges. The
+extractor resolves `any` at registration, so there is no reflection on the hot
+publication path.
+*/
+type SubscriberWire struct {
+	InTopic  string
+	OutTopic string
+	Class    ServiceClass
+	Delivery DeliveryPolicy
+
+	keyFunc  func(any) string
+	step     func(any) any
+	descStep func(any) error
+	stepKind StepKind
+
+	// keyLimit optionally bounds the LatestByKey cell cardinality. Zero means
+	// the configured infrastructure default applies.
+	keyLimit int
+}
+
+/*
+Subscriber is one logical subscriber: exactly one physical LMAX Disruptor and
+one handler group of long-lived, key-affine handlers. It never owns multiple
+rings and never admits a queue after the ring.
+*/
+type Subscriber struct {
+	id        uint32
+	name      string
+	workspace *Workspace
+	wire      SubscriberWire
+
+	disruptor  disruptor.Disruptor
+	buffer     *ringBuffer
+	handlers   []*keyedHandler
+	handlerCnt int
+
+	// reliableRequested tracks that at least one reliable edge exists so
+	// quiescence can distinguish "drained" from "never had work".
+	started atomic.Bool
+
+	// latest-state cells: fixed per-key current value plus an outstanding dirty
+	// notification flag. The cells are bounded state, never a work queue.
+	latestMu     sync.Mutex
+	latestDirty  map[string]bool
+	latestCells  map[string]*atomic.Pointer[any]
+
+	// telemetry
+	published      atomic.Uint64
+	completed      atomic.Uint64
+	tryReserveFmt  atomic.Uint64
+	dropped        atomic.Uint64
+	lastDrop       atomic.Int64
+	typeMismatch   atomic.Uint64
+	stepCount      atomic.Uint64
+	stepMaxNanos   atomic.Int64
+	activeHandlers atomic.Int64
+	lastComplete   atomic.Int64
+}
+
+/*
+keyedHandler is one long-lived handler inside a subscriber's single handler
+group. Every input has an explicit execution key; only the handler whose stable
+lane identity matches hash(key) % handlerCount executes Step for that event. All
+other handlers acknowledge/skip cheaply.
+*/
+type keyedHandler struct {
+	subscriber *Subscriber
+	id         int
+}
+
+func (handler *keyedHandler) Handle(lower, upper int64) {
+	subscriber := handler.subscriber
+	handlerCount := subscriber.handlerCnt
+
+	subscriber.activeHandlers.Add(1)
+	defer subscriber.activeHandlers.Add(-1)
+
+	for sequence := lower; sequence <= upper; sequence++ {
+		event := &subscriber.buffer[sequence&subscriberCapacityMask]
+
+		if ownerOf(event.Value, subscriber.wire.keyFunc, handlerCount) != handler.id {
+			continue
 		}
 
-		lane.runtime.workspace.acquireAnalyticsToken(ctx)
-		lane.process(event)
-		lane.runtime.workspace.releaseAnalyticsToken()
+		subscriber.execute(event)
 	}
 }
 
-func (lane *Lane) process(event RingEvent) {
+/*
+ownerOf resolves hash(key) % handlerCount for an event's registered key. The
+empty key collapses to the unkeyed/global lane.
+*/
+func ownerOf(value any, keyFunc func(any) string, handlerCount int) int {
+	if handlerCount <= 1 {
+		return 0
+	}
+
+	if keyFunc == nil {
+		return 0
+	}
+
+	key := keyFunc(value)
+	if key == "" {
+		key = globalKey
+	}
+
+	hasher := fnv.New32a()
+	_, _ = hasher.Write([]byte(key))
+
+	return int(hasher.Sum32()) % handlerCount
+}
+
+/*
+execute runs one Step for one owned event inside its owning handler. The
+analytical token (Analytics class only) is acquired around Step and released
+before any downstream publication, so a full downstream ring can never deadlock
+against a downstream subscriber waiting for analytical CPU.
+*/
+func (subscriber *Subscriber) execute(event *Event) {
+	value := event.Value
+
+	if subscriber.wire.Delivery == DeliveryLatestByKey {
+		resolved := subscriber.resolveLatest(value)
+		if resolved == nil {
+			return
+		}
+
+		value = resolved
+	}
+
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			var err error
-
-			if panicErr, ok := recovered.(error); ok {
-				err = fmt.Errorf("workspace: subscriber panic on %s (out: %s): %w\n%s", lane.runtime.inTopic, lane.runtime.outTopic, panicErr, string(debug.Stack()))
-			}
-
-			if err == nil {
-				err = fmt.Errorf("workspace: subscriber panic on %s (out: %s): %v\n%s", lane.runtime.inTopic, lane.runtime.outTopic, recovered, string(debug.Stack()))
-			}
-
-			if failureFn := lane.runtime.workspace.failureHandler.Load(); failureFn != nil && *failureFn != nil {
-				(*failureFn)(err)
-			}
-
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"workspace: subscriber panic",
-				err,
-			))
+			subscriber.reportPanic(recovered)
 		}
 	}()
 
 	started := time.Now()
-	output := lane.runtime.step(event.Value)
-	duration := time.Since(started)
 
-	lane.runtime.stepDurationNanos.Add(duration.Nanoseconds())
-	lane.runtime.stepCount.Add(1)
-	lane.runtime.completedEvents.Add(1)
+	if subscriber.wire.Class == ServiceAnalytics {
+		subscriber.workspace.acquireAnalyticsToken()
+	}
 
-	if output != nil && lane.runtime.outTopic != "" {
-		lane.runtime.workspace.Publish(lane.runtime.outTopic, output)
+	var output any
+
+	switch subscriber.wire.stepKind {
+	case kindStepFunc:
+		if err := subscriber.wire.descStep(value); err != nil {
+			subscriber.typeMismatch.Add(1)
+			subscriber.workspace.reportFailure(err)
+		}
+	case kindStep:
+		output = subscriber.wire.step(value)
+	}
+
+	if subscriber.wire.Class == ServiceAnalytics {
+		subscriber.workspace.releaseAnalyticsToken()
+	}
+
+	subscriber.recordLatency(time.Since(started))
+	subscriber.completed.Add(1)
+	subscriber.lastComplete.Store(time.Now().UnixNano())
+
+	if output != nil && subscriber.wire.OutTopic != "" {
+		subscriber.workspace.publish(subscriber.wire.OutTopic, output)
+	}
+}
+
+func (subscriber *Subscriber) reportPanic(recovered any) {
+	var failure error
+
+	switch panicErr := recovered.(type) {
+	case error:
+		failure = fmt.Errorf(
+			"workspace: subscriber panic on %s (out: %s): %w\n%s",
+			subscriber.wire.InTopic,
+			subscriber.wire.OutTopic,
+			panicErr,
+			string(debug.Stack()),
+		)
+	default:
+		failure = fmt.Errorf(
+			"workspace: subscriber panic on %s (out: %s): %v\n%s",
+			subscriber.wire.InTopic,
+			subscriber.wire.OutTopic,
+			recovered,
+			string(debug.Stack()),
+		)
+	}
+
+	subscriber.workspace.reportFailure(failure)
+	errnie.Error(errnie.Err(errnie.Internal, "workspace: subscriber panic", failure))
+}
+
+func (subscriber *Subscriber) recordLatency(duration time.Duration) {
+	nanos := duration.Nanoseconds()
+	subscriber.stepCount.Add(1)
+
+	for {
+		maxSeen := subscriber.stepMaxNanos.Load()
+		if nanos <= maxSeen || subscriber.stepMaxNanos.CompareAndSwap(maxSeen, nanos) {
+			break
+		}
 	}
 }
 
 /*
-SubscriberRuntime represents an independently executing processing stage backed by its own bounded lanes.
+pendingList is copy-on-write downstream edge registration. The slice is replaced
+atomically on mutation; the hot publication path only Loads it.
 */
-type SubscriberRuntime struct {
-	id                uint32
-	workspace         *Workspace
-	inTopic           string
-	outTopic          string
-	keyFunc           func(any) string
-	step              func(any) any
-	lanes             []*Lane
-	completedEvents   atomic.Uint64
-	stepCount         atomic.Uint64
-	stepDurationNanos atomic.Int64
+type pendingList struct {
+	pointer atomic.Pointer[[]*Subscriber]
 }
 
-func (runtime *SubscriberRuntime) Enqueue(value any) {
-	key := runtime.keyFunc(value)
-	hasher := fnv.New32a()
-	_, _ = hasher.Write([]byte(key))
-	laneIndex := int(hasher.Sum32()) % len(runtime.lanes)
+func (list *pendingList) load() []*Subscriber {
+	if list == nil {
+		return nil
+	}
 
-	lane := runtime.lanes[laneIndex]
-	_ = lane.ring.Enqueue(value) // Enqueue never blocks, it overwrites oldest if full for observational.
+	loaded := list.pointer.Load()
+	if loaded == nil {
+		return nil
+	}
+
+	return *loaded
 }
 
-func (runtime *SubscriberRuntime) Close() error {
-	for _, lane := range runtime.lanes {
-		lane.ring.Close()
-	}
-	return nil
-}
-
-/*
-DefaultKeyExtractor attempts to extract a partition/ordering key from value.
-If none is identifiable, it returns "global".
-*/
-func DefaultKeyExtractor(value any) string {
-	if value == nil {
-		return "global"
+func (list *pendingList) append(target *Subscriber) {
+	if list == nil {
+		return
 	}
 
-	switch item := value.(type) {
-	case string:
-		return item
-	case interface{ ExecutionKey() string }:
-		return item.ExecutionKey()
-	case interface{ Symbol() string }:
-		return item.Symbol()
-	case interface{ GetSymbol() string }:
-		return item.GetSymbol()
-	}
+	for {
+		current := list.pointer.Load()
 
-	val := reflect.ValueOf(value)
+		var next []*Subscriber
 
-	if val.Kind() == reflect.Pointer {
-		val = val.Elem()
-	}
-
-	if val.IsValid() && val.Kind() == reflect.Slice && val.Len() > 0 {
-		first := val.Index(0)
-
-		if first.Kind() == reflect.Pointer {
-			first = first.Elem()
+		if current == nil {
+			next = []*Subscriber{target}
+		} else {
+			next = make([]*Subscriber, len(*current)+1)
+			copy(next, *current)
+			next[len(*current)] = target
 		}
 
-		if first.IsValid() && first.Kind() == reflect.Struct {
-			if field := first.FieldByName("Symbol"); field.IsValid() && field.Kind() == reflect.String {
-				if symbol := field.String(); symbol != "" {
-					return symbol
-				}
-			}
-
-			if field := first.FieldByName("Label"); field.IsValid() && field.Kind() == reflect.String {
-				if label := field.String(); label != "" {
-					return label
-				}
-			}
+		if list.pointer.CompareAndSwap(current, &next) {
+			return
 		}
 	}
-
-	if val.IsValid() && val.Kind() == reflect.Struct {
-		if field := val.FieldByName("Symbol"); field.IsValid() && field.Kind() == reflect.String {
-			if symbol := field.String(); symbol != "" {
-				return symbol
-			}
-		}
-
-		if field := val.FieldByName("Label"); field.IsValid() && field.Kind() == reflect.String {
-			if label := field.String(); label != "" {
-				return label
-			}
-		}
-	}
-
-	return "global"
 }
 
 /*
-Workspace is the typed dataflow coordinator and routing substrate.
+Workspace is SYMM's real-time streaming execution fabric. SYMM is a stream
+end-to-end: the LMAX Disruptor ring is the queue, and there is no queue after
+the ring.
 */
 type Workspace struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	pool           *Pool[func()]
-	nextRuntimeID  atomic.Uint32
-	runtimesMu     sync.RWMutex
-	runtimes       []*SubscriberRuntime
-	subscribers    *lf.SkipList[string, *atomic.Pointer[[]*SubscriberRuntime]]
-	shared         *lf.SkipList[string, any]
-	signals        *lf.SkipList[string, *atomic.Pointer[[]func()]]
-	failureHandler atomic.Pointer[func(error)]
-	
-	analyticsSem   chan struct{}
-	laneCount      int
-}
+	ctx    context.Context
+	cancel context.CancelFunc
 
-func stringLess(first string, second string) bool {
-	return first < second
+	analyticsSem chan struct{}
+	handlerCount int
+
+	nextSubscriberID atomic.Uint32
+	subscribersMu    sync.RWMutex
+	subscribers      []*Subscriber
+
+	routerMu sync.RWMutex
+	router   map[string]*pendingList
+
+	sharedMu sync.Mutex
+	shared   map[string]any
+
+	signalsMu sync.RWMutex
+	signals   map[string][]func()
+
+	failureHandler atomic.Pointer[func(error)]
+
+	// latestKeyLimit bounds LatestByKey cell cardinality; zero means unbounded
+	// growth is allowed only for UI/diagnostics streams whose universe is fixed.
 }
 
 func NewWorkspace(ctx context.Context) *Workspace {
-	return NewWorkspaceWithWorkers(ctx, 0)
-}
-
-func NewWorkspaceWithWorkers(ctx context.Context, maxWorkers int) *Workspace {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-
-	workerPool := NewPool[func()](func(task func()) {
-		task()
-	})
-	workerPool.Start()
-
-	if maxWorkers <= 0 {
-		maxWorkers = 32 // reasonable default for analytical concurrency budget
+	workspaceCtx, cancel := context.WithCancel(ctx)
+	handlerCount := runtime.GOMAXPROCS(0)
+	if handlerCount < 1 {
+		handlerCount = 1
 	}
-	
-	laneCount := 16 // reasonable hash lanes per subscriber
 
-	workspace := &Workspace{
-		ctx:          ctx,
+	return &Workspace{
+		ctx:          workspaceCtx,
 		cancel:       cancel,
-		pool:         workerPool,
-		subscribers:  lf.NewSkipList[string, *atomic.Pointer[[]*SubscriberRuntime]](stringLess),
-		shared:       lf.NewSkipList[string, any](stringLess),
-		signals:      lf.NewSkipList[string, *atomic.Pointer[[]func()]](stringLess),
-		analyticsSem: make(chan struct{}, maxWorkers),
-		laneCount:    laneCount,
+		analyticsSem: make(chan struct{}, handlerCount),
+		handlerCount: handlerCount,
+		router:       make(map[string]*pendingList),
+		shared:       make(map[string]any),
+		signals:      make(map[string][]func()),
 	}
-
-	return workspace
 }
 
-func (workspace *Workspace) Close() error {
-	workspace.cancel()
-
-	workspace.runtimesMu.Lock()
-	for _, runtime := range workspace.runtimes {
-		_ = runtime.Close()
-	}
-	workspace.runtimesMu.Unlock()
-
-	if workspace.pool != nil {
-		workspace.pool.Stop()
+func (workspace *Workspace) acquireAnalyticsToken() {
+	if workspace == nil || workspace.analyticsSem == nil {
+		return
 	}
 
-	return nil
-}
-
-func (workspace *Workspace) acquireAnalyticsToken(ctx context.Context) {
 	select {
 	case workspace.analyticsSem <- struct{}{}:
-	case <-ctx.Done():
+	case <-workspace.ctx.Done():
 	}
 }
 
 func (workspace *Workspace) releaseAnalyticsToken() {
+	if workspace == nil || workspace.analyticsSem == nil {
+		return
+	}
+
 	select {
 	case <-workspace.analyticsSem:
 	default:
@@ -264,16 +446,462 @@ func (workspace *Workspace) releaseAnalyticsToken() {
 }
 
 func (workspace *Workspace) SetFailureHandler(handler func(error)) {
+	if workspace == nil {
+		return
+	}
+
 	workspace.failureHandler.Store(&handler)
 }
 
+func (workspace *Workspace) reportFailure(failure error) {
+	if workspace == nil || failure == nil {
+		return
+	}
+
+	if handler := workspace.failureHandler.Load(); handler != nil && *handler != nil {
+		(*handler)(failure)
+	}
+}
+
+/*
+Close stops publication by cancelling the workspace context and closes every
+subscriber's Disruptor so handler goroutines drain and exit.
+*/
+func (workspace *Workspace) Close() error {
+	if workspace == nil {
+		return nil
+	}
+
+	workspace.cancel()
+
+	workspace.subscribersMu.Lock()
+	subscribers := workspace.subscribers
+	workspace.subscribers = nil
+	workspace.subscribersMu.Unlock()
+
+	for _, subscriber := range subscribers {
+		if subscriber != nil && subscriber.disruptor != nil {
+			_ = subscriber.disruptor.Close()
+		}
+	}
+
+	return nil
+}
+
+/*
+Wire registers an unkeyed/global subscriber with the default Analytics class and
+ObservationalFIFO delivery. Global subscribers explicitly declare key = global.
+*/
+func (workspace *Workspace) Wire(inTopic string, outTopic string, step func(any) any) {
+	workspace.register(SubscriberWire{
+		InTopic:  inTopic,
+		OutTopic: outTopic,
+		Class:    ServiceAnalytics,
+		Delivery: DeliveryObservationalFIFO,
+		keyFunc:  func(any) string { return globalKey },
+		step:     step,
+		stepKind: kindStep,
+	})
+}
+
+/*
+WireFunc registers a destructively-typed subscriber with the default Analytics
+class and ObservationalFIFO delivery.
+*/
+func WireFunc[T any, U any](workspace *Workspace, inTopic string, outTopic string, step func(T) U) {
+	if workspace == nil {
+		return
+	}
+
+	workspace.register(SubscriberWire{
+		InTopic:  inTopic,
+		OutTopic: outTopic,
+		Class:    ServiceAnalytics,
+		Delivery: DeliveryObservationalFIFO,
+		keyFunc:  func(any) string { return globalKey },
+		step:     func(input any) any { return step(input.(T)) },
+		stepKind: kindStep,
+	})
+}
+
+func WireNode[T any, U any](workspace *Workspace, inTopic string, outTopic string, node Node[T, U]) {
+	if workspace == nil {
+		return
+	}
+
+	WireFunc[T, U](workspace, inTopic, outTopic, node.Step)
+}
+
+/*
+WireKeyed registers a keyed subscriber with an explicit, registration-time key
+extractor. No reflection happens on the publication path.
+*/
+func WireKeyed[T any, U any](
+	workspace *Workspace,
+	inTopic string,
+	outTopic string,
+	keyFunc func(T) string,
+	step func(T) U,
+) {
+	if workspace == nil {
+		return
+	}
+
+	if keyFunc == nil {
+		keyFunc = func(T) string { return globalKey }
+	}
+
+	workspace.register(SubscriberWire{
+		InTopic:  inTopic,
+		OutTopic: outTopic,
+		Class:    ServiceAnalytics,
+		Delivery: DeliveryObservationalFIFO,
+		keyFunc:  func(input any) string { return keyFunc(input.(T)) },
+		step:     func(input any) any { return step(input.(T)) },
+		stepKind: kindStep,
+	})
+}
+
+/*
+WireKeyedFunc is retained for source compatibility with existing callers.
+*/
+func WireKeyedFunc[T any, U any](
+	workspace *Workspace,
+	inTopic string,
+	outTopic string,
+	keyFunc func(T) string,
+	step func(T) U,
+) {
+	WireKeyed[T, U](workspace, inTopic, outTopic, keyFunc, step)
+}
+
+/*
+WireWithKey registers a subscriber with an explicit `any` key extractor and an
+already-boxed step, preserving the pre-v3 dynamic API.
+*/
+func (workspace *Workspace) WireWithKey(
+	inTopic string,
+	outTopic string,
+	keyFunc func(any) string,
+	step func(any) any,
+) {
+	if keyFunc == nil {
+		keyFunc = func(any) string { return globalKey }
+	}
+
+	workspace.register(SubscriberWire{
+		InTopic:  inTopic,
+		OutTopic: outTopic,
+		Class:    ServiceAnalytics,
+		Delivery: DeliveryObservationalFIFO,
+		keyFunc:  keyFunc,
+		step:     step,
+		stepKind: kindStep,
+	})
+}
+
+/*
+WireClass registers a fully-specified subscriber: explicit service class,
+delivery policy, key extractor, and step.
+*/
+func (workspace *Workspace) WireClass(
+	inTopic string,
+	outTopic string,
+	class ServiceClass,
+	delivery DeliveryPolicy,
+	keyFunc func(any) string,
+	step func(any) any,
+) {
+	if keyFunc == nil {
+		keyFunc = func(any) string { return globalKey }
+	}
+
+	workspace.register(SubscriberWire{
+		InTopic:  inTopic,
+		OutTopic: outTopic,
+		Class:    class,
+		Delivery: delivery,
+		keyFunc:  keyFunc,
+		step:     step,
+		stepKind: kindStep,
+	})
+}
+
+/*
+WireClassStepFunc registers a destructive subscriber with an explicit class and
+delivery whose step reports a descriptive error on type mismatch.
+*/
+func (workspace *Workspace) WireClassStepFunc(
+	inTopic string,
+	outTopic string,
+	class ServiceClass,
+	delivery DeliveryPolicy,
+	keyFunc func(any) string,
+	step func(any) error,
+) {
+	if keyFunc == nil {
+		keyFunc = func(any) string { return globalKey }
+	}
+
+	workspace.register(SubscriberWire{
+		InTopic:  inTopic,
+		OutTopic: outTopic,
+		Class:    class,
+		Delivery: delivery,
+		keyFunc:  keyFunc,
+		descStep: step,
+		stepKind: kindStepFunc,
+	})
+}
+
+/*
+register constructs exactly one Subscriber with exactly one physical Disruptor
+and one handler group of handlerCount long-lived keyed handlers. It is the only
+place a Disruptor is created; a subscriber never gets more than one.
+*/
+func (workspace *Workspace) register(wire SubscriberWire) *Subscriber {
+	handlerCount := workspace.handlerCount
+	if wire.Delivery == DeliveryLatestByKey {
+		// Latest-state consumers render per key and coalesce, so a single
+		// consumer sequence is sufficient and avoids fanning one render across
+		// keyed handlers that would still need to be serialized per key.
+		handlerCount = 1
+	}
+
+	if handlerCount < 1 {
+		handlerCount = 1
+	}
+
+	handlers := make([]*keyedHandler, handlerCount)
+	group := make([]disruptor.Handler, handlerCount)
+
+	for index := 0; index < handlerCount; index++ {
+		handlers[index] = &keyedHandler{id: index}
+		group[index] = handlers[index]
+	}
+
+	buffer := new(ringBuffer)
+	disruptorInstance, err := disruptor.New(
+		disruptor.Options.BufferCapacity(subscriberCapacity),
+		disruptor.Options.WriterCount(64),
+		disruptor.Options.NewHandlerGroup(group...),
+	)
+
+	if err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"workspace: failed to construct disruptor for "+wire.InTopic,
+			err,
+		))
+
+		return nil
+	}
+
+	subscriber := &Subscriber{
+		id:          workspace.nextSubscriberID.Add(1),
+		name:        wire.InTopic,
+		workspace:   workspace,
+		wire:        wire,
+		disruptor:   disruptorInstance,
+		buffer:      buffer,
+		handlers:    handlers,
+		handlerCnt:  handlerCount,
+		latestDirty: make(map[string]bool),
+		latestCells: make(map[string]*atomic.Pointer[any]),
+	}
+
+	for _, handler := range handlers {
+		handler.subscriber = subscriber
+	}
+
+	go disruptorInstance.Listen()
+	subscriber.started.Store(true)
+
+	workspace.subscribersMu.Lock()
+	workspace.subscribers = append(workspace.subscribers, subscriber)
+	workspace.subscribersMu.Unlock()
+
+	workspace.routerMu.Lock()
+	list := workspace.router[wire.InTopic]
+	if list == nil {
+		list = &pendingList{}
+		workspace.router[wire.InTopic] = list
+	}
+	workspace.routerMu.Unlock()
+
+	list.append(subscriber)
+
+	return subscriber
+}
+
+/*
+Publish fans a value out to every eligible subscriber on a topic, following each
+subscriber's declared delivery policy. This is the entire hot path: copy-on-write
+list load, no global mutex, no reflection, no routing rebuild.
+*/
+func (workspace *Workspace) Publish(topic string, value any) {
+	workspace.publish(topic, value)
+}
+
+func (workspace *Workspace) publish(topic string, value any) {
+	workspace.routerMu.RLock()
+	list := workspace.router[topic]
+	workspace.routerMu.RUnlock()
+
+	if list == nil {
+		return
+	}
+
+	for _, subscriber := range list.load() {
+		subscriber.publish(value)
+	}
+}
+
+func (subscriber *Subscriber) publish(value any) {
+	switch subscriber.wire.Delivery {
+	case DeliveryLatestByKey:
+		subscriber.publishLatest(value)
+	case DeliveryReliableFIFO, DeliveryPriorityFIFO:
+		subscriber.publishReliable(value)
+	case DeliveryObservationalFIFO:
+		subscriber.publishObservational(value)
+	}
+}
+
+/*
+publishObservational uses the library's native TryReserve: a non-blocking
+reservation that reports ErrCapacityUnavailable when consumers have not advanced
+far enough. On failure it records the drop explicitly; it never blocks and never
+creates another queue.
+*/
+func (subscriber *Subscriber) publishObservational(value any) {
+	sequence := subscriber.disruptor.TryReserve(1)
+	if sequence < 0 {
+		subscriber.dropped.Add(1)
+		subscriber.tryReserveFmt.Add(1)
+		subscriber.lastDrop.Store(time.Now().UnixNano())
+		return
+	}
+
+	subscriber.buffer[sequence&subscriberCapacityMask] = Event{Sequence: sequence, Value: value}
+	subscriber.disruptor.Commit(sequence, sequence)
+	subscriber.published.Add(1)
+}
+
+/*
+publishReliable uses the library's blocking Reserve: backpressure is real,
+visible, and bounded. No event is dropped and no second queue evades it.
+*/
+func (subscriber *Subscriber) publishReliable(value any) {
+	sequence := subscriber.disruptor.Reserve(1)
+	if sequence < 0 {
+		subscriber.workspace.reportFailure(errnie.Err(
+			errnie.NotAcceptable,
+			"workspace: reliable reservation failed",
+			nil,
+		))
+
+		return
+	}
+
+	subscriber.buffer[sequence&subscriberCapacityMask] = Event{Sequence: sequence, Value: value}
+	subscriber.disruptor.Commit(sequence, sequence)
+	subscriber.published.Add(1)
+}
+
+/*
+publishLatest implements LatestByKey using fixed per-key state plus LMAX dirty
+notifications. The latest cell is replaced on every update; if the key is already
+dirty no further notification is emitted, so there is at most one outstanding
+notification per key. The Disruptor carries only the dirty key token.
+*/
+func (subscriber *Subscriber) publishLatest(value any) {
+	key := subscriber.wire.keyFunc(value)
+	if key == "" {
+		key = globalKey
+	}
+
+	subscriber.latestMu.Lock()
+
+	cell, exists := subscriber.latestCells[key]
+	if !exists {
+		limit := subscriber.wire.keyLimit
+		if limit <= 0 {
+			limit = 640
+		}
+
+		if len(subscriber.latestCells) >= limit {
+			subscriber.workspace.reportFailure(errnie.Err(
+				errnie.TooManyRequests,
+				fmt.Sprintf("workspace: latest-state key cardinality exceeds limit %d", limit),
+				nil,
+			))
+
+			subscriber.latestMu.Unlock()
+			return
+		}
+
+		subscriber.latestCells[key] = &atomic.Pointer[any]{}
+		subscriber.latestDirty[key] = false
+		cell = subscriber.latestCells[key]
+	}
+
+	cell.Store(&value)
+	alreadyDirty := subscriber.latestDirty[key]
+	subscriber.latestDirty[key] = true
+
+	subscriber.latestMu.Unlock()
+
+	if alreadyDirty {
+		return
+	}
+
+	// Publish only the dirty key token through LMAX; the payload stays in the
+	// fixed latest cell and never queues.
+	token := key
+	subscriber.publishReliable(token)
+}
+
+/*
+resolveLatest drains the fixed latest cell for a dirty key and clears the dirty
+flag. It returns nil (skip) if the cell was never populated.
+*/
+func (subscriber *Subscriber) resolveLatest(value any) any {
+	key, ok := value.(string)
+	if !ok {
+		key = globalKey
+	}
+
+	subscriber.latestMu.Lock()
+	cell, exists := subscriber.latestCells[key]
+	if exists {
+		subscriber.latestDirty[key] = false
+	}
+	subscriber.latestMu.Unlock()
+
+	if !exists {
+		return nil
+	}
+
+	loaded := cell.Load()
+	if loaded == nil {
+		return nil
+	}
+
+	return *loaded
+}
+
+/*
+WaitForQuiescence blocks until every reliable stream has drained (committed
+sequences consumed and no handler executing) and every latest-state stream has
+no dirty keys pending. It uses Disruptor progress, never sleep-based guessing.
+*/
 func (workspace *Workspace) WaitForQuiescence(args ...any) error {
 	if workspace == nil {
 		return nil
 	}
 
 	maxWait := 5 * time.Second
-
 	for _, arg := range args {
 		if duration, ok := arg.(time.Duration); ok && duration > 0 {
 			maxWait = duration
@@ -283,173 +911,228 @@ func (workspace *Workspace) WaitForQuiescence(args ...any) error {
 	deadline := time.Now().Add(maxWait)
 
 	for {
-		pending := int64(0)
-		workspace.runtimesMu.RLock()
-		for _, runtime := range workspace.runtimes {
-			for _, lane := range runtime.lanes {
-				pending += lane.ring.Occupancy()
-			}
-		}
-		workspace.runtimesMu.RUnlock()
-		
-		if pending <= 0 {
+		if workspace.quiescent() {
 			return nil
 		}
 
 		if time.Now().After(deadline) {
-			return fmt.Errorf(
-				"workspace: quiescence timeout with %d events pending in rings",
-				pending,
-			)
+			return fmt.Errorf("workspace: quiescence timeout")
 		}
 
 		time.Sleep(200 * time.Microsecond)
 	}
 }
 
-func (workspace *Workspace) Publish(topic string, value any) {
-	if subPtr, found := workspace.subscribers.Get(topic); found && subPtr != nil {
-		subList := subPtr.Load()
+func (workspace *Workspace) quiescent() bool {
+	workspace.subscribersMu.RLock()
+	subscribers := workspace.subscribers
+	workspace.subscribersMu.RUnlock()
 
-		if subList != nil {
-			for _, runtime := range *subList {
-				runtime.Enqueue(value)
+	for _, subscriber := range subscribers {
+		if subscriber == nil {
+			continue
+		}
+
+		if subscriber.activeHandlers.Load() > 0 {
+			return false
+		}
+
+		if subscriber.wire.Delivery == DeliveryLatestByKey {
+			subscriber.latestMu.Lock()
+			hasDirty := false
+
+			for _, dirty := range subscriber.latestDirty {
+				if dirty {
+					hasDirty = true
+					break
+				}
+			}
+
+			subscriber.latestMu.Unlock()
+
+			if hasDirty {
+				return false
 			}
 		}
+
+		// A reliable/observational subscriber is drained when published equals
+		// completed; the Disruptor sequence tracking makes this the actual
+		// committed-vs-completed measure, never a software backlog guess.
+		if subscriber.published.Load() != subscriber.completed.Load() {
+			return false
+		}
+	}
+
+	return true
+}
+
+/*
+Snapshot is the per-subscriber telemetry record. Capacity is the physical LMAX
+ring capacity; it never exceeds that and never reflects any hidden pending work.
+*/
+type Snapshot struct {
+	Name           string
+	InTopic        string
+	OutTopic       string
+	ServiceClass   string
+	Delivery       string
+	Capacity       uint64
+	Published      uint64
+	Completed      uint64
+	Dropped        uint64
+	TryReserveFail uint64
+	TypeMismatch   uint64
+	StepCalls      uint64
+	StepMaxNanos   int64
+	HandlerCount   int
+	ActiveHandlers uint64
+	LastDropUnixNano int64
+
+	// Legacy diagnostics fields. Pending is derived from actual Disruptor
+	// progress (published minus completed), never a software backlog; Lanes is
+	// the count of key-affine handlers, not the number of physical rings.
+	Pending uint64
+	Lanes   uint64
+}
+
+/*
+WorkspaceSnapshot is the compatibility name the diagnostics layer uses. It is
+an alias of Snapshot; its fields are ring-meaningful, never exceeding physical
+ring capacity for a single logical subscriber.
+*/
+type WorkspaceSnapshot = Snapshot
+
+func (subscriber *Subscriber) snapshot() Snapshot {
+	published := subscriber.published.Load()
+	completed := subscriber.completed.Load()
+
+	var pending uint64
+	if published > completed {
+		pending = published - completed
+	}
+
+	return Snapshot{
+		Name:             subscriber.name,
+		InTopic:          subscriber.wire.InTopic,
+		OutTopic:         subscriber.wire.OutTopic,
+		ServiceClass:     subscriber.wire.Class.String(),
+		Delivery:         subscriber.wire.Delivery.String(),
+		Capacity:         uint64(subscriberCapacity),
+		Published:        published,
+		Completed:        completed,
+		Dropped:          subscriber.dropped.Load(),
+		TryReserveFail:   subscriber.tryReserveFmt.Load(),
+		TypeMismatch:     subscriber.typeMismatch.Load(),
+		StepCalls:        subscriber.stepCount.Load(),
+		StepMaxNanos:     subscriber.stepMaxNanos.Load(),
+		HandlerCount:     subscriber.handlerCnt,
+		ActiveHandlers:   uint64(subscriber.activeHandlers.Load()),
+		LastDropUnixNano: subscriber.lastDrop.Load(),
+		Pending:          pending,
+		Lanes:            uint64(subscriber.handlerCnt),
 	}
 }
 
-func (workspace *Workspace) Wire(inTopic string, outTopic string, step func(any) any) {
-	workspace.WireWithKey(inTopic, outTopic, DefaultKeyExtractor, step)
+/*
+Snapshots returns per-subscriber telemetry for every registered subscriber.
+*/
+func (workspace *Workspace) Snapshots() []Snapshot {
+	if workspace == nil {
+		return nil
+	}
+
+	workspace.subscribersMu.RLock()
+	defer workspace.subscribersMu.RUnlock()
+
+	snapshots := make([]Snapshot, 0, len(workspace.subscribers))
+	for _, subscriber := range workspace.subscribers {
+		snapshots = append(snapshots, subscriber.snapshot())
+	}
+
+	return snapshots
 }
 
-func (workspace *Workspace) WireWithKey(
-	inTopic string,
-	outTopic string,
-	keyFunc func(any) string,
-	step func(any) any,
-) {
-	if keyFunc == nil {
-		keyFunc = DefaultKeyExtractor
+/*
+TopicSnapshot aggregates per-subscriber telemetry for one topic so the existing
+diagnostics layer keeps its shape.
+*/
+func (workspace *Workspace) TopicSnapshot(topic string) Snapshot {
+	if workspace == nil {
+		return Snapshot{}
 	}
 
-	runtimeID := workspace.nextRuntimeID.Add(1)
+	workspace.routerMu.RLock()
+	list := workspace.router[topic]
+	workspace.routerMu.RUnlock()
 
-	runtime := &SubscriberRuntime{
-		id:         runtimeID,
-		workspace:  workspace,
-		inTopic:    inTopic,
-		outTopic:   outTopic,
-		keyFunc:    keyFunc,
-		step:       step,
-		lanes:      make([]*Lane, workspace.laneCount),
+	if list == nil {
+		return Snapshot{Name: topic, InTopic: topic}
 	}
 
-	for i := 0; i < workspace.laneCount; i++ {
-		lane := &Lane{
-			id:      i,
-			ring:    NewRing(subscriberCapacity, StreamObservational),
-			runtime: runtime,
+	aggregate := Snapshot{Name: topic, InTopic: topic}
+
+	for _, subscriber := range list.load() {
+		snap := subscriber.snapshot()
+		aggregate.Published += snap.Published
+		aggregate.Completed += snap.Completed
+		aggregate.Dropped += snap.Dropped
+		aggregate.TryReserveFail += snap.TryReserveFail
+		aggregate.TypeMismatch += snap.TypeMismatch
+		aggregate.StepCalls += snap.StepCalls
+		aggregate.ActiveHandlers += snap.ActiveHandlers
+		aggregate.Lanes += snap.Lanes
+		if snap.StepMaxNanos > aggregate.StepMaxNanos {
+			aggregate.StepMaxNanos = snap.StepMaxNanos
 		}
-		runtime.lanes[i] = lane
-		go lane.start(workspace.ctx)
-	}
-
-	workspace.runtimesMu.Lock()
-	workspace.runtimes = append(workspace.runtimes, runtime)
-	workspace.runtimesMu.Unlock()
-
-	ptr, found := workspace.subscribers.Get(inTopic)
-
-	if !found || ptr == nil {
-		newPtr := &atomic.Pointer[[]*SubscriberRuntime]{}
-		workspace.subscribers.Set(inTopic, newPtr)
-		ptr, _ = workspace.subscribers.Get(inTopic)
-	}
-
-	for {
-		current := ptr.Load()
-		var updated []*SubscriberRuntime
-
-		if current == nil {
-			updated = []*SubscriberRuntime{runtime}
-		}
-
-		if current != nil {
-			updated = make([]*SubscriberRuntime, len(*current)+1)
-			copy(updated, *current)
-			updated[len(*current)] = runtime
-		}
-
-		if ptr.CompareAndSwap(current, &updated) {
-			break
+		if aggregate.Capacity == 0 {
+			aggregate.Capacity = snap.Capacity
 		}
 	}
+
+	aggregate.Pending = aggregate.Published - aggregate.Completed
+
+	if aggregate.Capacity == 0 {
+		aggregate.Capacity = uint64(subscriberCapacity)
+	}
+
+	return aggregate
 }
 
-func WireNode[T any, U any](workspace *Workspace, inTopic string, outTopic string, node Node[T, U]) {
-	workspace.WireWithKey(inTopic, outTopic, DefaultKeyExtractor, func(input any) any {
-		typedInput, ok := input.(T)
-
-		if !ok {
-			return nil
-		}
-
-		return node.Step(typedInput)
-	})
-}
-
-func WireFunc[T any, U any](workspace *Workspace, inTopic string, outTopic string, step func(T) U) {
-	workspace.WireWithKey(inTopic, outTopic, DefaultKeyExtractor, func(input any) any {
-		typedInput, ok := input.(T)
-
-		if !ok {
-			return nil
-		}
-
-		return step(typedInput)
-	})
-}
-
-func WireKeyed[T any, U any](
-	workspace *Workspace,
-	inTopic string,
-	outTopic string,
-	keyFunc func(T) string,
-	step func(T) U,
-) {
-	WireKeyedFunc(workspace, inTopic, outTopic, keyFunc, step)
-}
-
-func WireKeyedFunc[T any, U any](
-	workspace *Workspace,
-	inTopic string,
-	outTopic string,
-	keyFunc func(T) string,
-	step func(T) U,
-) {
-	wrappedKeyFunc := func(input any) string {
-		if typedInput, ok := input.(T); ok && keyFunc != nil {
-			return keyFunc(typedInput)
-		}
-
-		return DefaultKeyExtractor(input)
+/*
+Share stores a shared runtime object under a composite key built from name and
+optional identity components.
+*/
+func (workspace *Workspace) Share(name string, value any, id ...string) {
+	if workspace == nil {
+		return
 	}
 
-	workspace.WireWithKey(inTopic, outTopic, wrappedKeyFunc, func(input any) any {
-		typedInput, ok := input.(T)
+	key := sharedKey(name, id)
 
-		if !ok {
-			return nil
-		}
+	workspace.sharedMu.Lock()
+	workspace.shared[key] = value
+	workspace.sharedMu.Unlock()
+}
 
-		return step(typedInput)
-	})
+/*
+Shared retrieves a shared runtime object and reports whether it exists.
+*/
+func (workspace *Workspace) Shared(name string, id ...string) (any, bool) {
+	if workspace == nil {
+		return nil, false
+	}
+
+	key := sharedKey(name, id)
+
+	workspace.sharedMu.Lock()
+	value, found := workspace.shared[key]
+	workspace.sharedMu.Unlock()
+
+	return value, found
 }
 
 func sharedKey(name string, ids []string) string {
 	key := fmt.Sprintf("%d:%s/", len(name), name)
-
 	for _, id := range ids {
 		if id == "" {
 			continue
@@ -461,143 +1144,29 @@ func sharedKey(name string, ids []string) string {
 	return key
 }
 
-func (workspace *Workspace) Share(name string, value any, id ...string) {
-	key := sharedKey(name, id)
-	workspace.shared.Set(key, value)
-}
-
-func (workspace *Workspace) Shared(name string, id ...string) (any, bool) {
-	key := sharedKey(name, id)
-	return workspace.shared.Get(key)
-}
-
+/*
+On registers a signal listener; Notify dispatches to every listener.
+*/
 func (workspace *Workspace) On(signal string, handler func()) {
-	ptr, found := workspace.signals.Get(signal)
-
-	if !found || ptr == nil {
-		newPtr := &atomic.Pointer[[]func()]{}
-		workspace.signals.Set(signal, newPtr)
-		ptr, _ = workspace.signals.Get(signal)
+	if workspace == nil {
+		return
 	}
 
-	for {
-		current := ptr.Load()
-		var updated []func()
-
-		if current == nil {
-			updated = []func(){handler}
-		}
-
-		if current != nil {
-			updated = make([]func(), len(*current)+1)
-			copy(updated, *current)
-			updated[len(*current)] = handler
-		}
-
-		if ptr.CompareAndSwap(current, &updated) {
-			break
-		}
-	}
+	workspace.signalsMu.Lock()
+	workspace.signals[signal] = append(workspace.signals[signal], handler)
+	workspace.signalsMu.Unlock()
 }
 
 func (workspace *Workspace) Notify(signal string) {
-	if ptr, found := workspace.signals.Get(signal); found && ptr != nil {
-		handlers := ptr.Load()
-
-		if handlers != nil {
-			for _, handler := range *handlers {
-				targetHandler := handler
-				err := workspace.pool.AddTask(func() {
-					targetHandler()
-				})
-
-				if err != nil {
-					errnie.Error(errnie.Err(
-						errnie.TooManyRequests,
-						"workspace: failed to dispatch signal to pool",
-						err,
-					))
-				}
-			}
-		}
-	}
-}
-
-/*
-WorkspaceSnapshot captures high-level queue metrics for telemetry and diagnostics.
-*/
-type WorkspaceSnapshot struct {
-	Pending       uint64
-	Capacity      uint64
-	Lanes         uint64
-	Dropped       uint64
-	ActiveWorkers uint64
-	ActiveKeys    uint64
-}
-
-func (workspace *Workspace) Snapshot() WorkspaceSnapshot {
 	if workspace == nil {
-		return WorkspaceSnapshot{}
+		return
 	}
 
-	pending := uint64(0)
-	dropped := uint64(0)
-	lanes := uint64(0)
-	
-	workspace.runtimesMu.RLock()
-	for _, runtime := range workspace.runtimes {
-		lanes += uint64(len(runtime.lanes))
-		for _, lane := range runtime.lanes {
-			pending += uint64(lane.ring.Occupancy())
-			dropped += uint64(lane.ring.Dropped())
-		}
-	}
-	workspace.runtimesMu.RUnlock()
+	workspace.signalsMu.RLock()
+	handlers := append([]func(){}, workspace.signals[signal]...)
+	workspace.signalsMu.RUnlock()
 
-	return WorkspaceSnapshot{
-		Pending:       pending,
-		Capacity:      uint64(subscriberCapacity * int64(lanes)), // Total aggregate capacity across all lanes
-		Lanes:         lanes,
-		Dropped:       dropped,
-		ActiveWorkers: uint64(cap(workspace.analyticsSem) - len(workspace.analyticsSem)), // rough estimate
-		ActiveKeys:    0,
-	}
-}
-
-func (workspace *Workspace) TopicSnapshot(topic string) WorkspaceSnapshot {
-	if workspace == nil {
-		return WorkspaceSnapshot{}
-	}
-
-	if subPtr, found := workspace.subscribers.Get(topic); found && subPtr != nil {
-		subList := subPtr.Load()
-
-		if subList != nil {
-			pending := uint64(0)
-			dropped := uint64(0)
-			lanes := uint64(0)
-
-			for _, runtime := range *subList {
-				lanes += uint64(len(runtime.lanes))
-				for _, lane := range runtime.lanes {
-					pending += uint64(lane.ring.Occupancy())
-					dropped += uint64(lane.ring.Dropped())
-				}
-			}
-
-			return WorkspaceSnapshot{
-				Pending:  pending,
-				Capacity: uint64(subscriberCapacity * int64(lanes)),
-				Lanes:    lanes,
-				Dropped:  dropped,
-			}
-		}
-	}
-
-	return WorkspaceSnapshot{
-		Pending:  0,
-		Capacity: uint64(subscriberCapacity),
-		Lanes:    0,
-		Dropped:  0,
+	for _, handler := range handlers {
+		go handler()
 	}
 }
