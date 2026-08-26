@@ -469,36 +469,29 @@ func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float6
 	var hasQuote bool
 	var bidPrice, askPrice, bidQty, askQty float64
 
-	if sharedBook, found := level3.workspace.Shared("book", symbol); found && sharedBook != nil {
-		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
-			bestBid := currentBook.BestBid()
-			bestAsk := currentBook.BestAsk()
-
-			if bestBid != nil && bestAsk != nil {
-				bidPrice = bestBid.Price.Float64()
-				askPrice = bestAsk.Price.Float64()
-				bidQty = bestBid.Quantity.Float64()
-				askQty = bestAsk.Quantity.Float64()
-				hasQuote = true
-			}
+	inspectBook := func(currentBook *book.Book) {
+		if currentBook == nil {
+			return
 		}
-	} else if shared, found := level3.workspace.Shared("api", ""); found && shared != nil {
-		if api, ok := shared.(*websocket.API); ok && api != nil {
-			api.Book(symbol, func(currentBook *book.Book) {
-				if currentBook == nil {
-					return
-				}
-				bestBid := currentBook.BestBid()
-				bestAsk := currentBook.BestAsk()
+		bestBid := currentBook.BestBid()
+		bestAsk := currentBook.BestAsk()
 
-				if bestBid != nil && bestAsk != nil {
-					bidPrice = bestBid.Price.Float64()
-					askPrice = bestAsk.Price.Float64()
-					bidQty = bestBid.Quantity.Float64()
-					askQty = bestAsk.Quantity.Float64()
-					hasQuote = true
-				}
-			})
+		if bestBid != nil && bestAsk != nil {
+			bidPrice = bestBid.Price.Float64()
+			askPrice = bestAsk.Price.Float64()
+			bidQty = bestBid.Quantity.Float64()
+			askQty = bestAsk.Quantity.Float64()
+			hasQuote = true
+		}
+	}
+
+	if shared, found := level3.workspace.Shared("api", ""); found && shared != nil {
+		if api, ok := shared.(*websocket.API); ok && api != nil {
+			api.Book(symbol, inspectBook)
+		}
+	} else if sharedBook, found := level3.workspace.Shared("book", symbol); found && sharedBook != nil {
+		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
+			inspectBook(currentBook)
 		}
 	} else {
 		panic(fmt.Sprintf("toxicity: shared book or api missing for %s", symbol))

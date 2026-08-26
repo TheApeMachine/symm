@@ -3,6 +3,7 @@ package relation
 import (
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -31,18 +32,19 @@ type StoreSnapshot struct {
 }
 
 /*
-ObservationStore is a typed observational coordinate store. Each coordinate
-keeps its own bounded chronological ring; eviction follows the retention
-policy only. Observed zero is stored and remains distinct from missing.
+ObservationStore is a typed observational coordinate store with coordinate-local
+locking. Each coordinate keeps its own bounded chronological ring; eviction
+follows the retention policy only. Observed zero is stored and remains distinct
+from missing.
 */
 type ObservationStore struct {
-	mu       sync.RWMutex
 	policy   RetentionPolicy
-	rings    map[Coordinate]*observationRing
-	appended uint64
+	rings    sync.Map
+	appended atomic.Uint64
 }
 
 type observationRing struct {
+	mu         sync.RWMutex
 	coordinate Coordinate
 	entries    []Observation
 	head       int
@@ -60,7 +62,6 @@ func NewObservationStore(capacity int) *ObservationStore {
 
 	return &ObservationStore{
 		policy: RetentionPolicy{Capacity: capacity},
-		rings:  make(map[Coordinate]*observationRing),
 	}
 }
 
@@ -75,6 +76,30 @@ func (store *ObservationStore) Retention() RetentionPolicy {
 	return store.policy
 }
 
+func (store *ObservationStore) getOrCreateRing(coordinate Coordinate) *observationRing {
+	if stored, found := store.rings.Load(coordinate); found {
+		return stored.(*observationRing)
+	}
+
+	candidate := &observationRing{
+		coordinate: coordinate,
+		entries:    make([]Observation, store.policy.Capacity),
+	}
+	actual, _ := store.rings.LoadOrStore(coordinate, candidate)
+
+	return actual.(*observationRing)
+}
+
+func (store *ObservationStore) getRing(coordinate Coordinate) *observationRing {
+	stored, found := store.rings.Load(coordinate)
+
+	if !found {
+		return nil
+	}
+
+	return stored.(*observationRing)
+}
+
 /*
 Append stores one observation for its coordinate, evicting the oldest
 retained observation when the ring is full. It never blocks and never drops
@@ -85,21 +110,12 @@ func (store *ObservationStore) Append(observation Observation) {
 		return
 	}
 
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	ring := store.rings[observation.Coordinate]
-
-	if ring == nil {
-		ring = &observationRing{
-			coordinate: observation.Coordinate,
-			entries:    make([]Observation, store.policy.Capacity),
-		}
-		store.rings[observation.Coordinate] = ring
-	}
-
+	ring := store.getOrCreateRing(observation.Coordinate)
+	ring.mu.Lock()
 	ring.push(observation)
-	store.appended++
+	ring.mu.Unlock()
+
+	store.appended.Add(1)
 }
 
 /*
@@ -125,12 +141,16 @@ func (store *ObservationStore) History(coordinate Coordinate) []Observation {
 		return nil
 	}
 
-	store.mu.RLock()
-	defer store.mu.RUnlock()
+	ring := store.getRing(coordinate)
 
-	ring := store.rings[coordinate]
+	if ring == nil {
+		return nil
+	}
 
-	if ring == nil || ring.size == 0 {
+	ring.mu.RLock()
+
+	if ring.size == 0 {
+		ring.mu.RUnlock()
 		return nil
 	}
 
@@ -139,6 +159,8 @@ func (store *ObservationStore) History(coordinate Coordinate) []Observation {
 	for index := 0; index < ring.size; index++ {
 		history[index] = ring.at(index)
 	}
+
+	ring.mu.RUnlock()
 
 	sort.Slice(history, func(left int, right int) bool {
 		return history[left].At.Before(history[right].At)
@@ -149,19 +171,23 @@ func (store *ObservationStore) History(coordinate Coordinate) []Observation {
 
 /*
 Latest returns the most recent retained observation for one coordinate,
-reading the newest ring entry directly under the store's read lock.
+reading the newest ring entry directly under the coordinate's read lock.
 */
 func (store *ObservationStore) Latest(coordinate Coordinate) (Observation, bool) {
 	if store == nil {
 		return Observation{}, false
 	}
 
-	store.mu.RLock()
-	defer store.mu.RUnlock()
+	ring := store.getRing(coordinate)
 
-	ring := store.rings[coordinate]
+	if ring == nil {
+		return Observation{}, false
+	}
 
-	if ring == nil || ring.size == 0 {
+	ring.mu.RLock()
+	defer ring.mu.RUnlock()
+
+	if ring.size == 0 {
 		return Observation{}, false
 	}
 
@@ -176,14 +202,14 @@ func (store *ObservationStore) Count(coordinate Coordinate) int {
 		return 0
 	}
 
-	store.mu.RLock()
-	defer store.mu.RUnlock()
-
-	ring := store.rings[coordinate]
+	ring := store.getRing(coordinate)
 
 	if ring == nil {
 		return 0
 	}
+
+	ring.mu.RLock()
+	defer ring.mu.RUnlock()
 
 	return ring.size
 }
@@ -196,16 +222,26 @@ func (store *ObservationStore) Coordinates() []Coordinate {
 		return nil
 	}
 
-	store.mu.RLock()
-	defer store.mu.RUnlock()
+	var coordinates []Coordinate
 
-	coordinates := make([]Coordinate, 0, len(store.rings))
+	store.rings.Range(func(key, value any) bool {
+		coord, validCoord := key.(Coordinate)
+		ring, validRing := value.(*observationRing)
 
-	for coordinate, ring := range store.rings {
-		if ring.size > 0 {
-			coordinates = append(coordinates, coordinate)
+		if !validCoord || !validRing {
+			return true
 		}
-	}
+
+		ring.mu.RLock()
+		hasData := ring.size > 0
+		ring.mu.RUnlock()
+
+		if hasData {
+			coordinates = append(coordinates, coord)
+		}
+
+		return true
+	})
 
 	sort.Slice(coordinates, func(left int, right int) bool {
 		return coordinates[left].ID() < coordinates[right].ID()
@@ -223,17 +259,24 @@ func (store *ObservationStore) Snapshot() StoreSnapshot {
 		return StoreSnapshot{}
 	}
 
-	store.mu.RLock()
-	defer store.mu.RUnlock()
-
 	snapshot := StoreSnapshot{
-		Coordinates: len(store.rings),
-		Appended:    store.appended,
+		Appended: store.appended.Load(),
 	}
 
-	for _, ring := range store.rings {
-		snapshot.Observations += ring.size
-	}
+	store.rings.Range(func(key, value any) bool {
+		ring, valid := value.(*observationRing)
+
+		if valid && ring != nil {
+			ring.mu.RLock()
+			if ring.size > 0 {
+				snapshot.Coordinates++
+				snapshot.Observations += ring.size
+			}
+			ring.mu.RUnlock()
+		}
+
+		return true
+	})
 
 	return snapshot
 }
@@ -247,16 +290,17 @@ func (store *ObservationStore) TimeRange() (time.Time, time.Time, bool) {
 		return time.Time{}, time.Time{}, false
 	}
 
-	store.mu.RLock()
-	defer store.mu.RUnlock()
-
 	var earliest, latest time.Time
 	found := false
 
-	for _, ring := range store.rings {
-		if ring.size == 0 {
-			continue
+	store.rings.Range(func(key, value any) bool {
+		ring, valid := value.(*observationRing)
+
+		if !valid || ring == nil {
+			return true
 		}
+
+		ring.mu.RLock()
 
 		for index := 0; index < ring.size; index++ {
 			observation := ring.at(index)
@@ -271,7 +315,10 @@ func (store *ObservationStore) TimeRange() (time.Time, time.Time, bool) {
 
 			found = true
 		}
-	}
+
+		ring.mu.RUnlock()
+		return true
+	})
 
 	return earliest, latest, found
 }

@@ -78,10 +78,6 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 
 		managed.EnableMaxDepth = true
 
-		if bus := book.bus.Load(); bus != nil {
-			bus.Share("book", managed, managed.Name)
-		}
-
 		// Kraken's checksum is the authority for Level 3 state. Applying the
 		// SDK's per-order crossing heuristic inside one multi-order venue frame
 		// can delete a newly added order before the later orders in that same

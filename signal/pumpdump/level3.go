@@ -91,13 +91,13 @@ func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float6
 		}
 	}
 
-	if sharedBook, found := level3.workspace.Shared("book", symbol); found && sharedBook != nil {
-		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
-			inspectBook(currentBook)
-		}
-	} else if shared, found := level3.workspace.Shared("api", ""); found && shared != nil {
+	if shared, found := level3.workspace.Shared("api", ""); found && shared != nil {
 		if api, ok := shared.(*websocket.API); ok && api != nil {
 			api.Book(symbol, inspectBook)
+		}
+	} else if sharedBook, found := level3.workspace.Shared("book", symbol); found && sharedBook != nil {
+		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
+			inspectBook(currentBook)
 		}
 	} else {
 		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: api missing for %s", symbol)}

@@ -320,13 +320,13 @@ func (trade *Trade) Step(point kraken.TradeData) *data.Measurement[float64] {
 		}
 	}
 
-	if sharedBook, found := trade.workspace.Shared("book", point.Symbol); found && sharedBook != nil {
-		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
-			inspectBook(currentBook)
-		}
-	} else if shared, found := trade.workspace.Shared("api", ""); found && shared != nil {
+	if shared, found := trade.workspace.Shared("api", ""); found && shared != nil {
 		if api, ok := shared.(*websocket.API); ok && api != nil {
 			api.Book(point.Symbol, inspectBook)
+		}
+	} else if sharedBook, found := trade.workspace.Shared("book", point.Symbol); found && sharedBook != nil {
+		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
+			inspectBook(currentBook)
 		}
 	}
 

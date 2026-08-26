@@ -80,6 +80,7 @@ type Solver struct {
 	maxSeqLen      int
 	surprisalLimit float64
 	tickCounter    uint64
+	ObserveModule  func(string, time.Duration)
 
 	// Beam search shape. Held as fields rather than call-site constants so the
 	// lookahead can be tuned without also reshaping what Cortex draws — the two
@@ -208,6 +209,13 @@ func (solver *Solver) Step(categories []types.Category) *types.Cognition {
 	if len(categories) == 0 {
 		return nil
 	}
+
+	started := time.Now()
+	defer func() {
+		if solver.ObserveModule != nil {
+			solver.ObserveModule("cognition", time.Since(started))
+		}
+	}()
 
 	config := system.Cfg.Snapshot()
 	switchThreshold := config.Planner.MinimumConfidence

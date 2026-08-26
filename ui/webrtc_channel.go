@@ -173,6 +173,8 @@ func (channel *fluidChannel) enqueue(payload []byte) error {
 		return channel.ctx.Err()
 	case channel.pending <- payload:
 		return nil
+	default:
+		return nil
 	}
 }
 

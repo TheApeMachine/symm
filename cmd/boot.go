@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/causal"
 	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/graph"
@@ -514,6 +515,10 @@ func BootWithHub(
 		bus,
 	)
 
+	categorySolver := category.NewSolver(systemCtx, bus)
+	causalSolver := causal.NewSolver(bus)
+	cognitionSolver := cognition.NewSolver(systemCtx, bus)
+
 	crypto, err := NewCrypto(
 		systemCtx,
 		bus,
@@ -529,6 +534,11 @@ func BootWithHub(
 	}
 
 	signalRunner.ObserveModule = crypto.ObserveModule()
+	categorySolver.ObserveModule = crypto.ObserveModule()
+	causalSolver.ObserveModule = crypto.ObserveModule()
+	cognitionSolver.ObserveModule = crypto.ObserveModule()
+	resonanceSolver.ObserveModule = crypto.ObserveModule()
+	desk.ObserveModule = crypto.ObserveModule()
 
 	// The Influence Graph stage subscribes to ChannelMeasurements, maintains the
 	// shared Influence Graph in place, and publishes a GraphUpdate per symbol on
@@ -542,8 +552,10 @@ func BootWithHub(
 		strategy.RelationPlansFromSchema(strategy.DefaultCausalSchema(1, time.Second), 1, 30*time.Second),
 		strategy.DefaultCausalSchema(1, time.Second).Version,
 	)
+	graphSolver.ObserveModule = crypto.ObserveModule()
 
 	manifoldSolver := manifold.NewSolver(systemCtx, bus)
+	manifoldSolver.ObserveModule = crypto.ObserveModule()
 
 	planner := strategy.NewPlanner(systemCtx, thesis, recorder, desk, bus)
 	planner.ObserveModule = crypto.ObserveModule()
@@ -582,6 +594,9 @@ func BootWithHub(
 			return nil
 		},
 		signalRunner.Close,
+		categorySolver.Close,
+		causalSolver.Close,
+		cognitionSolver.Close,
 		graphSolver.Close,
 		manifoldSolver.Close,
 		planner.Close,

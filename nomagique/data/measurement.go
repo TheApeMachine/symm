@@ -35,6 +35,22 @@ type Measurement[Value any] struct {
 	Provenance map[string]string        `json:"provenance,omitempty"`
 }
 
+func (measurement *Measurement[Value]) ExecutionKey() string {
+	if measurement == nil {
+		return "global"
+	}
+
+	return measurement.Label
+}
+
+func (measurement *Measurement[Value]) Symbol() string {
+	if measurement == nil {
+		return ""
+	}
+
+	return measurement.Label
+}
+
 /*
 ToTypesMeasurement converts a projected data.Measurement[float64] into a *types.Measurement.
 */

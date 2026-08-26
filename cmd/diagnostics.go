@@ -624,6 +624,10 @@ func (crypto *Crypto) queueSnapshots() []QueueSnapshot {
 		func(reading types.Cognition) string { return reading.Symbol })
 	graphs := channelSnapshot(crypto.bus, types.ChannelRelations,
 		func(update graph.GraphUpdate) string { return update.Symbol })
+	decisions := channelSnapshot(crypto.bus, types.ChannelDecisions,
+		func(_ any) string { return "" })
+	executions := channelSnapshot(crypto.bus, types.ChannelExecutions,
+		func(_ any) string { return "" })
 	ui := channelSnapshot(crypto.bus, types.ChannelUI,
 		func(frame *types.UIFrame) string { return "" })
 	fluid := channelSnapshot(crypto.bus, types.ChannelFluid,
@@ -645,29 +649,29 @@ func (crypto *Crypto) queueSnapshots() []QueueSnapshot {
 
 	return []QueueSnapshot{
 		collect(
-			"ingress.tickers", "ingress", []string{"ingress"},
-			[]string{"correlation", "leadlag", "liquidity", "pumpdump", "sentiment", "resonance", "desk"},
+			"ingress.tickers", "ingress", []string{"crypto"},
+			[]string{"correlation", "leadlag", "liquidity", "pumpdump", "sentiment", "exhaustion", "resonance", "desk"},
 			tickers,
 		),
 		collect(
-			"ingress.trades", "ingress", []string{"ingress"},
-			[]string{"cvd", "exhaustion", "hawkes", "pumpdump"},
+			"ingress.trades", "ingress", []string{"crypto"},
+			[]string{"cvd", "derivatives", "exhaustion", "hawkes", "pumpdump", "toxicity"},
 			trades,
 		),
 		collect(
-			"ingress.level3", "ingress", []string{"ingress"},
-			[]string{"depthflow", "toxicity", "pumpdump"},
+			"ingress.level3", "ingress", []string{"crypto"},
+			[]string{"depthflow"},
 			level3,
 		),
 		collect(
 			"measurements", "rail",
-			[]string{"correlation", "cvd", "depthflow", "exhaustion", "hawkes", "leadlag", "liquidity", "pumpdump", "sentiment", "toxicity"},
+			[]string{"correlation", "cvd", "depthflow", "derivatives", "exhaustion", "hawkes", "leadlag", "liquidity", "pumpdump", "sentiment", "toxicity"},
 			[]string{"category", "manifold", "graph"},
 			measurements,
 		),
 		collect(
 			"derived.category", "derived", []string{"category"},
-			[]string{"graph", "cognition"},
+			[]string{"cognition", "graph"},
 			categories,
 		),
 		collect(
@@ -690,10 +694,30 @@ func (crypto *Crypto) queueSnapshots() []QueueSnapshot {
 			[]string{"causal", "graph"},
 			resonance,
 		),
+		collect(
+			"decisions", "strategy", []string{"planner"},
+			[]string{"mcts", "allocation", "desk"},
+			decisions,
+		),
+		collect(
+			"desk.ticker", "broker", []string{"crypto"},
+			[]string{"desk"},
+			tickers,
+		),
+		collect(
+			"desk.executions", "broker", []string{"websocket-api"},
+			[]string{"desk"},
+			executions,
+		),
+		collect(
+			"positions", "broker", []string{"desk"},
+			[]string{"audit", "hub"},
+			decisions,
+		),
 		{
 			Name:      "ui.dashboard",
 			Kind:      "ui",
-			Writers:   []string{"ingress", "category", "manifold", "causal", "cognition", "graph", "resonance", "planner", "desk"},
+			Writers:   []string{"crypto", "category", "manifold", "causal", "cognition", "graph", "resonance", "planner", "allocation", "desk", "diagnostics"},
 			Readers:   []string{"hub"},
 			Depth:     ui.Pending,
 			Cap:       ui.Capacity,

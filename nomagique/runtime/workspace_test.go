@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,6 +16,15 @@ type mockPassNode struct{}
 
 func (node *mockPassNode) Step(input int) int {
 	return input * 2
+}
+
+type testKeyedEvent struct {
+	Symbol string
+	Seq    int
+}
+
+func (event testKeyedEvent) ExecutionKey() string {
+	return event.Symbol
 }
 
 func WorkspaceWireTest(t *testing.T) {
@@ -110,6 +121,7 @@ func WorkspaceWireTest(t *testing.T) {
 			waitGroup.Wait()
 			So(finalOutput.Load(), ShouldEqual, 52)
 		})
+
 		Convey("When publishing high volume cascading events across multiple stages", func() {
 			var stage3Received atomic.Int64
 			const totalEvents = 2000
@@ -162,6 +174,225 @@ func WorkspaceWireTest(t *testing.T) {
 			err := workspace.WaitForQuiescence(3 * time.Second)
 			So(err, ShouldBeNil)
 			So(slowCount.Load(), ShouldEqual, int64(eventCount))
+		})
+	})
+}
+
+func WorkspaceConcurrencyTest(t *testing.T) {
+	Convey("Given a Workspace with multi-worker KeyedExecutor", t, func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		workspace := NewWorkspace(ctx)
+
+		Reset(func() {
+			workspace.Close()
+			cancel()
+		})
+
+		Convey("When publishing across 640 unique symbols, different symbols execute concurrently", func() {
+			const symbolCount = 640
+			var activeCount atomic.Int64
+			var maxConcurrent atomic.Int64
+			var completedCount atomic.Int64
+
+			WireKeyed[testKeyedEvent, any](
+				workspace,
+				"symbol_stream",
+				"",
+				func(event testKeyedEvent) string {
+					return event.Symbol
+				},
+				func(event testKeyedEvent) any {
+					current := activeCount.Add(1)
+
+					for {
+						highest := maxConcurrent.Load()
+
+						if current <= highest || maxConcurrent.CompareAndSwap(highest, current) {
+							break
+						}
+					}
+
+					time.Sleep(2 * time.Millisecond)
+					activeCount.Add(-1)
+					completedCount.Add(1)
+					return nil
+				},
+			)
+
+			for index := 0; index < symbolCount; index++ {
+				workspace.Publish("symbol_stream", testKeyedEvent{
+					Symbol: fmt.Sprintf("SYM-%d", index),
+					Seq:    index,
+				})
+			}
+
+			err := workspace.WaitForQuiescence(10 * time.Second)
+			So(err, ShouldBeNil)
+			So(completedCount.Load(), ShouldEqual, symbolCount)
+
+			if runtime.GOMAXPROCS(0) > 1 {
+				So(maxConcurrent.Load(), ShouldBeGreaterThan, 1)
+			}
+		})
+
+		Convey("When publishing many events for the same symbol, same symbol never executes concurrently", func() {
+			const eventCount = 200
+			var activeCount atomic.Int64
+			var maxConcurrent atomic.Int64
+			var completedCount atomic.Int64
+
+			WireKeyed[testKeyedEvent, any](
+				workspace,
+				"single_symbol_stream",
+				"",
+				func(event testKeyedEvent) string {
+					return event.Symbol
+				},
+				func(event testKeyedEvent) any {
+					current := activeCount.Add(1)
+
+					for {
+						highest := maxConcurrent.Load()
+
+						if current <= highest || maxConcurrent.CompareAndSwap(highest, current) {
+							break
+						}
+					}
+
+					time.Sleep(100 * time.Microsecond)
+					activeCount.Add(-1)
+					completedCount.Add(1)
+					return nil
+				},
+			)
+
+			for index := 0; index < eventCount; index++ {
+				workspace.Publish("single_symbol_stream", testKeyedEvent{
+					Symbol: "BTC/USD",
+					Seq:    index,
+				})
+			}
+
+			err := workspace.WaitForQuiescence(5 * time.Second)
+			So(err, ShouldBeNil)
+			So(completedCount.Load(), ShouldEqual, eventCount)
+			So(maxConcurrent.Load(), ShouldEqual, 1)
+		})
+
+		Convey("When publishing 10,000 sequential events for one symbol, same-symbol ordering is exact", func() {
+			const eventCount = 10000
+			expectedSeq := 0
+			var sequenceMismatch atomic.Bool
+			var completedCount atomic.Int64
+
+			WireKeyed[testKeyedEvent, any](
+				workspace,
+				"ordered_stream",
+				"",
+				func(event testKeyedEvent) string {
+					return event.Symbol
+				},
+				func(event testKeyedEvent) any {
+					if event.Seq != expectedSeq {
+						sequenceMismatch.Store(true)
+					}
+
+					expectedSeq++
+					completedCount.Add(1)
+					return nil
+				},
+			)
+
+			for index := 0; index < eventCount; index++ {
+				workspace.Publish("ordered_stream", testKeyedEvent{
+					Symbol: "BTC/USD",
+					Seq:    index,
+				})
+			}
+
+			err := workspace.WaitForQuiescence(10 * time.Second)
+			So(err, ShouldBeNil)
+			So(completedCount.Load(), ShouldEqual, eventCount)
+			So(sequenceMismatch.Load(), ShouldBeFalse)
+		})
+
+		Convey("When one symbol is slow, other symbols progress without blocking", func() {
+			var fastCount atomic.Int64
+			var slowStarted atomic.Bool
+			var slowFinished atomic.Bool
+
+			WireKeyed[testKeyedEvent, any](
+				workspace,
+				"multi_symbol_stream",
+				"",
+				func(event testKeyedEvent) string {
+					return event.Symbol
+				},
+				func(event testKeyedEvent) any {
+					if event.Symbol == "SLOW" {
+						slowStarted.Store(true)
+						time.Sleep(100 * time.Millisecond)
+						slowFinished.Store(true)
+						return nil
+					}
+
+					fastCount.Add(1)
+					return nil
+				},
+			)
+
+			workspace.Publish("multi_symbol_stream", testKeyedEvent{Symbol: "SLOW", Seq: 1})
+
+			// Ensure SLOW is picked up
+			for !slowStarted.Load() {
+				time.Sleep(1 * time.Millisecond)
+			}
+
+			for index := 0; index < 50; index++ {
+				workspace.Publish("multi_symbol_stream", testKeyedEvent{
+					Symbol: fmt.Sprintf("FAST-%d", index),
+					Seq:    index,
+				})
+			}
+
+			time.Sleep(20 * time.Millisecond)
+			So(fastCount.Load(), ShouldEqual, 50)
+			So(slowFinished.Load(), ShouldBeFalse)
+
+			err := workspace.WaitForQuiescence(3 * time.Second)
+			So(err, ShouldBeNil)
+			So(slowFinished.Load(), ShouldBeTrue)
+		})
+
+		Convey("When sustained high-volume workload runs, goroutine count remains bounded", func() {
+			const eventCount = 10000
+			initialGoroutines := runtime.NumGoroutine()
+
+			WireKeyed[testKeyedEvent, any](
+				workspace,
+				"bounded_goroutine_stream",
+				"",
+				func(event testKeyedEvent) string {
+					return event.Symbol
+				},
+				func(event testKeyedEvent) any {
+					return nil
+				},
+			)
+
+			for index := 0; index < eventCount; index++ {
+				workspace.Publish("bounded_goroutine_stream", testKeyedEvent{
+					Symbol: fmt.Sprintf("SYM-%d", index%100),
+					Seq:    index,
+				})
+			}
+
+			err := workspace.WaitForQuiescence(10 * time.Second)
+			So(err, ShouldBeNil)
+
+			currentGoroutines := runtime.NumGoroutine()
+			// Goroutines should not scale with 10,000 events
+			So(currentGoroutines-initialGoroutines, ShouldBeLessThan, 50)
 		})
 	})
 }
@@ -248,6 +479,7 @@ func WorkspaceOnTest(t *testing.T) {
 
 func TestWorkspace(t *testing.T) {
 	WorkspaceWireTest(t)
+	WorkspaceConcurrencyTest(t)
 	WorkspaceShareTest(t)
 	WorkspaceOnTest(t)
 }
@@ -277,4 +509,49 @@ func BenchmarkWorkspacePublish(b *testing.B) {
 	}
 
 	waitGroup.Wait()
+}
+
+func BenchmarkWorkspace640Symbols(b *testing.B) {
+	ctx, cancel := context.WithCancel(context.Background())
+	workspace := NewWorkspace(ctx)
+
+	defer func() {
+		workspace.Close()
+		cancel()
+	}()
+
+	const symbolCount = 640
+	symbols := make([]string, symbolCount)
+
+	for index := 0; index < symbolCount; index++ {
+		symbols[index] = fmt.Sprintf("SYM_%d", index)
+	}
+
+	var processedCount atomic.Int64
+	WireKeyed[testKeyedEvent, any](
+		workspace,
+		"bench_640",
+		"",
+		func(event testKeyedEvent) string {
+			return event.Symbol
+		},
+		func(event testKeyedEvent) any {
+			processedCount.Add(1)
+			return nil
+		},
+	)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		for index := 0; index < symbolCount; index++ {
+			workspace.Publish("bench_640", testKeyedEvent{
+				Symbol: symbols[index],
+				Seq:    index,
+			})
+		}
+	}
+
+	_ = workspace.WaitForQuiescence(10 * time.Second)
 }

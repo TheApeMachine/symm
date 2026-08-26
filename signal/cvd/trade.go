@@ -695,13 +695,13 @@ func (trade *Trade) loadQuote(symbol string, input *nmtypes.Frame) {
 		}
 	}
 
-	if sharedBook, found := trade.workspace.Shared("book", symbol); found && sharedBook != nil {
-		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
-			inspectBook(currentBook)
-		}
-	} else if shared, found := trade.workspace.Shared("api", ""); found && shared != nil {
+	if shared, found := trade.workspace.Shared("api", ""); found && shared != nil {
 		if api, ok := shared.(*websocket.API); ok && api != nil {
 			api.Book(symbol, inspectBook)
+		}
+	} else if sharedBook, found := trade.workspace.Shared("book", symbol); found && sharedBook != nil {
+		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
+			inspectBook(currentBook)
 		}
 	}
 

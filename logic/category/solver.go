@@ -5,7 +5,9 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"time"
 
+	"github.com/theapemachine/symm/nomagique/data"
 	nomagique_probability "github.com/theapemachine/symm/nomagique/probability"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -24,11 +26,12 @@ measurements jointly support. It never predicts, never consults Cognition, and
 never lets signal publication cadence count as extra evidence.
 */
 type Solver struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	err        error
-	categories []types.CategoryType
-	states     sync.Map
+	ctx           context.Context
+	cancel        context.CancelFunc
+	err           error
+	categories    []types.CategoryType
+	states        sync.Map
+	ObserveModule func(string, time.Duration)
 }
 
 /*
@@ -77,12 +80,17 @@ func NewSolver(ctx context.Context, bus *runtime.Workspace) *Solver {
 	}
 
 	if bus != nil {
-		runtime.WireFunc[*nmtypes.Measurement, []types.Category](
-			bus,
-			types.ChannelMeasurements,
-			types.ChannelCategories,
-			solver.Step,
-		)
+		bus.Wire(types.ChannelMeasurements, types.ChannelCategories, func(value any) any {
+			if m, ok := value.(*nmtypes.Measurement); ok && m != nil {
+				return solver.Step(m)
+			}
+
+			if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
+				return solver.Step(m.ToTypesMeasurement())
+			}
+
+			return nil
+		})
 	}
 
 	return solver
@@ -103,6 +111,13 @@ func (solver *Solver) Step(measurement *nmtypes.Measurement) []types.Category {
 	if measurement == nil || measurement.Symbol == "" {
 		return nil
 	}
+
+	started := time.Now()
+	defer func() {
+		if solver.ObserveModule != nil {
+			solver.ObserveModule("category", time.Since(started))
+		}
+	}()
 
 	state := solver.symbolState(measurement.Symbol)
 	solver.accumulate(state, measurement)

@@ -67,6 +67,26 @@ func NewFluidRTC(
 		)
 	}
 
+	if bus != nil {
+		bus.Wire(types.ChannelFluid, "", func(value any) any {
+			frame, ok := value.(types.FluidFrame)
+
+			if !ok {
+				return nil
+			}
+
+			if !fluidTransport.HasChannel(frame.Channel) {
+				return nil
+			}
+
+			if err := fluidTransport.publish(frame.Channel, frame.Payload); err != nil {
+				fluidTransport.fail(err)
+			}
+
+			return nil
+		})
+	}
+
 	return fluidTransport
 }
 

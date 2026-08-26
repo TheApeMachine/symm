@@ -2,10 +2,12 @@ package manifold
 
 import (
 	"context"
+	"time"
 
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -27,11 +29,12 @@ oscillators via the Dataset, loads them into the resident domain, and advances
 the field once.
 */
 type Solver struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	err       error
-	workspace *runtime.Workspace
-	physics   *sensorium.Manifold
+	ctx           context.Context
+	cancel        context.CancelFunc
+	err           error
+	workspace     *runtime.Workspace
+	physics       *sensorium.Manifold
+	ObserveModule func(string, time.Duration)
 }
 
 func NewSolver(
@@ -52,12 +55,24 @@ func NewSolver(
 	}
 
 	if workspace != nil {
-		runtime.WireFunc[*data.Measurement[float64], any](
-			workspace,
-			types.ChannelHawkes,
+		workspace.Wire(
+			types.ChannelMeasurements,
 			"",
-			func(measurement *data.Measurement[float64]) any {
-				_ = solver.Step(measurement)
+			func(value any) any {
+				if m, ok := value.(*data.Measurement[float64]); ok && m != nil && m.Source == "hawkes" {
+					_ = solver.Step(m)
+					return nil
+				}
+
+				if m, ok := value.(*nmtypes.Measurement); ok && m != nil && m.Source == "hawkes" {
+					_ = solver.Step(&data.Measurement[float64]{
+						Source: m.Source,
+						Label:  m.Symbol,
+						At:     m.At,
+					})
+					return nil
+				}
+
 				return nil
 			},
 		)
@@ -79,6 +94,13 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *sensorium.St
 	if measurement == nil || solver.physics == nil {
 		return nil
 	}
+
+	started := time.Now()
+	defer func() {
+		if solver.ObserveModule != nil {
+			solver.ObserveModule("manifold", time.Since(started))
+		}
+	}()
 
 	if err := solver.physics.Load(); err != nil {
 		solver.err = err

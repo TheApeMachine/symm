@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -323,6 +324,7 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.StrategyRound {
 	}()
 
 	var g errgroup.Group
+	g.SetLimit(goruntime.GOMAXPROCS(0))
 
 	for i, state := range states {
 		i, state := i, state
@@ -534,7 +536,12 @@ func (planner *Planner) decisionFromCausalState(
 		config.Planner.UncertaintyWeight,
 		causalSeed(state),
 	)
+	mctsStarted := time.Now()
 	result := search.Run(economicState, &causalActionEstimator{state: state})
+
+	if planner.ObserveModule != nil {
+		planner.ObserveModule("mcts", time.Since(mctsStarted))
+	}
 
 	decision.Cause = "causal-mcts"
 
@@ -780,6 +787,7 @@ func (planner *Planner) executeDecisions(
 	}
 
 	var g errgroup.Group
+	g.SetLimit(goruntime.GOMAXPROCS(0))
 
 	if planner.desk == nil {
 		return nil
@@ -804,6 +812,7 @@ func (planner *Planner) executeDecisions(
 	}
 
 	var g2 errgroup.Group
+	g2.SetLimit(goruntime.GOMAXPROCS(0))
 	for _, decision := range winners {
 		if decision.Action != types.ActionEnter {
 			continue

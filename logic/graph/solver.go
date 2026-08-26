@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/network"
 	"github.com/theapemachine/symm/nomagique/relation"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -182,8 +184,23 @@ type InfluenceGraph struct {
 	planVersion     uint64
 	historyCapacity int
 
-	nodes *network.Graph[relation.Coordinate, InfluenceNode, struct{}]
-	edges *network.Graph[edgeKey, edgeData, struct{}]
+	edgeMutexes [64]sync.Mutex
+	nodes       *network.Graph[relation.Coordinate, InfluenceNode, struct{}]
+	edges       *network.Graph[edgeKey, edgeData, struct{}]
+}
+
+func (influenceGraph *InfluenceGraph) edgeLock(key edgeKey) *sync.Mutex {
+	hash := uint64(key.edgeType)
+
+	for index := 0; index < len(key.source.Symbol); index++ {
+		hash = hash*31 + uint64(key.source.Symbol[index])
+	}
+
+	for index := 0; index < len(key.target.Symbol); index++ {
+		hash = hash*31 + uint64(key.target.Symbol[index])
+	}
+
+	return &influenceGraph.edgeMutexes[hash%uint64(len(influenceGraph.edgeMutexes))]
 }
 
 /*
@@ -334,6 +351,10 @@ func (influenceGraph *InfluenceGraph) UpsertEdge(edge *InfluenceEdge) error {
 	})
 
 	key := edgeKey{edgeType: edge.Type, source: edge.Source, target: edge.Target}
+	edgeMutex := influenceGraph.edgeLock(key)
+	edgeMutex.Lock()
+	defer edgeMutex.Unlock()
+
 	current, _ := influenceGraph.getEdge(key)
 
 	history := current.history
@@ -365,6 +386,9 @@ func (influenceGraph *InfluenceGraph) RegisterCandidate(edgeType EdgeType, sourc
 	}
 
 	key := edgeKey{edgeType: edgeType, source: source, target: target}
+	edgeMutex := influenceGraph.edgeLock(key)
+	edgeMutex.Lock()
+	defer edgeMutex.Unlock()
 
 	if _, found := influenceGraph.getEdge(key); !found {
 		influenceGraph.setEdge(key, edgeData{state: CandidateScheduled})
@@ -391,6 +415,10 @@ func (influenceGraph *InfluenceGraph) SetUnavailable(edgeType EdgeType, source r
 	}
 
 	key := edgeKey{edgeType: edgeType, source: source, target: target}
+	edgeMutex := influenceGraph.edgeLock(key)
+	edgeMutex.Lock()
+	defer edgeMutex.Unlock()
+
 	current, found := influenceGraph.getEdge(key)
 
 	if !found {
@@ -617,16 +645,18 @@ is a pure domain processor: no UI frames, wire projections, or diagnostic timing
 live here, exactly as signals carry none.
 */
 type Solver struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	err       error
-	epoch     uint64
-	store     *relation.ObservationStore
-	estimator *relation.InfluenceEstimator
-	influence *InfluenceGraph
-	plans     []*relation.RelationPlan
-	interval  time.Duration
-	lastRun   map[string]time.Time
+	ctx           context.Context
+	cancel        context.CancelFunc
+	err           error
+	epoch         uint64
+	store         *relation.ObservationStore
+	estimator     *relation.InfluenceEstimator
+	influence     *InfluenceGraph
+	plans         []*relation.RelationPlan
+	interval      time.Duration
+	lastRun       sync.Map
+	compiledPlans sync.Map
+	ObserveModule func(string, time.Duration)
 }
 
 /*
@@ -665,19 +695,23 @@ func NewSolver(
 		influence: NewInfluenceGraph(epoch, schemaVersion, planVersion(plans), 64),
 		plans:     plans,
 		interval:  100 * time.Millisecond,
-		lastRun:   make(map[string]time.Time),
 	}
 
 	if bus != nil {
 		bus.Share(SharedObservationStore, solver.store, "")
 		bus.Share(SharedInfluenceGraph, solver.influence, "")
 
-		runtime.WireFunc[*nmtypes.Measurement, *GraphUpdate](
-			bus,
-			types.ChannelMeasurements,
-			types.ChannelRelations,
-			solver.Step,
-		)
+		bus.Wire(types.ChannelMeasurements, types.ChannelRelations, func(value any) any {
+			if m, ok := value.(*nmtypes.Measurement); ok && m != nil {
+				return solver.Step(m)
+			}
+
+			if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
+				return solver.Step(m.ToTypesMeasurement())
+			}
+
+			return nil
+		})
 	}
 
 	return solver
@@ -701,10 +735,17 @@ func (solver *Solver) due(symbol string, at time.Time) bool {
 		return true
 	}
 
-	last, ran := solver.lastRun[symbol]
+	lastVal, ran := solver.lastRun.Load(symbol)
 
-	if !ran || at.Sub(last) >= solver.interval {
-		solver.lastRun[symbol] = at
+	if !ran {
+		solver.lastRun.Store(symbol, at)
+		return true
+	}
+
+	last, ok := lastVal.(time.Time)
+
+	if !ok || at.Sub(last) >= solver.interval {
+		solver.lastRun.Store(symbol, at)
 		return true
 	}
 
@@ -721,6 +762,13 @@ func (solver *Solver) Step(measurement *nmtypes.Measurement) *GraphUpdate {
 	if solver == nil {
 		return nil
 	}
+
+	started := time.Now()
+	defer func() {
+		if solver.ObserveModule != nil {
+			solver.ObserveModule("graph", time.Since(started))
+		}
+	}()
 
 	observations := relation.AppendMeasurement(measurement, solver.epoch)
 
@@ -800,63 +848,58 @@ func planVersion(plans []*relation.RelationPlan) uint64 {
 	return version
 }
 
+type compiledPlanEntry struct {
+	coordinateCount int
+	candidates      []relation.CompiledCandidate
+}
+
 /*
 estimate evaluates every planned pair for one symbol and records the Influence
-edges. Selectors expand to every matching stored coordinate, so a plan can
-declare "all configured same-symbol compatible coordinate pairs" without
-enumerating combinations. Self-pairs are excluded.
+edges using precompiled candidate topology.
 */
 func (solver *Solver) estimate(symbol string) {
 	coordinates := solver.store.Coordinates()
+	coordinateCount := len(coordinates)
 
-	for _, plan := range solver.plans {
-		if plan == nil || plan.Epoch != solver.epoch {
-			continue
+	var candidates []relation.CompiledCandidate
+
+	if cachedValue, found := solver.compiledPlans.Load(symbol); found {
+		entry := cachedValue.(compiledPlanEntry)
+
+		if entry.coordinateCount == coordinateCount {
+			candidates = entry.candidates
 		}
+	}
 
-		for _, pair := range plan.PairsForSymbol(symbol) {
-			sources := resolveSelectors(pair.Source, symbol, plan.Peer, solver.epoch, coordinates)
-			targets := resolveSelectors(pair.Target, symbol, plan.Peer, solver.epoch, coordinates)
+	if candidates == nil {
+		candidates = relation.CompilePlansForSymbol(solver.plans, symbol, solver.epoch, coordinates)
+		solver.compiledPlans.Store(symbol, compiledPlanEntry{
+			coordinateCount: coordinateCount,
+			candidates:      candidates,
+		})
+	}
 
-			for _, source := range sources {
-				for _, target := range targets {
-					if source == target {
-						continue
-					}
-
-					solver.estimatePair(plan, symbol, source, target, coordinates)
-				}
-			}
-		}
+	for _, candidate := range candidates {
+		solver.estimateCandidate(candidate)
 	}
 }
 
 /*
-estimatePair estimates one Source→Target pair and records the Influence edge.
-The pair is a structurally scheduled candidate first; an undefined estimate
-marks that candidate unavailable (never deleted, never a measured zero).
+estimateCandidate estimates one precompiled candidate pair and records the Influence edge.
 */
-func (solver *Solver) estimatePair(
-	plan *relation.RelationPlan,
-	symbol string,
-	source relation.Coordinate,
-	target relation.Coordinate,
-	coordinates []relation.Coordinate,
-) {
-	_ = solver.influence.RegisterCandidate(EdgeInfluence, source, target, solver.epoch)
+func (solver *Solver) estimateCandidate(candidate relation.CompiledCandidate) {
+	_ = solver.influence.RegisterCandidate(EdgeInfluence, candidate.Source, candidate.Target, solver.epoch)
 
-	controls, controlsComplete := plan.ResolveControls(symbol, coordinates)
-
-	if !controlsComplete {
-		_ = solver.influence.SetUnavailable(EdgeInfluence, source, target, solver.epoch)
+	if !candidate.ControlsComplete {
+		_ = solver.influence.SetUnavailable(EdgeInfluence, candidate.Source, candidate.Target, solver.epoch)
 		return
 	}
 
 	result, err := solver.estimator.Estimate(solver.store, relation.InfluenceRequest{
-		Source:   source,
-		Target:   target,
-		Controls: controls,
-		Lag:      plan.Lag,
+		Source:   candidate.Source,
+		Target:   candidate.Target,
+		Controls: candidate.Controls,
+		Lag:      candidate.Lag,
 	})
 
 	if err != nil {
@@ -866,8 +909,8 @@ func (solver *Solver) estimatePair(
 	if result.Defined() {
 		_ = solver.influence.UpsertEdge(&InfluenceEdge{
 			Type:   EdgeInfluence,
-			Source: source,
-			Target: target,
+			Source: candidate.Source,
+			Target: candidate.Target,
 			Result: result,
 			From:   result.From,
 			At:     result.At,
@@ -877,39 +920,7 @@ func (solver *Solver) estimatePair(
 		return
 	}
 
-	_ = solver.influence.SetUnavailable(EdgeInfluence, source, target, solver.epoch)
-}
-
-/*
-resolveSelectors returns every stored coordinate matching one structural
-selector for the symbol and epoch.
-*/
-func resolveSelectors(
-	selector relation.Selector,
-	symbol string,
-	peer string,
-	epoch uint64,
-	coordinates []relation.Coordinate,
-) []relation.Coordinate {
-	matches := make([]relation.Coordinate, 0)
-
-	for _, coordinate := range coordinates {
-		if coordinate.Symbol != symbol || coordinate.Epoch != epoch {
-			continue
-		}
-
-		if peer != "" && coordinate.Peer != peer {
-			continue
-		}
-
-		if !selector.Matches(coordinate) {
-			continue
-		}
-
-		matches = append(matches, coordinate)
-	}
-
-	return matches
+	_ = solver.influence.SetUnavailable(EdgeInfluence, candidate.Source, candidate.Target, solver.epoch)
 }
 
 /*

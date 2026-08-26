@@ -58,15 +58,16 @@ Solver evaluates Judea Pearl's Causal Ladder over live market measurements,
 physics fluid metrics, and predictive coding resonance predictions.
 */
 type Solver struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	err      error
-	thesis   *types.Thesis
-	price    *broker.Price
-	recorder *audit.Recorder
-	pearls   *sync.Map
-	rows     *sync.Map
-	config   PearlConfig
+	ctx           context.Context
+	cancel        context.CancelFunc
+	err           error
+	thesis        *types.Thesis
+	price         *broker.Price
+	recorder      *audit.Recorder
+	pearls        *sync.Map
+	rows          *sync.Map
+	config        PearlConfig
+	ObserveModule func(string, time.Duration)
 }
 
 /*
@@ -116,12 +117,17 @@ func NewSolver(bus *runtime.Workspace, opts ...Option) *Solver {
 	}
 
 	if bus != nil {
-		runtime.WireFunc[types.ResonanceArtifact, *types.CausalOutput](
-			bus,
-			types.ChannelResonance,
-			types.ChannelCausal,
-			solver.Step,
-		)
+		bus.Wire(types.ChannelResonance, types.ChannelCausal, func(value any) any {
+			if artifact, ok := value.(*types.ResonanceArtifact); ok && artifact != nil {
+				return solver.Step(*artifact)
+			}
+
+			if artifact, ok := value.(types.ResonanceArtifact); ok {
+				return solver.Step(artifact)
+			}
+
+			return nil
+		})
 	}
 
 	return solver
@@ -142,6 +148,13 @@ func (solver *Solver) Step(artifact types.ResonanceArtifact) *types.CausalOutput
 	if solver == nil || solver.thesis == nil || artifact.Manifold == nil {
 		return nil
 	}
+
+	started := time.Now()
+	defer func() {
+		if solver.ObserveModule != nil {
+			solver.ObserveModule("causal", time.Since(started))
+		}
+	}()
 
 	out, ok, err := solver.measure(solver.thesis, artifact.Symbol, artifact.Manifold)
 	solver.err = err

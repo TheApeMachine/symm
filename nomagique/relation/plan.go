@@ -175,3 +175,88 @@ func (plan *RelationPlan) ResolveControls(symbol string, coordinates []Coordinat
 
 	return controls, true
 }
+
+/*
+CompiledCandidate represents a pre-resolved (Source, Target, Controls, Lag) candidate pair.
+*/
+type CompiledCandidate struct {
+	Plan             *RelationPlan
+	Source           Coordinate
+	Target           Coordinate
+	Controls         []Control
+	ControlsComplete bool
+	Lag              LagDomain
+}
+
+/*
+CompilePlansForSymbol precompiles the relation candidates across all active plans
+for a symbol given the currently available coordinates.
+*/
+func CompilePlansForSymbol(
+	plans []*RelationPlan,
+	symbol string,
+	epoch uint64,
+	coordinates []Coordinate,
+) []CompiledCandidate {
+	var candidates []CompiledCandidate
+
+	for _, plan := range plans {
+		if plan == nil || plan.Epoch != epoch {
+			continue
+		}
+
+		controls, controlsComplete := plan.ResolveControls(symbol, coordinates)
+
+		for _, pair := range plan.PairsForSymbol(symbol) {
+			sources := resolveSelectorsForSymbol(pair.Source, symbol, plan.Peer, epoch, coordinates)
+			targets := resolveSelectorsForSymbol(pair.Target, symbol, plan.Peer, epoch, coordinates)
+
+			for _, source := range sources {
+				for _, target := range targets {
+					if source == target {
+						continue
+					}
+
+					candidates = append(candidates, CompiledCandidate{
+						Plan:             plan,
+						Source:           source,
+						Target:           target,
+						Controls:         controls,
+						ControlsComplete: controlsComplete,
+						Lag:              plan.Lag,
+					})
+				}
+			}
+		}
+	}
+
+	return candidates
+}
+
+func resolveSelectorsForSymbol(
+	selector Selector,
+	symbol string,
+	peer string,
+	epoch uint64,
+	coordinates []Coordinate,
+) []Coordinate {
+	matches := make([]Coordinate, 0)
+
+	for _, coordinate := range coordinates {
+		if coordinate.Symbol != symbol || coordinate.Epoch != epoch {
+			continue
+		}
+
+		if peer != "" && coordinate.Peer != peer {
+			continue
+		}
+
+		if !selector.Matches(coordinate) {
+			continue
+		}
+
+		matches = append(matches, coordinate)
+	}
+
+	return matches
+}
