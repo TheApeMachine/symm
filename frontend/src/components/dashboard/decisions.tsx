@@ -12,35 +12,40 @@ import { Decision } from "#/providers/telemetry/telemetry/decision";
 
 const decObj = new Decision();
 
+type DecisionRow = {
+	id: string;
+	symbol: string;
+	utility: number;
+	action: string;
+	reason: string;
+};
+
 export const Decisions = () => {
-	const last = useSelector(strategyStore, (state) =>
-		state.findLast((f) => f.decisionsLength() > 0),
-	);
+	// Merge every decision across the whole ring buffer by symbol, latest
+	// frame wins. A candidate whose causal state was not refreshed in a given
+	// round still keeps its card, so the list behaves like a normal growing
+	// list instead of a full-replacement snapshot that churns every tick.
+	const decisions = useSelector(strategyStore, (state) => {
+		const merged = new Map<string, DecisionRow>();
 
-	const decisions: Array<{
-		id: string;
-		symbol: string;
-		thesisScore: number;
-		action: string;
-		reason: string;
-	}> = [];
-
-	if (last) {
-		for (let i = 0; i < last.decisionsLength(); i++) {
-			const dec = last.decisions(i, decObj);
-			if (!dec) continue;
-			const id = dec.id() ?? `dec-${i}`;
-			const symbol = dec.symbol() ?? "";
-			if (!id) continue;
-			decisions.push({
-				id,
-				symbol,
-				thesisScore: dec.thesisScore(),
-				action: dec.action() ?? "—",
-				reason: dec.reason() ?? "No rejection reason published",
-			});
+		for (const frame of state.toArray()) {
+			for (let i = 0; i < frame.decisionsLength(); i++) {
+				const dec = frame.decisions(i, decObj);
+				if (!dec) continue;
+				const symbol = dec.symbol() ?? "";
+				if (!symbol) continue;
+				merged.set(symbol, {
+					id: dec.id() ?? `dec-${symbol}`,
+					symbol,
+					utility: dec.utility(),
+					action: dec.action() ?? "—",
+					reason: dec.reason() ?? "No rejection reason published",
+				});
+			}
 		}
-	}
+
+		return [...merged.values()];
+	});
 
 	const inspectDecision = (symbol: string) => {
 		setDecisionsScopeSymbol(symbol);
@@ -68,7 +73,7 @@ export const Decisions = () => {
 				) : (
 					decisions.map((dec) => (
 						<List.Item
-							key={dec.id}
+							key={dec.symbol || dec.id}
 							className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0 rounded-[3px] border border-(--line) bg-(--sunken) px-2.5 py-1.5 transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)] hover:bg-(--raised)"
 							data-decision-card="true"
 							data-decision-id={dec.id}
@@ -80,16 +85,16 @@ export const Decisions = () => {
 							</Typography.Span>
 							<Flex.Row className="items-center gap-2">
 								<Typography.Span className="text-[8.5px] text-(--f4)">
-									t=
+									u=
 									<span className="tabular-nums text-(--f2)">
-										{dec.thesisScore.toFixed(4)}
+										{dec.utility.toFixed(4)}
 									</span>
 								</Typography.Span>
-								<Typography.Span className="rounded-[2px] border border-(--line) px-1.5 py-px text-[8.5px] uppercase">
+								<Typography.Span className="rounded-xs border border-(--line) px-1.5 py-px text-[8.5px] uppercase">
 									{dec.action}
 								</Typography.Span>
 							</Flex.Row>
-							<Typography.Span className="col-span-2 mt-0.5 line-clamp-2 min-w-0 break-words text-[9px] leading-[1.25] text-(--f4)">
+							<Typography.Span className="col-span-2 mt-0.5 line-clamp-2 min-w-0 wrap-break-word text-[9px] leading-tight text-(--f4)">
 								{dec.reason}
 							</Typography.Span>
 						</List.Item>

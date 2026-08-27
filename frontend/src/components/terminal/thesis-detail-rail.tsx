@@ -13,6 +13,7 @@ import { Causal } from "#/providers/telemetry/telemetry/causal";
 import { Cognition } from "#/providers/telemetry/telemetry/cognition";
 import { Decision } from "#/providers/telemetry/telemetry/decision";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
+import { NamedNumber } from "#/providers/telemetry/telemetry/named-number";
 import { Position } from "#/providers/telemetry/telemetry/position";
 import { Stoploss } from "#/providers/telemetry/telemetry/stoploss";
 
@@ -75,6 +76,23 @@ const stopObj = new Stoploss();
 const decObj = new Decision();
 const causalObj = new Causal();
 const cogObj = new Cognition();
+const altObj = new NamedNumber();
+
+/*
+readAlternative returns one named economic/causal value from a decision's
+alternatives vector, or null when absent. Missing values stay missing rather
+than collapsing to a fabricated zero.
+*/
+const readAlternative = (decision: Decision | null, name: string): number | null => {
+	if (!decision) return null;
+
+	for (let i = 0; i < decision.alternativesLength(); i++) {
+		const entry = decision.alternatives(i, altObj);
+		if (entry && entry.name() === name) return entry.value();
+	}
+
+	return null;
+};
 
 export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
 	const positionRef = useRef<HTMLDivElement>(null);
@@ -128,15 +146,22 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
 
 	strategyStore.subscribe((state) => {
 		if (!arbitrationRef.current) return;
-		const last = state.getLast();
-		if (!last) return;
 
+		// Merge across the whole ring buffer: the clicked symbol may have been
+		// absent from the latest delta round, so read its most recent decision
+		// from any frame instead of only getLast().
+		const frames = state.toArray();
 		let liveDecision: Decision | null = null;
-		for (let i = 0; i < last.decisionsLength(); i++) {
-			const dec = last.decisions(i, decObj);
-			if (dec && dec.symbol() === symbol) {
-				liveDecision = dec;
-				break;
+
+		for (let f = frames.length - 1; f >= 0 && !liveDecision; f--) {
+			const frame = frames[f];
+
+			for (let i = 0; i < frame.decisionsLength(); i++) {
+				const dec = frame.decisions(i, decObj);
+				if (dec && dec.symbol() === symbol) {
+					liveDecision = dec;
+					break;
+				}
 			}
 		}
 
@@ -151,11 +176,10 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
 		}
 
 		set("action", liveDecision?.action() ?? "—");
-		set("thesis score", liveDecision ? liveDecision.thesisScore().toFixed(4) : "—");
-		set("confidence", liveDecision ? `${(liveDecision.confidence() * 100).toFixed(1)}%` : "—");
-		set("graph score", liveDecision ? liveDecision.graphScore().toFixed(4) : "—");
 		set("utility", liveDecision ? liveDecision.utility().toFixed(4) : "—");
-		set("margin", liveDecision ? liveDecision.opportunityMargin().toFixed(4) : "—");
+		set("uncertainty", readAlternative(liveDecision, "economic:outcome_uncertainty")?.toFixed(4) ?? "—");
+		set("visits", readAlternative(liveDecision, "economic:visits")?.toFixed(0) ?? "—");
+		set("causal support", readAlternative(liveDecision, "causal:effective_support")?.toFixed(4) ?? "—");
 		set("cause", liveDecision?.reason() ?? "—");
 		set("reason", liveDecision?.reason() ?? "—");
 		set("at", liveDecision?.at() ? new Date(Number(liveDecision.at())).toISOString().slice(11, 19) : "—");
@@ -165,15 +189,18 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
 
 	causalStore.subscribe((frames) => {
 		if (!causalRef.current) return;
-		const lastFrame = frames.getLast();
-		if (!lastFrame) return;
+		const all = frames.toArray();
 
 		let targetRow: Causal | null = null;
-		for (let i = 0; i < lastFrame.rowsLength(); i++) {
-			const row = lastFrame.rows(i, causalObj);
-			if (row && row.symbol() === symbol) {
-				targetRow = row;
-				break;
+		for (let f = all.length - 1; f >= 0 && !targetRow; f--) {
+			const frame = all[f];
+
+			for (let i = 0; i < frame.rowsLength(); i++) {
+				const row = frame.rows(i, causalObj);
+				if (row && row.symbol() === symbol) {
+					targetRow = row;
+					break;
+				}
 			}
 		}
 
@@ -189,15 +216,18 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
 
 	cognitionStore.subscribe((state) => {
 		if (!cognitionRef.current) return;
-		const last = state.getLast();
-		if (!last) return;
+		const all = state.toArray();
 
 		let targetRow: Cognition | null = null;
-		for (let i = 0; i < last.rowsLength(); i++) {
-			const row = last.rows(i, cogObj);
-			if (row && row.symbol() === symbol) {
-				targetRow = row;
-				break;
+		for (let f = all.length - 1; f >= 0 && !targetRow; f--) {
+			const frame = all[f];
+
+			for (let i = 0; i < frame.rowsLength(); i++) {
+				const row = frame.rows(i, cogObj);
+				if (row && row.symbol() === symbol) {
+					targetRow = row;
+					break;
+				}
 			}
 		}
 
@@ -242,11 +272,10 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
 					}
 				>
 					<Row label="action" tone="text-(--acc) uppercase" />
-					<Row label="thesis score" />
-					<Row label="confidence" />
-					<Row label="graph score" />
 					<Row label="utility" />
-					<Row label="margin" />
+					<Row label="uncertainty" />
+					<Row label="visits" />
+					<Row label="causal support" />
 					<Row label="cause" />
 					<Row label="reason" />
 					<Row label="at" />

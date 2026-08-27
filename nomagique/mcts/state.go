@@ -43,6 +43,12 @@ history. It reports not-found when no entry satisfies the cutoff — which is
 missing, never a fabricated zero.
 */
 func (state MarketState) ValueAt(coordinate relation.Coordinate, lag time.Duration) (float64, bool) {
+	if lag <= 0 {
+		if value, found := state.Current[coordinate]; found {
+			return value, true
+		}
+	}
+
 	cutoff := state.At.Add(-lag)
 
 	if entries := state.History[coordinate]; len(entries) > 0 {
@@ -50,12 +56,6 @@ func (state MarketState) ValueAt(coordinate relation.Coordinate, lag time.Durati
 			if !entries[index].At.After(cutoff) {
 				return entries[index].Value, true
 			}
-		}
-	}
-
-	if lag <= 0 {
-		if value, found := state.Current[coordinate]; found {
-			return value, true
 		}
 	}
 

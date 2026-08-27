@@ -32,6 +32,30 @@ func TestCrossLag(t *testing.T) {
 			So(output.MustGet(SymbolLeadLagReady), ShouldEqual, 0.0)
 		})
 	})
+
+	Convey("Given only the anchor path lacking spacing metadata", t, func() {
+		anchor := hayashiEquationPath([]int64{0, 0, 0}, []float64{100, 101, 102})
+		follower := hayashiEquationPath([]int64{0, 1_000_000_000, 2_000_000_000}, []float64{50, 51, 52})
+
+		Convey("It should mark the search unready without requiring both paths to lack spacing", func() {
+			output := CrossLag("previous", "current")(pairPaths(anchor, follower))
+
+			So(output.Err, ShouldBeNil)
+			So(output.MustGet(SymbolLeadLagReady), ShouldEqual, 0.0)
+		})
+	})
+
+	Convey("Given only the follower path lacking spacing metadata", t, func() {
+		anchor := hayashiEquationPath([]int64{0, 1_000_000_000, 2_000_000_000}, []float64{100, 101, 102})
+		follower := hayashiEquationPath([]int64{0, 0, 0}, []float64{50, 51, 52})
+
+		Convey("It should mark the search unready without requiring both paths to lack spacing", func() {
+			output := CrossLag("previous", "current")(pairPaths(anchor, follower))
+
+			So(output.Err, ShouldBeNil)
+			So(output.MustGet(SymbolLeadLagReady), ShouldEqual, 0.0)
+		})
+	})
 }
 
 func delayedCrossLagPaths(sampleCount int) (types.Frame, types.Frame) {

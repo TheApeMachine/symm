@@ -30,16 +30,19 @@ describe("sourceHeadlineMetric", () => {
 		expect(sourceHeadlineMetric("depthflow")).toBe("metrics.book_imbalance");
 		expect(sourceMetrics("depthflow")).toContain("book_imbalance");
 		expect(sourceMetrics("depthflow")).toContain("touch_imbalance");
+		expect(sourceMetrics("depthflow")[0]).toBe("snr");
 	});
 
 	it("uses the live correlation hypothesis as its headline", () => {
 		expect(sourceHeadlineMetric("correlation")).toBe("metrics.signed_correlation");
 		expect(sourceMetrics("correlation")).toContain("signed_correlation");
+		expect(sourceMetrics("correlation")[0]).toBe("snr");
 	});
 
 	it("uses the anchor evidence names emitted by leadlag", () => {
 		expect(sourceHeadlineMetric("leadlag")).toBe("metrics.best_lag_correlation");
 		expect(sourceMetrics("leadlag")).toContain("best_lag_correlation");
+		expect(sourceMetrics("leadlag")[0]).toBe("snr");
 	});
 
 	it("shows PumpDump's measured spread contract", () => {

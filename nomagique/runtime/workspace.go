@@ -261,9 +261,10 @@ func (subscriber *Subscriber) execute(event *Event) {
 	}
 
 	released := false
+	acquired := false
 
 	defer func() {
-		if subscriber.wire.Class == ServiceAnalytics && !released {
+		if acquired && !released {
 			subscriber.workspace.releaseAnalyticsToken()
 		}
 
@@ -275,7 +276,7 @@ func (subscriber *Subscriber) execute(event *Event) {
 	started := time.Now()
 
 	if subscriber.wire.Class == ServiceAnalytics {
-		subscriber.workspace.acquireAnalyticsToken()
+		acquired = subscriber.workspace.acquireAnalyticsToken()
 	}
 
 	var output any
@@ -290,7 +291,7 @@ func (subscriber *Subscriber) execute(event *Event) {
 		output = subscriber.wire.step(value)
 	}
 
-	if subscriber.wire.Class == ServiceAnalytics {
+	if acquired {
 		subscriber.workspace.releaseAnalyticsToken()
 		released = true
 	}
@@ -441,14 +442,16 @@ func NewWorkspace(ctx context.Context) *Workspace {
 	}
 }
 
-func (workspace *Workspace) acquireAnalyticsToken() {
+func (workspace *Workspace) acquireAnalyticsToken() bool {
 	if workspace == nil || workspace.analyticsSem == nil {
-		return
+		return false
 	}
 
 	select {
 	case workspace.analyticsSem <- struct{}{}:
+		return true
 	case <-workspace.ctx.Done():
+		return false
 	}
 }
 

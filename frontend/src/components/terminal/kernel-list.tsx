@@ -47,16 +47,18 @@ const getKernelReadings = (
 		let foundValue: number | null = null;
 
 		/*
-		The kernel list plots the measurement's signal-to-noise ratio: the wire
-		serializes it as a named "snr" metric, and it is the one quantity every
-		source carries. Fall back to a named headline or the first metric only
-		when "snr" is absent.
+		The kernel list plots a normalized signal-to-noise reading for the
+		confidence gauge and sparkline. The raw "snr" value is unbounded, so it
+		is only used when the metric also carries a normalized value; otherwise
+		the established headline or first-metric fallback supplies the [0,1]
+		reading.
 		*/
 		for (let j = 0; j < count; j++) {
 			const metric = row.metrics(j, metricObj);
 			if (!metric) continue;
 			if (metric.name() !== "snr") continue;
-			foundValue = metric.hasNormalized() ? metric.normalized() : metric.raw();
+			if (!metric.hasNormalized()) continue;
+			foundValue = metric.normalized();
 			break;
 		}
 

@@ -59,10 +59,14 @@ export const XrayHawkesPanel = () => {
 		);
 		write("background_rate:buy", "mu", (raw) => `${raw.toFixed(4)} /s`);
 		write("event_count:sell", "sells", (raw) => raw.toFixed(0));
-		write("spectral_radius", "eta", (raw) => raw.toFixed(3));
+		write("branching_spectral_radius", "eta", (raw) => raw.toFixed(3));
+		if (metricsMap.branching_spectral_radius === undefined) {
+			write("spectral_radius", "eta", (raw) => raw.toFixed(3));
+		}
 
 		const etaBar = root.current.querySelector<HTMLElement>("[data-eta-bar]");
-		const eta = metricsMap.spectral_radius?.raw;
+		const eta =
+			metricsMap.branching_spectral_radius?.raw ?? metricsMap.spectral_radius?.raw;
 
 		if (etaBar instanceof HTMLElement && typeof eta === "number") {
 			etaBar.style.width = `calc(${Math.min(1, Math.max(0, eta))} * 100%)`;

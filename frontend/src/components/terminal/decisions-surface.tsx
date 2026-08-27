@@ -7,7 +7,7 @@ import { Panel } from "#/components/ui/panel";
 import { Decision } from "#/providers/telemetry/telemetry/decision";
 
 type DecisionKey = {
-	id: string;
+	symbol: string;
 	index: number;
 };
 
@@ -23,11 +23,14 @@ export const DecisionsSurface = () => {
 		const currentKeys: DecisionKey[] = [];
 		for (let i = 0; i < last.decisionsLength(); i++) {
 			const dec = last.decisions(i, decObj);
-			const id = dec?.id() ?? String(i);
-			currentKeys.push({ id, index: i });
+			const symbol = dec?.symbol() ?? String(i);
+			currentKeys.push({ symbol, index: i });
 		}
 
-		if (currentKeys.map((k) => k.id).join(",") !== decisionKeys.map((k) => k.id).join(",")) {
+		if (
+			currentKeys.map((key) => key.symbol).join(",") !==
+			decisionKeys.map((key) => key.symbol).join(",")
+		) {
 			setDecisionKeys(currentKeys);
 		}
 	});
@@ -53,7 +56,7 @@ export const DecisionsSurface = () => {
 						</Panel>
 					) : (
 						decisionKeys.map((key) => (
-							<DecisionChain key={key.id} index={key.index} />
+							<DecisionChain key={key.symbol} index={key.index} />
 						))
 					)}
 				</div>

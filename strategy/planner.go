@@ -719,6 +719,11 @@ func (planner *Planner) deskMarketInputs(symbol string) marketInputs {
 recordEconomic records the economic outcome provenance on the decision.
 */
 func recordEconomic(decision *types.Decision, result *mcts.SearchResult, state *CausalState) {
+	// Utility is the search's expected economic outcome for the selected
+	// action: the same value the causal rollout actually optimized, surfaced
+	// directly rather than reconstructed by the frontend.
+	decision.Utility = result.ExpectedEconomicOutcome
+
 	alternatives := decision.Alternatives
 	alternatives["economic:expected_outcome"] = result.ExpectedEconomicOutcome
 	alternatives["economic:outcome_uncertainty"] = result.OutcomeUncertainty
@@ -732,13 +737,7 @@ func recordEconomic(decision *types.Decision, result *mcts.SearchResult, state *
 	// entry before the price actually moves. Missing values are absent keys,
 	// never fabricated zeros.
 	if radius, found := marketValue(state, "hawkes", "branching_spectral_radius", ""); found {
-		supercritical := 0.0
-
-		if radius > 0.8 {
-			supercritical = 1.0
-		}
-
-		alternatives["precursor:hawkes_supercritical"] = supercritical
+		alternatives["precursor:hawkes_supercritical"] = radius
 	}
 
 	if retreat, found := marketValue(state, "toxicity", "retreat_rate", "ask"); found {
@@ -747,6 +746,58 @@ func recordEconomic(decision *types.Decision, result *mcts.SearchResult, state *
 
 	if basis, found := marketValue(state, "derivatives", "basis_zscore", ""); found {
 		alternatives["precursor:basis_tension"] = basis
+	}
+
+	if cvdSigned, found := marketValue(state, "cvd", "signed_net_fraction_zscore", ""); found {
+		alternatives["precursor:cvd_signed_fraction"] = cvdSigned
+	}
+
+	if cvdGross, found := marketValue(state, "cvd", "gross_notional_rate_zscore", ""); found {
+		alternatives["precursor:cvd_gross_rate"] = cvdGross
+	}
+
+	if bookImb, found := marketValue(state, "depthflow", "book_imbalance", ""); found {
+		alternatives["precursor:depthflow_book_imbalance"] = bookImb
+	}
+
+	if resGap, found := marketValue(state, "depthflow", "imbalance_resolution_gap", ""); found {
+		alternatives["precursor:depthflow_resolution_gap"] = resGap
+	}
+
+	if spread, found := marketValue(state, "liquidity", "relative_spread", ""); found {
+		alternatives["precursor:liquidity_spread"] = spread
+	}
+
+	if lagCorr, found := marketValue(state, "leadlag", "best_lag_correlation", ""); found {
+		alternatives["precursor:leadlag_correlation"] = lagCorr
+	}
+
+	if consensus, found := marketValue(state, "sentiment", "directional_consensus", ""); found {
+		alternatives["precursor:sentiment_consensus"] = consensus
+	}
+
+	if oiGrowth, found := marketValue(state, "derivatives", "open_interest_growth_zscore", ""); found {
+		alternatives["precursor:derivatives_oi_growth"] = oiGrowth
+	}
+
+	if liqRate, found := marketValue(state, "derivatives", "liquidation_notional_rate", ""); found {
+		alternatives["precursor:derivatives_liquidation_rate"] = liqRate
+	}
+
+	if withBid, found := marketValue(state, "toxicity", "withdrawal_fraction_zscore", "bid"); found {
+		alternatives["precursor:toxicity_withdrawal_bid"] = withBid
+	}
+
+	if withAsk, found := marketValue(state, "toxicity", "withdrawal_fraction_zscore", "ask"); found {
+		alternatives["precursor:toxicity_withdrawal_ask"] = withAsk
+	}
+
+	if fillBid, found := marketValue(state, "toxicity", "fill_fraction_zscore", "bid"); found {
+		alternatives["precursor:toxicity_fill_bid"] = fillBid
+	}
+
+	if fillAsk, found := marketValue(state, "toxicity", "fill_fraction_zscore", "ask"); found {
+		alternatives["precursor:toxicity_fill_ask"] = fillAsk
 	}
 }
 

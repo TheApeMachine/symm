@@ -62,6 +62,25 @@ type hubClient struct {
 	wake   chan struct{}
 }
 
+/*
+takePending drains the client's coalesced latest-state cells under one lock and
+returns them by stream key, leaving the map empty for the next wake. It is the
+single shared drain path used by both the live writer and the coalescing test.
+*/
+func (client *hubClient) takePending() map[string][]byte {
+	client.mu.Lock()
+	pending := make(map[string][]byte, len(client.latest))
+
+	for stream, payload := range client.latest {
+		pending[stream] = payload
+		delete(client.latest, stream)
+	}
+
+	client.mu.Unlock()
+
+	return pending
+}
+
 type diagnosticsToggleRequest struct {
 	Enabled bool `json:"enabled"`
 }
@@ -188,15 +207,7 @@ func NewHub(
 				case <-client.done:
 					return
 				case <-client.wake:
-					client.mu.Lock()
-					pending := make([][]byte, 0, len(client.latest))
-
-					for stream, payload := range client.latest {
-						pending = append(pending, payload)
-						delete(client.latest, stream)
-					}
-
-					client.mu.Unlock()
+					pending := client.takePending()
 
 					_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 
@@ -264,17 +275,23 @@ func hubLatestKey(value any) string {
 		return "global"
 	}
 
-	if frame.Type == wire.FrameMeasurementsFrame {
-		if measurements, valid := frame.Value.(*wire.MeasurementsFrameT); valid && len(measurements.Rows) > 0 {
-			if row := measurements.Rows[0]; row != nil && row.Source != "" {
-				return "measurements:" + row.Source
-			}
-		}
+	if frame.Type != wire.FrameMeasurementsFrame {
+		return frame.Type.String()
+	}
 
+	measurements, valid := frame.Value.(*wire.MeasurementsFrameT)
+
+	if !valid || len(measurements.Rows) == 0 {
 		return "measurements"
 	}
 
-	return frame.Type.String()
+	row := measurements.Rows[0]
+
+	if row == nil || row.Source == "" {
+		return "measurements"
+	}
+
+	return "measurements:" + row.Source
 }
 
 func (hub *Hub) Step(msg any) any {

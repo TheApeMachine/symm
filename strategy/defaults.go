@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/theapemachine/symm/logic/causal"
@@ -97,7 +98,9 @@ return:
 
 Every tier-2/3/4 metric lists exactly the structural parents that mediate
 information down to it; no variable is wired as a direct parent of the outcome
-unless the cascade reaches it that way.
+unless the cascade reaches it that way. The one intentional exception is the
+Tier 1 leadlag/best_lag_correlation variable, which is wired directly to the
+Tier 4 outcome, bypassing Tiers 2 and 3.
 */
 func DefaultCausalSchema(epoch uint64, step time.Duration) *causal.CausalSchema {
 	if step <= 0 {
@@ -108,7 +111,16 @@ func DefaultCausalSchema(epoch uint64, step time.Duration) *causal.CausalSchema 
 
 	// Resolve a typed catalog coordinate into its market variable identity.
 	variable := func(source, metric, side string) causal.VariableID {
-		return marketVariable(marketCoordinate(catalogSpec(source, metric, side)))
+		spec := catalogSpec(source, metric, side)
+
+		if spec == (MarketCoordinateSpec{}) {
+			panic(fmt.Sprintf(
+				"strategy: unresolved catalog coordinate for source=%s metric=%s side=%s",
+				source, metric, side,
+			))
+		}
+
+		return marketVariable(marketCoordinate(spec))
 	}
 
 	// 1. Tier 1: Latent / Macro / External (Self-Lag Only)

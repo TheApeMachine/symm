@@ -1,6 +1,7 @@
 package sensorium
 
 import (
+	"fmt"
 	"math"
 	"sort"
 )
@@ -263,13 +264,17 @@ func (fluid *workspace) admitConserved() {
 
 	for cell, density := range rho {
 		// Zero out vacuum and numerical underflow cells cleanly
-		if density <= rhoMin || math.IsNaN(float64(density)) {
+		if density <= rhoMin || math.IsNaN(float64(density)) || math.IsInf(float64(density), 0) {
 			rho[cell] = 0
 			mom[cell*3+0] = 0
 			mom[cell*3+1] = 0
 			mom[cell*3+2] = 0
 			energy[cell] = 0
-		} else if energy[cell] < 0 || math.IsNaN(float64(energy[cell])) {
+
+			continue
+		}
+
+		if energy[cell] < 0 || math.IsNaN(float64(energy[cell])) || math.IsInf(float64(energy[cell]), 0) {
 			energy[cell] = 0
 		}
 	}
@@ -293,10 +298,11 @@ func (fluid *workspace) planckExchange() {
 		freq := float64(omega[index])
 
 		if math.IsNaN(thermal) || thermal < 0 {
-			thermal = 0.5
+			panic(fmt.Sprintf("sensorium: invalid thermal energy %v for particle %d", thermal, index))
 		}
+
 		if math.IsNaN(osc) || osc < 0 {
-			osc = 1.0
+			panic(fmt.Sprintf("sensorium: invalid oscillator energy %v for particle %d", osc, index))
 		}
 
 		denom := particleMass * cv

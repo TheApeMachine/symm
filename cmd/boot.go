@@ -18,6 +18,7 @@ import (
 	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/logic/manifold"
+	"github.com/theapemachine/symm/logic/opportunity"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/relation"
@@ -406,7 +407,18 @@ func BootWithHub(
 				var store *relation.ObservationStore
 
 				if sharedStore, storeFound := bus.Shared(graph.SharedObservationStore, ""); storeFound {
-					store, _ = sharedStore.(*relation.ObservationStore)
+					var ok bool
+					store, ok = sharedStore.(*relation.ObservationStore)
+
+					if !ok {
+						errnie.Error(errnie.Err(
+							errnie.Validation,
+							"boot: shared observation store has unexpected type",
+							nil,
+						))
+
+						return nil
+					}
 				}
 
 				return &types.UIFrame{
@@ -531,6 +543,7 @@ func BootWithHub(
 	categorySolver := category.NewSolver(systemCtx, bus)
 	causalSolver := causal.NewSolver(bus)
 	cognitionSolver := cognition.NewSolver(systemCtx, bus)
+	opportunitySolver := opportunity.NewSolver(systemCtx, bus)
 
 	// The Influence Graph stage subscribes to ChannelMeasurements, maintains the
 	// shared Influence Graph in place, and publishes a GraphUpdate per symbol on
@@ -572,6 +585,7 @@ func BootWithHub(
 	cognitionSolver.ObserveModule = diagnosticsCollector.ObserveModule()
 	graphSolver.ObserveModule = diagnosticsCollector.ObserveModule()
 	manifoldSolver.ObserveModule = diagnosticsCollector.ObserveModule()
+	opportunitySolver.ObserveModule = diagnosticsCollector.ObserveModule()
 	resonanceSolver.ObserveModule = diagnosticsCollector.ObserveModule()
 	desk.ObserveModule = diagnosticsCollector.ObserveModule()
 	planner.ObserveModule = diagnosticsCollector.ObserveModule()
@@ -601,6 +615,7 @@ func BootWithHub(
 		cognitionSolver.Close,
 		graphSolver.Close,
 		manifoldSolver.Close,
+		opportunitySolver.Close,
 		planner.Close,
 		resonanceSolver.Close,
 		diagnosticsCollector.Close,
@@ -699,6 +714,10 @@ func measurementWire(measurement *nmtypes.Measurement) *wire.MeasurementT {
 	}
 
 	for _, name := range names {
+		if name == "snr" {
+			continue
+		}
+
 		metric := measurement.Metrics[name]
 
 		if metric == nil {

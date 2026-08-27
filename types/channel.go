@@ -29,6 +29,7 @@ const (
 	ChannelGraphs         = "graphs"
 	ChannelRelations      = "relations"
 	ChannelCausalState    = "causal_state"
+	ChannelOpportunities  = "opportunities"
 	ChannelDecisions      = "decisions"
 	ChannelExecutions     = "executions"
 	ChannelRegulator      = "regulator"

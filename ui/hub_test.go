@@ -140,40 +140,6 @@ func TestHubPerStreamCoalescing(t *testing.T) {
 }
 
 /*
-TestMeasurementObserverFocusGate replicates the boot measurement observer's
-exact focus gate: only rows whose symbol equals the dashboard focus survive.
-If a signal ever emits a different symbol spelling than the focus (for example
-an unnormalized venue symbol), that source silently disappears from the
-kernel list — which is precisely the depthflow-only symptom.
-*/
-func TestMeasurementObserverFocusGate(t *testing.T) {
-	Convey("Given the focus symbol is BTC/USD", t, func() {
-		types.SetFocus("BTC/USD")
-		defer types.SetFocus("")
-
-		Convey("a row carrying the focus symbol passes", func() {
-			row := &wire.MeasurementT{
-				Source: "cvd",
-				Symbol: "BTC/USD",
-				Metrics: []*wire.MetricT{
-					{Name: "flow", Raw: 1.0},
-				},
-			}
-
-			So(row, ShouldNotBeNil)
-			So(row.Source, ShouldEqual, "cvd")
-		})
-
-		Convey("a row carrying a different symbol spelling is dropped by the observer", func() {
-			// The observer gate is `measurement.Symbol != types.Focus()`; a row
-			// that reaches the frontend must already have passed it, so the
-			// wire never sees the mismatch. The gate lives in boot.go.
-			So(types.Focus(), ShouldEqual, "BTC/USD")
-		})
-	})
-}
-
-/*
 TestMeasurementsFlowThroughBootChain replicates the complete production wiring
 end to end: signals publish *data.Measurement[float64] to ChannelMeasurements,
 the boot observer (a WireFunc, exactly as cmd/boot.go registers it) converts
@@ -297,8 +263,9 @@ func TestHubPerClientCoalescing(t *testing.T) {
 			wake:   make(chan struct{}, 1),
 			done:   make(chan struct{}),
 		}
+		defer close(client.done)
 
-		delivered := map[string]int{}
+		delivered := map[string]string{}
 		deliveredMu := sync.Mutex{}
 
 		// Replace the socket writer with a collector that stalls 10ms per
@@ -309,19 +276,11 @@ func TestHubPerClientCoalescing(t *testing.T) {
 				case <-client.done:
 					return
 				case <-client.wake:
-					client.mu.Lock()
-					pending := make([][]byte, 0, len(client.latest))
+					pending := client.takePending()
 
-					for stream, payload := range client.latest {
-						pending = append(pending, payload)
-						delete(client.latest, stream)
-					}
-
-					client.mu.Unlock()
-
-					for _, payload := range pending {
+					for stream, payload := range pending {
 						deliveredMu.Lock()
-						delivered[string(payload)]++
+						delivered[stream] = string(payload)
 						deliveredMu.Unlock()
 						time.Sleep(10 * time.Millisecond)
 					}
@@ -335,7 +294,7 @@ func TestHubPerClientCoalescing(t *testing.T) {
 			for round := 0; round < 3; round++ {
 				for _, stream := range streams {
 					client.mu.Lock()
-					client.latest[stream] = []byte(stream + "-" + itoa(round))
+					client.latest[stream] = []byte(stream + "-" + strconv.Itoa(round))
 					client.mu.Unlock()
 
 					select {
@@ -352,19 +311,13 @@ func TestHubPerClientCoalescing(t *testing.T) {
 				defer deliveredMu.Unlock()
 
 				for _, stream := range streams {
-					if delivered[stream+"-2"] < 1 {
+					if delivered[stream] != stream+"-2" {
 						return false
 					}
 				}
 
 				return true
 			})
-
-			close(client.done)
 		})
 	})
-}
-
-func itoa(value int) string {
-	return strconv.Itoa(value)
 }

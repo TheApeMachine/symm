@@ -4,6 +4,7 @@ let socket: WebSocket | null = null;
 let connectUrl = "";
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
+let socketGeneration = 0;
 
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 10_000;
@@ -31,6 +32,11 @@ const sendFocus = (symbol: string) => {
 };
 
 const teardownSocket = () => {
+	// Invalidate the current socket before an intentional close so its stale
+	// lifecycle handlers can never schedule a reconnect for a replaced or
+	// deliberately disconnected connection.
+	socketGeneration += 1;
+
 	if (
 		socket !== null &&
 		(socket.readyState === WebSocket.OPEN ||
@@ -60,31 +66,48 @@ const scheduleReconnect = () => {
 };
 
 const connect = (url: string) => {
-	teardownSocket();
-
 	if (url === "") {
 		return;
 	}
 
+	teardownSocket();
+
 	connectUrl = url;
+	const generation = socketGeneration;
 	socket = new WebSocket(url);
 	socket.binaryType = "arraybuffer";
 
 	socket.addEventListener("open", () => {
+		if (generation !== socketGeneration) {
+			return;
+		}
+
 		reconnectAttempts = 0;
 		self.postMessage({ type: "STATUS", status: "ONLINE" });
 	});
 
 	socket.addEventListener("close", () => {
+		if (generation !== socketGeneration) {
+			return;
+		}
+
 		self.postMessage({ type: "STATUS", status: "OFFLINE" });
 		scheduleReconnect();
 	});
 
 	socket.addEventListener("error", (event) => {
+		if (generation !== socketGeneration) {
+			return;
+		}
+
 		self.postMessage({ type: "ERROR", error: String(event) });
 	});
 
 	socket.addEventListener("message", (event) => {
+		if (generation !== socketGeneration) {
+			return;
+		}
+
 		try {
 			const raw = event.data;
 			let arrayBuffer: ArrayBuffer | null = null;

@@ -12,8 +12,9 @@ import (
 
 /*
 topoCoordinate builds a market coordinate identity for ordering tests. The
-metric names are chosen so that alphabetical order A < B < C < D < E is the
-opposite of the causal (parent-first) order, forcing the sort to actually
+metric names are chosen so that plain alphabetical order (a_leaf < b_mid <
+c_mid < d_root_b < e_root_a) is the exact reverse of the causal parent-first
+order (e_root_a < d_root_b < c_mid < b_mid < a_leaf), forcing the sort to
 respect the DAG rather than accidentally passing lexicographically.
 */
 func topoCoordinate(metric string) relation.Coordinate {
@@ -51,11 +52,11 @@ func topoTransition(target relation.Coordinate, parents ...relation.Coordinate) 
 func TestTransitionOrder(t *testing.T) {
 	Convey("Given a fitted transition set with a multi-tier cascade", t, func() {
 		// Layer 1 autonomous: A, B. Layer 2: C ← A, D ← A,B. Layer 3: E ← C,D.
-		coordA := topoCoordinate("a_autonomous")
-		coordB := topoCoordinate("b_autonomous")
-		coordC := topoCoordinate("c_book")
-		coordD := topoCoordinate("d_book")
-		coordE := topoCoordinate("e_flow")
+		coordA := topoCoordinate("e_root_a")
+		coordB := topoCoordinate("d_root_b")
+		coordC := topoCoordinate("c_mid")
+		coordD := topoCoordinate("b_mid")
+		coordE := topoCoordinate("a_leaf")
 
 		state := &CausalState{
 			Transitions: map[relation.Coordinate]*causal.TransitionModel{

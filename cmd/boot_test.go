@@ -151,6 +151,32 @@ func TestMeasurementWireDeterministicOrder(t *testing.T) {
 			}
 		})
 
+		Convey("a map entry named 'snr' never duplicates the dedicated SNR", func() {
+			measurement.SNR = 12.5
+			measurement.SNRDefined = true
+			measurement.Metrics["snr"] = nmtypes.NewMetric(
+				"snr", 99.0, nmtypes.Descriptor{Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
+			)
+
+			row := measurementWire(measurement)
+
+			So(row, ShouldNotBeNil)
+
+			var snrCount int
+			var snr *wire.MetricT
+
+			for _, metric := range row.Metrics {
+				if metric.Name == "snr" {
+					snrCount++
+					snr = metric
+				}
+			}
+
+			So(snrCount, ShouldEqual, 1)
+			So(snr, ShouldNotBeNil)
+			So(snr.Raw, ShouldEqual, 12.5)
+		})
+
 		Convey("nil measurements produce no row", func() {
 			So(measurementWire(nil), ShouldBeNil)
 		})

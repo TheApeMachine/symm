@@ -116,7 +116,13 @@ func testMarketState(price float64) MarketState {
 
 func TestValueAt(t *testing.T) {
 	Convey("Given a market state with timestamped history", t, func() {
-		at := time.Unix(0, 100*int64(time.Second))
+		cadence := time.Second
+		at := time.Unix(0, 100*int64(cadence))
+
+		history := []MarketSample{
+			{At: at.Add(-2 * cadence), Value: 5},
+			{At: at.Add(-1 * cadence), Value: 6},
+		}
 
 		state := MarketState{
 			At: at,
@@ -124,25 +130,22 @@ func TestValueAt(t *testing.T) {
 				testPriceCoordinate: 9,
 			},
 			History: map[relation.Coordinate][]MarketSample{
-				testPriceCoordinate: {
-					{At: at.Add(-2 * time.Second), Value: 5},
-					{At: at.Add(-1 * time.Second), Value: 6},
-					{At: at, Value: 9},
-				},
+				testPriceCoordinate: history,
 			},
 		}
 
 		Convey("a lag matching a stored timestamp reads that exact slice", func() {
-			value, found := state.ValueAt(testPriceCoordinate, 1*time.Second)
+			value, found := state.ValueAt(testPriceCoordinate, cadence)
 			So(found, ShouldBeTrue)
 			So(value, ShouldEqual, 6)
 		})
 
 		Convey("a lag falling between stored timestamps clamps to the nearest prior slice", func() {
-			// 1.5s is between the 2s and 1s slices; the nearest slice at or
-			// before the cutoff is the 2s slice (value 5), never a fabricated
-			// zero and never a future value.
-			value, found := state.ValueAt(testPriceCoordinate, 1500*time.Millisecond)
+			// 1.5 cadence is midway between the 2-cadence and 1-cadence
+			// slices; the nearest slice at or before the cutoff is the
+			// 2-cadence slice (value 5), never a fabricated zero and never a
+			// future value.
+			value, found := state.ValueAt(testPriceCoordinate, 3*cadence/2)
 			So(found, ShouldBeTrue)
 			So(value, ShouldEqual, 5)
 		})
@@ -154,7 +157,8 @@ func TestValueAt(t *testing.T) {
 		})
 
 		Convey("a lag beyond the retained history reports not-found", func() {
-			_, found := state.ValueAt(testPriceCoordinate, 10*time.Second)
+			retained := time.Duration(len(history)) * cadence
+			_, found := state.ValueAt(testPriceCoordinate, retained+cadence)
 			So(found, ShouldBeFalse)
 		})
 	})

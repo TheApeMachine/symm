@@ -11,6 +11,15 @@ export const vectorSlotTransform = (slot: number, slotCount: number): string =>
 
 export const signedVectorTransform = "scaleY(calc(var(--value, 0) * -1))";
 
+interface VectorBarStyle extends CSSProperties {
+	"--value": number;
+}
+
+const vectorBarStyle = (value: number): VectorBarStyle => ({
+	transform: signedVectorTransform,
+	"--value": value,
+});
+
 const fmt = (value: number | undefined | null, digits: number): string =>
 	value === undefined || value === null || !Number.isFinite(value) ? "—" : value.toFixed(digits);
 
@@ -226,12 +235,7 @@ const VectorLane = ({
 							>
 								<div
 									className="absolute top-1/2 right-px left-0 h-[calc(50%-1px)] origin-top bg-(--line2)"
-									style={
-										{
-											transform: signedVectorTransform,
-											"--value": value / ghostExtent,
-										} as CSSProperties
-									}
+									style={vectorBarStyle(value / ghostExtent)}
 								/>
 							</div>
 						))}
@@ -246,12 +250,7 @@ const VectorLane = ({
 					>
 						<div
 							className={`absolute top-1/2 right-1.5 left-1 h-[calc(50%-1px)] origin-top ${color}`}
-							style={
-								{
-									transform: signedVectorTransform,
-									"--value": value / stateExtent,
-								} as CSSProperties
-							}
+							style={vectorBarStyle(value / stateExtent)}
 						/>
 					</div>
 				))}
