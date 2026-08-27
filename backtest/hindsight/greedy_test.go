@@ -140,6 +140,40 @@ func TestRoundTrips(t *testing.T) {
 			So(result.Legs[1].SellPrice, ShouldEqual, 130)
 		})
 	})
+
+	Convey("Given a series with high friction exceeding price move", t, func() {
+		series := &Series{
+			Symbol: "TEST/USD",
+			Points: []Point{
+				{At: epoch, Price: 100, Bid: 98, Ask: 102, Friction: 0.04},
+				{At: epoch.Add(time.Second), Price: 101, Bid: 99, Ask: 103, Friction: 0.04},
+			},
+		}
+		result := RoundTrips(series)
+
+		Convey("It should discard the sub-friction move", func() {
+			So(len(result.Legs), ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given a series with profitable move exceeding friction", t, func() {
+		series := &Series{
+			Symbol: "TEST/USD",
+			Points: []Point{
+				{At: epoch, Price: 100, Bid: 99.5, Ask: 100.5, Friction: 0.01},
+				{At: epoch.Add(time.Second), Price: 120, Bid: 119.5, Ask: 120.5, Friction: 0.01},
+			},
+		}
+		result := RoundTrips(series)
+
+		Convey("It should compute gross, friction, and net profit", func() {
+			So(len(result.Legs), ShouldEqual, 1)
+			leg := result.Legs[0]
+			So(leg.GrossProfitPct, ShouldAlmostEqual, 0.20, 1e-9)
+			So(leg.FrictionPct, ShouldAlmostEqual, 0.02, 1e-9)
+			So(leg.ProfitPct, ShouldAlmostEqual, 0.18, 1e-9)
+		})
+	})
 }
 
 func sampleSeries(pointCount int) *Series {

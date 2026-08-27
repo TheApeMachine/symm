@@ -5,8 +5,12 @@ import type { HindsightReport } from "#/collections/app";
 import {
 	hindsightDiagnosticCoverage,
 	hindsightLegCaptureRate,
+	hindsightLossPct,
+	hindsightLossPositions,
 	hindsightRealizedPct,
 	hindsightValueCaptureRate,
+	rankHindsightLossRecommendations,
+	rankHindsightLossRootCauses,
 	rankHindsightRecommendations,
 	rankHindsightRootCauses,
 } from "./hindsight-model";
@@ -20,6 +24,8 @@ const report: HindsightReport = {
 	missedLegs: 2,
 	totalLegs: 4,
 	realizedPct: 0.2,
+	lossPct: 0.05,
+	lossPositions: 1,
 	valueCaptureRate: 0.4,
 	legCaptureRate: 0.5,
 	diagnosticCoverage: 0.75,
@@ -72,17 +78,46 @@ const report: HindsightReport = {
 			symbols: ["AAA/USD"],
 		},
 	],
+	lossRootCauses: [
+		{
+			category: "whipsaw_stopout",
+			impactPct: 0.05,
+			occurrences: 1,
+			symbols: ["AAA/USD"],
+		},
+	],
+	lossRecommendations: [
+		{
+			key: "tune_stoploss_buffer",
+			kind: "tune_risk",
+			target: "trading.risk.stoploss_buffer",
+			title: "Tune stoploss buffer",
+			action: "Widen stoploss threshold to clear market noise.",
+			rationale: "Position stopped out on immediate wick.",
+			current: 0.02,
+			suggested: 0.035,
+			hasCurrent: true,
+			hasSuggested: true,
+			adjustment: "raise",
+			confidence: 0.88,
+			impactPct: 0.05,
+			occurrences: 1,
+			symbols: ["AAA/USD"],
+		},
+	],
 };
 
 describe("hindsight model", () => {
 	it("exposes backend-owned summary arithmetic without re-deriving it", () => {
 		expect(hindsightRealizedPct(report)).toBe(0.2);
+		expect(hindsightLossPct(report)).toBe(0.05);
+		expect(hindsightLossPositions(report)).toBe(1);
 		expect(hindsightValueCaptureRate(report)).toBe(0.4);
 		expect(hindsightLegCaptureRate(report)).toBe(0.5);
 		expect(hindsightDiagnosticCoverage(report)).toBe(0.75);
 	});
 
-	it("preserves backend recommendation and root-cause ordering", () => {
+	it("preserves backend recommendation and root-cause ordering for both opportunities and losses", () => {
 		expect(rankHindsightRecommendations(report).map(({ key }) => key)).toEqual([
 			"execution:coverage",
 			"admission:confidence",
@@ -91,11 +126,25 @@ describe("hindsight model", () => {
 			"execution_feasibility",
 			"admission_policy",
 		]);
+		expect(rankHindsightLossRecommendations(report).map(({ key }) => key)).toEqual([
+			"tune_stoploss_buffer",
+		]);
+		expect(rankHindsightLossRootCauses(report).map(({ category }) => category)).toEqual([
+			"whipsaw_stopout",
+		]);
 	});
 
 	it("renders unavailable backend verdicts as empty rather than synthesizing them", () => {
-		const incomplete = { ...report, recommendations: undefined, rootCauses: undefined };
+		const incomplete = {
+			...report,
+			recommendations: undefined,
+			rootCauses: undefined,
+			lossRecommendations: undefined,
+			lossRootCauses: undefined,
+		};
 		expect(rankHindsightRecommendations(incomplete)).toEqual([]);
 		expect(rankHindsightRootCauses(incomplete)).toEqual([]);
+		expect(rankHindsightLossRecommendations(incomplete)).toEqual([]);
+		expect(rankHindsightLossRootCauses(incomplete)).toEqual([]);
 	});
 });

@@ -536,6 +536,8 @@ table HindsightLeg {
   buyPrice:double;
   sellPrice:double;
   profitPct:double;
+  grossProfitPct:double;
+  frictionPct:double;
 }
 table HindsightSignal {
   at:long;
@@ -610,14 +612,33 @@ table HindsightOpportunity {
   missed:bool;
   diagnosis:HindsightDiagnosis;
 }
+table HindsightLoss {
+  symbol:string;
+  decisionId:string;
+  entryAt:long;
+  exitAt:long;
+  entryPrice:double;
+  exitPrice:double;
+  pnl:double;
+  returnPct:double;
+  grossPct:double;
+  frictionPct:double;
+  triggerReason:string;
+  diagnosis:HindsightDiagnosis;
+  signal:HindsightSignal;
+  journal:[HindsightSignal];
+}
 table HindsightSymbol {
   symbol:string;
   upboundPct:double;
   realizedPct:double;
   missedPct:double;
+  lossPct:double;
   legs:long;
   missedLegs:long;
+  lossPositions:long;
   opportunities:[HindsightOpportunity];
+  losses:[HindsightLoss];
 }
 table HindsightFrame {
   captureId:long;
@@ -628,11 +649,15 @@ table HindsightFrame {
   missedLegs:long;
   totalLegs:long;
   realizedPct:double;
+  lossPct:double;
+  lossPositions:long;
   valueCaptureRate:double;
   legCaptureRate:double;
   diagnosticCoverage:double;
   rootCauses:[HindsightRootCause];
   recommendations:[HindsightRecommendation];
+  lossRootCauses:[HindsightRootCause];
+  lossRecommendations:[HindsightRecommendation];
 }
 table ErrorFrame {
   level:string;

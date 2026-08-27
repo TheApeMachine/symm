@@ -128,6 +128,25 @@ export type HindsightLeg = {
 	sellAt: string;
 	sellPrice: number;
 	profitPct: number;
+	grossProfitPct?: number;
+	frictionPct?: number;
+};
+
+export type HindsightLoss = {
+	symbol: string;
+	decisionId: string;
+	entryAt: string | null;
+	exitAt: string | null;
+	entryPrice: number;
+	exitPrice: number;
+	pnl: number;
+	returnPct: number;
+	grossPct: number;
+	frictionPct: number;
+	triggerReason?: string;
+	diagnosis?: HindsightDiagnosis | null;
+	signal: HindsightSignal;
+	journal?: HindsightSignal[];
 };
 
 export type HindsightOpportunity = {
@@ -145,9 +164,12 @@ export type HindsightSymbol = {
 	upboundPct: number;
 	realizedPct: number;
 	missedPct: number;
+	lossPct?: number;
 	legs: number;
 	missedLegs: number;
+	lossPositions?: number;
 	opportunities: HindsightOpportunity[];
+	losses?: HindsightLoss[];
 };
 
 export type HindsightReport = {
@@ -159,11 +181,15 @@ export type HindsightReport = {
 	missedLegs: number;
 	totalLegs: number;
 	realizedPct?: number;
+	lossPct?: number;
+	lossPositions?: number;
 	valueCaptureRate?: number;
 	legCaptureRate?: number;
 	diagnosticCoverage?: number;
 	rootCauses?: HindsightRootCause[];
 	recommendations?: HindsightRecommendation[];
+	lossRootCauses?: HindsightRootCause[];
+	lossRecommendations?: HindsightRecommendation[];
 };
 
 export type BacktestState = {

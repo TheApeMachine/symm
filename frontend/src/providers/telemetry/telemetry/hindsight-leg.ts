@@ -57,8 +57,18 @@ profitPct():number {
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
+grossProfitPct():number {
+  const offset = this.bb!.__offset(this.bb_pos, 16);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+frictionPct():number {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
 static startHindsightLeg(builder:flatbuffers.Builder) {
-  builder.startObject(6);
+  builder.startObject(8);
 }
 
 static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
@@ -85,12 +95,20 @@ static addProfitPct(builder:flatbuffers.Builder, profitPct:number) {
   builder.addFieldFloat64(5, profitPct, 0.0);
 }
 
+static addGrossProfitPct(builder:flatbuffers.Builder, grossProfitPct:number) {
+  builder.addFieldFloat64(6, grossProfitPct, 0.0);
+}
+
+static addFrictionPct(builder:flatbuffers.Builder, frictionPct:number) {
+  builder.addFieldFloat64(7, frictionPct, 0.0);
+}
+
 static endHindsightLeg(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createHindsightLeg(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset, buyAt:bigint, sellAt:bigint, buyPrice:number, sellPrice:number, profitPct:number):flatbuffers.Offset {
+static createHindsightLeg(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset, buyAt:bigint, sellAt:bigint, buyPrice:number, sellPrice:number, profitPct:number, grossProfitPct:number, frictionPct:number):flatbuffers.Offset {
   HindsightLeg.startHindsightLeg(builder);
   HindsightLeg.addSymbol(builder, symbolOffset);
   HindsightLeg.addBuyAt(builder, buyAt);
@@ -98,6 +116,8 @@ static createHindsightLeg(builder:flatbuffers.Builder, symbolOffset:flatbuffers.
   HindsightLeg.addBuyPrice(builder, buyPrice);
   HindsightLeg.addSellPrice(builder, sellPrice);
   HindsightLeg.addProfitPct(builder, profitPct);
+  HindsightLeg.addGrossProfitPct(builder, grossProfitPct);
+  HindsightLeg.addFrictionPct(builder, frictionPct);
   return HindsightLeg.endHindsightLeg(builder);
 }
 
@@ -108,7 +128,9 @@ unpack(): HindsightLegT {
     this.sellAt(),
     this.buyPrice(),
     this.sellPrice(),
-    this.profitPct()
+    this.profitPct(),
+    this.grossProfitPct(),
+    this.frictionPct()
   );
 }
 
@@ -120,6 +142,8 @@ unpackTo(_o: HindsightLegT): void {
   _o.buyPrice = this.buyPrice();
   _o.sellPrice = this.sellPrice();
   _o.profitPct = this.profitPct();
+  _o.grossProfitPct = this.grossProfitPct();
+  _o.frictionPct = this.frictionPct();
 }
 }
 
@@ -130,7 +154,9 @@ constructor(
   public sellAt: bigint = BigInt('0'),
   public buyPrice: number = 0.0,
   public sellPrice: number = 0.0,
-  public profitPct: number = 0.0
+  public profitPct: number = 0.0,
+  public grossProfitPct: number = 0.0,
+  public frictionPct: number = 0.0
 ){}
 
 
@@ -143,7 +169,9 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     this.sellAt,
     this.buyPrice,
     this.sellPrice,
-    this.profitPct
+    this.profitPct,
+    this.grossProfitPct,
+    this.frictionPct
   );
 }
 }

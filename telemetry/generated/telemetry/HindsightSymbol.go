@@ -11,9 +11,12 @@ type HindsightSymbolT struct {
 	UpboundPct float64 `json:"upboundPct"`
 	RealizedPct float64 `json:"realizedPct"`
 	MissedPct float64 `json:"missedPct"`
+	LossPct float64 `json:"lossPct"`
 	Legs int64 `json:"legs"`
 	MissedLegs int64 `json:"missedLegs"`
+	LossPositions int64 `json:"lossPositions"`
 	Opportunities []*HindsightOpportunityT `json:"opportunities"`
+	Losses []*HindsightLossT `json:"losses"`
 }
 
 func (t *HindsightSymbolT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -37,14 +40,30 @@ func (t *HindsightSymbolT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffse
 		}
 		opportunitiesOffset = builder.EndVector(opportunitiesLength)
 	}
+	lossesOffset := flatbuffers.UOffsetT(0)
+	if t.Losses != nil {
+		lossesLength := len(t.Losses)
+		lossesOffsets := make([]flatbuffers.UOffsetT, lossesLength)
+		for j := 0; j < lossesLength; j++ {
+			lossesOffsets[j] = t.Losses[j].Pack(builder)
+		}
+		HindsightSymbolStartLossesVector(builder, lossesLength)
+		for j := lossesLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(lossesOffsets[j])
+		}
+		lossesOffset = builder.EndVector(lossesLength)
+	}
 	HindsightSymbolStart(builder)
 	HindsightSymbolAddSymbol(builder, symbolOffset)
 	HindsightSymbolAddUpboundPct(builder, t.UpboundPct)
 	HindsightSymbolAddRealizedPct(builder, t.RealizedPct)
 	HindsightSymbolAddMissedPct(builder, t.MissedPct)
+	HindsightSymbolAddLossPct(builder, t.LossPct)
 	HindsightSymbolAddLegs(builder, t.Legs)
 	HindsightSymbolAddMissedLegs(builder, t.MissedLegs)
+	HindsightSymbolAddLossPositions(builder, t.LossPositions)
 	HindsightSymbolAddOpportunities(builder, opportunitiesOffset)
+	HindsightSymbolAddLosses(builder, lossesOffset)
 	return HindsightSymbolEnd(builder)
 }
 
@@ -53,14 +72,23 @@ func (rcv *HindsightSymbol) UnPackTo(t *HindsightSymbolT) {
 	t.UpboundPct = rcv.UpboundPct()
 	t.RealizedPct = rcv.RealizedPct()
 	t.MissedPct = rcv.MissedPct()
+	t.LossPct = rcv.LossPct()
 	t.Legs = rcv.Legs()
 	t.MissedLegs = rcv.MissedLegs()
+	t.LossPositions = rcv.LossPositions()
 	opportunitiesLength := rcv.OpportunitiesLength()
 	t.Opportunities = make([]*HindsightOpportunityT, opportunitiesLength)
 	for j := 0; j < opportunitiesLength; j++ {
 		x := HindsightOpportunity{}
 		rcv.Opportunities(&x, j)
 		t.Opportunities[j] = x.UnPack()
+	}
+	lossesLength := rcv.LossesLength()
+	t.Losses = make([]*HindsightLossT, lossesLength)
+	for j := 0; j < lossesLength; j++ {
+		x := HindsightLoss{}
+		rcv.Losses(&x, j)
+		t.Losses[j] = x.UnPack()
 	}
 }
 
@@ -152,19 +180,19 @@ func (rcv *HindsightSymbol) MutateMissedPct(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
 
-func (rcv *HindsightSymbol) Legs() int64 {
+func (rcv *HindsightSymbol) LossPct() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
-		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
-	return 0
+	return 0.0
 }
 
-func (rcv *HindsightSymbol) MutateLegs(n int64) bool {
-	return rcv._tab.MutateInt64Slot(12, n)
+func (rcv *HindsightSymbol) MutateLossPct(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(12, n)
 }
 
-func (rcv *HindsightSymbol) MissedLegs() int64 {
+func (rcv *HindsightSymbol) Legs() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
@@ -172,12 +200,36 @@ func (rcv *HindsightSymbol) MissedLegs() int64 {
 	return 0
 }
 
-func (rcv *HindsightSymbol) MutateMissedLegs(n int64) bool {
+func (rcv *HindsightSymbol) MutateLegs(n int64) bool {
 	return rcv._tab.MutateInt64Slot(14, n)
 }
 
-func (rcv *HindsightSymbol) Opportunities(obj *HindsightOpportunity, j int) bool {
+func (rcv *HindsightSymbol) MissedLegs() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *HindsightSymbol) MutateMissedLegs(n int64) bool {
+	return rcv._tab.MutateInt64Slot(16, n)
+}
+
+func (rcv *HindsightSymbol) LossPositions() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *HindsightSymbol) MutateLossPositions(n int64) bool {
+	return rcv._tab.MutateInt64Slot(18, n)
+}
+
+func (rcv *HindsightSymbol) Opportunities(obj *HindsightOpportunity, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -189,7 +241,27 @@ func (rcv *HindsightSymbol) Opportunities(obj *HindsightOpportunity, j int) bool
 }
 
 func (rcv *HindsightSymbol) OpportunitiesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *HindsightSymbol) Losses(obj *HindsightLoss, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *HindsightSymbol) LossesLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -197,7 +269,7 @@ func (rcv *HindsightSymbol) OpportunitiesLength() int {
 }
 
 func HindsightSymbolStart(builder *flatbuffers.Builder) {
-	builder.StartObject(7)
+	builder.StartObject(10)
 }
 func HindsightSymbolAddSymbol(builder *flatbuffers.Builder, symbol flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(symbol), 0)
@@ -211,16 +283,28 @@ func HindsightSymbolAddRealizedPct(builder *flatbuffers.Builder, realizedPct flo
 func HindsightSymbolAddMissedPct(builder *flatbuffers.Builder, missedPct float64) {
 	builder.PrependFloat64Slot(3, missedPct, 0.0)
 }
+func HindsightSymbolAddLossPct(builder *flatbuffers.Builder, lossPct float64) {
+	builder.PrependFloat64Slot(4, lossPct, 0.0)
+}
 func HindsightSymbolAddLegs(builder *flatbuffers.Builder, legs int64) {
-	builder.PrependInt64Slot(4, legs, 0)
+	builder.PrependInt64Slot(5, legs, 0)
 }
 func HindsightSymbolAddMissedLegs(builder *flatbuffers.Builder, missedLegs int64) {
-	builder.PrependInt64Slot(5, missedLegs, 0)
+	builder.PrependInt64Slot(6, missedLegs, 0)
+}
+func HindsightSymbolAddLossPositions(builder *flatbuffers.Builder, lossPositions int64) {
+	builder.PrependInt64Slot(7, lossPositions, 0)
 }
 func HindsightSymbolAddOpportunities(builder *flatbuffers.Builder, opportunities flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(opportunities), 0)
+	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(opportunities), 0)
 }
 func HindsightSymbolStartOpportunitiesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func HindsightSymbolAddLosses(builder *flatbuffers.Builder, losses flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(losses), 0)
+}
+func HindsightSymbolStartLossesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func HindsightSymbolEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

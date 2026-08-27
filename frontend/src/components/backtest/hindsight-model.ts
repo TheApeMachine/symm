@@ -19,6 +19,12 @@ rescore candidates from raw signal values in the browser.
 export const hindsightRealizedPct = (report: HindsightReport): number =>
 	report.realizedPct ?? 0;
 
+export const hindsightLossPct = (report: HindsightReport): number =>
+	report.lossPct ?? 0;
+
+export const hindsightLossPositions = (report: HindsightReport): number =>
+	report.lossPositions ?? 0;
+
 export const hindsightValueCaptureRate = (report: HindsightReport): number =>
 	report.valueCaptureRate ?? 0;
 
@@ -36,3 +42,11 @@ export const rankHindsightRecommendations = (
 export const rankHindsightRootCauses = (
 	report: HindsightReport,
 ): HindsightRootCause[] => report.rootCauses ?? [];
+
+export const rankHindsightLossRecommendations = (
+	report: HindsightReport,
+): HindsightRecommendation[] => report.lossRecommendations ?? [];
+
+export const rankHindsightLossRootCauses = (
+	report: HindsightReport,
+): HindsightRootCause[] => report.lossRootCauses ?? [];

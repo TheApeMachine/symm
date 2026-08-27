@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useSelector } from "@tanstack/react-store";
 import {
 	causalStore,
 	cognitionStore,
@@ -29,11 +29,18 @@ const fmt = (value: unknown, digits?: number): string => {
 	return "—";
 };
 
+const num = (value: number | null | undefined, digits: number): string =>
+	value === null || value === undefined || !Number.isFinite(value)
+		? "—"
+		: value.toFixed(digits);
+
 const Row = ({
 	label,
+	value,
 	tone = "text-(--f1)",
 }: {
 	label: string;
+	value?: string | null;
 	tone?: string;
 }) => (
 	<Flex.Row align="baseline" justify="between" className="gap-2">
@@ -42,10 +49,9 @@ const Row = ({
 		</Typography.Label>
 		<Typography.Mono
 			size="s"
-			data-row={label}
 			className={cn("min-w-0 truncate text-right", tone)}
 		>
-			—
+			{value || "—"}
 		</Typography.Mono>
 	</Flex.Row>
 );
@@ -78,14 +84,7 @@ const causalObj = new Causal();
 const cogObj = new Cognition();
 const altObj = new NamedNumber();
 
-/*
-readAlternative returns one named economic/causal value from a decision's
-alternatives vector, or null when absent. Missing values stay missing rather
-than collapsing to a fabricated zero.
-*/
-const readAlternative = (decision: Decision | null, name: string): number | null => {
-	if (!decision) return null;
-
+const readAlternative = (decision: Decision, name: string): number | null => {
 	for (let i = 0; i < decision.alternativesLength(); i++) {
 		const entry = decision.alternatives(i, altObj);
 		if (entry && entry.name() === name) return entry.value();
@@ -94,213 +93,183 @@ const readAlternative = (decision: Decision | null, name: string): number | null
 	return null;
 };
 
-export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
-	const positionRef = useRef<HTMLDivElement>(null);
-	const arbitrationRef = useRef<HTMLDivElement>(null);
-	const causalRef = useRef<HTMLDivElement>(null);
-	const cognitionRef = useRef<HTMLDivElement>(null);
+/*
+Each selector below merges across the whole ring buffer (newest frame first)
+and returns plain display values — never flatbuffer view references — so React
+renders them directly. The previous subscribe-in-body + querySelector approach
+mutated the DOM after render, which is why the fields stayed on their "—"
+placeholders.
+*/
 
-	positionStore.subscribe((state) => {
-		if (!positionRef.current) return;
-		const last = state.getLast();
-		if (!last) return;
+const selectPosition = (state: ReturnType<typeof positionStore.get>, symbol: string) => {
+	const frames = state.toArray();
 
-		let targetPos: Position | null = null;
-		let targetHolding: Holding | null = null;
-		for (let i = 0; i < last.rowsLength(); i++) {
-			const pos = last.rows(i, posObj);
+	for (let f = frames.length - 1; f >= 0; f--) {
+		const frame = frames[f];
+
+		for (let i = 0; i < frame.rowsLength(); i++) {
+			const pos = frame.rows(i, posObj);
 			if (!pos) continue;
-			const h = pos.holding(holdObj);
-			if (h && h.symbol() === symbol) {
-				targetPos = pos;
-				targetHolding = h;
-				break;
-			}
+			const holding = pos.holding(holdObj);
+			if (!holding || holding.symbol() !== symbol) continue;
+
+			const stoploss = holding.stoploss(stopObj);
+
+			return {
+				status: holding.status() ?? pos.status() ?? "",
+				qty: fmt(holding.qty()),
+				entry: fmt(holding.entryPrice()),
+				mark: fmt(holding.mark()),
+				pnl: fmt(holding.pnl()),
+				returnPct: Number.isFinite(holding.returnPct())
+					? `${(holding.returnPct() * 100).toFixed(2)}%`
+					: "—",
+				stopFloor: fmt(stoploss?.floor()),
+				peak: fmt(stoploss?.peak()),
+				profitLine: fmt(stoploss?.profitLine()),
+				stopStatus: stoploss?.status() ?? "",
+			};
 		}
+	}
 
-		const holding = targetHolding;
-		const stoploss = holding?.stoploss(stopObj);
+	return null;
+};
 
+const selectDecision = (state: ReturnType<typeof strategyStore.get>, symbol: string) => {
+	const frames = state.toArray();
 
-		const set = (q: string, value: string) => {
-			const el = positionRef.current?.querySelector<HTMLElement>(`[data-row="${q}"]`);
-			if (el) el.textContent = value;
-		};
+	for (let f = frames.length - 1; f >= 0; f--) {
+		const frame = frames[f];
 
-		set("status", holding?.status() ?? targetPos?.status() ?? "—");
-		set("qty", holding ? fmt(holding.qty()) : "—");
-		set("entry", holding ? fmt(holding.entryPrice()) : "—");
-		set("mark", holding ? fmt(holding.mark()) : "—");
-		set("pnl", holding ? fmt(holding.pnl()) : "—");
-		set(
-			"return",
-			holding && Number.isFinite(holding.returnPct())
-				? `${(holding.returnPct() * 100).toFixed(2)}%`
-				: "—",
-		);
-		set("stop floor", stoploss ? fmt(stoploss.floor()) : "—");
-		set("peak", stoploss ? fmt(stoploss.peak()) : "—");
-		set("profit line", stoploss ? fmt(stoploss.profitLine()) : "—");
-		set("stop status", stoploss?.status() ?? "—");
-	});
+		for (let i = 0; i < frame.decisionsLength(); i++) {
+			const dec = frame.decisions(i, decObj);
+			if (!dec || dec.symbol() !== symbol) continue;
 
-	strategyStore.subscribe((state) => {
-		if (!arbitrationRef.current) return;
-
-		// Merge across the whole ring buffer: the clicked symbol may have been
-		// absent from the latest delta round, so read its most recent decision
-		// from any frame instead of only getLast().
-		const frames = state.toArray();
-		let liveDecision: Decision | null = null;
-
-		for (let f = frames.length - 1; f >= 0 && !liveDecision; f--) {
-			const frame = frames[f];
-
-			for (let i = 0; i < frame.decisionsLength(); i++) {
-				const dec = frame.decisions(i, decObj);
-				if (dec && dec.symbol() === symbol) {
-					liveDecision = dec;
-					break;
-				}
-			}
+			return {
+				action: dec.action() ?? "",
+				utility: num(dec.utility(), 4),
+				uncertainty: num(readAlternative(dec, "economic:outcome_uncertainty"), 4),
+				visits: num(readAlternative(dec, "economic:visits"), 0),
+				causalSupport: num(readAlternative(dec, "causal:effective_support"), 4),
+				cause: dec.reason() ?? "",
+				reason: dec.reason() ?? "",
+				at: dec.at()
+					? new Date(Number(dec.at())).toISOString().slice(11, 19)
+					: "",
+				proposedNotional: fmt(dec.proposedNotional()),
+				proposedQuantity: fmt(dec.proposedQuantity()),
+			};
 		}
+	}
 
-		const set = (q: string, value: string) => {
-			const el = arbitrationRef.current?.querySelector<HTMLElement>(`[data-row="${q}"]`);
-			if (el) el.textContent = value;
-		};
+	return null;
+};
 
-		const sourceBadge = arbitrationRef.current.querySelector<HTMLElement>("[data-decision-source]");
-		if (sourceBadge) {
-			sourceBadge.textContent = "LIVE TICK";
+const selectCausal = (state: ReturnType<typeof causalStore.get>, symbol: string) => {
+	const frames = state.toArray();
+
+	for (let f = frames.length - 1; f >= 0; f--) {
+		const frame = frames[f];
+
+		for (let i = 0; i < frame.rowsLength(); i++) {
+			const row = frame.rows(i, causalObj);
+			if (!row || row.symbol() !== symbol) continue;
+
+			return {
+				association: num(row.association(), 4),
+				confidence: num(row.confidence(), 4),
+				strength: num(row.strength(), 4),
+			};
 		}
+	}
 
-		set("action", liveDecision?.action() ?? "—");
-		set("utility", liveDecision ? liveDecision.utility().toFixed(4) : "—");
-		set("uncertainty", readAlternative(liveDecision, "economic:outcome_uncertainty")?.toFixed(4) ?? "—");
-		set("visits", readAlternative(liveDecision, "economic:visits")?.toFixed(0) ?? "—");
-		set("causal support", readAlternative(liveDecision, "causal:effective_support")?.toFixed(4) ?? "—");
-		set("cause", liveDecision?.reason() ?? "—");
-		set("reason", liveDecision?.reason() ?? "—");
-		set("at", liveDecision?.at() ? new Date(Number(liveDecision.at())).toISOString().slice(11, 19) : "—");
-		set("proposed notional", liveDecision ? fmt(liveDecision.proposedNotional()) : "—");
-		set("proposed qty", liveDecision ? fmt(liveDecision.proposedQuantity()) : "—");
-	});
+	return null;
+};
 
-	causalStore.subscribe((frames) => {
-		if (!causalRef.current) return;
-		const all = frames.toArray();
+const selectCognition = (state: ReturnType<typeof cognitionStore.get>, symbol: string) => {
+	const frames = state.toArray();
 
-		let targetRow: Causal | null = null;
-		for (let f = all.length - 1; f >= 0 && !targetRow; f--) {
-			const frame = all[f];
+	for (let f = frames.length - 1; f >= 0; f--) {
+		const frame = frames[f];
 
-			for (let i = 0; i < frame.rowsLength(); i++) {
-				const row = frame.rows(i, causalObj);
-				if (row && row.symbol() === symbol) {
-					targetRow = row;
-					break;
-				}
-			}
+		for (let i = 0; i < frame.rowsLength(); i++) {
+			const row = frame.rows(i, cogObj);
+			if (!row || row.symbol() !== symbol) continue;
+
+			return {
+				winner: row.winner() ?? "",
+				contrast: num(row.contrast(), 3),
+				entropy: num(row.entropyBits(), 3),
+				paths: String(row.lookaheadPaths()),
+			};
 		}
+	}
 
-		const set = (q: string, value: string) => {
-			const el = causalRef.current?.querySelector<HTMLElement>(`[data-row="${q}"]`);
-			if (el) el.textContent = value;
-		};
+	return null;
+};
 
-		set("association", targetRow ? targetRow.association().toFixed(4) : "—");
-		set("confidence", targetRow ? targetRow.confidence().toFixed(4) : "—");
-		set("strength", targetRow ? targetRow.strength().toFixed(4) : "—");
-	});
-
-	cognitionStore.subscribe((state) => {
-		if (!cognitionRef.current) return;
-		const all = state.toArray();
-
-		let targetRow: Cognition | null = null;
-		for (let f = all.length - 1; f >= 0 && !targetRow; f--) {
-			const frame = all[f];
-
-			for (let i = 0; i < frame.rowsLength(); i++) {
-				const row = frame.rows(i, cogObj);
-				if (row && row.symbol() === symbol) {
-					targetRow = row;
-					break;
-				}
-			}
-		}
-
-		const set = (q: string, value: string) => {
-			const el = cognitionRef.current?.querySelector<HTMLElement>(`[data-row="${q}"]`);
-			if (el) el.textContent = value;
-		};
-
-		set("winner", targetRow?.winner() ?? "—");
-		set("contrast", targetRow ? targetRow.contrast().toFixed(3) : "—");
-		set("entropy", targetRow ? targetRow.entropyBits().toFixed(3) : "—");
-		set("paths", targetRow ? String(targetRow.lookaheadPaths()) : "—");
-	});
+export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
+	const position = useSelector(positionStore, (state) =>
+		selectPosition(state, symbol),
+	);
+	const decision = useSelector(strategyStore, (state) =>
+		selectDecision(state, symbol),
+	);
+	const causal = useSelector(causalStore, (state) => selectCausal(state, symbol));
+	const cognition = useSelector(cognitionStore, (state) =>
+		selectCognition(state, symbol),
+	);
 
 	return (
 		<div className="flex min-h-0 flex-col gap-2 overflow-auto pr-1">
-			<div ref={positionRef}>
-				<Card title="Position">
-					<Row label="status" />
-					<Row label="qty" />
-					<Row label="entry" />
-					<Row label="mark" />
-					<Row label="pnl" />
-					<Row label="return" />
-					<Row label="stop floor" />
-					<Row label="peak" />
-					<Row label="profit line" />
-					<Row label="stop status" />
-				</Card>
-			</div>
+			<Card title="Position">
+				<Row label="status" value={position?.status} />
+				<Row label="qty" value={position?.qty} />
+				<Row label="entry" value={position?.entry} />
+				<Row label="mark" value={position?.mark} />
+				<Row label="pnl" value={position?.pnl} />
+				<Row label="return" value={position?.returnPct} />
+				<Row label="stop floor" value={position?.stopFloor} />
+				<Row label="peak" value={position?.peak} />
+				<Row label="profit line" value={position?.profitLine} />
+				<Row label="stop status" value={position?.stopStatus} />
+			</Card>
 
-			<div ref={arbitrationRef}>
-				<Card
-					title="Arbitration"
-					badge={
-						<span
-							data-decision-source
-							className="rounded border border-(--line2) bg-(--sunken) px-1.5 py-0.5 font-mono text-[8.5px] uppercase font-semibold text-(--f3)"
-						>
-							SNAPSHOT
-						</span>
-					}
-				>
-					<Row label="action" tone="text-(--acc) uppercase" />
-					<Row label="utility" />
-					<Row label="uncertainty" />
-					<Row label="visits" />
-					<Row label="causal support" />
-					<Row label="cause" />
-					<Row label="reason" />
-					<Row label="at" />
-					<Row label="proposed notional" />
-					<Row label="proposed qty" />
-				</Card>
-			</div>
+			<Card
+				title="Arbitration"
+				badge={
+					<span
+						data-decision-source
+						className="rounded border border-(--line2) bg-(--sunken) px-1.5 py-0.5 font-mono text-[8.5px] uppercase font-semibold text-(--f3)"
+					>
+						{decision ? "LIVE TICK" : "NO DATA"}
+					</span>
+				}
+			>
+				<Row label="action" value={decision?.action} tone="text-(--acc) uppercase" />
+				<Row label="utility" value={decision?.utility} />
+				<Row label="uncertainty" value={decision?.uncertainty} />
+				<Row label="visits" value={decision?.visits} />
+				<Row label="causal support" value={decision?.causalSupport} />
+				<Row label="cause" value={decision?.cause} />
+				<Row label="reason" value={decision?.reason} />
+				<Row label="at" value={decision?.at} />
+				<Row label="proposed notional" value={decision?.proposedNotional} />
+				<Row label="proposed qty" value={decision?.proposedQuantity} />
+			</Card>
 
-			<div ref={causalRef}>
-				<Card title="Causal">
-					<Row label="association" />
-					<Row label="confidence" />
-					<Row label="strength" />
-				</Card>
-			</div>
+			<Card title="Causal">
+				<Row label="association" value={causal?.association} />
+				<Row label="confidence" value={causal?.confidence} />
+				<Row label="strength" value={causal?.strength} />
+			</Card>
 
-			<div ref={cognitionRef}>
-				<Card title="Cognition">
-					<Row label="winner" tone="text-(--acc)" />
-					<Row label="contrast" />
-					<Row label="entropy" />
-					<Row label="paths" />
-				</Card>
-			</div>
+			<Card title="Cognition">
+				<Row label="winner" value={cognition?.winner} tone="text-(--acc)" />
+				<Row label="contrast" value={cognition?.contrast} />
+				<Row label="entropy" value={cognition?.entropy} />
+				<Row label="paths" value={cognition?.paths} />
+			</Card>
 		</div>
 	);
 };
-

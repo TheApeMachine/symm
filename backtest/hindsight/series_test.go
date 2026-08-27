@@ -11,8 +11,7 @@ var epoch = time.Unix(0, 0).UTC()
 
 /*
 seriesFromPrices builds a Series from bare prices with synthetic strictly
-increasing timestamps, so the greedy and swing decompositions can be asserted
-on their shape without noise from wall times.
+increasing timestamps.
 */
 func seriesFromPrices(prices ...float64) *Series {
 	points := make([]Point, 0, len(prices))
@@ -52,6 +51,28 @@ func TestIngest(t *testing.T) {
 			eth := reducer.SeriesFor("ETH/USD")
 			So(eth, ShouldNotBeNil)
 			So(len(eth.Points), ShouldEqual, 1)
+		})
+	})
+
+	Convey("Given ticker updates followed by trade prints", t, func() {
+		reducer := NewReducer()
+		tickerPayload := []byte(`{"channel":"ticker","type":"update","data":[
+			{"symbol":"BTC/USD","bid":99.5,"ask":100.5,"last":100}
+		]}`)
+		tradePayload := []byte(`{"channel":"trade","type":"update","data":[
+			{"symbol":"BTC/USD","side":"buy","price":100,"qty":1,"timestamp":"2026-01-01T00:00:01Z"}
+		]}`)
+
+		Convey("Ingest should enrich trade points with ticker quotes and spread friction", func() {
+			So(reducer.Ingest(tickerPayload, epoch), ShouldBeNil)
+			So(reducer.Ingest(tradePayload, epoch), ShouldBeNil)
+
+			btc := reducer.SeriesFor("BTC/USD")
+			So(btc, ShouldNotBeNil)
+			So(len(btc.Points), ShouldEqual, 1)
+			So(btc.Points[0].Bid, ShouldEqual, 99.5)
+			So(btc.Points[0].Ask, ShouldEqual, 100.5)
+			So(btc.Points[0].Friction, ShouldAlmostEqual, 0.01, 1e-4)
 		})
 	})
 

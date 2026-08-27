@@ -55,9 +55,14 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 
 			opportunities = append(opportunities, &wire.HindsightOpportunityT{
 				Leg: &wire.HindsightLegT{
-					Symbol: opportunity.Leg.Symbol, BuyAt: opportunity.Leg.BuyAt.UnixNano(),
-					SellAt: opportunity.Leg.SellAt.UnixNano(), BuyPrice: opportunity.Leg.BuyPrice,
-					SellPrice: opportunity.Leg.SellPrice, ProfitPct: opportunity.Leg.ProfitPct,
+					Symbol:         opportunity.Leg.Symbol,
+					BuyAt:          opportunity.Leg.BuyAt.UnixNano(),
+					SellAt:         opportunity.Leg.SellAt.UnixNano(),
+					BuyPrice:       opportunity.Leg.BuyPrice,
+					SellPrice:      opportunity.Leg.SellPrice,
+					ProfitPct:      opportunity.Leg.ProfitPct,
+					GrossProfitPct: opportunity.Leg.GrossProfitPct,
+					FrictionPct:    opportunity.Leg.FrictionPct,
 				},
 				Signal: &wire.HindsightSignalT{
 					Id:                  opportunity.Signal.ID,
@@ -83,15 +88,89 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 				Journal:   journal,
 				Diagnosis: hindsightDiagnosisWire(opportunity.Diagnosis),
 				Why:       opportunity.Why,
-				Captured:  opportunity.Captured, Missed: opportunity.Missed,
+				Captured:  opportunity.Captured,
+				Missed:    opportunity.Missed,
+			})
+		}
+
+		losses := make([]*wire.HindsightLossT, 0, len(symbol.Losses))
+
+		for _, loss := range symbol.Losses {
+			lossJournal := make([]*wire.HindsightSignalT, 0, len(loss.Journal))
+
+			for _, decision := range loss.Journal {
+				lossJournal = append(lossJournal, &wire.HindsightSignalT{
+					Id:                  decision.ID,
+					At:                  decision.At.UnixNano(),
+					Action:              decision.Action,
+					Reason:              decision.Reason,
+					Cause:               decision.Cause,
+					GraphScore:          decision.GraphScore,
+					ThesisScore:         decision.ThesisScore,
+					ThesisConfidence:    decision.ThesisConfidence,
+					ThesisSupport:       decision.ThesisSupport,
+					ThesisContradiction: decision.ThesisContradiction,
+					ThesisConditions:    decision.ThesisConditions,
+					Direction:           decision.Direction,
+					Confidence:          decision.Confidence,
+					AdmissionThreshold:  decision.AdmissionThreshold,
+					Opportunity:         decision.Opportunity,
+					OpportunityType:     decision.OpportunityType,
+					PredictiveReady:     decision.PredictiveReady,
+					PredictiveStatus:    decision.PredictiveStatus,
+					Alternatives:        hindsightNumbers(decision.Alternatives),
+				})
+			}
+
+			losses = append(losses, &wire.HindsightLossT{
+				Symbol:        loss.Symbol,
+				DecisionId:    loss.DecisionID,
+				EntryAt:       loss.EntryAt.UnixNano(),
+				ExitAt:        loss.ExitAt.UnixNano(),
+				EntryPrice:    loss.EntryPrice,
+				ExitPrice:     loss.ExitPrice,
+				Pnl:           loss.PnL,
+				ReturnPct:     loss.ReturnPct,
+				GrossPct:      loss.GrossPct,
+				FrictionPct:   loss.FrictionPct,
+				TriggerReason: loss.TriggerReason,
+				Diagnosis:     hindsightDiagnosisWire(loss.Diagnosis),
+				Signal: &wire.HindsightSignalT{
+					Id:                  loss.Signal.ID,
+					At:                  loss.Signal.At.UnixNano(),
+					Action:              loss.Signal.Action,
+					Reason:              loss.Signal.Reason,
+					Cause:               loss.Signal.Cause,
+					GraphScore:          loss.Signal.GraphScore,
+					ThesisScore:         loss.Signal.ThesisScore,
+					ThesisConfidence:    loss.Signal.ThesisConfidence,
+					ThesisSupport:       loss.Signal.ThesisSupport,
+					ThesisContradiction: loss.Signal.ThesisContradiction,
+					ThesisConditions:    loss.Signal.ThesisConditions,
+					Direction:           loss.Signal.Direction,
+					Confidence:          loss.Signal.Confidence,
+					AdmissionThreshold:  loss.Signal.AdmissionThreshold,
+					Opportunity:         loss.Signal.Opportunity,
+					OpportunityType:     loss.Signal.Type,
+					PredictiveReady:     loss.Signal.PredictiveReady,
+					PredictiveStatus:    loss.Signal.PredictiveStatus,
+					Alternatives:        hindsightNumbers(loss.Signal.Alternatives),
+				},
+				Journal: lossJournal,
 			})
 		}
 
 		symbols = append(symbols, &wire.HindsightSymbolT{
-			Symbol: symbol.Symbol, UpboundPct: symbol.UpboundPct,
-			RealizedPct: symbol.RealizedPct, MissedPct: symbol.MissedPct,
-			Legs: int64(symbol.Legs), MissedLegs: int64(symbol.MissedLegs),
+			Symbol:        symbol.Symbol,
+			UpboundPct:    symbol.UpboundPct,
+			RealizedPct:   symbol.RealizedPct,
+			MissedPct:     symbol.MissedPct,
+			LossPct:       symbol.LossPct,
+			Legs:          int64(symbol.Legs),
+			MissedLegs:    int64(symbol.MissedLegs),
+			LossPositions: int64(symbol.LossPositions),
 			Opportunities: opportunities,
+			Losses:        losses,
 		})
 	}
 
@@ -115,13 +194,44 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 		)
 	}
 
+	lossRootCauses := make([]*wire.HindsightRootCauseT, 0, len(report.LossRootCauses))
+
+	for _, cause := range report.LossRootCauses {
+		lossRootCauses = append(lossRootCauses, &wire.HindsightRootCauseT{
+			Category:    cause.Category,
+			ImpactPct:   cause.ImpactPct,
+			Occurrences: int64(cause.Occurrences),
+			Symbols:     cause.Symbols,
+		})
+	}
+
+	lossRecommendations := make([]*wire.HindsightRecommendationT, 0, len(report.LossRecommendations))
+
+	for _, recommendation := range report.LossRecommendations {
+		lossRecommendations = append(
+			lossRecommendations,
+			hindsightRecommendationWire(recommendation),
+		)
+	}
+
 	return &wire.HindsightFrameT{
-		CaptureId: report.CaptureID, Status: report.Status, Symbols: symbols,
-		MissedPct: report.MissedPct, UpboundPct: report.UpboundPct,
-		MissedLegs: int64(report.MissedLegs), TotalLegs: int64(report.TotalLegs),
-		RealizedPct: report.RealizedPct, ValueCaptureRate: report.ValueCaptureRate,
-		LegCaptureRate: report.LegCaptureRate, DiagnosticCoverage: report.DiagnosticCoverage,
-		RootCauses: rootCauses, Recommendations: recommendations,
+		CaptureId:           report.CaptureID,
+		Status:              report.Status,
+		Symbols:             symbols,
+		MissedPct:           report.MissedPct,
+		UpboundPct:          report.UpboundPct,
+		MissedLegs:          int64(report.MissedLegs),
+		TotalLegs:           int64(report.TotalLegs),
+		RealizedPct:         report.RealizedPct,
+		LossPct:             report.LossPct,
+		LossPositions:       int64(report.LossPositions),
+		ValueCaptureRate:    report.ValueCaptureRate,
+		LegCaptureRate:      report.LegCaptureRate,
+		DiagnosticCoverage:  report.DiagnosticCoverage,
+		RootCauses:          rootCauses,
+		Recommendations:     recommendations,
+		LossRootCauses:      lossRootCauses,
+		LossRecommendations: lossRecommendations,
 	}
 }
 

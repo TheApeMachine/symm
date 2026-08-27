@@ -62,13 +62,16 @@ PerSymbol ties a symbol's perfect legs to what the system actually did, and how
 much profit the tape offered versus how much the system collected.
 */
 type PerSymbol struct {
-	Symbol        string      `json:"symbol"`
-	UpboundPct    float64     `json:"upboundPct"`
-	RealizedPct   float64     `json:"realizedPct"`
-	MissedPct     float64     `json:"missedPct"`
-	Legs          int         `json:"legs"`
-	MissedLegs    int         `json:"missedLegs"`
-	Opportunities []MissedLeg `json:"opportunities"`
+	Symbol        string         `json:"symbol"`
+	UpboundPct    float64        `json:"upboundPct"`
+	RealizedPct   float64        `json:"realizedPct"`
+	MissedPct     float64        `json:"missedPct"`
+	LossPct       float64        `json:"lossPct"`
+	Legs          int            `json:"legs"`
+	MissedLegs    int            `json:"missedLegs"`
+	LossPositions int            `json:"lossPositions"`
+	Opportunities []MissedLeg    `json:"opportunities"`
+	Losses        []PositionLoss `json:"losses"`
 }
 
 /*
@@ -359,19 +362,40 @@ func Analyze(reducer *Reducer, decisions []Decision) ([]PerSymbol, error) {
 			}
 		}
 
+		losses := ExtractLosses(symbolDecisions, series)
+		lossPct := 0.0
+
+		for _, loss := range losses {
+			lossAmount := -loss.ReturnPct
+
+			if lossAmount > 0 {
+				lossPct += lossAmount
+			}
+		}
+
 		reports = append(reports, PerSymbol{
 			Symbol:        series.Symbol,
 			UpboundPct:    upbound,
 			RealizedPct:   realized,
 			MissedPct:     missed,
+			LossPct:       lossPct,
 			Legs:          len(legs.Legs),
 			MissedLegs:    missedCount,
+			LossPositions: len(losses),
 			Opportunities: opportunities,
+			Losses:        losses,
 		})
 	}
 
 	// Stable output order is friendlier to the dashboard than capture order.
 	sort.SliceStable(reports, func(i, j int) bool {
+		totalI := reports[i].MissedPct + reports[i].LossPct
+		totalJ := reports[j].MissedPct + reports[j].LossPct
+
+		if totalI != totalJ {
+			return totalI > totalJ
+		}
+
 		return reports[i].MissedPct > reports[j].MissedPct
 	})
 

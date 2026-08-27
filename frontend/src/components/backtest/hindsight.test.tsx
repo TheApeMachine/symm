@@ -13,6 +13,8 @@ const report: HindsightReport = {
 	missedLegs: 1,
 	totalLegs: 2,
 	realizedPct: 0.1,
+	lossPct: 0.05,
+	lossPositions: 1,
 	valueCaptureRate: 1 / 3,
 	legCaptureRate: 0.5,
 	diagnosticCoverage: 1,
@@ -43,14 +45,43 @@ const report: HindsightReport = {
 			symbols: ["DENT/USD"],
 		},
 	],
+	lossRootCauses: [
+		{
+			category: "whipsaw_stopout",
+			impactPct: 0.05,
+			occurrences: 1,
+			symbols: ["DENT/USD"],
+		},
+	],
+	lossRecommendations: [
+		{
+			key: "tune_stoploss_buffer",
+			kind: "tune_risk",
+			target: "trading.risk.stoploss_buffer",
+			title: "Tune stoploss buffer",
+			action: "Widen stoploss threshold to clear market noise.",
+			rationale: "Position stopped out on immediate wick.",
+			current: 0.02,
+			suggested: 0.035,
+			hasCurrent: true,
+			hasSuggested: true,
+			adjustment: "raise",
+			confidence: 0.88,
+			impactPct: 0.05,
+			occurrences: 1,
+			symbols: ["DENT/USD"],
+		},
+	],
 	symbols: [
 		{
 			symbol: "DENT/USD",
 			upboundPct: 0.3,
 			realizedPct: 0.1,
 			missedPct: 0.2,
+			lossPct: 0.05,
 			legs: 2,
 			missedLegs: 1,
+			lossPositions: 1,
 			opportunities: [
 				{
 					leg: {
@@ -59,7 +90,9 @@ const report: HindsightReport = {
 						buyPrice: 100,
 						sellAt: "2026-01-01T00:01:00.000Z",
 						sellPrice: 120,
-						profitPct: 0.2,
+						profitPct: 0.18,
+						grossProfitPct: 0.20,
+						frictionPct: 0.02,
 					},
 					signal: {
 						id: "signal-1",
@@ -117,20 +150,77 @@ const report: HindsightReport = {
 					missed: true,
 				},
 			],
+			losses: [
+				{
+					symbol: "DENT/USD",
+					decisionId: "dec-loss-1",
+					entryAt: "2026-01-01T00:02:00.000Z",
+					exitAt: "2026-01-01T00:03:00.000Z",
+					entryPrice: 120,
+					exitPrice: 114,
+					pnl: -6,
+					returnPct: -0.05,
+					grossPct: -0.05,
+					frictionPct: 0.002,
+					triggerReason: "stoploss: floor breached at 114.00",
+					signal: {
+						id: "signal-loss-1",
+						at: "2026-01-01T00:02:00.000Z",
+						action: "enter",
+						graphScore: 0.8,
+						thesisScore: 0.7,
+						thesisConfidence: 0.65,
+						opportunity: true,
+						opportunityType: "pump",
+						alternatives: null,
+					},
+					diagnosis: {
+						category: "whipsaw_stopout",
+						summary: "Position stopped out by stoploss floor breach.",
+						evidenceQuality: 0.88,
+						evidenceStatus: "complete",
+						blockers: [],
+						recommendation: {
+							key: "tune_stoploss_buffer",
+							kind: "tune_risk",
+							target: "trading.risk.stoploss_buffer",
+							title: "Tune stoploss buffer",
+							action: "Widen stoploss threshold to clear market noise.",
+							rationale: "Position stopped out on immediate wick.",
+							current: 0.02,
+							suggested: 0.035,
+							hasCurrent: true,
+							hasSuggested: true,
+							adjustment: "raise",
+							confidence: 0.88,
+							impactPct: 0.05,
+							occurrences: 1,
+							symbols: ["DENT/USD"],
+						},
+					},
+				},
+			],
 		},
 	],
 };
 
 describe("HindsightPanel", () => {
-	it("renders ranked causes, blockers, and a concrete next experiment", () => {
+	it("renders ranked causes, blockers, concrete experiments, and loss post-mortem", () => {
 		const markup = renderToStaticMarkup(<HindsightPanel report={report} />);
 
-		expect(markup).toContain("Priority experiments");
+		expect(markup).toContain("Priority opportunity experiments");
+		expect(markup).toContain("Priority risk &amp; execution fixes");
 		expect(markup).toContain("Admission Policy");
+		expect(markup).toContain("Whipsaw Stopout");
+		expect(markup).toContain("Where capital was lost");
 		expect(markup).toContain("current 0.5000");
 		expect(markup).toContain("counterfactual candidate 0.4800");
 		expect(markup).toContain("entry confidence 0.4800 was 0.0200 below");
 		expect(markup).toContain("evidence complete");
 		expect(markup).toContain("DENT/USD");
+		expect(markup).toContain("gross 20.00%");
+		expect(markup).toContain("friction -2.00%");
+		expect(markup).toContain("Losing positions post-mortem");
+		expect(markup).toContain("stoploss: floor breached at 114.00");
 	});
 });

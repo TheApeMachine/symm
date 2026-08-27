@@ -23,19 +23,23 @@ the complete per-symbol breakdown plus a capture-wide summary of how much of
 the tape's theoretical value the system did not collect.
 */
 type RealizedReport struct {
-	CaptureID          int64                        `json:"captureId"`
-	Status             string                       `json:"status,omitempty"`
-	Symbols            []hindsight.PerSymbol        `json:"symbols"`
-	MissedPct          float64                      `json:"missedPct"`
-	RealizedPct        float64                      `json:"realizedPct"`
-	UpboundPct         float64                      `json:"upboundPct"`
-	MissedLegs         int                          `json:"missedLegs"`
-	TotalLegs          int                          `json:"totalLegs"`
-	ValueCaptureRate   float64                      `json:"valueCaptureRate"`
-	LegCaptureRate     float64                      `json:"legCaptureRate"`
-	DiagnosticCoverage float64                      `json:"diagnosticCoverage"`
-	RootCauses         []hindsight.RootCauseSummary `json:"rootCauses"`
-	Recommendations    []hindsight.Recommendation   `json:"recommendations"`
+	CaptureID             int64                        `json:"captureId"`
+	Status                string                       `json:"status,omitempty"`
+	Symbols               []hindsight.PerSymbol        `json:"symbols"`
+	MissedPct             float64                      `json:"missedPct"`
+	RealizedPct           float64                      `json:"realizedPct"`
+	LossPct               float64                      `json:"lossPct"`
+	UpboundPct            float64                      `json:"upboundPct"`
+	MissedLegs            int                          `json:"missedLegs"`
+	TotalLegs             int                          `json:"totalLegs"`
+	LossPositions         int                          `json:"lossPositions"`
+	ValueCaptureRate      float64                      `json:"valueCaptureRate"`
+	LegCaptureRate        float64                      `json:"legCaptureRate"`
+	DiagnosticCoverage    float64                      `json:"diagnosticCoverage"`
+	RootCauses            []hindsight.RootCauseSummary `json:"rootCauses"`
+	Recommendations       []hindsight.Recommendation   `json:"recommendations"`
+	LossRootCauses        []hindsight.RootCauseSummary `json:"lossRootCauses"`
+	LossRecommendations   []hindsight.Recommendation   `json:"lossRecommendations"`
 }
 
 /*
@@ -148,7 +152,7 @@ func streamTape(reducer *hindsight.Reducer, frames func() (backtest.Frame, bool)
 			break
 		}
 
-		if frame.Endpoint != "public" || !isTradePayload(frame.Payload) {
+		if frame.Endpoint != "public" || !isMarketTapePayload(frame.Payload) {
 			continue
 		}
 
@@ -159,18 +163,21 @@ func streamTape(reducer *hindsight.Reducer, frames func() (backtest.Frame, bool)
 		reducedCount++
 	}
 
-	errnie.Info(fmt.Sprintf("hindsight: reduced %d trade frames into %d symbol series", reducedCount, len(reducer.Symbols())))
+	errnie.Info(fmt.Sprintf("hindsight: reduced %d trade/market frames into %d symbol series", reducedCount, len(reducer.Symbols())))
 
 	return reducedCount, nil
 }
 
 /*
-isTradePayload is a light prefix probe that accepts a captured payload only
-when it begins as a trade update, so the reducer's deeper decode is not invoked
-on book or heartbeat frames.
+isMarketTapePayload probes whether a frame carries trade prints or ticker quotes for tape reduction.
 */
-func isTradePayload(payload []byte) bool {
-	return len(payload) >= len(`{"channel":"trade"`) && bytes.HasPrefix(payload, []byte(`{"channel":"trade"`))
+func isMarketTapePayload(payload []byte) bool {
+	if len(payload) < len(`{"channel":"trade"`) {
+		return false
+	}
+
+	return bytes.HasPrefix(payload, []byte(`{"channel":"trade"`)) ||
+		bytes.HasPrefix(payload, []byte(`{"channel":"ticker"`))
 }
 
 /*
@@ -257,19 +264,23 @@ report.
 */
 func summarize(captureID int64, reports []hindsight.PerSymbol) RealizedReport {
 	summary := RealizedReport{
-		CaptureID:          captureID,
-		Symbols:            reports,
-		DiagnosticCoverage: hindsight.DiagnosticCoverage(reports),
-		RootCauses:         hindsight.RootCauseSummaries(reports),
-		Recommendations:    hindsight.AggregateRecommendations(reports),
+		CaptureID:           captureID,
+		Symbols:             reports,
+		DiagnosticCoverage:  hindsight.DiagnosticCoverage(reports),
+		RootCauses:          hindsight.RootCauseSummaries(reports),
+		Recommendations:     hindsight.AggregateRecommendations(reports),
+		LossRootCauses:      hindsight.LossRootCauseSummaries(reports),
+		LossRecommendations: hindsight.AggregateLossRecommendations(reports),
 	}
 
 	for _, report := range reports {
 		summary.MissedPct += report.MissedPct
 		summary.RealizedPct += report.RealizedPct
+		summary.LossPct += report.LossPct
 		summary.UpboundPct += report.UpboundPct
 		summary.MissedLegs += report.MissedLegs
 		summary.TotalLegs += report.Legs
+		summary.LossPositions += report.LossPositions
 	}
 
 	if summary.UpboundPct > 0 {

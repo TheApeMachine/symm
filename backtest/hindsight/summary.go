@@ -85,6 +85,82 @@ func AggregateRecommendations(reports []PerSymbol) []Recommendation {
 	return result
 }
 
+/*
+AggregateLossRecommendations ranks the recommendations for non-profitable positions by realized loss.
+*/
+func AggregateLossRecommendations(reports []PerSymbol) []Recommendation {
+	aggregates := map[string]*recommendationAggregate{}
+
+	for _, report := range reports {
+		for _, loss := range report.Losses {
+			recommendation := loss.Diagnosis.Recommendation
+
+			if recommendation.Key == "" {
+				continue
+			}
+
+			aggregate := aggregates[recommendation.Key]
+
+			if aggregate == nil {
+				aggregate = &recommendationAggregate{
+					recommendation: recommendation,
+					symbols:        map[string]struct{}{},
+					currentStable:  true,
+				}
+				aggregate.recommendation.ImpactPct = 0
+				aggregate.recommendation.Occurrences = 0
+				aggregate.recommendation.Symbols = nil
+				aggregates[recommendation.Key] = aggregate
+			}
+
+			lossAmount := -loss.ReturnPct
+
+			if lossAmount < 0 {
+				lossAmount = 0
+			}
+
+			aggregate.recommendation.ImpactPct += lossAmount
+			aggregate.recommendation.Occurrences++
+			aggregate.weightedTrust += loss.Diagnosis.EvidenceQuality * lossAmount
+			aggregate.weight += lossAmount
+			aggregate.symbols[report.Symbol] = struct{}{}
+			mergeRecommendationBoundary(aggregate, recommendation)
+		}
+	}
+
+	result := make([]Recommendation, 0, len(aggregates))
+
+	for _, aggregate := range aggregates {
+		if aggregate.weight > 0 {
+			aggregate.recommendation.Confidence = aggregate.weightedTrust / aggregate.weight
+		}
+
+		for symbol := range aggregate.symbols {
+			aggregate.recommendation.Symbols = append(
+				aggregate.recommendation.Symbols,
+				symbol,
+			)
+		}
+
+		sort.Strings(aggregate.recommendation.Symbols)
+		result = append(result, aggregate.recommendation)
+	}
+
+	sort.SliceStable(result, func(left, right int) bool {
+		if result[left].ImpactPct != result[right].ImpactPct {
+			return result[left].ImpactPct > result[right].ImpactPct
+		}
+
+		if result[left].Occurrences != result[right].Occurrences {
+			return result[left].Occurrences > result[right].Occurrences
+		}
+
+		return result[left].Key < result[right].Key
+	})
+
+	return result
+}
+
 func mergeRecommendationBoundary(
 	aggregate *recommendationAggregate,
 	recommendation Recommendation,
@@ -141,6 +217,61 @@ func RootCauseSummaries(reports []PerSymbol) []RootCauseSummary {
 			}
 
 			summary.ImpactPct += opportunity.Leg.ProfitPct
+			summary.Occurrences++
+			symbols[category][report.Symbol] = struct{}{}
+		}
+	}
+
+	result := make([]RootCauseSummary, 0, len(summaries))
+
+	for category, summary := range summaries {
+		for symbol := range symbols[category] {
+			summary.Symbols = append(summary.Symbols, symbol)
+		}
+
+		sort.Strings(summary.Symbols)
+		result = append(result, *summary)
+	}
+
+	sort.SliceStable(result, func(left, right int) bool {
+		if result[left].ImpactPct != result[right].ImpactPct {
+			return result[left].ImpactPct > result[right].ImpactPct
+		}
+
+		return result[left].Category < result[right].Category
+	})
+
+	return result
+}
+
+/* LossRootCauseSummaries ranks failure classes by realized capital loss. */
+func LossRootCauseSummaries(reports []PerSymbol) []RootCauseSummary {
+	summaries := map[string]*RootCauseSummary{}
+	symbols := map[string]map[string]struct{}{}
+
+	for _, report := range reports {
+		for _, loss := range report.Losses {
+			category := loss.Diagnosis.Category
+
+			if category == "" {
+				category = DiagnosisAdverseSelection
+			}
+
+			summary := summaries[category]
+
+			if summary == nil {
+				summary = &RootCauseSummary{Category: category}
+				summaries[category] = summary
+				symbols[category] = map[string]struct{}{}
+			}
+
+			lossAmount := -loss.ReturnPct
+
+			if lossAmount < 0 {
+				lossAmount = 0
+			}
+
+			summary.ImpactPct += lossAmount
 			summary.Occurrences++
 			symbols[category][report.Symbol] = struct{}{}
 		}

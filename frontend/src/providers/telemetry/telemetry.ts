@@ -42,6 +42,7 @@ export { HindsightBlocker, HindsightBlockerT } from './telemetry/hindsight-block
 export { HindsightDiagnosis, HindsightDiagnosisT } from './telemetry/hindsight-diagnosis.js';
 export { HindsightFrame, HindsightFrameT } from './telemetry/hindsight-frame.js';
 export { HindsightLeg, HindsightLegT } from './telemetry/hindsight-leg.js';
+export { HindsightLoss, HindsightLossT } from './telemetry/hindsight-loss.js';
 export { HindsightOpportunity, HindsightOpportunityT } from './telemetry/hindsight-opportunity.js';
 export { HindsightRecommendation, HindsightRecommendationT } from './telemetry/hindsight-recommendation.js';
 export { HindsightRootCause, HindsightRootCauseT } from './telemetry/hindsight-root-cause.js';

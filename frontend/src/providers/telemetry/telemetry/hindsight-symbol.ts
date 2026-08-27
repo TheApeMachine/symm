@@ -5,6 +5,7 @@
 
 import * as flatbuffers from 'flatbuffers';
 
+import { HindsightLoss, HindsightLossT } from '../telemetry/hindsight-loss.js';
 import { HindsightOpportunity, HindsightOpportunityT } from '../telemetry/hindsight-opportunity.js';
 
 
@@ -48,28 +49,48 @@ missedPct():number {
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-legs():bigint {
+lossPct():number {
   const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-missedLegs():bigint {
+legs():bigint {
   const offset = this.bb!.__offset(this.bb_pos, 14);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
-opportunities(index: number, obj?:HindsightOpportunity):HindsightOpportunity|null {
+missedLegs():bigint {
   const offset = this.bb!.__offset(this.bb_pos, 16);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+lossPositions():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+opportunities(index: number, obj?:HindsightOpportunity):HindsightOpportunity|null {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? (obj || new HindsightOpportunity()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 opportunitiesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+losses(index: number, obj?:HindsightLoss):HindsightLoss|null {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? (obj || new HindsightLoss()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+lossesLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 static startHindsightSymbol(builder:flatbuffers.Builder) {
-  builder.startObject(7);
+  builder.startObject(10);
 }
 
 static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
@@ -88,16 +109,24 @@ static addMissedPct(builder:flatbuffers.Builder, missedPct:number) {
   builder.addFieldFloat64(3, missedPct, 0.0);
 }
 
+static addLossPct(builder:flatbuffers.Builder, lossPct:number) {
+  builder.addFieldFloat64(4, lossPct, 0.0);
+}
+
 static addLegs(builder:flatbuffers.Builder, legs:bigint) {
-  builder.addFieldInt64(4, legs, BigInt('0'));
+  builder.addFieldInt64(5, legs, BigInt('0'));
 }
 
 static addMissedLegs(builder:flatbuffers.Builder, missedLegs:bigint) {
-  builder.addFieldInt64(5, missedLegs, BigInt('0'));
+  builder.addFieldInt64(6, missedLegs, BigInt('0'));
+}
+
+static addLossPositions(builder:flatbuffers.Builder, lossPositions:bigint) {
+  builder.addFieldInt64(7, lossPositions, BigInt('0'));
 }
 
 static addOpportunities(builder:flatbuffers.Builder, opportunitiesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, opportunitiesOffset, 0);
+  builder.addFieldOffset(8, opportunitiesOffset, 0);
 }
 
 static createOpportunitiesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -112,20 +141,39 @@ static startOpportunitiesVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
+static addLosses(builder:flatbuffers.Builder, lossesOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(9, lossesOffset, 0);
+}
+
+static createLossesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startLossesVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
 static endHindsightSymbol(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createHindsightSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset, upboundPct:number, realizedPct:number, missedPct:number, legs:bigint, missedLegs:bigint, opportunitiesOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createHindsightSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset, upboundPct:number, realizedPct:number, missedPct:number, lossPct:number, legs:bigint, missedLegs:bigint, lossPositions:bigint, opportunitiesOffset:flatbuffers.Offset, lossesOffset:flatbuffers.Offset):flatbuffers.Offset {
   HindsightSymbol.startHindsightSymbol(builder);
   HindsightSymbol.addSymbol(builder, symbolOffset);
   HindsightSymbol.addUpboundPct(builder, upboundPct);
   HindsightSymbol.addRealizedPct(builder, realizedPct);
   HindsightSymbol.addMissedPct(builder, missedPct);
+  HindsightSymbol.addLossPct(builder, lossPct);
   HindsightSymbol.addLegs(builder, legs);
   HindsightSymbol.addMissedLegs(builder, missedLegs);
+  HindsightSymbol.addLossPositions(builder, lossPositions);
   HindsightSymbol.addOpportunities(builder, opportunitiesOffset);
+  HindsightSymbol.addLosses(builder, lossesOffset);
   return HindsightSymbol.endHindsightSymbol(builder);
 }
 
@@ -135,9 +183,12 @@ unpack(): HindsightSymbolT {
     this.upboundPct(),
     this.realizedPct(),
     this.missedPct(),
+    this.lossPct(),
     this.legs(),
     this.missedLegs(),
-    this.bb!.createObjList<HindsightOpportunity, HindsightOpportunityT>(this.opportunities.bind(this), this.opportunitiesLength())
+    this.lossPositions(),
+    this.bb!.createObjList<HindsightOpportunity, HindsightOpportunityT>(this.opportunities.bind(this), this.opportunitiesLength()),
+    this.bb!.createObjList<HindsightLoss, HindsightLossT>(this.losses.bind(this), this.lossesLength())
   );
 }
 
@@ -147,9 +198,12 @@ unpackTo(_o: HindsightSymbolT): void {
   _o.upboundPct = this.upboundPct();
   _o.realizedPct = this.realizedPct();
   _o.missedPct = this.missedPct();
+  _o.lossPct = this.lossPct();
   _o.legs = this.legs();
   _o.missedLegs = this.missedLegs();
+  _o.lossPositions = this.lossPositions();
   _o.opportunities = this.bb!.createObjList<HindsightOpportunity, HindsightOpportunityT>(this.opportunities.bind(this), this.opportunitiesLength());
+  _o.losses = this.bb!.createObjList<HindsightLoss, HindsightLossT>(this.losses.bind(this), this.lossesLength());
 }
 }
 
@@ -159,24 +213,31 @@ constructor(
   public upboundPct: number = 0.0,
   public realizedPct: number = 0.0,
   public missedPct: number = 0.0,
+  public lossPct: number = 0.0,
   public legs: bigint = BigInt('0'),
   public missedLegs: bigint = BigInt('0'),
-  public opportunities: (HindsightOpportunityT)[] = []
+  public lossPositions: bigint = BigInt('0'),
+  public opportunities: (HindsightOpportunityT)[] = [],
+  public losses: (HindsightLossT)[] = []
 ){}
 
 
 pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const symbol = (this.symbol !== null ? builder.createString(this.symbol!) : 0);
   const opportunities = HindsightSymbol.createOpportunitiesVector(builder, builder.createObjectOffsetList(this.opportunities));
+  const losses = HindsightSymbol.createLossesVector(builder, builder.createObjectOffsetList(this.losses));
 
   return HindsightSymbol.createHindsightSymbol(builder,
     symbol,
     this.upboundPct,
     this.realizedPct,
     this.missedPct,
+    this.lossPct,
     this.legs,
     this.missedLegs,
-    opportunities
+    this.lossPositions,
+    opportunities,
+    losses
   );
 }
 }

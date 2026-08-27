@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import type {
 	HindsightBlocker,
+	HindsightLoss,
 	HindsightOpportunity,
 	HindsightRecommendation,
 	HindsightSignal,
@@ -81,7 +82,7 @@ const JournalRows = ({ journal }: { journal?: HindsightSignal[] }) =>
 	journal === undefined || journal.length === 0 ? null : (
 		<div className="flex flex-col gap-1 border-t border-(--line) pt-2">
 			<span className="font-mono text-[9px] uppercase tracking-widest text-(--f4)">
-				decision path through the missed hold
+				decision path through the position
 			</span>
 			{journal.map((decision) => (
 				<div
@@ -183,26 +184,32 @@ const RecommendationCard = ({
 	</div>
 );
 
-const OpportunityCard = ({ opportunity }: { opportunity: HindsightOpportunity }) => {
+export const OpportunityCard = ({ opportunity }: { opportunity: HindsightOpportunity }) => {
 	const diagnosis = opportunity.diagnosis;
+	const leg = opportunity.leg;
 
 	return (
 		<div className="flex flex-col gap-2 rounded-[3px] border border-(--line) bg-(--surface) p-3">
 			<Flex.Row align="center" gap={2} className="font-mono text-[10px]">
 				<span className="text-(--up)">↑</span>
 				<span className="tabular-nums text-(--f2)">
-					{opportunity.leg.buyPrice} → {opportunity.leg.sellPrice}
+					{leg.buyPrice.toFixed(2)} → {leg.sellPrice.toFixed(2)}
 				</span>
 				<span className="tabular-nums text-(--warn)">
-					{formatPct(opportunity.leg.profitPct)} missed
+					{formatPct(leg.profitPct)} net missed
 				</span>
+				{leg.grossProfitPct !== undefined && leg.frictionPct !== undefined && leg.frictionPct > 0 ? (
+					<span className="text-[9px] text-(--f4)">
+						(gross {formatPct(leg.grossProfitPct)} · friction -{formatPct(leg.frictionPct)})
+					</span>
+				) : null}
 				{diagnosis?.category ? (
 					<span className="rounded-[3px] border border-(--warn) px-1.5 py-px text-[8px] uppercase tracking-widest text-(--warn)">
 						{formatHindsightCategory(diagnosis.category)}
 					</span>
 				) : null}
 				<span className="ml-auto text-(--f4)">
-					{formatClock(opportunity.leg.buyAt)} → {formatClock(opportunity.leg.sellAt)}
+					{formatClock(leg.buyAt)} → {formatClock(leg.sellAt)}
 				</span>
 			</Flex.Row>
 
@@ -240,14 +247,90 @@ const OpportunityCard = ({ opportunity }: { opportunity: HindsightOpportunity })
 	);
 };
 
+export const LossCard = ({ loss }: { loss: HindsightLoss }) => {
+	const diagnosis = loss.diagnosis;
+
+	return (
+		<div className="flex flex-col gap-2 rounded-[3px] border border-(--down) bg-(--surface) p-3">
+			<Flex.Row align="center" gap={2} className="font-mono text-[10px]">
+				<span className="text-(--down)">↓</span>
+				<span className="tabular-nums text-(--f2)">
+					{loss.entryPrice.toFixed(2)} → {loss.exitPrice.toFixed(2)}
+				</span>
+				<span className="tabular-nums font-semibold text-(--down)">
+					{formatPct(loss.returnPct)} loss
+				</span>
+				{loss.frictionPct > 0 ? (
+					<span className="text-[9px] text-(--f4)">
+						(gross {formatPct(loss.grossPct)} · friction -{formatPct(loss.frictionPct)})
+					</span>
+				) : null}
+				{diagnosis?.category ? (
+					<span className="rounded-[3px] border border-(--down) px-1.5 py-px text-[8px] uppercase tracking-widest text-(--down)">
+						{formatHindsightCategory(diagnosis.category)}
+					</span>
+				) : null}
+				<span className="ml-auto text-(--f4)">
+					{formatClock(loss.entryAt)} → {formatClock(loss.exitAt)}
+				</span>
+			</Flex.Row>
+
+			{loss.triggerReason ? (
+				<p className="font-mono text-[9px] text-(--f4)">
+					Exit trigger: <span className="text-(--f2)">{loss.triggerReason}</span>
+				</p>
+			) : null}
+
+			<p className="rounded-[3px] border border-(--down) bg-(--sunken) px-2 py-1.5 font-mono text-[10px] leading-relaxed text-(--down)">
+				{diagnosis?.summary || "Non-profitable position."}
+			</p>
+
+			{diagnosis !== undefined && diagnosis !== null ? (
+				<>
+					<BlockerRows blockers={diagnosis.blockers} />
+					{diagnosis.recommendation !== null ? (
+						<RecommendationCard
+							recommendation={diagnosis.recommendation}
+							evidenceQuality={diagnosis.evidenceQuality}
+							evidenceStatus={diagnosis.evidenceStatus}
+						/>
+					) : null}
+				</>
+			) : null}
+
+			<div className="grid grid-cols-2 gap-x-4 gap-y-0.5 border-t border-(--line) pt-2">
+				<ThesisRow label="entry thesis confidence" value={loss.signal.thesisConfidence} />
+				<ThesisRow label="entry thesis support" value={loss.signal.thesisSupport} />
+				<ThesisRow label="entry thesis contradiction" value={loss.signal.thesisContradiction} />
+				<ThesisRow label="entry thesis conditions" value={loss.signal.thesisConditions} />
+				<ThesisRow label="entry direction" value={loss.signal.direction} />
+				<ThesisRow label="admission threshold" value={loss.signal.admissionThreshold} />
+			</div>
+			<JournalRows journal={loss.journal} />
+			{loss.signal.alternatives !== null &&
+			Object.keys(loss.signal.alternatives).length > 0 ? (
+				<AlternativeBars alternatives={loss.signal.alternatives} />
+			) : null}
+		</div>
+	);
+};
+
 export const HindsightSymbolCard = ({
 	symbol,
 	defaultOpen = false,
+	activeTab = "all",
 }: {
 	symbol: HindsightSymbol;
 	defaultOpen?: boolean;
+	activeTab?: "all" | "opportunities" | "losses";
 }) => {
 	const [open, setOpen] = useState(defaultOpen);
+	const losses = symbol.losses ?? [];
+	const lossPct = symbol.lossPct ?? 0;
+	const lossPositions = symbol.lossPositions ?? losses.length;
+
+	const showOpportunities = activeTab === "all" || activeTab === "opportunities";
+	const showLosses = activeTab === "all" || activeTab === "losses";
 
 	return (
 		<li className="border-b border-(--line) last:border-b-0">
@@ -259,22 +342,49 @@ export const HindsightSymbolCard = ({
 				<span className="w-32 truncate font-mono text-[11px] font-semibold text-(--f1)">{symbol.symbol}</span>
 				<span className="w-24 font-mono text-[10px] tabular-nums text-(--f3)">ceiling {formatPct(symbol.upboundPct)}</span>
 				<span className="w-28 font-mono text-[10px] tabular-nums text-(--up)">entered {formatPct(symbol.realizedPct)}</span>
-				<span className="w-28 font-mono text-[10px] tabular-nums text-(--down)">missed {formatPct(symbol.missedPct)}</span>
+				<span className="w-28 font-mono text-[10px] tabular-nums text-(--warn)">missed {formatPct(symbol.missedPct)}</span>
+				{lossPct > 0 || lossPositions > 0 ? (
+					<span className="w-28 font-mono text-[10px] tabular-nums text-(--down)">
+						loss -{formatPct(lossPct)} ({lossPositions})
+					</span>
+				) : null}
 				<span className="font-mono text-[10px] text-(--f4)">{symbol.missedLegs}/{symbol.legs} legs</span>
 				<span className="ml-auto font-mono text-[9px] text-(--f4)">{open ? "▲" : "▼"}</span>
 			</Button>
 
 			{open ? (
-				<div className="flex flex-col gap-2 border-t border-(--line) bg-(--sunken) px-4 py-3">
-					{symbol.opportunities.length === 0 ? (
-						<p className="font-mono text-[10px] text-(--f4)">No missed legs with retained decision context.</p>
+				<div className="flex flex-col gap-3 border-t border-(--line) bg-(--sunken) px-4 py-3">
+					{showLosses && losses.length > 0 ? (
+						<div className="flex flex-col gap-2">
+							<span className="font-mono text-[9px] uppercase tracking-widest text-(--down)">
+								Losing positions post-mortem ({losses.length})
+							</span>
+							{losses.map((loss) => (
+								<LossCard
+									key={`${loss.decisionId}-${loss.entryAt}-${loss.exitAt}`}
+									loss={loss}
+								/>
+							))}
+						</div>
 					) : null}
-					{symbol.opportunities.slice(0, 8).map((opportunity) => (
-						<OpportunityCard
-							key={`${opportunity.leg.buyAt}-${opportunity.leg.sellAt}-${opportunity.leg.buyPrice}`}
-							opportunity={opportunity}
-						/>
-					))}
+
+					{showOpportunities && symbol.opportunities.length > 0 ? (
+						<div className="flex flex-col gap-2">
+							<span className="font-mono text-[9px] uppercase tracking-widest text-(--warn)">
+								Missed market opportunities ({symbol.opportunities.length})
+							</span>
+							{symbol.opportunities.slice(0, 8).map((opportunity) => (
+								<OpportunityCard
+									key={`${opportunity.leg.buyAt}-${opportunity.leg.sellAt}-${opportunity.leg.buyPrice}`}
+									opportunity={opportunity}
+								/>
+							))}
+						</div>
+					) : null}
+
+					{symbol.opportunities.length === 0 && losses.length === 0 ? (
+						<p className="font-mono text-[10px] text-(--f4)">No retained diagnostic context for this symbol.</p>
+					) : null}
 				</div>
 			) : null}
 		</li>

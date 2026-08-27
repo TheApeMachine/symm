@@ -75,43 +75,73 @@ realizedPct():number {
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-valueCaptureRate():number {
+lossPct():number {
   const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-legCaptureRate():number {
+lossPositions():bigint {
   const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
-diagnosticCoverage():number {
+valueCaptureRate():number {
   const offset = this.bb!.__offset(this.bb_pos, 24);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-rootCauses(index: number, obj?:HindsightRootCause):HindsightRootCause|null {
+legCaptureRate():number {
   const offset = this.bb!.__offset(this.bb_pos, 26);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+diagnosticCoverage():number {
+  const offset = this.bb!.__offset(this.bb_pos, 28);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+rootCauses(index: number, obj?:HindsightRootCause):HindsightRootCause|null {
+  const offset = this.bb!.__offset(this.bb_pos, 30);
   return offset ? (obj || new HindsightRootCause()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 rootCausesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
+  const offset = this.bb!.__offset(this.bb_pos, 30);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 recommendations(index: number, obj?:HindsightRecommendation):HindsightRecommendation|null {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
+  const offset = this.bb!.__offset(this.bb_pos, 32);
   return offset ? (obj || new HindsightRecommendation()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 recommendationsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
+  const offset = this.bb!.__offset(this.bb_pos, 32);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+lossRootCauses(index: number, obj?:HindsightRootCause):HindsightRootCause|null {
+  const offset = this.bb!.__offset(this.bb_pos, 34);
+  return offset ? (obj || new HindsightRootCause()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+lossRootCausesLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 34);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+lossRecommendations(index: number, obj?:HindsightRecommendation):HindsightRecommendation|null {
+  const offset = this.bb!.__offset(this.bb_pos, 36);
+  return offset ? (obj || new HindsightRecommendation()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+lossRecommendationsLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 36);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 static startHindsightFrame(builder:flatbuffers.Builder) {
-  builder.startObject(13);
+  builder.startObject(17);
 }
 
 static addCaptureId(builder:flatbuffers.Builder, captureId:bigint) {
@@ -158,20 +188,28 @@ static addRealizedPct(builder:flatbuffers.Builder, realizedPct:number) {
   builder.addFieldFloat64(7, realizedPct, 0.0);
 }
 
+static addLossPct(builder:flatbuffers.Builder, lossPct:number) {
+  builder.addFieldFloat64(8, lossPct, 0.0);
+}
+
+static addLossPositions(builder:flatbuffers.Builder, lossPositions:bigint) {
+  builder.addFieldInt64(9, lossPositions, BigInt('0'));
+}
+
 static addValueCaptureRate(builder:flatbuffers.Builder, valueCaptureRate:number) {
-  builder.addFieldFloat64(8, valueCaptureRate, 0.0);
+  builder.addFieldFloat64(10, valueCaptureRate, 0.0);
 }
 
 static addLegCaptureRate(builder:flatbuffers.Builder, legCaptureRate:number) {
-  builder.addFieldFloat64(9, legCaptureRate, 0.0);
+  builder.addFieldFloat64(11, legCaptureRate, 0.0);
 }
 
 static addDiagnosticCoverage(builder:flatbuffers.Builder, diagnosticCoverage:number) {
-  builder.addFieldFloat64(10, diagnosticCoverage, 0.0);
+  builder.addFieldFloat64(12, diagnosticCoverage, 0.0);
 }
 
 static addRootCauses(builder:flatbuffers.Builder, rootCausesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(11, rootCausesOffset, 0);
+  builder.addFieldOffset(13, rootCausesOffset, 0);
 }
 
 static createRootCausesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -187,7 +225,7 @@ static startRootCausesVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addRecommendations(builder:flatbuffers.Builder, recommendationsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(12, recommendationsOffset, 0);
+  builder.addFieldOffset(14, recommendationsOffset, 0);
 }
 
 static createRecommendationsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -202,12 +240,44 @@ static startRecommendationsVector(builder:flatbuffers.Builder, numElems:number) 
   builder.startVector(4, numElems, 4);
 }
 
+static addLossRootCauses(builder:flatbuffers.Builder, lossRootCausesOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(15, lossRootCausesOffset, 0);
+}
+
+static createLossRootCausesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startLossRootCausesVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
+static addLossRecommendations(builder:flatbuffers.Builder, lossRecommendationsOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(16, lossRecommendationsOffset, 0);
+}
+
+static createLossRecommendationsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startLossRecommendationsVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
 static endHindsightFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createHindsightFrame(builder:flatbuffers.Builder, captureId:bigint, statusOffset:flatbuffers.Offset, symbolsOffset:flatbuffers.Offset, missedPct:number, upboundPct:number, missedLegs:bigint, totalLegs:bigint, realizedPct:number, valueCaptureRate:number, legCaptureRate:number, diagnosticCoverage:number, rootCausesOffset:flatbuffers.Offset, recommendationsOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createHindsightFrame(builder:flatbuffers.Builder, captureId:bigint, statusOffset:flatbuffers.Offset, symbolsOffset:flatbuffers.Offset, missedPct:number, upboundPct:number, missedLegs:bigint, totalLegs:bigint, realizedPct:number, lossPct:number, lossPositions:bigint, valueCaptureRate:number, legCaptureRate:number, diagnosticCoverage:number, rootCausesOffset:flatbuffers.Offset, recommendationsOffset:flatbuffers.Offset, lossRootCausesOffset:flatbuffers.Offset, lossRecommendationsOffset:flatbuffers.Offset):flatbuffers.Offset {
   HindsightFrame.startHindsightFrame(builder);
   HindsightFrame.addCaptureId(builder, captureId);
   HindsightFrame.addStatus(builder, statusOffset);
@@ -217,11 +287,15 @@ static createHindsightFrame(builder:flatbuffers.Builder, captureId:bigint, statu
   HindsightFrame.addMissedLegs(builder, missedLegs);
   HindsightFrame.addTotalLegs(builder, totalLegs);
   HindsightFrame.addRealizedPct(builder, realizedPct);
+  HindsightFrame.addLossPct(builder, lossPct);
+  HindsightFrame.addLossPositions(builder, lossPositions);
   HindsightFrame.addValueCaptureRate(builder, valueCaptureRate);
   HindsightFrame.addLegCaptureRate(builder, legCaptureRate);
   HindsightFrame.addDiagnosticCoverage(builder, diagnosticCoverage);
   HindsightFrame.addRootCauses(builder, rootCausesOffset);
   HindsightFrame.addRecommendations(builder, recommendationsOffset);
+  HindsightFrame.addLossRootCauses(builder, lossRootCausesOffset);
+  HindsightFrame.addLossRecommendations(builder, lossRecommendationsOffset);
   return HindsightFrame.endHindsightFrame(builder);
 }
 
@@ -235,11 +309,15 @@ unpack(): HindsightFrameT {
     this.missedLegs(),
     this.totalLegs(),
     this.realizedPct(),
+    this.lossPct(),
+    this.lossPositions(),
     this.valueCaptureRate(),
     this.legCaptureRate(),
     this.diagnosticCoverage(),
     this.bb!.createObjList<HindsightRootCause, HindsightRootCauseT>(this.rootCauses.bind(this), this.rootCausesLength()),
-    this.bb!.createObjList<HindsightRecommendation, HindsightRecommendationT>(this.recommendations.bind(this), this.recommendationsLength())
+    this.bb!.createObjList<HindsightRecommendation, HindsightRecommendationT>(this.recommendations.bind(this), this.recommendationsLength()),
+    this.bb!.createObjList<HindsightRootCause, HindsightRootCauseT>(this.lossRootCauses.bind(this), this.lossRootCausesLength()),
+    this.bb!.createObjList<HindsightRecommendation, HindsightRecommendationT>(this.lossRecommendations.bind(this), this.lossRecommendationsLength())
   );
 }
 
@@ -253,11 +331,15 @@ unpackTo(_o: HindsightFrameT): void {
   _o.missedLegs = this.missedLegs();
   _o.totalLegs = this.totalLegs();
   _o.realizedPct = this.realizedPct();
+  _o.lossPct = this.lossPct();
+  _o.lossPositions = this.lossPositions();
   _o.valueCaptureRate = this.valueCaptureRate();
   _o.legCaptureRate = this.legCaptureRate();
   _o.diagnosticCoverage = this.diagnosticCoverage();
   _o.rootCauses = this.bb!.createObjList<HindsightRootCause, HindsightRootCauseT>(this.rootCauses.bind(this), this.rootCausesLength());
   _o.recommendations = this.bb!.createObjList<HindsightRecommendation, HindsightRecommendationT>(this.recommendations.bind(this), this.recommendationsLength());
+  _o.lossRootCauses = this.bb!.createObjList<HindsightRootCause, HindsightRootCauseT>(this.lossRootCauses.bind(this), this.lossRootCausesLength());
+  _o.lossRecommendations = this.bb!.createObjList<HindsightRecommendation, HindsightRecommendationT>(this.lossRecommendations.bind(this), this.lossRecommendationsLength());
 }
 }
 
@@ -271,11 +353,15 @@ constructor(
   public missedLegs: bigint = BigInt('0'),
   public totalLegs: bigint = BigInt('0'),
   public realizedPct: number = 0.0,
+  public lossPct: number = 0.0,
+  public lossPositions: bigint = BigInt('0'),
   public valueCaptureRate: number = 0.0,
   public legCaptureRate: number = 0.0,
   public diagnosticCoverage: number = 0.0,
   public rootCauses: (HindsightRootCauseT)[] = [],
-  public recommendations: (HindsightRecommendationT)[] = []
+  public recommendations: (HindsightRecommendationT)[] = [],
+  public lossRootCauses: (HindsightRootCauseT)[] = [],
+  public lossRecommendations: (HindsightRecommendationT)[] = []
 ){}
 
 
@@ -284,6 +370,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const symbols = HindsightFrame.createSymbolsVector(builder, builder.createObjectOffsetList(this.symbols));
   const rootCauses = HindsightFrame.createRootCausesVector(builder, builder.createObjectOffsetList(this.rootCauses));
   const recommendations = HindsightFrame.createRecommendationsVector(builder, builder.createObjectOffsetList(this.recommendations));
+  const lossRootCauses = HindsightFrame.createLossRootCausesVector(builder, builder.createObjectOffsetList(this.lossRootCauses));
+  const lossRecommendations = HindsightFrame.createLossRecommendationsVector(builder, builder.createObjectOffsetList(this.lossRecommendations));
 
   return HindsightFrame.createHindsightFrame(builder,
     this.captureId,
@@ -294,11 +382,15 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     this.missedLegs,
     this.totalLegs,
     this.realizedPct,
+    this.lossPct,
+    this.lossPositions,
     this.valueCaptureRate,
     this.legCaptureRate,
     this.diagnosticCoverage,
     rootCauses,
-    recommendations
+    recommendations,
+    lossRootCauses,
+    lossRecommendations
   );
 }
 }

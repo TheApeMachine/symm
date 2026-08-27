@@ -13,6 +13,8 @@ type HindsightLegT struct {
 	BuyPrice float64 `json:"buyPrice"`
 	SellPrice float64 `json:"sellPrice"`
 	ProfitPct float64 `json:"profitPct"`
+	GrossProfitPct float64 `json:"grossProfitPct"`
+	FrictionPct float64 `json:"frictionPct"`
 }
 
 func (t *HindsightLegT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -30,6 +32,8 @@ func (t *HindsightLegT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT 
 	HindsightLegAddBuyPrice(builder, t.BuyPrice)
 	HindsightLegAddSellPrice(builder, t.SellPrice)
 	HindsightLegAddProfitPct(builder, t.ProfitPct)
+	HindsightLegAddGrossProfitPct(builder, t.GrossProfitPct)
+	HindsightLegAddFrictionPct(builder, t.FrictionPct)
 	return HindsightLegEnd(builder)
 }
 
@@ -40,6 +44,8 @@ func (rcv *HindsightLeg) UnPackTo(t *HindsightLegT) {
 	t.BuyPrice = rcv.BuyPrice()
 	t.SellPrice = rcv.SellPrice()
 	t.ProfitPct = rcv.ProfitPct()
+	t.GrossProfitPct = rcv.GrossProfitPct()
+	t.FrictionPct = rcv.FrictionPct()
 }
 
 func (rcv *HindsightLeg) UnPack() *HindsightLegT {
@@ -154,8 +160,32 @@ func (rcv *HindsightLeg) MutateProfitPct(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(14, n)
 }
 
+func (rcv *HindsightLeg) GrossProfitPct() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *HindsightLeg) MutateGrossProfitPct(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(16, n)
+}
+
+func (rcv *HindsightLeg) FrictionPct() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *HindsightLeg) MutateFrictionPct(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(18, n)
+}
+
 func HindsightLegStart(builder *flatbuffers.Builder) {
-	builder.StartObject(6)
+	builder.StartObject(8)
 }
 func HindsightLegAddSymbol(builder *flatbuffers.Builder, symbol flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(symbol), 0)
@@ -174,6 +204,12 @@ func HindsightLegAddSellPrice(builder *flatbuffers.Builder, sellPrice float64) {
 }
 func HindsightLegAddProfitPct(builder *flatbuffers.Builder, profitPct float64) {
 	builder.PrependFloat64Slot(5, profitPct, 0.0)
+}
+func HindsightLegAddGrossProfitPct(builder *flatbuffers.Builder, grossProfitPct float64) {
+	builder.PrependFloat64Slot(6, grossProfitPct, 0.0)
+}
+func HindsightLegAddFrictionPct(builder *flatbuffers.Builder, frictionPct float64) {
+	builder.PrependFloat64Slot(7, frictionPct, 0.0)
 }
 func HindsightLegEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()
