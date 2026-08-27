@@ -545,8 +545,23 @@ func BootWithHub(
 	causalSolver := causal.NewSolver(bus)
 	cognitionSolver := cognition.NewSolver(systemCtx, bus)
 	opportunitySolver := opportunity.NewSolver(systemCtx, bus)
-	historicalAnalogueAdvisor := advisor.NewHistoricalAnalogueAdvisor(systemCtx, bus)
-	relativeStateAdvisor := advisor.NewRelativeStateAdvisor(systemCtx, bus)
+	liquidityAdvisor := advisor.NewAdvisor(
+		"advisor:liquidity",
+		types.KindLiquidity,
+		advisor.MetricBinding{Source: "liquidity", Metric: "relative_spread"},
+		advisor.MetricBinding{Source: "liquidity", Metric: "touch_notional_imbalance"},
+		advisor.MetricBinding{Source: "depthflow", Metric: "book_imbalance"},
+	)
+
+	if bus != nil {
+		runtime.WireKeyed[*data.Measurement[float64], *types.Perspective](
+			bus,
+			types.ChannelMeasurements,
+			types.ChannelPerspectives,
+			func(measurement *data.Measurement[float64]) string { return measurement.Label },
+			liquidityAdvisor.Step,
+		)
+	}
 
 	// The Influence Graph stage subscribes to ChannelMeasurements, maintains the
 	// shared Influence Graph in place, and publishes a GraphUpdate per symbol on
@@ -589,8 +604,7 @@ func BootWithHub(
 	graphSolver.ObserveModule = diagnosticsCollector.ObserveModule()
 	manifoldSolver.ObserveModule = diagnosticsCollector.ObserveModule()
 	opportunitySolver.ObserveModule = diagnosticsCollector.ObserveModule()
-	historicalAnalogueAdvisor.ObserveModule = diagnosticsCollector.ObserveModule()
-	relativeStateAdvisor.ObserveModule = diagnosticsCollector.ObserveModule()
+	liquidityAdvisor.ObserveModule = diagnosticsCollector.ObserveModule()
 	resonanceSolver.ObserveModule = diagnosticsCollector.ObserveModule()
 	desk.ObserveModule = diagnosticsCollector.ObserveModule()
 	planner.ObserveModule = diagnosticsCollector.ObserveModule()

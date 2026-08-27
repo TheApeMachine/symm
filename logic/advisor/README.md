@@ -2,9 +2,9 @@
 
 ## 1. Purpose
 
-Advisors are SYMM's descriptive context layer. An Advisor is an operational
-component that consumes already-produced observations, maintains bounded
-resident state, and emits a **Perspective** — its current descriptive output.
+Advisors are SYMM's descriptive context layer. An Advisor is one operational
+component that composes already-produced **Measurements** into bounded resident
+state and emits a **Perspective** — its current descriptive output.
 
 A Perspective answers:
 
@@ -20,72 +20,60 @@ The governing principle is:
 
 Every Advisor:
 
-1. subscribes to one or more typed streams;
-2. consumes each event exactly once;
-3. mutates bounded resident state;
-4. optionally emits a Perspective;
+1. subscribes to the `ChannelMeasurements` stream;
+2. consumes each Measurement exactly once;
+3. mutates bounded resident state through a `nomagique.Number` pipeline;
+4. emits a Perspective;
 5. retains no unbounded event backlog;
 6. never reconstructs a world snapshot to process one event.
 
-## 3. Perspective
+## 3. One Advisor Type, Composed by a Pipeline
+
+There is exactly one `Advisor` type. It wraps a `nomagique.Number` pipeline —
+the bounded per-symbol, per-metric resident state plus its derived statistics —
+and is configured with the set of measurement metrics it composes.
+
+Each composed metric runs through the same temporal-context stage:
+
+```text
+temporal.Window → statistic.ZScore → statistic.Baseline → statistic.Velocity
+```
+
+so each metric's current value, adaptive baseline, z-score (departure from that
+baseline in units of its own dispersion), and first difference are derived from
+the metric's own event-time history. The `MetricBinding{Source, Metric}` declares
+which measurement feeds which stream; the `Source` disambiguates a metric name
+emitted by more than one signal.
+
+## 4. Perspective
 
 `types.Perspective` is the fixed-size wire value: a symbol/peer identity, an
-interned `PerspectiveKind`, a `From`/`At` window, a monotonic `Sequence`, a
-bounded `Maturity`, and a kind-specific value payload. Structural identity is
-`types.PerspectiveKey` (Symbol, Peer, Kind) — a comparable value type, never a
-built string.
+interned `PerspectiveKind`, an `At` timestamp, a monotonic `Sequence`, and a
+fixed-size array of `MetricReading` values (`Value`, `Baseline`, `ZScore`,
+`Velocity`, `Ready`). `Count` says how many readings are populated.
 
-Definedness is explicit: each payload carries an integer support count, and the
-accompanying floats are meaningless when that count is zero. A missing
-historical-analogue model is never rendered as `distance = 0`.
+Definedness is explicit: a reading's `Ready` is false until every derived slot
+exists, so a not-ready reading's zeros are never mistaken for a real estimate.
+Each Advisor family owns a distinct `PerspectiveKind` so perspectives do not
+collide on identity.
 
-## 4. HistoricalAnalogueAdvisor
+## 5. Live Composition
 
-Answers, per symbol:
+`cmd/boot.go` wires one `KindLiquidity` advisor over three measurement metrics:
 
-> **Has this symbol previously exhibited a regime trajectory similar to the one observed now, and where does the present trajectory sit relative to those archived episodes?**
+- `liquidity/relative_spread`
+- `liquidity/touch_notional_imbalance`
+- `depthflow/book_imbalance`
 
-It consumes the ranked `[]types.Category` batch (`ChannelCategories`), reduces
-each tick to its dominant regime (interned category index), and matches the
-in-progress trajectory against the symbol's own bounded archive of completed
-trajectory windows.
-
-Outputs:
-
-- `Support` — archived episode count (zero means no comparison was possible);
-- `NearestDistance` — minimum normalized Hamming distance to an archived window;
-- `MedianDistance` — the archive's own typical self-distance, the honest scale
-  against which "unusually close" is judged without a tuned threshold;
-- `StageAlignment` — the in-progress trajectory's fill fraction.
-
-It deliberately does **not** fabricate a `P(VerticalIgnition)` from the analogue
-count, nor a distance "percentile" with no null model. Those calibrated
-quantities belong to offline research (the Research Catalog), not to this live
-descriptive stage.
-
-## 5. RelativeStateAdvisor
-
-Answers, per symbol:
-
-> **How does this symbol's current regime compare with the rest of the market population's regimes?**
-
-It consumes the same ranked `[]types.Category` batch, maintains a bounded
-population of each symbol's current dominant regime, and reports measured
-cross-sectional facts:
-
-- `PeerCount` — population size (zero means no comparison was possible);
-- `SameRegime` — symbols sharing this symbol's regime;
-- `Breadth` — `SameRegime / PeerCount`, the fraction of the population in the
-  same regime;
-- `MajorityRegime` / `MajorityBreadth` — the most frequent regime and its share.
-
-These are measured shares, never an outlier/leader classification.
+describing, per symbol, how unusual the current execution terrain (spread, touch
+capacity, book imbalance) is relative to its own history.
 
 ## 6. Non-Goals
 
 - no universal scoring system or generic confidence scalar;
 - no hard-coded "bot" or manipulation labels;
 - no direct trading authority — a Perspective is never a buy/sell/hold;
+- no re-deriving a raw signal: the advisor composes already-emitted Measurements;
 - no world snapshots, cloned histories, or unbounded backlogs;
 - no permanent all-to-all pair state.
 
@@ -96,7 +84,6 @@ These are measured shares, never an outlier/leader classification.
   pair identity has nothing to consume. Requires the named-pair admission path
   (spec §17/§38: Research Catalog, spot/perpetual, or explicit config).
 - **MorphologyAdvisor** (normalized book morphology) — the depthflow signal
-  emits flow/mutation metrics (book_imbalance, turnover, resolution_gap) but not
-  the structural measures the spec lists (normalized entropy, Herfindahl
-  concentration, spacing regularity, size quantization). Requires those
-  measurements to exist first.
+  emits flow/mutation metrics, not the structural measures the spec lists
+  (normalized entropy, Herfindahl concentration, spacing regularity, size
+  quantization). Requires those measurements to exist first.
