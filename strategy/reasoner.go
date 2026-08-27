@@ -391,7 +391,7 @@ func (reasoner *Reasoner) snapshotSymbol(symbolState *reasonerSymbolState, symbo
 	transitions := model.TransitionModels(at)
 	outcomeTransition := transitions[outcome.Coordinate]
 	market := reasoner.buildMarketState(symbol, at, model)
-	edges := reasoner.influenceGraph.Incoming(outcome.Coordinate)
+	edges := reasoner.symbolInfluenceEdges(symbol)
 
 	identification := outcomeTransition.Status
 
@@ -495,6 +495,29 @@ func (reasoner *Reasoner) sortedPresentCoordinates(state mcts.MarketState) []rel
 	slices.SortFunc(coordinates, relation.CompareCoordinate)
 
 	return coordinates
+}
+
+/*
+symbolInfluenceEdges returns every current Influence edge for one symbol,
+spanning all four tiers of the mediated DAG rather than only the inbound
+edges to the outcome. The audit trace and the frontend graph need the full
+cascade, not the single-sink fan into price return.
+*/
+func (reasoner *Reasoner) symbolInfluenceEdges(symbol string) []*graph.InfluenceEdge {
+	if reasoner == nil || reasoner.influenceGraph == nil {
+		return nil
+	}
+
+	edges := reasoner.influenceGraph.Edges()
+	filtered := make([]*graph.InfluenceEdge, 0, len(edges))
+
+	for _, edge := range edges {
+		if edge.Type == graph.EdgeInfluence && edge.Source.Symbol == symbol {
+			filtered = append(filtered, edge)
+		}
+	}
+
+	return filtered
 }
 
 /*

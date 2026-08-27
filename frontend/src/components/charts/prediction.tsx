@@ -1,7 +1,10 @@
 import { useSelector } from "@tanstack/react-store";
+import type { CSSProperties } from "react";
 import { focusStore, resonanceStore } from "#/collections/app";
+import { semanticLayerName } from "#/components/terminal/xray-layers";
 import { Resonance } from "#/providers/telemetry/telemetry/resonance";
 import { ResonanceForecast } from "#/providers/telemetry/telemetry/resonance-forecast";
+import { ResonanceLayer } from "#/providers/telemetry/telemetry/resonance-layer";
 
 export const vectorSlotTransform = (slot: number, slotCount: number): string =>
 	`translateX(${(slot / slotCount) * 100}%) scaleX(${1 / slotCount})`;
@@ -20,6 +23,7 @@ const dir = (value: number | undefined | null): string => {
 
 const resObj = new Resonance();
 const forecastObj = new ResonanceForecast();
+const layerObj = new ResonanceLayer();
 
 const ScalarDiagnostics = () => {
 	const symbol = useSelector(focusStore, (state) => state);
@@ -168,9 +172,163 @@ const VerdictRow = () => {
 	);
 };
 
+const toVector = (value: Float64Array | null | undefined): number[] =>
+	value === null || value === undefined ? [] : Array.from(value);
+
+/*
+Each lane is normalized against its own largest component because every layer's
+state has a different width and magnitude; a shared scale would flatten the
+quieter lanes onto the zero line.
+*/
+const maxAbsExtent = (values: number[]): number =>
+	Math.max(...values.map((value) => Math.abs(value)), Number.EPSILON);
+
+/*
+VectorLane unrolls one vector into a bar per component straddling a zero line.
+The forward curve is legible because bar k is the direction lean k steps out.
+An optional ghost vector — the top-down prediction for a layer — is drawn
+full-slot behind the narrower settled bar so the residual reads as the exposed
+shoulder of the ghost rather than as a number to subtract by eye.
+*/
+const VectorLane = ({
+	values,
+	ghost,
+	label,
+	meta,
+	color,
+}: {
+	values: number[];
+	ghost?: number[];
+	label: string;
+	meta: string;
+	color: string;
+}) => {
+	const stateExtent = maxAbsExtent(values);
+	const ghostExtent = ghost === undefined ? Number.EPSILON : maxAbsExtent(ghost);
+
+	return (
+		<div className="flex min-h-0 flex-1 items-stretch gap-3">
+			<div className="flex w-36 shrink-0 flex-col justify-center gap-0.5 font-mono text-[9px] leading-tight">
+				<span className="font-semibold uppercase tracking-widest text-(--f3)">
+					{label}
+				</span>
+				<span className="text-(--f4)">{meta}</span>
+			</div>
+			<div className="relative min-h-0 flex-1 overflow-hidden border border-(--line) bg-[linear-gradient(to_bottom,transparent_calc(50%-0.5px),var(--line2)_calc(50%-0.5px),var(--line2)_calc(50%+0.5px),transparent_calc(50%+0.5px))]">
+				{ghost !== undefined ? (
+					<div className="absolute inset-0">
+						{ghost.map((value, index) => (
+							<div
+								// biome-ignore lint/suspicious/noArrayIndexKey: vector slots are positional and never reordered
+								key={`ghost-${index}`}
+								className="absolute inset-y-0 right-1 left-1 origin-left"
+								style={{ transform: vectorSlotTransform(index, ghost.length) }}
+							>
+								<div
+									className="absolute top-1/2 right-px left-0 h-[calc(50%-1px)] origin-top bg-(--line2)"
+									style={
+										{
+											transform: signedVectorTransform,
+											"--value": value / ghostExtent,
+										} as CSSProperties
+									}
+								/>
+							</div>
+						))}
+					</div>
+				) : null}
+				{values.map((value, index) => (
+					<div
+						// biome-ignore lint/suspicious/noArrayIndexKey: vector slots are positional and never reordered
+						key={`state-${index}`}
+						className="absolute inset-y-0 right-1 left-1 origin-left"
+						style={{ transform: vectorSlotTransform(index, values.length) }}
+					>
+						<div
+							className={`absolute top-1/2 right-1.5 left-1 h-[calc(50%-1px)] origin-top ${color}`}
+							style={
+								{
+									transform: signedVectorTransform,
+									"--value": value / stateExtent,
+								} as CSSProperties
+							}
+						/>
+					</div>
+				))}
+			</div>
+		</div>
+	);
+};
+
+/*
+HierarchyLanes paints every emitted predictive-coding layer as a state/prediction
+pair, followed by the settled latent vector and the signed forward-direction
+curve. All lanes read the focused carrier row from the resonance store.
+*/
+const HierarchyLanes = () => {
+	const symbol = useSelector(focusStore, (state) => state);
+	const frameWithSymbol = useSelector(resonanceStore, (state) =>
+		state.findLast((frame) => {
+			for (let i = 0; i < frame.rowsLength(); i++) {
+				const row = frame.rows(i, resObj);
+				if (row && row.symbol() === symbol) {
+					return true;
+				}
+			}
+			return false;
+		}),
+	);
+
+	let res: Resonance | null = null;
+	if (frameWithSymbol) {
+		for (let i = 0; i < frameWithSymbol.rowsLength(); i++) {
+			const row = frameWithSymbol.rows(i, resObj);
+			if (row && row.symbol() === symbol) {
+				res = row;
+				break;
+			}
+		}
+	}
+
+	const layerCount = res ? res.layersLength() : 0;
+	const layers = Array.from({ length: layerCount }, (_, index) => {
+		const layer = res?.layers(index, layerObj);
+
+		return {
+			label: `L${index} · ${semanticLayerName(index, layerCount)}`,
+			meta: index < layerCount - 1 ? "adjacent generative link" : "context state",
+			color: "bg-(--f3)",
+			values: toVector(layer?.stateArray()),
+			ghost: toVector(layer?.predictionArray()),
+		};
+	});
+	const forecast = res ? res.forecast(forecastObj) : null;
+
+	return (
+		<>
+			{layers.map((layer) => (
+				<VectorLane key={layer.label} {...layer} />
+			))}
+			<VectorLane
+				label="Latent state z"
+				meta="settled predictive state · zero centered"
+				color="bg-(--info)"
+				values={toVector(res?.latentArray())}
+			/>
+			<VectorLane
+				label="Forward direction shape"
+				meta="signed direction lean · t+1 → t+k"
+				color="bg-(--acc)"
+				values={toVector(forecast?.forwardCurveArray())}
+			/>
+		</>
+	);
+};
+
 export const TerminalPredictionChart = () => (
 	<div className="flex size-full flex-col gap-3 px-4 pt-14 pb-3">
 		<VerdictRow />
 		<ScalarDiagnostics />
+		<HierarchyLanes />
 	</div>
 );

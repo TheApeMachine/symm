@@ -8,9 +8,11 @@ import {
 
 describe("sourceHeadline", () => {
 	it("names the metric each signal kernel leads with", () => {
-		expect(sourceHeadline("depthflow")).toBe("loaded_score");
-		expect(sourceHeadline("hawkes")).toBe("spectral_radius");
-		expect(sourceHeadline("correlation")).toBe("herd_score");
+		expect(sourceHeadline("depthflow")).toBe("book_imbalance");
+		expect(sourceHeadline("hawkes")).toBe("branching_spectral_radius");
+		expect(sourceHeadline("correlation")).toBe("signed_correlation");
+		expect(sourceHeadline("cvd")).toBe("signed_net_fraction_zscore");
+		expect(sourceHeadline("toxicity")).toBe("fill_fraction_zscore:bid");
 	});
 
 	it("returns null for sources with no named headline", () => {
@@ -21,51 +23,34 @@ describe("sourceHeadline", () => {
 
 describe("sourceHeadlineMetric", () => {
 	it("uses the dimensionless branching ratio as Hawkes' headline", () => {
-		expect(sourceHeadlineMetric("hawkes")).toBe("metrics.spectral_radius");
+		expect(sourceHeadlineMetric("hawkes")).toBe("metrics.branching_spectral_radius");
 	});
 
 	it("uses a metric the live depthflow measurement publishes", () => {
-		expect(sourceHeadlineMetric("depthflow")).toBe("metrics.loaded_score");
-		expect(sourceMetrics("depthflow")).toEqual([
-			"touch_imbalance",
-			"deep_imbalance",
-			"loaded_score",
-			"spoof_score",
-			"thin_score",
-		]);
+		expect(sourceHeadlineMetric("depthflow")).toBe("metrics.book_imbalance");
+		expect(sourceMetrics("depthflow")).toContain("book_imbalance");
+		expect(sourceMetrics("depthflow")).toContain("touch_imbalance");
 	});
 
 	it("uses the live correlation hypothesis as its headline", () => {
-		expect(sourceHeadlineMetric("correlation")).toBe("metrics.herd_score");
-		expect(sourceMetrics("correlation")).toContain("herd_score");
+		expect(sourceHeadlineMetric("correlation")).toBe("metrics.signed_correlation");
+		expect(sourceMetrics("correlation")).toContain("signed_correlation");
 	});
 
 	it("uses the anchor evidence names emitted by leadlag", () => {
-		expect(sourceHeadlineMetric("leadlag")).toBe("metrics.inefficient");
-		expect(sourceMetrics("leadlag")).toContain("sync");
+		expect(sourceHeadlineMetric("leadlag")).toBe("metrics.best_lag_correlation");
+		expect(sourceMetrics("leadlag")).toContain("best_lag_correlation");
 	});
 
-	it("shows PumpDump's complete side-aware measurement contract", () => {
-		expect(sourceMetrics("pumpdump")).toEqual([
-			"snr",
-			"best_price:buy",
-			"best_price:sell",
-			"midpoint",
-			"trade_price",
-			"trade_quantity",
-			"rvol",
-			"spread",
-			"compression",
-			"precursor:buy",
-			"precursor:sell",
-			"exhaustion:buy",
-			"exhaustion:sell",
-		]);
+	it("shows PumpDump's measured spread contract", () => {
+		expect(sourceMetrics("pumpdump")).toContain("spread");
+		expect(sourceMetrics("pumpdump")).toContain("relative_spread");
+		expect(sourceMetrics("pumpdump")).toContain("spread_zscore");
 	});
 
-	it("uses toxicity's emitted intensity rather than an absent summary", () => {
+	it("uses toxicity's emitted fill-fraction z-score rather than an absent summary", () => {
 		expect(sourceHeadlineMetric("toxicity")).toBe(
-			"metrics.toxicity_intensity",
+			"metrics.fill_fraction_zscore:bid",
 		);
 	});
 

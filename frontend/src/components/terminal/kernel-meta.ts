@@ -50,23 +50,26 @@ Each kernel publishes its own vocabulary, so the headline is named per source
 rather than assumed. The binding must name a metric that the live producer
 actually emits; otherwise the row can be live while its trace remains empty.
 
-Hawkes leads with its fitted branching ratio. Conditional intensity is measured
-in events per second and has no intrinsic unit interval, while spectral radius
-is the dimensionless cascade measure the row describes and already carries the
-model's normalized estimate.
+Headlines are the actual emitted metric names, verified against the signal
+bindings: signed_correlation (correlation), signed_net_fraction_zscore (cvd),
+book_imbalance (depthflow), open_interest_growth_zscore (derivatives),
+book_imbalance_zscore (exhaustion), branching_spectral_radius (hawkes),
+best_lag_correlation (leadlag), touch_notional_imbalance (liquidity),
+spread_zscore (pumpdump), breadth (sentiment), fill_fraction_zscore:bid
+(toxicity).
 */
 const SOURCE_HEADLINE: Record<string, string> = {
-	correlation: "herd_score",
-	cvd: "absorption",
-	depthflow: "loaded_score",
-	derivatives: "leveraged_ignition",
-	exhaustion: "urgency",
-	hawkes: "spectral_radius",
-	leadlag: "inefficient",
-	liquidity: "executable_touch_depth",
-	pumpdump: "rvol",
+	correlation: "signed_correlation",
+	cvd: "signed_net_fraction_zscore",
+	depthflow: "book_imbalance",
+	derivatives: "open_interest_growth_zscore",
+	exhaustion: "book_imbalance_zscore",
+	hawkes: "branching_spectral_radius",
+	leadlag: "best_lag_correlation",
+	liquidity: "touch_notional_imbalance",
+	pumpdump: "spread_zscore",
 	sentiment: "breadth",
-	toxicity: "toxicity_intensity",
+	toxicity: "fill_fraction_zscore:bid",
 };
 
 /*
@@ -101,108 +104,134 @@ zero, so the panel understates rather than invents.
 */
 const SOURCE_METRICS: Record<string, string[]> = {
 	correlation: [
-		"correlation",
-		"signed",
-		"relative_energy",
-		"herd_score",
-		"alpha_score",
-		"noise_score",
-		"stress_score",
-		"snr",
+		"last_price",
+		"signed_correlation",
+		"absolute_correlation",
+		"cohort_signed_correlation",
+		"correlation_zscore",
+		"correlation_p_value",
+		"overlap_density",
+		"effective_sample_count",
 	],
-	cvd: ["net", "flow_baseline", "flow_zscore", "absorption"],
+	cvd: [
+		"trade_count",
+		"signed_count_fraction",
+		"executed_quantity:buy",
+		"executed_quantity:sell",
+		"gross_notional",
+		"net_notional",
+		"signed_net_fraction",
+		"signed_net_fraction_zscore",
+		"gross_notional_rate",
+		"gross_notional_rate_zscore",
+		"cumulative_volume_delta",
+		"midpoint_log_return",
+	],
 	depthflow: [
+		"book_imbalance",
 		"touch_imbalance",
-		"deep_imbalance",
-		"loaded_score",
-		"spoof_score",
-		"thin_score",
+		"book_imbalance_zscore",
+		"imbalance_resolution_gap",
+		"flow_activity_imbalance",
+		"net_displayed_flow:bid",
+		"net_displayed_flow:ask",
+		"signed_net_displayed_flow_rate",
 	],
 	derivatives: [
-		"leveraged_ignition",
-		"short_squeeze",
-		"adverse_leverage_buildup",
-		"long_deleveraging",
-		"derivatives_decoupling",
-		"futures_oi",
-		"futures_oi_velocity",
-		"futures_oi_acceleration",
-		"futures_basis",
-		"futures_basis_velocity",
-		"futures_index_basis",
-		"futures_tripartite_divergence",
-		"futures_cvd",
-		"futures_aggressor_imbalance",
-		"futures_liquidation_buy",
-		"futures_liquidation_sell",
-		"futures_liquidation_intensity",
+		"derivative_price",
+		"reference_price",
+		"basis",
+		"basis_zscore",
+		"open_interest",
+		"open_interest_growth_zscore",
+		"return_gap_zscore",
+		"open_interest_growth_baseline",
 	],
-	exhaustion: ["mechanical", "fragile", "thermal", "reversal", "urgency"],
+	exhaustion: [
+		"displayed_depth_notional",
+		"spread",
+		"relative_spread",
+		"book_imbalance",
+		"book_imbalance_zscore",
+		"depth_zscore:bid",
+		"depth_zscore:ask",
+		"midpoint_log_return",
+	],
 	hawkes: [
-		"background_rate:buy",
+		"arrival_rate",
+		"arrival_rate:buy",
+		"arrival_rate:sell",
+		"conditional_intensity",
 		"conditional_intensity:buy",
 		"conditional_intensity:sell",
-		"excitation_decay:buy_from_buy",
-		"excitation_amplitude:buy_to_buy",
-		"excitation_amplitude:sell_to_sell",
-		"spectral_radius",
-		"expected_total_descendants:buy",
+		"background_rate",
+		"branching_spectral_radius",
+		"event_count",
+		"event_fraction:buy",
 	],
 	leadlag: [
-		"correlation",
-		"signed_correlation",
-		"signed_contemp_correlation",
-		"signed_lag_correlation",
+		"contemporaneous_correlation",
+		"best_lag_correlation",
+		"best_lag_correlation_zscore",
+		"best_lag_index",
+		"best_lag_seconds",
 		"lag_fraction",
-		"sample_count",
-		"inefficient",
-		"sync",
-		"decoupled",
-		"stall",
-		"strength",
-		"signed_lag_direction",
+		"absolute_correlation_gain",
+		"effective_sample_count",
 	],
 	liquidity: [
-		"executable_touch_depth",
-		"depth_baseline",
-		"depth_zscore",
-		"depth_deviation",
-		"depth_stability",
-		"effective_window",
+		"best_bid_price",
+		"best_ask_price",
+		"midpoint",
+		"spread",
+		"relative_spread",
+		"touch_quantity:bid",
+		"touch_quantity:ask",
+		"touch_notional_imbalance",
+		"two_sided_touch_notional",
 	],
 	pumpdump: [
-		"snr",
-		"best_price:buy",
-		"best_price:sell",
+		"best_bid",
+		"best_ask",
 		"midpoint",
+		"spread",
+		"relative_spread",
+		"spread_ratio",
+		"spread_divergence",
+		"spread_zscore",
 		"trade_price",
 		"trade_quantity",
-		"rvol",
-		"spread",
-		"compression",
-		"precursor:buy",
-		"precursor:sell",
-		"exhaustion:buy",
-		"exhaustion:sell",
+		"notional_rate",
+		"notional_rate_zscore",
 	],
 	sentiment: [
+		"advance_count",
+		"decline_count",
+		"advance_fraction",
 		"breadth",
-		"change",
-		"surge_score",
-		"slump_score",
-		"divergent_score",
-		"leader_strength",
-		"leader_evidence",
-		"relative_lead",
-		"strength",
+		"breadth_zscore",
+		"median_return",
+		"largest_absolute_return",
+		"directional_agreement",
 	],
-	toxicity: ["honesty_zscore", "honesty_deviation", "toxicity_intensity"],
+	toxicity: [
+		"touch_fill_fraction:bid",
+		"touch_fill_fraction:ask",
+		"fill_fraction_baseline:bid",
+		"fill_fraction_divergence:bid",
+		"fill_fraction_zscore:bid",
+		"fill_fraction_zscore:ask",
+		"net_withdrawal_fraction:bid",
+		"withdrawal_fraction_zscore:bid",
+	],
 };
 
 /*
 sourceMetrics names the metrics a kernel's detail panel reads. An unsupported
 source is a wiring error; silently painting a generic metric would make that
-frontend defect indistinguishable from missing backend data.
+frontend defect indistinguishable from missing backend data. "snr" is prepended
+first: every measurement row serializes its signal-to-noise ratio under that
+name, so it is the one quantity every kernel's detail always shows.
 */
 export const sourceMetrics = (source: string): string[] => {
 	const metrics = SOURCE_METRICS[source.toLowerCase()];
@@ -211,7 +240,7 @@ export const sourceMetrics = (source: string): string[] => {
 		throw new Error(`unsupported measurement source: ${source}`);
 	}
 
-	return metrics;
+	return metrics.includes("snr") ? metrics : ["snr", ...metrics];
 };
 
 /*

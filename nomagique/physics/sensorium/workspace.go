@@ -7,7 +7,7 @@ import (
 const (
 	spectralHeads = 8
 	modeAnchors   = 8
-	gInteraction  = -1.0
+	gInteraction  = 0.0
 	metabolicRate = 0.5
 	hbarEff       = 1.0
 	massEff       = 1.0
@@ -48,12 +48,12 @@ func newWorkspaceGrid(gx, gy, gz int) workspaceGrid {
 	spacing := 1 / float64(maximumAxis)
 	gamma := airGamma
 	rSpecific := gamma - 1
-	cP := gamma * rSpecific / (gamma - 1)
 	modes := derivedModes(maximumAxis)
-	deltaT := spacing
 
-	if deltaT > dtMax {
-		deltaT = dtMax
+	// CFL acoustic limit for 64³ grid: dt <= 0.18 * dx
+	deltaT := 0.18 * spacing
+	if deltaT > 0.003 {
+		deltaT = 0.003
 	}
 
 	return workspaceGrid{
@@ -71,7 +71,7 @@ func newWorkspaceGrid(gx, gy, gz int) workspaceGrid {
 		RhoMin:    floorDensity,
 		PMin:      floorPressure,
 		Mu:        gridViscosity,
-		KThermal:  (gridViscosity * cP) / airPrandtl,
+		KThermal:  1e-4,
 		OmegaMin:  -4,
 		OmegaMax:  4,
 	}
@@ -185,9 +185,9 @@ func newWorkspace(gx, gy, gz int) (*workspace, error) {
 		rngSeed: 1,
 		rates: stepRates{
 			deltaT:        grid.DeltaT,
-			energyDecay:   1 / float64(grid.MaxModes),
+			energyDecay:   0.8,
 			metabolicRate: metabolicRate,
-			gInteraction:  gInteraction,
+			gInteraction:  0.0,
 		},
 	}
 	fluid.allocateGrid()

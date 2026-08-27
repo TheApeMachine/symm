@@ -514,6 +514,62 @@ func WorkspaceServiceClassTest(t *testing.T) {
 
 			close(release)
 		})
+
+		Convey("A panicking analytics Step must not leak its permit", func() {
+			var panicsEntered atomic.Int64
+
+			workspace.WireClass(
+				"panic_analytics",
+				"",
+				ServiceAnalytics,
+				DeliveryReliableFIFO,
+				func(any) string { return "global" },
+				func(any) any {
+					panicsEntered.Add(1)
+					panic("boom")
+				},
+			)
+
+			// Saturate every permit with panics. If a panic leaked its permit,
+			// the analytics semaphore would stay full forever and the healthy
+			// analytics subscriber below would starve.
+			for index := 0; index < workspace.handlerCount; index++ {
+				workspace.Publish("panic_analytics", testKeyedEvent{Symbol: "panic", Seq: index})
+			}
+
+			// Every panic must have entered AND fully unwound: the semaphore
+			// drains to empty (released) and no handler is mid-batch.
+			eventually(t, func() bool {
+				if panicsEntered.Load() < int64(workspace.handlerCount) {
+					return false
+				}
+
+				return len(workspace.analyticsSem) == 0 &&
+					workspace.TopicSnapshot("panic_analytics").ActiveHandlers == 0
+			})
+
+			// A healthy analytics subscriber must still be able to acquire a
+			// permit and complete, proving no permit was leaked.
+			var healthyReceived atomic.Int64
+
+			workspace.WireClass(
+				"healthy_analytics",
+				"",
+				ServiceAnalytics,
+				DeliveryReliableFIFO,
+				func(any) string { return "global" },
+				func(any) any {
+					healthyReceived.Add(1)
+					return nil
+				},
+			)
+
+			workspace.Publish("healthy_analytics", testKeyedEvent{Symbol: "healthy", Seq: 1})
+
+			eventually(t, func() bool {
+				return healthyReceived.Load() >= 1
+			})
+		})
 	})
 }
 

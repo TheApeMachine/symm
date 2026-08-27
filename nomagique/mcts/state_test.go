@@ -114,6 +114,53 @@ func testMarketState(price float64) MarketState {
 	}
 }
 
+func TestValueAt(t *testing.T) {
+	Convey("Given a market state with timestamped history", t, func() {
+		at := time.Unix(0, 100*int64(time.Second))
+
+		state := MarketState{
+			At: at,
+			Current: map[relation.Coordinate]float64{
+				testPriceCoordinate: 9,
+			},
+			History: map[relation.Coordinate][]MarketSample{
+				testPriceCoordinate: {
+					{At: at.Add(-2 * time.Second), Value: 5},
+					{At: at.Add(-1 * time.Second), Value: 6},
+					{At: at, Value: 9},
+				},
+			},
+		}
+
+		Convey("a lag matching a stored timestamp reads that exact slice", func() {
+			value, found := state.ValueAt(testPriceCoordinate, 1*time.Second)
+			So(found, ShouldBeTrue)
+			So(value, ShouldEqual, 6)
+		})
+
+		Convey("a lag falling between stored timestamps clamps to the nearest prior slice", func() {
+			// 1.5s is between the 2s and 1s slices; the nearest slice at or
+			// before the cutoff is the 2s slice (value 5), never a fabricated
+			// zero and never a future value.
+			value, found := state.ValueAt(testPriceCoordinate, 1500*time.Millisecond)
+			So(found, ShouldBeTrue)
+			So(value, ShouldEqual, 5)
+		})
+
+		Convey("a zero lag reads the current value", func() {
+			value, found := state.ValueAt(testPriceCoordinate, 0)
+			So(found, ShouldBeTrue)
+			So(value, ShouldEqual, 9)
+		})
+
+		Convey("a lag beyond the retained history reports not-found", func() {
+			_, found := state.ValueAt(testPriceCoordinate, 10*time.Second)
+			So(found, ShouldBeFalse)
+		})
+	})
+}
+
+
 func TestEconomicReward(t *testing.T) {
 	Convey("Given a deterministic market path and known fees", t, func() {
 		marketModel := priceModel(0, 0)

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import * as flatbuffers from "flatbuffers";
 import {
 	adaptGraph,
+	graphFrameFromFlatBuffer,
 	graphFramePlan,
 	graphStructureKey,
 	renderedNodeIds,
@@ -8,6 +10,12 @@ import {
 	type MarketGraphFrame,
 	type MarketGraphNode,
 } from "./graph-surface-store";
+import { GraphFrame } from "#/providers/telemetry/telemetry/graph-frame";
+import { GraphFrameT } from "#/providers/telemetry/telemetry/graph-frame";
+import { GraphMetadataT } from "#/providers/telemetry/telemetry/graph-metadata";
+import { GraphNodeT } from "#/providers/telemetry/telemetry/graph-node";
+import { NamedNumberT } from "#/providers/telemetry/telemetry/named-number";
+import { NamedStringT } from "#/providers/telemetry/telemetry/named-string";
 
 const frame = (): MarketGraphFrame & {
 	nodes: Record<string, MarketGraphNode>;
@@ -121,5 +129,79 @@ describe("graphStructureKey", () => {
 		};
 
 		expect(graphStructureKey(right)).toBe(graphStructureKey(left));
+	});
+});
+
+describe("graphFrameFromFlatBuffer", () => {
+	it("decodes node identity, values, and metadata from the wire frame", () => {
+		const builder = new flatbuffers.Builder(1024);
+
+		const frame = new GraphFrameT(
+			BigInt(1723123456789),
+			BigInt(0),
+			0,
+			false,
+			null,
+			[
+				new GraphNodeT(
+					"BTC/USD/cvd/signed_net_fraction_zscore//dimensionless/instantaneous/epoch=1",
+					null,
+					"BTC/USD",
+					"",
+					"cvd",
+					"",
+					"signed_net_fraction_zscore",
+					"",
+					"measurement",
+					-1.5,
+					0,
+					false,
+					0,
+					false,
+					1.5,
+					0.9,
+					0,
+					"dimensionless",
+					BigInt(0),
+					BigInt(0),
+					BigInt(1723123456789),
+					new GraphMetadataT(
+						[new NamedNumberT("epoch", 1)],
+						[new NamedStringT("timescale", "instantaneous")],
+						[],
+						[],
+					),
+					false,
+				),
+			],
+			[],
+			null,
+		);
+
+		const offset = frame.pack(builder);
+		builder.finish(offset);
+		const bytes = builder.asUint8Array();
+		const buffer = bytes.buffer.slice(
+			bytes.byteOffset,
+			bytes.byteOffset + bytes.byteLength,
+		);
+		const fb = GraphFrame.getRootAsGraphFrame(
+			new flatbuffers.ByteBuffer(new Uint8Array(buffer)),
+		);
+
+		const decoded = graphFrameFromFlatBuffer(fb);
+		const node = decoded?.nodes?.[
+			"BTC/USD/cvd/signed_net_fraction_zscore//dimensionless/instantaneous/epoch=1"
+		];
+
+		expect(node).toBeDefined();
+		expect(node?.value).toBe(-1.5);
+		expect(node?.strength).toBe(1.5);
+		expect(node?.confidence).toBe(0.9);
+		expect(node?.at).toBe("1723123456789");
+		expect(node?.metadata).toEqual({
+			epoch: 1,
+			timescale: "instantaneous",
+		});
 	});
 });

@@ -727,6 +727,47 @@ func recordEconomic(decision *types.Decision, result *mcts.SearchResult, state *
 	if state != nil && state.Transition != nil {
 		alternatives["causal:effective_support"] = state.Transition.EffectiveSupport
 	}
+
+	// Precursor telemetry: the structural conditions that may justify an
+	// entry before the price actually moves. Missing values are absent keys,
+	// never fabricated zeros.
+	if radius, found := marketValue(state, "hawkes", "branching_spectral_radius", ""); found {
+		supercritical := 0.0
+
+		if radius > 0.8 {
+			supercritical = 1.0
+		}
+
+		alternatives["precursor:hawkes_supercritical"] = supercritical
+	}
+
+	if retreat, found := marketValue(state, "toxicity", "retreat_rate", "ask"); found {
+		alternatives["precursor:ask_retreat_velocity"] = retreat
+	}
+
+	if basis, found := marketValue(state, "derivatives", "basis_zscore", ""); found {
+		alternatives["precursor:basis_tension"] = basis
+	}
+}
+
+/*
+marketValue reads one market coordinate's current value from the causal state,
+matched by structural selector (source, metric, side) rather than the full
+symbol-bound identity, so the precursor telemetry stays decoupled from the
+per-symbol coordinate rewrite.
+*/
+func marketValue(state *CausalState, source, metric, side string) (float64, bool) {
+	if state == nil {
+		return 0, false
+	}
+
+	for coordinate, value := range state.MarketState.Current {
+		if coordinate.Source == source && coordinate.Metric == metric && coordinate.Side == side {
+			return value, true
+		}
+	}
+
+	return 0, false
 }
 
 /*

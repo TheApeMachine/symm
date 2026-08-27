@@ -12,6 +12,97 @@ import (
 )
 
 /*
+transitionOrder returns the schema market coordinates in topological DAG
+order: every variable's structural parents precede it. Within a tier the
+coordinates are ordered by relation.CompareCoordinate so the sequence is a
+total order and replay runs consume the random stream identically. Cycles
+(which the schema authoring forbids but a fit could in principle exhibit)
+fall back to the total coordinate order rather than looping forever.
+*/
+func (state *CausalState) transitionOrder() []relation.Coordinate {
+	coordinates := make([]relation.Coordinate, 0, len(state.Transitions))
+
+	for coordinate := range state.Transitions {
+		coordinates = append(coordinates, coordinate)
+	}
+
+	// A total, deterministic coordinate order is the tie-break and the seed
+	// for Kahn's algorithm; without it the order would inherit map iteration
+	// order and break replay determinism.
+	slices.SortFunc(coordinates, relation.CompareCoordinate)
+
+	indexOf := make(map[relation.Coordinate]int, len(coordinates))
+
+	for index, coordinate := range coordinates {
+		indexOf[coordinate] = index
+	}
+
+	// Parent→child adjacency restricted to the present transition set.
+	children := make([][]int, len(coordinates))
+
+	for index, coordinate := range coordinates {
+		transition := state.Transitions[coordinate]
+
+		if transition == nil {
+			continue
+		}
+
+		for _, parent := range transition.Parents {
+			if parentIndex, found := indexOf[parent.Parent.Coordinate]; found {
+				children[parentIndex] = append(children[parentIndex], index)
+			}
+		}
+	}
+
+	inDegree := make([]int, len(coordinates))
+
+	for _, targets := range children {
+		for _, targetIndex := range targets {
+			inDegree[targetIndex]++
+		}
+	}
+
+	ordered := make([]relation.Coordinate, 0, len(coordinates))
+
+	// A deterministic Kahn's algorithm: always emit the lowest-index ready
+	// vertex, so the sequence is a total order independent of map iteration.
+	for len(ordered) < len(coordinates) {
+		ready := -1
+
+		for index := range coordinates {
+			if inDegree[index] == 0 {
+				ready = index
+				break
+			}
+		}
+
+		if ready == -1 {
+			// A cycle remains. Emit the remaining coordinates in total
+			// coordinate order and stop; the schema forbids cycles, so this
+			// is a defensive convergence guarantee, not a routing decision.
+			for index := range coordinates {
+				if inDegree[index] > 0 {
+					ordered = append(ordered, coordinates[index])
+				}
+			}
+
+			break
+		}
+
+		inDegree[ready] = -1
+		ordered = append(ordered, coordinates[ready])
+
+		for _, childIndex := range children[ready] {
+			if inDegree[childIndex] > 0 {
+				inDegree[childIndex]--
+			}
+		}
+	}
+
+	return ordered
+}
+
+/*
 causalMarketModel evolves the whole time-sliced market system one step
 forward: every schema market variable advances through its own fitted
 transition (self history plus schema-authorized, graph-informed lagged
@@ -53,16 +144,13 @@ func (model *causalMarketModel) Step(current mcts.MarketState, random *rand.Rand
 		next.History[coordinate] = append([]mcts.MarketSample(nil), samples...)
 	}
 
-	// Iterate the transition set in deterministic coordinate order so the
-	// sampled rollouts consume the random stream identically across replay
-	// runs (map iteration order is random).
-	coordinates := make([]relation.Coordinate, 0, len(model.state.Transitions))
-
-	for coordinate := range model.state.Transitions {
-		coordinates = append(coordinates, coordinate)
-	}
-
-	slices.SortFunc(coordinates, relation.CompareCoordinate)
+	// Iterate the transition set in topological DAG order (parents before
+	// children), so a value sampled at this step for a parent is available
+	// to its child's transition in the same step. Within a tier the order is
+	// the deterministic coordinate order, so the sampled rollouts consume
+	// the random stream identically across replay runs (map iteration order
+	// is random, and a plain topological sort is not a total order).
+	coordinates := model.state.transitionOrder()
 
 	for _, coordinate := range coordinates {
 		transition := model.state.Transitions[coordinate]

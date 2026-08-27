@@ -18,6 +18,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -41,16 +42,24 @@ type Hub struct {
 	diagnostics     DiagnosticsControl
 	fluid           *FluidRTC
 	maxMessageBytes int
-	maxBatchFrames  int
 	clients         *sync.Map
 	clientCount     atomic.Int64
 	ObserveModule   func(string, time.Duration)
 }
 
 type hubClient struct {
-	conn     *websocket.Conn
-	outbound chan []byte
-	done     chan struct{}
+	conn *websocket.Conn
+	done chan struct{}
+
+	// latest holds the most recent encoded payload per frame stream (frame
+	// type, and per measurement source). A slow client that cannot drain
+	// fast enough never loses a stream entirely: the newest frame of each
+	// stream replaces the previous one, so every source's latest value is
+	// always delivered once the client catches up. wake (capacity 1) is a
+	// coalescing notify; the writer drains the whole map per wake.
+	mu     sync.Mutex
+	latest map[string][]byte
+	wake   chan struct{}
 }
 
 type diagnosticsToggleRequest struct {
@@ -105,11 +114,6 @@ func NewHub(
 	ctx, cancel := context.WithCancel(ctx)
 	viper.SetDefault("ui.addr", "127.0.0.1:8765")
 	viper.SetDefault("ui.websocket.max_message_bytes", 4*1024*1024)
-	// Cap frames assembled into a single FlatBuffers batch so a slow client
-	// that lets the queue grow can never drive one builder past the library's
-	// 2 GB ceiling before the message-size split runs. The split loop below
-	// still trims each actual write to max_message_bytes.
-	viper.SetDefault("ui.websocket.max_batch_frames", 256)
 
 	hub := &Hub{
 		ctx:        ctx,
@@ -126,20 +130,21 @@ func NewHub(
 		}),
 		fluid:           NewFluidRTC(ctx, workspace, "fluid"),
 		maxMessageBytes: viper.GetInt("ui.websocket.max_message_bytes"),
-		maxBatchFrames:  viper.GetInt("ui.websocket.max_batch_frames"),
 		clients:         &sync.Map{},
 	}
 
-	if hub.maxBatchFrames < 1 {
-		hub.maxBatchFrames = 1
-	}
-
+	// The hub coalesces per frame stream, not globally: every frame type (ticks,
+	// measurements, graph, cognition, ...) gets its own latest-state cell, and
+	// each measurement source gets its own cell too. A single "global" key would
+	// make the highest-frequency publisher (ticks, then level3 depthflow)
+	// overwrite every other stream's latest value before the hub drains,
+	// silently starving the sparser signals out of the dashboard.
 	hub.workspace.WireClass(
 		types.ChannelUI,
 		"",
 		runtime.ServiceUI,
 		runtime.DeliveryLatestByKey,
-		func(value any) string { return "global" },
+		hubLatestKey,
 		hub.Step,
 	)
 
@@ -151,7 +156,6 @@ func NewHub(
 
 		return fiber.ErrUpgradeRequired
 	})
-
 	hub.app.Get("/backtest/captures", func(c fiber.Ctx) error {
 		if hub.captures == nil {
 			return c.JSON([]backtest.CaptureInfo{})
@@ -163,9 +167,10 @@ func NewHub(
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		key := uuid.NewString()
 		client := &hubClient{
-			conn:     conn,
-			outbound: make(chan []byte, hub.maxBatchFrames*2),
-			done:     make(chan struct{}),
+			conn:   conn,
+			latest: make(map[string][]byte),
+			wake:   make(chan struct{}, 1),
+			done:   make(chan struct{}),
 		}
 		hub.clients.Store(key, client)
 		hub.clientCount.Add(1)
@@ -182,17 +187,26 @@ func NewHub(
 				select {
 				case <-client.done:
 					return
-				case payload, ok := <-client.outbound:
-					if !ok {
-						return
+				case <-client.wake:
+					client.mu.Lock()
+					pending := make([][]byte, 0, len(client.latest))
+
+					for stream, payload := range client.latest {
+						pending = append(pending, payload)
+						delete(client.latest, stream)
 					}
 
-					_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-					writeErr := conn.WriteMessage(websocket.BinaryMessage, payload)
+					client.mu.Unlock()
 
-					if writeErr != nil {
-						_ = conn.Conn.Close()
-						return
+					_ = conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+
+					for _, payload := range pending {
+						writeErr := conn.WriteMessage(websocket.BinaryMessage, payload)
+
+						if writeErr != nil {
+							_ = conn.Conn.Close()
+							return
+						}
 					}
 				}
 			}
@@ -204,8 +218,12 @@ func NewHub(
 			copy(payload, wallet.Bytes)
 			wallet.Release()
 
+			client.mu.Lock()
+			client.latest[hubLatestKey(balance.Wallet())] = payload
+			client.mu.Unlock()
+
 			select {
-			case client.outbound <- payload:
+			case client.wake <- struct{}{}:
 			default:
 			}
 		}
@@ -232,6 +250,33 @@ func NewHub(
 	return hub
 }
 
+/*
+hubLatestKey names the latest-state cell one UI frame coalesces into. The hub
+renders each frame stream independently: frame type for everything except
+measurements, which are keyed per source so one signal's rows can never be
+overwritten by another's before the hub drains. Nil and unknown values fall
+back to the single global cell.
+*/
+func hubLatestKey(value any) string {
+	frame, ok := value.(*types.UIFrame)
+
+	if !ok || frame == nil {
+		return "global"
+	}
+
+	if frame.Type == wire.FrameMeasurementsFrame {
+		if measurements, valid := frame.Value.(*wire.MeasurementsFrameT); valid && len(measurements.Rows) > 0 {
+			if row := measurements.Rows[0]; row != nil && row.Source != "" {
+				return "measurements:" + row.Source
+			}
+		}
+
+		return "measurements"
+	}
+
+	return frame.Type.String()
+}
+
 func (hub *Hub) Step(msg any) any {
 	if hub.clientCount.Load() == 0 {
 		return nil
@@ -250,12 +295,20 @@ func (hub *Hub) Step(msg any) any {
 		return nil
 	}
 
+	stream := hubLatestKey(frame)
+
 	batch := telemetry.EncodeBatch([]*types.UIFrame{frame})
 	defer batch.Release()
 
 	payload := make([]byte, len(batch.Bytes))
 	copy(payload, batch.Bytes)
 
+	// Per-stream coalescing, never a dropping FIFO: the newest payload of each
+	// frame stream replaces the previous one. A slow client (a browser busy
+	// booting WebGL/React right after refresh) may miss intermediate frames, but
+	// every stream's latest value survives until the client catches up — so no
+	// source ever disappears from the dashboard, and the workspace is never
+	// blocked on a slow socket.
 	hub.clients.Range(func(key, value any) bool {
 		client, valid := value.(*hubClient)
 
@@ -263,8 +316,12 @@ func (hub *Hub) Step(msg any) any {
 			return true
 		}
 
+		client.mu.Lock()
+		client.latest[stream] = payload
+		client.mu.Unlock()
+
 		select {
-		case client.outbound <- payload:
+		case client.wake <- struct{}{}:
 		default:
 		}
 

@@ -11,11 +11,10 @@ import {
 	kernelSparkPaths,
 	kernelStatusMeta,
 	kernelStatusVariant,
-	sourceHeadline,
 	type SignalHealthStatus,
 } from "#/components/terminal/kernel-meta";
-import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui";
+import { Badge } from "#/components/ui/badge";
 import { cn } from "#/lib/utils";
 import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
 import { Metric } from "#/providers/telemetry/telemetry/metric";
@@ -24,7 +23,7 @@ const metricObj = new Metric();
 
 /*
 getKernelReadings walks the focused symbol's ring for a kernel and collects the
-headline signal value per row. Rows that carry no usable metric are skipped, so
+signal-to-noise ratio per row. Rows that carry no usable metric are skipped, so
 a sparse row never injects a zero into the trace.
 */
 const getKernelReadings = (
@@ -39,7 +38,6 @@ const getKernelReadings = (
 
 	const len = foundSymbol.getBufferLength();
 	const points: number[] = [];
-	const headline = sourceHeadline(kernel);
 
 	for (let i = 0; i < len; i++) {
 		const row = foundSymbol.get(i);
@@ -49,18 +47,17 @@ const getKernelReadings = (
 		let foundValue: number | null = null;
 
 		/*
-		Prefer the kernel's own headline metric — the reading the producer leads
-		with — before the generic score names, so a trace plots the kernel's
-		vocabulary even when another generic metric appears earlier in the row.
+		The kernel list plots the measurement's signal-to-noise ratio: the wire
+		serializes it as a named "snr" metric, and it is the one quantity every
+		source carries. Fall back to a named headline or the first metric only
+		when "snr" is absent.
 		*/
-		if (headline !== null) {
-			for (let j = 0; j < count; j++) {
-				const metric = row.metrics(j, metricObj);
-				if (!metric) continue;
-				if (metric.name() !== headline) continue;
-				foundValue = metric.hasNormalized() ? metric.normalized() : metric.raw();
-				break;
-			}
+		for (let j = 0; j < count; j++) {
+			const metric = row.metrics(j, metricObj);
+			if (!metric) continue;
+			if (metric.name() !== "snr") continue;
+			foundValue = metric.hasNormalized() ? metric.normalized() : metric.raw();
+			break;
 		}
 
 		if (foundValue === null) {
@@ -68,7 +65,7 @@ const getKernelReadings = (
 				const metric = row.metrics(j, metricObj);
 				if (!metric) continue;
 				const name = metric.name();
-				if (name !== "snr" && name !== "score" && name !== "normalized") continue;
+				if (name !== "score" && name !== "normalized") continue;
 				foundValue = metric.hasNormalized() ? metric.normalized() : metric.raw();
 				break;
 			}

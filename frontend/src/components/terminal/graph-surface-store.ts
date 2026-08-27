@@ -2,7 +2,10 @@ import { createStore } from "@tanstack/store";
 import { Graph as RenderGraph } from "#/components/graph/core/graph";
 import { GraphEdge } from "#/providers/telemetry/telemetry/graph-edge";
 import { GraphFrame } from "#/providers/telemetry/telemetry/graph-frame";
+import { GraphMetadata } from "#/providers/telemetry/telemetry/graph-metadata";
 import { GraphNode } from "#/providers/telemetry/telemetry/graph-node";
+import { NamedNumber } from "#/providers/telemetry/telemetry/named-number";
+import { NamedString } from "#/providers/telemetry/telemetry/named-string";
 
 export type MarketGraphNode = {
 	id: string;
@@ -49,6 +52,43 @@ const graphSurfaceStore = createStore<GraphSurfaceState>({
 
 const nodeObj = new GraphNode();
 const edgeObj = new GraphEdge();
+const metadataObj = new GraphMetadata();
+const namedNumberObj = new NamedNumber();
+const namedStringObj = new NamedString();
+
+/*
+graphMetadataFromFlatBuffer decodes the backend's named string/number metadata
+table (timescale, epoch) into a plain record for the inspection panel.
+*/
+const graphMetadataFromFlatBuffer = (
+	meta: GraphMetadata | null,
+): Record<string, unknown> | undefined => {
+	if (!meta) {
+		return undefined;
+	}
+
+	const entries: Record<string, unknown> = {};
+
+	for (let i = 0; i < meta.stringsLength(); i++) {
+		const entry = meta.strings(i, namedStringObj);
+		const name = entry?.name();
+
+		if (name !== null && name !== undefined) {
+			entries[name] = entry?.value() ?? "";
+		}
+	}
+
+	for (let i = 0; i < meta.numbersLength(); i++) {
+		const entry = meta.numbers(i, namedNumberObj);
+		const name = entry?.name();
+
+		if (name !== null && name !== undefined) {
+			entries[name] = entry?.value();
+		}
+	}
+
+	return entries;
+};
 
 export const graphFrameFromFlatBuffer = (fb: GraphFrame | null): MarketGraphFrame | null => {
 	if (!fb) return null;
@@ -67,6 +107,7 @@ export const graphFrameFromFlatBuffer = (fb: GraphFrame | null): MarketGraphFram
 				strength: n.strength(),
 				confidence: n.confidence(),
 				at: String(n.at()),
+				metadata: graphMetadataFromFlatBuffer(n.metadata(metadataObj)),
 			};
 		}
 	}

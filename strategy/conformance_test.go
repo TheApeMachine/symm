@@ -702,29 +702,57 @@ func TestConformanceCrossSignalParticipation(t *testing.T) {
 		Convey("an unavailable Relation never becomes an active causal parent", func() {
 			state := reasoner.CausalState("TEST/USD", at)
 			So(state, ShouldNotBeNil)
-			transition := state.Transitions[state.OutcomeVariable.Coordinate]
-			So(transition, ShouldNotBeNil)
 
-			found := false
+			// The mediated topology wires hawkes conditional intensity into
+			// the signed-flow transition (Layer 3), not directly into the
+			// price outcome (Layer 4). The outcome therefore must not expose
+			// hawkes as a parent at all — active or excluded.
+			signedFlow := relation.Coordinate{
+				Symbol:    "TEST/USD",
+				Source:    "cvd",
+				Metric:    "signed_net_fraction_zscore",
+				Unit:      nmtypes.UnitDimensionless,
+				Timescale: nmtypes.TimescaleInstantaneous,
+				Epoch:     1,
+			}
+			flowTransition := state.Transitions[signedFlow]
+			So(flowTransition, ShouldNotBeNil)
 
-			for _, parent := range transition.Parents {
+			active := false
+
+			for _, parent := range flowTransition.Parents {
 				if parent.Parent.Coordinate.Metric == "conditional_intensity" {
-					found = true
+					active = true
 				}
 			}
 
 			// With a single hawkes observation the parent is excluded from
 			// the query-local fit (no observed history to align), but the
-			// schema still authorizes the direction.
-			So(found, ShouldBeFalse)
+			// schema still authorizes the direction on the flow transition.
+			So(active, ShouldBeFalse)
 
-			for _, excluded := range transition.ExcludedParents {
-				if excluded.Parent.Coordinate.Metric == "conditional_intensity" {
-					found = true
+			excluded := false
+
+			for _, excludedParent := range flowTransition.ExcludedParents {
+				if excludedParent.Parent.Coordinate.Metric == "conditional_intensity" {
+					excluded = true
 				}
 			}
 
-			So(found, ShouldBeTrue)
+			So(excluded, ShouldBeTrue)
+
+			// The outcome is mediated: hawkes is not a direct structural
+			// parent of price return in either role.
+			outcomeTransition := state.Transitions[state.OutcomeVariable.Coordinate]
+			So(outcomeTransition, ShouldNotBeNil)
+
+			for _, parent := range outcomeTransition.Parents {
+				So(parent.Parent.Coordinate.Metric, ShouldNotEqual, "conditional_intensity")
+			}
+
+			for _, excludedParent := range outcomeTransition.ExcludedParents {
+				So(excludedParent.Parent.Coordinate.Metric, ShouldNotEqual, "conditional_intensity")
+			}
 		})
 
 		Convey("a present variable with an unidentified transition makes the causal evaluation unavailable", func() {

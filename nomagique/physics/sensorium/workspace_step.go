@@ -15,85 +15,47 @@ func (fluid *workspace) step() Reading {
 		return fluid.observe()
 	}
 
-	fluid.projectSpatialWave()
 	fluid.gatherParticles()
 	fluid.planckExchange()
+
+	// 1. Seed particle anchors into the ω-frequency lattice
+	fluid.seedModeAnchors()
+
+	// 2. Step the Gross-Pitaevskii Equation across the spectral heads
+	//    and pull particle oscillator phases towards resonant modes (Kuramoto sync)
 	fluid.waveStep()
+
+	// 3. Project the coherent mode amplitudes Ψ_k into the 3D spatial field Ψ(x)
+	fluid.projectSpatialWave()
+
 	return fluid.observe()
 }
 
 /*
-projectSpatialWave rebuilds Ψ(x) as a CIC of each oscillator's phasor
-m e^{iθ}. GPE stays on the 1D ω-lattice; its heads are not a spatial field.
+projectSpatialWave projects the resonant mode coefficients Ψ_k into the 3D
+spatial complex field Ψ(x) via their spatial anchors on the GPU.
 */
 func (fluid *workspace) projectSpatialWave() {
-	fluid.psiRe.Zero()
-	fluid.psiIm.Zero()
-	fluid.splatParticleWave()
-}
-
-func (fluid *workspace) splatParticleWave() {
 	if fluid.particles == 0 {
+		fluid.psiRe.Zero()
+		fluid.psiIm.Zero()
 		return
 	}
 
-	gx := fluid.domain.GridX
-	gy := fluid.domain.GridY
-	gz := fluid.domain.GridZ
-	inv := 1 / fluid.domain.GridSpacing()
-	pos := fluid.pos.Float32Slice()
-	mass := fluid.mass.Float32Slice()
-	phase := fluid.phase.Float32Slice()
-	psiRe := fluid.psiRe.Float32Slice()
-	psiIm := fluid.psiIm.Float32Slice()
+	fluid.psiRe.Zero()
+	fluid.psiIm.Zero()
 
-	for particle := 0; particle < fluid.particles; particle++ {
-		deposit := float64(mass[particle])
-		angle := float64(phase[particle])
-		real := float32(deposit * math.Cos(angle))
-		imag := float32(deposit * math.Sin(angle))
-		gridX := float64(pos[particle*3+0]) * inv
-		gridY := float64(pos[particle*3+1]) * inv
-		gridZ := float64(pos[particle*3+2]) * inv
-		ix0 := int(math.Floor(gridX))
-		iy0 := int(math.Floor(gridY))
-		iz0 := int(math.Floor(gridZ))
-		fx := float32(gridX - math.Floor(gridX))
-		fy := float32(gridY - math.Floor(gridY))
-		fz := float32(gridZ - math.Floor(gridZ))
-		wx0 := 1 - fx
-		wy0 := 1 - fy
-		wz0 := 1 - fz
-		ix1 := wrapIndex(ix0+1, gx)
-		iy1 := wrapIndex(iy0+1, gy)
-		iz1 := wrapIndex(iz0+1, gz)
-		ix0 = wrapIndex(ix0, gx)
-		iy0 = wrapIndex(iy0, gy)
-		iz0 = wrapIndex(iz0, gz)
-		corners := [8]struct {
-			x, y, z int
-			weight  float32
-		}{
-			{ix0, iy0, iz0, wx0 * wy0 * wz0},
-			{ix1, iy0, iz0, fx * wy0 * wz0},
-			{ix0, iy1, iz0, wx0 * fy * wz0},
-			{ix1, iy1, iz0, fx * fy * wz0},
-			{ix0, iy0, iz1, wx0 * wy0 * fz},
-			{ix1, iy0, iz1, fx * wy0 * fz},
-			{ix0, iy1, iz1, wx0 * fy * fz},
-			{ix1, iy1, iz1, fx * fy * fz},
-		}
-
-		for _, corner := range corners {
-			if !(corner.weight > 0) {
-				continue
-			}
-
-			cell := corner.x + gx*(corner.y+gy*corner.z)
-			psiRe[cell] += real * corner.weight
-			psiIm[cell] += imag * corner.weight
-		}
-	}
+	fluid.engine.ProjectModesToSpatial(
+		fluid.psiModeReal,
+		fluid.psiModeImag,
+		fluid.anchorIdx,
+		fluid.anchorWeight,
+		fluid.pos,
+		fluid.psiRe,
+		fluid.psiIm,
+		modeAnchors,
+	)
+	fluid.engine.Synchronize()
 }
 
 func wrapIndex(index, extent int) int {
@@ -243,24 +205,6 @@ func (fluid *workspace) scatterParticles() {
 	fluid.admitConserved()
 }
 
-func (fluid *workspace) admitConserved() {
-	rho := fluid.rho.Float32Slice()
-	mom := fluid.mom.Float32Slice()
-	energy := fluid.energy.Float32Slice()
-	rhoMin := float32(fluid.domain.RhoMin)
-
-	for cell, density := range rho {
-		if density > rhoMin || density < -rhoMin {
-			continue
-		}
-
-		mom[cell*3+0] = 0
-		mom[cell*3+1] = 0
-		mom[cell*3+2] = 0
-		energy[cell] = 0
-	}
-}
-
 func (fluid *workspace) gasRK2() {
 	dt := float32(fluid.rates.deltaT)
 	gamma := float32(fluid.domain.Gamma)
@@ -311,6 +255,26 @@ func (fluid *workspace) gatherParticles() {
 	copy(fluid.heat.Float32Slice(), fluid.heatOut.Float32Slice())
 }
 
+func (fluid *workspace) admitConserved() {
+	rho := fluid.rho.Float32Slice()
+	mom := fluid.mom.Float32Slice()
+	energy := fluid.energy.Float32Slice()
+	rhoMin := float32(fluid.domain.RhoMin)
+
+	for cell, density := range rho {
+		// Zero out vacuum and numerical underflow cells cleanly
+		if density <= rhoMin || math.IsNaN(float64(density)) {
+			rho[cell] = 0
+			mom[cell*3+0] = 0
+			mom[cell*3+1] = 0
+			mom[cell*3+2] = 0
+			energy[cell] = 0
+		} else if energy[cell] < 0 || math.IsNaN(float64(energy[cell])) {
+			energy[cell] = 0
+		}
+	}
+}
+
 func (fluid *workspace) planckExchange() {
 	dt := fluid.rates.deltaT
 	cv := fluid.domain.CV
@@ -327,6 +291,14 @@ func (fluid *workspace) planckExchange() {
 		thermal := float64(heat[index])
 		osc := float64(energy[index])
 		freq := float64(omega[index])
+
+		if math.IsNaN(thermal) || thermal < 0 {
+			thermal = 0.5
+		}
+		if math.IsNaN(osc) || osc < 0 {
+			osc = 1.0
+		}
+
 		denom := particleMass * cv
 		temperature := 0.0
 
@@ -334,7 +306,7 @@ func (fluid *workspace) planckExchange() {
 			temperature = thermal / denom
 		}
 
-		eq := planckEnergy(freq, temperature)
+		eq := planckEnergy(math.Abs(freq), temperature)
 		alpha := 0.0
 
 		if kappa > 0 && radius > 0 && denom > 0 {
@@ -347,14 +319,22 @@ func (fluid *workspace) planckExchange() {
 		if delta > thermal {
 			delta = thermal
 		}
-
 		if -delta > osc {
 			delta = -osc
 		}
 
-		heat[index] = float32(thermal - delta)
-		energy[index] = float32(osc + delta)
-		amp[index] = float32(math.Sqrt(math.Max(0, osc+delta)))
+		nextHeat := float32(thermal - delta)
+		nextOsc := float32(osc + delta)
+		if nextHeat < 0 || math.IsNaN(float64(nextHeat)) {
+			nextHeat = 0
+		}
+		if nextOsc < 0 || math.IsNaN(float64(nextOsc)) {
+			nextOsc = 0
+		}
+
+		heat[index] = nextHeat
+		energy[index] = nextOsc
+		amp[index] = float32(math.Sqrt(float64(nextOsc)))
 	}
 }
 
@@ -391,6 +371,7 @@ func (fluid *workspace) waveStep() {
 	headPhase := fluid.headPhase.Float32Slice()
 	budget := 1 / float32(spectralHeads)
 
+	// Step each spectral head independently under the GPE
 	for head := 0; head < spectralHeads; head++ {
 		offset := float64(head) * (2 * math.Pi) / float64(spectralHeads)
 		fluid.accums.Zero()
@@ -439,6 +420,27 @@ func (fluid *workspace) waveStep() {
 		fluid.engine.Synchronize()
 		fluid.rngSeed++
 	}
+
+	// 1. Average across all spectral heads into psiModeReal & psiModeImag
+	fluid.meanHeads()
+
+	// 2. Apply resonance torque to pull particle phases towards resonant modes
+	fluid.engine.CoherenceUpdateOscillatorPhases(
+		fluid.phase, fluid.omega, fluid.amp,
+		fluid.psiModeReal, fluid.psiModeImag, fluid.omegaLattice, fluid.gateWidth,
+		fluid.anchorIdx, fluid.anchorWeight, fluid.numCarriers,
+		fluid.particles, modes,
+		dt,
+		1.0, // coupling scale
+		gateMin, gateMax,
+		fluid.binStarts, fluid.binnedIdx, fluid.binParams,
+		modes,
+		fluid.pos,
+		float32(sigma),
+		float32(fluid.rates.metabolicRate),
+		weightFloor,
+	)
+	fluid.engine.Synchronize()
 }
 
 func (fluid *workspace) writeCouplingAmp() {

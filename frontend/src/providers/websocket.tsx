@@ -7,8 +7,8 @@ import {
 	balanceStore,
 	causalStore,
 	cognitionStore,
-	diagnosticsFrameStore,
 	diagnosticStore,
+	diagnosticsFrameStore,
 	equityStore,
 	errorFrameStore,
 	errorStore,
@@ -67,7 +67,6 @@ export const sendBacktestAction = (
 
 export const publishBacktestCommand = sendBacktestAction;
 
-
 export const sendPositionExit = (symbol: string) => {
 	globalWsWorker?.postMessage({
 		type: "POSITION_EXIT",
@@ -76,7 +75,9 @@ export const sendPositionExit = (symbol: string) => {
 };
 
 export const setDiagnosticsEnabled = (enabled: boolean) => {
-	const baseUrl = import.meta.env.VITE_SYMM_WS_URL?.replace(/\/ws$/, "") || "http://127.0.0.1:8765";
+	const baseUrl =
+		import.meta.env.VITE_SYMM_WS_URL?.replace(/\/ws$/, "") ||
+		"http://127.0.0.1:8765";
 	globalWebrtcWorker?.postMessage({
 		type: "SET_DIAGNOSTICS",
 		url: baseUrl,
@@ -95,7 +96,8 @@ const defaultWsUrl = () => {
 };
 
 const defaultWebrtcUrl = () => {
-	if (typeof window === "undefined") return "http://127.0.0.1:8765/webrtc/manifold";
+	if (typeof window === "undefined")
+		return "http://127.0.0.1:8765/webrtc/manifold";
 	const protocol = window.location.protocol === "https:" ? "https:" : "http:";
 	const host =
 		!window.location.hostname || window.location.hostname === "localhost"
@@ -173,10 +175,9 @@ const builders: Partial<Record<Frame, FrameHandler<any>>> = {
 
 export const WsFeed = () => {
 	useEffect(() => {
-		const wsWorker = new Worker(
-			new URL("./ws-worker.ts", import.meta.url),
-			{ type: "module" },
-		);
+		const wsWorker = new Worker(new URL("./ws-worker.ts", import.meta.url), {
+			type: "module",
+		});
 		globalWsWorker = wsWorker;
 
 		const webrtcWorker = new Worker(
@@ -186,7 +187,8 @@ export const WsFeed = () => {
 		globalWebrtcWorker = webrtcWorker;
 
 		const wsUrl = import.meta.env.VITE_SYMM_WS_URL || defaultWsUrl();
-		const webrtcUrl = import.meta.env.VITE_SYMM_WEBRTC_URL || defaultWebrtcUrl();
+		const webrtcUrl =
+			import.meta.env.VITE_SYMM_WEBRTC_URL || defaultWebrtcUrl();
 
 		wsWorker.addEventListener("message", (event: MessageEvent) => {
 			const data = event.data;
@@ -208,7 +210,9 @@ export const WsFeed = () => {
 
 			if (data.type === "BATCH" && data.buffer instanceof ArrayBuffer) {
 				try {
-					const buffer = new flatbuffers.ByteBuffer(new Uint8Array(data.buffer));
+					const buffer = new flatbuffers.ByteBuffer(
+						new Uint8Array(data.buffer),
+					);
 					const batch = Batch.getRootAsBatch(buffer);
 					const entry = new FrameEntry();
 
@@ -232,14 +236,15 @@ export const WsFeed = () => {
 			}
 		});
 
-
 		webrtcWorker.addEventListener("message", (event: MessageEvent) => {
 			const data = event.data;
 			if (!data) return;
 
 			if (data.type === "FRAME" && data.buffer instanceof ArrayBuffer) {
 				try {
-					const buffer = new flatbuffers.ByteBuffer(new Uint8Array(data.buffer));
+					const buffer = new flatbuffers.ByteBuffer(
+						new Uint8Array(data.buffer),
+					);
 					if (Envelope.bufferHasIdentifier(buffer)) {
 						const envelope = Envelope.getRootAsEnvelope(buffer);
 						const frame = envelope.frame(new DiagnosticsFrame());
@@ -278,7 +283,6 @@ export const WsFeed = () => {
 			globalWsWorker = null;
 			globalWebrtcWorker = null;
 		};
-
 	}, []);
 
 	return null;

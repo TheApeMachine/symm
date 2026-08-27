@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"sync"
@@ -942,11 +943,18 @@ graph carries no wire knowledge, and the projection runs only when the boot
 side-effect observer needs to render the focused symbol.
 
 The view is read-only and reversible: every node is a Measurement coordinate
-identity (never a collapsed signal rollup), and every edge carries the measured
-Relation — the signed coefficient as Weight, Maturity as Confidence, and the
-lag/PredictiveGain/estimator as the reason.
+identity (never a collapsed signal rollup) stamped with the store's latest
+observation — Raw as Value, its magnitude as Strength, Maturity as Confidence,
+and the observation instant as At — and a coordinate with no retained
+observation renders as its identity alone. The edge set mirrors the backend's
+full structural state: a fitted edge carries the measured Relation (signed
+coefficient as Weight, Maturity as Confidence, lag/PredictiveGain/estimator as
+the reason), while a scheduled-but-unfitted candidate renders as a
+state-annotated edge (Derived=true, zero weight/confidence) so the graph is
+never empty simply because a Relation has not yet been estimated.
 */
 func InfluenceGraphWire(
+	store *relation.ObservationStore,
 	influenceGraph *InfluenceGraph,
 	symbol string,
 	at time.Time,
@@ -955,24 +963,67 @@ func InfluenceGraphWire(
 		return nil
 	}
 
-	nodes := make([]*wire.GraphNodeT, 0)
-
-	for _, node := range influenceGraph.Nodes() {
-		if node.Coordinate.Symbol != symbol {
-			continue
-		}
-
-		nodes = append(nodes, influenceNodeWire(node.Coordinate))
-	}
-
-	edges := make([]*wire.GraphEdgeT, 0)
+	// The frontend must mirror whatever the backend currently holds, and the
+	// backend knows more than just successfully fitted relations: it holds a
+	// full scheduled candidate set with per-edge lifecycle state. Projecting
+	// only defined edges would render an empty graph whenever no Relation
+	// has yet reached a fit — a faithful view needs the candidates too.
+	definedByKey := make(map[edgeKey]*InfluenceEdge, influenceGraph.edges.Len())
 
 	for _, edge := range influenceGraph.Edges() {
-		if edge.Source.Symbol != symbol || edge.Target.Symbol != symbol {
+		definedByKey[edgeKey{edgeType: edge.Type, source: edge.Source, target: edge.Target}] = edge
+	}
+
+	nodes := make([]*wire.GraphNodeT, 0)
+	seenNodes := make(map[relation.Coordinate]bool)
+	edges := make([]*wire.GraphEdgeT, 0, influenceGraph.edges.Len())
+
+	emitNode := func(coordinate relation.Coordinate) {
+		if coordinate.Symbol != symbol || seenNodes[coordinate] {
+			return
+		}
+
+		seenNodes[coordinate] = true
+		nodes = append(nodes, influenceNodeWire(store, coordinate))
+	}
+
+	for _, candidate := range influenceGraph.Candidates() {
+		if candidate.Source.Symbol != symbol || candidate.Target.Symbol != symbol {
 			continue
 		}
 
-		edges = append(edges, influenceEdgeWire(edge))
+		emitNode(candidate.Source)
+		emitNode(candidate.Target)
+
+		key := edgeKey{edgeType: candidate.Type, source: candidate.Source, target: candidate.Target}
+
+		if defined, found := definedByKey[key]; found {
+			edges = append(edges, influenceEdgeWire(defined))
+			continue
+		}
+
+		edges = append(edges, &wire.GraphEdgeT{
+			From:      candidate.Source.ID(),
+			To:        candidate.Target.ID(),
+			Relation:  candidate.Type.String(),
+			Reason:    "state=" + candidate.State.String(),
+			Derived:   candidate.State != CandidateEstimated,
+			At:        at.UnixNano(),
+			Confidence: 0,
+			Weight:    0,
+		})
+	}
+
+	// Defined-edge endpoints without a scheduled candidate (Association edges
+	// or partners outside the candidate plan) still render as nodes.
+	for _, edge := range influenceGraph.Edges() {
+		if edge.Source.Symbol == symbol {
+			emitNode(edge.Source)
+		}
+
+		if edge.Target.Symbol == symbol {
+			emitNode(edge.Target)
+		}
 	}
 
 	return &wire.GraphFrameT{
@@ -982,8 +1033,8 @@ func InfluenceGraphWire(
 	}
 }
 
-func influenceNodeWire(coordinate relation.Coordinate) *wire.GraphNodeT {
-	return &wire.GraphNodeT{
+func influenceNodeWire(store *relation.ObservationStore, coordinate relation.Coordinate) *wire.GraphNodeT {
+	node := &wire.GraphNodeT{
 		Id:     coordinate.ID(),
 		Symbol: coordinate.Symbol,
 		Peer:   coordinate.Peer,
@@ -1001,6 +1052,23 @@ func influenceNodeWire(coordinate relation.Coordinate) *wire.GraphNodeT {
 			},
 		},
 	}
+
+	if store == nil {
+		return node
+	}
+
+	observation, found := store.Latest(coordinate)
+
+	if !found {
+		return node
+	}
+
+	node.Value = observation.Raw
+	node.Strength = math.Abs(observation.Raw)
+	node.Confidence = observation.Maturity
+	node.At = observation.At.UnixNano()
+
+	return node
 }
 
 func influenceEdgeWire(edge *InfluenceEdge) *wire.GraphEdgeT {

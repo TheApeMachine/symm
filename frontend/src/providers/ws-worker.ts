@@ -1,6 +1,12 @@
 /// <reference lib="webworker" />
 
 let socket: WebSocket | null = null;
+let connectUrl = "";
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectAttempts = 0;
+
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_MAX_MS = 10_000;
 
 const sendBacktest = (
 	action: "play" | "pause" | "seek" | "select" | "hindsight",
@@ -36,18 +42,42 @@ const teardownSocket = () => {
 	socket = null;
 };
 
+const scheduleReconnect = () => {
+	if (reconnectTimer !== null) {
+		return;
+	}
+
+	const delay = Math.min(
+		RECONNECT_BASE_MS * 2 ** reconnectAttempts,
+		RECONNECT_MAX_MS,
+	);
+
+	reconnectTimer = setTimeout(() => {
+		reconnectTimer = null;
+		reconnectAttempts += 1;
+		connect(connectUrl);
+	}, delay);
+};
+
 const connect = (url: string) => {
 	teardownSocket();
 
+	if (url === "") {
+		return;
+	}
+
+	connectUrl = url;
 	socket = new WebSocket(url);
 	socket.binaryType = "arraybuffer";
 
 	socket.addEventListener("open", () => {
+		reconnectAttempts = 0;
 		self.postMessage({ type: "STATUS", status: "ONLINE" });
 	});
 
 	socket.addEventListener("close", () => {
 		self.postMessage({ type: "STATUS", status: "OFFLINE" });
+		scheduleReconnect();
 	});
 
 	socket.addEventListener("error", (event) => {
@@ -99,6 +129,14 @@ self.addEventListener("message", (event: MessageEvent) => {
 			connect(message.url ?? "");
 			return;
 		case "DISCONNECT":
+			// Explicit teardown cancels any pending reconnect so a deliberate
+			// disconnect (unmount, teardown) never spins the backoff loop.
+			if (reconnectTimer !== null) {
+				clearTimeout(reconnectTimer);
+				reconnectTimer = null;
+			}
+
+			reconnectAttempts = 0;
 			teardownSocket();
 			return;
 		case "FOCUS":

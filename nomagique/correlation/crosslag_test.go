@@ -20,6 +20,18 @@ func TestCrossLag(t *testing.T) {
 		So(output.MustGet(SymbolLagBars), ShouldEqual, 1.0)
 		So(output.MustGet(SymbolLagCorrelation), ShouldBeGreaterThan, 0.0)
 	})
+
+	Convey("Given paths whose timestamps produce no positive gaps", t, func() {
+		anchor := hayashiEquationPath([]int64{0, 0, 0}, []float64{100, 101, 102})
+		follower := hayashiEquationPath([]int64{0, 0, 0}, []float64{50, 51, 52})
+
+		Convey("It should mark the search unready instead of panicking", func() {
+			output := CrossLag("previous", "current")(pairPaths(anchor, follower))
+
+			So(output.Err, ShouldBeNil)
+			So(output.MustGet(SymbolLeadLagReady), ShouldEqual, 0.0)
+		})
+	})
 }
 
 func delayedCrossLagPaths(sampleCount int) (types.Frame, types.Frame) {

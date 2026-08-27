@@ -72,10 +72,16 @@ func CrossLag(leftPrefix string, rightPrefix string) types.Primitive {
 			return input
 		}
 
-		spacing := math.Min(
-			leftSpacing.MustGet(temporal.SymbolSpacingNanos),
-			rightSpacing.MustGet(temporal.SymbolSpacingNanos),
-		)
+		leftSpacingNanos, hasLeftSpacing := leftSpacing.Get(temporal.SymbolSpacingNanos)
+		rightSpacingNanos, hasRightSpacing := rightSpacing.Get(temporal.SymbolSpacingNanos)
+
+		if !hasLeftSpacing || !hasRightSpacing {
+			input.Put(SymbolLeadLagReady, 0)
+
+			return input
+		}
+
+		spacing := math.Min(leftSpacingNanos, rightSpacingNanos)
 		maximumLag := sampleCount - minimumLagPathSamples + 1
 		lagInput := input
 		lagInput.Put(SymbolLagSpacing, spacing)

@@ -125,6 +125,26 @@ describe("ws-worker", () => {
 		expect(scope.messages).toContainEqual({ type: "STATUS", status: "OFFLINE" });
 	});
 
+	it("reconnects automatically after the socket closes", async () => {
+		const { scope, socket } = await connectWorker();
+		await socket.emit("open", {});
+
+		// Close: OFFLINE and a reconnect must be scheduled (500ms base backoff).
+		await socket.emit("close", {});
+
+		const reconnect = new Promise<void>((resolve) => {
+			const timer = setInterval(() => {
+				if (MockWebSocket.latest !== null && MockWebSocket.latest !== socket) {
+					clearInterval(timer);
+					resolve();
+				}
+			}, 10);
+		});
+
+		await reconnect;
+		expect(scope.messages).toContainEqual({ type: "STATUS", status: "OFFLINE" });
+	});
+
 	it("dispatches main thread commands to the backend websocket", async () => {
 		const { scope, socket } = await connectWorker();
 		await socket.emit("open", {});

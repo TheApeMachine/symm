@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/relation"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
 /*
@@ -361,6 +362,127 @@ func TestSolverNameAndAccessors(t *testing.T) {
 
 		Convey("step is nil-safe", func() {
 			So(solver.Step(nil), ShouldBeNil)
+		})
+	})
+}
+
+func TestInfluenceGraphWire(t *testing.T) {
+	Convey("Given a graph with an estimated edge and a store with observations", t, func() {
+		graph := NewInfluenceGraph(1, 1, 1, 8)
+		source := testCoordinate("cvd", "signed_net_fraction_zscore")
+		target := testCoordinate("cvd", "midpoint_log_return")
+		at := time.Unix(0, 149*int64(time.Second))
+
+		_ = graph.UpsertEdge(testEdge(source, target, 0.004, at))
+
+		store := relation.NewObservationStore(8)
+		store.AppendObservations([]relation.Observation{
+			{
+				Coordinate: source,
+				Raw:        -1.5,
+				From:       at.Add(-time.Second),
+				At:         at,
+				Maturity:   0.9,
+			},
+			{
+				Coordinate: target,
+				Raw:        2.25,
+				From:       at.Add(-time.Second),
+				At:         at,
+				Maturity:   0.7,
+			},
+		})
+
+		Convey("nodes are stamped with their latest observation", func() {
+			frame := InfluenceGraphWire(store, graph, "TEST/USD", at)
+			So(frame, ShouldNotBeNil)
+			So(frame.Nodes, ShouldHaveLength, 2)
+
+			var node *wire.GraphNodeT
+
+			for _, candidate := range frame.Nodes {
+				if candidate.Id == source.ID() {
+					node = candidate
+				}
+			}
+
+			So(node, ShouldNotBeNil)
+			So(node.Kind, ShouldEqual, "measurement")
+			So(node.Value, ShouldEqual, -1.5)
+			So(node.Strength, ShouldEqual, 1.5)
+			So(node.Confidence, ShouldEqual, 0.9)
+			So(node.At, ShouldEqual, at.UnixNano())
+		})
+
+		Convey("edges carry the fitted relation statistics", func() {
+			frame := InfluenceGraphWire(store, graph, "TEST/USD", at)
+			So(frame.Edges, ShouldHaveLength, 1)
+			So(frame.Edges[0].Weight, ShouldEqual, 0.004)
+			So(frame.Edges[0].Confidence, ShouldEqual, 0.9)
+			So(frame.Edges[0].Relation, ShouldEqual, "influence")
+			So(frame.Edges[0].Reason, ShouldContainSubstring, "prequential-linear-v1")
+		})
+
+		Convey("nodes outside the focused symbol are excluded", func() {
+			frame := InfluenceGraphWire(store, graph, "OTHER/USD", at)
+			So(frame.Nodes, ShouldBeEmpty)
+			So(frame.Edges, ShouldBeEmpty)
+		})
+
+		Convey("a coordinate without observations stays an identity node", func() {
+			unobserved := testCoordinate("depthflow", "book_imbalance")
+			_ = graph.UpsertEdge(testEdge(unobserved, source, 0.01, at))
+
+			frame := InfluenceGraphWire(store, graph, "TEST/USD", at)
+			So(frame.Nodes, ShouldHaveLength, 3)
+
+			var identity *wire.GraphNodeT
+
+			for _, node := range frame.Nodes {
+				if node.Id == unobserved.ID() {
+					identity = node
+				}
+			}
+
+			So(identity, ShouldNotBeNil)
+			So(identity.Value, ShouldEqual, 0)
+			So(identity.At, ShouldEqual, 0)
+		})
+
+		Convey("a nil store leaves nodes as pure identity", func() {
+			frame := InfluenceGraphWire(nil, graph, "TEST/USD", at)
+			So(frame, ShouldNotBeNil)
+			So(frame.Nodes, ShouldHaveLength, 2)
+			So(frame.Nodes[0].Value, ShouldEqual, 0)
+			So(frame.Nodes[0].At, ShouldEqual, 0)
+		})
+
+		Convey("a nil graph yields no frame", func() {
+			So(InfluenceGraphWire(store, nil, "TEST/USD", at), ShouldBeNil)
+		})
+	})
+
+	Convey("Given a graph with only scheduled candidates and no fitted edges", t, func() {
+		graph := NewInfluenceGraph(1, 1, 1, 8)
+		source := testCoordinate("depthflow", "book_imbalance")
+		target := testCoordinate("cvd", "signed_net_fraction_zscore")
+
+		_ = graph.RegisterCandidate(EdgeInfluence, source, target, 1)
+
+		Convey("the frame still renders the structural candidates, not an empty graph", func() {
+			frame := InfluenceGraphWire(nil, graph, "TEST/USD", time.Unix(0, 0))
+			So(frame, ShouldNotBeNil)
+
+			So(frame.Nodes, ShouldHaveLength, 2)
+			So(frame.Edges, ShouldHaveLength, 1)
+
+			edge := frame.Edges[0]
+			So(edge.From, ShouldEqual, source.ID())
+			So(edge.To, ShouldEqual, target.ID())
+			So(edge.Reason, ShouldEqual, "state=candidate")
+			So(edge.Derived, ShouldBeTrue)
+			So(edge.Weight, ShouldEqual, 0)
+			So(edge.Confidence, ShouldEqual, 0)
 		})
 	})
 }

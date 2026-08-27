@@ -244,7 +244,9 @@ func ownerOf(value any, keyFunc func(any) string, handlerCount int) int {
 execute runs one Step for one owned event inside its owning handler. The
 analytical token (Analytics class only) is acquired around Step and released
 before any downstream publication, so a full downstream ring can never deadlock
-against a downstream subscriber waiting for analytical CPU.
+against a downstream subscriber waiting for analytical CPU. The release is
+guarded by the released flag so a Step panic — caught by the deferred recover —
+can never leak the permit and silently deadlock the analytics chain.
 */
 func (subscriber *Subscriber) execute(event *Event) {
 	value := event.Value
@@ -258,7 +260,13 @@ func (subscriber *Subscriber) execute(event *Event) {
 		value = resolved
 	}
 
+	released := false
+
 	defer func() {
+		if subscriber.wire.Class == ServiceAnalytics && !released {
+			subscriber.workspace.releaseAnalyticsToken()
+		}
+
 		if recovered := recover(); recovered != nil {
 			subscriber.reportPanic(recovered)
 		}
@@ -284,6 +292,7 @@ func (subscriber *Subscriber) execute(event *Event) {
 
 	if subscriber.wire.Class == ServiceAnalytics {
 		subscriber.workspace.releaseAnalyticsToken()
+		released = true
 	}
 
 	subscriber.recordLatency(time.Since(started))

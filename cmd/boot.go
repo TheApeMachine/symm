@@ -20,6 +20,7 @@ import (
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/relation"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/regulator"
@@ -402,9 +403,15 @@ func BootWithHub(
 					return nil
 				}
 
+				var store *relation.ObservationStore
+
+				if sharedStore, storeFound := bus.Shared(graph.SharedObservationStore, ""); storeFound {
+					store, _ = sharedStore.(*relation.ObservationStore)
+				}
+
 				return &types.UIFrame{
 					Type:  wire.FrameGraphFrame,
-					Value: graph.InfluenceGraphWire(influence, update.Symbol, update.At),
+					Value: graph.InfluenceGraphWire(store, influence, update.Symbol, update.At),
 				}
 			},
 		)
@@ -663,9 +670,37 @@ func measurementWire(measurement *nmtypes.Measurement) *wire.MeasurementT {
 		return nil
 	}
 
-	metrics := make([]*wire.MetricT, 0, len(measurement.Metrics))
+	// Metrics are emitted in deterministic name order. The dashboard reads
+	// the first metric as a fallback when its headline is absent, so a random
+	// map iteration order would make that fallback pick a different metric on
+	// every row — a sparkline that jumps between unrelated scales.
+	names := make([]string, 0, len(measurement.Metrics))
 
-	for name, metric := range measurement.Metrics {
+	for name := range measurement.Metrics {
+		names = append(names, name)
+	}
+
+	slices.Sort(names)
+
+	metrics := make([]*wire.MetricT, 0, len(names)+1)
+
+	// The dashboard's kernel list and signal detail read the measurement's
+	// signal-to-noise ratio by the metric name "snr". The wire schema has no
+	// Snr field, so the SNR value is serialized as a named metric alongside
+	// the real projected metrics — the only path it reaches the browser.
+	if measurement.SNRDefined {
+		metrics = append(metrics, &wire.MetricT{
+			Name:          "snr",
+			Raw:           measurement.SNR,
+			Normalized:    0,
+			HasNormalized: false,
+			Unit:          nmtypes.UnitDimensionless.String(),
+		})
+	}
+
+	for _, name := range names {
+		metric := measurement.Metrics[name]
+
 		if metric == nil {
 			continue
 		}

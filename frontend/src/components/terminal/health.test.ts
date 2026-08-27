@@ -21,7 +21,7 @@ const reading = (
 describe("terminalHealthSummary", () => {
 	it("counts backend measurement frames as firing", () => {
 		const summary = terminalHealthSummary(
-			[reading("depthflow", "BTC/USD", "loaded_score", 0.21)],
+			[reading("depthflow", "BTC/USD", "book_imbalance", 0.21)],
 			"BTC/USD",
 			["depthflow", "hawkes"],
 			{ count: 12, completed: true, ns: 45_000_000 },

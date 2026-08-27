@@ -17,8 +17,8 @@ import (
 	nmcausal "github.com/theapemachine/symm/nomagique/causal"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/probability"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -103,13 +103,13 @@ func NewSolver(bus *runtime.Workspace, opts ...Option) *Solver {
 	}
 
 	solver := &Solver{
-		ctx:      ctx,
-		cancel:   cancel,
-		thesis:   thesis,
-		price:    price,
-		pearls:   &sync.Map{},
-		rows:     &sync.Map{},
-		config:   defaultConfig,
+		ctx:    ctx,
+		cancel: cancel,
+		thesis: thesis,
+		price:  price,
+		pearls: &sync.Map{},
+		rows:   &sync.Map{},
+		config: defaultConfig,
 	}
 
 	for _, opt := range opts {
@@ -442,9 +442,6 @@ func (solver *Solver) evaluatePearl(
 	condition float64,
 	intervention float64,
 ) (map[string]any, bool, error) {
-	_ = symbol
-	_ = row
-
 	frame := nmtypes.Frame{}
 	frame.Put(nmcausal.SymbolRowCount, float64(len(rows)))
 	frame.Put(nmcausal.SymbolTarget, float64(solver.config.Target))
