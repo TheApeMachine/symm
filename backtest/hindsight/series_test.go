@@ -72,7 +72,7 @@ func TestIngest(t *testing.T) {
 			So(len(btc.Points), ShouldEqual, 1)
 			So(btc.Points[0].Bid, ShouldEqual, 99.5)
 			So(btc.Points[0].Ask, ShouldEqual, 100.5)
-			So(btc.Points[0].Friction, ShouldAlmostEqual, 0.01, 1e-4)
+			So(btc.Points[0].Friction, ShouldAlmostEqual, 0.005, 1e-4)
 		})
 	})
 

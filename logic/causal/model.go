@@ -201,6 +201,7 @@ func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *Tran
 	}
 
 	if specification.SelfLag <= 0 {
+		transition.Status = IdentificationUndefined
 		transition.Reason = "self lag must be positive"
 		return transition
 	}

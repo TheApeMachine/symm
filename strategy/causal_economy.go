@@ -24,7 +24,9 @@ func (state *CausalState) transitionOrder() []relation.Coordinate {
 
 	if len(state.ActiveClosure) > 0 {
 		coordinates = append([]relation.Coordinate(nil), state.ActiveClosure...)
-	} else {
+	}
+
+	if len(state.ActiveClosure) == 0 {
 		coordinates = make([]relation.Coordinate, 0, len(state.Transitions))
 
 		for coordinate := range state.Transitions {

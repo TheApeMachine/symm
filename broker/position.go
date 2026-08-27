@@ -365,23 +365,13 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 }
 
 /*
-initiateProtectiveExit claims the exit atomically and submits the initial exit
-order. It is idempotent: repeated triggering ticks before the exchange
-acknowledges cannot re-submit, and ordering with persistence is preserved by
-submitting the exit before any checkpoint or audit work.
+initiateProtectiveExit checkpoints the trigger and submits the initial exit
+order through Exit, which claims the exit atomically. It is idempotent: repeated
+triggering ticks before the exchange acknowledges cannot re-submit, and ordering
+with persistence is preserved by submitting the exit before any checkpoint or
+audit work.
 */
 func (position *Position) initiateProtectiveExit() {
-	if position.ExitOrder != nil {
-		return
-	}
-
-	position.exitMu.Lock()
-	defer position.exitMu.Unlock()
-
-	if position.exitClaim.Swap(true) {
-		return
-	}
-
 	if position.checkpoint != nil {
 		position.checkpoint()
 	}
@@ -759,9 +749,14 @@ func (position *Position) executeManualExit() error {
 Exit is the single sell-order boundary for an open lot.
 */
 func (position *Position) Exit() (*Position, error) {
-	// Atomic check-and-set to ensure we only fire the exit order once
-	currentStatus := position.status()
-	if currentStatus == types.CLOSED {
+	if position.status() == types.CLOSED {
+		return position, nil
+	}
+
+	position.exitMu.Lock()
+	defer position.exitMu.Unlock()
+
+	if position.exitClaim.Swap(true) {
 		return position, nil
 	}
 
@@ -819,10 +814,6 @@ func (position *Position) Close() (err error) {
 		return nil
 	}
 
-	if position.onClose != nil {
-		position.onClose()
-	}
-
 	if position.cancel != nil {
 		position.cancel()
 	}
@@ -836,5 +827,10 @@ func (position *Position) Close() (err error) {
 	}
 
 	position.setStatus(types.CLOSED)
+
+	if position.onClose != nil {
+		position.onClose()
+	}
+
 	return errnie.Error(err)
 }

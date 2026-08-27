@@ -146,4 +146,30 @@ func TestExtractLosses(t *testing.T) {
 			So(len(losses), ShouldEqual, 0)
 		})
 	})
+
+	Convey("Given a symbol with a single enter decision and no exit", t, func() {
+		entryTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		series := &Series{
+			Symbol: "LINK/USD",
+			Points: []Point{
+				{At: entryTime, Price: 100, Bid: 99.9, Ask: 100.1, Friction: 0.002},
+				{At: entryTime.Add(30 * time.Second), Price: 95, Bid: 94.9, Ask: 95.1, Friction: 0.002},
+			},
+		}
+
+		decisions := []Decision{
+			{
+				ID:     "dec-entry-only",
+				Symbol: "LINK/USD",
+				At:     entryTime,
+				Action: "enter",
+			},
+		}
+
+		Convey("ExtractLosses should not emit an unclosed entry as a realized loss", func() {
+			losses := ExtractLosses(decisions, series)
+			So(len(losses), ShouldEqual, 0)
+		})
+	})
 }

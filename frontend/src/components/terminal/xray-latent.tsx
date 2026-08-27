@@ -57,7 +57,11 @@ export const paintXrayLatent = (value: unknown, focusSymbol: string) => {
 	) as Array<ResonanceFrame | Record<string, unknown>>;
 	const newPoints = latentPointsFromFrames(frames);
 	if (newPoints.length > 0) {
-		latentPointsStore.setState(() => newPoints);
+		const incomingSymbols = new Set(newPoints.map((point) => point.symbol));
+		const retained = latentPointsStore.state.filter(
+			(point) => !incomingSymbols.has(point.symbol),
+		);
+		latentPointsStore.setState(() => [...retained, ...newPoints]);
 	}
 	const pointsToDraw = retainedLatentPoints();
 	const width = canvas.clientWidth;

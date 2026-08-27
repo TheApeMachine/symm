@@ -40,19 +40,7 @@ func (leg *Leg) computeEconomicProfit(trough Point, peak Point) {
 
 	leg.GrossProfitPct = (leg.SellPrice - leg.BuyPrice) / leg.BuyPrice
 
-	entryFriction := trough.Friction
-
-	if entryFriction == 0 && trough.Ask > trough.Bid && trough.Price > 0 {
-		entryFriction = (trough.Ask - trough.Bid) / (2 * trough.Price)
-	}
-
-	exitFriction := peak.Friction
-
-	if exitFriction == 0 && peak.Ask > peak.Bid && peak.Price > 0 {
-		exitFriction = (peak.Ask - peak.Bid) / (2 * peak.Price)
-	}
-
-	leg.FrictionPct = entryFriction + exitFriction
+	leg.FrictionPct = trough.CrossingCost() + peak.CrossingCost()
 	leg.ProfitPct = leg.GrossProfitPct - leg.FrictionPct
 }
 

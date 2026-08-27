@@ -21,6 +21,23 @@ type Point struct {
 }
 
 /*
+CrossingCost returns the per-side cost of crossing the book at this point:
+the recorded friction when it is positive, otherwise the one-sided spread cost
+derived from the quote width relative to the book midpoint.
+*/
+func (point Point) CrossingCost() float64 {
+	if point.Friction > 0 {
+		return point.Friction
+	}
+
+	if point.Ask <= point.Bid || point.Price <= 0 {
+		return 0
+	}
+
+	return (point.Ask - point.Bid) / (point.Ask + point.Bid)
+}
+
+/*
 Series is the reduced tape for one symbol.
 */
 type Series struct {
@@ -42,7 +59,7 @@ func (series *Series) PriceAt(at time.Time) float64 {
 		}
 	}
 
-	return series.Points[0].Price
+	return 0
 }
 
 /*
@@ -59,7 +76,7 @@ func (series *Series) PointAt(at time.Time) Point {
 		}
 	}
 
-	return series.Points[0]
+	return Point{}
 }
 
 /*
@@ -173,7 +190,7 @@ func (reducer *Reducer) ingestTicker(payload []byte) error {
 			bid:      row.Bid,
 			ask:      row.Ask,
 			spread:   spread,
-			friction: spread,
+			friction: spread / 2,
 		}
 	}
 

@@ -146,15 +146,16 @@ cadence, independent of the Hawkes forcing cadence: the physics state persists
 between steps, so the viewer stays live even when the forcing is sparse.
 */
 func (solver *Solver) publishLoop() {
-	ticker := time.NewTicker(fluidPublishInterval)
-	defer ticker.Stop()
+	timer := time.NewTimer(fluidPublishInterval)
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-solver.ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			solver.publishFluid()
+			timer.Reset(fluidPublishInterval)
 		}
 	}
 }

@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
+import { useEffect } from "react";
 
+import type { BacktestCapture } from "#/collections/app";
 import { appStore } from "#/collections/app";
 import {
 	HindsightEmpty,
@@ -11,9 +13,56 @@ import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import { publishBacktestCommand } from "#/providers/websocket";
 
+/*
+backtestBaseUrl locates the hub's REST capture-listing endpoint, mirroring the
+websocket origin (env override with a localhost default).
+*/
+const backtestBaseUrl = () => {
+	if (import.meta.env.VITE_SYMM_WS_URL) {
+		return import.meta.env.VITE_SYMM_WS_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
+	}
+
+	const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+	const host =
+		!window.location.hostname || window.location.hostname === "localhost"
+			? "127.0.0.1"
+			: window.location.hostname;
+
+	return `${protocol}//${host}:8765`;
+};
+
 const BacktestRoute = () => {
 	const backtest = useSelector(appStore, (state) => state.backtest);
 	const hindsight = backtest.hindsight;
+
+	useEffect(() => {
+		let cancelled = false;
+
+		const loadCaptures = async () => {
+			try {
+				const response = await fetch(`${backtestBaseUrl()}/backtest/captures`);
+
+				if (!response.ok) {
+					return;
+				}
+
+				const captures = (await response.json()) as BacktestCapture[];
+
+				if (!cancelled) {
+					appStore.actions.setBacktestCaptures(captures);
+				}
+			} catch {
+				// The backend may still be booting; the websocket reconnects and a
+				// later visit re-fetches.
+			}
+		};
+
+		loadCaptures();
+
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	return (
 		<div className="flex h-full min-w-275 overflow-hidden bg-(--bg)">

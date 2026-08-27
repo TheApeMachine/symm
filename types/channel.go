@@ -30,6 +30,7 @@ const (
 	ChannelRelations      = "relations"
 	ChannelCausalState    = "causal_state"
 	ChannelOpportunities  = "opportunities"
+	ChannelPerspectives   = "perspectives"
 	ChannelDecisions      = "decisions"
 	ChannelExecutions     = "executions"
 	ChannelRegulator      = "regulator"

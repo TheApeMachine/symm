@@ -3,7 +3,6 @@ import * as flatbuffers from "flatbuffers";
 import { useEffect } from "react";
 import {
 	appStore,
-	backtestStore,
 	balanceStore,
 	causalStore,
 	cognitionStore,
@@ -15,7 +14,6 @@ import {
 	fluidFrameStore,
 	focusStore,
 	graphStore,
-	hindsightStore,
 	measurementStore,
 	onlineStore,
 	positionStore,
@@ -25,6 +23,7 @@ import {
 	tickStore,
 } from "#/collections/app";
 
+import { backtestFrameToState, hindsightFrameToReport } from "#/providers/backtest-wire";
 import { BacktestFrame } from "#/providers/telemetry/telemetry/backtest-frame";
 import { BalancesFrame } from "#/providers/telemetry/telemetry/balances-frame";
 import { Batch } from "#/providers/telemetry/telemetry/batch";
@@ -156,8 +155,20 @@ const builders: Partial<Record<Frame, FrameHandler<any>>> = {
 	[Frame.EquityFrame]: frameBuilder(EquityFrame, equityStore),
 	[Frame.FluidPhaseFrame]: frameBuilder(FluidPhaseFrame, fluidFrameStore),
 	[Frame.ErrorFrame]: frameBuilder(ErrorFrame, errorFrameStore),
-	[Frame.BacktestFrame]: frameBuilder(BacktestFrame, backtestStore),
-	[Frame.HindsightFrame]: frameBuilder(HindsightFrame, hindsightStore),
+	[Frame.BacktestFrame]: {
+		table: BacktestFrame,
+		update: (table: BacktestFrame) => {
+			appStore.actions.updateBacktest(backtestFrameToState(table));
+		},
+	},
+	[Frame.HindsightFrame]: {
+		table: HindsightFrame,
+		update: (table: HindsightFrame) => {
+			appStore.actions.updateBacktest({
+				hindsight: hindsightFrameToReport(table),
+			});
+		},
+	},
 	[Frame.DiagnosticsFrame]: {
 		table: DiagnosticsFrame,
 		update: (table: DiagnosticsFrame) => {

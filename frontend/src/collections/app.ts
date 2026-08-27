@@ -139,7 +139,7 @@ export type HindsightLoss = {
 	exitAt: string | null;
 	entryPrice: number;
 	exitPrice: number;
-	pnl: number;
+	lossPerUnit: number;
 	returnPct: number;
 	grossPct: number;
 	frictionPct: number;

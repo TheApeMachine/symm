@@ -350,14 +350,10 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.StrategyRound {
 			}
 
 			// A symbol with no executable quote (or no cash/fee surface yet) is
-			// not priced: no economic decision is possible, so none is
-			// attempted. During startup this keeps the planner from churning on
-			// symbols the market data has not reached.
+			// not priced: it is still reported as a missing execution market
+			// decision rather than silently dropped, so the valuation state
+			// reaches the telemetry path without entering allocation.
 			inputs := planner.marketInputsFor(state.Symbol)
-
-			if !inputs.available {
-				return nil
-			}
 
 			decision := planner.decisionFromCausalState(state, config, inputs)
 			decisions[i] = decision
@@ -498,7 +494,8 @@ func (planner *Planner) decisionFromCausalState(
 
 		if state.BlockingTransition != nil {
 			alternatives["causal:blocking_rank"] = float64(state.BlockingTransition.Rank)
-			alternatives["causal:blocking_observations"] = float64(state.BlockingTransition.AlignedCount)
+			alternatives["causal:blocking_observations"] = float64(state.BlockingTransition.ObservationCount)
+			alternatives["causal:blocking_aligned"] = float64(state.BlockingTransition.AlignedCount)
 			alternatives["causal:blocking_parameters"] = float64(state.BlockingTransition.ParameterCount)
 		}
 	}
@@ -510,10 +507,14 @@ func (planner *Planner) decisionFromCausalState(
 		decision.ValuationStatus = state.Identification.String()
 		decision.UtilityAvailable = false
 
+		decision.Reason = "planner: causal evaluation unavailable: " + state.Identification.String()
+
 		if state.BlockingCoordinate != nil {
-			decision.Reason = "planner: causal evaluation unavailable: " + state.Identification.String() + " on " + state.BlockingCoordinate.ID()
-		} else {
-			decision.Reason = "planner: causal evaluation unavailable: " + state.Identification.String()
+			decision.Reason += " on " + state.BlockingCoordinate.ID()
+		}
+
+		if state.BlockingReason != "" {
+			decision.Reason += ": " + state.BlockingReason
 		}
 
 		return decision

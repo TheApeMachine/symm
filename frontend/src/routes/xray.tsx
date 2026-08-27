@@ -63,9 +63,8 @@ const XrayPaintBridge = () => {
 
 const XrayCarrierBar = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
-	const observedSymbols = useSelector(symbolsStore, (state) => state);
 	const [symbols, setSymbols] = useState<string[]>(() => {
-		const initial = new Set<string>(observedSymbols);
+		const initial = new Set<string>(symbolsStore.state);
 		for (const row of getAllRetainedResonance()) {
 			if (row.symbol) initial.add(row.symbol as string);
 		}

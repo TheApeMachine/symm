@@ -4,6 +4,7 @@ import type {
 	HindsightRecommendation,
 	HindsightReport,
 	HindsightRootCause,
+	HindsightSymbol,
 } from "#/collections/app";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
@@ -24,6 +25,9 @@ import {
 import { HindsightSymbolCard } from "./hindsight-symbol";
 
 const formatPct = (value: number): string => `${(value * 100).toFixed(2)}%`;
+
+const hasLosses = (symbol: HindsightSymbol): boolean =>
+	(symbol.lossPositions ?? 0) > 0 || (symbol.losses?.length ?? 0) > 0;
 
 const RootCauseStrip = ({
 	title,
@@ -171,14 +175,10 @@ export const HindsightPanel = ({ report }: { report: HindsightReport }) => {
 		}
 
 		if (activeTab === "losses") {
-			return (symbol.lossPositions ?? 0) > 0 || (symbol.losses?.length ?? 0) > 0;
+			return hasLosses(symbol);
 		}
 
-		return (
-			symbol.missedLegs > 0 ||
-			(symbol.lossPositions ?? 0) > 0 ||
-			(symbol.losses?.length ?? 0) > 0
-		);
+		return symbol.missedLegs > 0 || hasLosses(symbol);
 	});
 
 	return (
@@ -213,6 +213,7 @@ export const HindsightPanel = ({ report }: { report: HindsightReport }) => {
 								variant={activeTab === "all" ? "default" : "bare"}
 								size="sm"
 								className="h-5 px-2 font-mono text-[9px]"
+								aria-pressed={activeTab === "all"}
 								onClick={() => setActiveTab("all")}
 							>
 								All
@@ -221,6 +222,7 @@ export const HindsightPanel = ({ report }: { report: HindsightReport }) => {
 								variant={activeTab === "opportunities" ? "default" : "bare"}
 								size="sm"
 								className="h-5 px-2 font-mono text-[9px]"
+								aria-pressed={activeTab === "opportunities"}
 								onClick={() => setActiveTab("opportunities")}
 							>
 								Missed Opportunities ({report.missedLegs})
@@ -229,6 +231,7 @@ export const HindsightPanel = ({ report }: { report: HindsightReport }) => {
 								variant={activeTab === "losses" ? "default" : "bare"}
 								size="sm"
 								className="h-5 px-2 font-mono text-[9px]"
+								aria-pressed={activeTab === "losses"}
 								onClick={() => setActiveTab("losses")}
 							>
 								Trade Post-Mortem ({lossPositions})

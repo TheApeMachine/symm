@@ -822,7 +822,7 @@ func TestConformanceMediatedPathNoDoubleCounting(t *testing.T) {
 	})
 }
 
-func TestConformanceStartupSkipsUnpricedSymbols(t *testing.T) {
+func TestConformanceStartupMarksUnpricedSymbolsMissingMarket(t *testing.T) {
 	Convey("Given a planner with a mixed priced/unpriced candidate universe", t, func() {
 		at := time.Unix(0, 149*int64(time.Second))
 		priced := deterministicCausalState(at, 0.005)
@@ -845,11 +845,22 @@ func TestConformanceStartupSkipsUnpricedSymbols(t *testing.T) {
 		planner.pending.Store(priced.Symbol, priced)
 		planner.pending.Store(unpriced.Symbol, unpriced)
 
-		Convey("Update decides only the priced symbol", func() {
+		Convey("Update reports the unpriced symbol as a missing execution market", func() {
 			round := planner.Update(types.NewThesis(t.Context()))
 			So(round, ShouldNotBeNil)
-			So(len(round.Decisions), ShouldEqual, 1)
-			So(round.Decisions[0].Symbol, ShouldEqual, "PRICED/USD")
+			So(len(round.Decisions), ShouldEqual, 2)
+
+			bySymbol := map[string]*types.Decision{}
+			for _, decision := range round.Decisions {
+				bySymbol[decision.Symbol] = decision
+			}
+
+			So(bySymbol["PRICED/USD"], ShouldNotBeNil)
+			unpricedDecision := bySymbol["UNPRICED/USD"]
+			So(unpricedDecision, ShouldNotBeNil)
+			So(unpricedDecision.ValuationStatus, ShouldEqual, "missing_execution_market")
+			So(unpricedDecision.ValuationAttempted, ShouldBeFalse)
+			So(unpricedDecision.Action, ShouldEqual, types.ActionNothing)
 		})
 	})
 }
@@ -977,8 +988,9 @@ func TestConformanceRequiredTransitionFailure(t *testing.T) {
 		// 1) cvdFlow -> priceReturn (identified)
 		// 2) hawkes -> cvdFlow (registered, but hawkes observations are too few)
 		influenceGraph := graph.NewInfluenceGraph(1, 1, 1, 16)
-		_ = influenceGraph.RegisterCandidate(graph.EdgeInfluence, cvdFlow.Coordinate, priceReturn.Coordinate, 1)
-		_ = influenceGraph.UpsertEdge(&graph.InfluenceEdge{
+		err := influenceGraph.RegisterCandidate(graph.EdgeInfluence, cvdFlow.Coordinate, priceReturn.Coordinate, 1)
+		So(err, ShouldBeNil)
+		err = influenceGraph.UpsertEdge(&graph.InfluenceEdge{
 			Type:   graph.EdgeInfluence,
 			Source: cvdFlow.Coordinate,
 			Target: priceReturn.Coordinate,
@@ -990,8 +1002,10 @@ func TestConformanceRequiredTransitionFailure(t *testing.T) {
 			At:    at,
 			Epoch: 1,
 		})
-		_ = influenceGraph.RegisterCandidate(graph.EdgeInfluence, hawkes.Coordinate, cvdFlow.Coordinate, 1)
-		_ = influenceGraph.UpsertEdge(&graph.InfluenceEdge{
+		So(err, ShouldBeNil)
+		err = influenceGraph.RegisterCandidate(graph.EdgeInfluence, hawkes.Coordinate, cvdFlow.Coordinate, 1)
+		So(err, ShouldBeNil)
+		err = influenceGraph.UpsertEdge(&graph.InfluenceEdge{
 			Type:   graph.EdgeInfluence,
 			Source: hawkes.Coordinate,
 			Target: cvdFlow.Coordinate,
@@ -1003,6 +1017,7 @@ func TestConformanceRequiredTransitionFailure(t *testing.T) {
 			At:    at,
 			Epoch: 1,
 		})
+		So(err, ShouldBeNil)
 
 		model := causal.NewCausalModel(schema, store, influenceGraph, "req-fail-v1")
 		transitions := model.TransitionModels(at)
@@ -1145,9 +1160,10 @@ func TestConformanceOpportunitySurvivesValuationFailure(t *testing.T) {
 			BlockingCoordinate: &blockingCoord,
 			BlockingStatus:     causal.IdentificationInsufficientRank,
 			BlockingTransition: &causal.TransitionModel{
-				Rank:           1,
-				AlignedCount:   183,
-				ParameterCount: 2,
+				Rank:             1,
+				ObservationCount: 200,
+				AlignedCount:     183,
+				ParameterCount:   2,
 			},
 		}
 
@@ -1172,7 +1188,8 @@ func TestConformanceOpportunitySurvivesValuationFailure(t *testing.T) {
 			So(decision.UtilityAvailable, ShouldBeFalse)
 			So(decision.CausalBlockingCoordinate, ShouldEqual, blockingCoord.ID())
 			So(decision.Alternatives["causal:blocking_rank"], ShouldEqual, 1)
-			So(decision.Alternatives["causal:blocking_observations"], ShouldEqual, 183)
+			So(decision.Alternatives["causal:blocking_observations"], ShouldEqual, 200)
+			So(decision.Alternatives["causal:blocking_aligned"], ShouldEqual, 183)
 			So(decision.Alternatives["causal:blocking_parameters"], ShouldEqual, 2)
 		})
 	})

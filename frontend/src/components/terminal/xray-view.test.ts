@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { Measurement } from "#/collections/types";
 import {
+	clearRetainedTelemetry,
 	getAllRetainedResonance,
 	getRetainedCognition,
 	getRetainedHawkes,
@@ -36,6 +37,10 @@ const hawkesMeasurement = (
 });
 
 describe("xray-view", () => {
+	beforeEach(() => {
+		clearRetainedTelemetry();
+	});
+
 	it("builds hierarchy rows from resonance layers", () => {
 		const layers = xrayLayersFromResonance({
 			source: "resonance",

@@ -472,24 +472,28 @@ func activeCausalClosure(
 
 		transition := transitions[current]
 
+		if transition == nil && blockingCoordinate == nil {
+			coordinateCopy := current
+			blockingCoordinate = &coordinateCopy
+			blockingStatus = causal.IdentificationUndefined
+			blockingReason = "required transition in active closure missing"
+			continue
+		}
+
 		if transition == nil {
-			if blockingCoordinate == nil {
-				coordinateCopy := current
-				blockingCoordinate = &coordinateCopy
-				blockingStatus = causal.IdentificationUndefined
-				blockingReason = "required transition in active closure missing"
-			}
+			continue
+		}
+
+		if transition.Status != causal.IdentificationIdentified && blockingCoordinate == nil {
+			coordinateCopy := current
+			blockingCoordinate = &coordinateCopy
+			blockingStatus = transition.Status
+			blockingReason = transition.Reason
+			blockingTransition = transition
 			continue
 		}
 
 		if transition.Status != causal.IdentificationIdentified {
-			if blockingCoordinate == nil {
-				coordinateCopy := current
-				blockingCoordinate = &coordinateCopy
-				blockingStatus = transition.Status
-				blockingReason = transition.Reason
-				blockingTransition = transition
-			}
 			continue
 		}
 

@@ -130,6 +130,13 @@ func TestHindsightWire(t *testing.T) {
 			So(frame.Symbols[0].Opportunities[0].Leg.FrictionPct, ShouldAlmostEqual, 0.01, 1e-12)
 			So(frame.Symbols[0].Losses, ShouldHaveLength, 1)
 			So(frame.Symbols[0].Losses[0].ReturnPct, ShouldAlmostEqual, -0.05, 1e-12)
+			So(frame.LossRecommendations, ShouldHaveLength, 1)
+			So(frame.LossRecommendations[0].Key, ShouldEqual, "admission:confidence")
+			So(frame.LossRecommendations[0].Suggested, ShouldAlmostEqual, 0.48, 1e-12)
+			lossDiagnosis := frame.Symbols[0].Losses[0].Diagnosis
+			So(lossDiagnosis, ShouldNotBeNil)
+			So(lossDiagnosis.Category, ShouldEqual, hindsight.DiagnosisWhipsawStopout)
+			So(lossDiagnosis.Summary, ShouldEqual, "stopped out by volatility wick")
 			diagnosis := frame.Symbols[0].Opportunities[0].Diagnosis
 			So(diagnosis, ShouldNotBeNil)
 			So(diagnosis.Category, ShouldEqual, hindsight.DiagnosisAdmission)

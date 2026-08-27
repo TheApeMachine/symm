@@ -116,7 +116,7 @@ func TestSplatParticleWave(t *testing.T) {
 		fluid.phase.Float32Slice()[0] = 0
 		fluid.psiRe.Zero()
 		fluid.psiIm.Zero()
-		fluid.splatParticleWave()
+		fluid.projectSpatialWave()
 		psiRe := fluid.psiRe.Float32Slice()
 		var total float32
 		var peak float32

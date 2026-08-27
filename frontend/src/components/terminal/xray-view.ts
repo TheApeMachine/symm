@@ -39,16 +39,6 @@ const numberArray = (value: unknown): number[] =>
 		? value.filter((item): item is number => typeof item === "number")
 		: [];
 
-const sumValues = (...values: Array<number | null>): number | null => {
-	const available = values.filter((value): value is number => value !== null);
-
-	if (available.length === 0) {
-		return null;
-	}
-
-	return available.reduce((sum, value) => sum + value, 0);
-};
-
 const measurementEpochs = (measurements: Measurement[]): Measurement[][] => {
 	const epochs = new Map<string, Measurement[]>();
 
@@ -130,11 +120,12 @@ export const xrayLayersFromResonance = (
 };
 
 const hawkesMetrics = (epoch: Measurement[]): HawkesMetrics => {
-	const buyIntensity =
-		measurementRaw(epoch, "conditional_intensity", "buy") ??
-		measurementRaw(epoch, "arrival_rate", "buy") ??
+	const aggregateIntensity =
 		measurementRaw(epoch, "conditional_intensity") ??
 		measurementRaw(epoch, "arrival_rate");
+	const buyIntensity =
+		measurementRaw(epoch, "conditional_intensity", "buy") ??
+		measurementRaw(epoch, "arrival_rate", "buy");
 	const sellIntensity =
 		measurementRaw(epoch, "conditional_intensity", "sell") ??
 		measurementRaw(epoch, "arrival_rate", "sell");
@@ -142,19 +133,30 @@ const hawkesMetrics = (epoch: Measurement[]): HawkesMetrics => {
 		measurementRaw(epoch, "branching_spectral_radius") ??
 		measurementRaw(epoch, "spectral_radius");
 
-	const buyBg =
-		measurementRaw(epoch, "background_rate", "buy") ??
-		measurementRaw(epoch, "background_rate");
+	const aggregateBg = measurementRaw(epoch, "background_rate");
+	const buyBg = measurementRaw(epoch, "background_rate", "buy");
 	const sellBg = measurementRaw(epoch, "background_rate", "sell");
 
+	const intensity =
+		aggregateIntensity ??
+		(buyIntensity !== null && sellIntensity !== null
+			? buyIntensity + sellIntensity
+			: buyIntensity ?? sellIntensity);
+
+	const exo =
+		aggregateBg ??
+		(buyBg !== null && sellBg !== null
+			? buyBg + sellBg
+			: buyBg ?? sellBg);
+
 	return {
-		intensity: sumValues(buyIntensity, sellIntensity) ?? buyIntensity,
+		intensity,
 		branching: radius,
 		radius,
 		asymmetry: null,
 		buyIntensity,
 		sellIntensity,
-		exo: sumValues(buyBg, sellBg) ?? buyBg,
+		exo,
 	};
 };
 
@@ -332,4 +334,10 @@ export const retainHawkesMetric = (symbol: string, metric: string, raw: number) 
 export const getRetainedHawkes = (symbol?: string): Record<string, number> => {
 	if (!symbol) return {};
 	return retainedHawkes.get(symbol) ?? {};
+};
+
+export const clearRetainedTelemetry = () => {
+	retainedResonance.clear();
+	retainedCognition.clear();
+	retainedHawkes.clear();
 };

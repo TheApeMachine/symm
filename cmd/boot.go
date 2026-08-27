@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/logic/advisor"
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/causal"
 	"github.com/theapemachine/symm/logic/cognition"
@@ -544,6 +545,8 @@ func BootWithHub(
 	causalSolver := causal.NewSolver(bus)
 	cognitionSolver := cognition.NewSolver(systemCtx, bus)
 	opportunitySolver := opportunity.NewSolver(systemCtx, bus)
+	historicalAnalogueAdvisor := advisor.NewHistoricalAnalogueAdvisor(systemCtx, bus)
+	relativeStateAdvisor := advisor.NewRelativeStateAdvisor(systemCtx, bus)
 
 	// The Influence Graph stage subscribes to ChannelMeasurements, maintains the
 	// shared Influence Graph in place, and publishes a GraphUpdate per symbol on
@@ -586,6 +589,8 @@ func BootWithHub(
 	graphSolver.ObserveModule = diagnosticsCollector.ObserveModule()
 	manifoldSolver.ObserveModule = diagnosticsCollector.ObserveModule()
 	opportunitySolver.ObserveModule = diagnosticsCollector.ObserveModule()
+	historicalAnalogueAdvisor.ObserveModule = diagnosticsCollector.ObserveModule()
+	relativeStateAdvisor.ObserveModule = diagnosticsCollector.ObserveModule()
 	resonanceSolver.ObserveModule = diagnosticsCollector.ObserveModule()
 	desk.ObserveModule = diagnosticsCollector.ObserveModule()
 	planner.ObserveModule = diagnosticsCollector.ObserveModule()

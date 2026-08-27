@@ -392,12 +392,6 @@ table Decision {
   symbol:string;
   at:long;
   utility:double;
-  utilityAvailable:bool;
-  valuationAttempted:bool;
-  valuationAvailable:bool;
-  valuationStatus:string;
-  causalIdentification:string;
-  causalBlockingCoordinate:string;
   graphScore:double;
   thesisScore:double;
   thesisConfidence:double;
@@ -468,6 +462,12 @@ table Decision {
   stoploss:Stoploss;
   risk:RiskPlan;
   trace:DecisionTrace;
+  utilityAvailable:bool;
+  valuationAttempted:bool;
+  valuationAvailable:bool;
+  valuationStatus:string;
+  causalIdentification:string;
+  causalBlockingCoordinate:string;
 }
 table StrategyFrame { evaluated:bool; outcome:string; decisions:[Decision]; }
 

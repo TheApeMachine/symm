@@ -30,27 +30,7 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 			journal := make([]*wire.HindsightSignalT, 0, len(opportunity.Journal))
 
 			for _, decision := range opportunity.Journal {
-				journal = append(journal, &wire.HindsightSignalT{
-					Id:                  decision.ID,
-					At:                  decision.At.UnixNano(),
-					Action:              decision.Action,
-					Reason:              decision.Reason,
-					Cause:               decision.Cause,
-					GraphScore:          decision.GraphScore,
-					ThesisScore:         decision.ThesisScore,
-					ThesisConfidence:    decision.ThesisConfidence,
-					ThesisSupport:       decision.ThesisSupport,
-					ThesisContradiction: decision.ThesisContradiction,
-					ThesisConditions:    decision.ThesisConditions,
-					Direction:           decision.Direction,
-					Confidence:          decision.Confidence,
-					AdmissionThreshold:  decision.AdmissionThreshold,
-					Opportunity:         decision.Opportunity,
-					OpportunityType:     decision.OpportunityType,
-					PredictiveReady:     decision.PredictiveReady,
-					PredictiveStatus:    decision.PredictiveStatus,
-					Alternatives:        hindsightNumbers(decision.Alternatives),
-				})
+				journal = append(journal, hindsightDecisionSignalWire(decision))
 			}
 
 			opportunities = append(opportunities, &wire.HindsightOpportunityT{
@@ -64,27 +44,7 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 					GrossProfitPct: opportunity.Leg.GrossProfitPct,
 					FrictionPct:    opportunity.Leg.FrictionPct,
 				},
-				Signal: &wire.HindsightSignalT{
-					Id:                  opportunity.Signal.ID,
-					At:                  opportunity.Signal.At.UnixNano(),
-					Action:              opportunity.Signal.Action,
-					Reason:              opportunity.Signal.Reason,
-					Cause:               opportunity.Signal.Cause,
-					GraphScore:          opportunity.Signal.GraphScore,
-					ThesisScore:         opportunity.Signal.ThesisScore,
-					ThesisConfidence:    opportunity.Signal.ThesisConfidence,
-					ThesisSupport:       opportunity.Signal.ThesisSupport,
-					ThesisContradiction: opportunity.Signal.ThesisContradiction,
-					ThesisConditions:    opportunity.Signal.ThesisConditions,
-					Direction:           opportunity.Signal.Direction,
-					Confidence:          opportunity.Signal.Confidence,
-					AdmissionThreshold:  opportunity.Signal.AdmissionThreshold,
-					Opportunity:         opportunity.Signal.Opportunity,
-					OpportunityType:     opportunity.Signal.Type,
-					PredictiveReady:     opportunity.Signal.PredictiveReady,
-					PredictiveStatus:    opportunity.Signal.PredictiveStatus,
-					Alternatives:        hindsightNumbers(opportunity.Signal.Alternatives),
-				},
+				Signal:    hindsightSignalWire(opportunity.Signal),
 				Journal:   journal,
 				Diagnosis: hindsightDiagnosisWire(opportunity.Diagnosis),
 				Why:       opportunity.Why,
@@ -99,27 +59,7 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 			lossJournal := make([]*wire.HindsightSignalT, 0, len(loss.Journal))
 
 			for _, decision := range loss.Journal {
-				lossJournal = append(lossJournal, &wire.HindsightSignalT{
-					Id:                  decision.ID,
-					At:                  decision.At.UnixNano(),
-					Action:              decision.Action,
-					Reason:              decision.Reason,
-					Cause:               decision.Cause,
-					GraphScore:          decision.GraphScore,
-					ThesisScore:         decision.ThesisScore,
-					ThesisConfidence:    decision.ThesisConfidence,
-					ThesisSupport:       decision.ThesisSupport,
-					ThesisContradiction: decision.ThesisContradiction,
-					ThesisConditions:    decision.ThesisConditions,
-					Direction:           decision.Direction,
-					Confidence:          decision.Confidence,
-					AdmissionThreshold:  decision.AdmissionThreshold,
-					Opportunity:         decision.Opportunity,
-					OpportunityType:     decision.OpportunityType,
-					PredictiveReady:     decision.PredictiveReady,
-					PredictiveStatus:    decision.PredictiveStatus,
-					Alternatives:        hindsightNumbers(decision.Alternatives),
-				})
+				lossJournal = append(lossJournal, hindsightDecisionSignalWire(decision))
 			}
 
 			losses = append(losses, &wire.HindsightLossT{
@@ -129,34 +69,14 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 				ExitAt:        loss.ExitAt.UnixNano(),
 				EntryPrice:    loss.EntryPrice,
 				ExitPrice:     loss.ExitPrice,
-				Pnl:           loss.PnL,
+				Pnl:           loss.LossPerUnit,
 				ReturnPct:     loss.ReturnPct,
 				GrossPct:      loss.GrossPct,
 				FrictionPct:   loss.FrictionPct,
 				TriggerReason: loss.TriggerReason,
 				Diagnosis:     hindsightDiagnosisWire(loss.Diagnosis),
-				Signal: &wire.HindsightSignalT{
-					Id:                  loss.Signal.ID,
-					At:                  loss.Signal.At.UnixNano(),
-					Action:              loss.Signal.Action,
-					Reason:              loss.Signal.Reason,
-					Cause:               loss.Signal.Cause,
-					GraphScore:          loss.Signal.GraphScore,
-					ThesisScore:         loss.Signal.ThesisScore,
-					ThesisConfidence:    loss.Signal.ThesisConfidence,
-					ThesisSupport:       loss.Signal.ThesisSupport,
-					ThesisContradiction: loss.Signal.ThesisContradiction,
-					ThesisConditions:    loss.Signal.ThesisConditions,
-					Direction:           loss.Signal.Direction,
-					Confidence:          loss.Signal.Confidence,
-					AdmissionThreshold:  loss.Signal.AdmissionThreshold,
-					Opportunity:         loss.Signal.Opportunity,
-					OpportunityType:     loss.Signal.Type,
-					PredictiveReady:     loss.Signal.PredictiveReady,
-					PredictiveStatus:    loss.Signal.PredictiveStatus,
-					Alternatives:        hindsightNumbers(loss.Signal.Alternatives),
-				},
-				Journal: lossJournal,
+				Signal:        hindsightSignalWire(loss.Signal),
+				Journal:       lossJournal,
 			})
 		}
 
@@ -174,16 +94,7 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 		})
 	}
 
-	rootCauses := make([]*wire.HindsightRootCauseT, 0, len(report.RootCauses))
-
-	for _, cause := range report.RootCauses {
-		rootCauses = append(rootCauses, &wire.HindsightRootCauseT{
-			Category:    cause.Category,
-			ImpactPct:   cause.ImpactPct,
-			Occurrences: int64(cause.Occurrences),
-			Symbols:     cause.Symbols,
-		})
-	}
+	rootCauses := hindsightRootCausesWire(report.RootCauses)
 
 	recommendations := make([]*wire.HindsightRecommendationT, 0, len(report.Recommendations))
 
@@ -194,16 +105,7 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 		)
 	}
 
-	lossRootCauses := make([]*wire.HindsightRootCauseT, 0, len(report.LossRootCauses))
-
-	for _, cause := range report.LossRootCauses {
-		lossRootCauses = append(lossRootCauses, &wire.HindsightRootCauseT{
-			Category:    cause.Category,
-			ImpactPct:   cause.ImpactPct,
-			Occurrences: int64(cause.Occurrences),
-			Symbols:     cause.Symbols,
-		})
-	}
+	lossRootCauses := hindsightRootCausesWire(report.LossRootCauses)
 
 	lossRecommendations := make([]*wire.HindsightRecommendationT, 0, len(report.LossRecommendations))
 
@@ -233,6 +135,82 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 		LossRootCauses:      lossRootCauses,
 		LossRecommendations: lossRecommendations,
 	}
+}
+
+/*
+hindsightDecisionSignalWire projects one journal decision onto the wire signal
+shape. Journal entries expose the raw Decision opportunity type.
+*/
+func hindsightDecisionSignalWire(decision hindsight.Decision) *wire.HindsightSignalT {
+	return &wire.HindsightSignalT{
+		Id:                  decision.ID,
+		At:                  decision.At.UnixNano(),
+		Action:              decision.Action,
+		Reason:              decision.Reason,
+		Cause:               decision.Cause,
+		GraphScore:          decision.GraphScore,
+		ThesisScore:         decision.ThesisScore,
+		ThesisConfidence:    decision.ThesisConfidence,
+		ThesisSupport:       decision.ThesisSupport,
+		ThesisContradiction: decision.ThesisContradiction,
+		ThesisConditions:    decision.ThesisConditions,
+		Direction:           decision.Direction,
+		Confidence:          decision.Confidence,
+		AdmissionThreshold:  decision.AdmissionThreshold,
+		Opportunity:         decision.Opportunity,
+		OpportunityType:     decision.OpportunityType,
+		PredictiveReady:     decision.PredictiveReady,
+		PredictiveStatus:    decision.PredictiveStatus,
+		Alternatives:        hindsightNumbers(decision.Alternatives),
+	}
+}
+
+/*
+hindsightSignalWire projects one entry-signal context onto the wire signal
+shape. Signal contexts carry the opportunity type in their Type field.
+*/
+func hindsightSignalWire(signal hindsight.SignalContext) *wire.HindsightSignalT {
+	return &wire.HindsightSignalT{
+		Id:                  signal.ID,
+		At:                  signal.At.UnixNano(),
+		Action:              signal.Action,
+		Reason:              signal.Reason,
+		Cause:               signal.Cause,
+		GraphScore:          signal.GraphScore,
+		ThesisScore:         signal.ThesisScore,
+		ThesisConfidence:    signal.ThesisConfidence,
+		ThesisSupport:       signal.ThesisSupport,
+		ThesisContradiction: signal.ThesisContradiction,
+		ThesisConditions:    signal.ThesisConditions,
+		Direction:           signal.Direction,
+		Confidence:          signal.Confidence,
+		AdmissionThreshold:  signal.AdmissionThreshold,
+		Opportunity:         signal.Opportunity,
+		OpportunityType:     signal.Type,
+		PredictiveReady:     signal.PredictiveReady,
+		PredictiveStatus:    signal.PredictiveStatus,
+		Alternatives:        hindsightNumbers(signal.Alternatives),
+	}
+}
+
+/*
+hindsightRootCausesWire projects a root-cause summary list onto the wire shape.
+*/
+func hindsightRootCausesWire(
+	causes []hindsight.RootCauseSummary,
+) []*wire.HindsightRootCauseT {
+	result := make([]*wire.HindsightRootCauseT, 0, len(causes))
+
+	for _, cause := range causes {
+		result = append(result, &wire.HindsightRootCauseT{
+			Category:    cause.Category,
+			ImpactPct:   cause.ImpactPct,
+			Occurrences: int64(cause.Occurrences),
+			Symbols:     cause.Symbols,
+		})
+	}
+
+	return result
 }
 
 func hindsightDiagnosisWire(

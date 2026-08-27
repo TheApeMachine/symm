@@ -14,7 +14,7 @@ const num = (value: unknown, digits: number): string =>
 const ROWS = [
 	{ label: "energy", read: (row: Record<string, unknown>) => num(row.energy, 3) },
 	{ label: "surprise", read: (row: Record<string, unknown>) => num(row.surprise, 3) },
-	{ label: "base alpha", read: (row: Record<string, unknown>) => typeof row.taskForecast === "number" && row.taskForecast !== 0 ? num(row.taskForecast, 3) : "—" },
+	{ label: "base alpha", read: (row: Record<string, unknown>) => num(row.taskForecast, 3) },
 	{ label: "horizon", read: (row: Record<string, unknown>) => {
 		const fcast = row.forecast as Record<string, unknown> | undefined;
 		return fcast?.supportedHorizon != null ? `${num(Number(fcast.supportedHorizon), 0)} ticks` : "—";
@@ -68,20 +68,22 @@ export const XrayManifoldPanel = () => {
 				if (el) el.textContent = value;
 			};
 
+			for (const index of ROWS.keys()) {
+				set(`r${index}`, "—");
+			}
+
+			for (const index of DYNAMICS_FIELDS.keys()) {
+				set(`d${index}`, "—");
+			}
+
 			if (targetRow) {
 				for (const [index, entry] of ROWS.entries()) {
-					const val = entry.read(targetRow);
-					if (val !== "—" || !root.current?.querySelector<HTMLElement>(`[data-f="r${index}"]`)?.textContent) {
-						set(`r${index}`, val);
-					}
+					set(`r${index}`, entry.read(targetRow));
 				}
 
 				const dyn = targetRow.dynamics as Record<string, unknown> | undefined;
 				for (const [index, entry] of DYNAMICS_FIELDS.entries()) {
-					const val = entry.read(dyn);
-					if (val !== "—" || !root.current?.querySelector<HTMLElement>(`[data-f="d${index}"]`)?.textContent) {
-						set(`d${index}`, val);
-					}
+					set(`d${index}`, entry.read(dyn));
 				}
 			}
 		};

@@ -1210,25 +1210,15 @@ This specification does NOT authorize:
 These statements are intended to be copied into agent instructions and treated as non-negotiable.
 
 > **Opportunity detection and causal valuation are separate concerns.**
-
 > **Causal evaluation unavailable does not mean no opportunity exists.**
-
 > **No evaluation is not zero utility.**
-
 > **Causal identification is query-local, not a whole-world readiness gate.**
-
 > **Only the transitions required by the active economic query may block that query.**
-
 > **Unavailable evidence remains unavailable; never fabricate a fallback.**
-
 > **Metrics are facts in the stream and may have multiple legitimate consumers.**
-
 > **MCTS optimizes interventions; it does not define whether an opportunity exists.**
-
 > **Hindsight must learn whether failure occurred in detection, valuation, selection, execution, or management.**
-
 > **Events move. State stays. No clones, copies, snapshots, hidden accumulations, or world rebuilds on the hot path.**
-
 > **Expensive computation follows opportunity density, not universe size.**
 
 ---

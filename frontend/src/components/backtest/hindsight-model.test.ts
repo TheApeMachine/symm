@@ -141,10 +141,14 @@ describe("hindsight model", () => {
 			rootCauses: undefined,
 			lossRecommendations: undefined,
 			lossRootCauses: undefined,
+			lossPct: undefined,
+			lossPositions: undefined,
 		};
 		expect(rankHindsightRecommendations(incomplete)).toEqual([]);
 		expect(rankHindsightRootCauses(incomplete)).toEqual([]);
 		expect(rankHindsightLossRecommendations(incomplete)).toEqual([]);
 		expect(rankHindsightLossRootCauses(incomplete)).toEqual([]);
+		expect(hindsightLossPct(incomplete)).toBe(0);
+		expect(hindsightLossPositions(incomplete)).toBe(0);
 	});
 });

@@ -27,7 +27,7 @@ type PositionLoss struct {
 	ExitAt        time.Time     `json:"exitAt"`
 	EntryPrice    float64       `json:"entryPrice"`
 	ExitPrice     float64       `json:"exitPrice"`
-	PnL           float64       `json:"pnl"`
+	LossPerUnit   float64       `json:"lossPerUnit"`
 	ReturnPct     float64       `json:"returnPct"`
 	GrossPct      float64       `json:"grossPct"`
 	FrictionPct   float64       `json:"frictionPct"`
@@ -62,25 +62,19 @@ func ExtractLosses(decisions []Decision, series *Series) []PositionLoss {
 			continue
 		}
 
-		if activeEntry != nil {
-			activeJournal = append(activeJournal, decision)
-
-			if decision.Action == "exit" || decision.Action == "close" || decision.Action == "reduce" {
-				if loss, ok := evaluateLossPosition(*activeEntry, decision, activeJournal, series); ok {
-					losses = append(losses, loss)
-				}
-
-				activeEntry = nil
-				activeJournal = nil
-			}
+		if activeEntry == nil {
+			continue
 		}
-	}
 
-	if activeEntry != nil && len(activeJournal) > 0 {
-		lastDecision := activeJournal[len(activeJournal)-1]
+		activeJournal = append(activeJournal, decision)
 
-		if loss, ok := evaluateLossPosition(*activeEntry, lastDecision, activeJournal, series); ok {
-			losses = append(losses, loss)
+		if decision.Action == "exit" || decision.Action == "close" || decision.Action == "reduce" {
+			if loss, ok := evaluateLossPosition(*activeEntry, decision, activeJournal, series); ok {
+				losses = append(losses, loss)
+			}
+
+			activeEntry = nil
+			activeJournal = nil
 		}
 	}
 
@@ -108,21 +102,7 @@ func evaluateLossPosition(
 	entryPoint := series.PointAt(entry.At)
 	exitPoint := series.PointAt(exit.At)
 
-	frictionPct := entryPoint.Friction + exitPoint.Friction
-
-	if frictionPct == 0 {
-		spread := 0.0
-
-		if entryPoint.Ask > entryPoint.Bid && entryPoint.Price > 0 {
-			spread += (entryPoint.Ask - entryPoint.Bid) / entryPoint.Price
-		}
-
-		if exitPoint.Ask > exitPoint.Bid && exitPoint.Price > 0 {
-			spread += (exitPoint.Ask - exitPoint.Bid) / exitPoint.Price
-		}
-
-		frictionPct = spread
-	}
+	frictionPct := entryPoint.CrossingCost() + exitPoint.CrossingCost()
 
 	returnPct := grossPct - frictionPct
 
@@ -170,7 +150,7 @@ func evaluateLossPosition(
 		ExitAt:        exit.At,
 		EntryPrice:    entryPrice,
 		ExitPrice:     exitPrice,
-		PnL:           returnPct * entryPrice,
+		LossPerUnit:   returnPct * entryPrice,
 		ReturnPct:     returnPct,
 		GrossPct:      grossPct,
 		FrictionPct:   frictionPct,
@@ -194,7 +174,7 @@ func diagnoseLossPosition(
 	reasonText := strings.ToLower(firstNonEmpty(exit.Reason, exit.Cause, entry.Reason))
 
 	// Check for friction drag: gross move was flat/positive, but spread/fees caused net loss.
-	if grossPct >= 0 && returnPct <= 0 {
+	if grossPct >= 0 {
 		blocker := Blocker{
 			Key:      "loss:friction_drag",
 			Category: DiagnosisFrictionDrag,
@@ -237,7 +217,7 @@ func diagnoseLossPosition(
 			Key:      "loss:whipsaw_stopout",
 			Category: DiagnosisWhipsawStopout,
 			Label:    "stoploss trigger",
-			Observed: exitPriceFromSeries(series, exit.At),
+			Observed: series.PriceAt(exit.At),
 			Severity: lossMagnitude,
 			Explanation: fmt.Sprintf(
 				"position was stopped out: %s",
@@ -337,12 +317,4 @@ func diagnoseLossPosition(
 			Symbols:     []string{entry.Symbol},
 		},
 	}
-}
-
-func exitPriceFromSeries(series *Series, at time.Time) float64 {
-	if series == nil {
-		return 0
-	}
-
-	return series.PriceAt(at)
 }

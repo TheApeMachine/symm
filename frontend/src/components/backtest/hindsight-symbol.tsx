@@ -359,7 +359,7 @@ export const HindsightSymbolCard = ({
 							<span className="font-mono text-[9px] uppercase tracking-widest text-(--down)">
 								Losing positions post-mortem ({losses.length})
 							</span>
-							{losses.map((loss) => (
+							{losses.slice(0, 8).map((loss) => (
 								<LossCard
 									key={`${loss.decisionId}-${loss.entryAt}-${loss.exitAt}`}
 									loss={loss}

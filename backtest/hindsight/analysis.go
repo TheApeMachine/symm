@@ -396,7 +396,11 @@ func Analyze(reducer *Reducer, decisions []Decision) ([]PerSymbol, error) {
 			return totalI > totalJ
 		}
 
-		return reports[i].MissedPct > reports[j].MissedPct
+		if reports[i].MissedPct != reports[j].MissedPct {
+			return reports[i].MissedPct > reports[j].MissedPct
+		}
+
+		return reports[i].Symbol < reports[j].Symbol
 	})
 
 	return reports, nil

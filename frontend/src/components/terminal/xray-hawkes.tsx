@@ -37,6 +37,25 @@ export const XrayHawkesPanel = () => {
 				if (el) el.textContent = value;
 			};
 
+			// Reset readouts, the eta bar, and the canvas before applying
+			// retained metrics so sparse data cannot preserve stale geometry.
+			for (const field of ["events", "lambda", "mu", "sells", "eta"]) {
+				set(field, "");
+			}
+
+			const etaBar = root.current.querySelector<HTMLElement>("[data-eta-bar]");
+			if (etaBar instanceof HTMLElement) {
+				etaBar.style.width = "0%";
+			}
+
+			const resetCanvas = hawkesCanvasRef.current;
+			if (resetCanvas) {
+				const resetCtx = resetCanvas.getContext("2d");
+				if (resetCtx) {
+					resetCtx.clearRect(0, 0, resetCanvas.width, resetCanvas.height);
+				}
+			}
+
 			const events = retained.event_count ?? retained["event_count:buy"];
 			if (typeof events === "number") {
 				set("events", events.toFixed(0));
@@ -111,12 +130,14 @@ export const XrayHawkesPanel = () => {
 						intensities.push(intensityVal);
 					}
 
-					const maxL = Math.max(1.0, ...intensities) * 1.15;
+					const observedMax = Math.max(0, ...intensities);
+					const maxL = observedMax > 0 ? observedMax : 1;
 					const pad = 14 * (window.devicePixelRatio || 1);
 					const base = h - 22 * (window.devicePixelRatio || 1);
+					const topMargin = 20 * (window.devicePixelRatio || 1);
 					const toX = (idx: number) =>
 						pad + (idx / Math.max(1, intensities.length - 1)) * (w - pad * 2);
-					const toY = (val: number) => base - (val / maxL) * (base - 20);
+					const toY = (val: number) => base - (val / maxL) * (base - topMargin);
 
 					if (typeof mu === "number" && mu > 0) {
 						ctx.strokeStyle = "#3A342B";

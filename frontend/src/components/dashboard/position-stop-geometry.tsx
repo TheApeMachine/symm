@@ -31,7 +31,25 @@ export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
 
 	useEffect(() => {
 		const updateElements = (lastPositionsFrame?: PositionsFrame | null) => {
-			if (!root.current || !lastPositionsFrame) return;
+			if (!root.current) return;
+
+			// Reset every readout and hide all geometry nodes before applying
+			// the incoming frame so stale values cannot survive a missing or
+			// invalid update.
+			for (const field of [
+				"floor", "peak", "profit", "arm", "lock", "surge",
+				"momentum", "lastmove", "trigger", "locked", "threshold", "stopstatus",
+			]) {
+				const node = root.current.querySelector<HTMLElement>(`[data-f="${field}"]`);
+				if (node) node.textContent = "—";
+			}
+
+			for (const marker of ["profit-marker", "arm-marker", "lock-marker", "indicator"]) {
+				const node = root.current.querySelector<HTMLElement>(`[data-f="${marker}"]`);
+				if (node) node.style.display = "none";
+			}
+
+			if (!lastPositionsFrame) return;
 
 			let targetHolding: Holding | null = null;
 
@@ -147,7 +165,7 @@ export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
 					data-f="indicator"
 					data-stoploss-indicator
 					className="absolute -top-1 h-3.5 w-1.5 -translate-x-1/2 rounded-full bg-(--f1) shadow-[0_0_6px_var(--acc)] ring-1 ring-(--acc) transition-[left] duration-100"
-					style={{ left: "50%" }}
+					style={{ left: "50%", display: "none" }}
 					title="Live mark stoploss indicator"
 				/>
 			</div>

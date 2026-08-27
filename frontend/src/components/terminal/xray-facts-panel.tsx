@@ -42,6 +42,12 @@ export const XrayFactsPanel = () => {
 				if (el) el.textContent = value;
 			};
 
+			// Reset every field before applying retained values so a missing
+			// row cannot preserve the previously focused symbol's readout.
+			for (const field of ["winner", "confidence", "contrast", "entropy", "ambiguous", "sequence"]) {
+				set(field, "—");
+			}
+
 			if (targetRow) {
 				const winnerVal = (targetRow.winner as string | undefined) || "none named";
 				set("winner", winnerVal);

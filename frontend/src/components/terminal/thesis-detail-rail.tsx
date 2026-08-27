@@ -1,4 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
+import { shallow } from "@tanstack/store";
 import {
 	causalStore,
 	cognitionStore,
@@ -101,18 +102,54 @@ mutated the DOM after render, which is why the fields stayed on their "—"
 placeholders.
 */
 
-const selectPosition = (state: ReturnType<typeof positionStore.get>, symbol: string) => {
-	const frames = state.toArray();
+/*
+scanLatest walks the ring buffer newest-frame-first and returns the first row
+that matches the supplied predicate, projected through the supplied callback.
+Each selector supplies its own row length, row access, matching, and projection
+so a single traversal convention backs all four rails.
+*/
+const scanLatest = <TFrame, TRow, TResult>(
+	frames: TFrame[],
+	rowLength: (frame: TFrame) => number,
+	rowAt: (frame: TFrame, index: number) => TRow | null,
+	matches: (row: TRow) => boolean,
+	project: (row: TRow) => TResult,
+): TResult | null => {
+	for (let frameIndex = frames.length - 1; frameIndex >= 0; frameIndex--) {
+		const frame = frames[frameIndex];
 
-	for (let f = frames.length - 1; f >= 0; f--) {
-		const frame = frames[f];
+		for (let rowIndex = 0; rowIndex < rowLength(frame); rowIndex++) {
+			const row = rowAt(frame, rowIndex);
 
-		for (let i = 0; i < frame.rowsLength(); i++) {
-			const pos = frame.rows(i, posObj);
-			if (!pos) continue;
+			if (row === null) {
+				continue;
+			}
+
+			if (!matches(row)) {
+				continue;
+			}
+
+			return project(row);
+		}
+	}
+
+	return null;
+};
+
+const selectPosition = (
+	state: ReturnType<typeof positionStore.get>,
+	symbol: string,
+) =>
+	scanLatest(
+		state.toArray(),
+		(frame) => frame.rowsLength(),
+		(frame, index) => frame.rows(index, posObj),
+		(pos) => {
 			const holding = pos.holding(holdObj);
-			if (!holding || holding.symbol() !== symbol) continue;
-
+			return holding !== null && holding.symbol() === symbol;
+		},
+		(pos) => {
+			const holding = pos.holding(holdObj)!;
 			const stoploss = holding.stoploss(stopObj);
 
 			return {
@@ -129,30 +166,28 @@ const selectPosition = (state: ReturnType<typeof positionStore.get>, symbol: str
 				profitLine: fmt(stoploss?.profitLine()),
 				stopStatus: stoploss?.status() ?? "",
 			};
-		}
-	}
+		},
+	);
 
-	return null;
-};
-
-const selectDecision = (state: ReturnType<typeof strategyStore.get>, symbol: string) => {
-	const frames = state.toArray();
-
-	for (let f = frames.length - 1; f >= 0; f--) {
-		const frame = frames[f];
-
-		for (let i = 0; i < frame.decisionsLength(); i++) {
-			const dec = frame.decisions(i, decObj);
-			if (!dec || dec.symbol() !== symbol) continue;
-
+const selectDecision = (
+	state: ReturnType<typeof strategyStore.get>,
+	symbol: string,
+) =>
+	scanLatest(
+		state.toArray(),
+		(frame) => frame.decisionsLength(),
+		(frame, index) => frame.decisions(index, decObj),
+		(dec) => dec.symbol() === symbol,
+		(dec) => {
 			const utilityAvailable = dec.utilityAvailable();
+
 			return {
 				action: dec.action() ?? "",
 				utility: utilityAvailable ? num(dec.utility(), 4) : "—",
 				uncertainty: num(readAlternative(dec, "economic:outcome_uncertainty"), 4),
 				visits: num(readAlternative(dec, "economic:visits"), 0),
 				causalSupport: num(readAlternative(dec, "causal:effective_support"), 4),
-				cause: dec.reason() ?? "",
+				cause: dec.cause() ?? "",
 				reason: dec.reason() ?? "",
 				at: dec.at()
 					? new Date(Number(dec.at())).toISOString().slice(11, 19)
@@ -160,65 +195,62 @@ const selectDecision = (state: ReturnType<typeof strategyStore.get>, symbol: str
 				proposedNotional: fmt(dec.proposedNotional()),
 				proposedQuantity: fmt(dec.proposedQuantity()),
 			};
-		}
-	}
+		},
+	);
 
-	return null;
-};
+const selectCausal = (
+	state: ReturnType<typeof causalStore.get>,
+	symbol: string,
+) =>
+	scanLatest(
+		state.toArray(),
+		(frame) => frame.rowsLength(),
+		(frame, index) => frame.rows(index, causalObj),
+		(row) => row.symbol() === symbol,
+		(row) => ({
+			association: num(row.association(), 4),
+			confidence: num(row.confidence(), 4),
+			strength: num(row.strength(), 4),
+		}),
+	);
 
-const selectCausal = (state: ReturnType<typeof causalStore.get>, symbol: string) => {
-	const frames = state.toArray();
-
-	for (let f = frames.length - 1; f >= 0; f--) {
-		const frame = frames[f];
-
-		for (let i = 0; i < frame.rowsLength(); i++) {
-			const row = frame.rows(i, causalObj);
-			if (!row || row.symbol() !== symbol) continue;
-
-			return {
-				association: num(row.association(), 4),
-				confidence: num(row.confidence(), 4),
-				strength: num(row.strength(), 4),
-			};
-		}
-	}
-
-	return null;
-};
-
-const selectCognition = (state: ReturnType<typeof cognitionStore.get>, symbol: string) => {
-	const frames = state.toArray();
-
-	for (let f = frames.length - 1; f >= 0; f--) {
-		const frame = frames[f];
-
-		for (let i = 0; i < frame.rowsLength(); i++) {
-			const row = frame.rows(i, cogObj);
-			if (!row || row.symbol() !== symbol) continue;
-
-			return {
-				winner: row.winner() ?? "",
-				contrast: num(row.contrast(), 3),
-				entropy: num(row.entropyBits(), 3),
-				paths: String(row.lookaheadPaths()),
-			};
-		}
-	}
-
-	return null;
-};
+const selectCognition = (
+	state: ReturnType<typeof cognitionStore.get>,
+	symbol: string,
+) =>
+	scanLatest(
+		state.toArray(),
+		(frame) => frame.rowsLength(),
+		(frame, index) => frame.rows(index, cogObj),
+		(row) => row.symbol() === symbol,
+		(row) => ({
+			winner: row.winner() ?? "",
+			contrast: num(row.contrast(), 3),
+			entropy: num(row.entropyBits(), 3),
+			paths: String(row.lookaheadPaths()),
+		}),
+	);
 
 export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
-	const position = useSelector(positionStore, (state) =>
-		selectPosition(state, symbol),
+	const position = useSelector(
+		positionStore,
+		(state) => selectPosition(state, symbol),
+		{ compare: shallow },
 	);
-	const decision = useSelector(strategyStore, (state) =>
-		selectDecision(state, symbol),
+	const decision = useSelector(
+		strategyStore,
+		(state) => selectDecision(state, symbol),
+		{ compare: shallow },
 	);
-	const causal = useSelector(causalStore, (state) => selectCausal(state, symbol));
-	const cognition = useSelector(cognitionStore, (state) =>
-		selectCognition(state, symbol),
+	const causal = useSelector(
+		causalStore,
+		(state) => selectCausal(state, symbol),
+		{ compare: shallow },
+	);
+	const cognition = useSelector(
+		cognitionStore,
+		(state) => selectCognition(state, symbol),
+		{ compare: shallow },
 	);
 
 	return (
