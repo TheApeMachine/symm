@@ -124,18 +124,18 @@ Metrics preserve raw value, optional normalized value, and unit. A signal report
 
 Signals subscribe to thesis wake-ups, consume only new observations for their source, publish measurements, and stamp every symbol they evaluated. Their estimators use observed data to derive windows and scales rather than sharing fixed market horizons.
 
-| Signal | Primary inputs | Responsibility |
-|---|---|---|
-| `correlation` | ticker | Asynchronous cross-symbol co-movement and cohort divergence using Hayashi–Yoshida relationships. |
-| `cvd` | ticker, trade | Signed aggressor flow against midpoint response, separating drive from absorption. |
-| `depthflow` | trade, L3 | Touch and depth-weighted imbalance, thinning, pressure, and toxic depth. |
-| `exhaust` | trade, L3 | Side-specific decay in the microstructure that would support a position. |
-| `hawkes` | trade | Bivariate buy/sell arrival intensity, excitation, stability, and fitted process parameters. |
-| `leadlag` | ticker | Asynchronous leader/follower timing, lag, synchronization, and anchor state. |
-| `liquidity` | ticker | Executable touch depth and reported turnover relative to the current cohort. |
-| `pumpdump` | trade, L3 snapshot | Trade lift and price movement conditioned by current midpoint and spread structure. |
-| `sentiment` | ticker | Cross-sectional breadth, leadership, and peer divergence. |
-| `toxicity` | ticker, trade, L3 | Touch cancellation, retreat, replenishment, and execution asymmetry. |
+| Signal        | Primary inputs     | Responsibility                                                                                   |
+|---------------|--------------------|--------------------------------------------------------------------------------------------------|
+| `correlation` | ticker             | Asynchronous cross-symbol co-movement and cohort divergence using Hayashi–Yoshida relationships. |
+| `cvd`         | ticker, trade      | Signed aggressor flow against midpoint response, separating drive from absorption.               |
+| `depthflow`   | trade, L3          | Touch and depth-weighted imbalance, thinning, pressure, and toxic depth.                         |
+| `exhaust`     | trade, L3          | Side-specific decay in the microstructure that would support a position.                         |
+| `hawkes`      | trade              | Bivariate buy/sell arrival intensity, excitation, stability, and fitted process parameters.      |
+| `leadlag`     | ticker             | Asynchronous leader/follower timing, lag, synchronization, and anchor state.                     |
+| `liquidity`   | ticker             | Executable touch depth and reported turnover relative to the current cohort.                     |
+| `pumpdump`    | trade, L3 snapshot | Trade lift and price movement conditioned by current midpoint and spread structure.              |
+| `sentiment`   | ticker             | Cross-sectional breadth, leadership, and peer divergence.                                        |
+| `toxicity`    | ticker, trade, L3  | Touch cancellation, retreat, replenishment, and execution asymmetry.                             |
 
 Detailed mathematical notes live beside each implementation under `signal/<name>/README.md`. `signal/compute` is shared Metal-initialization infrastructure, not a market signal.
 
@@ -145,14 +145,14 @@ Detailed mathematical notes live beside each implementation under `signal/<name>
 
 [`logic.Analyzer`](logic/analyzer.go) runs six solvers concurrently. Solvers that do not yet have their prerequisites return without inventing output; the analyzer repeats while readiness advances and stops if the manifold explicitly needs a newer book or no solver can progress.
 
-| Solver | Output |
-|---|---|
-| `category` | Cross-signal hypotheses derived from metric support, opposition, and missing evidence. |
+| Solver      | Output                                                                                                     |
+|-------------|------------------------------------------------------------------------------------------------------------|
+| `category`  | Cross-signal hypotheses derived from metric support, opposition, and missing evidence.                     |
 | `resonance` | Per-symbol predictive-coding state and an online return forecast with a Student-t predictive distribution. |
-| `manifold` | A physical readout of the visible L3 order population, conditioned by Hawkes excitation. |
-| `causal` | Historical causal rows, treatment level, sample support, and estimate precision. |
-| `cognition` | DMT-backed episodic sequences and cognitive paths. |
-| `graph` | The final evidence graph, including support, contradiction, lead/lag, and temporal relationships. |
+| `manifold`  | A physical readout of the visible L3 order population, conditioned by Hawkes excitation.                   |
+| `causal`    | Historical causal rows, treatment level, sample support, and estimate precision.                           |
+| `cognition` | DMT-backed episodic sequences and cognitive paths.                                                         |
+| `graph`     | The final evidence graph, including support, contradiction, lead/lag, and temporal relationships.          |
 
 The graph stage waits for category, resonance, causal, cognition, and—when Hawkes evidence is present—manifold completion. It is the final structural product of the logic layer.
 
@@ -201,11 +201,11 @@ On boot, [`broker.Recovery`](broker/recovery.go) reconciles exchange balances, t
 
 `trading.model: real` routes account operations and orders to Kraken. Authenticated transports read:
 
-| Environment variable | Purpose |
-|---|---|
-| `KRAKEN_API_KEY` | Kraken API public key. |
-| `KRAKEN_API_SECRET` | Kraken API secret consumed by the SDK. |
-| `SYMM_PPROF` | Enables the pprof listener even when config disables it. |
+| Environment variable | Purpose                                                  |
+|----------------------|----------------------------------------------------------|
+| `KRAKEN_API_KEY`     | Kraken API public key.                                   |
+| `KRAKEN_API_SECRET`  | Kraken API secret consumed by the SDK.                   |
+| `SYMM_PPROF`         | Enables the pprof listener even when config disables it. |
 
 There is no automatic `SYMM_*` mapping for Viper configuration in the current loader. Use a YAML configuration file for other settings.
 
@@ -223,16 +223,16 @@ At each broker valuation event the regulator:
 
 Controls the regulator can adjust:
 
-| Control | Consumer |
-|---|---|
-| Entry allocation ceiling | `strategy.Allocation` |
-| Forecast horizon confidence gate | `logic/resonance` |
-| Graph admission boundary | `strategy.Planner` |
-| Net utility boundary | `strategy.Allocation`, `broker.Desk` |
-| Causal search bias | causal MCTS |
-| MCTS iterations | causal MCTS |
-| MCTS exploration constant | causal MCTS |
-| Manifold relaxation | `logic/manifold` |
+| Control                          | Consumer                             |
+|----------------------------------|--------------------------------------|
+| Entry allocation ceiling         | `strategy.Allocation`                |
+| Forecast horizon confidence gate | `logic/resonance`                    |
+| Graph admission boundary         | `strategy.Planner`                   |
+| Net utility boundary             | `strategy.Allocation`, `broker.Desk` |
+| Causal search bias               | causal MCTS                          |
+| MCTS iterations                  | causal MCTS                          |
+| MCTS exploration constant        | causal MCTS                          |
+| Manifold relaxation              | `logic/manifold`                     |
 
 While the wallet carries no exposure, the regulator publishes permissive defaults on all controls. This prevents the system from becoming more restrictive before it has produced an exposed outcome to learn from.
 
@@ -300,20 +300,20 @@ The name is the thesis: **no magic numbers**. Window sizes, adaptation rates, an
 
 The frontend is a React 19 and TanStack Start terminal. Its surfaces include:
 
-| Surface | What it shows |
-|---|---|
-| Dashboard | Live queue depths, equity curve, and system-level telemetry. |
-| Regulator | Current and historical control vectors; optimizer state. |
-| Evidence graph | The per-symbol logic graph: support, contradiction, lead/lag edges. |
-| Manifold | Live L3 physical-model visualization; particle fields and pressure maps. |
-| Signal inspector | Per-signal metric timeseries and estimator state. |
-| Decisions | Entry candidates, live positions, stoploss geometry. |
-| Trade journal | Completed round trips and realized PnL. |
-| Latent-state x-ray | Resonance hidden state and prequential skill history. |
-| Cognitive tree | DMT node activations and episodic path history. |
-| Allocation view | Current slot usage, reserve qualification, and position sizing. |
-| Backtest | Capture list, replay transport, hindsight analysis report. |
-| System diagnostics | Live pipeline topology; per-stage and per-queue health and latency. |
+| Surface            | What it shows                                                            |
+|--------------------|--------------------------------------------------------------------------|
+| Dashboard          | Live queue depths, equity curve, and system-level telemetry.             |
+| Regulator          | Current and historical control vectors; optimizer state.                 |
+| Evidence graph     | The per-symbol logic graph: support, contradiction, lead/lag edges.      |
+| Manifold           | Live L3 physical-model visualization; particle fields and pressure maps. |
+| Signal inspector   | Per-signal metric timeseries and estimator state.                        |
+| Decisions          | Entry candidates, live positions, stoploss geometry.                     |
+| Trade journal      | Completed round trips and realized PnL.                                  |
+| Latent-state x-ray | Resonance hidden state and prequential skill history.                    |
+| Cognitive tree     | DMT node activations and episodic path history.                          |
+| Allocation view    | Current slot usage, reserve qualification, and position sizing.          |
+| Backtest           | Capture list, replay transport, hindsight analysis report.               |
+| System diagnostics | Live pipeline topology; per-stage and per-queue health and latency.      |
 
 The browser sends the selected focus symbol back to the backend so detailed telemetry is gated to the active market rather than broadcast for every pair.
 
@@ -345,11 +345,11 @@ See [`cmd/cfg/config.yml`](cmd/cfg/config.yml) for the complete checked-in confi
 
 Runtime files under `system.data_path` include:
 
-| File | Purpose |
-|---|---|
-| `runtime-audit.jsonl` | Orchestration, evidence, decision, and execution audit records. |
-| `symm.sqlite` | Persisted per-symbol stoploss state and backtest capture store. |
-| authenticated nonce state | Monotonic Kraken nonce continuity across restarts. |
+| File                      | Purpose                                                         |
+|---------------------------|-----------------------------------------------------------------|
+| `runtime-audit.jsonl`     | Orchestration, evidence, decision, and execution audit records. |
+| `symm.sqlite`             | Persisted per-symbol stoploss state and backtest capture store. |
+| authenticated nonce state | Monotonic Kraken nonce continuity across restarts.              |
 
 ## Build and run
 
@@ -426,28 +426,28 @@ pnpm bench            # Vitest benchmarks
 
 ## Repository map
 
-| Path | Responsibility |
-|---|---|
-| `main.go`, `cmd/` | Cobra entrypoint, configuration loading, and system assembly. |
-| `kraken/` | Kraken wire models and normalized exchange payloads. |
-| `kraken/websocket/` | Live public/private/L3 transport, subscriptions, nonce management, and paper routing. |
-| `types/` | Thesis, measurements, readiness, evidence, forecasts, decisions, holdings, and stoploss types. |
-| `signal/` | Numerical market conditioners and their per-source estimator state. |
-| `logic/` | Category, resonance, manifold, causal, cognition, graph, and analyzer stages. |
-| `strategy/` | Forecast admission, graph evidence, portfolio MCTS, and allocation. |
-| `broker/` | Instruments, price and fee economics, wallet, desk, orders, positions, persistence, and recovery. |
-| `trader/` | Raw market ingress and completed-decision handoff. |
-| `regulator/` | Online system-identification and equity-driven control optimization. |
-| `backtest/` | Capture store, replay driver, and hindsight analysis. |
-| `telemetry/` | FlatBuffers schema and generated Go bindings for binary dashboard frames. |
-| `nomagique/` | Embedded numeric computation library (Frames, Primitives, estimators). |
-| `audit/` | JSONL recording and boot rotation. |
-| `ui/` | Dashboard WebSocket, WebRTC manifold transport, and error bridge. |
-| `frontend/` | React/TanStack terminal and WebSocket-backed stores. |
-| `tests/` | Deterministic venue, market scenarios, fixtures, execution model, and stack harness. |
-| `system/` | Runtime-tunable analysis, risk, and planner configuration. |
-| `utils/` | Small shared transport, JSON, math, path, publish, and readiness helpers. |
-| `specs/` | Design contracts, research notes, reviews, and simulator specifications. |
+| Path                | Responsibility                                                                                    |
+|---------------------|---------------------------------------------------------------------------------------------------|
+| `main.go`, `cmd/`   | Cobra entrypoint, configuration loading, and system assembly.                                     |
+| `kraken/`           | Kraken wire models and normalized exchange payloads.                                              |
+| `kraken/websocket/` | Live public/private/L3 transport, subscriptions, nonce management, and paper routing.             |
+| `types/`            | Thesis, measurements, readiness, evidence, forecasts, decisions, holdings, and stoploss types.    |
+| `signal/`           | Numerical market conditioners and their per-source estimator state.                               |
+| `logic/`            | Category, resonance, manifold, causal, cognition, graph, and analyzer stages.                     |
+| `strategy/`         | Forecast admission, graph evidence, portfolio MCTS, and allocation.                               |
+| `broker/`           | Instruments, price and fee economics, wallet, desk, orders, positions, persistence, and recovery. |
+| `trader/`           | Raw market ingress and completed-decision handoff.                                                |
+| `regulator/`        | Online system-identification and equity-driven control optimization.                              |
+| `backtest/`         | Capture store, replay driver, and hindsight analysis.                                             |
+| `telemetry/`        | FlatBuffers schema and generated Go bindings for binary dashboard frames.                         |
+| `nomagique/`        | Embedded numeric computation library (Frames, Primitives, estimators).                            |
+| `audit/`            | JSONL recording and boot rotation.                                                                |
+| `ui/`               | Dashboard WebSocket, WebRTC manifold transport, and error bridge.                                 |
+| `frontend/`         | React/TanStack terminal and WebSocket-backed stores.                                              |
+| `tests/`            | Deterministic venue, market scenarios, fixtures, execution model, and stack harness.              |
+| `system/`           | Runtime-tunable analysis, risk, and planner configuration.                                        |
+| `utils/`            | Small shared transport, JSON, math, path, publish, and readiness helpers.                         |
+| `specs/`            | Design contracts, research notes, reviews, and simulator specifications.                          |
 
 ### Adding or changing a signal
 

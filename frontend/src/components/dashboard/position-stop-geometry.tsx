@@ -1,37 +1,27 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { positionStore } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
+import type { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { Position } from "#/providers/telemetry/telemetry/position";
 import { Stoploss } from "#/providers/telemetry/telemetry/stoploss";
 
-const fmt = (value: unknown, digits: number): string =>
-	typeof value === "number"
-		? value.toFixed(digits)
-		: typeof value === "string" && value !== "" && Number.isFinite(Number(value))
-			? Number(value).toFixed(digits)
-			: String(value ?? "—");
+const fmt = (value: unknown, digits: number): string => {
+	if (typeof value === "number") {
+		return value.toFixed(digits);
+	}
 
-type QueryEntry = {
-	floor: HTMLElement | null;
-	peak: HTMLElement | null;
-	profit: HTMLElement | null;
-	arm: HTMLElement | null;
-	lock: HTMLElement | null;
-	surge: HTMLElement | null;
-	momentum: HTMLElement | null;
-	lastmove: HTMLElement | null;
-	trigger: HTMLElement | null;
-	locked: HTMLElement | null;
-	threshold: HTMLElement | null;
-	stopstatus: HTMLElement | null;
+	if (typeof value === "string" && value !== "" && Number.isFinite(Number(value))) {
+		return Number(value).toFixed(digits);
+	}
+
+	return String(value ?? "—");
 };
 
-const queryCache: Record<string, QueryEntry> = {};
-const posObj = new Position();
-const holdingObj = new Holding();
-const stoplossObj = new Stoploss();
+const positionInstance = new Position();
+const holdingInstance = new Holding();
+const stoplossInstance = new Stoploss();
 
 /*
 Floor and Peak bound the live stop interval, mapped onto the card's own domain.
@@ -39,63 +29,128 @@ Floor and Peak bound the live stop interval, mapped onto the card's own domain.
 export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
 	const root = useRef<HTMLDivElement>(null);
 
-	positionStore.subscribe((state) => {
-		if (!root.current) return;
-		const last = state.getLast();
-		if (!last) return;
+	useEffect(() => {
+		const updateElements = (lastPositionsFrame?: PositionsFrame | null) => {
+			if (!root.current || !lastPositionsFrame) return;
 
-		let targetHolding: Holding | null = null;
+			let targetHolding: Holding | null = null;
 
-		for (let i = 0; i < last.rowsLength(); i++) {
-			const pos = last.rows(i, posObj);
-			if (!pos) continue;
-			const h = pos.holding(holdingObj);
-			if (h && h.symbol() === symbol) {
-				targetHolding = h;
-				break;
+			for (let index = 0; index < lastPositionsFrame.rowsLength(); index++) {
+				const currentPosition = lastPositionsFrame.rows(index, positionInstance);
+				if (!currentPosition) continue;
+
+				const currentHolding = currentPosition.holding(holdingInstance);
+				if (currentHolding && currentHolding.symbol() === symbol) {
+					targetHolding = currentHolding;
+					break;
+				}
 			}
-		}
 
-		if (!targetHolding) return;
+			if (!targetHolding) return;
 
-		const stoploss = targetHolding.stoploss(stoplossObj);
+			const currentStoploss = targetHolding.stoploss(stoplossInstance);
 
-		let element = queryCache[symbol];
-		if (!element) {
-			element = {
-				floor: root.current.querySelector<HTMLElement>('[data-f="floor"]'),
-				peak: root.current.querySelector<HTMLElement>('[data-f="peak"]'),
-				profit: root.current.querySelector<HTMLElement>('[data-f="profit"]'),
-				arm: root.current.querySelector<HTMLElement>('[data-f="arm"]'),
-				lock: root.current.querySelector<HTMLElement>('[data-f="lock"]'),
-				surge: root.current.querySelector<HTMLElement>('[data-f="surge"]'),
-				momentum: root.current.querySelector<HTMLElement>('[data-f="momentum"]'),
-				lastmove: root.current.querySelector<HTMLElement>('[data-f="lastmove"]'),
-				trigger: root.current.querySelector<HTMLElement>('[data-f="trigger"]'),
-				locked: root.current.querySelector<HTMLElement>('[data-f="locked"]'),
-				threshold: root.current.querySelector<HTMLElement>('[data-f="threshold"]'),
-				stopstatus: root.current.querySelector<HTMLElement>('[data-f="stopstatus"]'),
+			const floorText = currentStoploss?.floor();
+			const peakText = currentStoploss?.peak();
+			const markText = currentStoploss?.mark() ?? targetHolding.mark();
+			const profitText = currentStoploss?.profitLine();
+			const armText = currentStoploss?.armAt();
+			const lockText = currentStoploss?.lockFloor();
+
+			const floorValue = floorText ? Number(floorText) : Number.NaN;
+			const peakValue = peakText ? Number(peakText) : Number.NaN;
+			const markValue = markText ? Number(markText) : Number.NaN;
+
+			const setText = (field: string, textContent: string) => {
+				const node = root.current?.querySelector<HTMLElement>(`[data-f="${field}"]`);
+				if (node) node.textContent = textContent;
 			};
-			queryCache[symbol] = element;
-		}
 
-		if (element.floor) element.floor.textContent = fmt(stoploss?.floor(), 6);
-		if (element.peak) element.peak.textContent = fmt(stoploss?.peak(), 6);
-		if (element.profit) element.profit.textContent = fmt(stoploss?.profitLine(), 6);
-		if (element.arm) element.arm.textContent = fmt(stoploss?.armAt(), 6);
-		if (element.lock) element.lock.textContent = fmt(stoploss?.lockFloor(), 6);
-		if (element.surge) element.surge.textContent = String(stoploss?.surgeArmed() ?? false);
-		if (element.momentum) element.momentum.textContent = fmt(stoploss?.momentumFloor(), 6);
-		if (element.lastmove) element.lastmove.textContent = fmt(stoploss?.lastMove(), 6);
-		if (element.trigger) element.trigger.textContent = stoploss?.triggerReason() ?? "—";
-		if (element.locked) element.locked.textContent = String(stoploss?.locked() ?? false);
-		if (element.threshold) element.threshold.textContent = fmt(targetHolding.profitThreshold(), 6);
-		if (element.stopstatus) element.stopstatus.textContent = stoploss?.status() ?? "—";
-	});
+			const setMarker = (markerField: string, priceValue: number, minFloor: number, maxPeak: number) => {
+				const markerNode = root.current?.querySelector<HTMLElement>(`[data-f="${markerField}"]`);
+				if (!markerNode) return;
+
+				if (Number.isFinite(priceValue) && Number.isFinite(minFloor) && Number.isFinite(maxPeak) && maxPeak > minFloor) {
+					const positionPercent = Math.min(Math.max(((priceValue - minFloor) / (maxPeak - minFloor)) * 100, 0), 100);
+					markerNode.style.left = `${positionPercent}%`;
+					markerNode.style.display = "block";
+					return;
+				}
+
+				markerNode.style.display = "none";
+			};
+
+			setText("floor", fmt(floorText, 6));
+			setText("peak", fmt(peakText, 6));
+			setText("profit", fmt(profitText, 6));
+			setText("arm", fmt(armText, 6));
+			setText("lock", fmt(lockText, 6));
+			setText("surge", String(currentStoploss?.surgeArmed() ?? false));
+			setText("momentum", fmt(currentStoploss?.momentumFloor(), 6));
+			setText("lastmove", fmt(currentStoploss?.lastMove(), 6));
+			setText("trigger", currentStoploss?.triggerReason() ?? "—");
+			setText("locked", String(currentStoploss?.locked() ?? false));
+			setText("threshold", fmt(targetHolding.profitThreshold(), 6));
+			setText("stopstatus", currentStoploss?.status() ?? "—");
+
+			const indicatorNode = root.current.querySelector<HTMLElement>('[data-f="indicator"]');
+			if (indicatorNode) {
+				if (Number.isFinite(floorValue) && Number.isFinite(peakValue) && peakValue > floorValue && Number.isFinite(markValue)) {
+					const markPercent = Math.min(Math.max(((markValue - floorValue) / (peakValue - floorValue)) * 100, 0), 100);
+					indicatorNode.style.left = `${markPercent}%`;
+					indicatorNode.style.display = "block";
+				} else if (Number.isFinite(floorValue) && Number.isFinite(markValue)) {
+					indicatorNode.style.left = markValue >= floorValue ? "100%" : "0%";
+					indicatorNode.style.display = "block";
+				}
+			}
+
+			if (Number.isFinite(floorValue) && Number.isFinite(peakValue) && peakValue > floorValue) {
+				if (profitText) setMarker("profit-marker", Number(profitText), floorValue, peakValue);
+				if (armText) setMarker("arm-marker", Number(armText), floorValue, peakValue);
+				if (lockText) setMarker("lock-marker", Number(lockText), floorValue, peakValue);
+			}
+		};
+
+		updateElements(positionStore.state.getLast());
+		const subscription = positionStore.subscribe((state) => {
+			updateElements(state.getLast());
+		});
+
+		return () => {
+			subscription?.unsubscribe();
+		};
+	}, [symbol]);
 
 	return (
 		<div ref={root}>
-			<div className="relative mt-2 h-1 overflow-visible rounded-full bg-[linear-gradient(90deg,color-mix(in_srgb,var(--down)_12%,transparent),color-mix(in_srgb,var(--f4)_18%,transparent)_42%,color-mix(in_srgb,var(--up)_12%,transparent))]" />
+			<div className="relative mt-2 h-1.5 overflow-visible rounded-full bg-[linear-gradient(90deg,color-mix(in_srgb,var(--down)_25%,transparent),color-mix(in_srgb,var(--warn)_25%,transparent)_40%,color-mix(in_srgb,var(--up)_25%,transparent))]">
+				<div
+					data-f="profit-marker"
+					className="absolute -top-0.5 h-2.5 w-0.5 -translate-x-1/2 rounded-xs bg-(--info) opacity-70"
+					style={{ left: "0%", display: "none" }}
+					title="Profit line"
+				/>
+				<div
+					data-f="arm-marker"
+					className="absolute -top-0.5 h-2.5 w-0.5 -translate-x-1/2 rounded-xs bg-(--warn) opacity-70"
+					style={{ left: "0%", display: "none" }}
+					title="Arm threshold"
+				/>
+				<div
+					data-f="lock-marker"
+					className="absolute -top-0.5 h-2.5 w-0.5 -translate-x-1/2 rounded-xs bg-(--up) opacity-70"
+					style={{ left: "0%", display: "none" }}
+					title="Lock floor"
+				/>
+				<div
+					data-f="indicator"
+					data-stoploss-indicator
+					className="absolute -top-1 h-3.5 w-1.5 -translate-x-1/2 rounded-full bg-(--f1) shadow-[0_0_6px_var(--acc)] ring-1 ring-(--acc) transition-[left] duration-100"
+					style={{ left: "50%" }}
+					title="Live mark stoploss indicator"
+				/>
+			</div>
 
 			<Flex.Row className="mt-1.25 items-center justify-between gap-2 text-[8.5px]">
 				<Typography.Span className="text-(--acc)">

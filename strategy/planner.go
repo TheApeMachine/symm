@@ -476,11 +476,16 @@ func (planner *Planner) decisionFromCausalState(
 	if state == nil {
 		decision := types.NewDecision(types.ActionNothing, "")
 		decision.Reason = "planner: no causal state for symbol"
+		decision.ValuationAttempted = false
+		decision.ValuationAvailable = false
+		decision.UtilityAvailable = false
 		return decision
 	}
 
 	decision := types.NewDecision(types.ActionNothing, state.Symbol)
 	decision.At = state.At
+	decision.CausalIdentification = state.Identification.String()
+
 	alternatives := make(map[string]float64)
 	decision.Alternatives = alternatives
 
@@ -488,15 +493,39 @@ func (planner *Planner) decisionFromCausalState(
 	alternatives["causal:schema_version"] = float64(state.SchemaVersion)
 	alternatives["causal:identification"] = float64(state.Identification)
 
+	if state.BlockingCoordinate != nil {
+		decision.CausalBlockingCoordinate = state.BlockingCoordinate.ID()
+
+		if state.BlockingTransition != nil {
+			alternatives["causal:blocking_rank"] = float64(state.BlockingTransition.Rank)
+			alternatives["causal:blocking_observations"] = float64(state.BlockingTransition.AlignedCount)
+			alternatives["causal:blocking_parameters"] = float64(state.BlockingTransition.ParameterCount)
+		}
+	}
+
 	if state.Identification != causal.IdentificationIdentified ||
 		state.Transition == nil {
-		decision.Reason = "planner: causal evaluation unavailable: " + state.Identification.String()
+		decision.ValuationAttempted = true
+		decision.ValuationAvailable = false
+		decision.ValuationStatus = state.Identification.String()
+		decision.UtilityAvailable = false
+
+		if state.BlockingCoordinate != nil {
+			decision.Reason = "planner: causal evaluation unavailable: " + state.Identification.String() + " on " + state.BlockingCoordinate.ID()
+		} else {
+			decision.Reason = "planner: causal evaluation unavailable: " + state.Identification.String()
+		}
+
 		return decision
 	}
 
 	position, _ := planner.heldPosition(state.Symbol)
 
 	if !inputs.available || !(inputs.mark > 0) {
+		decision.ValuationAttempted = false
+		decision.ValuationAvailable = false
+		decision.ValuationStatus = "missing_execution_market"
+		decision.UtilityAvailable = false
 		decision.Reason = "planner: broker market inputs unavailable (cash, mark, or fee)"
 		return decision
 	}
@@ -517,6 +546,10 @@ func (planner *Planner) decisionFromCausalState(
 	unitQuantity := (cash * config.Planner.MaxAllocationFraction) / mark
 
 	if unitQuantity <= 0 {
+		decision.ValuationAttempted = false
+		decision.ValuationAvailable = false
+		decision.ValuationStatus = "no_allocatable_capital"
+		decision.UtilityAvailable = false
 		decision.Reason = "planner: no allocatable capital for economic evaluation"
 		return decision
 	}
@@ -560,8 +593,12 @@ func (planner *Planner) decisionFromCausalState(
 	}
 
 	decision.Cause = "causal-mcts"
+	decision.ValuationAttempted = true
+	decision.ValuationStatus = result.IdentificationStatus.String()
 
 	if result.DecisionUnavailable {
+		decision.ValuationAvailable = false
+		decision.UtilityAvailable = false
 		decision.Reason = "planner: no feasible action has an estimable economic objective (" +
 			result.IdentificationStatus.String() + ")"
 		recordEconomic(decision, result, state)
@@ -569,6 +606,9 @@ func (planner *Planner) decisionFromCausalState(
 		return decision
 	}
 
+	decision.ValuationAvailable = true
+	decision.UtilityAvailable = true
+	decision.Utility = result.ExpectedEconomicOutcome
 	recordEconomic(decision, result, state)
 
 	switch result.SelectedAction {

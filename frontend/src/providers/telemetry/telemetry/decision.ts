@@ -61,428 +61,471 @@ utility():number {
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-graphScore():number {
+utilityAvailable():boolean {
   const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
-thesisScore():number {
+valuationAttempted():boolean {
   const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
-thesisConfidence():number {
+valuationAvailable():boolean {
   const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
-thesisSupport():number {
+valuationStatus():string|null
+valuationStatus(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+valuationStatus(optionalEncoding?:any):string|Uint8Array|null {
   const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
-thesisContradiction():number {
+causalIdentification():string|null
+causalIdentification(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+causalIdentification(optionalEncoding?:any):string|Uint8Array|null {
   const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
-thesisConditions():number {
+causalBlockingCoordinate():string|null
+causalBlockingCoordinate(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+causalBlockingCoordinate(optionalEncoding?:any):string|Uint8Array|null {
   const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
-direction():number {
+graphScore():number {
   const offset = this.bb!.__offset(this.bb_pos, 26);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-perspectiveReturn():number {
+thesisScore():number {
   const offset = this.bb!.__offset(this.bb_pos, 28);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-perspectiveConfidence():number {
+thesisConfidence():number {
   const offset = this.bb!.__offset(this.bb_pos, 30);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-admissionGraphThreshold():number {
+thesisSupport():number {
   const offset = this.bb!.__offset(this.bb_pos, 32);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-admissionUtilityThreshold():number {
+thesisContradiction():number {
   const offset = this.bb!.__offset(this.bb_pos, 34);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-allocationHaircut():number {
+thesisConditions():number {
   const offset = this.bb!.__offset(this.bb_pos, 36);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+direction():number {
+  const offset = this.bb!.__offset(this.bb_pos, 38);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+perspectiveReturn():number {
+  const offset = this.bb!.__offset(this.bb_pos, 40);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+perspectiveConfidence():number {
+  const offset = this.bb!.__offset(this.bb_pos, 42);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+admissionGraphThreshold():number {
+  const offset = this.bb!.__offset(this.bb_pos, 44);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+admissionUtilityThreshold():number {
+  const offset = this.bb!.__offset(this.bb_pos, 46);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+allocationHaircut():number {
+  const offset = this.bb!.__offset(this.bb_pos, 48);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 allocationHaircutReason():string|null
 allocationHaircutReason(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 allocationHaircutReason(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
+  const offset = this.bb!.__offset(this.bb_pos, 50);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 alternatives(index: number, obj?:NamedNumber):NamedNumber|null {
-  const offset = this.bb!.__offset(this.bb_pos, 40);
+  const offset = this.bb!.__offset(this.bb_pos, 52);
   return offset ? (obj || new NamedNumber()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 alternativesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 40);
+  const offset = this.bb!.__offset(this.bb_pos, 52);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 allocationClass():string|null
 allocationClass(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 allocationClass(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 42);
+  const offset = this.bb!.__offset(this.bb_pos, 54);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 opportunity():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 44);
+  const offset = this.bb!.__offset(this.bb_pos, 56);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
 opportunityType():string|null
 opportunityType(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 opportunityType(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 46);
+  const offset = this.bb!.__offset(this.bb_pos, 58);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+opportunityPhase():string|null
+opportunityPhase(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+opportunityPhase(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 60);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 reserveEligible():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
+  const offset = this.bb!.__offset(this.bb_pos, 62);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
 reserveReason():string|null
 reserveReason(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 reserveReason(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 50);
+  const offset = this.bb!.__offset(this.bb_pos, 64);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 predictiveReady():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 52);
+  const offset = this.bb!.__offset(this.bb_pos, 66);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
 predictiveStatus():string|null
 predictiveStatus(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 predictiveStatus(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 54);
+  const offset = this.bb!.__offset(this.bb_pos, 68);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 taskSkill():number {
-  const offset = this.bb!.__offset(this.bb_pos, 56);
+  const offset = this.bb!.__offset(this.bb_pos, 70);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 taskSkillReady():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 58);
+  const offset = this.bb!.__offset(this.bb_pos, 72);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
 proposedNotional():string|null
 proposedNotional(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 proposedNotional(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 60);
+  const offset = this.bb!.__offset(this.bb_pos, 74);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 proposedQuantity():string|null
 proposedQuantity(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 proposedQuantity(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 62);
+  const offset = this.bb!.__offset(this.bb_pos, 76);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 referencePrice():string|null
 referencePrice(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 referencePrice(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 64);
+  const offset = this.bb!.__offset(this.bb_pos, 78);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 validThroughEpoch():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 66);
+  const offset = this.bb!.__offset(this.bb_pos, 80);
   return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
 }
 
 arbitrationRound():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 68);
+  const offset = this.bb!.__offset(this.bb_pos, 82);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
 forecastSource():string|null
 forecastSource(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 forecastSource(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 70);
+  const offset = this.bb!.__offset(this.bb_pos, 84);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 forecastModel():string|null
 forecastModel(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 forecastModel(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 72);
+  const offset = this.bb!.__offset(this.bb_pos, 86);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 forecastEpoch():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 74);
+  const offset = this.bb!.__offset(this.bb_pos, 88);
   return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
 }
 
 forecastHorizon():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 76);
+  const offset = this.bb!.__offset(this.bb_pos, 90);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
 forwardCurve(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 78);
+  const offset = this.bb!.__offset(this.bb_pos, 92);
   return offset ? this.bb!.readFloat64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : 0;
 }
 
 forwardCurveLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 78);
+  const offset = this.bb!.__offset(this.bb_pos, 92);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 forwardCurveArray():Float64Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 78);
+  const offset = this.bb!.__offset(this.bb_pos, 92);
   return offset ? new Float64Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
 calibrationCount():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 80);
+  const offset = this.bb!.__offset(this.bb_pos, 94);
   return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
 }
 
 expectedReturn():string|null
 expectedReturn(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 expectedReturn(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 82);
+  const offset = this.bb!.__offset(this.bb_pos, 96);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 expectedFees():string|null
 expectedFees(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 expectedFees(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 84);
+  const offset = this.bb!.__offset(this.bb_pos, 98);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 expectedSpread():string|null
 expectedSpread(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 expectedSpread(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 86);
+  const offset = this.bb!.__offset(this.bb_pos, 100);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 expectedImpact():string|null
 expectedImpact(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 expectedImpact(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 88);
+  const offset = this.bb!.__offset(this.bb_pos, 102);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 adverseSelection():string|null
 adverseSelection(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 adverseSelection(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 90);
+  const offset = this.bb!.__offset(this.bb_pos, 104);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 uncertainty():number {
-  const offset = this.bb!.__offset(this.bb_pos, 92);
+  const offset = this.bb!.__offset(this.bb_pos, 106);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 confidence():number {
-  const offset = this.bb!.__offset(this.bb_pos, 94);
+  const offset = this.bb!.__offset(this.bb_pos, 108);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 causalPrecision():number {
-  const offset = this.bb!.__offset(this.bb_pos, 96);
+  const offset = this.bb!.__offset(this.bb_pos, 110);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 opportunityMargin():number {
-  const offset = this.bb!.__offset(this.bb_pos, 98);
+  const offset = this.bb!.__offset(this.bb_pos, 112);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 cognitiveLead():number {
-  const offset = this.bb!.__offset(this.bb_pos, 100);
+  const offset = this.bb!.__offset(this.bb_pos, 114);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 basinConfidence():number {
-  const offset = this.bb!.__offset(this.bb_pos, 102);
+  const offset = this.bb!.__offset(this.bb_pos, 116);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 availableCapital():string|null
 availableCapital(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 availableCapital(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 104);
+  const offset = this.bb!.__offset(this.bb_pos, 118);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 openPositions():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 106);
+  const offset = this.bb!.__offset(this.bb_pos, 120);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
 slotCapacity():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 108);
+  const offset = this.bb!.__offset(this.bb_pos, 122);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
 cause():string|null
 cause(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 cause(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 110);
+  const offset = this.bb!.__offset(this.bb_pos, 124);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 reason():string|null
 reason(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 reason(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 112);
+  const offset = this.bb!.__offset(this.bb_pos, 126);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 displaces():string|null
 displaces(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 displaces(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 114);
+  const offset = this.bb!.__offset(this.bb_pos, 128);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 displacedQuantity():string|null
 displacedQuantity(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 displacedQuantity(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 116);
+  const offset = this.bb!.__offset(this.bb_pos, 130);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 displacedPrice():string|null
 displacedPrice(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 displacedPrice(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 118);
+  const offset = this.bb!.__offset(this.bb_pos, 132);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 reservationId():string|null
 reservationId(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 reservationId(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 120);
+  const offset = this.bb!.__offset(this.bb_pos, 134);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 positionStatus():string|null
 positionStatus(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 positionStatus(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 122);
+  const offset = this.bb!.__offset(this.bb_pos, 136);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 sellableQty():string|null
 sellableQty(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 sellableQty(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 124);
+  const offset = this.bb!.__offset(this.bb_pos, 138);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 entryAt():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 126);
+  const offset = this.bb!.__offset(this.bb_pos, 140);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
 exitAt():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 128);
+  const offset = this.bb!.__offset(this.bb_pos, 142);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
 entryPrice():string|null
 entryPrice(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 entryPrice(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 130);
+  const offset = this.bb!.__offset(this.bb_pos, 144);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 entryFee():string|null
 entryFee(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 entryFee(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 132);
+  const offset = this.bb!.__offset(this.bb_pos, 146);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 exitPrice():string|null
 exitPrice(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 exitPrice(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 134);
+  const offset = this.bb!.__offset(this.bb_pos, 148);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 exitFee():string|null
 exitFee(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 exitFee(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 136);
+  const offset = this.bb!.__offset(this.bb_pos, 150);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 pnl():string|null
 pnl(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 pnl(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 138);
+  const offset = this.bb!.__offset(this.bb_pos, 152);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 returnPct():number {
-  const offset = this.bb!.__offset(this.bb_pos, 140);
+  const offset = this.bb!.__offset(this.bb_pos, 154);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 mark():string|null
 mark(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 mark(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 142);
+  const offset = this.bb!.__offset(this.bb_pos, 156);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 entryCost(obj?:EntryCost):EntryCost|null {
-  const offset = this.bb!.__offset(this.bb_pos, 144);
+  const offset = this.bb!.__offset(this.bb_pos, 158);
   return offset ? (obj || new EntryCost()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 stoploss(obj?:Stoploss):Stoploss|null {
-  const offset = this.bb!.__offset(this.bb_pos, 146);
+  const offset = this.bb!.__offset(this.bb_pos, 160);
   return offset ? (obj || new Stoploss()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 risk(obj?:RiskPlan):RiskPlan|null {
-  const offset = this.bb!.__offset(this.bb_pos, 148);
+  const offset = this.bb!.__offset(this.bb_pos, 162);
   return offset ? (obj || new RiskPlan()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 trace(obj?:DecisionTrace):DecisionTrace|null {
-  const offset = this.bb!.__offset(this.bb_pos, 150);
+  const offset = this.bb!.__offset(this.bb_pos, 164);
   return offset ? (obj || new DecisionTrace()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 static startDecision(builder:flatbuffers.Builder) {
-  builder.startObject(74);
+  builder.startObject(81);
 }
 
 static addId(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset) {
@@ -505,60 +548,84 @@ static addUtility(builder:flatbuffers.Builder, utility:number) {
   builder.addFieldFloat64(4, utility, 0.0);
 }
 
+static addUtilityAvailable(builder:flatbuffers.Builder, utilityAvailable:boolean) {
+  builder.addFieldInt8(5, +utilityAvailable, +false);
+}
+
+static addValuationAttempted(builder:flatbuffers.Builder, valuationAttempted:boolean) {
+  builder.addFieldInt8(6, +valuationAttempted, +false);
+}
+
+static addValuationAvailable(builder:flatbuffers.Builder, valuationAvailable:boolean) {
+  builder.addFieldInt8(7, +valuationAvailable, +false);
+}
+
+static addValuationStatus(builder:flatbuffers.Builder, valuationStatusOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(8, valuationStatusOffset, 0);
+}
+
+static addCausalIdentification(builder:flatbuffers.Builder, causalIdentificationOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(9, causalIdentificationOffset, 0);
+}
+
+static addCausalBlockingCoordinate(builder:flatbuffers.Builder, causalBlockingCoordinateOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(10, causalBlockingCoordinateOffset, 0);
+}
+
 static addGraphScore(builder:flatbuffers.Builder, graphScore:number) {
-  builder.addFieldFloat64(5, graphScore, 0.0);
+  builder.addFieldFloat64(11, graphScore, 0.0);
 }
 
 static addThesisScore(builder:flatbuffers.Builder, thesisScore:number) {
-  builder.addFieldFloat64(6, thesisScore, 0.0);
+  builder.addFieldFloat64(12, thesisScore, 0.0);
 }
 
 static addThesisConfidence(builder:flatbuffers.Builder, thesisConfidence:number) {
-  builder.addFieldFloat64(7, thesisConfidence, 0.0);
+  builder.addFieldFloat64(13, thesisConfidence, 0.0);
 }
 
 static addThesisSupport(builder:flatbuffers.Builder, thesisSupport:number) {
-  builder.addFieldFloat64(8, thesisSupport, 0.0);
+  builder.addFieldFloat64(14, thesisSupport, 0.0);
 }
 
 static addThesisContradiction(builder:flatbuffers.Builder, thesisContradiction:number) {
-  builder.addFieldFloat64(9, thesisContradiction, 0.0);
+  builder.addFieldFloat64(15, thesisContradiction, 0.0);
 }
 
 static addThesisConditions(builder:flatbuffers.Builder, thesisConditions:number) {
-  builder.addFieldFloat64(10, thesisConditions, 0.0);
+  builder.addFieldFloat64(16, thesisConditions, 0.0);
 }
 
 static addDirection(builder:flatbuffers.Builder, direction:number) {
-  builder.addFieldFloat64(11, direction, 0.0);
+  builder.addFieldFloat64(17, direction, 0.0);
 }
 
 static addPerspectiveReturn(builder:flatbuffers.Builder, perspectiveReturn:number) {
-  builder.addFieldFloat64(12, perspectiveReturn, 0.0);
+  builder.addFieldFloat64(18, perspectiveReturn, 0.0);
 }
 
 static addPerspectiveConfidence(builder:flatbuffers.Builder, perspectiveConfidence:number) {
-  builder.addFieldFloat64(13, perspectiveConfidence, 0.0);
+  builder.addFieldFloat64(19, perspectiveConfidence, 0.0);
 }
 
 static addAdmissionGraphThreshold(builder:flatbuffers.Builder, admissionGraphThreshold:number) {
-  builder.addFieldFloat64(14, admissionGraphThreshold, 0.0);
+  builder.addFieldFloat64(20, admissionGraphThreshold, 0.0);
 }
 
 static addAdmissionUtilityThreshold(builder:flatbuffers.Builder, admissionUtilityThreshold:number) {
-  builder.addFieldFloat64(15, admissionUtilityThreshold, 0.0);
+  builder.addFieldFloat64(21, admissionUtilityThreshold, 0.0);
 }
 
 static addAllocationHaircut(builder:flatbuffers.Builder, allocationHaircut:number) {
-  builder.addFieldFloat64(16, allocationHaircut, 0.0);
+  builder.addFieldFloat64(22, allocationHaircut, 0.0);
 }
 
 static addAllocationHaircutReason(builder:flatbuffers.Builder, allocationHaircutReasonOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(17, allocationHaircutReasonOffset, 0);
+  builder.addFieldOffset(23, allocationHaircutReasonOffset, 0);
 }
 
 static addAlternatives(builder:flatbuffers.Builder, alternativesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(18, alternativesOffset, 0);
+  builder.addFieldOffset(24, alternativesOffset, 0);
 }
 
 static createAlternativesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -574,79 +641,83 @@ static startAlternativesVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addAllocationClass(builder:flatbuffers.Builder, allocationClassOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(19, allocationClassOffset, 0);
+  builder.addFieldOffset(25, allocationClassOffset, 0);
 }
 
 static addOpportunity(builder:flatbuffers.Builder, opportunity:boolean) {
-  builder.addFieldInt8(20, +opportunity, +false);
+  builder.addFieldInt8(26, +opportunity, +false);
 }
 
 static addOpportunityType(builder:flatbuffers.Builder, opportunityTypeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(21, opportunityTypeOffset, 0);
+  builder.addFieldOffset(27, opportunityTypeOffset, 0);
+}
+
+static addOpportunityPhase(builder:flatbuffers.Builder, opportunityPhaseOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(28, opportunityPhaseOffset, 0);
 }
 
 static addReserveEligible(builder:flatbuffers.Builder, reserveEligible:boolean) {
-  builder.addFieldInt8(22, +reserveEligible, +false);
+  builder.addFieldInt8(29, +reserveEligible, +false);
 }
 
 static addReserveReason(builder:flatbuffers.Builder, reserveReasonOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(23, reserveReasonOffset, 0);
+  builder.addFieldOffset(30, reserveReasonOffset, 0);
 }
 
 static addPredictiveReady(builder:flatbuffers.Builder, predictiveReady:boolean) {
-  builder.addFieldInt8(24, +predictiveReady, +false);
+  builder.addFieldInt8(31, +predictiveReady, +false);
 }
 
 static addPredictiveStatus(builder:flatbuffers.Builder, predictiveStatusOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(25, predictiveStatusOffset, 0);
+  builder.addFieldOffset(32, predictiveStatusOffset, 0);
 }
 
 static addTaskSkill(builder:flatbuffers.Builder, taskSkill:number) {
-  builder.addFieldFloat64(26, taskSkill, 0.0);
+  builder.addFieldFloat64(33, taskSkill, 0.0);
 }
 
 static addTaskSkillReady(builder:flatbuffers.Builder, taskSkillReady:boolean) {
-  builder.addFieldInt8(27, +taskSkillReady, +false);
+  builder.addFieldInt8(34, +taskSkillReady, +false);
 }
 
 static addProposedNotional(builder:flatbuffers.Builder, proposedNotionalOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(28, proposedNotionalOffset, 0);
+  builder.addFieldOffset(35, proposedNotionalOffset, 0);
 }
 
 static addProposedQuantity(builder:flatbuffers.Builder, proposedQuantityOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(29, proposedQuantityOffset, 0);
+  builder.addFieldOffset(36, proposedQuantityOffset, 0);
 }
 
 static addReferencePrice(builder:flatbuffers.Builder, referencePriceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(30, referencePriceOffset, 0);
+  builder.addFieldOffset(37, referencePriceOffset, 0);
 }
 
 static addValidThroughEpoch(builder:flatbuffers.Builder, validThroughEpoch:bigint) {
-  builder.addFieldInt64(31, validThroughEpoch, BigInt('0'));
+  builder.addFieldInt64(38, validThroughEpoch, BigInt('0'));
 }
 
 static addArbitrationRound(builder:flatbuffers.Builder, arbitrationRound:bigint) {
-  builder.addFieldInt64(32, arbitrationRound, BigInt('0'));
+  builder.addFieldInt64(39, arbitrationRound, BigInt('0'));
 }
 
 static addForecastSource(builder:flatbuffers.Builder, forecastSourceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(33, forecastSourceOffset, 0);
+  builder.addFieldOffset(40, forecastSourceOffset, 0);
 }
 
 static addForecastModel(builder:flatbuffers.Builder, forecastModelOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(34, forecastModelOffset, 0);
+  builder.addFieldOffset(41, forecastModelOffset, 0);
 }
 
 static addForecastEpoch(builder:flatbuffers.Builder, forecastEpoch:bigint) {
-  builder.addFieldInt64(35, forecastEpoch, BigInt('0'));
+  builder.addFieldInt64(42, forecastEpoch, BigInt('0'));
 }
 
 static addForecastHorizon(builder:flatbuffers.Builder, forecastHorizon:bigint) {
-  builder.addFieldInt64(36, forecastHorizon, BigInt('0'));
+  builder.addFieldInt64(43, forecastHorizon, BigInt('0'));
 }
 
 static addForwardCurve(builder:flatbuffers.Builder, forwardCurveOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(37, forwardCurveOffset, 0);
+  builder.addFieldOffset(44, forwardCurveOffset, 0);
 }
 
 static createForwardCurveVector(builder:flatbuffers.Builder, data:number[]|Float64Array):flatbuffers.Offset;
@@ -667,147 +738,147 @@ static startForwardCurveVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addCalibrationCount(builder:flatbuffers.Builder, calibrationCount:bigint) {
-  builder.addFieldInt64(38, calibrationCount, BigInt('0'));
+  builder.addFieldInt64(45, calibrationCount, BigInt('0'));
 }
 
 static addExpectedReturn(builder:flatbuffers.Builder, expectedReturnOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(39, expectedReturnOffset, 0);
+  builder.addFieldOffset(46, expectedReturnOffset, 0);
 }
 
 static addExpectedFees(builder:flatbuffers.Builder, expectedFeesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(40, expectedFeesOffset, 0);
+  builder.addFieldOffset(47, expectedFeesOffset, 0);
 }
 
 static addExpectedSpread(builder:flatbuffers.Builder, expectedSpreadOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(41, expectedSpreadOffset, 0);
+  builder.addFieldOffset(48, expectedSpreadOffset, 0);
 }
 
 static addExpectedImpact(builder:flatbuffers.Builder, expectedImpactOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(42, expectedImpactOffset, 0);
+  builder.addFieldOffset(49, expectedImpactOffset, 0);
 }
 
 static addAdverseSelection(builder:flatbuffers.Builder, adverseSelectionOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(43, adverseSelectionOffset, 0);
+  builder.addFieldOffset(50, adverseSelectionOffset, 0);
 }
 
 static addUncertainty(builder:flatbuffers.Builder, uncertainty:number) {
-  builder.addFieldFloat64(44, uncertainty, 0.0);
+  builder.addFieldFloat64(51, uncertainty, 0.0);
 }
 
 static addConfidence(builder:flatbuffers.Builder, confidence:number) {
-  builder.addFieldFloat64(45, confidence, 0.0);
+  builder.addFieldFloat64(52, confidence, 0.0);
 }
 
 static addCausalPrecision(builder:flatbuffers.Builder, causalPrecision:number) {
-  builder.addFieldFloat64(46, causalPrecision, 0.0);
+  builder.addFieldFloat64(53, causalPrecision, 0.0);
 }
 
 static addOpportunityMargin(builder:flatbuffers.Builder, opportunityMargin:number) {
-  builder.addFieldFloat64(47, opportunityMargin, 0.0);
+  builder.addFieldFloat64(54, opportunityMargin, 0.0);
 }
 
 static addCognitiveLead(builder:flatbuffers.Builder, cognitiveLead:number) {
-  builder.addFieldFloat64(48, cognitiveLead, 0.0);
+  builder.addFieldFloat64(55, cognitiveLead, 0.0);
 }
 
 static addBasinConfidence(builder:flatbuffers.Builder, basinConfidence:number) {
-  builder.addFieldFloat64(49, basinConfidence, 0.0);
+  builder.addFieldFloat64(56, basinConfidence, 0.0);
 }
 
 static addAvailableCapital(builder:flatbuffers.Builder, availableCapitalOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(50, availableCapitalOffset, 0);
+  builder.addFieldOffset(57, availableCapitalOffset, 0);
 }
 
 static addOpenPositions(builder:flatbuffers.Builder, openPositions:bigint) {
-  builder.addFieldInt64(51, openPositions, BigInt('0'));
+  builder.addFieldInt64(58, openPositions, BigInt('0'));
 }
 
 static addSlotCapacity(builder:flatbuffers.Builder, slotCapacity:bigint) {
-  builder.addFieldInt64(52, slotCapacity, BigInt('0'));
+  builder.addFieldInt64(59, slotCapacity, BigInt('0'));
 }
 
 static addCause(builder:flatbuffers.Builder, causeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(53, causeOffset, 0);
+  builder.addFieldOffset(60, causeOffset, 0);
 }
 
 static addReason(builder:flatbuffers.Builder, reasonOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(54, reasonOffset, 0);
+  builder.addFieldOffset(61, reasonOffset, 0);
 }
 
 static addDisplaces(builder:flatbuffers.Builder, displacesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(55, displacesOffset, 0);
+  builder.addFieldOffset(62, displacesOffset, 0);
 }
 
 static addDisplacedQuantity(builder:flatbuffers.Builder, displacedQuantityOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(56, displacedQuantityOffset, 0);
+  builder.addFieldOffset(63, displacedQuantityOffset, 0);
 }
 
 static addDisplacedPrice(builder:flatbuffers.Builder, displacedPriceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(57, displacedPriceOffset, 0);
+  builder.addFieldOffset(64, displacedPriceOffset, 0);
 }
 
 static addReservationId(builder:flatbuffers.Builder, reservationIdOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(58, reservationIdOffset, 0);
+  builder.addFieldOffset(65, reservationIdOffset, 0);
 }
 
 static addPositionStatus(builder:flatbuffers.Builder, positionStatusOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(59, positionStatusOffset, 0);
+  builder.addFieldOffset(66, positionStatusOffset, 0);
 }
 
 static addSellableQty(builder:flatbuffers.Builder, sellableQtyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(60, sellableQtyOffset, 0);
+  builder.addFieldOffset(67, sellableQtyOffset, 0);
 }
 
 static addEntryAt(builder:flatbuffers.Builder, entryAt:bigint) {
-  builder.addFieldInt64(61, entryAt, BigInt('0'));
+  builder.addFieldInt64(68, entryAt, BigInt('0'));
 }
 
 static addExitAt(builder:flatbuffers.Builder, exitAt:bigint) {
-  builder.addFieldInt64(62, exitAt, BigInt('0'));
+  builder.addFieldInt64(69, exitAt, BigInt('0'));
 }
 
 static addEntryPrice(builder:flatbuffers.Builder, entryPriceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(63, entryPriceOffset, 0);
+  builder.addFieldOffset(70, entryPriceOffset, 0);
 }
 
 static addEntryFee(builder:flatbuffers.Builder, entryFeeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(64, entryFeeOffset, 0);
+  builder.addFieldOffset(71, entryFeeOffset, 0);
 }
 
 static addExitPrice(builder:flatbuffers.Builder, exitPriceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(65, exitPriceOffset, 0);
+  builder.addFieldOffset(72, exitPriceOffset, 0);
 }
 
 static addExitFee(builder:flatbuffers.Builder, exitFeeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(66, exitFeeOffset, 0);
+  builder.addFieldOffset(73, exitFeeOffset, 0);
 }
 
 static addPnl(builder:flatbuffers.Builder, pnlOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(67, pnlOffset, 0);
+  builder.addFieldOffset(74, pnlOffset, 0);
 }
 
 static addReturnPct(builder:flatbuffers.Builder, returnPct:number) {
-  builder.addFieldFloat64(68, returnPct, 0.0);
+  builder.addFieldFloat64(75, returnPct, 0.0);
 }
 
 static addMark(builder:flatbuffers.Builder, markOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(69, markOffset, 0);
+  builder.addFieldOffset(76, markOffset, 0);
 }
 
 static addEntryCost(builder:flatbuffers.Builder, entryCostOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(70, entryCostOffset, 0);
+  builder.addFieldOffset(77, entryCostOffset, 0);
 }
 
 static addStoploss(builder:flatbuffers.Builder, stoplossOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(71, stoplossOffset, 0);
+  builder.addFieldOffset(78, stoplossOffset, 0);
 }
 
 static addRisk(builder:flatbuffers.Builder, riskOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(72, riskOffset, 0);
+  builder.addFieldOffset(79, riskOffset, 0);
 }
 
 static addTrace(builder:flatbuffers.Builder, traceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(73, traceOffset, 0);
+  builder.addFieldOffset(80, traceOffset, 0);
 }
 
 static endDecision(builder:flatbuffers.Builder):flatbuffers.Offset {
@@ -823,6 +894,12 @@ unpack(): DecisionT {
     this.symbol(),
     this.at(),
     this.utility(),
+    this.utilityAvailable(),
+    this.valuationAttempted(),
+    this.valuationAvailable(),
+    this.valuationStatus(),
+    this.causalIdentification(),
+    this.causalBlockingCoordinate(),
     this.graphScore(),
     this.thesisScore(),
     this.thesisConfidence(),
@@ -840,6 +917,7 @@ unpack(): DecisionT {
     this.allocationClass(),
     this.opportunity(),
     this.opportunityType(),
+    this.opportunityPhase(),
     this.reserveEligible(),
     this.reserveReason(),
     this.predictiveReady(),
@@ -902,6 +980,12 @@ unpackTo(_o: DecisionT): void {
   _o.symbol = this.symbol();
   _o.at = this.at();
   _o.utility = this.utility();
+  _o.utilityAvailable = this.utilityAvailable();
+  _o.valuationAttempted = this.valuationAttempted();
+  _o.valuationAvailable = this.valuationAvailable();
+  _o.valuationStatus = this.valuationStatus();
+  _o.causalIdentification = this.causalIdentification();
+  _o.causalBlockingCoordinate = this.causalBlockingCoordinate();
   _o.graphScore = this.graphScore();
   _o.thesisScore = this.thesisScore();
   _o.thesisConfidence = this.thesisConfidence();
@@ -919,6 +1003,7 @@ unpackTo(_o: DecisionT): void {
   _o.allocationClass = this.allocationClass();
   _o.opportunity = this.opportunity();
   _o.opportunityType = this.opportunityType();
+  _o.opportunityPhase = this.opportunityPhase();
   _o.reserveEligible = this.reserveEligible();
   _o.reserveReason = this.reserveReason();
   _o.predictiveReady = this.predictiveReady();
@@ -981,6 +1066,12 @@ constructor(
   public symbol: string|Uint8Array|null = null,
   public at: bigint = BigInt('0'),
   public utility: number = 0.0,
+  public utilityAvailable: boolean = false,
+  public valuationAttempted: boolean = false,
+  public valuationAvailable: boolean = false,
+  public valuationStatus: string|Uint8Array|null = null,
+  public causalIdentification: string|Uint8Array|null = null,
+  public causalBlockingCoordinate: string|Uint8Array|null = null,
   public graphScore: number = 0.0,
   public thesisScore: number = 0.0,
   public thesisConfidence: number = 0.0,
@@ -998,6 +1089,7 @@ constructor(
   public allocationClass: string|Uint8Array|null = null,
   public opportunity: boolean = false,
   public opportunityType: string|Uint8Array|null = null,
+  public opportunityPhase: string|Uint8Array|null = null,
   public reserveEligible: boolean = false,
   public reserveReason: string|Uint8Array|null = null,
   public predictiveReady: boolean = false,
@@ -1057,10 +1149,14 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const id = (this.id !== null ? builder.createString(this.id!) : 0);
   const action = (this.action !== null ? builder.createString(this.action!) : 0);
   const symbol = (this.symbol !== null ? builder.createString(this.symbol!) : 0);
+  const valuationStatus = (this.valuationStatus !== null ? builder.createString(this.valuationStatus!) : 0);
+  const causalIdentification = (this.causalIdentification !== null ? builder.createString(this.causalIdentification!) : 0);
+  const causalBlockingCoordinate = (this.causalBlockingCoordinate !== null ? builder.createString(this.causalBlockingCoordinate!) : 0);
   const allocationHaircutReason = (this.allocationHaircutReason !== null ? builder.createString(this.allocationHaircutReason!) : 0);
   const alternatives = Decision.createAlternativesVector(builder, builder.createObjectOffsetList(this.alternatives));
   const allocationClass = (this.allocationClass !== null ? builder.createString(this.allocationClass!) : 0);
   const opportunityType = (this.opportunityType !== null ? builder.createString(this.opportunityType!) : 0);
+  const opportunityPhase = (this.opportunityPhase !== null ? builder.createString(this.opportunityPhase!) : 0);
   const reserveReason = (this.reserveReason !== null ? builder.createString(this.reserveReason!) : 0);
   const predictiveStatus = (this.predictiveStatus !== null ? builder.createString(this.predictiveStatus!) : 0);
   const proposedNotional = (this.proposedNotional !== null ? builder.createString(this.proposedNotional!) : 0);
@@ -1100,6 +1196,12 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   Decision.addSymbol(builder, symbol);
   Decision.addAt(builder, this.at);
   Decision.addUtility(builder, this.utility);
+  Decision.addUtilityAvailable(builder, this.utilityAvailable);
+  Decision.addValuationAttempted(builder, this.valuationAttempted);
+  Decision.addValuationAvailable(builder, this.valuationAvailable);
+  Decision.addValuationStatus(builder, valuationStatus);
+  Decision.addCausalIdentification(builder, causalIdentification);
+  Decision.addCausalBlockingCoordinate(builder, causalBlockingCoordinate);
   Decision.addGraphScore(builder, this.graphScore);
   Decision.addThesisScore(builder, this.thesisScore);
   Decision.addThesisConfidence(builder, this.thesisConfidence);
@@ -1117,6 +1219,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   Decision.addAllocationClass(builder, allocationClass);
   Decision.addOpportunity(builder, this.opportunity);
   Decision.addOpportunityType(builder, opportunityType);
+  Decision.addOpportunityPhase(builder, opportunityPhase);
   Decision.addReserveEligible(builder, this.reserveEligible);
   Decision.addReserveReason(builder, reserveReason);
   Decision.addPredictiveReady(builder, this.predictiveReady);

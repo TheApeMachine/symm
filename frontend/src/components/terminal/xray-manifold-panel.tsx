@@ -1,90 +1,100 @@
 import { useSelector } from "@tanstack/react-store";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { focusStore, resonanceStore } from "#/collections/app";
+import {
+	getRetainedResonance,
+	retainResonanceRow,
+} from "#/components/terminal/xray-view";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
-import { Resonance } from "#/providers/telemetry/telemetry/resonance";
-import { ResonanceDynamics } from "#/providers/telemetry/telemetry/resonance-dynamics";
-import { ResonanceForecast } from "#/providers/telemetry/telemetry/resonance-forecast";
 
-const num = (value: number | undefined, digits: number): string =>
-	value === undefined || !Number.isFinite(value) ? "—" : value.toFixed(digits);
+const num = (value: unknown, digits: number): string =>
+	typeof value !== "number" || !Number.isFinite(value) ? "—" : value.toFixed(digits);
 
 const ROWS = [
-	{ label: "energy", read: (row: Resonance) => num(row.energy(), 3) },
-	{ label: "surprise", read: (row: Resonance) => num(row.surprise(), 3) },
-	{ label: "base alpha", read: (_row: Resonance) => "—" },
-	{ label: "horizon", read: (_row: Resonance, fcast: ResonanceForecast | null) => `${num(fcast ? Number(fcast.supportedHorizon()) : undefined, 0)} ticks` },
-	{ label: "reach", read: (_row: Resonance, fcast: ResonanceForecast | null) => `${num(fcast ? Number(fcast.probeHorizon()) : undefined, 0)} ticks` },
-	{ label: "samples", read: (row: Resonance) => num(Number(row.samples()), 0) },
-
-	{ label: "task skill", read: (row: Resonance) => num(row.taskSkill(), 3) },
-	{ label: "task scale", read: (row: Resonance) => num(row.taskRelativePrecision(), 8) },
+	{ label: "energy", read: (row: Record<string, unknown>) => num(row.energy, 3) },
+	{ label: "surprise", read: (row: Record<string, unknown>) => num(row.surprise, 3) },
+	{ label: "base alpha", read: (row: Record<string, unknown>) => typeof row.taskForecast === "number" && row.taskForecast !== 0 ? num(row.taskForecast, 3) : "—" },
+	{ label: "horizon", read: (row: Record<string, unknown>) => {
+		const fcast = row.forecast as Record<string, unknown> | undefined;
+		return fcast?.supportedHorizon != null ? `${num(Number(fcast.supportedHorizon), 0)} ticks` : "—";
+	} },
+	{ label: "reach", read: (row: Record<string, unknown>) => {
+		const fcast = row.forecast as Record<string, unknown> | undefined;
+		return fcast?.probeHorizon != null ? `${num(Number(fcast.probeHorizon), 0)} ticks` : "—";
+	} },
+	{ label: "samples", read: (row: Record<string, unknown>) => row.samples != null ? num(Number(row.samples), 0) : "—" },
+	{ label: "task skill", read: (row: Record<string, unknown>) => num(row.taskSkill, 3) },
+	{ label: "task scale", read: (row: Record<string, unknown>) => num(row.taskRelativePrecision, 8) },
 ] as const;
 
 const DYNAMICS_FIELDS = [
-	{ label: "velocity", read: (d: ResonanceDynamics | null) => num(d?.velocity(), 4) },
-	{ label: "acceleration", read: (d: ResonanceDynamics | null) => num(d?.acceleration(), 4) },
-	{ label: "liquid memory", read: (d: ResonanceDynamics | null) => num(d?.memory(), 4) },
-	{ label: "memory scale", read: (d: ResonanceDynamics | null) => num(d?.memoryScale(), 4) },
-	{ label: "stored energy", read: (d: ResonanceDynamics | null) => num(d?.storedEnergy(), 4) },
-	{ label: "supplied power", read: (d: ResonanceDynamics | null) => num(d?.suppliedPower(), 4) },
-	{ label: "dissipation", read: (d: ResonanceDynamics | null) => num(d?.dissipation(), 4) },
-	{ label: "passivity residue", read: (d: ResonanceDynamics | null) => num(d?.passivityResidue(), 4) },
-	{ label: "diffusion variance", read: (d: ResonanceDynamics | null) => num(d?.continuousVariance(), 6) },
-	{ label: "jump amplitude", read: (d: ResonanceDynamics | null) => num(d?.jumpAmplitude(), 6) },
-	{ label: "jump variance", read: (d: ResonanceDynamics | null) => num(d?.jumpVariance(), 6) },
-	{ label: "rotor norm", read: (d: ResonanceDynamics | null) => num(d?.equivarianceNorm(), 4) },
+	{ label: "velocity", read: (d: Record<string, unknown> | null | undefined) => num(d?.velocity, 4) },
+	{ label: "acceleration", read: (d: Record<string, unknown> | null | undefined) => num(d?.acceleration, 4) },
+	{ label: "liquid memory", read: (d: Record<string, unknown> | null | undefined) => num(d?.memory, 4) },
+	{ label: "memory scale", read: (d: Record<string, unknown> | null | undefined) => num(d?.memoryScale, 4) },
+	{ label: "stored energy", read: (d: Record<string, unknown> | null | undefined) => num(d?.storedEnergy, 4) },
+	{ label: "supplied power", read: (d: Record<string, unknown> | null | undefined) => num(d?.suppliedPower, 4) },
+	{ label: "dissipation", read: (d: Record<string, unknown> | null | undefined) => num(d?.dissipation, 4) },
+	{ label: "passivity residue", read: (d: Record<string, unknown> | null | undefined) => num(d?.passivityResidue, 4) },
+	{ label: "diffusion variance", read: (d: Record<string, unknown> | null | undefined) => num(d?.continuousVariance, 6) },
+	{ label: "jump amplitude", read: (d: Record<string, unknown> | null | undefined) => num(d?.jumpAmplitude, 6) },
+	{ label: "jump variance", read: (d: Record<string, unknown> | null | undefined) => num(d?.jumpVariance, 6) },
+	{ label: "rotor norm", read: (d: Record<string, unknown> | null | undefined) => num(d?.equivarianceNorm, 4) },
 ] as const;
-
-const resObj = new Resonance();
-const fcastObj = new ResonanceForecast();
-const dynObj = new ResonanceDynamics();
 
 export const XrayManifoldPanel = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 
-	resonanceStore.subscribe((state) => {
-		if (!root.current) return;
-		const last = state.getLast();
-		if (!last) return;
-
-		let targetRow: Resonance | null = null;
-		for (let i = 0; i < last.rowsLength(); i++) {
-			const row = last.rows(i, resObj);
-			if (row && row.symbol() === focusSymbol) {
-				targetRow = row;
-				break;
+	useEffect(() => {
+		const updateFromState = (state: typeof resonanceStore.state) => {
+			if (!root.current) return;
+			const last = state.getLast();
+			if (last) {
+				const unpacked = last.unpack();
+				for (const row of unpacked.rows) {
+					const sym = typeof row.symbol === "string" ? row.symbol : "";
+					if (sym) {
+						retainResonanceRow(sym, row as unknown as Record<string, unknown>);
+					}
+				}
 			}
-		}
 
-		const set = (q: string, value: string) => {
-			const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
-			if (el) el.textContent = value;
+			const targetRow = getRetainedResonance(focusSymbol);
+
+			const set = (q: string, value: string) => {
+				const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
+				if (el) el.textContent = value;
+			};
+
+			if (targetRow) {
+				for (const [index, entry] of ROWS.entries()) {
+					const val = entry.read(targetRow);
+					if (val !== "—" || !root.current?.querySelector<HTMLElement>(`[data-f="r${index}"]`)?.textContent) {
+						set(`r${index}`, val);
+					}
+				}
+
+				const dyn = targetRow.dynamics as Record<string, unknown> | undefined;
+				for (const [index, entry] of DYNAMICS_FIELDS.entries()) {
+					const val = entry.read(dyn);
+					if (val !== "—" || !root.current?.querySelector<HTMLElement>(`[data-f="d${index}"]`)?.textContent) {
+						set(`d${index}`, val);
+					}
+				}
+			}
 		};
 
-		if (!targetRow) {
-			for (const [index] of ROWS.entries()) {
-				set(`r${index}`, "—");
-			}
-			for (const [index] of DYNAMICS_FIELDS.entries()) {
-				set(`d${index}`, "—");
-			}
-			return;
-		}
+		updateFromState(resonanceStore.state);
+		const subscription = resonanceStore.subscribe((state) => {
+			updateFromState(state);
+		});
 
-		const fcast = targetRow.forecast(fcastObj);
-		const dyn = targetRow.dynamics(dynObj);
-
-		for (const [index, entry] of ROWS.entries()) {
-			set(`r${index}`, entry.read(targetRow, fcast));
-		}
-
-		for (const [index, entry] of DYNAMICS_FIELDS.entries()) {
-			set(`d${index}`, entry.read(dyn));
-		}
-	});
+		return () => {
+			subscription.unsubscribe();
+		};
+	}, [focusSymbol]);
 
 	return (
 		<Flex.Column ref={root} gap={2} className="flex flex-col gap-2 border-(--line) border-t px-3.5 py-3">

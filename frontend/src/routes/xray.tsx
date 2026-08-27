@@ -1,7 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
-import { focusStore, resonanceStore } from "#/collections/app";
+import {
+	DEFAULT_FOCUS_SYMBOL,
+	appStore,
+	focusStore,
+	resonanceStore,
+	symbolsStore,
+} from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { paintXrayHierarchy } from "#/components/terminal/xray-hierarchy";
 import { paintXrayLatent } from "#/components/terminal/xray-latent";
@@ -12,75 +18,107 @@ import {
 	XrayLatentPanel,
 	XrayManifoldPanel,
 } from "#/components/terminal/xray-panels";
-import { Resonance } from "#/providers/telemetry/telemetry/resonance";
-
-const resObj = new Resonance();
+import {
+	getAllRetainedResonance,
+	retainResonanceRow,
+} from "#/components/terminal/xray-view";
 
 const XrayPaintBridge = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
 
 	useEffect(() => {
-		const unregister = resonanceStore.subscribe((state) => {
+		const updatePaint = (state: typeof resonanceStore.state) => {
 			const last = state.getLast();
-			if (!last) return;
-			const rows: any[] = [];
-			for (let i = 0; i < last.rowsLength(); i++) {
-				const row = last.rows(i, resObj);
-				if (row) rows.push(row);
+			if (last) {
+				const unpacked = last.unpack();
+				for (const row of unpacked.rows) {
+					const sym = typeof row.symbol === "string" ? row.symbol : "";
+					if (sym) {
+						retainResonanceRow(
+							sym,
+							row as unknown as Record<string, unknown>,
+						);
+						appStore.actions.observeSymbols([sym]);
+					}
+				}
 			}
-			paintXrayHierarchy(rows, focusSymbol);
-			paintXrayLatent(rows, focusSymbol);
+
+			const universe = getAllRetainedResonance();
+			paintXrayHierarchy(universe, focusSymbol);
+			paintXrayLatent(universe, focusSymbol);
+		};
+
+		updatePaint(resonanceStore.state);
+		const subscription = resonanceStore.subscribe((state) => {
+			updatePaint(state);
 		});
 
 		return () => {
-			unregister.unsubscribe();
+			subscription.unsubscribe();
 		};
 	}, [focusSymbol]);
-
 
 	return null;
 };
 
 const XrayCarrierBar = () => {
-	const [symbols, setSymbols] = useState<string[]>([]);
-
-	resonanceStore.subscribe((state) => {
-		const last = state.getLast();
-		if (!last) return;
-
-		const currentSymbols: string[] = [];
-		for (let i = 0; i < last.rowsLength(); i++) {
-			const row = last.rows(i, resObj);
-			const sym = row?.symbol();
-			if (sym) currentSymbols.push(sym);
+	const focusSymbol = useSelector(focusStore, (state) => state);
+	const observedSymbols = useSelector(symbolsStore, (state) => state);
+	const [symbols, setSymbols] = useState<string[]>(() => {
+		const initial = new Set<string>(observedSymbols);
+		for (const row of getAllRetainedResonance()) {
+			if (row.symbol) initial.add(row.symbol as string);
 		}
-
-		if (currentSymbols.join(",") !== symbols.join(",")) {
-			setSymbols(currentSymbols);
-		}
+		if (initial.size === 0) initial.add(DEFAULT_FOCUS_SYMBOL);
+		return [...initial];
 	});
+
+	useEffect(() => {
+		const syncSymbols = () => {
+			const current = new Set<string>(symbolsStore.state);
+			for (const row of getAllRetainedResonance()) {
+				if (row.symbol) current.add(row.symbol as string);
+			}
+			if (current.size === 0) current.add(DEFAULT_FOCUS_SYMBOL);
+			const list = [...current];
+			setSymbols((prev) => (prev.join(",") === list.join(",") ? prev : list));
+		};
+
+		syncSymbols();
+		const sub1 = symbolsStore.subscribe(syncSymbols);
+		const sub2 = resonanceStore.subscribe(syncSymbols);
+
+		return () => {
+			sub1.unsubscribe();
+			sub2.unsubscribe();
+		};
+	}, []);
 
 	return (
 		<div className="flex h-11.5 shrink-0 items-center gap-2 overflow-x-auto border-(--line) border-b bg-(--surface) px-3.5">
 			<span className="mr-1 shrink-0 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
 				Inspect symbol
 			</span>
-			{symbols.length === 0 ? (
-				<span className="font-mono text-[10px] text-(--f4)">waiting for resonance carriers</span>
-			) : null}
-			{symbols.map((sym) => (
-				<button
-					key={sym}
-					type="button"
-					onClick={() => {
-						focusStore.setState(() => sym);
-						terminalStore.actions.selectFocusSymbol(sym);
-					}}
-					className="shrink-0 cursor-pointer rounded-[3px] border border-(--line2) bg-transparent px-2.75 py-1 font-medium font-mono text-[11px] text-(--f3) hover:border-(--acc)"
-				>
-					{sym}
-				</button>
-			))}
+			{symbols.map((sym) => {
+				const active = sym === focusSymbol;
+				return (
+					<button
+						key={sym}
+						type="button"
+						onClick={() => {
+							appStore.actions.updateFocusSymbol(sym);
+							terminalStore.actions.selectFocusSymbol(sym);
+						}}
+						className={`shrink-0 cursor-pointer rounded-[3px] border px-2.75 py-1 font-medium font-mono text-[11px] transition-colors ${
+							active
+								? "border-(--acc) bg-[color-mix(in_srgb,var(--acc)_14%,transparent)] text-(--acc)"
+								: "border-(--line2) bg-transparent text-(--f3) hover:border-(--acc)"
+						}`}
+					>
+						{sym}
+					</button>
+				);
+			})}
 		</div>
 	);
 };

@@ -670,6 +670,9 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		}
 
 		desk.positions.Store(decision.Symbol, position)
+		position.onClose = func() {
+			desk.positions.CompareAndDelete(decision.Symbol, position)
+		}
 
 		_, err = position.Enter()
 

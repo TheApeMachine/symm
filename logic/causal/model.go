@@ -42,6 +42,12 @@ type TransitionModel struct {
 	// recorded for provenance, not silently activated with a fallback lag.
 	ExcludedParents []AllowedParent
 
+	ObservationCount   int
+	AlignedCount       int
+	ParameterCount     int
+	Rank               int
+	Reason             string
+
 	Intercept          float64
 	SelfCoefficient    float64
 	ParentCoefficients []float64
@@ -184,6 +190,7 @@ func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *Tran
 		return &TransitionModel{
 			Target: target,
 			Status: IdentificationNotIdentifiable,
+			Reason: "target variable not declared in schema",
 		}
 	}
 
@@ -194,6 +201,7 @@ func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *Tran
 	}
 
 	if specification.SelfLag <= 0 {
+		transition.Reason = "self lag must be positive"
 		return transition
 	}
 
@@ -205,10 +213,13 @@ func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *Tran
 		}
 
 		transition.Status = IdentificationUndefined
+		transition.Reason = "required target history absent"
 		return transition
 	}
 
 	defer targetView.Close()
+
+	transition.ObservationCount = targetView.Len()
 
 	// The schema authorizes the possibility of each parent direction; a
 	// parent becomes active only when the Influence Graph holds a defined
@@ -260,6 +271,7 @@ func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *Tran
 			}
 
 			transition.Status = IdentificationInsufficientSupport
+			transition.Reason = "required active parent history absent"
 			return transition
 		}
 
@@ -272,16 +284,20 @@ func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *Tran
 	}
 
 	aligned := relation.AlignViews(targetView, series)
+	transition.AlignedCount = len(aligned)
 
 	if len(aligned) == 0 {
 		transition.Status = IdentificationInsufficientSupport
+		transition.Reason = "no temporally aligned observations"
 		return transition
 	}
 
 	parameterCount := 2 + len(parents)
+	transition.ParameterCount = parameterCount
 
 	if len(aligned) <= parameterCount {
 		transition.Status = IdentificationInsufficientSupport
+		transition.Reason = "aligned row count too small for parameter count"
 		return transition
 	}
 
@@ -299,9 +315,11 @@ func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *Tran
 	}
 
 	fit := statistic.FitOLS(design, targets, parameterCount)
+	transition.Rank = fit.Rank
 
 	if !fit.Defined {
 		transition.Status = IdentificationInsufficientRank
+		transition.Reason = "design matrix is not full rank"
 		return transition
 	}
 
@@ -321,6 +339,7 @@ func (model *CausalModel) TransitionModel(target VariableID, at time.Time) *Tran
 	transition.EffectiveSupport = effective
 	transition.Maturity = statistic.KishMaturity(weights)
 	transition.Status = IdentificationIdentified
+	transition.Reason = ""
 
 	return transition
 }

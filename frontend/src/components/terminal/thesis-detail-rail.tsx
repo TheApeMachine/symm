@@ -145,9 +145,10 @@ const selectDecision = (state: ReturnType<typeof strategyStore.get>, symbol: str
 			const dec = frame.decisions(i, decObj);
 			if (!dec || dec.symbol() !== symbol) continue;
 
+			const utilityAvailable = dec.utilityAvailable();
 			return {
 				action: dec.action() ?? "",
-				utility: num(dec.utility(), 4),
+				utility: utilityAvailable ? num(dec.utility(), 4) : "—",
 				uncertainty: num(readAlternative(dec, "economic:outcome_uncertainty"), 4),
 				visits: num(readAlternative(dec, "economic:visits"), 0),
 				causalSupport: num(readAlternative(dec, "causal:effective_support"), 4),

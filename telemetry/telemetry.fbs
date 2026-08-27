@@ -392,6 +392,12 @@ table Decision {
   symbol:string;
   at:long;
   utility:double;
+  utilityAvailable:bool;
+  valuationAttempted:bool;
+  valuationAvailable:bool;
+  valuationStatus:string;
+  causalIdentification:string;
+  causalBlockingCoordinate:string;
   graphScore:double;
   thesisScore:double;
   thesisConfidence:double;
@@ -409,6 +415,7 @@ table Decision {
   allocationClass:string;
   opportunity:bool;
   opportunityType:string;
+  opportunityPhase:string;
   reserveEligible:bool;
   reserveReason:string;
   predictiveReady:bool;

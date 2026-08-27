@@ -20,10 +20,16 @@ total order and replay runs consume the random stream identically. Cycles
 fall back to the total coordinate order rather than looping forever.
 */
 func (state *CausalState) transitionOrder() []relation.Coordinate {
-	coordinates := make([]relation.Coordinate, 0, len(state.Transitions))
+	var coordinates []relation.Coordinate
 
-	for coordinate := range state.Transitions {
-		coordinates = append(coordinates, coordinate)
+	if len(state.ActiveClosure) > 0 {
+		coordinates = append([]relation.Coordinate(nil), state.ActiveClosure...)
+	} else {
+		coordinates = make([]relation.Coordinate, 0, len(state.Transitions))
+
+		for coordinate := range state.Transitions {
+			coordinates = append(coordinates, coordinate)
+		}
 	}
 
 	// A total, deterministic coordinate order is the tie-break and the seed
@@ -103,22 +109,11 @@ func (state *CausalState) transitionOrder() []relation.Coordinate {
 }
 
 /*
-causalMarketModel evolves the whole time-sliced market system one step
-forward: every schema market variable advances through its own fitted
-transition (self history plus schema-authorized, graph-informed lagged
-parents), so the causal chain — e.g. Liquidity(t) → Flow(t+1) → Price(t+2),
-Hawkes(t) → Flow(t+1) — unfolds over multi-step rollouts instead of freezing
-the parents after the first prediction. Each transition is evaluated with the
-same as-of lag semantics it was fitted with (the state's timestamped
-trajectory supplies the parent value valid at the required cutoff), and the
-sampled next values are appended to the trajectory.
-
-A market variable present in the state whose transition is not identified
-makes the step unavailable: its future is genuinely unknown, and it must not
-be silently carried forward as a persistence model. The random source
-samples each transition's residual noise, so rollouts walk a distribution of
-plausible causal trajectories. Actions never mutate market state: they
-change portfolio variables only.
+causalMarketModel evolves the active causal dependency closure of the market
+system one step forward: each variable in the query's active closure advances
+through its fitted transition (self history plus active graph-informed lagged
+parents), evolving multi-step rollouts without requiring unrelated market
+variables to be identified.
 */
 type causalMarketModel struct {
 	state *CausalState
@@ -144,46 +139,26 @@ func (model *causalMarketModel) Step(current mcts.MarketState, random *rand.Rand
 		next.History[coordinate] = append([]mcts.MarketSample(nil), samples...)
 	}
 
-	// Iterate the transition set in topological DAG order (parents before
-	// children), so a value sampled at this step for a parent is available
-	// to its child's transition in the same step. Within a tier the order is
-	// the deterministic coordinate order, so the sampled rollouts consume
-	// the random stream identically across replay runs (map iteration order
-	// is random, and a plain topological sort is not a total order).
+	// Iterate the active closure in topological DAG order (parents before children).
 	coordinates := model.state.transitionOrder()
 
 	for _, coordinate := range coordinates {
 		transition := model.state.Transitions[coordinate]
-		present := false
 
-		if _, found := current.Current[coordinate]; found {
-			present = true
-		}
-
-		// An unidentified transition for a coordinate present in the state
-		// is an unavailable future, not a silent persistence carry-forward.
 		if transition == nil || transition.Status != causal.IdentificationIdentified {
-			if present {
-				return current, 0, 0, fmt.Errorf(
-					"causal market model: transition for %s is not identified",
-					coordinate.ID(),
-				)
-			}
-
-			continue
+			return current, 0, 0, fmt.Errorf(
+				"causal market model: transition for %s is not identified",
+				coordinate.ID(),
+			)
 		}
 
 		expected, noise, defined := transition.Step(current)
 
 		if !defined {
-			if present {
-				return current, 0, 0, fmt.Errorf(
-					"causal market model: transition for %s is not defined at the state",
-					coordinate.ID(),
-				)
-			}
-
-			continue
+			return current, 0, 0, fmt.Errorf(
+				"causal market model: transition for %s is not defined at the state",
+				coordinate.ID(),
+			)
 		}
 
 		value := expected

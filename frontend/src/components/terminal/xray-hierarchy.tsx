@@ -47,7 +47,7 @@ const paintHierarchyRows = (
 			row.className = "flex items-center gap-3";
 			row.innerHTML = `
 				<span data-label class="w-23 shrink-0 font-mono text-[10px] text-(--f3)"></span>
-				<div data-cells class="grid h-16 flex-1 grid-cols-16 gap-0.5"></div>
+				<div data-cells class="grid flex-1 grid-cols-16 gap-0.5"></div>
 				<div class="w-20 shrink-0">
 					<div class="flex justify-between font-mono text-[9px] text-(--f4)">
 						<span>ε</span>
@@ -96,7 +96,7 @@ const paintHierarchyRows = (
 			if (cell === undefined) {
 				cell = document.createElement("div");
 				cell.className =
-					"min-w-0 rounded-[1px] transition-colors duration-150 ease-out";
+					"min-w-0 aspect-square rounded-[1px] transition-colors duration-150 ease-out";
 				cells.appendChild(cell);
 			}
 
@@ -120,7 +120,7 @@ that complete bounded snapshot and owns no second cache of backend state.
 export const paintXrayHierarchy = (value: unknown, focusSymbol: string) => {
 	const frames = (
 		Array.isArray(value) ? value : value != null ? [value] : []
-	) as ResonanceFrame[];
+	) as Array<ResonanceFrame | Record<string, unknown>>;
 
 	const focused = frames.find((frame) => frame.symbol === focusSymbol);
 	const layers = xrayLayersFromResonance(focused);

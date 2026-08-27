@@ -11,55 +11,67 @@ import { Stoploss } from "#/providers/telemetry/telemetry/stoploss";
 import { sendPositionExit } from "#/providers/websocket";
 import { PositionStopGeometry } from "./position-stop-geometry";
 
-const f = (value: unknown, digits: number): string =>
+const formatValue = (value: unknown, digits: number): string =>
 	typeof value === "number"
 		? value.toFixed(digits)
 		: typeof value === "string" && value !== "" && Number.isFinite(Number(value))
 			? Number(value).toFixed(digits)
 			: String(value ?? "—");
 
-const posObj = new Position();
-const holdingObj = new Holding();
-const stoplossObj = new Stoploss();
+const positionObject = new Position();
+const holdingObject = new Holding();
+const stoplossObject = new Stoploss();
+
+type PositionCardData = {
+	symbol: string;
+	status: string;
+	stoploss: string;
+	pnl: string;
+	entryPrice: string;
+	mark: string;
+	returnPct: string;
+};
 
 export const Positions = () => {
-	const last = useSelector(positionStore, (state) =>
-		state.findLast((f) => f.rowsLength() > 0),
-	);
-	const [pendingExits, setPendingExits] = useState<ReadonlySet<string>>(new Set());
+	const positions = useSelector(positionStore, (state) => {
+		const mergedPositions = new Map<string, PositionCardData>();
 
-	const positions: Array<{
-		symbol: string;
-		status: string;
-		stoploss: string;
-		pnl: string;
-		entryPrice: string;
-		mark: string;
-		returnPct: string;
-	}> = [];
+		for (const frame of state.toArray()) {
+			for (let rowIndex = 0; rowIndex < frame.rowsLength(); rowIndex++) {
+				const currentPosition = frame.rows(rowIndex, positionObject);
+				if (!currentPosition) continue;
 
-	if (last) {
-		for (let i = 0; i < last.rowsLength(); i++) {
-			const pos = last.rows(i, posObj);
-			if (!pos) continue;
-			const h = pos.holding(holdingObj);
-			if (!h) continue;
-			const symbol = h.symbol() ?? "";
-			if (!symbol) continue;
+				const currentHolding = currentPosition.holding(holdingObject);
+				if (!currentHolding) continue;
 
-			const stoploss = h.stoploss(stoplossObj);
+				const currentSymbol = currentHolding.symbol() ?? "";
+				if (!currentSymbol) continue;
 
-			positions.push({
-				symbol,
-				status: h.status() ?? "—",
-				stoploss: stoploss?.status() ?? "—",
-				pnl: `${f(h.pnl(), 4)} USD`,
-				entryPrice: f(h.entryPrice(), 6),
-				mark: f(h.mark(), 6),
-				returnPct: `${f(h.returnPct(), 2)}%`,
-			});
+				const positionStatus = currentHolding.status() ?? currentPosition.status() ?? "—";
+				if (positionStatus === "closed") {
+					mergedPositions.delete(currentSymbol);
+					continue;
+				}
+
+				const currentStoploss = currentHolding.stoploss(stoplossObject);
+
+				mergedPositions.set(currentSymbol, {
+					symbol: currentSymbol,
+					status: positionStatus,
+					stoploss: currentStoploss?.status() ?? "—",
+					pnl: `${formatValue(currentHolding.pnl(), 4)} USD`,
+					entryPrice: formatValue(currentHolding.entryPrice(), 6),
+					mark: formatValue(currentHolding.mark(), 6),
+					returnPct: `${formatValue(currentHolding.returnPct(), 2)}%`,
+				});
+			}
 		}
-	}
+
+		return [...mergedPositions.values()].sort((leftPosition, rightPosition) =>
+			leftPosition.symbol.localeCompare(rightPosition.symbol),
+		);
+	});
+	const [pendingExits, setPendingExits] = useState<ReadonlySet<string>>(new Set());
 
 	const requestExit = (symbol: string) => {
 		if (pendingExits.has(symbol)) {

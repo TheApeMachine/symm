@@ -47,6 +47,7 @@ type Position struct {
 	recorder       *audit.Recorder
 	store          *PositionStore
 	checkpoint     func()
+	onClose        func()
 	pair           kraken.InstrumentPair
 	seenExecutions map[string]struct{}
 	passage        *passageTracker
@@ -760,10 +761,10 @@ Exit is the single sell-order boundary for an open lot.
 func (position *Position) Exit() (*Position, error) {
 	// Atomic check-and-set to ensure we only fire the exit order once
 	currentStatus := position.status()
-	if currentStatus == types.CLOSED || currentStatus == types.PENDING {
+	if currentStatus == types.CLOSED {
 		return position, nil
 	}
-	
+
 	if position.ExitOrder != nil {
 		return position, nil
 	}
@@ -816,6 +817,10 @@ Close marks the lot closed once Desk drops it from the open map.
 func (position *Position) Close() (err error) {
 	if position.status() == types.CLOSED {
 		return nil
+	}
+
+	if position.onClose != nil {
+		position.onClose()
 	}
 
 	if position.cancel != nil {

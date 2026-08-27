@@ -325,6 +325,9 @@ func (recovery *Recovery) recoveredPosition(
 	position.Holding.EntryAt = &entryAt
 	position.Holding.EntryFee = entryFee
 	position.Holding.Status = types.OPEN
+	position.onClose = func() {
+		recovery.positions.CompareAndDelete(pair.Symbol, position)
+	}
 	recovery.positions.Store(pair.Symbol, position)
 
 	return position

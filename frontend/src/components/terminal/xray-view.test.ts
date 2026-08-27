@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { Measurement } from "#/collections/types";
 import {
+	getAllRetainedResonance,
+	getRetainedCognition,
+	getRetainedHawkes,
+	getRetainedResonance,
 	hawkesMetricsFromBuffer,
 	hawkesMetricsFromFrames,
 	latentPointsFromFrames,
+	retainCognitionRow,
+	retainHawkesMetric,
+	retainResonanceRow,
 	xrayLayersFromResonance,
 } from "#/components/terminal/xray-view";
 
@@ -148,5 +155,44 @@ describe("xray-view", () => {
 				category: "equilibrium",
 			},
 		]);
+	});
+
+	it("retains per-symbol resonance state across sparse updates", () => {
+		retainResonanceRow("BTC/USD", {
+			symbol: "BTC/USD",
+			energy: 0.42,
+			layers: [{ state: [0.1], prediction: [0.0], errorNorm: 0.1 }],
+		});
+
+		retainResonanceRow("ETH/USD", {
+			symbol: "ETH/USD",
+			energy: 0.88,
+		});
+
+		const btc = getRetainedResonance("BTC/USD");
+		expect(btc?.energy).toBe(0.42);
+		expect(btc?.layers).toHaveLength(1);
+
+		const all = getAllRetainedResonance();
+		expect(all.length).toBeGreaterThanOrEqual(2);
+	});
+
+	it("retains per-symbol cognition and hawkes metrics", () => {
+		retainCognitionRow("BTC/USD", {
+			winner: "trend-up",
+			confidence: 0.95,
+		});
+
+		expect(getRetainedCognition("BTC/USD")).toMatchObject({
+			winner: "trend-up",
+			confidence: 0.95,
+		});
+
+		retainHawkesMetric("BTC/USD", "conditional_intensity:buy", 0.1234);
+		retainHawkesMetric("BTC/USD", "branching_spectral_radius", 0.75);
+
+		const hwk = getRetainedHawkes("BTC/USD");
+		expect(hwk["conditional_intensity:buy"]).toBe(0.1234);
+		expect(hwk.branching_spectral_radius).toBe(0.75);
 	});
 });

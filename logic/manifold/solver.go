@@ -138,7 +138,7 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *State {
 /*
 fluidPublishInterval is the cadence of the fluid WebRTC publication loop.
 */
-const fluidPublishInterval = 250 * time.Millisecond
+const fluidPublishInterval = 10 * time.Millisecond
 
 /*
 publishLoop streams the resident domain to the fluid channels on a fixed

@@ -11,6 +11,7 @@ import (
 
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/logic/causal"
+	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/nomagique/mcts"
 	"github.com/theapemachine/symm/nomagique/relation"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -127,6 +128,7 @@ func deterministicCausalState(at time.Time, constantReturn float64) *CausalState
 		OutcomeVariable: outcome,
 		Transition:      outcomeTransition,
 		Transitions:     transitions,
+		ActiveClosure:   []relation.Coordinate{outcome.Coordinate},
 		StepLag:         time.Second,
 	}
 }
@@ -755,14 +757,14 @@ func TestConformanceCrossSignalParticipation(t *testing.T) {
 			}
 		})
 
-		Convey("a present variable with an unidentified transition makes the causal evaluation unavailable", func() {
-			// The single hawkes observation is present in the market state,
-			// but its own transition cannot be estimated; the system's
-			// future is genuinely unknown and the evaluation must be
-			// unavailable, not a silent persistence carry-forward.
+		Convey("an unrelated newly observed coordinate does not veto an evaluable query", func() {
+			// The single hawkes observation is present in the coordinate store,
+			// but because hawkes is an excluded parent of flow, hawkes is NOT
+			// in the active dependency closure of the price outcome.
+			// The price outcome query remains identified.
 			state := reasoner.CausalState("TEST/USD", at)
 			So(state, ShouldNotBeNil)
-			So(state.Identification, ShouldNotEqual, causal.IdentificationIdentified)
+			So(state.Identification, ShouldEqual, causal.IdentificationIdentified)
 		})
 	})
 }
@@ -877,6 +879,338 @@ func TestConformanceTradingDormantBeforeEngagement(t *testing.T) {
 			// The pending state is retained for the first engaged round.
 			_, retained := planner.pending.Load(priced.Symbol)
 			So(retained, ShouldBeTrue)
+		})
+	})
+}
+
+func TestConformanceQueryLocalCausalGating(t *testing.T) {
+	Convey("Given a symbol with identified outcome closure and one unrelated under-supported coordinate", t, func() {
+		reasoner := newTestReasoner()
+		ingestSeries(reasoner, 150, 53, 0)
+		at := time.Unix(0, 149*int64(time.Second))
+
+		// Ingest one sample of an unrelated sentiment metric.
+		sentimentMeasurement := &nmtypes.Measurement{
+			ID:         "test:sentiment:149",
+			Source:     "sentiment",
+			Symbol:     "TEST/USD",
+			At:         at,
+			Maturity:   0.9,
+			SNR:        0.5,
+			SNRDefined: true,
+			Metrics: map[string]*nmtypes.Metric[float64]{
+				"directional_consensus": nmtypes.NewMetric(
+					"directional_consensus", 0.75,
+					nmtypes.Descriptor{Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
+				),
+			},
+		}
+		reasoner.Ingest(sentimentMeasurement)
+		reasoner.Refresh("TEST/USD", at)
+
+		state := reasoner.CausalState("TEST/USD", at)
+		So(state, ShouldNotBeNil)
+
+		Convey("the economic query remains identified and evaluable", func() {
+			So(state.Identification, ShouldEqual, causal.IdentificationIdentified)
+			So(state.Transition, ShouldNotBeNil)
+			So(state.Transition.Status, ShouldEqual, causal.IdentificationIdentified)
+
+			inputs := marketInputs{cash: 100000, mark: 100, feeRate: 0.001, spreadFraction: 0, available: true}
+			planner := &Planner{
+				marketProvider: func(symbol string) marketInputs {
+					return inputs
+				},
+			}
+
+			decision := planner.decisionFromCausalState(state, testConfig(), inputs)
+			So(decision.ValuationAttempted, ShouldBeTrue)
+			So(decision.ValuationAvailable, ShouldBeTrue)
+			So(decision.UtilityAvailable, ShouldBeTrue)
+		})
+	})
+}
+
+func TestConformanceRequiredTransitionFailure(t *testing.T) {
+	Convey("Given a symbol whose required outcome parent has insufficient support", t, func() {
+		schema := causal.NewCausalSchema("req-fail-v1", "TEST/USD", 1)
+		hawkes := causal.VariableID{
+			Coordinate: relation.Coordinate{Symbol: "TEST/USD", Source: "hawkes", Metric: "background_rate", Epoch: 1},
+			Role:       causal.RoleMarket,
+		}
+		cvdFlow := causal.VariableID{
+			Coordinate: relation.Coordinate{Symbol: "TEST/USD", Source: "cvd", Metric: "signed_net_fraction_zscore", Epoch: 1},
+			Role:       causal.RoleMarket,
+		}
+		priceReturn := causal.VariableID{
+			Coordinate: relation.Coordinate{Symbol: "TEST/USD", Source: "cvd", Metric: "midpoint_log_return", Epoch: 1},
+			Role:       causal.RoleMarket,
+		}
+
+		schema.AddMarketVariable(causal.MarketVariable{
+			Variable: priceReturn,
+			SelfLag:  time.Second,
+			Parents:  []causal.AllowedParent{{Parent: cvdFlow, Lag: time.Second}},
+		})
+		schema.AddMarketVariable(causal.MarketVariable{
+			Variable: cvdFlow,
+			SelfLag:  time.Second,
+			Parents:  []causal.AllowedParent{{Parent: hawkes, Lag: time.Second}},
+		})
+		schema.AddMarketVariable(causal.MarketVariable{
+			Variable: hawkes,
+			SelfLag:  time.Second,
+		})
+
+		store := relation.NewObservationStore(2048)
+		at := time.Unix(0, 100*int64(time.Second))
+
+		// Ingest 50 observations for priceReturn and cvdFlow, but only 1 observation for hawkes.
+		for index := 0; index < 50; index++ {
+			sampleAt := time.Unix(0, int64(index)*int64(time.Second))
+			store.Append(relation.Observation{Coordinate: priceReturn.Coordinate, Raw: math.Sin(float64(index)), At: sampleAt})
+			store.Append(relation.Observation{Coordinate: cvdFlow.Coordinate, Raw: math.Cos(float64(index)), At: sampleAt})
+		}
+		store.Append(relation.Observation{Coordinate: hawkes.Coordinate, Raw: 0.5, At: at})
+
+		// Register influence edges:
+		// 1) cvdFlow -> priceReturn (identified)
+		// 2) hawkes -> cvdFlow (registered, but hawkes observations are too few)
+		influenceGraph := graph.NewInfluenceGraph(1, 1, 1, 16)
+		_ = influenceGraph.RegisterCandidate(graph.EdgeInfluence, cvdFlow.Coordinate, priceReturn.Coordinate, 1)
+		_ = influenceGraph.UpsertEdge(&graph.InfluenceEdge{
+			Type:   graph.EdgeInfluence,
+			Source: cvdFlow.Coordinate,
+			Target: priceReturn.Coordinate,
+			Result: &relation.InfluenceResult{
+				Lag:              time.Second,
+				Status:           relation.FitOK,
+				EstimatorVersion: "test-v1",
+			},
+			At:    at,
+			Epoch: 1,
+		})
+		_ = influenceGraph.RegisterCandidate(graph.EdgeInfluence, hawkes.Coordinate, cvdFlow.Coordinate, 1)
+		_ = influenceGraph.UpsertEdge(&graph.InfluenceEdge{
+			Type:   graph.EdgeInfluence,
+			Source: hawkes.Coordinate,
+			Target: cvdFlow.Coordinate,
+			Result: &relation.InfluenceResult{
+				Lag:              time.Second,
+				Status:           relation.FitOK,
+				EstimatorVersion: "test-v1",
+			},
+			At:    at,
+			Epoch: 1,
+		})
+
+		model := causal.NewCausalModel(schema, store, influenceGraph, "req-fail-v1")
+		transitions := model.TransitionModels(at)
+
+		activeClosure, identification, blockingCoordinate, _, blockingReason, _ := activeCausalClosure(priceReturn.Coordinate, transitions)
+
+		Convey("valuation is unavailable and the blocking coordinate is preserved", func() {
+			So(identification, ShouldEqual, causal.IdentificationInsufficientSupport)
+			So(blockingCoordinate, ShouldNotBeNil)
+			So(blockingCoordinate.Metric, ShouldEqual, "signed_net_fraction_zscore")
+			So(blockingReason, ShouldNotBeEmpty)
+			So(len(activeClosure), ShouldBeGreaterThanOrEqualTo, 2)
+		})
+	})
+}
+
+func TestConformanceRankDeficientProvenance(t *testing.T) {
+	Convey("Given a constant predictor producing a rank-deficient design matrix", t, func() {
+		schema := causal.NewCausalSchema("rank-v1", "TEST/USD", 1)
+		priceReturn := causal.VariableID{
+			Coordinate: relation.Coordinate{Symbol: "TEST/USD", Source: "cvd", Metric: "midpoint_log_return", Epoch: 1},
+			Role:       causal.RoleMarket,
+		}
+
+		schema.AddMarketVariable(causal.MarketVariable{
+			Variable: priceReturn,
+			SelfLag:  time.Second,
+		})
+
+		store := relation.NewObservationStore(2048)
+
+		// 50 constant observations (all exactly 1.0) -> constant self-lag colinear with intercept.
+		for index := 0; index < 50; index++ {
+			sampleAt := time.Unix(0, int64(index)*int64(time.Second))
+			store.Append(relation.Observation{Coordinate: priceReturn.Coordinate, Raw: 1.0, At: sampleAt})
+		}
+
+		at := time.Unix(0, 50*int64(time.Second))
+		model := causal.NewCausalModel(schema, store, nil, "rank-v1")
+		transition := model.TransitionModel(priceReturn, at)
+
+		Convey("status is insufficient_rank with exact diagnostics reported", func() {
+			So(transition.Status, ShouldEqual, causal.IdentificationInsufficientRank)
+			So(transition.AlignedCount, ShouldBeGreaterThan, transition.ParameterCount)
+			So(transition.Rank, ShouldBeLessThan, transition.ParameterCount)
+			So(transition.Reason, ShouldContainSubstring, "not full rank")
+		})
+	})
+}
+
+func TestConformanceUndefinedTarget(t *testing.T) {
+	Convey("Given a target coordinate with no observations", t, func() {
+		schema := causal.NewCausalSchema("undef-v1", "TEST/USD", 1)
+		priceReturn := causal.VariableID{
+			Coordinate: relation.Coordinate{Symbol: "TEST/USD", Source: "cvd", Metric: "midpoint_log_return", Epoch: 1},
+			Role:       causal.RoleMarket,
+		}
+
+		schema.AddMarketVariable(causal.MarketVariable{
+			Variable: priceReturn,
+			SelfLag:  time.Second,
+		})
+
+		store := relation.NewObservationStore(2048)
+		at := time.Unix(0, 10*int64(time.Second))
+		model := causal.NewCausalModel(schema, store, nil, "undef-v1")
+		transition := model.TransitionModel(priceReturn, at)
+
+		Convey("status is undefined and utility is unavailable", func() {
+			So(transition.Status, ShouldEqual, causal.IdentificationUndefined)
+			So(transition.Reason, ShouldContainSubstring, "required target history absent")
+
+			state := &CausalState{
+				Symbol:             "TEST/USD",
+				At:                 at,
+				Identification:     causal.IdentificationUndefined,
+				BlockingCoordinate: &priceReturn.Coordinate,
+			}
+
+			inputs := marketInputs{cash: 100000, mark: 100, feeRate: 0.001, spreadFraction: 0, available: true}
+			planner := &Planner{
+				marketProvider: func(symbol string) marketInputs {
+					return inputs
+				},
+			}
+
+			decision := planner.decisionFromCausalState(state, testConfig(), inputs)
+			So(decision.UtilityAvailable, ShouldBeFalse)
+			So(decision.ValuationAvailable, ShouldBeFalse)
+			So(decision.ValuationStatus, ShouldEqual, "undefined")
+		})
+	})
+}
+
+func TestConformanceUtilityZeroVsUnavailable(t *testing.T) {
+	Convey("Given decision evaluation for zero expected reward vs unavailable query", t, func() {
+		at := time.Unix(0, 149*int64(time.Second))
+		inputs := marketInputs{cash: 100000, mark: 100, feeRate: 0.001, spreadFraction: 0, available: true}
+		planner := &Planner{
+			marketProvider: func(symbol string) marketInputs {
+				return inputs
+			},
+		}
+
+		Convey("Case A: MCTS evaluated -> UtilityAvailable is true", func() {
+			state := deterministicCausalState(at, 0)
+			decision := planner.decisionFromCausalState(state, testConfig(), inputs)
+
+			So(decision.ValuationAttempted, ShouldBeTrue)
+			So(decision.ValuationAvailable, ShouldBeTrue)
+			So(decision.UtilityAvailable, ShouldBeTrue)
+			So(decision.Action, ShouldEqual, types.ActionNothing)
+		})
+
+		Convey("Case B: causal query unavailable -> UtilityAvailable is false", func() {
+			unavailableState := &CausalState{
+				Symbol:         "TEST/USD",
+				At:             at,
+				Identification: causal.IdentificationInsufficientRank,
+			}
+
+			decision := planner.decisionFromCausalState(unavailableState, testConfig(), inputs)
+
+			So(decision.ValuationAttempted, ShouldBeTrue)
+			So(decision.ValuationAvailable, ShouldBeFalse)
+			So(decision.UtilityAvailable, ShouldBeFalse)
+			So(decision.Reason, ShouldContainSubstring, "causal evaluation unavailable: insufficient_rank")
+		})
+	})
+}
+
+func TestConformanceOpportunitySurvivesValuationFailure(t *testing.T) {
+	Convey("Given a detected opportunity precursor with unavailable causal valuation", t, func() {
+		at := time.Unix(0, 149*int64(time.Second))
+		blockingCoord := relation.Coordinate{Symbol: "TEST/USD", Source: "hawkes", Metric: "background_rate", Epoch: 1}
+		unavailableState := &CausalState{
+			Symbol:             "TEST/USD",
+			At:                 at,
+			Identification:     causal.IdentificationInsufficientRank,
+			BlockingCoordinate: &blockingCoord,
+			BlockingStatus:     causal.IdentificationInsufficientRank,
+			BlockingTransition: &causal.TransitionModel{
+				Rank:           1,
+				AlignedCount:   183,
+				ParameterCount: 2,
+			},
+		}
+
+		inputs := marketInputs{cash: 100000, mark: 100, feeRate: 0.001, spreadFraction: 0, available: true}
+		planner := &Planner{
+			marketProvider: func(symbol string) marketInputs {
+				return inputs
+			},
+		}
+
+		decision := planner.decisionFromCausalState(unavailableState, testConfig(), inputs)
+		decision.Opportunity = true
+		decision.OpportunityType = string(types.ArchetypeVerticalIgnition)
+		decision.OpportunityPhase = string(types.PhaseForming)
+
+		Convey("the candidate remains present without fabricating an entry", func() {
+			So(decision.Opportunity, ShouldBeTrue)
+			So(decision.OpportunityType, ShouldEqual, string(types.ArchetypeVerticalIgnition))
+			So(decision.OpportunityPhase, ShouldEqual, string(types.PhaseForming))
+			So(decision.Action, ShouldEqual, types.ActionNothing)
+			So(decision.ValuationAvailable, ShouldBeFalse)
+			So(decision.UtilityAvailable, ShouldBeFalse)
+			So(decision.CausalBlockingCoordinate, ShouldEqual, blockingCoord.ID())
+			So(decision.Alternatives["causal:blocking_rank"], ShouldEqual, 1)
+			So(decision.Alternatives["causal:blocking_observations"], ShouldEqual, 183)
+			So(decision.Alternatives["causal:blocking_parameters"], ShouldEqual, 2)
+		})
+	})
+}
+
+func TestConformanceNoGlobalWorldVeto(t *testing.T) {
+	Convey("Given an existing evaluable candidate and a newly observed single-sample coordinate", t, func() {
+		reasoner := newTestReasoner()
+		ingestSeries(reasoner, 150, 61, 0)
+		at := time.Unix(0, 149*int64(time.Second))
+
+		stateBefore := reasoner.CausalState("TEST/USD", at)
+		So(stateBefore.Identification, ShouldEqual, causal.IdentificationIdentified)
+
+		// Add a single-sample new coordinate from an unrelated signal (toxicity).
+		toxMeasurement := &nmtypes.Measurement{
+			ID:         "test:tox:149",
+			Source:     "toxicity",
+			Symbol:     "TEST/USD",
+			At:         at,
+			Maturity:   0.5,
+			SNR:        0.1,
+			SNRDefined: true,
+			Metrics: map[string]*nmtypes.Metric[float64]{
+				"retreat_rate:ask": nmtypes.NewMetric(
+					"retreat_rate:ask", 1.2,
+					nmtypes.Descriptor{Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
+				),
+			},
+		}
+		reasoner.Ingest(toxMeasurement)
+		reasoner.Refresh("TEST/USD", at)
+
+		stateAfter := reasoner.CausalState("TEST/USD", at)
+
+		Convey("the existing candidate remains evaluable because the new coordinate is outside active closure", func() {
+			So(stateAfter, ShouldNotBeNil)
+			So(stateAfter.Identification, ShouldEqual, causal.IdentificationIdentified)
 		})
 	})
 }

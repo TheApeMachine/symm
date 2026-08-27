@@ -23,12 +23,16 @@ identification status, and the relevant Influence Graph edges. It is
 published on ChannelCausalState.
 */
 type CausalState struct {
-	Symbol          string
-	At              time.Time
-	Epoch           uint64
-	SchemaVersion   uint64
-	ModelVersion    string
-	Identification  causal.IdentificationStatus
+	Symbol             string
+	At                 time.Time
+	Epoch              uint64
+	SchemaVersion      uint64
+	ModelVersion       string
+	Identification     causal.IdentificationStatus
+	BlockingCoordinate *relation.Coordinate
+	BlockingStatus     causal.IdentificationStatus
+	BlockingReason     string
+	BlockingTransition *causal.TransitionModel
 	// MarketState is the temporal market state: current values plus the
 	// timestamped trajectory the as-of transition evaluation reads.
 	MarketState     mcts.MarketState
@@ -38,6 +42,8 @@ type CausalState struct {
 	// Transitions is the fitted transition of every schema market variable;
 	// the causal rollout evolves this whole system.
 	Transitions map[relation.Coordinate]*causal.TransitionModel
+	// ActiveClosure is the query-local dependency closure of the outcome.
+	ActiveClosure []relation.Coordinate
 	// StepLag is the causal time step of one rollout transition.
 	StepLag        time.Duration
 	InfluenceEdges []*graph.InfluenceEdge
@@ -393,24 +399,10 @@ func (reasoner *Reasoner) snapshotSymbol(symbolState *reasonerSymbolState, symbo
 	market := reasoner.buildMarketState(symbol, at, model)
 	edges := reasoner.symbolInfluenceEdges(symbol)
 
-	identification := outcomeTransition.Status
-
-	if outcomeTransition.Status == causal.IdentificationIdentified {
-		for _, coordinate := range reasoner.sortedPresentCoordinates(market) {
-			transition := transitions[coordinate]
-
-			if transition == nil || transition.Status != causal.IdentificationIdentified {
-				status := causal.IdentificationUndefined
-
-				if transition != nil {
-					status = transition.Status
-				}
-
-				identification = status
-				break
-			}
-		}
-	}
+	activeClosure, identification, blockingCoordinate, blockingStatus, blockingReason, blockingTransition := activeCausalClosure(
+		outcome.Coordinate,
+		transitions,
+	)
 
 	stepLag := time.Second
 
@@ -419,19 +411,104 @@ func (reasoner *Reasoner) snapshotSymbol(symbolState *reasonerSymbolState, symbo
 	}
 
 	return &CausalState{
-		Symbol:          symbol,
-		At:              at,
-		Epoch:           reasoner.epoch,
-		SchemaVersion:   schema.Version,
-		ModelVersion:    model.ModelVersion(),
-		Identification:  identification,
-		MarketState:     market,
-		OutcomeVariable: outcome,
-		Transition:      outcomeTransition,
-		Transitions:     transitions,
-		StepLag:         stepLag,
-		InfluenceEdges:  append([]*graph.InfluenceEdge(nil), edges...),
+		Symbol:             symbol,
+		At:                 at,
+		Epoch:              reasoner.epoch,
+		SchemaVersion:      schema.Version,
+		ModelVersion:       model.ModelVersion(),
+		Identification:     identification,
+		BlockingCoordinate: blockingCoordinate,
+		BlockingStatus:     blockingStatus,
+		BlockingReason:     blockingReason,
+		BlockingTransition: blockingTransition,
+		MarketState:        market,
+		OutcomeVariable:    outcome,
+		Transition:         outcomeTransition,
+		Transitions:        transitions,
+		ActiveClosure:      activeClosure,
+		StepLag:            stepLag,
+		InfluenceEdges:     append([]*graph.InfluenceEdge(nil), edges...),
 	}
+}
+
+/*
+activeCausalClosure finds the query-local dependency closure for the requested
+outcome: starting at the outcome, it recursively walks only active fitted parents
+(transitions with defined Relations). If any transition in this closure is
+unidentified, it records the blocking coordinate and status. Unrelated coordinates
+outside the closure never veto the query.
+*/
+func activeCausalClosure(
+	outcome relation.Coordinate,
+	transitions map[relation.Coordinate]*causal.TransitionModel,
+) ([]relation.Coordinate, causal.IdentificationStatus, *relation.Coordinate, causal.IdentificationStatus, string, *causal.TransitionModel) {
+	outcomeTransition := transitions[outcome]
+
+	if outcomeTransition == nil {
+		blockingCoordinate := outcome
+		return []relation.Coordinate{outcome}, causal.IdentificationUndefined, &blockingCoordinate, causal.IdentificationUndefined, "outcome transition missing", nil
+	}
+
+	if outcomeTransition.Status != causal.IdentificationIdentified {
+		blockingCoordinate := outcome
+		return []relation.Coordinate{outcome}, outcomeTransition.Status, &blockingCoordinate, outcomeTransition.Status, outcomeTransition.Reason, outcomeTransition
+	}
+
+	closure := make([]relation.Coordinate, 0, len(transitions))
+	visited := make(map[relation.Coordinate]bool, len(transitions))
+
+	visited[outcome] = true
+	closure = append(closure, outcome)
+	queue := []relation.Coordinate{outcome}
+
+	var blockingCoordinate *relation.Coordinate
+	var blockingTransition *causal.TransitionModel
+	blockingStatus := causal.IdentificationIdentified
+	blockingReason := ""
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		transition := transitions[current]
+
+		if transition == nil {
+			if blockingCoordinate == nil {
+				coordinateCopy := current
+				blockingCoordinate = &coordinateCopy
+				blockingStatus = causal.IdentificationUndefined
+				blockingReason = "required transition in active closure missing"
+			}
+			continue
+		}
+
+		if transition.Status != causal.IdentificationIdentified {
+			if blockingCoordinate == nil {
+				coordinateCopy := current
+				blockingCoordinate = &coordinateCopy
+				blockingStatus = transition.Status
+				blockingReason = transition.Reason
+				blockingTransition = transition
+			}
+			continue
+		}
+
+		for _, parent := range transition.Parents {
+			parentCoordinate := parent.Parent.Coordinate
+
+			if !visited[parentCoordinate] {
+				visited[parentCoordinate] = true
+				closure = append(closure, parentCoordinate)
+				queue = append(queue, parentCoordinate)
+			}
+		}
+	}
+
+	if blockingCoordinate != nil {
+		return closure, blockingStatus, blockingCoordinate, blockingStatus, blockingReason, blockingTransition
+	}
+
+	return closure, causal.IdentificationIdentified, nil, causal.IdentificationIdentified, "", nil
 }
 
 /*

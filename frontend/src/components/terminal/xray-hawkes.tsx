@@ -1,6 +1,10 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { focusStore, measurementStore } from "#/collections/app";
+import {
+	getRetainedHawkes,
+	retainHawkesMetric,
+} from "#/components/terminal/xray-view";
 import { Typography } from "#/components/ui/typography";
 import { Metric } from "#/providers/telemetry/telemetry/metric";
 
@@ -11,102 +15,155 @@ export const XrayHawkesPanel = () => {
 	const root = useRef<HTMLDivElement>(null);
 	const hawkesCanvasRef = useRef<HTMLCanvasElement>(null);
 
-	measurementStore.subscribe((state) => {
-		if (!root.current) return;
-		const ring = state.hawkes?.[focusSymbol];
-		const row = ring?.getLast();
+	useEffect(() => {
+		const updateFromState = (state: typeof measurementStore.state) => {
+			if (!root.current) return;
+			const ring = state.hawkes?.[focusSymbol];
+			const row = ring?.getLast();
 
-		/*
-			Backend updates arrive sparsely: a row may carry only a subset of the
-			vocabulary. Writing a default zero for an absent metric would blank a
-			live reading, so each readout is left at its current value unless the
-			row actually carries the metric.
-		*/
-		if (!row) return;
-
-		const set = (q: string, value: string) => {
-			const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
-			if (el) el.textContent = value;
-		};
-
-		const metricsMap: Record<string, { raw: number; normalized: number }> = {};
-		for (let j = 0; j < row.metricsLength(); j++) {
-			const m = row.metrics(j, metricObj);
-			if (m) {
-				metricsMap[m.name() ?? ""] = {
-					raw: m.raw(),
-					normalized: m.normalized(),
-				};
-			}
-		}
-
-		const write = (
-			metric: string,
-			q: string,
-			format: (raw: number) => string,
-		) => {
-			const m = metricsMap[metric];
-			if (m !== undefined) {
-				set(q, format(m.raw));
-			}
-		};
-
-		write("event_count", "events", (raw) => raw.toFixed(0));
-		write(
-			"conditional_intensity:buy",
-			"lambda",
-			(raw) => `${raw.toFixed(4)} /s`,
-		);
-		write("background_rate:buy", "mu", (raw) => `${raw.toFixed(4)} /s`);
-		write("event_count:sell", "sells", (raw) => raw.toFixed(0));
-		write("branching_spectral_radius", "eta", (raw) => raw.toFixed(3));
-		if (metricsMap.branching_spectral_radius === undefined) {
-			write("spectral_radius", "eta", (raw) => raw.toFixed(3));
-		}
-
-		const etaBar = root.current.querySelector<HTMLElement>("[data-eta-bar]");
-		const eta =
-			metricsMap.branching_spectral_radius?.raw ?? metricsMap.spectral_radius?.raw;
-
-		if (etaBar instanceof HTMLElement && typeof eta === "number") {
-			etaBar.style.width = `calc(${Math.min(1, Math.max(0, eta))} * 100%)`;
-		}
-
-		const canvas = hawkesCanvasRef.current;
-		if (canvas && ring && ring.getSize() > 1) {
-			const ctx = canvas.getContext("2d");
-			if (ctx) {
-				const w = (canvas.width =
-					canvas.clientWidth * (window.devicePixelRatio || 1));
-				const h = (canvas.height =
-					canvas.clientHeight * (window.devicePixelRatio || 1));
-				ctx.clearRect(0, 0, w, h);
-				ctx.strokeStyle = "rgba(235, 140, 50, 0.7)";
-				ctx.lineWidth = 1.5;
-				ctx.beginPath();
-
-				const count = ring.getSize();
-				for (let i = 0; i < count; i++) {
-					const r = ring.get(i);
-					if (!r) continue;
-					let intensity = 0;
-					for (let j = 0; j < r.metricsLength(); j++) {
-						const m = r.metrics(j, metricObj);
-						if (m && m.name() === "conditional_intensity:buy") {
-							intensity = m.raw();
-							break;
-						}
+			if (row) {
+				for (let j = 0; j < row.metricsLength(); j++) {
+					const m = row.metrics(j, metricObj);
+					if (m) {
+						retainHawkesMetric(focusSymbol, m.name() ?? "", m.raw());
 					}
-					const x = (i / Math.max(1, count - 1)) * w;
-					const y =
-						h - Math.min(1, Math.max(0, intensity / 10)) * (h - 20) - 10;
-					if (i === 0) ctx.moveTo(x, y);
-					else ctx.lineTo(x, y);
 				}
-				ctx.stroke();
 			}
-		}
-	});
+
+			const retained = getRetainedHawkes(focusSymbol);
+
+			const set = (q: string, value: string) => {
+				const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
+				if (el) el.textContent = value;
+			};
+
+			const events = retained.event_count ?? retained["event_count:buy"];
+			if (typeof events === "number") {
+				set("events", events.toFixed(0));
+			}
+
+			const lambda =
+				retained["conditional_intensity:buy"] ??
+				retained.conditional_intensity ??
+				retained["arrival_rate:buy"] ??
+				retained.arrival_rate;
+			if (typeof lambda === "number") {
+				set("lambda", `${lambda.toFixed(4)} /s`);
+			}
+
+			const mu = retained["background_rate:buy"] ?? retained.background_rate;
+			if (typeof mu === "number") {
+				set("mu", `${mu.toFixed(4)} /s`);
+			}
+
+			const sells =
+				retained["event_count:sell"] ??
+				retained["conditional_intensity:sell"] ??
+				retained["arrival_rate:sell"];
+			if (typeof sells === "number") {
+				set("sells", sells.toFixed(0));
+			}
+
+			const eta =
+				retained.branching_spectral_radius ??
+				retained.spectral_radius ??
+				retained.branching;
+			if (typeof eta === "number") {
+				set("eta", eta.toFixed(3));
+				const etaBar = root.current.querySelector<HTMLElement>("[data-eta-bar]");
+				if (etaBar instanceof HTMLElement) {
+					etaBar.style.width = `calc(${Math.min(1, Math.max(0, eta))} * 100%)`;
+				}
+			}
+
+			const canvas = hawkesCanvasRef.current;
+			if (canvas && ring && ring.getSize() > 1) {
+				const ctx = canvas.getContext("2d");
+				if (ctx) {
+					const dpr = window.devicePixelRatio || 1;
+					const w = canvas.clientWidth * dpr;
+					const h = canvas.clientHeight * dpr;
+					canvas.width = w;
+					canvas.height = h;
+					ctx.clearRect(0, 0, w, h);
+
+					const count = ring.getSize();
+					const intensities: number[] = [];
+					for (let i = 0; i < count; i++) {
+						const r = ring.get(i);
+						if (!r) continue;
+						let intensityVal = 0;
+						for (let j = 0; j < r.metricsLength(); j++) {
+							const m = r.metrics(j, metricObj);
+							if (m) {
+								const name = m.name();
+								if (
+									name === "conditional_intensity:buy" ||
+									name === "conditional_intensity" ||
+									name === "arrival_rate:buy" ||
+									name === "arrival_rate"
+								) {
+									intensityVal = m.raw();
+									break;
+								}
+							}
+						}
+						intensities.push(intensityVal);
+					}
+
+					const maxL = Math.max(1.0, ...intensities) * 1.15;
+					const pad = 14 * (window.devicePixelRatio || 1);
+					const base = h - 22 * (window.devicePixelRatio || 1);
+					const toX = (idx: number) =>
+						pad + (idx / Math.max(1, intensities.length - 1)) * (w - pad * 2);
+					const toY = (val: number) => base - (val / maxL) * (base - 20);
+
+					if (typeof mu === "number" && mu > 0) {
+						ctx.strokeStyle = "#3A342B";
+						ctx.setLineDash([3, 3]);
+						ctx.lineWidth = 1;
+						ctx.beginPath();
+						ctx.moveTo(pad, toY(mu));
+						ctx.lineTo(w - pad, toY(mu));
+						ctx.stroke();
+						ctx.setLineDash([]);
+					}
+
+					if (intensities.length > 1) {
+						ctx.beginPath();
+						ctx.moveTo(toX(0), base);
+						for (let i = 0; i < intensities.length; i++) {
+							ctx.lineTo(toX(i), toY(intensities[i] ?? 0));
+						}
+						ctx.lineTo(toX(intensities.length - 1), base);
+						ctx.closePath();
+						ctx.fillStyle = "rgba(235, 140, 50, 0.15)";
+						ctx.fill();
+
+						ctx.strokeStyle = "rgba(235, 140, 50, 0.85)";
+						ctx.lineWidth = 1.6;
+						ctx.beginPath();
+						for (let i = 0; i < intensities.length; i++) {
+							const x = toX(i);
+							const y = toY(intensities[i] ?? 0);
+							if (i === 0) ctx.moveTo(x, y);
+							else ctx.lineTo(x, y);
+						}
+						ctx.stroke();
+					}
+				}
+			}
+		};
+
+		updateFromState(measurementStore.state);
+		const subscription = measurementStore.subscribe((state) => {
+			updateFromState(state);
+		});
+
+		return () => {
+			subscription.unsubscribe();
+		};
+	}, [focusSymbol]);
 
 	return (
 		<div

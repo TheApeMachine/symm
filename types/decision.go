@@ -39,6 +39,12 @@ type Decision struct {
 	Symbol                    string                      `json:"symbol" validate:"required"`
 	At                        time.Time                   `json:"at" validate:"required"`
 	Utility                   float64                     `json:"utility,omitempty" validate:"finite"`
+	UtilityAvailable          bool                        `json:"utilityAvailable"`
+	ValuationAttempted        bool                        `json:"valuationAttempted"`
+	ValuationAvailable        bool                        `json:"valuationAvailable"`
+	ValuationStatus           string                      `json:"valuationStatus,omitempty"`
+	CausalIdentification     string                      `json:"causalIdentification,omitempty"`
+	CausalBlockingCoordinate  string                      `json:"causalBlockingCoordinate,omitempty"`
 	GraphScore                float64                     `json:"graphScore" validate:"finite"`
 	ThesisScore               float64                     `json:"thesisScore" validate:"finite,min=-1,max=1"`
 	ThesisConfidence          float64                     `json:"thesisConfidence" validate:"finite,min=0,max=1"`
@@ -60,6 +66,7 @@ type Decision struct {
 	AllocationClass         string              `json:"allocationClass"`
 	Opportunity             bool                `json:"opportunity"`
 	OpportunityType         string              `json:"opportunityType,omitempty"`
+	OpportunityPhase        string              `json:"opportunityPhase,omitempty"`
 	ReserveEligible         bool                `json:"reserveEligible"`
 	ReserveReason           string              `json:"reserveReason,omitempty"`
 	PredictiveReady         bool                `json:"predictiveReady"`

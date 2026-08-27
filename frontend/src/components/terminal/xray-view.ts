@@ -110,21 +110,21 @@ the mean absolute difference recomputed here, which only stands in for layers
 published before errorNorm existed.
 */
 export const xrayLayersFromResonance = (
-	frame: ResonanceFrame | null | undefined,
+	frame: ResonanceFrame | Record<string, unknown> | null | undefined,
 ): XrayLayer[] => {
-	const layers = frame?.layers ?? [];
+	const layers = (frame?.layers as Array<Record<string, unknown>> | undefined) ?? [];
 
 	return layers.map((layer, index) => {
 		const state = numberArray(layer.state);
 		const prediction = numberArray(layer.prediction);
-		const reported = finite(layer.errorNorm);
+		const reported = finite(layer.errorNorm ?? layer.error_norm);
 
 		return {
 			index,
 			label: `L${index} · ${semanticLayerName(index, layers.length)}`,
 			state,
 			prediction,
-			error_norm: reported ?? layerError(state, prediction, frame?.surprise),
+			error_norm: reported ?? layerError(state, prediction, frame?.surprise as number | undefined),
 		};
 	});
 };
@@ -132,23 +132,29 @@ export const xrayLayersFromResonance = (
 const hawkesMetrics = (epoch: Measurement[]): HawkesMetrics => {
 	const buyIntensity =
 		measurementRaw(epoch, "conditional_intensity", "buy") ??
-		measurementRaw(epoch, "arrival_rate", "buy");
+		measurementRaw(epoch, "arrival_rate", "buy") ??
+		measurementRaw(epoch, "conditional_intensity") ??
+		measurementRaw(epoch, "arrival_rate");
 	const sellIntensity =
 		measurementRaw(epoch, "conditional_intensity", "sell") ??
 		measurementRaw(epoch, "arrival_rate", "sell");
-	const radius = measurementRaw(epoch, "spectral_radius");
+	const radius =
+		measurementRaw(epoch, "branching_spectral_radius") ??
+		measurementRaw(epoch, "spectral_radius");
+
+	const buyBg =
+		measurementRaw(epoch, "background_rate", "buy") ??
+		measurementRaw(epoch, "background_rate");
+	const sellBg = measurementRaw(epoch, "background_rate", "sell");
 
 	return {
-		intensity: sumValues(buyIntensity, sellIntensity),
+		intensity: sumValues(buyIntensity, sellIntensity) ?? buyIntensity,
 		branching: radius,
 		radius,
 		asymmetry: null,
 		buyIntensity,
 		sellIntensity,
-		exo: sumValues(
-			measurementRaw(epoch, "background_rate", "buy"),
-			measurementRaw(epoch, "background_rate", "sell"),
-		),
+		exo: sumValues(buyBg, sellBg) ?? buyBg,
 	};
 };
 
@@ -161,17 +167,19 @@ export const hawkesMetricsFromFrames = (
 ): HawkesMetrics => {
 	const epoch = measurementEpochs(frames).at(-1);
 
-	return epoch === undefined
-		? {
-				intensity: null,
-				branching: null,
-				radius: null,
-				asymmetry: null,
-				buyIntensity: null,
-				sellIntensity: null,
-				exo: null,
-			}
-		: hawkesMetrics(epoch);
+	if (epoch === undefined) {
+		return {
+			intensity: null,
+			branching: null,
+			radius: null,
+			asymmetry: null,
+			buyIntensity: null,
+			sellIntensity: null,
+			exo: null,
+		};
+	}
+
+	return hawkesMetrics(epoch);
 };
 
 /*
@@ -190,12 +198,16 @@ latentPointsFromFrames projects each symbol's latest resonance latent pair for
 the universe scatter without inventing coordinates.
 */
 export const latentPointsFromFrames = (
-	frames: ResonanceFrame[],
+	frames: Array<ResonanceFrame | Record<string, unknown>>,
 ): LatentPoint[] => {
-	const latest = new Map<string, ResonanceFrame>();
+	const latest = new Map<string, ResonanceFrame | Record<string, unknown>>();
 
 	for (const frame of frames) {
-		latest.set(frame.symbol, frame);
+		const symbol = stringValue(frame.symbol);
+
+		if (symbol !== "") {
+			latest.set(symbol, frame);
+		}
 	}
 
 	return [...latest.entries()].flatMap(([symbol, frame]) => {
@@ -277,3 +289,47 @@ export const manifoldReading = (
 
 export const finiteMetric = finite;
 export const stringMetric = stringValue;
+
+/*
+Retained universe maps across sparse telemetry updates.
+*/
+const retainedResonance = new Map<string, Record<string, unknown>>();
+const retainedCognition = new Map<string, Record<string, unknown>>();
+const retainedHawkes = new Map<string, Record<string, number>>();
+
+export const retainResonanceRow = (symbol: string, row: Record<string, unknown>) => {
+	if (!symbol) return;
+	const existing = retainedResonance.get(symbol) ?? {};
+	retainedResonance.set(symbol, { ...existing, ...row, symbol });
+};
+
+export const getRetainedResonance = (symbol?: string): Record<string, unknown> | null => {
+	if (!symbol) return null;
+	return retainedResonance.get(symbol) ?? null;
+};
+
+export const getAllRetainedResonance = (): Array<Record<string, unknown>> =>
+	[...retainedResonance.values()];
+
+export const retainCognitionRow = (symbol: string, row: Record<string, unknown>) => {
+	if (!symbol) return;
+	const existing = retainedCognition.get(symbol) ?? {};
+	retainedCognition.set(symbol, { ...existing, ...row, symbol });
+};
+
+export const getRetainedCognition = (symbol?: string): Record<string, unknown> | null => {
+	if (!symbol) return null;
+	return retainedCognition.get(symbol) ?? null;
+};
+
+export const retainHawkesMetric = (symbol: string, metric: string, raw: number) => {
+	if (!symbol || !metric || !Number.isFinite(raw)) return;
+	const current = retainedHawkes.get(symbol) ?? {};
+	current[metric] = raw;
+	retainedHawkes.set(symbol, current);
+};
+
+export const getRetainedHawkes = (symbol?: string): Record<string, number> => {
+	if (!symbol) return {};
+	return retainedHawkes.get(symbol) ?? {};
+};
