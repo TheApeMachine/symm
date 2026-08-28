@@ -55,13 +55,12 @@ Different Advisor families are different pipelines composed through the same
 `LiquidityAdvisor`, `MorphologyAdvisor`, `CoordinationAdvisor`, ...). The
 Liquidity family's temporal-context composition
 (`temporal.Window → statistic.ZScore → statistic.Baseline → statistic.Velocity`,
-namespaced per bound metric, gated on freshness, and folded with
-`nomagique.TryFork`) lives in `liquidity.go` as `LiquidityPipeline` — a named
-function returning one Advisor's mathematics, not a second Advisor type. It
-declares four named outputs per bound metric (value, baseline, z-score,
-velocity) via `LiquidityOutputs`; a future family with different mathematics
-declares however many outputs its own pipeline produces, from one to many, and
-Advisor's projection code never has to change.
+namespaced per bound metric and gated on freshness) lives in `liquidity.go` as
+`LiquidityPipeline` — a named function returning one Advisor's mathematics,
+not a second Advisor type. It declares four named outputs per bound metric
+(value, baseline, z-score, velocity) via `LiquidityOutputs`; a future family
+with different mathematics declares however many outputs its own pipeline
+produces, from one to many, and Advisor's projection code never has to change.
 
 ## 4. One Number Per Logical Subject
 
@@ -91,21 +90,22 @@ without an explicit marker.
 
 `MetricBinding.Fresh` is that marker: `Advisor.Step` sets it in the incoming
 Frame only for the bindings this specific Measurement carries. Each pipeline
-branch gates its own advance on `Fresh`, so a metric's series only appends a
-new sample when this call genuinely delivered it — never merely because the
-value is still present from a prior step. `nomagique.TryFork` additionally
-tolerates a metric that has never been observed at all: a branch whose own
-required value has never arrived fails before changing the frame and is
-dropped rather than failing the whole step (checked with `Frame.Equal`, not a
-mask comparison — a branch that mutates an already-populated slot in place and
-then fails must still propagate, even though the mask itself did not change).
+branch gates its own advance on `Fresh`: fresh, it runs its temporal-context
+stage; not fresh, it is a deliberate no-op — the frame returns exactly as
+given, with no error, never a condition for anything downstream to interpret
+or forgive. `Fresh` already says everything there is to say about whether a
+branch applies to this event, so the branches compose with plain
+`nomagique.Fork`, not a permissive variant that infers absence from whether a
+frame happened to change: a fresh branch's genuine error (malformed input, a
+regressed clock, whatever) always propagates immediately and unconditionally.
 
 The `Fresh` marker itself must never survive into what gets committed, or it
 would read as fresh again on every later call regardless of what that call
 delivered — `Number.Step` commits whatever the pipeline returns, and `Merge`
 only overlays populated slots, never clearing one absent from a later call's
-own input. `LiquidityPipeline` therefore runs an explicit `scrubFresh` stage
-after `TryFork` on every call, deleting every binding's marker from the
+own input (and a not-fresh branch passing its input through unchanged does not
+clear it either). `LiquidityPipeline` therefore runs an explicit `scrubFresh`
+stage after `Fork` on every call, deleting every binding's marker from the
 composed output regardless of which branches ran.
 
 Together these are what let a liquidity Measurement and a later depthflow
@@ -141,11 +141,11 @@ interned `PerspectiveKind`, an `At` timestamp, a fixed-size array of
 `MetricReading` values, and `Err`. `Count` says how many readings are
 populated.
 
-`Err` carries a genuine pipeline transition failure for this Step (`TryFork`
-already forgives absence; this is a real defect). `Number` only commits
-successful output, so on a failure the Readings still reflect the last
-successfully committed state, not this event's contribution — a consumer must
-check `Err` before trusting them.
+`Err` carries a genuine pipeline transition failure for this Step — absence is
+already handled by the `Fresh` no-op, so a non-nil `Err` here is always a real
+defect. `Number` only commits successful output, so on a failure the Readings
+still reflect the last successfully committed state, not this event's
+contribution — a consumer must check `Err` before trusting them.
 
 Each `MetricReading` is one named fact a pipeline emitted for one composed
 metric: `Metric` is the interned identity of the value (a bound metric's raw
@@ -158,6 +158,13 @@ provenance forward. A consumer determines what a reading means from its
 Perspective itself never assumes a pipeline produces any particular shape of
 readings per composed metric (not "value plus baseline plus z-score plus
 velocity"; that shape belongs to whichever pipeline happens to produce it).
+
+`PerspectiveMetricCapacity` bounds `Readings` to a fixed-size array; Liquidity's
+12 declared outputs (3 bound metrics × 4 each) fill it exactly, with no spare
+capacity. `NewAdvisor` panics at construction if a pipeline declares more
+outputs than that — a wiring-time structural mismatch, not a runtime condition
+to degrade through, so a future wider pipeline fails loudly instead of
+silently losing readings.
 
 ## 8. Live Composition
 

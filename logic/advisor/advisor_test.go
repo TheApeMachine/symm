@@ -2,6 +2,7 @@ package advisor
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -358,6 +359,52 @@ func TestAdvisorStep(t *testing.T) {
 		So(passthroughPerspective.Count, ShouldEqual, 1)
 		So(passthroughPerspective.Readings[0].Defined, ShouldBeTrue)
 		So(passthroughPerspective.Readings[0].Value, ShouldEqual, 0.01)
+	})
+}
+
+func TestNewAdvisorOutputCapacity(t *testing.T) {
+	Convey("NewAdvisor panics when declared outputs exceed PerspectiveMetricCapacity", t, func() {
+		binding := NewMetricBinding("liquidity", "relative_spread", "test/advisor/capacity_overflow")
+		outputs := make([]Output, types.PerspectiveMetricCapacity+1)
+
+		for index := range outputs {
+			outputs[index] = Output{
+				Slot:   nmtypes.MustIntern(fmt.Sprintf("test/advisor/capacity_overflow/output/%d", index)),
+				Metric: binding,
+			}
+		}
+
+		So(func() {
+			NewAdvisor(
+				"advisor:overflow",
+				types.KindState,
+				nmtypes.Identity,
+				[]MetricBinding{binding},
+				outputs,
+			)
+		}, ShouldPanic)
+	})
+
+	Convey("NewAdvisor accepts exactly PerspectiveMetricCapacity outputs", t, func() {
+		binding := NewMetricBinding("liquidity", "relative_spread", "test/advisor/capacity_exact")
+		outputs := make([]Output, types.PerspectiveMetricCapacity)
+
+		for index := range outputs {
+			outputs[index] = Output{
+				Slot:   nmtypes.MustIntern(fmt.Sprintf("test/advisor/capacity_exact/output/%d", index)),
+				Metric: binding,
+			}
+		}
+
+		So(func() {
+			NewAdvisor(
+				"advisor:exact",
+				types.KindState,
+				nmtypes.Identity,
+				[]MetricBinding{binding},
+				outputs,
+			)
+		}, ShouldNotPanic)
 	})
 }
 

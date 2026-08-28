@@ -45,11 +45,12 @@ PerspectiveMetricCapacity bounds how many readings one Perspective can carry.
 It is a declared structural bound so the payload stays a fixed-size value and
 the hot path never allocates a slice per emission. Each Advisor pipeline
 declares its own output symbols (see advisor.NewAdvisor), and the Liquidity
-pipeline is the widest known composition today: 3 bound metrics, each
+pipeline is exactly the widest known composition today: 3 bound metrics, each
 contributing 4 named readings (its current value plus its adaptive baseline,
-departure z-score, and first difference) — 12 readings. The capacity tracks
-the widest declared pipeline output with headroom for the next-widest known
-family rather than an arbitrary round number.
+departure z-score, and first difference) — 12 readings, with no spare
+capacity. advisor.NewAdvisor panics if a pipeline declares more outputs than
+this bound, so a wider future pipeline fails loudly at construction rather
+than silently losing readings — raise this constant when that happens.
 */
 const PerspectiveMetricCapacity = 12
 

@@ -35,12 +35,15 @@ carried that metric. Each branch is therefore gated on the binding's Fresh
 marker — populated by Advisor.Step only for the metrics this specific
 Measurement delivered — so a branch advances its series exactly once per
 genuine observation instead of re-appending the same retained sample on every
-other bound metric's event. TryFork additionally tolerates a metric that has
-never been observed at all: a branch whose own required value has never
-arrived fails before writing anything and is dropped, while every branch that
-has data still composes. Together these are what let a liquidity Measurement
-and a later depthflow Measurement for the same symbol both contribute to the
-same committed state without either erasing or duplicating the other.
+other bound metric's event.
+
+A not-fresh branch is a deliberate no-op (it returns its input unchanged, no
+error), never a failure to be forgiven: Fresh already tells us exactly which
+branches apply to this event, so there is nothing left to infer from whether a
+branch happened to change the frame. Plain Fork is therefore the right
+combinator here, not TryFork — a fresh branch's genuine error (malformed
+input, a regressed clock, whatever) always propagates immediately, with no
+absence-vs-defect guessing at the composition layer.
 */
 func LiquidityPipeline(bindings []MetricBinding) nmtypes.Primitive {
 	branches := make([]nmtypes.Primitive, 0, len(bindings))
@@ -49,7 +52,7 @@ func LiquidityPipeline(bindings []MetricBinding) nmtypes.Primitive {
 		branches = append(branches, freshTemporalContext(binding))
 	}
 
-	return nmtypes.Pipe(nmtypes.TryFork(branches...), scrubFresh(bindings))
+	return nmtypes.Pipe(nmtypes.Fork(branches...), scrubFresh(bindings))
 }
 
 /*
@@ -77,7 +80,8 @@ func LiquidityOutputs(bindings []MetricBinding) []Output {
 freshTemporalContext returns the Window→ZScore→Baseline→Velocity composition
 for one binding's series prefix, gated on that binding's Fresh marker: the
 stage only advances the series when this call's own Measurement delivered the
-value.
+value. When it did not, this is a deliberate no-op — the frame returns exactly
+as given, with no error — never a condition for Fork to forgive.
 */
 func freshTemporalContext(binding MetricBinding) nmtypes.Primitive {
 	stage := nmtypes.Pipe(
@@ -89,8 +93,6 @@ func freshTemporalContext(binding MetricBinding) nmtypes.Primitive {
 
 	return func(input nmtypes.Frame) nmtypes.Frame {
 		if !input.Has(binding.Fresh) {
-			input.Err = nmtypes.PrimitiveError("advisor: binding is not fresh this step")
-
 			return input
 		}
 
@@ -99,13 +101,13 @@ func freshTemporalContext(binding MetricBinding) nmtypes.Primitive {
 }
 
 /*
-scrubFresh deletes every binding's Fresh marker from the frame TryFork hands
-back. A branch's own Delete only clears the marker from that branch's own
-returned frame; TryFork's output starts as a copy of its input (which still
-has whichever markers the caller set) and only overlays what each branch
-newly wrote, so a marker present in the input survives untouched unless
-something deletes it from the composed output directly. Without this final
-scrub a Fresh bit set once would commit and read as fresh again on every
+scrubFresh deletes every binding's Fresh marker from the frame Fork hands
+back. Fork's output starts as a copy of its input (which still has whichever
+markers the caller set) and only overlays what each branch newly wrote, so a
+marker present in the input survives untouched unless something deletes it
+from the composed output directly — a branch simply passing its input through
+unchanged (the not-fresh no-op case) does not clear it either. Without this
+final scrub a Fresh bit set once would commit and read as fresh again on every
 later call regardless of what that call actually delivered, permanently
 defeating the gate after its first success.
 */

@@ -25,6 +25,7 @@ the type, carries the family's mathematics.
 package advisor
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/theapemachine/symm/nomagique"
@@ -132,6 +133,12 @@ whatever the family requires); Advisor only hosts it. Every binding declares a
 measurement metric the pipeline ingests; every output declares one named fact
 the pipeline emits back. Bindings, outputs, and pipeline are built once here,
 never per event.
+
+NewAdvisor panics if outputs exceeds PerspectiveMetricCapacity: this is a
+wiring-time structural mismatch between a pipeline's declared output count and
+the fixed-size Perspective payload, not a runtime condition to degrade
+through — silently truncating a future, wider pipeline's Outputs would drop
+real readings without any signal that they were dropped.
 */
 func NewAdvisor(
 	name string,
@@ -140,6 +147,13 @@ func NewAdvisor(
 	bindings []MetricBinding,
 	outputs []Output,
 ) *Advisor {
+	if len(outputs) > types.PerspectiveMetricCapacity {
+		panic(fmt.Sprintf(
+			"advisor: %d declared outputs exceed PerspectiveMetricCapacity (%d)",
+			len(outputs), types.PerspectiveMetricCapacity,
+		))
+	}
+
 	return &Advisor{
 		name:     name,
 		kind:     kind,
@@ -231,7 +245,9 @@ project reads the symbol's committed pipeline state and materializes the
 Perspective by walking the Advisor's declared Outputs — never by assuming a
 fixed shape of what the pipeline produces per composed metric. An output whose
 slot is not yet populated contributes an explicitly undefined reading: its
-absence is carried by Defined, never by a fabricated zero.
+absence is carried by Defined, never by a fabricated zero. NewAdvisor already
+rejects more outputs than PerspectiveMetricCapacity, so every output declared
+here has a slot.
 */
 func (advisor *Advisor) project(
 	symbol string,
@@ -247,10 +263,6 @@ func (advisor *Advisor) project(
 	count := 0
 
 	for _, output := range advisor.outputs {
-		if count >= types.PerspectiveMetricCapacity {
-			break
-		}
-
 		value, defined := state.Get(output.Slot)
 		maturity, _ := state.Get(output.Metric.Maturity)
 		snr, _ := state.Get(output.Metric.SNR)

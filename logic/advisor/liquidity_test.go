@@ -27,11 +27,13 @@ func TestFreshTemporalContext(t *testing.T) {
 		binding := NewMetricBinding("liquidity", "relative_spread", "test/liquidity/fresh_branch")
 		branch := freshTemporalContext(binding)
 
-		Convey("a call whose input never marks the binding Fresh fails without writing any slot", func() {
-			// This is the shape TryFork relies on to drop a branch rather than
-			// fail the whole composed step: the retained value/sec/nsec are
-			// present (carried forward by Number.Step's merge), but Fresh is
-			// not, because this call's own Measurement never delivered them.
+		Convey("a call whose input never marks the binding Fresh is a deliberate no-op, never an error", func() {
+			// The retained value/sec/nsec are present (carried forward by
+			// Number.Step's merge), but Fresh is not, because this call's own
+			// Measurement never delivered them. Fresh already says everything
+			// there is to say about whether this branch applies to this
+			// event — the branch must not turn that into an error for Fork
+			// (or anything else) to interpret.
 			retained := nmtypes.Frame{}
 			retained.Put(binding.Series.ValueSymbol, 0.01)
 			retained.Put(binding.Series.SecSymbol, 0)
@@ -39,8 +41,8 @@ func TestFreshTemporalContext(t *testing.T) {
 
 			output := branch(retained)
 
-			So(output.Err, ShouldNotBeNil)
-			So(output.Mask, ShouldEqual, retained.Mask)
+			So(output.Err, ShouldBeNil)
+			So(output.Equal(retained), ShouldBeTrue)
 		})
 
 		Convey("a Fresh call advances the retained series", func() {
@@ -48,6 +50,22 @@ func TestFreshTemporalContext(t *testing.T) {
 
 			So(output.Err, ShouldBeNil)
 			So(binding.Series.Count(output), ShouldEqual, 1)
+		})
+
+		Convey("a Fresh call that is itself malformed propagates its error unconditionally, never mistaken for absence", func() {
+			// Fresh is set, so this is unambiguously "this call's own
+			// Measurement delivered this metric" — the stage's own event-time
+			// regression guard rejecting it is a genuine defect that must
+			// surface, not something a composition layer could ever
+			// legitimately reinterpret as "not yet observed."
+			first := branch(freshFrame(binding, 0.01, 5, 0))
+			So(first.Err, ShouldBeNil)
+
+			merged := first
+			merged.Merge(freshFrame(binding, 0.02, 1, 0))
+			regressed := branch(merged)
+
+			So(regressed.Err, ShouldNotBeNil)
 		})
 	})
 
@@ -87,11 +105,10 @@ func TestFreshTemporalContext(t *testing.T) {
 			// A stale resubmission: exactly the committed output carried
 			// forward, precisely what Number.Step's merge would hand the
 			// pipeline on the next call if some other, unrelated binding fired
-			// instead of this one — no Fresh marker is set for this call.
-			// TryFork forgives the branch (its own gate fails before writing
-			// anything), so the composed step still succeeds overall, but the
-			// series itself must not advance a second time for the same
-			// observation.
+			// instead of this one — no Fresh marker is set for this call. The
+			// branch's own gate makes this a deliberate no-op, so the composed
+			// step still succeeds overall, but the series itself must not
+			// advance a second time for the same observation.
 			staleInput := nmtypes.Frame{}
 			staleInput.Merge(afterSecond)
 			stale := pipeline(staleInput)
