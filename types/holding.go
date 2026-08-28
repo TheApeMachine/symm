@@ -35,6 +35,20 @@ type Holding struct {
 	IsOpportunity   bool             `json:"is_opportunity"`
 	ReservationID   string           `json:"reservation_id,omitempty"`
 	Stoploss        *Stoploss        `json:"stoploss"`
+
+	// Authoritative realized economics, separated so the journal can reconcile
+	// fee-net exits against entry basis without overloading one field.
+	EntryVWAP   *decimal.Decimal `json:"entry_vwap,omitempty"`
+	ExitVWAP    *decimal.Decimal `json:"exit_vwap,omitempty"`
+	EntryQty    *decimal.Decimal `json:"entry_qty,omitempty"`
+	ExitQty     *decimal.Decimal `json:"exit_qty,omitempty"`
+	EntryFees   *decimal.Decimal `json:"entry_fees,omitempty"`
+	ExitFees    *decimal.Decimal `json:"exit_fees,omitempty"`
+	RealizedPnL *decimal.Decimal `json:"realized_pnl,omitempty"`
+	// RealizedReturn is the fee-inclusive percentage return derived from the
+	// same realized economics that produce RealizedPnL, never from a ticker
+	// mark or a current-price estimate.
+	RealizedReturn *decimal.Decimal `json:"realized_return,omitempty"`
 }
 
 /*

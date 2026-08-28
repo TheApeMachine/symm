@@ -175,6 +175,16 @@ func NewDesk(
 		},
 	)
 
+	runtime.RegisterSinkClass(
+		bus,
+		runtime.ServicePriorityControl,
+		runtime.DeliveryPriorityFIFO,
+		func(level3 kraken.Level3Data) string { return level3.Symbol },
+		func(level3 kraken.Level3Data) {
+			_ = desk.StepLevel3(level3)
+		},
+	)
+
 	if err := desk.recovery.Recover(); err != nil {
 		desk.status = types.ERROR
 
@@ -264,6 +274,34 @@ func (desk *Desk) StepExecution(execution kraken.ExecutionData) error {
 		errnie.Error(errnie.Err(
 			errnie.NotAcceptable,
 			"desk: position guardian priority ring saturated for "+execution.Symbol,
+			err,
+		))
+	}
+
+	return nil
+}
+
+// StepLevel3 routes one completed, committed L3 book frame to the symbol's
+// open position. The frame has already been applied to the authoritative book
+// before it is emitted, so the guardian evaluates one coherent post-frame
+// state, never an intermediate per-order mutation.
+func (desk *Desk) StepLevel3(level3 kraken.Level3Data) error {
+	found, ok := desk.positions.Load(level3.Symbol)
+
+	if !ok || found == nil {
+		return nil
+	}
+
+	position, ok := found.(*Position)
+
+	if !ok || position == nil {
+		return nil
+	}
+
+	if err := position.publishGuardian(level3); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"desk: position guardian priority ring saturated for "+level3.Symbol,
 			err,
 		))
 	}

@@ -17,10 +17,10 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/causal"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/nomagique/mcts"
+	"github.com/theapemachine/symm/nomagique/relation"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"golang.org/x/sync/errgroup"
@@ -89,35 +89,34 @@ func NewPlanner(
 	config := system.Cfg.Snapshot()
 
 	epoch := uint64(1)
-	historyCapacity := 512
-	relationInterval := time.Second
 	measurementStep := time.Second
-	relationMaxLag := 30 * time.Second
 	schemaTemplate := DefaultCausalSchema(epoch, measurementStep)
-	plans := RelationPlansFromSchema(schemaTemplate, epoch, relationMaxLag)
 
 	if config != nil && config.Planner != nil {
-		relationInterval = config.Planner.RelationInterval
-
-		if relationInterval <= 0 {
-			relationInterval = time.Second
-		}
-
 		if config.Planner.MeasurementStep > 0 {
 			measurementStep = config.Planner.MeasurementStep
 			schemaTemplate = DefaultCausalSchema(epoch, measurementStep)
 		}
-
-		if config.Planner.RelationMaxLag > 0 {
-			relationMaxLag = config.Planner.RelationMaxLag
-		}
-
-		// The candidate Relation space is always generated from the schema's
-		// authorized edges, so the two cannot drift apart.
-		plans = RelationPlansFromSchema(schemaTemplate, epoch, relationMaxLag)
 	}
 
-	reasoner, reasonerErr := NewReasoner(epoch, historyCapacity, plans, schemaTemplate, relationInterval)
+	// The reasoner is a pure consumer of the graph stage's authoritative store
+	// and influence graph. The graph stage (boot) shares them before the
+	// planner is constructed; resolving them here makes the reasoner a reader
+	// of one fitted state rather than a second, parallel estimator.
+	var store *relation.ObservationStore
+	var influenceGraph *graph.InfluenceGraph
+
+	if bus != nil {
+		if sharedStore, storeFound := bus.Shared(graph.SharedObservationStore, ""); storeFound {
+			store, _ = sharedStore.(*relation.ObservationStore)
+		}
+
+		if sharedGraph, graphFound := bus.Shared(graph.SharedInfluenceGraph, ""); graphFound {
+			influenceGraph, _ = sharedGraph.(*graph.InfluenceGraph)
+		}
+	}
+
+	reasoner, reasonerErr := NewReasoner(epoch, store, influenceGraph, schemaTemplate)
 
 	if reasonerErr != nil {
 		errnie.Error(errnie.Err(
@@ -147,21 +146,23 @@ func NewPlanner(
 			nil,
 			planner.StepTick,
 		)
+		// The reasoner consumes the graph stage's relation refreshes; it no
+		// longer subscribes to raw measurements and never re-fits relations.
 		runtime.RegisterSink(
 			bus,
-			func(measurement *data.Measurement[float64]) string {
-				if measurement == nil {
+			func(update *graph.GraphUpdate) string {
+				if update == nil {
 					return ""
 				}
 
-				return measurement.Symbol()
+				return update.Symbol
 			},
-			func(measurement *data.Measurement[float64]) {
-				if measurement == nil {
+			func(update *graph.GraphUpdate) {
+				if update == nil {
 					return
 				}
 
-				_ = planner.StepMeasurement(measurement.ToTypesMeasurement())
+				planner.reasoner.OnGraphUpdate(update.Symbol, update.At)
 			},
 		)
 	}
@@ -192,10 +193,6 @@ func (planner *Planner) SetEntryExecutor(executor func(types.Decision) error) {
 	planner.executeEntry = executor
 }
 
-func (planner *Planner) IngestMeasurement(measurement *nmtypes.Measurement) {
-	_ = planner.StepMeasurement(measurement)
-}
-
 func (planner *Planner) Status() types.Status {
 	return planner.status
 }
@@ -218,20 +215,6 @@ func (planner *Planner) Holding(symbol string) bool {
 
 func (planner *Planner) Close() error {
 	planner.cancel()
-	return nil
-}
-
-/*
-StepMeasurement feeds one Measurement into the reasoner. The reasoner appends
-observations, refreshes planned Relations, and publishes the resulting
-CausalState on ChannelCausalState.
-*/
-func (planner *Planner) StepMeasurement(measurement *nmtypes.Measurement) error {
-	if planner == nil || planner.reasoner == nil || measurement == nil {
-		return nil
-	}
-
-	planner.reasoner.Ingest(measurement)
 	return nil
 }
 

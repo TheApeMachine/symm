@@ -703,6 +703,149 @@ func TestStoplossAccessors(t *testing.T) {
 	})
 }
 
+/*
+executableSurface builds a fully executable, book-complete surface with the
+given executable VWAP, sellable quantity, and floor coverage. It is the light
+fixture for ObserveExecutable regime tests, which need no real book.
+*/
+func executableSurface(mark float64, sellable float64, covered float64) *ExecutionSurface {
+	return &ExecutionSurface{
+		Symbol:           "TEST/USD",
+		SellableQty:      decimal.NewFromFloat64(sellable),
+		BestBid:          decimal.NewFromFloat64(mark),
+		ExecutableQty:    decimal.NewFromFloat64(sellable),
+		ExecutableVWAP:   decimal.NewFromFloat64(mark),
+		FloorCoverageQty: decimal.NewFromFloat64(covered),
+		BookComplete:     true,
+		FullyExecutable:  true,
+	}
+}
+
+func TestStoplossObserveExecutable(t *testing.T) {
+	Convey("Given a locked stop whose floor is covered by the visible book", t, func() {
+		stoploss := stoplossFixture(t)
+		stoploss.Update(stoploss.ArmAt)
+
+		surface := executableSurface(110, 100000, 100000)
+
+		Convey("a fully executable mark above the floor does not trigger", func() {
+			stoploss.ObserveExecutable(surface)
+
+			So(stoploss.Status, ShouldEqual, ARMED)
+			So(stoploss.Mark.Cmp(decimal.NewFromFloat64(110)), ShouldEqual, 0)
+		})
+
+		Convey("it does not consume the forecast horizon on L3 frames", func() {
+			stoploss.ArmClock()
+			before := stoploss.Observed
+
+			for range 10 {
+				stoploss.ObserveExecutable(surface)
+			}
+
+			So(stoploss.Observed, ShouldEqual, before)
+		})
+	})
+
+	Convey("Given a locked stop whose floor loses quantity coverage", t, func() {
+		stoploss := stoplossFixture(t)
+		stoploss.Update(stoploss.ArmAt)
+
+		surface := executableSurface(110, 100000, 24000)
+
+		Convey("BestBid above floor but floor coverage below SellableQty triggers regime invalidation", func() {
+			stoploss.ObserveExecutable(surface)
+
+			So(stoploss.Status, ShouldEqual, TRIGGERED)
+			So(stoploss.TriggerReason, ShouldEqual, TriggerRegimeInvalidated)
+		})
+	})
+
+	Convey("Given a stop whose full-lot executable mark reaches the floor", t, func() {
+		stoploss := stoplossFixture(t)
+		stoploss.Update(stoploss.ArmAt)
+
+		floor := stoploss.Floor
+
+		surface := executableSurface(floor.Float64(), 100000, 100000)
+
+		Convey("it triggers floor protection immediately", func() {
+			stoploss.ObserveExecutable(surface)
+
+			So(stoploss.Status, ShouldEqual, TRIGGERED)
+		})
+	})
+
+	Convey("Given a stop whose book cannot complete the lot", t, func() {
+		stoploss := stoplossFixture(t)
+
+		surface := executableSurface(110, 100000, 100000)
+		surface.FullyExecutable = false
+		surface.ExecutableQty = decimal.NewFromFloat64(24000)
+		surface.ExecutableVWAP = nil
+
+		Convey("insufficient complete depth triggers execution-risk invalidation", func() {
+			stoploss.ObserveExecutable(surface)
+
+			So(stoploss.Status, ShouldEqual, TRIGGERED)
+			So(stoploss.TriggerReason, ShouldEqual, TriggerRegimeInvalidated)
+		})
+	})
+
+	Convey("Given a stop whose authoritative book is invalid at initial bootstrap", t, func() {
+		stoploss := stoplossFixture(t)
+
+		surface := executableSurface(110, 100000, 100000)
+		surface.BookComplete = false
+
+		Convey("it stays armed and waits for the first coherent frame, never fabricating a mark", func() {
+			stoploss.ObserveExecutable(surface)
+
+			So(stoploss.Status, ShouldEqual, ARMED)
+			So(stoploss.BookObserved, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given a stop whose book was valid and then fails integrity", t, func() {
+		stoploss := stoplossFixture(t)
+		stoploss.ObserveExecutable(executableSurface(110, 100000, 100000))
+
+		surface := executableSurface(110, 100000, 100000)
+		surface.BookComplete = false
+
+		Convey("it surfaces execution-risk invalidation immediately", func() {
+			stoploss.ObserveExecutable(surface)
+
+			So(stoploss.Status, ShouldEqual, TRIGGERED)
+			So(stoploss.TriggerReason, ShouldEqual, TriggerRegimeInvalidated)
+		})
+	})
+
+	Convey("Given an unlocked stop", t, func() {
+		stoploss := stoplossFixture(t)
+
+		surface := executableSurface(110, 100000, 100000)
+
+		Convey("the executable mark raises the peak to the full-lot value, not BestBid", func() {
+			stoploss.ObserveExecutable(surface)
+
+			So(stoploss.Peak.Cmp(decimal.NewFromFloat64(110)), ShouldEqual, 0)
+		})
+	})
+}
+
+func BenchmarkStoplossObserveExecutable(b *testing.B) {
+	stoploss := stoplossFixture(b)
+	stoploss.Update(stoploss.ArmAt)
+	surface := executableSurface(110, 100000, 100000)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		stoploss.Status = ARMED
+		stoploss.ObserveExecutable(surface)
+	}
+}
+
 type testReporter interface {
 	Helper()
 	Fatalf(string, ...any)

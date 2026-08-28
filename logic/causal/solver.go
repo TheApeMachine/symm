@@ -11,7 +11,6 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/algo"
 	nmcausal "github.com/theapemachine/symm/nomagique/causal"
@@ -374,57 +373,37 @@ func (solver *Solver) estimatePrecision(rows [][]float64) (float64, error) {
 	}
 
 	if len(rows) > 0 {
-		treatmentPrecision = columnPrecision(
-			rows, solver.config.Treatment, "treatment",
-		)
-		targetPrecision = columnPrecision(
-			rows, solver.config.Target, "target",
-		)
+		treatmentPrecision = columnPrecision(rows, solver.config.Treatment)
+		targetPrecision = columnPrecision(rows, solver.config.Target)
 	}
 
 	return math.Min(treatmentPrecision, targetPrecision), nil
 }
 
 /*
-columnPrecision runs the in-repo adaptive.Standardizer primitive over one
-column of the retained rows and returns the predictive precision its moments
-reached. The running Welford moments persist in a nomagique.Number across the
-rows of this single pass.
+columnPrecision returns the predictive precision of one column of the retained
+rows. Precision is a pure function of the observation count — the adaptive
+Standardizer's precision slot is precisionFor(count), with count the number of
+accepted values — so running the whole nomagique.Number + Frame pipeline per
+call to reach a count-derived scalar allocated a 66 KB frame and interned
+symbols on every row for no information. The equivalent result is the shared
+adaptive.StandardizerPrecision primitive applied to the accepted-row count.
 */
 func columnPrecision(
 	rows [][]float64,
 	column int,
-	name string,
 ) float64 {
-	number := nomagique.NewNumber[string](
-		adaptive.Standardizer("causal/" + name),
-	)
+	accepted := 0.0
 
 	for _, row := range rows {
 		if column < 0 || column >= len(row) {
 			continue
 		}
 
-		input := nmtypes.Frame{}
-		input.Put(
-			nmtypes.MustIntern("causal/"+name+"/value"),
-			row[column],
-		)
-
-		number.Step("precision", input)
+		accepted++
 	}
 
-	output, found := number.Project("precision")
-
-	if !found {
-		return 0
-	}
-
-	precision, _ := output.Get(
-		nmtypes.MustIntern("causal/" + name + "/precision"),
-	)
-
-	return precision
+	return adaptive.StandardizerPrecision(accepted)
 }
 
 /*

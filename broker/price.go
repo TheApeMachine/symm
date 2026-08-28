@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -201,6 +202,113 @@ func (price *Price) ExitValue(
 		decimal.NewFromInt64(0).Add(tick.Bid).Mul(holding.Qty),
 		SELL,
 	)
+}
+
+/*
+ExecutableSurface derives the full-lot executable-liquidation state for one
+position's actual current SellableQty from the authoritative L3 book, under the
+protected read callback. It is the single authoritative executable-liquidation
+calculation: it walks the same high→low bid chain WithFriction walks, filling
+the position's complete SellableQty and producing the fee-net executable VWAP
+and value. It never falls back to ticker, never copies the book, and never lets
+the managed book escape the callback.
+
+Three independent facts are derived:
+
+  ExecutableQty    — total quantity fillable from the whole visible valid bid
+                     depth (how much the book can absorb before running out).
+  FloorCoverageQty — quantity visible at or above the protected floor (how much
+                     of the sellable lot the floor can still realize).
+  ExecutableVWAP   — the full-lot liquidation-equivalent price, defined only
+                     when ExecutableQty >= SellableQty.
+
+It reports BookComplete=false (and FullyExecutable=false) when the book cannot
+truthfully price the position — missing bid side, or crossed with the ask side.
+It reports FullyExecutable=false when the visible valid depth cannot fill the
+complete SellableQty, with ExecutableVWAP/ExecutableValue left undefined rather
+than fabricated.
+*/
+func (price *Price) ExecutableSurface(
+	symbol string,
+	sellableQty *decimal.Decimal,
+	floor *decimal.Decimal,
+	at time.Time,
+) *types.ExecutionSurface {
+	surface := &types.ExecutionSurface{
+		Symbol:      symbol,
+		At:          at,
+		SellableQty: decimal.NewFromInt64(0).Add(sellableQty),
+	}
+
+	if price == nil || price.api == nil || sellableQty == nil || sellableQty.Sign() <= 0 {
+		return surface
+	}
+
+	price.api.Book(price.api.Normalizer().Name(symbol), func(managed *book.Book) {
+		if managed == nil || managed.Bids == nil || managed.Bids.High == nil ||
+			managed.Asks == nil || managed.Asks.Low == nil {
+			return
+		}
+
+		bestBid := decimal.NewFromInt64(0).Add(managed.Bids.High.Price)
+
+		if managed.Asks.Low.Price.Cmp(bestBid) < 0 {
+			return
+		}
+
+		surface.BookComplete = true
+		surface.BestBid = bestBid
+
+		zero := decimal.NewFromInt64(0)
+		executable := zero
+		covered := zero
+
+		for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
+			if bid.Quantity.Sign() <= 0 {
+				continue
+			}
+
+			executable = executable.Add(bid.Quantity)
+
+			if floor == nil || bid.Price.Cmp(floor) >= 0 {
+				covered = covered.Add(bid.Quantity)
+			}
+		}
+
+		surface.ExecutableQty = decimal.NewFromInt64(0).Add(executable)
+		surface.FloorCoverageQty = decimal.NewFromInt64(0).Add(covered)
+
+		if executable.Cmp(sellableQty) < 0 {
+			return
+		}
+
+		surface.FullyExecutable = true
+
+		remaining := decimal.NewFromInt64(0).Add(sellableQty)
+		gross := zero
+
+		for bid := managed.Bids.High; bid != nil && remaining.Sign() > 0; bid = bid.Lower {
+			if bid.Quantity.Sign() <= 0 {
+				continue
+			}
+
+			fillQty := bid.Quantity
+
+			if fillQty.Cmp(remaining) > 0 {
+				fillQty = remaining
+			}
+
+			gross = gross.Add(decimal.NewFromInt64(0).Add(bid.Price).Mul(fillQty))
+			remaining = remaining.Sub(fillQty)
+		}
+
+		surface.ExecutableValue = price.WithFee(symbol, gross, SELL)
+		surface.ExecutableVWAP = decimal.NewFromInt64(0).Add(
+			surface.ExecutableValue,
+		).Div(sellableQty)
+	})
+
+	return surface
 }
 
 /*

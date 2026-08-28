@@ -1,0 +1,297 @@
+package broker
+
+import (
+	"testing"
+	"time"
+
+	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests/mock"
+	"github.com/theapemachine/symm/types"
+)
+
+/*
+mustDecimal parses an exact decimal string and panics on failure. Test fixtures
+use it so float64 representation error never leaks into accounting assertions.
+*/
+func mustDecimal(value string) *decimal.Decimal {
+	parsed, err := decimal.NewFromString(value)
+
+	if err != nil {
+		panic(err)
+	}
+
+	return parsed
+}
+
+/*
+closeFillPosition builds a minimal open lot whose realized exit economics can be
+asserted without a live exchange, desk, or database. sellable is the complete
+filled inventory; entryPrice and entryFee are the authoritative entry basis.
+*/
+func closeFillPosition(sellable string, entryPrice string, entryFee string) *Position {
+	quantity, _ := decimal.NewFromString(sellable)
+	price, _ := decimal.NewFromString(entryPrice)
+	fee, _ := decimal.NewFromString(entryFee)
+
+	position := &Position{
+		pair: kraken.InstrumentPair{Symbol: "SHAPE/USD"},
+		Decision: types.Decision{
+			ID:     "shape-decision",
+			Symbol: "SHAPE/USD",
+		},
+		Holding: &types.Holding{
+			Symbol:      "SHAPE/USD",
+			Qty:         quantity,
+			SellableQty: quantity,
+			EntryPrice:  price,
+			EntryFee:    fee,
+		},
+	}
+
+	position.setStatus(types.OPEN)
+
+	return position
+}
+
+/*
+executionFixture builds a Kraken ExecutionData with a last individual fill whose
+LastPrice is materially different from the whole-order AvgPrice, so a
+close-fill path that marks the exit by the last fill would diverge from the
+authoritative whole-order realized VWAP. All figures are exact decimal strings
+so float64 representation error never leaks into the assertion.
+*/
+func executionFixture(
+	lastPrice string,
+	avgPrice string,
+	cumQty string,
+	cumCost string,
+	feeUsd string,
+) kraken.ExecutionData {
+	return kraken.ExecutionData{
+		ExecID:      "exit-1",
+		LastQty:     mustDecimal(cumQty),
+		LastPrice:   mustDecimal(lastPrice),
+		CumQty:      mustDecimal(cumQty),
+		CumCost:     mustDecimal(cumCost),
+		AvgPrice:    mustDecimal(avgPrice),
+		FeeUsdEquiv: mustDecimal(feeUsd),
+		Timestamp:   time.Now(),
+		OrderStatus: "filled",
+	}
+}
+
+func TestCloseFillWholeOrderVWAP(t *testing.T) {
+	Convey("Given a multi-fill exit where the last fill differs from the whole-order average", t, func() {
+		// Whole-order realized VWAP 0.000506, final individual fill 0.000520:
+		// marking the exit by LastPrice would overstate proceeds and fake a
+		// profit the realized economics do not support.
+		position := closeFillPosition("100000", "0.000490", "0.04")
+		execution := executionFixture("0.000520", "0.000506", "100000", "50.6", "0.40")
+		sellable := mustDecimal("100000")
+		avgPrice := mustDecimal("0.000506")
+
+		Convey("the exit price is the whole-order realized VWAP, not the last fill", func() {
+			err := position.closeFill(execution)
+
+			So(err, ShouldBeNil)
+			So(position.Holding.ExitVWAP.Cmp(avgPrice), ShouldEqual, 0)
+			So(position.Holding.ExitPrice.Cmp(avgPrice), ShouldEqual, 0)
+			So(position.Holding.ExitQty.Cmp(sellable), ShouldEqual, 0)
+		})
+
+		Convey("PnL and ReturnPct reconcile from the same realized economics", func() {
+			err := position.closeFill(execution)
+
+			So(err, ShouldBeNil)
+
+			// entry basis 0.000490 × 100000 = 49, + entry fee 0.04 = 49.04
+			// exit proceeds 50.6 − exit fee 0.40 = 50.2
+			// realized PnL = 50.2 − 49.04 = 1.16
+			So(position.Holding.PnL.Float64(), ShouldAlmostEqual, 1.16, 1e-12)
+			So(position.Holding.RealizedPnL.Float64(), ShouldAlmostEqual, 1.16, 1e-12)
+
+			expectedReturn := 1.16 / 49.04 * 100
+			So(position.Holding.ReturnPct, ShouldAlmostEqual, expectedReturn, 1e-9)
+
+			// RealizedReturn is the fee-inclusive fraction derived from the same
+			// realized economics; it reconciles with ReturnPct to within the
+			// decimal library's scale.
+			realizedPct := position.Holding.RealizedReturn.Float64() * 100
+			So(realizedPct-expectedReturn < 1e-8 && expectedReturn-realizedPct < 1e-8, ShouldBeTrue)
+		})
+
+		Convey("exit fees are the exchange's authoritative total", func() {
+			err := position.closeFill(execution)
+
+			So(err, ShouldBeNil)
+			So(position.Holding.ExitFees.Cmp(mustDecimal("0.40")), ShouldEqual, 0)
+			So(position.Holding.ExitFee.Cmp(mustDecimal("0.40")), ShouldEqual, 0)
+		})
+	})
+}
+
+func TestCloseFillAvgPriceFallback(t *testing.T) {
+	Convey("Given an exit execution without an explicit AvgPrice", t, func() {
+		position := closeFillPosition("100000", "0.000490", "0.04")
+		execution := executionFixture("0.000520", "0", "100000", "50.6", "0.40")
+		execution.AvgPrice = nil
+
+		Convey("the exit VWAP falls back to the cumulative CumCost/CumQty equivalent", func() {
+			err := position.closeFill(execution)
+
+			So(err, ShouldBeNil)
+			So(position.Holding.ExitVWAP.Cmp(mustDecimal("0.000506")), ShouldEqual, 0)
+		})
+	})
+}
+
+/*
+partialFillPosition builds a lot mid-exit: the ExitOrder is already submitted and
+the sellable inventory is complete, so onExecution routes exit executions to the
+close path.
+*/
+func partialFillPosition(sellable string, entryPrice string, entryFee string) *Position {
+	position := closeFillPosition(sellable, entryPrice, entryFee)
+	position.ExitOrder = &spot.AddOrderRequest{
+		ClOrdId: "shape-entry-exit",
+		Type:    "sell",
+		Volume:  sellable,
+		Pair:    "SHAPE/USD",
+	}
+
+	return position
+}
+
+func TestPartialFillExitAccumulatesWholeOrder(t *testing.T) {
+	Convey("Given a multi-fill exit with a duplicate terminal fill", t, func() {
+		position := partialFillPosition("100000", "0.000490", "0.04")
+
+		partialOne := executionFixture("0.000510", "0.000510", "40000", "20.4", "0.10")
+		partialOne.ExecID = "exit-partial-1"
+		partialOne.OrderStatus = "partially_filled"
+		partialOne.ClientOrderID = "shape-entry-exit"
+
+		partialTwo := executionFixture("0.000505", "0.000505", "60000", "30.3", "0.15")
+		partialTwo.ExecID = "exit-partial-2"
+		partialTwo.OrderStatus = "partially_filled"
+		partialTwo.ClientOrderID = "shape-entry-exit"
+
+		terminal := executionFixture("0.000502", "0.000504", "100000", "50.4", "0.25")
+		terminal.ExecID = "exit-terminal"
+		terminal.ClientOrderID = "shape-entry-exit"
+		terminal.OrderStatus = "filled"
+
+		dupe := terminal
+		dupe.ExecID = "exit-terminal"
+
+		Convey("the terminal fill's cumulative whole-order VWAP is the exit price, and duplicates do not double-count", func() {
+			finished := position.onExecution(kraken.Execution{
+				Channel: "executions",
+				Type:    "update",
+				Data:    []kraken.ExecutionData{
+					partialOne, partialTwo, terminal, dupe,
+				},
+			})
+
+			So(finished, ShouldBeTrue)
+			So(position.Holding.ExitVWAP.Cmp(mustDecimal("0.000504")), ShouldEqual, 0)
+			So(position.Holding.ExitQty.Cmp(mustDecimal("100000")), ShouldEqual, 0)
+			So(position.Holding.SellableQty.Sign(), ShouldEqual, 0)
+
+			// 0.000490 × 100000 = 49, + 0.04 fee = 49.04 basis.
+			// 50.4 − 0.25 = 50.15 proceeds. PnL = 1.11.
+			So(position.Holding.PnL.Float64(), ShouldAlmostEqual, 1.11, 1e-9)
+		})
+	})
+}
+
+/*
+shapeBookPosition builds a SHAPE-like exposed position whose protected floor
+sits above break-even and whose authoritative book has collapsed: best bid still
+prints above the floor, but only 24000 of the 100000 sellable lot remains
+visible at or above the floor. The price surface reads the managed book through
+a mock API so no live websocket is required.
+*/
+func shapeBookPosition(t *testing.T, price *Price) *Position {
+	api := websocket.NewAPI(t.Context(), mock.NewConn(), mock.NewConn())
+
+	node := &Position{
+		pair:  kraken.InstrumentPair{Symbol: "SHAPE/USD"},
+		price: price,
+		api:   api,
+		Decision: types.Decision{
+			ID:     "shape-decision",
+			Symbol: "SHAPE/USD",
+		},
+		EntryOrder: &spot.AddOrderRequest{
+			ClOrdId: "shape-entry",
+			Type:    "buy",
+			Volume:  "100000",
+			Pair:    "SHAPE/USD",
+		},
+		Holding: &types.Holding{
+			Symbol: "SHAPE/USD",
+			Qty:     mustDecimal("100000"),
+			SellableQty: mustDecimal("100000"),
+			EntryPrice:  mustDecimal("0.000490"),
+			EntryFee:    mustDecimal("0.04"),
+			Stoploss: &types.Stoploss{
+				Status: types.ARMED,
+				Symbol: "SHAPE/USD",
+				Locked: true,
+				Floor:  mustDecimal("0.000506"),
+				Mark:   mustDecimal("0.000506"),
+				Peak:   mustDecimal("0.000520"),
+			},
+		},
+	}
+
+	node.setStatus(types.OPEN)
+
+	return node
+}
+
+func TestShapeL3FloorCoverageCollapse(t *testing.T) {
+	Convey("Given a SHAPE-style locked position", t, func() {
+		managed := entryEconomicsBook(
+			t,
+			bookLevel{book.Bid, 0.000520, 24000},
+			bookLevel{book.Bid, 0.000300, 1000000},
+			bookLevel{book.Ask, 0.000530, 1000000},
+		)
+		price := shapePriceFixture(t, managed)
+		position := shapeBookPosition(t, price)
+
+		Convey("an L3 frame that collapses depth below the floor triggers protection without any ticker", func() {
+			position.onLevel3(kraken.Level3Data{
+				Symbol:    "SHAPE/USD",
+				Timestamp: time.Now(),
+			})
+
+			So(position.Holding.Stoploss.Status, ShouldEqual, types.TRIGGERED)
+			So(position.Holding.Stoploss.TriggerReason, ShouldEqual, types.TriggerRegimeInvalidated)
+		})
+	})
+}
+
+/*
+shapePriceFixture builds a fee-loaded price surface whose authoritative book is
+the managed fixture, keyed under SHAPE/USD. It reuses the entry economics book
+mock so ExecutableSurface can read the collapsed depth without a live feed.
+*/
+func shapePriceFixture(t *testing.T, managed *book.Book) *Price {
+	private := &entryEconomicsBookConn{Conn: mock.NewConn(), managed: managed}
+	api := websocket.NewAPI(t.Context(), mock.NewConn(), private)
+	price := newTestPrice(t, api)
+	price.fees.Store("SHAPE/USD", kraken.TradeVolumeFee{
+		Fee: decimal.NewFromFloat64(0.25),
+	})
+
+	return price
+}
+

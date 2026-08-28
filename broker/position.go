@@ -231,6 +231,8 @@ func (position *Position) handleGuardian(value any) {
 			Type:    "update",
 			Data:    []kraken.ExecutionData{payload},
 		})
+	case kraken.Level3Data:
+		position.onLevel3(payload)
 	case string: // e.g. "manual_exit"
 		if payload == "manual_exit" {
 			_ = position.executeManualExit()
@@ -377,6 +379,96 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 		goroutine that atomically claims the exit may submit the initial order.
 	*/
 	if triggered && stoploss.Status == types.TRIGGERED {
+		position.initiateProtectiveExit()
+	}
+
+	changed := previousStatus != stoploss.Status ||
+		previousLocked != stoploss.Locked ||
+		previousFloor.Cmp(stoploss.Floor) != 0 ||
+		previousPeak.Cmp(stoploss.Peak) != 0
+
+	if changed && position.store != nil {
+		if err := position.store.Save(stoploss); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"position: failed to persist stoploss transition",
+				err,
+			))
+		}
+	}
+
+	position.Publish()
+}
+
+/*
+onLevel3 derives the current executable-liquidation surface for this position's
+actual SellableQty from the authoritative post-frame book and feeds it to the
+bound stoploss through ObserveExecutable. It is the L3 market-state clock: the
+mark, peak, floor, and any execution-regime trigger are driven by the complete
+book, never by ticker.Bid, and never once per intermediate order mutation.
+
+It only runs for positions with positive sellable inventory, so a closed or
+unfilled lot performs no L3 book work.
+*/
+func (position *Position) onLevel3(level3 kraken.Level3Data) {
+	position.evaluateExecutable(level3.Symbol, level3.Timestamp)
+}
+
+/*
+evaluateExecutable derives the current executable-liquidation surface for this
+position's actual SellableQty from the authoritative book and feeds it to the
+bound stoploss through ObserveExecutable. It is the single evaluation path for
+the L3 market-state clock, used by both live L3 frames and recovery. It only
+runs for positions with positive sellable inventory, so a closed or unfilled
+lot performs no L3 book work.
+
+The mark, peak, floor, and any execution-regime trigger are driven by the
+complete book, never by ticker.Bid, and never once per intermediate order
+mutation.
+*/
+func (position *Position) evaluateExecutable(symbol string, at time.Time) {
+	if position.Holding == nil {
+		return
+	}
+
+	if position.Holding.SellableQty == nil || position.Holding.SellableQty.Sign() <= 0 {
+		return
+	}
+
+	stoploss := position.Holding.Stoploss
+
+	if stoploss == nil || stoploss.Status == types.TRIGGERED {
+		return
+	}
+
+	surface := position.price.ExecutableSurface(
+		symbol,
+		position.Holding.SellableQty,
+		stoploss.Floor,
+		at,
+	)
+
+	previousStatus := stoploss.Status
+	previousLocked := stoploss.Locked
+	previousFloor := stoploss.Floor
+	previousPeak := stoploss.Peak
+
+	stoploss.ObserveExecutable(surface)
+
+	if surface.ExecutableVWAP != nil && surface.ExecutableVWAP.Sign() > 0 {
+		position.Holding.Mark = surface.ExecutableVWAP
+	}
+
+	position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
+	position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
+
+	if position.passage != nil && surface.ExecutableVWAP != nil {
+		position.passage.observe(position, surface.ExecutableVWAP)
+	}
+
+	triggered := stoploss.Status == types.TRIGGERED
+
+	if triggered {
 		position.initiateProtectiveExit()
 	}
 
@@ -577,12 +669,17 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 		position.setStatus(status)
 		position.Holding.Status = position.status()
 		position.Holding.EntryAt = &execution.Timestamp
-		position.Holding.EntryPrice = decimal.NewFromInt64(0).Add(
-			execution.CumCost,
-		).Div(execution.CumQty)
+		position.Holding.EntryPrice = executionVWAP(execution)
 		position.Holding.EntryFee = execution.FeeUsdEquiv
 		position.Holding.Qty = execution.CumQty
 		position.Holding.SellableQty = execution.CumQty
+
+		// Authoritative entry economics for the audit journal: whole-order
+		// realized VWAP (AvgPrice preferred), total filled quantity, and the
+		// exchange's reported fee.
+		position.Holding.EntryVWAP = executionVWAP(execution)
+		position.Holding.EntryQty = decimal.NewFromInt64(0).Add(execution.CumQty)
+		position.Holding.EntryFees = decimal.NewFromInt64(0).Add(execution.FeeUsdEquiv)
 
 		if err := position.Holding.Stoploss.RebindFill(
 			position.Holding.EntryPrice,
@@ -615,9 +712,36 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 }
 
 /*
+executionVWAP resolves the authoritative whole-order realized VWAP for a
+Kraken ExecutionData. It prefers the explicit AvgPrice field (Kraken's own
+whole-order average) and falls back to the cumulative equivalent
+CumCost/CumQty only when AvgPrice is absent. It never uses the individual
+LastPrice, which is a single fill and not the whole-order economics a closed
+position's exit must be marked by.
+*/
+func executionVWAP(execution kraken.ExecutionData) *decimal.Decimal {
+	if execution.AvgPrice != nil && execution.AvgPrice.Sign() > 0 {
+		return decimal.NewFromInt64(0).Add(execution.AvgPrice)
+	}
+
+	if execution.CumCost == nil || execution.CumCost.Sign() <= 0 ||
+		execution.CumQty == nil || execution.CumQty.Sign() <= 0 {
+		return nil
+	}
+
+	return decimal.NewFromInt64(0).Add(execution.CumCost).Div(execution.CumQty)
+}
+
+/*
 closeFill records the exchange's realized exit economics before the lot leaves
 the desk and publishes the terminal state so retained UI positions can remove
 it by identity.
+
+The exit price is the whole-order realized VWAP (AvgPrice preferred, else
+CumCost/CumQty), never the final individual fill's LastPrice. Entry and exit
+fees are the exchange's authoritative FeeUsdEquiv totals. Realized PnL and
+RealizedReturn derive from those same figures, so the journal reconciles
+exit proceeds − entry basis − entry fees − exit fees exactly.
 */
 func (position *Position) closeFill(execution kraken.ExecutionData) error {
 	if position.status() == types.CLOSED {
@@ -656,18 +780,37 @@ func (position *Position) closeFill(execution kraken.ExecutionData) error {
 		position.Holding.EntryPrice,
 	).Mul(position.Holding.Qty)
 	entryValue := entryGross.Add(position.Holding.EntryFee)
+	exitVWAP := executionVWAP(execution)
+
+	if exitVWAP == nil {
+		return errnie.Err(
+			errnie.Validation,
+			"position: exit execution has no resolvable realized VWAP",
+			nil,
+		)
+	}
+
+	// Authoritative exit proceeds are CumCost (gross): realized PnL is
+	// proceeds − entry basis − entry fees − exit fees, all exchange-reported.
 	exitValue := decimal.NewFromInt64(0).Add(execution.CumCost).Sub(
 		execution.FeeUsdEquiv,
 	)
 	position.Holding.ExitAt = &execution.Timestamp
-	position.Holding.ExitPrice = decimal.NewFromInt64(0).Add(
-		execution.CumCost,
-	).Div(execution.CumQty)
+	position.Holding.ExitPrice = exitVWAP
 	position.Holding.ExitFee = execution.FeeUsdEquiv
 	position.Holding.PnL = exitValue.Sub(entryValue)
 	position.Holding.ReturnPct = decimal.NewFromInt64(0).Add(
 		position.Holding.PnL,
 	).Div(entryValue).Mul(decimal.NewFromInt64(100)).Float64()
+
+	// Separated realized economics for the audit journal.
+	position.Holding.ExitVWAP = exitVWAP
+	position.Holding.ExitQty = decimal.NewFromInt64(0).Add(execution.CumQty)
+	position.Holding.ExitFees = decimal.NewFromInt64(0).Add(execution.FeeUsdEquiv)
+	position.Holding.RealizedPnL = decimal.NewFromInt64(0).Add(position.Holding.PnL)
+	position.Holding.RealizedReturn = decimal.NewFromInt64(0).Add(
+		position.Holding.PnL,
+	).Div(entryValue)
 	position.Holding.SellableQty = decimal.NewFromInt64(0)
 
 	if position.store != nil {

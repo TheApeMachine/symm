@@ -40,6 +40,8 @@ SKIP_DIRECTORY_NAMES: frozenset[str] = frozenset(
         "scripts",
         "telemetry",
         "specs",
+        "tests",
+        "frontend",
     }
 )
 
@@ -52,6 +54,7 @@ SKIP_FILE_NAMES: frozenset[str] = frozenset(
         ".test.tsx",
         ".pnpm-lock.yaml",
         "AGENTS.md",
+        "pnpm-lock.yaml",
     }
 )
 
@@ -64,8 +67,7 @@ ALLOWED_SUFFIXES: tuple[str, ...] = (
     ".metal",
     ".mm",
     ".m",
-    ".h",
-    ".md",
+    ".h"
 )
 
 

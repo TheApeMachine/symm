@@ -668,9 +668,26 @@ type GraphUpdate struct {
 }
 
 /*
+SolverOption configures one graph-solver property at construction.
+*/
+type SolverOption func(*Solver)
+
+/*
+WithInterval overrides the per-symbol Relation refresh cadence. A non-positive
+value disables the cadence gate (every observation re-estimates, matching the
+solver's own due() semantics). The default is 100ms.
+*/
+func WithInterval(interval time.Duration) SolverOption {
+	return func(solver *Solver) {
+		solver.interval = interval
+	}
+}
+
+/*
 NewSolver builds the graph stage. historyCapacity bounds each coordinate's
 retained observations (infrastructure provenance). schemaVersion and the plans'
-versions identify the graph snapshot.
+versions identify the graph snapshot. opts override the default Relation refresh
+cadence.
 */
 func NewSolver(
 	ctx context.Context,
@@ -679,6 +696,7 @@ func NewSolver(
 	historyCapacity int,
 	plans []*relation.RelationPlan,
 	schemaVersion uint64,
+	opts ...SolverOption,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -691,6 +709,10 @@ func NewSolver(
 		influence: NewInfluenceGraph(epoch, schemaVersion, planVersion(plans), 64),
 		plans:     plans,
 		interval:  100 * time.Millisecond,
+	}
+
+	for _, opt := range opts {
+		opt(solver)
 	}
 
 	if bus != nil {

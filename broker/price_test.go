@@ -2,6 +2,7 @@ package broker
 
 import (
 	"testing"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -371,9 +372,133 @@ func TestPriceReturnPct(t *testing.T) {
 	})
 }
 
+func TestPriceExecutableSurface(t *testing.T) {
+	Convey("Given a one-level full-coverage bid book", t, func() {
+		managed := entryEconomicsBook(
+			t,
+			bookLevel{book.Bid, 100, 100000},
+			bookLevel{book.Ask, 101, 100000},
+		)
+		price := entryEconomicsManagedFixture(t, managed, 101, 100, 100000)
+
+		surface := price.ExecutableSurface(
+			"EDGE/USD",
+			decimal.NewFromFloat64(100000),
+			nil,
+			time.Now(),
+		)
+
+		Convey("it produces the expected executable mark and full coverage", func() {
+			So(surface.BookComplete, ShouldBeTrue)
+			So(surface.FullyExecutable, ShouldBeTrue)
+			So(surface.ExecutableQty.Float64(), ShouldAlmostEqual, 100000, 1e-9)
+			So(surface.ExecutableVWAP.Float64(), ShouldAlmostEqual, 100*0.9975, 1e-9)
+		})
+	})
+
+	Convey("Given a multi-level bid book", t, func() {
+		managed := entryEconomicsBook(
+			t,
+			bookLevel{book.Bid, 100, 50000},
+			bookLevel{book.Bid, 90, 50000},
+			bookLevel{book.Ask, 120, 100000},
+		)
+		price := entryEconomicsManagedFixture(t, managed, 120, 100, 100000)
+
+		Convey("it walks the levels and produces the correct executable VWAP", func() {
+			surface := price.ExecutableSurface(
+				"EDGE/USD",
+				decimal.NewFromFloat64(100000),
+				nil,
+				time.Now(),
+			)
+
+			gross := 100.0*50000 + 90.0*50000
+			expectedVWAP := gross * 0.9975 / 100000
+
+			So(surface.FullyExecutable, ShouldBeTrue)
+			So(surface.ExecutableVWAP.Float64(), ShouldAlmostEqual, expectedVWAP, 1e-9)
+		})
+
+		Convey("the executable mark uses the actual SellableQty", func() {
+			surface := price.ExecutableSurface(
+				"EDGE/USD",
+				decimal.NewFromFloat64(50000),
+				nil,
+				time.Now(),
+			)
+
+			So(surface.FullyExecutable, ShouldBeTrue)
+			So(surface.ExecutableVWAP.Float64(), ShouldAlmostEqual, 100*0.9975, 1e-9)
+		})
+	})
+
+	Convey("Given a book that cannot fill the complete lot", t, func() {
+		managed := entryEconomicsBook(
+			t,
+			bookLevel{book.Bid, 100, 24000},
+			bookLevel{book.Ask, 101, 100000},
+		)
+		price := entryEconomicsManagedFixture(t, managed, 101, 100, 24000)
+
+		Convey("insufficient visible quantity is explicitly incomplete, never ticker fallback", func() {
+			surface := price.ExecutableSurface(
+				"EDGE/USD",
+				decimal.NewFromFloat64(100000),
+				nil,
+				time.Now(),
+			)
+
+			So(surface.BookComplete, ShouldBeTrue)
+			So(surface.FullyExecutable, ShouldBeFalse)
+			So(surface.ExecutableVWAP, ShouldBeNil)
+		})
+	})
+
+	Convey("Given a protected floor", t, func() {
+		managed := entryEconomicsBook(
+			t,
+			bookLevel{book.Bid, 110, 24000},
+			bookLevel{book.Bid, 95, 100000},
+			bookLevel{book.Ask, 120, 100000},
+		)
+		price := entryEconomicsManagedFixture(t, managed, 120, 110, 100000)
+
+		Convey("floor coverage reflects only quantity at or above the floor", func() {
+			surface := price.ExecutableSurface(
+				"EDGE/USD",
+				decimal.NewFromFloat64(100000),
+				decimal.NewFromFloat64(100),
+				time.Now(),
+			)
+
+			So(surface.FloorCoverageQty.Float64(), ShouldAlmostEqual, 24000, 1e-9)
+			So(surface.ExecutableQty.Float64(), ShouldAlmostEqual, 124000, 1e-9)
+		})
+	})
+}
+
+func BenchmarkPriceExecutableSurface(b *testing.B) {
+	managed := entryEconomicsBook(
+		b,
+		bookLevel{book.Bid, 100, 50000},
+		bookLevel{book.Bid, 99, 50000},
+		bookLevel{book.Bid, 50, 50000},
+		bookLevel{book.Ask, 101, 100000},
+	)
+	price := entryEconomicsManagedFixture(b, managed, 101, 100, 100000)
+	sellable := decimal.NewFromFloat64(100000)
+	floor := decimal.NewFromFloat64(51)
+	at := time.Now()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		price.ExecutableSurface("EDGE/USD", sellable, floor, at)
+	}
+}
+
 func BenchmarkPriceUpdate(b *testing.B) {
 	price, _ := newPriceSurface(b, "TEST8")
-
 	ticker := &kraken.TickerData{
 		Symbol: "TEST8",
 		Ask:    decimal.NewFromFloat64(90000.00),

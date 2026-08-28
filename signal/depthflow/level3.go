@@ -654,15 +654,18 @@ func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float6
 			return
 		}
 		if orderBook.Bids != nil {
-			for _, priceLevel := range orderBook.Bids.Levels {
-				if priceLevel != nil && priceLevel.Price != nil {
+			// Walk the sorted high→low linked chain instead of iterating the
+			// price-keyed map: totals are order-independent, and the chain walk
+			// visits each level exactly once with no map iteration overhead.
+			for priceLevel := orderBook.Bids.High; priceLevel != nil; priceLevel = priceLevel.Lower {
+				if priceLevel.Price != nil && priceLevel.Quantity != nil {
 					bidNotional += priceLevel.Price.Float64() * priceLevel.Quantity.Float64()
 				}
 			}
 		}
 		if orderBook.Asks != nil {
-			for _, priceLevel := range orderBook.Asks.Levels {
-				if priceLevel != nil && priceLevel.Price != nil {
+			for priceLevel := orderBook.Asks.Low; priceLevel != nil; priceLevel = priceLevel.Higher {
+				if priceLevel.Price != nil && priceLevel.Quantity != nil {
 					askNotional += priceLevel.Price.Float64() * priceLevel.Quantity.Float64()
 				}
 			}

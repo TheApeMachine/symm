@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -135,27 +136,46 @@ func deterministicCausalState(at time.Time, constantReturn float64) *CausalState
 
 func newTestReasoner() *Reasoner {
 	schemaTemplate := DefaultCausalSchema(1, time.Second)
-	reasoner, err := NewReasoner(1, 2048, RelationPlansFromSchema(schemaTemplate, 1, 30*time.Second), schemaTemplate, time.Hour)
+
+	graphSolver := graph.NewSolver(
+		context.Background(),
+		nil,
+		1,
+		2048,
+		RelationPlansFromSchema(schemaTemplate, 1, 30*time.Second),
+		schemaTemplate.Version,
+		graph.WithInterval(0),
+	)
+
+	reasoner, err := NewReasoner(1, graphSolver.Store(), graphSolver.Graph(), schemaTemplate)
 
 	if err != nil {
 		panic(err)
 	}
 
+	testHarness = graphSolver
+
 	return reasoner
 }
 
+// testHarness holds the graph solver that owns the shared store and influence
+// graph for the current test reasoner. Ingestion and relation estimation run
+// through it — the reasoner is a pure consumer of its fitted state. In the
+// production wiring this is the graph.Solver shared through the workspace; the
+// test binds it directly.
+var testHarness *graph.Solver
+
 /*
-ingestSeries feeds a synthetic series into a reasoner and refreshes its
-Relation estimates once at the end.
+ingestSeries feeds a synthetic series into the graph solver that owns the
+reasoner's shared store, then refreshes Relations once at the end so the
+reasoner observes the fully fitted influence graph.
 */
 func ingestSeries(reasoner *Reasoner, count int, seed int64, metadata float64) {
 	flow, gross, ret := syntheticSeries(count, seed)
 
 	for index := 0; index < count; index++ {
-		reasoner.Ingest(syntheticMeasurement(index, flow[index], gross[index], ret[index], metadata))
+		testHarness.Step(syntheticMeasurement(index, flow[index], gross[index], ret[index], metadata))
 	}
-
-	reasoner.Refresh("TEST/USD", time.Unix(0, int64(count-1)*int64(time.Second)))
 }
 
 func TestConformanceInformationPreservation(t *testing.T) {
@@ -660,8 +680,7 @@ func TestConformanceCrossSignalParticipation(t *testing.T) {
 				),
 			},
 		}
-		reasoner.Ingest(hawkesMeasurement)
-		reasoner.Refresh("TEST/USD", at)
+		testHarness.Step(hawkesMeasurement)
 
 		hawkesCoordinate := relation.Coordinate{
 			Symbol:    "TEST/USD",
@@ -916,8 +935,7 @@ func TestConformanceQueryLocalCausalGating(t *testing.T) {
 				),
 			},
 		}
-		reasoner.Ingest(sentimentMeasurement)
-		reasoner.Refresh("TEST/USD", at)
+		testHarness.Step(sentimentMeasurement)
 
 		state := reasoner.CausalState("TEST/USD", at)
 		So(state, ShouldNotBeNil)
@@ -1220,8 +1238,7 @@ func TestConformanceNoGlobalWorldVeto(t *testing.T) {
 				),
 			},
 		}
-		reasoner.Ingest(toxMeasurement)
-		reasoner.Refresh("TEST/USD", at)
+		testHarness.Step(toxMeasurement)
 
 		stateAfter := reasoner.CausalState("TEST/USD", at)
 

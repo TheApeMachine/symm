@@ -370,23 +370,6 @@ func (estimator *InfluenceEstimator) estimateAtLag(
 		lastTarget = target.At
 		lastSource = aligned[len(aligned)-1].At
 
-		// Prequential step: predict with models fitted strictly on earlier
-		// rows, then incorporate the current row so it never trains the
-		// model that scored it.
-		restrictedFit := restrictedAccumulator.Fit()
-		fullFit := fullAccumulator.Fit()
-
-		// Warm-up steps (rows not exceeding parameters) are not defined and
-		// not rank-deficient; a singular fit with more rows than parameters
-		// is rank deficiency.
-		if restrictedAccumulator.Rows() > restrictedParameters && !restrictedFit.Defined {
-			rankDeficient = true
-		}
-
-		if fullAccumulator.Rows() > fullParameters && !fullFit.Defined {
-			rankDeficient = true
-		}
-
 		predictors[0] = 1
 		predictors[1] = aligned[0].Raw
 
@@ -396,15 +379,33 @@ func (estimator *InfluenceEstimator) estimateAtLag(
 
 		predictors[restrictedParameters] = aligned[len(aligned)-1].Raw
 
-		if restrictedFit.Defined && fullFit.Defined {
-			restrictedPrediction, _ := restrictedFit.Predict(predictors[:restrictedParameters])
-			fullPrediction, _ := fullFit.Predict(predictors[:fullParameters])
+		// Prequential step: predict with models fitted strictly on earlier
+		// rows, then incorporate the current row so it never trains the
+		// model that scored it. The prediction runs on the recursive
+		// least-squares state (O(p²), zero allocation) seeded from the exact
+		// normal equations at the first non-singular design.
+		restrictedPrediction, restrictedDefined := restrictedAccumulator.PrequentialPredict(predictors[:restrictedParameters])
+		fullPrediction, fullDefined := fullAccumulator.PrequentialPredict(predictors[:fullParameters])
+
+		// Warm-up steps (rows not exceeding parameters) are not defined and
+		// not rank-deficient; a singular design with more rows than parameters
+		// is rank deficiency. The RLS readiness mirrors the exact Fit Defined
+		// gate, seeding false when the accumulated design is singular.
+		if restrictedAccumulator.Rows() > restrictedParameters && !restrictedDefined {
+			rankDeficient = true
+		}
+
+		if fullAccumulator.Rows() > fullParameters && !fullDefined {
+			rankDeficient = true
+		}
+
+		if restrictedDefined && fullDefined {
 			restrictedResiduals = append(restrictedResiduals, target.Raw-restrictedPrediction)
 			fullResiduals = append(fullResiduals, target.Raw-fullPrediction)
 		}
 
-		restrictedAccumulator.Add(predictors[:restrictedParameters], target.Raw)
-		fullAccumulator.Add(predictors[:fullParameters], target.Raw)
+		restrictedAccumulator.PrequentialAdd(predictors[:restrictedParameters], target.Raw)
+		fullAccumulator.PrequentialAdd(predictors[:fullParameters], target.Raw)
 
 		return true
 	})

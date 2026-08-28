@@ -66,6 +66,12 @@ type Stoploss struct {
 	Horizon              int                 `json:"horizon,omitempty"`
 	Observed             int                 `json:"observed,omitempty"`
 	ClockArmed           bool                `json:"clock_armed,omitempty"`
+	// BookObserved latches true once a valid authoritative L3 book has been
+	// read after the stop became live. It distinguishes clean initial
+	// bootstrap (no book yet, stay armed and wait) from feed-integrity failure
+	// after protection was live (a valid book that becomes invalid owns an
+	// execution-regime invalidation).
+	BookObserved         bool                `json:"book_observed,omitempty"`
 	Status               Status              `json:"status"`
 	Symbol               string              `json:"symbol"`
 	Floor                *decimal.Decimal    `json:"floor,omitempty"`
@@ -279,9 +285,102 @@ func (stoploss *Stoploss) RebindFill(
 }
 
 /*
-Update applies the next executable mark without ever lowering the floor.
+Update applies the next executable mark without ever lowering the floor, then
+advances the forecast-horizon clock. It is the ticker/mark cadence path: each
+call counts one admitted observation against the horizon.
 */
 func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
+	if stoploss == nil || mark == nil || mark.Sign() <= 0 {
+		return
+	}
+
+	stoploss.observeMark(mark)
+
+	if stoploss.ClockArmed && stoploss.Status == ARMED {
+		stoploss.Observed++
+	}
+}
+
+/*
+ObserveExecutable applies the authoritative executable-liquidation state from
+one committed L3 book frame. It is the economic-state path: it updates the
+executable mark, realizable peak, and trailing floor, and owns every
+execution-regime check immediately. It never advances Observed/Horizon — a
+busy book that emits many frames must not consume the forecast horizon merely
+because more frames arrived.
+
+The mark is the full-lot liquidation-equivalent price. The surface must be
+book-complete and fully executable; otherwise the position cannot truthfully
+price its complete SellableQty and the protection path claims an
+execution-regime invalidation. A locked/protected position whose floor loses
+quantity coverage (FloorCoverageQty < SellableQty) is likewise invalidated
+immediately: the floor has already become economically unrealizable for the
+complete lot even if BestBid still prints above it.
+*/
+func (stoploss *Stoploss) ObserveExecutable(surface *ExecutionSurface) {
+	if stoploss == nil || surface == nil || stoploss.Status == TRIGGERED {
+		return
+	}
+
+	if !surface.BookComplete {
+		// A valid book has never been observed: clean initial bootstrap — the
+		// position stays armed and waits for the first coherent frame rather
+		// than fabricating a mark or falling back to ticker.
+		if !stoploss.BookObserved {
+			return
+		}
+
+		// A valid book was previously observed and has now become unusable:
+		// feed-integrity failure surfaces immediate execution risk.
+		stoploss.triggerRegimeInvalidated(surface)
+		return
+	}
+
+	stoploss.BookObserved = true
+
+	if !surface.FullyExecutable || surface.ExecutableVWAP == nil ||
+		surface.ExecutableVWAP.Sign() <= 0 {
+		stoploss.triggerRegimeInvalidated(surface)
+		return
+	}
+
+	if stoploss.Locked && surface.FloorCoverageQty != nil &&
+		surface.SellableQty != nil &&
+		surface.FloorCoverageQty.Cmp(surface.SellableQty) < 0 {
+		stoploss.triggerRegimeInvalidated(surface)
+		return
+	}
+
+	stoploss.observeMark(surface.ExecutableVWAP)
+}
+
+/*
+triggerRegimeInvalidated claims the protective exit via the execution-regime
+boundary. The executable mark, when available, is retained as the trigger mark;
+when the surface cannot price the position at all, the last known executable
+mark is retained so the audit record still shows what the lot was worth before
+the book became unusable.
+*/
+func (stoploss *Stoploss) triggerRegimeInvalidated(surface *ExecutionSurface) {
+	stoploss.Status = TRIGGERED
+	stoploss.TriggerReason = TriggerRegimeInvalidated
+
+	if surface.ExecutableVWAP != nil && surface.ExecutableVWAP.Sign() > 0 {
+		stoploss.TriggerMark = decimal.NewFromInt64(0).Add(surface.ExecutableVWAP)
+		return
+	}
+
+	stoploss.TriggerMark = scaled(stoploss.Mark)
+}
+
+/*
+observeMark applies one executable mark's full economic evaluation — floor
+trigger, peak reach, trailing rachet, profit lock, stagnation, and surge
+momentum — without touching the forecast-horizon clock. Update and
+ObserveExecutable both delegate here so the mark semantics are identical; only
+the caller decides whether the observation counts against the horizon.
+*/
+func (stoploss *Stoploss) observeMark(mark *decimal.Decimal) {
 	if stoploss == nil || mark == nil || mark.Sign() <= 0 {
 		return
 	}
@@ -387,10 +486,6 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 			stoploss.TriggerMark = mark
 			return
 		}
-	}
-
-	if stoploss.ClockArmed && stoploss.Status == ARMED {
-		stoploss.Observed++
 	}
 }
 

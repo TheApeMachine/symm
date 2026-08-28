@@ -12,7 +12,6 @@ import (
 	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/nomagique/mcts"
 	"github.com/theapemachine/symm/nomagique/relation"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -50,70 +49,66 @@ type CausalState struct {
 }
 
 type reasonerSymbolState struct {
-	mu      sync.Mutex
-	lastRun time.Time
-	model   *causal.CausalModel
+	mu    sync.Mutex
+	model *causal.CausalModel
 }
 
 /*
-Reasoner is the live observational reasoning stage. It owns the coordinate
-store, the Relation engine, the Influence Graph, and the per-symbol Causal
-models, and it publishes CausalState per symbol with symbol-local synchronization.
-It is the explicit dataflow:
+Reasoner is the live causal-reasoning stage. It does NOT estimate Relations:
+that single responsibility belongs to the graph stage, which owns the shared
+ObservationStore and InfluenceGraph (graph.SharedObservationStore /
+graph.SharedInfluenceGraph) and refreshes them on its own cadence. The reasoner
+is a pure consumer — it reads those shared objects and derives the per-symbol
+CausalModel and CausalState on top of the already-fitted influence graph. The
+dataflow is:
 
-	ChannelMeasurements
-	    → Observational Coordinate Store
-	    → Relation Engine
-	    → Influence updates
-	    → Influence Graph
-	    → Causal Model / CausalState
+	ChannelRelations (graph.GraphUpdate)
+	    → read shared ObservationStore + InfluenceGraph
+	    → per-symbol Causal Model
+	    → CausalState
 
 Feature selection is query-local; every valid Measurement coordinate stays in
-the store. Simulated states never enter the store.
+the shared store. Simulated states never enter the store.
 */
 type Reasoner struct {
 	epoch          uint64
 	store          *relation.ObservationStore
-	estimator      *relation.InfluenceEstimator
 	influenceGraph *graph.InfluenceGraph
 	schemaTemplate *causal.CausalSchema
-	plans          []*relation.RelationPlan
-	interval       time.Duration
 	symbolStates   sync.Map
-	compiledPlans  sync.Map
 	onState        atomic.Pointer[func(*CausalState)]
 }
 
 /*
-NewReasoner builds the reasoning stage. historyCapacity bounds each
-coordinate's retained observations (infrastructure provenance). plans are the
-explicit Relation plans; schemaTemplate is the symbol-agnostic CausalSchema
-instantiated per symbol. interval bounds per-symbol Relation refresh rate. A
-nil schemaTemplate is a validation error.
+NewReasoner builds the reasoning stage. store and influenceGraph are the shared
+authoritative instances owned by the graph stage; the reasoner reads them and
+never writes a relation estimate. schemaTemplate is the symbol-agnostic
+CausalSchema instantiated per symbol. A nil schemaTemplate, store, or graph is a
+validation error: the reasoner cannot reason without the fitted influence data.
 */
 func NewReasoner(
 	epoch uint64,
-	historyCapacity int,
-	plans []*relation.RelationPlan,
+	store *relation.ObservationStore,
+	influenceGraph *graph.InfluenceGraph,
 	schemaTemplate *causal.CausalSchema,
-	interval time.Duration,
 ) (*Reasoner, error) {
 	if schemaTemplate == nil {
 		return nil, errStrategy("causal schema template is required")
 	}
 
-	if interval <= 0 {
-		interval = time.Second
+	if store == nil {
+		return nil, errStrategy("shared observation store is required")
+	}
+
+	if influenceGraph == nil {
+		return nil, errStrategy("shared influence graph is required")
 	}
 
 	return &Reasoner{
 		epoch:          epoch,
-		store:          relation.NewObservationStore(historyCapacity),
-		estimator:      relation.NewInfluenceEstimator("prequential-linear-v1"),
-		influenceGraph: graph.NewInfluenceGraph(epoch, schemaTemplate.Version, planVersion(plans), 64),
+		store:          store,
+		influenceGraph: influenceGraph,
 		schemaTemplate: schemaTemplate,
-		plans:          plans,
-		interval:       interval,
 	}, nil
 }
 
@@ -144,78 +139,25 @@ func errStrategy(format string, arguments ...any) error {
 	return fmt.Errorf("strategy: "+format, arguments...)
 }
 
-func planVersion(plans []*relation.RelationPlan) uint64 {
-	version := uint64(0)
-
-	for _, plan := range plans {
-		if plan != nil && plan.Version > version {
-			version = plan.Version
-		}
-	}
-
-	return version
-}
-
 /*
 Ingest appends one Measurement to the coordinate store and refreshes the
 Relation estimates for its symbol using symbol-local locking.
 */
-func (reasoner *Reasoner) Ingest(measurement *nmtypes.Measurement) {
-	if reasoner == nil || measurement == nil || measurement.Err != nil {
-		return
-	}
-
-	observations := relation.AppendMeasurement(measurement, reasoner.epoch)
-
-	if len(observations) == 0 {
-		return
-	}
-
-	reasoner.store.AppendObservations(observations)
-
-	symbolState := reasoner.getSymbolState(measurement.Symbol)
-	symbolState.mu.Lock()
-
-	due := false
-	if !symbolState.lastRun.IsZero() && measurement.At.Sub(symbolState.lastRun) >= reasoner.interval {
-		symbolState.lastRun = measurement.At
-		due = true
-	} else if symbolState.lastRun.IsZero() {
-		symbolState.lastRun = measurement.At
-		due = true
-	}
-
-	var state *CausalState
-	onStatePtr := reasoner.onState.Load()
-
-	if due {
-		reasoner.updateRelations(measurement.Symbol)
-
-		if onStatePtr != nil && *onStatePtr != nil {
-			state = reasoner.snapshotSymbol(symbolState, measurement.Symbol, measurement.At)
-		}
-	}
-
-	symbolState.mu.Unlock()
-
-	if onStatePtr != nil && *onStatePtr != nil && state != nil {
-		(*onStatePtr)(state)
-	}
-}
-
 /*
-Refresh forces one Relation update round for a symbol and republishes its
-causal state.
+OnGraphUpdate consumes one graph relation refresh for a symbol and republishes
+its causal state over the freshly estimated influence graph. It never writes a
+relation: it reads the shared store and graph that the graph stage just advanced
+and derives the CausalState for the affected symbol. The symbol-local lock
+serializes concurrent updates so a slow causal snapshot can never interleave a
+later one for the same symbol.
 */
-func (reasoner *Reasoner) Refresh(symbol string, at time.Time) {
+func (reasoner *Reasoner) OnGraphUpdate(symbol string, at time.Time) {
 	if reasoner == nil || symbol == "" {
 		return
 	}
 
 	symbolState := reasoner.getSymbolState(symbol)
 	symbolState.mu.Lock()
-
-	reasoner.updateRelations(symbol)
 
 	var state *CausalState
 	onStatePtr := reasoner.onState.Load()
@@ -229,80 +171,6 @@ func (reasoner *Reasoner) Refresh(symbol string, at time.Time) {
 	if onStatePtr != nil && *onStatePtr != nil && state != nil {
 		(*onStatePtr)(state)
 	}
-}
-
-type reasonerCompiledPlanEntry struct {
-	coordinateCount int
-	candidates      []relation.CompiledCandidate
-}
-
-/*
-updateRelations estimates every planned pair for one symbol and records the
-Influence edges using precompiled candidate topology.
-*/
-func (reasoner *Reasoner) updateRelations(symbol string) {
-	coordinateCount := reasoner.store.CoordinateCount()
-
-	var candidates []relation.CompiledCandidate
-
-	if cachedValue, found := reasoner.compiledPlans.Load(symbol); found {
-		entry := cachedValue.(reasonerCompiledPlanEntry)
-
-		if entry.coordinateCount == coordinateCount {
-			candidates = entry.candidates
-		}
-	}
-
-	if candidates == nil {
-		candidates = relation.CompilePlansForSymbol(reasoner.plans, symbol, reasoner.epoch, reasoner.store)
-		reasoner.compiledPlans.Store(symbol, reasonerCompiledPlanEntry{
-			coordinateCount: coordinateCount,
-			candidates:      candidates,
-		})
-	}
-
-	for _, candidate := range candidates {
-		reasoner.estimateCandidate(candidate)
-	}
-}
-
-/*
-estimateCandidate estimates one precompiled candidate pair and records the Influence edge.
-*/
-func (reasoner *Reasoner) estimateCandidate(candidate relation.CompiledCandidate) {
-	_ = reasoner.influenceGraph.RegisterCandidate(graph.EdgeInfluence, candidate.Source, candidate.Target, reasoner.epoch)
-
-	if !candidate.ControlsComplete {
-		_ = reasoner.influenceGraph.SetUnavailable(graph.EdgeInfluence, candidate.Source, candidate.Target, reasoner.epoch)
-		return
-	}
-
-	result, err := reasoner.estimator.Estimate(reasoner.store, relation.InfluenceRequest{
-		Source:   candidate.Source,
-		Target:   candidate.Target,
-		Controls: candidate.Controls,
-		Lag:      candidate.Lag,
-	})
-
-	if err != nil {
-		return
-	}
-
-	if result.Defined() {
-		_ = reasoner.influenceGraph.UpsertEdge(&graph.InfluenceEdge{
-			Type:   graph.EdgeInfluence,
-			Source: candidate.Source,
-			Target: candidate.Target,
-			Result: result,
-			From:   result.From,
-			At:     result.At,
-			Epoch:  reasoner.epoch,
-		})
-
-		return
-	}
-
-	_ = reasoner.influenceGraph.SetUnavailable(graph.EdgeInfluence, candidate.Source, candidate.Target, reasoner.epoch)
 }
 
 /*
