@@ -42,6 +42,7 @@ type Market struct {
 	execution         *executionModel
 	stack             Stack
 	bus               *runtime.Workspace
+	feed              *runtime.Feed
 	autoFill          bool
 	primed            bool
 	clockSet          bool

@@ -3,11 +3,12 @@ package broker
 import (
 	"context"
 	"fmt"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/theapemachine/symm/nomagique/runtime"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -81,11 +82,9 @@ func NewInstrument(
 
 	instrument.status = types.PENDING
 
-	if bus != nil {
-		bus.On(types.ChannelDisconnect, func() {
-			errnie.Info("instrument: channel disconnect received")
-		})
-	}
+	bus.On(types.ChannelDisconnect, func() {
+		errnie.Info("instrument: channel disconnect received")
+	})
 
 	return instrument
 }

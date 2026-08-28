@@ -193,10 +193,9 @@ func NewSolver(
 	}
 
 	if bus != nil {
-		runtime.WireFunc[[]types.Category, *types.Cognition](
+		runtime.Register[[]types.Category, *types.Cognition](
 			bus,
-			types.ChannelCategories,
-			types.ChannelCognition,
+			nil,
 			solver.Step,
 		)
 	}

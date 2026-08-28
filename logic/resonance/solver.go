@@ -121,10 +121,9 @@ func NewSolver(
 	}
 
 	if bus != nil {
-		runtime.WireFunc[kraken.TickerData, *types.ResonanceArtifact](
+		runtime.Register[kraken.TickerData, *types.ResonanceArtifact](
 			bus,
-			types.ChannelTickers,
-			types.ChannelResonance,
+			nil,
 			solver.Step,
 		)
 	}

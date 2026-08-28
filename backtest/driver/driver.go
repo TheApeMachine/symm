@@ -48,6 +48,7 @@ type Driver struct {
 	ctx     context.Context
 	store   *backtest.Store
 	ui      *runtime.Workspace
+	uiFeed  *runtime.Feed
 	hub     *ui.Hub
 	onState func(State)
 
@@ -79,6 +80,7 @@ func NewDriver(
 		store:    store,
 		hub:      hub,
 		ui:       ui,
+		uiFeed:   ui.NewFeed(),
 		onState:  onState,
 		commands: make(chan command, 8),
 		state:    State{},

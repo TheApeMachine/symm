@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { useRef } from "react";
-import { focusStore, measurementStore } from "#/collections/app";
+import { useEffect, useRef } from "react";
+import { focusStore, getMeasurementStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
@@ -24,20 +24,31 @@ export const KernelInspector = () => {
 		? sourceHeadlineMetric(source).slice("metrics.".length)
 		: "";
 
-	measurementStore.subscribe((state) => {
-		if (!root.current) return;
-		const ring = active ? state[source]?.[focusSymbol] : undefined;
-		const row = ring?.getLast();
+	useEffect(() => {
+		if (!active) return;
+		const sourceStore = getMeasurementStore(source);
 
-		const set = (q: string, value: string) => {
-			const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
-			if (el) el.textContent = value;
+		const applyState = () => {
+			if (!root.current) return;
+			const row = sourceStore.state.getLast();
+
+			const set = (q: string, value: string) => {
+				const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
+				if (el) el.textContent = value;
+			};
+
+			set("unit", headline === "" ? "" : headline);
+			set("symbol", row?.symbol() ?? focusSymbol);
+			set("at", row?.at() === undefined ? "" : new Date(Number(row.at())).toISOString().slice(11, 19));
 		};
 
-		set("unit", headline === "" ? "" : headline);
-		set("symbol", row?.symbol() ?? focusSymbol);
-		set("at", row?.at() === undefined ? "" : new Date(Number(row.at())).toISOString().slice(11, 19));
-	});
+		applyState();
+		const subscription = sourceStore.subscribe(applyState);
+
+		return () => {
+			subscription.unsubscribe();
+		};
+	}, [active, source, focusSymbol, headline]);
 
 	if (!active) {
 		return null;

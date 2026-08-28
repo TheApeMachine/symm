@@ -25,6 +25,7 @@ gaps never open the overlay.
 */
 type ErrorBridge struct {
 	bus   *runtime.Workspace
+	feed  *runtime.Feed
 	ready func() bool
 	// onError receives each distinct error as (source, message, caller) so the
 	// diagnostics WebRTC frame can surface subsystem-attributed errors. Nil
@@ -55,6 +56,7 @@ func NewErrorBridge(
 
 	return log.IOWriter{Writer: &ErrorBridge{
 		bus:     hub.workspace,
+		feed:    hub.workspace.NewFeed(),
 		ready:   ready,
 		onError: onError,
 	}}
@@ -100,8 +102,8 @@ func (bridge *ErrorBridge) Write(payload []byte) (int, error) {
 	}
 
 	safe := safeErrorFields(fields)
-	if bridge.bus != nil {
-		bridge.bus.Publish(types.ChannelUI, &types.UIFrame{
+	if bridge.feed != nil {
+		bridge.feed.Emit(&types.UIFrame{
 			Type: wire.FrameErrorFrame,
 			Value: &wire.ErrorFrameT{
 				Level: stringMapField(safe, "level"), Source: attributedErrorSource(fields),

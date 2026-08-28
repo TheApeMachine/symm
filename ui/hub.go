@@ -181,13 +181,12 @@ func NewHub(
 	// make the highest-frequency publisher (ticks, then level3 depthflow)
 	// overwrite every other stream's latest value before the hub drains,
 	// silently starving the sparser signals out of the dashboard.
-	hub.workspace.WireClass(
-		types.ChannelUI,
-		"",
+	runtime.RegisterSinkClass(
+		hub.workspace,
 		runtime.ServiceUI,
 		runtime.DeliveryLatestByKey,
 		hubLatestKey,
-		hub.Step,
+		func(frame *types.UIFrame) { hub.Step(frame) },
 	)
 
 	hub.app.Use("/ws", func(c fiber.Ctx) error {
@@ -291,10 +290,8 @@ measurements, which are keyed per source so one signal's rows can never be
 overwritten by another's before the hub drains. Nil and unknown values fall
 back to the single global cell.
 */
-func hubLatestKey(value any) string {
-	frame, ok := value.(*types.UIFrame)
-
-	if !ok || frame == nil {
+func hubLatestKey(frame *types.UIFrame) string {
+	if frame == nil {
 		return "global"
 	}
 

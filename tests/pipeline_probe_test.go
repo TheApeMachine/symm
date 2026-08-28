@@ -9,7 +9,9 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/cmd"
+	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	tes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
@@ -33,56 +35,44 @@ func TestPipelineFrameInventory(t *testing.T) {
 
 			var mu sync.Mutex
 			counts := make(map[wire.Frame]int)
-			system.Bus.Wire(types.ChannelUI, "", func(value any) any {
-				frame, ok := value.(*types.UIFrame)
-				if !ok || frame == nil {
-					return nil
+			runtime.RegisterSink(system.Bus, nil, func(frame *types.UIFrame) {
+				if frame == nil {
+					return
 				}
 				mu.Lock()
 				counts[frame.Type]++
 				mu.Unlock()
-
-				return nil
 			})
 
 			measurements := make(map[string]int)
-			system.Bus.Wire(types.ChannelMeasurements, "", func(value any) any {
-				measurement, ok := value.(*data.Measurement[float64])
-				if !ok || measurement == nil {
-					return nil
+			runtime.RegisterSink(system.Bus, nil, func(measurement *data.Measurement[float64]) {
+				if measurement == nil {
+					return
 				}
 				mu.Lock()
 				measurements[measurement.Source]++
 				mu.Unlock()
-
-				return nil
 			})
 
 			categoryCount := 0
-			system.Bus.Wire(types.ChannelCategories, "", func(_ any) any {
+			runtime.RegisterSink(system.Bus, nil, func([]types.Category) {
 				mu.Lock()
 				categoryCount++
 				mu.Unlock()
-
-				return nil
 			})
 
 			causalCount := 0
-			system.Bus.Wire(types.ChannelCausal, "", func(_ any) any {
+			runtime.RegisterSink(system.Bus, nil, func(*types.CausalOutput) {
 				mu.Lock()
 				causalCount++
 				mu.Unlock()
-
-				return nil
 			})
 
 			graphCount := 0
-			system.Bus.Wire(types.ChannelRelations, "", func(_ any) any {
+			runtime.RegisterSink(system.Bus, nil, func(*graph.GraphUpdate) {
 				mu.Lock()
 				graphCount++
 				mu.Unlock()
-
-				return nil
 			})
 
 			tickCount := 1000

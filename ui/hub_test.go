@@ -61,9 +61,8 @@ func TestHubLatestKey(t *testing.T) {
 			So(hubLatestKey(empty), ShouldEqual, "measurements")
 		})
 
-		Convey("nil and non-frame values fall back to the global cell", func() {
+		Convey("a nil frame falls back to the global cell", func() {
 			So(hubLatestKey(nil), ShouldEqual, "global")
-			So(hubLatestKey("not a frame"), ShouldEqual, "global")
 		})
 	})
 }
@@ -85,17 +84,16 @@ func TestHubPerStreamCoalescing(t *testing.T) {
 		var depthflowReceived atomic.Int64
 		var cvdReceived atomic.Int64
 
-		bus.WireClass(
-			types.ChannelUI,
-			"",
+		feed := bus.NewFeed()
+
+		runtime.RegisterSinkClass(
+			bus,
 			runtime.ServiceUI,
 			runtime.DeliveryLatestByKey,
 			hubLatestKey,
-			func(value any) any {
-				frame, ok := value.(*types.UIFrame)
-
-				if !ok || frame == nil || frame.Type != wire.FrameMeasurementsFrame {
-					return nil
+			func(frame *types.UIFrame) {
+				if frame == nil || frame.Type != wire.FrameMeasurementsFrame {
+					return
 				}
 
 				if measurements, valid := frame.Value.(*wire.MeasurementsFrameT); valid && len(measurements.Rows) > 0 {
@@ -106,8 +104,6 @@ func TestHubPerStreamCoalescing(t *testing.T) {
 						cvdReceived.Add(1)
 					}
 				}
-
-				return nil
 			},
 		)
 
@@ -115,7 +111,7 @@ func TestHubPerStreamCoalescing(t *testing.T) {
 			// depthflow floods far more rows than cvd, exactly like level3 book
 			// data outpaces trade-driven signals in production.
 			for index := 0; index < 500; index++ {
-				bus.Publish(types.ChannelUI, &types.UIFrame{
+				feed.Emit(&types.UIFrame{
 					Type: wire.FrameMeasurementsFrame,
 					Value: &wire.MeasurementsFrameT{
 						Rows: []*wire.MeasurementT{{Source: "depthflow", Symbol: "BTC/USD"}},
@@ -123,7 +119,7 @@ func TestHubPerStreamCoalescing(t *testing.T) {
 				})
 
 				if index%50 == 0 {
-					bus.Publish(types.ChannelUI, &types.UIFrame{
+					feed.Emit(&types.UIFrame{
 						Type: wire.FrameMeasurementsFrame,
 						Value: &wire.MeasurementsFrameT{
 							Rows: []*wire.MeasurementT{{Source: "cvd", Symbol: "BTC/USD"}},
@@ -161,19 +157,18 @@ func TestMeasurementsFlowThroughBootChain(t *testing.T) {
 		var depthflowReceived atomic.Int64
 		var cvdReceived atomic.Int64
 
+		feed := bus.NewFeed()
+
 		// The hub: ServiceUI + LatestByKey keyed per frame stream, exactly as
 		// ui/hub.go registers it.
-		bus.WireClass(
-			types.ChannelUI,
-			"",
+		runtime.RegisterSinkClass(
+			bus,
 			runtime.ServiceUI,
 			runtime.DeliveryLatestByKey,
 			hubLatestKey,
-			func(value any) any {
-				frame, ok := value.(*types.UIFrame)
-
-				if !ok || frame == nil || frame.Type != wire.FrameMeasurementsFrame {
-					return nil
+			func(frame *types.UIFrame) {
+				if frame == nil || frame.Type != wire.FrameMeasurementsFrame {
+					return
 				}
 
 				if measurements, valid := frame.Value.(*wire.MeasurementsFrameT); valid && len(measurements.Rows) > 0 {
@@ -184,18 +179,15 @@ func TestMeasurementsFlowThroughBootChain(t *testing.T) {
 						cvdReceived.Add(1)
 					}
 				}
-
-				return nil
 			},
 		)
 
-		// The boot observer: a WireFunc on ChannelMeasurements -> ChannelUI,
-		// converting data.Measurement[float64] into a MeasurementsFrame, with
-		// the focus gate, exactly as cmd/boot.go wires it.
-		runtime.WireFunc[*data.Measurement[float64], *types.UIFrame](
+		// The boot observer: a Register node on *data.Measurement[float64] ->
+		// *types.UIFrame, converting data.Measurement[float64] into a
+		// MeasurementsFrame, with the focus gate, exactly as cmd/boot.go wires it.
+		runtime.Register(
 			bus,
-			types.ChannelMeasurements,
-			types.ChannelUI,
+			nil,
 			func(measurement *data.Measurement[float64]) *types.UIFrame {
 				if measurement == nil {
 					return nil
@@ -227,13 +219,13 @@ func TestMeasurementsFlowThroughBootChain(t *testing.T) {
 			// consumer — the exact scenario that was starved by the single
 			// "global" coalescing key.
 			for index := 0; index < 500; index++ {
-				bus.Publish(types.ChannelMeasurements, &data.Measurement[float64]{
+				feed.Emit(&data.Measurement[float64]{
 					Source: "depthflow",
 					Label:  "BTC/USD",
 				})
 
 				if index%50 == 0 {
-					bus.Publish(types.ChannelMeasurements, &data.Measurement[float64]{
+					feed.Emit(&data.Measurement[float64]{
 						Source: "cvd",
 						Label:  "BTC/USD",
 					})

@@ -27,10 +27,24 @@ func (event testKeyedEvent) ExecutionKey() string {
 	return event.Symbol
 }
 
+// Distinct wire types stand in for the old topic strings: routing is by Go
+// type now, so a pipeline stage needs its own type the same way it used to
+// need its own topic name.
+type inboundValue int64
+type rawValue int64
+type doubledValue int64
+type tripledValue int64
+type nodeInValue int
+type funcInValue int
+type stage1Value int64
+type stage2Value int64
+type stage3Value int64
+
 func WorkspaceWireTest(t *testing.T) {
 	Convey("Given a new Workspace instance", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		workspace := NewWorkspace(ctx)
+		feed := workspace.NewFeed()
 
 		Reset(func() {
 			workspace.Close()
@@ -42,16 +56,12 @@ func WorkspaceWireTest(t *testing.T) {
 			var waitGroup sync.WaitGroup
 			waitGroup.Add(1)
 
-			workspace.Wire("inbound", "", func(input any) any {
-				if value, ok := input.(int64); ok {
-					received.Store(value)
-					waitGroup.Done()
-				}
-
-				return nil
+			RegisterSink(workspace, nil, func(value inboundValue) {
+				received.Store(int64(value))
+				waitGroup.Done()
 			})
 
-			workspace.Publish("inbound", int64(42))
+			feed.Emit(inboundValue(42))
 
 			done := make(chan struct{})
 			go func() {
@@ -75,28 +85,24 @@ func WorkspaceWireTest(t *testing.T) {
 			var waitGroup sync.WaitGroup
 			waitGroup.Add(3)
 
-			workspace.Wire("raw", "doubled", func(input any) any {
-				value := input.(int64)
-				stage1Received.Store(value)
+			Register(workspace, nil, func(value rawValue) doubledValue {
+				stage1Received.Store(int64(value))
 				waitGroup.Done()
-				return value * 2
+				return doubledValue(value * 2)
 			})
 
-			workspace.Wire("doubled", "tripled", func(input any) any {
-				value := input.(int64)
-				stage2Received.Store(value)
+			Register(workspace, nil, func(value doubledValue) tripledValue {
+				stage2Received.Store(int64(value))
 				waitGroup.Done()
-				return value * 3
+				return tripledValue(value * 3)
 			})
 
-			workspace.Wire("tripled", "", func(input any) any {
-				value := input.(int64)
-				stage3Received.Store(value)
+			RegisterSink(workspace, nil, func(value tripledValue) {
+				stage3Received.Store(int64(value))
 				waitGroup.Done()
-				return nil
 			})
 
-			workspace.Publish("raw", int64(5))
+			feed.Emit(rawValue(5))
 
 			done := make(chan struct{})
 			go func() {
@@ -115,26 +121,26 @@ func WorkspaceWireTest(t *testing.T) {
 			So(stage3Received.Load(), ShouldEqual, 30)
 		})
 
-		Convey("When wiring with WireNode and WireFunc helpers", func() {
+		Convey("When wiring with a Node and a plain Register step", func() {
 			var finalOutput atomic.Int64
 			var waitGroup sync.WaitGroup
 			waitGroup.Add(2)
 
 			node := &mockPassNode{}
-			WireNode[int, int](workspace, "node_in", "func_in", node)
-
-			WireFunc[int, int](workspace, "func_in", "", func(input int) int {
-				finalOutput.Store(int64(input + 10))
-				waitGroup.Done()
-				return 0
+			Register(workspace, nil, func(value nodeInValue) funcInValue {
+				return funcInValue(node.Step(int(value)))
 			})
 
-			workspace.Wire("func_in", "", func(_ any) any {
+			RegisterSink(workspace, nil, func(value funcInValue) {
+				finalOutput.Store(int64(value) + 10)
 				waitGroup.Done()
-				return nil
 			})
 
-			workspace.Publish("node_in", 21)
+			RegisterSink(workspace, nil, func(value funcInValue) {
+				waitGroup.Done()
+			})
+
+			feed.Emit(nodeInValue(21))
 
 			done := make(chan struct{})
 			go func() {
@@ -155,21 +161,20 @@ func WorkspaceWireTest(t *testing.T) {
 			var stage3Received atomic.Int64
 			const totalEvents = 2000
 
-			workspace.Wire("stage1", "stage2", func(input any) any {
-				return input.(int64) + 1
+			Register(workspace, nil, func(value stage1Value) stage2Value {
+				return stage2Value(value + 1)
 			})
 
-			workspace.Wire("stage2", "stage3", func(input any) any {
-				return input.(int64) * 2
+			Register(workspace, nil, func(value stage2Value) stage3Value {
+				return stage3Value(value * 2)
 			})
 
-			workspace.Wire("stage3", "", func(input any) any {
+			RegisterSink(workspace, nil, func(value stage3Value) {
 				stage3Received.Add(1)
-				return nil
 			})
 
 			for index := int64(0); index < totalEvents; index++ {
-				workspace.Publish("stage1", index)
+				feed.Emit(stage1Value(index))
 			}
 
 			err := workspace.WaitForQuiescence()
@@ -183,6 +188,7 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 	Convey("Given a Workspace with parallel key-affine handlers", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		workspace := NewWorkspace(ctx)
+		feed := workspace.NewFeed()
 
 		Reset(func() {
 			workspace.Close()
@@ -195,14 +201,12 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 			var maxConcurrent atomic.Int64
 			var completedCount atomic.Int64
 
-			WireKeyed[testKeyedEvent, any](
+			RegisterSink(
 				workspace,
-				"symbol_stream",
-				"",
 				func(event testKeyedEvent) string {
 					return event.Symbol
 				},
-				func(event testKeyedEvent) any {
+				func(event testKeyedEvent) {
 					current := activeCount.Add(1)
 
 					for {
@@ -215,12 +219,11 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 					time.Sleep(2 * time.Millisecond)
 					activeCount.Add(-1)
 					completedCount.Add(1)
-					return nil
 				},
 			)
 
 			for index := 0; index < symbolCount; index++ {
-				workspace.Publish("symbol_stream", testKeyedEvent{
+				feed.Emit(testKeyedEvent{
 					Symbol: fmt.Sprintf("SYM-%d", index),
 					Seq:    index,
 				})
@@ -241,14 +244,12 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 			var maxConcurrent atomic.Int64
 			var completedCount atomic.Int64
 
-			WireKeyed[testKeyedEvent, any](
+			RegisterSink(
 				workspace,
-				"single_symbol_stream",
-				"",
 				func(event testKeyedEvent) string {
 					return event.Symbol
 				},
-				func(event testKeyedEvent) any {
+				func(event testKeyedEvent) {
 					current := activeCount.Add(1)
 
 					for {
@@ -261,12 +262,11 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 					time.Sleep(100 * time.Microsecond)
 					activeCount.Add(-1)
 					completedCount.Add(1)
-					return nil
 				},
 			)
 
 			for index := 0; index < eventCount; index++ {
-				workspace.Publish("single_symbol_stream", testKeyedEvent{
+				feed.Emit(testKeyedEvent{
 					Symbol: "BTC/USD",
 					Seq:    index,
 				})
@@ -284,26 +284,23 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 			var sequenceMismatch atomic.Bool
 			var completedCount atomic.Int64
 
-			WireKeyed[testKeyedEvent, any](
+			RegisterSink(
 				workspace,
-				"ordered_stream",
-				"",
 				func(event testKeyedEvent) string {
 					return event.Symbol
 				},
-				func(event testKeyedEvent) any {
+				func(event testKeyedEvent) {
 					if int64(event.Seq) != expectedSeq {
 						sequenceMismatch.Store(true)
 					}
 
 					expectedSeq++
 					completedCount.Add(1)
-					return nil
 				},
 			)
 
 			for index := 0; index < eventCount; index++ {
-				workspace.Publish("ordered_stream", testKeyedEvent{
+				feed.Emit(testKeyedEvent{
 					Symbol: "BTC/USD",
 					Seq:    index,
 				})
@@ -320,27 +317,24 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 			var slowStarted atomic.Bool
 			var slowFinished atomic.Bool
 
-			WireKeyed[testKeyedEvent, any](
+			RegisterSink(
 				workspace,
-				"multi_symbol_stream",
-				"",
 				func(event testKeyedEvent) string {
 					return event.Symbol
 				},
-				func(event testKeyedEvent) any {
+				func(event testKeyedEvent) {
 					if event.Symbol == "SLOW" {
 						slowStarted.Store(true)
 						time.Sleep(100 * time.Millisecond)
 						slowFinished.Store(true)
-						return nil
+						return
 					}
 
 					fastCount.Add(1)
-					return nil
 				},
 			)
 
-			workspace.Publish("multi_symbol_stream", testKeyedEvent{Symbol: "SLOW", Seq: 1})
+			feed.Emit(testKeyedEvent{Symbol: "SLOW", Seq: 1})
 
 			for !slowStarted.Load() {
 				time.Sleep(1 * time.Millisecond)
@@ -351,7 +345,7 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 			// SLOW is still blocked. This asserts cross-key concurrency without
 			// requiring every key to land on a different lane.
 			for index := 0; index < 200; index++ {
-				workspace.Publish("multi_symbol_stream", testKeyedEvent{
+				feed.Emit(testKeyedEvent{
 					Symbol: fmt.Sprintf("FAST-%d", index),
 					Seq:    index,
 				})
@@ -372,20 +366,16 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 			const eventCount = 10000
 			initialGoroutines := runtime.NumGoroutine()
 
-			WireKeyed[testKeyedEvent, any](
+			RegisterSink(
 				workspace,
-				"bounded_goroutine_stream",
-				"",
 				func(event testKeyedEvent) string {
 					return event.Symbol
 				},
-				func(event testKeyedEvent) any {
-					return nil
-				},
+				func(event testKeyedEvent) {},
 			)
 
 			for index := 0; index < eventCount; index++ {
-				workspace.Publish("bounded_goroutine_stream", testKeyedEvent{
+				feed.Emit(testKeyedEvent{
 					Symbol: fmt.Sprintf("SYM-%d", index%100),
 					Seq:    index,
 				})
@@ -398,13 +388,11 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 			So(currentGoroutines-initialGoroutines, ShouldBeLessThan, 100)
 		})
 
-		Convey("When inspecting subscriber construction, one Disruptor exists per logical subscriber", func() {
-			WireKeyed[testKeyedEvent, any](
+		Convey("When inspecting subscriber construction, one Disruptor ring exists per producer-consumer edge", func() {
+			RegisterSink(
 				workspace,
-				"one_ring_stream",
-				"",
 				func(event testKeyedEvent) string { return event.Symbol },
-				func(event testKeyedEvent) any { return nil },
+				func(event testKeyedEvent) {},
 			)
 
 			snapshots := workspace.Snapshots()
@@ -420,10 +408,11 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 
 			// Adversarial: introspect the actual registered subscriber, not the
 			// snapshot's self-report. There must be exactly one logical
-			// subscriber with exactly one physical Disruptor and one contiguous
-			// ring buffer of exactly the declared capacity, while the parallel
-			// handler count is an invariant of machine capacity — never an
-			// extra ring.
+			// consumer node; publishing from this test's one Feed identity
+			// creates exactly one physical ring (one producer, one consumer),
+			// with a contiguous ring buffer of exactly the declared capacity,
+			// while the parallel handler count is an invariant of machine
+			// capacity — never an extra ring.
 			workspace.subscribersMu.RLock()
 			subscribers := workspace.subscribers
 			workspace.subscribersMu.RUnlock()
@@ -432,10 +421,56 @@ func WorkspaceConcurrencyTest(t *testing.T) {
 
 			subscriber := subscribers[0]
 			So(subscriber, ShouldNotBeNil)
-			So(subscriber.disruptor, ShouldNotBeNil)
-			So(len(subscriber.handlers), ShouldEqual, workspace.handlerCount)
-			So(len(subscriber.buffer), ShouldEqual, int(subscriberCapacity))
 			So(subscriber.handlerCnt, ShouldEqual, workspace.handlerCount)
+
+			feed.Emit(testKeyedEvent{Symbol: "ring-probe", Seq: 1})
+			err := workspace.WaitForQuiescence(2 * time.Second)
+			So(err, ShouldBeNil)
+
+			loaded := subscriber.rings.Load()
+			So(loaded, ShouldNotBeNil)
+			So(len(*loaded), ShouldEqual, 1)
+
+			for _, target := range *loaded {
+				So(target, ShouldNotBeNil)
+				So(target.disruptor, ShouldNotBeNil)
+				So(len(target.handlers), ShouldEqual, workspace.handlerCount)
+				So(len(target.buffer), ShouldEqual, int(subscriberCapacity))
+			}
+		})
+
+		Convey("When two producers feed the same consumer type, each gets its own dedicated ring", func() {
+			var completedCount atomic.Int64
+
+			RegisterSink(
+				workspace,
+				func(event testKeyedEvent) string { return event.Symbol },
+				func(event testKeyedEvent) { completedCount.Add(1) },
+			)
+
+			feedA := workspace.NewFeed()
+			feedB := workspace.NewFeed()
+
+			for index := 0; index < 50; index++ {
+				feedA.Emit(testKeyedEvent{Symbol: fmt.Sprintf("A-%d", index), Seq: index})
+				feedB.Emit(testKeyedEvent{Symbol: fmt.Sprintf("B-%d", index), Seq: index})
+			}
+
+			err := workspace.WaitForQuiescence(5 * time.Second)
+			So(err, ShouldBeNil)
+			So(completedCount.Load(), ShouldEqual, 100)
+
+			workspace.subscribersMu.RLock()
+			subscribers := workspace.subscribers
+			workspace.subscribersMu.RUnlock()
+
+			So(len(subscribers), ShouldEqual, 1)
+
+			loaded := subscribers[0].rings.Load()
+			So(loaded, ShouldNotBeNil)
+			// One dedicated ring per distinct Feed identity that actually wrote
+			// to this consumer: never a ring shared between feedA and feedB.
+			So(len(*loaded), ShouldEqual, 2)
 		})
 	})
 }
@@ -444,6 +479,7 @@ func WorkspaceServiceClassTest(t *testing.T) {
 	Convey("Given analytics saturation", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		workspace := NewWorkspace(ctx)
+		feed := workspace.NewFeed()
 
 		Reset(func() {
 			workspace.Close()
@@ -456,27 +492,26 @@ func WorkspaceServiceClassTest(t *testing.T) {
 			// Saturate the analytics semaphore with CPU-heavy Steps that hold
 			// their permit until released.
 			release := make(chan struct{})
-			wireAnalyticsBlocker(workspace, "saturated_analytics", release)
+			blockerFeed := wireAnalyticsBlocker(workspace, release)
 
 			// Wait until at least one analytics Step has entered and is blocked.
 			eventually(t, func() bool {
-				snap := workspace.TopicSnapshot("saturated_analytics")
+				snap := TypeSnapshot[analyticsBlockerValue](workspace)
 				return snap.ActiveHandlers > 0 || len(workspace.analyticsSem) > 0
 			})
 
-			workspace.WireClass(
-				"ui_state",
-				"",
+			RegisterSinkClass(
+				workspace,
 				ServiceUI,
 				DeliveryLatestByKey,
-				func(any) string { return "global" },
-				func(any) any {
+				func(uiStateValue) string { return "global" },
+				func(uiStateValue) {
 					uiReceived.Add(1)
-					return nil
 				},
 			)
 
-			workspace.Publish("ui_state", testKeyedEvent{Symbol: "g", Seq: 1})
+			_ = blockerFeed
+			feed.Emit(uiStateValue{Symbol: "g", Seq: 1})
 
 			eventually(t, func() bool {
 				return uiReceived.Load() >= 1
@@ -488,25 +523,23 @@ func WorkspaceServiceClassTest(t *testing.T) {
 		Convey("Priority bypass: PositionGuardian-style priority subscriber consumes without an analytics permit", func() {
 			var priorityReceived atomic.Int64
 			release := make(chan struct{})
-			wireAnalyticsBlocker(workspace, "saturated_priority_analytics", release)
+			wireAnalyticsBlocker(workspace, release)
 
 			eventually(t, func() bool {
 				return len(workspace.analyticsSem) > 0
 			})
 
-			workspace.WireClass(
-				"priority_stream",
-				"",
+			RegisterSinkClass(
+				workspace,
 				ServicePriorityControl,
 				DeliveryPriorityFIFO,
-				func(any) string { return "global" },
-				func(any) any {
+				func(priorityStreamValue) string { return "global" },
+				func(priorityStreamValue) {
 					priorityReceived.Add(1)
-					return nil
 				},
 			)
 
-			workspace.Publish("priority_stream", testKeyedEvent{Symbol: "p", Seq: 1})
+			feed.Emit(priorityStreamValue{Symbol: "p", Seq: 1})
 
 			eventually(t, func() bool {
 				return priorityReceived.Load() >= 1
@@ -518,13 +551,12 @@ func WorkspaceServiceClassTest(t *testing.T) {
 		Convey("A panicking analytics Step must not leak its permit", func() {
 			var panicsEntered atomic.Int64
 
-			workspace.WireClass(
-				"panic_analytics",
-				"",
+			RegisterSinkClass(
+				workspace,
 				ServiceAnalytics,
 				DeliveryReliableFIFO,
-				func(any) string { return "global" },
-				func(any) any {
+				func(panicAnalyticsValue) string { return "global" },
+				func(panicAnalyticsValue) {
 					panicsEntered.Add(1)
 					panic("boom")
 				},
@@ -534,7 +566,7 @@ func WorkspaceServiceClassTest(t *testing.T) {
 			// the analytics semaphore would stay full forever and the healthy
 			// analytics subscriber below would starve.
 			for index := 0; index < workspace.handlerCount; index++ {
-				workspace.Publish("panic_analytics", testKeyedEvent{Symbol: "panic", Seq: index})
+				feed.Emit(panicAnalyticsValue{Symbol: "panic", Seq: index})
 			}
 
 			// Every panic must have entered AND fully unwound: the semaphore
@@ -545,26 +577,24 @@ func WorkspaceServiceClassTest(t *testing.T) {
 				}
 
 				return len(workspace.analyticsSem) == 0 &&
-					workspace.TopicSnapshot("panic_analytics").ActiveHandlers == 0
+					TypeSnapshot[panicAnalyticsValue](workspace).ActiveHandlers == 0
 			})
 
 			// A healthy analytics subscriber must still be able to acquire a
 			// permit and complete, proving no permit was leaked.
 			var healthyReceived atomic.Int64
 
-			workspace.WireClass(
-				"healthy_analytics",
-				"",
+			RegisterSinkClass(
+				workspace,
 				ServiceAnalytics,
 				DeliveryReliableFIFO,
-				func(any) string { return "global" },
-				func(any) any {
+				func(healthyAnalyticsValue) string { return "global" },
+				func(healthyAnalyticsValue) {
 					healthyReceived.Add(1)
-					return nil
 				},
 			)
 
-			workspace.Publish("healthy_analytics", testKeyedEvent{Symbol: "healthy", Seq: 1})
+			feed.Emit(healthyAnalyticsValue{Symbol: "healthy", Seq: 1})
 
 			eventually(t, func() bool {
 				return healthyReceived.Load() >= 1
@@ -573,26 +603,35 @@ func WorkspaceServiceClassTest(t *testing.T) {
 	})
 }
 
-func wireAnalyticsBlocker(workspace *Workspace, topic string, release chan struct{}) {
-	workspace.WireClass(
-		topic,
-		"",
+type analyticsBlockerValue testKeyedEvent
+type uiStateValue testKeyedEvent
+type priorityStreamValue testKeyedEvent
+type panicAnalyticsValue testKeyedEvent
+type healthyAnalyticsValue testKeyedEvent
+type obsStreamValue int
+
+func wireAnalyticsBlocker(workspace *Workspace, release chan struct{}) *Feed {
+	RegisterSinkClass(
+		workspace,
 		ServiceAnalytics,
 		DeliveryReliableFIFO,
-		func(any) string { return "global" },
-		func(any) any {
+		func(analyticsBlockerValue) string { return "global" },
+		func(analyticsBlockerValue) {
 			<-release
-			return nil
 		},
 	)
 
-	workspace.Publish(topic, testKeyedEvent{Symbol: "block", Seq: 1})
+	feed := workspace.NewFeed()
+	feed.Emit(analyticsBlockerValue{Symbol: "block", Seq: 1})
+
+	return feed
 }
 
 func WorkspaceObservationalTest(t *testing.T) {
 	Convey("Given an observational subscriber whose consumer never advances", t, func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		workspace := NewWorkspace(ctx)
+		feed := workspace.NewFeed()
 
 		Reset(func() {
 			workspace.Close()
@@ -605,17 +644,15 @@ func WorkspaceObservationalTest(t *testing.T) {
 			// fail TryReserve promptly and increment the drop counter exactly
 			// once per failed publication — it must never block and never creep
 			// past the ring's physical slot count.
-			workspace.WireClass(
-				"obs_stream",
-				"",
+			RegisterSinkClass(
+				workspace,
 				ServiceAnalytics,
 				DeliveryObservationalFIFO,
-				func(any) string { return globalKey },
-				func(any) any {
+				func(obsStreamValue) string { return globalKey },
+				func(obsStreamValue) {
 					// Never complete: block until the workspace cancels, so the
 					// consumer's sequence stays pinned and the ring cannot refill.
 					<-workspace.ctx.Done()
-					return nil
 				},
 			)
 
@@ -628,7 +665,7 @@ func WorkspaceObservationalTest(t *testing.T) {
 			publishStarted := time.Now()
 
 			for index := 0; index < capacity+extra; index++ {
-				workspace.Publish("obs_stream", index)
+				feed.Emit(obsStreamValue(index))
 			}
 
 			elapsed := time.Since(publishStarted)
@@ -636,14 +673,13 @@ func WorkspaceObservationalTest(t *testing.T) {
 			// Non-blocking: publishing 65,636 attempts must finish fast.
 			So(elapsed, ShouldBeLessThan, 2*time.Second)
 
-			subscriber := workspace.subscribers[0]
-			So(subscriber, ShouldNotBeNil)
+			snap := TypeSnapshot[obsStreamValue](workspace)
 
 			// Exactly one physical ring of exactly the declared capacity.
-			So(subscriber.dropped.Load(), ShouldEqual, uint64(extra))
-			So(subscriber.tryReserveFmt.Load(), ShouldEqual, uint64(extra))
-			So(subscriber.published.Load(), ShouldEqual, uint64(capacity))
-			So(len(subscriber.buffer), ShouldEqual, capacity)
+			So(snap.Dropped, ShouldEqual, uint64(extra))
+			So(snap.TryReserveFail, ShouldEqual, uint64(extra))
+			So(snap.Published, ShouldEqual, uint64(capacity))
+			So(snap.Capacity, ShouldEqual, uint64(capacity))
 		})
 	})
 }
@@ -754,9 +790,12 @@ func eventually(t *testing.T, condition func() bool) {
 	t.Fatal("condition did not become true within deadline")
 }
 
+type benchValue int64
+
 func BenchmarkWorkspacePublish(b *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	workspace := NewWorkspace(ctx)
+	feed := workspace.NewFeed()
 
 	defer func() {
 		workspace.Close()
@@ -764,15 +803,14 @@ func BenchmarkWorkspacePublish(b *testing.B) {
 	}()
 
 	var counter atomic.Int64
-	workspace.Wire("bench", "", func(_ any) any {
+	RegisterSink(workspace, nil, func(benchValue) {
 		counter.Add(1)
-		return nil
 	})
 
 	b.ReportAllocs()
 
 	for b.Loop() {
-		workspace.Publish("bench", int64(1))
+		feed.Emit(benchValue(1))
 	}
 
 	_ = workspace.WaitForQuiescence(5 * time.Second)
@@ -781,6 +819,7 @@ func BenchmarkWorkspacePublish(b *testing.B) {
 func BenchmarkWorkspace640Symbols(b *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	workspace := NewWorkspace(ctx)
+	feed := workspace.NewFeed()
 
 	defer func() {
 		workspace.Close()
@@ -795,16 +834,13 @@ func BenchmarkWorkspace640Symbols(b *testing.B) {
 	}
 
 	var processedCount atomic.Int64
-	WireKeyed[testKeyedEvent, any](
+	RegisterSink(
 		workspace,
-		"bench_640",
-		"",
 		func(event testKeyedEvent) string {
 			return event.Symbol
 		},
-		func(event testKeyedEvent) any {
+		func(event testKeyedEvent) {
 			processedCount.Add(1)
-			return nil
 		},
 	)
 
@@ -813,7 +849,7 @@ func BenchmarkWorkspace640Symbols(b *testing.B) {
 
 	for b.Loop() {
 		for index := 0; index < symbolCount; index++ {
-			workspace.Publish("bench_640", testKeyedEvent{
+			feed.Emit(testKeyedEvent{
 				Symbol: symbols[index],
 				Seq:    index,
 			})
@@ -825,7 +861,7 @@ func BenchmarkWorkspace640Symbols(b *testing.B) {
 
 /*
 BenchmarkWorkspaceFanout measures the production signal fan-out shape: N keyed
-subscribers all consuming the same ticker topic with a no-op Step, so the
+subscribers all consuming the same ticker type with a no-op Step, so the
 broadcast-handler-group cost (every handler scanning every sequence range) is
 isolated from signal mathematics. This is the empty-runtime regression boundary:
 it must comfortably exceed 1,000 events/sec — by orders of magnitude — before
@@ -834,6 +870,7 @@ any signal work is considered.
 func BenchmarkWorkspaceFanout(b *testing.B) {
 	ctx, cancel := context.WithCancel(context.Background())
 	workspace := NewWorkspace(ctx)
+	feed := workspace.NewFeed()
 
 	defer func() {
 		workspace.Close()
@@ -851,14 +888,11 @@ func BenchmarkWorkspaceFanout(b *testing.B) {
 	var processed atomic.Int64
 
 	for subscriber := 0; subscriber < subscriberCount; subscriber++ {
-		WireKeyed[testKeyedEvent, any](
+		RegisterSink(
 			workspace,
-			"fanout_tickers",
-			"",
 			func(event testKeyedEvent) string { return event.Symbol },
-			func(event testKeyedEvent) any {
+			func(event testKeyedEvent) {
 				processed.Add(1)
-				return nil
 			},
 		)
 	}
@@ -868,7 +902,7 @@ func BenchmarkWorkspaceFanout(b *testing.B) {
 
 	for b.Loop() {
 		for index := 0; index < symbolCount; index++ {
-			workspace.Publish("fanout_tickers", testKeyedEvent{Symbol: symbols[index], Seq: index})
+			feed.Emit(testKeyedEvent{Symbol: symbols[index], Seq: index})
 		}
 	}
 

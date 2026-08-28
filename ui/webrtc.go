@@ -75,48 +75,40 @@ func NewFluidRTC(
 	}
 
 	if bus != nil {
-		// ChannelFluid publishes a full grid-field snapshot on every Hawkes-
+		// *manifold.State publishes a full grid-field snapshot on every Hawkes-
 		// triggered Step (several times a second); DeliveryLatestByKey holds
 		// only the most recent value in a fixed cell instead of the default
 		// 64K-slot ring, so an unread backlog never pins hours of past
 		// snapshots in memory — only ever the current state matters here.
-		bus.WireClass(
-			types.ChannelFluid, "",
+		runtime.RegisterSinkClass(
+			bus,
 			runtime.ServiceAnalytics, runtime.DeliveryLatestByKey, nil,
-			func(value any) any {
-				state, ok := value.(*manifold.State)
-
-				if !ok || state == nil {
-					return nil
+			func(state *manifold.State) {
+				if state == nil {
+					return
 				}
 
 				if !fluidTransport.HasChannel(types.ManifoldChannel) {
-					return nil
+					return
 				}
 
 				_ = fluidTransport.publish(types.ManifoldChannel, fluidTransport.encodeManifold(state))
-
-				return nil
 			},
 		)
 
-		bus.WireClass(
-			types.ChannelDiagnostics, "",
+		runtime.RegisterSinkClass(
+			bus,
 			runtime.ServiceAnalytics, runtime.DeliveryLatestByKey, nil,
-			func(value any) any {
-				payload, ok := value.([]byte)
-
-				if !ok || len(payload) == 0 {
-					return nil
+			func(payload []byte) {
+				if len(payload) == 0 {
+					return
 				}
 
 				if !fluidTransport.HasChannel(types.DiagnosticsChannel) {
-					return nil
+					return
 				}
 
 				_ = fluidTransport.publish(types.DiagnosticsChannel, payload)
-
-				return nil
 			},
 		)
 	}

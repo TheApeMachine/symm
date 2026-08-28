@@ -15,7 +15,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -698,31 +697,21 @@ func NewSolver(
 		bus.Share(SharedObservationStore, solver.store, "")
 		bus.Share(SharedInfluenceGraph, solver.influence, "")
 
-		runtime.WireKeyed(
+		runtime.Register(
 			bus,
-			types.ChannelMeasurements,
-			types.ChannelRelations,
-			func(value any) string {
-				if m, ok := value.(*nmtypes.Measurement); ok && m != nil {
-					return m.Symbol
+			func(measurement *data.Measurement[float64]) string {
+				if measurement == nil {
+					return ""
 				}
 
-				if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
-					return m.Symbol()
-				}
-
-				return ""
+				return measurement.Symbol()
 			},
-			func(value any) any {
-				if m, ok := value.(*nmtypes.Measurement); ok && m != nil {
-					return solver.Step(m)
+			func(measurement *data.Measurement[float64]) *GraphUpdate {
+				if measurement == nil {
+					return nil
 				}
 
-				if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
-					return solver.Step(m.ToTypesMeasurement())
-				}
-
-				return nil
+				return solver.Step(measurement.ToTypesMeasurement())
 			},
 		)
 	}

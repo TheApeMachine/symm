@@ -117,17 +117,17 @@ func NewSolver(bus *runtime.Workspace, opts ...Option) *Solver {
 	}
 
 	if bus != nil {
-		bus.Wire(types.ChannelResonance, types.ChannelCausal, func(value any) any {
-			if artifact, ok := value.(*types.ResonanceArtifact); ok && artifact != nil {
+		runtime.Register(
+			bus,
+			nil,
+			func(artifact *types.ResonanceArtifact) *types.CausalOutput {
+				if artifact == nil {
+					return nil
+				}
+
 				return solver.Step(*artifact)
-			}
-
-			if artifact, ok := value.(types.ResonanceArtifact); ok {
-				return solver.Step(artifact)
-			}
-
-			return nil
-		})
+			},
+		)
 	}
 
 	return solver

@@ -86,10 +86,9 @@ func NewSolver(ctx context.Context, bus *runtime.Workspace) *Solver {
 	}
 
 	if bus != nil {
-		runtime.WireFunc[[]types.Category, []*types.OpportunityCandidate](
+		runtime.Register[[]types.Category, []*types.OpportunityCandidate](
 			bus,
-			types.ChannelCategories,
-			types.ChannelOpportunities,
+			nil,
 			solver.Step,
 		)
 	}

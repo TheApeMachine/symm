@@ -68,10 +68,11 @@ func Command() *cobra.Command {
 
 			thesis := types.NewThesis(ctx)
 			hub := ui.NewHub(ctx, thesis, nil, nil, nil, bus)
+			backtestFeed := bus.NewFeed()
 			replay := NewDriver(ctx, store, hub, bus,
 				func(state State) {
-					if bus != nil {
-						bus.Publish(types.ChannelUI, &types.UIFrame{
+					if backtestFeed != nil {
+						backtestFeed.Emit(&types.UIFrame{
 							Type: wire.FrameBacktestFrame,
 							Value: &wire.BacktestFrameT{
 								CaptureId: state.CaptureID,

@@ -261,18 +261,15 @@ func BootWithHub(
 	signalRunner := signal.NewRunner(systemCtx, bus)
 
 	if bus != nil {
-		runtime.WireFunc(
+		runtime.Register(
 			bus,
-			types.ChannelMeasurements,
-			types.ChannelUI,
-			func(value any) *types.UIFrame {
-				var measurement *nmtypes.Measurement
-
-				if m, ok := value.(*nmtypes.Measurement); ok {
-					measurement = m
-				} else if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
-					measurement = m.ToTypesMeasurement()
+			nil,
+			func(m *data.Measurement[float64]) *types.UIFrame {
+				if m == nil {
+					return nil
 				}
+
+				measurement := m.ToTypesMeasurement()
 
 				if measurement == nil {
 					return nil
@@ -304,63 +301,45 @@ func BootWithHub(
 		// derived stages. Logic solvers emit domain data only; these taps convert
 		// it to wire frames so UI publishing lives in one place, not in each
 		// module's data path.
-		runtime.WireFunc(
+		runtime.Register(
 			bus,
-			types.ChannelCausal,
-			types.ChannelUI,
-			func(value any) *types.UIFrame {
-				var rows map[string]any
-				if output, ok := value.(types.CausalOutput); ok {
-					rows = output.Rows
-				} else if ptr, ok := value.(*types.CausalOutput); ok && ptr != nil {
-					rows = ptr.Rows
-				} else {
+			nil,
+			func(output *types.CausalOutput) *types.UIFrame {
+				if output == nil {
 					return nil
 				}
 
 				return &types.UIFrame{
 					Type: wire.FrameCausalFrame,
 					Value: &wire.CausalFrameT{
-						Rows: []*wire.CausalT{causal.CausalWire(rows)},
+						Rows: []*wire.CausalT{causal.CausalWire(output.Rows)},
 					},
 				}
 			},
 		)
 
-		runtime.WireFunc(
+		runtime.Register(
 			bus,
-			types.ChannelCognition,
-			types.ChannelUI,
-			func(value any) *types.UIFrame {
-				var reading types.Cognition
-				if r, ok := value.(types.Cognition); ok {
-					reading = r
-				} else if ptr, ok := value.(*types.Cognition); ok && ptr != nil {
-					reading = *ptr
-				} else {
+			nil,
+			func(reading *types.Cognition) *types.UIFrame {
+				if reading == nil {
 					return nil
 				}
 
 				return &types.UIFrame{
 					Type: wire.FrameCognitionFrame,
 					Value: &wire.CognitionFrameT{
-						Rows: []*wire.CognitionT{cognition.CognitionWire(reading)},
+						Rows: []*wire.CognitionT{cognition.CognitionWire(*reading)},
 					},
 				}
 			},
 		)
 
-		runtime.WireFunc(
+		runtime.Register(
 			bus,
-			types.ChannelResonance,
-			types.ChannelUI,
-			func(value any) *types.UIFrame {
-				var artifact types.ResonanceArtifact
-				if a, ok := value.(types.ResonanceArtifact); ok {
-					artifact = a
-				} else if ptr, ok := value.(*types.ResonanceArtifact); ok && ptr != nil {
-					artifact = *ptr
-				} else {
+			nil,
+			func(artifact *types.ResonanceArtifact) *types.UIFrame {
+				if artifact == nil {
 					return nil
 				}
 
@@ -368,24 +347,18 @@ func BootWithHub(
 					Type: wire.FrameResonanceFrame,
 					Value: &wire.ResonanceFrameT{
 						Rows: []*wire.ResonanceT{
-							resonance.ResonanceWire(artifact.Symbol, artifact.At, artifact),
+							resonance.ResonanceWire(artifact.Symbol, artifact.At, *artifact),
 						},
 					},
 				}
 			},
 		)
 
-		runtime.WireFunc(
+		runtime.Register(
 			bus,
-			types.ChannelRelations,
-			types.ChannelUI,
-			func(value any) *types.UIFrame {
-				var update graph.GraphUpdate
-				if u, ok := value.(graph.GraphUpdate); ok {
-					update = u
-				} else if ptr, ok := value.(*graph.GraphUpdate); ok && ptr != nil {
-					update = *ptr
-				} else {
+			nil,
+			func(update *graph.GraphUpdate) *types.UIFrame {
+				if update == nil {
 					return nil
 				}
 
@@ -429,17 +402,11 @@ func BootWithHub(
 			},
 		)
 
-		runtime.WireFunc(
+		runtime.Register(
 			bus,
-			types.ChannelDecisions,
-			types.ChannelUI,
-			func(value any) *types.UIFrame {
-				var round types.StrategyRound
-				if r, ok := value.(types.StrategyRound); ok {
-					round = r
-				} else if ptr, ok := value.(*types.StrategyRound); ok && ptr != nil {
-					round = *ptr
-				} else {
+			nil,
+			func(round *types.StrategyRound) *types.UIFrame {
+				if round == nil {
 					return nil
 				}
 
@@ -472,20 +439,10 @@ func BootWithHub(
 			},
 		)
 
-		runtime.WireFunc(
+		runtime.Register(
 			bus,
-			types.ChannelRegulator,
-			types.ChannelUI,
-			func(value any) *types.UIFrame {
-				var payload regulator.RegulatorPayload
-				if p, ok := value.(regulator.RegulatorPayload); ok {
-					payload = p
-				} else if ptr, ok := value.(*regulator.RegulatorPayload); ok && ptr != nil {
-					payload = *ptr
-				} else {
-					return nil
-				}
-
+			nil,
+			func(payload regulator.RegulatorPayload) *types.UIFrame {
 				return &types.UIFrame{
 					Type:  wire.FrameRegulatorFrame,
 					Value: regulator.RegulatorWire(payload),
@@ -557,18 +514,14 @@ func BootWithHub(
 			return measurement.Label
 		}
 
-		runtime.WireKeyed(
+		runtime.Register(
 			bus,
-			types.ChannelMeasurements,
-			types.ChannelPerspectives,
 			measurementKey,
 			liquidityAdvisor.Step,
 		)
 
-		runtime.WireKeyed(
+		runtime.Register(
 			bus,
-			types.ChannelMeasurements,
-			types.ChannelPerspectives,
 			measurementKey,
 			historicalAdvisor.Step,
 		)

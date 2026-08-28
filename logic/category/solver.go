@@ -58,8 +58,14 @@ type evidenceItem struct {
 categoryState is one symbol's current evidence snapshot. It holds exactly one
 current affinity per evidence coordinate, so memory is bounded by
 O(symbols × schema coordinates) and publication frequency never inflates votes.
+
+The coordinates map is guarded by mu. Step runs on runtime handlers whose lane
+ownership does not guarantee single-goroutine access to one symbol — a symbol's
+measurements can arrive on distinct producer rings, each with its own handler
+group, so two goroutines may mutate and read the same state concurrently.
 */
 type categoryState struct {
+	mu          sync.Mutex
 	coordinates map[coordinate]evidenceItem
 }
 
@@ -80,31 +86,21 @@ func NewSolver(ctx context.Context, bus *runtime.Workspace) *Solver {
 	}
 
 	if bus != nil {
-		runtime.WireKeyed(
+		runtime.Register(
 			bus,
-			types.ChannelMeasurements,
-			types.ChannelCategories,
-			func(value any) string {
-				if m, ok := value.(*nmtypes.Measurement); ok && m != nil {
-					return m.Symbol
+			func(measurement *data.Measurement[float64]) string {
+				if measurement == nil {
+					return ""
 				}
 
-				if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
-					return m.Symbol()
-				}
-
-				return ""
+				return measurement.Symbol()
 			},
-			func(value any) any {
-				if m, ok := value.(*nmtypes.Measurement); ok && m != nil {
-					return solver.Step(m)
+			func(measurement *data.Measurement[float64]) []types.Category {
+				if measurement == nil {
+					return nil
 				}
 
-				if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
-					return solver.Step(m.ToTypesMeasurement())
-				}
-
-				return nil
+				return solver.Step(measurement.ToTypesMeasurement())
 			},
 		)
 	}
@@ -167,6 +163,9 @@ coordinate overwrites rather than accumulates, so arrival cadence is not
 evidence.
 */
 func (solver *Solver) accumulate(state *categoryState, measurement *nmtypes.Measurement) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	for _, schema := range types.CategorySchemas {
 		if string(schema.Source) != measurement.Source {
 			continue
@@ -284,6 +283,9 @@ that mirrors the declared vocabulary.
 func (solver *Solver) aggregate(
 	state *categoryState,
 ) (map[types.CategoryType][]evidenceItem, bool) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
 	byCategory := make(map[types.CategoryType][]evidenceItem)
 
 	measured := false

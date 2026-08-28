@@ -34,6 +34,7 @@ type Desk struct {
 	status         types.Status
 	api            *websocket.API
 	bus            *runtime.Workspace
+	feed           *runtime.Feed
 	instrument     *Instrument
 	price          *Price
 	balance        *Balance
@@ -142,41 +143,37 @@ func NewDesk(
 		maxPositions:   viper.GetViper().GetInt("trading.slots.normal"),
 		maxReserved:    viper.GetViper().GetInt("trading.slots.reserved"),
 		bus:            bus,
+		feed:           bus.NewFeed(),
 	}
 
 	desk.recovery = NewRecovery(
 		ctx, api, bus, instrument, price, balance, recorder, store, desk.positions,
 	)
 
-	if bus != nil {
-		// The desk's ticker/execution ingress subscriptions are priority
-		// control: they route open-position protection directly to each
-		// PositionGuardian's dedicated LMAX Disruptor before, and independent
-		// of, any analytical fan-out. They never acquire the analytical
-		// semaphore.
-		bus.WireClass(
-			types.ChannelTickers,
-			"",
-			runtime.ServicePriorityControl,
-			runtime.DeliveryPriorityFIFO,
-			func(value any) string { return value.(kraken.TickerData).Symbol },
-			func(value any) any {
-				_ = desk.StepTicker(value.(kraken.TickerData))
-				return nil
-			},
-		)
-		bus.WireClass(
-			types.ChannelExecutions,
-			"",
-			runtime.ServicePriorityControl,
-			runtime.DeliveryPriorityFIFO,
-			func(value any) string { return value.(kraken.ExecutionData).Symbol },
-			func(value any) any {
-				_ = desk.StepExecution(value.(kraken.ExecutionData))
-				return nil
-			},
-		)
-	}
+	// The desk's ticker/execution ingress subscriptions are priority
+	// control: they route open-position protection directly to each
+	// PositionGuardian's dedicated LMAX Disruptor before, and independent
+	// of, any analytical fan-out. They never acquire the analytical
+	// semaphore.
+	runtime.RegisterSinkClass(
+		bus,
+		runtime.ServicePriorityControl,
+		runtime.DeliveryPriorityFIFO,
+		func(ticker kraken.TickerData) string { return ticker.Symbol },
+		func(ticker kraken.TickerData) {
+			_ = desk.StepTicker(ticker)
+		},
+	)
+
+	runtime.RegisterSinkClass(
+		bus,
+		runtime.ServicePriorityControl,
+		runtime.DeliveryPriorityFIFO,
+		func(execution kraken.ExecutionData) string { return execution.Symbol },
+		func(execution kraken.ExecutionData) {
+			_ = desk.StepExecution(execution)
+		},
+	)
 
 	if err := desk.recovery.Recover(); err != nil {
 		desk.status = types.ERROR
@@ -423,8 +420,8 @@ func (desk *Desk) PublishEquity() error {
 		))
 	}
 
-	if desk.bus != nil {
-		desk.bus.Publish(types.ChannelUI, &types.UIFrame{
+	if desk.feed != nil {
+		desk.feed.Emit(&types.UIFrame{
 			Type: wire.FrameEquityFrame,
 			Value: &wire.EquityFrameT{
 				Cash:       desk.balance.Cash().String(),

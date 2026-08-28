@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import {
-	measurementStore,
+	measurementSourcesStore,
 	positionStore,
 	strategyStore,
 	tickStore,
@@ -39,8 +39,8 @@ export const Pulse = () => {
 		state.findLast((f) => !!f.outcome() || f.decisionsLength() > 0),
 	);
 	const measurementCount = useSelector(
-		measurementStore,
-		(state) => Object.keys(state).length,
+		measurementSourcesStore,
+		(state) => state.length,
 	);
 	const lastPositions = useSelector(positionStore, (state) =>
 		state.findLast((f) => f.rowsLength() > 0),

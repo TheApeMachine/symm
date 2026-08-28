@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { useSelector } from "@tanstack/react-store";
-import { focusStore, measurementStore } from "#/collections/app";
+import { focusStore, getMeasurementStore } from "#/collections/app";
+import type { FrameBuffer } from "#/collections/app";
+import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
 import {
 	getRetainedHawkes,
 	retainHawkesMetric,
@@ -16,10 +18,11 @@ export const XrayHawkesPanel = () => {
 	const hawkesCanvasRef = useRef<HTMLCanvasElement>(null);
 
 	useEffect(() => {
-		const updateFromState = (state: typeof measurementStore.state) => {
+		const hawkesStore = getMeasurementStore("hawkes");
+
+		const updateFromState = (state: FrameBuffer<Measurement>) => {
 			if (!root.current) return;
-			const ring = state.hawkes?.[focusSymbol];
-			const row = ring?.getLast();
+			const row = state.getLast();
 
 			if (row) {
 				for (let j = 0; j < row.metricsLength(); j++) {
@@ -96,7 +99,7 @@ export const XrayHawkesPanel = () => {
 			}
 
 			const canvas = hawkesCanvasRef.current;
-			if (canvas && ring && ring.getSize() > 1) {
+			if (canvas && state.getSize() > 1) {
 				const ctx = canvas.getContext("2d");
 				if (ctx) {
 					const dpr = window.devicePixelRatio || 1;
@@ -106,10 +109,10 @@ export const XrayHawkesPanel = () => {
 					canvas.height = h;
 					ctx.clearRect(0, 0, w, h);
 
-					const count = ring.getSize();
+					const count = state.getSize();
 					const intensities: number[] = [];
 					for (let i = 0; i < count; i++) {
-						const r = ring.get(i);
+						const r = state.get(i);
 						if (!r) continue;
 						let intensityVal = 0;
 						for (let j = 0; j < r.metricsLength(); j++) {
@@ -176,8 +179,8 @@ export const XrayHawkesPanel = () => {
 			}
 		};
 
-		updateFromState(measurementStore.state);
-		const subscription = measurementStore.subscribe((state) => {
+		updateFromState(hawkesStore.state);
+		const subscription = hawkesStore.subscribe((state) => {
 			updateFromState(state);
 		});
 

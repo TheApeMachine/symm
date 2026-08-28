@@ -36,6 +36,7 @@ type Paper struct {
 	books        *spot.BookManager
 	thesis       atomic.Pointer[types.Thesis]
 	bus          *runtime.Workspace
+	feed         *runtime.Feed
 }
 
 /*
@@ -87,6 +88,7 @@ func (paper *Paper) SetBus(bus *runtime.Workspace) {
 	}
 
 	paper.bus = bus
+	paper.feed = bus.NewFeed()
 }
 
 /*
@@ -668,8 +670,8 @@ func (paper *Paper) publish(channel string, message any) {
 		}
 
 		for index := range execution.Data {
-			if paper.bus != nil {
-				paper.bus.Publish(types.ChannelExecutions, execution.Data[index])
+			if paper.feed != nil {
+				paper.feed.Emit(execution.Data[index])
 			}
 		}
 	case "balances", "add_order":

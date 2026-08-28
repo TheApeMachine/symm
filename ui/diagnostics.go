@@ -6,6 +6,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/logic/graph"
+	"github.com/theapemachine/symm/logic/manifold"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/telemetry"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -105,14 +109,16 @@ type StreamDiagnostics struct {
 
 /*
 queueTopology is the static fan-out of one pipeline buffer: who writes it, who
-reads it, and which workspace topic its ring depth is read from.
+reads it, and a closure that reads its aggregate ring telemetry by the
+concrete Go type flowing through it (there is no topic string to key on —
+routing is by type, so diagnostics reads telemetry the same way).
 */
 type queueTopology struct {
-	name    string
-	kind    string
-	writers []string
-	readers []string
-	topic   string
+	name     string
+	kind     string
+	writers  []string
+	readers  []string
+	snapshot func(bus *runtime.Workspace) runtime.Snapshot
 }
 
 /*
@@ -125,97 +131,97 @@ var queueTopologies = []queueTopology{
 		name: "ingress.tickers", kind: "ingress",
 		writers: []string{"crypto"},
 		readers: []string{"correlation", "leadlag", "liquidity", "pumpdump", "sentiment", "exhaustion", "resonance", "desk"},
-		topic:   types.ChannelTickers,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[kraken.TickerData](bus) },
 	},
 	{
 		name: "ingress.trades", kind: "ingress",
 		writers: []string{"crypto"},
 		readers: []string{"cvd", "derivatives", "exhaustion", "hawkes", "pumpdump", "toxicity"},
-		topic:   types.ChannelTrades,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[kraken.TradeData](bus) },
 	},
 	{
 		name: "ingress.level3", kind: "ingress",
 		writers: []string{"crypto"},
 		readers: []string{"depthflow"},
-		topic:   types.ChannelLevel3,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[kraken.Level3Data](bus) },
 	},
 	{
 		name: "measurements", kind: "rail",
 		writers: []string{"correlation", "cvd", "depthflow", "derivatives", "exhaustion", "hawkes", "leadlag", "liquidity", "pumpdump", "sentiment", "toxicity"},
 		readers: []string{"category", "manifold", "graph"},
-		topic:   types.ChannelMeasurements,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[*data.Measurement[float64]](bus) },
 	},
 	{
 		name: "derived.category", kind: "derived",
 		writers: []string{"category"},
 		readers: []string{"cognition", "graph"},
-		topic:   types.ChannelCategories,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[[]types.Category](bus) },
 	},
 	{
 		name: "derived.causal", kind: "derived",
 		writers: []string{"causal"},
 		readers: []string{"graph"},
-		topic:   types.ChannelCausal,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[*types.CausalOutput](bus) },
 	},
 	{
 		name: "derived.cognition", kind: "derived",
 		writers: []string{"cognition"},
 		readers: []string{"graph"},
-		topic:   types.ChannelCognition,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[*types.Cognition](bus) },
 	},
 	{
 		name: "derived.graph", kind: "derived",
 		writers: []string{"graph"},
 		readers: []string{"planner"},
-		topic:   types.ChannelRelations,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[*graph.GraphUpdate](bus) },
 	},
 	{
 		name: "derived.resonance", kind: "derived",
 		writers: []string{"resonance"},
 		readers: []string{"causal", "graph"},
-		topic:   types.ChannelResonance,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[*types.ResonanceArtifact](bus) },
 	},
 	{
 		name: "decisions", kind: "strategy",
 		writers: []string{"planner"},
 		readers: []string{"mcts", "allocation", "desk"},
-		topic:   types.ChannelDecisions,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[*types.StrategyRound](bus) },
 	},
 	{
 		name: "desk.ticker", kind: "broker",
 		writers: []string{"crypto"},
 		readers: []string{"desk"},
-		topic:   types.ChannelTickers,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[kraken.TickerData](bus) },
 	},
 	{
 		name: "desk.executions", kind: "broker",
 		writers: []string{"websocket-api"},
 		readers: []string{"desk"},
-		topic:   types.ChannelExecutions,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[kraken.ExecutionData](bus) },
 	},
 	{
 		name: "positions", kind: "broker",
 		writers: []string{"desk"},
 		readers: []string{"audit", "hub"},
-		topic:   types.ChannelDecisions,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[*types.StrategyRound](bus) },
 	},
 	{
 		name: "ui.dashboard", kind: "ui",
 		writers: []string{"crypto", "category", "manifold", "causal", "cognition", "graph", "resonance", "planner", "allocation", "desk", "diagnostics"},
 		readers: []string{"hub"},
-		topic:   types.ChannelUI,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[*types.UIFrame](bus) },
 	},
 	{
 		name: "ui.manifold", kind: "ui",
 		writers: []string{"manifold"},
 		readers: []string{"webrtc-hub"},
-		topic:   types.ChannelFluid,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[*manifold.State](bus) },
 	},
 	{
 		name: "ui.diagnostics", kind: "ui",
 		writers: []string{"diagnostics"},
 		readers: []string{"webrtc-hub"},
-		topic:   types.ChannelDiagnostics,
+		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[[]byte](bus) },
 	},
 }
 
@@ -235,6 +241,7 @@ type Diagnostics struct {
 	started  time.Time
 	interval time.Duration
 	bus      *runtime.Workspace
+	feed     *runtime.Feed
 
 	// disabled is set when collection is switched off; the zero value keeps the
 	// collector enabled so short-lived call sites and tests preserve the
@@ -258,6 +265,7 @@ func NewDiagnostics(ctx context.Context, bus *runtime.Workspace) *Diagnostics {
 		cancel:  cancel,
 		started: time.Now(),
 		bus:     bus,
+		feed:    bus.NewFeed(),
 	}
 }
 
@@ -433,7 +441,7 @@ func (diagnostics *Diagnostics) queueSnapshots() []QueueSnapshot {
 	queues := make([]QueueSnapshot, 0, len(queueTopologies))
 
 	for _, topology := range queueTopologies {
-		snapshot := diagnostics.bus.TopicSnapshot(topology.topic)
+		snapshot := topology.snapshot(diagnostics.bus)
 
 		queues = append(queues, QueueSnapshot{
 			Name:    topology.name,
@@ -461,12 +469,12 @@ func (diagnostics *Diagnostics) publish() {
 
 	frame := diagnostics.Snapshot().Wire()
 
-	diagnostics.bus.Publish(types.ChannelDiagnostics, telemetry.Encode(&wire.FrameT{
+	diagnostics.feed.Emit(telemetry.Encode(&wire.FrameT{
 		Type:  wire.FrameDiagnosticsFrame,
 		Value: frame,
 	}))
 
-	diagnostics.bus.Publish(types.ChannelUI, &types.UIFrame{
+	diagnostics.feed.Emit(&types.UIFrame{
 		Type:  wire.FrameDiagnosticsFrame,
 		Value: frame,
 	})

@@ -293,20 +293,42 @@ export const backtestStateStore = createStore<BacktestState>({
 /*
 Typed FlatBuffer Frame Stores (RingBuffer instances with TanStack Store actions)
 */
-const measurements: Record<string, Record<string, RingBuffer<Measurement>>> = {};
 
-export const measurementStore = createStore(
-	measurements,
-	({ setState }) => ({
-		addMeasurement: (source: string, symbol: string, row: Measurement) => {
-			if (!measurements[source]) measurements[source] = {};
-			if (!measurements[source][symbol])
-				measurements[source][symbol] = new RingBuffer(50);
-			measurements[source][symbol].add(row);
-			setState((prev) => ({ ...prev }));
-		},
-	}),
-);
+/*
+One FrameStore per measurement source, not per source+symbol. The backend
+already focus-gates every measurement to the currently focused symbol before
+it ever reaches the browser (cmd/boot.go's ChannelMeasurements -> ChannelUI
+wire drops anything not matching types.Focus()), so a symbol-keyed lookup on
+the frontend was dead weight: it never needed to hold more than one symbol's
+readings at a time, and its nested-map shape made every read and write pay
+for a lookup that could never disambiguate anything. This mirrors every
+other store in this file — a plain Record<string, FrameStore<T>> — and
+avoids the whole "which source, which symbol, does either sub-map exist yet"
+bookkeeping that came with the previous nested-map shape.
+
+Sources are created lazily on first sight rather than pre-seeded from
+DEFAULT_KERNELS, so a source the frontend doesn't yet know about by name
+(e.g. a newly added kernel) still gets its own ring instead of being dropped.
+*/
+const measurementStores: Record<string, ReturnType<typeof createFrameStore<Measurement>>> = {};
+
+export const measurementSourcesStore = createStore<string[]>([]);
+
+export const getMeasurementStore = (source: string) => {
+	let store = measurementStores[source];
+	if (!store) {
+		store = createFrameStore<Measurement>(50);
+		measurementStores[source] = store;
+		measurementSourcesStore.setState((prev) =>
+			prev.includes(source) ? prev : [...prev, source],
+		);
+	}
+	return store;
+};
+
+export const addMeasurement = (source: string, row: Measurement) => {
+	getMeasurementStore(source).actions.add(row);
+};
 
 export const tickStore = createFrameStore<TickFrame>(50);
 export const regulatorStore = createFrameStore<RegulatorFrame>(50);

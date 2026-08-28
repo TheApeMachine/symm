@@ -89,11 +89,11 @@ func TestInstrumentSubscribe(t *testing.T) {
 newTestInstrument builds an Instrument on a workspace that shares the api and a
 Price, matching how boot wires the two shared objects.
 */
-func newTestInstrument(testCase testing.TB, api *websocket.API) *Instrument {
-	testCase.Helper()
-	bus := runtime.NewWorkspace(nil)
+func newTestInstrument(t testing.TB, api *websocket.API) *Instrument {
+	t.Helper()
+	bus := runtime.NewWorkspace(t.Context())
 	bus.Share("api", api, "")
-	bus.Share("price", newTestPrice(testCase, api), "")
+	bus.Share("price", newTestPrice(t, api), "")
 
-	return NewInstrument(testCase.Context(), bus)
+	return NewInstrument(t.Context(), bus)
 }

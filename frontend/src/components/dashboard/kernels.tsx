@@ -1,10 +1,5 @@
-import { useSelector } from "@tanstack/react-store";
 import { useRef } from "react";
-import {
-	DEFAULT_KERNELS,
-	focusStore,
-	measurementStore,
-} from "#/collections/app";
+import { DEFAULT_KERNELS, getMeasurementStore } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
@@ -20,25 +15,21 @@ type QueryEntry = {
 const queryCache: Record<string, QueryEntry> = {};
 
 export const KernelList = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 
-	measurementStore.subscribe((state) => {
-		if (!root.current) return;
+	for (const kernel of DEFAULT_KERNELS) {
+		getMeasurementStore(kernel).subscribe((state) => {
+			if (!root.current) return;
 
-		for (const kernel of DEFAULT_KERNELS) {
-			const ring = state[kernel]?.[focusSymbol];
-			if (!ring) continue;
-
-			const last = ring.getLast();
-			if (!last) continue;
+			const last = state.getLast();
+			if (!last) return;
 
 			let element = queryCache[kernel];
 			if (!element) {
 				const cell = root.current.querySelector<HTMLElement>(
 					`[data-kernel="${kernel}"]`,
 				);
-				if (!cell) continue;
+				if (!cell) return;
 
 				element = {
 					status: cell.querySelector<HTMLElement>('[data-k="status"]'),
@@ -71,8 +62,8 @@ export const KernelList = () => {
 					element.readout.textContent = `snr: ${snrVal.toFixed(2)}`;
 				}
 			}
-		}
-	});
+		});
+	}
 
 	return (
 		<List ref={root} className="min-h-0 flex-1 border-(--line) border-b">

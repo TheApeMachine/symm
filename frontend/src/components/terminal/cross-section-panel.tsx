@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useRef } from "react";
-import { focusStore, measurementStore } from "#/collections/app";
+import { focusStore, getMeasurementStore } from "#/collections/app";
 import { Panel } from "#/components/ui/panel";
 import { Metric } from "#/providers/telemetry/telemetry/metric";
 
@@ -19,10 +19,9 @@ export const CrossSectionPanel = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 
-	measurementStore.subscribe((state) => {
+	getMeasurementStore("liquidity").subscribe((state) => {
 		if (!root.current) return;
-		const ring = state.liquidity?.[focusSymbol];
-		const row = ring?.getLast();
+		const row = state.getLast();
 
 		const set = (q: string, value: string) => {
 			const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);

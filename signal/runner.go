@@ -19,11 +19,14 @@ import (
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
-Runner owns and coordinates all analytical signal instances wired to the Workspace.
+Runner owns and coordinates all analytical signal instances registered on the
+Workspace. Each signal declares what type it wants (kraken.TickerData,
+kraken.TradeData, ...) and what type it returns (*data.Measurement[float64]);
+the workspace discovers every downstream node that wants a measurement and
+routes to it directly, with no topic string involved.
 */
 type Runner struct {
 	ctx           context.Context
@@ -46,14 +49,10 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 
 	if workspace != nil {
 		hawkesSignal := hawkes.NewSignal(ctx)
-		// Hawkes is the manifold forcing term: it publishes once onto the
-		// dedicated Hawkes topic (raw), and a pass-through forwards that same
-		// measurement onto ChannelMeasurements so Category/Graph/Planner keep
-		// receiving it without Hawkes computing twice.
-		runtime.WireKeyed[kraken.TradeData, *data.Measurement[float64]](
-			workspace, types.ChannelTrades, types.ChannelHawkes,
+		runtime.Register(
+			workspace,
 			func(trade kraken.TradeData) string { return trade.Symbol },
-			func(trade kraken.TradeData) *data.Measurement[float64] {
+			func(trade kraken.TradeData) *hawkes.Measurement {
 				if runner.ObserveModule == nil {
 					return hawkesSignal.Step(trade)
 				}
@@ -65,15 +64,24 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 				return measurement
 			},
 		)
-		runtime.WireFunc[*data.Measurement[float64], *data.Measurement[float64]](
-			workspace, types.ChannelHawkes, types.ChannelMeasurements, func(m *data.Measurement[float64]) *data.Measurement[float64] {
-				return m
+		// Hawkes feeds the manifold solver exclusively (its own *hawkes.Measurement
+		// type, above); this unwrap also merges the same reading into the shared
+		// *data.Measurement[float64] stream category/graph/planner/UI consume.
+		runtime.Register(
+			workspace,
+			nil,
+			func(measurement *hawkes.Measurement) *data.Measurement[float64] {
+				if measurement == nil {
+					return nil
+				}
+
+				return measurement.Measurement
 			},
 		)
 
 		correlationSignal := correlation.NewSignal(ctx, workspace)
-		runtime.WireKeyed[kraken.TickerData, *data.Measurement[float64]](
-			workspace, types.ChannelTickers, types.ChannelMeasurements,
+		runtime.Register(
+			workspace,
 			func(ticker kraken.TickerData) string { return ticker.Symbol },
 			func(ticker kraken.TickerData) *data.Measurement[float64] {
 				if runner.ObserveModule == nil {
@@ -89,8 +97,8 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		cvdSignal := cvd.NewSignal(ctx, workspace)
-		runtime.WireKeyed[kraken.TradeData, *data.Measurement[float64]](
-			workspace, types.ChannelTrades, types.ChannelMeasurements,
+		runtime.Register(
+			workspace,
 			func(trade kraken.TradeData) string { return trade.Symbol },
 			func(trade kraken.TradeData) *data.Measurement[float64] {
 				if runner.ObserveModule == nil {
@@ -106,8 +114,8 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		depthflowSignal := depthflow.NewSignal(ctx, workspace)
-		runtime.WireKeyed[kraken.Level3Data, *data.Measurement[float64]](
-			workspace, types.ChannelLevel3, types.ChannelMeasurements,
+		runtime.Register(
+			workspace,
 			func(frame kraken.Level3Data) string { return frame.Symbol },
 			func(frame kraken.Level3Data) *data.Measurement[float64] {
 				if runner.ObserveModule == nil {
@@ -123,8 +131,8 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		morphologySignal := morphology.NewSignal(ctx, workspace)
-		runtime.WireKeyed[kraken.Level3Data, *data.Measurement[float64]](
-			workspace, types.ChannelLevel3, types.ChannelMeasurements,
+		runtime.Register(
+			workspace,
 			func(frame kraken.Level3Data) string { return frame.Symbol },
 			func(frame kraken.Level3Data) *data.Measurement[float64] {
 				if runner.ObserveModule == nil {
@@ -140,8 +148,8 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		derivativesSignal := derivatives.NewSignal(ctx, workspace)
-		runtime.WireKeyed[kraken.FuturesTickerData, *data.Measurement[float64]](
-			workspace, types.ChannelFuturesTickers, types.ChannelMeasurements,
+		runtime.Register(
+			workspace,
 			func(ticker kraken.FuturesTickerData) string { return ticker.Symbol },
 			func(ticker kraken.FuturesTickerData) *data.Measurement[float64] {
 				if runner.ObserveModule == nil {
@@ -155,8 +163,8 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 				return measurement
 			},
 		)
-		runtime.WireKeyed[kraken.FuturesTradeData, *data.Measurement[float64]](
-			workspace, types.ChannelFuturesTrades, types.ChannelMeasurements,
+		runtime.Register(
+			workspace,
 			func(trade kraken.FuturesTradeData) string { return trade.Symbol },
 			func(trade kraken.FuturesTradeData) *data.Measurement[float64] {
 				if runner.ObserveModule == nil {
@@ -172,8 +180,8 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		exhaustSignal := exhaust.NewSignal(ctx)
-		runtime.WireKeyed[kraken.TickerData, *data.Measurement[float64]](
-			workspace, types.ChannelTickers, types.ChannelMeasurements,
+		runtime.Register(
+			workspace,
 			func(ticker kraken.TickerData) string { return ticker.Symbol },
 			func(ticker kraken.TickerData) *data.Measurement[float64] {
 				if runner.ObserveModule == nil {
@@ -189,8 +197,8 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		leadlagSignal := leadlag.NewSignal(ctx, workspace)
-		runtime.WireKeyed[kraken.TickerData, *data.Measurement[float64]](
-			workspace, types.ChannelTickers, types.ChannelMeasurements,
+		runtime.Register(
+			workspace,
 			func(ticker kraken.TickerData) string { return ticker.Symbol },
 			func(ticker kraken.TickerData) *data.Measurement[float64] {
 				if runner.ObserveModule == nil {
@@ -206,8 +214,8 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		liquiditySignal := liquidity.NewSignal(ctx)
-		runtime.WireKeyed[kraken.TickerData, *data.Measurement[float64]](
-			workspace, types.ChannelTickers, types.ChannelMeasurements,
+		runtime.Register(
+			workspace,
 			func(ticker kraken.TickerData) string { return ticker.Symbol },
 			func(ticker kraken.TickerData) *data.Measurement[float64] {
 				if runner.ObserveModule == nil {
@@ -223,8 +231,8 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		pumpdumpSignal := pumpdump.NewSignal(ctx, workspace)
-		runtime.WireKeyed[kraken.TickerData, *data.Measurement[float64]](
-			workspace, types.ChannelTickers, types.ChannelMeasurements,
+		runtime.Register(
+			workspace,
 			func(ticker kraken.TickerData) string { return ticker.Symbol },
 			func(ticker kraken.TickerData) *data.Measurement[float64] {
 				if runner.ObserveModule == nil {
@@ -238,8 +246,8 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 				return measurement
 			},
 		)
-		runtime.WireKeyed[kraken.TradeData, *data.Measurement[float64]](
-			workspace, types.ChannelTrades, types.ChannelMeasurements,
+		runtime.Register(
+			workspace,
 			func(trade kraken.TradeData) string { return trade.Symbol },
 			func(trade kraken.TradeData) *data.Measurement[float64] {
 				if runner.ObserveModule == nil {
@@ -255,8 +263,8 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		sentimentSignal := sentiment.NewSignal(ctx, workspace)
-		runtime.WireKeyed[kraken.TickerData, *data.Measurement[float64]](
-			workspace, types.ChannelTickers, types.ChannelMeasurements,
+		runtime.Register(
+			workspace,
 			func(ticker kraken.TickerData) string { return ticker.Symbol },
 			func(ticker kraken.TickerData) *data.Measurement[float64] {
 				if runner.ObserveModule == nil {
@@ -272,8 +280,8 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 		)
 
 		toxicitySignal := toxicity.NewSignal(ctx, workspace)
-		runtime.WireKeyed[kraken.TradeData, *data.Measurement[float64]](
-			workspace, types.ChannelTrades, types.ChannelMeasurements,
+		runtime.Register(
+			workspace,
 			func(trade kraken.TradeData) string { return trade.Symbol },
 			func(trade kraken.TradeData) *data.Measurement[float64] {
 				if runner.ObserveModule == nil {

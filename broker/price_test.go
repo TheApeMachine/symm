@@ -17,10 +17,10 @@ import (
 /*
 newPriceSurface creates a price surface with the symbol's executable fee row.
 */
-func newPriceSurface(testCase testing.TB, symbol string) (*Price, *websocket.API) {
-	testCase.Helper()
-	api := websocket.NewAPI(testCase.Context(), mock.NewConn(), mock.NewConn())
-	price := newTestPrice(testCase, api)
+func newPriceSurface(t testing.TB, symbol string) (*Price, *websocket.API) {
+	t.Helper()
+	api := websocket.NewAPI(t.Context(), mock.NewConn(), mock.NewConn())
+	price := newTestPrice(t, api)
 	price.fees.Store(symbol, kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.25),
 	})
@@ -32,20 +32,20 @@ func newPriceSurface(testCase testing.TB, symbol string) (*Price, *websocket.API
 newTestPrice builds a Price from an api, wiring the shared workspace the
 constructor reads the api from.
 */
-func newTestPrice(testCase testing.TB, api *websocket.API) *Price {
-	testCase.Helper()
-	bus := runtime.NewWorkspace(nil)
+func newTestPrice(t testing.TB, api *websocket.API) *Price {
+	t.Helper()
+	bus := runtime.NewWorkspace(t.Context())
 	bus.Share("api", api, "")
 
-	return NewPrice(testCase.Context(), bus)
+	return NewPrice(t.Context(), bus)
 }
 
 /*
 newQuantityPrice creates the executable BTC/USD quantity fixture.
 */
-func newQuantityPrice(testCase testing.TB) *Price {
-	testCase.Helper()
-	price, api := newPriceSurface(testCase, "BTC/USD")
+func newQuantityPrice(t testing.TB) *Price {
+	t.Helper()
+	price, api := newPriceSurface(t, "BTC/USD")
 	api.Normalizer().Update(&spot.AssetsManagerUpdate{
 		NewAssets: map[string]spot.AssetInfo{
 			"BTC": {AltName: "BTC", Decimals: 8, DisplayDecimals: 8},

@@ -8,8 +8,8 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/system"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -116,11 +116,16 @@ func NewSolver(
 	}
 
 	if workspace != nil {
-		runtime.WireFunc(
+		runtime.Register(
 			workspace,
-			types.ChannelHawkes,
-			types.ChannelFluid,
-			solver.Step,
+			nil,
+			func(measurement *hawkes.Measurement) *State {
+				if measurement == nil {
+					return nil
+				}
+
+				return solver.Step(measurement.Measurement)
+			},
 		)
 	}
 

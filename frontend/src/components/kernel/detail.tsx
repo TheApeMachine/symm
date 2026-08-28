@@ -1,9 +1,10 @@
 import { useSelector } from "@tanstack/react-store";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import {
 	focusStore,
+	getMeasurementStore,
 	kernelDetailStore,
-	measurementStore,
+	measurementSourcesStore,
 	symbolsStore,
 } from "#/collections/app";
 import {
@@ -27,38 +28,49 @@ export const SignalDetail = () => {
 	const copy = source === "" ? { name: "Signal detail", sub: "", blurb: "" } : kernelCopy(source, "");
 	const metrics = source === "" ? [] : sourceMetrics(source);
 
-	measurementStore.subscribe((state) => {
-		if (!root.current) return;
-		const ring = source === "" ? undefined : state[source]?.[focusSymbol];
-		const row = ring?.getLast();
+	useEffect(() => {
+		if (source === "") return;
+		const sourceStore = getMeasurementStore(source);
 
-		const set = (q: string, value: string) => {
-			const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
-			if (el) el.textContent = value;
-		};
+		const applyState = () => {
+			if (!root.current) return;
+			const row = sourceStore.state.getLast();
 
-		set("symbol", row?.symbol() ?? focusSymbol);
-		set("at", row?.at() === undefined ? "—" : new Date(Number(row.at())).toISOString().slice(11, 19));
-		set("maturity", row?.maturity() === undefined ? "—" : row.maturity().toFixed(3));
-		set("peer", row?.peer() ?? "—");
-		set("epoch", String(Object.keys(state).length));
+			const set = (q: string, value: string) => {
+				const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
+				if (el) el.textContent = value;
+			};
 
-		if (row) {
-			for (let j = 0; j < row.metricsLength(); j++) {
-				const m = row.metrics(j, metricObj);
-				if (!m) continue;
-				const name = m.name() ?? "";
-				const raw = m.raw();
-				const normalized = m.normalized();
+			set("symbol", row?.symbol() ?? focusSymbol);
+			set("at", row?.at() === undefined ? "—" : new Date(Number(row.at())).toISOString().slice(11, 19));
+			set("maturity", row?.maturity() === undefined ? "—" : row.maturity().toFixed(3));
+			set("peer", row?.peer() ?? "—");
+			set("epoch", String(measurementSourcesStore.state.length));
 
-				set(`m:${name}`, raw.toFixed(4));
-				const bar = root.current?.querySelector<HTMLElement>(`[data-mbar="${name}"]`);
-				if (bar instanceof HTMLElement) {
-					bar.style.width = `calc(clamp(0, ${Math.min(1, Math.max(0, normalized))}, 1) * 100%)`;
+			if (row) {
+				for (let j = 0; j < row.metricsLength(); j++) {
+					const m = row.metrics(j, metricObj);
+					if (!m) continue;
+					const name = m.name() ?? "";
+					const raw = m.raw();
+					const normalized = m.normalized();
+
+					set(`m:${name}`, raw.toFixed(4));
+					const bar = root.current?.querySelector<HTMLElement>(`[data-mbar="${name}"]`);
+					if (bar instanceof HTMLElement) {
+						bar.style.width = `calc(clamp(0, ${Math.min(1, Math.max(0, normalized))}, 1) * 100%)`;
+					}
 				}
 			}
-		}
-	});
+		};
+
+		applyState();
+		const subscription = sourceStore.subscribe(applyState);
+
+		return () => {
+			subscription.unsubscribe();
+		};
+	}, [source, focusSymbol]);
 
 	if (source === "") {
 		return (

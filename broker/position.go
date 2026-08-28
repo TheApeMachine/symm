@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	disruptor "github.com/smarty/go-disruptor"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
+	disruptor "github.com/smarty/go-disruptor"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
@@ -41,6 +41,7 @@ type Position struct {
 	cancel         context.CancelFunc
 	api            *websocket.API
 	bus            *runtime.Workspace
+	feed           *runtime.Feed
 	instrument     *Instrument
 	price          *Price
 	balance        *Balance
@@ -73,8 +74,8 @@ type Position struct {
 		slot storage and a single guardian consumer handler. The guardian
 		bypasses Workspace analytics scheduling entirely.
 	*/
-	disruptor     disruptor.Disruptor
-	guardian      *guardianHandler
+	disruptor    disruptor.Disruptor
+	guardian     *guardianHandler
 	guardianSlot [guardianCapacity]guardianEvent
 
 	// exitSequence protects the OPEN → EXIT_REQUESTED → EXITING → CLOSED
@@ -131,6 +132,7 @@ func NewPosition(
 		cancel:         cancel,
 		api:            api,
 		bus:            bus,
+		feed:           bus.NewFeed(),
 		instrument:     instrument,
 		price:          price,
 		balance:        balance,
@@ -161,8 +163,6 @@ func NewPosition(
 	guardian := &guardianHandler{position: position}
 	disruptorInstance, err := disruptor.New(
 		disruptor.Options.BufferCapacity(guardianCapacity),
-		disruptor.Options.WriterCount(64),
-		disruptor.Options.WaitStrategy(runtime.AdaptiveWaitStrategy{}),
 		disruptor.Options.NewHandlerGroup(guardian),
 	)
 
@@ -268,11 +268,11 @@ Publish sends the position's typed FlatBuffers object to the UI queue. Wallet
 state remains a separate balance publication owned by the account readout.
 */
 func (position *Position) Publish() {
-	if position.bus == nil {
+	if position.feed == nil {
 		return
 	}
 
-	position.bus.Publish(types.ChannelUI, &types.UIFrame{
+	position.feed.Emit(&types.UIFrame{
 		Type: wire.FramePositionsFrame,
 		Value: &wire.PositionsFrameT{
 			Rows: []*wire.PositionT{position.Wire()},
@@ -720,7 +720,7 @@ func (position *Position) Enter() (*Position, error) {
 }
 
 /*
-ManualExit is the operator override for one filled lot. It pushes a command to the 
+ManualExit is the operator override for one filled lot. It pushes a command to the
 guardian ring to guarantee order with market events.
 */
 func (position *Position) ManualExit() error {

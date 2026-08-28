@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useRef } from "react";
-import { focusStore, measurementStore } from "#/collections/app";
+import { focusStore, getMeasurementStore } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 import { Metric } from "#/providers/telemetry/telemetry/metric";
@@ -19,12 +19,11 @@ export const RadarPanel = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 
-	measurementStore.subscribe((state) => {
-		if (!root.current) return;
+	for (const axis of radarAxes) {
+		getMeasurementStore(axis.source).subscribe((state) => {
+			if (!root.current) return;
 
-		for (const axis of radarAxes) {
-			const ring = state[axis.source]?.[focusSymbol];
-			const row = ring?.getLast();
+			const row = state.getLast();
 			let normalized = 0;
 
 			if (row) {
@@ -41,8 +40,8 @@ export const RadarPanel = () => {
 			if (arm instanceof SVGElement) {
 				arm.style.setProperty("--axis", String(Math.min(1, Math.max(0, normalized))));
 			}
-		}
-	});
+		});
+	}
 
 	return (
 		<div ref={root} className="flex h-full flex-col">

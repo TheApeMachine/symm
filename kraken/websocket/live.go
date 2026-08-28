@@ -69,6 +69,7 @@ type Live struct {
 	quote        string
 	thesis       atomic.Pointer[types.Thesis]
 	bus          atomic.Pointer[runtime.Workspace]
+	feed         atomic.Pointer[runtime.Feed]
 	simulator    *Simulator
 	normalizer   *spot.Normalizer
 	level3       *sync.Map
@@ -203,6 +204,7 @@ func (live *Live) SetBus(bus *runtime.Workspace) {
 	}
 
 	live.bus.Store(bus)
+	live.feed.Store(bus.NewFeed())
 
 	if live.book != nil {
 		live.book.SetBus(bus)
@@ -328,8 +330,8 @@ func NewWithClient(
 			thesis := live.thesis.Load()
 
 			if thesis != nil && thesis.Symbol(data.Symbol).AcceptLevel3(data.Timestamp) {
-				if bus := live.bus.Load(); bus != nil {
-					bus.Publish(types.ChannelLevel3, data)
+				if feed := live.feed.Load(); feed != nil {
+					feed.Emit(data)
 				}
 			}
 		}
@@ -442,13 +444,13 @@ func NewWithClient(
 					symbol.Tick = tick
 
 					if symbol.AcceptTicker(ticker.Timestamp) {
-						if bus := live.bus.Load(); bus != nil {
-							bus.Publish(types.ChannelTickers, ticker)
+						if feed := live.feed.Load(); feed != nil {
+							feed.Emit(ticker)
 						}
 					}
 
-					if bus := live.bus.Load(); bus != nil {
-						bus.Publish(types.ChannelUI, &types.UIFrame{
+					if feed := live.feed.Load(); feed != nil {
+						feed.Emit(&types.UIFrame{
 							Type: wire.FrameTickFrame,
 							Value: &wire.TickFrameT{
 								Count: tick,
@@ -465,8 +467,8 @@ func NewWithClient(
 					trade := entity.Data[index]
 
 					if thesis.Symbol(trade.Symbol).AcceptTrade(trade.Timestamp) {
-						if bus := live.bus.Load(); bus != nil {
-							bus.Publish(types.ChannelTrades, trade)
+						if feed := live.feed.Load(); feed != nil {
+							feed.Emit(trade)
 						}
 					}
 				}
@@ -478,8 +480,8 @@ func NewWithClient(
 				for index := range entity.Data {
 					execution := entity.Data[index]
 
-					if bus := live.bus.Load(); bus != nil {
-						bus.Publish(types.ChannelExecutions, execution)
+					if feed := live.feed.Load(); feed != nil {
+						feed.Emit(execution)
 					}
 				}
 			}

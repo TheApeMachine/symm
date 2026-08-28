@@ -47,22 +47,16 @@ func TestDiagnosticsPublishing(t *testing.T) {
 		var receivedUI atomic.Int64
 		var receivedFluid atomic.Int64
 
-		bus.Wire(types.ChannelUI, "", func(value any) any {
-			frame, ok := value.(*types.UIFrame)
-			if ok && frame != nil && frame.Type == wire.FrameDiagnosticsFrame {
+		runtime.RegisterSink(bus, nil, func(frame *types.UIFrame) {
+			if frame != nil && frame.Type == wire.FrameDiagnosticsFrame {
 				receivedUI.Add(1)
 			}
-
-			return nil
 		})
 
-		bus.Wire(types.ChannelDiagnostics, "", func(value any) any {
-			payload, ok := value.([]byte)
-			if ok && len(payload) > 0 {
+		runtime.RegisterSink(bus, nil, func(payload []byte) {
+			if len(payload) > 0 {
 				receivedFluid.Add(1)
 			}
-
-			return nil
 		})
 
 		collector.publish()
@@ -100,13 +94,10 @@ func TestDiagnosticsEndToEndDelivery(t *testing.T) {
 		Convey("A heartbeat must reconstruct the exact 15-queue topology, byte-for-byte", func() {
 			var received atomic.Value
 
-			bus.Wire(types.ChannelDiagnostics, "", func(value any) any {
-				payload, ok := value.([]byte)
-				if ok && len(payload) > 0 {
+			runtime.RegisterSink(bus, nil, func(payload []byte) {
+				if len(payload) > 0 {
 					received.Store(payload)
 				}
-
-				return nil
 			})
 
 			collector.publish()

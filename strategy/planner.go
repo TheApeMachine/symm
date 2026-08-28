@@ -142,38 +142,26 @@ func NewPlanner(
 	}
 
 	if bus != nil {
-		runtime.WireFunc(
+		runtime.Register(
 			bus,
-			types.ChannelTickers,
-			types.ChannelDecisions,
+			nil,
 			planner.StepTick,
 		)
-		runtime.WireKeyed(
+		runtime.RegisterSink(
 			bus,
-			types.ChannelMeasurements,
-			"",
-			func(value any) string {
-				if m, ok := value.(*nmtypes.Measurement); ok && m != nil {
-					return m.Symbol
+			func(measurement *data.Measurement[float64]) string {
+				if measurement == nil {
+					return ""
 				}
 
-				if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
-					return m.Symbol()
-				}
-
-				return ""
+				return measurement.Symbol()
 			},
-			func(value any) any {
-				if m, ok := value.(*nmtypes.Measurement); ok {
-					_ = planner.StepMeasurement(m)
-					return nil
+			func(measurement *data.Measurement[float64]) {
+				if measurement == nil {
+					return
 				}
 
-				if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
-					_ = planner.StepMeasurement(m.ToTypesMeasurement())
-				}
-
-				return nil
+				_ = planner.StepMeasurement(measurement.ToTypesMeasurement())
 			},
 		)
 	}

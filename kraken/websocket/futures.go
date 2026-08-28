@@ -34,6 +34,7 @@ type FuturesLive struct {
 	endpoint      string
 	thesis        atomic.Pointer[types.Thesis]
 	bus           atomic.Pointer[runtime.Workspace]
+	feed          atomic.Pointer[runtime.Feed]
 	capture       CaptureSink
 	conn          *gorillawebsocket.Conn
 	connMu        sync.Mutex
@@ -113,6 +114,7 @@ func (futures *FuturesLive) SetBus(bus *runtime.Workspace) {
 	}
 
 	futures.bus.Store(bus)
+	futures.feed.Store(bus.NewFeed())
 }
 
 func (futures *FuturesLive) SetThesis(thesis *types.Thesis) {
@@ -345,8 +347,8 @@ func (futures *FuturesLive) dispatchTicker(raw []byte) {
 	ticker.Data.Symbol = spotSymbol
 
 	if thesis.Symbol(spotSymbol).AcceptFuturesTicker(ticker.Data.Timestamp) {
-		if bus := futures.bus.Load(); bus != nil {
-			bus.Publish(types.ChannelFuturesTickers, ticker.Data)
+		if feed := futures.feed.Load(); feed != nil {
+			feed.Emit(ticker.Data)
 		}
 	}
 }
@@ -375,8 +377,8 @@ func (futures *FuturesLive) dispatchTrades(raw []byte) {
 		trade.Symbol = spotSymbol
 
 		if thesis.Symbol(spotSymbol).AcceptFuturesTrade(trade.Timestamp) {
-			if bus := futures.bus.Load(); bus != nil {
-				bus.Publish(types.ChannelFuturesTrades, trade)
+			if feed := futures.feed.Load(); feed != nil {
+				feed.Emit(trade)
 			}
 		}
 	}
@@ -404,8 +406,8 @@ func (futures *FuturesLive) dispatchBook(raw []byte) {
 	book.Data.Symbol = spotSymbol
 
 	if thesis.Symbol(spotSymbol).AcceptFuturesBook(book.Data.Timestamp) {
-		if bus := futures.bus.Load(); bus != nil {
-			bus.Publish(types.ChannelFuturesBooks, book.Data)
+		if feed := futures.feed.Load(); feed != nil {
+			feed.Emit(book.Data)
 		}
 	}
 }

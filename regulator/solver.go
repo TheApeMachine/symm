@@ -28,6 +28,7 @@ type Solver struct {
 	configSource         *system.Config
 	optimizer            *optimizer
 	bus                  *runtime.Workspace
+	feed                 *runtime.Feed
 	history              []float64
 	historyCapacity      int
 	lastEquity           float64
@@ -81,6 +82,7 @@ func NewSolver(
 		configSource:    configSource,
 		optimizer:       model,
 		bus:             bus,
+		feed:            bus.NewFeed(),
 		history:         make([]float64, 0, config.Regulator.HistoryCapacity),
 		historyCapacity: config.Regulator.HistoryCapacity,
 		marks:           make(map[string]observedPositionMark),
@@ -192,10 +194,10 @@ func (solver *Solver) Update(thesis *types.Thesis, exposed bool) error {
 	solver.recordHistory(result.surprise)
 	payload := solver.buildPayload(periodReturn, result)
 
-	// The dashboard frame is projected by the workspace observer on
-	// ChannelRegulator (boot.go); the solver emits the domain payload only.
-	if solver.bus != nil {
-		solver.bus.Publish(types.ChannelRegulator, payload)
+	// The dashboard frame is projected by the workspace observer registered on
+	// RegulatorPayload (boot.go); the solver emits the domain payload only.
+	if solver.feed != nil {
+		solver.feed.Emit(payload)
 	}
 
 	return nil

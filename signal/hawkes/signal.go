@@ -5,9 +5,19 @@ import (
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/types"
 )
+
+/*
+Measurement distinguishes a Hawkes reading from every other signal's
+*data.Measurement[float64] by Go type alone: the manifold solver is fired
+exclusively by Hawkes (it is the fluid field's forcing term), so it must be
+able to want a type only Hawkes produces, distinct from the merged
+*data.Measurement[float64] stream every other consumer (category, graph,
+planner, the UI taps) wants.
+*/
+type Measurement struct {
+	*data.Measurement[float64]
+}
 
 /*
 Signal is the Hawkes arrival-dynamics measuring instrument. It composes its
@@ -37,8 +47,14 @@ func (signal *Signal) Name() string { return "hawkes" }
 
 func (signal *Signal) Error() error { return signal.err }
 
-func (signal *Signal) Step(trade kraken.TradeData) *data.Measurement[float64] {
-	return signal.trade.Step(trade)
+func (signal *Signal) Step(trade kraken.TradeData) *Measurement {
+	measurement := signal.trade.Step(trade)
+
+	if measurement == nil {
+		return nil
+	}
+
+	return &Measurement{measurement}
 }
 
 /*
@@ -58,31 +74,6 @@ func (signal *Signal) Process(
 
 	return measurement, true, nil
 }
-
-/*
-RegisterWire connects the Hawkes signal as a pure unit-processing node: trades
-in, raw measurements out on the Hawkes topic, with the workspace owning the
-routing. There is no publish call here — the returned measurement is published
-by the workspace onto the downstream topic.
-*/
-func (signal *Signal) RegisterWire(workspace *runtime.Workspace) {
-	if signal == nil || workspace == nil {
-		return
-	}
-
-	runtime.WireNode[kraken.TradeData, *data.Measurement[float64]](
-		workspace,
-		types.ChannelTrades,
-		HawkesTopic,
-		signal,
-	)
-}
-
-/*
-HawkesTopic names the raw Hawkes measurement topic. It is the output of the
-Hawkes node and the input of the manifold solver.
-*/
-const HawkesTopic = "hawkes"
 
 func (signal *Signal) Close() error {
 	if signal.cancel != nil {

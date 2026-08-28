@@ -14,7 +14,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	tes "github.com/theapemachine/symm/tests/types"
-	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -33,6 +32,7 @@ func (market *Market) WithStagedReplay(
 	}
 
 	market.bus = bus
+	market.feed = bus.NewFeed()
 	market.replayStart = func() {}
 	market.replayObservation = func() error {
 		if failure != nil {
@@ -207,8 +207,8 @@ func (market *Market) ReplayFrame(frame backtest.Frame) error {
 					if ticker != nil && ticker.Data.ProductID != "" {
 						if spotSymbol := kraken.FuturesProductIDToSpot(ticker.Data.ProductID); spotSymbol != "" {
 							ticker.Data.Symbol = spotSymbol
-							if market.bus != nil {
-								market.bus.Publish(types.ChannelFuturesTickers, ticker.Data)
+							if market.feed != nil {
+								market.feed.Emit(ticker.Data)
 							}
 						}
 					}
@@ -218,8 +218,8 @@ func (market *Market) ReplayFrame(frame backtest.Frame) error {
 						for _, singleTrade := range trades.Data {
 							if spotSymbol := kraken.FuturesProductIDToSpot(singleTrade.ProductID); spotSymbol != "" {
 								singleTrade.Symbol = spotSymbol
-								if market.bus != nil {
-									market.bus.Publish(types.ChannelFuturesTrades, singleTrade)
+								if market.feed != nil {
+									market.feed.Emit(singleTrade)
 								}
 							}
 						}
@@ -229,8 +229,8 @@ func (market *Market) ReplayFrame(frame backtest.Frame) error {
 					if bookDelta != nil && bookDelta.Data.ProductID != "" {
 						if spotSymbol := kraken.FuturesProductIDToSpot(bookDelta.Data.ProductID); spotSymbol != "" {
 							bookDelta.Data.Symbol = spotSymbol
-							if market.bus != nil {
-								market.bus.Publish(types.ChannelFuturesBooks, bookDelta.Data)
+							if market.feed != nil {
+								market.feed.Emit(bookDelta.Data)
 							}
 						}
 					}

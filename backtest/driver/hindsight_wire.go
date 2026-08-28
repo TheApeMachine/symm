@@ -12,8 +12,8 @@ import (
 publishHindsight emits one hindsight wire frame for the dashboard.
 */
 func (driver *Driver) publishHindsight(report RealizedReport) {
-	if driver.ui != nil {
-		driver.ui.Publish(types.ChannelUI, &types.UIFrame{
+	if driver.uiFeed != nil {
+		driver.uiFeed.Emit(&types.UIFrame{
 			Type:  wire.FrameHindsightFrame,
 			Value: hindsightWire(report),
 		})

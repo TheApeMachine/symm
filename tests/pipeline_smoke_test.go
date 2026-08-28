@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/cmd"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	tes "github.com/theapemachine/symm/tests/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -23,18 +24,15 @@ func TestPipelinePumpsFramesToUIBus(t *testing.T) {
 	Convey("Given the assembled system driven by the fixture venue", t,
 		WithStack(t, []*tes.Symbol{symbol}, cmd.Boot, func(market *Market, system *cmd.System) {
 			received := make(chan *types.UIFrame, 512)
-			system.Bus.Wire(types.ChannelUI, "", func(value any) any {
-				frame, ok := value.(*types.UIFrame)
-				if !ok || frame == nil {
-					return nil
+			runtime.RegisterSink(system.Bus, nil, func(frame *types.UIFrame) {
+				if frame == nil {
+					return
 				}
 
 				select {
 				case received <- frame:
 				default:
 				}
-
-				return nil
 			})
 
 			for index := 0; index < 60; index++ {
