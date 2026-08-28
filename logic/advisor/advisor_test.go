@@ -151,6 +151,50 @@ func TestAdvisorStep(t *testing.T) {
 			So(bookValue, ShouldEqual, 0.5)
 		})
 
+		Convey("one Measurement carrying two already-observed bound metrics advances both, never reverting one to its stale value", func() {
+			// Build up independent prior state for both metrics first.
+			advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(0, 0), map[string]float64{
+				"relative_spread": 0.01,
+			}))
+			advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(1, 0), map[string]float64{
+				"relative_spread": 0.02,
+			}))
+			advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(2, 0), map[string]float64{
+				"touch_notional_imbalance": 0.1,
+			}))
+			advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(3, 0), map[string]float64{
+				"touch_notional_imbalance": 0.2,
+			}))
+
+			outputs := LiquidityOutputs(LiquidityBindings())
+			spreadBaselineSlot := outputs[1].Slot
+			imbalanceBaselineSlot := outputs[5].Slot
+
+			before, found := advisor.number.Project("TEST/USD")
+			So(found, ShouldBeTrue)
+			spreadBaselineBefore, _ := before.Get(spreadBaselineSlot)
+			imbalanceBaselineBefore, _ := before.Get(imbalanceBaselineSlot)
+
+			// One Measurement now carries BOTH bound metrics at once, so both
+			// branches are fresh and both genuinely mutate their own
+			// already-populated baseline in the same Step. A blind
+			// last-writer-wins merge of two branches that each still carry a
+			// full, untouched copy of the other's prior state would silently
+			// revert whichever branch merges first back to its stale value.
+			advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(4, 0), map[string]float64{
+				"relative_spread":          0.03,
+				"touch_notional_imbalance": 0.3,
+			}))
+
+			after, found := advisor.number.Project("TEST/USD")
+			So(found, ShouldBeTrue)
+			spreadBaselineAfter, _ := after.Get(spreadBaselineSlot)
+			imbalanceBaselineAfter, _ := after.Get(imbalanceBaselineSlot)
+
+			So(spreadBaselineAfter, ShouldNotEqual, spreadBaselineBefore)
+			So(imbalanceBaselineAfter, ShouldNotEqual, imbalanceBaselineBefore)
+		})
+
 		Convey("an unrelated binding's event does not fabricate a duplicate observation for a metric it did not deliver", func() {
 			// Two distinct real observations grow relative_spread's retained
 			// ring past its initial single-slot capacity, so a stale
@@ -338,7 +382,7 @@ func TestAdvisorStep(t *testing.T) {
 			types.KindState,
 			nmtypes.Identity,
 			[]MetricBinding{passthroughBinding},
-			[]Output{{Slot: passthroughBinding.Series.ValueSymbol, Metric: passthroughBinding}},
+			[]Output{NewMetricOutput(passthroughBinding.Series.ValueSymbol, passthroughBinding)},
 		)
 
 		measurement := testMeasurement("TEST/USD", "liquidity", time.Unix(0, 0), map[string]float64{
@@ -368,10 +412,10 @@ func TestNewAdvisorOutputCapacity(t *testing.T) {
 		outputs := make([]Output, types.PerspectiveMetricCapacity+1)
 
 		for index := range outputs {
-			outputs[index] = Output{
-				Slot:   nmtypes.MustIntern(fmt.Sprintf("test/advisor/capacity_overflow/output/%d", index)),
-				Metric: binding,
-			}
+			outputs[index] = NewMetricOutput(
+				nmtypes.MustIntern(fmt.Sprintf("test/advisor/capacity_overflow/output/%d", index)),
+				binding,
+			)
 		}
 
 		So(func() {
@@ -390,10 +434,10 @@ func TestNewAdvisorOutputCapacity(t *testing.T) {
 		outputs := make([]Output, types.PerspectiveMetricCapacity)
 
 		for index := range outputs {
-			outputs[index] = Output{
-				Slot:   nmtypes.MustIntern(fmt.Sprintf("test/advisor/capacity_exact/output/%d", index)),
-				Metric: binding,
-			}
+			outputs[index] = NewMetricOutput(
+				nmtypes.MustIntern(fmt.Sprintf("test/advisor/capacity_exact/output/%d", index)),
+				binding,
+			)
 		}
 
 		So(func() {

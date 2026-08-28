@@ -92,19 +92,67 @@ func NewMetricBinding(source, metric, seriesPrefix string) MetricBinding {
 }
 
 /*
-Output declares one named fact a pipeline emits for one composed metric: the
-interned Slot a reading's value is read back from, and the Metric identity of
-the composed metric it belongs to (for quality-provenance lookup, since
-Maturity/SNR/SNRDefined are tracked per bound metric, not per output slot). A
-pipeline built from temporal-context primitives declares four outputs per
-bound metric (its value, baseline, z-score, and velocity); a different family's
-pipeline declares whatever named facts its own mathematics produces. Advisor
-never assumes a fixed output shape — it only walks whatever Outputs its
-pipeline declared.
+Output declares one named fact a pipeline emits: the interned Slot a reading's
+value is read back from, plus that fact's own Maturity/SNR/SNRDefined
+provenance slots. A pipeline built from temporal-context primitives declares
+four outputs per bound metric (its value, baseline, z-score, and velocity); a
+different family's pipeline declares whatever named facts its own mathematics
+produces. Advisor never assumes a fixed output shape — it only walks whatever
+Outputs its pipeline declared.
+
+Provenance is declared per Output, not inferred from a single bound metric: an
+output derived from exactly one measurement (Liquidity's case) may honestly
+reuse that metric's own Maturity/SNR/SNRDefined slots via NewMetricOutput, but
+an output derived from several composed metrics jointly (Historical Analogue's
+distance/percentile, derived from every bound dimension at once) has no single
+honest parent to borrow from — it must declare its own provenance slots
+instead, populated by whatever the pipeline computes as that output's genuine
+supporting evidence.
 */
 type Output struct {
-	Slot   nmtypes.Symbol
-	Metric MetricBinding
+	Slot       nmtypes.Symbol
+	Maturity   nmtypes.Symbol
+	SNR        nmtypes.Symbol
+	SNRDefined nmtypes.Symbol
+}
+
+/*
+undeclaredProvenance is interned once and never written by any pipeline, so
+Get always reports it not found. It is the explicit "no provenance declared"
+value for an Output field, so a zero-value Symbol(0) — which is some other
+package's real, unrelated interned slot, decided by whatever order init()
+functions across the whole program happened to run in — can never be
+silently dereferenced as if it meant something.
+*/
+var undeclaredProvenance = nmtypes.MustIntern("advisor/output/undeclared_provenance")
+
+/*
+NewMetricOutput declares one output whose provenance is honestly a single
+bound metric's own quality: the metric's Maturity/SNR/SNRDefined slots,
+populated by Advisor.Step from the source Measurement that fed that binding.
+*/
+func NewMetricOutput(slot nmtypes.Symbol, binding MetricBinding) Output {
+	return Output{
+		Slot:       slot,
+		Maturity:   binding.Maturity,
+		SNR:        binding.SNR,
+		SNRDefined: binding.SNRDefined,
+	}
+}
+
+/*
+NewDerivedOutput declares one output whose provenance is genuinely its own,
+derived from several composed metrics jointly rather than borrowed from any
+single one — maturity is the pipeline's own honest supporting-evidence slot;
+SNR has no principled definition for this quantity and stays undeclared.
+*/
+func NewDerivedOutput(slot nmtypes.Symbol, maturity nmtypes.Symbol) Output {
+	return Output{
+		Slot:       slot,
+		Maturity:   maturity,
+		SNR:        undeclaredProvenance,
+		SNRDefined: undeclaredProvenance,
+	}
 }
 
 /*
@@ -264,9 +312,9 @@ func (advisor *Advisor) project(
 
 	for _, output := range advisor.outputs {
 		value, defined := state.Get(output.Slot)
-		maturity, _ := state.Get(output.Metric.Maturity)
-		snr, _ := state.Get(output.Metric.SNR)
-		snrDefined, _ := state.Get(output.Metric.SNRDefined)
+		maturity, _ := state.Get(output.Maturity)
+		snr, _ := state.Get(output.SNR)
+		snrDefined, _ := state.Get(output.SNRDefined)
 
 		perspective.Readings[count] = types.MetricReading{
 			Metric:     output.Slot,

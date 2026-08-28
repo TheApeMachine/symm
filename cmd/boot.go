@@ -546,20 +546,31 @@ func BootWithHub(
 	cognitionSolver := cognition.NewSolver(systemCtx, bus)
 	opportunitySolver := opportunity.NewSolver(systemCtx, bus)
 	liquidityAdvisor := advisor.NewLiquidityAdvisor("advisor:liquidity")
+	historicalAdvisor := advisor.NewHistoricalAdvisor("advisor:historical")
 
 	if bus != nil {
+		measurementKey := func(measurement *data.Measurement[float64]) string {
+			if measurement == nil {
+				return ""
+			}
+
+			return measurement.Label
+		}
+
 		runtime.WireKeyed(
 			bus,
 			types.ChannelMeasurements,
 			types.ChannelPerspectives,
-			func(measurement *data.Measurement[float64]) string {
-				if measurement == nil {
-					return ""
-				}
-
-				return measurement.Label
-			},
+			measurementKey,
 			liquidityAdvisor.Step,
+		)
+
+		runtime.WireKeyed(
+			bus,
+			types.ChannelMeasurements,
+			types.ChannelPerspectives,
+			measurementKey,
+			historicalAdvisor.Step,
 		)
 	}
 
@@ -605,6 +616,7 @@ func BootWithHub(
 	manifoldSolver.ObserveModule = diagnosticsCollector.ObserveModule()
 	opportunitySolver.ObserveModule = diagnosticsCollector.ObserveModule()
 	liquidityAdvisor.ObserveModule = diagnosticsCollector.ObserveModule()
+	historicalAdvisor.ObserveModule = diagnosticsCollector.ObserveModule()
 	resonanceSolver.ObserveModule = diagnosticsCollector.ObserveModule()
 	desk.ObserveModule = diagnosticsCollector.ObserveModule()
 	planner.ObserveModule = diagnosticsCollector.ObserveModule()

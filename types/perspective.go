@@ -23,6 +23,10 @@ const (
 	// KindLiquidity names the execution-terrain composition (spread, touch
 	// capacity, book imbalance) the liquidity advisor maintains.
 	KindLiquidity
+	// KindHistoricalAnalogue names the multivariate trajectory-recurrence
+	// composition (nearest historical path distance, its percentile, match
+	// count, and match location) the historical analogue advisor maintains.
+	KindHistoricalAnalogue
 )
 
 /*
@@ -35,6 +39,8 @@ func (kind PerspectiveKind) String() string {
 		return "state"
 	case KindLiquidity:
 		return "liquidity"
+	case KindHistoricalAnalogue:
+		return "historical_analogue"
 	default:
 		return "unknown"
 	}

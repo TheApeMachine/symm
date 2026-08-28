@@ -40,10 +40,20 @@ other bound metric's event.
 A not-fresh branch is a deliberate no-op (it returns its input unchanged, no
 error), never a failure to be forgiven: Fresh already tells us exactly which
 branches apply to this event, so there is nothing left to infer from whether a
-branch happened to change the frame. Plain Fork is therefore the right
-combinator here, not TryFork — a fresh branch's genuine error (malformed
-input, a regressed clock, whatever) always propagates immediately, with no
-absence-vs-defect guessing at the composition layer.
+branch happened to change the frame — no need for TryFork's absence-vs-defect
+guessing here.
+
+ForkStrict, not plain Fork, composes the branches: when two or more bindings
+are fresh on the same Measurement, each branch's returned frame is a full copy
+of the shared input, including every other binding's already-populated prior
+state, untouched. Plain Fork overlays each branch's output onto the composed
+result unconditionally and in order, so a later branch's untouched copy of an
+earlier branch's freshly mutated slot silently reverts it — a real,
+previously undetected clobbering bug that surfaces exactly when one
+Measurement carries two or more bound metrics at once. ForkStrict compares
+each branch's output against the shared input to isolate only what that
+branch actually changed before merging, so two branches that each mutate only
+their own series never step on one another regardless of merge order.
 */
 func LiquidityPipeline(bindings []MetricBinding) nmtypes.Primitive {
 	branches := make([]nmtypes.Primitive, 0, len(bindings))
@@ -52,7 +62,7 @@ func LiquidityPipeline(bindings []MetricBinding) nmtypes.Primitive {
 		branches = append(branches, freshTemporalContext(binding))
 	}
 
-	return nmtypes.Pipe(nmtypes.Fork(branches...), scrubFresh(bindings))
+	return nmtypes.Pipe(nmtypes.ForkStrict(branches...), scrubFresh(bindings))
 }
 
 /*
@@ -66,10 +76,10 @@ func LiquidityOutputs(bindings []MetricBinding) []Output {
 
 	for _, binding := range bindings {
 		outputs = append(outputs,
-			Output{Slot: binding.Series.ValueSymbol, Metric: binding},
-			Output{Slot: nmtypes.MustIntern(temporal.JoinPrefix(binding.Prefix, "baseline/value")), Metric: binding},
-			Output{Slot: nmtypes.MustIntern(temporal.JoinPrefix(binding.Prefix, "z/value")), Metric: binding},
-			Output{Slot: nmtypes.MustIntern(temporal.JoinPrefix(binding.Prefix, "velocity/delta")), Metric: binding},
+			NewMetricOutput(binding.Series.ValueSymbol, binding),
+			NewMetricOutput(nmtypes.MustIntern(temporal.JoinPrefix(binding.Prefix, "baseline/value")), binding),
+			NewMetricOutput(nmtypes.MustIntern(temporal.JoinPrefix(binding.Prefix, "z/value")), binding),
+			NewMetricOutput(nmtypes.MustIntern(temporal.JoinPrefix(binding.Prefix, "velocity/delta")), binding),
 		)
 	}
 
