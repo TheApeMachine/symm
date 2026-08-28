@@ -9,7 +9,8 @@ import (
 
 /*
 HistoricalBindings declares the three complementary, already-standardized
-trajectory dimensions the Historical Analogue Advisor composes for one symbol:
+trajectory dimensions the Historical Analogue Advisor composes for one symbol,
+plus one control binding that supplies the comparison horizon:
 
   - cvd/signed_net_fraction_zscore — executed-flow structure: aggressor-side
     imbalance, standardized against its own causal history by the CVD signal.
@@ -19,6 +20,10 @@ trajectory dimensions the Historical Analogue Advisor composes for one symbol:
   - hawkes/standardized_innovation:buy — event/excitation structure: the
     Hawkes point-process buy-side innovation, a z-score by construction
     ((N-Λ)/√Λ), standardized against the fitted conditional intensity.
+  - hawkes/excitation_timescale:buy_from_buy — the comparison horizon Q:
+    the symbol's own Hawkes excitation e-folding timescale tau = 1/beta
+    (seconds), a control fact (not a trajectory dimension) that defines how
+    long a single query window spans.
 
 Each metric is already a dimensionless, causally standardized quantity
 published by its own signal (signal/README.md §12: a value is normalized only
@@ -35,6 +40,10 @@ func HistoricalBindings() []MetricBinding {
 		NewMetricBinding("cvd", "signed_net_fraction_zscore", "advisor/historical/flow"),
 		NewMetricBinding("depthflow", "book_imbalance_zscore", "advisor/historical/book"),
 		NewMetricBinding("hawkes", "standardized_innovation:buy", "advisor/historical/excitation"),
+		// The comparison horizon is the symbol's own Hawkes excitation
+		// e-folding timescale tau = 1/beta (seconds): a control fact derived
+		// from the arrival process, not a trajectory dimension.
+		NewControlBinding("hawkes", "excitation_timescale:buy_from_buy", "advisor/historical/horizon"),
 	}
 }
 
@@ -66,6 +75,19 @@ func HistoricalPipeline(bindings []MetricBinding) nmtypes.Primitive {
 	prefixes := make([]string, 0, len(bindings))
 
 	for _, binding := range bindings {
+		if binding.Control {
+			// A control binding feeds the recurrence horizon: its raw value is
+			// projected into Series.ValueSymbol by Step when the Hawkes
+			// measurement delivers the fitted timescale, and horizonControl
+			// relays it into the control slot recurrence.Analogue reads. Gated
+			// on Fresh exactly like freshPath, so a stale timescale retained
+			// from an earlier event is never re-written as if this one
+			// delivered it.
+			branches = append(branches, horizonControl(binding))
+
+			continue
+		}
+
 		branches = append(branches, freshPath(binding))
 		prefixes = append(prefixes, binding.Prefix)
 	}
@@ -79,20 +101,20 @@ func HistoricalPipeline(bindings []MetricBinding) nmtypes.Primitive {
 
 /*
 HistoricalOutputs declares the six named facts HistoricalPipeline emits: the
-joint comparison's nearest historical distance, its within-scan percentile,
-the number of non-overlapping candidates actually searched, the nearest
-match's start time, the query length the scan derived from retained history,
-and the comparison's own maturity.
+joint comparison's nearest historical distance, its discord score (how the
+nearest match stands out from background — 0 recurring, 1 novel), the number of
+non-overlapping candidate windows actually searched, the nearest match's start
+time, the comparison horizon the scan used, and the comparison's own maturity.
 
 These are properties of the joint multivariate comparison, not of any single
 bound dimension, so they cannot honestly borrow one binding's
 Maturity/SNR/SNRDefined the way Liquidity's per-metric outputs do (a
 derived output must represent its own provenance, not an arbitrary parent's).
 Maturity is populated from recurrence.Analogue's own effective support (how
-many historical candidates the nearest match was actually chosen among); SNR
-has no principled definition for a nearest-neighbor distance (no causal noise
-model applies here the way it does to a scalar departure), so it stays
-honestly undefined rather than fabricated.
+many historical candidate windows the nearest match was actually chosen
+among); SNR has no principled definition for a nearest-neighbor distance (no
+causal noise model applies here the way it does to a scalar departure), so it
+stays honestly undefined rather than fabricated.
 */
 func HistoricalOutputs() []Output {
 	return []Output{
@@ -119,6 +141,31 @@ func freshPath(binding MetricBinding) nmtypes.Primitive {
 		}
 
 		return path(input)
+	}
+}
+
+/*
+horizonControl relays one control binding's projected raw value (already placed
+in Series.ValueSymbol by Step when its Fresh marker fired) into the recurrence
+horizon control slot. It is gated on Fresh exactly like freshPath, so a stale
+timescale retained from an earlier, unrelated event is never re-written as if
+this event delivered it.
+*/
+func horizonControl(binding MetricBinding) nmtypes.Primitive {
+	return func(input nmtypes.Frame) nmtypes.Frame {
+		if !input.Has(binding.Fresh) {
+			return input
+		}
+
+		value, found := input.Get(binding.Series.ValueSymbol)
+
+		if !found {
+			return input
+		}
+
+		input.Put(recurrence.SymbolHorizon, value)
+
+		return input
 	}
 }
 

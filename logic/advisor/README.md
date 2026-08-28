@@ -267,20 +267,30 @@ comparison mathematics does not belong inside `logic/advisor`) retains each
 bound dimension as its own `temporal.Path` and performs a self-join matrix
 profile over the joint trajectory, per signal/README.md §10:
 
-- `sampleCount` = the smallest retained count across every dimension (the
-  joint trajectory is only as long as its least-observed dimension);
-- `queryLength = 2*sampleCount/5` — not an arbitrary split: with the exclusion
-  radius fixed at half the query length (the standard matrix-profile
-  definition), one query, one exclusion gap, and one candidate of the same
-  length consume `2.5×queryLength` samples in the worst case, so this is the
-  *tightest* fraction of retained history that structurally guarantees room
-  for a candidate as soon as one exists — every quantity here is derived from
-  how much history has actually accumulated, never a fixed constant;
-- a candidate is compared only once a full `queryLength/2` gap separates it
-  from the query (the query can never match itself or a trivially overlapping
-  window);
-- distance is plain multivariate Euclidean distance across the already-
-  standardized dimensions — no additional per-window normalization;
+- each dimension is retained as a timestamped `temporal.Path`, and the three
+  streams are aligned in **wall-clock time**, not by sample ordinal: CVD and
+  Hawkes observe on trades while Depthflow observes on L3 book events, so a
+  joint trajectory is assembled by selecting the observations inside one
+  absolute horizon and carrying each dimension's last value forward across its
+  quiet gaps (a standardized level is held, never zero-filled);
+- the comparison horizon `Q` is **not** a sample-count split. It is an explicit
+  control fact — the symbol's own Hawkes excitation e-folding timescale
+  `tau = 1/beta` — wired into `recurrence.Analogue` by `HistoricalPipeline`,
+  never hardcoded inside recurrence and never a magic constant;
+- a query window is `[now−Q, now]`; candidate windows are a fixed number of
+  earlier, non-overlapping intervals of the same duration, stepped back into
+  history. Because the windows are fixed in number and separated in time, the
+  retained history actually searched grows steadily with that history, and
+  effective support accrues the way evidence is supposed to (instead of
+  cycling on a sample-count remainder);
+- distance is length-normalized RMS across the aligned dimensions — the square
+  root of the mean squared per-step mismatch — so a longer window does not
+  inflate distance merely by spanning more steps;
+- the percentile is the matrix-profile **discord score** `M(x) = sqrt(nearest /
+  mean)` over the candidate distances: near 0 the nearest match is unusually
+  close (the trajectory recurs), near 1 it is an outlier (the trajectory is
+  novel). It ranks the nearest match against background instead of counting how
+  many distances tie at the minimum;
 - `maturity` follows the spec formula (signal/README.md §8) applied to the
   scan's own effective support, the candidate count actually searched.
 
@@ -288,17 +298,18 @@ profile over the joint trajectory, per signal/README.md §10:
 
 | Output | Meaning |
 |---|---|
-| `recurrence/nearest_distance` | distance to the closest non-overlapping prior trajectory |
-| `recurrence/nearest_percentile` | the nearest distance's rank among every candidate distance this scan actually computed |
-| `recurrence/match_count` | how many non-overlapping candidates were searched |
+| `recurrence/nearest_distance` | distance to the closest non-overlapping prior trajectory (length-normalized RMS) |
+| `recurrence/discord_score` | matrix-profile discord score `sqrt(nearest/mean)`: 0 recurring, 1 novel |
+| `recurrence/match_count` | how many non-overlapping candidate windows were searched |
 | `recurrence/match_from_unix_sec` / `_nsec` | when the nearest match began |
-| `recurrence/query_length` | the current comparison horizon, derived from retained history |
+| `recurrence/query_length` | the comparison horizon `Q` (seconds) the scan used |
 | `recurrence/maturity` | this comparison's own effective-support quality (`NewDerivedOutput`, not borrowed from any one bound metric) |
 
-`Defined=false` (not a fabricated zero) until `queryLength` reaches its
-structural minimum of 2 samples (a single point has no shape) and at least one
-valid non-overlapping candidate exists — see §7.1 for why `SNR`/`SNRDefined`
-stay explicitly undeclared for these outputs.
+`Defined=false` (not a fabricated zero) until the horizon `Q` has been wired,
+the query window contains a full aligned observation on every dimension, and
+at least one non-overlapping candidate window exists entirely within retained
+history — see §7.1 for why `SNR`/`SNRDefined` stay explicitly undeclared for
+these outputs.
 
 ### 9.4 What this Advisor explicitly does not claim
 
@@ -309,11 +320,12 @@ recorded structural similarity to the symbol's own retained history.
 
 ### 9.5 Live cost
 
-State is `O(3 bounded Path series)` per symbol — each capped at
-`temporal.MaxPathSamples`. Per-Step cost is `O(sampleCount × queryLength × 3)`,
-bounded by the same ceiling; no per-event allocation beyond the emitted
-`*Perspective` (steady-state benchmark: 1 allocation/op). No cross-symbol
-state, no O(symbols²) work, no unbounded retained history.
+State is `O(3 bounded Path series + 1 control fact)` per symbol — each capped at
+`temporal.MaxPathSamples`. Per-Step cost is `O(dimensions × alignedSteps ×
+candidateWindows)`, bounded by fixed structural constants; no per-event
+allocation beyond the emitted `*Perspective` (steady-state benchmark: 1
+allocation/op). No cross-symbol state, no O(symbols²) work, no unbounded
+retained history.
 
 ## 10. Non-Goals
 

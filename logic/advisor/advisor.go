@@ -70,6 +70,15 @@ type MetricBinding struct {
 	Maturity   nmtypes.Symbol
 	SNR        nmtypes.Symbol
 	SNRDefined nmtypes.Symbol
+
+	// Control marks a binding whose metric is a control fact (a duration,
+	// threshold, or timescale) feeding the pipeline's mathematics rather than a
+	// trajectory dimension retained as an observation. A trajectory pipeline
+	// treats Control bindings as inputs to derive from, not as series to
+	// append to; Step still projects the metric's raw value into the binding's
+	// Series.ValueSymbol so the pipeline can read it, but no path branch
+	// advances for it.
+	Control bool
 }
 
 /*
@@ -89,6 +98,19 @@ func NewMetricBinding(source, metric, seriesPrefix string) MetricBinding {
 		SNR:        nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "advisor/snr")),
 		SNRDefined: nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "advisor/snr_defined")),
 	}
+}
+
+/*
+NewControlBinding constructs one binding whose metric is a control fact rather
+than a retained trajectory dimension. It differs from NewMetricBinding only in
+the Control flag: the value is still projected into Series.ValueSymbol so the
+pipeline can read it, but no path branch advances on its Fresh marker.
+*/
+func NewControlBinding(source, metric, seriesPrefix string) MetricBinding {
+	binding := NewMetricBinding(source, metric, seriesPrefix)
+	binding.Control = true
+
+	return binding
 }
 
 /*
