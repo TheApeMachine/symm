@@ -545,13 +545,7 @@ func BootWithHub(
 	causalSolver := causal.NewSolver(bus)
 	cognitionSolver := cognition.NewSolver(systemCtx, bus)
 	opportunitySolver := opportunity.NewSolver(systemCtx, bus)
-	liquidityAdvisor := advisor.NewAdvisor(
-		"advisor:liquidity",
-		types.KindLiquidity,
-		advisor.MetricBinding{Source: "liquidity", Metric: "relative_spread"},
-		advisor.MetricBinding{Source: "liquidity", Metric: "touch_notional_imbalance"},
-		advisor.MetricBinding{Source: "depthflow", Metric: "book_imbalance"},
-	)
+	liquidityAdvisor := advisor.NewLiquidityAdvisor("advisor:liquidity")
 
 	if bus != nil {
 		runtime.WireKeyed(

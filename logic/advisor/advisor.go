@@ -160,8 +160,9 @@ func (advisor *Advisor) Step(measurement *data.Measurement[float64]) *types.Pers
 		return nil
 	}
 
-	state := advisor.number.Step(measurement.Label, frame)
+	advisor.number.Step(measurement.Label, frame)
 
+	state, _ := advisor.number.Project(measurement.Label)
 	perspective := advisor.project(measurement.Label, measurement.At, state)
 
 	if advisor.ObserveModule != nil {
