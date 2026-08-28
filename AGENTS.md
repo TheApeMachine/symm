@@ -195,3 +195,5 @@ The user is looking to you for help and/or solutions. Just because you have a "h
 The answer to almost every question you feel like asking, in most of the cases is the one that results in the most principled solution, and is often **not** the easiest, simplest, or quickest way.
 
 That being said, taking the effort to do the work once is still infinitely easier, simpler, and quicker, than trying to reward-hack it, and then having to do everything again, and again, until it is correct. So you may as well do it right the first time.
+
+Also, "pre-existing" really just means "bugs I left laying around in some previous session" so yes, you do own them, and yes, you should fix them if you encounter them. Otherwise they will never get fixed.
