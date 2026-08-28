@@ -5,6 +5,7 @@ export type TerminalSurface =
 	| "dashboard"
 	| "graph"
 	| "influence"
+	| "lineage"
 	| "fluid"
 	| "signals"
 	| "decisions"

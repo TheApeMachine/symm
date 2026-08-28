@@ -361,6 +361,14 @@ without panicking.
 func (subscriber *Subscriber) execute(event *Event) (ok bool, elapsedNanos int64) {
 	value := event.Value
 
+	// A nil value is never a valid step input. Observational delivery can
+	// surface an uncommitted or overwritten slot, and LatestByKey resolves
+	// through a cell that may be empty; a node's step asserts on its concrete
+	// type and must never be handed a nil interface. Skip before any assertion.
+	if value == nil {
+		return false, 0
+	}
+
 	if subscriber.node.Delivery == DeliveryLatestByKey {
 		resolved := subscriber.resolveLatest(value)
 		if resolved == nil {

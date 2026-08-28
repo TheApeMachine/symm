@@ -11,6 +11,7 @@ type TerminalRoutePath =
 	| "/"
 	| "/graph"
 	| "/influence"
+	| "/lineage"
 	| "/fluid"
 	| "/signals"
 	| "/decisions"
@@ -47,6 +48,12 @@ const SURFACE_ITEMS: Array<{
 		label: "Influence field",
 		icon: "spark",
 		to: "/influence",
+	},
+	{
+		key: "lineage",
+		label: "Metric lineage",
+		icon: "target",
+		to: "/lineage",
 	},
 	{ key: "fluid", label: "Fluid manifold", icon: "scan", to: "/fluid" },
 	{ key: "signals", label: "Signal insight", icon: "signal", to: "/signals" },

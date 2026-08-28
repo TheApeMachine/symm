@@ -1,0 +1,544 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Chip } from "#/components/ui/chip";
+import { Flex } from "#/components/ui/flex";
+import { Icon } from "#/components/ui/icon";
+import { Panel } from "#/components/ui/panel";
+import { Toolbar } from "#/components/ui/toolbar";
+import { Typography } from "#/components/ui/typography";
+import { cn } from "#/lib/utils";
+
+/*
+LineageReport mirrors tools/metriclineage's JSON output (see
+tools/metriclineage/main.go's report/producerOut/consumerOut/summaryOut
+structs) exactly — this is a static, generated artifact, not a live wire
+frame. Regenerate it with `go run ./tools/metriclineage . frontend/public/metric-lineage.json`
+whenever a signal kernel, advisor binding, or the causal schema catalog
+changes; this component only reads whatever's currently in public/.
+*/
+type ConsumerRef = {
+	kind: "fine" | "kernel" | "generic";
+	consumer: string;
+	package: string;
+	file: string;
+	line: number;
+};
+
+type ProducerRow = {
+	id: string;
+	source: string;
+	metric: string;
+	side?: string;
+	package: string;
+	file: string;
+	line: number;
+	unit?: string;
+	consumers: ConsumerRef[];
+	dead: boolean;
+	kernelOnly: boolean;
+};
+
+type ConsumerRow = {
+	consumer: string;
+	kind: "fine" | "kernel" | "generic";
+	package: string;
+	file: string;
+	line: number;
+	targets: string[];
+};
+
+type LineageReport = {
+	producers: ProducerRow[];
+	consumers: ConsumerRow[];
+	unresolved: Array<{ package: string; file: string; line: number; reason: string }>;
+	summary: {
+		totalProducers: number;
+		deadProducers: number;
+		kernelOnlyProducers: number;
+		fineConsumerEdges: number;
+		kernelConsumerEdges: number;
+		genericConsumerEdges: number;
+		unresolved: number;
+	};
+};
+
+type StatusFilter = "all" | "dead" | "used" | "kernelOnly";
+
+const STATUS_COLOR: Record<"dead" | "used" | "kernelOnly", string> = {
+	dead: "var(--down, #e5484d)",
+	used: "var(--pnl, #30a46c)",
+	kernelOnly: "var(--warn, #f5a524)",
+};
+
+const statusOf = (p: ProducerRow): "dead" | "used" | "kernelOnly" =>
+	p.dead ? (p.kernelOnly ? "kernelOnly" : "dead") : "used";
+
+/*
+Point is one laid-out node: a kernel, a metric, or a consumer, positioned in
+one of three columns. Metric y-positions are assigned within their own
+kernel's vertical band, and kernel bands are sized proportionally to their
+metric count — so a 63-metric kernel (sentiment) gets 63/432 of the height
+and a 7-metric kernel (morphology) gets 7/432, instead of every kernel
+fighting for the same cramped space regardless of how much it actually
+produces. This is what makes the view use the whole canvas rather than
+clumping everything into one dense mass.
+*/
+type Point = { id: string; x: number; y: number };
+
+const COLUMN_KERNEL = 0.08;
+const COLUMN_METRIC = 0.46;
+const COLUMN_CONSUMER = 0.9;
+
+const buildLayout = (
+	producers: ProducerRow[],
+	consumers: ConsumerRow[],
+	width: number,
+	height: number,
+) => {
+	const padding = 28;
+	const usableHeight = Math.max(1, height - padding * 2);
+
+	const bySource = new Map<string, ProducerRow[]>();
+	for (const p of producers) {
+		const list = bySource.get(p.source) ?? [];
+		list.push(p);
+		bySource.set(p.source, list);
+	}
+
+	const sources = [...bySource.keys()].sort();
+	const total = producers.length || 1;
+
+	const kernelPoints: Array<Point & { count: number; dead: number }> = [];
+	const metricPoints: Point[] = [];
+	const metricById = new Map<string, ProducerRow>();
+
+	let cursor = 0;
+	for (const source of sources) {
+		const rows = (bySource.get(source) ?? []).sort((a, b) => a.metric.localeCompare(b.metric));
+		const bandHeight = (rows.length / total) * usableHeight;
+		const bandTop = padding + (cursor / total) * usableHeight;
+
+		kernelPoints.push({
+			id: source,
+			x: width * COLUMN_KERNEL,
+			y: bandTop + bandHeight / 2,
+			count: rows.length,
+			dead: rows.filter((r) => r.dead).length,
+		});
+
+		rows.forEach((row, index) => {
+			const y =
+				rows.length === 1
+					? bandTop + bandHeight / 2
+					: bandTop + (index / (rows.length - 1)) * Math.max(bandHeight, 1);
+			const point = { id: row.id, x: width * COLUMN_METRIC, y };
+			metricPoints.push(point);
+			metricById.set(row.id, row);
+		});
+
+		cursor += rows.length;
+	}
+
+	const consumerNames = consumers.map((c) => c.consumer);
+	const consumerPoints: Point[] = consumerNames.map((name, index) => ({
+		id: name,
+		x: width * COLUMN_CONSUMER,
+		y:
+			consumerNames.length === 1
+				? padding + usableHeight / 2
+				: padding + (index / (consumerNames.length - 1)) * usableHeight,
+	}));
+
+	return { kernelPoints, metricPoints, consumerPoints, metricById };
+};
+
+export const MetricLineage = () => {
+	const [report, setReport] = useState<LineageReport | null>(null);
+	const [loadError, setLoadError] = useState<string | null>(null);
+	const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+	const [sourceFilter, setSourceFilter] = useState<string | null>(null);
+	const [activeMetricId, setActiveMetricId] = useState<string | null>(null);
+
+	const [dimensions, setDimensions] = useState({ width: 1200, height: 700 });
+	const containerRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		let cancelled = false;
+
+		fetch("/metric-lineage.json")
+			.then((response) => {
+				if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+				return response.json() as Promise<LineageReport>;
+			})
+			.then((data) => {
+				if (!cancelled) setReport(data);
+			})
+			.catch((err) => {
+				if (!cancelled) setLoadError(String(err));
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	useEffect(() => {
+		if (!containerRef.current) return;
+		const observer = new ResizeObserver((entries) => {
+			if (!entries || entries.length === 0) return;
+			const { width, height } = entries[0].contentRect;
+			setDimensions({ width, height });
+		});
+		observer.observe(containerRef.current);
+		return () => observer.disconnect();
+	}, []);
+
+	const sources = useMemo(
+		() => (report ? [...new Set(report.producers.map((p) => p.source))].sort() : []),
+		[report],
+	);
+
+	const filteredProducers = useMemo(() => {
+		if (!report) return [];
+		return report.producers.filter((p) => {
+			if (sourceFilter && p.source !== sourceFilter) return false;
+			if (statusFilter === "all") return true;
+			return statusOf(p) === statusFilter;
+		});
+	}, [report, statusFilter, sourceFilter]);
+
+	const relevantConsumers = useMemo(() => {
+		if (!report) return [];
+		const ids = new Set(filteredProducers.map((p) => p.id));
+		return report.consumers.filter((c) =>
+			c.targets.some((t) => t === "*" || ids.has(t)),
+		);
+	}, [report, filteredProducers]);
+
+	const layout = useMemo(
+		() => buildLayout(filteredProducers, relevantConsumers, dimensions.width, dimensions.height),
+		[filteredProducers, relevantConsumers, dimensions.width, dimensions.height],
+	);
+
+	const activeProducer = useMemo(
+		() => filteredProducers.find((p) => p.id === activeMetricId) ?? null,
+		[filteredProducers, activeMetricId],
+	);
+
+	const kernelPointById = useMemo(
+		() => new Map(layout.kernelPoints.map((k) => [k.id, k])),
+		[layout.kernelPoints],
+	);
+	const consumerPointById = useMemo(
+		() => new Map(layout.consumerPoints.map((c) => [c.id, c])),
+		[layout.consumerPoints],
+	);
+
+	if (loadError) {
+		return (
+			<div className="flex h-full w-full flex-col overflow-hidden bg-(--sunken) text-(--f1)">
+				<Toolbar>
+					<Icon name="target" size="m" className="text-(--f3)" />
+					<Typography.Label size="m" tone="f3">
+						Metric lineage
+					</Typography.Label>
+				</Toolbar>
+				<div className="flex flex-1 items-center justify-center px-8 text-center font-mono text-[12px] text-(--f4)">
+					Could not load /metric-lineage.json ({loadError}). Regenerate it with{" "}
+					<span className="text-(--f2)">
+						go run ./tools/metriclineage . frontend/public/metric-lineage.json
+					</span>
+					.
+				</div>
+			</div>
+		);
+	}
+
+	if (!report) {
+		return (
+			<div className="flex h-full w-full flex-col overflow-hidden bg-(--sunken) text-(--f1)">
+				<Toolbar>
+					<Icon name="target" size="m" className="text-(--f3)" />
+					<Typography.Label size="m" tone="f3">
+						Metric lineage
+					</Typography.Label>
+				</Toolbar>
+				<div className="flex flex-1 items-center justify-center font-mono text-[12px] text-(--f4)">
+					Loading static lineage report…
+				</div>
+			</div>
+		);
+	}
+
+	const { summary } = report;
+
+	return (
+		<div className="flex h-full w-full flex-col overflow-hidden bg-(--sunken) text-(--f1)">
+			<Toolbar>
+				<Icon name="target" size="m" className="text-(--f3)" />
+				<Typography.Label size="m" tone="f3" className="mr-1 shrink-0">
+					Metric lineage
+				</Typography.Label>
+				<Chip label="metrics" value={summary.totalProducers} />
+				<Chip label="dead" value={summary.deadProducers} />
+				<Chip label="kernel-only" value={summary.kernelOnlyProducers} />
+				<Chip label="fine edges" value={summary.fineConsumerEdges} />
+
+				<div className="ml-4 flex items-center gap-1">
+					{(["all", "used", "kernelOnly", "dead"] as StatusFilter[]).map((filter) => (
+						<button
+							key={filter}
+							type="button"
+							onClick={() => setStatusFilter(filter)}
+							className={cn(
+								"rounded-[3px] border border-(--line) px-2 py-1 font-mono text-[10px] uppercase tracking-wide",
+								statusFilter === filter
+									? "bg-(--raised) text-(--f1)"
+									: "text-(--f4) hover:text-(--f2)",
+							)}
+						>
+							{filter === "kernelOnly" ? "kernel-only" : filter}
+						</button>
+					))}
+				</div>
+
+				<select
+					value={sourceFilter ?? ""}
+					onChange={(e) => setSourceFilter(e.target.value || null)}
+					className="ml-2 rounded-[3px] border border-(--line) bg-(--raised) px-2 py-1 font-mono text-[10px] text-(--f3)"
+				>
+					<option value="">all kernels</option>
+					{sources.map((s) => (
+						<option key={s} value={s}>
+							{s}
+						</option>
+					))}
+				</select>
+			</Toolbar>
+
+			<div className="relative min-h-0 flex-1" ref={containerRef}>
+				<svg
+					width={dimensions.width}
+					height={dimensions.height}
+					viewBox={`0 0 ${dimensions.width} ${dimensions.height}`}
+					className="absolute inset-0"
+				>
+					<title>Metric producer to consumer lineage</title>
+
+					{/* Column headers */}
+					<text x={dimensions.width * COLUMN_KERNEL} y={16} textAnchor="middle" className="fill-(--f4) font-mono text-[9px] uppercase tracking-wide">
+						kernels
+					</text>
+					<text x={dimensions.width * COLUMN_METRIC} y={16} textAnchor="middle" className="fill-(--f4) font-mono text-[9px] uppercase tracking-wide">
+						metrics
+					</text>
+					<text x={dimensions.width * COLUMN_CONSUMER} y={16} textAnchor="middle" className="fill-(--f4) font-mono text-[9px] uppercase tracking-wide">
+						consumers
+					</text>
+
+					{/* Kernel -> metric edges (every metric to its own kernel dot) */}
+					<g opacity={0.25} stroke="var(--line)" strokeWidth={1}>
+						{layout.metricPoints.map((m) => {
+							const row = layout.metricById.get(m.id);
+							if (!row) return null;
+							const k = kernelPointById.get(row.source);
+							if (!k) return null;
+							return <line key={`k-${m.id}`} x1={k.x} y1={k.y} x2={m.x} y2={m.y} />;
+						})}
+					</g>
+
+					{/* Metric -> consumer edges, only for fine (named) consumption —
+					    kernel/generic edges are structurally many-to-many (every metric
+					    of a kernel to one wildcard consumer) and would render as an
+					    unreadable solid block; they're shown in the detail panel and
+					    consumer list instead. */}
+					<g opacity={0.5}>
+						{layout.metricPoints.map((m) => {
+							const row = layout.metricById.get(m.id);
+							if (!row) return null;
+							return row.consumers
+								.filter((c) => c.kind === "fine")
+								.map((c) => {
+									const target = consumerPointById.get(c.consumer);
+									if (!target) return null;
+									return (
+										<line
+											key={`c-${m.id}-${c.consumer}-${c.file}:${c.line}`}
+											x1={m.x}
+											y1={m.y}
+											x2={target.x}
+											y2={target.y}
+											stroke={STATUS_COLOR.used}
+											strokeWidth={activeMetricId === m.id ? 2 : 1}
+										/>
+									);
+								});
+						})}
+					</g>
+
+					{/* Kernel nodes */}
+					{layout.kernelPoints.map((k) => (
+						<g key={k.id} transform={`translate(${k.x},${k.y})`}>
+							<circle
+								r={Math.max(4, Math.min(14, 4 + k.count * 0.15))}
+								fill="var(--raised)"
+								stroke="var(--line)"
+								strokeWidth={1.5}
+							/>
+							<text
+								x={-12}
+								y={4}
+								textAnchor="end"
+								className="fill-(--f2) font-mono text-[10px] font-semibold"
+							>
+								{k.id}
+							</text>
+							<text
+								x={-12}
+								y={16}
+								textAnchor="end"
+								className="fill-(--f4) font-mono text-[8.5px]"
+							>
+								{k.count - k.dead}/{k.count} used
+							</text>
+						</g>
+					))}
+
+					{/* Metric nodes */}
+					{layout.metricPoints.map((m) => {
+						const row = layout.metricById.get(m.id);
+						if (!row) return null;
+						const status = statusOf(row);
+						return (
+							// biome-ignore lint/a11y/useSemanticElements: an SVG <g> holding <circle> children can't become a <button>.
+							<g
+								key={m.id}
+								transform={`translate(${m.x},${m.y})`}
+								className="cursor-pointer"
+								role="button"
+								tabIndex={0}
+								aria-label={`Select ${row.id}`}
+								aria-pressed={activeMetricId === row.id}
+								onClick={() => setActiveMetricId(row.id === activeMetricId ? null : row.id)}
+								onKeyDown={(event) => {
+									if (event.key === "Enter" || event.key === " ") {
+										event.preventDefault();
+										setActiveMetricId(row.id === activeMetricId ? null : row.id);
+									}
+								}}
+							>
+								<circle
+									r={activeMetricId === row.id ? 5.5 : 3.5}
+									fill={STATUS_COLOR[status]}
+									opacity={activeMetricId === row.id ? 1 : 0.85}
+									stroke={activeMetricId === row.id ? "var(--f1)" : "none"}
+									strokeWidth={1.5}
+								/>
+								<title>
+									{row.id} — {status}
+								</title>
+							</g>
+						);
+					})}
+
+					{/* Consumer nodes */}
+					{layout.consumerPoints.map((c) => {
+						const row = relevantConsumers.find((r) => r.consumer === c.id);
+						return (
+							<g key={c.id} transform={`translate(${c.x},${c.y})`}>
+								<circle
+									r={5}
+									fill={
+										row?.kind === "fine"
+											? "var(--acc, #5b8def)"
+											: row?.kind === "kernel"
+												? STATUS_COLOR.kernelOnly
+												: "var(--f4)"
+									}
+									stroke="var(--line)"
+									strokeWidth={1}
+								/>
+								<text
+									x={12}
+									y={4}
+									textAnchor="start"
+									className="fill-(--f3) font-mono text-[9px]"
+								>
+									{c.id.length > 42 ? `${c.id.slice(0, 40)}…` : c.id}
+								</text>
+							</g>
+						);
+					})}
+				</svg>
+
+				{activeProducer ? (
+					<Panel
+						variant="surface"
+						size="bare"
+						className="absolute right-3 bottom-3 flex max-w-[420px] flex-col gap-2 p-3 font-mono text-[11px]"
+					>
+						<Flex.Row className="items-center justify-between gap-2">
+							<Typography.Span className="font-semibold text-(--f1)">
+								{activeProducer.id}
+							</Typography.Span>
+							<Typography.Span
+								className="rounded-xs border border-(--line) px-1.5 py-px text-[9px] uppercase"
+								style={{ color: STATUS_COLOR[statusOf(activeProducer)] }}
+							>
+								{statusOf(activeProducer)}
+							</Typography.Span>
+						</Flex.Row>
+						<Typography.Span className="text-[9.5px] text-(--f4)">
+							declared {activeProducer.file}:{activeProducer.line}
+							{activeProducer.unit ? ` · ${activeProducer.unit}` : ""}
+						</Typography.Span>
+						<div className="border-(--line) border-t pt-1.5">
+							{activeProducer.consumers.length === 0 ? (
+								<Typography.Span className="text-(--down)">
+									No consumer of any kind found — nothing in the codebase looks at
+									this metric.
+								</Typography.Span>
+							) : (
+								<div className="flex flex-col gap-1">
+									{activeProducer.consumers.map((c) => (
+										<Flex.Row
+											key={`${c.consumer}-${c.file}:${c.line}`}
+											className="items-center justify-between gap-2"
+										>
+											<Typography.Span
+												className={cn(
+													"truncate",
+													c.kind === "fine"
+														? "text-(--f1)"
+														: c.kind === "kernel"
+															? "text-(--f3)"
+															: "text-(--f4)",
+												)}
+											>
+												{c.consumer}
+											</Typography.Span>
+											<Typography.Span className="shrink-0 text-[8.5px] text-(--f4)">
+												{c.kind} · {c.file}:{c.line}
+											</Typography.Span>
+										</Flex.Row>
+									))}
+								</div>
+							)}
+						</div>
+					</Panel>
+				) : (
+					<Panel
+						variant="surface"
+						size="bare"
+						className="absolute right-3 bottom-3 max-w-[320px] p-3 font-mono text-[10px] text-(--f4)"
+					>
+						Click a metric dot for its full producer/consumer trace. Green =
+						named by an advisor or the causal schema catalog. Amber =
+						kernel-only (a bulk subscription reads the whole kernel, but
+						nothing names this metric specifically). Red = no reference
+						anywhere.
+					</Panel>
+				)}
+			</div>
+		</div>
+	);
+};

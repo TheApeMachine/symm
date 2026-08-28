@@ -204,6 +204,25 @@ func NewHub(
 
 		return c.JSON(hub.captures())
 	})
+	hub.app.Get("/trades", func(c fiber.Ctx) error {
+		store := hub.positionStore()
+
+		if store == nil {
+			return c.JSON([]*wire.PositionT{})
+		}
+
+		limit := fiber.Query(c, "limit", 200)
+
+		trades, err := store.RecentTrades(limit)
+
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": err.Error(),
+			})
+		}
+
+		return c.JSON(trades)
+	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		key := uuid.NewString()
@@ -381,6 +400,21 @@ func (hub *Hub) balance() *broker.Balance {
 	balance, _ := shared.(*broker.Balance)
 
 	return balance
+}
+
+/*
+positionStore returns the shared broker PositionStore from the workspace, or
+nil when the bus is unavailable or the store was never shared.
+*/
+func (hub *Hub) positionStore() *broker.PositionStore {
+	if hub.workspace == nil {
+		return nil
+	}
+
+	shared, _ := hub.workspace.Shared("positionStore", "")
+	store, _ := shared.(*broker.PositionStore)
+
+	return store
 }
 
 func (hub *Hub) Name() string { return "hub" }

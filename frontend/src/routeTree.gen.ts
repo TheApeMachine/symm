@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as XrayRouteImport } from './routes/xray'
 import { Route as SignalsRouteImport } from './routes/signals'
 import { Route as RegulatorRouteImport } from './routes/regulator'
+import { Route as LineageRouteImport } from './routes/lineage'
 import { Route as JournalRouteImport } from './routes/journal'
 import { Route as InfluenceRouteImport } from './routes/influence'
 import { Route as GraphRouteImport } from './routes/graph'
@@ -36,6 +37,11 @@ const SignalsRoute = SignalsRouteImport.update({
 const RegulatorRoute = RegulatorRouteImport.update({
   id: '/regulator',
   path: '/regulator',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LineageRoute = LineageRouteImport.update({
+  id: '/lineage',
+  path: '/lineage',
   getParentRoute: () => rootRouteImport,
 } as any)
 const JournalRoute = JournalRouteImport.update({
@@ -100,6 +106,7 @@ export interface FileRoutesByFullPath {
   '/graph': typeof GraphRoute
   '/influence': typeof InfluenceRoute
   '/journal': typeof JournalRoute
+  '/lineage': typeof LineageRoute
   '/regulator': typeof RegulatorRoute
   '/signals': typeof SignalsRoute
   '/xray': typeof XrayRoute
@@ -115,6 +122,7 @@ export interface FileRoutesByTo {
   '/graph': typeof GraphRoute
   '/influence': typeof InfluenceRoute
   '/journal': typeof JournalRoute
+  '/lineage': typeof LineageRoute
   '/regulator': typeof RegulatorRoute
   '/signals': typeof SignalsRoute
   '/xray': typeof XrayRoute
@@ -131,6 +139,7 @@ export interface FileRoutesById {
   '/graph': typeof GraphRoute
   '/influence': typeof InfluenceRoute
   '/journal': typeof JournalRoute
+  '/lineage': typeof LineageRoute
   '/regulator': typeof RegulatorRoute
   '/signals': typeof SignalsRoute
   '/xray': typeof XrayRoute
@@ -148,6 +157,7 @@ export interface FileRouteTypes {
     | '/graph'
     | '/influence'
     | '/journal'
+    | '/lineage'
     | '/regulator'
     | '/signals'
     | '/xray'
@@ -163,6 +173,7 @@ export interface FileRouteTypes {
     | '/graph'
     | '/influence'
     | '/journal'
+    | '/lineage'
     | '/regulator'
     | '/signals'
     | '/xray'
@@ -178,6 +189,7 @@ export interface FileRouteTypes {
     | '/graph'
     | '/influence'
     | '/journal'
+    | '/lineage'
     | '/regulator'
     | '/signals'
     | '/xray'
@@ -194,6 +206,7 @@ export interface RootRouteChildren {
   GraphRoute: typeof GraphRoute
   InfluenceRoute: typeof InfluenceRoute
   JournalRoute: typeof JournalRoute
+  LineageRoute: typeof LineageRoute
   RegulatorRoute: typeof RegulatorRoute
   SignalsRoute: typeof SignalsRoute
   XrayRoute: typeof XrayRoute
@@ -220,6 +233,13 @@ declare module '@tanstack/react-router' {
       path: '/regulator'
       fullPath: '/regulator'
       preLoaderRoute: typeof RegulatorRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/lineage': {
+      id: '/lineage'
+      path: '/lineage'
+      fullPath: '/lineage'
+      preLoaderRoute: typeof LineageRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/journal': {
@@ -306,6 +326,7 @@ const rootRouteChildren: RootRouteChildren = {
   GraphRoute: GraphRoute,
   InfluenceRoute: InfluenceRoute,
   JournalRoute: JournalRoute,
+  LineageRoute: LineageRoute,
   RegulatorRoute: RegulatorRoute,
   SignalsRoute: SignalsRoute,
   XrayRoute: XrayRoute,

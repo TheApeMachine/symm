@@ -27,6 +27,11 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 		hint: "Derived weighted force field · coefficient flow",
 	},
 	{
+		id: "lineage",
+		label: "Metric lineage",
+		hint: "Static producer→consumer map · dead-metric audit",
+	},
+	{
 		id: "fluid",
 		label: "Fluid manifold",
 		hint: "Particle gas · gas volume · complex wave field",

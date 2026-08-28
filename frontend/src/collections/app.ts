@@ -52,6 +52,73 @@ export type BacktestCapture = {
 	frames: number;
 };
 
+/*
+TradeRecord mirrors the JSON shape of wire.PositionT as returned by the hub's
+GET /trades endpoint (broker.PositionStore.RecentTrades, backed by the
+position_trades SQLite table) — the durable trade journal, independent of the
+live positionStore ring buffer.
+*/
+export type TradeRecord = {
+	status: string;
+	decision?: Record<string, unknown> & {
+		id?: string;
+		thesisScore?: number;
+		thesisConfidence?: number;
+		causalIdentification?: string;
+		allocationHaircut?: number;
+		allocationHaircutReason?: string;
+		adverseSelection?: string;
+		expectedReturn?: string;
+		expectedFees?: string;
+		expectedSpread?: string;
+		expectedImpact?: string;
+		entryCost?: {
+			bestAsk?: string;
+			bestBid?: string;
+			spread?: string;
+			impact?: string;
+			breakEven?: string;
+			roundTripFees?: string;
+		} | null;
+		risk?: {
+			riskDistance?: string;
+			trailDistance?: string;
+			armBuffer?: string;
+			lockBuffer?: string;
+			maxLoss?: string;
+			minEdge?: string;
+		} | null;
+		trace?: {
+			hypothesis?: string;
+			recommendedAction?: string;
+			graphSupports?: number;
+			graphContradicts?: number;
+		} | null;
+	} | null;
+	holding?: {
+		symbol?: string;
+		status?: string;
+		entryAt?: number;
+		exitAt?: number;
+		entryPrice?: string;
+		entryFee?: string;
+		exitPrice?: string;
+		exitFee?: string;
+		pnl?: string;
+		returnPct?: number;
+		stoploss?: {
+			status?: string;
+			floor?: string;
+			peak?: string;
+			profitLine?: string;
+			locked?: boolean;
+			triggerReason?: string;
+			triggerMark?: string;
+			surgeArmed?: boolean;
+		} | null;
+	} | null;
+};
+
 export type HindsightBlocker = {
 	key: string;
 	category: string;
@@ -373,6 +440,15 @@ export const fluidFrameStore = createFrameStore<FluidPhaseFrame>(50);
 export const errorFrameStore = createFrameStore<ErrorFrame>(50);
 export const backtestStore = createFrameStore<BacktestFrame>(50);
 export const hindsightStore = createFrameStore<HindsightFrame>(50);
+
+/*
+tradeHistoryStore holds the durable trade journal fetched from GET /trades.
+Unlike positionStore (a 50-frame live-telemetry ring buffer that evicts closed
+trades once enough newer frames from any symbol arrive), this is the full
+persisted record from position_trades — it survives restarts and is not
+bounded by tick volume.
+*/
+export const tradeHistoryStore = createStore<TradeRecord[]>([]);
 
 /*
 Backward compatibility appStore
