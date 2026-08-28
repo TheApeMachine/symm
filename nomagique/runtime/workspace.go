@@ -409,7 +409,7 @@ func (subscriber *Subscriber) execute(event *Event) (ok bool, elapsedNanos int64
 	elapsed := time.Since(started)
 	subscriber.recordMax(elapsed)
 
-	if output != nil && subscriber.node.ReturnType != nil {
+	if !isNilValue(output) && subscriber.node.ReturnType != nil {
 		subscriber.workspace.dispatch(subscriber.id, output)
 	}
 
@@ -932,6 +932,29 @@ func (feed *Feed) Emit(value any) {
 }
 
 /*
+isNilValue reports whether value is nil in either the untyped (nil interface) or
+typed (nil pointer/map/slice/chan/func/interface) sense. A typed nil is not a
+valid routing payload: it carries a dynamic type but no data, so dispatching it
+would deliver a zero-value of a concrete type to a subscriber whose
+assertion then panics. The hot path checks it only after the cheap value == nil
+fast path, so a non-nil concrete value never pays a reflection call.
+*/
+func isNilValue(value any) bool {
+	if value == nil {
+		return true
+	}
+
+	kind := reflect.TypeOf(value).Kind()
+
+	switch kind {
+	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func, reflect.Interface:
+		return reflect.ValueOf(value).IsNil()
+	default:
+		return false
+	}
+}
+
+/*
 dispatch fans a value out to every subscriber whose declared WantType matches
 the value's concrete dynamic type, writing into the dedicated ring belonging
 to (producerID, that subscriber) alone. This is the entire hot path:
@@ -939,7 +962,7 @@ copy-on-write registry load, no global mutex, no string routing, no ring ever
 shared between two different producer identities.
 */
 func (workspace *Workspace) dispatch(producerID uint32, value any) {
-	if value == nil {
+	if isNilValue(value) {
 		return
 	}
 
