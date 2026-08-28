@@ -109,6 +109,12 @@ const GLYPHS = {
 	chevronDown: <path d="M6 9l6 6 6-6" />,
 	chevronRight: <path d="M9 6l6 6-6 6" />,
 	check: <path d="M4 12.5l5 5 11-11" />,
+	spark: (
+		<>
+			<circle cx="12" cy="12" r="2.2" />
+			<path d="M12 3v4.2M12 16.8V21M3 12h4.2M16.8 12H21M5.8 5.8l3 3M15.2 15.2l3 3M18.2 5.8l-3 3M8.8 15.2l-3 3" />
+		</>
+	),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof GLYPHS;

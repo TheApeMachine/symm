@@ -321,6 +321,40 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 		return
 	}
 
+	/*
+		A fill whose RebindFill failed at execution time leaves the stop in ERROR
+		with no geometry (Floor/Peak/ArmAt/LockFloor all nil) and would otherwise
+		sit unprotected forever, since nothing else ever calls RebindFill again.
+		Retry it on every tick using the live bid: the inputs that matter
+		(TickSize, fee rates, RiskDistance, Plan) live on the Stoploss itself and
+		don't depend on the tick that originally failed, so a later mark that
+		clears the tick-rounded positive-floor requirement recovers the position
+		into a normally armed stop.
+	*/
+	if position.Holding.Stoploss.Status == types.ERROR {
+		if ticker.Bid == nil {
+			position.Publish()
+			return
+		}
+
+		if err := position.Holding.Stoploss.RebindFill(
+			position.Holding.EntryPrice,
+			ticker.Bid,
+		); err != nil {
+			position.Holding.Mark = ticker.Bid
+			position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
+			position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
+			position.Publish()
+			return
+		}
+
+		position.Holding.Status = types.OPEN
+
+		if position.store != nil {
+			errnie.Error(position.store.Save(position.Holding.Stoploss))
+		}
+	}
+
 	previousStatus := position.Holding.Stoploss.Status
 	previousLocked := position.Holding.Stoploss.Locked
 	previousFloor := position.Holding.Stoploss.Floor

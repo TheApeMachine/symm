@@ -139,6 +139,8 @@ const builders: Partial<Record<Frame, FrameHandler<any>>> = {
 				const source = row.source() ?? "";
 				const symbol = row.symbol() ?? "";
 				if (!source || !symbol) continue;
+				// biome-ignore lint/suspicious/noConsole: temporary debug probe, will be removed
+				console.log("__MEASPROBE__", source, symbol, table.rowsLength());
 				measurementStore.actions.addMeasurement(source, symbol, row);
 			}
 		},
@@ -233,6 +235,8 @@ export const WsFeed = () => {
 							if (frameEntry === null) continue;
 
 							const handler = builders[frameEntry.frameType()];
+							// biome-ignore lint/suspicious/noConsole: temporary debug probe, will be removed
+							console.log("__FRAMEPROBE__", frameEntry.frameType(), Frame[frameEntry.frameType()], handler === undefined ? "NO_HANDLER" : "OK");
 							if (handler === undefined) continue;
 
 							const table = frameEntry.frame(new handler.table());

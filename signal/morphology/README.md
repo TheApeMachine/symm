@@ -28,15 +28,6 @@ mid     = (a + b) / 2
 ```
 
 For an aggregated price level at price `p` with displayed quantity `q`, its
-**position** is its distance from the midpoint in spread units:
-
-\[
-\boxed{
-r = \frac{p - \text{mid}}{\text{spread}}
-}
-\]
-
-so the bid touch sits at `r = −0.5` and the ask touch at `r = +0.5`. Its
 **weight** is its displayed quote notional:
 
 \[
@@ -45,10 +36,37 @@ w = p\,q
 }
 \]
 
-A side's *shape* is the probability mass over positions obtained by
-normalizing its level weights to a unit sum. Price is normalized by the current
-spread; weight is normalized by the side's own notional. The result is
-dimensionless and unitless — a shape, not a quote of size or price.
+Two coordinate systems are used, one per purpose:
+
+**Folded (bilateral) position** — used for `book_shape_distance` and
+`book_shape_ks`. Each side is reflected around the midpoint onto a single
+positive distance-from-mid axis:
+
+\[
+\boxed{
+r^{\text{bid}} = \frac{\text{mid} - p}{\text{spread}},\qquad
+r^{\text{ask}} = \frac{p - \text{mid}}{\text{spread}}
+}
+\]
+
+Both touches sit at `r = +0.5`. A perfectly mirrored book — identical mass at
+identical folded positions on both sides — therefore has distance `0`. This is
+what "bilateral shape similarity" means: how alike the two sides' geometry is,
+not the unsurprising fact that bids sit below mid and asks above it.
+
+**Signed position** — used only for whole-book structural change:
+
+\[
+\boxed{
+r = \frac{p - \text{mid}}{\text{spread}}
+}
+\]
+
+so the bid side occupies `r < 0` and the ask side `r > 0`, and physical
+bid/ask placement remains part of `morphology_change`.
+
+A side's *shape* is the probability mass over positions obtained by normalizing
+its level weights to a unit sum. The result is dimensionless and unitless.
 
 ### 2.2 Bilateral distance
 
@@ -79,10 +97,11 @@ D(P,Q)=\sup_r\left|F_P(r)-F_Q(r)\right|
 It answers *"what is the worst cumulative local disagreement?"* and is
 dimensionless in `[0,1]`.
 
-The two shapes live on different price supports in general, so they are first
-placed onto their **sorted union of positions**, each side contributing zero
-mass at a position it does not occupy. This is the exact comparison of two
-empirical distributions, with no resampling and no invented grid.
+The two shapes live on different price supports in general, so the distance is
+computed by a **single merged walk** of the two already-sorted folded streams:
+each side contributes zero mass at a position the other does not occupy, so no
+union array, map, resampling, or invented grid is ever materialized. This is the
+exact comparison of two empirical distributions over their folded positions.
 
 ### 2.3 Concentration and entropy
 

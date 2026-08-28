@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	neturl "net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -151,6 +153,27 @@ func NewHub(
 		maxMessageBytes: viper.GetInt("ui.websocket.max_message_bytes"),
 		clients:         &sync.Map{},
 	}
+
+	// The dashboard is a separate origin from the hub (vite dev server on
+	// :3000 vs. the hub on :8765). The REST capture listing is fetched with a
+	// plain cross-origin GET, so the browser blocks the response without an
+	// Access-Control-Allow-Origin header. Permit loopback origins on any port
+	// so a locally-served dashboard can always read it without opening CORS to
+	// arbitrary remote origins.
+	hub.app.Use(cors.New(cors.Config{
+		AllowOriginsFunc: func(origin string) bool {
+			parsed, err := neturl.Parse(origin)
+
+			if err != nil {
+				return false
+			}
+
+			host := parsed.Hostname()
+
+			return host == "localhost" || host == "127.0.0.1" || host == "::1"
+		},
+		AllowHeaders: []string{"Content-Type"},
+	}))
 
 	// The hub coalesces per frame stream, not globally: every frame type (ticks,
 	// measurements, graph, cognition, ...) gets its own latest-state cell, and

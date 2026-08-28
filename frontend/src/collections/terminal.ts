@@ -4,6 +4,7 @@ import { DEFAULT_FOCUS_SYMBOL } from "#/collections/app";
 export type TerminalSurface =
 	| "dashboard"
 	| "graph"
+	| "influence"
 	| "fluid"
 	| "signals"
 	| "decisions"

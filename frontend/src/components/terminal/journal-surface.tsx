@@ -22,9 +22,16 @@ const stoplossHolder = new Stoploss();
 type ActiveLotEntry = {
 	symbol: string;
 	status: string;
+	stopStatus: string;
 	pnl: string;
 	mark: string;
 	returnPct: string;
+	entryPrice: string;
+	entryAt: string;
+	floor: string;
+	peak: string;
+	locked: boolean;
+	surgeArmed: boolean;
 };
 
 type JournalTradeEntry = {
@@ -34,8 +41,14 @@ type JournalTradeEntry = {
 	pnl: string;
 	returnPct: string;
 	entryPrice: string;
+	entryAt: string;
 	exitPrice: string;
+	entryFee: string;
+	exitFee: string;
 	triggerReason: string;
+	stopStatus: string;
+	locked: boolean;
+	surgeArmed: boolean;
 	exitAt: string;
 };
 
@@ -61,6 +74,11 @@ export const JournalSurface = () => {
 				const positionStatus = currentHolding.status() ?? currentPosition.status() ?? "—";
 				const currentStoploss = currentHolding.stoploss(stoplossHolder);
 
+				const entryNano = currentHolding.entryAt();
+				const entryTimestamp = entryNano > 0n
+					? new Date(Number(entryNano / 1000000n)).toLocaleTimeString()
+					: "—";
+
 				if (positionStatus === "closed" || currentHolding.exitPrice()) {
 					activeMap.delete(currentSymbol);
 
@@ -77,8 +95,14 @@ export const JournalSurface = () => {
 						pnl: `${formatNumber(currentHolding.pnl(), 4)} USD`,
 						returnPct: `${formatNumber(currentHolding.returnPct(), 2)}%`,
 						entryPrice: formatNumber(currentHolding.entryPrice(), 6),
+						entryAt: entryTimestamp,
 						exitPrice: formatNumber(currentHolding.exitPrice(), 6),
+						entryFee: formatNumber(currentHolding.entryFee(), 4),
+						exitFee: formatNumber(currentHolding.exitFee(), 4),
 						triggerReason: currentStoploss?.triggerReason() ?? "—",
+						stopStatus: currentStoploss?.status() ?? "—",
+						locked: currentStoploss?.locked() ?? false,
+						surgeArmed: currentStoploss?.surgeArmed() ?? false,
 						exitAt: exitTimestamp,
 					});
 					continue;
@@ -87,9 +111,16 @@ export const JournalSurface = () => {
 				activeMap.set(currentSymbol, {
 					symbol: currentSymbol,
 					status: positionStatus,
+					stopStatus: currentStoploss?.status() ?? "—",
 					pnl: `${formatNumber(currentHolding.pnl(), 4)} USD`,
 					mark: formatNumber(currentHolding.mark(), 6),
 					returnPct: `${formatNumber(currentHolding.returnPct(), 2)}%`,
+					entryPrice: formatNumber(currentHolding.entryPrice(), 6),
+					entryAt: entryTimestamp,
+					floor: formatNumber(currentStoploss?.floor(), 6),
+					peak: formatNumber(currentStoploss?.peak(), 6),
+					locked: currentStoploss?.locked() ?? false,
+					surgeArmed: currentStoploss?.surgeArmed() ?? false,
 				});
 			}
 		}
@@ -114,23 +145,42 @@ export const JournalSurface = () => {
 							</Panel>
 						) : (
 							activeLots.map((lot) => (
-								<Panel key={lot.symbol} variant="surface" size="bare" className="flex items-center justify-between gap-2 px-2.5 py-2 font-mono text-[11px]">
-									<Flex.Column className="min-w-0 gap-0.5">
-										<Typography.Span className="truncate font-semibold text-(--f1)">
-											{lot.symbol}
+								<Panel key={lot.symbol} variant="surface" size="bare" className="flex flex-col gap-1 px-2.5 py-2 font-mono text-[11px]">
+									<Flex.Row className="items-center justify-between gap-2">
+										<Flex.Column className="min-w-0 gap-0.5">
+											<Typography.Span className="truncate font-semibold text-(--f1)">
+												{lot.symbol}
+											</Typography.Span>
+											<Typography.Span className="text-[9.5px] text-(--f4)">
+												entry {lot.entryPrice} · mark {lot.mark}
+											</Typography.Span>
+										</Flex.Column>
+										<Flex.Column className="shrink-0 items-end gap-0.5">
+											<Typography.Span className="rounded-xs border border-(--line) px-1 py-px text-[8px] uppercase tracking-wide">
+												{lot.status}
+											</Typography.Span>
+											<Typography.Span className="text-[9.5px] text-(--pnl)">
+												{lot.pnl} ({lot.returnPct})
+											</Typography.Span>
+										</Flex.Column>
+									</Flex.Row>
+									<Flex.Row className="items-center justify-between gap-2 border-(--line) border-t pt-1 text-[9px] text-(--f4)">
+										<Typography.Span
+											className={lot.stopStatus === "error" ? "font-semibold uppercase text-(--down)" : "uppercase"}
+										>
+											{lot.stopStatus === "error" ? "⚠ stop error" : `stop ${lot.stopStatus}`}
 										</Typography.Span>
-										<Typography.Span className="text-[9.5px] text-(--f4)">
-											mark {lot.mark}
+										<Typography.Span>
+											floor {lot.floor} · peak {lot.peak}
 										</Typography.Span>
-									</Flex.Column>
-									<Flex.Column className="shrink-0 items-end gap-0.5">
-										<Typography.Span className="rounded-xs border border-(--line) px-1 py-px text-[8px] uppercase tracking-wide">
-											{lot.status}
+									</Flex.Row>
+									<Flex.Row className="items-center justify-between gap-2 text-[9px] text-(--f4)">
+										<Typography.Span>entered {lot.entryAt}</Typography.Span>
+										<Typography.Span>
+											{lot.locked ? "locked" : "unlocked"}
+											{lot.surgeArmed ? " · surge" : ""}
 										</Typography.Span>
-										<Typography.Span className="text-[9.5px] text-(--pnl)">
-											{lot.pnl} ({lot.returnPct})
-										</Typography.Span>
-									</Flex.Column>
+									</Flex.Row>
 								</Panel>
 							))
 						)}
@@ -171,7 +221,21 @@ export const JournalSurface = () => {
 										{trade.entryPrice} → {trade.exitPrice}
 									</Typography.Span>
 									<Typography.Span>
-										exited at {trade.exitAt}
+										entered {trade.entryAt} · exited {trade.exitAt}
+									</Typography.Span>
+								</Flex.Row>
+								<Flex.Row className="items-center justify-between border-(--line) border-t pt-1 text-[9px] text-(--f4)">
+									<Typography.Span>
+										fees {trade.entryFee} → {trade.exitFee}
+									</Typography.Span>
+									<Typography.Span>
+										<Typography.Span
+											className={trade.stopStatus === "error" ? "font-semibold uppercase text-(--down)" : "uppercase"}
+										>
+											{trade.stopStatus === "error" ? "⚠ stop error" : trade.stopStatus}
+										</Typography.Span>
+										{trade.locked ? " · locked" : ""}
+										{trade.surgeArmed ? " · surge" : ""}
 									</Typography.Span>
 								</Flex.Row>
 							</Panel>

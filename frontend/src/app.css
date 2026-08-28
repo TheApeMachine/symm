@@ -1,3 +1,19 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "./components/ui/theme.css";
+
+.node-group {
+  cursor: grab;
+}
+
+.node-group:active {
+  cursor: grabbing;
+}
+
+.node-glow {
+  transition: all 0.2s ease-in-out;
+}
+
+.node-group:hover .node-glow {
+  filter: drop-shadow(0 0 15px currentColor) brightness(1.2);
+}

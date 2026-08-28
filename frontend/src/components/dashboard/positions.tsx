@@ -103,8 +103,14 @@ export const Positions = () => {
 								<Typography.Span className="rounded-xs border border-(--line) px-1 py-px text-[8px] uppercase tracking-wide">
 									{pos.status}
 								</Typography.Span>
-								<Typography.Span className="text-[8px] uppercase text-(--f4)">
-									{pos.stoploss}
+								<Typography.Span
+									className={
+										pos.stoploss === "error"
+											? "text-[8px] font-semibold uppercase text-(--down)"
+											: "text-[8px] uppercase text-(--f4)"
+									}
+								>
+									{pos.stoploss === "error" ? "⚠ stop error" : pos.stoploss}
 								</Typography.Span>
 							</Flex.Row>
 							<Flex.Row className="items-center gap-1.5">

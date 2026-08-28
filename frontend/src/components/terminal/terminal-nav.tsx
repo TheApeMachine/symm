@@ -10,6 +10,7 @@ import { Nav } from "@/components/ui/nav";
 type TerminalRoutePath =
 	| "/"
 	| "/graph"
+	| "/influence"
 	| "/fluid"
 	| "/signals"
 	| "/decisions"
@@ -41,6 +42,12 @@ const SURFACE_ITEMS: Array<{
 		to: "/diagnostics",
 	},
 	{ key: "graph", label: "Market graph", icon: "graph", to: "/graph" },
+	{
+		key: "influence",
+		label: "Influence field",
+		icon: "spark",
+		to: "/influence",
+	},
 	{ key: "fluid", label: "Fluid manifold", icon: "scan", to: "/fluid" },
 	{ key: "signals", label: "Signal insight", icon: "signal", to: "/signals" },
 	{ key: "decisions", label: "Decision tree", icon: "tree", to: "/decisions" },

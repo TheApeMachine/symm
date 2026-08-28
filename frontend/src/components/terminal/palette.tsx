@@ -22,6 +22,11 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 		hint: "Relational topology · node inspection",
 	},
 	{
+		id: "influence",
+		label: "Influence field",
+		hint: "Derived weighted force field · coefficient flow",
+	},
+	{
 		id: "fluid",
 		label: "Fluid manifold",
 		hint: "Particle gas · gas volume · complex wave field",

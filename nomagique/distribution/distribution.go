@@ -199,3 +199,207 @@ type positionWeight struct {
 	position float64
 	weight   float64
 }
+
+/*
+WeightedPoint is one (position, weight) observation of a distribution, sorted
+ascending by position. It is the streaming form callers build when they already
+have a sorted book: the merged-walk distance functions consume two such
+streams directly, so no union, zero-padding, map, or combined snapshot is ever
+materialized on a hot path.
+*/
+type WeightedPoint struct {
+	Position float64
+	Weight   float64
+}
+
+/*
+Wasserstein1Pairs returns the first Wasserstein distance between two
+distributions given as ascending-sorted WeightedPoint streams, by a single
+merged walk of their positions. It is the same quantity as Wasserstein1 but
+requires no shared pre-aligned support: the two streams' positions may differ
+freely, and each side simply contributes zero mass at positions the other side
+does not occupy. No union, map, or copy is allocated.
+*/
+func Wasserstein1Pairs(left, right []WeightedPoint) float64 {
+	leftTotal := totalWeight(left)
+	rightTotal := totalWeight(right)
+
+	if leftTotal == 0 || rightTotal == 0 {
+		return math.Inf(1)
+	}
+
+	_, distance, _ := mergedWalk(left, leftTotal, right, rightTotal)
+
+	return distance
+}
+
+/*
+KolmogorovSmirnovPairs returns the Kolmogorov-Smirnov statistic between two
+distributions given as ascending-sorted WeightedPoint streams, by the same
+single merged walk. It is the supremum of the absolute cumulative difference,
+dimensionless in [0,1], requiring no shared pre-aligned support.
+*/
+func KolmogorovSmirnovPairs(left, right []WeightedPoint) float64 {
+	leftTotal := totalWeight(left)
+	rightTotal := totalWeight(right)
+
+	if leftTotal == 0 || rightTotal == 0 {
+		return math.Inf(1)
+	}
+
+	statistic, _, _ := mergedWalk(left, leftTotal, right, rightTotal)
+
+	return statistic
+}
+
+/*
+mergedWalk consumes two ascending-sorted position streams in one pass and
+returns, in a single walk, the KS statistic (sup |ΔCDF|), the Wasserstein-1
+distance (∫ |ΔCDF| dp), and the number of distinct positions visited. It
+normalizes each side by its supplied total in place (weights are divided on the
+fly), so no normalization copy is allocated. Because both streams are sorted,
+the two distributions are compared exactly with no union, map, or combined
+array.
+*/
+func mergedWalk(left []WeightedPoint, leftTotal float64, right []WeightedPoint, rightTotal float64) (float64, float64, int) {
+	leftIndex := 0
+	rightIndex := 0
+	cumulativeLeft := 0.0
+	cumulativeRight := 0.0
+	previousPosition := math.NaN()
+	statistic := 0.0
+	distance := 0.0
+	distinct := 0
+
+	for leftIndex < len(left) || rightIndex < len(right) {
+		var position float64
+		advanceLeft := false
+		advanceRight := false
+
+		switch {
+		case leftIndex >= len(left):
+			position = right[rightIndex].Position
+			advanceRight = true
+		case rightIndex >= len(right):
+			position = left[leftIndex].Position
+			advanceLeft = true
+		default:
+			leftPosition := left[leftIndex].Position
+			rightPosition := right[rightIndex].Position
+
+			switch {
+			case leftPosition < rightPosition:
+				position = leftPosition
+				advanceLeft = true
+			case rightPosition < leftPosition:
+				position = rightPosition
+				advanceRight = true
+			default:
+				position = leftPosition
+				advanceLeft = true
+				advanceRight = true
+			}
+		}
+
+		if !math.IsNaN(previousPosition) {
+			width := position - previousPosition
+
+			if width > 0 {
+				distance += math.Abs(cumulativeLeft-cumulativeRight) * width
+			}
+		}
+
+		if advanceLeft {
+			// Advance over every left point at this position (equal positions
+			// collapse), adding their mass.
+			for leftIndex < len(left) && left[leftIndex].Position == position {
+				cumulativeLeft += left[leftIndex].Weight / leftTotal
+				leftIndex++
+			}
+		}
+
+		if advanceRight {
+			for rightIndex < len(right) && right[rightIndex].Position == position {
+				cumulativeRight += right[rightIndex].Weight / rightTotal
+				rightIndex++
+			}
+		}
+
+		difference := math.Abs(cumulativeLeft - cumulativeRight)
+
+		if difference > statistic {
+			statistic = difference
+		}
+
+		previousPosition = position
+		distinct++
+	}
+
+	return statistic, distance, distinct
+}
+
+/*
+totalWeight returns the sum of non-negative weights of a point stream, the
+normalizer the merged walk divides by.
+*/
+func totalWeight(points []WeightedPoint) float64 {
+	total := 0.0
+
+	for _, point := range points {
+		if point.Weight > 0 {
+			total += point.Weight
+		}
+	}
+
+	return total
+}
+
+/*
+ConcentrationPoints returns the Herfindahl concentration of a point stream,
+normalizing its weights inline (no copy). It is the sum of squared normalized
+weights, in (0,1]: 1/n for uniform mass over n points, 1 for a single point.
+*/
+func ConcentrationPoints(points []WeightedPoint) float64 {
+	total := totalWeight(points)
+
+	if total == 0 {
+		return 0
+	}
+
+	concentration := 0.0
+
+	for _, point := range points {
+		if point.Weight > 0 {
+			normalized := point.Weight / total
+
+			concentration += normalized * normalized
+		}
+	}
+
+	return concentration
+}
+
+/*
+EntropyPoints returns the Shannon entropy (nats) of a point stream, normalizing
+its weights inline (no copy). Zero for a single point, ln(n) for uniform mass
+over n points.
+*/
+func EntropyPoints(points []WeightedPoint) float64 {
+	total := totalWeight(points)
+
+	if total == 0 {
+		return 0
+	}
+
+	entropy := 0.0
+
+	for _, point := range points {
+		if point.Weight > 0 {
+			normalized := point.Weight / total
+
+			entropy -= normalized * math.Log(normalized)
+		}
+	}
+
+	return entropy
+}

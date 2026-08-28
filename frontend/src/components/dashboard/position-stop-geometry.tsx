@@ -30,7 +30,40 @@ export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		const updateElements = (lastPositionsFrame?: PositionsFrame | null) => {
+		/*
+		Position.Publish() emits one single-row frame per event, for whichever
+		symbol just ticked or filled — the globally-latest frame therefore
+		reflects only the most recently active symbol on the whole desk, not
+		necessarily this widget's own symbol. Scan backward through the ring
+		buffer for the last frame that actually carries a row for this symbol,
+		matching the merge Positions.tsx already does across the full buffer.
+		*/
+		const findHoldingForSymbol = (): Holding | null => {
+			const frame = positionStore.state.findLast((candidate: PositionsFrame) => {
+				for (let index = 0; index < candidate.rowsLength(); index++) {
+					const currentPosition = candidate.rows(index, positionInstance);
+					const currentHolding = currentPosition?.holding(holdingInstance);
+					if (currentHolding && currentHolding.symbol() === symbol) return true;
+				}
+				return false;
+			});
+
+			if (!frame) return null;
+
+			for (let index = 0; index < frame.rowsLength(); index++) {
+				const currentPosition = frame.rows(index, positionInstance);
+				if (!currentPosition) continue;
+
+				const currentHolding = currentPosition.holding(holdingInstance);
+				if (currentHolding && currentHolding.symbol() === symbol) {
+					return currentHolding;
+				}
+			}
+
+			return null;
+		};
+
+		const updateElements = () => {
 			if (!root.current) return;
 
 			// Reset every readout and hide all geometry nodes before applying
@@ -49,20 +82,7 @@ export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
 				if (node) node.style.display = "none";
 			}
 
-			if (!lastPositionsFrame) return;
-
-			let targetHolding: Holding | null = null;
-
-			for (let index = 0; index < lastPositionsFrame.rowsLength(); index++) {
-				const currentPosition = lastPositionsFrame.rows(index, positionInstance);
-				if (!currentPosition) continue;
-
-				const currentHolding = currentPosition.holding(holdingInstance);
-				if (currentHolding && currentHolding.symbol() === symbol) {
-					targetHolding = currentHolding;
-					break;
-				}
-			}
+			const targetHolding = findHoldingForSymbol();
 
 			if (!targetHolding) return;
 
@@ -109,7 +129,15 @@ export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
 			setText("trigger", currentStoploss?.triggerReason() ?? "—");
 			setText("locked", String(currentStoploss?.locked() ?? false));
 			setText("threshold", fmt(targetHolding.profitThreshold(), 6));
-			setText("stopstatus", currentStoploss?.status() ?? "—");
+
+			const stopStatusValue = currentStoploss?.status() ?? "—";
+			setText(
+				"stopstatus",
+				stopStatusValue === "error" ? "geometry failed" : stopStatusValue,
+			);
+
+			const stopStatusNode = root.current?.querySelector<HTMLElement>('[data-f="stopstatus"]');
+			stopStatusNode?.classList.toggle("text-(--down)", stopStatusValue === "error");
 
 			const indicatorNode = root.current.querySelector<HTMLElement>('[data-f="indicator"]');
 			if (indicatorNode) {
@@ -130,9 +158,9 @@ export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
 			}
 		};
 
-		updateElements(positionStore.state.getLast());
-		const subscription = positionStore.subscribe((state) => {
-			updateElements(state.getLast());
+		updateElements();
+		const subscription = positionStore.subscribe(() => {
+			updateElements();
 		});
 
 		return () => {

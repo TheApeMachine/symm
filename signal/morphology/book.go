@@ -1,8 +1,8 @@
 /*
 Package morphology measures the shape of an order book as a geometric object:
-where displayed notional sits along the price axis, how one-sided the two
-shapes are, how concentrated each side is, and how much the whole shape moved
-since the last observation.
+where displayed notional sits along the price axis, how symmetric the two
+sides' shapes are, how concentrated each side is, and how much the whole shape
+moved since the last observation.
 
 It is deliberately a measuring instrument, never a judge. Every emitted fact
 is a dimensionless, unitless description of book geometry: a distance in spread
@@ -12,9 +12,19 @@ label, no fixed symmetry threshold, and no arbitrary depth bucket — the shape
 is the book's own levels, normalized by its own current spread and each level
 weighted by its own side notional.
 
+Bilateral shape (book_shape_distance, book_shape_ks) reflects each side around
+the midpoint onto a single positive distance axis, so a perfectly mirrored book
+has distance zero; the sides' physical separation above/below mid is not what
+bilateral morphology measures. Whole-book structural change (morphology_change)
+keeps signed distance-from-mid so physical bid/ask placement remains part of
+the change.
+
 The generic distribution mathematics (Wasserstein, Kolmogorov-Smirnov,
-entropy, Herfindahl) lives in nomagique/distribution; this package only
-projects a live book into shape coordinates and calls it.
+entropy, Herfindahl) lives in nomagique/distribution, including the merged-walk
+Wasserstein1Pairs / KolmogorovSmirnovPairs that compare two sorted streams with
+no union, map, or combined snapshot. This package only projects a live book into
+shape coordinates and calls it — and it reads the authoritative shared book only
+inside its protected read callback, never letting the pointer escape.
 */
 package morphology
 
@@ -45,13 +55,6 @@ var (
 	symbolMorphologyChange = nmtypes.MustIntern("morphology/morphology_change")
 )
 
-// shape is one normalized book-shape: sorted positions in spread units paired
-// with the normalized notional weight at each position.
-type shape struct {
-	positions []float64
-	weights   []float64
-}
-
 /*
 Book is the book-shape market entity. It reads the shared book per step and
 projects one dimensionless shape Measurement. It retains the prior whole-book
@@ -63,13 +66,13 @@ type Book struct {
 	projector *data.Projector
 
 	mu       sync.Mutex
-	previous map[string]shape
+	previous map[string][]distribution.WeightedPoint
 }
 
 func NewBook(workspace *runtime.Workspace) *Book {
 	return &Book{
 		workspace: workspace,
-		previous:  make(map[string]shape),
+		previous:  make(map[string][]distribution.WeightedPoint),
 		projector: data.NewProjector(
 			data.Binding{From: symbolShapeDistance, Name: "book_shape_distance", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolShapeKS, Name: "book_shape_ks", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
@@ -85,43 +88,48 @@ func NewBook(workspace *runtime.Workspace) *Book {
 func (morphology *Book) Close() error { return nil }
 
 /*
-Step reads the shared book for one symbol, projects it into spread-normalized
-shape coordinates, and emits exactly one descriptive Measurement. A missing or
-degenerate book (crossed, no spread, one empty side) yields no measurement; the
-caller skips it rather than panicking.
+Step reads the shared book for one symbol inside its protected read callback,
+projects the shape facts there (the pointer never escapes), and emits exactly
+one descriptive Measurement. A missing or degenerate book (crossed, no spread,
+one empty side) yields no measurement; the caller skips it rather than panicking.
 */
 func (morphology *Book) Step(symbol string, at time.Time) *data.Measurement[float64] {
 	if morphology == nil || morphology.workspace == nil {
 		return nil
 	}
 
-	orderBook := morphology.readBook(symbol)
+	var shapeDistance, shapeKS float64
+	var concentrationBid, concentrationAsk float64
+	var entropyBid, entropyAsk float64
+	var foldedOK bool
+	var currentWhole []distribution.WeightedPoint
 
-	if orderBook == nil {
+	morphology.readBook(symbol, func(orderBook *book.Book) {
+		if orderBook == nil {
+			return
+		}
+
+		bidFolded, askFolded, whole, ok := projectShape(orderBook)
+
+		if !ok {
+			return
+		}
+
+		foldedOK = true
+		shapeDistance = distribution.Wasserstein1Pairs(bidFolded, askFolded)
+		shapeKS = distribution.KolmogorovSmirnovPairs(bidFolded, askFolded)
+		concentrationBid = distribution.ConcentrationPoints(bidFolded)
+		concentrationAsk = distribution.ConcentrationPoints(askFolded)
+		entropyBid = distribution.EntropyPoints(bidFolded)
+		entropyAsk = distribution.EntropyPoints(askFolded)
+		currentWhole = whole
+	})
+
+	if !foldedOK {
 		return nil
 	}
 
-	bidPositions, bidWeights, askPositions, askWeights, ok := shapeCoordinates(orderBook)
-
-	if !ok {
-		return nil
-	}
-
-	bidWeights, _ = distribution.Normalize(bidWeights)
-	askWeights, _ = distribution.Normalize(askWeights)
-
-	unionPositions, unionBidWeights, unionAskWeights := sharedSupport(bidPositions, bidWeights, askPositions, askWeights)
-
-	shapeDistance := distribution.Wasserstein1(unionPositions, unionBidWeights, unionAskWeights)
-	shapeKS := distribution.KolmogorovSmirnov(unionPositions, unionBidWeights, unionAskWeights)
-	concentrationBid := distribution.Concentration(bidWeights)
-	concentrationAsk := distribution.Concentration(askWeights)
-	entropyBid := distribution.Entropy(bidWeights)
-	entropyAsk := distribution.Entropy(askWeights)
-
-	current := wholeBookShape(unionPositions, unionBidWeights, unionAskWeights)
-
-	morphologyChange, changed := morphology.recordChange(symbol, current)
+	morphologyChange, changed := morphology.recordChange(symbol, currentWhole)
 
 	input := nmtypes.Frame{}
 	input.Put(symbolShapeDistance, shapeDistance)
@@ -139,39 +147,35 @@ func (morphology *Book) Step(symbol string, at time.Time) *data.Measurement[floa
 }
 
 /*
-readBook returns the live aggregated book for one symbol from the workspace
-shared pool, matching the depthflow signal's access pattern.
+readBook invokes the supplied callback with the authoritative book while its
+protected read lock is held. The callback must not retain the pointer; it copies
+the values it needs and returns. The book is never returned or stored.
 */
-func (morphology *Book) readBook(symbol string) *book.Book {
+func (morphology *Book) readBook(symbol string, read func(*book.Book)) {
 	if shared, found := morphology.workspace.Shared("api", ""); found && shared != nil {
 		if api, isAPI := shared.(*websocket.API); isAPI && api != nil {
-			var orderBook *book.Book
+			api.Book(symbol, read)
 
-			api.Book(symbol, func(sharedBook *book.Book) {
-				orderBook = sharedBook
-			})
-
-			return orderBook
+			return
 		}
 	}
 
 	if sharedBook, found := morphology.workspace.Shared("book", symbol); found && sharedBook != nil {
 		if currentBook, isBook := sharedBook.(*book.Book); isBook {
-			return currentBook
+			read(currentBook)
 		}
 	}
-
-	return nil
 }
 
 /*
 recordChange stores the current whole-book shape and returns how far it moved
-from the previously retained shape of the same symbol, measured as the
-Wasserstein-1 distance between the two normalized whole shapes on their shared
-support. The first observation of a symbol has no prior and reports no change.
+from the previous shape of the same symbol, on their merged position streams.
+The first observation of a symbol has no prior and reports no change. Ownership
+of the current slice transfers into the resident map, so no extra clone is made.
 */
-func (morphology *Book) recordChange(symbol string, current shape) (float64, bool) {
+func (morphology *Book) recordChange(symbol string, current []distribution.WeightedPoint) (float64, bool) {
 	morphology.mu.Lock()
+
 	previous, hadPrevious := morphology.previous[symbol]
 	morphology.previous[symbol] = current
 	morphology.mu.Unlock()
@@ -180,25 +184,24 @@ func (morphology *Book) recordChange(symbol string, current shape) (float64, boo
 		return 0, false
 	}
 
-	union, previousWeights, currentWeights := sharedSupport(previous.positions, previous.weights, current.positions, current.weights)
-
-	return distribution.Wasserstein1(union, previousWeights, currentWeights), true
+	return distribution.Wasserstein1Pairs(previous, current), true
 }
 
 /*
-shapeCoordinates projects a book's levels into spread-normalized coordinates:
-each level's position is (price − midpoint) / spread (so the bid touch sits at
-−0.5 and the ask touch at +0.5 in spread units), and each level's weight is its
-displayed notional (price × quantity). ok is false when the book is degenerate
-— missing touch, non-positive spread, or an empty side — so no distance is
-fabricated on a book with no shape.
+projectShape reads one book into folded bilateral shapes and a signed
+whole-book shape. The bilateral shapes reflect both sides onto the positive
+distance-from-mid axis (bid r = (mid−price)/spread, ask r = (price−mid)/spread),
+so a perfectly mirrored book yields identical streams. The whole-book shape
+retains the signed position ((price−mid)/spread) so physical bid/ask placement
+stays part of structural change. ok is false on a degenerate book — missing
+touch, non-positive spread, or an empty side.
 */
-func shapeCoordinates(orderBook *book.Book) ([]float64, []float64, []float64, []float64, bool) {
+func projectShape(orderBook *book.Book) ([]distribution.WeightedPoint, []distribution.WeightedPoint, []distribution.WeightedPoint, bool) {
 	bestBid := orderBook.BestBid()
 	bestAsk := orderBook.BestAsk()
 
 	if bestBid == nil || bestAsk == nil || bestBid.Price == nil || bestAsk.Price == nil {
-		return nil, nil, nil, nil, false
+		return nil, nil, nil, false
 	}
 
 	bidPrice := bestBid.Price.Float64()
@@ -206,15 +209,14 @@ func shapeCoordinates(orderBook *book.Book) ([]float64, []float64, []float64, []
 	spread := askPrice - bidPrice
 
 	if spread <= 0 {
-		return nil, nil, nil, nil, false
+		return nil, nil, nil, false
 	}
 
 	midpoint := (bidPrice + askPrice) / 2
 
-	bidPositions := make([]float64, 0)
-	bidWeights := make([]float64, 0)
-	askPositions := make([]float64, 0)
-	askWeights := make([]float64, 0)
+	bidFolded := make([]distribution.WeightedPoint, 0)
+	askFolded := make([]distribution.WeightedPoint, 0)
+	whole := make([]distribution.WeightedPoint, 0)
 
 	if orderBook.Bids != nil {
 		for _, level := range orderBook.Bids.Levels {
@@ -222,14 +224,17 @@ func shapeCoordinates(orderBook *book.Book) ([]float64, []float64, []float64, []
 				continue
 			}
 
-			weight := level.Price.Float64() * level.Quantity.Float64()
+			price := level.Price.Float64()
+			weight := price * level.Quantity.Float64()
 
 			if weight <= 0 {
 				continue
 			}
 
-			bidPositions = append(bidPositions, (level.Price.Float64()-midpoint)/spread)
-			bidWeights = append(bidWeights, weight)
+			signed := (price - midpoint) / spread
+
+			bidFolded = append(bidFolded, distribution.WeightedPoint{Position: -signed, Weight: weight})
+			whole = append(whole, distribution.WeightedPoint{Position: signed, Weight: weight})
 		}
 	}
 
@@ -239,79 +244,27 @@ func shapeCoordinates(orderBook *book.Book) ([]float64, []float64, []float64, []
 				continue
 			}
 
-			weight := level.Price.Float64() * level.Quantity.Float64()
+			price := level.Price.Float64()
+			weight := price * level.Quantity.Float64()
 
 			if weight <= 0 {
 				continue
 			}
 
-			askPositions = append(askPositions, (level.Price.Float64()-midpoint)/spread)
-			askWeights = append(askWeights, weight)
+			signed := (price - midpoint) / spread
+
+			askFolded = append(askFolded, distribution.WeightedPoint{Position: signed, Weight: weight})
+			whole = append(whole, distribution.WeightedPoint{Position: signed, Weight: weight})
 		}
 	}
 
-	if len(bidPositions) == 0 || len(askPositions) == 0 {
-		return nil, nil, nil, nil, false
+	if len(bidFolded) == 0 || len(askFolded) == 0 {
+		return nil, nil, nil, false
 	}
 
-	return bidPositions, bidWeights, askPositions, askWeights, true
-}
+	sort.Slice(bidFolded, func(left, right int) bool { return bidFolded[left].Position < bidFolded[right].Position })
+	sort.Slice(askFolded, func(left, right int) bool { return askFolded[left].Position < askFolded[right].Position })
+	sort.Slice(whole, func(left, right int) bool { return whole[left].Position < whole[right].Position })
 
-/*
-sharedSupport places two distributions onto their sorted union of positions.
-For each union position the returned weight for side A is A's own weight there
-(or zero if the position belongs only to B), and symmetrically for B. The union
-is ascending and both weight slices are zero-padded so a position present on
-only one side is represented as missing mass on the other.
-*/
-func sharedSupport(positionsA, weightsA, positionsB, weightsB []float64) ([]float64, []float64, []float64) {
-	weightByA := make(map[float64]float64, len(positionsA))
-	weightByB := make(map[float64]float64, len(positionsB))
-	seen := make(map[float64]bool, len(positionsA)+len(positionsB))
-
-	for index, position := range positionsA {
-		weightByA[position] = weightsA[index]
-		seen[position] = true
-	}
-
-	for index, position := range positionsB {
-		weightByB[position] = weightsB[index]
-		seen[position] = true
-	}
-
-	union := make([]float64, 0, len(seen))
-
-	for position := range seen {
-		union = append(union, position)
-	}
-
-	sort.Float64s(union)
-
-	unionWeightsA := make([]float64, len(union))
-	unionWeightsB := make([]float64, len(union))
-
-	for index, position := range union {
-		unionWeightsA[index] = weightByA[position]
-		unionWeightsB[index] = weightByB[position]
-	}
-
-	return union, unionWeightsA, unionWeightsB
-}
-
-/*
-wholeBookShape folds both sides into one combined mass profile along the price
-axis for the structural-change comparison: the union positions with each
-side's normalized weight halved, so the two sides together still sum to 1.
-*/
-func wholeBookShape(unionPositions, unionBidWeights, unionAskWeights []float64) shape {
-	weights := make([]float64, len(unionPositions))
-
-	for index := range unionPositions {
-		weights[index] = (unionBidWeights[index] + unionAskWeights[index]) / 2
-	}
-
-	return shape{
-		positions: append([]float64(nil), unionPositions...),
-		weights:   weights,
-	}
+	return bidFolded, askFolded, whole, true
 }

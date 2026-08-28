@@ -137,3 +137,86 @@ func TestSortedPositions(t *testing.T) {
 		})
 	})
 }
+
+func TestWasserstein1Pairs(t *testing.T) {
+	Convey("Given two sorted point streams on different supports", t, func() {
+		Convey("identical single-point streams have distance zero", func() {
+			left := []WeightedPoint{{Position: 0.5, Weight: 1}}
+			right := []WeightedPoint{{Position: 0.5, Weight: 1}}
+
+			So(Wasserstein1Pairs(left, right), ShouldAlmostEqual, 0)
+		})
+
+		Convey("mirrored-but-equal mass profiles on the folded axis have distance zero", func() {
+			left := []WeightedPoint{{Position: 0.5, Weight: 2}, {Position: 1.5, Weight: 1}}
+			right := []WeightedPoint{{Position: 0.5, Weight: 2}, {Position: 1.5, Weight: 1}}
+
+			So(Wasserstein1Pairs(left, right), ShouldAlmostEqual, 0)
+		})
+
+		Convey("disjoint supports transport the full mass across the gap", func() {
+			left := []WeightedPoint{{Position: 0, Weight: 1}}
+			right := []WeightedPoint{{Position: 3, Weight: 1}}
+
+			So(Wasserstein1Pairs(left, right), ShouldAlmostEqual, 3)
+		})
+
+		Convey("Weighting does not affect a shared single point", func() {
+			left := []WeightedPoint{{Position: 1, Weight: 100}}
+			right := []WeightedPoint{{Position: 1, Weight: 1}}
+
+			So(Wasserstein1Pairs(left, right), ShouldAlmostEqual, 0)
+		})
+
+		Convey("a zero-total stream returns +Inf", func() {
+			So(math.IsInf(Wasserstein1Pairs([]WeightedPoint{{0, 0}}, []WeightedPoint{{0, 1}}), 1), ShouldBeTrue)
+		})
+	})
+}
+
+func TestKolmogorovSmirnovPairs(t *testing.T) {
+	Convey("Given two sorted point streams", t, func() {
+		Convey("equal streams have statistic zero", func() {
+			left := []WeightedPoint{{Position: 0.5, Weight: 1}, {Position: 1, Weight: 1}}
+			right := []WeightedPoint{{Position: 0.5, Weight: 1}, {Position: 1, Weight: 1}}
+
+			So(KolmogorovSmirnovPairs(left, right), ShouldAlmostEqual, 0)
+		})
+
+		Convey("disjoint supports have statistic one", func() {
+			left := []WeightedPoint{{Position: 0, Weight: 1}}
+			right := []WeightedPoint{{Position: 3, Weight: 1}}
+
+			So(KolmogorovSmirnovPairs(left, right), ShouldAlmostEqual, 1)
+		})
+
+		Convey("a zero-total stream returns +Inf", func() {
+			So(math.IsInf(KolmogorovSmirnovPairs([]WeightedPoint{{0, 0}}, []WeightedPoint{{0, 1}}), 1), ShouldBeTrue)
+		})
+	})
+}
+
+func TestConcentrationPointsAndEntropyPoints(t *testing.T) {
+	Convey("Given a point stream", t, func() {
+		Convey("a single point has concentration one and entropy zero", func() {
+			points := []WeightedPoint{{Position: 1, Weight: 5}}
+
+			So(ConcentrationPoints(points), ShouldAlmostEqual, 1)
+			So(EntropyPoints(points), ShouldAlmostEqual, 0)
+		})
+
+		Convey("two equal points have concentration 1/2 and entropy ln 2", func() {
+			points := []WeightedPoint{{Position: 1, Weight: 3}, {Position: 2, Weight: 3}}
+
+			So(ConcentrationPoints(points), ShouldAlmostEqual, 0.5)
+			So(EntropyPoints(points), ShouldAlmostEqual, math.Log(2))
+		})
+
+		Convey("a zero-total stream is empty", func() {
+			points := []WeightedPoint{{Position: 1, Weight: 0}}
+
+			So(ConcentrationPoints(points), ShouldAlmostEqual, 0)
+			So(EntropyPoints(points), ShouldAlmostEqual, 0)
+		})
+	})
+}

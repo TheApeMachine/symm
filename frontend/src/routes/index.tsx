@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DEFAULT_KERNELS } from "#/collections/app";
-import { AuditTrail } from "#/components/dashboard/audit";
 import { Decisions } from "#/components/dashboard/decisions";
 import { Positions } from "#/components/dashboard/positions";
 import { KernelInspector } from "#/components/kernel/inspector";
@@ -74,13 +73,10 @@ const RouteComponent = () => {
 						<div className="min-h-0 flex-[1.15] border-(--line) border-b">
 							<Decisions />
 						</div>
-						<Section className="flex-none border-(--line) border-b">
+						<Section className="min-h-0 flex-1 overflow-auto border-(--line) border-b">
 							<Section.Header title="Open positions" />
 							<Positions />
 						</Section>
-						<div className="min-h-0 flex-1 overflow-auto">
-							<AuditTrail />
-						</div>
 					</Flex.Column>
 				</Grid>
 			</Flex>
