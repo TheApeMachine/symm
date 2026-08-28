@@ -321,7 +321,8 @@ recorded structural similarity to the symbol's own retained history.
 
 State is `O(3 bounded Path series + 1 control fact + 1 bounded baseline ring)`
 per symbol — each capped at `temporal.MaxPathSamples` (the percentile baseline
-at its own smaller `baselineCapacity`). Per-Step cost is `O(dimensions ×
+ring shares the same `MaxPathSamples` bound, so its support fills to the same
+ceiling as every retained path). Per-Step cost is `O(dimensions ×
 changePoints × matchCount)` — change points are the union of retained
 observations inside a window, and `matchCount` is the number of candidate
 windows actually searched, both bounded by the retained-history ceiling; no
@@ -349,7 +350,8 @@ unbounded retained history.
   measurements, so a pair identity has nothing to consume. Requires the
   named-pair admission path (spec §17/§38: Research Catalog, spot/perpetual,
   or explicit config).
-- **MorphologyAdvisor pipeline** (normalized book morphology) — the depthflow
-  signal emits flow/mutation metrics, not the structural measures the spec
-  lists (normalized entropy, Herfindahl concentration, spacing regularity,
-  size quantization). Requires those measurements to exist first.
+- **MorphologyAdvisor pipeline** (normalized book morphology) — the new
+  `signal/morphology` now emits the structural measures (book-shape Wasserstein
+  and KS, bid/ask concentration and entropy, structural change), so an Advisor
+  can compose them once the temporal/temporal-historical contextualization
+  defined for it is decided. Not yet built; the raw measurements exist first.

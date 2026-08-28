@@ -57,14 +57,16 @@ const nanosecondsPerSecond = int64(1_000_000_000)
 
 /*
 baselineCapacity bounds how many prior nearest distances the recurrence
-percentile ranks against. It is the resident-state bound of the percentile's
-own effective support — the same class of bound as temporal.MaxPathSamples —
-not a statistical horizon and not derived from data: a fixed ring keeps the
-baseline bounded and causal while its support fills toward the bound as history
-accumulates. Below this bound the support grows one prior scan per step; at the
-bound it becomes a causal sliding window, dropping the oldest scan first.
+percentile ranks against. It is the engine's own fixed-sample ceiling —
+temporal.MaxPathSamples — not an independent constant and not a statistical
+horizon: the baseline ring is the same kind of bounded retained series as every
+temporal.Path, so it shares the same principled capacity. The percentile's
+effective support fills toward this bound as history accumulates; at the bound
+the ring becomes a causal sliding window, dropping the oldest scan first. It is
+read from MaxPathSamples rather than hardcoded so the two resident-state bounds
+can never silently drift apart.
 */
-const baselineCapacity = 16
+var baselineCapacity = temporal.MaxPathSamples
 
 // baselineSeries names the dedicated namespaced slots that carry the
 // per-symbol ring of prior nearest distances. It is resolved once at wiring

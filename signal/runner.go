@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/signal/leadlag"
 	"github.com/theapemachine/symm/signal/liquidity"
+	"github.com/theapemachine/symm/signal/morphology"
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
@@ -116,6 +117,23 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 				started := time.Now()
 				measurement := depthflowSignal.Step(frame.Symbol, frame.Timestamp)
 				runner.ObserveModule("depthflow", time.Since(started))
+
+				return measurement
+			},
+		)
+
+		morphologySignal := morphology.NewSignal(ctx, workspace)
+		runtime.WireKeyed[kraken.Level3Data, *data.Measurement[float64]](
+			workspace, types.ChannelLevel3, types.ChannelMeasurements,
+			func(frame kraken.Level3Data) string { return frame.Symbol },
+			func(frame kraken.Level3Data) *data.Measurement[float64] {
+				if runner.ObserveModule == nil {
+					return morphologySignal.Step(frame.Symbol, frame.Timestamp)
+				}
+
+				started := time.Now()
+				measurement := morphologySignal.Step(frame.Symbol, frame.Timestamp)
+				runner.ObserveModule("morphology", time.Since(started))
 
 				return measurement
 			},
@@ -279,6 +297,7 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			hawkesSignal,
 			leadlagSignal,
 			liquiditySignal,
+			morphologySignal,
 			pumpdumpSignal,
 			sentimentSignal,
 			toxicitySignal,
