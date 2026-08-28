@@ -1,6 +1,7 @@
 package recurrence
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -189,6 +190,36 @@ func TestAnalogue(t *testing.T) {
 
 			So(found, ShouldBeTrue)
 			So(count, ShouldBeGreaterThanOrEqualTo, 1)
+		})
+	})
+
+	Convey("Given two windows with different change-point grids", t, func() {
+		Convey("distance is exact on the union of their relative change offsets, never +Inf", func() {
+			// Two dimensions. The query changes dimension A at offsets 2 and 4
+			// and dimension B at offset 3; the candidate changes dimension A at
+			// offsets 1 and 4 and dimension B at offset 2. Their grids differ,
+			// so a positional comparison would wrongly report +Inf.
+			query := []dimensionStep{
+				{segments: []stepAt{{0, 0}, {2, 1}, {4, 2}}},
+				{segments: []stepAt{{0, 0}, {3, 10}}},
+			}
+			candidate := []dimensionStep{
+				{segments: []stepAt{{0, 0}, {1, 1}, {4, 2}}},
+				{segments: []stepAt{{0, 0}, {2, 10}}},
+			}
+
+			distance := timeWeightedDistance(query, candidate, 5)
+
+			So(math.IsInf(distance, 1), ShouldBeFalse)
+			So(distance, ShouldBeGreaterThanOrEqualTo, 0)
+
+			// Hand-computed union grid over [0,5]: offsets 1,2,3,4.
+			// dim A mismatch only on (1,2] where +1 vs 0 -> width 1, squared 1.
+			// dim B mismatch on (2,3] where 10 vs 0 -> width 1, squared 100.
+			// Total = 1*1 + 100*1 = 101 over duration 5 * 2 dims.
+			expected := math.Sqrt(101.0 / (5.0 * 2.0))
+
+			So(distance, ShouldAlmostEqual, expected, 1e-9)
 		})
 	})
 

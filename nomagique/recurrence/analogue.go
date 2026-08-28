@@ -187,7 +187,7 @@ func Analogue(prefixes ...string) types.Primitive {
 				break
 			}
 
-			distance := timeWeightedDistance(query, candidate)
+			distance := timeWeightedDistance(query, candidate, horizonNanos)
 			candidateCount++
 
 			if distance < nearestDistance {
@@ -238,130 +238,170 @@ func Analogue(prefixes ...string) types.Primitive {
 }
 
 /*
-stepWindow rebuilds one joint piecewise-constant trajectory over the interval
-[start, end]: the merged, sorted change points of every series inside the
-window, each carrying the joint vector of every dimension's held value at that
-moment. The first point is always start (so the leading sub-interval from start
-to the first real change is represented), and the last is end. ok is false only
-when an internal read of a series' own retained sample fails.
+stepWindow rebuilds one window as, per dimension, its piecewise-constant step
+function over the interval [start, end], expressed in relative offsets from the
+window's own start. Each dimension's segments are sorted by offset; the first
+segment of every dimension begins at offset 0 (the value held at the window's
+start) and the last extends to the window's end. Relative offsets — not
+absolute timestamps — are what make two windows comparable: the query and every
+candidate all span exactly the same duration, so offset 0..Q is the shared
+coordinate frame in which their (independently irregular) change patterns can
+be merged. ok is false only when an internal read of a series' own retained
+sample fails.
 */
 func stepWindow(
 	series []temporal.Series,
 	frame *types.Frame,
 	start int64,
 	end int64,
-) ([]stepPoint, bool) {
+) ([]dimensionStep, bool) {
 	if end <= start {
 		return nil, false
 	}
 
 	dimensions := len(series)
-	changeTimes := []int64{start, end}
+	steps := make([]dimensionStep, dimensions)
 
-	for _, oneSeries := range series {
+	for seriesIndex, oneSeries := range series {
+		// The leading value is whatever the dimension held at the window's
+		// start (its most recent observation at or before start).
+		leadingValue, found := valueAtOrBefore(oneSeries, frame, start)
+
+		if !found {
+			return nil, false
+		}
+
+		segments := []stepAt{{offset: 0, value: leadingValue}}
+
 		count := oneSeries.Count(*frame)
 
 		for index := 0; index < count; index++ {
-			timestamp, _, found := oneSeries.Sample(frame, index)
+			timestamp, value, ok := oneSeries.Sample(frame, index)
 
-			if !found {
+			if !ok {
 				return nil, false
 			}
 
 			if timestamp > start && timestamp < end {
-				changeTimes = append(changeTimes, timestamp)
+				segments = append(segments, stepAt{offset: timestamp - start, value: value})
 			}
 		}
+
+		// Samples are already chronological, and the leading segment is at
+		// offset 0, so segments are naturally sorted by offset.
+		steps[seriesIndex] = dimensionStep{segments: segments}
 	}
 
-	sort.Slice(changeTimes, func(left, right int) bool {
-		return changeTimes[left] < changeTimes[right]
-	})
-
-	// Deduplicate change times so equal timestamps across dimensions collapse
-	// to one boundary with one held-value vector.
-	unique := changeTimes[:0]
-	previous := int64(-1)
-
-	for _, changeTime := range changeTimes {
-		if changeTime != previous {
-			unique = append(unique, changeTime)
-			previous = changeTime
-		}
-	}
-
-	points := make([]stepPoint, len(unique))
-
-	for index, changeTime := range unique {
-		values := make([]float64, dimensions)
-
-		for seriesIndex, oneSeries := range series {
-			value, found := valueAtOrBefore(oneSeries, frame, changeTime)
-
-			if !found {
-				return nil, false
-			}
-
-			values[seriesIndex] = value
-		}
-
-		points[index] = stepPoint{at: changeTime, values: values}
-	}
-
-	return points, true
+	return steps, true
 }
 
 /*
-stepPoint is one wall-clock instant at which the joint trajectory may change:
-the time and the held value vector of every dimension immediately at that
-instant. Consecutive stepPoints bound one sub-interval over which every
-dimension is constant.
+dimensionStep is one dimension's piecewise-constant trajectory inside a window:
+an ordered list of (offset, value) thresholds. The value holds from its own
+offset until the next threshold's offset — or the window's end for the last.
 */
-type stepPoint struct {
-	at     int64
-	values []float64
+type dimensionStep struct {
+	segments []stepAt
+}
+
+/*
+stepAt is one threshold of a dimension's step function: the relative offset at
+which the dimension changes and the value it holds from that offset onward.
+*/
+type stepAt struct {
+	offset int64
+	value  float64
 }
 
 /*
 timeWeightedDistance computes the exact time-weighted RMS distance between two
-joint piecewise-constant windows that share the same change-point grid (both
-were built over the same [start, end] by stepWindow, so their grids coincide).
-Each grid point's held-vector difference contributes its squared magnitude
-weighted by the duration until the next point, summed across dimensions and
-divided by (elapsed time × dimensions) — the square root is the RMS. A longer
-duration of identical mismatch no longer inflates the distance beyond what the
-RMS definition dictates, because elapsed time normalizes it.
+windows whose change grids are independent. It merges the two windows' relative
+change offsets into one shared grid, holds each window's value per dimension
+across every resulting interval, and integrates the squared difference weighted
+by interval width, divided by (window duration × dimensions) under the square
+root. Both windows span the same duration — passed in explicitly — so their
+relative offsets coincide in a shared coordinate frame even when their change
+patterns differ, and the distance is exact for arbitrary asynchronous
+observations.
 */
-func timeWeightedDistance(query []stepPoint, candidate []stepPoint) float64 {
-	if len(query) != len(candidate) || len(query) < 2 {
+func timeWeightedDistance(query []dimensionStep, candidate []dimensionStep, duration int64) float64 {
+	if len(query) != len(candidate) || len(query) == 0 {
 		return math.Inf(1)
 	}
 
-	dimensions := len(query[0].values)
-	sumSquares := 0.0
-	totalWidth := int64(0)
+	if duration <= 0 {
+		return math.Inf(1)
+	}
 
-	for index := 0; index+1 < len(query); index++ {
-		width := query[index+1].at - query[index].at
+	dimensions := len(query)
+	offsets := mergedOffsets(query, candidate, duration)
+	sumSquares := 0.0
+
+	for index := 0; index+1 < len(offsets); index++ {
+		width := offsets[index+1] - offsets[index]
 
 		if width <= 0 {
 			continue
 		}
 
-		totalWidth += width
-
 		for dimension := 0; dimension < dimensions; dimension++ {
-			difference := query[index].values[dimension] - candidate[index].values[dimension]
+			queryValue := heldValue(query[dimension].segments, offsets[index])
+			candidateValue := heldValue(candidate[dimension].segments, offsets[index])
+
+			difference := queryValue - candidateValue
 
 			sumSquares += difference * difference * float64(width)
 		}
 	}
 
-	if totalWidth <= 0 || dimensions == 0 {
-		return math.Inf(1)
+	return math.Sqrt(sumSquares / (float64(duration) * float64(dimensions)))
+}
+
+/*
+mergedOffsets returns the sorted, deduplicated union of both windows' relative
+change offsets plus the shared start (0) and end offsets, so every sub-interval
+over which both step functions are constant is enumerated exactly once.
+*/
+func mergedOffsets(query []dimensionStep, candidate []dimensionStep, end int64) []int64 {
+	seen := map[int64]bool{0: true, end: true}
+
+	for _, window := range [][]dimensionStep{query, candidate} {
+		for _, dimension := range window {
+			for _, segment := range dimension.segments {
+				seen[segment.offset] = true
+			}
+		}
 	}
 
-	return math.Sqrt(sumSquares / (float64(totalWidth) * float64(dimensions)))
+	offsets := make([]int64, 0, len(seen))
+
+	for offset := range seen {
+		offsets = append(offsets, offset)
+	}
+
+	sort.Slice(offsets, func(left, right int) bool {
+		return offsets[left] < offsets[right]
+	})
+
+	return offsets
+}
+
+/*
+heldValue returns the value a dimension holds at a given relative offset: the
+value of the last threshold whose offset is at or before the queried offset.
+*/
+func heldValue(segments []stepAt, offset int64) float64 {
+	value := 0.0
+
+	for _, segment := range segments {
+		if segment.offset > offset {
+			break
+		}
+
+		value = segment.value
+	}
+
+	return value
 }
 
 /*
