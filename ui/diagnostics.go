@@ -130,13 +130,13 @@ var queueTopologies = []queueTopology{
 	{
 		name: "ingress.tickers", kind: "ingress",
 		writers: []string{"crypto"},
-		readers: []string{"correlation", "leadlag", "liquidity", "pumpdump", "sentiment", "exhaustion", "resonance", "desk"},
+		readers: []string{"correlation", "leadlag", "liquidity", "pumpdump", "sentiment", "resonance", "desk"},
 		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[kraken.TickerData](bus) },
 	},
 	{
 		name: "ingress.trades", kind: "ingress",
 		writers: []string{"crypto"},
-		readers: []string{"cvd", "derivatives", "exhaustion", "hawkes", "pumpdump", "toxicity"},
+		readers: []string{"cvd", "derivatives", "hawkes", "pumpdump", "toxicity"},
 		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[kraken.TradeData](bus) },
 	},
 	{
@@ -147,7 +147,7 @@ var queueTopologies = []queueTopology{
 	},
 	{
 		name: "measurements", kind: "rail",
-		writers: []string{"correlation", "cvd", "depthflow", "derivatives", "exhaustion", "hawkes", "leadlag", "liquidity", "pumpdump", "sentiment", "toxicity"},
+		writers: []string{"correlation", "cvd", "depthflow", "derivatives", "hawkes", "leadlag", "liquidity", "pumpdump", "sentiment", "toxicity"},
 		readers: []string{"category", "manifold", "graph"},
 		snapshot: func(bus *runtime.Workspace) runtime.Snapshot { return runtime.TypeSnapshot[*data.Measurement[float64]](bus) },
 	},

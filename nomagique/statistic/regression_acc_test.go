@@ -15,10 +15,10 @@ func BenchmarkRegressionAccumulatorFit(b *testing.B) {
 		accumulator.Add([]float64{1, float64(i), float64(i) * 2, float64(i) * 3}, float64(i)*1.5)
 	}
 
-	b.ResetTimer()
+	
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = accumulator.Fit()
 	}
 }

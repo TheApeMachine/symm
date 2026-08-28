@@ -2,8 +2,6 @@ package statistic
 
 import (
 	"math"
-
-	"gonum.org/v1/gonum/mat"
 )
 
 /*
@@ -34,6 +32,14 @@ type RegressionAccumulator struct {
 	fitCoefficients []float64
 	fitInverse      []float64
 
+	// luScratch, pvtScratch and colScratch are the in-place LU solver's
+	// working space (the decomposed p×p matrix, the pivot permutation, and
+	// one p-length column buffer for inversion), reused across every solveLU
+	// and invertLU call on this accumulator so neither ever allocates.
+	luScratch  []float64
+	pvtScratch []int
+	colScratch []float64
+
 	// rlsP, rlsW, rlsScratch and rlsReady hold the recursive least-squares
 	// prequential state: the running inverse (XᵀX)⁻¹ in row-major p×p form, the
 	// running coefficient vector, a reusable p-vector scratch, and the
@@ -61,6 +67,9 @@ func NewRegressionAccumulator(parameters int) *RegressionAccumulator {
 		xty:             make([]float64, parameters),
 		fitCoefficients: make([]float64, parameters),
 		fitInverse:      make([]float64, parameters*parameters),
+		luScratch:       make([]float64, parameters*parameters),
+		pvtScratch:      make([]int, parameters),
+		colScratch:      make([]float64, parameters),
 		rlsP:            make([]float64, parameters*parameters),
 		rlsW:            make([]float64, parameters),
 		rlsScratch:      make([]float64, parameters),
@@ -87,6 +96,29 @@ func (accumulator *RegressionAccumulator) Rows() int {
 	}
 
 	return accumulator.rows
+}
+
+/*
+Reset clears accumulated moments and RLS state so the accumulator's buffers
+can be reused for a new candidate/lag without a fresh allocation.
+*/
+func (accumulator *RegressionAccumulator) Reset() {
+	if accumulator == nil {
+		return
+	}
+
+	clear(accumulator.xtx)
+	clear(accumulator.xty)
+	accumulator.yty = 0
+	accumulator.rows = 0
+
+	clear(accumulator.fitCoefficients)
+	clear(accumulator.fitInverse)
+
+	clear(accumulator.rlsP)
+	clear(accumulator.rlsW)
+	clear(accumulator.rlsScratch)
+	accumulator.rlsReady = false
 }
 
 /*
@@ -178,7 +210,7 @@ func (accumulator *RegressionAccumulator) PrequentialAdd(predictors []float64, t
 		denominator += predictors[row] * sum
 	}
 
-	if denominator == 0 {
+	if denominator == 0 || math.IsNaN(denominator) {
 		accumulator.rlsReady = false
 
 		return
@@ -208,19 +240,19 @@ accumulated normal equations at the first non-singular design. It returns false
 when XᵀX is singular, matching Fit's rank-deficiency signal.
 */
 func (accumulator *RegressionAccumulator) initializeRLS() bool {
-	crossProduct := mat.NewDense(accumulator.parameters, accumulator.parameters, accumulator.xtx)
-	inverse := mat.NewDense(accumulator.parameters, accumulator.parameters, accumulator.rlsP)
-
-	if err := inverse.Inverse(crossProduct); err != nil {
+	if !invertLU(
+		accumulator.xtx, accumulator.rlsP, accumulator.parameters,
+		accumulator.luScratch, accumulator.pvtScratch, accumulator.colScratch,
+	) {
 		accumulator.rlsReady = false
 
 		return false
 	}
 
-	rightHand := mat.NewVecDense(accumulator.parameters, accumulator.xty)
-	coefficients := mat.NewVecDense(accumulator.parameters, accumulator.rlsW)
-
-	if err := coefficients.SolveVec(crossProduct, rightHand); err != nil {
+	if !solveLU(
+		accumulator.xtx, accumulator.xty, accumulator.rlsW, accumulator.parameters,
+		accumulator.luScratch, accumulator.pvtScratch,
+	) {
 		accumulator.rlsReady = false
 
 		return false
@@ -265,17 +297,16 @@ func (accumulator *RegressionAccumulator) fit(withVariance bool) RegressionFit {
 		return fit
 	}
 
-	crossProduct := mat.NewDense(accumulator.parameters, accumulator.parameters, accumulator.xtx)
-	rightHand := mat.NewVecDense(accumulator.parameters, accumulator.xty)
-	coefficients := mat.NewVecDense(accumulator.parameters, accumulator.fitCoefficients)
-
-	if err := coefficients.SolveVec(crossProduct, rightHand); err != nil {
+	if !solveLU(
+		accumulator.xtx, accumulator.xty, accumulator.fitCoefficients, accumulator.parameters,
+		accumulator.luScratch, accumulator.pvtScratch,
+	) {
 		// Singular cross-product: rank-deficient design.
 		return fit
 	}
 
-	// SolveVec wrote the solution into the reused fitCoefficients backing
-	// slice; copy it out directly without a fresh allocation or mat.Col scan.
+	// solveLU wrote the solution into the reused fitCoefficients backing
+	// slice; copy it out directly without a fresh allocation.
 	fit.Coefficients = append(fit.Coefficients[:0], accumulator.fitCoefficients...)
 
 	sse := accumulator.yty
@@ -292,9 +323,7 @@ func (accumulator *RegressionAccumulator) fit(withVariance bool) RegressionFit {
 	fit.ResidualVariance = sse / float64(accumulator.rows-accumulator.parameters)
 
 	if withVariance {
-		fit.CoefficientVariance = coefficientVarianceFromCrossProduct(
-			crossProduct, accumulator.fitInverse, fit.ResidualVariance, accumulator.parameters,
-		)
+		fit.CoefficientVariance = accumulator.coefficientVarianceFromCrossProduct(fit.ResidualVariance)
 	}
 
 	fit.Defined = true
@@ -348,22 +377,179 @@ func (fit RegressionFit) VarianceAt(column int) (float64, bool) {
 
 /*
 coefficientVarianceFromCrossProduct computes diag(sigma² (X'X)⁻¹) from the
-already-formed cross-product matrix. It returns nil when the inverse is not
-computable, which is an explicit undefined state for coefficient uncertainty.
-scratch is the caller's reusable p×p backing slice for the inverse.
+accumulator's cross-product matrix, using its reused fitInverse/luScratch/
+colScratch buffers. It returns nil when the inverse is not computable, which
+is an explicit undefined state for coefficient uncertainty.
 */
-func coefficientVarianceFromCrossProduct(crossProduct *mat.Dense, scratch []float64, residualVariance float64, parameters int) []float64 {
-	inverse := mat.NewDense(parameters, parameters, scratch)
-
-	if err := inverse.Inverse(crossProduct); err != nil {
+func (accumulator *RegressionAccumulator) coefficientVarianceFromCrossProduct(residualVariance float64) []float64 {
+	if !invertLU(
+		accumulator.xtx, accumulator.fitInverse, accumulator.parameters,
+		accumulator.luScratch, accumulator.pvtScratch, accumulator.colScratch,
+	) {
 		return nil
 	}
 
-	variance := make([]float64, parameters)
+	variance := make([]float64, accumulator.parameters)
 
-	for index := 0; index < parameters; index++ {
-		variance[index] = residualVariance * inverse.At(index, index)
+	for index := 0; index < accumulator.parameters; index++ {
+		variance[index] = residualVariance * accumulator.fitInverse[index*accumulator.parameters+index]
 	}
 
 	return variance
+}
+
+/*
+solveLU solves A x = b in-place using LU decomposition with partial pivoting.
+a is p×p row-major and left untouched; lu and pvt are the caller's reusable
+p×p and p-length scratch buffers. It returns false when A is singular to
+working precision, matching the rank-deficiency signal callers already expect
+from a normal-equations solve.
+*/
+func solveLU(a, b, x []float64, p int, lu []float64, pvt []int) bool {
+	copy(lu, a)
+	copy(x, b)
+
+	for i := 0; i < p; i++ {
+		pvt[i] = i
+	}
+
+	for k := 0; k < p; k++ {
+		maxVal := math.Abs(lu[k*p+k])
+		maxRow := k
+
+		for i := k + 1; i < p; i++ {
+			val := math.Abs(lu[i*p+k])
+			if val > maxVal {
+				maxVal = val
+				maxRow = i
+			}
+		}
+
+		if maxVal <= 1e-15 || math.IsNaN(maxVal) {
+			return false
+		}
+
+		if maxRow != k {
+			pvt[k], pvt[maxRow] = pvt[maxRow], pvt[k]
+
+			for j := 0; j < p; j++ {
+				lu[k*p+j], lu[maxRow*p+j] = lu[maxRow*p+j], lu[k*p+j]
+			}
+
+			x[k], x[maxRow] = x[maxRow], x[k]
+		}
+
+		pivotVal := lu[k*p+k]
+
+		for i := k + 1; i < p; i++ {
+			factor := lu[i*p+k] / pivotVal
+			lu[i*p+k] = factor
+
+			for j := k + 1; j < p; j++ {
+				lu[i*p+j] -= factor * lu[k*p+j]
+			}
+
+			x[i] -= factor * x[k]
+		}
+	}
+
+	for i := p - 1; i >= 0; i-- {
+		sum := x[i]
+
+		for j := i + 1; j < p; j++ {
+			sum -= lu[i*p+j] * x[j]
+		}
+
+		x[i] = sum / lu[i*p+i]
+	}
+
+	return true
+}
+
+/*
+invertLU computes inv = A⁻¹ in-place using LU decomposition with partial
+pivoting. a is p×p row-major and left untouched; lu, pvt and col are the
+caller's reusable p×p, p-length, and p-length scratch buffers.
+*/
+func invertLU(a, inv []float64, p int, lu []float64, pvt []int, col []float64) bool {
+	copy(lu, a)
+
+	for i := 0; i < p; i++ {
+		pvt[i] = i
+	}
+
+	for k := 0; k < p; k++ {
+		maxVal := math.Abs(lu[k*p+k])
+		maxRow := k
+
+		for i := k + 1; i < p; i++ {
+			val := math.Abs(lu[i*p+k])
+			if val > maxVal {
+				maxVal = val
+				maxRow = i
+			}
+		}
+
+		if maxVal <= 1e-15 || math.IsNaN(maxVal) {
+			return false
+		}
+
+		if maxRow != k {
+			pvt[k], pvt[maxRow] = pvt[maxRow], pvt[k]
+
+			for j := 0; j < p; j++ {
+				lu[k*p+j], lu[maxRow*p+j] = lu[maxRow*p+j], lu[k*p+j]
+			}
+		}
+
+		pivotVal := lu[k*p+k]
+
+		for i := k + 1; i < p; i++ {
+			factor := lu[i*p+k] / pivotVal
+			lu[i*p+k] = factor
+
+			for j := k + 1; j < p; j++ {
+				lu[i*p+j] -= factor * lu[k*p+j]
+			}
+		}
+	}
+
+	for j := 0; j < p; j++ {
+		for i := 0; i < p; i++ {
+			col[i] = 0.0
+		}
+
+		for i := 0; i < p; i++ {
+			if pvt[i] == j {
+				col[i] = 1.0
+				break
+			}
+		}
+
+		for i := 0; i < p; i++ {
+			sum := col[i]
+
+			for k := 0; k < i; k++ {
+				sum -= lu[i*p+k] * col[k]
+			}
+
+			col[i] = sum
+		}
+
+		for i := p - 1; i >= 0; i-- {
+			sum := col[i]
+
+			for k := i + 1; k < p; k++ {
+				sum -= lu[i*p+k] * col[k]
+			}
+
+			col[i] = sum / lu[i*p+i]
+		}
+
+		for i := 0; i < p; i++ {
+			inv[i*p+j] = col[i]
+		}
+	}
+
+	return true
 }

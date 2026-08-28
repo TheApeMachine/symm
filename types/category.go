@@ -263,7 +263,6 @@ var CategorySchemas = []CategorySchema{
 	{Source: SourceLeadLag, Metric: "contemporaneous_correlation", Category: SynchronizedDrift},
 	{Source: SourceLeadLag, Metric: "lag_zscore", Category: DecoupledMove},
 	{Source: SourceLeadLag, Metric: "best_lag_correlation_zscore", Category: AnchorStall},
-	{Source: SourceLeadLag, Metric: "lag_fraction", Category: DecoupledMove},
 
 	// CVD / executed flow: aggressive execution economics and midpoint response.
 	{Source: SourceCVD, Metric: "signed_net_fraction_zscore", Category: AggressiveDrive},
@@ -282,7 +281,6 @@ var CategorySchemas = []CategorySchema{
 
 	// Depthflow: displayed-book mutation and shape.
 	{Source: SourceDepthFlow, Metric: "book_imbalance_zscore", Category: LoadedImbalance},
-	{Source: SourceDepthFlow, Metric: "touch_imbalance", Category: SpoofTrap},
 	{Source: SourceDepthFlow, Metric: "resolution_gap_zscore", Category: BookThinning},
 	{Source: SourceDepthFlow, Metric: "turnover_zscore", Category: DenseNeutrality},
 	{Source: SourceDepthFlow, Metric: "book_imbalance_divergence", Category: LoadedImbalance},
@@ -300,17 +298,13 @@ var CategorySchemas = []CategorySchema{
 	{Source: SourcePumpDump, Metric: "notional_rate_zscore", Category: VerticalIgnition},
 
 	// Liquidity: displayed executable capacity and spread.
-	{Source: SourceLiquidity, Metric: "touch_notional_imbalance", Category: ExtremeScarcity},
 	{Source: SourceLiquidity, Metric: "relative_spread", Category: ExtremeScarcity},
-	{Source: SourceLiquidity, Metric: "touch_notional_imbalance", Category: RobustLiquidity},
 	{Source: SourceLiquidity, Metric: "two_sided_touch_notional", Category: RobustLiquidity},
 
-	// Exhaustion: joint microstructure support state.
-	{Source: SourceExhaustion, Metric: "book_imbalance_zscore", Category: MechanicalCollapse},
-	{Source: SourceExhaustion, Metric: "spread_zscore", Category: ThermalExhaustion},
-	{Source: SourceExhaustion, Metric: "relative_spread", Category: FragileExpansion},
-	{Source: SourceExhaustion, Metric: "depth_ask_divergence_velocity", Category: ActiveReversal},
-	{Source: SourceExhaustion, Metric: "total_depth_zscore", Category: MechanicalCollapse},
+	// Exhaustion metrics are REDUNDANT_WITH canonical Liquidity/Depthflow/CVD
+	// sources (see signal/METRIC_MAP.md §8). Their Category consumers migrate
+	// to canonical sources before the exhaust signal is removed; no new
+	// SourceExhaustion evidence leg may be added here.
 
 	// Sentiment: cross-sectional return state.
 	{Source: SourceSentiment, Metric: "directional_consensus", Category: RiskOnSurge},
@@ -318,12 +312,10 @@ var CategorySchemas = []CategorySchema{
 	{Source: SourceSentiment, Metric: "median_absolute_return_zscore", Category: DivergentMove},
 	{Source: SourceSentiment, Metric: "return_dispersion_zscore", Category: DivergentMove},
 	{Source: SourceSentiment, Metric: "breadth_zscore", Category: SystemicSlump},
-	{Source: SourceSentiment, Metric: "advance_fraction", Category: SystemicSlump},
 
 	// Derivatives: leverage, liquidation, and basis.
 	{Source: SourceDerivatives, Metric: "open_interest_growth_zscore", Category: LeveragedIgnition},
 	{Source: SourceDerivatives, Metric: "open_interest_growth_rate", Category: LeveragedIgnition},
-	{Source: SourceDerivatives, Metric: "liquidation_signed_fraction", Category: ShortSqueeze},
 	{Source: SourceDerivatives, Metric: "liquidation_notional_rate", Category: AdverseLeverageBuildup},
 	{Source: SourceDerivatives, Metric: "net_liquidation_notional", Category: LongDeleveraging},
 	{Source: SourceDerivatives, Metric: "liquidation_share", Category: LongDeleveraging},
@@ -331,8 +323,6 @@ var CategorySchemas = []CategorySchema{
 	{Source: SourceDerivatives, Metric: "basis_rate", Category: DerivativesDecoupling},
 
 	// Toxicity: liquidity disposition.
-	{Source: SourceToxicity, Metric: "withdrawal_fraction_zscore:bid", Category: ToxicBluff},
-	{Source: SourceToxicity, Metric: "withdrawal_fraction_zscore:ask", Category: ToxicBluff},
 	{Source: SourceToxicity, Metric: "fill_fraction_zscore:bid", Category: LiquidityVacuum},
 	{Source: SourceToxicity, Metric: "fill_fraction_zscore:ask", Category: LiquidityVacuum},
 

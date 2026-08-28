@@ -99,7 +99,7 @@ func BenchmarkCompareCoordinate(b *testing.B) {
 
 	b.ReportAllocs()
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for iteration := 0; b.Loop(); iteration++ {
 		left := coordinates[iteration%len(coordinates)]
 		right := coordinates[(iteration+1)%len(coordinates)]
 		benchmarkCompareSink += CompareCoordinate(left, right)
@@ -122,9 +122,9 @@ func BenchmarkSortCoordinates(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for b.Loop() {
 		slices.SortFunc(coordinates, CompareCoordinate)
 		benchmarkCompareSink += len(coordinates)
 	}

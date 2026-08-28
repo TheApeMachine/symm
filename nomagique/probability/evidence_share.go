@@ -81,9 +81,15 @@ written back to SymbolWinner and SymbolConfidence.
 */
 func EvidenceShare() types.Primitive {
 	return func(input types.Frame) types.Frame {
-		strengths, _ := collectSamples(input)
+		var strengths [types.MaxSamples]float64
 
-		if len(strengths) == 0 {
+		count, ok := collectSamples(&input, &strengths)
+
+		if !ok {
+			return input
+		}
+
+		if count == 0 {
 			input.Err = fmt.Errorf("probability: evidence share requires samples")
 
 			return input
@@ -94,10 +100,10 @@ func EvidenceShare() types.Primitive {
 		if index, hasWinner := input.Get(SymbolWinner); hasWinner {
 			selected = int(index)
 		} else {
-			selected = argmaxIndex(strengths)
+			selected = argmaxIndex(strengths[:count])
 		}
 
-		if selected < 0 || selected >= len(strengths) {
+		if selected < 0 || selected >= count {
 			input.Err = fmt.Errorf("probability: evidence share winner index out of range")
 
 			return input
@@ -106,8 +112,8 @@ func EvidenceShare() types.Primitive {
 		selectedStrength := strengths[selected]
 
 		if selectedStrength <= 0 {
-			for _, strength := range strengths {
-				if strength > 0 {
+			for index := 0; index < count; index++ {
+				if strengths[index] > 0 {
 					input.Err = fmt.Errorf(
 						"probability: evidence share requires positive selected evidence",
 					)
@@ -117,23 +123,23 @@ func EvidenceShare() types.Primitive {
 			}
 
 			input.Put(SymbolWinner, float64(selected))
-			input.Put(SymbolConfidence, 1.0/float64(len(strengths)))
+			input.Put(SymbolConfidence, 1.0/float64(count))
 
 			return input
 		}
 
-		exponent := evidenceExponent(strengths)
+		exponent := evidenceExponent(strengths[:count])
 		evidenceSum := 0.0
 
-		for _, strength := range strengths {
-			if strength > 0 {
-				evidenceSum += math.Ldexp(strength, -exponent)
+		for index := 0; index < count; index++ {
+			if strengths[index] > 0 {
+				evidenceSum += math.Ldexp(strengths[index], -exponent)
 			}
 		}
 
 		pseudocount := math.Ldexp(1, -exponent)
 		numerator := math.Ldexp(selectedStrength, -exponent) + pseudocount
-		denominator := evidenceSum + float64(len(strengths))*pseudocount
+		denominator := evidenceSum + float64(count)*pseudocount
 
 		input.Put(SymbolWinner, float64(selected))
 		input.Put(SymbolConfidence, numerator/denominator)
@@ -154,9 +160,15 @@ composes with a bare strength vector or a confidence vector alike.
 */
 func ShannonAmbiguity() types.Primitive {
 	return func(input types.Frame) types.Frame {
-		values, found := collectSamples(input)
+		var values [types.MaxSamples]float64
 
-		if len(values) == 0 {
+		count, ok := collectSamples(&input, &values)
+
+		if !ok {
+			return input
+		}
+
+		if count == 0 {
 			input.Err = fmt.Errorf("probability: shannon ambiguity requires samples")
 
 			return input
@@ -164,14 +176,14 @@ func ShannonAmbiguity() types.Primitive {
 
 		total := 0.0
 
-		for _, value := range values {
-			if value < 0 {
+		for index := 0; index < count; index++ {
+			if values[index] < 0 {
 				input.Err = fmt.Errorf("probability: shannon ambiguity requires non-negative values")
 
 				return input
 			}
 
-			total += value
+			total += values[index]
 		}
 
 		if total <= 0 {
@@ -182,16 +194,16 @@ func ShannonAmbiguity() types.Primitive {
 
 		entropy := 0.0
 
-		for _, value := range values {
-			if value <= 0 {
+		for index := 0; index < count; index++ {
+			if values[index] <= 0 {
 				continue
 			}
 
-			probability := value / total
+			probability := values[index] / total
 			entropy -= probability * math.Log2(probability)
 		}
 
-		maximum := math.Log2(float64(len(values)))
+		maximum := math.Log2(float64(count))
 
 		if maximum <= 0 {
 			input.Put(SymbolAmbiguity, 0)
@@ -203,19 +215,24 @@ func ShannonAmbiguity() types.Primitive {
 
 		input.Put(SymbolAmbiguity, clampUnit(ambiguity))
 
-		_ = found
-
 		return input
 	}
 }
 
 /*
-collectSamples collects every populated generic sample slot into a slice in
-ascending slot order, rejecting non-finite values. It is the shared reduction
-scaffold the sample-reading primitives build on.
+collectSamples collects every populated generic sample slot into the
+caller's fixed-size stack array in ascending slot order, rejecting
+non-finite values. It is the shared reduction scaffold the sample-reading
+primitives build on. values must have capacity types.MaxSamples; the
+returned count is the number of populated slots written into it (values[:count]
+is the valid range). Returning false means input.Err was set and the caller
+must return input immediately without further work — every previous caller of
+the by-value collectSamples silently lost this error because Frame was passed
+by value, so the failure never reached the pipeline; taking *types.Frame here
+fixes that alongside removing the per-call heap slice.
 */
-func collectSamples(input types.Frame) ([]float64, bool) {
-	var values []float64
+func collectSamples(input *types.Frame, values *[types.MaxSamples]float64) (int, bool) {
+	count := 0
 
 	for index := range types.MaxSamples {
 		value, present := input.Get(types.MustSampleSymbol(index))
@@ -227,13 +244,14 @@ func collectSamples(input types.Frame) ([]float64, bool) {
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			input.Err = fmt.Errorf("probability: sample/%d must be finite", index)
 
-			return nil, false
+			return 0, false
 		}
 
-		values = append(values, value)
+		values[count] = value
+		count++
 	}
 
-	return values, true
+	return count, true
 }
 
 /*

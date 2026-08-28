@@ -9,7 +9,7 @@ import (
 
 func TestKeyedStreamsCompatibility(t *testing.T) {
 	Convey("KeyedStreams delegates to the canonical Number implementation", t, func() {
-		collection := NewKeyedStreams[string](numberAccumulator, func(key string) types.Frame {
+		collection := NewKeyedStreams(numberAccumulator, func(key string) types.Frame {
 			return types.Frame{}.Set(numberTotal, float64(len(key)))
 		})
 		output := collection.Step("AA", types.Frame{}.Set(numberDelta, 3))

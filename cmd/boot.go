@@ -488,6 +488,19 @@ func BootWithHub(
 		bus,
 	)
 
+	if err := desk.Error(); err != nil {
+		// NewDesk returns a live desk even when startup recovery failed —
+		// boot has no Runnable/errgroup path that ever re-checks this, so
+		// without a loud signal here the process comes up looking healthy
+		// while some fraction of genuinely open exchange positions sit
+		// untracked and unprotected. This is the only place that can catch it.
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"desk: booting with unrecovered account state — open positions may be untracked",
+			err,
+		))
+	}
+
 	if bus != nil {
 		bus.Share("desk", desk, "")
 	}

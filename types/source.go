@@ -6,7 +6,6 @@ const (
 	SourceCorrelation SourceType = "correlation"
 	SourceCVD         SourceType = "cvd"
 	SourceDepthFlow   SourceType = "depthflow"
-	SourceExhaustion  SourceType = "exhaustion"
 	SourceHawkes      SourceType = "hawkes"
 	SourceLeadLag     SourceType = "leadlag"
 	SourceLiquidity   SourceType = "liquidity"
@@ -39,7 +38,6 @@ var SignalSources = []SourceType{
 	SourceCorrelation,
 	SourceCVD,
 	SourceDepthFlow,
-	SourceExhaustion,
 	SourceHawkes,
 	SourceLeadLag,
 	SourceLiquidity,
@@ -53,7 +51,6 @@ var SignalSourceStrings = []string{
 	"correlation",
 	"cvd",
 	"depthflow",
-	"exhaustion",
 	"hawkes",
 	"leadlag",
 	"liquidity",
@@ -94,14 +91,12 @@ TradeReceivers names the signals that drain per-symbol trade queues.
 */
 var TradeReceivers = []SourceType{
 	SourceCVD,
-	SourceExhaustion,
 	SourceHawkes,
 	SourcePumpDump,
 }
 
 var TradeReceiverStrings = []string{
 	"cvd",
-	"exhaustion",
 	"hawkes",
 	"pumpdump",
 }
@@ -112,7 +107,6 @@ Level 3 manager applies an order update.
 */
 var BookReceivers = []SourceType{
 	SourceDepthFlow,
-	SourceExhaustion,
 }
 
 /*

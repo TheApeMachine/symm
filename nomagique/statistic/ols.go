@@ -2,8 +2,6 @@ package statistic
 
 import (
 	"math"
-
-	"gonum.org/v1/gonum/mat"
 )
 
 /*
@@ -34,13 +32,6 @@ type OLSFit struct {
 }
 
 /*
-machineEpsilon is the IEEE-754 double-precision unit roundoff used by the
-numerical rank threshold. It is a model constant of floating point arithmetic,
-not a tuning parameter.
-*/
-const machineEpsilon = 2.220446049250313e-16
-
-/*
 FitOLS fits y (length n) on the design matrix x (n×p, row-major). The caller
 owns the design: an intercept column of ones is included only when the model
 requires it. When rank < p the fit is undefined; no regularization is applied.
@@ -54,19 +45,6 @@ func FitOLS(x []float64, y []float64, p int) OLSFit {
 
 	if n <= p {
 		return OLSFit{
-			Observations:    n,
-			Parameters:      p,
-			ResidualVariance: math.NaN(),
-			Defined:         false,
-		}
-	}
-
-	xMatrix := mat.NewDense(n, p, x)
-	yVector := mat.NewVecDense(n, y)
-
-	var svd mat.SVD
-	if !svd.Factorize(xMatrix, mat.SVDThin) {
-		return OLSFit{
 			Observations:     n,
 			Parameters:       p,
 			ResidualVariance: math.NaN(),
@@ -74,97 +52,77 @@ func FitOLS(x []float64, y []float64, p int) OLSFit {
 		}
 	}
 
-	singularValues := svd.Values(nil)
-	rank := numericalRank(singularValues, n, p)
-
-	if rank < p {
-		return OLSFit{
-			Observations:     n,
-			Parameters:       p,
-			Rank:             rank,
-			ResidualVariance: math.NaN(),
-			Defined:          false,
-		}
-	}
-
-	beta := mat.NewVecDense(p, nil)
-	svd.SolveVecTo(beta, yVector, rank)
-
-	coefficients := make([]float64, p)
-	mat.Col(coefficients, 0, beta)
-
-	sse := 0.0
+	xtx := make([]float64, p*p)
+	xty := make([]float64, p)
+	yty := 0.0
 
 	for row := 0; row < n; row++ {
-		predicted := 0.0
+		rowOffset := row * p
+		yVal := y[row]
+		yty += yVal * yVal
 
 		for column := 0; column < p; column++ {
-			predicted += x[row*p+column] * coefficients[column]
-		}
+			xty[column] += x[rowOffset+column] * yVal
 
-		residual := y[row] - predicted
-		sse += residual * residual
+			for k := 0; k <= column; k++ {
+				xtx[column*p+k] += x[rowOffset+column] * x[rowOffset+k]
+			}
+		}
+	}
+
+	for column := 0; column < p; column++ {
+		for k := 0; k < column; k++ {
+			xtx[k*p+column] = xtx[column*p+k]
+		}
+	}
+
+	coefficients := make([]float64, p)
+	luScratch := make([]float64, p*p)
+	pvtScratch := make([]int, p)
+
+	if !solveLU(xtx, xty, coefficients, p, luScratch, pvtScratch) {
+		return OLSFit{
+			Observations:     n,
+			Parameters:       p,
+			ResidualVariance: math.NaN(),
+			Defined:          false,
+		}
+	}
+
+	sse := yty
+
+	for column := 0; column < p; column++ {
+		sse -= coefficients[column] * xty[column]
+	}
+
+	if sse < 0 {
+		sse = 0
 	}
 
 	residualVariance := sse / float64(n-p)
-	variance := coefficientVariance(xMatrix, p, residualVariance)
+
+	invScratch := make([]float64, p*p)
+	colScratch := make([]float64, p)
+
+	var variance []float64
+	if invertLU(xtx, invScratch, p, luScratch, pvtScratch, colScratch) {
+		variance = make([]float64, p)
+
+		for index := 0; index < p; index++ {
+			variance[index] = residualVariance * invScratch[index*p+index]
+		}
+	}
 
 	return OLSFit{
 		Coefficients:        coefficients,
 		CoefficientVariance: variance,
-		Rank:                rank,
+		Rank:                p,
 		Observations:        n,
 		Parameters:          p,
 		ResidualSSE:         sse,
 		ResidualVariance:    residualVariance,
 		Defined:             true,
 	}
-}
-
-/*
-numericalRank counts singular values above the standard LAPACK-style
-threshold max(m,n) * eps * s_max. This is floating point rank determination,
-not an evidence threshold.
-*/
-func numericalRank(singularValues []float64, rows int, columns int) int {
-	if len(singularValues) == 0 {
-		return 0
-	}
-
-	threshold := float64(max(rows, columns)) * machineEpsilon * singularValues[0]
-	rank := 0
-
-	for _, singularValue := range singularValues {
-		if singularValue > threshold {
-			rank++
-		}
-	}
-
-	return rank
-}
-
-/*
-coefficientVariance computes diag(sigma² (X'X)⁻¹). It returns nil when the
-cross-product matrix cannot be inverted, which is an explicit undefined state
-for coefficient uncertainty.
-*/
-func coefficientVariance(xMatrix *mat.Dense, p int, residualVariance float64) []float64 {
-	crossProduct := mat.NewDense(p, p, nil)
-	crossProduct.Product(xMatrix.T(), xMatrix)
-
-	inverse := mat.NewDense(p, p, nil)
-
-	if err := inverse.Inverse(crossProduct); err != nil {
-		return nil
-	}
-
-	variance := make([]float64, p)
-
-	for index := 0; index < p; index++ {
-		variance[index] = residualVariance * inverse.At(index, index)
-	}
-
-	return variance
 }
 
 /*

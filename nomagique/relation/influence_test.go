@@ -405,9 +405,9 @@ func BenchmarkInfluenceEstimate(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for b.Loop() {
 		result, err := estimator.Estimate(store, request)
 
 		if err != nil {

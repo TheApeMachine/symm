@@ -1,0 +1,43 @@
+left_source,right_source,relationship_type,normative_meaning
+cvd,liquidity,CONDITIONS_EFFECT,"Restored Liquidity spec defines aggressive-buy notional / displayed ask capacity and aggressive-sell notional / displayed bid capacity. Flow has different mechanical significance under shallow vs deep displayed capacity; this is an effect-conditioning relationship, not a confidence multiplier."
+cvd,toxicity,CONTEXTUALIZES,Touch fill/replenishment/withdrawal/retreat explains how displayed liquidity was disposed while aggressive flow executed.
+cvd,depthflow,CONTEXTUALIZES,"Compare actual executed flow with displayed-book mutation, turnover, and touch/full-book imbalance disagreement."
+cvd,hawkes,DECOMPOSES,Arrival intensity × mean trade notional separates event frequency from economic event size; many-small and few-large activity are distinct.
+cvd,derivatives,CONTEXTUALIZES,"OI, basis and liquidation state contextualize aggressive flow without assigning leverage causality."
+cvd,correlation,CONTEXTUALIZES,Local flow distinguishes a correlated price move with local participation from one with little local execution imbalance.
+cvd,sentiment,CONTEXTUALIZES,Local signed flow contextualizes member/cohort return distribution and breadth.
+depthflow,liquidity,CONTEXTUALIZES,"Compare touch imbalance with full-depth imbalance, touch-depth divergence with whole-book notional divergence, and touch geometry with deeper-book structure. Resolution disagreement is itself measurable; it is not spoof/loaded classification."
+depthflow,toxicity,CONTEXTUALIZES,"Aggregate removals/turnover plus touch-level trade attribution distinguish execution, withdrawal, retreat, replenishment and redistribution."
+depthflow,hawkes,CONTEXTUALIZES,Book mutation under ordinary arrivals differs from mutation during clustered arrival intensity.
+depthflow,morphology,CONTEXTUALIZES,Morphology describes arrangement; depthflow describes mutation. Shape change plus turnover/flow describes how structure is moving.
+depthflow,correlation,CONTEXTUALIZES,Relationship changes under unusual book turnover/imbalance differ from the same price dependence under ordinary microstructure.
+depthflow,leadlag,CONTEXTUALIZES,"Lag changes can be interpreted alongside turnover, resolution gap, withdrawal/replenishment; never convert precedence into causality."
+liquidity,hawkes,CONDITIONS_EFFECT,"Restored Liquidity spec explicitly relates buy arrival intensity to displayed ask capacity and sell arrival intensity to displayed bid capacity (lambda_buy/D_ask, lambda_sell/D_bid or analogous rate-normalized forms)."
+liquidity,leadlag,CONTEXTUALIZES,"Spread/depth state contextualizes lag seconds, lag gain and lag stability; liquidity may alter repricing speed."
+liquidity,correlation,CONTEXTUALIZES,"Price dependence/movement can be contextualized by touch depth, depth divergence, spread divergence, Liquidity SNR and book-shape novelty; Liquidity does not decide what the relationship implies."
+liquidity,toxicity,CONTEXTUALIZES,"Liquidity supplies the resulting displayed touch state; Toxicity supplies attributed fill, withdrawal, replenishment or retreat mechanism. Useful joint states include cancellation+falling depth, cancellation+replenishment, fills+falling depth, and retreat+stable aggregate depth. Neither assigns intent."
+liquidity,sentiment,CONTEXTUALIZES,"Price/cross-sectional movement can be contextualized by touch depth, depth divergence, spread divergence, Liquidity SNR and book-shape novelty. The same return under ordinary vs unusual liquidity is mechanically different."
+hawkes,toxicity,CONTEXTUALIZES,Arrival clustering combined with replenishment/withdrawal/retreat distinguishes event density from liquidity disposition.
+hawkes,leadlag,TEMPORALLY_RELATES,Compare event-process excitation changes with price-path lag changes; neither establishes the other.
+hawkes,correlation,CONTEXTUALIZES,Price-path coupling and event-process excitation are separate dependence structures.
+hawkes,derivatives,TEMPORALLY_RELATES,Liquidation events require distinct marks if modeled; compare liquidation clustering with OI/liquidation state.
+correlation,leadlag,TEMPORALLY_RELATES,Correlation measures dependence at a defined alignment; lead-lag measures how dependence changes with alignment.
+correlation,sentiment,CONTEXTUALIZES,"Pair/cohort dependence complements breadth, return dispersion and median movement."
+correlation,derivatives,CONTEXTUALIZES,"For explicit related markets, price dependence complements basis, return gap, OI and liquidation state."
+leadlag,sentiment,CONTEXTUALIZES,Cross-sectional state may motivate explicit pair analysis but must not silently pick the leader/reference.
+leadlag,derivatives,TEMPORALLY_RELATES,Spot/perpetual/index lag complements basis/OI/liquidation geometry; it is not price discovery by itself.
+sentiment,derivatives,CONTEXTUALIZES,"Cohort breadth/dispersion can be compared with OI, basis and liquidation distributions in explicit derivative cohorts."
+pumpdump,cvd,CONTEXTUALIZES,Volume-clock economic throughput complements signed executed flow; activity and direction are separate.
+pumpdump,liquidity,CONTEXTUALIZES,"Executed volume/notional rate is interpreted alongside depth ratio, depth-divergence velocity, spread divergence and shape-change distance. Liquidity supplies state/geometry; the volume-clock signal supplies execution activity."
+pumpdump,depthflow,CONTEXTUALIZES,Volume-clock activity with turnover/book mutation distinguishes tape throughput from displayed-book change.
+pumpdump,toxicity,CONTEXTUALIZES,Activity and return combined with replenishment/withdrawal/retreat describe how the touch responds.
+pumpdump,hawkes,DECOMPOSES,Completed economic throughput and event-arrival intensity separate event count dynamics from trade size.
+pumpdump,sentiment,CONTEXTUALIZES,Local activity/return is interpreted against explicit cohort breadth and dispersion.
+pumpdump,correlation,CONTEXTUALIZES,Local activity state contextualizes changing pair/cohort price dependence.
+morphology,liquidity,CONTEXTUALIZES,Book arrangement and absolute executable capacity answer different questions; shape is not capacity.
+morphology,depthflow,CONTEXTUALIZES,Book arrangement and its mutation/turnover jointly describe structural evolution.
+morphology,toxicity,CONTEXTUALIZES,"Touch disposition can explain whether an observed shape change came with fills, replenishment, withdrawal or retreat."
+morphology,historical,HISTORICAL_CONTEXT,Compare dimensionless morphology state/change to its own causal historical context in an Advisor; raw shape is not a regime label.
+exhaustion,liquidity,REDUNDANT_WITH,Legacy compatibility source duplicates canonical liquidity facts; migrate consumers to liquidity.
+exhaustion,depthflow,REDUNDANT_WITH,Legacy compatibility source duplicates canonical depthflow facts; migrate consumers to depthflow.
+exhaustion,cvd,REDUNDANT_WITH,Legacy compatibility source duplicates canonical executed-flow facts; do not grow new exhaust dependencies.

@@ -207,20 +207,6 @@ func value(frame types.Frame, symbol types.Symbol, fallback float64) float64 {
 	return fallback
 }
 
-func number(frame types.Frame, symbol types.Symbol) float64 {
-	value, _ := frame.Get(symbol)
-
-	return value
-}
-
-func before(sec float64, nsec float64, otherSec float64, otherNsec float64) bool {
-	if sec < otherSec {
-		return true
-	}
-
-	return sec == otherSec && nsec < otherNsec
-}
-
 func elapsed(sec float64, nsec float64, previousSec float64, previousNsec float64) float64 {
 	return sec - previousSec + (nsec-previousNsec)*1e-9
 }

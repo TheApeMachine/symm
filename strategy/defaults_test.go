@@ -62,7 +62,7 @@ func TestDefaultCausalSchema(t *testing.T) {
 			// The outcome's only direct structural parents are the Layer-3
 			// flow/toxicity/leadlag signals; the upstream macro variables
 			// (hawkes, depthflow, liquidity, derivatives, correlation,
-			// sentiment, pumpdump, exhaustion) are NOT direct parents.
+			// sentiment, pumpdump) are NOT direct parents.
 			for _, forbidden := range []string{
 				"hawkes/conditional_intensity",
 				"hawkes/branching_spectral_radius",
@@ -71,8 +71,10 @@ func TestDefaultCausalSchema(t *testing.T) {
 				"depthflow/touch_imbalance",
 				"depthflow/book_turnover_rate",
 				"depthflow/imbalance_resolution_gap",
+				"depthflow/book_imbalance_zscore",
 				"liquidity/touch_notional_imbalance",
 				"liquidity/relative_spread",
+				"liquidity/spread_zscore",
 				"derivatives/basis_zscore",
 				"derivatives/open_interest_growth_zscore",
 				"derivatives/liquidation_notional_rate",
@@ -80,8 +82,6 @@ func TestDefaultCausalSchema(t *testing.T) {
 				"sentiment/directional_consensus",
 				"sentiment/breadth_zscore",
 				"pumpdump/relative_spread",
-				"exhaustion/book_imbalance_zscore",
-				"exhaustion/spread_zscore",
 				"toxicity/withdrawal_fraction_zscore",
 			} {
 				So(priceParents[forbidden], ShouldBeFalse)

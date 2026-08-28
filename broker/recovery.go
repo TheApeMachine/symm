@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"sort"
 	"strings"
@@ -94,6 +95,16 @@ func (recovery *Recovery) Recover() error {
 
 	quote := recovery.api.Normalizer().Name(viper.GetString("market.quote_currency"))
 
+	// One asset's recovery failure must not cost every other asset its
+	// tracking and protection: balances iterates in random map order, so
+	// returning on the first error here silently orphaned whichever assets
+	// hadn't been visited yet — genuinely open, unprotected, invisible in the
+	// UI, with no boot-time signal beyond a log line nothing read. Every
+	// asset is now attempted regardless of an earlier failure, and every
+	// failure is collected and reported once recovery finishes attempting
+	// the whole balance sheet.
+	var recoveryErrors []error
+
 	for asset, amount := range balances {
 		asset = recovery.api.Normalizer().Name(asset)
 
@@ -104,8 +115,16 @@ func (recovery *Recovery) Recover() error {
 		if err := recovery.recoverAsset(
 			asset, quote, amount, history.Trades, working.Open,
 		); err != nil {
-			return err
+			recoveryErrors = append(recoveryErrors, errnie.Error(errnie.Err(
+				errnie.Internal,
+				"recovery: failed to recover "+asset+"/"+quote,
+				err,
+			)))
 		}
+	}
+
+	if len(recoveryErrors) > 0 {
+		return errors.Join(recoveryErrors...)
 	}
 
 	for orderID, order := range working.Open {

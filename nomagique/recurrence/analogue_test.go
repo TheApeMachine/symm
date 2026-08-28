@@ -363,9 +363,9 @@ func BenchmarkAnalogue(benchmark *testing.B) {
 	input := synchronousObservation(series, []float64{1, -1, 1}, 100, temporal.MaxPathSamples)
 
 	benchmark.ReportAllocs()
-	benchmark.ResetTimer()
+	
 
-	for index := 0; index < benchmark.N; index++ {
+	for benchmark.Loop() {
 		_ = stream.Step(input)
 	}
 }

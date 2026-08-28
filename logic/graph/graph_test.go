@@ -309,7 +309,7 @@ func TestPlanVersion(t *testing.T) {
 
 func TestSolverStep(t *testing.T) {
 	Convey("Given a solver wired on a workspace", t, func() {
-		bus := runtime.NewWorkspace(nil)
+		bus := runtime.NewWorkspace(t.Context())
 		defer bus.Close()
 
 		solver := NewSolver(context.Background(), bus, 1, 2048, testPlans(), 1)
@@ -334,7 +334,7 @@ func TestSolverStep(t *testing.T) {
 
 func TestSolverSharedObjects(t *testing.T) {
 	Convey("Given a solver on a workspace", t, func() {
-		bus := runtime.NewWorkspace(nil)
+		bus := runtime.NewWorkspace(t.Context())
 		defer bus.Close()
 
 		solver := NewSolver(context.Background(), bus, 1, 2048, testPlans(), 1)

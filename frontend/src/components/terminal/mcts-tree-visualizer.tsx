@@ -11,11 +11,22 @@ import type { MCTSNodeT } from "#/providers/telemetry/telemetry/mctsnode";
 import { MCTSNode } from "#/providers/telemetry/telemetry/mctsnode";
 import { Position } from "#/providers/telemetry/telemetry/position";
 
-const decObj = new Decision();
-const positionObj = new Position();
-const holdingObj = new Holding();
-const traceObj = new DecisionTrace();
-const treeObj = new MCTSNode();
+/*
+Each read path (positionStore selector, strategyStore selector, the memoized
+tree builds that follow) gets its own accessor instances. These flatbuffer
+objects are mutable cursors (__init reassigns bb/bb_pos in place), and
+useSyncExternalStoreWithSelector can interleave multiple selector invocations
+per commit — sharing one cursor across concurrent reads produced inconsistent
+values that looked like the store was "always changing," which is what drove
+this into an infinite re-render loop.
+*/
+const newAccessors = () => ({
+	decObj: new Decision(),
+	positionObj: new Position(),
+	holdingObj: new Holding(),
+	traceObj: new DecisionTrace(),
+	treeObj: new MCTSNode(),
+});
 
 /*
 mctsNodeToTree converts one unpacked MCTSNodeT (flatbuffer state is a
@@ -275,9 +286,48 @@ export const MCTSTreeVisualizer = ({ symbol, className }: MCTSTreeVisualizerProp
 	of that frame entirely. The MCTS tree that produced the entry is instead
 	captured on the position itself, so an already-open lot's thesis is read
 	from positionStore (mirroring journal-surface.tsx's closed-trade path).
+
+	The selector returns only primitive fingerprints (root visits/iterations),
+	never the decoded tree itself — building a fresh object on every store
+	tick would never reference-equal the previous one, and useSyncExternalStore
+	re-invoking a selector that always "changes" on a fast-ticking store is
+	what drove this into "Maximum update depth exceeded." Fingerprints compare
+	by value, so the expensive unpack only reruns when the tree actually does.
 	*/
-	const positionTree = useSelector(positionStore, (state) => {
-		for (const frame of state.toArray()) {
+	const positionFingerprint = useSelector(
+		positionStore,
+		(state) => {
+			const { positionObj, holdingObj, decObj, traceObj, treeObj } = newAccessors();
+
+			for (const frame of state.toArray()) {
+				for (let rowIndex = 0; rowIndex < frame.rowsLength(); rowIndex++) {
+					const row = frame.rows(rowIndex, positionObj);
+					if (!row) continue;
+
+					const holding = row.holding(holdingObj);
+					if (!holding || holding.symbol() !== symbol) continue;
+
+					const trace = row.decision(decObj)?.trace(traceObj);
+					const tree = trace?.tree(treeObj);
+					if (!tree) return null;
+
+					return `${trace?.iterations() ?? 0n}:${tree.visits()}:${tree.childrenLength()}`;
+				}
+			}
+
+			return null;
+		},
+		{
+			compare: (a, b) => a === b,
+		},
+	);
+
+	const positionTree = useMemo(() => {
+		if (positionFingerprint === null) return null;
+
+		const { positionObj, holdingObj, decObj, traceObj, treeObj } = newAccessors();
+
+		for (const frame of positionStore.state.toArray()) {
 			for (let rowIndex = 0; rowIndex < frame.rowsLength(); rowIndex++) {
 				const row = frame.rows(rowIndex, positionObj);
 				if (!row) continue;
@@ -285,8 +335,7 @@ export const MCTSTreeVisualizer = ({ symbol, className }: MCTSTreeVisualizerProp
 				const holding = row.holding(holdingObj);
 				if (!holding || holding.symbol() !== symbol) continue;
 
-				const decision = row.decision(decObj);
-				const trace = decision?.trace(traceObj);
+				const trace = row.decision(decObj)?.trace(traceObj);
 				const tree = trace?.tree(treeObj);
 				if (!tree) return null;
 
@@ -299,32 +348,61 @@ export const MCTSTreeVisualizer = ({ symbol, className }: MCTSTreeVisualizerProp
 		}
 
 		return null;
-	});
+	}, [positionFingerprint, symbol]);
 
 	// Fall back to the live arbitration frame for a symbol still being
 	// actively searched (not yet an open position).
-	const lastStrategy = strategyStore.state.getLast();
-	let liveDecision: Decision | null = null;
-	if (!positionTree && lastStrategy) {
+	const strategyFingerprint = useSelector(
+		strategyStore,
+		(state) => {
+			const { decObj, traceObj, treeObj } = newAccessors();
+			const lastStrategy = state.getLast();
+			if (!lastStrategy) return null;
+
+			for (let i = 0; i < lastStrategy.decisionsLength(); i++) {
+				const d = lastStrategy.decisions(i, decObj);
+				if (!d || d.symbol() !== symbol) continue;
+
+				const trace = d.trace(traceObj);
+				const tree = trace?.tree(treeObj);
+				if (!tree) return null;
+
+				return `${trace?.iterations() ?? 0n}:${tree.visits()}:${tree.childrenLength()}`;
+			}
+
+			return null;
+		},
+		{
+			compare: (a, b) => a === b,
+		},
+	);
+
+	const liveTree = useMemo(() => {
+		if (positionTree || strategyFingerprint === null) return null;
+
+		const { decObj, traceObj, treeObj } = newAccessors();
+		const lastStrategy = strategyStore.state.getLast();
+		if (!lastStrategy) return null;
+
 		for (let i = 0; i < lastStrategy.decisionsLength(); i++) {
 			const d = lastStrategy.decisions(i, decObj);
-			if (d && d.symbol() === symbol) {
-				liveDecision = d;
-				break;
-			}
+			if (!d || d.symbol() !== symbol) continue;
+
+			const trace = d.trace(traceObj);
+			const tree = trace?.tree(treeObj);
+			if (!tree) return null;
+
+			return {
+				tree: mctsNodeToTree(tree.unpack()),
+				iterations: Number(trace?.iterations() ?? 0n),
+				recommendedAction: trace?.recommendedAction() ?? undefined,
+			};
 		}
-	}
 
-	const liveTrace = liveDecision?.trace(traceObj);
-	const liveTree = liveTrace?.tree(treeObj);
+		return null;
+	}, [positionTree, strategyFingerprint, symbol]);
 
-	const mcts = positionTree ?? (liveTree
-		? {
-				tree: mctsNodeToTree(liveTree.unpack()),
-				iterations: Number(liveTrace?.iterations() ?? 0n),
-				recommendedAction: liveTrace?.recommendedAction() ?? undefined,
-			}
-		: null);
+	const mcts = positionTree ?? liveTree;
 	const treeRoot = mcts?.tree;
 
 	// iterations/recommendedAction come off the wire; maxDepth/totalNodes

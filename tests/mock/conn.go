@@ -19,6 +19,13 @@ type Conn struct {
 	// success — tests use it to simulate an exchange/network rejection of an
 	// order submission.
 	AddOrderErr error
+
+	// BalanceResult and TradesHistoryResult, when set, are returned verbatim
+	// by Balance/TradesHistory instead of the empty defaults — tests use them
+	// to simulate an exchange reporting multiple held assets with fill
+	// history, e.g. for account-recovery-on-boot scenarios.
+	BalanceResult       map[string]*decimal.Decimal
+	TradesHistoryResult spot.TradesHistoryResult
 }
 
 func NewConn() *Conn {
@@ -53,9 +60,19 @@ func (conn *Conn) SubL3(symbols []string) {}
 
 func (conn *Conn) SubCandles(symbols []string) {}
 
-func (conn *Conn) Balance() (map[string]*decimal.Decimal, error) { return nil, nil }
+func (conn *Conn) Balance() (map[string]*decimal.Decimal, error) {
+	if conn.BalanceResult != nil {
+		return conn.BalanceResult, nil
+	}
+
+	return nil, nil
+}
 
 func (conn *Conn) TradesHistory() (spot.TradesHistoryResult, error) {
+	if conn.TradesHistoryResult.Trades != nil {
+		return conn.TradesHistoryResult, nil
+	}
+
 	return spot.TradesHistoryResult{}, nil
 }
 

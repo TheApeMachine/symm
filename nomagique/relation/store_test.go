@@ -215,9 +215,9 @@ func BenchmarkObservationStoreAppend(b *testing.B) {
 	store.RegisterCoordinate(coordinate)
 
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for iteration := 0; b.Loop(); iteration++ {
 		store.Append(Observation{Coordinate: coordinate, Raw: float64(iteration), At: time.Unix(0, int64(iteration)*int64(time.Second))})
 		benchmarkStoreSink++
 	}
@@ -235,9 +235,9 @@ func BenchmarkObservationStoreRangeCoordinates(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for b.Loop() {
 		store.RangeCoordinates(func(coordinate Coordinate) bool {
 			benchmarkStoreSink = len(coordinate.Symbol)
 			return true
@@ -254,9 +254,9 @@ func BenchmarkObservationStoreRangeHistory(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for b.Loop() {
 		store.RangeHistory(coordinate, func(observation Observation) bool {
 			benchmarkStoreSink = int(observation.Raw)
 			return true
@@ -268,11 +268,11 @@ func BenchmarkObservationStoreRegisterCoordinate(b *testing.B) {
 	store := NewObservationStore(2048)
 
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
 	// Each iteration structurally registers one new coordinate: the resident
 	// ordered insert is the whole cost of a growing universe.
-	for iteration := 0; iteration < b.N; iteration++ {
+	for iteration := 0; b.Loop(); iteration++ {
 		store.RegisterCoordinate(fixtureCoordinate(fmt.Sprintf("source%d", iteration), "metric"))
 	}
 }

@@ -256,19 +256,6 @@ func maxEdgeKey() edgeKey {
 }
 
 /*
-edgeKeys returns every stored edge key in ascending order.
-*/
-func (influenceGraph *InfluenceGraph) edgeKeys() []edgeKey {
-	keys := make([]edgeKey, 0)
-
-	influenceGraph.edges.Range(edgeKey{}, maxEdgeKey(), func(node network.Node[edgeKey, edgeData]) {
-		keys = append(keys, node.ID)
-	})
-
-	return keys
-}
-
-/*
 Epoch returns the graph's model epoch.
 */
 func (influenceGraph *InfluenceGraph) Epoch() uint64 {
@@ -532,20 +519,18 @@ func (influenceGraph *InfluenceGraph) Candidates() []CandidateEdge {
 
 	var candidates []CandidateEdge
 
-	for _, key := range influenceGraph.edgeKeys() {
-		data, found := influenceGraph.getEdge(key)
-
-		if !found {
-			continue
-		}
-
+	// A single Range pass reads each node's ID and Data together; the
+	// previous edgeKeys()+getEdge() form walked the skip list once to
+	// collect every key, then performed one more O(log N) findNode search
+	// per key to re-fetch data already visited during that walk.
+	influenceGraph.edges.Range(edgeKey{}, maxEdgeKey(), func(node network.Node[edgeKey, edgeData]) {
 		candidates = append(candidates, CandidateEdge{
-			Type:   key.edgeType,
-			Source: key.source,
-			Target: key.target,
-			State:  data.state,
+			Type:   node.ID.edgeType,
+			Source: node.ID.source,
+			Target: node.ID.target,
+			State:  node.Data.state,
 		})
-	}
+	})
 
 	slices.SortFunc(candidates, compareCandidateEdges)
 
@@ -586,23 +571,23 @@ func (influenceGraph *InfluenceGraph) currentEdges(predicate func(*InfluenceEdge
 
 	var edges []*InfluenceEdge
 
-	for _, key := range influenceGraph.edgeKeys() {
-		data, found := influenceGraph.getEdge(key)
-
-		if !found || len(data.history) == 0 {
-			continue
+	// See Candidates: one Range pass replaces the previous
+	// edgeKeys()+getEdge() double walk.
+	influenceGraph.edges.Range(edgeKey{}, maxEdgeKey(), func(node network.Node[edgeKey, edgeData]) {
+		if len(node.Data.history) == 0 {
+			return
 		}
 
-		edge := data.history[len(data.history)-1]
+		edge := node.Data.history[len(node.Data.history)-1]
 
-		if edge.Type != key.edgeType {
-			continue
+		if edge.Type != node.ID.edgeType {
+			return
 		}
 
 		if predicate(edge) {
 			edges = append(edges, edge)
 		}
-	}
+	})
 
 	slices.SortFunc(edges, compareInfluenceEdges)
 
@@ -979,12 +964,14 @@ func InfluenceGraphWire(
 	// full scheduled candidate set with per-edge lifecycle state. Projecting
 	// only defined edges would render an empty graph whenever no Relation
 	// has yet reached a fit — a faithful view needs the candidates too.
-	definedByKey := make(map[edgeKey]*InfluenceEdge, influenceGraph.edges.Len())
-
-	for _, edge := range influenceGraph.Edges() {
-		definedByKey[edgeKey{edgeType: edge.Type, source: edge.Source, target: edge.Target}] = edge
-	}
-
+	//
+	// Every stored edgeData node already carries both the candidate state and
+	// the measured history together, so the candidate view and the defined
+	// view are two projections of the same node, not two separate data sets.
+	// A single Range pass produces both instead of walking Candidates() and
+	// Edges() (which itself walks the same tree) three times over: once to
+	// build a defined-edge lookup map, once for the candidate/edge pairing,
+	// and once more for orphan defined-edge endpoints.
 	nodes := make([]*wire.GraphNodeT, 0)
 	seenNodes := make(map[relation.Coordinate]bool)
 	edges := make([]*wire.GraphEdgeT, 0, influenceGraph.edges.Len())
@@ -998,44 +985,45 @@ func InfluenceGraphWire(
 		nodes = append(nodes, influenceNodeWire(store, coordinate))
 	}
 
-	for _, candidate := range influenceGraph.Candidates() {
-		if candidate.Source.Symbol != symbol || candidate.Target.Symbol != symbol {
-			continue
+	influenceGraph.edges.Range(edgeKey{}, maxEdgeKey(), func(node network.Node[edgeKey, edgeData]) {
+		key := node.ID
+		data := node.Data
+
+		// Defined-edge endpoints render as nodes even when the pair falls
+		// outside the candidate plan (Association edges, or a partner the
+		// current plan no longer schedules).
+		if key.source.Symbol == symbol {
+			emitNode(key.source)
 		}
 
-		emitNode(candidate.Source)
-		emitNode(candidate.Target)
+		if key.target.Symbol == symbol {
+			emitNode(key.target)
+		}
 
-		key := edgeKey{edgeType: candidate.Type, source: candidate.Source, target: candidate.Target}
+		if key.source.Symbol != symbol || key.target.Symbol != symbol {
+			return
+		}
 
-		if defined, found := definedByKey[key]; found {
-			edges = append(edges, influenceEdgeWire(defined))
-			continue
+		if len(data.history) > 0 {
+			latest := data.history[len(data.history)-1]
+
+			if latest.Type == key.edgeType {
+				edges = append(edges, influenceEdgeWire(latest))
+				return
+			}
 		}
 
 		edges = append(edges, &wire.GraphEdgeT{
-			From:      candidate.Source.ID(),
-			To:        candidate.Target.ID(),
-			Relation:  candidate.Type.String(),
-			Reason:    "state=" + candidate.State.String(),
-			Derived:   candidate.State != CandidateEstimated,
-			At:        at.UnixNano(),
+			From:       key.source.ID(),
+			To:         key.target.ID(),
+			Relation:   key.edgeType.String(),
+			Reason:     "state=" + data.state.String(),
+			Derived:    data.state != CandidateEstimated,
+			At:         at.UnixNano(),
 			Confidence: 0,
-			Weight:    0,
+			Weight:     0,
 		})
-	}
-
-	// Defined-edge endpoints without a scheduled candidate (Association edges
-	// or partners outside the candidate plan) still render as nodes.
-	for _, edge := range influenceGraph.Edges() {
-		if edge.Source.Symbol == symbol {
-			emitNode(edge.Source)
-		}
-
-		if edge.Target.Symbol == symbol {
-			emitNode(edge.Target)
-		}
-	}
+	})
 
 	return &wire.GraphFrameT{
 		At:    at.UnixNano(),

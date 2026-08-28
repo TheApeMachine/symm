@@ -365,27 +365,48 @@ change offsets plus the shared start (0) and end offsets, so every sub-interval
 over which both step functions are constant is enumerated exactly once.
 */
 func mergedOffsets(query []dimensionStep, candidate []dimensionStep, end int64) []int64 {
-	seen := map[int64]bool{0: true, end: true}
+	totalSegments := 2 // the shared start (0) and end offsets
+
+	for _, window := range [][]dimensionStep{query, candidate} {
+		for _, dimension := range window {
+			totalSegments += len(dimension.segments)
+		}
+	}
+
+	// A sort-then-dedup slice replaces the map: this runs once per candidate
+	// pair inside the analogue search, so a map's per-entry bucket overhead
+	// (versus a contiguous slice) was a direct, avoidable allocation cost on
+	// every ticker tick.
+	offsets := make([]int64, 0, totalSegments)
+	offsets = append(offsets, 0, end)
 
 	for _, window := range [][]dimensionStep{query, candidate} {
 		for _, dimension := range window {
 			for _, segment := range dimension.segments {
-				seen[segment.offset] = true
+				offsets = append(offsets, segment.offset)
 			}
 		}
-	}
-
-	offsets := make([]int64, 0, len(seen))
-
-	for offset := range seen {
-		offsets = append(offsets, offset)
 	}
 
 	sort.Slice(offsets, func(left, right int) bool {
 		return offsets[left] < offsets[right]
 	})
 
-	return offsets
+	deduped := offsets[:0]
+	var previous int64
+	hasPrevious := false
+
+	for _, offset := range offsets {
+		if hasPrevious && offset == previous {
+			continue
+		}
+
+		deduped = append(deduped, offset)
+		previous = offset
+		hasPrevious = true
+	}
+
+	return deduped
 }
 
 /*

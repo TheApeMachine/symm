@@ -50,8 +50,8 @@ var defaultMarketCatalog = []MarketCoordinateSpec{
 	{Selector: relation.Selector{Source: "depthflow", Metric: "imbalance_resolution_gap"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "liquidity", Metric: "touch_notional_imbalance"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "liquidity", Metric: "relative_spread"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
-	{Selector: relation.Selector{Source: "exhaustion", Metric: "book_imbalance_zscore"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
-	{Selector: relation.Selector{Source: "exhaustion", Metric: "spread_zscore"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
+	{Selector: relation.Selector{Source: "depthflow", Metric: "book_imbalance_zscore"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
+	{Selector: relation.Selector{Source: "liquidity", Metric: "spread_zscore"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "pumpdump", Metric: "relative_spread"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 
 	// Tier 3: Aggressive Execution, Fill Dynamics & Toxicity (Active Flow)
@@ -89,7 +89,7 @@ return:
 	    background rate, derivatives basis/OI/liquidations, leadlag, correlation,
 	    sentiment.
 	Tier 2 (displayed liquidity / passive book morphology): depthflow,
-	    liquidity, exhaustion, pumpdump spreads.
+	    liquidity, pumpdump spreads.
 	Tier 3 (aggressive execution / flow / toxicity precursors): hawkes buy &
 	    sell intensity, cvd signed & gross flow, toxicity withdrawal/fill
 	    fractions and ask retreat rate.
@@ -191,14 +191,14 @@ func DefaultCausalSchema(epoch uint64, step time.Duration) *causal.CausalSchema 
 		},
 	})
 	schema.AddMarketVariable(causal.MarketVariable{
-		Variable: variable("exhaustion", "book_imbalance_zscore", ""),
+		Variable: variable("depthflow", "book_imbalance_zscore", ""),
 		SelfLag:  step,
 		Parents: []causal.AllowedParent{
 			{Parent: variable("depthflow", "book_imbalance", ""), Lag: step, LagSource: "schema"},
 		},
 	})
 	schema.AddMarketVariable(causal.MarketVariable{
-		Variable: variable("exhaustion", "spread_zscore", ""),
+		Variable: variable("liquidity", "spread_zscore", ""),
 		SelfLag:  step,
 		Parents: []causal.AllowedParent{
 			{Parent: variable("liquidity", "relative_spread", ""), Lag: step, LagSource: "schema"},

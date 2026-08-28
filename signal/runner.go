@@ -11,7 +11,6 @@ import (
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
 	"github.com/theapemachine/symm/signal/derivatives"
-	"github.com/theapemachine/symm/signal/exhaust"
 	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/signal/leadlag"
 	"github.com/theapemachine/symm/signal/liquidity"
@@ -179,23 +178,6 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			},
 		)
 
-		exhaustSignal := exhaust.NewSignal(ctx)
-		runtime.Register(
-			workspace,
-			func(ticker kraken.TickerData) string { return ticker.Symbol },
-			func(ticker kraken.TickerData) *data.Measurement[float64] {
-				if runner.ObserveModule == nil {
-					return exhaustSignal.Step(ticker)
-				}
-
-				started := time.Now()
-				measurement := exhaustSignal.Step(ticker)
-				runner.ObserveModule("exhaustion", time.Since(started))
-
-				return measurement
-			},
-		)
-
 		leadlagSignal := leadlag.NewSignal(ctx, workspace)
 		runtime.Register(
 			workspace,
@@ -301,7 +283,6 @@ func NewRunner(ctx context.Context, workspace *runtime.Workspace) *Runner {
 			cvdSignal,
 			depthflowSignal,
 			derivativesSignal,
-			exhaustSignal,
 			hawkesSignal,
 			leadlagSignal,
 			liquiditySignal,

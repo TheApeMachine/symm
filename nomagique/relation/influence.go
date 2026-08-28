@@ -66,9 +66,9 @@ measured at one candidate lag. Gains that are mathematically undefined are
 absent, not zero.
 */
 type LagPoint struct {
-	Lag           time.Duration
+	Lag            time.Duration
 	PredictiveGain *float64
-	DefinedSteps  int
+	DefinedSteps   int
 }
 
 /*
@@ -89,34 +89,34 @@ coefficients and zero PredictiveGain are valid measurements and remain
 representable.
 */
 type InfluenceResult struct {
-	Source    Coordinate
-	Target    Coordinate
-	Controls  []Control
-	From      time.Time
-	At        time.Time
+	Source           Coordinate
+	Target           Coordinate
+	Controls         []Control
+	From             time.Time
+	At               time.Time
 	SourceObservedAt time.Time
 	TargetObservedAt time.Time
-	SourceAge time.Duration
+	SourceAge        time.Duration
 
-	Lag                 time.Duration
-	LagResolution       time.Duration
-	LagSearchSpan       time.Duration
+	Lag           time.Duration
+	LagResolution time.Duration
+	LagSearchSpan time.Duration
 	// LagSupportBound is the largest candidate lag the retained history can
 	// support, derived from the target observation count, the parameter
 	// count, and the observed cadence. It is provenance, not a fixed
 	// constant.
-	LagSupportBound     time.Duration
-	LagCandidateCount   int
-	LagSurface          []LagPoint
+	LagSupportBound   time.Duration
+	LagCandidateCount int
+	LagSurface        []LagPoint
 
-	Coefficient             *float64
-	CoefficientVariance     *float64
-	CoefficientSNR          *float64
+	Coefficient                *float64
+	CoefficientVariance        *float64
+	CoefficientSNR             *float64
 	RestrictedResidualVariance *float64
-	FullResidualVariance    *float64
-	PredictiveGain          *float64
-	EffectiveSampleCount    float64
-	Maturity                float64
+	FullResidualVariance       *float64
+	PredictiveGain             *float64
+	EffectiveSampleCount       float64
+	Maturity                   float64
 
 	EstimatorVersion string
 	Epoch            uint64
@@ -296,9 +296,18 @@ func (estimator *InfluenceEstimator) Estimate(
 	best := (*InfluenceResult)(nil)
 	surface := make([]LagPoint, 0, len(candidates))
 
+	// scratch is built once per Estimate call and reused across every
+	// candidate lag: the accumulators are Reset (not reallocated) between
+	// lags, and the residual/predictor/cursor/aligned buffers are reused
+	// slices. A candidate search routinely walks tens of lags per estimate
+	// cycle across hundreds of candidate pairs per tick, so a fresh
+	// accumulator pair and set of buffers per lag was a direct multiplier on
+	// process-wide allocation pressure.
+	scratch := newEstimateScratch(2+len(request.Controls), targetView.Len())
+
 	for _, lag := range candidates {
 		candidate := estimator.estimateAtLag(
-			request, sourceView, targetView, controlViews, lag, resolution, searchSpan,
+			request, sourceView, targetView, controlViews, lag, resolution, searchSpan, scratch,
 		)
 
 		if candidate == nil {
@@ -329,11 +338,56 @@ func (estimator *InfluenceEstimator) Estimate(
 }
 
 /*
+estimateScratch holds every reusable buffer estimateAtLag/fullFitViews need
+across a single Estimate call's candidate-lag search: the restricted/full
+accumulators (Reset between lags, never reallocated), the residual and
+predictor slices, and the per-series cursor/aligned-observation buffers
+walkAligned scans with. seriesCount is 2 + len(Controls) (target-past,
+source, one slot per control); parameterCount is fullParameters
+(restrictedParameters + 1) since that upper-bounds both accumulators and the
+predictor row.
+*/
+type estimateScratch struct {
+	restrictedAccumulator *statistic.RegressionAccumulator
+	fullAccumulator       *statistic.RegressionAccumulator
+	fullFitAccumulator    *statistic.RegressionAccumulator
+	restrictedResiduals   []float64
+	fullResiduals         []float64
+	predictors            []float64
+	fullFitPredictors     []float64
+	cursors               []int
+	aligned               []Observation
+}
+
+/*
+newEstimateScratch allocates one estimateScratch sized for seriesCount
+series (2 + len(Controls)) and an expected row capacity, so the residual
+slices rarely need to grow during the search.
+*/
+func newEstimateScratch(seriesCount int, expectedRows int) *estimateScratch {
+	restrictedParameters := seriesCount
+	fullParameters := seriesCount + 1
+
+	return &estimateScratch{
+		restrictedAccumulator: statistic.NewRegressionAccumulator(restrictedParameters),
+		fullAccumulator:       statistic.NewRegressionAccumulator(fullParameters),
+		fullFitAccumulator:    statistic.NewRegressionAccumulator(fullParameters),
+		restrictedResiduals:   make([]float64, 0, expectedRows),
+		fullResiduals:         make([]float64, 0, expectedRows),
+		predictors:            make([]float64, fullParameters),
+		fullFitPredictors:     make([]float64, fullParameters),
+		cursors:               make([]int, seriesCount),
+		aligned:               make([]Observation, seriesCount),
+	}
+}
+
+/*
 estimateAtLag runs the prequential restricted/full comparison at one lag. It
 walks the resident target ring exactly twice (the prequential pass and the
 final full fit), aligning predictors with per-series cursors on the resident
 source/control/target rings — no history copy and no aligned-row
-materialization.
+materialization. scratch's accumulators and buffers are reused across every
+candidate lag in the enclosing search; only Reset, never reallocated.
 */
 func (estimator *InfluenceEstimator) estimateAtLag(
 	request InfluenceRequest,
@@ -343,13 +397,18 @@ func (estimator *InfluenceEstimator) estimateAtLag(
 	lag time.Duration,
 	resolution time.Duration,
 	searchSpan time.Duration,
+	scratch *estimateScratch,
 ) *InfluenceResult {
 	restrictedParameters := 2 + len(request.Controls)
 	fullParameters := 3 + len(request.Controls)
-	restrictedAccumulator := statistic.NewRegressionAccumulator(restrictedParameters)
-	fullAccumulator := statistic.NewRegressionAccumulator(fullParameters)
-	restrictedResiduals := make([]float64, 0, targetView.Len())
-	fullResiduals := make([]float64, 0, targetView.Len())
+
+	restrictedAccumulator := scratch.restrictedAccumulator
+	fullAccumulator := scratch.fullAccumulator
+	restrictedAccumulator.Reset()
+	fullAccumulator.Reset()
+
+	restrictedResiduals := scratch.restrictedResiduals[:0]
+	fullResiduals := scratch.fullResiduals[:0]
 	rankDeficient := false
 	rows := 0
 	firstTarget := time.Time{}
@@ -357,10 +416,11 @@ func (estimator *InfluenceEstimator) estimateAtLag(
 	lastSource := time.Time{}
 
 	// Reusable design row: [intercept, targetPast, controls..., source]. It
-	// is reused across rows; no per-row slice is allocated.
-	predictors := make([]float64, fullParameters)
+	// is reused across rows and across lags; no per-row or per-lag slice is
+	// allocated.
+	predictors := scratch.predictors
 
-	walkAligned(targetView, sourceView, controlViews, request.Controls, lag, func(target Observation, aligned []Observation) bool {
+	walkAlignedWithBuffers(targetView, sourceView, controlViews, request.Controls, lag, scratch.cursors, scratch.aligned, func(target Observation, aligned []Observation) bool {
 		rows++
 
 		if rows == 1 {
@@ -409,6 +469,13 @@ func (estimator *InfluenceEstimator) estimateAtLag(
 
 		return true
 	})
+
+	// append may have grown the residual slices past their starting
+	// capacity; write the (possibly reallocated) backing arrays back so the
+	// next candidate lag reuses the larger capacity instead of scratch
+	// reverting to its original, smaller allocation.
+	scratch.restrictedResiduals = restrictedResiduals
+	scratch.fullResiduals = fullResiduals
 
 	if rows == 0 {
 		return nil
@@ -462,7 +529,7 @@ func (estimator *InfluenceEstimator) estimateAtLag(
 		result.Maturity = 1 - 1/effective
 	}
 
-	finalFit := fullFitViews(targetView, sourceView, controlViews, request.Controls, lag, fullParameters)
+	finalFit := fullFitViews(targetView, sourceView, controlViews, request.Controls, lag, fullParameters, scratch)
 
 	if finalFit == nil || !finalFit.Defined {
 		if rows <= restrictedParameters {
@@ -489,28 +556,30 @@ func (estimator *InfluenceEstimator) estimateAtLag(
 }
 
 /*
-walkAligned visits every target observation that aligns with all predictors
-in chronological order, reading exclusively from resident ring views with
-per-series cursors. The visit callback receives the target and a reusable
-slice of aligned observations ([targetPast, controls..., source]); the slice
-must not be retained across calls. Nothing is materialized.
+walkAlignedWithBuffers visits every target observation that aligns with all
+predictors in chronological order, reading exclusively from resident ring
+views with per-series cursors. The visit callback receives the target and a
+reusable slice of aligned observations ([targetPast, controls..., source]);
+the slice must not be retained across calls. Nothing is materialized. cursors
+and aligned are the caller's reusable per-series buffers (sized 2 +
+len(controlViews)); they are reset in place on every call so the same
+allocation serves every candidate lag in a search.
 */
-func walkAligned(
+func walkAlignedWithBuffers(
 	targetView RingView,
 	sourceView RingView,
 	controlViews []RingView,
 	controls []Control,
 	lag time.Duration,
+	cursors []int,
+	aligned []Observation,
 	visit func(target Observation, aligned []Observation) bool,
 ) {
 	seriesCount := 2 + len(controlViews)
-	cursors := make([]int, seriesCount)
 
-	for index := range cursors {
+	for index := 0; index < seriesCount; index++ {
 		cursors[index] = -1
 	}
-
-	aligned := make([]Observation, seriesCount)
 
 	for targetIndex := 0; targetIndex < targetView.Len(); targetIndex++ {
 		target := targetView.At(targetIndex)
@@ -562,7 +631,10 @@ func walkAligned(
 
 /*
 fullFitViews fits the final full model over every aligned row from the
-resident rings, in the same alignment used by the prequential pass.
+resident rings, in the same alignment used by the prequential pass. It reuses
+scratch's fullFitAccumulator and predictor buffer, the same as
+estimateAtLag's prequential pass, so the final fit adds no allocations on top
+of the search that already ran at this lag.
 */
 func fullFitViews(
 	targetView RingView,
@@ -571,11 +643,13 @@ func fullFitViews(
 	controls []Control,
 	lag time.Duration,
 	parameterCount int,
+	scratch *estimateScratch,
 ) *statistic.RegressionFit {
-	accumulator := statistic.NewRegressionAccumulator(parameterCount)
-	predictors := make([]float64, parameterCount)
+	accumulator := scratch.fullFitAccumulator
+	accumulator.Reset()
+	predictors := scratch.fullFitPredictors
 
-	walkAligned(targetView, sourceView, controlViews, controls, lag, func(target Observation, aligned []Observation) bool {
+	walkAlignedWithBuffers(targetView, sourceView, controlViews, controls, lag, scratch.cursors, scratch.aligned, func(target Observation, aligned []Observation) bool {
 		predictors[0] = 1
 		predictors[1] = aligned[0].Raw
 

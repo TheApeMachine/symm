@@ -43,6 +43,7 @@ export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
 				for (let index = 0; index < candidate.rowsLength(); index++) {
 					const currentPosition = candidate.rows(index, positionInstance);
 					const currentHolding = currentPosition?.holding(holdingInstance);
+					
 					if (currentHolding && currentHolding.symbol() === symbol) return true;
 				}
 				return false;
@@ -70,10 +71,23 @@ export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
 			// the incoming frame so stale values cannot survive a missing or
 			// invalid update.
 			for (const field of [
-				"floor", "peak", "profit", "arm", "lock", "surge",
-				"momentum", "lastmove", "trigger", "locked", "threshold", "stopstatus",
+				"floor", 
+				"peak", 
+				"profit", 
+				"arm", 
+				"lock", 
+				"surge",
+				"momentum", 
+				"lastmove", 
+				"trigger", 
+				"locked", 
+				"threshold", 
+				"stopstatus",
 			]) {
-				const node = root.current.querySelector<HTMLElement>(`[data-f="${field}"]`);
+				const node = root.current.querySelector<HTMLElement>(
+					`[data-f="${field}"]`
+				);
+				
 				if (node) node.textContent = "—";
 			}
 
