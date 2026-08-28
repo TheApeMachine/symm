@@ -41,34 +41,41 @@ func (kind PerspectiveKind) String() string {
 }
 
 /*
-PerspectiveMetricCapacity bounds how many composed-metric readings one
-Perspective can carry. It is a declared structural bound so the payload stays a
-fixed-size value and the hot path never allocates a slice per emission.
+PerspectiveMetricCapacity bounds how many readings one Perspective can carry.
+It is a declared structural bound so the payload stays a fixed-size value and
+the hot path never allocates a slice per emission. Each Advisor pipeline
+declares its own output symbols (see advisor.NewAdvisor), and the Liquidity
+pipeline is the widest known composition today: 3 bound metrics, each
+contributing 4 named readings (its current value plus its adaptive baseline,
+departure z-score, and first difference) — 12 readings. The capacity tracks
+the widest declared pipeline output with headroom for the next-widest known
+family rather than an arbitrary round number.
 */
-const PerspectiveMetricCapacity = 8
+const PerspectiveMetricCapacity = 12
 
 /*
-MetricReading is one composed metric's derived temporal context: the current
-value plus the adaptive baseline, the z-score (departure from that baseline in
-units of its own dispersion), and the first difference, each against the metric's
-own history. Metric is the interned identity of the measured quantity this
-reading describes, so a consumer can determine what a reading means without
-relying on its position in the Readings array. Ready is false until every
-derived slot exists, so a not-ready reading's zeros are never mistaken for a
-real estimate.
+MetricReading is one named fact a pipeline emitted for one composed metric:
+the interned identity of the value (Metric — e.g. a bound metric's raw value,
+or one of its derived statistics such as a baseline or z-score) and the value
+itself. A consumer determines what a reading means from Metric, never from its
+position in the Readings array, so an Advisor's pipeline can emit any number
+of named facts per composed metric without Perspective assuming a fixed shape
+such as "value plus baseline plus z-score plus velocity" — that shape belongs
+to whichever pipeline happens to produce it, not to the generic wire type.
+
+Defined is false when the pipeline has not yet produced this fact (its
+required estimator state does not exist yet), so an undefined reading's zero
+Value is never mistaken for a real, observed zero.
 
 Maturity, SNR, and SNRDefined carry forward the source Measurement's own
-quality facts for this metric's most recent observation — an Advisor composes
-already-produced Measurements and must not discard or re-derive the
+quality facts for the composed metric this reading belongs to — an Advisor
+composes already-produced Measurements and must not discard or re-derive the
 provenance they already established.
 */
 type MetricReading struct {
 	Metric     nmtypes.Symbol
 	Value      float64
-	Baseline   float64
-	ZScore     float64
-	Velocity   float64
-	Ready      bool
+	Defined    bool
 	Maturity   float64
 	SNR        float64
 	SNRDefined bool

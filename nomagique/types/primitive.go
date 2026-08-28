@@ -78,11 +78,14 @@ func Fork(primitives ...Primitive) Primitive {
 
 /*
 TryFork is Fork for branches that may not yet have anything to compose: a
-branch that fails without having written any slot is dropped rather than
-failing the whole step, so a composition of independently-arriving facts
+branch that fails without having changed the frame at all is dropped rather
+than failing the whole step, so a composition of independently-arriving facts
 tolerates the ones that have not arrived yet without losing the ones that
-have. A branch that fails after writing at least one slot is a genuine defect,
-not an absence, and still propagates.
+have. A branch that fails after writing or mutating even one slot is a genuine
+defect, not an absence, and still propagates — checked with Equal, not a mask
+comparison: a mature branch can fail after overwriting an already-populated
+slot in place, which leaves the mask unchanged but the data mutated, and a
+mask-only check would wrongly forgive that as untouched.
 */
 func TryFork(primitives ...Primitive) Primitive {
 	branches := append([]Primitive(nil), primitives...)
@@ -94,7 +97,7 @@ func TryFork(primitives ...Primitive) Primitive {
 			branch := Step(primitive, input)
 
 			if branch.Err != nil {
-				if branch.Mask == input.Mask {
+				if branch.Equal(input) {
 					continue
 				}
 

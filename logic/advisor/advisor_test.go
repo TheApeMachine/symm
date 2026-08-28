@@ -34,6 +34,21 @@ func newTestLiquidityAdvisor(name string) *Advisor {
 	return NewLiquidityAdvisor(name)
 }
 
+/*
+readingFor finds the reading for one output slot in a Perspective, so a test
+can assert on a specific composed metric's value without depending on
+position in Readings.
+*/
+func readingFor(perspective *types.Perspective, slot nmtypes.Symbol) (types.MetricReading, bool) {
+	for index := 0; index < perspective.Count; index++ {
+		if perspective.Readings[index].Metric == slot {
+			return perspective.Readings[index], true
+		}
+	}
+
+	return types.MetricReading{}, false
+}
+
 func TestAdvisorStep(t *testing.T) {
 	Convey("Given a Liquidity Advisor composed over its three bound metrics", t, func() {
 		advisor := newTestLiquidityAdvisor("advisor:liquidity:" + t.Name())
@@ -59,7 +74,9 @@ func TestAdvisorStep(t *testing.T) {
 
 			So(perspective, ShouldNotBeNil)
 			So(perspective.Kind, ShouldEqual, types.KindLiquidity)
-			So(perspective.Count, ShouldEqual, 3)
+			// Three bound metrics, each contributing four named outputs
+			// (value, baseline, z-score, velocity).
+			So(perspective.Count, ShouldEqual, 12)
 
 			state, found := advisor.number.Project("TEST/USD")
 			So(found, ShouldBeTrue)
@@ -199,32 +216,37 @@ func TestAdvisorStep(t *testing.T) {
 		})
 
 		Convey("undefined derived state stays explicitly undefined until every derived slot exists", func() {
+			bindings := LiquidityBindings()
+			outputs := LiquidityOutputs(bindings)
+			// relative_spread's velocity output: unlike baseline (which seeds
+			// itself as the first observation's own value), velocity requires a
+			// prior value to difference against, so it stays undefined until a
+			// second observation of the same metric arrives.
+			spreadVelocitySlot := outputs[3].Slot
+
 			perspective := advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(0, 0), map[string]float64{
 				"relative_spread": 0.01,
 			}))
 
 			So(perspective, ShouldNotBeNil)
-			So(perspective.Count, ShouldEqual, 3)
+			So(perspective.Count, ShouldEqual, 12)
 
-			for index := 0; index < perspective.Count; index++ {
-				if perspective.Readings[index].Metric == LiquidityBindings()[0].Series.ValueSymbol {
-					So(perspective.Readings[index].Ready, ShouldBeFalse)
-				}
-			}
+			spreadValue, foundValue := readingFor(perspective, bindings[0].Series.ValueSymbol)
+			So(foundValue, ShouldBeTrue)
+			So(spreadValue.Defined, ShouldBeTrue)
+
+			spreadVelocity, foundVelocity := readingFor(perspective, spreadVelocitySlot)
+			So(foundVelocity, ShouldBeTrue)
+			So(spreadVelocity.Defined, ShouldBeFalse)
 
 			perspective = advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(1, 0), map[string]float64{
 				"relative_spread": 0.02,
 			}))
 
-			ready := false
-
-			for index := 0; index < perspective.Count; index++ {
-				if perspective.Readings[index].Metric == LiquidityBindings()[0].Series.ValueSymbol {
-					ready = perspective.Readings[index].Ready
-				}
-			}
-
-			So(ready, ShouldBeTrue)
+			spreadVelocity, foundVelocity = readingFor(perspective, spreadVelocitySlot)
+			So(foundVelocity, ShouldBeTrue)
+			So(spreadVelocity.Defined, ShouldBeTrue)
+			So(spreadVelocity.Value, ShouldEqual, 0.01)
 		})
 
 		Convey("each reading is self-describing by its interned Metric identity, not by array position", func() {
@@ -302,15 +324,20 @@ func TestAdvisorStep(t *testing.T) {
 			"advisor:liquidity-only",
 			types.KindLiquidity,
 			LiquidityPipeline([]MetricBinding{liquidityBinding}),
-			liquidityBinding,
+			[]MetricBinding{liquidityBinding},
+			LiquidityOutputs([]MetricBinding{liquidityBinding}),
 		)
 
+		// A deliberately different, non-temporal pipeline: it declares only
+		// one output (the raw value itself) and derives nothing else, proving
+		// Advisor imposes no fixed output shape on any pipeline it hosts.
 		passthroughBinding := NewMetricBinding("liquidity", "relative_spread", "test/advisor/passthrough_only")
 		passthrough := NewAdvisor(
 			"advisor:passthrough",
 			types.KindState,
 			nmtypes.Identity,
-			passthroughBinding,
+			[]MetricBinding{passthroughBinding},
+			[]Output{{Slot: passthroughBinding.Series.ValueSymbol, Metric: passthroughBinding}},
 		)
 
 		measurement := testMeasurement("TEST/USD", "liquidity", time.Unix(0, 0), map[string]float64{
@@ -325,17 +352,12 @@ func TestAdvisorStep(t *testing.T) {
 		So(liquidityPerspective.Kind, ShouldEqual, types.KindLiquidity)
 		So(passthroughPerspective.Kind, ShouldEqual, types.KindState)
 
-		// The identity pipeline never derives a baseline/z-score/velocity, so its
-		// reading never becomes ready even after the same input the liquidity
-		// pipeline used to become ready on a second observation.
-		passthrough.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(1, 0), map[string]float64{
-			"relative_spread": 0.02,
-		}))
-		stillNotReady := passthrough.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(2, 0), map[string]float64{
-			"relative_spread": 0.03,
-		}))
-
-		So(stillNotReady.Readings[0].Ready, ShouldBeFalse)
+		// The liquidity pipeline declares four outputs per bound metric; the
+		// passthrough pipeline declares exactly the one it computes.
+		So(liquidityPerspective.Count, ShouldEqual, 4)
+		So(passthroughPerspective.Count, ShouldEqual, 1)
+		So(passthroughPerspective.Readings[0].Defined, ShouldBeTrue)
+		So(passthroughPerspective.Readings[0].Value, ShouldEqual, 0.01)
 	})
 }
 

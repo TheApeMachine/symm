@@ -53,6 +53,27 @@ func LiquidityPipeline(bindings []MetricBinding) nmtypes.Primitive {
 }
 
 /*
+LiquidityOutputs declares the four named facts LiquidityPipeline emits per
+bound metric: its current value, adaptive baseline, departure z-score, and
+first difference. This naming knowledge belongs to the Liquidity pipeline
+alone — Advisor never assumes any pipeline produces these specific facts.
+*/
+func LiquidityOutputs(bindings []MetricBinding) []Output {
+	outputs := make([]Output, 0, len(bindings)*4)
+
+	for _, binding := range bindings {
+		outputs = append(outputs,
+			Output{Slot: binding.Series.ValueSymbol, Metric: binding},
+			Output{Slot: nmtypes.MustIntern(temporal.JoinPrefix(binding.Prefix, "baseline/value")), Metric: binding},
+			Output{Slot: nmtypes.MustIntern(temporal.JoinPrefix(binding.Prefix, "z/value")), Metric: binding},
+			Output{Slot: nmtypes.MustIntern(temporal.JoinPrefix(binding.Prefix, "velocity/delta")), Metric: binding},
+		)
+	}
+
+	return outputs
+}
+
+/*
 freshTemporalContext returns the Window→ZScore→Baseline→Velocity composition
 for one binding's series prefix, gated on that binding's Fresh marker: the
 stage only advances the series when this call's own Measurement delivered the
@@ -105,5 +126,11 @@ instance over LiquidityPipeline and LiquidityBindings.
 func NewLiquidityAdvisor(name string) *Advisor {
 	bindings := LiquidityBindings()
 
-	return NewAdvisor(name, types.KindLiquidity, LiquidityPipeline(bindings), bindings...)
+	return NewAdvisor(
+		name,
+		types.KindLiquidity,
+		LiquidityPipeline(bindings),
+		bindings,
+		LiquidityOutputs(bindings),
+	)
 }

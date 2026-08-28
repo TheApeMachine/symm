@@ -193,6 +193,21 @@ func TestTryForkContracts(t *testing.T) {
 		output := TryFork(wroteThenFailed)(Frame{}.Set(primitiveInput, 1))
 		So(output.Err, ShouldNotBeNil)
 	})
+
+	Convey("TryFork propagates a branch failure that mutated an already-populated slot in place", t, func() {
+		// The mask is unchanged (primitiveShared was already populated before
+		// this branch ran), but the underlying data was overwritten. A
+		// mask-only "did this branch write anything" check would wrongly
+		// forgive this as an untouched, not-yet-observed branch.
+		mutatedThenFailed := func(input Frame) Frame {
+			input.Put(primitiveShared, 999)
+			input.Err = errors.New("genuine defect after in-place mutation")
+
+			return input
+		}
+		output := TryFork(mutatedThenFailed)(Frame{}.Set(primitiveShared, 1).Set(primitiveInput, 1))
+		So(output.Err, ShouldNotBeNil)
+	})
 }
 
 func TestConfigureContracts(t *testing.T) {

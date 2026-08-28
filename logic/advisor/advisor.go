@@ -43,20 +43,18 @@ metric name emitted by more than one signal. Prefix namespaces the binding's
 value, event time, and derived estimator slots so several bindings can compose
 into the same per-symbol Frame without collision.
 
-Series is the resolved slot table for Prefix. Baseline, ZScore, and Velocity
-name the same prefix's temporal-context estimator slots (statistic.Baseline /
-statistic.ZScore / statistic.Velocity), resolved once here so a reading
-pipeline built from those primitives can be projected back into a Perspective
-without re-deriving the naming convention.
+Series is the resolved slot table for Prefix.
 
 Fresh names a marker slot Step populates only when this specific call's
 Measurement actually carried the binding's metric. A pipeline branch built for
-this binding must gate its own advance on Fresh and must never write it, so it
-never enters the committed Frame: Number.Step merges the previous committed
-Frame under the incoming one before running the pipeline, so without a marker
-scoped to "this call's own input" every branch would see the binding's value
-and event time as still present (retained from an earlier, unrelated event)
-and would advance again on every other binding's Measurement.
+this binding must gate its own advance on Fresh: Number.Step merges the
+previous committed Frame under the incoming one before running the pipeline,
+so without a marker scoped to "this call's own input" every branch would see
+the binding's value and event time as still present (retained from an earlier,
+unrelated event) and would advance again on every other binding's Measurement.
+The pipeline must also ensure Fresh never survives into what gets committed,
+or it would read as fresh again on every later call regardless of what that
+call delivered.
 
 Maturity, SNR, and SNRDefined name where Step projects the source
 Measurement's own quality facts for this metric, so a composed reading can
@@ -67,9 +65,6 @@ type MetricBinding struct {
 	Metric     string
 	Prefix     string
 	Series     temporal.Series
-	Baseline   nmtypes.Symbol
-	ZScore     nmtypes.Symbol
-	Velocity   nmtypes.Symbol
 	Fresh      nmtypes.Symbol
 	Maturity   nmtypes.Symbol
 	SNR        nmtypes.Symbol
@@ -77,10 +72,10 @@ type MetricBinding struct {
 }
 
 /*
-NewMetricBinding constructs one binding, interning its series prefix,
-temporal-context estimator slots, and quality-provenance slots once at wiring
-time. The prefix should be unique per composed metric within an Advisor so its
-Frame slots do not collide with any other bound metric.
+NewMetricBinding constructs one binding, interning its series prefix and
+quality-provenance slots once at wiring time. The prefix should be unique per
+composed metric within an Advisor so its Frame slots do not collide with any
+other bound metric.
 */
 func NewMetricBinding(source, metric, seriesPrefix string) MetricBinding {
 	return MetricBinding{
@@ -88,9 +83,6 @@ func NewMetricBinding(source, metric, seriesPrefix string) MetricBinding {
 		Metric:     metric,
 		Prefix:     seriesPrefix,
 		Series:     temporal.NewSeries(seriesPrefix),
-		Baseline:   nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "baseline/value")),
-		ZScore:     nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "z/value")),
-		Velocity:   nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "velocity/delta")),
 		Fresh:      nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "advisor/fresh")),
 		Maturity:   nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "advisor/maturity")),
 		SNR:        nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "advisor/snr")),
@@ -99,17 +91,36 @@ func NewMetricBinding(source, metric, seriesPrefix string) MetricBinding {
 }
 
 /*
+Output declares one named fact a pipeline emits for one composed metric: the
+interned Slot a reading's value is read back from, and the Metric identity of
+the composed metric it belongs to (for quality-provenance lookup, since
+Maturity/SNR/SNRDefined are tracked per bound metric, not per output slot). A
+pipeline built from temporal-context primitives declares four outputs per
+bound metric (its value, baseline, z-score, and velocity); a different family's
+pipeline declares whatever named facts its own mathematics produces. Advisor
+never assumes a fixed output shape — it only walks whatever Outputs its
+pipeline declared.
+*/
+type Output struct {
+	Slot   nmtypes.Symbol
+	Metric MetricBinding
+}
+
+/*
 Advisor is the single context-producer type. It owns one nomagique.Number
 pipeline — supplied at construction, never assumed — keyed by the logical
 subject (the symbol) so every composed metric for that subject folds into the
-same committed Number state, and projects the declared measurement metrics
-into that pipeline through their bindings.
+same committed Number state. It ingests measurement facts through its
+MetricBindings and projects a Perspective by walking its declared Outputs;
+Advisor assumes nothing about what mathematics the pipeline performs or how
+many named facts it produces per composed metric.
 */
 type Advisor struct {
 	name     string
 	kind     types.PerspectiveKind
 	number   *nomagique.Number[string]
 	bindings []MetricBinding
+	outputs  []Output
 
 	ObserveModule func(string, time.Duration)
 }
@@ -118,20 +129,23 @@ type Advisor struct {
 NewAdvisor constructs one Advisor over a caller-supplied pipeline. The pipeline
 carries the family's mathematics (temporal, cross-sectional, relational,
 whatever the family requires); Advisor only hosts it. Every binding declares a
-measurement metric the pipeline composes; bindings and pipeline are built once
-here, never per event.
+measurement metric the pipeline ingests; every output declares one named fact
+the pipeline emits back. Bindings, outputs, and pipeline are built once here,
+never per event.
 */
 func NewAdvisor(
 	name string,
 	kind types.PerspectiveKind,
 	pipeline nmtypes.Primitive,
-	bindings ...MetricBinding,
+	bindings []MetricBinding,
+	outputs []Output,
 ) *Advisor {
 	return &Advisor{
 		name:     name,
 		kind:     kind,
 		number:   nomagique.NewNumber[string](pipeline),
 		bindings: bindings,
+		outputs:  outputs,
 	}
 }
 
@@ -214,9 +228,10 @@ func (advisor *Advisor) Step(measurement *data.Measurement[float64]) *types.Pers
 
 /*
 project reads the symbol's committed pipeline state and materializes the
-Perspective. A bound metric whose derived slots are not all present contributes
-an explicitly not-ready reading: its absence is carried by Ready, never by a
-fabricated zero.
+Perspective by walking the Advisor's declared Outputs — never by assuming a
+fixed shape of what the pipeline produces per composed metric. An output whose
+slot is not yet populated contributes an explicitly undefined reading: its
+absence is carried by Defined, never by a fabricated zero.
 */
 func (advisor *Advisor) project(
 	symbol string,
@@ -231,26 +246,20 @@ func (advisor *Advisor) project(
 
 	count := 0
 
-	for _, binding := range advisor.bindings {
+	for _, output := range advisor.outputs {
 		if count >= types.PerspectiveMetricCapacity {
 			break
 		}
 
-		value, hasValue := state.Get(binding.Series.ValueSymbol)
-		baseline, hasBaseline := state.Get(binding.Baseline)
-		zScore, hasZScore := state.Get(binding.ZScore)
-		velocity, hasVelocity := state.Get(binding.Velocity)
-		maturity, _ := state.Get(binding.Maturity)
-		snr, _ := state.Get(binding.SNR)
-		snrDefined, _ := state.Get(binding.SNRDefined)
+		value, defined := state.Get(output.Slot)
+		maturity, _ := state.Get(output.Metric.Maturity)
+		snr, _ := state.Get(output.Metric.SNR)
+		snrDefined, _ := state.Get(output.Metric.SNRDefined)
 
 		perspective.Readings[count] = types.MetricReading{
-			Metric:     binding.Series.ValueSymbol,
+			Metric:     output.Slot,
 			Value:      value,
-			Baseline:   baseline,
-			ZScore:     zScore,
-			Velocity:   velocity,
-			Ready:      hasValue && hasBaseline && hasZScore && hasVelocity,
+			Defined:    defined,
 			Maturity:   maturity,
 			SNR:        snr,
 			SNRDefined: snrDefined != 0,
