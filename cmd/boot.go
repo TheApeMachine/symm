@@ -554,11 +554,17 @@ func BootWithHub(
 	)
 
 	if bus != nil {
-		runtime.WireKeyed[*data.Measurement[float64], *types.Perspective](
+		runtime.WireKeyed(
 			bus,
 			types.ChannelMeasurements,
 			types.ChannelPerspectives,
-			func(measurement *data.Measurement[float64]) string { return measurement.Label },
+			func(measurement *data.Measurement[float64]) string {
+				if measurement == nil {
+					return ""
+				}
+
+				return measurement.Label
+			},
 			liquidityAdvisor.Step,
 		)
 	}
@@ -722,15 +728,17 @@ func measurementWire(measurement *nmtypes.Measurement) *wire.MeasurementT {
 	// signal-to-noise ratio by the metric name "snr". The wire schema has no
 	// Snr field, so the SNR value is serialized as a named metric alongside
 	// the real projected metrics — the only path it reaches the browser.
-	if measurement.SNRDefined {
-		metrics = append(metrics, &wire.MetricT{
-			Name:          "snr",
-			Raw:           measurement.SNR,
-			Normalized:    0,
-			HasNormalized: false,
-			Unit:          nmtypes.UnitDimensionless.String(),
-		})
-	}
+	//
+	// snr is emitted unconditionally: a signal whose noise model was not
+	// estimable still lands a zero reading so every kernel row resolves a
+	// value instead of falling through to an unrelated first metric.
+	metrics = append(metrics, &wire.MetricT{
+		Name:          "snr",
+		Raw:           measurement.SNR,
+		Normalized:    0,
+		HasNormalized: false,
+		Unit:          nmtypes.UnitDimensionless.String(),
+	})
 
 	for _, name := range names {
 		if name == "snr" {

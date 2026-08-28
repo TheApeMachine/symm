@@ -53,6 +53,91 @@ def channel_slug(channel):
     return slug or "unknown"
 
 
+"""
+Collect every list entry a channel group exposes under its "data" key into a
+single flat list, in capture order.
+
+Level3 frames carry the full book state as {"channel": "level3", ...,
+"data": [ {symbol, bids, asks, checksum, timestamp}, ... ]}, so each data entry
+lands as one element of the flat array. Frames without a "data" field (e.g.
+subscribe acknowledgements) contribute nothing.
+"""
+def collect_channel_data(payloads):
+    entries = []
+
+    for payload in payloads:
+        data = flatten_payload(payload)
+
+        if not isinstance(data, dict):
+            continue
+
+        channel_data = data.get("data")
+
+        if channel_data is None:
+            continue
+
+        if isinstance(channel_data, dict):
+            channel_data = [channel_data]
+
+        entries.extend(channel_data)
+
+    return entries
+
+
+"""
+Explode every sub-array of each level3 book entry into a single flat object.
+
+A data entry is a full book state of the form
+{symbol, checksum, timestamp, bids: [order, ...], asks: [order, ...]}. Each
+array field is decomposed so every order becomes its own flat JSON object, with
+the entry's scalar fields (symbol, checksum) carried onto the row and a "side"
+field naming which array it came from:
+
+    {"symbol": ..., "checksum": ..., "side": "bids", ...order fields}
+
+When an order carries a field that also names a book scalar (e.g. "timestamp"),
+the order value wins and the book scalar is preserved under "book_<field>" so
+nothing is silently discarded. Entries without array fields pass through.
+"""
+def explode_level3(entries):
+    rows = []
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            rows.append(entry)
+            continue
+
+        arrays = {
+            key: value for key, value in entry.items() if isinstance(value, list)
+        }
+
+        if not arrays:
+            rows.append(entry)
+            continue
+
+        scalars = {
+            key: value for key, value in entry.items() if key not in arrays
+        }
+
+        for side, items in arrays.items():
+            for item in items:
+                if not isinstance(item, dict):
+                    rows.append({**scalars, "side": side, "value": item})
+                    continue
+
+                pending = {}
+
+                for key, value in scalars.items():
+                    if key in item:
+                        pending[f"book_{key}"] = value
+                    else:
+                        pending[key] = value
+
+                rows.append({**pending, "side": side, **item})
+
+    return rows
+
+
 def dump_capture_frames(db_path, output_dir, limit=100000, since=None, until=None):
     print(f"Connecting to {db_path}...")
     conn = sqlite3.connect(db_path)
@@ -98,6 +183,21 @@ def dump_capture_frames(db_path, output_dir, limit=100000, since=None, until=Non
     metadata_cols = ["capture_id", "seq", "received_at", "endpoint", "channel"]
 
     for channel, group in df.groupby("channel", sort=True):
+        slug = channel_slug(channel)
+
+        if channel == "level3":
+            # The full book state lives under "data", with each book's bids and
+            # asks nested arrays; dump every order as one flat JSON object.
+            entries = explode_level3(collect_channel_data(group["payload"]))
+
+            out_path = os.path.join(output_dir, f"{slug}.json")
+            print(f"Writing {len(entries)} flat level3 records to {out_path}...")
+
+            with open(out_path, "w") as handle:
+                json.dump(entries, handle, ensure_ascii=False)
+
+            continue
+
         flattened_df = pd.json_normalize(group["payload"].map(flatten_payload).tolist())
 
         if "channel" in flattened_df.columns:
@@ -109,7 +209,7 @@ def dump_capture_frames(db_path, output_dir, limit=100000, since=None, until=Non
             axis=1,
         )
 
-        out_path = os.path.join(output_dir, f"{channel_slug(channel)}.csv")
+        out_path = os.path.join(output_dir, f"{slug}.csv")
         print(f"Writing {len(result_df)} rows ({result_df.shape[1]} columns) to {out_path}...")
         result_df.to_csv(out_path, index=False)
 
@@ -119,7 +219,7 @@ def dump_capture_frames(db_path, output_dir, limit=100000, since=None, until=Non
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", required=True, help="Path to symm.sqlite")
-    parser.add_argument("--out", required=True, help="Output directory; one <channel>.csv is written per channel")
+    parser.add_argument("--out", required=True, help="Output directory; one <channel>.csv per channel (level3 written as a flat JSON array of data entries)")
     parser.add_argument("--limit", type=int, default=100000, help="Max rows to dump")
     parser.add_argument("--since", help="Start time (ISO format)")
     parser.add_argument("--until", help="End time (ISO format)")

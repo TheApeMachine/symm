@@ -143,9 +143,21 @@ func (book *Book) Get(symbol string, read func(*spotbook.Book)) {
 	}
 }
 
+/*
+Create registers a managed book for symbol if one does not already exist.
+Reconnect resubscribes the whole group on the SDK's fixed retry cadence, and a
+new *book.Book here would discard the live order book and everything referencing
+it; the snapshot frame that follows resubscription already rebuilds book
+contents in place via apply, so re-creating here on every reconnect only
+leaked memory without adding correctness.
+*/
 func (book *Book) Create(symbol string, depth int) {
 	book.mu.Lock()
 	defer book.mu.Unlock()
+
+	if book.manager.GetBook(symbol) != nil {
+		return
+	}
 
 	book.manager.CreateBook(symbol, depth)
 }

@@ -40,3 +40,15 @@ qodana.yaml
 .reasonix/
 extracted_opportunities/
 .gocache/
+scripts/level3.json
+scripts/tickers.csv
+scripts/tickers.json
+scripts/new_dump.csv/0_private_TradeVolume.csv
+scripts/new_dump.csv/balances.csv
+scripts/new_dump.csv/book.csv
+scripts/new_dump.csv/executions.csv
+scripts/new_dump.csv/heartbeat.csv
+scripts/new_dump.csv/instrument.csv
+scripts/new_dump.csv/status.csv
+scripts/new_dump.csv/ticker.csv
+scripts/new_dump.csv/trade.csv

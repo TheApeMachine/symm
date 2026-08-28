@@ -155,11 +155,7 @@ func (plan *RelationPlan) ResolveControls(symbol string, store *ObservationStore
 	for _, selector := range plan.Controls {
 		matched := false
 
-		store.RangeCoordinates(func(coordinate Coordinate) bool {
-			if coordinate.Symbol != symbol {
-				return true
-			}
-
+		store.RangeCoordinatesForSymbol(symbol, func(coordinate Coordinate) bool {
 			if plan.Peer != "" && coordinate.Peer != plan.Peer {
 				return true
 			}
@@ -252,8 +248,8 @@ func resolveSelectorsForSymbol(
 ) []Coordinate {
 	matches := make([]Coordinate, 0)
 
-	store.RangeCoordinates(func(coordinate Coordinate) bool {
-		if coordinate.Symbol != symbol || coordinate.Epoch != epoch {
+	store.RangeCoordinatesForSymbol(symbol, func(coordinate Coordinate) bool {
+		if coordinate.Epoch != epoch {
 			return true
 		}
 

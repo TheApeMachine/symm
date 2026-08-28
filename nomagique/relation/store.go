@@ -194,6 +194,34 @@ func (store *ObservationStore) RangeCoordinates(visit func(Coordinate) bool) {
 }
 
 /*
+RangeCoordinatesForSymbol visits every registered coordinate for one symbol, in
+canonical CompareCoordinate order. Symbol is the primary field in that order, so
+one symbol's coordinates occupy one contiguous run of the resident index;
+binary search finds its bounds instead of walking every coordinate in the
+store. Candidate compilation calls this once per symbol per plan-pair, so an
+O(total coordinates) scan here becomes the dominant cost once the coordinate
+universe grows large — this keeps it O(this symbol's coordinates).
+*/
+func (store *ObservationStore) RangeCoordinatesForSymbol(symbol string, visit func(Coordinate) bool) {
+	if store == nil {
+		return
+	}
+
+	store.indexMu.RLock()
+	defer store.indexMu.RUnlock()
+
+	start := sort.Search(len(store.order), func(index int) bool {
+		return store.order[index].Symbol >= symbol
+	})
+
+	for index := start; index < len(store.order) && store.order[index].Symbol == symbol; index++ {
+		if !visit(store.order[index]) {
+			return
+		}
+	}
+}
+
+/*
 CoordinateCount returns the number of resident coordinates.
 */
 func (store *ObservationStore) CoordinateCount() int {

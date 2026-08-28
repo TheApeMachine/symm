@@ -6,6 +6,7 @@ import {
 	measurementStore,
 	type RingBuffer,
 } from "#/collections/app";
+import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
 	kernelSparkPaths,
@@ -131,7 +132,10 @@ export const KernelList = ({
 						key={source}
 						type="button"
 						data-kernel={source}
-						onClick={() => kernelDetailStore.setState(() => source)}
+						onClick={() => {
+							kernelDetailStore.setState(() => source);
+							terminalStore.actions.inspectSource(source);
+						}}
 						className="block w-full cursor-pointer border-(--line) border-b border-l-2 border-l-transparent bg-transparent px-3 py-2.5 text-left font-[inherit] hover:bg-(--raised)"
 					>
 						<Flex.Row align="center" justify="between" gap={2}>
