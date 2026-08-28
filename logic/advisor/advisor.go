@@ -1,8 +1,9 @@
 /*
 Package advisor hosts SYMM's descriptive context layer: a single Advisor type
 that composes already-produced Measurements into bounded per-symbol resident
-state through a nomagique.Number pipeline, and emits Perspectives — current
-descriptive context that is never a gate, a score, or a trade instruction.
+state through a caller-supplied nomagique.Number pipeline, and emits
+Perspectives — current descriptive context that is never a gate, a score, or a
+trade instruction.
 
 The contract every Advisor obeys:
 
@@ -15,6 +16,11 @@ The contract every Advisor obeys:
 
 Advisors compose existing Measurements rather than re-deriving raw signals, and
 answer "what context is relevant now?" — never "what should be done?".
+
+There is exactly one Advisor Go type. Every concrete advisor family (liquidity,
+morphology, coordination, ...) is one Advisor instance constructed with its own
+nomagique.Number pipeline and its own set of MetricBindings; the pipeline, not
+the type, carries the family's mathematics.
 */
 package advisor
 
@@ -23,74 +29,88 @@ import (
 
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-MetricBinding declares one measurement a composed Advisor feeds: the producing
-Source and the metric name exactly as the Measurement.Metrics map keys it. The
-Source disambiguates a metric name emitted by more than one signal.
+MetricBinding declares one measurement fact a composed Advisor's pipeline
+consumes: the producing Source and the metric name exactly as the
+Measurement.Metrics map keys it, plus the series Prefix that names the
+interned Frame slots the value is projected into. The Source disambiguates a
+metric name emitted by more than one signal. Prefix namespaces the binding's
+value, event time, and derived estimator slots so several bindings can compose
+into the same per-symbol Frame without collision.
+
+Series is the resolved slot table for Prefix. Baseline, ZScore, and Velocity
+name the same prefix's temporal-context estimator slots (statistic.Baseline /
+statistic.ZScore / statistic.Velocity), resolved once here so a reading
+pipeline built from those primitives can be projected back into a Perspective
+without re-deriving the naming convention.
 */
 type MetricBinding struct {
-	Source string
-	Metric string
+	Source   string
+	Metric   string
+	Prefix   string
+	Series   temporal.Series
+	Baseline nmtypes.Symbol
+	ZScore   nmtypes.Symbol
+	Velocity nmtypes.Symbol
 }
 
 /*
-advisorKey is the bounded resident-state identity of one composed metric for one
-symbol. Each key owns one independent Number stream, so a symbol's composed
-metrics evolve independently without slot collision.
+NewMetricBinding constructs one binding, interning its series prefix and
+temporal-context estimator slots once at wiring time. The prefix should be
+unique per composed metric within an Advisor so its Frame slots do not
+collide with any other bound metric.
 */
-type advisorKey struct {
-	symbol string
-	source string
-	metric string
-}
-
-/*
-stage is the shared temporal-context pipeline each composed metric runs: retain
-a bounded event-time window, then derive the adaptive baseline, the departure
-z-score, and the first difference. The empty prefix uses the legacy generic
-slots, so the per-metric key — not the slot namespace — keeps streams apart.
-*/
-func stage() nmtypes.Primitive {
-	return nmtypes.Pipe(
-		temporal.Window(""),
-		statistic.ZScore(""),
-		statistic.Baseline(""),
-		statistic.Velocity(""),
-	)
+func NewMetricBinding(source, metric, seriesPrefix string) MetricBinding {
+	return MetricBinding{
+		Source:   source,
+		Metric:   metric,
+		Prefix:   seriesPrefix,
+		Series:   temporal.NewSeries(seriesPrefix),
+		Baseline: nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "baseline/value")),
+		ZScore:   nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "z/value")),
+		Velocity: nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "velocity/delta")),
+	}
 }
 
 /*
 Advisor is the single context-producer type. It owns one nomagique.Number
-pipeline — the bounded per-symbol, per-metric resident state plus its derived
-statistics — and composes the declared Measurement metrics through it.
+pipeline — supplied at construction, never assumed — keyed by the logical
+subject (the symbol) so every composed metric for that subject folds into the
+same committed Number state, and projects the declared measurement metrics
+into that pipeline through their bindings.
 */
 type Advisor struct {
-	name    string
-	kind    types.PerspectiveKind
-	number  *nomagique.Number[advisorKey]
-	metrics []MetricBinding
+	name     string
+	kind     types.PerspectiveKind
+	number   *nomagique.Number[string]
+	bindings []MetricBinding
 
-	sequence      uint64
 	ObserveModule func(string, time.Duration)
 }
 
 /*
-NewAdvisor constructs one composed-metric Advisor. Every binding declares a
-measurement metric the advisor maintains temporal context for; the pipeline and
-resident state are built once here, never per event.
+NewAdvisor constructs one Advisor over a caller-supplied pipeline. The pipeline
+carries the family's mathematics (temporal, cross-sectional, relational,
+whatever the family requires); Advisor only hosts it. Every binding declares a
+measurement metric the pipeline composes; bindings and pipeline are built once
+here, never per event.
 */
-func NewAdvisor(name string, kind types.PerspectiveKind, metrics ...MetricBinding) *Advisor {
+func NewAdvisor(
+	name string,
+	kind types.PerspectiveKind,
+	pipeline nmtypes.Primitive,
+	bindings ...MetricBinding,
+) *Advisor {
 	return &Advisor{
-		name:    name,
-		kind:    kind,
-		number:  nomagique.NewNumber[advisorKey](stage()),
-		metrics: metrics,
+		name:     name,
+		kind:     kind,
+		number:   nomagique.NewNumber[string](pipeline),
+		bindings: bindings,
 	}
 }
 
@@ -104,9 +124,10 @@ Close is a no-op: the advisor owns no goroutines and no external resources.
 func (advisor *Advisor) Close() error { return nil }
 
 /*
-Step folds one projected Measurement into the composed metrics' resident state
-and returns the current Perspective for that symbol. A nil, errored, or
-unlabeled measurement produces no context.
+Step folds one projected Measurement's relevant facts into the symbol's
+composed resident state and returns the current Perspective for that symbol.
+A nil, errored, or unlabeled measurement, or one with no binding relevant to
+this Advisor, produces no context: events move, state stays.
 */
 func (advisor *Advisor) Step(measurement *data.Measurement[float64]) *types.Perspective {
 	if advisor == nil || measurement == nil || measurement.Err != nil || measurement.Label == "" {
@@ -115,7 +136,10 @@ func (advisor *Advisor) Step(measurement *data.Measurement[float64]) *types.Pers
 
 	started := time.Now()
 
-	for _, binding := range advisor.metrics {
+	frame := nmtypes.Frame{}
+	relevant := false
+
+	for _, binding := range advisor.bindings {
 		if measurement.Source != binding.Source {
 			continue
 		}
@@ -126,10 +150,19 @@ func (advisor *Advisor) Step(measurement *data.Measurement[float64]) *types.Pers
 			continue
 		}
 
-		advisor.ingest(measurement.Label, binding, metric.Raw, measurement.At)
+		frame.Put(binding.Series.ValueSymbol, metric.Raw)
+		frame.Put(binding.Series.SecSymbol, float64(measurement.At.Unix()))
+		frame.Put(binding.Series.NsecSymbol, float64(measurement.At.Nanosecond()))
+		relevant = true
 	}
 
-	perspective := advisor.project(measurement.Label, measurement.At)
+	if !relevant {
+		return nil
+	}
+
+	state := advisor.number.Step(measurement.Label, frame)
+
+	perspective := advisor.project(measurement.Label, measurement.At, state)
 
 	if advisor.ObserveModule != nil {
 		advisor.ObserveModule(advisor.name, time.Since(started))
@@ -139,60 +172,36 @@ func (advisor *Advisor) Step(measurement *data.Measurement[float64]) *types.Pers
 }
 
 /*
-ingest feeds one composed metric's current value and event time into its keyed
-pipeline stream.
+project reads the symbol's committed pipeline state and materializes the
+Perspective. A bound metric whose derived slots are not all present contributes
+an explicitly not-ready reading: its absence is carried by Ready, never by a
+fabricated zero.
 */
-func (advisor *Advisor) ingest(symbol string, binding MetricBinding, value float64, at time.Time) {
-	frame := nmtypes.Frame{}
-	frame.Put(temporal.DefaultSeries.ValueSymbol, value)
-	frame.Put(temporal.SymbolUnixSec, float64(at.Unix()))
-	frame.Put(temporal.SymbolUnixNsec, float64(at.Nanosecond()))
-
-	advisor.number.Step(advisorKey{
-		symbol: symbol,
-		source: binding.Source,
-		metric: binding.Metric,
-	}, frame)
-}
-
-/*
-project reads each composed metric's committed state and materializes the
-Perspective. A metric whose derived slots are not all present contributes no
-reading: its absence is carried by Count, never by a fabricated zero.
-*/
-func (advisor *Advisor) project(symbol string, at time.Time) *types.Perspective {
+func (advisor *Advisor) project(
+	symbol string,
+	at time.Time,
+	state nmtypes.Frame,
+) *types.Perspective {
 	perspective := &types.Perspective{
-		Symbol:   symbol,
-		Kind:     advisor.kind,
-		At:       at,
-		Sequence: advisor.sequence,
+		Symbol: symbol,
+		Kind:   advisor.kind,
+		At:     at,
 	}
-
-	advisor.sequence++
 
 	count := 0
 
-	for _, binding := range advisor.metrics {
+	for _, binding := range advisor.bindings {
 		if count >= types.PerspectiveMetricCapacity {
 			break
 		}
 
-		frame, found := advisor.number.Project(advisorKey{
-			symbol: symbol,
-			source: binding.Source,
-			metric: binding.Metric,
-		})
-
-		if !found {
-			continue
-		}
-
-		value, hasValue := frame.Get(temporal.DefaultSeries.ValueSymbol)
-		baseline, hasBaseline := frame.Get(statistic.SymbolBaselineValue)
-		zScore, hasZScore := frame.Get(statistic.SymbolZScore)
-		velocity, hasVelocity := frame.Get(statistic.SymbolVelocityDelta)
+		value, hasValue := state.Get(binding.Series.ValueSymbol)
+		baseline, hasBaseline := state.Get(binding.Baseline)
+		zScore, hasZScore := state.Get(binding.ZScore)
+		velocity, hasVelocity := state.Get(binding.Velocity)
 
 		perspective.Readings[count] = types.MetricReading{
+			Metric:   binding.Series.ValueSymbol,
 			Value:    value,
 			Baseline: baseline,
 			ZScore:   zScore,

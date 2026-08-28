@@ -1,6 +1,10 @@
 package types
 
-import "time"
+import (
+	"time"
+
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
+)
 
 /*
 PerspectiveKind names the family of descriptive context a Perspective carries.
@@ -47,10 +51,14 @@ const PerspectiveMetricCapacity = 8
 MetricReading is one composed metric's derived temporal context: the current
 value plus the adaptive baseline, the z-score (departure from that baseline in
 units of its own dispersion), and the first difference, each against the metric's
-own history. Ready is false until every derived slot exists, so a not-ready
-reading's zeros are never mistaken for a real estimate.
+own history. Metric is the interned identity of the measured quantity this
+reading describes, so a consumer can determine what a reading means without
+relying on its position in the Readings array. Ready is false until every
+derived slot exists, so a not-ready reading's zeros are never mistaken for a
+real estimate.
 */
 type MetricReading struct {
+	Metric   nmtypes.Symbol
 	Value    float64
 	Baseline float64
 	ZScore   float64
