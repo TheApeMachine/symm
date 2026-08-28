@@ -184,7 +184,7 @@ export default function VectorLab() {
           {/* Contour Rings */}
           {nodes.map((node) => (
             <g key={`contour-${node.id}`} opacity={activeMetricId === node.id ? 0.25 : 0.05}>
-              {contourLevels.map((level, idx) => {
+              {contourLevels.map((_level, idx) => {
                 const computedRadius = Math.max(10, Math.abs(node.currentWeight) * (idx + 1) * 1.1);
                 return (
                   <circle

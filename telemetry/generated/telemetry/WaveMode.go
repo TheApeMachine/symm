@@ -10,6 +10,7 @@ type WaveModeT struct {
 	Omega float32 `json:"omega"`
 	Real float32 `json:"real"`
 	Imaginary float32 `json:"imaginary"`
+	Linewidth float32 `json:"linewidth"`
 }
 
 func (t *WaveModeT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -20,6 +21,7 @@ func (t *WaveModeT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	WaveModeAddOmega(builder, t.Omega)
 	WaveModeAddReal(builder, t.Real)
 	WaveModeAddImaginary(builder, t.Imaginary)
+	WaveModeAddLinewidth(builder, t.Linewidth)
 	return WaveModeEnd(builder)
 }
 
@@ -27,6 +29,7 @@ func (rcv *WaveMode) UnPackTo(t *WaveModeT) {
 	t.Omega = rcv.Omega()
 	t.Real = rcv.Real()
 	t.Imaginary = rcv.Imaginary()
+	t.Linewidth = rcv.Linewidth()
 }
 
 func (rcv *WaveMode) UnPack() *WaveModeT {
@@ -109,8 +112,20 @@ func (rcv *WaveMode) MutateImaginary(n float32) bool {
 	return rcv._tab.MutateFloat32Slot(8, n)
 }
 
+func (rcv *WaveMode) Linewidth() float32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetFloat32(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *WaveMode) MutateLinewidth(n float32) bool {
+	return rcv._tab.MutateFloat32Slot(10, n)
+}
+
 func WaveModeStart(builder *flatbuffers.Builder) {
-	builder.StartObject(3)
+	builder.StartObject(4)
 }
 func WaveModeAddOmega(builder *flatbuffers.Builder, omega float32) {
 	builder.PrependFloat32Slot(0, omega, 0.0)
@@ -120,6 +135,9 @@ func WaveModeAddReal(builder *flatbuffers.Builder, real float32) {
 }
 func WaveModeAddImaginary(builder *flatbuffers.Builder, imaginary float32) {
 	builder.PrependFloat32Slot(2, imaginary, 0.0)
+}
+func WaveModeAddLinewidth(builder *flatbuffers.Builder, linewidth float32) {
+	builder.PrependFloat32Slot(3, linewidth, 0.0)
 }
 func WaveModeEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

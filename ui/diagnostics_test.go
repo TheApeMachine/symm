@@ -56,9 +56,9 @@ func TestDiagnosticsPublishing(t *testing.T) {
 			return nil
 		})
 
-		bus.Wire(types.ChannelFluid, "", func(value any) any {
-			frame, ok := value.(types.FluidFrame)
-			if ok && frame.Channel == types.DiagnosticsChannel && len(frame.Payload) > 0 {
+		bus.Wire(types.ChannelDiagnostics, "", func(value any) any {
+			payload, ok := value.([]byte)
+			if ok && len(payload) > 0 {
 				receivedFluid.Add(1)
 			}
 
@@ -100,10 +100,10 @@ func TestDiagnosticsEndToEndDelivery(t *testing.T) {
 		Convey("A heartbeat must reconstruct the exact 15-queue topology, byte-for-byte", func() {
 			var received atomic.Value
 
-			bus.Wire(types.ChannelFluid, "", func(value any) any {
-				frame, ok := value.(types.FluidFrame)
-				if ok && frame.Channel == types.DiagnosticsChannel {
-					received.Store(frame)
+			bus.Wire(types.ChannelDiagnostics, "", func(value any) any {
+				payload, ok := value.([]byte)
+				if ok && len(payload) > 0 {
+					received.Store(payload)
 				}
 
 				return nil
@@ -113,9 +113,9 @@ func TestDiagnosticsEndToEndDelivery(t *testing.T) {
 
 			eventually(t, func() bool { return received.Load() != nil })
 
-			frame := received.Load().(types.FluidFrame)
+			payload := received.Load().([]byte)
 
-			envelope, err := telemetry.Decode(frame.Payload)
+			envelope, err := telemetry.Decode(payload)
 			So(err, ShouldBeNil)
 
 			diag, ok := envelope.Frame.Value.(*wire.DiagnosticsFrameT)
@@ -124,7 +124,7 @@ func TestDiagnosticsEndToEndDelivery(t *testing.T) {
 			So(diag.Enabled, ShouldBeTrue)
 
 			// The exact topology, in the exact emission order.
-			So(len(diag.Queues), ShouldEqual, 15)
+			So(len(diag.Queues), ShouldEqual, 16)
 
 			type want struct {
 				name            string
@@ -155,7 +155,8 @@ func TestDiagnosticsEndToEndDelivery(t *testing.T) {
 				{"ui.dashboard", "ui",
 					[]string{"crypto", "category", "manifold", "causal", "cognition", "graph", "resonance", "planner", "allocation", "desk", "diagnostics"},
 					[]string{"hub"}},
-				{"ui.manifold", "ui", []string{"manifold", "diagnostics"}, []string{"webrtc-hub"}},
+				{"ui.manifold", "ui", []string{"manifold"}, []string{"webrtc-hub"}},
+				{"ui.diagnostics", "ui", []string{"diagnostics"}, []string{"webrtc-hub"}},
 			}
 
 			for index, expected := range wants {
@@ -173,13 +174,13 @@ func TestDiagnosticsEndToEndDelivery(t *testing.T) {
 				So(queue.Depth, ShouldEqual, 0)
 				So(queue.HighWater, ShouldEqual, 0)
 
-				// Exactly one subscriber is registered by this test (the fluid
-				// capture wire on topic "fluid"), and unkeyed wires run a single
-				// handler lane, so only the ui.manifold queue — which reads
-				// topic "fluid" — reports that lane; every other queue has zero
-				// registered lanes.
+				// Exactly one subscriber is registered by this test (the capture
+				// wire on topic "diagnostics"), and unkeyed wires run a single
+				// handler lane, so only the ui.diagnostics queue — which reads
+				// topic "diagnostics" — reports that lane; every other queue has
+				// zero registered lanes.
 				expectedLanes := uint64(0)
-				if expected.name == "ui.manifold" {
+				if expected.name == "ui.diagnostics" {
 					expectedLanes = 1
 				}
 

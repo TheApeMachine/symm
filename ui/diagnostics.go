@@ -207,9 +207,15 @@ var queueTopologies = []queueTopology{
 	},
 	{
 		name: "ui.manifold", kind: "ui",
-		writers: []string{"manifold", "diagnostics"},
+		writers: []string{"manifold"},
 		readers: []string{"webrtc-hub"},
 		topic:   types.ChannelFluid,
+	},
+	{
+		name: "ui.diagnostics", kind: "ui",
+		writers: []string{"diagnostics"},
+		readers: []string{"webrtc-hub"},
+		topic:   types.ChannelDiagnostics,
 	},
 }
 
@@ -455,13 +461,10 @@ func (diagnostics *Diagnostics) publish() {
 
 	frame := diagnostics.Snapshot().Wire()
 
-	diagnostics.bus.Publish(types.ChannelFluid, types.FluidFrame{
-		Channel: types.DiagnosticsChannel,
-		Payload: telemetry.Encode(&wire.FrameT{
-			Type:  wire.FrameDiagnosticsFrame,
-			Value: frame,
-		}),
-	})
+	diagnostics.bus.Publish(types.ChannelDiagnostics, telemetry.Encode(&wire.FrameT{
+		Type:  wire.FrameDiagnosticsFrame,
+		Value: frame,
+	}))
 
 	diagnostics.bus.Publish(types.ChannelUI, &types.UIFrame{
 		Type:  wire.FrameDiagnosticsFrame,

@@ -42,9 +42,7 @@ func (peer *fluidPeer) ready() bool {
 	peer.mutex.RLock()
 	defer peer.mutex.RUnlock()
 
-	return peer.channels[types.FluidFieldsChannel] != nil &&
-		peer.channels[types.FluidParticlesChannel] != nil &&
-		peer.channels[types.FluidPhaseChannel] != nil
+	return peer.channels[types.ManifoldChannel] != nil
 }
 
 func (peer *fluidPeer) has(label string) bool {
@@ -57,9 +55,7 @@ func (peer *fluidPeer) has(label string) bool {
 func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
 	label := dataChannel.Label()
 
-	if label != types.FluidFieldsChannel &&
-		label != types.FluidParticlesChannel &&
-		label != types.FluidPhaseChannel &&
+	if label != types.ManifoldChannel &&
 		label != types.DiagnosticsChannel {
 		errnie.Error(fluidError("unsupported data channel "+label, nil))
 		_ = dataChannel.Close()

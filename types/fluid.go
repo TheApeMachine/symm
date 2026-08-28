@@ -1,31 +1,15 @@
 package types
 
 /*
-The fluid view's data channels. A frame belongs to one of them, and the
-producer knows which the moment it builds one.
+The fluid view's data channels. ManifoldChannel carries the resident sensorium
+State and Reading as one ManifoldFrame per Step; DiagnosticsChannel carries the
+replaceable diagnostics snapshot. Both ride the same WebRTC transport.
 */
 const (
-	FluidFieldsChannel    = "fluid-fields"
-	FluidParticlesChannel = "fluid-particles"
-	FluidPhaseChannel     = "fluid-phase"
+	ManifoldChannel = "manifold"
 
 	// DiagnosticsChannel carries the replaceable diagnostics snapshot. It rides
-	// the same WebRTC transport as the fluid channels so the diagram can be
+	// the same WebRTC transport as the manifold channel so the diagram can be
 	// opened without the orchestrating websocket bus in front of the data.
 	DiagnosticsChannel = "diagnostics"
 )
-
-/*
-FluidFrame is one manifold publication addressed to the data channel that
-carries it.
-
-The channel used to be recovered on the consuming end by testing the payload
-for a `{"fields":` or `{"particles":` prefix, which re-derived something the
-producer already knew and made the routing depend on how the payload happened
-to be encoded. Naming the destination keeps that knowledge where it originates
-and leaves Payload free to become an opaque binary encoding.
-*/
-type FluidFrame struct {
-	Channel string
-	Payload []byte
-}

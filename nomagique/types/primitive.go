@@ -77,6 +77,38 @@ func Fork(primitives ...Primitive) Primitive {
 }
 
 /*
+TryFork is Fork for branches that may not yet have anything to compose: a
+branch that fails without having written any slot is dropped rather than
+failing the whole step, so a composition of independently-arriving facts
+tolerates the ones that have not arrived yet without losing the ones that
+have. A branch that fails after writing at least one slot is a genuine defect,
+not an absence, and still propagates.
+*/
+func TryFork(primitives ...Primitive) Primitive {
+	branches := append([]Primitive(nil), primitives...)
+
+	return func(input Frame) Frame {
+		output := input
+
+		for _, primitive := range branches {
+			branch := Step(primitive, input)
+
+			if branch.Err != nil {
+				if branch.Mask == input.Mask {
+					continue
+				}
+
+				return branch
+			}
+
+			output.Merge(branch)
+		}
+
+		return output
+	}
+}
+
+/*
 ForkStrict is Fork with collision detection: conflicting writes to the same
 slot fail rather than silently overwriting.
 */

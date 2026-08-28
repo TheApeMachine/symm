@@ -52,6 +52,8 @@ export { Holding, HoldingT } from './telemetry/holding.js';
 export { Hydrodynamics, HydrodynamicsT } from './telemetry/hydrodynamics.js';
 export { MCTSBranch, MCTSBranchT } from './telemetry/mctsbranch.js';
 export { MCTSNode, MCTSNodeT } from './telemetry/mctsnode.js';
+export { ManifoldFrame, ManifoldFrameT } from './telemetry/manifold-frame.js';
+export { ManifoldReading, ManifoldReadingT } from './telemetry/manifold-reading.js';
 export { Measurement, MeasurementT } from './telemetry/measurement.js';
 export { MeasurementsFrame, MeasurementsFrameT } from './telemetry/measurements-frame.js';
 export { Metric, MetricT } from './telemetry/metric.js';

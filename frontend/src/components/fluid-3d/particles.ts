@@ -28,12 +28,27 @@ const particleBindLayout = (device: GPUDevice) =>
 FluidParticles is one instanced-quad draw for the complete resident particle
 selection. WebGPU has no point size, so each particle is a camera-facing quad.
 */
+const maxAbs = (values: Float32Array): number => {
+	let peak = 0;
+
+	for (const value of values) {
+		const abs = Math.abs(value);
+
+		if (abs > peak) {
+			peak = abs;
+		}
+	}
+
+	return peak;
+};
+
 export class FluidParticles {
 	visible = true;
 	private frame: FluidParticleFrame | null = null;
 	private instanceBuffer: GPUBuffer | null = null;
 	private instanceCapacity = 0;
 	private gridSpacing = 1 / 64;
+	private scales = { heat: 0, energy: 0, mass: 0, amplitude: 0 };
 	private readonly quadBuffer: GPUBuffer;
 	private readonly uniformBuffer: GPUBuffer;
 	private readonly bindGroup: GPUBindGroup;
@@ -122,14 +137,39 @@ export class FluidParticles {
 			});
 		}
 
-		this.gpu.device.queue.writeBuffer(
-			this.instanceBuffer,
-			0,
-			frame.values.buffer,
-			frame.values.byteOffset,
-			bytes,
-		);
+		// The wire carries one Float32Array per field; the vertex buffer needs
+		// them interleaved (Pos3, Vel3, Mass, Heat, Energy, Phase, Omega, Amp)
+		// for GPU instancing. Interleaving is GPU vertex-buffer layout, done
+		// here at the one place that needs those bytes — the wire format
+		// itself stays field-for-field, unreshaped.
+		const stride = PARTICLE_STRIDE_BYTES / Float32Array.BYTES_PER_ELEMENT;
+		const instances = new Float32Array(frame.count * stride);
+
+		for (let index = 0; index < frame.count; index += 1) {
+			const p = index * 3;
+			const o = index * stride;
+			instances[o + 0] = frame.pos[p + 0] ?? 0;
+			instances[o + 1] = frame.pos[p + 1] ?? 0;
+			instances[o + 2] = frame.pos[p + 2] ?? 0;
+			instances[o + 3] = frame.vel[p + 0] ?? 0;
+			instances[o + 4] = frame.vel[p + 1] ?? 0;
+			instances[o + 5] = frame.vel[p + 2] ?? 0;
+			instances[o + 6] = frame.mass[index] ?? 0;
+			instances[o + 7] = frame.heat[index] ?? 0;
+			instances[o + 8] = frame.energy[index] ?? 0;
+			instances[o + 9] = frame.phase[index] ?? 0;
+			instances[o + 10] = frame.omega[index] ?? 0;
+			instances[o + 11] = frame.amp[index] ?? 0;
+		}
+
+		this.gpu.device.queue.writeBuffer(this.instanceBuffer, 0, instances);
 		this.frame = frame;
+		this.scales = {
+			heat: maxAbs(frame.heat),
+			energy: maxAbs(frame.energy),
+			mass: maxAbs(frame.mass),
+			amplitude: maxAbs(frame.amp),
+		};
 	}
 
 	setGridSpacing(spacing: number) {
@@ -146,10 +186,10 @@ export class FluidParticles {
 		data[20] = camera.up[0];
 		data[21] = camera.up[1];
 		data[22] = camera.up[2];
-		data[23] = this.frame?.heatScale ?? 0;
-		data[24] = this.frame?.energyScale ?? 0;
-		data[25] = this.frame?.massScale ?? 0;
-		data[26] = this.frame?.amplitudeScale ?? 0;
+		data[23] = this.scales.heat;
+		data[24] = this.scales.energy;
+		data[25] = this.scales.mass;
+		data[26] = this.scales.amplitude;
 		this.gpu.device.queue.writeBuffer(this.uniformBuffer, 0, data);
 	}
 

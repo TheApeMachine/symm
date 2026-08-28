@@ -676,7 +676,55 @@ table ErrorFrame {
   time:string;
 }
 
-table WaveMode { omega:float; real:float; imaginary:float; }
+table ManifoldReading {
+  divergence:double;
+  guidanceSpeed:double;
+  coherenceMag2:double;
+  pressureGradNorm:double;
+  viscosityProxy:double;
+  kuramotoR:double;
+}
+
+/*
+ManifoldFrame carries the resident sensorium State and Reading exactly as
+logic/manifold.Solver.Step returns them, field for field. It is built only at
+the WebRTC transport boundary, from the *manifold.State every Step produces;
+nothing upstream of that boundary encodes or shapes this data.
+*/
+table ManifoldFrame {
+  sequence:ulong;
+  n:long;
+  bytes:[long] (required);
+  seqs:[long] (required);
+  tokenIds:[long] (required);
+  contentIds:[long] (required);
+  phase:[float] (required);
+  omega:[float] (required);
+  energy:[float] (required);
+  mass:[float] (required);
+  heat:[float] (required);
+  amp:[float] (required);
+  pos:[float] (required);
+  vel:[float] (required);
+  clamped:[bool] (required);
+  dark:[bool] (required);
+  reading:ManifoldReading (required);
+  gridX:int;
+  gridY:int;
+  gridZ:int;
+  gridSpacing:double;
+  momRho:[float] (required);
+  fieldEnergy:[float] (required);
+  waveReal:[float] (required);
+  waveImag:[float] (required);
+  densityScale:float;
+  momentumScale:float;
+  energyScale:float;
+  waveScale:float;
+  modes:[WaveMode] (required);
+}
+
+table WaveMode { omega:float; real:float; imaginary:float; linewidth:float; }
 table PhaseOutcome { direction:string; returnValue:double; horizon:long; }
 table PhaseResponse {
   angle:double;
@@ -777,7 +825,8 @@ union Frame {
   HindsightFrame,
   ErrorFrame,
   FluidPhaseFrame,
-  DiagnosticsFrame
+  DiagnosticsFrame,
+  ManifoldFrame
 }
 
 table Envelope {

@@ -148,6 +148,53 @@ func TestForkContracts(t *testing.T) {
 	})
 }
 
+func TestTryForkContracts(t *testing.T) {
+	Convey("TryFork drops a branch that fails without writing any slot", t, func() {
+		ready := func(input Frame) Frame {
+			input.Put(primitiveFirstOutput, 10)
+
+			return input
+		}
+		notYetObserved := func(input Frame) Frame {
+			input.Err = errors.New("required fact absent")
+
+			return input
+		}
+		output := TryFork(ready, notYetObserved)(Frame{}.Set(primitiveInput, 1))
+		So(output.Err, ShouldBeNil)
+		So(output.MustGet(primitiveFirstOutput), ShouldEqual, 10.0)
+		So(output.Has(primitiveSecondOut), ShouldBeFalse)
+	})
+
+	Convey("TryFork still composes every branch once each has arrived", t, func() {
+		first := func(input Frame) Frame {
+			input.Put(primitiveFirstOutput, 10)
+
+			return input
+		}
+		second := func(input Frame) Frame {
+			input.Put(primitiveSecondOut, 20)
+
+			return input
+		}
+		output := TryFork(first, second)(Frame{}.Set(primitiveInput, 1))
+		So(output.Err, ShouldBeNil)
+		So(output.MustGet(primitiveFirstOutput), ShouldEqual, 10.0)
+		So(output.MustGet(primitiveSecondOut), ShouldEqual, 20.0)
+	})
+
+	Convey("TryFork propagates a branch failure that already wrote a slot", t, func() {
+		wroteThenFailed := func(input Frame) Frame {
+			input.Put(primitiveFirstState, 1)
+			input.Err = errors.New("genuine defect")
+
+			return input
+		}
+		output := TryFork(wroteThenFailed)(Frame{}.Set(primitiveInput, 1))
+		So(output.Err, ShouldNotBeNil)
+	})
+}
+
 func TestConfigureContracts(t *testing.T) {
 	producerState := MustIntern("test/configure/producer_state")
 	consumerState := MustIntern("test/configure/consumer_state")

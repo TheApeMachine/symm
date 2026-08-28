@@ -27,7 +27,7 @@ func TestFluidRTCAnswer(t *testing.T) {
 			So(err, ShouldBeNil)
 			defer clientPC.Close()
 
-			dc, err := clientPC.CreateDataChannel(types.FluidFieldsChannel, &webrtc.DataChannelInit{
+			dc, err := clientPC.CreateDataChannel(types.ManifoldChannel, &webrtc.DataChannelInit{
 				Ordered: new(true),
 			})
 			So(err, ShouldBeNil)
@@ -50,7 +50,7 @@ func TestFluidRTCAnswer(t *testing.T) {
 			clientPC, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 			So(err, ShouldBeNil)
 
-			dc, err := clientPC.CreateDataChannel(types.FluidFieldsChannel, &webrtc.DataChannelInit{
+			dc, err := clientPC.CreateDataChannel(types.ManifoldChannel, &webrtc.DataChannelInit{
 				Ordered: new(true),
 			})
 			So(err, ShouldBeNil)
@@ -71,7 +71,7 @@ func TestFluidRTCAnswer(t *testing.T) {
 				So(err, ShouldBeNil)
 				defer newClientPC.Close()
 
-				newDC, err := newClientPC.CreateDataChannel(types.FluidFieldsChannel, &webrtc.DataChannelInit{
+				newDC, err := newClientPC.CreateDataChannel(types.ManifoldChannel, &webrtc.DataChannelInit{
 					Ordered: new(true),
 				})
 				So(err, ShouldBeNil)
@@ -102,7 +102,7 @@ func TestFluidRTCPublish(t *testing.T) {
 		defer fluid.Close()
 
 		Convey("Publishing to no active peers should succeed cleanly", func() {
-			err := fluid.publish(types.FluidFieldsChannel, []byte("test"))
+			err := fluid.publish(types.ManifoldChannel, []byte("test"))
 			So(err, ShouldBeNil)
 		})
 	})

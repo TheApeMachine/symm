@@ -25,6 +25,14 @@ type RegressionAccumulator struct {
 	xty        []float64 // p
 	yty        float64
 	rows       int
+
+	// fitCoefficients and fitInverse are Fit's scratch space, reused across
+	// calls on the same accumulator. A prequential walk calls Fit once per
+	// resident row (hundreds per candidate pair), so a fresh gonum vector and
+	// matrix on every call was the single largest allocator in the process;
+	// both are purely local to one Fit call and never retained past it.
+	fitCoefficients []float64
+	fitInverse      []float64
 }
 
 /*
@@ -37,9 +45,11 @@ func NewRegressionAccumulator(parameters int) *RegressionAccumulator {
 	}
 
 	return &RegressionAccumulator{
-		parameters: parameters,
-		xtx:        make([]float64, parameters*parameters),
-		xty:        make([]float64, parameters),
+		parameters:      parameters,
+		xtx:             make([]float64, parameters*parameters),
+		xty:             make([]float64, parameters),
+		fitCoefficients: make([]float64, parameters),
+		fitInverse:      make([]float64, parameters*parameters),
 	}
 }
 
@@ -105,7 +115,7 @@ func (accumulator *RegressionAccumulator) Fit() RegressionFit {
 
 	crossProduct := mat.NewDense(accumulator.parameters, accumulator.parameters, accumulator.xtx)
 	rightHand := mat.NewVecDense(accumulator.parameters, accumulator.xty)
-	coefficients := mat.NewVecDense(accumulator.parameters, nil)
+	coefficients := mat.NewVecDense(accumulator.parameters, accumulator.fitCoefficients)
 
 	if err := coefficients.SolveVec(crossProduct, rightHand); err != nil {
 		// Singular cross-product: rank-deficient design.
@@ -127,7 +137,9 @@ func (accumulator *RegressionAccumulator) Fit() RegressionFit {
 
 	fit.ResidualSSE = sse
 	fit.ResidualVariance = sse / float64(accumulator.rows-accumulator.parameters)
-	fit.CoefficientVariance = coefficientVarianceFromCrossProduct(crossProduct, fit.ResidualVariance, accumulator.parameters)
+	fit.CoefficientVariance = coefficientVarianceFromCrossProduct(
+		crossProduct, accumulator.fitInverse, fit.ResidualVariance, accumulator.parameters,
+	)
 	fit.Defined = true
 
 	return fit
@@ -181,9 +193,10 @@ func (fit RegressionFit) VarianceAt(column int) (float64, bool) {
 coefficientVarianceFromCrossProduct computes diag(sigma² (X'X)⁻¹) from the
 already-formed cross-product matrix. It returns nil when the inverse is not
 computable, which is an explicit undefined state for coefficient uncertainty.
+scratch is the caller's reusable p×p backing slice for the inverse.
 */
-func coefficientVarianceFromCrossProduct(crossProduct *mat.Dense, residualVariance float64, parameters int) []float64 {
-	inverse := mat.NewDense(parameters, parameters, nil)
+func coefficientVarianceFromCrossProduct(crossProduct *mat.Dense, scratch []float64, residualVariance float64, parameters int) []float64 {
+	inverse := mat.NewDense(parameters, parameters, scratch)
 
 	if err := inverse.Inverse(crossProduct); err != nil {
 		return nil

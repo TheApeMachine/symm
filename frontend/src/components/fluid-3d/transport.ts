@@ -1,16 +1,12 @@
 import { FluidRecordReader } from "./record";
 import {
-	decodeFields,
-	decodeParticles,
-	decodePhase,
+	decodeManifold,
 	type FluidFields,
 	type FluidParticleFrame,
 	type FluidPhase,
 } from "./wire";
 
-const fieldsChannel = "fluid-fields";
-const particlesChannel = "fluid-particles";
-const phaseChannel = "fluid-phase";
+const manifoldChannel = "manifold";
 
 export type FluidFeedHandlers = {
 	onFields: (fields: FluidFields) => void;
@@ -48,8 +44,9 @@ const errorValue = (value: unknown) =>
 	value instanceof Error ? value : new Error(String(value));
 
 /*
-FluidWebRTCFeed owns one peer connection and delivers the three direct domain
-publications without routing them through the dashboard WebSocket store.
+FluidWebRTCFeed owns one peer connection carrying the manifold channel and
+decodes each ManifoldFrame once into the fields/particles/phase views the
+viewer paints.
 */
 export class FluidWebRTCFeed {
 	private connection: RTCPeerConnection | null = null;
@@ -66,21 +63,32 @@ export class FluidWebRTCFeed {
 				this.handlers.onState(connection.connectionState);
 			}
 		});
-		this.attach(
-			connection.createDataChannel(fieldsChannel, { ordered: true }),
-			decodeFields,
-			this.handlers.onFields,
-		);
-		this.attach(
-			connection.createDataChannel(particlesChannel, { ordered: true }),
-			decodeParticles,
-			this.handlers.onParticles,
-		);
-		this.attach(
-			connection.createDataChannel(phaseChannel, { ordered: true }),
-			decodePhase,
-			this.handlers.onPhase,
-		);
+
+		const channel = connection.createDataChannel(manifoldChannel, {
+			ordered: true,
+		});
+		const reader = new FluidRecordReader();
+		channel.binaryType = "arraybuffer";
+		channel.addEventListener("message", (event) => {
+			try {
+				if (!(event.data instanceof ArrayBuffer)) {
+					throw new Error(`${channel.label} received a non-binary message`);
+				}
+
+				const record = reader.push(event.data);
+
+				if (record !== null) {
+					const { fields, particles, phase } = decodeManifold(
+						new Uint8Array(record),
+					);
+					this.handlers.onFields(fields);
+					this.handlers.onParticles(particles);
+					this.handlers.onPhase(phase);
+				}
+			} catch (error) {
+				this.handlers.onError(errorValue(error));
+			}
+		});
 
 		try {
 			await connection.setLocalDescription(await connection.createOffer());
@@ -125,29 +133,5 @@ export class FluidWebRTCFeed {
 		const connection = this.connection;
 		this.connection = null;
 		connection?.close();
-	}
-
-	private attach<T>(
-		channel: RTCDataChannel,
-		decode: (value: Uint8Array) => T,
-		publish: (value: T) => void,
-	) {
-		const reader = new FluidRecordReader();
-		channel.binaryType = "arraybuffer";
-		channel.addEventListener("message", (event) => {
-			try {
-				if (!(event.data instanceof ArrayBuffer)) {
-					throw new Error(`${channel.label} received a non-binary message`);
-				}
-
-				const record = reader.push(event.data);
-
-				if (record !== null) {
-					publish(decode(new Uint8Array(record)));
-				}
-			} catch (error) {
-				this.handlers.onError(errorValue(error));
-			}
-		});
 	}
 }

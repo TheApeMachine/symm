@@ -27,6 +27,7 @@ const (
 	FrameErrorFrame        Frame = 14
 	FrameFluidPhaseFrame   Frame = 15
 	FrameDiagnosticsFrame  Frame = 16
+	FrameManifoldFrame     Frame = 17
 )
 
 var EnumNamesFrame = map[Frame]string{
@@ -47,6 +48,7 @@ var EnumNamesFrame = map[Frame]string{
 	FrameErrorFrame:        "ErrorFrame",
 	FrameFluidPhaseFrame:   "FluidPhaseFrame",
 	FrameDiagnosticsFrame:  "DiagnosticsFrame",
+	FrameManifoldFrame:     "ManifoldFrame",
 }
 
 var EnumValuesFrame = map[string]Frame{
@@ -67,6 +69,7 @@ var EnumValuesFrame = map[string]Frame{
 	"ErrorFrame":        FrameErrorFrame,
 	"FluidPhaseFrame":   FrameFluidPhaseFrame,
 	"DiagnosticsFrame":  FrameDiagnosticsFrame,
+	"ManifoldFrame":     FrameManifoldFrame,
 }
 
 func (v Frame) String() string {
@@ -118,6 +121,8 @@ func (t *FrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 		return t.Value.(*FluidPhaseFrameT).Pack(builder)
 	case FrameDiagnosticsFrame:
 		return t.Value.(*DiagnosticsFrameT).Pack(builder)
+	case FrameManifoldFrame:
+		return t.Value.(*ManifoldFrameT).Pack(builder)
 	}
 	return 0
 }
@@ -188,6 +193,10 @@ func (rcv Frame) UnPack(table flatbuffers.Table) *FrameT {
 		var x DiagnosticsFrame
 		x.Init(table.Bytes, table.Pos)
 		return &FrameT{Type: FrameDiagnosticsFrame, Value: x.UnPack()}
+	case FrameManifoldFrame:
+		var x ManifoldFrame
+		x.Init(table.Bytes, table.Pos)
+		return &FrameT{Type: FrameManifoldFrame, Value: x.UnPack()}
 	}
 	return nil
 }

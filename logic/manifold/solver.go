@@ -2,7 +2,6 @@ package manifold
 
 import (
 	"context"
-	"math"
 	"sync"
 	"time"
 
@@ -13,9 +12,51 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+WaveMode is one resident ω-lattice spectral mode: its lattice frequency,
+complex spectral-head coefficient, and gate linewidth.
+*/
+type WaveMode struct {
+	Omega     float32
+	Real      float32
+	Imag      float32
+	Linewidth float32
+}
+
+/*
+State is everything Step returns for one advance of the resident domain: the
+per-particle sensorium.State and Reading, the packed Eulerian gas/wave grid
+fields, and the resident spectral mode lattice. Every field here is exactly
+what sensorium.Manifold already exposes through State/Reading/PackFields/
+SpectralModes/Grid — Step gathers all of it once per advance instead of a
+separate caller re-deriving any of it later.
+*/
 type State struct {
 	sensorium.State
 	sensorium.Reading
+
+	GridX, GridY, GridZ int
+	GridSpacing         float64
+
+	// MomRho is four floats per grid cell: momentum xyz then density.
+	MomRho []float32
+	// FieldEnergy is the packed Eulerian energy field, one value per grid
+	// cell — distinct from the embedded sensorium.State.Energy, which is
+	// per-particle.
+	FieldEnergy []float32
+	// WaveReal and WaveImag are the complex spatial wave field, one value per
+	// grid cell.
+	WaveReal []float32
+	WaveImag []float32
+	// DensityScale, MomentumScale, EnergyScale, and WaveScale are the peak
+	// magnitudes PackFields observed while packing MomRho/FieldEnergy/
+	// WaveReal/WaveImag, for normalizing a renderer's color/volume mapping.
+	DensityScale  float32
+	MomentumScale float32
+	EnergyScale   float32
+	WaveScale     float32
+
+	Modes []WaveMode
 }
 
 /*
@@ -38,11 +79,10 @@ type Solver struct {
 	physics       *sensorium.Manifold
 	ObserveModule func(string, time.Duration)
 
-	// sequence numbers the fluid slabs; it advances under mu on each publish.
-	sequence uint64
-
-	// fieldBuffers are reused across publishes so the 4 Hz field slab does not
-	// churn a few megabytes of floats per tick.
+	// fieldMomRho/fieldEnergy/fieldWaveReal/fieldWaveImag are Step's private
+	// working buffers for PackFields, reused across advances so gathering the
+	// grid fields does not itself allocate; State.MomRho etc. is always a
+	// fresh copy handed to the caller, never these buffers.
 	fieldMomRho   []float32
 	fieldEnergy   []float32
 	fieldWaveReal []float32
@@ -66,20 +106,6 @@ func NewSolver(
 		),
 	}
 
-	if workspace != nil {
-		workspace.Wire(
-			types.ChannelHawkes,
-			"",
-			func(value any) any {
-				if m, ok := value.(*data.Measurement[float64]); ok && m != nil {
-					_ = solver.Step(m)
-				}
-
-				return nil
-			},
-		)
-	}
-
 	if solver.physics != nil {
 		gridX, gridY, gridZ, _ := solver.physics.Grid()
 		cells := gridX * gridY * gridZ
@@ -89,7 +115,14 @@ func NewSolver(
 		solver.fieldWaveImag = make([]float32, cells)
 	}
 
-	go solver.publishLoop()
+	if workspace != nil {
+		runtime.WireFunc(
+			workspace,
+			types.ChannelHawkes,
+			types.ChannelFluid,
+			solver.Step,
+		)
+	}
 
 	return solver
 }
@@ -129,123 +162,44 @@ func (solver *Solver) Step(measurement *data.Measurement[float64]) *State {
 		return nil
 	}
 
-	return &State{
-		State:   *state,
-		Reading: solver.physics.Reading(),
-	}
-}
-
-/*
-fluidPublishInterval is the cadence of the fluid WebRTC publication loop.
-*/
-const fluidPublishInterval = 10 * time.Millisecond
-
-/*
-publishLoop streams the resident domain to the fluid channels on a fixed
-cadence, independent of the Hawkes forcing cadence: the physics state persists
-between steps, so the viewer stays live even when the forcing is sparse.
-*/
-func (solver *Solver) publishLoop() {
-	timer := time.NewTimer(fluidPublishInterval)
-	defer timer.Stop()
-
-	for {
-		select {
-		case <-solver.ctx.Done():
-			return
-		case <-timer.C:
-			solver.publishFluid()
-			timer.Reset(fluidPublishInterval)
-		}
-	}
-}
-
-/*
-publishFluid ships the latest resident state as three slabs: the Eulerian
-fields, the oscillator gas, and the phase reading with its spectral modes.
-The FluidRTC wire drops the frames when no viewer owns the channel, so the
-encoding cost is only paid by viewers, never by the trading hot path.
-*/
-func (solver *Solver) publishFluid() {
-	if solver.workspace == nil || solver.physics == nil {
-		return
-	}
-
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
-
-	state := solver.physics.State()
-
-	if state == nil || state.N == 0 {
-		return
-	}
-
-	solver.sequence++
-	sequence := solver.sequence
-
 	gridX, gridY, gridZ, gridSpacing := solver.physics.Grid()
-	density, momentum, energyPeak, wave := solver.physics.PackFields(
+	densityScale, momentumScale, energyScale, waveScale := solver.physics.PackFields(
 		solver.fieldMomRho,
 		solver.fieldEnergy,
 		solver.fieldWaveReal,
 		solver.fieldWaveImag,
-	)
-
-	fieldsSlab := encodeFieldsSlab(
-		sequence,
-		gridX, gridY, gridZ,
-		float32(gridSpacing),
-		density, momentum, energyPeak, wave,
-		solver.fieldMomRho,
-		solver.fieldEnergy,
-		solver.fieldWaveReal,
-		solver.fieldWaveImag,
-	)
-
-	heatScale := maxAbs32(state.Heat)
-	energyScale := maxAbs32(state.Energy)
-	massScale := maxAbs32(state.Mass)
-
-	particlesSlab := encodeParticlesSlab(
-		sequence,
-		state,
-		heatScale, energyScale, massScale,
 	)
 
 	modeOmega, modeReal, modeImag, modeLinewidth := solver.physics.SpectralModes()
-	phaseSlab := encodePhaseSlab(
-		sequence,
-		solver.physics.Reading(),
-		state,
-		modeOmega, modeReal, modeImag, modeLinewidth,
-	)
+	modes := make([]WaveMode, len(modeOmega))
 
-	solver.workspace.Publish(types.ChannelFluid, types.FluidFrame{
-		Channel: types.FluidFieldsChannel,
-		Payload: fieldsSlab,
-	})
-	solver.workspace.Publish(types.ChannelFluid, types.FluidFrame{
-		Channel: types.FluidParticlesChannel,
-		Payload: particlesSlab,
-	})
-	solver.workspace.Publish(types.ChannelFluid, types.FluidFrame{
-		Channel: types.FluidPhaseChannel,
-		Payload: phaseSlab,
-	})
-}
-
-func maxAbs32(values []float32) float32 {
-	var peak float32
-
-	for _, value := range values {
-		abs := float32(math.Abs(float64(value)))
-
-		if abs > peak {
-			peak = abs
+	for index := range modeOmega {
+		modes[index] = WaveMode{
+			Omega:     modeOmega[index],
+			Real:      modeReal[index],
+			Imag:      modeImag[index],
+			Linewidth: modeLinewidth[index],
 		}
 	}
 
-	return peak
+	return &State{
+		State:   *state,
+		Reading: solver.physics.Reading(),
+
+		GridX: gridX, GridY: gridY, GridZ: gridZ, GridSpacing: gridSpacing,
+
+		MomRho:      append([]float32(nil), solver.fieldMomRho...),
+		FieldEnergy: append([]float32(nil), solver.fieldEnergy...),
+		WaveReal:    append([]float32(nil), solver.fieldWaveReal...),
+		WaveImag:    append([]float32(nil), solver.fieldWaveImag...),
+
+		DensityScale:  densityScale,
+		MomentumScale: momentumScale,
+		EnergyScale:   energyScale,
+		WaveScale:     waveScale,
+
+		Modes: modes,
+	}
 }
 
 func (solver *Solver) Close() error {

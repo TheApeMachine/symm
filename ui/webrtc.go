@@ -5,12 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/webrtc/v4"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/telemetry"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -37,6 +41,7 @@ type FluidRTC struct {
 	consumerID    string
 	queueLimit    int
 	bufferedLimit uint64
+	sequence      uint64
 	ObserveModule func(string, time.Duration)
 }
 
@@ -70,24 +75,116 @@ func NewFluidRTC(
 	}
 
 	if bus != nil {
-		bus.Wire(types.ChannelFluid, "", func(value any) any {
-			frame, ok := value.(types.FluidFrame)
+		// ChannelFluid publishes a full grid-field snapshot on every Hawkes-
+		// triggered Step (several times a second); DeliveryLatestByKey holds
+		// only the most recent value in a fixed cell instead of the default
+		// 64K-slot ring, so an unread backlog never pins hours of past
+		// snapshots in memory — only ever the current state matters here.
+		bus.WireClass(
+			types.ChannelFluid, "",
+			runtime.ServiceAnalytics, runtime.DeliveryLatestByKey, nil,
+			func(value any) any {
+				state, ok := value.(*manifold.State)
 
-			if !ok {
+				if !ok || state == nil {
+					return nil
+				}
+
+				if !fluidTransport.HasChannel(types.ManifoldChannel) {
+					return nil
+				}
+
+				_ = fluidTransport.publish(types.ManifoldChannel, fluidTransport.encodeManifold(state))
+
 				return nil
-			}
+			},
+		)
 
-			if !fluidTransport.HasChannel(frame.Channel) {
+		bus.WireClass(
+			types.ChannelDiagnostics, "",
+			runtime.ServiceAnalytics, runtime.DeliveryLatestByKey, nil,
+			func(value any) any {
+				payload, ok := value.([]byte)
+
+				if !ok || len(payload) == 0 {
+					return nil
+				}
+
+				if !fluidTransport.HasChannel(types.DiagnosticsChannel) {
+					return nil
+				}
+
+				_ = fluidTransport.publish(types.DiagnosticsChannel, payload)
+
 				return nil
-			}
-
-			_ = fluidTransport.publish(frame.Channel, frame.Payload)
-
-			return nil
-		})
+			},
+		)
 	}
 
 	return fluidTransport
+}
+
+/*
+encodeManifold builds the wire ManifoldFrame from the *manifold.State Step
+returned, field for field. This is the transport boundary: the only place
+sensorium.State and Reading are turned into bytes.
+*/
+func (fluidTransport *FluidRTC) encodeManifold(state *manifold.State) []byte {
+	sequence := atomic.AddUint64(&fluidTransport.sequence, 1)
+
+	modes := make([]*wire.WaveModeT, len(state.Modes))
+
+	for index, mode := range state.Modes {
+		modes[index] = &wire.WaveModeT{
+			Omega:     mode.Omega,
+			Real:      mode.Real,
+			Imaginary: mode.Imag,
+			Linewidth: mode.Linewidth,
+		}
+	}
+
+	return telemetry.Encode(&wire.FrameT{
+		Type: wire.FrameManifoldFrame,
+		Value: &wire.ManifoldFrameT{
+			Sequence:   sequence,
+			N:          int64(state.N),
+			Bytes:      state.Bytes,
+			Seqs:       state.Seqs,
+			TokenIds:   state.TokenIDs,
+			ContentIds: state.ContentIDs,
+			Phase:      state.Phase,
+			Omega:      state.Omega,
+			Energy:     state.Energy,
+			Mass:       state.Mass,
+			Heat:       state.Heat,
+			Amp:        state.Amp,
+			Pos:        state.Pos,
+			Vel:        state.Vel,
+			Clamped:    state.Clamped,
+			Dark:       state.Dark,
+			Reading: &wire.ManifoldReadingT{
+				Divergence:       state.Reading.Divergence,
+				GuidanceSpeed:    state.Reading.GuidanceSpeed,
+				CoherenceMag2:    state.Reading.CoherenceMag2,
+				PressureGradNorm: state.Reading.PressureGradNorm,
+				ViscosityProxy:   state.Reading.ViscosityProxy,
+				KuramotoR:        state.Reading.KuramotoR,
+			},
+			GridX:         int32(state.GridX),
+			GridY:         int32(state.GridY),
+			GridZ:         int32(state.GridZ),
+			GridSpacing:   state.GridSpacing,
+			MomRho:        state.MomRho,
+			FieldEnergy:   state.FieldEnergy,
+			WaveReal:      state.WaveReal,
+			WaveImag:      state.WaveImag,
+			DensityScale:  state.DensityScale,
+			MomentumScale: state.MomentumScale,
+			EnergyScale:   state.EnergyScale,
+			WaveScale:     state.WaveScale,
+			Modes:         modes,
+		},
+	})
 }
 
 func (fluidTransport *FluidRTC) Name() string { return "fluid-webrtc" }

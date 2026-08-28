@@ -191,7 +191,7 @@ export const HindsightPanel = ({ report }: { report: HindsightReport }) => {
 					layout="tile"
 					label="realized loss"
 					value={lossPct > 0 ? `-${formatPct(lossPct)} (${lossPositions})` : "0.00%"}
-					variant={lossPct > 0 ? "error" : "default"}
+					variant={lossPct > 0 ? "error" : undefined}
 					className="px-4 py-3"
 				/>
 				<Stat layout="tile" label="diagnosis coverage" value={formatPct(diagnosticCoverage)} className="px-4 py-3" />
@@ -210,8 +210,8 @@ export const HindsightPanel = ({ report }: { report: HindsightReport }) => {
 						</div>
 						<div className="flex items-center gap-1">
 							<Button
-								variant={activeTab === "all" ? "default" : "bare"}
-								size="sm"
+								variant={activeTab === "all" ? "solid" : "bare"}
+								size="s"
 								className="h-5 px-2 font-mono text-[9px]"
 								aria-pressed={activeTab === "all"}
 								onClick={() => setActiveTab("all")}
@@ -219,8 +219,8 @@ export const HindsightPanel = ({ report }: { report: HindsightReport }) => {
 								All
 							</Button>
 							<Button
-								variant={activeTab === "opportunities" ? "default" : "bare"}
-								size="sm"
+								variant={activeTab === "opportunities" ? "solid" : "bare"}
+								size="s"
 								className="h-5 px-2 font-mono text-[9px]"
 								aria-pressed={activeTab === "opportunities"}
 								onClick={() => setActiveTab("opportunities")}
@@ -228,8 +228,8 @@ export const HindsightPanel = ({ report }: { report: HindsightReport }) => {
 								Missed Opportunities ({report.missedLegs})
 							</Button>
 							<Button
-								variant={activeTab === "losses" ? "default" : "bare"}
-								size="sm"
+								variant={activeTab === "losses" ? "solid" : "bare"}
+								size="s"
 								className="h-5 px-2 font-mono text-[9px]"
 								aria-pressed={activeTab === "losses"}
 								onClick={() => setActiveTab("losses")}

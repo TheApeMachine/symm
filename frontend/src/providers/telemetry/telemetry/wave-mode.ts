@@ -40,8 +40,13 @@ imaginary():number {
   return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
 }
 
+linewidth():number {
+  const offset = this.bb!.__offset(this.bb_pos, 10);
+  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+}
+
 static startWaveMode(builder:flatbuffers.Builder) {
-  builder.startObject(3);
+  builder.startObject(4);
 }
 
 static addOmega(builder:flatbuffers.Builder, omega:number) {
@@ -56,16 +61,21 @@ static addImaginary(builder:flatbuffers.Builder, imaginary:number) {
   builder.addFieldFloat32(2, imaginary, 0.0);
 }
 
+static addLinewidth(builder:flatbuffers.Builder, linewidth:number) {
+  builder.addFieldFloat32(3, linewidth, 0.0);
+}
+
 static endWaveMode(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createWaveMode(builder:flatbuffers.Builder, omega:number, real:number, imaginary:number):flatbuffers.Offset {
+static createWaveMode(builder:flatbuffers.Builder, omega:number, real:number, imaginary:number, linewidth:number):flatbuffers.Offset {
   WaveMode.startWaveMode(builder);
   WaveMode.addOmega(builder, omega);
   WaveMode.addReal(builder, real);
   WaveMode.addImaginary(builder, imaginary);
+  WaveMode.addLinewidth(builder, linewidth);
   return WaveMode.endWaveMode(builder);
 }
 
@@ -73,7 +83,8 @@ unpack(): WaveModeT {
   return new WaveModeT(
     this.omega(),
     this.real(),
-    this.imaginary()
+    this.imaginary(),
+    this.linewidth()
   );
 }
 
@@ -82,6 +93,7 @@ unpackTo(_o: WaveModeT): void {
   _o.omega = this.omega();
   _o.real = this.real();
   _o.imaginary = this.imaginary();
+  _o.linewidth = this.linewidth();
 }
 }
 
@@ -89,7 +101,8 @@ export class WaveModeT implements flatbuffers.IGeneratedObject {
 constructor(
   public omega: number = 0.0,
   public real: number = 0.0,
-  public imaginary: number = 0.0
+  public imaginary: number = 0.0,
+  public linewidth: number = 0.0
 ){}
 
 
@@ -97,7 +110,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   return WaveMode.createWaveMode(builder,
     this.omega,
     this.real,
-    this.imaginary
+    this.imaginary,
+    this.linewidth
   );
 }
 }

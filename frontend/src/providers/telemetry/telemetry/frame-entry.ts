@@ -16,6 +16,7 @@ import { FluidPhaseFrame, FluidPhaseFrameT } from '../telemetry/fluid-phase-fram
 import { Frame, unionToFrame, unionListToFrame } from '../telemetry/frame.js';
 import { GraphFrame, GraphFrameT } from '../telemetry/graph-frame.js';
 import { HindsightFrame, HindsightFrameT } from '../telemetry/hindsight-frame.js';
+import { ManifoldFrame, ManifoldFrameT } from '../telemetry/manifold-frame.js';
 import { MeasurementsFrame, MeasurementsFrameT } from '../telemetry/measurements-frame.js';
 import { PositionsFrame, PositionsFrameT } from '../telemetry/positions-frame.js';
 import { RegulatorFrame, RegulatorFrameT } from '../telemetry/regulator-frame.js';
@@ -102,7 +103,7 @@ unpackTo(_o: FrameEntryT): void {
 export class FrameEntryT implements flatbuffers.IGeneratedObject {
 constructor(
   public frameType: Frame = Frame.NONE,
-  public frame: BacktestFrameT|BalancesFrameT|CausalFrameT|CognitionFrameT|DiagnosticsFrameT|EquityFrameT|ErrorFrameT|FluidPhaseFrameT|GraphFrameT|HindsightFrameT|MeasurementsFrameT|PositionsFrameT|RegulatorFrameT|ResonanceFrameT|StrategyFrameT|TickFrameT|null = null
+  public frame: BacktestFrameT|BalancesFrameT|CausalFrameT|CognitionFrameT|DiagnosticsFrameT|EquityFrameT|ErrorFrameT|FluidPhaseFrameT|GraphFrameT|HindsightFrameT|ManifoldFrameT|MeasurementsFrameT|PositionsFrameT|RegulatorFrameT|ResonanceFrameT|StrategyFrameT|TickFrameT|null = null
 ){}
 
 
