@@ -26,35 +26,76 @@ func LiquidityBindings() []MetricBinding {
 LiquidityPipeline composes the temporal context (current value, adaptive
 baseline, departure z-score, first difference) of every bound metric,
 independently, into one Frame. Each metric's stage runs under its own series
-prefix, so the three streams never collide, and TryFork tolerates a metric
-that has not been observed yet: a branch whose own required value has never
+prefix, so the three streams never collide.
+
+Number.Step merges the previous committed Frame under the incoming one before
+running the pipeline, so every branch sees every bound metric's retained value
+and event time on every call, whether or not this call's Measurement actually
+carried that metric. Each branch is therefore gated on the binding's Fresh
+marker — populated by Advisor.Step only for the metrics this specific
+Measurement delivered — so a branch advances its series exactly once per
+genuine observation instead of re-appending the same retained sample on every
+other bound metric's event. TryFork additionally tolerates a metric that has
+never been observed at all: a branch whose own required value has never
 arrived fails before writing anything and is dropped, while every branch that
-has data still composes. This is what lets a liquidity Measurement and a later
-depthflow Measurement for the same symbol both contribute to the same
-committed state without either erasing the other.
+has data still composes. Together these are what let a liquidity Measurement
+and a later depthflow Measurement for the same symbol both contribute to the
+same committed state without either erasing or duplicating the other.
 */
 func LiquidityPipeline(bindings []MetricBinding) nmtypes.Primitive {
 	branches := make([]nmtypes.Primitive, 0, len(bindings))
 
 	for _, binding := range bindings {
-		branches = append(branches, temporalContext(binding.Prefix))
+		branches = append(branches, freshTemporalContext(binding))
 	}
 
-	return nmtypes.TryFork(branches...)
+	return nmtypes.Pipe(nmtypes.TryFork(branches...), scrubFresh(bindings))
 }
 
 /*
-temporalContext returns the Window→ZScore→Baseline→Velocity composition for
-one series prefix: the current value, adaptive baseline, departure z-score,
-and first difference of that series' own event-time history.
+freshTemporalContext returns the Window→ZScore→Baseline→Velocity composition
+for one binding's series prefix, gated on that binding's Fresh marker: the
+stage only advances the series when this call's own Measurement delivered the
+value.
 */
-func temporalContext(prefix string) nmtypes.Primitive {
-	return nmtypes.Pipe(
-		temporal.Window(prefix),
-		statistic.ZScore(prefix),
-		statistic.Baseline(prefix),
-		statistic.Velocity(prefix),
+func freshTemporalContext(binding MetricBinding) nmtypes.Primitive {
+	stage := nmtypes.Pipe(
+		temporal.Window(binding.Prefix),
+		statistic.ZScore(binding.Prefix),
+		statistic.Baseline(binding.Prefix),
+		statistic.Velocity(binding.Prefix),
 	)
+
+	return func(input nmtypes.Frame) nmtypes.Frame {
+		if !input.Has(binding.Fresh) {
+			input.Err = nmtypes.PrimitiveError("advisor: binding is not fresh this step")
+
+			return input
+		}
+
+		return stage(input)
+	}
+}
+
+/*
+scrubFresh deletes every binding's Fresh marker from the frame TryFork hands
+back. A branch's own Delete only clears the marker from that branch's own
+returned frame; TryFork's output starts as a copy of its input (which still
+has whichever markers the caller set) and only overlays what each branch
+newly wrote, so a marker present in the input survives untouched unless
+something deletes it from the composed output directly. Without this final
+scrub a Fresh bit set once would commit and read as fresh again on every
+later call regardless of what that call actually delivered, permanently
+defeating the gate after its first success.
+*/
+func scrubFresh(bindings []MetricBinding) nmtypes.Primitive {
+	return func(input nmtypes.Frame) nmtypes.Frame {
+		for _, binding := range bindings {
+			input.Delete(binding.Fresh)
+		}
+
+		return input
+	}
 }
 
 /*

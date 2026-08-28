@@ -8,6 +8,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/theapemachine/symm/nomagique/data"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -29,13 +30,13 @@ func testMeasurement(symbol, source string, at time.Time, values map[string]floa
 	}
 }
 
+func newTestLiquidityAdvisor(name string) *Advisor {
+	return NewLiquidityAdvisor(name)
+}
+
 func TestAdvisorStep(t *testing.T) {
-	Convey("Given a composed-metric Advisor", t, func() {
-		advisor := NewAdvisor(
-			"advisor:liquidity",
-			types.KindLiquidity,
-			MetricBinding{Source: "liquidity", Metric: "relative_spread"},
-		)
+	Convey("Given a Liquidity Advisor composed over its three bound metrics", t, func() {
+		advisor := newTestLiquidityAdvisor("advisor:liquidity:" + t.Name())
 
 		Convey("a nil or errored or unlabeled measurement produces no perspective", func() {
 			So(advisor.Step(nil), ShouldBeNil)
@@ -43,90 +44,298 @@ func TestAdvisorStep(t *testing.T) {
 			So(advisor.Step(&data.Measurement[float64]{Label: "", Source: "liquidity"}), ShouldBeNil)
 		})
 
-		Convey("a measurement from an uncomposed source produces no reading", func() {
+		Convey("an unrelated Measurement carrying no bound metric returns nil, not an empty perspective", func() {
 			perspective := advisor.Step(testMeasurement("TEST/USD", "cvd", time.Unix(0, 0), map[string]float64{
-				"relative_spread": 0.01,
+				"unrelated_metric": 1,
 			}))
 
-			So(perspective, ShouldNotBeNil)
-			So(perspective.Count, ShouldEqual, 0)
+			So(perspective, ShouldBeNil)
 		})
 
-		Convey("the first observation is not ready: no baseline departure yet", func() {
+		Convey("the first relevant liquidity Measurement becomes part of the symbol's Number state", func() {
 			perspective := advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(0, 0), map[string]float64{
 				"relative_spread": 0.01,
 			}))
 
 			So(perspective, ShouldNotBeNil)
 			So(perspective.Kind, ShouldEqual, types.KindLiquidity)
-			So(perspective.Count, ShouldEqual, 1)
-			So(perspective.Readings[0].Ready, ShouldBeFalse)
+			So(perspective.Count, ShouldEqual, 3)
+
+			state, found := advisor.number.Project("TEST/USD")
+			So(found, ShouldBeTrue)
+
+			bindings := LiquidityBindings()
+			value, hasValue := state.Get(bindings[0].Series.ValueSymbol)
+			So(hasValue, ShouldBeTrue)
+			So(value, ShouldEqual, 0.01)
 		})
 
-		Convey("a second observation makes the reading ready with derived context", func() {
+		Convey("a later depthflow Measurement for the same symbol composes with the previously retained liquidity facts", func() {
 			advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(0, 0), map[string]float64{
-				"relative_spread": 0.01,
-			}))
-			perspective := advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(0, int64(time.Second)), map[string]float64{
-				"relative_spread": 0.02,
+				"relative_spread":          0.01,
+				"touch_notional_imbalance": 0.02,
 			}))
 
-			So(perspective, ShouldNotBeNil)
-			So(perspective.Readings[0].Ready, ShouldBeTrue)
-			So(perspective.Readings[0].Value, ShouldEqual, 0.02)
-			So(perspective.Readings[0].Velocity, ShouldEqual, 0.01)
-		})
-
-		Convey("two advisors fed identical measurements emit identical readings", func() {
-			left := NewAdvisor("a", types.KindLiquidity, MetricBinding{Source: "liquidity", Metric: "relative_spread"})
-			right := NewAdvisor("b", types.KindLiquidity, MetricBinding{Source: "liquidity", Metric: "relative_spread"})
-
-			feed := func(advisor *Advisor) *types.Perspective {
-				advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(0, 0), map[string]float64{"relative_spread": 0.01}))
-				return advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(0, int64(time.Second)), map[string]float64{"relative_spread": 0.02}))
-			}
-
-			leftPerspective := feed(left)
-			rightPerspective := feed(right)
-
-			So(leftPerspective.Readings[0], ShouldResemble, rightPerspective.Readings[0])
-			So(leftPerspective.Count, ShouldEqual, rightPerspective.Count)
-		})
-
-		Convey("each composed metric occupies its own independent stream", func() {
-			multi := NewAdvisor(
-				"advisor:multi",
-				types.KindState,
-				MetricBinding{Source: "liquidity", Metric: "relative_spread"},
-				MetricBinding{Source: "depthflow", Metric: "book_imbalance"},
-			)
-
-			multi.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(0, 0), map[string]float64{
-				"relative_spread": 0.01,
-			}))
-			multi.Step(testMeasurement("TEST/USD", "depthflow", time.Unix(0, 0), map[string]float64{
+			perspective := advisor.Step(testMeasurement("TEST/USD", "depthflow", time.Unix(1, 0), map[string]float64{
 				"book_imbalance": 0.5,
 			}))
 
-			perspective := multi.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(0, int64(time.Second)), map[string]float64{
+			So(perspective, ShouldNotBeNil)
+
+			bindings := LiquidityBindings()
+			state, found := advisor.number.Project("TEST/USD")
+			So(found, ShouldBeTrue)
+
+			// The liquidity facts observed on the first, independent Measurement
+			// must still be present in the committed state after the depthflow
+			// Measurement composed on top of it.
+			spreadValue, hasSpread := state.Get(bindings[0].Series.ValueSymbol)
+			So(hasSpread, ShouldBeTrue)
+			So(spreadValue, ShouldEqual, 0.01)
+
+			imbalanceValue, hasImbalance := state.Get(bindings[1].Series.ValueSymbol)
+			So(hasImbalance, ShouldBeTrue)
+			So(imbalanceValue, ShouldEqual, 0.02)
+
+			bookValue, hasBook := state.Get(bindings[2].Series.ValueSymbol)
+			So(hasBook, ShouldBeTrue)
+			So(bookValue, ShouldEqual, 0.5)
+		})
+
+		Convey("updating one input does not erase the other previously observed inputs", func() {
+			advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(0, 0), map[string]float64{
+				"relative_spread":          0.01,
+				"touch_notional_imbalance": 0.02,
+			}))
+			advisor.Step(testMeasurement("TEST/USD", "depthflow", time.Unix(1, 0), map[string]float64{
+				"book_imbalance": 0.5,
+			}))
+
+			advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(2, 0), map[string]float64{
+				"relative_spread": 0.03,
+			}))
+
+			bindings := LiquidityBindings()
+			state, found := advisor.number.Project("TEST/USD")
+			So(found, ShouldBeTrue)
+
+			spreadValue, _ := state.Get(bindings[0].Series.ValueSymbol)
+			So(spreadValue, ShouldEqual, 0.03)
+
+			// touch_notional_imbalance and book_imbalance were not part of this
+			// last Measurement and must survive unchanged.
+			imbalanceValue, hasImbalance := state.Get(bindings[1].Series.ValueSymbol)
+			So(hasImbalance, ShouldBeTrue)
+			So(imbalanceValue, ShouldEqual, 0.02)
+
+			bookValue, hasBook := state.Get(bindings[2].Series.ValueSymbol)
+			So(hasBook, ShouldBeTrue)
+			So(bookValue, ShouldEqual, 0.5)
+		})
+
+		Convey("an unrelated binding's event does not fabricate a duplicate observation for a metric it did not deliver", func() {
+			// Two distinct real observations grow relative_spread's retained
+			// ring past its initial single-slot capacity, so a stale
+			// resubmission of the same retained sample would visibly advance
+			// Count/Head if Advisor ever re-ran the branch without a fresh
+			// input — the ring is not merely idempotent by accident here.
+			advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(0, 0), map[string]float64{
+				"relative_spread": 0.01,
+			}))
+			advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(1, 0), map[string]float64{
 				"relative_spread": 0.02,
 			}))
 
-			So(perspective, ShouldNotBeNil)
-			So(perspective.Count, ShouldEqual, 2)
+			bindings := LiquidityBindings()
+			afterSecond, found := advisor.number.Project("TEST/USD")
+			So(found, ShouldBeTrue)
+			countAfterSecond := bindings[0].Series.Count(afterSecond)
+			headAfterSecond := bindings[0].Series.Head(afterSecond)
 
-			// The liquidity metric advanced to two observations and is ready;
-			// the depthflow metric has one and is not.
-			ready := 0
+			// Three more Measurements arrive that never mention relative_spread.
+			// Its retained sample count and ring head must not advance on any
+			// of them: a series only advances when this call's own Measurement
+			// delivered that series' value, never merely because the value is
+			// still sitting in the committed Frame from an earlier step.
+			advisor.Step(testMeasurement("TEST/USD", "depthflow", time.Unix(2, 0), map[string]float64{
+				"book_imbalance": 0.5,
+			}))
+			advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(3, 0), map[string]float64{
+				"touch_notional_imbalance": 0.2,
+			}))
+			advisor.Step(testMeasurement("TEST/USD", "depthflow", time.Unix(4, 0), map[string]float64{
+				"book_imbalance": 0.6,
+			}))
+
+			afterUnrelated, found := advisor.number.Project("TEST/USD")
+			So(found, ShouldBeTrue)
+			So(bindings[0].Series.Count(afterUnrelated), ShouldEqual, countAfterSecond)
+			So(bindings[0].Series.Head(afterUnrelated), ShouldEqual, headAfterSecond)
+
+			spreadValue, hasSpread := afterUnrelated.Get(bindings[0].Series.ValueSymbol)
+			So(hasSpread, ShouldBeTrue)
+			So(spreadValue, ShouldEqual, 0.02)
+		})
+
+		Convey("two different symbols never share resident state", func() {
+			advisor.Step(testMeasurement("AAA/USD", "liquidity", time.Unix(0, 0), map[string]float64{
+				"relative_spread": 0.01,
+			}))
+			advisor.Step(testMeasurement("BBB/USD", "liquidity", time.Unix(0, 0), map[string]float64{
+				"relative_spread": 0.05,
+			}))
+
+			bindings := LiquidityBindings()
+
+			aaaState, aaaFound := advisor.number.Project("AAA/USD")
+			So(aaaFound, ShouldBeTrue)
+			aaaValue, _ := aaaState.Get(bindings[0].Series.ValueSymbol)
+			So(aaaValue, ShouldEqual, 0.01)
+
+			bbbState, bbbFound := advisor.number.Project("BBB/USD")
+			So(bbbFound, ShouldBeTrue)
+			bbbValue, _ := bbbState.Get(bindings[0].Series.ValueSymbol)
+			So(bbbValue, ShouldEqual, 0.05)
+		})
+
+		Convey("undefined derived state stays explicitly undefined until every derived slot exists", func() {
+			perspective := advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(0, 0), map[string]float64{
+				"relative_spread": 0.01,
+			}))
+
+			So(perspective, ShouldNotBeNil)
+			So(perspective.Count, ShouldEqual, 3)
 
 			for index := 0; index < perspective.Count; index++ {
-				if perspective.Readings[index].Ready {
-					ready++
+				if perspective.Readings[index].Metric == LiquidityBindings()[0].Series.ValueSymbol {
+					So(perspective.Readings[index].Ready, ShouldBeFalse)
 				}
 			}
 
-			So(ready, ShouldEqual, 1)
+			perspective = advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(1, 0), map[string]float64{
+				"relative_spread": 0.02,
+			}))
+
+			ready := false
+
+			for index := 0; index < perspective.Count; index++ {
+				if perspective.Readings[index].Metric == LiquidityBindings()[0].Series.ValueSymbol {
+					ready = perspective.Readings[index].Ready
+				}
+			}
+
+			So(ready, ShouldBeTrue)
 		})
+
+		Convey("each reading is self-describing by its interned Metric identity, not by array position", func() {
+			perspective := advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(0, 0), map[string]float64{
+				"relative_spread":          0.01,
+				"touch_notional_imbalance": 0.02,
+			}))
+
+			bindings := LiquidityBindings()
+			seen := map[uint16]bool{}
+
+			for index := 0; index < perspective.Count; index++ {
+				seen[uint16(perspective.Readings[index].Metric)] = true
+			}
+
+			So(seen[uint16(bindings[0].Series.ValueSymbol)], ShouldBeTrue)
+			So(seen[uint16(bindings[1].Series.ValueSymbol)], ShouldBeTrue)
+			So(seen[uint16(bindings[2].Series.ValueSymbol)], ShouldBeTrue)
+		})
+
+		Convey("a genuine pipeline failure propagates on the emitted Perspective instead of being silently discarded", func() {
+			advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(10, 0), map[string]float64{
+				"relative_spread": 0.01,
+			}))
+
+			bindings := LiquidityBindings()
+			beforeRegression, found := advisor.number.Project("TEST/USD")
+			So(found, ShouldBeTrue)
+			spreadBefore, _ := beforeRegression.Get(bindings[0].Series.ValueSymbol)
+
+			// An event time earlier than the last observed one is a genuine
+			// defect (Velocity/ZScore/Baseline all reject a regressed clock),
+			// not an absent input TryFork should forgive: it must surface on the
+			// returned Perspective, and the committed state must not silently
+			// advance to reflect this failed attempt.
+			regressed := advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(5, 0), map[string]float64{
+				"relative_spread": 0.02,
+			}))
+
+			So(regressed, ShouldNotBeNil)
+			So(regressed.Err, ShouldNotBeNil)
+
+			afterRegression, found := advisor.number.Project("TEST/USD")
+			So(found, ShouldBeTrue)
+			spreadAfter, _ := afterRegression.Get(bindings[0].Series.ValueSymbol)
+			So(spreadAfter, ShouldEqual, spreadBefore)
+		})
+
+		Convey("deterministic replay of the same input sequence produces the same Perspective values", func() {
+			replay := func() *types.Perspective {
+				fresh := newTestLiquidityAdvisor("advisor:liquidity:replay:" + t.Name())
+				fresh.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(0, 0), map[string]float64{
+					"relative_spread": 0.01,
+				}))
+
+				return fresh.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(1, 0), map[string]float64{
+					"relative_spread": 0.02,
+				}))
+			}
+
+			first := replay()
+			second := replay()
+
+			So(first.Count, ShouldEqual, second.Count)
+
+			for index := 0; index < first.Count; index++ {
+				So(first.Readings[index], ShouldResemble, second.Readings[index])
+			}
+		})
+	})
+
+	Convey("Two Advisor instances supplied different pipelines produce different semantics from the same Go type", t, func() {
+		liquidityBinding := NewMetricBinding("liquidity", "relative_spread", "test/advisor/liquidity_only")
+		liquidityOnly := NewAdvisor(
+			"advisor:liquidity-only",
+			types.KindLiquidity,
+			LiquidityPipeline([]MetricBinding{liquidityBinding}),
+			liquidityBinding,
+		)
+
+		passthroughBinding := NewMetricBinding("liquidity", "relative_spread", "test/advisor/passthrough_only")
+		passthrough := NewAdvisor(
+			"advisor:passthrough",
+			types.KindState,
+			nmtypes.Identity,
+			passthroughBinding,
+		)
+
+		measurement := testMeasurement("TEST/USD", "liquidity", time.Unix(0, 0), map[string]float64{
+			"relative_spread": 0.01,
+		})
+
+		liquidityPerspective := liquidityOnly.Step(measurement)
+		passthroughPerspective := passthrough.Step(measurement)
+
+		So(liquidityPerspective, ShouldNotBeNil)
+		So(passthroughPerspective, ShouldNotBeNil)
+		So(liquidityPerspective.Kind, ShouldEqual, types.KindLiquidity)
+		So(passthroughPerspective.Kind, ShouldEqual, types.KindState)
+
+		// The identity pipeline never derives a baseline/z-score/velocity, so its
+		// reading never becomes ready even after the same input the liquidity
+		// pipeline used to become ready on a second observation.
+		passthrough.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(1, 0), map[string]float64{
+			"relative_spread": 0.02,
+		}))
+		stillNotReady := passthrough.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(2, 0), map[string]float64{
+			"relative_spread": 0.03,
+		}))
+
+		So(stillNotReady.Readings[0].Ready, ShouldBeFalse)
 	})
 }
 
@@ -135,7 +344,7 @@ BenchmarkStep measures the steady-state cost of one perspective step after the
 pipeline is warm. The only allocation is the emitted Perspective value.
 */
 func BenchmarkStep(b *testing.B) {
-	advisor := NewAdvisor("advisor:liquidity", types.KindLiquidity, MetricBinding{Source: "liquidity", Metric: "relative_spread"})
+	advisor := NewLiquidityAdvisor("advisor:liquidity:bench")
 	at := time.Unix(0, 0)
 	measurement := testMeasurement("TEST/USD", "liquidity", at, map[string]float64{"relative_spread": 0.01})
 	advisor.Step(measurement)

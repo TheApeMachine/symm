@@ -48,32 +48,53 @@ name the same prefix's temporal-context estimator slots (statistic.Baseline /
 statistic.ZScore / statistic.Velocity), resolved once here so a reading
 pipeline built from those primitives can be projected back into a Perspective
 without re-deriving the naming convention.
+
+Fresh names a marker slot Step populates only when this specific call's
+Measurement actually carried the binding's metric. A pipeline branch built for
+this binding must gate its own advance on Fresh and must never write it, so it
+never enters the committed Frame: Number.Step merges the previous committed
+Frame under the incoming one before running the pipeline, so without a marker
+scoped to "this call's own input" every branch would see the binding's value
+and event time as still present (retained from an earlier, unrelated event)
+and would advance again on every other binding's Measurement.
+
+Maturity, SNR, and SNRDefined name where Step projects the source
+Measurement's own quality facts for this metric, so a composed reading can
+carry that provenance forward instead of discarding it.
 */
 type MetricBinding struct {
-	Source   string
-	Metric   string
-	Prefix   string
-	Series   temporal.Series
-	Baseline nmtypes.Symbol
-	ZScore   nmtypes.Symbol
-	Velocity nmtypes.Symbol
+	Source     string
+	Metric     string
+	Prefix     string
+	Series     temporal.Series
+	Baseline   nmtypes.Symbol
+	ZScore     nmtypes.Symbol
+	Velocity   nmtypes.Symbol
+	Fresh      nmtypes.Symbol
+	Maturity   nmtypes.Symbol
+	SNR        nmtypes.Symbol
+	SNRDefined nmtypes.Symbol
 }
 
 /*
-NewMetricBinding constructs one binding, interning its series prefix and
-temporal-context estimator slots once at wiring time. The prefix should be
-unique per composed metric within an Advisor so its Frame slots do not
-collide with any other bound metric.
+NewMetricBinding constructs one binding, interning its series prefix,
+temporal-context estimator slots, and quality-provenance slots once at wiring
+time. The prefix should be unique per composed metric within an Advisor so its
+Frame slots do not collide with any other bound metric.
 */
 func NewMetricBinding(source, metric, seriesPrefix string) MetricBinding {
 	return MetricBinding{
-		Source:   source,
-		Metric:   metric,
-		Prefix:   seriesPrefix,
-		Series:   temporal.NewSeries(seriesPrefix),
-		Baseline: nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "baseline/value")),
-		ZScore:   nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "z/value")),
-		Velocity: nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "velocity/delta")),
+		Source:     source,
+		Metric:     metric,
+		Prefix:     seriesPrefix,
+		Series:     temporal.NewSeries(seriesPrefix),
+		Baseline:   nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "baseline/value")),
+		ZScore:     nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "z/value")),
+		Velocity:   nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "velocity/delta")),
+		Fresh:      nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "advisor/fresh")),
+		Maturity:   nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "advisor/maturity")),
+		SNR:        nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "advisor/snr")),
+		SNRDefined: nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "advisor/snr_defined")),
 	}
 }
 
@@ -128,6 +149,13 @@ Step folds one projected Measurement's relevant facts into the symbol's
 composed resident state and returns the current Perspective for that symbol.
 A nil, errored, or unlabeled measurement, or one with no binding relevant to
 this Advisor, produces no context: events move, state stays.
+
+Only the bindings this specific Measurement actually carries are marked Fresh,
+so the pipeline advances exactly the streams this event contributed to and
+leaves every other bound metric's resident state untouched — Number.Step
+merges the previous committed Frame under the incoming one before running the
+pipeline, so without that marker a pipeline branch could not tell a fact this
+event delivered from one merely retained from an earlier, unrelated event.
 */
 func (advisor *Advisor) Step(measurement *data.Measurement[float64]) *types.Perspective {
 	if advisor == nil || measurement == nil || measurement.Err != nil || measurement.Label == "" {
@@ -153,6 +181,17 @@ func (advisor *Advisor) Step(measurement *data.Measurement[float64]) *types.Pers
 		frame.Put(binding.Series.ValueSymbol, metric.Raw)
 		frame.Put(binding.Series.SecSymbol, float64(measurement.At.Unix()))
 		frame.Put(binding.Series.NsecSymbol, float64(measurement.At.Nanosecond()))
+		frame.Put(binding.Fresh, 1)
+		frame.Put(binding.Maturity, measurement.Maturity)
+		frame.Put(binding.SNR, measurement.SNR)
+
+		snrDefined := 0.0
+
+		if measurement.SNRDefined {
+			snrDefined = 1
+		}
+
+		frame.Put(binding.SNRDefined, snrDefined)
 		relevant = true
 	}
 
@@ -160,10 +199,11 @@ func (advisor *Advisor) Step(measurement *data.Measurement[float64]) *types.Pers
 		return nil
 	}
 
-	advisor.number.Step(measurement.Label, frame)
+	output := advisor.number.Step(measurement.Label, frame)
 
 	state, _ := advisor.number.Project(measurement.Label)
 	perspective := advisor.project(measurement.Label, measurement.At, state)
+	perspective.Err = output.Err
 
 	if advisor.ObserveModule != nil {
 		advisor.ObserveModule(advisor.name, time.Since(started))
@@ -200,14 +240,20 @@ func (advisor *Advisor) project(
 		baseline, hasBaseline := state.Get(binding.Baseline)
 		zScore, hasZScore := state.Get(binding.ZScore)
 		velocity, hasVelocity := state.Get(binding.Velocity)
+		maturity, _ := state.Get(binding.Maturity)
+		snr, _ := state.Get(binding.SNR)
+		snrDefined, _ := state.Get(binding.SNRDefined)
 
 		perspective.Readings[count] = types.MetricReading{
-			Metric:   binding.Series.ValueSymbol,
-			Value:    value,
-			Baseline: baseline,
-			ZScore:   zScore,
-			Velocity: velocity,
-			Ready:    hasValue && hasBaseline && hasZScore && hasVelocity,
+			Metric:     binding.Series.ValueSymbol,
+			Value:      value,
+			Baseline:   baseline,
+			ZScore:     zScore,
+			Velocity:   velocity,
+			Ready:      hasValue && hasBaseline && hasZScore && hasVelocity,
+			Maturity:   maturity,
+			SNR:        snr,
+			SNRDefined: snrDefined != 0,
 		}
 
 		count++

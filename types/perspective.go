@@ -56,14 +56,22 @@ reading describes, so a consumer can determine what a reading means without
 relying on its position in the Readings array. Ready is false until every
 derived slot exists, so a not-ready reading's zeros are never mistaken for a
 real estimate.
+
+Maturity, SNR, and SNRDefined carry forward the source Measurement's own
+quality facts for this metric's most recent observation — an Advisor composes
+already-produced Measurements and must not discard or re-derive the
+provenance they already established.
 */
 type MetricReading struct {
-	Metric   nmtypes.Symbol
-	Value    float64
-	Baseline float64
-	ZScore   float64
-	Velocity float64
-	Ready    bool
+	Metric     nmtypes.Symbol
+	Value      float64
+	Baseline   float64
+	ZScore     float64
+	Velocity   float64
+	Ready      bool
+	Maturity   float64
+	SNR        float64
+	SNRDefined bool
 }
 
 /*
@@ -90,6 +98,15 @@ type Perspective struct {
 
 	Readings [PerspectiveMetricCapacity]MetricReading
 	Count    int
+
+	/*
+		Err carries a pipeline transition failure for this Step. Number only
+		commits successful output, so on a genuine failure this Perspective
+		describes nothing new: a consumer must check Err before trusting Readings,
+		which in that case still reflect the last successfully committed state,
+		not this event's contribution.
+	*/
+	Err error
 }
 
 /*
