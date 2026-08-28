@@ -17,9 +17,12 @@ plus one control binding that supplies the comparison horizon:
   - depthflow/book_imbalance_zscore — liquidity/book structure: displayed
     bid/ask asymmetry, standardized against its own causal history by the
     Depthflow signal.
-  - hawkes/standardized_innovation:buy — event/excitation structure: the
-    Hawkes point-process buy-side innovation, a z-score by construction
-    ((N-Λ)/√Λ), standardized against the fitted conditional intensity.
+  - hawkes/excitation_fraction:buy — event/excitation structure: the fraction
+    of current fitted buy intensity attributable to prior-event excitation
+    ((λ_b − μ_b)/λ_b ∈ [0,1]). It is a dimensionless state of the arrival
+    process — a level that legitimately holds between events — rather than an
+    event residual like a standardized innovation, so it carries forward
+    through quiet time without inventing a "surprise" that did not occur.
   - hawkes/excitation_timescale:buy_from_buy — the comparison horizon Q:
     the symbol's own Hawkes excitation e-folding timescale tau = 1/beta
     (seconds), a control fact (not a trajectory dimension) that defines how
@@ -39,7 +42,7 @@ func HistoricalBindings() []MetricBinding {
 	return []MetricBinding{
 		NewMetricBinding("cvd", "signed_net_fraction_zscore", "advisor/historical/flow"),
 		NewMetricBinding("depthflow", "book_imbalance_zscore", "advisor/historical/book"),
-		NewMetricBinding("hawkes", "standardized_innovation:buy", "advisor/historical/excitation"),
+		NewMetricBinding("hawkes", "excitation_fraction:buy", "advisor/historical/excitation"),
 		// The comparison horizon is the symbol's own Hawkes excitation
 		// e-folding timescale tau = 1/beta (seconds): a control fact derived
 		// from the arrival process, not a trajectory dimension.
@@ -101,10 +104,11 @@ func HistoricalPipeline(bindings []MetricBinding) nmtypes.Primitive {
 
 /*
 HistoricalOutputs declares the six named facts HistoricalPipeline emits: the
-joint comparison's nearest historical distance, its discord score (how the
-nearest match stands out from background — 0 recurring, 1 novel), the number of
-non-overlapping candidate windows actually searched, the nearest match's start
-time, the comparison horizon the scan used, and the comparison's own maturity.
+joint comparison's nearest historical distance, its causal recurrence
+percentile (the fraction of prior scans' nearest distances closer than today's
+— 0 recurring/familiar, 1 novel), the number of non-overlapping candidate
+windows actually searched, the nearest match's start time, the comparison
+horizon the scan used, and the comparison's own maturity.
 
 These are properties of the joint multivariate comparison, not of any single
 bound dimension, so they cannot honestly borrow one binding's

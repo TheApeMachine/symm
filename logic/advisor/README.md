@@ -246,7 +246,7 @@ not invented):
 |---|---|---|
 | `cvd` | `signed_net_fraction_zscore` | executed-flow (aggressor-side imbalance) |
 | `depthflow` | `book_imbalance_zscore` | liquidity/book (displayed asymmetry) |
-| `hawkes` | `standardized_innovation:buy` | event/excitation (point-process surprise) |
+| `hawkes` | `excitation_fraction:buy` | event/excitation (a dimensionless state of the arrival process, not an event residual) |
 
 Each is already a dimensionless z-score published causally by its own signal
 (signal/README.md §12: normalize only when the normalization has an intrinsic
@@ -269,28 +269,27 @@ profile over the joint trajectory, per signal/README.md §10:
 
 - each dimension is retained as a timestamped `temporal.Path`, and the three
   streams are aligned in **wall-clock time**, not by sample ordinal: CVD and
-  Hawkes observe on trades while Depthflow observes on L3 book events, so a
-  joint trajectory is assembled by selecting the observations inside one
-  absolute horizon and carrying each dimension's last value forward across its
-  quiet gaps (a standardized level is held, never zero-filled);
+  Hawkes observe on trades while Depthflow observes on L3 book events. Each
+  dimension is a piecewise-constant step function of time — its last observed
+  value holds until the next observation — and never a resampled grid;
 - the comparison horizon `Q` is **not** a sample-count split. It is an explicit
   control fact — the symbol's own Hawkes excitation e-folding timescale
   `tau = 1/beta` — wired into `recurrence.Analogue` by `HistoricalPipeline`,
   never hardcoded inside recurrence and never a magic constant;
-- a query window is `[now−Q, now]`; candidate windows are a fixed number of
-  earlier, non-overlapping intervals of the same duration, stepped back into
-  history. Because the windows are fixed in number and separated in time, the
-  retained history actually searched grows steadily with that history, and
-  effective support accrues the way evidence is supposed to (instead of
-  cycling on a sample-count remainder);
-- distance is length-normalized RMS across the aligned dimensions — the square
-  root of the mean squared per-step mismatch — so a longer window does not
-  inflate distance merely by spanning more steps;
-- the percentile is the matrix-profile **discord score** `M(x) = sqrt(nearest /
-  mean)` over the candidate distances: near 0 the nearest match is unusually
-  close (the trajectory recurs), near 1 it is an outlier (the trajectory is
-  novel). It ranks the nearest match against background instead of counting how
-  many distances tie at the minimum;
+- a query window is `[now−Q, now]`; every earlier non-overlapping window of
+  the same duration, stepped back through the entire retained joint history,
+  is searched — the nearest analogue is reachable however far back it
+  occurred, and `match_count` grows with retained history rather than being
+  capped at a fixed small number;
+- distance is the **exact time-weighted RMS** of the squared difference of the
+  two step functions, integrated over the window's actual change points and
+  divided by elapsed time (no invented grid resolution). A period a dimension
+  did not observe contributes zero width, never a fabricated zero value;
+- the percentile is a genuine **causal percentile**: today's nearest distance
+  is ranked against a bounded history of prior scans' nearest distances, as
+  the fraction of priors that were closer. Near 0 the nearest match is
+  unusually close (familiar/recurring); near 1 it is unusually far (novel).
+  Its support grows with history up to the bounded baseline;
 - `maturity` follows the spec formula (signal/README.md §8) applied to the
   scan's own effective support, the candidate count actually searched.
 
@@ -298,8 +297,8 @@ profile over the joint trajectory, per signal/README.md §10:
 
 | Output | Meaning |
 |---|---|
-| `recurrence/nearest_distance` | distance to the closest non-overlapping prior trajectory (length-normalized RMS) |
-| `recurrence/discord_score` | matrix-profile discord score `sqrt(nearest/mean)`: 0 recurring, 1 novel |
+| `recurrence/nearest_distance` | distance to the closest non-overlapping prior trajectory (time-weighted RMS) |
+| `recurrence/nearest_percentile` | causal percentile vs prior nearest distances: 0 familiar/recurring, 1 novel |
 | `recurrence/match_count` | how many non-overlapping candidate windows were searched |
 | `recurrence/match_from_unix_sec` / `_nsec` | when the nearest match began |
 | `recurrence/query_length` | the comparison horizon `Q` (seconds) the scan used |
@@ -320,12 +319,15 @@ recorded structural similarity to the symbol's own retained history.
 
 ### 9.5 Live cost
 
-State is `O(3 bounded Path series + 1 control fact)` per symbol — each capped at
-`temporal.MaxPathSamples`. Per-Step cost is `O(dimensions × alignedSteps ×
-candidateWindows)`, bounded by fixed structural constants; no per-event
-allocation beyond the emitted `*Perspective` (steady-state benchmark: 1
-allocation/op). No cross-symbol state, no O(symbols²) work, no unbounded
-retained history.
+State is `O(3 bounded Path series + 1 control fact + 1 bounded baseline ring)`
+per symbol — each capped at `temporal.MaxPathSamples` (the percentile baseline
+at its own smaller `baselineCapacity`). Per-Step cost is `O(dimensions ×
+changePoints × matchCount)` — change points are the union of retained
+observations inside a window, and `matchCount` is the number of candidate
+windows actually searched, both bounded by the retained-history ceiling; no
+per-event allocation beyond the emitted `*Perspective` plus the small
+per-window change-point slices. No cross-symbol state, no O(symbols²) work, no
+unbounded retained history.
 
 ## 10. Non-Goals
 

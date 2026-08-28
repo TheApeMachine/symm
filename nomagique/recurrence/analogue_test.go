@@ -32,7 +32,8 @@ func observation(series []temporal.Series, values []float64, seconds []int64, ca
 
 /*
 synchronousObservation feeds every series the same timestamp, for tests whose
-subject is the horizon/discord math rather than cross-stream alignment.
+subject is the horizon/distance/percentile math rather than cross-stream
+alignment.
 */
 func synchronousObservation(series []temporal.Series, values []float64, second int64, capacity float64) types.Frame {
 	seconds := make([]int64, len(series))
@@ -94,7 +95,7 @@ func TestAnalogue(t *testing.T) {
 		})
 	})
 
-	Convey("Given insufficient retained history for the horizon", t, func() {
+	Convey("Given insufficient retained history for one full horizon", t, func() {
 		stream, series := newAnalogueStream("dim0", "dim1")
 
 		for index := int64(0); index < 4; index++ {
@@ -102,57 +103,78 @@ func TestAnalogue(t *testing.T) {
 			So(output.Err, ShouldBeNil)
 		}
 
-		Convey("no observations at all leaves distance explicitly undefined", func() {
+		Convey("distance and match count are explicitly undefined", func() {
 			state := stream.Project()
-			_, found := state.Get(SymbolDistance)
+			_, distanceFound := state.Get(SymbolDistance)
+			_, countFound := state.Get(SymbolMatchCount)
 
-			So(found, ShouldBeFalse)
+			So(distanceFound, ShouldBeFalse)
+			So(countFound, ShouldBeFalse)
 		})
 	})
 
-	Convey("Given a query window and at least one earlier candidate within a fixed horizon", t, func() {
+	Convey("Given enough retained history", t, func() {
 		stream, series := newAnalogueStream("dim0", "dim1")
 
-		Convey("distance becomes defined over time-aligned windows, not sample ordinals", func() {
-			for index := int64(0); index < 12; index++ {
-				stream.Step(synchronousObservation(series, []float64{float64(index % 5), float64(index % 5)}, index, temporal.MaxPathSamples))
-			}
+		for index := int64(0); index < 25; index++ {
+			stream.Step(synchronousObservation(series, []float64{float64(index % 5), float64(index % 5)}, index, temporal.MaxPathSamples))
+		}
 
+		Convey("distance becomes defined and match count grows with retained history", func() {
 			state := stream.Project()
 			distance, distanceFound := state.Get(SymbolDistance)
-			matchCount, matchCountFound := state.Get(SymbolMatchCount)
+			matchCount, countFound := state.Get(SymbolMatchCount)
 
 			So(distanceFound, ShouldBeTrue)
-			So(matchCountFound, ShouldBeTrue)
-			So(matchCount, ShouldBeGreaterThanOrEqualTo, 1)
+			So(countFound, ShouldBeTrue)
+			So(matchCount, ShouldBeGreaterThanOrEqualTo, 2)
 			So(distance, ShouldBeGreaterThanOrEqualTo, 0)
 		})
 
-		Convey("the nearest match always precedes the query window, never overlapping it", func() {
-			for index := int64(0); index < 12; index++ {
-				stream.Step(synchronousObservation(series, []float64{float64(index), float64(index)}, index, temporal.MaxPathSamples))
+		Convey("maturity follows effective support and exceeds the fixed-two-window ceiling", func() {
+			state := stream.Project()
+			matchCount, countFound := state.Get(SymbolMatchCount)
+			So(countFound, ShouldBeTrue)
+
+			maturity, maturityFound := state.Get(SymbolMaturity)
+			So(maturityFound, ShouldBeTrue)
+
+			expected := 0.0
+
+			if matchCount > 1 {
+				expected = 1 - 1/matchCount
 			}
 
+			So(maturity, ShouldEqual, expected)
+
+			if matchCount > 2 {
+				So(maturity, ShouldBeGreaterThan, 0.5)
+			}
+		})
+
+		Convey("the nearest match always precedes the query window, never overlapping it", func() {
 			state := stream.Project()
-			queryLength, found := state.Get(SymbolQueryLength)
+			horizonValue, found := state.Get(SymbolQueryLength)
 			So(found, ShouldBeTrue)
 
 			matchFromSec, found := state.Get(SymbolMatchFromSec)
 			So(found, ShouldBeTrue)
 
-			// The query occupies [now-Q, now] where now is the last observed
-			// second (11) and Q=5, so the query starts at 6. The nearest match
-			// must start strictly before 6.
-			So(int(matchFromSec), ShouldBeLessThan, 11-int(queryLength))
+			// now = 24, Q = 5, so the query occupies [19, 24]. The nearest
+			// match must start strictly before 19.
+			So(int(matchFromSec), ShouldBeLessThan, 24-int(horizonValue))
 		})
+	})
 
-		Convey("two asynchronous streams are aligned by wall clock, not by ordinal", func() {
-			// dim0 observes every second; dim1 observes only every fifth
-			// second. Their joint trajectory must be assembled in time, holding
-			// dim1's last value across its quiet gaps.
+	Convey("Given two asynchronous streams", t, func() {
+		Convey("they are aligned by wall clock and never zero-filled", func() {
 			asyncStream, asyncSeries := newAnalogueStream("async0", "async1")
 
-			for index := int64(0); index < 12; index++ {
+			// dim0 observes every second; dim1 observes only every fifth
+			// second, starting at t=0. Its value holds across quiet gaps, and
+			// before its first observation the joint window is not compared at
+			// all (no fabricated zero).
+			for index := int64(0); index < 30; index++ {
 				output := asyncStream.Step(observation(
 					asyncSeries,
 					[]float64{float64(index), float64(index)},
@@ -211,10 +233,13 @@ func TestAnalogue(t *testing.T) {
 			So(repeatedDistance, ShouldBeLessThan, novelDistance)
 		})
 
-		Convey("discord score orders an ordinary trajectory below a deliberately novel one", func() {
+		Convey("the recurrence percentile orders an ordinary trajectory below a deliberately novel one", func() {
+			// Flat trajectory: every nearest match is near-perfect, so the
+			// percentile (fraction of prior scans closer than today) should be
+			// low (familiar) once a baseline exists.
 			ordinaryStream, ordinarySeries := newAnalogueStream("ordinary0", "ordinary1")
 
-			for index := 0; index < 30; index++ {
+			for index := 0; index < 40; index++ {
 				output := ordinaryStream.Step(synchronousObservation(
 					ordinarySeries,
 					[]float64{1, 1},
@@ -225,11 +250,13 @@ func TestAnalogue(t *testing.T) {
 			}
 
 			ordinaryState := ordinaryStream.Project()
-			ordinaryDiscord, found := ordinaryState.Get(SymbolPercentile)
+			ordinaryPercentile, found := ordinaryState.Get(SymbolPercentile)
 			So(found, ShouldBeTrue)
 
+			// A trajectory whose recent segment is a sharp unique spike: its
+			// nearest match is an outlier, so the percentile is high (novel).
 			distinctiveStream, distinctiveSeries := newAnalogueStream("distinctive0", "distinctive1")
-			distinctiveValues := []float64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100, -100, 100, -100, 100, -100, 100, -100, 100, -100, 100, 100}
+			distinctiveValues := []float64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100, -100, 100, -100, 100, -100, 100, -100, 100, 100, 100, 100, 100, 100, -100, -100, -100, -100}
 
 			for index, value := range distinctiveValues {
 				output := distinctiveStream.Step(synchronousObservation(
@@ -242,10 +269,10 @@ func TestAnalogue(t *testing.T) {
 			}
 
 			distinctiveState := distinctiveStream.Project()
-			distinctiveDiscord, found := distinctiveState.Get(SymbolPercentile)
+			distinctivePercentile, found := distinctiveState.Get(SymbolPercentile)
 			So(found, ShouldBeTrue)
 
-			So(distinctiveDiscord, ShouldBeGreaterThan, ordinaryDiscord)
+			So(ordinaryPercentile, ShouldBeLessThan, distinctivePercentile)
 		})
 	})
 
@@ -280,11 +307,12 @@ func TestAnalogue(t *testing.T) {
 
 			firstDistance, _ := first.Get(SymbolDistance)
 			secondDistance, _ := second.Get(SymbolDistance)
-			firstDiscord, _ := first.Get(SymbolPercentile)
-			secondDiscord, _ := second.Get(SymbolPercentile)
+			firstPercentile, firstHas := first.Get(SymbolPercentile)
+			secondPercentile, secondHas := second.Get(SymbolPercentile)
 
 			So(firstDistance, ShouldEqual, secondDistance)
-			So(firstDiscord, ShouldEqual, secondDiscord)
+			So(firstHas, ShouldEqual, secondHas)
+			So(firstPercentile, ShouldEqual, secondPercentile)
 		})
 	})
 }

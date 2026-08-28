@@ -7,24 +7,28 @@ same retained history.
 
 This is the multivariate matrix-profile self-join signal/README.md §10
 describes: a standardized trajectory Z_t compared against non-overlapping
-historical subsequences, reporting distance and its discord score — never a
-regime label, never a probability.
+historical subsequences, reporting distance and its causal percentile — never
+a regime label, never a probability.
 
-The three dimensions a caller composes (flow, book, arrival-process) arrive on
-independent clocks: different streams observe at different instants and at
-different rates. A joint trajectory must therefore be assembled in wall-clock
-time, not by sample ordinal. Analogue takes the comparison horizon as an
-explicit Frame control fact — an absolute duration Q in seconds — selects, for
-each series, the observations falling inside [now−Q, now], aligns them to one
-shared clock by carrying the last value forward where a series is momentarily
-quiet, and compares that aligned query against earlier aligned windows of the
-same duration. Recurrence itself never knows what produced its clock; whoever
-supplies Q is responsible for its mathematical meaning.
+The dimensions a caller composes (flow, book, arrival-process) arrive on
+independent clocks and at independent rates, so a joint trajectory must be
+assembled in wall-clock time, not by sample ordinal. Analogue takes the
+comparison horizon as an explicit Frame control fact — an absolute duration Q
+in seconds — and treats every dimension as a piecewise-constant step function
+of time (a standardized level holds until its next observation). The distance
+between two windows is then the exact time-weighted RMS of their squared
+difference, integrated over the window's actual change points — no invented
+resampling grid, no samples compared by ordinal, and no value fabricated for a
+period a dimension did not actually observe.
+
+Recurrence itself never knows what produced its clock; whoever supplies Q is
+responsible for its mathematical meaning.
 */
 package recurrence
 
 import (
 	"math"
+	"sort"
 
 	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
@@ -32,7 +36,7 @@ import (
 
 var (
 	SymbolDistance      = types.MustIntern("recurrence/nearest_distance")
-	SymbolPercentile    = types.MustIntern("recurrence/discord_score")
+	SymbolPercentile    = types.MustIntern("recurrence/nearest_percentile")
 	SymbolMatchCount    = types.MustIntern("recurrence/match_count")
 	SymbolMatchFromSec  = types.MustIntern("recurrence/match_from_unix_sec")
 	SymbolMatchFromNsec = types.MustIntern("recurrence/match_from_unix_nsec")
@@ -52,26 +56,21 @@ var (
 const nanosecondsPerSecond = int64(1_000_000_000)
 
 /*
-candidateWindows is the fixed number of earlier, non-overlapping aligned
-windows the query is compared against on every scan. It is not a horizon and
-is not derived from data: it is the width of the distribution the discord
-score ranks the nearest match within. Two windows is the minimum that allows a
-nearest match to be either unusually close (recurring) or unusually far
-(novel) relative to the retained history, and keeps the scan bounded and
-causal as history grows instead of recomputing over an ever-lengthening
-backlog.
+baselineCapacity bounds how many prior nearest distances the recurrence
+percentile ranks against. It is the resident-state bound of the percentile's
+own effective support — the same class of bound as temporal.MaxPathSamples —
+not a statistical horizon and not derived from data: a fixed ring keeps the
+baseline bounded and causal while its support fills toward the bound as history
+accumulates. Below this bound the support grows one prior scan per step; at the
+bound it becomes a causal sliding window, dropping the oldest scan first.
 */
-const candidateWindows = 2
+const baselineCapacity = 16
 
-/*
-alignedSteps is the fixed number of equal time steps one query window of
-duration Q is resampled onto. It is a fixed structural subdivision of the
-window — the "shape" resolution of a trajectory — not a tunable horizon, and
-it is identical for the query and every candidate so distances compare
-like-shaped windows. Independent of Q, so distances stay length-normalized
-across differently-horizoned comparisons.
-*/
-const alignedSteps = 8
+// baselineSeries names the dedicated namespaced slots that carry the
+// per-symbol ring of prior nearest distances. It is resolved once at wiring
+// time; the slots live in the committed Frame, so the baseline is isolated per
+// subject exactly like every other retained state.
+var baselineSeries = temporal.NewSeries("recurrence/baseline")
 
 /*
 Analogue returns the primitive that performs one causal, bounded matrix-profile
@@ -80,36 +79,38 @@ wall-clock time over the absolute horizon Q read from SymbolHorizon each step.
 
 Every series must already be a temporal.Path under its own prefix, and every
 dimension is expected to already be standardized (a z-score or similarly
-dimensionless, comparable quantity) by its own upstream signal. Distance is a
-length-normalized RMS across dimensions — the square root of the mean squared
-per-step mismatch — so a longer window does not inflate distance merely because
-it spans more steps, and comparisons across differing query lengths remain
-comparable.
+dimensionless, comparable quantity) by its own upstream signal.
 
-The comparison horizon is the caller-supplied duration Q, never a sample count
-and never a constant of this package. A query window is the interval [now−Q,
-now] ending at the most recent joint observation; each candidate window is one
-of candidateWindows earlier, non-overlapping intervals of the same duration,
-stepping Q+spacing earlier into history. Because the windows are fixed in
-number and separated in time, the fraction of retained history actually
-searched grows steadily with that history — effective support accrues the way
-evidence is supposed to — instead of cycling on a sample-count remainder.
+Alignment is exact, not resampled: each dimension is a piecewise-constant step
+function of wall-clock time, holding its last observed value until its next
+observation. Two windows are compared by integrating the squared difference of
+their joint step functions over the window's actual change points and dividing
+by elapsed time — the time-weighted RMS. A period a dimension did not observe
+is not compared at all: a window is only valid where every dimension is
+defined, so no fabricated zero ever enters the distance.
 
-The percentile is the matrix-profile discord score M(x) = sqrt(nearest / mean)
-over the candidate distances: a value near 0 means the nearest match is
-unusually close (the trajectory recurs), a value near 1 means the nearest match
-is an outlier (the trajectory is novel). It ranks the nearest distance against
-the observed background of candidate distances, so a tie among several equally
-close candidates no longer masquerades as recurrence.
+The query window is [now-Q, now] ending at the most recent joint observation.
+Candidate windows are every earlier non-overlapping interval of the same
+duration Q, stepped back through the entire retained joint history until a
+window would begin before any dimension's oldest retained observation. All
+retained history is therefore searched, so the nearest analogue — however far
+back it occurred — is always reachable, and match_count grows with retained
+history instead of being capped at a fixed small number.
+
+The percentile is a genuine causal percentile of today's nearest distance
+against the bounded history of prior scans' nearest distances: the fraction of
+prior nearest distances that are strictly closer than today's. Near 0 means
+today's nearest match is unusually close (a recurring, familiar trajectory);
+near 1 means it is unusually far (a novel trajectory). Ties do not inflate it,
+and its support grows with history up to baselineCapacity.
 
 Maturity follows the spec definition (signal/README.md §8) applied to this
-scan's own effective support, the count of candidate windows actually
-compared: 0 when at most one was searched, 1 - 1/candidateCount otherwise.
+scan's own effective support, the candidate count actually compared: 0 when at
+most one candidate was searched, 1 - 1/match_count otherwise.
 
 Output is explicitly undefined (no slot written) until Q is positive, the
-query window contains at least two aligned steps on every dimension, and at
-least one non-overlapping candidate window exists entirely within retained
-history.
+query window is fully defined on every dimension, and at least one fully
+defined candidate window exists entirely within retained history.
 */
 func Analogue(prefixes ...string) types.Primitive {
 	series := make([]temporal.Series, len(prefixes))
@@ -148,35 +149,45 @@ func Analogue(prefixes ...string) types.Primitive {
 			return input
 		}
 
-		queryStart := nowNanos - horizonNanos
-
-		query, ok := alignedWindow(series, &input, queryStart, nowNanos)
+		oldestNanos, ok := oldestTimestamp(series, &input)
 
 		if !ok {
 			return input
 		}
 
-		// Sweep candidate windows earlier in time. Each candidate occupies a
-		// duration Q and is separated from the next window by a spacing so
-		// windows never overlap; stepping into history by Q+spacing per window
-		// guarantees causal non-overlap with the query and with each other.
+		queryStart := nowNanos - horizonNanos
+
+		if queryStart < oldestNanos {
+			// The query window opens before the earliest joint observation:
+			// the joint trajectory is not yet one full horizon long.
+			return input
+		}
+
+		query, ok := stepWindow(series, &input, queryStart, nowNanos)
+
+		if !ok {
+			return input
+		}
+
+		// Sweep every earlier non-overlapping window of duration Q through the
+		// whole retained joint history. A window is valid only while it lies
+		// entirely at or after the earliest joint observation (each dimension
+		// fully defined), so the sweep naturally stops at the true start of
+		// history rather than at an arbitrary fixed count.
 		nearestDistance := math.Inf(1)
 		nearestStart := int64(0)
-		distanceSum := 0.0
 		candidateCount := 0
 
-		for windowIndex := 0; windowIndex < candidateWindows; windowIndex++ {
-			candidateEnd := queryStart - int64(windowIndex)*(horizonNanos+alignmentSpacingNanos(horizonNanos))
+		for candidateEnd := queryStart; candidateEnd-horizonNanos >= oldestNanos; candidateEnd -= horizonNanos {
 			candidateStart := candidateEnd - horizonNanos
 
-			candidate, candidateOK := alignedWindow(series, &input, candidateStart, candidateEnd)
+			candidate, candidateOK := stepWindow(series, &input, candidateStart, candidateEnd)
 
 			if !candidateOK {
 				break
 			}
 
-			distance := rmsDistance(query, candidate)
-			distanceSum += distance
+			distance := timeWeightedDistance(query, candidate)
 			candidateCount++
 
 			if distance < nearestDistance {
@@ -192,7 +203,18 @@ func Analogue(prefixes ...string) types.Primitive {
 		matchSec := nearestStart / nanosecondsPerSecond
 		matchNsec := nearestStart % nanosecondsPerSecond
 
-		discord := discordScore(nearestDistance, distanceSum, candidateCount)
+		// The percentile ranks today's nearest distance against the bounded
+		// causal history of prior scans' nearest distances before appending
+		// today's, so today never ranks against itself.
+		percentile, ok := percentileOf(&input, nearestDistance)
+
+		if !ok {
+			// No prior scan yet: the distance is still defined, but there is
+			// no baseline to rank it against, so the percentile is undefined.
+			percentile = -1
+		}
+
+		appendBaseline(&input, nearestDistance)
 
 		maturity := 0.0
 
@@ -201,39 +223,150 @@ func Analogue(prefixes ...string) types.Primitive {
 		}
 
 		input.Put(SymbolDistance, nearestDistance)
-		input.Put(SymbolPercentile, discord)
 		input.Put(SymbolMatchCount, float64(candidateCount))
 		input.Put(SymbolMatchFromSec, float64(matchSec))
 		input.Put(SymbolMatchFromNsec, float64(matchNsec))
 		input.Put(SymbolQueryLength, horizonSeconds)
 		input.Put(SymbolMaturity, maturity)
 
+		if percentile >= 0 {
+			input.Put(SymbolPercentile, percentile)
+		}
+
 		return input
 	}
 }
 
 /*
-alignmentSpacingNanos is the non-overlap spacing between successive candidate
-windows: a fixed fraction of the horizon Q, so every window is separated from
-its neighbours in proportion to the timescale being compared. The query can
-therefore never match itself or a trivially overlapping segment.
+stepWindow rebuilds one joint piecewise-constant trajectory over the interval
+[start, end]: the merged, sorted change points of every series inside the
+window, each carrying the joint vector of every dimension's held value at that
+moment. The first point is always start (so the leading sub-interval from start
+to the first real change is represented), and the last is end. ok is false only
+when an internal read of a series' own retained sample fails.
 */
-func alignmentSpacingNanos(horizonNanos int64) int64 {
-	return int64(float64(horizonNanos) * spacingFraction)
+func stepWindow(
+	series []temporal.Series,
+	frame *types.Frame,
+	start int64,
+	end int64,
+) ([]stepPoint, bool) {
+	if end <= start {
+		return nil, false
+	}
+
+	dimensions := len(series)
+	changeTimes := []int64{start, end}
+
+	for _, oneSeries := range series {
+		count := oneSeries.Count(*frame)
+
+		for index := 0; index < count; index++ {
+			timestamp, _, found := oneSeries.Sample(frame, index)
+
+			if !found {
+				return nil, false
+			}
+
+			if timestamp > start && timestamp < end {
+				changeTimes = append(changeTimes, timestamp)
+			}
+		}
+	}
+
+	sort.Slice(changeTimes, func(left, right int) bool {
+		return changeTimes[left] < changeTimes[right]
+	})
+
+	// Deduplicate change times so equal timestamps across dimensions collapse
+	// to one boundary with one held-value vector.
+	unique := changeTimes[:0]
+	previous := int64(-1)
+
+	for _, changeTime := range changeTimes {
+		if changeTime != previous {
+			unique = append(unique, changeTime)
+			previous = changeTime
+		}
+	}
+
+	points := make([]stepPoint, len(unique))
+
+	for index, changeTime := range unique {
+		values := make([]float64, dimensions)
+
+		for seriesIndex, oneSeries := range series {
+			value, found := valueAtOrBefore(oneSeries, frame, changeTime)
+
+			if !found {
+				return nil, false
+			}
+
+			values[seriesIndex] = value
+		}
+
+		points[index] = stepPoint{at: changeTime, values: values}
+	}
+
+	return points, true
 }
 
 /*
-spacingFraction is the fraction of Q left as a non-overlap buffer between
-windows: one window, one buffer, and the query laid back-to-back fit neatly
-into a compact causal layout without any count-derived arithmetic.
+stepPoint is one wall-clock instant at which the joint trajectory may change:
+the time and the held value vector of every dimension immediately at that
+instant. Consecutive stepPoints bound one sub-interval over which every
+dimension is constant.
 */
-const spacingFraction = 0.5
+type stepPoint struct {
+	at     int64
+	values []float64
+}
+
+/*
+timeWeightedDistance computes the exact time-weighted RMS distance between two
+joint piecewise-constant windows that share the same change-point grid (both
+were built over the same [start, end] by stepWindow, so their grids coincide).
+Each grid point's held-vector difference contributes its squared magnitude
+weighted by the duration until the next point, summed across dimensions and
+divided by (elapsed time × dimensions) — the square root is the RMS. A longer
+duration of identical mismatch no longer inflates the distance beyond what the
+RMS definition dictates, because elapsed time normalizes it.
+*/
+func timeWeightedDistance(query []stepPoint, candidate []stepPoint) float64 {
+	if len(query) != len(candidate) || len(query) < 2 {
+		return math.Inf(1)
+	}
+
+	dimensions := len(query[0].values)
+	sumSquares := 0.0
+	totalWidth := int64(0)
+
+	for index := 0; index+1 < len(query); index++ {
+		width := query[index+1].at - query[index].at
+
+		if width <= 0 {
+			continue
+		}
+
+		totalWidth += width
+
+		for dimension := 0; dimension < dimensions; dimension++ {
+			difference := query[index].values[dimension] - candidate[index].values[dimension]
+
+			sumSquares += difference * difference * float64(width)
+		}
+	}
+
+	if totalWidth <= 0 || dimensions == 0 {
+		return math.Inf(1)
+	}
+
+	return math.Sqrt(sumSquares / (float64(totalWidth) * float64(dimensions)))
+}
 
 /*
 latestTimestamp returns the most recent retained timestamp across every
-series, which ends the query window. A series whose path is empty contributes
-nothing; if every series is empty the query has no anchor and the output stays
-undefined.
+series, which ends the query window.
 */
 func latestTimestamp(series []temporal.Series, frame *types.Frame) (int64, bool) {
 	latest := int64(0)
@@ -262,62 +395,39 @@ func latestTimestamp(series []temporal.Series, frame *types.Frame) (int64, bool)
 }
 
 /*
-alignedWindow assembles one length-aligned joint observation of every series
-over the interval [start, end]. The window is split into alignedSteps equal
-time steps; at each step a series contributes its most recent value observed
-no later than that step's time, carrying the previous value forward when the
-series is quiet (a standardized level is held, not zero-filled — inventing a
-zero would pretend the dimension vanished). The result is a flat slice of
-dimension-major values: step 0 of every series, then step 1 of every series,
-and so on. ok is false when any series has no retained value at or before the
-window start, so the window would begin in the middle of an unobserved gap.
+oldestTimestamp returns the earliest retained timestamp across every series,
+which is where the joint history begins. A window is fully defined only where
+every dimension has observed, so comparisons stop before this point.
 */
-func alignedWindow(
-	series []temporal.Series,
-	frame *types.Frame,
-	start int64,
-	end int64,
-) ([]float64, bool) {
-	dimensions := len(series)
-	stepDuration := (end - start) / alignedSteps
+func oldestTimestamp(series []temporal.Series, frame *types.Frame) (int64, bool) {
+	oldest := int64(0)
+	found := false
 
-	if stepDuration <= 0 {
-		return nil, false
-	}
+	for _, oneSeries := range series {
+		count := oneSeries.Count(*frame)
 
-	aligned := make([]float64, alignedSteps*dimensions)
-
-	for seriesIndex, oneSeries := range series {
-		carry := 0.0
-		hasCarry := false
-
-		for step := 0; step < alignedSteps; step++ {
-			stepTime := start + int64(step+1)*stepDuration
-			value, found := valueAtOrBefore(oneSeries, frame, stepTime)
-
-			if found {
-				carry = value
-				hasCarry = true
-			}
-
-			aligned[seriesIndex+step*dimensions] = carry
+		if count == 0 {
+			continue
 		}
 
-		if !hasCarry {
-			// This dimension had no observation anywhere in the window: the
-			// joint trajectory cannot be assembled and the output stays
-			// undefined rather than fabricating a held zero.
-			return nil, false
+		timestamp, _, ok := oneSeries.Sample(frame, 0)
+
+		if !ok {
+			continue
+		}
+
+		if !found || timestamp < oldest {
+			oldest = timestamp
+			found = true
 		}
 	}
 
-	return aligned, true
+	return oldest, found
 }
 
 /*
 valueAtOrBefore returns the most recent retained value of the series observed
-no later than the target time. It scans backward from the newest sample, so
-the freshest qualifying observation is returned without a full forward pass.
+no later than the target time, scanning backward from the newest sample.
 */
 func valueAtOrBefore(
 	series temporal.Series,
@@ -342,53 +452,58 @@ func valueAtOrBefore(
 }
 
 /*
-rmsDistance computes the length-normalized Euclidean distance between two
-joint aligned windows: the square root of the mean over all dimensions and
-steps of the squared per-step difference. Dividing by the total element count
-makes the distance an RMS mismatch per component, so a longer window (more
-steps) never inflates the distance merely by spanning more samples.
+percentileOf ranks one nearest distance against the bounded causal history of
+prior nearest distances already retained in the committed Frame. It returns the
+fraction of prior distances strictly closer (smaller) than the given distance —
+the empirical novelty rank of today's nearest match — and ok=false when no
+baseline exists yet. A value near 0 means today's nearest match is unusually
+close (familiar, a recurring trajectory); near 1 means it is unusually far
+(novel, an outlier). Ties contribute nothing, so two equally close prior scans
+are not counted twice, and perfect (zero) recurrence saturates at 0 rather than
+collapsing into maximal novelty.
 */
-func rmsDistance(query []float64, candidate []float64) float64 {
-	if len(query) == 0 || len(query) != len(candidate) {
-		return math.Inf(1)
+func percentileOf(frame *types.Frame, nearestDistance float64) (float64, bool) {
+	count := baselineSeries.Count(*frame)
+
+	if count == 0 {
+		return 0, false
 	}
 
-	sumSquares := 0.0
+	closer := 0
 
-	for index := range query {
-		difference := query[index] - candidate[index]
+	for index := 0; index < count; index++ {
+		value, found := baselineSeries.SampleAt(frame, index)
 
-		sumSquares += difference * difference
+		if !found {
+			continue
+		}
+
+		if value < nearestDistance {
+			closer++
+		}
 	}
 
-	return math.Sqrt(sumSquares / float64(len(query)))
+	return float64(closer) / float64(count), true
 }
 
 /*
-discordScore is the matrix-profile discord score: the square root of the
-nearest distance divided by the mean candidate distance. Near 0 the nearest
-match is unusually close (a recurring trajectory); near 1 the nearest match is
-a far outlier (a novel trajectory). It is scale-free and unaffected by a tie
-among several equally close candidates, so recurrence is measured by how the
-nearest neighbour stands out from background, not by how many distances happen
-to tie at the minimum.
+appendBaseline writes one nearest distance into the per-symbol baseline ring,
+evicting the oldest when the ring is full. The ring slot layout reuses the
+series' own sample slots, holding one value per slot (no timestamps), so the
+baseline is a plain bounded value ring in the committed Frame.
 */
-func discordScore(nearestDistance float64, distanceSum float64, candidateCount int) float64 {
-	if candidateCount <= 0 {
-		return 0
+func appendBaseline(frame *types.Frame, nearestDistance float64) {
+	count := baselineSeries.Count(*frame)
+
+	if count < baselineCapacity {
+		frame.Put(baselineSeries.SampleSymbol(count), nearestDistance)
+		frame.Put(baselineSeries.CountSymbol, float64(count+1))
+
+		return
 	}
 
-	meanDistance := distanceSum / float64(candidateCount)
+	head := baselineSeries.Head(*frame)
 
-	if meanDistance <= 0 {
-		return 0
-	}
-
-	score := math.Sqrt(nearestDistance / meanDistance)
-
-	if score > 1 {
-		return 1
-	}
-
-	return score
+	frame.Put(baselineSeries.SampleSymbol(head), nearestDistance)
+	frame.Put(baselineSeries.HeadSymbol, float64((head+1)%baselineCapacity))
 }
