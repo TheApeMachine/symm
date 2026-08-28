@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { positionStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { Flex } from "#/components/ui/flex";
@@ -73,6 +73,18 @@ export const Positions = () => {
 	});
 	const [pendingExits, setPendingExits] = useState<ReadonlySet<string>>(new Set());
 
+	// A closed lot drops out of `positions` entirely, so its pending flag would
+	// otherwise linger forever — clear it the moment the symbol is no longer
+	// open.
+	useEffect(() => {
+		const openSymbols = new Set(positions.map((pos) => pos.symbol));
+
+		setPendingExits((current) => {
+			const next = new Set([...current].filter((symbol) => openSymbols.has(symbol)));
+			return next.size === current.size ? current : next;
+		});
+	}, [positions]);
+
 	const requestExit = (symbol: string) => {
 		if (pendingExits.has(symbol)) {
 			return;
@@ -80,17 +92,37 @@ export const Positions = () => {
 
 		setPendingExits((current) => new Set(current).add(symbol));
 		sendPositionExit(symbol);
+
+		// The exit command has no ack on this socket — if the desk rejects or
+		// silently drops it, the button must not stay disabled forever with no
+		// way to retry.
+		setTimeout(() => {
+			setPendingExits((current) => {
+				if (!current.has(symbol)) return current;
+				const next = new Set(current);
+				next.delete(symbol);
+				return next;
+			});
+		}, 10_000);
 	};
 
 	return (
 		<List className="min-h-0 flex-1 p-1.5">
 			{positions.map((pos) => (
-				<button
-					type="button"
+				// biome-ignore lint/a11y/useSemanticElements: a <button> can't legally nest the EXIT <button>.
+				<div
+					role="button"
+					tabIndex={0}
 					data-pos={pos.symbol}
 					data-position-card
 					key={pos.symbol}
 					onClick={() => terminalStore.actions.openThesis(pos.symbol)}
+					onKeyDown={(event) => {
+						if (event.key === "Enter" || event.key === " ") {
+							event.preventDefault();
+							terminalStore.actions.openThesis(pos.symbol);
+						}
+					}}
 					title="Inspect this lot"
 					className="mb-1.25 block w-full cursor-pointer rounded-[3px] border border-(--line) bg-(--sunken) px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:border-[color-mix(in_srgb,var(--acc)_35%,transparent)]"
 				>
@@ -144,7 +176,7 @@ export const Positions = () => {
 
 						<PositionStopGeometry symbol={pos.symbol} />
 					</Flex.Column>
-				</button>
+				</div>
 			))}
 		</List>
 	);

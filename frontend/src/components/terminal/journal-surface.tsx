@@ -1,5 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect } from "react";
+import { cn } from "@/lib/utils";
 import type { TradeRecord } from "#/collections/app";
 import { positionStore, tradeHistoryStore } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
@@ -45,6 +46,18 @@ const formatPct = (value: unknown, digits: number): string => {
 	return formatted === "—" ? formatted : `${formatted}%`;
 };
 
+const numberOf = (value: unknown): number => {
+	if (typeof value === "number") return value;
+	if (typeof value === "string" && value !== "" && Number.isFinite(Number(value))) {
+		return Number(value);
+	}
+	return 0;
+};
+
+/* pnlTone maps a signed P&L to the terminal's up/down tone name. */
+const pnlTone = (value: number): "up" | "down" | "f3" =>
+	value > 0 ? "up" : value < 0 ? "down" : "f3";
+
 const positionHolder = new Position();
 const holdingHolder = new Holding();
 const stoplossHolder = new Stoploss();
@@ -58,6 +71,7 @@ type ActiveLotEntry = {
 	status: string;
 	stopStatus: string;
 	pnl: string;
+	pnlValue: number;
 	mark: string;
 	returnPct: string;
 	entryPrice: string;
@@ -77,6 +91,7 @@ type JournalTradeEntry = {
 	symbol: string;
 	status: string;
 	pnl: string;
+	pnlValue: number;
 	returnPct: string;
 	entryPrice: string;
 	entryAt: string;
@@ -142,6 +157,7 @@ const fromRecord = (record: TradeRecord): JournalTradeEntry | null => {
 		symbol: holding.symbol,
 		status: holding.status ?? record.status ?? "—",
 		pnl: `${formatNumber(holding.pnl, 4)} USD`,
+		pnlValue: numberOf(holding.pnl),
 		returnPct: formatPct(holding.returnPct, 2),
 		entryPrice: formatNumber(holding.entryPrice, 6),
 		entryAt: timeOf(holding.entryAt),
@@ -248,6 +264,7 @@ export const JournalSurface = () => {
 						symbol: currentSymbol,
 						status: positionStatus,
 						pnl: `${formatNumber(currentHolding.pnl(), 4)} USD`,
+						pnlValue: numberOf(currentHolding.pnl()),
 						returnPct: formatPct(currentHolding.returnPct(), 2),
 						entryPrice: formatNumber(currentHolding.entryPrice(), 6),
 						entryAt: entryTimestamp,
@@ -290,6 +307,7 @@ export const JournalSurface = () => {
 					status: positionStatus,
 					stopStatus: currentStoploss?.status() ?? "—",
 					pnl: `${formatNumber(currentHolding.pnl(), 4)} USD`,
+					pnlValue: numberOf(currentHolding.pnl()),
 					mark: formatNumber(currentHolding.mark(), 6),
 					returnPct: formatPct(currentHolding.returnPct(), 2),
 					entryPrice: formatNumber(currentHolding.entryPrice(), 6),
@@ -341,53 +359,72 @@ export const JournalSurface = () => {
 								no lots held
 							</Panel>
 						) : (
-							activeLots.map((lot) => (
-								<Panel key={lot.symbol} variant="surface" size="bare" className="flex flex-col gap-1 px-2.5 py-2 font-mono text-[11px]">
-									<Flex.Row className="items-center justify-between gap-2">
-										<Flex.Column className="min-w-0 gap-0.5">
-											<Typography.Span className="truncate font-semibold text-(--f1)">
-												{lot.symbol}
+							activeLots.map((lot) => {
+								const tone = pnlTone(lot.pnlValue);
+								const stopError = lot.stopStatus === "error";
+								return (
+									<Panel
+										key={lot.symbol}
+										variant="surface"
+										size="bare"
+										className={cn(
+											"flex flex-col gap-1.5 border-l-2 px-2.5 py-2 font-mono text-[11px]",
+											tone === "up" && "border-l-(--up)",
+											tone === "down" && "border-l-(--down)",
+											tone === "f3" && "border-l-(--line2)",
+										)}
+									>
+										<Flex.Row className="items-center justify-between gap-2">
+											<Flex.Column className="min-w-0 gap-0.5">
+												<Typography.Span className="truncate font-semibold text-[12.5px] text-(--f1)">
+													{lot.symbol}
+												</Typography.Span>
+												<Typography.Span className="text-[9.5px] text-(--f4)">
+													entry {lot.entryPrice} · mark {lot.mark}
+												</Typography.Span>
+											</Flex.Column>
+											<Flex.Column className="shrink-0 items-end gap-0.5">
+												<Typography.Span className="rounded-xs border border-(--line) px-1 py-px text-[8px] uppercase tracking-wide text-(--f3)">
+													{lot.status}
+												</Typography.Span>
+												<Typography.Mono size="s" tone={tone} weight="semibold">
+													{lot.pnl} ({lot.returnPct})
+												</Typography.Mono>
+											</Flex.Column>
+										</Flex.Row>
+										<Flex.Row className="items-center justify-between gap-2 border-(--line) border-t pt-1 text-[9px]">
+											<Typography.Span
+												className={cn(
+													"rounded-xs px-1 py-px uppercase tracking-wide",
+													stopError
+														? "bg-[color-mix(in_srgb,var(--down)_18%,transparent)] font-semibold text-(--down)"
+														: "text-(--f4)",
+												)}
+											>
+												{stopError ? "⚠ stop error" : `stop ${lot.stopStatus}`}
 											</Typography.Span>
-											<Typography.Span className="text-[9.5px] text-(--f4)">
-												entry {lot.entryPrice} · mark {lot.mark}
+											<Typography.Span className="text-(--f4)">
+												floor {lot.floor} · peak {lot.peak}
 											</Typography.Span>
-										</Flex.Column>
-										<Flex.Column className="shrink-0 items-end gap-0.5">
-											<Typography.Span className="rounded-xs border border-(--line) px-1 py-px text-[8px] uppercase tracking-wide">
-												{lot.status}
+										</Flex.Row>
+										<Flex.Row className="items-center justify-between gap-2 text-[9px] text-(--f4)">
+											<Typography.Span>entered {lot.entryAt}</Typography.Span>
+											<Typography.Span className={lot.surgeArmed ? "text-(--acc)" : undefined}>
+												{lot.locked ? "locked" : "unlocked"}
+												{lot.surgeArmed ? " · surge" : ""}
 											</Typography.Span>
-											<Typography.Span className="text-[9.5px] text-(--pnl)">
-												{lot.pnl} ({lot.returnPct})
+										</Flex.Row>
+										<Flex.Row className="items-center justify-between gap-2 border-(--line) border-t pt-1 text-[9px] text-(--f4)">
+											<Typography.Span>
+												thesis {lot.thesisScore} ({lot.thesisConfidence})
 											</Typography.Span>
-										</Flex.Column>
-									</Flex.Row>
-									<Flex.Row className="items-center justify-between gap-2 border-(--line) border-t pt-1 text-[9px] text-(--f4)">
-										<Typography.Span
-											className={lot.stopStatus === "error" ? "font-semibold uppercase text-(--down)" : "uppercase"}
-										>
-											{lot.stopStatus === "error" ? "⚠ stop error" : `stop ${lot.stopStatus}`}
-										</Typography.Span>
-										<Typography.Span>
-											floor {lot.floor} · peak {lot.peak}
-										</Typography.Span>
-									</Flex.Row>
-									<Flex.Row className="items-center justify-between gap-2 text-[9px] text-(--f4)">
-										<Typography.Span>entered {lot.entryAt}</Typography.Span>
-										<Typography.Span>
-											{lot.locked ? "locked" : "unlocked"}
-											{lot.surgeArmed ? " · surge" : ""}
-										</Typography.Span>
-									</Flex.Row>
-									<Flex.Row className="items-center justify-between gap-2 border-(--line) border-t pt-1 text-[9px] text-(--f4)">
-										<Typography.Span>
-											thesis {lot.thesisScore} ({lot.thesisConfidence})
-										</Typography.Span>
-										<Typography.Span>
-											risk {lot.riskDistance} · trail {lot.trailDistance}
-										</Typography.Span>
-									</Flex.Row>
-								</Panel>
-							))
+											<Typography.Span>
+												risk {lot.riskDistance} · trail {lot.trailDistance}
+											</Typography.Span>
+										</Flex.Row>
+									</Panel>
+								);
+							})
 						)}
 					</div>
 				</Section>
@@ -401,88 +438,122 @@ export const JournalSurface = () => {
 							nothing traded yet
 						</Panel>
 					) : (
-						closedTrades.map((trade) => (
-							<Panel key={trade.id} variant="surface" size="bare" className="flex flex-col gap-1.5 p-3 font-mono text-[11px]">
-								<Flex.Row className="items-center justify-between gap-2">
-									<Flex.Row className="items-center gap-2">
-										<Typography.Span className="font-semibold text-[12px] text-(--f1)">
-											{trade.symbol}
-										</Typography.Span>
-										<Typography.Span className="rounded-xs border border-(--line) px-1 py-px text-[8.5px] uppercase text-(--f3)">
-											{trade.triggerReason}
-										</Typography.Span>
-										{trade.source === "history" ? (
-											<Typography.Span className="rounded-xs border border-(--line) px-1 py-px text-[8px] uppercase text-(--f4)">
-												history
+						closedTrades.map((trade) => {
+							const tone = pnlTone(trade.pnlValue);
+							const stopError = trade.stopStatus === "error";
+							const hasDiagnostics = trade.hypothesis !== "—" || trade.recommendedAction !== "—";
+							return (
+								<Panel
+									key={trade.id}
+									variant="surface"
+									size="bare"
+									className={cn(
+										"flex flex-col gap-2 border-l-2 p-3 font-mono text-[11px]",
+										tone === "up" && "border-l-(--up)",
+										tone === "down" && "border-l-(--down)",
+										tone === "f3" && "border-l-(--line2)",
+									)}
+								>
+									{/* Primary: what happened. */}
+									<Flex.Row className="items-center justify-between gap-2">
+										<Flex.Row className="items-center gap-2">
+											<Typography.Span className="font-semibold text-[13px] text-(--f1)">
+												{trade.symbol}
 											</Typography.Span>
-										) : null}
+											<Typography.Span
+												className={cn(
+													"rounded-xs px-1 py-px text-[8.5px] uppercase tracking-wide",
+													stopError
+														? "bg-[color-mix(in_srgb,var(--down)_18%,transparent)] font-semibold text-(--down)"
+														: "bg-[color-mix(in_srgb,var(--warn)_14%,transparent)] text-(--warn)",
+												)}
+											>
+												{trade.triggerReason}
+											</Typography.Span>
+											{trade.source === "history" ? (
+												<Typography.Span className="rounded-xs border border-(--line) px-1 py-px text-[8px] uppercase text-(--f4)">
+													history
+												</Typography.Span>
+											) : null}
+										</Flex.Row>
+										<Flex.Row className="items-baseline gap-2">
+											<Typography.Mono size="lg" tone={tone} weight="semibold">
+												{trade.pnl}
+											</Typography.Mono>
+											<Typography.Mono size="s" tone={tone}>
+												({trade.returnPct})
+											</Typography.Mono>
+										</Flex.Row>
 									</Flex.Row>
-									<Flex.Row className="items-center gap-2">
-										<Typography.Span className="font-semibold text-(--pnl)">
-											{trade.pnl}
-										</Typography.Span>
-										<Typography.Span className="text-[9.5px] text-(--pnl)">
-											({trade.returnPct})
-										</Typography.Span>
-									</Flex.Row>
-								</Flex.Row>
-								<Flex.Row className="items-center justify-between text-[9.5px] text-(--f4)">
-									<Typography.Span>
-										{trade.entryPrice} → {trade.exitPrice}
-									</Typography.Span>
-									<Typography.Span>
-										entered {trade.entryAt} · exited {trade.exitAt}
-									</Typography.Span>
-								</Flex.Row>
-								<Flex.Row className="items-center justify-between border-(--line) border-t pt-1 text-[9px] text-(--f4)">
-									<Typography.Span>
-										fees {trade.entryFee} → {trade.exitFee}
-									</Typography.Span>
-									<Typography.Span>
-										<Typography.Span
-											className={trade.stopStatus === "error" ? "font-semibold uppercase text-(--down)" : "uppercase"}
-										>
-											{trade.stopStatus === "error" ? "⚠ stop error" : trade.stopStatus}
-										</Typography.Span>
-										{trade.locked ? " · locked" : ""}
-										{trade.surgeArmed ? " · surge" : ""}
-									</Typography.Span>
-								</Flex.Row>
-								<Flex.Row className="items-center justify-between border-(--line) border-t pt-1 text-[9px] text-(--f4)">
-									<Typography.Span>
-										thesis {trade.thesisScore} ({trade.thesisConfidence}) · causal {trade.causalIdentification}
-									</Typography.Span>
-									<Typography.Span>
-										haircut {trade.allocationHaircut}
-										{trade.allocationHaircutReason !== "—" ? ` (${trade.allocationHaircutReason})` : ""}
-									</Typography.Span>
-								</Flex.Row>
-								<Flex.Row className="items-center justify-between text-[9px] text-(--f4)">
-									<Typography.Span>
-										spread {trade.spread} · impact {trade.impact} · adverse {trade.adverseSelection}
-									</Typography.Span>
-									<Typography.Span>
-										expected {trade.expectedReturn} ({trade.expectedFees} fees)
-									</Typography.Span>
-								</Flex.Row>
-								<Flex.Row className="items-center justify-between text-[9px] text-(--f4)">
-									<Typography.Span>
-										risk {trade.riskDistance} · trail {trade.trailDistance} · max loss {trade.maxLoss}
-									</Typography.Span>
-									<Typography.Span>
-										best {trade.bestBid} / {trade.bestAsk} · BE {trade.breakEven}
-									</Typography.Span>
-								</Flex.Row>
-								{trade.hypothesis !== "—" || trade.recommendedAction !== "—" ? (
-									<Flex.Row className="items-center justify-between text-[9px] text-(--f4)">
-										<Typography.Span className="truncate">hypothesis: {trade.hypothesis}</Typography.Span>
+
+									{/* Secondary: prices, timing, fees, stop state. */}
+									<Flex.Row className="items-center justify-between text-[9.5px] text-(--f2)">
 										<Typography.Span>
-											mcts: {trade.recommendedAction} (+{trade.graphSupports}/-{trade.graphContradicts})
+											{trade.entryPrice} → {trade.exitPrice}
+										</Typography.Span>
+										<Typography.Span className="text-(--f4)">
+											entered {trade.entryAt} · exited {trade.exitAt}
 										</Typography.Span>
 									</Flex.Row>
-								) : null}
-							</Panel>
-						))
+									<Flex.Row className="items-center justify-between border-(--line) border-t pt-1.5 text-[9px] text-(--f4)">
+										<Typography.Span>
+											fees {trade.entryFee} → {trade.exitFee}
+										</Typography.Span>
+										<Typography.Span>
+											<Typography.Span
+												className={stopError ? "font-semibold uppercase text-(--down)" : "uppercase"}
+											>
+												{stopError ? "⚠ stop error" : trade.stopStatus}
+											</Typography.Span>
+											{trade.locked ? " · locked" : ""}
+											{trade.surgeArmed ? (
+												<Typography.Span className="text-(--acc)"> · surge</Typography.Span>
+											) : (
+												""
+											)}
+										</Typography.Span>
+									</Flex.Row>
+
+									{/* Diagnostics: why the model did this, demoted a step further. */}
+									<div className="flex flex-col gap-1 rounded-xs bg-(--sunken) px-2 py-1.5 text-[9px] text-(--f4)">
+										<Flex.Row className="items-center justify-between">
+											<Typography.Span>
+												thesis <span className="text-(--f3)">{trade.thesisScore}</span> ({trade.thesisConfidence}) ·
+												causal {trade.causalIdentification}
+											</Typography.Span>
+											<Typography.Span>
+												haircut {trade.allocationHaircut}
+												{trade.allocationHaircutReason !== "—" ? ` (${trade.allocationHaircutReason})` : ""}
+											</Typography.Span>
+										</Flex.Row>
+										<Flex.Row className="items-center justify-between">
+											<Typography.Span>
+												spread {trade.spread} · impact {trade.impact} · adverse {trade.adverseSelection}
+											</Typography.Span>
+											<Typography.Span>
+												expected {trade.expectedReturn} ({trade.expectedFees} fees)
+											</Typography.Span>
+										</Flex.Row>
+										<Flex.Row className="items-center justify-between">
+											<Typography.Span>
+												risk {trade.riskDistance} · trail {trade.trailDistance} · max loss {trade.maxLoss}
+											</Typography.Span>
+											<Typography.Span>
+												best {trade.bestBid} / {trade.bestAsk} · BE {trade.breakEven}
+											</Typography.Span>
+										</Flex.Row>
+										{hasDiagnostics ? (
+											<Flex.Row className="items-center justify-between border-(--line) border-t pt-1">
+												<Typography.Span className="truncate">hypothesis: {trade.hypothesis}</Typography.Span>
+												<Typography.Span>
+													mcts: {trade.recommendedAction} (+{trade.graphSupports}/-{trade.graphContradicts})
+												</Typography.Span>
+											</Flex.Row>
+										) : null}
+									</div>
+								</Panel>
+							);
+						})
 					)}
 				</div>
 			</div>

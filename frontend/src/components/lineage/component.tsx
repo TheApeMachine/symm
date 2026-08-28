@@ -5,72 +5,20 @@ import { Icon } from "#/components/ui/icon";
 import { Panel } from "#/components/ui/panel";
 import { Toolbar } from "#/components/ui/toolbar";
 import { Typography } from "#/components/ui/typography";
+import {
+	type ConsumerRow,
+	ensureLineageLoaded,
+	LINEAGE_STATUS_COLOR as STATUS_COLOR,
+	lineageStatusOf,
+	type ProducerRow,
+	readLineage,
+	subscribeLineage,
+} from "#/components/terminal/lineage-report";
 import { cn } from "#/lib/utils";
-
-/*
-LineageReport mirrors tools/metriclineage's JSON output (see
-tools/metriclineage/main.go's report/producerOut/consumerOut/summaryOut
-structs) exactly — this is a static, generated artifact, not a live wire
-frame. Regenerate it with `go run ./tools/metriclineage . frontend/public/metric-lineage.json`
-whenever a signal kernel, advisor binding, or the causal schema catalog
-changes; this component only reads whatever's currently in public/.
-*/
-type ConsumerRef = {
-	kind: "fine" | "kernel" | "generic";
-	consumer: string;
-	package: string;
-	file: string;
-	line: number;
-};
-
-type ProducerRow = {
-	id: string;
-	source: string;
-	metric: string;
-	side?: string;
-	package: string;
-	file: string;
-	line: number;
-	unit?: string;
-	consumers: ConsumerRef[];
-	dead: boolean;
-	kernelOnly: boolean;
-};
-
-type ConsumerRow = {
-	consumer: string;
-	kind: "fine" | "kernel" | "generic";
-	package: string;
-	file: string;
-	line: number;
-	targets: string[];
-};
-
-type LineageReport = {
-	producers: ProducerRow[];
-	consumers: ConsumerRow[];
-	unresolved: Array<{ package: string; file: string; line: number; reason: string }>;
-	summary: {
-		totalProducers: number;
-		deadProducers: number;
-		kernelOnlyProducers: number;
-		fineConsumerEdges: number;
-		kernelConsumerEdges: number;
-		genericConsumerEdges: number;
-		unresolved: number;
-	};
-};
 
 type StatusFilter = "all" | "dead" | "used" | "kernelOnly";
 
-const STATUS_COLOR: Record<"dead" | "used" | "kernelOnly", string> = {
-	dead: "var(--down, #e5484d)",
-	used: "var(--pnl, #30a46c)",
-	kernelOnly: "var(--warn, #f5a524)",
-};
-
-const statusOf = (p: ProducerRow): "dead" | "used" | "kernelOnly" =>
-	p.dead ? (p.kernelOnly ? "kernelOnly" : "dead") : "used";
+const statusOf = (p: ProducerRow): "dead" | "used" | "kernelOnly" => lineageStatusOf(p) ?? "used";
 
 /*
 Point is one laid-out node: a kernel, a metric, or a consumer, positioned in
@@ -152,8 +100,7 @@ const buildLayout = (
 };
 
 export const MetricLineage = () => {
-	const [report, setReport] = useState<LineageReport | null>(null);
-	const [loadError, setLoadError] = useState<string | null>(null);
+	const [, setVersion] = useState(0);
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 	const [sourceFilter, setSourceFilter] = useState<string | null>(null);
 	const [activeMetricId, setActiveMetricId] = useState<string | null>(null);
@@ -162,24 +109,12 @@ export const MetricLineage = () => {
 	const containerRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		let cancelled = false;
-
-		fetch("/metric-lineage.json")
-			.then((response) => {
-				if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-				return response.json() as Promise<LineageReport>;
-			})
-			.then((data) => {
-				if (!cancelled) setReport(data);
-			})
-			.catch((err) => {
-				if (!cancelled) setLoadError(String(err));
-			});
-
-		return () => {
-			cancelled = true;
-		};
+		ensureLineageLoaded();
+		const unsubscribe = subscribeLineage(() => setVersion((v) => v + 1));
+		return unsubscribe;
 	}, []);
+
+	const { report, error: loadError } = readLineage();
 
 	useEffect(() => {
 		if (!containerRef.current) return;
@@ -385,17 +320,17 @@ export const MetricLineage = () => {
 								strokeWidth={1.5}
 							/>
 							<text
-								x={-12}
+								x={14}
 								y={4}
-								textAnchor="end"
+								textAnchor="start"
 								className="fill-(--f2) font-mono text-[10px] font-semibold"
 							>
 								{k.id}
 							</text>
 							<text
-								x={-12}
+								x={14}
 								y={16}
-								textAnchor="end"
+								textAnchor="start"
 								className="fill-(--f4) font-mono text-[8.5px]"
 							>
 								{k.count - k.dead}/{k.count} used
@@ -440,7 +375,10 @@ export const MetricLineage = () => {
 						);
 					})}
 
-					{/* Consumer nodes */}
+					{/* Consumer nodes — dot only; the label renders as an HTML overlay
+					    below so long consumer names (e.g. "graph.Solver
+					    (causal-influence catalog)") can wrap instead of being
+					    clipped at the SVG's right edge. */}
 					{layout.consumerPoints.map((c) => {
 						const row = relevantConsumers.find((r) => r.consumer === c.id);
 						return (
@@ -457,24 +395,49 @@ export const MetricLineage = () => {
 									stroke="var(--line)"
 									strokeWidth={1}
 								/>
-								<text
-									x={12}
-									y={4}
-									textAnchor="start"
-									className="fill-(--f3) font-mono text-[9px]"
-								>
-									{c.id.length > 42 ? `${c.id.slice(0, 40)}…` : c.id}
-								</text>
 							</g>
 						);
 					})}
 				</svg>
 
+				{/* Consumer labels as an HTML overlay, not SVG <text>: SVG text
+				    doesn't wrap, so a long consumer name (e.g. "graph.Solver
+				    (causal-influence catalog)") either overflows the canvas or has
+				    to be truncated. A positioned <div> can wrap onto a second line
+				    and use the genuinely large amount of free space to the right of
+				    the dot column instead. */}
+				{layout.consumerPoints.map((c) => {
+					const row = relevantConsumers.find((r) => r.consumer === c.id);
+					return (
+						<div
+							key={`label-${c.id}`}
+							className="pointer-events-none absolute font-mono text-[10px] text-(--f3) leading-tight break-words"
+							style={{
+								left: `${c.x + 12}px`,
+								// Anchor the label's first line to the dot's y (not
+								// vertically centered): a wrapped 2-line label centered
+								// on its own height pushes its first line below the dot
+								// it belongs to, which reads as misaligned with the next
+								// dot down instead.
+								top: `${c.y - 6}px`,
+								right: 12,
+							}}
+						>
+							{c.id}
+							{row ? (
+								<span className="ml-1 text-(--f4)">
+									· {row.kind}
+								</span>
+							) : null}
+						</div>
+					);
+				})}
+
 				{activeProducer ? (
 					<Panel
 						variant="surface"
 						size="bare"
-						className="absolute right-3 bottom-3 flex max-w-[420px] flex-col gap-2 p-3 font-mono text-[11px]"
+						className="absolute right-3 bottom-3 flex max-w-105 flex-col gap-2 p-3 font-mono text-[11px]"
 					>
 						<Flex.Row className="items-center justify-between gap-2">
 							<Typography.Span className="font-semibold text-(--f1)">
@@ -506,7 +469,6 @@ export const MetricLineage = () => {
 										>
 											<Typography.Span
 												className={cn(
-													"truncate",
 													c.kind === "fine"
 														? "text-(--f1)"
 														: c.kind === "kernel"

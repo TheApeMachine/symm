@@ -235,7 +235,13 @@ func (position *Position) handleGuardian(value any) {
 		position.onLevel3(payload)
 	case string: // e.g. "manual_exit"
 		if payload == "manual_exit" {
-			_ = position.executeManualExit()
+			if err := position.executeManualExit(); err != nil {
+				errnie.Error(errnie.Err(
+					errnie.UnprocessableContent,
+					"position: manual exit did not execute for "+position.pair.Symbol,
+					err,
+				))
+			}
 		}
 	}
 }
@@ -621,6 +627,7 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 
 			position.ExitOrder = nil
 			position.ExitOrderResult = nil
+			position.exitClaim.Store(false)
 			position.setStatus(types.OPEN)
 			position.Holding.Status = types.OPEN
 			position.Publish()
@@ -967,6 +974,11 @@ func (position *Position) Exit() (*Position, error) {
 	result, err := position.api.AddOrder(exitOrder)
 
 	if err != nil {
+		// No order reached the exchange, so the claim must release or a
+		// transient AddOrder failure would permanently strand a triggered
+		// stop with no exit ever in flight and no path to retry it.
+		position.exitClaim.Store(false)
+
 		return position, errnie.Error(errnie.Err(
 			errnie.Internal,
 			"failed to place market exit order",

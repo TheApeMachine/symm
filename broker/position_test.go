@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -275,6 +276,103 @@ func TestShapeL3FloorCoverageCollapse(t *testing.T) {
 
 			So(position.Holding.Stoploss.Status, ShouldEqual, types.TRIGGERED)
 			So(position.Holding.Stoploss.TriggerReason, ShouldEqual, types.TriggerRegimeInvalidated)
+		})
+	})
+}
+
+/*
+triggeredExitPosition builds an open lot whose stoploss has already latched
+TRIGGERED, mirroring the state Exit() requires before it will submit anything.
+*/
+func triggeredExitPosition(t *testing.T, private *mock.Conn) *Position {
+	api := websocket.NewAPI(t.Context(), mock.NewConn(), private)
+
+	position := &Position{
+		pair: kraken.InstrumentPair{Symbol: "SHAPE/USD"},
+		api:  api,
+		Decision: types.Decision{
+			ID:     "shape-decision",
+			Symbol: "SHAPE/USD",
+		},
+		EntryOrder: &spot.AddOrderRequest{
+			ClOrdId: "shape-entry",
+			Type:    "buy",
+			Volume:  "100000",
+			Pair:    "SHAPE/USD",
+		},
+		Holding: &types.Holding{
+			Symbol:      "SHAPE/USD",
+			Qty:         mustDecimal("100000"),
+			SellableQty: mustDecimal("100000"),
+			EntryPrice:  mustDecimal("0.000490"),
+			EntryFee:    mustDecimal("0.04"),
+			Stoploss: &types.Stoploss{
+				Status: types.TRIGGERED,
+				Symbol: "SHAPE/USD",
+				Locked: true,
+			},
+		},
+	}
+
+	position.setStatus(types.OPEN)
+
+	return position
+}
+
+/*
+A triggered stop is only meaningful if Exit() gets another chance after a
+failed submission — otherwise a single transient AddOrder error (a dropped
+connection, an exchange-side rejection) permanently strands the position: the
+stop stays latched TRIGGERED forever with no order ever in flight, while price
+keeps moving underneath it. exitClaim used to latch true on the first attempt
+and never release on failure, so every subsequent tick's Exit() call would
+silently no-op instead of retrying.
+*/
+func TestExitRetriesAfterFailedSubmission(t *testing.T) {
+	Convey("Given a triggered stop whose first exit submission fails", t, func() {
+		private := mock.NewConn()
+		private.AddOrderErr = errors.New("exchange rejected order")
+		position := triggeredExitPosition(t, private)
+
+		_, err := position.Exit()
+		So(err, ShouldNotBeNil)
+		So(position.ExitOrder, ShouldBeNil)
+
+		Convey("a later tick can retry and submit the exit successfully", func() {
+			private.AddOrderErr = nil
+
+			_, err := position.Exit()
+
+			So(err, ShouldBeNil)
+			So(position.ExitOrder, ShouldNotBeNil)
+			So(position.Holding.Status, ShouldEqual, types.PENDING)
+		})
+	})
+}
+
+/*
+The operator's manual EXIT button dispatches through the guardian ring
+(ManualExit -> publishGuardian -> handleGuardian -> executeManualExit), and
+handleGuardian used to discard executeManualExit's error entirely — a click
+that failed for any reason (a stop not in an overridable state, a rejected
+order, an already-claimed exit) looked identical to a click that worked: no
+log, no error, the button just stuck on "EXITING" forever. This asserts the
+failure is no longer silent — executeManualExit itself returns a real error
+that a caller (or handleGuardian's log) can observe.
+*/
+func TestExecuteManualExitReportsFailure(t *testing.T) {
+	Convey("Given a lot whose stoploss cannot be manually overridden", t, func() {
+		private := mock.NewConn()
+		position := triggeredExitPosition(t, private)
+		// PENDING is neither ARMED (overridable) nor TRIGGERED (already an
+		// exit path) — TriggerManualOverride must refuse it.
+		position.Holding.Stoploss.Status = types.PENDING
+
+		Convey("executeManualExit surfaces the rejection instead of pretending success", func() {
+			err := position.executeManualExit()
+
+			So(err, ShouldNotBeNil)
+			So(position.ExitOrder, ShouldBeNil)
 		})
 	})
 }

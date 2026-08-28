@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { graphStore } from "#/collections/app";
 import {
-	type MarketGraphEdge,
-	type MarketGraphFrame,
-	type MarketGraphNode,
-	paintGraphSurface,
-	readGraphSurface,
-	subscribeGraphSurface,
-} from "#/components/terminal/graph-surface-store";
+	ensureLineageLoaded,
+	type LineageStatus,
+	lineageStatusOf,
+	type ProducerRow,
+	readLineage,
+	subscribeLineage,
+} from "#/components/terminal/lineage-report";
 import { Chip } from "#/components/ui/chip";
 import { Flex } from "#/components/ui/flex";
 import { Icon } from "#/components/ui/icon";
@@ -16,34 +15,55 @@ import { Typography } from "#/components/ui/typography";
 import { cn } from "#/lib/utils";
 
 /*
-InfluencedNode is one connected graph node with a derived force-field weight.
+InfluenceField is the original force-directed field visualization, unchanged,
+now sourced from the same static tools/metriclineage report Metric lineage
+reads (frontend/src/components/terminal/lineage-report.ts) instead of the
+live websocket regression graph (graphStore/graph.Solver) it used to run on.
+There is no websocket subscription and no per-tick recomputation of anything
+here — the animation loop below only replays the field's existing idle-noise
+motion against a snapshot that's fetched once and doesn't change until the
+underlying JSON is regenerated (`go run ./tools/metriclineage . frontend/public/metric-lineage.json`,
+wired into `make run`).
 
-Real edges relate metric pairs with unrelated units (a z-score to raw
-events/second, a dimensionless ratio to a spread) — their Coefficients are
-not on a common scale, so summing raw coefficients across a node's edges
-would add incompatible quantities together and the result would not mean
-anything. Instead every edge is first converted to a rank score: its
-position (0..1, signed) among the |coefficient| of every edge currently in
-view. That rank is scale-free by construction, so a node's weight — the
-signed sum of its incident edges' rank scores — is comparable across the
-whole rendered field regardless of what units happen to be present. The
-node's raw incident coefficients remain available in the detail panel;
-only the rendering (ring size, field pull, node radius) uses the rank.
+Node = one metric (a ProducerRow). Edge = one metric's "fine" (named)
+consumer link to another metric that shares that same consumer — e.g. two
+metrics both bound by the same advisor are drawn connected, mirroring how the
+original regression graph connected metrics that predicted one another.
+Weight (the field's "influence," fed into every ring/arrow/hub radius below)
+is no longer a regression coefficient rank; it's a signed rank of maturity
+for used metrics and a fixed negative rank for dead ones — used pulls the
+field toward --up, dead pulls it toward --down, exactly like a positive vs.
+negative coefficient used to.
 */
-type InfluencedNode = MarketGraphNode & {
+
+type InfluencedNode = {
+	id: string;
+	symbol?: string;
+	source?: string;
+	status: LineageStatus;
+	value?: number;
+	confidence?: number;
 	weight: number;
 	edgeCount: number;
 	x: number;
 	y: number;
+	producer: ProducerRow;
 };
 
-type RankedEdge = MarketGraphEdge & { rank: number };
+type RankedEdge = {
+	from: string;
+	to: string;
+	relation?: string;
+	weight: number;
+	confidence: number;
+	reason?: string;
+	rank: number;
+};
 
 /*
 rankWeight converts a list of signed raw values into signed [-1,1] rank
 scores: each value's fractional position among the sorted |value|s of the
-whole set, keeping its original sign. Ties share the same rank. This is the
-one normalization applied before any raw coefficient touches a pixel.
+whole set, keeping its original sign. Ties share the same rank.
 */
 const rankWeight = (values: number[]): number[] => {
 	if (values.length === 0) return [];
@@ -68,8 +88,8 @@ const rankWeight = (values: number[]): number[] => {
 
 /*
 hashUnit turns a node id into a stable [0,1) value. Positions must be
-deterministic across re-renders and SSR (no Math.random()), and the layout
-below only needs a stable starting angle per id, not real randomness.
+deterministic across re-renders (no Math.random()), and the layout below only
+needs a stable starting angle per id, not real randomness.
 */
 const hashUnit = (id: string): number => {
 	let hash = 2166136261;
@@ -82,10 +102,8 @@ const hashUnit = (id: string): number => {
 
 /*
 layoutNodes runs a short, deterministic force simulation: every node repels
-every other node, and every real edge pulls its two endpoints together in
-proportion to the magnitude of its own coefficient — a stronger measured
-influence draws its pair visibly closer. This replaces the mockup's fixed
-pentagon with a layout the graph itself produces.
+every other node, and every edge pulls its two endpoints together in
+proportion to its own rank — a stronger link draws its pair visibly closer.
 */
 const layoutNodes = (
 	nodeIds: string[],
@@ -174,80 +192,107 @@ const layoutNodes = (
 	return new Map(nodePositions.map(({ id, position }) => [id, position]));
 };
 
+/*
+buildInfluencedNodes turns the static lineage report's producers into the
+same {nodes, edges} shape the field's rendering code has always consumed.
+Two metrics get an edge when they share at least one "fine" (named) consumer
+— the closest honest analogue to the original regression graph's "these two
+predict one another" edge, since the lineage data only records
+metric-to-consumer links, not metric-to-metric ones.
+*/
 const buildInfluencedNodes = (
-	frame: MarketGraphFrame | null,
+	producers: ProducerRow[],
 	width: number,
 	height: number,
 ): { nodes: InfluencedNode[]; edges: RankedEdge[] } => {
-	if (!frame || !frame.nodes || !frame.edges) {
+	if (producers.length === 0) {
 		return { nodes: [], edges: [] };
 	}
 
-	const rawEdges = frame.edges.filter(
-		(edge) => edge.from in (frame.nodes ?? {}) && edge.to in (frame.nodes ?? {}),
-	);
-	const ranks = rankWeight(rawEdges.map((edge) => edge.weight ?? 0));
+	const byConsumer = new Map<string, ProducerRow[]>();
+	for (const producer of producers) {
+		for (const consumer of producer.consumers) {
+			if (consumer.kind !== "fine") continue;
+			const list = byConsumer.get(consumer.consumer) ?? [];
+			list.push(producer);
+			byConsumer.set(consumer.consumer, list);
+		}
+	}
+
+	const rawEdges: Array<{ from: string; to: string; reason: string; weight: number }> = [];
+	const seenPairs = new Set<string>();
+
+	for (const [consumer, rows] of byConsumer) {
+		for (let i = 0; i < rows.length; i++) {
+			for (let j = i + 1; j < rows.length; j++) {
+				const pairKey = [rows[i].id, rows[j].id].sort().join("|");
+				if (seenPairs.has(pairKey)) continue;
+				seenPairs.add(pairKey);
+				rawEdges.push({
+					from: rows[i].id,
+					to: rows[j].id,
+					reason: `shared consumer: ${consumer}`,
+					weight: 1,
+				});
+			}
+		}
+	}
+
+	const ranks = rankWeight(rawEdges.map((edge) => edge.weight));
 	const edges: RankedEdge[] = rawEdges.map((edge, index) => ({
 		...edge,
+		confidence: 0.6,
 		rank: ranks[index],
 	}));
 
 	const connected = new Set<string>();
-	const weight = new Map<string, number>();
 	const edgeCount = new Map<string, number>();
-
 	for (const edge of edges) {
 		connected.add(edge.from);
 		connected.add(edge.to);
-		weight.set(edge.from, (weight.get(edge.from) ?? 0) + edge.rank);
-		weight.set(edge.to, (weight.get(edge.to) ?? 0) - edge.rank);
 		edgeCount.set(edge.from, (edgeCount.get(edge.from) ?? 0) + 1);
 		edgeCount.set(edge.to, (edgeCount.get(edge.to) ?? 0) + 1);
 	}
 
+	// Isolated metrics (no shared consumer with anything else, including
+	// every dead metric by definition) still render — the field is meant to
+	// show them, not hide them for lack of an edge.
+	for (const producer of producers) {
+		connected.add(producer.id);
+	}
+
 	const nodeIds = [...connected].sort();
 	const positions = layoutNodes(nodeIds, edges, width, height);
+	const byId = new Map(producers.map((p) => [p.id, p]));
 
 	const nodes: InfluencedNode[] = nodeIds.map((id) => {
-		const source = frame.nodes?.[id];
+		const producer = byId.get(id);
 		const position = positions.get(id) ?? { x: width / 2, y: height / 2 };
+		const status: LineageStatus = producer ? (lineageStatusOf(producer) ?? "used") : "dead";
+		// used -> positive weight (pulls the field toward --up), dead ->
+		// negative (toward --down), kernelOnly sits near zero (weak signal:
+		// something reads the whole kernel, but nothing names this metric).
+		const weight = status === "used" ? 1 : status === "kernelOnly" ? 0.15 : -1;
+
 		return {
 			id,
-			symbol: source?.symbol,
-			source: source?.source,
-			kind: source?.kind,
-			value: source?.value,
-			strength: source?.strength,
-			confidence: source?.confidence,
-			at: source?.at,
-			metadata: source?.metadata,
-			weight: weight.get(id) ?? 0,
+			symbol: undefined,
+			source: producer?.source,
+			status,
+			value: undefined,
+			confidence: producer ? (producer.dead ? 0 : 1) : 0,
+			weight,
 			edgeCount: edgeCount.get(id) ?? 0,
 			x: position.x,
 			y: position.y,
+			producer: producer as ProducerRow,
 		};
 	});
 
 	return { nodes, edges };
 };
 
-/*
-Real node ids are relation.Coordinate.ID() — a slash-joined
-"{symbol}/{source}/{metric}/{side}/[peer=.../]{unit}/{timescale}/epoch={n}"
-string (symbol itself may contain a slash, e.g. "BTC/USD"). The decoded
-node's own `source` field is already the exact Source segment, so anchoring
-on it — rather than assuming a fixed slash index — finds the Metric segment
-correctly regardless of how many slashes the symbol has.
-*/
-const shortLabel = (node: MarketGraphNode): string => {
-	if (!node.source) return node.id;
-
-	const parts = node.id.split("/");
-	const sourceIndex = parts.indexOf(node.source);
-	const metric = sourceIndex >= 0 ? parts[sourceIndex + 1] : undefined;
-
-	return metric ? `${node.source} · ${metric}` : node.source;
-};
+const shortLabel = (node: InfluencedNode): string => `${node.source ?? "?"} · ${node.producer?.metric ?? node.id}`;
 
 export const InfluenceField = () => {
 	const [dimensions, setDimensions] = useState({ width: 800, height: 500 });
@@ -273,18 +318,9 @@ export const InfluenceField = () => {
 	}, []);
 
 	useEffect(() => {
+		ensureLineageLoaded();
 		const notify = () => setVersion((value) => value + 1);
-		const unsubscribe = subscribeGraphSurface(notify);
-		const unregister = graphStore.subscribe(() => {
-			paintGraphSurface(graphStore.state);
-		});
-		paintGraphSurface(graphStore.state);
-		notify();
-
-		return () => {
-			unsubscribe();
-			unregister.unsubscribe();
-		};
+		return subscribeLineage(notify);
 	}, []);
 
 	useEffect(() => {
@@ -309,12 +345,12 @@ export const InfluenceField = () => {
 		};
 	}, [isPlaying]);
 
-	const snapshot = readGraphSurface();
-	const frame = snapshot.frame;
+	const { report } = readLineage();
+	const producers = report?.producers ?? [];
 
 	const { nodes, edges } = useMemo(
-		() => buildInfluencedNodes(frame, dimensions.width, dimensions.height),
-		[frame, dimensions.width, dimensions.height],
+		() => buildInfluencedNodes(producers, dimensions.width, dimensions.height),
+		[producers, dimensions.width, dimensions.height],
 	);
 
 	useEffect(() => {
@@ -328,9 +364,7 @@ export const InfluenceField = () => {
 	const totalInfluencePower = nodes.reduce((acc, n) => acc + Math.abs(n.weight), 0);
 	const netSystemBalance = nodes.reduce((acc, n) => acc + n.weight, 0);
 	const meanConfidence =
-		nodes.length === 0
-			? 0
-			: nodes.reduce((acc, n) => acc + (n.confidence ?? 0), 0) / nodes.length;
+		nodes.length === 0 ? 0 : nodes.reduce((acc, n) => acc + (n.confidence ?? 0), 0) / nodes.length;
 
 	const gridColumns = 24;
 	const gridRows = 16;
@@ -400,7 +434,7 @@ export const InfluenceField = () => {
 					<Chip label="edges" value={0} />
 				</Toolbar>
 				<div className="flex flex-1 items-center justify-center px-8 text-center font-mono text-[12px] text-(--f4)">
-					Waiting for a live influence graph frame.
+					Loading static lineage report…
 				</div>
 			</div>
 		);
@@ -418,7 +452,6 @@ export const InfluenceField = () => {
 				</Typography.Label>
 				<Chip label="nodes" value={nodes.length} />
 				<Chip label="edges" value={edges.length} />
-				<Chip label="at" value={frame?.at ?? "—"} />
 				<button
 					type="button"
 					onClick={() => setIsPlaying((v) => !v)}
@@ -429,14 +462,6 @@ export const InfluenceField = () => {
 			</Toolbar>
 
 			<div className="relative min-h-0 flex-1">
-				{/*
-				With a handful of nodes every label can stay pinned open without
-				collision; the live graph regularly carries dozens, and pinning all
-				of them turns into an unreadable wall of overlapping text. Only the
-				selected node's label stays open — every other node is a plain dot,
-				disclosed via its own <title> tooltip and the bottom detail panel on
-				click, matching how Market graph's node inspector already works.
-				*/}
 				{activeNode ? (
 					<div
 						key={activeNode.id}
@@ -454,16 +479,13 @@ export const InfluenceField = () => {
 							}}
 						/>
 						{shortLabel(activeNode)}
-						<span className="text-[9px] text-(--f4) tabular-nums">
-							({activeNode.weight > 0 ? "+" : ""}
-							{activeNode.weight.toFixed(2)})
-						</span>
+						<span className="text-[9px] text-(--f4) tabular-nums">({activeNode.status})</span>
 					</div>
 				) : null}
 
 				<svg
 					role="img"
-					aria-label="Derived influence vector field"
+					aria-label="Metric usage field"
 					viewBox={`0 0 ${dimensions.width} ${dimensions.height}`}
 					className="block h-full w-full"
 				>
@@ -479,17 +501,11 @@ export const InfluenceField = () => {
 						})}
 					</g>
 
-					{/* Contour Rings — radius from the node's own derived influence weight */}
+					{/* Contour Rings — radius from the node's own derived weight */}
 					{nodes.map((node) => (
-						<g
-							key={`contour-${node.id}`}
-							opacity={activeNodeId === node.id ? 0.25 : 0.05}
-						>
+						<g key={`contour-${node.id}`} opacity={activeNodeId === node.id ? 0.25 : 0.05}>
 							{contourLevels.map((level, idx) => {
-								const computedRadius = Math.max(
-									10,
-									Math.abs(node.weight) * (idx + 1) * 15,
-								);
+								const computedRadius = Math.max(10, Math.abs(node.weight) * (idx + 1) * 15);
 								return (
 									<circle
 										key={`c-ring-${level}`}
@@ -531,7 +547,7 @@ export const InfluenceField = () => {
 						})}
 					</g>
 
-					{/* Connective Chords — one per real edge, weight/confidence from the wire */}
+					{/* Connective Chords — one per shared-consumer edge */}
 					<g opacity="0.7">
 						{edges.map((edge) => {
 							const source = nodes.find((n) => n.id === edge.from);
@@ -544,24 +560,22 @@ export const InfluenceField = () => {
 							const ctrlX = midX + (cx - midX) * weightFactor;
 							const ctrlY = midY + (cy - midY) * weightFactor;
 
-							const isActive =
-								activeNodeId === source.id || activeNodeId === target.id;
+							const isActive = activeNodeId === source.id || activeNodeId === target.id;
 							const confidence = edge.confidence ?? 0;
 							const strokeWidth = Math.min(4, 0.6 + Math.abs(edge.weight ?? 0) * 3);
 
 							return (
 								<path
-									key={`chord-${edge.from}-${edge.to}-${edge.relation ?? ""}`}
+									key={`chord-${edge.from}-${edge.to}`}
 									d={`M ${source.x} ${source.y} Q ${ctrlX} ${ctrlY} ${target.x} ${target.y}`}
 									fill="none"
 									stroke={isActive ? "var(--f2)" : "var(--f4)"}
 									strokeWidth={isActive ? strokeWidth + 1 : strokeWidth}
 									strokeOpacity={Math.max(0.15, confidence)}
-									strokeDasharray={confidence < 0.4 ? "5 5" : "none"}
 									className="transition-colors duration-300"
 								>
 									<title>
-										{edge.from} → {edge.to} · {edge.reason ?? edge.relation ?? "influence"}
+										{edge.from} → {edge.to} · {edge.reason ?? edge.relation ?? "shared consumer"}
 									</title>
 								</path>
 							);
@@ -641,7 +655,7 @@ export const InfluenceField = () => {
 					</div>
 					<div className="flex flex-col items-center gap-1">
 						<span className="text-[9px] font-semibold uppercase tracking-wider text-(--f4)">
-							Mean Maturity
+							Used Share
 						</span>
 						<span className="text-sm font-bold tabular-nums text-(--warn)">
 							{(meanConfidence * 100).toFixed(1)}%
@@ -661,8 +675,7 @@ export const InfluenceField = () => {
 									activeNode.weight >= 0 ? "text-(--up)" : "text-(--down)",
 								)}
 							>
-								net weight {activeNode.weight > 0 ? "+" : ""}
-								{activeNode.weight.toFixed(4)}
+								{activeNode.status}
 							</span>
 						</Flex.Row>
 						<div className="grid grid-cols-2 gap-x-6 gap-y-1 font-mono text-[10px] text-(--f4) md:grid-cols-4">
@@ -670,20 +683,17 @@ export const InfluenceField = () => {
 								source <b className="font-normal text-(--f2)">{activeNode.source ?? "—"}</b>
 							</span>
 							<span>
-								symbol <b className="font-normal text-(--f2)">{activeNode.symbol ?? "—"}</b>
-							</span>
-							<span>
-								value{" "}
+								declared{" "}
 								<b className="font-normal text-(--f2)">
-									{typeof activeNode.value === "number" ? activeNode.value.toFixed(6) : "—"}
+									{activeNode.producer
+										? `${activeNode.producer.file}:${activeNode.producer.line}`
+										: "—"}
 								</b>
 							</span>
 							<span>
-								maturity{" "}
+								consumers{" "}
 								<b className="font-normal text-(--f2)">
-									{typeof activeNode.confidence === "number"
-										? `${(activeNode.confidence * 100).toFixed(1)}%`
-										: "—"}
+									{activeNode.producer?.consumers.length ?? 0}
 								</b>
 							</span>
 							<span>
@@ -696,5 +706,3 @@ export const InfluenceField = () => {
 		</div>
 	);
 };
-
-export default InfluenceField;

@@ -190,7 +190,7 @@ const selectDecision = (
 				cause: dec.cause() ?? "",
 				reason: dec.reason() ?? "",
 				at: dec.at()
-					? new Date(Number(dec.at())).toISOString().slice(11, 19)
+					? new Date(Number(dec.at() / 1000000n)).toISOString().slice(11, 19)
 					: "",
 				proposedNotional: fmt(dec.proposedNotional()),
 				proposedQuantity: fmt(dec.proposedQuantity()),

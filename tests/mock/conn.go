@@ -14,6 +14,11 @@ import (
 
 type Conn struct {
 	status types.Status
+
+	// AddOrderErr, when set, is returned by AddOrder instead of a synthetic
+	// success — tests use it to simulate an exchange/network rejection of an
+	// order submission.
+	AddOrderErr error
 }
 
 func NewConn() *Conn {
@@ -63,6 +68,10 @@ func (conn *Conn) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, erro
 }
 
 func (conn *Conn) AddOrder(*spot.AddOrderRequest) (spot.AddOrderResult, error) {
+	if conn.AddOrderErr != nil {
+		return spot.AddOrderResult{}, conn.AddOrderErr
+	}
+
 	return spot.AddOrderResult{}, nil
 }
 

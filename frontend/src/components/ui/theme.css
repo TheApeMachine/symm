@@ -18,6 +18,7 @@ Foreground scale (--f1 through --f4) is ordered by emphasis, f1 loudest.
 	--brand: oklch(0.5691 0.2451 282.62);
 	--up: #9cc06e;
 	--down: #d5786a;
+	--pnl: var(--f2);
 	--info: #7fbacb;
 	--warn: #e8a33d;
 	--success: var(--up);

@@ -1,11 +1,54 @@
+import { useSelector } from "@tanstack/react-store";
 import { useMemo, useState } from "react";
-import { strategyStore } from "#/collections/app";
+import { positionStore, strategyStore } from "#/collections/app";
 import type { DecisionMCTSTreeNode } from "#/types/thesis";
 import { Input } from "@/components/ui/input";
 import { Typography } from "@/components/ui/typography";
 import { Decision } from "#/providers/telemetry/telemetry/decision";
+import { DecisionTrace } from "#/providers/telemetry/telemetry/decision-trace";
+import { Holding } from "#/providers/telemetry/telemetry/holding";
+import type { MCTSNodeT } from "#/providers/telemetry/telemetry/mctsnode";
+import { MCTSNode } from "#/providers/telemetry/telemetry/mctsnode";
+import { Position } from "#/providers/telemetry/telemetry/position";
 
 const decObj = new Decision();
+const positionObj = new Position();
+const holdingObj = new Holding();
+const traceObj = new DecisionTrace();
+const treeObj = new MCTSNode();
+
+/*
+mctsNodeToTree converts one unpacked MCTSNodeT (flatbuffer state is a
+{name,value}[] list) into the plain DecisionMCTSTreeNode shape the visualizer
+renders (state as a Record<string, number>), recursively.
+*/
+const mctsNodeToTree = (node: MCTSNodeT): DecisionMCTSTreeNode => ({
+	action: Number(node.action),
+	actionName: typeof node.actionName === "string" ? node.actionName : "",
+	depth: Number(node.depth),
+	visits: Number(node.visits),
+	effectiveVisits: node.effectiveVisits,
+	observedReward: node.observedReward,
+	counterfactualReward: node.counterfactualReward,
+	counterfactualMass: node.counterfactualMass,
+	counterfactualPrecision: node.counterfactualPrecision,
+	totalReward: node.totalReward,
+	meanReward: node.meanReward,
+	exploitation: node.exploitation,
+	exploration: node.exploration,
+	causalExpectation: node.causalExpectation,
+	selectionScore: node.selectionScore,
+	scmReady: node.scmReady,
+	scmReason: typeof node.scmReason === "string" ? node.scmReason : undefined,
+	selected: node.selected,
+	principal: node.principal,
+	state: Object.fromEntries(
+		node.state
+			.filter((entry) => typeof entry.name === "string")
+			.map((entry) => [entry.name as string, entry.value]),
+	),
+	children: node.children.map(mctsNodeToTree),
+});
 
 
 type MCTSTreeVisualizerProps = {
@@ -226,9 +269,43 @@ export const MCTSTreeVisualizer = ({ symbol, className }: MCTSTreeVisualizerProp
 	const [filterQuery, setFilterQuery] = useState("");
 	const [expandedMap, setExpandedMap] = useState<Map<string, boolean>>(new Map());
 
+	/*
+	The live arbitration frame (strategyStore) only lists symbols currently
+	being considered — once a position is open, its entry decision drops out
+	of that frame entirely. The MCTS tree that produced the entry is instead
+	captured on the position itself, so an already-open lot's thesis is read
+	from positionStore (mirroring journal-surface.tsx's closed-trade path).
+	*/
+	const positionTree = useSelector(positionStore, (state) => {
+		for (const frame of state.toArray()) {
+			for (let rowIndex = 0; rowIndex < frame.rowsLength(); rowIndex++) {
+				const row = frame.rows(rowIndex, positionObj);
+				if (!row) continue;
+
+				const holding = row.holding(holdingObj);
+				if (!holding || holding.symbol() !== symbol) continue;
+
+				const decision = row.decision(decObj);
+				const trace = decision?.trace(traceObj);
+				const tree = trace?.tree(treeObj);
+				if (!tree) return null;
+
+				return {
+					tree: mctsNodeToTree(tree.unpack()),
+					iterations: Number(trace?.iterations() ?? 0n),
+					recommendedAction: trace?.recommendedAction() ?? undefined,
+				};
+			}
+		}
+
+		return null;
+	});
+
+	// Fall back to the live arbitration frame for a symbol still being
+	// actively searched (not yet an open position).
 	const lastStrategy = strategyStore.state.getLast();
 	let liveDecision: Decision | null = null;
-	if (lastStrategy) {
+	if (!positionTree && lastStrategy) {
 		for (let i = 0; i < lastStrategy.decisionsLength(); i++) {
 			const d = lastStrategy.decisions(i, decObj);
 			if (d && d.symbol() === symbol) {
@@ -238,10 +315,37 @@ export const MCTSTreeVisualizer = ({ symbol, className }: MCTSTreeVisualizerProp
 		}
 	}
 
-	const trace = (liveDecision as any)?.trace;
-	const mcts = trace?.mcts;
+	const liveTrace = liveDecision?.trace(traceObj);
+	const liveTree = liveTrace?.tree(treeObj);
+
+	const mcts = positionTree ?? (liveTree
+		? {
+				tree: mctsNodeToTree(liveTree.unpack()),
+				iterations: Number(liveTrace?.iterations() ?? 0n),
+				recommendedAction: liveTrace?.recommendedAction() ?? undefined,
+			}
+		: null);
 	const treeRoot = mcts?.tree;
 
+	// iterations/recommendedAction come off the wire; maxDepth/totalNodes
+	// don't — the full tree is already on the client, so they're cheaper to
+	// derive here than to add to the wire format.
+	const treeStats = useMemo(() => {
+		if (!treeRoot) {
+			return { maxDepth: undefined, totalNodes: undefined };
+		}
+
+		let maxDepth = treeRoot.depth;
+		let totalNodes = 0;
+		const visit = (node: DecisionMCTSTreeNode) => {
+			totalNodes += 1;
+			maxDepth = Math.max(maxDepth, node.depth);
+			node.children?.forEach(visit);
+		};
+		visit(treeRoot);
+
+		return { maxDepth, totalNodes };
+	}, [treeRoot]);
 
 	// Build breadcrumb trail of the optimal selected path
 	const selectedPath = useMemo(() => {
@@ -326,16 +430,16 @@ export const MCTSTreeVisualizer = ({ symbol, className }: MCTSTreeVisualizerProp
 					</div>
 					<div>
 						<span className="text-(--f4)">Max Depth: </span>
-						<span className="font-semibold text-(--f1)">{mcts.maxDepth ?? "—"}</span>
+						<span className="font-semibold text-(--f1)">{treeStats.maxDepth ?? "—"}</span>
 					</div>
 					<div>
 						<span className="text-(--f4)">Explored Nodes: </span>
-						<span className="font-semibold text-(--f1)">{mcts.totalNodes ?? "—"}</span>
+						<span className="font-semibold text-(--f1)">{treeStats.totalNodes ?? "—"}</span>
 					</div>
 					<div>
 						<span className="text-(--f4)">Recommended: </span>
 						<span className="font-semibold text-(--acc) uppercase">
-							{mcts.recommendedAction ?? "—"}
+							{mcts?.recommendedAction ?? "—"}
 						</span>
 					</div>
 				</div>
