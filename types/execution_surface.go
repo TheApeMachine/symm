@@ -19,10 +19,16 @@ type ExecutionSurface struct {
 
 	// SellableQty is the position's actual current sellable inventory, not the
 	// intended, original-allocation, or pre-fill quantity.
-	SellableQty      *decimal.Decimal
-	BestBid          *decimal.Decimal
-	ExecutableQty    *decimal.Decimal
-	ExecutableVWAP   *decimal.Decimal
+	SellableQty   *decimal.Decimal
+	BestBid       *decimal.Decimal
+	ExecutableQty *decimal.Decimal
+	// ExecutableVWAP is the full-lot liquidation-equivalent GROSS price (raw
+	// filled VWAP in price coordinate), comparable to the stoploss's gross
+	// break-even geometry. The fee-net proceeds are ExecutableValue.
+	ExecutableVWAP *decimal.Decimal
+	// ExecutableValue is the fee-net liquidation proceeds in dollar/economic
+	// coordinate (gross proceeds minus the sell fee). It is never divided into
+	// a "fee-net price".
 	ExecutableValue  *decimal.Decimal
 	FloorCoverageQty *decimal.Decimal
 

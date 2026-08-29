@@ -23,6 +23,13 @@ type Number[Key comparable] struct {
 type numberStream struct {
 	mutex sync.RWMutex
 	frame Frame
+	// scratch is a persistent, heap-embedded work frame. Step copies the
+	// committed state into it and passes &stream.scratch to the primitive, so
+	// the pointer never escapes to a fresh allocation: it already lives inside
+	// the heap-allocated numberStream. A local `merged := stream.frame` value
+	// would escape to the heap on every Step because the opaque Primitive may
+	// retain &merged, churning a 66KB Frame and driving GC.
+	scratch Frame
 }
 
 // NewNumber composes primitives into one isolated numeric unit per key.
@@ -59,15 +66,15 @@ func (number *Number[Key]) Step(key Key, input Frame) Frame {
 	stream.mutex.Lock()
 	defer stream.mutex.Unlock()
 
-	merged := stream.frame
-	merged.Merge(input)
-	Step(number.primitive, &merged)
+	stream.scratch = stream.frame
+	stream.scratch.Merge(input)
+	Step(number.primitive, &stream.scratch)
 
-	if merged.Err == nil {
-		stream.frame = merged
+	if stream.scratch.Err == nil {
+		stream.frame = stream.scratch
 	}
 
-	return merged
+	return stream.scratch
 }
 
 // Project returns the committed state for one key.
@@ -424,17 +431,24 @@ type Single func(input Frame) Frame
 // NewSingle composes primitives into one state-carrying callable.
 func NewSingle(primitives ...Primitive) Single {
 	pipeline := Pipe(primitives...)
-	state := types.Frame{}
+
+	// state is the committed state and scratch is the persistent work frame.
+	// Both are heap-allocated once at construction and reused across every call,
+	// so &scratch passed to the opaque pipeline never triggers a fresh 66KB
+	// allocation. A by-value state captured in the closure would instead escape
+	// on every call through Step(pipeline, &merged).
+	state := new(types.Frame)
+	scratch := new(types.Frame)
 
 	return func(input Frame) Frame {
-		merged := state
-		merged.Merge(input)
-		Step(pipeline, &merged)
+		*scratch = *state
+		scratch.Merge(input)
+		Step(pipeline, scratch)
 
-		if merged.Err == nil {
-			state = merged
+		if scratch.Err == nil {
+			*state = *scratch
 		}
 
-		return merged
+		return *scratch
 	}
 }

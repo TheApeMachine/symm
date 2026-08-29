@@ -11772,7 +11772,7 @@
       "metric": "best_ask_price",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 118,
+      "line": 124,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -11820,7 +11820,7 @@
       "metric": "best_bid_price",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 117,
+      "line": 123,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -11869,7 +11869,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 137,
+      "line": 143,
       "unit": "data.UnitNat",
       "consumers": [
         {
@@ -11918,7 +11918,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 131,
+      "line": 137,
       "unit": "data.UnitNat",
       "consumers": [
         {
@@ -11967,7 +11967,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 138,
+      "line": 144,
       "unit": "data.UnitNat",
       "consumers": [
         {
@@ -12016,7 +12016,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 132,
+      "line": 138,
       "unit": "data.UnitNat",
       "consumers": [
         {
@@ -12065,7 +12065,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 136,
+      "line": 142,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -12114,7 +12114,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 130,
+      "line": 136,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -12163,7 +12163,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 139,
+      "line": 145,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -12212,7 +12212,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 133,
+      "line": 139,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -12261,7 +12261,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 148,
+      "line": 154,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -12310,8 +12310,106 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 147,
+      "line": 153,
       "unit": "data.UnitPerSecond",
+      "consumers": [
+        {
+          "kind": "generic",
+          "consumer": "generic measurement stream (github.com/theapemachine/symm/logic/category)",
+          "package": "github.com/theapemachine/symm/logic/category",
+          "file": "logic/category/solver.go",
+          "line": 89
+        },
+        {
+          "kind": "generic",
+          "consumer": "generic measurement stream (github.com/theapemachine/symm/logic/graph)",
+          "package": "github.com/theapemachine/symm/logic/graph",
+          "file": "logic/graph/solver.go",
+          "line": 707
+        },
+        {
+          "kind": "generic",
+          "consumer": "generic measurement stream (github.com/theapemachine/symm/cmd)",
+          "package": "github.com/theapemachine/symm/cmd",
+          "file": "cmd/boot.go",
+          "line": 264
+        },
+        {
+          "kind": "generic",
+          "consumer": "generic measurement stream (github.com/theapemachine/symm/cmd)",
+          "package": "github.com/theapemachine/symm/cmd",
+          "file": "cmd/boot.go",
+          "line": 530
+        },
+        {
+          "kind": "generic",
+          "consumer": "generic measurement stream (github.com/theapemachine/symm/cmd)",
+          "package": "github.com/theapemachine/symm/cmd",
+          "file": "cmd/boot.go",
+          "line": 536
+        }
+      ],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "liquidity/divergence_velocity_snr:ask",
+      "source": "liquidity",
+      "metric": "divergence_velocity_snr",
+      "side": "ask",
+      "package": "github.com/theapemachine/symm/signal/liquidity",
+      "file": "signal/liquidity/ticker.go",
+      "line": 158,
+      "unit": "data.UnitDimensionless",
+      "consumers": [
+        {
+          "kind": "generic",
+          "consumer": "generic measurement stream (github.com/theapemachine/symm/logic/category)",
+          "package": "github.com/theapemachine/symm/logic/category",
+          "file": "logic/category/solver.go",
+          "line": 89
+        },
+        {
+          "kind": "generic",
+          "consumer": "generic measurement stream (github.com/theapemachine/symm/logic/graph)",
+          "package": "github.com/theapemachine/symm/logic/graph",
+          "file": "logic/graph/solver.go",
+          "line": 707
+        },
+        {
+          "kind": "generic",
+          "consumer": "generic measurement stream (github.com/theapemachine/symm/cmd)",
+          "package": "github.com/theapemachine/symm/cmd",
+          "file": "cmd/boot.go",
+          "line": 264
+        },
+        {
+          "kind": "generic",
+          "consumer": "generic measurement stream (github.com/theapemachine/symm/cmd)",
+          "package": "github.com/theapemachine/symm/cmd",
+          "file": "cmd/boot.go",
+          "line": 530
+        },
+        {
+          "kind": "generic",
+          "consumer": "generic measurement stream (github.com/theapemachine/symm/cmd)",
+          "package": "github.com/theapemachine/symm/cmd",
+          "file": "cmd/boot.go",
+          "line": 536
+        }
+      ],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "liquidity/divergence_velocity_snr:bid",
+      "source": "liquidity",
+      "metric": "divergence_velocity_snr",
+      "side": "bid",
+      "package": "github.com/theapemachine/symm/signal/liquidity",
+      "file": "signal/liquidity/ticker.go",
+      "line": 157,
+      "unit": "data.UnitDimensionless",
       "consumers": [
         {
           "kind": "generic",
@@ -12358,7 +12456,7 @@
       "metric": "midpoint",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 123,
+      "line": 129,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -12406,7 +12504,7 @@
       "metric": "relative_spread",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 125,
+      "line": 131,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -12468,7 +12566,7 @@
       "metric": "relative_spread_baseline",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 141,
+      "line": 147,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -12516,7 +12614,7 @@
       "metric": "spread",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 124,
+      "line": 130,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -12564,7 +12662,7 @@
       "metric": "spread_divergence",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 143,
+      "line": 149,
       "unit": "data.UnitNat",
       "consumers": [
         {
@@ -12612,8 +12710,56 @@
       "metric": "spread_divergence_velocity",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 149,
+      "line": 155,
       "unit": "data.UnitPerSecond",
+      "consumers": [
+        {
+          "kind": "generic",
+          "consumer": "generic measurement stream (github.com/theapemachine/symm/logic/category)",
+          "package": "github.com/theapemachine/symm/logic/category",
+          "file": "logic/category/solver.go",
+          "line": 89
+        },
+        {
+          "kind": "generic",
+          "consumer": "generic measurement stream (github.com/theapemachine/symm/logic/graph)",
+          "package": "github.com/theapemachine/symm/logic/graph",
+          "file": "logic/graph/solver.go",
+          "line": 707
+        },
+        {
+          "kind": "generic",
+          "consumer": "generic measurement stream (github.com/theapemachine/symm/cmd)",
+          "package": "github.com/theapemachine/symm/cmd",
+          "file": "cmd/boot.go",
+          "line": 264
+        },
+        {
+          "kind": "generic",
+          "consumer": "generic measurement stream (github.com/theapemachine/symm/cmd)",
+          "package": "github.com/theapemachine/symm/cmd",
+          "file": "cmd/boot.go",
+          "line": 530
+        },
+        {
+          "kind": "generic",
+          "consumer": "generic measurement stream (github.com/theapemachine/symm/cmd)",
+          "package": "github.com/theapemachine/symm/cmd",
+          "file": "cmd/boot.go",
+          "line": 536
+        }
+      ],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "liquidity/spread_divergence_velocity_snr",
+      "source": "liquidity",
+      "metric": "spread_divergence_velocity_snr",
+      "package": "github.com/theapemachine/symm/signal/liquidity",
+      "file": "signal/liquidity/ticker.go",
+      "line": 159,
+      "unit": "data.UnitDimensionless",
       "consumers": [
         {
           "kind": "generic",
@@ -12660,7 +12806,7 @@
       "metric": "spread_noise_scale",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 144,
+      "line": 150,
       "unit": "data.UnitNat",
       "consumers": [
         {
@@ -12708,7 +12854,7 @@
       "metric": "spread_ratio",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 142,
+      "line": 148,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -12756,7 +12902,7 @@
       "metric": "spread_zscore",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 145,
+      "line": 151,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -12812,7 +12958,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 122,
+      "line": 128,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -12861,7 +13007,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 121,
+      "line": 127,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -12910,7 +13056,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 135,
+      "line": 141,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -12959,7 +13105,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 129,
+      "line": 135,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -13007,7 +13153,7 @@
       "metric": "touch_notional_imbalance",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 127,
+      "line": 133,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -13070,7 +13216,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 120,
+      "line": 126,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -13119,7 +13265,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 119,
+      "line": 125,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -13167,7 +13313,7 @@
       "metric": "two_sided_touch_notional",
       "package": "github.com/theapemachine/symm/signal/liquidity",
       "file": "signal/liquidity/ticker.go",
-      "line": 126,
+      "line": 132,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -21416,8 +21562,8 @@
   ],
   "unresolved": null,
   "summary": {
-    "totalProducers": 420,
-    "deadProducers": 390,
+    "totalProducers": 423,
+    "deadProducers": 393,
     "kernelOnlyProducers": 49,
     "fineConsumerEdges": 35,
     "kernelConsumerEdges": 2,

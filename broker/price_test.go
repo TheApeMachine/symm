@@ -133,26 +133,22 @@ func TestPricePnL(t *testing.T) {
 			EntryFee:   decimal.NewFromInt64(0),
 		}
 
-		Convey("Given some ticker data", func() {
-			ticker := &kraken.TickerData{
-				Symbol: "TEST3",
-				Ask:    decimal.NewFromFloat64(50000.00),
-				Bid:    decimal.NewFromFloat64(49950.00),
-			}
-
-			price.Update(ticker)
+		Convey("Given an authoritative economic mark", func() {
+			mark := decimal.NewFromFloat64(49950.00)
+			holding.Mark = mark
 
 			Convey("When the PnL is calculated for a holding", func() {
 				pnl := price.PnL(pair, holding)
 
-				Convey("It should return the profit or loss based on the current market best bid price", func() {
+				Convey("It should return the profit or loss based on the authoritative mark, including fees", func() {
+					// mark * qty * (1 - exitFee) - entryPrice * qty - entryFee
 					So(pnl.Float64(), ShouldAlmostEqual, 4825.125, 1e-12)
 				})
 			})
 		})
 	})
 
-	Convey("Given a holding before its first ticker arrives", t, func() {
+	Convey("Given a holding before its mark is set", t, func() {
 		price, _ := newPriceSurface(t, "COLD/USD")
 		holding := &types.Holding{
 			Qty:        decimal.NewFromFloat64(1),
@@ -171,7 +167,7 @@ func TestPricePnL(t *testing.T) {
 	Convey("Given a tiny quantity of a high-priced asset", t, func() {
 		price, _ := newPriceSurface(t, "PAXG/USD")
 		entryPrice := 4339.01
-		bid := 4338.33
+		mark := 4338.33
 		quantity := 0.00765083
 		entryFee := entryPrice * quantity * 0.0025
 		pair := kraken.InstrumentPair{
@@ -184,16 +180,12 @@ func TestPricePnL(t *testing.T) {
 			Qty:        decimal.NewFromFloat64(quantity),
 			EntryPrice: decimal.NewFromFloat64(entryPrice),
 			EntryFee:   decimal.NewFromFloat64(entryFee),
+			Mark:       decimal.NewFromFloat64(mark),
 		}
-		price.Update(&kraken.TickerData{
-			Symbol: "PAXG/USD",
-			Ask:    decimal.NewFromFloat64(4339.02),
-			Bid:    decimal.NewFromFloat64(bid),
-		})
 
 		Convey("It should multiply price and quantity without rounding quantity to a cent", func() {
 			pnl := price.PnL(pair, holding)
-			expected := bid*quantity*(1-0.0025) -
+			expected := mark*quantity*(1-0.0025) -
 				entryPrice*quantity - entryFee
 
 			So(pnl.Sign(), ShouldEqual, -1)
@@ -214,26 +206,20 @@ func TestExitValue(t *testing.T) {
 			EntryFee:   decimal.NewFromInt64(0),
 		}
 
-		Convey("Given some ticker data", func() {
-			ticker := &kraken.TickerData{
-				Symbol: "TEST4",
-				Ask:    decimal.NewFromFloat64(65000.00),
-				Bid:    decimal.NewFromFloat64(64950.00),
-			}
-
-			price.Update(ticker)
+		Convey("Given an authoritative economic mark", func() {
+			holding.Mark = decimal.NewFromFloat64(64950.00)
 
 			Convey("When the exit value is calculated for a holding", func() {
 				exitValue := price.ExitValue(pair, holding)
 
-				Convey("It should return the exit value based on the current market best bid price", func() {
+				Convey("It should return the exit value based on the authoritative mark, fee-net", func() {
 					So(exitValue.Float64(), ShouldAlmostEqual, 129575.25, 1e-12)
 				})
 			})
 		})
 	})
 
-	Convey("Given no holding or ticker", t, func() {
+	Convey("Given no holding or mark", t, func() {
 		price, _ := newPriceSurface(t, "COLD/USD")
 
 		Convey("It should reject both incomplete domains without dereferencing them", func() {
@@ -352,12 +338,8 @@ func TestPriceReturnPct(t *testing.T) {
 			Qty:        decimal.NewFromFloat64(quantity),
 			EntryPrice: decimal.NewFromFloat64(entryPrice),
 			EntryFee:   decimal.NewFromFloat64(entryFee),
+			Mark:       decimal.NewFromFloat64(bid),
 		}
-		price.Update(&kraken.TickerData{
-			Symbol: "BTC/USD",
-			Ask:    decimal.NewFromFloat64(64951.1),
-			Bid:    decimal.NewFromFloat64(bid),
-		})
 
 		Convey("It should report percent once instead of erasing the exit value", func() {
 			entryValue := entryPrice*quantity + entryFee
@@ -392,7 +374,10 @@ func TestPriceExecutableSurface(t *testing.T) {
 			So(surface.BookComplete, ShouldBeTrue)
 			So(surface.FullyExecutable, ShouldBeTrue)
 			So(surface.ExecutableQty.Float64(), ShouldAlmostEqual, 100000, 1e-9)
-			So(surface.ExecutableVWAP.Float64(), ShouldAlmostEqual, 100*0.9975, 1e-9)
+			// ExecutableVWAP is the GROSS price coordinate (100), while
+			// ExecutableValue is the fee-net dollar proceeds (100000*100*0.9975).
+			So(surface.ExecutableVWAP.Float64(), ShouldAlmostEqual, 100, 1e-9)
+			So(surface.ExecutableValue.Float64(), ShouldAlmostEqual, 100*100000*0.9975, 1e-9)
 		})
 	})
 
@@ -414,7 +399,7 @@ func TestPriceExecutableSurface(t *testing.T) {
 			)
 
 			gross := 100.0*50000 + 90.0*50000
-			expectedVWAP := gross * 0.9975 / 100000
+			expectedVWAP := gross / 100000
 
 			So(surface.FullyExecutable, ShouldBeTrue)
 			So(surface.ExecutableVWAP.Float64(), ShouldAlmostEqual, expectedVWAP, 1e-9)
@@ -429,7 +414,7 @@ func TestPriceExecutableSurface(t *testing.T) {
 			)
 
 			So(surface.FullyExecutable, ShouldBeTrue)
-			So(surface.ExecutableVWAP.Float64(), ShouldAlmostEqual, 100*0.9975, 1e-9)
+			So(surface.ExecutableVWAP.Float64(), ShouldAlmostEqual, 100, 1e-9)
 		})
 	})
 

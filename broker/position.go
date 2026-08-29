@@ -374,15 +374,30 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 	previousLocked := position.Holding.Stoploss.Locked
 	previousFloor := position.Holding.Stoploss.Floor
 	previousPeak := position.Holding.Stoploss.Peak
-	position.Holding.Update(ticker)
+
+	// One economic mark: once the authoritative L3 book has been read
+	// (BookObserved), the executable-liquidation VWAP owns Holding.Mark and the
+	// stoploss geometry. A later ticker must refresh the cache (price.Update
+	// above) and advance the forecast-horizon clock, but must NOT overwrite the
+	// mark with best-bid or re-run the stoploss against it — otherwise a
+	// mid-run ticker undoes the L3 mark ("never mind, mark is best bid Y, now
+	// run the stoploss again"). Before the book has produced a coherent frame,
+	// best-bid is the only available mark and seeds the position.
+	mark := ticker.Bid
+
+	if position.Holding.Stoploss.BookObserved && position.Holding.Mark != nil {
+		mark = position.Holding.Mark
+	}
+
+	stoploss := position.Holding.Stoploss
+	stoploss.Update(mark)
+	position.Holding.Mark = mark
 	position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
 	position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
 
 	if position.passage != nil {
 		position.passage.observe(position, position.Holding.Mark)
 	}
-
-	stoploss := position.Holding.Stoploss
 
 	triggered := stoploss.Status == types.TRIGGERED
 

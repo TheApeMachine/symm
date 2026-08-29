@@ -142,8 +142,6 @@ func HawkesIntensity(input *types.Frame) {
 
 	rateAlpha := alphaCount / duration
 	rateBeta := betaCount / duration
-	lambdaAlpha = math.Max(lambdaAlpha, rateAlpha)
-	lambdaBeta = math.Max(lambdaBeta, rateBeta)
 
 	input.Put(symbolLastSec, sec)
 	input.Put(symbolLastNsec, nsec)

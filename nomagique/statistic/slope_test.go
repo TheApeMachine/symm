@@ -32,8 +32,9 @@ func TestSlope(t *testing.T) {
 			ready, _ := output.Get(SymbolReady)
 			So(ready, ShouldEqual, 0)
 
-			slope, _ := output.Get(SymbolSlope)
-			So(slope, ShouldEqual, 0)
+			// Undefined ≠ zero: the slope slot is absent, not a numeric 0.
+			_, hasSlope := output.Get(SymbolSlope)
+			So(hasSlope, ShouldBeFalse)
 		})
 	})
 

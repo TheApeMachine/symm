@@ -95,6 +95,30 @@ func (recovery *Recovery) Recover() error {
 
 	quote := recovery.api.Normalizer().Name(viper.GetString("market.quote_currency"))
 
+	// Recovery runs before the paced instrument subscription loads fee
+	// tiers (that happens much later in boot, batched across the whole
+	// tradeable universe), so a wallet balance needing synthesized
+	// protection would otherwise find no fee for its symbol and fail purely
+	// on timing. Fetching fees for just the held symbols here, up front,
+	// removes that ordering dependency without waiting on the full universe.
+	var recoverySymbols []string
+
+	for asset, amount := range balances {
+		asset = recovery.api.Normalizer().Name(asset)
+
+		if asset == "" || asset == quote || amount == nil || amount.Sign() <= 0 {
+			continue
+		}
+
+		recoverySymbols = append(recoverySymbols, asset+"/"+quote)
+	}
+
+	if len(recoverySymbols) > 0 {
+		if err := recovery.price.GetFees(recoverySymbols); err != nil {
+			errnie.Warn("recovery: failed to preload fee tiers for held symbols: " + err.Error())
+		}
+	}
+
 	// One asset's recovery failure must not cost every other asset its
 	// tracking and protection: balances iterates in random map order, so
 	// returning on the first error here silently orphaned whichever assets
@@ -305,14 +329,25 @@ and trade history are intact but whose stored stoploss row is gone (the
 process died between a fill landing and its execution frame persisting one,
 or the row was otherwise lost). It mirrors the desk's live entry construction
 in NewDesk's admission path: same NewRiskPlan with DefaultRiskMultiples, same
-NewStoplossWithPlan call, priced off the current book instead of a fresh
-order. Horizon is forced to 0 so Reconsider can never expire a forecast this
-recovered lot never had.
+NewStoplossWithPlan call. Horizon is forced to 0 so Reconsider can never
+expire a forecast this recovered lot never had.
+
+Recovery runs before the instrument subscription has delivered any ticker or
+book frame — there is no live quote to price a spread or market-impact band
+from yet, only the wallet balance and trade history. NewRiskPlan already
+falls back to a tick-granularity noise band when spread and impact are absent
+(the standard "no book yet" case, not a recovery-specific concession), so this
+prices the plan directly off entryPrice and the venue's own tick size rather
+than requiring a live EntryCost read. The lot's mark starts at its own entry
+price for the same reason: the desk's own evaluateExecutable call right after
+construction (recovery.go's recoveredPosition) supplies the real mark as soon
+as the first coherent tick or L3 frame arrives, exactly as a fresh entry does
+before its own first tick.
 
 The wallet is authoritative for whether a position exists; the stoploss store
 only ever supplied its protection parameters. Refusing to track a real
 position for want of that row leaves it live and completely unprotected, which
-is strictly worse than a hard-floor stop rebuilt from current market geometry.
+is strictly worse than a hard-floor stop rebuilt from known entry economics.
 */
 func (recovery *Recovery) synthesizeStoploss(
 	pair kraken.InstrumentPair,
@@ -340,22 +375,24 @@ func (recovery *Recovery) synthesizeStoploss(
 		))
 	}
 
-	cost, err := recovery.price.EntryCost(symbol, quantity)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"recovery: current market cannot price protection for "+symbol,
-			err,
-		))
-	}
-
 	feeRate := decimal.NewFromInt64(0).Add(fee.Fee).Div(decimal.NewFromInt64(100))
+
+	// A live book is a bonus when it happens to already be available, not a
+	// requirement: its spread/impact only sharpen the noise band NewRiskPlan
+	// would otherwise floor at venue tick granularity.
+	var spread, impact *decimal.Decimal
+	mark := entryPrice
+
+	if cost, err := recovery.price.EntryCost(symbol, quantity); err == nil {
+		spread = cost.Spread
+		impact = cost.Impact
+		mark = cost.BestBid
+	}
 
 	plan := types.NewRiskPlan(types.RiskInputs{
 		ReferencePrice: entryPrice,
-		Spread:         cost.Spread,
-		Impact:         cost.Impact,
+		Spread:         spread,
+		Impact:         impact,
 		TickSize:       &pair.TickSize,
 		ExitFeeRate:    feeRate,
 		EntryFeeRate:   feeRate,
@@ -375,7 +412,7 @@ func (recovery *Recovery) synthesizeStoploss(
 		recovery.ctx,
 		symbol,
 		entryPrice,
-		cost.BestBid,
+		mark,
 		nil,
 		0,
 		&pair.TickSize,

@@ -13,6 +13,19 @@ import { Metric } from "#/providers/telemetry/telemetry/metric";
 
 const metricObj = new Metric();
 
+/*
+HAWKES_INTENSITY_METRIC_RANK orders the candidate intensity metric names by
+preference, lowest wins: the fitted per-side conditional intensity is the
+real λ(t), while arrival_rate is the flat cumulative-average count/duration.
+Must match the ?? fallback chain the readout above uses for the same value.
+*/
+const HAWKES_INTENSITY_METRIC_RANK: Record<string, number> = {
+	"conditional_intensity:buy": 0,
+	conditional_intensity: 1,
+	"arrival_rate:buy": 2,
+	arrival_rate: 3,
+};
+
 export const XrayHawkesPanel = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
@@ -100,7 +113,7 @@ export const XrayHawkesPanel = () => {
 			}
 
 			const canvas = hawkesCanvasRef.current;
-			if (canvas && state.getSize() > 1) {
+			if (canvas && state.getBufferLength() > 1) {
 				const ctx = canvas.getContext("2d");
 				if (ctx) {
 					const dpr = window.devicePixelRatio || 1;
@@ -110,32 +123,49 @@ export const XrayHawkesPanel = () => {
 					canvas.height = h;
 					ctx.clearRect(0, 0, w, h);
 
-					const count = state.getSize();
+					const count = state.getBufferLength();
 					const intensityRows: Array<{ at: bigint; raw: number }> = [];
 					for (let i = 0; i < count; i++) {
 						const r = state.get(i);
 						if (!r) continue;
+
+						// Preference order matches the readout above exactly
+						// (conditional_intensity:buy > conditional_intensity >
+						// arrival_rate:buy > arrival_rate): scanning metrics in
+						// whatever order they happen to sit in the row and
+						// taking the first name match ignores that ranking
+						// entirely, silently plotting arrival_rate — a flat,
+						// slowly-drifting cumulative average — whenever it
+						// happens to be enumerated before the real intensity.
+						let best: number | null = null;
+						let bestRank = Number.POSITIVE_INFINITY;
+
 						for (let j = 0; j < r.metricsLength(); j++) {
 							const m = r.metrics(j, metricObj);
-							if (m) {
-								const name = m.name();
-								if (
-									name === "conditional_intensity:buy" ||
-									name === "conditional_intensity" ||
-									name === "arrival_rate:buy" ||
-									name === "arrival_rate"
-								) {
-									intensityRows.push({ at: r.at(), raw: m.raw() });
-									break;
-								}
+							if (!m) continue;
+
+							const rank = HAWKES_INTENSITY_METRIC_RANK[m.name() ?? ""];
+
+							if (rank !== undefined && rank < bestRank) {
+								bestRank = rank;
+								best = m.raw();
 							}
+						}
+
+						if (best !== null) {
+							intensityRows.push({ at: r.at(), raw: best });
 						}
 					}
 					const intensities = intensitySeriesFromRingRows(intensityRows);
 
+					// Real intensity ranges from a few hundredths (quiet symbols)
+					// to several tens (a fresh burst), so the vertical scale must
+					// follow the series actually observed rather than a fixed
+					// floor: a constant tuned for one regime silently flattens
+					// every symbol whose scale sits far from it.
 					const observedMax = Math.max(0, ...intensities);
 					const muFloor = typeof mu === "number" && mu > 0 ? mu : 0;
-					const maxL = Math.max(1.2, observedMax, muFloor) * 1.1;
+					const maxL = Math.max(observedMax, muFloor, Number.EPSILON) * 1.1;
 					const pad = 14 * (window.devicePixelRatio || 1);
 					const base = h - 22 * (window.devicePixelRatio || 1);
 					const topMargin = 20 * (window.devicePixelRatio || 1);

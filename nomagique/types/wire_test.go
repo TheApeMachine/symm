@@ -100,8 +100,19 @@ func TestWireDataBoundary(t *testing.T) {
 
 	Convey("Established wiring performs no heap allocation", t, func() {
 		input := Frame{}.Set(wireFactA, 3).Set(wireFactB, 4)
+
+		// Reuse one output frame across iterations so the measurement
+		// isolates Wire's own steady-state churn (pool Get/Reset/runWire/Put)
+		// rather than the caller's one-time frame escape. Under the *Frame
+		// primitive contract a caller that passes &frame to an opaque
+		// Primitive forces that frame onto the heap once; Wire must not add
+		// any allocation on top of that unavoidable cost once the pool is
+		// warm.
+		output := input
+		wired(&output)
+
 		allocations := testing.AllocsPerRun(1000, func() {
-			output := input
+			output = input
 			wired(&output)
 
 			if output.Err != nil {
@@ -187,4 +198,26 @@ func TestWireStateBoundary(t *testing.T) {
 		So(output.Err, ShouldBeNil)
 		So(output.Has(wireOuterStateA), ShouldBeFalse)
 	})
+}
+
+func BenchmarkWireStep(b *testing.B) {
+	add := func(input *Frame) {
+		input.Put(wirePortResult, input.MustGet(wirePortA)+input.MustGet(wirePortB))
+	}
+	wired := Wire(add, In(wireFactA, wirePortA), In(wireFactB, wirePortB), Out(wirePortResult, wireFactResult))
+	input := Frame{}.Set(wireFactA, 3).Set(wireFactB, 4)
+
+	output := input
+	wired(&output)
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		output = input
+		wired(&output)
+
+		if output.Err != nil {
+			panic(output.Err)
+		}
+	}
 }

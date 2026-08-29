@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -87,7 +88,11 @@ func NewPositionStore(path string) (*PositionStore, error) {
 }
 
 /*
-EnsureSchema creates the required tables if they do not already exist.
+EnsureSchema creates the required tables if they do not already exist, and
+migrates position_stoplosses forward if it was created under the old
+symbol-only schema (before entry_at existed). CREATE TABLE IF NOT EXISTS
+does not add columns to an existing table, so a database from before this
+column was introduced silently keeps its old shape forever without this step.
 */
 func (store *PositionStore) EnsureSchema() error {
 	if store == nil || store.database == nil {
@@ -96,6 +101,10 @@ func (store *PositionStore) EnsureSchema() error {
 			"position store: database required",
 			nil,
 		))
+	}
+
+	if err := store.migrateStoplossSchema(); err != nil {
+		return err
 	}
 
 	if _, err := store.database.Exec(positionStoplossSchema); err != nil {
@@ -121,6 +130,229 @@ func (store *PositionStore) EnsureSchema() error {
 			err,
 		))
 	}
+
+	return nil
+}
+
+/*
+migrateStoplossSchema renames an existing symbol-only position_stoplosses
+table out of the way so the caller can recreate it under the current
+(symbol, entry_at) schema. Only rows whose marshaled state already carries an
+entry_at (saved after that field was introduced) are carried forward; a row
+predating it can never be safely attributed to a specific lot, and recovery's
+existing fallback synthesizes fresh protection for a position whose row is
+missing, so dropping it here is not a regression in coverage — it is
+identical to the missing-row path recovery already handles correctly. A
+database that never had this table, or already has entry_at, is left alone.
+*/
+func (store *PositionStore) migrateStoplossSchema() error {
+	var tableCount int
+
+	if err := store.database.QueryRow(
+		"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='position_stoplosses'",
+	).Scan(&tableCount); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"position store: check for existing stoploss table failed",
+			err,
+		))
+	}
+
+	if tableCount == 0 {
+		return nil
+	}
+
+	rows, err := store.database.Query("PRAGMA table_info(position_stoplosses)")
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"position store: inspect stoploss schema failed",
+			err,
+		))
+	}
+
+	hasEntryAt := false
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			dflt       any
+			pk         int
+		)
+
+		if scanErr := rows.Scan(&cid, &name, &columnType, &notNull, &dflt, &pk); scanErr != nil {
+			_ = rows.Close()
+
+			return errnie.Error(errnie.Err(
+				errnie.IO,
+				"position store: read stoploss column info failed",
+				scanErr,
+			))
+		}
+
+		if name == "entry_at" {
+			hasEntryAt = true
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"position store: row scan failed",
+			err,
+		))
+	}
+
+	if closeErr := rows.Close(); closeErr != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"position store: close stoploss column info failed",
+			closeErr,
+		))
+	}
+
+	if hasEntryAt {
+		return nil
+	}
+
+	tx, err := store.database.Begin()
+
+	if err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"position store: begin stoploss migration failed",
+			err,
+		))
+	}
+
+	if _, err := tx.Exec("ALTER TABLE position_stoplosses RENAME TO position_stoplosses_pre_entry_at"); err != nil {
+		_ = tx.Rollback()
+
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"position store: rename legacy stoploss table failed",
+			err,
+		))
+	}
+
+	if _, err := tx.Exec(positionStoplossSchema); err != nil {
+		_ = tx.Rollback()
+
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"position store: create migrated stoploss table failed",
+			err,
+		))
+	}
+
+	legacyRows, err := tx.Query("SELECT symbol, state FROM position_stoplosses_pre_entry_at")
+
+	if err != nil {
+		_ = tx.Rollback()
+
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"position store: read legacy stoploss rows failed",
+			err,
+		))
+	}
+
+	migrated := 0
+	dropped := 0
+
+	for legacyRows.Next() {
+		var (
+			symbol string
+			state  []byte
+		)
+
+		if scanErr := legacyRows.Scan(&symbol, &state); scanErr != nil {
+			_ = legacyRows.Close()
+			_ = tx.Rollback()
+
+			return errnie.Error(errnie.Err(
+				errnie.IO,
+				"position store: scan legacy stoploss row failed",
+				scanErr,
+			))
+		}
+
+		var decoded struct {
+			EntryAt *time.Time `json:"entry_at"`
+		}
+
+		if jsonErr := json.Unmarshal(state, &decoded); jsonErr != nil || decoded.EntryAt == nil || decoded.EntryAt.IsZero() {
+			dropped++
+
+			continue
+		}
+
+		if _, insertErr := tx.Exec(
+			"INSERT INTO position_stoplosses (symbol, entry_at, state) VALUES (?, ?, ?)",
+			symbol,
+			decoded.EntryAt.UTC().Format(time.RFC3339Nano),
+			state,
+		); insertErr != nil {
+			_ = legacyRows.Close()
+			_ = tx.Rollback()
+
+			return errnie.Error(errnie.Err(
+				errnie.IO,
+				"position store: insert migrated stoploss row failed",
+				insertErr,
+			))
+		}
+
+		migrated++
+	}
+
+	if err := legacyRows.Err(); err != nil {
+		_ = legacyRows.Close()
+		_ = tx.Rollback()
+
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"position store: read legacy stoploss rows failed",
+			err,
+		))
+	}
+
+	if closeErr := legacyRows.Close(); closeErr != nil {
+		_ = tx.Rollback()
+
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"position store: close legacy stoploss rows failed",
+			closeErr,
+		))
+	}
+
+	if _, err := tx.Exec("DROP TABLE position_stoplosses_pre_entry_at"); err != nil {
+		_ = tx.Rollback()
+
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"position store: drop legacy stoploss table failed",
+			err,
+		))
+	}
+
+	if err := tx.Commit(); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"position store: commit stoploss migration failed",
+			err,
+		))
+	}
+
+	errnie.Info(fmt.Sprintf(
+		"position store: migrated stoploss table to (symbol, entry_at); %d rows carried forward, %d rows without entry_at dropped",
+		migrated, dropped,
+	))
 
 	return nil
 }
@@ -296,7 +528,14 @@ func (store *PositionStore) Load(
 
 	if isNoSuchTable(err) {
 		if schemaErr := store.EnsureSchema(); schemaErr != nil {
-			return nil, schemaErr
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"position store: load stoploss failed for %s [%s]",
+					symbol, err.Error(),
+				),
+				schemaErr,
+			))
 		}
 
 		return nil, nil

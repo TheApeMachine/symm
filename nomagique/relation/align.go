@@ -98,7 +98,7 @@ func newestAtOrBeforeView(history RingView, cursor *int, cutoff time.Time) (Obse
 		start = *cursor
 	}
 
-	for index := start; index < history.Len() && !history.At(index).At.After(cutoff); index++ {
+	for index := start; index < history.Len() && !history.TimeAt(index).After(cutoff); index++ {
 		best = index
 	}
 

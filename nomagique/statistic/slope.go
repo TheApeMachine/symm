@@ -93,7 +93,14 @@ func Slope(prefix string) types.Primitive {
 		count := series.Count(*input)
 
 		if count < 2 {
-			input.Put(slots.slope, 0)
+			// Undefined ≠ zero: while the regression has no support, the slope
+			// (and auxiliary estimate slots) are deleted so consuming projectors
+			// observe absence rather than a fabricated numeric 0.
+			input.Delete(slots.slope)
+			input.Delete(slots.intercept)
+			input.Delete(slots.variance)
+			input.Delete(slots.snr)
+			input.Delete(slots.residualVariance)
 			input.Put(series.ReadySymbol, 0)
 
 			return
@@ -113,7 +120,14 @@ func Slope(prefix string) types.Primitive {
 		slope, intercept, slopeVar, snr, resVar, ok := fitLocalRegression(series, input, count, currentTimestamp, cutoff)
 
 		if !ok {
-			input.Put(slots.slope, 0)
+			// Undefined ≠ zero: the fit left no defined slope, so delete the
+			// estimate slots rather than emit a numeric zero that a downstream
+			// projector would misread as a real, defined velocity.
+			input.Delete(slots.slope)
+			input.Delete(slots.intercept)
+			input.Delete(slots.variance)
+			input.Delete(slots.snr)
+			input.Delete(slots.residualVariance)
 			input.Put(series.ReadySymbol, 0)
 
 			return

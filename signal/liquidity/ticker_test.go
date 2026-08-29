@@ -9,6 +9,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func tickerAt(symbol string, bid, ask float64, bidQty, askQty float64, at time.Time) kraken.TickerData {
@@ -178,19 +179,25 @@ func TestTickerIrregularTimeRegression(t *testing.T) {
 		// in TestLocalRegressionIrregularGrid in nomagique/statistic.
 		entity := NewTicker()
 
-		// Just ensure the velocity metric exists and is computed (present) once
-		// enough history exists, rather than a raw delta.
+		// Feed enough history that the divergence path accumulates several
+		// in-horizon samples and the causal local regression becomes defined —
+		// before that, the velocity is legitimately undefined (absent, not a
+		// numeric zero).
 		base := time.Unix(1, 0)
-		entity.Step(tickerAt("BTC/USD", 100, 102, 1.0, 1.0, base))
-		entity.Step(tickerAt("BTC/USD", 100, 102, 2.0, 1.0, base.Add(time.Second)))
-		entity.Step(tickerAt("BTC/USD", 100, 102, 1.5, 1.0, base.Add(3*time.Second)))
-		fourth := entity.Step(tickerAt("BTC/USD", 100, 102, 3.0, 1.0, base.Add(7*time.Second)))
+		depths := []float64{1.0, 2.0, 1.5, 3.0, 2.5, 4.0, 3.5, 5.0}
+		offsets := []time.Duration{0, time.Second, 3 * time.Second, 5 * time.Second, 8 * time.Second, 10 * time.Second, 13 * time.Second, 15 * time.Second}
+
+		var fourth *data.Measurement[float64]
+
+		for index := range depths {
+			fourth = entity.Step(tickerAt("BTC/USD", 100, 102, depths[index], 1.0, base.Add(offsets[index])))
+		}
 
 		Convey("the velocity is a fitted regression slope, not a message-count delta", func() {
 			velocity, hasVelocity := fourth.Metrics["divergence_velocity:bid"]
 			So(hasVelocity, ShouldBeTrue)
 
-			// A per-message delta would equal log(3.0/1.5); the regression slope
+			// A per-message delta would equal log(5.0/3.5); the regression slope
 			// is time-normalized and therefore different. We only assert it is
 			// finite (the exact slope equality across grids is tested at the
 			// statistic level).
@@ -201,3 +208,57 @@ func TestTickerIrregularTimeRegression(t *testing.T) {
 }
 
 var _ = kraken.TickerData{}
+
+/*
+TestTickerVelocityUndefinedAbsent asserts BLOCKER: undefined ≠ zero for the
+divergence velocity. Before the divergence path has enough in-horizon support
+for the local regression, divergence_velocity:* must be absent, never emitted
+as a numeric 0.
+*/
+func TestTickerVelocityUndefinedAbsent(t *testing.T) {
+	Convey("Given two observations (insufficient regression support)", t, func() {
+		entity := NewTicker()
+		base := time.Unix(1, 0)
+
+		entity.Step(tickerAt("BTC/USD", 100, 102, 1.0, 1.0, base))
+		second := entity.Step(tickerAt("BTC/USD", 100, 102, 2.0, 1.0, base.Add(time.Second)))
+
+		Convey("the divergence velocity is absent, not zero", func() {
+			velocity, hasVelocity := second.Metrics["divergence_velocity:bid"]
+			So(hasVelocity, ShouldBeFalse)
+
+			snr, hasSNR := second.Metrics["divergence_velocity_snr:bid"]
+			So(hasSNR, ShouldBeFalse)
+
+			_ = velocity
+			_ = snr
+		})
+	})
+}
+
+/*
+TestTickerVelocitySNRPresent asserts the divergence velocity SNR is projected
+once the regression is defined, and equals the velocity fit's own SNR.
+*/
+func TestTickerVelocitySNRPresent(t *testing.T) {
+	Convey("Given a divergence trajectory with enough in-horizon support", t, func() {
+		entity := NewTicker()
+		base := time.Unix(1, 0)
+		depths := []float64{1.0, 2.0, 1.5, 3.0, 2.5, 4.0, 3.5, 5.0, 4.5, 6.0}
+		offsets := []time.Duration{0, time.Second, 3 * time.Second, 5 * time.Second, 8 * time.Second, 10 * time.Second, 13 * time.Second, 15 * time.Second, 18 * time.Second, 20 * time.Second}
+
+		var last *data.Measurement[float64]
+
+		for index := range depths {
+			last = entity.Step(tickerAt("BTC/USD", 100, 102, depths[index], 1.0, base.Add(offsets[index])))
+		}
+
+		Convey("the velocity SNR metric is present and finite", func() {
+			snr, hasSNR := last.Metrics["divergence_velocity_snr:bid"]
+			So(hasSNR, ShouldBeTrue)
+			So(math.IsNaN(snr.Raw), ShouldBeFalse)
+			So(math.IsInf(snr.Raw, 0), ShouldBeFalse)
+			So(snr.Raw, ShouldBeGreaterThanOrEqualTo, 0)
+		})
+	})
+}

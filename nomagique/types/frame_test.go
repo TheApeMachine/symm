@@ -1,6 +1,7 @@
 package types
 
 import (
+	"errors"
 	"math"
 	"sync"
 	"testing"
@@ -137,6 +138,27 @@ func TestFrameContracts(t *testing.T) {
 		So(Frame{}.Set(first, nanBits).Equal(Frame{}.Set(first, nanBits)), ShouldBeTrue)
 	})
 
+	Convey("Reset clears every populated slot without touching unpopulated ones", t, func() {
+		frame := Frame{}.Set(first, 1).Set(second, 2).Set(third, 3)
+		frame.Err = errors.New("transient")
+
+		frame.Reset()
+
+		So(frame.Count(), ShouldEqual, 0)
+		So(frame.Has(first), ShouldBeFalse)
+		So(frame.Has(second), ShouldBeFalse)
+		So(frame.Has(third), ShouldBeFalse)
+		So(frame.Err, ShouldBeNil)
+	})
+
+	Convey("Reset on an empty frame is a no-op that never allocates", t, func() {
+		frame := Frame{}
+		allocations := testing.AllocsPerRun(1000, func() {
+			frame.Reset()
+		})
+		So(allocations, ShouldEqual, 0.0)
+	})
+
 	Convey("Out-of-capacity access cannot alias a valid slot", t, func() {
 		invalid := Symbol(MaxSlots)
 		frame := Frame{}.Set(first, 1)
@@ -162,8 +184,18 @@ func BenchmarkFrameGet(b *testing.B) {
 	symbol := MustIntern("benchmark/frame/value")
 	frame := Frame{}.Set(symbol, 7)
 	b.ReportAllocs()
-	
+
 	for b.Loop() {
 		_, _ = frame.Get(symbol)
+	}
+}
+
+func BenchmarkFrameReset(b *testing.B) {
+	symbol := MustIntern("benchmark/frame/reset")
+	frame := Frame{}.Set(symbol, 7)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		frame.Reset()
 	}
 }

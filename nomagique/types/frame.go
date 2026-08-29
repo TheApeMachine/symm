@@ -87,6 +87,32 @@ func (frame Frame) Set(symbol Symbol, value float64) Frame {
 	return frame
 }
 
+// Reset clears every populated slot in place, leaving the frame with its
+// mask and Err zeroed. It walks only the set bits of the mask, so a frame that
+// holds a handful of slots is cleared in a handful of writes instead of a full
+// MaxSlots-array zeroing. It never allocates and never shrinks the backing
+// Data array, so a pooled frame retains its fixed backing store across reuse.
+func (frame *Frame) Reset() {
+	if frame == nil {
+		return
+	}
+
+	for maskIndex, mask := range frame.Mask {
+		if mask == 0 {
+			continue
+		}
+
+		for remaining := mask; remaining != 0; remaining &= remaining - 1 {
+			bit := bits.TrailingZeros64(remaining)
+			frame.Data[(maskIndex<<6)+bit] = 0
+		}
+
+		frame.Mask[maskIndex] = 0
+	}
+
+	frame.Err = nil
+}
+
 // Delete clears one slot.
 func (frame *Frame) Delete(symbol Symbol) {
 	if frame == nil {

@@ -10,6 +10,14 @@ the last output; a failed transition leaves it unchanged and records Err.
 type Stream struct {
 	primitive Primitive
 	state     Frame
+	// scratch is a persistent, heap-embedded work frame. Step copies the
+	// committed state into it and passes &stream.scratch to the primitive, so
+	// the pointer never escapes to a fresh allocation: it already lives inside
+	// the Stream that was heap-allocated once at construction. A local
+	// `merged := stream.state` value would instead escape to the heap on every
+	// Step because the opaque Primitive may retain &merged, churning a 66KB
+	// Frame and driving GC.
+	scratch Frame
 }
 
 /*
@@ -33,15 +41,15 @@ func (stream *Stream) Step(input Frame) Frame {
 		return input
 	}
 
-	merged := stream.state
-	merged.Merge(input)
-	Step(stream.primitive, &merged)
+	stream.scratch = stream.state
+	stream.scratch.Merge(input)
+	Step(stream.primitive, &stream.scratch)
 
-	if merged.Err == nil {
-		stream.state = merged
+	if stream.scratch.Err == nil {
+		stream.state = stream.scratch
 	}
 
-	return merged
+	return stream.scratch
 }
 
 /*

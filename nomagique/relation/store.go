@@ -262,6 +262,17 @@ func (view RingView) At(index int) Observation {
 }
 
 /*
+TimeAt returns only the timestamp at logical index 0..Len-1 in insertion
+order, without copying the surrounding Observation. Alignment scans read the
+timestamp to find the newest entry at or before a cutoff; they never need the
+184-byte Observation struct for that comparison, so a per-step full copy is
+pure waste on the estimation hot path.
+*/
+func (view RingView) TimeAt(index int) time.Time {
+	return view.ring.at(index).At
+}
+
+/*
 Close releases the ring read lock. It must be called exactly once.
 */
 func (view RingView) Close() {

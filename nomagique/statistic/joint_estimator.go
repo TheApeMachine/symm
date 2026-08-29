@@ -16,14 +16,15 @@ effective support — so that no two consumers describe different histories.
 
 Ordering is strictly causal (signal/liquidity/README.md §8):
 
-	1. read pre-observation state (mu, covariance, weight moments);
-	2. compute residual r = X - mu_{t-}, scalar noise (diag of covariance),
-	   z-scores (r / noise when noise > 0), joint SNR (Cholesky over the
-	   pre-observation covariance) and effective support N_eff;
-	3. project (the caller's projector reads the emitted OBS slots);
-	4. update mu, covariance and weight moments with X under alpha.
+ 1. read pre-observation state (mu, covariance, weight moments);
+ 2. compute residual r = X - mu_{t-}, scalar noise (diag of covariance),
+    z-scores (r / noise when noise > 0), joint SNR (Cholesky over the
+    pre-observation covariance) and effective support N_eff;
+ 3. project (the caller's projector reads the emitted OBS slots);
+ 4. update mu, covariance and weight moments with X under alpha.
 
 State slots (committed, pre-observation):
+
 	state/mu/<j>
 	state/cov/<i>/<j>
 	state/weight_sum
@@ -32,6 +33,7 @@ State slots (committed, pre-observation):
 	state/last_nsec
 
 Observation slots (current):
+
 	obs/residual/<j>
 	obs/noise/<j>
 	obs/zscore/<j>
@@ -43,8 +45,8 @@ type JointDecayedEstimator struct {
 	prefix string
 	count  int
 
-	mu      []types.Symbol
-	cov     [][]types.Symbol
+	mu          []types.Symbol
+	cov         [][]types.Symbol
 	weightSum   types.Symbol
 	weightSqSum types.Symbol
 	spanHat     types.Symbol
@@ -55,9 +57,9 @@ type JointDecayedEstimator struct {
 	noise    []types.Symbol
 	zscore   []types.Symbol
 
-	neff  types.Symbol
-	snr   types.Symbol
-	ready types.Symbol
+	neff    types.Symbol
+	snr     types.Symbol
+	ready   types.Symbol
 	horizon types.Symbol
 }
 
@@ -66,13 +68,13 @@ NewJointDecayedEstimator builds the slot table for a k-dimensional estimator.
 */
 func NewJointDecayedEstimator(prefix string, count int) *JointDecayedEstimator {
 	estimator := &JointDecayedEstimator{
-		prefix:  prefix,
-		count:   count,
-		mu:      make([]types.Symbol, count),
-		cov:     make([][]types.Symbol, count),
+		prefix:   prefix,
+		count:    count,
+		mu:       make([]types.Symbol, count),
+		cov:      make([][]types.Symbol, count),
 		residual: make([]types.Symbol, count),
-		noise:   make([]types.Symbol, count),
-		zscore:  make([]types.Symbol, count),
+		noise:    make([]types.Symbol, count),
+		zscore:   make([]types.Symbol, count),
 	}
 
 	for index := range count {
@@ -175,12 +177,26 @@ func (estimator *JointDecayedEstimator) Primitive(
 
 		a := 1.0
 
-		if hasMean && elapsed > 0 {
-			if spanHat <= 0 {
-				spanHat = elapsed
-			}
+		if alpha != nil {
+			// Caller-supplied decay weight overrides the data-derived cadence
+			// path entirely, so a caller can fix the effective memory (and let
+			// N_eff grow past the dimension count) rather than relying on the
+			// self-tuned half-life cadence.
+			a = alpha(frame)
+		} else if hasMean {
+			// Event-time decay weight alpha = 1 - exp(-Δt·ln2/span_hat). At zero
+			// elapsed the new observation is simultaneous with the last one and
+			// must carry zero weight (α = 0), never replace state with α = 1.
+			// The first observation (no prior mean) still seeds with α = 1.
+			if elapsed <= 0 {
+				a = 0
+			} else {
+				if spanHat <= 0 {
+					spanHat = elapsed
+				}
 
-			a = 1 - math.Exp(-elapsed*math.Ln2/spanHat)
+				a = 1 - math.Exp(-elapsed*math.Ln2/spanHat)
+			}
 		}
 
 		// Step 2: pre-observation facts.
@@ -210,7 +226,17 @@ func (estimator *JointDecayedEstimator) Primitive(
 		gamma := 1 - a
 
 		if hasMean {
-			// Decayed mean and covariance (convex combination with gamma+a=1).
+			// Decayed mean update: mu' = mu + a·r. The covariance that follows
+			// is measured around the UPDATED mean, so the current observation's
+			// residual around mu' is (x - mu') = (1-a)·r = gamma·r, and its
+			// weight-a contribution is a·gamma²·r·rᵀ while the prior covariance
+			// is re-centered and rescaled by gamma:
+			//
+			//   C' = gamma·C + a·gamma·r·rᵀ
+			//
+			// The naive a·r·rᵀ (without the gamma centre correction) reports a
+			// variance that is a factor 1/gamma too large; the kill fixture
+			// mu=0, C=0, x=2, a=0.5 must yield variance 1, not 2.
 			for index := range estimator.count {
 				r := values[index] - mu[index]
 				frame.Put(estimator.mu[index], mu[index]+a*r)
@@ -218,7 +244,7 @@ func (estimator *JointDecayedEstimator) Primitive(
 				for column := range estimator.count {
 					rc := values[column] - mu[column]
 					cov, _ := frame.Get(estimator.cov[index][column])
-					frame.Put(estimator.cov[index][column], cov+a*(r*rc-cov))
+					frame.Put(estimator.cov[index][column], gamma*cov+a*gamma*(r*rc))
 				}
 			}
 
@@ -229,14 +255,13 @@ func (estimator *JointDecayedEstimator) Primitive(
 			frame.Put(estimator.weightSum, a+gamma*oldSum)
 			frame.Put(estimator.weightSqSum, a*a+gamma*gamma*oldSumSq)
 
-			// Decay the cadence estimate toward the latest gap.
-			if elapsed > 0 {
-				if spanHat <= 0 {
-					spanHat = elapsed
-				} else {
-					spanHat += a * (elapsed - spanHat)
-				}
-
+			// Decay the cadence estimate toward the latest gap. The second
+			// observation establishes the cadence from its actual elapsed event
+			// time; there is no one-second seed to inherit.
+			if elapsed > 0 && spanHat <= 0 {
+				frame.Put(estimator.spanHat, elapsed)
+			} else if elapsed > 0 {
+				spanHat += a * (elapsed - spanHat)
 				frame.Put(estimator.spanHat, spanHat)
 			}
 		} else {
@@ -247,7 +272,6 @@ func (estimator *JointDecayedEstimator) Primitive(
 
 			frame.Put(estimator.weightSum, 1)
 			frame.Put(estimator.weightSqSum, 1)
-			frame.Put(estimator.spanHat, 1)
 		}
 
 		frame.Put(estimator.lastSec, sec)
@@ -259,7 +283,7 @@ func (estimator *JointDecayedEstimator) Primitive(
 		sumW2, _ := frame.Get(estimator.weightSqSum)
 
 		if sumW2 > 0 {
-			neff := sumW*sumW/sumW2
+			neff := sumW * sumW / sumW2
 			frame.Put(estimator.neff, neff)
 
 			if horizon, found := frame.Get(estimator.spanHat); found && horizon > 0 {
@@ -339,11 +363,23 @@ evaluateJointSNR computes (1/k) delta^T Sigma^{-1} delta against the
 pre-observation covariance via Cholesky, writing obs/snr and obs/ready only
 when the covariance is invertible and has sufficient support. Absence of the
 ready marker or ready == 0 means the SNR is undefined.
+
+Readiness is gated on the pre-observation effective support N_eff =
+(sumW)^2/sumW2, not on the normalized weight mass sumW. sumW is normalized to
+saturate at 1 (newSum = a + (1-a)·oldSum), so `sumW > dimensionCount` can never
+become true; N_eff instead grows without bound as observations accumulate and
+must exceed the dimension count before a k×k covariance is invertible.
 */
 func evaluateJointSNR(estimator *JointDecayedEstimator, frame *types.Frame, residuals []float64) {
-	support, _ := frame.Get(estimator.weightSum)
+	sumW, _ := frame.Get(estimator.weightSum)
+	sumW2, _ := frame.Get(estimator.weightSqSum)
 
-	if support <= float64(estimator.count) {
+	neff := 0.0
+	if sumW2 > 0 {
+		neff = sumW * sumW / sumW2
+	}
+
+	if neff <= float64(estimator.count) {
 		frame.Put(estimator.ready, 0)
 
 		return

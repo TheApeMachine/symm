@@ -111,7 +111,7 @@ func (price *Price) Mark(
 	return nil
 }
 
-/* PnL returns holding profit or loss at the current bid, including fees. */
+/* PnL returns holding profit or loss at the authoritative economic mark, including fees. */
 func (price *Price) PnL(
 	pair kraken.InstrumentPair,
 	holding *types.Holding,
@@ -126,12 +126,12 @@ func (price *Price) PnL(
 		return nil
 	}
 
-	tick, fee := price.Tick(pair.Symbol), price.Fee(pair.Symbol)
+	fee := price.Fee(pair.Symbol)
 
-	if tick == nil || fee == nil {
+	if fee == nil {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
-			"price: ticker and fee required for PnL",
+			"price: fee required for PnL",
 			nil,
 		))
 
@@ -143,7 +143,7 @@ func (price *Price) PnL(
 		"qty":        holding.Qty,
 		"entryPrice": holding.EntryPrice,
 		"entryFee":   holding.EntryFee,
-		"bid":        tick.Bid,
+		"mark":       holding.Mark,
 		"fee":        fee.Fee,
 	})); err != nil {
 		return nil
@@ -160,7 +160,7 @@ func (price *Price) PnL(
 	).Sub(holding.EntryFee)
 }
 
-/* ExitValue returns holding value at the current bid after the taker fee. */
+/* ExitValue returns holding value at the authoritative economic mark after the taker fee. */
 func (price *Price) ExitValue(
 	pair kraken.InstrumentPair,
 	holding *types.Holding,
@@ -175,12 +175,10 @@ func (price *Price) ExitValue(
 		return nil
 	}
 
-	tick := price.Tick(pair.Symbol)
-
-	if tick == nil {
+	if holding.Mark == nil || holding.Mark.Sign() <= 0 {
 		errnie.Error(errnie.Err(
 			errnie.Validation,
-			"price: ticker required for exit value",
+			"price: holding mark required for exit value",
 			nil,
 		))
 
@@ -192,14 +190,14 @@ func (price *Price) ExitValue(
 		"qty":        holding.Qty,
 		"entryPrice": holding.EntryPrice,
 		"entryFee":   holding.EntryFee,
-		"bid":        tick.Bid,
+		"mark":       holding.Mark,
 	})); err != nil {
 		return nil
 	}
 
 	return price.WithFee(
 		pair.Symbol,
-		decimal.NewFromInt64(0).Add(tick.Bid).Mul(holding.Qty),
+		decimal.NewFromInt64(0).Add(holding.Mark).Mul(holding.Qty),
 		SELL,
 	)
 }
@@ -209,18 +207,21 @@ ExecutableSurface derives the full-lot executable-liquidation state for one
 position's actual current SellableQty from the authoritative L3 book, under the
 protected read callback. It is the single authoritative executable-liquidation
 calculation: it walks the same high→low bid chain WithFriction walks, filling
-the position's complete SellableQty and producing the fee-net executable VWAP
-and value. It never falls back to ticker, never copies the book, and never lets
-the managed book escape the callback.
+the position's complete SellableQty and producing the gross executable VWAP
+(price coordinate) alongside the fee-net executable value (dollar/economic
+coordinate). It never falls back to ticker, never copies the book, and never
+lets the managed book escape the callback.
 
 Three independent facts are derived:
 
-  ExecutableQty    — total quantity fillable from the whole visible valid bid
-                     depth (how much the book can absorb before running out).
-  FloorCoverageQty — quantity visible at or above the protected floor (how much
-                     of the sellable lot the floor can still realize).
-  ExecutableVWAP   — the full-lot liquidation-equivalent price, defined only
-                     when ExecutableQty >= SellableQty.
+	ExecutableQty    — total quantity fillable from the whole visible valid bid
+	                   depth (how much the book can absorb before running out).
+	FloorCoverageQty — quantity visible at or above the protected floor (how much
+	                   of the sellable lot the floor can still realize).
+	ExecutableVWAP   — the full-lot liquidation-equivalent GROSS price (raw filled
+	                   VWAP), defined only when ExecutableQty >= SellableQty. The
+	                   fee-net liquidation proceeds are ExecutableValue, a dollar
+	                   amount, and are never divided into a "fee-net price".
 
 It reports BookComplete=false (and FullyExecutable=false) when the book cannot
 truthfully price the position — missing bid side, or crossed with the ask side.
@@ -303,9 +304,14 @@ func (price *Price) ExecutableSurface(
 		}
 
 		surface.ExecutableValue = price.WithFee(symbol, gross, SELL)
-		surface.ExecutableVWAP = decimal.NewFromInt64(0).Add(
-			surface.ExecutableValue,
-		).Div(sellableQty)
+
+		// The full-lot liquidation-equivalent price is GROSS per unit: the raw
+		// VWAP of the filled levels, in the same price coordinate the stoploss
+		// break-even geometry lives in (entry·(1+entryFee) and cost/(1-exitFee)
+		// are gross prices). The fee-net liquidation proceeds live in
+		// ExecutableValue (dollar/economic value), never in a "fee-net price"
+		// that would be compared against gross price levels.
+		surface.ExecutableVWAP = decimal.NewFromInt64(0).Add(gross).Div(sellableQty)
 	})
 
 	return surface
@@ -426,7 +432,7 @@ func (price *Price) WithFriction(
 	return adjusted, nil
 }
 
-/* ReturnPct returns the holding's fee-inclusive percentage return. */
+/* ReturnPct returns the holding's fee-inclusive percentage return at the authoritative economic mark. */
 func (price *Price) ReturnPct(
 	pair kraken.InstrumentPair,
 	holding *types.Holding,

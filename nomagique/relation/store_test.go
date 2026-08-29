@@ -204,6 +204,16 @@ func TestRangeHistory(t *testing.T) {
 
 			view.Close()
 		})
+
+		Convey("TimeAt reads only the timestamp of the resident ring", func() {
+			view, found := store.ViewRing(coordinate)
+			So(found, ShouldBeTrue)
+			defer view.Close()
+
+			for index := 0; index < view.Len(); index++ {
+				So(view.TimeAt(index), ShouldEqual, view.At(index).At)
+			}
+		})
 	})
 }
 
@@ -215,7 +225,6 @@ func BenchmarkObservationStoreAppend(b *testing.B) {
 	store.RegisterCoordinate(coordinate)
 
 	b.ReportAllocs()
-	
 
 	for iteration := 0; b.Loop(); iteration++ {
 		store.Append(Observation{Coordinate: coordinate, Raw: float64(iteration), At: time.Unix(0, int64(iteration)*int64(time.Second))})
@@ -235,7 +244,6 @@ func BenchmarkObservationStoreRangeCoordinates(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	
 
 	for b.Loop() {
 		store.RangeCoordinates(func(coordinate Coordinate) bool {
@@ -254,7 +262,6 @@ func BenchmarkObservationStoreRangeHistory(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	
 
 	for b.Loop() {
 		store.RangeHistory(coordinate, func(observation Observation) bool {
@@ -268,11 +275,46 @@ func BenchmarkObservationStoreRegisterCoordinate(b *testing.B) {
 	store := NewObservationStore(2048)
 
 	b.ReportAllocs()
-	
 
 	// Each iteration structurally registers one new coordinate: the resident
 	// ordered insert is the whole cost of a growing universe.
 	for iteration := 0; b.Loop(); iteration++ {
 		store.RegisterCoordinate(fixtureCoordinate(fmt.Sprintf("source%d", iteration), "metric"))
+	}
+}
+
+func BenchmarkRingViewTimeAt(b *testing.B) {
+	store := NewObservationStore(2048)
+	coordinate := fixtureCoordinate("cvd", "signed_net_fraction_zscore")
+
+	for index := 0; index < 2048; index++ {
+		store.Append(Observation{Coordinate: coordinate, Raw: float64(index), At: time.Unix(0, int64(index)*int64(time.Second))})
+	}
+
+	view, _ := store.ViewRing(coordinate)
+	defer view.Close()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = view.TimeAt(1024)
+	}
+}
+
+func BenchmarkRingViewAt(b *testing.B) {
+	store := NewObservationStore(2048)
+	coordinate := fixtureCoordinate("cvd", "signed_net_fraction_zscore")
+
+	for index := 0; index < 2048; index++ {
+		store.Append(Observation{Coordinate: coordinate, Raw: float64(index), At: time.Unix(0, int64(index)*int64(time.Second))})
+	}
+
+	view, _ := store.ViewRing(coordinate)
+	defer view.Close()
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = view.At(1024)
 	}
 }

@@ -40,17 +40,21 @@ func TestTradeStep(t *testing.T) {
 			So(measurement.Metrics["arrival_rate:buy"].Raw, ShouldEqual, 1.0)
 			So(measurement.Metrics["arrival_rate:sell"].Raw, ShouldEqual, 0.0)
 
-			So(measurement.Metrics["conditional_intensity"].Raw, ShouldAlmostEqual, 1.1, 1e-12)
-			So(measurement.Metrics["conditional_intensity:buy"].Raw, ShouldEqual, 1.0)
+			So(measurement.Metrics["conditional_intensity"].Raw, ShouldAlmostEqual, 0.3, 1e-12)
+			So(measurement.Metrics["conditional_intensity:buy"].Raw, ShouldAlmostEqual, 0.2, 1e-12)
 			So(measurement.Metrics["conditional_intensity:sell"].Raw, ShouldAlmostEqual, 0.1, 1e-12)
 
 			So(measurement.Metrics["background_rate"].Raw, ShouldEqual, 1.0)
 			So(measurement.Metrics["background_rate:buy"].Raw, ShouldEqual, 1.0)
 			So(measurement.Metrics["background_rate:sell"].Raw, ShouldEqual, 0.0)
 
-			So(measurement.Metrics["excitation_intensity:buy"].Raw, ShouldEqual, 0.0)
+			// Buy intensity opens below its own just-set background rate (the
+			// rate is the cumulative average including this very event, while
+			// conditional_intensity is the fitted process value): excitation
+			// is genuinely negative here, not clamped to zero.
+			So(measurement.Metrics["excitation_intensity:buy"].Raw, ShouldAlmostEqual, -0.8, 1e-12)
 			So(measurement.Metrics["excitation_intensity:sell"].Raw, ShouldAlmostEqual, 0.1, 1e-12)
-			So(measurement.Metrics["excitation_fraction:buy"].Raw, ShouldEqual, 0.0)
+			So(measurement.Metrics["excitation_fraction:buy"].Raw, ShouldAlmostEqual, -4.0, 1e-12)
 			So(measurement.Metrics["excitation_fraction:sell"].Raw, ShouldEqual, 1.0)
 
 			So(measurement.Metrics["excitation_amplitude:buy_from_buy"].Raw, ShouldAlmostEqual, 0.2, 1e-12)
@@ -99,14 +103,19 @@ func TestTradeStep(t *testing.T) {
 			So(measurement.Metrics["arrival_rate:buy"].Raw, ShouldEqual, 1.0)
 			So(measurement.Metrics["arrival_rate:sell"].Raw, ShouldEqual, 1.0)
 
-			So(measurement.Metrics["conditional_intensity:buy"].Raw, ShouldAlmostEqual, 1.1, 1e-12)
-			So(measurement.Metrics["conditional_intensity:sell"].Raw, ShouldEqual, 1.0)
-			So(measurement.Metrics["excitation_intensity:buy"].Raw, ShouldAlmostEqual, 0.1, 1e-12)
-			So(measurement.Metrics["excitation_intensity:sell"].Raw, ShouldEqual, 0.0)
-			So(measurement.Metrics["excitation_fraction:buy"].Raw, ShouldAlmostEqual, 0.1/1.1, 1e-12)
-			So(measurement.Metrics["excitation_fraction:sell"].Raw, ShouldEqual, 0.0)
+			sellIntensityEvent2 := 0.1*math.Exp(-1) + 0.2
 
-			So(measurement.Metrics["conditional_intensity_velocity"].Raw, ShouldAlmostEqual, math.Log(2.1/1.1), 1e-9)
+			So(measurement.Metrics["conditional_intensity:buy"].Raw, ShouldAlmostEqual, 1.1, 1e-12)
+			So(measurement.Metrics["conditional_intensity:sell"].Raw, ShouldAlmostEqual, sellIntensityEvent2, 1e-9)
+			So(measurement.Metrics["excitation_intensity:buy"].Raw, ShouldAlmostEqual, 0.1, 1e-12)
+			// Sell intensity decayed most of the way back toward its own
+			// just-set background rate before this event's jump, landing
+			// below that rate: excitation is genuinely negative, not zero.
+			So(measurement.Metrics["excitation_intensity:sell"].Raw, ShouldAlmostEqual, sellIntensityEvent2-1.0, 1e-9)
+			So(measurement.Metrics["excitation_fraction:buy"].Raw, ShouldAlmostEqual, 0.1/1.1, 1e-12)
+			So(measurement.Metrics["excitation_fraction:sell"].Raw, ShouldAlmostEqual, (sellIntensityEvent2-1.0)/sellIntensityEvent2, 1e-9)
+
+			So(measurement.Metrics["conditional_intensity_velocity"].Raw, ShouldAlmostEqual, math.Log((1.1+sellIntensityEvent2)/0.3), 1e-9)
 			So(measurement.Metrics["spectral_radius_velocity"].Raw, ShouldEqual, 0.0)
 
 			// Compensator integrates the pre-arrival intensity over the closed

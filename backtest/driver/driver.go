@@ -361,6 +361,20 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time, playing bool
 
 	previousAt := from
 
+	// PaceTimer paces the replay: one timer reused across every frame instead
+	// of a fresh time.After per frame, which would allocate a short-lived heap
+	// timer thousands of times during a high-throughput market replay.
+	paceTimer := time.NewTimer(0)
+
+	if !paceTimer.Stop() {
+		select {
+		case <-paceTimer.C:
+		default:
+		}
+	}
+
+	defer paceTimer.Stop()
+
 	for {
 		select {
 		case <-sessionCtx.Done():
@@ -416,8 +430,10 @@ func (driver *Driver) runSession(captureID int64, holdAt time.Time, playing bool
 		}
 
 		if frame.ReceivedAt.After(previousAt) {
+			paceTimer.Reset(frame.ReceivedAt.Sub(previousAt))
+
 			select {
-			case <-time.After(frame.ReceivedAt.Sub(previousAt)):
+			case <-paceTimer.C:
 			case <-sessionCtx.Done():
 				return
 			}

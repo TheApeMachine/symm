@@ -229,6 +229,28 @@ func TestNumberCrossSectionAndSelection(t *testing.T) {
 	})
 }
 
+func TestSingleLifecycle(t *testing.T) {
+	Convey("NewSingle carries state across calls without allocating a scratch frame", t, func() {
+		single := NewSingle(numberAccumulator)
+		input := types.Frame{}.Set(numberDelta, 1)
+
+		first := single(input)
+		So(first.Err, ShouldBeNil)
+		So(first.MustGet(numberTotal), ShouldEqual, 1.0)
+
+		second := single(input)
+		So(second.Err, ShouldBeNil)
+		So(second.MustGet(numberTotal), ShouldEqual, 2.0)
+
+		allocations := testing.AllocsPerRun(1000, func() {
+			if stepOutput := single(input); stepOutput.Err != nil {
+				panic(stepOutput.Err)
+			}
+		})
+		So(allocations, ShouldEqual, 0.0)
+	})
+}
+
 func BenchmarkNumberEstablishedKey(b *testing.B) {
 	number := NewNumber[string](numberAccumulator)
 	input := types.Frame{}.Set(numberDelta, 1)
@@ -237,5 +259,16 @@ func BenchmarkNumberEstablishedKey(b *testing.B) {
 
 	for b.Loop() {
 		_ = number.Step("symbol", input)
+	}
+}
+
+func BenchmarkSingleStep(b *testing.B) {
+	single := NewSingle(numberAccumulator)
+	input := types.Frame{}.Set(numberDelta, 1)
+	_ = single(input)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = single(input)
 	}
 }

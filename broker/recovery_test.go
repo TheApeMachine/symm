@@ -36,12 +36,29 @@ func (conn *recoveryConn) SubInstrument(callback chan any) {
 /*
 newTestRecovery wires a Recovery whose exchange calls are served by a mock
 Conn carrying the given balances and fill history, with both AAA/USD and
-BBB/USD registered as tradeable pairs.
+BBB/USD registered as tradeable pairs and a seeded ticker for each.
 */
 func newTestRecovery(
 	t testing.TB,
 	balances map[string]*decimal.Decimal,
 	trades map[string]spot.Trade,
+) (*Recovery, *sync.Map) {
+	t.Helper()
+
+	return newTestRecoveryWithOptions(t, balances, trades, true)
+}
+
+/*
+newTestRecoveryWithOptions is newTestRecovery with control over whether a
+ticker is seeded, so a test can exercise synthesizeStoploss's no-live-quote
+fallback path — the shape recovery actually runs under at boot, before the
+instrument subscription has delivered any market data.
+*/
+func newTestRecoveryWithOptions(
+	t testing.TB,
+	balances map[string]*decimal.Decimal,
+	trades map[string]spot.Trade,
+	seedTicker bool,
 ) (*Recovery, *sync.Map) {
 	t.Helper()
 	viper.Set("market.quote_currency", "USD")
@@ -78,13 +95,16 @@ func newTestRecovery(
 
 	for _, symbol := range []string{"AAA/USD", "BBB/USD"} {
 		price.fees.Store(symbol, kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.25)})
-		price.Update(&kraken.TickerData{
-			Symbol: symbol,
-			Ask:    decimal.NewFromFloat64(2.0),
-			AskQty: 1000,
-			Bid:    decimal.NewFromFloat64(1.99),
-			BidQty: 1000,
-		})
+
+		if seedTicker {
+			price.Update(&kraken.TickerData{
+				Symbol: symbol,
+				Ask:    decimal.NewFromFloat64(2.0),
+				AskQty: 1000,
+				Bid:    decimal.NewFromFloat64(1.99),
+				BidQty: 1000,
+			})
+		}
 	}
 
 	storePath := t.TempDir() + "/recovery.sqlite"
@@ -234,6 +254,47 @@ func TestRecoverSynthesizesStoplossWhenStoreRowMissing(t *testing.T) {
 			So(position.Holding.Stoploss.Status, ShouldEqual, types.ARMED)
 			So(position.Holding.Stoploss.Floor, ShouldNotBeNil)
 			So(position.Holding.Stoploss.Floor.Sign(), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+/*
+Recover runs before the instrument subscription has delivered any ticker or
+book frame for the symbols it is trying to protect — that subscription
+happens much later in boot, batched across the whole tradeable universe. A
+position whose stored stoploss row is missing must still be recoverable in
+that window: synthesizeStoploss cannot require a live quote it has no way to
+have yet, only the wallet balance, trade history, and the venue's own tick
+size.
+*/
+func TestRecoverSynthesizesStoplossWithoutLiveQuote(t *testing.T) {
+	Convey("Given an open asset with no ticker or book data available yet", t, func() {
+		balances := map[string]*decimal.Decimal{
+			"AAA": mustDecimal("10"),
+		}
+		trades := map[string]spot.Trade{
+			"t-aaa": tradeFixture("AAA/USD", "10", "1.0", "10.0"),
+		}
+
+		recovery, positions := newTestRecoveryWithOptions(t, balances, trades, false)
+
+		Convey("Recover still rebuilds protection from entry price and tick size alone", func() {
+			err := recovery.Recover()
+
+			So(err, ShouldBeNil)
+
+			value, restored := positions.Load("AAA/USD")
+			So(restored, ShouldBeTrue)
+
+			position, ok := value.(*Position)
+			So(ok, ShouldBeTrue)
+			So(position.Holding.Stoploss, ShouldNotBeNil)
+			So(position.Holding.Stoploss.Status, ShouldEqual, types.ARMED)
+			So(position.Holding.Stoploss.Floor, ShouldNotBeNil)
+			So(position.Holding.Stoploss.Floor.Sign(), ShouldBeGreaterThan, 0)
+			// With no live book, mark starts at the known entry price rather
+			// than an unavailable BestBid.
+			So(position.Holding.Stoploss.Mark.Cmp(mustDecimal("1.0")), ShouldEqual, 0)
 		})
 	})
 }

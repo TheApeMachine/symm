@@ -37,18 +37,24 @@ var (
 	symbolLogRelSpread   = nmtypes.MustIntern("liquidity/log_relative_spread")
 
 	// Observed baseline / ratio / divergence projection slots.
-	symbolBidBaseline  = nmtypes.MustIntern("liquidity/obs/touch_notional_baseline_bid")
-	symbolBidRatio     = nmtypes.MustIntern("liquidity/obs/depth_ratio_bid")
-	symbolAskBaseline  = nmtypes.MustIntern("liquidity/obs/touch_notional_baseline_ask")
-	symbolAskRatio     = nmtypes.MustIntern("liquidity/obs/depth_ratio_ask")
-	symbolSpreadBase   = nmtypes.MustIntern("liquidity/obs/relative_spread_baseline")
-	symbolSpreadRatio  = nmtypes.MustIntern("liquidity/obs/spread_ratio")
+	symbolBidBaseline = nmtypes.MustIntern("liquidity/obs/touch_notional_baseline_bid")
+	symbolBidRatio    = nmtypes.MustIntern("liquidity/obs/depth_ratio_bid")
+	symbolAskBaseline = nmtypes.MustIntern("liquidity/obs/touch_notional_baseline_ask")
+	symbolAskRatio    = nmtypes.MustIntern("liquidity/obs/depth_ratio_ask")
+	symbolSpreadBase  = nmtypes.MustIntern("liquidity/obs/relative_spread_baseline")
+	symbolSpreadRatio = nmtypes.MustIntern("liquidity/obs/spread_ratio")
 
 	// Divergence-velocity regression slots (one causal local regression per
 	// divergence path, sharing the joint estimator's derived horizon).
-	symbolBidVelocity     = nmtypes.MustIntern(temporal.JoinPrefix("liquidity/vel_bid", "slope/beta"))
-	symbolAskVelocity     = nmtypes.MustIntern(temporal.JoinPrefix("liquidity/vel_ask", "slope/beta"))
-	symbolSpreadVelocity  = nmtypes.MustIntern(temporal.JoinPrefix("liquidity/vel_spread", "slope/beta"))
+	symbolBidVelocity    = nmtypes.MustIntern(temporal.JoinPrefix("liquidity/vel_bid", "slope/beta"))
+	symbolAskVelocity    = nmtypes.MustIntern(temporal.JoinPrefix("liquidity/vel_ask", "slope/beta"))
+	symbolSpreadVelocity = nmtypes.MustIntern(temporal.JoinPrefix("liquidity/vel_spread", "slope/beta"))
+
+	// Divergence-velocity SNR slots: β² / Var(β) from each local regression,
+	// present only when the slope is defined (the regression had support).
+	symbolBidVelocitySNR    = nmtypes.MustIntern(temporal.JoinPrefix("liquidity/vel_bid", "slope/snr"))
+	symbolAskVelocitySNR    = nmtypes.MustIntern(temporal.JoinPrefix("liquidity/vel_ask", "slope/snr"))
+	symbolSpreadVelocitySNR = nmtypes.MustIntern(temporal.JoinPrefix("liquidity/vel_spread", "slope/snr"))
 )
 
 /*
@@ -147,6 +153,10 @@ func NewTicker() *Ticker {
 			data.Binding{From: symbolBidVelocity, Name: "divergence_velocity:bid", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 			data.Binding{From: symbolAskVelocity, Name: "divergence_velocity:ask", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 			data.Binding{From: symbolSpreadVelocity, Name: "spread_divergence_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+
+			data.Binding{From: symbolBidVelocitySNR, Name: "divergence_velocity_snr:bid", Unit: data.UnitDimensionless, Timescale: data.TimescalePerSecond},
+			data.Binding{From: symbolAskVelocitySNR, Name: "divergence_velocity_snr:ask", Unit: data.UnitDimensionless, Timescale: data.TimescalePerSecond},
+			data.Binding{From: symbolSpreadVelocitySNR, Name: "spread_divergence_velocity_snr", Unit: data.UnitDimensionless, Timescale: data.TimescalePerSecond},
 		),
 	}
 }

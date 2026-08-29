@@ -66,19 +66,27 @@ func Wire(primitive Primitive, bindings ...Binding) Primitive {
 	program := append([]Binding(nil), bindings...)
 	configurationError := validateBindings(program)
 
-	return func(input *Frame) {
-		if configurationError != nil {
+	if configurationError != nil {
+		return func(input *Frame) {
 			input.Err = configurationError
-
-			return
 		}
+	}
 
-		if primitive == nil {
+	if primitive == nil {
+		return func(input *Frame) {
 			input.Err = PrimitiveError("wire primitive is nil")
-
-			return
 		}
+	}
 
+	// The returned closure is deliberately minimal: configuration and the
+	// nil-primitive guard are construction-time invariants resolved above, so
+	// the hot closure is exactly one Get/Reset/runWire/Put round-trip. Keeping
+	// its inline cost under the compiler budget is what lets an inlined call
+	// site keep its own Frame on the stack instead of heap-escaping through
+	// the opaque Primitive pointer. The cold error paths above also reference
+	// errors.New/PrimitiveError, whose inlined cost would otherwise push this
+	// closure past the budget and defeat the escape fix.
+	return func(input *Frame) {
 		// The pool round-trip is isolated to this one Get/Put pair — no
 		// early return between them — and the actual binding/Step logic
 		// runs in a helper that reports its outcome through a plain return
@@ -87,7 +95,7 @@ func Wire(primitive Primitive, bindings ...Binding) Primitive {
 		// hard enough that the *Frame from Get was heap-allocated fresh on
 		// every single call, silently making the pool a no-op.
 		local := wireFramePool.Get().(*Frame)
-		*local = Frame{}
+		local.Reset()
 
 		runWire(primitive, program, input, local)
 
