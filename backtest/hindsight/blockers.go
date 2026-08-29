@@ -132,11 +132,11 @@ func selectionBlockers(context SignalContext) []blockerCandidate {
 	if recommended == "" {
 		candidates = append(candidates, blockerCandidate{
 			Blocker: Blocker{
-				Key:      "selection:no_recommendation",
-				Category: DiagnosisSelection,
-				Label:    "no recommended action",
-				Gap:      1,
-				Severity: 1,
+				Key:         "selection:no_recommendation",
+				Category:    DiagnosisSelection,
+				Label:       "no recommended action",
+				Gap:         1,
+				Severity:    1,
 				Explanation: "the search ran but recorded no recommended action",
 			},
 			priority: 20,

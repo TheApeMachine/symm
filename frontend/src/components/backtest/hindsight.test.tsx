@@ -9,7 +9,8 @@ const report: HindsightReport = {
 	captureId: 42,
 	status: "ready",
 	missedPct: 0.2,
-	upboundPct: 0.3,
+	priceTheoreticalCeiling: 0.3,
+	executableCeiling: 0.28,
 	missedLegs: 1,
 	totalLegs: 2,
 	realizedPct: 0.1,
@@ -75,7 +76,8 @@ const report: HindsightReport = {
 	symbols: [
 		{
 			symbol: "DENT/USD",
-			upboundPct: 0.3,
+			priceTheoreticalCeiling: 0.3,
+			executableCeiling: 0.28,
 			realizedPct: 0.1,
 			missedPct: 0.2,
 			lossPct: 0.05,
@@ -98,48 +100,54 @@ const report: HindsightReport = {
 						id: "signal-1",
 						at: "2026-01-01T00:00:00.000Z",
 						action: "nothing",
-						graphScore: 0.7,
-						thesisScore: 0.48,
-						thesisConfidence: 0.48,
 						opportunity: true,
 						opportunityType: "pump",
+						valuationAttempted: true,
+						valuationAvailable: false,
+						valuationStatus: "incomplete",
 						alternatives: {
 							"admission:confidence_margin": -0.02,
 						},
 					},
+					regret: {
+						detection: false,
+						valuation: true,
+						selection: false,
+						execution: false,
+						management: false,
+					},
 					diagnosis: {
-						category: "admission_policy",
-						summary: "missed 100→120: confidence was below admission",
+						category: "valuation",
+						summary: "missed 100→120: valuation was attempted but no economic consequence was available",
 						evidenceQuality: 0.86,
-						evidenceStatus: "complete",
+						evidenceStatus: "partial",
 						blockers: [
 							{
-								key: "admission:confidence",
-								category: "admission_policy",
-								label: "entry confidence",
-								source: "trading.admission.minimum_confidence",
-								observed: 0.48,
-								target: 0.5,
-								hasTarget: true,
-								gap: 0.02,
-								severity: 0.02,
+								key: "valuation:not_available",
+								category: "valuation",
+								label: "valuation unavailable",
+								observed: 0,
+								target: 0,
+								hasTarget: false,
+								gap: 0.2,
+								severity: 1,
 								explanation:
-									"entry confidence 0.4800 was 0.0200 below the required 0.5000",
+									"valuation was attempted but no economic consequence was available",
 							},
 						],
 						recommendation: {
-							key: "admission:confidence",
-							kind: "tune_parameter",
-							target: "trading.admission.minimum_confidence",
-							title: "Backtest an entry confidence boundary sweep",
+							key: "valuation:not_available",
+							kind: "collect_outcomes",
+							target: "valuation evidence",
+							title: "Resolve valuation evidence before selection",
 							action:
-								"Replay retained no-action decisions and compare recovered value with wallet loss.",
-							rationale: "This exact gate stopped the decision.",
-							current: 0.5,
-							suggested: 0.48,
-							hasCurrent: true,
-							hasSuggested: true,
-							adjustment: "lower",
+								"Retain whether valuation was attempted and available.",
+							rationale: "Economic consequence was not estimable.",
+							current: 0,
+							suggested: 0,
+							hasCurrent: false,
+							hasSuggested: false,
+							adjustment: "",
 							confidence: 0.86,
 							impactPct: 0.2,
 							occurrences: 1,
@@ -167,9 +175,6 @@ const report: HindsightReport = {
 						id: "signal-loss-1",
 						at: "2026-01-01T00:02:00.000Z",
 						action: "enter",
-						graphScore: 0.8,
-						thesisScore: 0.7,
-						thesisConfidence: 0.65,
 						opportunity: true,
 						opportunityType: "pump",
 						alternatives: null,
@@ -210,13 +215,13 @@ describe("HindsightPanel", () => {
 
 		expect(markup).toContain("Priority opportunity experiments");
 		expect(markup).toContain("Priority risk &amp; execution fixes");
-		expect(markup).toContain("Admission Policy");
+		expect(markup).toContain("Valuation");
 		expect(markup).toContain("Whipsaw Stopout");
 		expect(markup).toContain("Where capital was lost");
-		expect(markup).toContain("current 0.5000");
-		expect(markup).toContain("counterfactual candidate 0.4800");
-		expect(markup).toContain("entry confidence 0.4800 was 0.0200 below");
-		expect(markup).toContain("evidence complete");
+		expect(markup).toContain("valuation was attempted but no economic consequence was available");
+		expect(markup).toContain("price-theoretical ceiling");
+		expect(markup).toContain("executable ceiling");
+		expect(markup).toContain("valuation unavailable");
 		expect(markup).toContain("DENT/USD");
 		expect(markup).toContain("gross 20.00%");
 		expect(markup).toContain("friction -2.00%");

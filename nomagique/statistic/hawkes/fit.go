@@ -1,9 +1,6 @@
 package hawkes
 
-import (
-	"math"
-	"time"
-)
+import "math"
 
 /*
 bivariateFit holds joint Hawkes MLE parameters and horizon intensities for
@@ -102,106 +99,6 @@ func (fit bivariateFit) withIntensitiesAt(stream arrivalStream, horizonSec float
 	result.intensityY = stream.sellIntensityAt(horizonSec, fit.muY, fit.alphaYX, fit.alphaYY, fit.beta)
 
 	return result
-}
-
-/*
-asymmetry returns normalized intensity excess on the requested side.
-*/
-func (fit bivariateFit) asymmetry(preferY bool) float64 {
-	total := fit.intensityX + fit.intensityY
-
-	if total <= 0 {
-		return 0
-	}
-
-	if preferY {
-		if fit.intensityY <= fit.intensityX {
-			return 0
-		}
-
-		return (fit.intensityY - fit.intensityX) / total
-	}
-
-	if fit.intensityX <= fit.intensityY {
-		return 0
-	}
-
-	return (fit.intensityX - fit.intensityY) / total
-}
-
-/*
-runway is the fitted kernel e-folding time 1/beta.
-*/
-func (fit bivariateFit) runway() time.Duration {
-	if fit.beta <= 0 {
-		return 0
-	}
-
-	return time.Duration((1 / fit.beta) * float64(time.Second))
-}
-
-/*
-excitationConfidence scores excitation ratio weighted by asymmetry.
-*/
-func (fit bivariateFit) excitationConfidence(
-	asymmetry float64,
-	baselineFence float64,
-	preferY bool,
-) float64 {
-	if asymmetry <= 0 || fit.spectralRadius >= criticalBranch {
-		return 0
-	}
-
-	if preferY {
-		if fit.muY <= 0 || fit.intensityY <= 0 {
-			return 0
-		}
-
-		ratio := fit.intensityY / fit.muY
-
-		if ratio <= baselineFence {
-			return 0
-		}
-
-		return asymmetry * ratio
-	}
-
-	if fit.muX <= 0 || fit.intensityX <= 0 {
-		return 0
-	}
-
-	ratio := fit.intensityX / fit.muX
-
-	if ratio <= baselineFence {
-		return 0
-	}
-
-	return asymmetry * ratio
-}
-
-/*
-clampSubcritical scales excitation parameters to stay below criticalBranch.
-*/
-func (fit bivariateFit) clampSubcritical() bivariateFit {
-	if fit.spectralRadius <= 0 || fit.spectralRadius < criticalBranch {
-		return fit
-	}
-
-	targetRadius := math.Nextafter(criticalBranch, 0)
-	factor := targetRadius / fit.spectralRadius
-
-	if factor <= 0 || factor >= 1 {
-		return fit
-	}
-
-	clamped := fit
-	clamped.alphaXX *= factor
-	clamped.alphaXY *= factor
-	clamped.alphaYX *= factor
-	clamped.alphaYY *= factor
-	clamped.spectralRadius = clamped.computeSpectralRadius()
-
-	return clamped
 }
 
 func (fit bivariateFit) withCrossZeroed() bivariateFit {

@@ -19,8 +19,8 @@ type SignalContext struct {
 	Cause  string    `json:"cause"`
 
 	// Opportunity state.
-	Opportunity     bool   `json:"opportunity"`
-	OpportunityType string `json:"opportunityType,omitempty"`
+	Opportunity      bool   `json:"opportunity"`
+	OpportunityType  string `json:"opportunityType,omitempty"`
 	OpportunityPhase string `json:"opportunityPhase,omitempty"`
 
 	// Valuation state.
@@ -31,29 +31,29 @@ type SignalContext struct {
 	CausalBlockingCoordinate string `json:"causalBlockingCoordinate,omitempty"`
 
 	// Selection state.
-	Utility          float64             `json:"utility"`
-	UtilityAvailable bool                `json:"utilityAvailable"`
+	Utility          float64            `json:"utility"`
+	UtilityAvailable bool               `json:"utilityAvailable"`
 	Alternatives     map[string]float64 `json:"alternatives"`
-	MCTS             DecisionTrace       `json:"mcts,omitempty"`
+	MCTS             DecisionTrace      `json:"mcts,omitempty"`
 
 	// Execution state.
-	ProposedQuantity Number   `json:"proposedQuantity"`
-	ProposedNotional Number   `json:"proposedNotional"`
-	AvailableCapital Number   `json:"availableCapital"`
+	ProposedQuantity Number    `json:"proposedQuantity"`
+	ProposedNotional Number    `json:"proposedNotional"`
+	AvailableCapital Number    `json:"availableCapital"`
 	EntryCost        EntryCost `json:"entryCost,omitempty"`
 	Risk             RiskPlan  `json:"risk"`
-	ExpectedReturn   Number   `json:"expectedReturn"`
-	ExpectedFees     Number   `json:"expectedFees"`
-	ExpectedSpread   Number   `json:"expectedSpread"`
-	ExpectedImpact   Number   `json:"expectedImpact"`
-	AdverseSelection Number   `json:"adverseSelection"`
-	Uncertainty      float64  `json:"uncertainty"`
+	ExpectedReturn   Number    `json:"expectedReturn"`
+	ExpectedFees     Number    `json:"expectedFees"`
+	ExpectedSpread   Number    `json:"expectedSpread"`
+	ExpectedImpact   Number    `json:"expectedImpact"`
+	AdverseSelection Number    `json:"adverseSelection"`
+	Uncertainty      float64   `json:"uncertainty"`
 
 	// Allocation state.
-	AllocationClass   string `json:"allocationClass"`
+	AllocationClass   string  `json:"allocationClass"`
 	AllocationHaircut float64 `json:"allocation_haircut"`
-	OpenPositions     int    `json:"openPositions"`
-	SlotCapacity      int    `json:"slotCapacity"`
+	OpenPositions     int     `json:"openPositions"`
+	SlotCapacity      int     `json:"slotCapacity"`
 }
 
 /*
@@ -102,9 +102,9 @@ type PerSymbol struct {
 	// recorded quantity could be fully captured; legs without a defensible
 	// quantity or sufficient depth contribute nothing here (undefined ≠ zero
 	// to the reader, and is tracked via ExecutableLegsDefined).
-	ExecutableCeiling      float64 `json:"executableCeiling"`
-	ExecutableLegsDefined  int     `json:"executableLegsDefined"`
-	ExecutableLegsTotal    int     `json:"executableLegsTotal"`
+	ExecutableCeiling     float64 `json:"executableCeiling"`
+	ExecutableLegsDefined int     `json:"executableLegsDefined"`
+	ExecutableLegsTotal   int     `json:"executableLegsTotal"`
 
 	RealizedPct   float64 `json:"realizedPct"`
 	MissedPct     float64 `json:"missedPct"`

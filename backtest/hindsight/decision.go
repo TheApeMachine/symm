@@ -77,39 +77,39 @@ type Decision struct {
 	At     time.Time `json:"at"`
 
 	// Valuation state — the Opportunity → Valuation boundary.
-	ValuationAttempted      bool   `json:"valuationAttempted"`
-	ValuationAvailable      bool   `json:"valuationAvailable"`
-	ValuationStatus         string `json:"valuationStatus,omitempty"`
-	CausalIdentification    string `json:"causalIdentification,omitempty"`
+	ValuationAttempted       bool   `json:"valuationAttempted"`
+	ValuationAvailable       bool   `json:"valuationAvailable"`
+	ValuationStatus          string `json:"valuationStatus,omitempty"`
+	CausalIdentification     string `json:"causalIdentification,omitempty"`
 	CausalBlockingCoordinate string `json:"causalBlockingCoordinate,omitempty"`
 
 	// Selection state — what MCTS compared and chose.
-	Utility          float64             `json:"utility"`
-	UtilityAvailable bool                `json:"utilityAvailable"`
+	Utility          float64            `json:"utility"`
+	UtilityAvailable bool               `json:"utilityAvailable"`
 	Alternatives     map[string]float64 `json:"alternatives"`
-	Opportunity      bool                `json:"opportunity"`
-	OpportunityType  string              `json:"opportunityType,omitempty"`
-	OpportunityPhase string              `json:"opportunityPhase,omitempty"`
-	Trace            DecisionTrace       `json:"trace,omitempty"`
+	Opportunity      bool               `json:"opportunity"`
+	OpportunityType  string             `json:"opportunityType,omitempty"`
+	OpportunityPhase string             `json:"opportunityPhase,omitempty"`
+	Trace            DecisionTrace      `json:"trace,omitempty"`
 
 	// Execution state — the size and risk this entry was solved under.
-	ProposedQuantity Number   `json:"proposedQuantity"`
-	ProposedNotional Number   `json:"proposedNotional"`
-	AvailableCapital Number   `json:"availableCapital"`
+	ProposedQuantity Number    `json:"proposedQuantity"`
+	ProposedNotional Number    `json:"proposedNotional"`
+	AvailableCapital Number    `json:"availableCapital"`
 	EntryCost        EntryCost `json:"entryCost,omitempty"`
 	Risk             RiskPlan  `json:"risk"`
-	ExpectedReturn   Number   `json:"expectedReturn"`
-	ExpectedFees     Number   `json:"expectedFees"`
-	ExpectedSpread   Number   `json:"expectedSpread"`
-	ExpectedImpact   Number   `json:"expectedImpact"`
-	AdverseSelection Number   `json:"adverseSelection"`
-	Uncertainty      float64  `json:"uncertainty"`
+	ExpectedReturn   Number    `json:"expectedReturn"`
+	ExpectedFees     Number    `json:"expectedFees"`
+	ExpectedSpread   Number    `json:"expectedSpread"`
+	ExpectedImpact   Number    `json:"expectedImpact"`
+	AdverseSelection Number    `json:"adverseSelection"`
+	Uncertainty      float64   `json:"uncertainty"`
 
 	// Allocation state.
-	AllocationClass   string `json:"allocationClass"`
+	AllocationClass   string  `json:"allocationClass"`
 	AllocationHaircut float64 `json:"allocation_haircut"`
-	OpenPositions     int    `json:"openPositions"`
-	SlotCapacity      int    `json:"slotCapacity"`
+	OpenPositions     int     `json:"openPositions"`
+	SlotCapacity      int     `json:"slotCapacity"`
 
 	// Narrative fallback fields retained for diagnosis prose.
 	Cause  string `json:"cause"`
@@ -121,8 +121,8 @@ DecisionTrace projects the MCTS entry-decision chain: the recommended action and
 the branches actually explored, straight off the search tree.
 */
 type DecisionTrace struct {
-	RecommendedAction string              `json:"recommendedAction,omitempty"`
-	Iterations        int                 `json:"iterations"`
+	RecommendedAction string               `json:"recommendedAction,omitempty"`
+	Iterations        int                  `json:"iterations"`
 	Branches          []DecisionMCTSBranch `json:"branches"`
 }
 
@@ -140,15 +140,15 @@ EntryCost mirrors the observable execution boundary one long was priced at:
 entry VWAP, fees, spread, impact, and break-even.
 */
 type EntryCost struct {
-	EntryPrice   Number `json:"entryPrice"`
-	BestAsk      Number `json:"bestAsk"`
-	BestBid      Number `json:"bestBid"`
+	EntryPrice    Number `json:"entryPrice"`
+	BestAsk       Number `json:"bestAsk"`
+	BestBid       Number `json:"bestBid"`
 	GrossNotional Number `json:"grossNotional"`
-	EntryFee     Number `json:"entryFee"`
+	EntryFee      Number `json:"entryFee"`
 	RoundTripFees Number `json:"roundTripFees"`
-	Spread       Number `json:"spread"`
-	Impact       Number `json:"impact"`
-	BreakEven    Number `json:"breakEven"`
+	Spread        Number `json:"spread"`
+	Impact        Number `json:"impact"`
+	BreakEven     Number `json:"breakEven"`
 }
 
 /*

@@ -166,26 +166,102 @@ export type HindsightRootCause = {
 	symbols: string[];
 };
 
+export type HindsightMCTSBranch = {
+	action: string;
+	visits: number;
+	meanReward: number;
+};
+
+export type HindsightMCTS = {
+	recommendedAction?: string;
+	iterations?: number;
+	branches?: HindsightMCTSBranch[];
+};
+
+export type HindsightEntryCost = {
+	entryPrice?: number;
+	bestAsk?: number;
+	bestBid?: number;
+	grossNotional?: number;
+	entryFee?: number;
+	spread?: number;
+	impact?: number;
+	breakEven?: number;
+};
+
+export type HindsightRisk = {
+	present?: boolean;
+	riskDistance?: number;
+	maxLoss?: number;
+	entryFeeRate?: number;
+	exitFeeRate?: number;
+};
+
 export type HindsightSignal = {
 	id: string;
 	at: string | null;
 	action?: string;
 	reason?: string;
 	cause?: string;
-	graphScore: number;
-	thesisScore: number;
-	thesisConfidence?: number;
-	thesisSupport?: number;
-	thesisContradiction?: number;
-	thesisConditions?: number;
-	direction?: number;
-	confidence?: number;
-	admissionThreshold?: number;
 	opportunity: boolean;
 	opportunityType?: string;
-	predictiveReady?: boolean;
-	predictiveStatus?: string;
+	opportunityPhase?: string;
+	valuationAttempted?: boolean;
+	valuationAvailable?: boolean;
+	valuationStatus?: string;
+	causalIdentification?: string;
+	causalBlockingCoordinate?: string;
+	utility?: number;
+	utilityAvailable?: boolean;
+	proposedQuantity?: number;
+	proposedNotional?: number;
+	availableCapital?: number;
+	allocationClass?: string;
+	allocationHaircut?: number;
+	expectedReturn?: number;
+	expectedFees?: number;
+	expectedSpread?: number;
+	expectedImpact?: number;
+	adverseSelection?: number;
+	uncertainty?: number;
+	openPositions?: number;
+	slotCapacity?: number;
+	entryCost?: HindsightEntryCost | null;
+	risk?: HindsightRisk | null;
+	mcts?: HindsightMCTS | null;
 	alternatives: Record<string, number> | null;
+};
+
+export type HindsightExecutable = {
+	symbol: string;
+	buyAt: string;
+	sellAt: string;
+	theoreticalBuyPrice: number;
+	theoreticalSellPrice: number;
+	theoreticalReturn: number;
+	requestedQty: number;
+	requestedNotional: number;
+	executableEntryQty: number;
+	executableEntryVWAP: number;
+	executableEntryValue: number;
+	executableEntryFees: number;
+	entryImpact: number;
+	executableExitQty: number;
+	executableExitVWAP: number;
+	executableExitValue: number;
+	executableExitFees: number;
+	exitImpact: number;
+	fullyExecutable: boolean;
+	executableReturn: number;
+	executablePnL: number;
+};
+
+export type HindsightRegret = {
+	detection: boolean;
+	valuation: boolean;
+	selection: boolean;
+	execution: boolean;
+	management: boolean;
 };
 
 export type HindsightLeg = {
@@ -220,6 +296,8 @@ export type HindsightOpportunity = {
 	leg: HindsightLeg;
 	signal: HindsightSignal;
 	journal?: HindsightSignal[];
+	executable?: HindsightExecutable | null;
+	regret?: HindsightRegret | null;
 	why?: string;
 	diagnosis?: HindsightDiagnosis | null;
 	captured: boolean;
@@ -228,7 +306,10 @@ export type HindsightOpportunity = {
 
 export type HindsightSymbol = {
 	symbol: string;
-	upboundPct: number;
+	priceTheoreticalCeiling: number;
+	executableCeiling: number;
+	executableLegsDefined?: number;
+	executableLegsTotal?: number;
 	realizedPct: number;
 	missedPct: number;
 	lossPct?: number;
@@ -243,8 +324,9 @@ export type HindsightReport = {
 	captureId: number;
 	status?: string;
 	symbols: HindsightSymbol[];
+	priceTheoreticalCeiling: number;
+	executableCeiling: number;
 	missedPct: number;
-	upboundPct: number;
 	missedLegs: number;
 	totalLegs: number;
 	realizedPct?: number;

@@ -183,8 +183,9 @@ export const HindsightPanel = ({ report }: { report: HindsightReport }) => {
 
 	return (
 		<Flex.Column className="min-h-0 flex-1 overflow-hidden">
-			<div className="grid shrink-0 grid-cols-5 divide-x divide-(--line) border-b border-(--line)">
-				<Stat layout="tile" label="perfect-execution ceiling" value={formatPct(report.upboundPct)} className="px-4 py-3" />
+			<div className="grid shrink-0 grid-cols-6 divide-x divide-(--line) border-b border-(--line)">
+				<Stat layout="tile" label="price-theoretical ceiling" value={formatPct(report.priceTheoreticalCeiling)} className="px-4 py-3" />
+				<Stat layout="tile" label="executable ceiling" value={formatPct(report.executableCeiling)} className="px-4 py-3" />
 				<Stat layout="tile" label="value captured" value={formatPct(valueCapture)} className="px-4 py-3" />
 				<Stat layout="tile" label="missed value" value={formatPct(report.missedPct)} variant="error" className="px-4 py-3" />
 				<Stat

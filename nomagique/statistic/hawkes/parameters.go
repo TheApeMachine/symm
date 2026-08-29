@@ -14,17 +14,6 @@ const (
 )
 
 /*
-fitFromLogParams is the unrestricted decoder used by the production full-model
-path.
-*/
-func fitFromLogParams(
-	logParams [bivariateParamCount]float64,
-	context fitContext,
-) bivariateFit {
-	return fitFromRestrictedLogParams(logParams, context, fitUnrestricted)
-}
-
-/*
 fitFromRestrictedLogParams converts bounded log coordinates
 [muX, muY, beta, branchXX, branchXY, branchYX, branchYY] into Hawkes
 parameters and applies the nested-model restriction before stability

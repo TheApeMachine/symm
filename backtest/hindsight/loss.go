@@ -142,14 +142,14 @@ func diagnoseLossPosition(
 
 	if grossPct >= 0 {
 		blocker := Blocker{
-			Key:      "loss:friction_drag",
-			Category: DiagnosisFrictionDrag,
-			Label:    "friction drag",
-			Observed: frictionPct,
-			Target:   grossPct,
+			Key:       "loss:friction_drag",
+			Category:  DiagnosisFrictionDrag,
+			Label:     "friction drag",
+			Observed:  frictionPct,
+			Target:    grossPct,
 			HasTarget: true,
-			Gap:      frictionPct - grossPct,
-			Severity: lossMagnitude,
+			Gap:       frictionPct - grossPct,
+			Severity:  lossMagnitude,
 			Explanation: fmt.Sprintf(
 				"gross return was +%.2f%%, but round-trip friction of %.2f%% consumed the gain",
 				grossPct*100,

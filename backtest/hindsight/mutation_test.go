@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/smartystreets/goconvey/convey"
 	"github.com/krakenfx/api-go/v2/pkg/book"
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 /*

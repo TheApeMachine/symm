@@ -120,6 +120,8 @@ func TestHindsightWire(t *testing.T) {
 
 		Convey("It should publish the backend verdicts and loss metrics", func() {
 			So(frame.ValueCaptureRate, ShouldAlmostEqual, 1.0/3.0, 1e-12)
+			So(frame.PriceTheoreticalCeiling, ShouldAlmostEqual, 0.3, 1e-12)
+			So(frame.ExecutableCeiling, ShouldAlmostEqual, 0.28, 1e-12)
 			So(frame.LossPct, ShouldAlmostEqual, 0.05, 1e-12)
 			So(frame.LossPositions, ShouldEqual, 1)
 			So(frame.RootCauses, ShouldHaveLength, 1)
@@ -127,6 +129,8 @@ func TestHindsightWire(t *testing.T) {
 			So(frame.Recommendations, ShouldHaveLength, 1)
 			So(frame.Recommendations[0].Suggested, ShouldAlmostEqual, 0.48, 1e-12)
 			So(frame.Symbols, ShouldHaveLength, 1)
+			So(frame.Symbols[0].PriceTheoreticalCeiling, ShouldAlmostEqual, 0.3, 1e-12)
+			So(frame.Symbols[0].ExecutableCeiling, ShouldAlmostEqual, 0.28, 1e-12)
 			So(frame.Symbols[0].Opportunities, ShouldHaveLength, 1)
 			So(frame.Symbols[0].Opportunities[0].Leg.GrossProfitPct, ShouldAlmostEqual, 0.20, 1e-12)
 			So(frame.Symbols[0].Opportunities[0].Leg.FrictionPct, ShouldAlmostEqual, 0.01, 1e-12)
@@ -143,6 +147,51 @@ func TestHindsightWire(t *testing.T) {
 			So(diagnosis, ShouldNotBeNil)
 			So(diagnosis.Category, ShouldEqual, hindsight.DiagnosisAdmission)
 			So(diagnosis.Blockers, ShouldHaveLength, 1)
+		})
+	})
+}
+
+/*
+TestHindsightWireStaleArchitecture asserts the migrated wire no longer carries
+the retired Thesis/Graph diagnostic fields. The flatbuffer schema defines only
+the current Opportunity → Valuation → MCTS → Execution → Risk facts; this test
+guards the valuation facts round-trip while the theorem is compile-enforced by
+the absence of any ThesisScore/GraphScore field on HindsightSignal.
+*/
+func TestHindsightWireStaleArchitecture(t *testing.T) {
+	Convey("Given a signal carrying current-architecture valuation facts", t, func() {
+		report := RealizedReport{
+			CaptureID: 1,
+			Symbols: []hindsight.PerSymbol{{
+				Symbol:                  "TEST/USD",
+				PriceTheoreticalCeiling: 0.1,
+				ExecutableCeiling:       0.09,
+				Opportunities: []hindsight.MissedLeg{{
+					Signal: hindsight.SignalContext{
+						Opportunity:          true,
+						OpportunityType:      "pump",
+						ValuationAttempted:   true,
+						ValuationAvailable:   false,
+						ValuationStatus:      "incomplete",
+						CausalIdentification: "",
+						UtilityAvailable:     true,
+						ProposedQuantity:     hindsight.Number(2),
+					},
+					Missed: true,
+				}},
+			}},
+		}
+
+		frame := hindsightWire(report)
+		signal := frame.Symbols[0].Opportunities[0].Signal
+
+		Convey("It should carry valuation facts, not thesis/graph scores", func() {
+			So(signal, ShouldNotBeNil)
+			So(signal.OpportunityType, ShouldEqual, "pump")
+			So(signal.ValuationAttempted, ShouldBeTrue)
+			So(signal.ValuationAvailable, ShouldBeFalse)
+			So(signal.ValuationStatus, ShouldEqual, "incomplete")
+			So(signal.ProposedQuantity, ShouldAlmostEqual, 2.0, 1e-12)
 		})
 	})
 }

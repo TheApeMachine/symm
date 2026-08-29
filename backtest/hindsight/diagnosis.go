@@ -17,14 +17,14 @@ const (
 )
 
 const (
-	DiagnosisDetection    = "detection"
-	DiagnosisValuation    = "valuation"
-	DiagnosisSelection    = "selection"
-	DiagnosisExecution    = "execution_feasibility"
-	DiagnosisAdmission    = "admission_policy"
-	DiagnosisAllocation   = "allocation_capacity"
+	DiagnosisDetection     = "detection"
+	DiagnosisValuation     = "valuation"
+	DiagnosisSelection     = "selection"
+	DiagnosisExecution     = "execution_feasibility"
+	DiagnosisAdmission     = "admission_policy"
+	DiagnosisAllocation    = "allocation_capacity"
 	DiagnosisFollowThrough = "decision_follow_through"
-	DiagnosisRegulator    = "regulator_readiness"
+	DiagnosisRegulator     = "regulator_readiness"
 	DiagnosisObservability = "observability_gap"
 )
 

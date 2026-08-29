@@ -2,9 +2,11 @@ import { useState } from "react";
 
 import type {
 	HindsightBlocker,
+	HindsightExecutable,
 	HindsightLoss,
 	HindsightOpportunity,
 	HindsightRecommendation,
+	HindsightRegret,
 	HindsightSignal,
 	HindsightSymbol,
 } from "#/collections/app";
@@ -12,6 +14,9 @@ import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 
 import { formatHindsightCategory } from "./hindsight-model";
+
+const boolLabel = (value: boolean | undefined): string =>
+	value === undefined ? "—" : value ? "yes" : "no";
 
 const formatPct = (value: number): string => `${(value * 100).toFixed(2)}%`;
 
@@ -70,13 +75,105 @@ const AlternativeBars = ({
 	);
 };
 
-const ThesisRow = ({ label, value }: { label: string; value?: number }) =>
-	value === undefined ? null : (
+const FactRow = ({
+	label,
+	value,
+}: {
+	label: string;
+	value: string | number | undefined;
+}) =>
+	value === undefined || value === "" ? null : (
 		<div className="flex items-center gap-2 font-mono text-[10px]">
-			<span className="w-40 text-(--f4)">{label}</span>
-			<span className="tabular-nums text-(--f3)">{value.toFixed(4)}</span>
+			<span className="w-48 shrink-0 text-(--f4)">{label}</span>
+			<span className="tabular-nums text-(--f3)">{value}</span>
 		</div>
 	);
+
+const DecisionFacts = ({ signal }: { signal: HindsightSignal }) => (
+	<div className="grid grid-cols-2 gap-x-4 gap-y-0.5 border-t border-(--line) pt-2">
+		<FactRow label="opportunity type" value={signal.opportunityType} />
+		<FactRow label="opportunity phase" value={signal.opportunityPhase} />
+		<FactRow label="valuation attempted" value={boolLabel(signal.valuationAttempted)} />
+		<FactRow label="valuation available" value={boolLabel(signal.valuationAvailable)} />
+		<FactRow label="valuation status" value={signal.valuationStatus} />
+		<FactRow label="causal identification" value={signal.causalIdentification} />
+		<FactRow label="expected return" value={signal.expectedReturn} />
+		<FactRow label="expected fees" value={signal.expectedFees} />
+		<FactRow label="expected spread" value={signal.expectedSpread} />
+		<FactRow label="expected impact" value={signal.expectedImpact} />
+		<FactRow label="adverse selection" value={signal.adverseSelection} />
+		<FactRow label="uncertainty" value={signal.uncertainty} />
+		<FactRow label="proposed quantity" value={signal.proposedQuantity} />
+		<FactRow label="proposed notional" value={signal.proposedNotional} />
+	</div>
+);
+
+const RegretBadges = ({
+	regret,
+}: {
+	regret: HindsightRegret | null | undefined;
+}) => {
+	if (regret === null || regret === undefined) {
+		return null;
+	}
+
+	const layers = [
+		["detection", regret.detection],
+		["valuation", regret.valuation],
+		["selection", regret.selection],
+		["execution", regret.execution],
+		["management", regret.management],
+	] as const;
+
+	return (
+		<div className="flex flex-wrap gap-1.5 border-t border-(--line) pt-2">
+			<span className="w-full font-mono text-[9px] uppercase tracking-widest text-(--f4)">
+				regret ownership
+			</span>
+			{layers.map(([name, owned]) => (
+				<span
+					key={name}
+					className={`rounded-[3px] border px-1.5 py-px font-mono text-[8px] ${
+						owned
+							? "border-(--warn) text-(--warn)"
+							: "border-(--line) text-(--f4)"
+					}`}
+				>
+					{name}{owned ? " ✦" : ""}
+				</span>
+			))}
+		</div>
+	);
+};
+
+const ExecutableBlock = ({
+	executable,
+}: {
+	executable: HindsightExecutable | null | undefined;
+}) => {
+	if (executable === null || executable === undefined) {
+		return null;
+	}
+
+	return (
+		<div className="flex flex-col gap-1 border-t border-(--line) pt-2">
+			<span className="font-mono text-[9px] uppercase tracking-widest text-(--f4)">
+				executable counterfactual
+			</span>
+			<div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+				<FactRow label="requested qty" value={executable.requestedQty} />
+				<FactRow label="entry VWAP" value={executable.executableEntryVWAP} />
+				<FactRow label="entry value" value={executable.executableEntryValue} />
+				<FactRow label="entry fees" value={executable.executableEntryFees} />
+				<FactRow label="exit VWAP" value={executable.executableExitVWAP} />
+				<FactRow label="exit value" value={executable.executableExitValue} />
+				<FactRow label="exit fees" value={executable.executableExitFees} />
+				<FactRow label="executable return" value={executable.executableReturn} />
+				<FactRow label="executable PnL" value={executable.executablePnL} />
+			</div>
+		</div>
+	);
+};
 
 const JournalRows = ({ journal }: { journal?: HindsightSignal[] }) =>
 	journal === undefined || journal.length === 0 ? null : (
@@ -87,7 +184,7 @@ const JournalRows = ({ journal }: { journal?: HindsightSignal[] }) =>
 			{journal.map((decision) => (
 				<div
 					key={decision.id}
-					className="grid grid-cols-[5rem_4rem_6rem_6rem_minmax(0,1fr)] items-center gap-2 rounded-[3px] bg-(--sunken) px-2 py-1 font-mono text-[10px]"
+					className="grid grid-cols-[5rem_4rem_8rem_8rem_minmax(0,1fr)] items-center gap-2 rounded-[3px] bg-(--sunken) px-2 py-1 font-mono text-[10px]"
 				>
 					<span className="tabular-nums text-(--f4)">{formatClock(decision.at)}</span>
 					<span
@@ -102,10 +199,10 @@ const JournalRows = ({ journal }: { journal?: HindsightSignal[] }) =>
 						{decision.action}
 					</span>
 					<span className="tabular-nums text-(--f3)">
-						graph {decision.graphScore.toFixed(4)}
+						opportunity {decision.opportunityType ?? "none"}
 					</span>
 					<span className="tabular-nums text-(--f3)">
-						thesis {decision.thesisScore.toFixed(4)}
+						utility {decision.utility ?? "—"}
 					</span>
 					<span className="truncate text-(--f4)">{decision.reason}</span>
 				</div>
@@ -230,14 +327,9 @@ export const OpportunityCard = ({ opportunity }: { opportunity: HindsightOpportu
 				</>
 			) : null}
 
-			<div className="grid grid-cols-2 gap-x-4 gap-y-0.5 border-t border-(--line) pt-2">
-				<ThesisRow label="thesis confidence" value={opportunity.signal.thesisConfidence} />
-				<ThesisRow label="thesis support" value={opportunity.signal.thesisSupport} />
-				<ThesisRow label="thesis contradiction" value={opportunity.signal.thesisContradiction} />
-				<ThesisRow label="thesis conditions" value={opportunity.signal.thesisConditions} />
-				<ThesisRow label="direction" value={opportunity.signal.direction} />
-				<ThesisRow label="admission threshold" value={opportunity.signal.admissionThreshold} />
-			</div>
+			<DecisionFacts signal={opportunity.signal} />
+			<ExecutableBlock executable={opportunity.executable} />
+			<RegretBadges regret={opportunity.regret} />
 			<JournalRows journal={opportunity.journal} />
 			{opportunity.signal.alternatives !== null &&
 			Object.keys(opportunity.signal.alternatives).length > 0 ? (
@@ -298,14 +390,7 @@ export const LossCard = ({ loss }: { loss: HindsightLoss }) => {
 				</>
 			) : null}
 
-			<div className="grid grid-cols-2 gap-x-4 gap-y-0.5 border-t border-(--line) pt-2">
-				<ThesisRow label="entry thesis confidence" value={loss.signal.thesisConfidence} />
-				<ThesisRow label="entry thesis support" value={loss.signal.thesisSupport} />
-				<ThesisRow label="entry thesis contradiction" value={loss.signal.thesisContradiction} />
-				<ThesisRow label="entry thesis conditions" value={loss.signal.thesisConditions} />
-				<ThesisRow label="entry direction" value={loss.signal.direction} />
-				<ThesisRow label="admission threshold" value={loss.signal.admissionThreshold} />
-			</div>
+			<DecisionFacts signal={loss.signal} />
 			<JournalRows journal={loss.journal} />
 			{loss.signal.alternatives !== null &&
 			Object.keys(loss.signal.alternatives).length > 0 ? (
@@ -340,7 +425,8 @@ export const HindsightSymbolCard = ({
 				onClick={() => setOpen((previous) => !previous)}
 			>
 				<span className="w-32 truncate font-mono text-[11px] font-semibold text-(--f1)">{symbol.symbol}</span>
-				<span className="w-24 font-mono text-[10px] tabular-nums text-(--f3)">ceiling {formatPct(symbol.upboundPct)}</span>
+				<span className="w-28 font-mono text-[10px] tabular-nums text-(--f3)">theoretical {formatPct(symbol.priceTheoreticalCeiling)}</span>
+				<span className="w-28 font-mono text-[10px] tabular-nums text-(--f4)">executable {formatPct(symbol.executableCeiling)}</span>
 				<span className="w-28 font-mono text-[10px] tabular-nums text-(--up)">entered {formatPct(symbol.realizedPct)}</span>
 				<span className="w-28 font-mono text-[10px] tabular-nums text-(--warn)">missed {formatPct(symbol.missedPct)}</span>
 				{lossPct > 0 || lossPositions > 0 ? (

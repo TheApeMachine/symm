@@ -130,48 +130,6 @@ func gapsFromMarked(marked []markedEvent) []float64 {
 }
 
 /*
-observationOrigin returns the common left endpoint for both marked sides.
-*/
-func (stream arrivalStream) observationOrigin() float64 {
-	return stream.originSec
-}
-
-/*
-withObservationOrigin returns the same arrival support with a new common
-observation origin. Events at the origin remain available as prehistory.
-*/
-func (stream arrivalStream) withObservationOrigin(originSec float64) arrivalStream {
-	stream.originSec = originSec
-
-	return stream
-}
-
-/*
-buyTimes returns buy-side timestamps in seconds.
-*/
-func (stream arrivalStream) buyTimes() []float64 {
-	return stream.buy
-}
-
-/*
-sellTimes returns sell-side timestamps in seconds.
-*/
-func (stream arrivalStream) sellTimes() []float64 {
-	return stream.sell
-}
-
-/*
-bounds returns the earliest and latest marked arrival.
-*/
-func (stream arrivalStream) bounds() (float64, float64, bool) {
-	if len(stream.marked) == 0 {
-		return 0, 0, false
-	}
-
-	return stream.marked[0].atSec, stream.marked[len(stream.marked)-1].atSec, true
-}
-
-/*
 span returns exposure seconds on the common interval (origin, horizon].
 */
 func (stream arrivalStream) span(horizonSec float64) float64 {

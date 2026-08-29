@@ -2,9 +2,11 @@ import type {
 	BacktestState,
 	HindsightBlocker,
 	HindsightDiagnosis,
+	HindsightExecutable,
 	HindsightLoss,
 	HindsightOpportunity,
 	HindsightRecommendation,
+	HindsightRegret,
 	HindsightReport,
 	HindsightRootCause,
 	HindsightSignal,
@@ -13,11 +15,13 @@ import type {
 import type { BacktestFrame } from "#/providers/telemetry/telemetry/backtest-frame";
 import type { HindsightBlockerT } from "#/providers/telemetry/telemetry/hindsight-blocker";
 import type { HindsightDiagnosisT } from "#/providers/telemetry/telemetry/hindsight-diagnosis";
+import type { HindsightExecutableT } from "#/providers/telemetry/telemetry/hindsight-executable";
 import type { HindsightFrame } from "#/providers/telemetry/telemetry/hindsight-frame";
 import type { HindsightLegT } from "#/providers/telemetry/telemetry/hindsight-leg";
 import type { HindsightLossT } from "#/providers/telemetry/telemetry/hindsight-loss";
 import type { HindsightOpportunityT } from "#/providers/telemetry/telemetry/hindsight-opportunity";
 import type { HindsightRecommendationT } from "#/providers/telemetry/telemetry/hindsight-recommendation";
+import type { HindsightRegretT } from "#/providers/telemetry/telemetry/hindsight-regret";
 import type { HindsightRootCauseT } from "#/providers/telemetry/telemetry/hindsight-root-cause";
 import type { HindsightSignalT } from "#/providers/telemetry/telemetry/hindsight-signal";
 import type { HindsightSymbolT } from "#/providers/telemetry/telemetry/hindsight-symbol";
@@ -58,19 +62,61 @@ const signalToReport = (signal: HindsightSignalT): HindsightSignal => ({
 	action: text(signal.action),
 	reason: text(signal.reason),
 	cause: text(signal.cause),
-	graphScore: signal.graphScore,
-	thesisScore: signal.thesisScore,
-	thesisConfidence: signal.thesisConfidence,
-	thesisSupport: signal.thesisSupport,
-	thesisContradiction: signal.thesisContradiction,
-	thesisConditions: signal.thesisConditions,
-	direction: signal.direction,
-	confidence: signal.confidence,
-	admissionThreshold: signal.admissionThreshold,
 	opportunity: signal.opportunity,
 	opportunityType: text(signal.opportunityType),
-	predictiveReady: signal.predictiveReady,
-	predictiveStatus: text(signal.predictiveStatus),
+	opportunityPhase: text(signal.opportunityPhase),
+	valuationAttempted: signal.valuationAttempted,
+	valuationAvailable: signal.valuationAvailable,
+	valuationStatus: text(signal.valuationStatus),
+	causalIdentification: text(signal.causalIdentification),
+	causalBlockingCoordinate: text(signal.causalBlockingCoordinate),
+	utility: signal.utility,
+	utilityAvailable: signal.utilityAvailable,
+	proposedQuantity: signal.proposedQuantity,
+	proposedNotional: signal.proposedNotional,
+	availableCapital: signal.availableCapital,
+	allocationClass: text(signal.allocationClass),
+	allocationHaircut: signal.allocationHaircut,
+	expectedReturn: signal.expectedReturn,
+	expectedFees: signal.expectedFees,
+	expectedSpread: signal.expectedSpread,
+	expectedImpact: signal.expectedImpact,
+	adverseSelection: signal.adverseSelection,
+	uncertainty: signal.uncertainty,
+	openPositions: count(signal.openPositions),
+	slotCapacity: count(signal.slotCapacity),
+	entryCost: signal.entryCost
+		? {
+				entryPrice: signal.entryCost.entryPrice,
+				bestAsk: signal.entryCost.bestAsk,
+				bestBid: signal.entryCost.bestBid,
+				grossNotional: signal.entryCost.grossNotional,
+				entryFee: signal.entryCost.entryFee,
+				spread: signal.entryCost.spread,
+				impact: signal.entryCost.impact,
+				breakEven: signal.entryCost.breakEven,
+			}
+		: null,
+	risk: signal.risk
+		? {
+				present: signal.risk.present,
+				riskDistance: signal.risk.riskDistance,
+				maxLoss: signal.risk.maxLoss,
+				entryFeeRate: signal.risk.entryFeeRate,
+				exitFeeRate: signal.risk.exitFeeRate,
+			}
+		: null,
+	mcts: signal.mcts
+		? {
+				recommendedAction: text(signal.mcts.recommendedAction),
+				iterations: count(signal.mcts.iterations),
+				branches: (signal.mcts.branches ?? []).map((branch) => ({
+					action: text(branch.action),
+					visits: count(branch.visits),
+					meanReward: branch.meanReward,
+				})),
+			}
+		: null,
 	alternatives: alternativesToRecord(signal.alternatives),
 });
 
@@ -147,12 +193,62 @@ const legToReport = (leg: HindsightLegT) => ({
 	frictionPct: leg.frictionPct,
 });
 
+const executableToReport = (
+	executable: HindsightExecutableT | null,
+): HindsightExecutable | null => {
+	if (executable === null) {
+		return null;
+	}
+
+	return {
+		symbol: text(executable.symbol),
+		buyAt: nanosToIso(executable.buyAt) ?? "",
+		sellAt: nanosToIso(executable.sellAt) ?? "",
+		theoreticalBuyPrice: executable.theoreticalBuyPrice,
+		theoreticalSellPrice: executable.theoreticalSellPrice,
+		theoreticalReturn: executable.theoreticalReturn,
+		requestedQty: executable.requestedQty,
+		requestedNotional: executable.requestedNotional,
+		executableEntryQty: executable.executableEntryQty,
+		executableEntryVWAP: executable.executableEntryVwap,
+		executableEntryValue: executable.executableEntryValue,
+		executableEntryFees: executable.executableEntryFees,
+		entryImpact: executable.entryImpact,
+		executableExitQty: executable.executableExitQty,
+		executableExitVWAP: executable.executableExitVwap,
+		executableExitValue: executable.executableExitValue,
+		executableExitFees: executable.executableExitFees,
+		exitImpact: executable.exitImpact,
+		fullyExecutable: executable.fullyExecutable,
+		executableReturn: executable.executableReturn,
+		executablePnL: executable.executablePnL,
+	};
+};
+
+const regretToReport = (
+	regret: HindsightRegretT | null,
+): HindsightRegret | null => {
+	if (regret === null) {
+		return null;
+	}
+
+	return {
+		detection: regret.detection,
+		valuation: regret.valuation,
+		selection: regret.selection,
+		execution: regret.execution,
+		management: regret.management,
+	};
+};
+
 const opportunityToReport = (
 	opportunity: HindsightOpportunityT,
 ): HindsightOpportunity => ({
 	leg: legToReport(opportunity.leg ?? ({} as HindsightLegT)),
 	signal: signalToReport(opportunity.signal ?? ({} as HindsightSignalT)),
 	journal: opportunity.journal.map(signalToReport),
+	executable: executableToReport(opportunity.executable),
+	regret: regretToReport(opportunity.regret),
 	why: text(opportunity.why),
 	captured: opportunity.captured,
 	missed: opportunity.missed,
@@ -178,7 +274,10 @@ const lossToReport = (loss: HindsightLossT): HindsightLoss => ({
 
 const symbolToReport = (symbol: HindsightSymbolT): HindsightSymbol => ({
 	symbol: text(symbol.symbol),
-	upboundPct: symbol.upboundPct,
+	priceTheoreticalCeiling: symbol.priceTheoreticalCeiling,
+	executableCeiling: symbol.executableCeiling,
+	executableLegsDefined: count(symbol.executableLegsDefined),
+	executableLegsTotal: count(symbol.executableLegsTotal),
 	realizedPct: symbol.realizedPct,
 	missedPct: symbol.missedPct,
 	lossPct: symbol.lossPct,
@@ -222,8 +321,9 @@ export const hindsightFrameToReport = (
 		captureId: count(unpacked.captureId),
 		status: text(unpacked.status),
 		symbols: unpacked.symbols.map(symbolToReport),
+		priceTheoreticalCeiling: unpacked.priceTheoreticalCeiling,
+		executableCeiling: unpacked.executableCeiling,
 		missedPct: unpacked.missedPct,
-		upboundPct: unpacked.upboundPct,
 		missedLegs: count(unpacked.missedLegs),
 		totalLegs: count(unpacked.totalLegs),
 		realizedPct: unpacked.realizedPct,
