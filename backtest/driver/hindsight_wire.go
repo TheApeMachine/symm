@@ -34,22 +34,15 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 			}
 
 			opportunities = append(opportunities, &wire.HindsightOpportunityT{
-				Leg: &wire.HindsightLegT{
-					Symbol:         opportunity.Leg.Symbol,
-					BuyAt:          opportunity.Leg.BuyAt.UnixNano(),
-					SellAt:         opportunity.Leg.SellAt.UnixNano(),
-					BuyPrice:       opportunity.Leg.BuyPrice,
-					SellPrice:      opportunity.Leg.SellPrice,
-					ProfitPct:      opportunity.Leg.ProfitPct,
-					GrossProfitPct: opportunity.Leg.GrossProfitPct,
-					FrictionPct:    opportunity.Leg.FrictionPct,
-				},
-				Signal:    hindsightSignalWire(opportunity.Signal),
-				Journal:   journal,
-				Diagnosis: hindsightDiagnosisWire(opportunity.Diagnosis),
-				Why:       opportunity.Why,
-				Captured:  opportunity.Captured,
-				Missed:    opportunity.Missed,
+				Leg:        hindsightLegWire(opportunity.Leg),
+				Signal:     hindsightSignalWire(opportunity.Signal),
+				Journal:    journal,
+				Executable: hindsightExecutableWire(opportunity.Executable),
+				Regret:     hindsightRegretWire(opportunity.Regret),
+				Diagnosis:  hindsightDiagnosisWire(opportunity.Diagnosis),
+				Why:        opportunity.Why,
+				Captured:   opportunity.Captured,
+				Missed:     opportunity.Missed,
 			})
 		}
 
@@ -81,16 +74,19 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 		}
 
 		symbols = append(symbols, &wire.HindsightSymbolT{
-			Symbol:        symbol.Symbol,
-			UpboundPct:    symbol.UpboundPct,
-			RealizedPct:   symbol.RealizedPct,
-			MissedPct:     symbol.MissedPct,
-			LossPct:       symbol.LossPct,
-			Legs:          int64(symbol.Legs),
-			MissedLegs:    int64(symbol.MissedLegs),
-			LossPositions: int64(symbol.LossPositions),
-			Opportunities: opportunities,
-			Losses:        losses,
+			Symbol:                  symbol.Symbol,
+			PriceTheoreticalCeiling: symbol.PriceTheoreticalCeiling,
+			ExecutableCeiling:       symbol.ExecutableCeiling,
+			ExecutableLegsDefined:   int64(symbol.ExecutableLegsDefined),
+			ExecutableLegsTotal:     int64(symbol.ExecutableLegsTotal),
+			RealizedPct:             symbol.RealizedPct,
+			MissedPct:               symbol.MissedPct,
+			LossPct:                 symbol.LossPct,
+			Legs:                    int64(symbol.Legs),
+			MissedLegs:              int64(symbol.MissedLegs),
+			LossPositions:           int64(symbol.LossPositions),
+			Opportunities:           opportunities,
+			Losses:                  losses,
 		})
 	}
 
@@ -117,79 +113,169 @@ func hindsightWire(report RealizedReport) *wire.HindsightFrameT {
 	}
 
 	return &wire.HindsightFrameT{
-		CaptureId:           report.CaptureID,
-		Status:              report.Status,
-		Symbols:             symbols,
-		MissedPct:           report.MissedPct,
-		UpboundPct:          report.UpboundPct,
-		MissedLegs:          int64(report.MissedLegs),
-		TotalLegs:           int64(report.TotalLegs),
-		RealizedPct:         report.RealizedPct,
-		LossPct:             report.LossPct,
-		LossPositions:       int64(report.LossPositions),
-		ValueCaptureRate:    report.ValueCaptureRate,
-		LegCaptureRate:      report.LegCaptureRate,
-		DiagnosticCoverage:  report.DiagnosticCoverage,
-		RootCauses:          rootCauses,
-		Recommendations:     recommendations,
-		LossRootCauses:      lossRootCauses,
-		LossRecommendations: lossRecommendations,
+		CaptureId:               report.CaptureID,
+		Status:                  report.Status,
+		Symbols:                 symbols,
+		PriceTheoreticalCeiling: report.PriceTheoreticalCeiling,
+		ExecutableCeiling:       report.ExecutableCeiling,
+		MissedPct:               report.MissedPct,
+		MissedLegs:              int64(report.MissedLegs),
+		TotalLegs:               int64(report.TotalLegs),
+		RealizedPct:             report.RealizedPct,
+		LossPct:                 report.LossPct,
+		LossPositions:           int64(report.LossPositions),
+		ValueCaptureRate:        report.ValueCaptureRate,
+		LegCaptureRate:          report.LegCaptureRate,
+		DiagnosticCoverage:      report.DiagnosticCoverage,
+		RootCauses:              rootCauses,
+		Recommendations:         recommendations,
+		LossRootCauses:          lossRootCauses,
+		LossRecommendations:     lossRecommendations,
+	}
+}
+
+func hindsightLegWire(leg hindsight.Leg) *wire.HindsightLegT {
+	return &wire.HindsightLegT{
+		Symbol:         leg.Symbol,
+		BuyAt:          leg.BuyAt.UnixNano(),
+		SellAt:         leg.SellAt.UnixNano(),
+		BuyPrice:       leg.BuyPrice,
+		SellPrice:      leg.SellPrice,
+		ProfitPct:      leg.ProfitPct,
+		GrossProfitPct: leg.GrossProfitPct,
+		FrictionPct:    leg.FrictionPct,
+	}
+}
+
+func hindsightExecutableWire(
+	executable *hindsight.ExecutableLeg,
+) *wire.HindsightExecutableT {
+	if executable == nil {
+		return nil
+	}
+
+	return &wire.HindsightExecutableT{
+		Symbol:               executable.Symbol,
+		BuyAt:                executable.BuyAt.UnixNano(),
+		SellAt:               executable.SellAt.UnixNano(),
+		TheoreticalBuyPrice:  executable.TheoreticalBuyPrice,
+		TheoreticalSellPrice: executable.TheoreticalSellPrice,
+		TheoreticalReturn:    executable.TheoreticalReturn,
+		RequestedQty:         executable.RequestedQty,
+		RequestedNotional:    executable.RequestedNotional,
+		ExecutableEntryQty:   executable.ExecutableEntryQty,
+		ExecutableEntryVwap:  executable.ExecutableEntryVWAP,
+		ExecutableEntryValue: executable.ExecutableEntryValue,
+		ExecutableEntryFees:  executable.ExecutableEntryFees,
+		EntryImpact:          executable.EntryImpact,
+		ExecutableExitQty:    executable.ExecutableExitQty,
+		ExecutableExitVwap:   executable.ExecutableExitVWAP,
+		ExecutableExitValue:  executable.ExecutableExitValue,
+		ExecutableExitFees:   executable.ExecutableExitFees,
+		ExitImpact:           executable.ExitImpact,
+		FullyExecutable:      executable.FullyExecutable,
+		ExecutableReturn:     executable.ExecutableReturn,
+		ExecutablePnL:        executable.ExecutablePnL,
+	}
+}
+
+func hindsightRegretWire(regret hindsight.RegretLayer) *wire.HindsightRegretT {
+	return &wire.HindsightRegretT{
+		Detection:  regret.Detection,
+		Valuation:  regret.Valuation,
+		Selection:  regret.Selection,
+		Execution:  regret.Execution,
+		Management: regret.Management,
 	}
 }
 
 /*
 hindsightDecisionSignalWire projects one journal decision onto the wire signal
-shape. Journal entries expose the raw Decision opportunity type.
+shape.
 */
 func hindsightDecisionSignalWire(decision hindsight.Decision) *wire.HindsightSignalT {
-	return &wire.HindsightSignalT{
-		Id:                  decision.ID,
-		At:                  decision.At.UnixNano(),
-		Action:              decision.Action,
-		Reason:              decision.Reason,
-		Cause:               decision.Cause,
-		GraphScore:          decision.GraphScore,
-		ThesisScore:         decision.ThesisScore,
-		ThesisConfidence:    decision.ThesisConfidence,
-		ThesisSupport:       decision.ThesisSupport,
-		ThesisContradiction: decision.ThesisContradiction,
-		ThesisConditions:    decision.ThesisConditions,
-		Direction:           decision.Direction,
-		Confidence:          decision.Confidence,
-		AdmissionThreshold:  decision.AdmissionThreshold,
-		Opportunity:         decision.Opportunity,
-		OpportunityType:     decision.OpportunityType,
-		PredictiveReady:     decision.PredictiveReady,
-		PredictiveStatus:    decision.PredictiveStatus,
-		Alternatives:        hindsightNumbers(decision.Alternatives),
-	}
+	return hindsightSignalWire(hindsight.SignalFromDecision(decision))
 }
 
 /*
-hindsightSignalWire projects one entry-signal context onto the wire signal
-shape. Signal contexts carry the opportunity type in their Type field.
+hindsightSignalWire projects one current-architecture decision context onto the
+wire signal shape. It no longer carries the retired Thesis/Graph scores.
 */
 func hindsightSignalWire(signal hindsight.SignalContext) *wire.HindsightSignalT {
 	return &wire.HindsightSignalT{
-		Id:                  signal.ID,
-		At:                  signal.At.UnixNano(),
-		Action:              signal.Action,
-		Reason:              signal.Reason,
-		Cause:               signal.Cause,
-		GraphScore:          signal.GraphScore,
-		ThesisScore:         signal.ThesisScore,
-		ThesisConfidence:    signal.ThesisConfidence,
-		ThesisSupport:       signal.ThesisSupport,
-		ThesisContradiction: signal.ThesisContradiction,
-		ThesisConditions:    signal.ThesisConditions,
-		Direction:           signal.Direction,
-		Confidence:          signal.Confidence,
-		AdmissionThreshold:  signal.AdmissionThreshold,
-		Opportunity:         signal.Opportunity,
-		OpportunityType:     signal.Type,
-		PredictiveReady:     signal.PredictiveReady,
-		PredictiveStatus:    signal.PredictiveStatus,
-		Alternatives:        hindsightNumbers(signal.Alternatives),
+		Id:                       signal.ID,
+		At:                       signal.At.UnixNano(),
+		Action:                   signal.Action,
+		Reason:                   signal.Reason,
+		Cause:                    signal.Cause,
+		Opportunity:              signal.Opportunity,
+		OpportunityType:          signal.OpportunityType,
+		OpportunityPhase:         signal.OpportunityPhase,
+		ValuationAttempted:       signal.ValuationAttempted,
+		ValuationAvailable:       signal.ValuationAvailable,
+		ValuationStatus:          signal.ValuationStatus,
+		CausalIdentification:     signal.CausalIdentification,
+		CausalBlockingCoordinate: signal.CausalBlockingCoordinate,
+		Utility:                  signal.Utility,
+		UtilityAvailable:         signal.UtilityAvailable,
+		ProposedQuantity:         signal.ProposedQuantity.Float(),
+		ProposedNotional:         signal.ProposedNotional.Float(),
+		AvailableCapital:         signal.AvailableCapital.Float(),
+		AllocationClass:          signal.AllocationClass,
+		AllocationHaircut:        signal.AllocationHaircut,
+		ExpectedReturn:           signal.ExpectedReturn.Float(),
+		ExpectedFees:             signal.ExpectedFees.Float(),
+		ExpectedSpread:           signal.ExpectedSpread.Float(),
+		ExpectedImpact:           signal.ExpectedImpact.Float(),
+		AdverseSelection:         signal.AdverseSelection.Float(),
+		Uncertainty:              signal.Uncertainty,
+		OpenPositions:            int64(signal.OpenPositions),
+		SlotCapacity:             int64(signal.SlotCapacity),
+		EntryCost:                hindsightEntryCostWire(signal.EntryCost),
+		Risk:                     hindsightRiskWire(signal.Risk),
+		Mcts:                     hindsightMCTSWire(signal.MCTS),
+		Alternatives:             hindsightNumbers(signal.Alternatives),
+	}
+}
+
+func hindsightEntryCostWire(cost hindsight.EntryCost) *wire.HindsightEntryCostT {
+	return &wire.HindsightEntryCostT{
+		EntryPrice:    cost.EntryPrice.Float(),
+		BestAsk:       cost.BestAsk.Float(),
+		BestBid:       cost.BestBid.Float(),
+		GrossNotional: cost.GrossNotional.Float(),
+		EntryFee:      cost.EntryFee.Float(),
+		Spread:        cost.Spread.Float(),
+		Impact:        cost.Impact.Float(),
+		BreakEven:     cost.BreakEven.Float(),
+	}
+}
+
+func hindsightRiskWire(risk hindsight.RiskPlan) *wire.HindsightRiskT {
+	return &wire.HindsightRiskT{
+		Present:      risk.Present,
+		RiskDistance: risk.RiskDistance.Float(),
+		MaxLoss:      risk.MaxLoss.Float(),
+		EntryFeeRate: risk.EntryFeeRate.Float(),
+		ExitFeeRate:  risk.ExitFeeRate.Float(),
+	}
+}
+
+func hindsightMCTSWire(mcts hindsight.DecisionTrace) *wire.HindsightMCTST {
+	branches := make([]*wire.HindsightMCTSBranchT, 0, len(mcts.Branches))
+
+	for _, branch := range mcts.Branches {
+		branches = append(branches, &wire.HindsightMCTSBranchT{
+			Action:     branch.Action,
+			Visits:     int64(branch.Visits),
+			MeanReward: branch.MeanReward,
+		})
+	}
+
+	return &wire.HindsightMCTST{
+		RecommendedAction: mcts.RecommendedAction,
+		Iterations:        int64(mcts.Iterations),
+		Branches:          branches,
 	}
 }
 

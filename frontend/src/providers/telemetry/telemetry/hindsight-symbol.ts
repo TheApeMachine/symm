@@ -34,99 +34,126 @@ symbol(optionalEncoding?:any):string|Uint8Array|null {
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
-upboundPct():number {
+priceTheoreticalCeiling():number {
   const offset = this.bb!.__offset(this.bb_pos, 6);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-realizedPct():number {
+executableCeiling():number {
   const offset = this.bb!.__offset(this.bb_pos, 8);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-missedPct():number {
+executableLegsDefined():bigint {
   const offset = this.bb!.__offset(this.bb_pos, 10);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+executableLegsTotal():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 12);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+realizedPct():number {
+  const offset = this.bb!.__offset(this.bb_pos, 14);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+missedPct():number {
+  const offset = this.bb!.__offset(this.bb_pos, 16);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 lossPct():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
+  const offset = this.bb!.__offset(this.bb_pos, 18);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 legs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
+  const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
 missedLegs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
+  const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
 lossPositions():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
+  const offset = this.bb!.__offset(this.bb_pos, 24);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
 opportunities(index: number, obj?:HindsightOpportunity):HindsightOpportunity|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
+  const offset = this.bb!.__offset(this.bb_pos, 26);
   return offset ? (obj || new HindsightOpportunity()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 opportunitiesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
+  const offset = this.bb!.__offset(this.bb_pos, 26);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 losses(index: number, obj?:HindsightLoss):HindsightLoss|null {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
+  const offset = this.bb!.__offset(this.bb_pos, 28);
   return offset ? (obj || new HindsightLoss()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 lossesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
+  const offset = this.bb!.__offset(this.bb_pos, 28);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 static startHindsightSymbol(builder:flatbuffers.Builder) {
-  builder.startObject(10);
+  builder.startObject(13);
 }
 
 static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
   builder.addFieldOffset(0, symbolOffset, 0);
 }
 
-static addUpboundPct(builder:flatbuffers.Builder, upboundPct:number) {
-  builder.addFieldFloat64(1, upboundPct, 0.0);
+static addPriceTheoreticalCeiling(builder:flatbuffers.Builder, priceTheoreticalCeiling:number) {
+  builder.addFieldFloat64(1, priceTheoreticalCeiling, 0.0);
+}
+
+static addExecutableCeiling(builder:flatbuffers.Builder, executableCeiling:number) {
+  builder.addFieldFloat64(2, executableCeiling, 0.0);
+}
+
+static addExecutableLegsDefined(builder:flatbuffers.Builder, executableLegsDefined:bigint) {
+  builder.addFieldInt64(3, executableLegsDefined, BigInt('0'));
+}
+
+static addExecutableLegsTotal(builder:flatbuffers.Builder, executableLegsTotal:bigint) {
+  builder.addFieldInt64(4, executableLegsTotal, BigInt('0'));
 }
 
 static addRealizedPct(builder:flatbuffers.Builder, realizedPct:number) {
-  builder.addFieldFloat64(2, realizedPct, 0.0);
+  builder.addFieldFloat64(5, realizedPct, 0.0);
 }
 
 static addMissedPct(builder:flatbuffers.Builder, missedPct:number) {
-  builder.addFieldFloat64(3, missedPct, 0.0);
+  builder.addFieldFloat64(6, missedPct, 0.0);
 }
 
 static addLossPct(builder:flatbuffers.Builder, lossPct:number) {
-  builder.addFieldFloat64(4, lossPct, 0.0);
+  builder.addFieldFloat64(7, lossPct, 0.0);
 }
 
 static addLegs(builder:flatbuffers.Builder, legs:bigint) {
-  builder.addFieldInt64(5, legs, BigInt('0'));
+  builder.addFieldInt64(8, legs, BigInt('0'));
 }
 
 static addMissedLegs(builder:flatbuffers.Builder, missedLegs:bigint) {
-  builder.addFieldInt64(6, missedLegs, BigInt('0'));
+  builder.addFieldInt64(9, missedLegs, BigInt('0'));
 }
 
 static addLossPositions(builder:flatbuffers.Builder, lossPositions:bigint) {
-  builder.addFieldInt64(7, lossPositions, BigInt('0'));
+  builder.addFieldInt64(10, lossPositions, BigInt('0'));
 }
 
 static addOpportunities(builder:flatbuffers.Builder, opportunitiesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, opportunitiesOffset, 0);
+  builder.addFieldOffset(11, opportunitiesOffset, 0);
 }
 
 static createOpportunitiesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -142,7 +169,7 @@ static startOpportunitiesVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addLosses(builder:flatbuffers.Builder, lossesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(9, lossesOffset, 0);
+  builder.addFieldOffset(12, lossesOffset, 0);
 }
 
 static createLossesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -162,10 +189,13 @@ static endHindsightSymbol(builder:flatbuffers.Builder):flatbuffers.Offset {
   return offset;
 }
 
-static createHindsightSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset, upboundPct:number, realizedPct:number, missedPct:number, lossPct:number, legs:bigint, missedLegs:bigint, lossPositions:bigint, opportunitiesOffset:flatbuffers.Offset, lossesOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createHindsightSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset, priceTheoreticalCeiling:number, executableCeiling:number, executableLegsDefined:bigint, executableLegsTotal:bigint, realizedPct:number, missedPct:number, lossPct:number, legs:bigint, missedLegs:bigint, lossPositions:bigint, opportunitiesOffset:flatbuffers.Offset, lossesOffset:flatbuffers.Offset):flatbuffers.Offset {
   HindsightSymbol.startHindsightSymbol(builder);
   HindsightSymbol.addSymbol(builder, symbolOffset);
-  HindsightSymbol.addUpboundPct(builder, upboundPct);
+  HindsightSymbol.addPriceTheoreticalCeiling(builder, priceTheoreticalCeiling);
+  HindsightSymbol.addExecutableCeiling(builder, executableCeiling);
+  HindsightSymbol.addExecutableLegsDefined(builder, executableLegsDefined);
+  HindsightSymbol.addExecutableLegsTotal(builder, executableLegsTotal);
   HindsightSymbol.addRealizedPct(builder, realizedPct);
   HindsightSymbol.addMissedPct(builder, missedPct);
   HindsightSymbol.addLossPct(builder, lossPct);
@@ -180,7 +210,10 @@ static createHindsightSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffe
 unpack(): HindsightSymbolT {
   return new HindsightSymbolT(
     this.symbol(),
-    this.upboundPct(),
+    this.priceTheoreticalCeiling(),
+    this.executableCeiling(),
+    this.executableLegsDefined(),
+    this.executableLegsTotal(),
     this.realizedPct(),
     this.missedPct(),
     this.lossPct(),
@@ -195,7 +228,10 @@ unpack(): HindsightSymbolT {
 
 unpackTo(_o: HindsightSymbolT): void {
   _o.symbol = this.symbol();
-  _o.upboundPct = this.upboundPct();
+  _o.priceTheoreticalCeiling = this.priceTheoreticalCeiling();
+  _o.executableCeiling = this.executableCeiling();
+  _o.executableLegsDefined = this.executableLegsDefined();
+  _o.executableLegsTotal = this.executableLegsTotal();
   _o.realizedPct = this.realizedPct();
   _o.missedPct = this.missedPct();
   _o.lossPct = this.lossPct();
@@ -210,7 +246,10 @@ unpackTo(_o: HindsightSymbolT): void {
 export class HindsightSymbolT implements flatbuffers.IGeneratedObject {
 constructor(
   public symbol: string|Uint8Array|null = null,
-  public upboundPct: number = 0.0,
+  public priceTheoreticalCeiling: number = 0.0,
+  public executableCeiling: number = 0.0,
+  public executableLegsDefined: bigint = BigInt('0'),
+  public executableLegsTotal: bigint = BigInt('0'),
   public realizedPct: number = 0.0,
   public missedPct: number = 0.0,
   public lossPct: number = 0.0,
@@ -229,7 +268,10 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
 
   return HindsightSymbol.createHindsightSymbol(builder,
     symbol,
-    this.upboundPct,
+    this.priceTheoreticalCeiling,
+    this.executableCeiling,
+    this.executableLegsDefined,
+    this.executableLegsTotal,
     this.realizedPct,
     this.missedPct,
     this.lossPct,

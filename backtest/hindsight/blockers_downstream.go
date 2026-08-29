@@ -79,32 +79,15 @@ func allocationBlockers(context SignalContext) []blockerCandidate {
 				Key:      "allocation:haircut",
 				Category: DiagnosisAllocation,
 				Label:    "allocation haircut",
-				Source:   context.AllocationHaircutReason,
 				Observed: context.AllocationHaircut,
 				Gap:      context.AllocationHaircut,
 				Severity: context.AllocationHaircut,
 				Explanation: fmt.Sprintf(
-					"allocation removed %.2f%% of the pre-risk notional: %s",
+					"allocation removed %.2f%% of the pre-risk notional",
 					context.AllocationHaircut*100,
-					firstNonEmpty(context.AllocationHaircutReason, "no reason retained"),
 				),
 			},
 			priority: 22,
-		})
-	}
-
-	if !context.ReserveEligible && context.ReserveReason != "" {
-		candidates = append(candidates, blockerCandidate{
-			Blocker: Blocker{
-				Key:         "allocation:reserve_ineligible",
-				Category:    DiagnosisAllocation,
-				Label:       "reserve-lane qualification",
-				Source:      "trading.slots.reserved",
-				Gap:         1,
-				Severity:    1,
-				Explanation: context.ReserveReason,
-			},
-			priority: 23,
 		})
 	}
 

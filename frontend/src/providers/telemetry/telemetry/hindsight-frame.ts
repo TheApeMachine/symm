@@ -50,98 +50,103 @@ symbolsLength():number {
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
-missedPct():number {
+priceTheoreticalCeiling():number {
   const offset = this.bb!.__offset(this.bb_pos, 10);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-upboundPct():number {
+executableCeiling():number {
   const offset = this.bb!.__offset(this.bb_pos, 12);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-missedLegs():bigint {
+missedPct():number {
   const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-totalLegs():bigint {
+missedLegs():bigint {
   const offset = this.bb!.__offset(this.bb_pos, 16);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
-realizedPct():number {
+totalLegs():bigint {
   const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
-lossPct():number {
+realizedPct():number {
   const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-lossPositions():bigint {
+lossPct():number {
   const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+lossPositions():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 24);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
 valueCaptureRate():number {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-legCaptureRate():number {
   const offset = this.bb!.__offset(this.bb_pos, 26);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-diagnosticCoverage():number {
+legCaptureRate():number {
   const offset = this.bb!.__offset(this.bb_pos, 28);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
-rootCauses(index: number, obj?:HindsightRootCause):HindsightRootCause|null {
+diagnosticCoverage():number {
   const offset = this.bb!.__offset(this.bb_pos, 30);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+rootCauses(index: number, obj?:HindsightRootCause):HindsightRootCause|null {
+  const offset = this.bb!.__offset(this.bb_pos, 32);
   return offset ? (obj || new HindsightRootCause()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 rootCausesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
+  const offset = this.bb!.__offset(this.bb_pos, 32);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 recommendations(index: number, obj?:HindsightRecommendation):HindsightRecommendation|null {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
+  const offset = this.bb!.__offset(this.bb_pos, 34);
   return offset ? (obj || new HindsightRecommendation()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 recommendationsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
+  const offset = this.bb!.__offset(this.bb_pos, 34);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 lossRootCauses(index: number, obj?:HindsightRootCause):HindsightRootCause|null {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
+  const offset = this.bb!.__offset(this.bb_pos, 36);
   return offset ? (obj || new HindsightRootCause()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 lossRootCausesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
+  const offset = this.bb!.__offset(this.bb_pos, 36);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 lossRecommendations(index: number, obj?:HindsightRecommendation):HindsightRecommendation|null {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
+  const offset = this.bb!.__offset(this.bb_pos, 38);
   return offset ? (obj || new HindsightRecommendation()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 lossRecommendationsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
+  const offset = this.bb!.__offset(this.bb_pos, 38);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 static startHindsightFrame(builder:flatbuffers.Builder) {
-  builder.startObject(17);
+  builder.startObject(18);
 }
 
 static addCaptureId(builder:flatbuffers.Builder, captureId:bigint) {
@@ -168,48 +173,52 @@ static startSymbolsVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
-static addMissedPct(builder:flatbuffers.Builder, missedPct:number) {
-  builder.addFieldFloat64(3, missedPct, 0.0);
+static addPriceTheoreticalCeiling(builder:flatbuffers.Builder, priceTheoreticalCeiling:number) {
+  builder.addFieldFloat64(3, priceTheoreticalCeiling, 0.0);
 }
 
-static addUpboundPct(builder:flatbuffers.Builder, upboundPct:number) {
-  builder.addFieldFloat64(4, upboundPct, 0.0);
+static addExecutableCeiling(builder:flatbuffers.Builder, executableCeiling:number) {
+  builder.addFieldFloat64(4, executableCeiling, 0.0);
+}
+
+static addMissedPct(builder:flatbuffers.Builder, missedPct:number) {
+  builder.addFieldFloat64(5, missedPct, 0.0);
 }
 
 static addMissedLegs(builder:flatbuffers.Builder, missedLegs:bigint) {
-  builder.addFieldInt64(5, missedLegs, BigInt('0'));
+  builder.addFieldInt64(6, missedLegs, BigInt('0'));
 }
 
 static addTotalLegs(builder:flatbuffers.Builder, totalLegs:bigint) {
-  builder.addFieldInt64(6, totalLegs, BigInt('0'));
+  builder.addFieldInt64(7, totalLegs, BigInt('0'));
 }
 
 static addRealizedPct(builder:flatbuffers.Builder, realizedPct:number) {
-  builder.addFieldFloat64(7, realizedPct, 0.0);
+  builder.addFieldFloat64(8, realizedPct, 0.0);
 }
 
 static addLossPct(builder:flatbuffers.Builder, lossPct:number) {
-  builder.addFieldFloat64(8, lossPct, 0.0);
+  builder.addFieldFloat64(9, lossPct, 0.0);
 }
 
 static addLossPositions(builder:flatbuffers.Builder, lossPositions:bigint) {
-  builder.addFieldInt64(9, lossPositions, BigInt('0'));
+  builder.addFieldInt64(10, lossPositions, BigInt('0'));
 }
 
 static addValueCaptureRate(builder:flatbuffers.Builder, valueCaptureRate:number) {
-  builder.addFieldFloat64(10, valueCaptureRate, 0.0);
+  builder.addFieldFloat64(11, valueCaptureRate, 0.0);
 }
 
 static addLegCaptureRate(builder:flatbuffers.Builder, legCaptureRate:number) {
-  builder.addFieldFloat64(11, legCaptureRate, 0.0);
+  builder.addFieldFloat64(12, legCaptureRate, 0.0);
 }
 
 static addDiagnosticCoverage(builder:flatbuffers.Builder, diagnosticCoverage:number) {
-  builder.addFieldFloat64(12, diagnosticCoverage, 0.0);
+  builder.addFieldFloat64(13, diagnosticCoverage, 0.0);
 }
 
 static addRootCauses(builder:flatbuffers.Builder, rootCausesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(13, rootCausesOffset, 0);
+  builder.addFieldOffset(14, rootCausesOffset, 0);
 }
 
 static createRootCausesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -225,7 +234,7 @@ static startRootCausesVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addRecommendations(builder:flatbuffers.Builder, recommendationsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(14, recommendationsOffset, 0);
+  builder.addFieldOffset(15, recommendationsOffset, 0);
 }
 
 static createRecommendationsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -241,7 +250,7 @@ static startRecommendationsVector(builder:flatbuffers.Builder, numElems:number) 
 }
 
 static addLossRootCauses(builder:flatbuffers.Builder, lossRootCausesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(15, lossRootCausesOffset, 0);
+  builder.addFieldOffset(16, lossRootCausesOffset, 0);
 }
 
 static createLossRootCausesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -257,7 +266,7 @@ static startLossRootCausesVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addLossRecommendations(builder:flatbuffers.Builder, lossRecommendationsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(16, lossRecommendationsOffset, 0);
+  builder.addFieldOffset(17, lossRecommendationsOffset, 0);
 }
 
 static createLossRecommendationsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -277,13 +286,14 @@ static endHindsightFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
   return offset;
 }
 
-static createHindsightFrame(builder:flatbuffers.Builder, captureId:bigint, statusOffset:flatbuffers.Offset, symbolsOffset:flatbuffers.Offset, missedPct:number, upboundPct:number, missedLegs:bigint, totalLegs:bigint, realizedPct:number, lossPct:number, lossPositions:bigint, valueCaptureRate:number, legCaptureRate:number, diagnosticCoverage:number, rootCausesOffset:flatbuffers.Offset, recommendationsOffset:flatbuffers.Offset, lossRootCausesOffset:flatbuffers.Offset, lossRecommendationsOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createHindsightFrame(builder:flatbuffers.Builder, captureId:bigint, statusOffset:flatbuffers.Offset, symbolsOffset:flatbuffers.Offset, priceTheoreticalCeiling:number, executableCeiling:number, missedPct:number, missedLegs:bigint, totalLegs:bigint, realizedPct:number, lossPct:number, lossPositions:bigint, valueCaptureRate:number, legCaptureRate:number, diagnosticCoverage:number, rootCausesOffset:flatbuffers.Offset, recommendationsOffset:flatbuffers.Offset, lossRootCausesOffset:flatbuffers.Offset, lossRecommendationsOffset:flatbuffers.Offset):flatbuffers.Offset {
   HindsightFrame.startHindsightFrame(builder);
   HindsightFrame.addCaptureId(builder, captureId);
   HindsightFrame.addStatus(builder, statusOffset);
   HindsightFrame.addSymbols(builder, symbolsOffset);
+  HindsightFrame.addPriceTheoreticalCeiling(builder, priceTheoreticalCeiling);
+  HindsightFrame.addExecutableCeiling(builder, executableCeiling);
   HindsightFrame.addMissedPct(builder, missedPct);
-  HindsightFrame.addUpboundPct(builder, upboundPct);
   HindsightFrame.addMissedLegs(builder, missedLegs);
   HindsightFrame.addTotalLegs(builder, totalLegs);
   HindsightFrame.addRealizedPct(builder, realizedPct);
@@ -304,8 +314,9 @@ unpack(): HindsightFrameT {
     this.captureId(),
     this.status(),
     this.bb!.createObjList<HindsightSymbol, HindsightSymbolT>(this.symbols.bind(this), this.symbolsLength()),
+    this.priceTheoreticalCeiling(),
+    this.executableCeiling(),
     this.missedPct(),
-    this.upboundPct(),
     this.missedLegs(),
     this.totalLegs(),
     this.realizedPct(),
@@ -326,8 +337,9 @@ unpackTo(_o: HindsightFrameT): void {
   _o.captureId = this.captureId();
   _o.status = this.status();
   _o.symbols = this.bb!.createObjList<HindsightSymbol, HindsightSymbolT>(this.symbols.bind(this), this.symbolsLength());
+  _o.priceTheoreticalCeiling = this.priceTheoreticalCeiling();
+  _o.executableCeiling = this.executableCeiling();
   _o.missedPct = this.missedPct();
-  _o.upboundPct = this.upboundPct();
   _o.missedLegs = this.missedLegs();
   _o.totalLegs = this.totalLegs();
   _o.realizedPct = this.realizedPct();
@@ -348,8 +360,9 @@ constructor(
   public captureId: bigint = BigInt('0'),
   public status: string|Uint8Array|null = null,
   public symbols: (HindsightSymbolT)[] = [],
+  public priceTheoreticalCeiling: number = 0.0,
+  public executableCeiling: number = 0.0,
   public missedPct: number = 0.0,
-  public upboundPct: number = 0.0,
   public missedLegs: bigint = BigInt('0'),
   public totalLegs: bigint = BigInt('0'),
   public realizedPct: number = 0.0,
@@ -377,8 +390,9 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     this.captureId,
     status,
     symbols,
+    this.priceTheoreticalCeiling,
+    this.executableCeiling,
     this.missedPct,
-    this.upboundPct,
     this.missedLegs,
     this.totalLegs,
     this.realizedPct,

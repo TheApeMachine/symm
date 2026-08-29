@@ -546,26 +546,92 @@ table HindsightLeg {
   grossProfitPct:double;
   frictionPct:double;
 }
+table HindsightMCTSBranch { action:string; visits:long; meanReward:double; }
+table HindsightMCTS {
+  recommendedAction:string;
+  iterations:long;
+  branches:[HindsightMCTSBranch];
+}
+table HindsightEntryCost {
+  entryPrice:double;
+  bestAsk:double;
+  bestBid:double;
+  grossNotional:double;
+  entryFee:double;
+  spread:double;
+  impact:double;
+  breakEven:double;
+}
+table HindsightRisk {
+  present:bool;
+  riskDistance:double;
+  maxLoss:double;
+  entryFeeRate:double;
+  exitFeeRate:double;
+}
+table HindsightExecutable {
+  symbol:string;
+  buyAt:long;
+  sellAt:long;
+  theoreticalBuyPrice:double;
+  theoreticalSellPrice:double;
+  theoreticalReturn:double;
+  requestedQty:double;
+  requestedNotional:double;
+  executableEntryQty:double;
+  executableEntryVWAP:double;
+  executableEntryValue:double;
+  executableEntryFees:double;
+  entryImpact:double;
+  executableExitQty:double;
+  executableExitVWAP:double;
+  executableExitValue:double;
+  executableExitFees:double;
+  exitImpact:double;
+  fullyExecutable:bool;
+  executableReturn:double;
+  executablePnL:double;
+}
+table HindsightRegret {
+  detection:bool;
+  valuation:bool;
+  selection:bool;
+  execution:bool;
+  management:bool;
+}
 table HindsightSignal {
+  id:string;
   at:long;
   action:string;
   reason:string;
   cause:string;
-  graphScore:double;
-  thesisScore:double;
-  thesisConfidence:double;
-  thesisSupport:double;
-  thesisContradiction:double;
-  thesisConditions:double;
-  direction:double;
-  confidence:double;
-  admissionThreshold:double;
   opportunity:bool;
   opportunityType:string;
-  predictiveReady:bool;
-  predictiveStatus:string;
+  opportunityPhase:string;
+  valuationAttempted:bool;
+  valuationAvailable:bool;
+  valuationStatus:string;
+  causalIdentification:string;
+  causalBlockingCoordinate:string;
+  utility:double;
+  utilityAvailable:bool;
+  proposedQuantity:double;
+  proposedNotional:double;
+  availableCapital:double;
+  allocationClass:string;
+  allocationHaircut:double;
+  expectedReturn:double;
+  expectedFees:double;
+  expectedSpread:double;
+  expectedImpact:double;
+  adverseSelection:double;
+  uncertainty:double;
+  openPositions:long;
+  slotCapacity:long;
+  entryCost:HindsightEntryCost;
+  risk:HindsightRisk;
+  mcts:HindsightMCTS;
   alternatives:[NamedNumber];
-  id:string;
 }
 table HindsightBlocker {
   key:string;
@@ -614,6 +680,8 @@ table HindsightOpportunity {
   leg:HindsightLeg;
   signal:HindsightSignal;
   journal:[HindsightSignal];
+  executable:HindsightExecutable;
+  regret:HindsightRegret;
   why:string;
   captured:bool;
   missed:bool;
@@ -637,7 +705,10 @@ table HindsightLoss {
 }
 table HindsightSymbol {
   symbol:string;
-  upboundPct:double;
+  priceTheoreticalCeiling:double;
+  executableCeiling:double;
+  executableLegsDefined:long;
+  executableLegsTotal:long;
   realizedPct:double;
   missedPct:double;
   lossPct:double;
@@ -651,8 +722,9 @@ table HindsightFrame {
   captureId:long;
   status:string;
   symbols:[HindsightSymbol];
+  priceTheoreticalCeiling:double;
+  executableCeiling:double;
   missedPct:double;
-  upboundPct:double;
   missedLegs:long;
   totalLegs:long;
   realizedPct:double;

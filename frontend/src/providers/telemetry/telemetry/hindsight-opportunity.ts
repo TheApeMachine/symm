@@ -6,7 +6,9 @@
 import * as flatbuffers from 'flatbuffers';
 
 import { HindsightDiagnosis, HindsightDiagnosisT } from '../telemetry/hindsight-diagnosis.js';
+import { HindsightExecutable, HindsightExecutableT } from '../telemetry/hindsight-executable.js';
 import { HindsightLeg, HindsightLegT } from '../telemetry/hindsight-leg.js';
+import { HindsightRegret, HindsightRegretT } from '../telemetry/hindsight-regret.js';
 import { HindsightSignal, HindsightSignalT } from '../telemetry/hindsight-signal.js';
 
 
@@ -48,30 +50,40 @@ journalLength():number {
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
+executable(obj?:HindsightExecutable):HindsightExecutable|null {
+  const offset = this.bb!.__offset(this.bb_pos, 10);
+  return offset ? (obj || new HindsightExecutable()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
+regret(obj?:HindsightRegret):HindsightRegret|null {
+  const offset = this.bb!.__offset(this.bb_pos, 12);
+  return offset ? (obj || new HindsightRegret()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
 why():string|null
 why(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 why(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
+  const offset = this.bb!.__offset(this.bb_pos, 14);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 captured():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
+  const offset = this.bb!.__offset(this.bb_pos, 16);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
 missed():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
+  const offset = this.bb!.__offset(this.bb_pos, 18);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
 diagnosis(obj?:HindsightDiagnosis):HindsightDiagnosis|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
+  const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? (obj || new HindsightDiagnosis()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 static startHindsightOpportunity(builder:flatbuffers.Builder) {
-  builder.startObject(7);
+  builder.startObject(9);
 }
 
 static addLeg(builder:flatbuffers.Builder, legOffset:flatbuffers.Offset) {
@@ -98,20 +110,28 @@ static startJournalVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
+static addExecutable(builder:flatbuffers.Builder, executableOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(3, executableOffset, 0);
+}
+
+static addRegret(builder:flatbuffers.Builder, regretOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(4, regretOffset, 0);
+}
+
 static addWhy(builder:flatbuffers.Builder, whyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(3, whyOffset, 0);
+  builder.addFieldOffset(5, whyOffset, 0);
 }
 
 static addCaptured(builder:flatbuffers.Builder, captured:boolean) {
-  builder.addFieldInt8(4, +captured, +false);
+  builder.addFieldInt8(6, +captured, +false);
 }
 
 static addMissed(builder:flatbuffers.Builder, missed:boolean) {
-  builder.addFieldInt8(5, +missed, +false);
+  builder.addFieldInt8(7, +missed, +false);
 }
 
 static addDiagnosis(builder:flatbuffers.Builder, diagnosisOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, diagnosisOffset, 0);
+  builder.addFieldOffset(8, diagnosisOffset, 0);
 }
 
 static endHindsightOpportunity(builder:flatbuffers.Builder):flatbuffers.Offset {
@@ -125,6 +145,8 @@ unpack(): HindsightOpportunityT {
     (this.leg() !== null ? this.leg()!.unpack() : null),
     (this.signal() !== null ? this.signal()!.unpack() : null),
     this.bb!.createObjList<HindsightSignal, HindsightSignalT>(this.journal.bind(this), this.journalLength()),
+    (this.executable() !== null ? this.executable()!.unpack() : null),
+    (this.regret() !== null ? this.regret()!.unpack() : null),
     this.why(),
     this.captured(),
     this.missed(),
@@ -137,6 +159,8 @@ unpackTo(_o: HindsightOpportunityT): void {
   _o.leg = (this.leg() !== null ? this.leg()!.unpack() : null);
   _o.signal = (this.signal() !== null ? this.signal()!.unpack() : null);
   _o.journal = this.bb!.createObjList<HindsightSignal, HindsightSignalT>(this.journal.bind(this), this.journalLength());
+  _o.executable = (this.executable() !== null ? this.executable()!.unpack() : null);
+  _o.regret = (this.regret() !== null ? this.regret()!.unpack() : null);
   _o.why = this.why();
   _o.captured = this.captured();
   _o.missed = this.missed();
@@ -149,6 +173,8 @@ constructor(
   public leg: HindsightLegT|null = null,
   public signal: HindsightSignalT|null = null,
   public journal: (HindsightSignalT)[] = [],
+  public executable: HindsightExecutableT|null = null,
+  public regret: HindsightRegretT|null = null,
   public why: string|Uint8Array|null = null,
   public captured: boolean = false,
   public missed: boolean = false,
@@ -160,6 +186,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const leg = (this.leg !== null ? this.leg!.pack(builder) : 0);
   const signal = (this.signal !== null ? this.signal!.pack(builder) : 0);
   const journal = HindsightOpportunity.createJournalVector(builder, builder.createObjectOffsetList(this.journal));
+  const executable = (this.executable !== null ? this.executable!.pack(builder) : 0);
+  const regret = (this.regret !== null ? this.regret!.pack(builder) : 0);
   const why = (this.why !== null ? builder.createString(this.why!) : 0);
   const diagnosis = (this.diagnosis !== null ? this.diagnosis!.pack(builder) : 0);
 
@@ -167,6 +195,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   HindsightOpportunity.addLeg(builder, leg);
   HindsightOpportunity.addSignal(builder, signal);
   HindsightOpportunity.addJournal(builder, journal);
+  HindsightOpportunity.addExecutable(builder, executable);
+  HindsightOpportunity.addRegret(builder, regret);
   HindsightOpportunity.addWhy(builder, why);
   HindsightOpportunity.addCaptured(builder, this.captured);
   HindsightOpportunity.addMissed(builder, this.missed);

@@ -9,28 +9,22 @@ import (
 const (
 	completeExecutionCoverage = 1.0
 
-	admissionAcceptedKey            = "admission:accepted"
-	admissionDirectionMarginKey     = "admission:direction_margin"
-	admissionDirectionTargetKey     = "admission:direction_target"
-	admissionThesisMarginKey        = "admission:thesis_score_margin"
-	admissionConfidenceMarginKey    = "admission:confidence_margin"
-	admissionSupportMarginKey       = "admission:support_margin"
-	admissionContradictionMarginKey = "admission:contradiction_margin"
-	executionCoverageKey            = "execution:visible_coverage"
-	executionFrictionKey            = "execution:friction_fraction"
-	executionSpreadKey              = "execution:spread_fraction"
-	executionImpactKey              = "execution:impact_fraction"
+	admissionAcceptedKey = "admission:accepted"
+	executionCoverageKey = "execution:visible_coverage"
+	executionFrictionKey = "execution:friction_fraction"
+	executionSpreadKey   = "execution:spread_fraction"
+	executionImpactKey   = "execution:impact_fraction"
 )
 
 const (
-	DiagnosisAdmission     = "admission_policy"
-	DiagnosisDirection     = "directional_evidence"
-	DiagnosisMeasurement   = "measurement_coverage"
-	DiagnosisPredictive    = "predictive_readiness"
-	DiagnosisAllocation    = "allocation_capacity"
-	DiagnosisExecution     = "execution_feasibility"
+	DiagnosisDetection    = "detection"
+	DiagnosisValuation    = "valuation"
+	DiagnosisSelection    = "selection"
+	DiagnosisExecution    = "execution_feasibility"
+	DiagnosisAdmission    = "admission_policy"
+	DiagnosisAllocation   = "allocation_capacity"
 	DiagnosisFollowThrough = "decision_follow_through"
-	DiagnosisRegulator     = "regulator_readiness"
+	DiagnosisRegulator    = "regulator_readiness"
 	DiagnosisObservability = "observability_gap"
 )
 
@@ -65,9 +59,7 @@ type Blocker struct {
 
 /*
 Recommendation is the next falsifiable experiment suggested by one or more
-missed legs. Suggested values are counterfactual sweep points, never direct
-production settings, and Confidence measures evidence completeness rather than
-promising that the recovered trade would have remained profitable live.
+missed legs.
 */
 type Recommendation struct {
 	Key          string   `json:"key"`
@@ -88,9 +80,7 @@ type Recommendation struct {
 }
 
 /*
-Diagnosis retains the complete causal answer for one missed leg: the primary
-failure class, every supporting blocker, the quality of the retained evidence,
-and the concrete experiment that can disprove or improve that explanation.
+Diagnosis retains the complete causal answer for one missed leg.
 */
 type Diagnosis struct {
 	Category        string         `json:"category"`
@@ -101,7 +91,9 @@ type Diagnosis struct {
 	Recommendation  Recommendation `json:"recommendation"`
 }
 
-/* RootCauseSummary aggregates missed value without blending symbol evidence. */
+/*
+RootCauseSummary aggregates missed value without blending symbol evidence.
+*/
 type RootCauseSummary struct {
 	Category    string   `json:"category"`
 	ImpactPct   float64  `json:"impactPct"`
@@ -124,12 +116,39 @@ type recommendationAggregate struct {
 	currentStable  bool
 }
 
+/*
+diagnoseOpportunity explains why a leg was missed from the current-architecture
+decision context. `observerAvailable` is false when the leg opened before the
+process began observing, in which case detection regret is not the strategy's.
+*/
 func diagnoseOpportunity(
 	context SignalContext,
 	leg Leg,
 	recorded bool,
+	observerAvailable bool,
 ) Diagnosis {
 	quality, status := evidenceQuality(context, recorded)
+
+	if !observerAvailable {
+		blocker := Blocker{
+			Key:      "availability:before_observer",
+			Category: DiagnosisObservability,
+			Label:    "move began before observer availability",
+			Gap:      leg.ProfitPct,
+			Severity: 1,
+			Explanation: "the move was already underway before this process began " +
+				"observing, so it is not a missed strategy opportunity",
+		}
+
+		return Diagnosis{
+			Category:        blocker.Category,
+			Summary:         blocker.Explanation,
+			EvidenceQuality: quality,
+			EvidenceStatus:  status,
+			Blockers:        []Blocker{blocker},
+			Recommendation:  Recommendation{Key: blocker.Key},
+		}
+	}
 
 	if !recorded {
 		blocker := Blocker{
@@ -138,8 +157,8 @@ func diagnoseOpportunity(
 			Label:    "decision evidence missing",
 			Gap:      leg.ProfitPct,
 			Severity: 1,
-			Explanation: "No decision for this symbol was retained before or during " +
-				"the leg, so parameter or measurement attribution would be invented.",
+			Explanation: "no decision for this symbol was retained before or during " +
+				"the leg, so valuation or selection attribution would be invented",
 		}
 		recommendation := recommendationFor(blocker, leg, quality)
 
@@ -208,12 +227,10 @@ func evidenceQuality(context SignalContext, recorded bool) (float64, string) {
 	checks := []bool{
 		context.Action != "",
 		context.Reason != "" || context.Cause != "",
-		context.Alternatives != nil,
-		hasAdmissionEvidence(context.Alternatives),
-		hasMeasurementEvidence(context.Alternatives),
-		context.PredictiveReady || context.PredictiveStatus != "",
-		context.GraphScore != 0 || context.AdmissionThreshold != 0 ||
-			strings.Contains(strings.ToLower(context.Reason), "graph"),
+		context.Opportunity || context.OpportunityType != "",
+		context.ValuationAttempted || context.ValuationStatus != "",
+		context.UtilityAvailable || context.Alternatives != nil,
+		context.ProposedQuantity.Float() > 0 || context.ProposedNotional.Float() > 0,
 	}
 	present := 0
 
@@ -233,15 +250,8 @@ func evidenceQuality(context SignalContext, recorded bool) (float64, string) {
 }
 
 func hasAdmissionEvidence(alternatives map[string]float64) bool {
-	for _, key := range []string{
-		admissionAcceptedKey,
-		admissionDirectionMarginKey,
-		admissionThesisMarginKey,
-		admissionConfidenceMarginKey,
-		admissionSupportMarginKey,
-		admissionContradictionMarginKey,
-	} {
-		if _, exists := alternatives[key]; exists {
+	for key := range alternatives {
+		if strings.HasPrefix(key, "admission:") {
 			return true
 		}
 	}
@@ -280,15 +290,37 @@ func missedClause(leg Leg) string {
 
 func contextRecorded(context SignalContext) bool {
 	return context.Action != "" || context.Reason != "" || context.Cause != "" ||
-		context.Opportunity || context.Type != "" || context.Alternatives != nil ||
-		context.GraphScore != 0 || context.ThesisScore != 0 ||
-		context.ThesisConfidence != 0 || context.ThesisSupport != 0 ||
-		context.ThesisContradiction != 0 || context.Direction != 0 ||
-		context.Confidence != 0 || context.AdmissionThreshold != 0 ||
-		context.PredictiveReady || context.PredictiveStatus != ""
+		context.Opportunity || context.OpportunityType != "" ||
+		context.Alternatives != nil || context.ValuationStatus != "" ||
+		context.UtilityAvailable || context.ProposedQuantity.Float() > 0
 }
 
-/* diagnose preserves the original summary-only API for existing callers. */
+/*
+diagnose preserves the original summary-only API for callers that only need the
+summary sentence.
+*/
 func diagnose(context SignalContext, leg Leg) string {
-	return diagnoseOpportunity(context, leg, contextRecorded(context)).Summary
+	return diagnoseOpportunity(context, leg, contextRecorded(context), true).Summary
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+
+	return ""
+}
+
+func fmtPrice(price float64) string {
+	return fmt.Sprintf("%.6f", price)
+}
+
+func abs(value float64) float64 {
+	if value < 0 {
+		return -value
+	}
+
+	return value
 }

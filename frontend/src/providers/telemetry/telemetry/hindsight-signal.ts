@@ -5,6 +5,9 @@
 
 import * as flatbuffers from 'flatbuffers';
 
+import { HindsightEntryCost, HindsightEntryCostT } from '../telemetry/hindsight-entry-cost.js';
+import { HindsightMCTS, HindsightMCTST } from '../telemetry/hindsight-mcts.js';
+import { HindsightRisk, HindsightRiskT } from '../telemetry/hindsight-risk.js';
 import { NamedNumber, NamedNumberT } from '../telemetry/named-number.js';
 
 
@@ -26,192 +29,321 @@ static getSizePrefixedRootAsHindsightSignal(bb:flatbuffers.ByteBuffer, obj?:Hind
   return (obj || new HindsightSignal()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
 }
 
-at():bigint {
+id():string|null
+id(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+id(optionalEncoding?:any):string|Uint8Array|null {
   const offset = this.bb!.__offset(this.bb_pos, 4);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+at():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
 action():string|null
 action(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 action(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
+  const offset = this.bb!.__offset(this.bb_pos, 8);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 reason():string|null
 reason(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 reason(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
+  const offset = this.bb!.__offset(this.bb_pos, 10);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 cause():string|null
 cause(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 cause(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
+  const offset = this.bb!.__offset(this.bb_pos, 12);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
-graphScore():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-thesisScore():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-thesisConfidence():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-thesisSupport():number {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-thesisContradiction():number {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-thesisConditions():number {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-direction():number {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-confidence():number {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-admissionThreshold():number {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
 opportunity():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
+  const offset = this.bb!.__offset(this.bb_pos, 14);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
 opportunityType():string|null
 opportunityType(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 opportunityType(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
+  const offset = this.bb!.__offset(this.bb_pos, 16);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
-predictiveReady():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
+opportunityPhase():string|null
+opportunityPhase(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+opportunityPhase(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+valuationAttempted():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
-predictiveStatus():string|null
-predictiveStatus(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-predictiveStatus(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
+valuationAvailable():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+valuationStatus():string|null
+valuationStatus(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+valuationStatus(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 24);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
-alternatives(index: number, obj?:NamedNumber):NamedNumber|null {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
-  return offset ? (obj || new NamedNumber()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+causalIdentification():string|null
+causalIdentification(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+causalIdentification(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 26);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
-alternativesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+causalBlockingCoordinate():string|null
+causalBlockingCoordinate(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+causalBlockingCoordinate(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 28);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
-id():string|null
-id(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-id(optionalEncoding?:any):string|Uint8Array|null {
+utility():number {
+  const offset = this.bb!.__offset(this.bb_pos, 30);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+utilityAvailable():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 32);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+proposedQuantity():number {
+  const offset = this.bb!.__offset(this.bb_pos, 34);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+proposedNotional():number {
+  const offset = this.bb!.__offset(this.bb_pos, 36);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+availableCapital():number {
+  const offset = this.bb!.__offset(this.bb_pos, 38);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+allocationClass():string|null
+allocationClass(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+allocationClass(optionalEncoding?:any):string|Uint8Array|null {
   const offset = this.bb!.__offset(this.bb_pos, 40);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
+allocationHaircut():number {
+  const offset = this.bb!.__offset(this.bb_pos, 42);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+expectedReturn():number {
+  const offset = this.bb!.__offset(this.bb_pos, 44);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+expectedFees():number {
+  const offset = this.bb!.__offset(this.bb_pos, 46);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+expectedSpread():number {
+  const offset = this.bb!.__offset(this.bb_pos, 48);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+expectedImpact():number {
+  const offset = this.bb!.__offset(this.bb_pos, 50);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+adverseSelection():number {
+  const offset = this.bb!.__offset(this.bb_pos, 52);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+uncertainty():number {
+  const offset = this.bb!.__offset(this.bb_pos, 54);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+openPositions():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 56);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+slotCapacity():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 58);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+entryCost(obj?:HindsightEntryCost):HindsightEntryCost|null {
+  const offset = this.bb!.__offset(this.bb_pos, 60);
+  return offset ? (obj || new HindsightEntryCost()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
+risk(obj?:HindsightRisk):HindsightRisk|null {
+  const offset = this.bb!.__offset(this.bb_pos, 62);
+  return offset ? (obj || new HindsightRisk()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
+mcts(obj?:HindsightMCTS):HindsightMCTS|null {
+  const offset = this.bb!.__offset(this.bb_pos, 64);
+  return offset ? (obj || new HindsightMCTS()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
+alternatives(index: number, obj?:NamedNumber):NamedNumber|null {
+  const offset = this.bb!.__offset(this.bb_pos, 66);
+  return offset ? (obj || new NamedNumber()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+alternativesLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 66);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
 static startHindsightSignal(builder:flatbuffers.Builder) {
-  builder.startObject(19);
+  builder.startObject(32);
+}
+
+static addId(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(0, idOffset, 0);
 }
 
 static addAt(builder:flatbuffers.Builder, at:bigint) {
-  builder.addFieldInt64(0, at, BigInt('0'));
+  builder.addFieldInt64(1, at, BigInt('0'));
 }
 
 static addAction(builder:flatbuffers.Builder, actionOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, actionOffset, 0);
+  builder.addFieldOffset(2, actionOffset, 0);
 }
 
 static addReason(builder:flatbuffers.Builder, reasonOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, reasonOffset, 0);
+  builder.addFieldOffset(3, reasonOffset, 0);
 }
 
 static addCause(builder:flatbuffers.Builder, causeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(3, causeOffset, 0);
-}
-
-static addGraphScore(builder:flatbuffers.Builder, graphScore:number) {
-  builder.addFieldFloat64(4, graphScore, 0.0);
-}
-
-static addThesisScore(builder:flatbuffers.Builder, thesisScore:number) {
-  builder.addFieldFloat64(5, thesisScore, 0.0);
-}
-
-static addThesisConfidence(builder:flatbuffers.Builder, thesisConfidence:number) {
-  builder.addFieldFloat64(6, thesisConfidence, 0.0);
-}
-
-static addThesisSupport(builder:flatbuffers.Builder, thesisSupport:number) {
-  builder.addFieldFloat64(7, thesisSupport, 0.0);
-}
-
-static addThesisContradiction(builder:flatbuffers.Builder, thesisContradiction:number) {
-  builder.addFieldFloat64(8, thesisContradiction, 0.0);
-}
-
-static addThesisConditions(builder:flatbuffers.Builder, thesisConditions:number) {
-  builder.addFieldFloat64(9, thesisConditions, 0.0);
-}
-
-static addDirection(builder:flatbuffers.Builder, direction:number) {
-  builder.addFieldFloat64(10, direction, 0.0);
-}
-
-static addConfidence(builder:flatbuffers.Builder, confidence:number) {
-  builder.addFieldFloat64(11, confidence, 0.0);
-}
-
-static addAdmissionThreshold(builder:flatbuffers.Builder, admissionThreshold:number) {
-  builder.addFieldFloat64(12, admissionThreshold, 0.0);
+  builder.addFieldOffset(4, causeOffset, 0);
 }
 
 static addOpportunity(builder:flatbuffers.Builder, opportunity:boolean) {
-  builder.addFieldInt8(13, +opportunity, +false);
+  builder.addFieldInt8(5, +opportunity, +false);
 }
 
 static addOpportunityType(builder:flatbuffers.Builder, opportunityTypeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(14, opportunityTypeOffset, 0);
+  builder.addFieldOffset(6, opportunityTypeOffset, 0);
 }
 
-static addPredictiveReady(builder:flatbuffers.Builder, predictiveReady:boolean) {
-  builder.addFieldInt8(15, +predictiveReady, +false);
+static addOpportunityPhase(builder:flatbuffers.Builder, opportunityPhaseOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(7, opportunityPhaseOffset, 0);
 }
 
-static addPredictiveStatus(builder:flatbuffers.Builder, predictiveStatusOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(16, predictiveStatusOffset, 0);
+static addValuationAttempted(builder:flatbuffers.Builder, valuationAttempted:boolean) {
+  builder.addFieldInt8(8, +valuationAttempted, +false);
+}
+
+static addValuationAvailable(builder:flatbuffers.Builder, valuationAvailable:boolean) {
+  builder.addFieldInt8(9, +valuationAvailable, +false);
+}
+
+static addValuationStatus(builder:flatbuffers.Builder, valuationStatusOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(10, valuationStatusOffset, 0);
+}
+
+static addCausalIdentification(builder:flatbuffers.Builder, causalIdentificationOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(11, causalIdentificationOffset, 0);
+}
+
+static addCausalBlockingCoordinate(builder:flatbuffers.Builder, causalBlockingCoordinateOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(12, causalBlockingCoordinateOffset, 0);
+}
+
+static addUtility(builder:flatbuffers.Builder, utility:number) {
+  builder.addFieldFloat64(13, utility, 0.0);
+}
+
+static addUtilityAvailable(builder:flatbuffers.Builder, utilityAvailable:boolean) {
+  builder.addFieldInt8(14, +utilityAvailable, +false);
+}
+
+static addProposedQuantity(builder:flatbuffers.Builder, proposedQuantity:number) {
+  builder.addFieldFloat64(15, proposedQuantity, 0.0);
+}
+
+static addProposedNotional(builder:flatbuffers.Builder, proposedNotional:number) {
+  builder.addFieldFloat64(16, proposedNotional, 0.0);
+}
+
+static addAvailableCapital(builder:flatbuffers.Builder, availableCapital:number) {
+  builder.addFieldFloat64(17, availableCapital, 0.0);
+}
+
+static addAllocationClass(builder:flatbuffers.Builder, allocationClassOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(18, allocationClassOffset, 0);
+}
+
+static addAllocationHaircut(builder:flatbuffers.Builder, allocationHaircut:number) {
+  builder.addFieldFloat64(19, allocationHaircut, 0.0);
+}
+
+static addExpectedReturn(builder:flatbuffers.Builder, expectedReturn:number) {
+  builder.addFieldFloat64(20, expectedReturn, 0.0);
+}
+
+static addExpectedFees(builder:flatbuffers.Builder, expectedFees:number) {
+  builder.addFieldFloat64(21, expectedFees, 0.0);
+}
+
+static addExpectedSpread(builder:flatbuffers.Builder, expectedSpread:number) {
+  builder.addFieldFloat64(22, expectedSpread, 0.0);
+}
+
+static addExpectedImpact(builder:flatbuffers.Builder, expectedImpact:number) {
+  builder.addFieldFloat64(23, expectedImpact, 0.0);
+}
+
+static addAdverseSelection(builder:flatbuffers.Builder, adverseSelection:number) {
+  builder.addFieldFloat64(24, adverseSelection, 0.0);
+}
+
+static addUncertainty(builder:flatbuffers.Builder, uncertainty:number) {
+  builder.addFieldFloat64(25, uncertainty, 0.0);
+}
+
+static addOpenPositions(builder:flatbuffers.Builder, openPositions:bigint) {
+  builder.addFieldInt64(26, openPositions, BigInt('0'));
+}
+
+static addSlotCapacity(builder:flatbuffers.Builder, slotCapacity:bigint) {
+  builder.addFieldInt64(27, slotCapacity, BigInt('0'));
+}
+
+static addEntryCost(builder:flatbuffers.Builder, entryCostOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(28, entryCostOffset, 0);
+}
+
+static addRisk(builder:flatbuffers.Builder, riskOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(29, riskOffset, 0);
+}
+
+static addMcts(builder:flatbuffers.Builder, mctsOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(30, mctsOffset, 0);
 }
 
 static addAlternatives(builder:flatbuffers.Builder, alternativesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(17, alternativesOffset, 0);
+  builder.addFieldOffset(31, alternativesOffset, 0);
 }
 
 static createAlternativesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -226,140 +358,173 @@ static startAlternativesVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
-static addId(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(18, idOffset, 0);
-}
-
 static endHindsightSignal(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createHindsightSignal(builder:flatbuffers.Builder, at:bigint, actionOffset:flatbuffers.Offset, reasonOffset:flatbuffers.Offset, causeOffset:flatbuffers.Offset, graphScore:number, thesisScore:number, thesisConfidence:number, thesisSupport:number, thesisContradiction:number, thesisConditions:number, direction:number, confidence:number, admissionThreshold:number, opportunity:boolean, opportunityTypeOffset:flatbuffers.Offset, predictiveReady:boolean, predictiveStatusOffset:flatbuffers.Offset, alternativesOffset:flatbuffers.Offset, idOffset:flatbuffers.Offset):flatbuffers.Offset {
-  HindsightSignal.startHindsightSignal(builder);
-  HindsightSignal.addAt(builder, at);
-  HindsightSignal.addAction(builder, actionOffset);
-  HindsightSignal.addReason(builder, reasonOffset);
-  HindsightSignal.addCause(builder, causeOffset);
-  HindsightSignal.addGraphScore(builder, graphScore);
-  HindsightSignal.addThesisScore(builder, thesisScore);
-  HindsightSignal.addThesisConfidence(builder, thesisConfidence);
-  HindsightSignal.addThesisSupport(builder, thesisSupport);
-  HindsightSignal.addThesisContradiction(builder, thesisContradiction);
-  HindsightSignal.addThesisConditions(builder, thesisConditions);
-  HindsightSignal.addDirection(builder, direction);
-  HindsightSignal.addConfidence(builder, confidence);
-  HindsightSignal.addAdmissionThreshold(builder, admissionThreshold);
-  HindsightSignal.addOpportunity(builder, opportunity);
-  HindsightSignal.addOpportunityType(builder, opportunityTypeOffset);
-  HindsightSignal.addPredictiveReady(builder, predictiveReady);
-  HindsightSignal.addPredictiveStatus(builder, predictiveStatusOffset);
-  HindsightSignal.addAlternatives(builder, alternativesOffset);
-  HindsightSignal.addId(builder, idOffset);
-  return HindsightSignal.endHindsightSignal(builder);
-}
 
 unpack(): HindsightSignalT {
   return new HindsightSignalT(
+    this.id(),
     this.at(),
     this.action(),
     this.reason(),
     this.cause(),
-    this.graphScore(),
-    this.thesisScore(),
-    this.thesisConfidence(),
-    this.thesisSupport(),
-    this.thesisContradiction(),
-    this.thesisConditions(),
-    this.direction(),
-    this.confidence(),
-    this.admissionThreshold(),
     this.opportunity(),
     this.opportunityType(),
-    this.predictiveReady(),
-    this.predictiveStatus(),
-    this.bb!.createObjList<NamedNumber, NamedNumberT>(this.alternatives.bind(this), this.alternativesLength()),
-    this.id()
+    this.opportunityPhase(),
+    this.valuationAttempted(),
+    this.valuationAvailable(),
+    this.valuationStatus(),
+    this.causalIdentification(),
+    this.causalBlockingCoordinate(),
+    this.utility(),
+    this.utilityAvailable(),
+    this.proposedQuantity(),
+    this.proposedNotional(),
+    this.availableCapital(),
+    this.allocationClass(),
+    this.allocationHaircut(),
+    this.expectedReturn(),
+    this.expectedFees(),
+    this.expectedSpread(),
+    this.expectedImpact(),
+    this.adverseSelection(),
+    this.uncertainty(),
+    this.openPositions(),
+    this.slotCapacity(),
+    (this.entryCost() !== null ? this.entryCost()!.unpack() : null),
+    (this.risk() !== null ? this.risk()!.unpack() : null),
+    (this.mcts() !== null ? this.mcts()!.unpack() : null),
+    this.bb!.createObjList<NamedNumber, NamedNumberT>(this.alternatives.bind(this), this.alternativesLength())
   );
 }
 
 
 unpackTo(_o: HindsightSignalT): void {
+  _o.id = this.id();
   _o.at = this.at();
   _o.action = this.action();
   _o.reason = this.reason();
   _o.cause = this.cause();
-  _o.graphScore = this.graphScore();
-  _o.thesisScore = this.thesisScore();
-  _o.thesisConfidence = this.thesisConfidence();
-  _o.thesisSupport = this.thesisSupport();
-  _o.thesisContradiction = this.thesisContradiction();
-  _o.thesisConditions = this.thesisConditions();
-  _o.direction = this.direction();
-  _o.confidence = this.confidence();
-  _o.admissionThreshold = this.admissionThreshold();
   _o.opportunity = this.opportunity();
   _o.opportunityType = this.opportunityType();
-  _o.predictiveReady = this.predictiveReady();
-  _o.predictiveStatus = this.predictiveStatus();
+  _o.opportunityPhase = this.opportunityPhase();
+  _o.valuationAttempted = this.valuationAttempted();
+  _o.valuationAvailable = this.valuationAvailable();
+  _o.valuationStatus = this.valuationStatus();
+  _o.causalIdentification = this.causalIdentification();
+  _o.causalBlockingCoordinate = this.causalBlockingCoordinate();
+  _o.utility = this.utility();
+  _o.utilityAvailable = this.utilityAvailable();
+  _o.proposedQuantity = this.proposedQuantity();
+  _o.proposedNotional = this.proposedNotional();
+  _o.availableCapital = this.availableCapital();
+  _o.allocationClass = this.allocationClass();
+  _o.allocationHaircut = this.allocationHaircut();
+  _o.expectedReturn = this.expectedReturn();
+  _o.expectedFees = this.expectedFees();
+  _o.expectedSpread = this.expectedSpread();
+  _o.expectedImpact = this.expectedImpact();
+  _o.adverseSelection = this.adverseSelection();
+  _o.uncertainty = this.uncertainty();
+  _o.openPositions = this.openPositions();
+  _o.slotCapacity = this.slotCapacity();
+  _o.entryCost = (this.entryCost() !== null ? this.entryCost()!.unpack() : null);
+  _o.risk = (this.risk() !== null ? this.risk()!.unpack() : null);
+  _o.mcts = (this.mcts() !== null ? this.mcts()!.unpack() : null);
   _o.alternatives = this.bb!.createObjList<NamedNumber, NamedNumberT>(this.alternatives.bind(this), this.alternativesLength());
-  _o.id = this.id();
 }
 }
 
 export class HindsightSignalT implements flatbuffers.IGeneratedObject {
 constructor(
+  public id: string|Uint8Array|null = null,
   public at: bigint = BigInt('0'),
   public action: string|Uint8Array|null = null,
   public reason: string|Uint8Array|null = null,
   public cause: string|Uint8Array|null = null,
-  public graphScore: number = 0.0,
-  public thesisScore: number = 0.0,
-  public thesisConfidence: number = 0.0,
-  public thesisSupport: number = 0.0,
-  public thesisContradiction: number = 0.0,
-  public thesisConditions: number = 0.0,
-  public direction: number = 0.0,
-  public confidence: number = 0.0,
-  public admissionThreshold: number = 0.0,
   public opportunity: boolean = false,
   public opportunityType: string|Uint8Array|null = null,
-  public predictiveReady: boolean = false,
-  public predictiveStatus: string|Uint8Array|null = null,
-  public alternatives: (NamedNumberT)[] = [],
-  public id: string|Uint8Array|null = null
+  public opportunityPhase: string|Uint8Array|null = null,
+  public valuationAttempted: boolean = false,
+  public valuationAvailable: boolean = false,
+  public valuationStatus: string|Uint8Array|null = null,
+  public causalIdentification: string|Uint8Array|null = null,
+  public causalBlockingCoordinate: string|Uint8Array|null = null,
+  public utility: number = 0.0,
+  public utilityAvailable: boolean = false,
+  public proposedQuantity: number = 0.0,
+  public proposedNotional: number = 0.0,
+  public availableCapital: number = 0.0,
+  public allocationClass: string|Uint8Array|null = null,
+  public allocationHaircut: number = 0.0,
+  public expectedReturn: number = 0.0,
+  public expectedFees: number = 0.0,
+  public expectedSpread: number = 0.0,
+  public expectedImpact: number = 0.0,
+  public adverseSelection: number = 0.0,
+  public uncertainty: number = 0.0,
+  public openPositions: bigint = BigInt('0'),
+  public slotCapacity: bigint = BigInt('0'),
+  public entryCost: HindsightEntryCostT|null = null,
+  public risk: HindsightRiskT|null = null,
+  public mcts: HindsightMCTST|null = null,
+  public alternatives: (NamedNumberT)[] = []
 ){}
 
 
 pack(builder:flatbuffers.Builder): flatbuffers.Offset {
+  const id = (this.id !== null ? builder.createString(this.id!) : 0);
   const action = (this.action !== null ? builder.createString(this.action!) : 0);
   const reason = (this.reason !== null ? builder.createString(this.reason!) : 0);
   const cause = (this.cause !== null ? builder.createString(this.cause!) : 0);
   const opportunityType = (this.opportunityType !== null ? builder.createString(this.opportunityType!) : 0);
-  const predictiveStatus = (this.predictiveStatus !== null ? builder.createString(this.predictiveStatus!) : 0);
+  const opportunityPhase = (this.opportunityPhase !== null ? builder.createString(this.opportunityPhase!) : 0);
+  const valuationStatus = (this.valuationStatus !== null ? builder.createString(this.valuationStatus!) : 0);
+  const causalIdentification = (this.causalIdentification !== null ? builder.createString(this.causalIdentification!) : 0);
+  const causalBlockingCoordinate = (this.causalBlockingCoordinate !== null ? builder.createString(this.causalBlockingCoordinate!) : 0);
+  const allocationClass = (this.allocationClass !== null ? builder.createString(this.allocationClass!) : 0);
+  const entryCost = (this.entryCost !== null ? this.entryCost!.pack(builder) : 0);
+  const risk = (this.risk !== null ? this.risk!.pack(builder) : 0);
+  const mcts = (this.mcts !== null ? this.mcts!.pack(builder) : 0);
   const alternatives = HindsightSignal.createAlternativesVector(builder, builder.createObjectOffsetList(this.alternatives));
-  const id = (this.id !== null ? builder.createString(this.id!) : 0);
 
-  return HindsightSignal.createHindsightSignal(builder,
-    this.at,
-    action,
-    reason,
-    cause,
-    this.graphScore,
-    this.thesisScore,
-    this.thesisConfidence,
-    this.thesisSupport,
-    this.thesisContradiction,
-    this.thesisConditions,
-    this.direction,
-    this.confidence,
-    this.admissionThreshold,
-    this.opportunity,
-    opportunityType,
-    this.predictiveReady,
-    predictiveStatus,
-    alternatives,
-    id
-  );
+  HindsightSignal.startHindsightSignal(builder);
+  HindsightSignal.addId(builder, id);
+  HindsightSignal.addAt(builder, this.at);
+  HindsightSignal.addAction(builder, action);
+  HindsightSignal.addReason(builder, reason);
+  HindsightSignal.addCause(builder, cause);
+  HindsightSignal.addOpportunity(builder, this.opportunity);
+  HindsightSignal.addOpportunityType(builder, opportunityType);
+  HindsightSignal.addOpportunityPhase(builder, opportunityPhase);
+  HindsightSignal.addValuationAttempted(builder, this.valuationAttempted);
+  HindsightSignal.addValuationAvailable(builder, this.valuationAvailable);
+  HindsightSignal.addValuationStatus(builder, valuationStatus);
+  HindsightSignal.addCausalIdentification(builder, causalIdentification);
+  HindsightSignal.addCausalBlockingCoordinate(builder, causalBlockingCoordinate);
+  HindsightSignal.addUtility(builder, this.utility);
+  HindsightSignal.addUtilityAvailable(builder, this.utilityAvailable);
+  HindsightSignal.addProposedQuantity(builder, this.proposedQuantity);
+  HindsightSignal.addProposedNotional(builder, this.proposedNotional);
+  HindsightSignal.addAvailableCapital(builder, this.availableCapital);
+  HindsightSignal.addAllocationClass(builder, allocationClass);
+  HindsightSignal.addAllocationHaircut(builder, this.allocationHaircut);
+  HindsightSignal.addExpectedReturn(builder, this.expectedReturn);
+  HindsightSignal.addExpectedFees(builder, this.expectedFees);
+  HindsightSignal.addExpectedSpread(builder, this.expectedSpread);
+  HindsightSignal.addExpectedImpact(builder, this.expectedImpact);
+  HindsightSignal.addAdverseSelection(builder, this.adverseSelection);
+  HindsightSignal.addUncertainty(builder, this.uncertainty);
+  HindsightSignal.addOpenPositions(builder, this.openPositions);
+  HindsightSignal.addSlotCapacity(builder, this.slotCapacity);
+  HindsightSignal.addEntryCost(builder, entryCost);
+  HindsightSignal.addRisk(builder, risk);
+  HindsightSignal.addMcts(builder, mcts);
+  HindsightSignal.addAlternatives(builder, alternatives);
+
+  return HindsightSignal.endHindsightSignal(builder);
 }
 }

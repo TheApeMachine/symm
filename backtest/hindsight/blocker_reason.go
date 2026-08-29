@@ -21,6 +21,14 @@ func reasonCategory(context SignalContext) string {
 	}
 
 	for _, token := range []string{
+		"valuation", "valuable", "estimate", "consequence",
+	} {
+		if strings.Contains(reason, token) {
+			return DiagnosisValuation
+		}
+	}
+
+	for _, token := range []string{
 		"allocation", "capacity", "capital", "cash", "slot", "reserve", "displace",
 	} {
 		if strings.Contains(reason, token) {

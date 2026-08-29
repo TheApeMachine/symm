@@ -1,83 +1,126 @@
 package hindsight
 
 import (
-	"fmt"
 	"sort"
 	"time"
 )
 
 /*
-SignalContext is the measurement snapshot the logic was actually reading at the
-moment it declined a leg's opportunity. It captures the scored alternatives the
-decision stream recorded so a missed leg can be traced back to the exact
-measurement that (or the exact admission gate that) kept the system flat.
+SignalContext is the current-architecture decision snapshot the logic recorded
+at the moment it declined a leg: its Opportunity and Valuation state, the MCTS
+selection it made, and the execution/risk plan it solved. It deliberately no
+longer carries the retired Thesis/Graph scoring fields.
 */
 type SignalContext struct {
-	ID                      string             `json:"id"`
-	At                      time.Time          `json:"at"`
-	Action                  string             `json:"action"`
-	Reason                  string             `json:"reason"`
-	Cause                   string             `json:"cause"`
-	GraphScore              float64            `json:"graphScore"`
-	ThesisScore             float64            `json:"thesisScore"`
-	ThesisConfidence        float64            `json:"thesisConfidence"`
-	ThesisSupport           float64            `json:"thesisSupport"`
-	ThesisContradiction     float64            `json:"thesisContradiction"`
-	ThesisConditions        float64            `json:"thesisConditions"`
-	Direction               float64            `json:"direction"`
-	Confidence              float64            `json:"confidence"`
-	AdmissionThreshold      float64            `json:"admissionGraphThreshold"`
-	Opportunity             bool               `json:"opportunity"`
-	Type                    string             `json:"opportunityType,omitempty"`
-	PredictiveReady         bool               `json:"predictiveReady"`
-	PredictiveStatus        string             `json:"predictiveStatus"`
-	AllocationClass         string             `json:"allocationClass"`
-	AllocationHaircut       float64            `json:"allocation_haircut"`
-	AllocationHaircutReason string             `json:"allocation_haircut_reason"`
-	ReserveEligible         bool               `json:"reserveEligible"`
-	ReserveReason           string             `json:"reserveReason"`
-	OpenPositions           int                `json:"openPositions"`
-	SlotCapacity            int                `json:"slotCapacity"`
-	Alternatives            map[string]float64 `json:"alternatives"`
+	ID     string    `json:"id"`
+	At     time.Time `json:"at"`
+	Action string    `json:"action"`
+	Reason string    `json:"reason"`
+	Cause  string    `json:"cause"`
+
+	// Opportunity state.
+	Opportunity     bool   `json:"opportunity"`
+	OpportunityType string `json:"opportunityType,omitempty"`
+	OpportunityPhase string `json:"opportunityPhase,omitempty"`
+
+	// Valuation state.
+	ValuationAttempted       bool   `json:"valuationAttempted"`
+	ValuationAvailable       bool   `json:"valuationAvailable"`
+	ValuationStatus          string `json:"valuationStatus,omitempty"`
+	CausalIdentification     string `json:"causalIdentification,omitempty"`
+	CausalBlockingCoordinate string `json:"causalBlockingCoordinate,omitempty"`
+
+	// Selection state.
+	Utility          float64             `json:"utility"`
+	UtilityAvailable bool                `json:"utilityAvailable"`
+	Alternatives     map[string]float64 `json:"alternatives"`
+	MCTS             DecisionTrace       `json:"mcts,omitempty"`
+
+	// Execution state.
+	ProposedQuantity Number   `json:"proposedQuantity"`
+	ProposedNotional Number   `json:"proposedNotional"`
+	AvailableCapital Number   `json:"availableCapital"`
+	EntryCost        EntryCost `json:"entryCost,omitempty"`
+	Risk             RiskPlan  `json:"risk"`
+	ExpectedReturn   Number   `json:"expectedReturn"`
+	ExpectedFees     Number   `json:"expectedFees"`
+	ExpectedSpread   Number   `json:"expectedSpread"`
+	ExpectedImpact   Number   `json:"expectedImpact"`
+	AdverseSelection Number   `json:"adverseSelection"`
+	Uncertainty      float64  `json:"uncertainty"`
+
+	// Allocation state.
+	AllocationClass   string `json:"allocationClass"`
+	AllocationHaircut float64 `json:"allocation_haircut"`
+	OpenPositions     int    `json:"openPositions"`
+	SlotCapacity      int    `json:"slotCapacity"`
 }
 
 /*
-MissedLeg pairs one perfect hold with the reason the system did not take it:
-the nearest decision before the leg opened and the measurement scores it was
-reading, plus the decision journal spanning just before entry to just after
-exit, and an inferred diagnosis derived from that recorded state.
+RegretLayer names which stage of the opportunity→outcome chain owns a regret.
+It is the correction to the old single-score view: detection, valuation,
+selection, execution, and management each fail on their own evidence and must
+not be blamed for one another.
+*/
+type RegretLayer struct {
+	Detection  bool `json:"detection"`
+	Valuation  bool `json:"valuation"`
+	Selection  bool `json:"selection"`
+	Execution  bool `json:"execution"`
+	Management bool `json:"management"`
+}
+
+/*
+MissedLeg pairs one theoretical hold with the current decision state that
+declined it, the executable counterfactual (when the recorded quantity could be
+defended through historical depth), and the layer-by-layer regret.
 */
 type MissedLeg struct {
-	Leg       Leg           `json:"leg"`
-	Signal    SignalContext `json:"signal"`
-	Journal   []Decision    `json:"journal"`
-	Why       string        `json:"why"`
-	Diagnosis Diagnosis     `json:"diagnosis"`
-	Captured  bool          `json:"captured"`
-	Missed    bool          `json:"missed"`
+	Leg        Leg            `json:"leg"`
+	Signal     SignalContext  `json:"signal"`
+	Journal    []Decision     `json:"journal"`
+	Executable *ExecutableLeg `json:"executable,omitempty"`
+	Regret     RegretLayer    `json:"regret"`
+	Why        string         `json:"why"`
+	Diagnosis  Diagnosis      `json:"diagnosis"`
+	Captured   bool           `json:"captured"`
+	Missed     bool           `json:"missed"`
 }
 
 /*
-PerSymbol ties a symbol's perfect legs to what the system actually did, and how
-much profit the tape offered versus how much the system collected.
+PerSymbol separates the price-theoretical ceiling (what the observed price path
+offered) from the executable ceiling (what the recorded quantity could actually
+capture through L3 depth), alongside what the system realized and lost.
 */
 type PerSymbol struct {
-	Symbol        string         `json:"symbol"`
-	UpboundPct    float64        `json:"upboundPct"`
-	RealizedPct   float64        `json:"realizedPct"`
-	MissedPct     float64        `json:"missedPct"`
-	LossPct       float64        `json:"lossPct"`
-	Legs          int            `json:"legs"`
-	MissedLegs    int            `json:"missedLegs"`
-	LossPositions int            `json:"lossPositions"`
+	Symbol string `json:"symbol"`
+
+	// PriceTheoreticalCeiling is the sum of theoretical leg returns with no
+	// size claim — the tape's path, not an achievable PnL.
+	PriceTheoreticalCeiling float64 `json:"priceTheoreticalCeiling"`
+	// ExecutableCeiling is the sum of executable leg returns over legs whose
+	// recorded quantity could be fully captured; legs without a defensible
+	// quantity or sufficient depth contribute nothing here (undefined ≠ zero
+	// to the reader, and is tracked via ExecutableLegsDefined).
+	ExecutableCeiling      float64 `json:"executableCeiling"`
+	ExecutableLegsDefined  int     `json:"executableLegsDefined"`
+	ExecutableLegsTotal    int     `json:"executableLegsTotal"`
+
+	RealizedPct   float64 `json:"realizedPct"`
+	MissedPct     float64 `json:"missedPct"`
+	LossPct       float64 `json:"lossPct"`
+	Legs          int     `json:"legs"`
+	MissedLegs    int     `json:"missedLegs"`
+	LossPositions int     `json:"lossPositions"`
+
 	Opportunities []MissedLeg    `json:"opportunities"`
 	Losses        []PositionLoss `json:"losses"`
 }
 
 /*
-CollectDecisionIndex groups decisions by symbol and sorts each symbol's list by
-decision time so nearest-decision lookups run in log time. Only decisions go
-into the timeline; capture-order duplicates are dropped by time.
+collectDecisionsIndex groups decisions by symbol and sorts each symbol's list by
+decision time so nearest-decision lookups run in log time. Capture-order
+duplicates at the same venue time are dropped in favour of the later replay.
 */
 func collectDecisionsIndex(decisions []Decision) map[string][]Decision {
 	index := map[string][]Decision{}
@@ -98,9 +141,6 @@ func collectDecisionsIndex(decisions []Decision) map[string][]Decision {
 			last := len(deduplicated) - 1
 
 			if last >= 0 && deduplicated[last].At.Equal(decision.At) {
-				// Audit events are read in insertion order. A later replay of the
-				// same capture therefore replaces the earlier decision at this
-				// exact venue moment instead of contaminating the timeline.
 				deduplicated[last] = decision
 				continue
 			}
@@ -131,15 +171,15 @@ func latestDecisionBefore(decisions []Decision, at time.Time) *Decision {
 }
 
 /*
-bestDecisionFor scans the decisions inside a leg's upward move and returns the
-one that best explains why the system stayed flat. It prefers decisions that
-flagged an opportunity but declined entry, and falls back to the highest score.
+bestDecisionFor scans the decisions inside a leg's move and returns the one that
+best explains why the system stayed flat: it prefers decisions that flagged an
+opportunity but declined, then the one with selection utility recorded.
 */
 func bestDecisionFor(decisions []Decision, leg Leg) *Decision {
 	var best *Decision
 
-	for i := range decisions {
-		decision := &decisions[i]
+	for index := range decisions {
+		decision := &decisions[index]
 
 		if decision.At.Before(leg.BuyAt) {
 			continue
@@ -156,15 +196,6 @@ func bestDecisionFor(decisions []Decision, leg Leg) *Decision {
 
 		if decision.Opportunity && !best.Opportunity {
 			best = decision
-			continue
-		}
-
-		if !decision.Opportunity && best.Opportunity {
-			continue
-		}
-
-		if decision.ThesisScore > best.ThesisScore {
-			best = decision
 		}
 	}
 
@@ -177,8 +208,7 @@ func bestDecisionFor(decisions []Decision, leg Leg) *Decision {
 
 /*
 hasEntryInside reports whether the decisions contain an actionable entry that
-opens a position inside the leg's window (from its buy to its sell), meaning
-the system was at least on the tape for the rising move.
+opens a position inside the leg's window.
 */
 func hasEntryInside(decisions []Decision, leg Leg) bool {
 	for _, decision := range decisions {
@@ -195,12 +225,52 @@ func hasEntryInside(decisions []Decision, leg Leg) bool {
 }
 
 /*
-truthFor returns the decision whose window the system had available when it
-declined a leg, plus the audit journal inside the leg's entry/exit window. A
-leg is captured when an enter decision covers its window; otherwise the nearest
-prior decision is the one whose measurement scores explain why it stayed flat.
+SignalFromDecision projects one recorded Decision onto the SignalContext the
+diagnosis and the dashboard consume.
 */
-func truthFor(decisions []Decision, leg Leg) MissedLeg {
+func SignalFromDecision(decision Decision) SignalContext {
+	return SignalContext{
+		ID:                       decision.ID,
+		At:                       decision.At,
+		Action:                   decision.Action,
+		Reason:                   decision.Reason,
+		Cause:                    decision.Cause,
+		Opportunity:              decision.Opportunity,
+		OpportunityType:          decision.OpportunityType,
+		OpportunityPhase:         decision.OpportunityPhase,
+		ValuationAttempted:       decision.ValuationAttempted,
+		ValuationAvailable:       decision.ValuationAvailable,
+		ValuationStatus:          decision.ValuationStatus,
+		CausalIdentification:     decision.CausalIdentification,
+		CausalBlockingCoordinate: decision.CausalBlockingCoordinate,
+		Utility:                  decision.Utility,
+		UtilityAvailable:         decision.UtilityAvailable,
+		Alternatives:             decision.Alternatives,
+		MCTS:                     decision.Trace,
+		ProposedQuantity:         decision.ProposedQuantity,
+		ProposedNotional:         decision.ProposedNotional,
+		AvailableCapital:         decision.AvailableCapital,
+		EntryCost:                decision.EntryCost,
+		Risk:                     decision.Risk,
+		ExpectedReturn:           decision.ExpectedReturn,
+		ExpectedFees:             decision.ExpectedFees,
+		ExpectedSpread:           decision.ExpectedSpread,
+		ExpectedImpact:           decision.ExpectedImpact,
+		AdverseSelection:         decision.AdverseSelection,
+		Uncertainty:              decision.Uncertainty,
+		AllocationClass:          decision.AllocationClass,
+		AllocationHaircut:        decision.AllocationHaircut,
+		OpenPositions:            decision.OpenPositions,
+		SlotCapacity:             decision.SlotCapacity,
+	}
+}
+
+/*
+truthFor builds the missed-leg record for one theoretical leg against the
+decision timeline: captured flag, the declining decision's current-architecture
+context, the audit journal, and the layer-by-layer regret.
+*/
+func truthFor(decisions []Decision, leg Leg, observerAvailable bool) MissedLeg {
 	captured := hasEntryInside(decisions, leg)
 	context := SignalContext{At: leg.BuyAt}
 	journal := decisionsAround(decisions, leg)
@@ -208,40 +278,15 @@ func truthFor(decisions []Decision, leg Leg) MissedLeg {
 
 	if decision := bestDecisionFor(decisions, leg); decision != nil {
 		recorded = true
-		context = SignalContext{
-			ID:                      decision.ID,
-			At:                      decision.At,
-			Action:                  decision.Action,
-			Reason:                  decision.Reason,
-			Cause:                   decision.Cause,
-			GraphScore:              decision.GraphScore,
-			ThesisScore:             decision.ThesisScore,
-			ThesisConfidence:        decision.ThesisConfidence,
-			ThesisSupport:           decision.ThesisSupport,
-			ThesisContradiction:     decision.ThesisContradiction,
-			ThesisConditions:        decision.ThesisConditions,
-			Direction:               decision.Direction,
-			Confidence:              decision.Confidence,
-			AdmissionThreshold:      decision.AdmissionThreshold,
-			Opportunity:             decision.Opportunity,
-			Type:                    decision.OpportunityType,
-			PredictiveReady:         decision.PredictiveReady,
-			PredictiveStatus:        decision.PredictiveStatus,
-			AllocationClass:         decision.AllocationClass,
-			AllocationHaircut:       decision.AllocationHaircut,
-			AllocationHaircutReason: decision.AllocationHaircutReason,
-			ReserveEligible:         decision.ReserveEligible,
-			ReserveReason:           decision.ReserveReason,
-			OpenPositions:           decision.OpenPositions,
-			SlotCapacity:            decision.SlotCapacity,
-			Alternatives:            decision.Alternatives,
-		}
+		context = SignalFromDecision(*decision)
 	}
 
 	diagnosis := Diagnosis{}
+	regret := RegretLayer{}
 
 	if !captured {
-		diagnosis = diagnoseOpportunity(context, leg, recorded)
+		diagnosis = diagnoseOpportunity(context, leg, recorded, observerAvailable)
+		regret = regretLayers(context, leg, recorded, observerAvailable)
 	}
 
 	return MissedLeg{
@@ -250,6 +295,7 @@ func truthFor(decisions []Decision, leg Leg) MissedLeg {
 		Journal:   journal,
 		Why:       diagnosis.Summary,
 		Diagnosis: diagnosis,
+		Regret:    regret,
 		Captured:  captured,
 		Missed:    !captured,
 	}
@@ -257,17 +303,13 @@ func truthFor(decisions []Decision, leg Leg) MissedLeg {
 
 /*
 decisionsAround returns the audit decisions from the nearest moment before a
-leg's entry through the first moment after its exit, in order. Replaying that
-slice is what lets the dashboard reconstruct the system's actual state — not
-just the single arbitration that declined it — across the whole missed hold.
+leg's entry through the first moment after its exit, in order.
 */
 func decisionsAround(decisions []Decision, leg Leg) []Decision {
 	if len(decisions) == 0 {
 		return nil
 	}
 
-	// The first decision strictly after the exit is the trailing boundary;
-	// when the hold ends the tape, the last recorded decision is the bound.
 	first := len(decisions)
 
 	for index, decision := range decisions {
@@ -281,8 +323,6 @@ func decisionsAround(decisions []Decision, leg Leg) []Decision {
 		first = len(decisions) - 1
 	}
 
-	// Back up to the decision immediately before the entry so the slice
-	// starts with what the system knew just before the hold opened.
 	start := 0
 
 	for index := first; index >= 0; index-- {
@@ -301,58 +341,74 @@ func decisionsAround(decisions []Decision, leg Leg) []Decision {
 	return out
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-
-	return ""
-}
-
-func fmtPrice(price float64) string {
-	return fmt.Sprintf("%.6f", price)
-}
-
-func abs(value float64) float64 {
-	if value < 0 {
-		return -value
-	}
-
-	return value
-}
-
 /*
-Analyze reduces all series and decisions for a capture into per-symbol hindsight
-reports: the tape's maximum possible value, what the system realized, and each
-missed leg with the signal that declined it. Realized profit is the share of
-the upbound that came from legs the system actually entered, so the upbound -
-realized gap is precisely the value the system left flat.
+Analyze reduces one capture's series, decisions, and reconstructed L3 book into
+per-symbol hindsight reports. The theoretical ceiling is the tape's path; the
+executable ceiling is the share any recorded quantity could actually capture.
+`observerStartedAt` is the process observation start so movement before the
+system was live is not blamed on the strategy.
 */
-func Analyze(reducer *Reducer, decisions []Decision) ([]PerSymbol, error) {
+func Analyze(
+	reducer *Reducer,
+	decisions []Decision,
+	bookStore *BookStore,
+	observerStartedAt time.Time,
+) ([]PerSymbol, error) {
+	if reducer == nil {
+		return nil, nil
+	}
+
 	decisionIndex := collectDecisionsIndex(decisions)
 	reports := make([]PerSymbol, 0, len(reducer.series))
 
 	for _, series := range reducer.Symbols() {
 		legs := RoundTrips(series)
 		symbolDecisions := decisionIndex[series.Symbol]
-		upbound := 0.0
+		theoretical := 0.0
+		executableCeiling := 0.0
 		realized := 0.0
 		missed := 0.0
 		missedCount := 0
+		executableDefined := 0
+		executableTotal := 0
 		opportunities := make([]MissedLeg, 0, len(legs.Legs))
 
 		for _, leg := range legs.Legs {
-			upbound += leg.ProfitPct
+			theoretical += leg.ProfitPct
 
-			report := truthFor(symbolDecisions, leg)
+			// A zero observer start means the whole capture is observed: only an
+			// explicit later start gates pre-start legs out of "missed strategy".
+			observerAvailable := observerStartedAt.IsZero() ||
+				!leg.BuyAt.Before(observerStartedAt)
+
+			report := truthFor(symbolDecisions, leg, observerAvailable)
+
+			// Executable counterfactual needs a defensible quantity.
+			quantity, quantityDefensible := counterfactualQuantity(symbolDecisions, leg)
+
+			if quantityDefensible {
+				executableTotal++
+				feeRate := counterfactualFeeRate(symbolDecisions, leg)
+
+				if bookStore != nil {
+					if outcome, ok := ExecutableCounterfactual(
+						bookStore,
+						leg,
+						quantity,
+						feeRate,
+					); ok {
+						report.Executable = &outcome
+						executableCeiling += outcome.ExecutableReturn
+						executableDefined++
+					}
+				}
+			}
 
 			if report.Captured {
 				realized += leg.ProfitPct
 			}
 
-			if report.Missed {
+			if report.Missed && observerAvailable {
 				missed += leg.ProfitPct
 				missedCount++
 			}
@@ -374,20 +430,22 @@ func Analyze(reducer *Reducer, decisions []Decision) ([]PerSymbol, error) {
 		}
 
 		reports = append(reports, PerSymbol{
-			Symbol:        series.Symbol,
-			UpboundPct:    upbound,
-			RealizedPct:   realized,
-			MissedPct:     missed,
-			LossPct:       lossPct,
-			Legs:          len(legs.Legs),
-			MissedLegs:    missedCount,
-			LossPositions: len(losses),
-			Opportunities: opportunities,
-			Losses:        losses,
+			Symbol:                  series.Symbol,
+			PriceTheoreticalCeiling: theoretical,
+			ExecutableCeiling:       executableCeiling,
+			ExecutableLegsDefined:   executableDefined,
+			ExecutableLegsTotal:     executableTotal,
+			RealizedPct:             realized,
+			MissedPct:               missed,
+			LossPct:                 lossPct,
+			Legs:                    len(legs.Legs),
+			MissedLegs:              missedCount,
+			LossPositions:           len(losses),
+			Opportunities:           opportunities,
+			Losses:                  losses,
 		})
 	}
 
-	// Stable output order is friendlier to the dashboard than capture order.
 	sort.SliceStable(reports, func(i, j int) bool {
 		totalI := reports[i].MissedPct + reports[i].LossPct
 		totalJ := reports[j].MissedPct + reports[j].LossPct

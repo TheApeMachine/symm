@@ -10,15 +10,13 @@ const (
 	DiagnosisAdverseSelection = "adverse_selection"
 	DiagnosisFrictionDrag     = "friction_drag"
 	DiagnosisWhipsawStopout   = "whipsaw_stopout"
-	DiagnosisThesisCollapse   = "thesis_invalidation"
 	DiagnosisLiquiditySlip    = "liquidity_slippage"
-	DiagnosisRegimeCollapse   = "regime_collapse"
 )
 
 /*
-PositionLoss captures one entered position that closed at a loss (or non-profitable),
-along with its entry signal context, holding journal, exit trigger reason, and
-inferred post-mortem diagnosis.
+PositionLoss captures one entered position that closed at a loss (or
+non-profitable), along with its entry decision context, holding journal, exit
+trigger reason, and inferred post-mortem diagnosis.
 */
 type PositionLoss struct {
 	Symbol        string        `json:"symbol"`
@@ -38,8 +36,8 @@ type PositionLoss struct {
 }
 
 /*
-ExtractLosses discovers non-profitable entered positions from a symbol's decision journal
-and tape series.
+ExtractLosses discovers non-profitable entered positions from a symbol's
+decision journal and tape series.
 */
 func ExtractLosses(decisions []Decision, series *Series) []PositionLoss {
 	losses := make([]PositionLoss, 0)
@@ -51,7 +49,6 @@ func ExtractLosses(decisions []Decision, series *Series) []PositionLoss {
 
 		if decision.Action == "enter" {
 			if activeEntry != nil {
-				// Close previous unclosed entry at current decision time
 				if loss, ok := evaluateLossPosition(*activeEntry, decision, activeJournal, series); ok {
 					losses = append(losses, loss)
 				}
@@ -106,42 +103,14 @@ func evaluateLossPosition(
 
 	returnPct := grossPct - frictionPct
 
-	// If position is profitable after friction, it is not a loss.
 	if returnPct > 0 {
 		return PositionLoss{}, false
 	}
 
 	triggerReason := firstNonEmpty(exit.Reason, exit.Cause, "exit order executed")
-	signal := SignalContext{
-		ID:                      entry.ID,
-		At:                      entry.At,
-		Action:                  entry.Action,
-		Reason:                  entry.Reason,
-		Cause:                   entry.Cause,
-		GraphScore:              entry.GraphScore,
-		ThesisScore:             entry.ThesisScore,
-		ThesisConfidence:        entry.ThesisConfidence,
-		ThesisSupport:           entry.ThesisSupport,
-		ThesisContradiction:     entry.ThesisContradiction,
-		ThesisConditions:        entry.ThesisConditions,
-		Direction:               entry.Direction,
-		Confidence:              entry.Confidence,
-		AdmissionThreshold:      entry.AdmissionThreshold,
-		Opportunity:             entry.Opportunity,
-		Type:                    entry.OpportunityType,
-		PredictiveReady:         entry.PredictiveReady,
-		PredictiveStatus:        entry.PredictiveStatus,
-		AllocationClass:         entry.AllocationClass,
-		AllocationHaircut:       entry.AllocationHaircut,
-		AllocationHaircutReason: entry.AllocationHaircutReason,
-		ReserveEligible:         entry.ReserveEligible,
-		ReserveReason:           entry.ReserveReason,
-		OpenPositions:           entry.OpenPositions,
-		SlotCapacity:            entry.SlotCapacity,
-		Alternatives:            entry.Alternatives,
-	}
+	signal := SignalFromDecision(entry)
 
-	diagnosis := diagnoseLossPosition(entry, exit, journal, series, grossPct, frictionPct, returnPct)
+	diagnosis := diagnoseLossPosition(entry, exit, grossPct, frictionPct, returnPct)
 
 	return PositionLoss{
 		Symbol:        entry.Symbol,
@@ -164,8 +133,6 @@ func evaluateLossPosition(
 func diagnoseLossPosition(
 	entry Decision,
 	exit Decision,
-	journal []Decision,
-	series *Series,
 	grossPct float64,
 	frictionPct float64,
 	returnPct float64,
@@ -173,7 +140,6 @@ func diagnoseLossPosition(
 	lossMagnitude := -returnPct
 	reasonText := strings.ToLower(firstNonEmpty(exit.Reason, exit.Cause, entry.Reason))
 
-	// Check for friction drag: gross move was flat/positive, but spread/fees caused net loss.
 	if grossPct >= 0 {
 		blocker := Blocker{
 			Key:      "loss:friction_drag",
@@ -200,9 +166,9 @@ func diagnoseLossPosition(
 			Recommendation: Recommendation{
 				Key:         "widen_friction_hurdle",
 				Kind:        RecommendationTuneParameter,
-				Target:      "trading.admission.minimum_thesis_score",
-				Title:       "Increase minimum score hurdle against wide spreads",
-				Action:      "Require expected move to exceed round-trip friction before admitting entry",
+				Target:      "trading.admission.friction_hurdle",
+				Title:       "Increase the friction hurdle against wide spreads",
+				Action:      "Require the expected move to exceed round-trip friction before admitting entry",
 				Rationale:   "Position suffered from spread and fee drag despite non-negative price movement",
 				ImpactPct:   lossMagnitude,
 				Occurrences: 1,
@@ -211,13 +177,11 @@ func diagnoseLossPosition(
 		}
 	}
 
-	// Check for whipsaw / tight stoploss.
 	if strings.Contains(reasonText, "stoploss") || strings.Contains(reasonText, "floor") {
 		blocker := Blocker{
 			Key:      "loss:whipsaw_stopout",
 			Category: DiagnosisWhipsawStopout,
 			Label:    "stoploss trigger",
-			Observed: series.PriceAt(exit.At),
 			Severity: lossMagnitude,
 			Explanation: fmt.Sprintf(
 				"position was stopped out: %s",
@@ -227,7 +191,7 @@ func diagnoseLossPosition(
 
 		return Diagnosis{
 			Category:        DiagnosisWhipsawStopout,
-			Summary:         fmt.Sprintf("loss %.2f%%: stopped out by volatility wick (%s)", lossMagnitude*100, blocker.Explanation),
+			Summary:         fmt.Sprintf("loss %.2f%%: stopped out by volatility wick", lossMagnitude*100),
 			EvidenceQuality: 0.9,
 			EvidenceStatus:  "complete",
 			Blockers:        []Blocker{blocker},
@@ -245,47 +209,6 @@ func diagnoseLossPosition(
 		}
 	}
 
-	// Check for thesis collapse / contradiction spike during hold.
-	for _, step := range journal {
-		if step.ThesisContradiction > step.ThesisSupport && step.ThesisContradiction > 0.5 {
-			blocker := Blocker{
-				Key:       "loss:thesis_invalidation",
-				Category:  DiagnosisThesisCollapse,
-				Label:     "thesis contradiction spike",
-				Observed:  step.ThesisContradiction,
-				Target:    step.ThesisSupport,
-				HasTarget: true,
-				Gap:       step.ThesisContradiction - step.ThesisSupport,
-				Severity:  lossMagnitude,
-				Explanation: fmt.Sprintf(
-					"thesis contradiction spiked to %.4f against support %.4f during hold",
-					step.ThesisContradiction,
-					step.ThesisSupport,
-				),
-			}
-
-			return Diagnosis{
-				Category:        DiagnosisThesisCollapse,
-				Summary:         fmt.Sprintf("loss %.2f%%: thesis contradiction spiked during hold", lossMagnitude*100),
-				EvidenceQuality: 0.9,
-				EvidenceStatus:  "complete",
-				Blockers:        []Blocker{blocker},
-				Recommendation: Recommendation{
-					Key:         "fast_thesis_exit",
-					Kind:        RecommendationTuneParameter,
-					Target:      "trading.risk.max_contradiction",
-					Title:       "Enforce early exit on contradiction spike",
-					Action:      "Trigger faster risk-off exit when contradiction exceeds support during hold",
-					Rationale:   "Holding decayed as market structure turned contradictory",
-					ImpactPct:   lossMagnitude,
-					Occurrences: 1,
-					Symbols:     []string{entry.Symbol},
-				},
-			}
-		}
-	}
-
-	// Default to adverse selection / exhaustion entry.
 	blocker := Blocker{
 		Key:      "loss:adverse_selection",
 		Category: DiagnosisAdverseSelection,

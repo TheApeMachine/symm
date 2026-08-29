@@ -18,28 +18,32 @@ import (
 )
 
 /*
-RealizedReport wraps the perfect-execution hindsight analysis for one capture:
-the complete per-symbol breakdown plus a capture-wide summary of how much of
-the tape's theoretical value the system did not collect.
+RealizedReport wraps the hindsight analysis for one capture: the per-symbol
+breakdown plus a capture-wide summary separating the price-theoretical ceiling
+(what the tape's path offered) from the executable ceiling (what the recorded
+quantity could actually capture through historical L3 depth).
 */
 type RealizedReport struct {
-	CaptureID             int64                        `json:"captureId"`
-	Status                string                       `json:"status,omitempty"`
-	Symbols               []hindsight.PerSymbol        `json:"symbols"`
-	MissedPct             float64                      `json:"missedPct"`
-	RealizedPct           float64                      `json:"realizedPct"`
-	LossPct               float64                      `json:"lossPct"`
-	UpboundPct            float64                      `json:"upboundPct"`
-	MissedLegs            int                          `json:"missedLegs"`
-	TotalLegs             int                          `json:"totalLegs"`
-	LossPositions         int                          `json:"lossPositions"`
-	ValueCaptureRate      float64                      `json:"valueCaptureRate"`
-	LegCaptureRate        float64                      `json:"legCaptureRate"`
-	DiagnosticCoverage    float64                      `json:"diagnosticCoverage"`
-	RootCauses            []hindsight.RootCauseSummary `json:"rootCauses"`
-	Recommendations       []hindsight.Recommendation   `json:"recommendations"`
-	LossRootCauses        []hindsight.RootCauseSummary `json:"lossRootCauses"`
-	LossRecommendations   []hindsight.Recommendation   `json:"lossRecommendations"`
+	CaptureID int64                 `json:"captureId"`
+	Status    string                `json:"status,omitempty"`
+	Symbols   []hindsight.PerSymbol `json:"symbols"`
+
+	PriceTheoreticalCeiling float64 `json:"priceTheoreticalCeiling"`
+	ExecutableCeiling       float64 `json:"executableCeiling"`
+
+	MissedPct           float64                      `json:"missedPct"`
+	RealizedPct         float64                      `json:"realizedPct"`
+	LossPct             float64                      `json:"lossPct"`
+	MissedLegs          int                          `json:"missedLegs"`
+	TotalLegs           int                          `json:"totalLegs"`
+	LossPositions       int                          `json:"lossPositions"`
+	ValueCaptureRate    float64                      `json:"valueCaptureRate"`
+	LegCaptureRate      float64                      `json:"legCaptureRate"`
+	DiagnosticCoverage  float64                      `json:"diagnosticCoverage"`
+	RootCauses          []hindsight.RootCauseSummary `json:"rootCauses"`
+	Recommendations     []hindsight.Recommendation   `json:"recommendations"`
+	LossRootCauses      []hindsight.RootCauseSummary `json:"lossRootCauses"`
+	LossRecommendations []hindsight.Recommendation   `json:"lossRecommendations"`
 }
 
 /*
@@ -84,13 +88,14 @@ func analyzeHindsight(command *cobra.Command) error {
 	}
 
 	reducer := hindsight.NewReducer()
+	bookStore := hindsight.NewBookStore()
 	frames, release, err := store.Frames(captureID, time.Time{})
 
 	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Internal, "hindsight: open frames", err))
 	}
 
-	reduced, reduceErr := streamTape(reducer, frames)
+	reduced, reduceErr := streamTape(reducer, bookStore, frames)
 
 	release()
 
@@ -108,7 +113,7 @@ func analyzeHindsight(command *cobra.Command) error {
 		return errnie.Error(errnie.Err(errnie.Internal, "hindsight: read decisions", eventsErr))
 	}
 
-	reports, analysisErr := hindsight.Analyze(reducer, decisions)
+	reports, analysisErr := hindsight.Analyze(reducer, decisions, bookStore, observerStart(captureID, store))
 
 	if analysisErr != nil {
 		return errnie.Error(errnie.Err(errnie.Internal, "hindsight: analyze", analysisErr))
@@ -139,10 +144,15 @@ func analyzeHindsight(command *cobra.Command) error {
 
 /*
 streamTape walks one capture's frames in order and reduces the trade prints to
-per-symbol series. A cheap channel prefix gate keeps the book and heartbeat
-frames — the vast majority of a capture — out of the decoder.
+per-symbol series while reconstructing each symbol's authoritative L3 book from
+the level3 frames. Trade/ticker frames build the price path; level3 frames build
+the depth the executable counterfactual walks.
 */
-func streamTape(reducer *hindsight.Reducer, frames func() (backtest.Frame, bool)) (int, error) {
+func streamTape(
+	reducer *hindsight.Reducer,
+	bookStore *hindsight.BookStore,
+	frames func() (backtest.Frame, bool),
+) (int, error) {
 	reducedCount := 0
 
 	for {
@@ -150,6 +160,14 @@ func streamTape(reducer *hindsight.Reducer, frames func() (backtest.Frame, bool)
 
 		if !ok {
 			break
+		}
+
+		if frame.Endpoint == "level3" {
+			if err := bookStore.Apply(frame.Payload, frame.ReceivedAt); err != nil {
+				return 0, err
+			}
+
+			continue
 		}
 
 		if frame.Endpoint != "public" || !isMarketTapePayload(frame.Payload) {
@@ -166,6 +184,24 @@ func streamTape(reducer *hindsight.Reducer, frames func() (backtest.Frame, bool)
 	errnie.Info(fmt.Sprintf("hindsight: reduced %d trade/market frames into %d symbol series", reducedCount, len(reducer.Symbols())))
 
 	return reducedCount, nil
+}
+
+/*
+observerStart returns the capture's recorded start time — the moment this
+process instance began observing — so hindsight never blames the strategy for a
+move that was already underway before the system was observationally available.
+It falls back to the first frame arrival when no start time is recorded.
+*/
+func observerStart(captureID int64, store *backtest.Store) time.Time {
+	if captures, err := store.ListCaptures(); err == nil {
+		for _, capture := range captures {
+			if capture.ID == captureID {
+				return capture.StartedAt
+			}
+		}
+	}
+
+	return time.Time{}
 }
 
 /*
@@ -277,14 +313,15 @@ func summarize(captureID int64, reports []hindsight.PerSymbol) RealizedReport {
 		summary.MissedPct += report.MissedPct
 		summary.RealizedPct += report.RealizedPct
 		summary.LossPct += report.LossPct
-		summary.UpboundPct += report.UpboundPct
+		summary.PriceTheoreticalCeiling += report.PriceTheoreticalCeiling
+		summary.ExecutableCeiling += report.ExecutableCeiling
 		summary.MissedLegs += report.MissedLegs
 		summary.TotalLegs += report.Legs
 		summary.LossPositions += report.LossPositions
 	}
 
-	if summary.UpboundPct > 0 {
-		summary.ValueCaptureRate = summary.RealizedPct / summary.UpboundPct
+	if summary.PriceTheoreticalCeiling > 0 {
+		summary.ValueCaptureRate = summary.RealizedPct / summary.PriceTheoreticalCeiling
 	}
 
 	if summary.TotalLegs == 0 {
@@ -364,13 +401,14 @@ func (driver *Driver) buildHindsight(captureID int64) (RealizedReport, error) {
 	}
 
 	reducer := hindsight.NewReducer()
+	bookStore := hindsight.NewBookStore()
 	frames, release, err := store.Frames(captureID, time.Time{})
 
 	if err != nil {
 		return RealizedReport{}, err
 	}
 
-	reduced, reduceErr := streamTape(reducer, frames)
+	reduced, reduceErr := streamTape(reducer, bookStore, frames)
 
 	release()
 
@@ -388,7 +426,7 @@ func (driver *Driver) buildHindsight(captureID int64) (RealizedReport, error) {
 		return RealizedReport{}, eventsErr
 	}
 
-	reports, analysisErr := hindsight.Analyze(reducer, decisions)
+	reports, analysisErr := hindsight.Analyze(reducer, decisions, bookStore, observerStart(captureID, store))
 
 	if analysisErr != nil {
 		return RealizedReport{}, analysisErr
