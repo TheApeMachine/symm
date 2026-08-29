@@ -45,6 +45,8 @@ export { EnvelopeCognitionSymbol, EnvelopeCognitionSymbolT } from './telemetry/e
 export { EnvelopeExcursion, EnvelopeExcursionT } from './telemetry/envelope-excursion.js';
 export { EnvelopeFloatRow, EnvelopeFloatRowT } from './telemetry/envelope-float-row.js';
 export { EnvelopeFrame, EnvelopeFrameT } from './telemetry/envelope-frame.js';
+export { EnvelopeFuturesTickerData, EnvelopeFuturesTickerDataT } from './telemetry/envelope-futures-ticker-data.js';
+export { EnvelopeFuturesTradeData, EnvelopeFuturesTradeDataT } from './telemetry/envelope-futures-trade-data.js';
 export { EnvelopeGraphUpdate, EnvelopeGraphUpdateT } from './telemetry/envelope-graph-update.js';
 export { EnvelopeLevel3Data, EnvelopeLevel3DataT } from './telemetry/envelope-level3-data.js';
 export { EnvelopeLevel3Order, EnvelopeLevel3OrderT } from './telemetry/envelope-level3-order.js';

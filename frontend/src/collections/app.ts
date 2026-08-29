@@ -13,32 +13,34 @@ export { RingBuffer };
 import type { FluidFields } from "#/components/fluid-3d/wire";
 import type { BacktestFrame } from "#/providers/telemetry/telemetry/backtest-frame";
 import type { BalancesFrame } from "#/providers/telemetry/telemetry/balances-frame";
-import type { CausalFrame } from "#/providers/telemetry/telemetry/causal-frame";
-import type { CognitionFrame } from "#/providers/telemetry/telemetry/cognition-frame";
-import type { DiagnosticQueue } from "#/providers/telemetry/telemetry/diagnostic-queue";
-import type { DiagnosticsFrame } from "#/providers/telemetry/telemetry/diagnostics-frame";
+import type { EnvelopeCategory } from "#/providers/telemetry/telemetry/envelope-category";
+import type { EnvelopeCausalOutput } from "#/providers/telemetry/telemetry/envelope-causal-output";
+import type { EnvelopeCognition } from "#/providers/telemetry/telemetry/envelope-cognition";
+import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
+import type { EnvelopeOpportunityCandidate } from "#/providers/telemetry/telemetry/envelope-opportunity-candidate";
+import type { EnvelopeResonanceArtifact } from "#/providers/telemetry/telemetry/envelope-resonance-artifact";
+import type { EnvelopeTickerData } from "#/providers/telemetry/telemetry/envelope-ticker-data";
 import type { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
 import type { ErrorFrame } from "#/providers/telemetry/telemetry/error-frame";
 import type { FluidPhaseFrame } from "#/providers/telemetry/telemetry/fluid-phase-frame";
 import type { GraphFrame } from "#/providers/telemetry/telemetry/graph-frame";
 import type { HindsightFrame } from "#/providers/telemetry/telemetry/hindsight-frame";
-import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
 import type { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
 import type { RegulatorFrame } from "#/providers/telemetry/telemetry/regulator-frame";
 import type { ResonanceFrame } from "#/providers/telemetry/telemetry/resonance-frame";
 import type { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
-import type { TickFrame } from "#/providers/telemetry/telemetry/tick-frame";
 
 export const DEFAULT_KERNELS = [
 	"correlation",
 	"cvd",
 	"depthflow",
 	"derivatives",
-	"exhaustion",
 	"hawkes",
 	"leadlag",
+	"morphology",
 	"liquidity",
 	"pumpdump",
+	"resonance",
 	"sentiment",
 	"toxicity",
 ];
@@ -459,14 +461,14 @@ Sources are created lazily on first sight rather than pre-seeded from
 DEFAULT_KERNELS, so a source the frontend doesn't yet know about by name
 (e.g. a newly added kernel) still gets its own ring instead of being dropped.
 */
-const measurementStores: Record<string, ReturnType<typeof createFrameStore<Measurement>>> = {};
+const measurementStores: Record<string, ReturnType<typeof createFrameStore<EnvelopeMeasurement>>> = {};
 
 export const measurementSourcesStore = createStore<string[]>([]);
 
 export const getMeasurementStore = (source: string) => {
 	let store = measurementStores[source];
 	if (!store) {
-		store = createFrameStore<Measurement>(50);
+		store = createFrameStore<EnvelopeMeasurement>(50);
 		measurementStores[source] = store;
 		measurementSourcesStore.setState((prev) =>
 			prev.includes(source) ? prev : [...prev, source],
@@ -475,35 +477,30 @@ export const getMeasurementStore = (source: string) => {
 	return store;
 };
 
-export const addMeasurement = (source: string, row: Measurement) => {
+export const addMeasurement = (source: string, row: EnvelopeMeasurement) => {
 	getMeasurementStore(source).actions.add(row);
 };
 
-export const tickStore = createFrameStore<TickFrame>(50);
+export const tickStore = createFrameStore<EnvelopeTickerData>(50);
 export const regulatorStore = createFrameStore<RegulatorFrame>(50);
+// resonanceStore carries the ResonanceFrame broadcast (ui.Hub's tagged
+// "RESO" buffer, built from logic/resonance.ResonanceWire) — the manifold's
+// full per-layer/task-skill/energy/surprise diagnostics prediction.tsx
+// renders, none of which EnvelopeState's own flattened resonance field
+// carries. resonanceArtifactStore is the separate, simpler artifact
+// (confidence/calibrated) that arrives on every envelope and feeds the
+// kernel list's live health row.
 export const resonanceStore = createFrameStore<ResonanceFrame>(50);
-export const cognitionStore = createFrameStore<CognitionFrame>(50);
-export const causalStore = createFrameStore<CausalFrame>(50);
+export const resonanceArtifactStore = createFrameStore<EnvelopeResonanceArtifact>(50);
+export const cognitionStore = createFrameStore<EnvelopeCognition>(50);
+export const causalStore = createFrameStore<EnvelopeCausalOutput>(50);
+export const categoryStore = createFrameStore<EnvelopeCategory>(50);
+export const opportunityStore = createFrameStore<EnvelopeOpportunityCandidate>(50);
 export const graphStore = createFrameStore<GraphFrame>(50);
 export const strategyStore = createFrameStore<StrategyFrame>(50);
 export const positionStore = createFrameStore<PositionsFrame>(50);
 export const balanceStore = createFrameStore<BalancesFrame>(50);
 export const equityStore = createFrameStore<EquityFrame>(50);
-export const diagnosticsFrameStore = createFrameStore<DiagnosticsFrame>(50);
-
-const diagnosticQueues: Record<string, RingBuffer<DiagnosticQueue>> = {};
-
-export const diagnosticStore = createStore(
-	diagnosticQueues,
-	({ setState }) => ({
-		updateQueue: (name: string, row: DiagnosticQueue) => {
-			if (!diagnosticQueues[name])
-				diagnosticQueues[name] = new RingBuffer(1);
-			diagnosticQueues[name].add(row);
-			setState((prev) => ({ ...prev }));
-		},
-	}),
-);
 
 const fluidPhases: Record<string, RingBuffer<FluidFields>> = {};
 

@@ -1,131 +1,128 @@
 import { renderToReadableStream } from "react-dom/server";
-import { describe, expect, it } from "vitest";
-import type { DiagnosticsFrame } from "#/collections/types";
-import { DiagnosticsDataflow } from "#/routes/diagnostics";
+import { beforeEach, describe, expect, it } from "vitest";
+import { topologyStore } from "#/collections/topology";
+import { DiagnosticsGraph, type DiagnosticsSelection } from "#/components/dashboard/diagnostics-graph";
+import type { EnvelopeBoundaryStamp } from "#/providers/telemetry/telemetry/envelope-boundary-stamp";
 
-const FRAME: DiagnosticsFrame = {
-	status: "flowing",
-	at_ns: 10_000_000_000,
-	started_ns: 1_000_000_000,
-	stages: [
-		{
-			name: "correlation",
-			count: 2,
-			total_ns: 4_000_000,
-			last_ns: 3_000_000,
-			max_ns: 3_000_000,
-			last_at_ns: 9_000_000_000,
-		},
-		{
-			name: "graph",
-			count: 1,
-			total_ns: 5_000_000,
-			last_ns: 5_000_000,
-			max_ns: 5_000_000,
-			last_at_ns: 9_500_000_000,
-		},
-	],
-	hops: [],
-	queues: [
-		{
-			name: "measurements",
-			kind: "rail",
-			writers: ["correlation"],
-			readers: ["graph"],
-			depth: 12,
-			cap: 0,
-			high_water: 19,
-			symbols: 3,
-		},
-	],
-	errors: [],
-	pass: { state: "running", in_flight_ns: 1_000_000 },
+/*
+FakeStamp mimics only the EnvelopeBoundaryStamp accessors topologyStore.ingest
+reads (label/atNs/seqCount/avgGapNs/lastGapNs/backlog) — the generated
+FlatBuffers view class needs a real backing buffer to construct, so tests
+build the same shape by hand rather than encoding one.
+*/
+class FakeStamp {
+	constructor(
+		private readonly _label: string,
+		private readonly _atNs: bigint,
+		private readonly _seqCount = 1n,
+		private readonly _avgGapNs = 0n,
+		private readonly _lastGapNs = 0n,
+		private readonly _backlog = 0n,
+	) {}
+
+	label() {
+		return this._label;
+	}
+	atNs() {
+		return this._atNs;
+	}
+	seqCount() {
+		return this._seqCount;
+	}
+	avgGapNs() {
+		return this._avgGapNs;
+	}
+	lastGapNs() {
+		return this._lastGapNs;
+	}
+	backlog() {
+		return this._backlog;
+	}
+}
+
+const ingest = (
+	trace: [string, number, number?][],
+) => {
+	const stamps = trace.map(
+		([label, atNs, backlog]) =>
+			new FakeStamp(label, BigInt(atNs), 1n, 0n, 0n, BigInt(backlog ?? 0)),
+	);
+
+	// FakeStamp satisfies the accessor shape ingest() actually calls
+	// (label/atNs/seqCount/avgGapNs/lastGapNs/backlog) but isn't the real
+	// generated EnvelopeBoundaryStamp class, so it can only be asserted via
+	// unknown rather than structurally matching the type.
+	topologyStore.actions.ingest(stamps as unknown as EnvelopeBoundaryStamp[]);
 };
 
-const render = async (frame: DiagnosticsFrame = FRAME) => {
+const render = async (
+	selection: DiagnosticsSelection | null = null,
+	atNs?: number,
+) => {
+	const { nodes, edges } = topologyStore.state;
+	const resolvedAtNs =
+		atNs ?? Math.max(0, ...Array.from(nodes.values()).map((n) => n.lastAtNs));
 	const stream = await renderToReadableStream(
-		<DiagnosticsDataflow frame={frame} connection="connected" />,
+		<DiagnosticsGraph nodes={nodes} edges={edges} atNs={resolvedAtNs} selection={selection} onSelect={() => {}} />,
 	);
 
 	return new Response(stream).text();
 };
 
-describe("DiagnosticsDataflow", () => {
-	it("renders the server-reported pipeline as a node graph with stages, queues, and direction", async () => {
+describe("DiagnosticsGraph", () => {
+	beforeEach(() => {
+		topologyStore.setState(() => ({ nodes: new Map(), edges: new Map(), version: 0 }));
+	});
+
+	it("renders a stage discovered purely from boundary stamps", async () => {
+		ingest([
+			["ticker.ingress", 10_000_000_000],
+			["ticker.signals", 10_000_050_000],
+		]);
+
 		const markup = await render();
 
-		expect(markup).toContain("Inspect Correlation");
-		expect(markup).toContain("Measurements");
-		expect(markup).toContain("Inspect Graph");
-		expect(markup).toContain("Inspect queue measurements");
-		// Queues render as compact tanks with a rising fill, not as oval pipes.
-		expect(markup).toContain("rounded-xs");
-		expect(markup).not.toContain("rounded-[50%]");
-		// The graph draws writer→queue and queue→reader edges on the svg; the
-		// router emits explicit orthogonal line segments and edge identity.
+		expect(markup).toContain("Inspect ticker.ingress");
+		expect(markup).toContain("Inspect ticker.signals");
 		expect(markup).toMatch(/<path d="M [^"]*\bL\b [^"]*"/);
-		expect(markup).toContain('data-from="correlation"');
-		expect(markup).toContain('data-to="measurements"');
-		// Edges use the muted latency-health palette, never a grey line.
-		expect(markup).toContain('data-health="healthy"');
-		expect(markup).toContain('stroke="hsl(140 32% 62%)"');
-		// Numeric columns reserve their widest expected footprint so changing
-		// counts and durations cannot move neighboring labels or controls.
-		expect(markup).toContain("grid-cols-[2.5ch_7ch_6ch]");
-		expect(markup).toContain("grid-cols-[minmax(0,1fr)_7ch_6ch]");
-		expect(markup).toContain("tabular-nums");
-		// Flow state and latency health are part of the legend.
-		expect(markup).toContain("flowing");
-		expect(markup).toContain("idle (solid)");
-		expect(markup).toContain("healthy");
+		expect(markup).toContain('data-from="ticker.ingress"');
+		expect(markup).toContain('data-to="ticker.signals"');
 	});
 
-	it("reports live pressure, growth, and processing averages without claiming payload quality", async () => {
+	it("shows the average hop latency between two consecutive stamps", async () => {
+		ingest([
+			["a", 10_000_000_000],
+			["b", 10_000_042_000],
+		]);
+
 		const markup = await render();
 
-		expect(markup).toContain("pending");
-		expect(markup).toContain(">12<");
-		expect(markup).toContain("Correlation");
-		expect(markup).toContain("2.00ms");
-		expect(markup).not.toContain("Payload quality");
-		expect(markup).not.toContain("Pipeline wiring map");
+		expect(markup).toContain("42.0µs");
 	});
 
-	it("shows an in-flight stage while its first operation is still running", async () => {
-		const markup = await render({
-			...FRAME,
-			stages: [
-				{
-					name: "category",
-					count: 0,
-					total_ns: 0,
-					last_ns: 0,
-					active: 1,
-					started_ns: 7_000_000_000,
-				},
-			],
-		});
+	it("keeps stages that have gone stale rendered, just dimmed to the stale tone", async () => {
+		ingest([["only", 0]]);
 
-		expect(markup).toContain("Inspect Category");
-		expect(markup).toContain("running");
-		expect(markup).toContain("3.00s");
-		expect(markup).toContain("1 active");
+		// Far beyond TOPOLOGY_LIVE_WINDOW_NS (2s) past the stamp's own atNs, so
+		// the stage reads as stale rather than live.
+		const markup = await render(null, 10_000_000_000);
+
+		expect(markup).toContain("Inspect only");
+		expect(markup).toContain("stale");
 	});
 
-	it("keeps the empty frame inside the fixed dataflow surface", async () => {
-		const markup = await render({
-			...FRAME,
-			stages: [],
-			queues: [],
-		});
-
-		expect(markup).toContain("Waiting for queue topology");
-		expect(markup).toContain("min-h-0");
-		expect(markup).toContain("overflow-hidden");
-	});
-
-	it("renders queue inspection breakdown with readers and own processing averages", async () => {
+	it("renders the empty-topology placeholder before any envelope has been stamped", async () => {
 		const markup = await render();
-		expect(markup).toBeDefined();
+
+		expect(markup).toContain("Waiting for the pipeline to stamp its first boundary");
+	});
+
+	it("shows real ring backlog stamped from the Workload's own sequence numbers", async () => {
+		ingest([["slow.stage", 10_000_000_000, 5]]);
+
+		const markup = await render();
+
+		expect(markup).toContain("bklg");
+		expect(markup).toContain(">5<");
 	});
 });

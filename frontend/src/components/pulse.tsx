@@ -52,7 +52,10 @@ export const Pulse = () => {
 			gap={4}
 			className="h-8 shrink-0 border-(--line) border-b bg-(--sunken) px-3.5 font-mono text-[11px] text-(--f3)"
 		>
-			<Reading which="tick" value={lastTick ? String(lastTick.count()) : "—"} />
+			<Reading
+				which="tick"
+				value={lastTick ? new Date(Number(lastTick.timestampNs() / 1000000n)).toISOString().slice(11, 19) : "—"}
+			/>
 			<Reading
 				label="phase"
 				which="phase"

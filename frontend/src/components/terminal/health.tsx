@@ -89,7 +89,9 @@ export const HealthPanel = () => {
 		const el = root.current.querySelector<HTMLElement>("[data-tick]");
 		const last = state.getLast();
 		if (el) {
-			el.textContent = String(last?.count() ?? "—");
+			el.textContent = last
+				? new Date(Number(last.timestampNs() / 1000000n)).toISOString().slice(11, 19)
+				: "—";
 		}
 	});
 

@@ -1162,6 +1162,41 @@ table EnvelopeTradeData {
   timestampNs:long;
 }
 
+table EnvelopeFuturesTickerData {
+  productId:string (required);
+  symbol:string;
+  hasBid:bool;
+  bid:double;
+  bidSize:double;
+  hasAsk:bool;
+  ask:double;
+  askSize:double;
+  hasLast:bool;
+  last:double;
+  openInterest:double;
+  hasMarkPrice:bool;
+  markPrice:double;
+  hasIndexPrice:bool;
+  indexPrice:double;
+  hasFundingRate:bool;
+  fundingRate:double;
+  hasFundingRatePrediction:bool;
+  fundingRatePrediction:double;
+  volume:double;
+  timestampNs:long;
+}
+
+table EnvelopeFuturesTradeData {
+  productId:string (required);
+  symbol:string;
+  price:double;
+  qty:double;
+  side:string;
+  type:string;
+  uid:string;
+  timestampNs:long;
+}
+
 table EnvelopeLevel3Order {
   event:string;
   orderId:string (required);
@@ -1181,11 +1216,22 @@ table EnvelopeLevel3Data {
   asks:[EnvelopeLevel3Order];
 }
 
-// EnvelopeBoundaryStamp mirrors one fixed types.Envelope.Boundaries slot: the
-// Observe group's index in the Workload's declared graph and when it witnessed
-// the envelope. An all-zero entry (atNs 0) means that boundary has not been
-// reached/stamped yet for this envelope.
-table EnvelopeBoundaryStamp { slot:int; atNs:long; }
+// EnvelopeBoundaryStamp mirrors one types.Envelope.Boundaries entry: the
+// diagnostics node's own label, when it witnessed the envelope, and a running
+// summary of how often and how regularly this exact stage runs. Boundaries is
+// an ordered trace, so consecutive entries are a live topology edge and their
+// atNs delta is that hop's latency; seqCount/avgGapNs/lastGapNs give per-stage
+// rate and health directly, and backlog is real ring pressure (how many
+// sequence numbers behind the Workload's producer this stage was) — no
+// separate graph definition or queue instrumentation needed.
+table EnvelopeBoundaryStamp {
+  label:string (required);
+  atNs:long;
+  seqCount:long;
+  avgGapNs:long;
+  lastGapNs:long;
+  backlog:long;
+}
 
 table EnvelopeState {
   key:string;
@@ -1194,6 +1240,8 @@ table EnvelopeState {
   tickerData:EnvelopeTickerData;
   tradeData:EnvelopeTradeData;
   level3Data:EnvelopeLevel3Data;
+  futuresTickerData:EnvelopeFuturesTickerData;
+  futuresTradeData:EnvelopeFuturesTradeData;
 
   correlation:EnvelopeMeasurement;
   leadLag:EnvelopeMeasurement;
@@ -1205,6 +1253,7 @@ table EnvelopeState {
   hawkes:EnvelopeMeasurement;
   pumpDump:EnvelopeMeasurement;
   toxicity:EnvelopeMeasurement;
+  derivatives:EnvelopeMeasurement;
 
   categories:[EnvelopeCategory];
   opportunities:[EnvelopeOpportunityCandidate];

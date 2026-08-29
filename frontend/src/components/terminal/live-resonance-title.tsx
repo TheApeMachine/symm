@@ -48,5 +48,3 @@ export const LiveResonanceTitle = () => {
 		</span>
 	);
 };
-
-

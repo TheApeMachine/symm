@@ -32,6 +32,7 @@ export const TERMINAL_KERNEL_ORDER = [
 	"exhaustion",
 	"cvd",
 	"depthflow",
+	"morphology",
 	"liquidity",
 	"sentiment",
 	"leadlag",
@@ -55,8 +56,8 @@ bindings: signed_correlation (correlation), signed_net_fraction_zscore (cvd),
 book_imbalance (depthflow), open_interest_growth_zscore (derivatives),
 book_imbalance_zscore (exhaustion), branching_spectral_radius (hawkes),
 best_lag_correlation (leadlag), touch_notional_imbalance (liquidity),
-spread_zscore (pumpdump), breadth (sentiment), fill_fraction_zscore:bid
-(toxicity).
+morphology_change (morphology), spread_zscore (pumpdump), breadth
+(sentiment), fill_fraction_zscore:bid (toxicity).
 */
 const SOURCE_HEADLINE: Record<string, string> = {
 	correlation: "signed_correlation",
@@ -67,6 +68,7 @@ const SOURCE_HEADLINE: Record<string, string> = {
 	hawkes: "branching_spectral_radius",
 	leadlag: "best_lag_correlation",
 	liquidity: "touch_notional_imbalance",
+	morphology: "morphology_change",
 	pumpdump: "spread_zscore",
 	sentiment: "breadth",
 	toxicity: "fill_fraction_zscore:bid",
@@ -165,19 +167,14 @@ const SOURCE_METRICS: Record<string, string[]> = {
 		"return_gap_zscore",
 		"open_interest_growth_baseline",
 	],
-	exhaustion: [
-		"displayed_depth_notional",
-		"spread",
-		"relative_spread",
-		"book_imbalance",
-		"book_imbalance_zscore",
-		"depth_zscore:bid",
-		"depth_zscore:ask",
-		"depth_ask_divergence_velocity",
-		"depth_bid_divergence_velocity",
-		"total_depth_zscore",
-		"spread_zscore",
-		"midpoint_log_return",
+	morphology: [
+		"morphology_change",
+		"book_shape_distance",
+		"book_shape_ks",
+		"concentration:bid",
+		"concentration:ask",
+		"entropy:bid",
+		"entropy:ask",
 	],
 	hawkes: [
 		"arrival_rate",
@@ -410,6 +407,12 @@ const KERNEL_COPY: Record<
 		sub: "depthflow · ladder",
 		blurb: "Depth flow measurement from backend frames.",
 	},
+	morphology: {
+		name: "Morphology",
+		sub: "morphology · book shape",
+		blurb:
+			"Order-book shape drift: bid/ask concentration and entropy versus a rolling reference shape, with the shape-distance divergence itself.",
+	},
 	cvd: {
 		name: "CVD",
 		sub: "cvd · pressure",
@@ -532,10 +535,13 @@ export const kernelSparkPaths = (
 	/*
 	The y-domain is fixed so the trace scrolls instead of renormalizing: a
 	window-relative min/max scale moves every existing point whenever a new
-	extreme lands, which reads as the whole line jumping as one segment.
-	Normalized [0,1] readings map directly, signed [-1,1] readings fold to the
-	lower half, and anything outside clamps to the rails, so old points keep
-	their position and only the newest point moves.
+	extreme lands, which reads as the whole line jumping as one segment. The
+	caller is expected to have already scaled values into [0,1] (or [-1,1]
+	signed, which folds to the lower half) using whatever mapping is
+	appropriate for that value's own domain — this function has no way to
+	know what range a given source's raw readings live in, so it never
+	invents one; it only clamps anything still outside [0,1]/[-1,1] to the
+	rails so old points keep their position and only the newest point moves.
 	*/
 	const scaled = history.map((value) => {
 		if (!Number.isFinite(value)) return 0.5;

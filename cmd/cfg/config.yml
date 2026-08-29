@@ -33,6 +33,7 @@ system:
       public: "wss://ws.kraken.com/v2"
       private: "wss://ws-auth.kraken.com/v2"
       level3: "wss://ws-l3.kraken.com/v2"
+      futures: "wss://futures.kraken.com/ws/v1"
     channel:
       # Public book/trade/ticker ingress queues and UI fan-out. Undersizing
       # stalls the Kraken reader behind book decode and starves trades.

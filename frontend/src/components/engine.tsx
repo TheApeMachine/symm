@@ -32,7 +32,7 @@ export const Engine = () => {
 		<Panel size="bare" className="p-2.5 font-mono text-[11px] leading-[1.7]">
 			<Row label="seq">
 				<Flex data-e="seq" className="text-(--f1)">
-					{String(lastTick?.count() ?? "—")}
+					{lastTick ? new Date(Number(lastTick.timestampNs() / 1000000n)).toISOString().slice(11, 19) : "—"}
 				</Flex>
 			</Row>
 			<Row label="phase">

@@ -1,5 +1,11 @@
 import { useSelector } from "@tanstack/react-store";
-import { DEFAULT_KERNELS, getMeasurementStore, kernelDetailStore } from "#/collections/app";
+import {
+	DEFAULT_KERNELS,
+	focusStore,
+	getMeasurementStore,
+	kernelDetailStore,
+	resonanceArtifactStore,
+} from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
 	kernelCopy,
@@ -11,67 +17,65 @@ import {
 import { Flex } from "#/components/ui";
 import { Badge } from "#/components/ui/badge";
 import { cn } from "#/lib/utils";
-import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
-import { Metric } from "#/providers/telemetry/telemetry/metric";
+import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
+import type { EnvelopeResonanceArtifact } from "#/providers/telemetry/telemetry/envelope-resonance-artifact";
 import type { FrameBuffer } from "#/collections/app";
-
-const metricObj = new Metric();
 
 /*
 getKernelReadings walks a kernel's own ring (already scoped to the focused
 symbol server-side — the backend never ships a measurement for any other
-symbol) and collects the signal-to-noise ratio per row. Rows that carry no
-usable metric are skipped, so a sparse row never injects a zero into the
-trace.
+symbol) and collects each row's signal-to-noise ratio. SNR is a top-level
+field on the wire measurement (data.Measurement.SNR/SNRDefined on the Go
+side), not an entry in its metrics map — Finalize() only sets SNRDefined
+once a real noise model or covariance was estimable, so a row with
+snrDefined() false has no SNR reading yet and is skipped rather than
+plotting some other metric in its place.
 */
-const getKernelReadings = (ring: FrameBuffer<Measurement>) => {
+const getKernelReadings = (ring: FrameBuffer<EnvelopeMeasurement>) => {
 	const len = ring.getBufferLength();
 	const points: number[] = [];
 
 	for (let i = 0; i < len; i++) {
 		const row = ring.get(i);
 		if (!row) continue;
+		if (!row.snrDefined()) continue;
 
-		const count = row.metricsLength();
-		let foundValue: number | null = null;
+		const snr = row.snr();
+		if (Number.isFinite(snr)) points.push(snr);
+	}
 
-		/*
-		The kernel list plots a normalized signal-to-noise reading for the
-		confidence gauge and sparkline. The raw "snr" value is unbounded, so it
-		is only used when the metric also carries a normalized value; otherwise
-		the established headline or first-metric fallback supplies the [0,1]
-		reading.
-		*/
-		for (let j = 0; j < count; j++) {
-			const metric = row.metrics(j, metricObj);
-			if (!metric) continue;
-			if (metric.name() !== "snr") continue;
-			if (!metric.hasNormalized()) continue;
-			foundValue = metric.normalized();
-			break;
-		}
+	const latest = points.length > 0 ? points[points.length - 1] : null;
+	return { points, latest };
+};
 
-		if (foundValue === null) {
-			for (let j = 0; j < count; j++) {
-				const metric = row.metrics(j, metricObj);
-				if (!metric) continue;
-				const name = metric.name();
-				if (name !== "score" && name !== "normalized") continue;
-				foundValue = metric.hasNormalized() ? metric.normalized() : metric.raw();
-				break;
-			}
-		}
+/*
+getResonanceReadings walks the shared resonanceArtifactStore ring for the
+frames that belong to the focused symbol — unlike every other kernel's ring, resonance is
+not pre-scoped to one symbol server-side (logic/resonance.Solver.Update keys
+its predictive coder per symbol across the whole cross-section), so the
+symbol filter has to happen here, the same way live-resonance-title.tsx and
+xray.tsx already do. Confidence is the collected reading: unlike SNR it is
+already a real [0,1] quantity by construction (learning.PredictiveOutput's
+own doc comment), but it is only meaningful once the predictive head has
+resolved enough outcomes to calibrate — calibrated() is that honest gate, the
+same role snrDefined() plays for the other kernels, so an uncalibrated frame
+is skipped rather than plotting a confidence value that isn't real yet.
+*/
+const getResonanceReadings = (
+	ring: FrameBuffer<EnvelopeResonanceArtifact>,
+	focusSymbol: string,
+) => {
+	const len = ring.getBufferLength();
+	const points: number[] = [];
 
-		if (foundValue === null && count > 0) {
-			const first = row.metrics(0, metricObj);
-			if (first) {
-				foundValue = first.hasNormalized() ? first.normalized() : first.raw();
-			}
-		}
+	for (let i = 0; i < len; i++) {
+		const row = ring.get(i);
+		if (!row) continue;
+		if (row.symbol() !== focusSymbol) continue;
+		if (!row.calibrated()) continue;
 
-		if (foundValue !== null && Number.isFinite(foundValue)) {
-			points.push(foundValue);
-		}
+		const confidence = row.confidence();
+		if (Number.isFinite(confidence)) points.push(confidence);
 	}
 
 	const latest = points.length > 0 ? points[points.length - 1] : null;
@@ -86,6 +90,37 @@ on standby until the first reading lands.
 const kernelStatus = (latest: number | null): SignalHealthStatus =>
 	latest === null ? "waiting" : "measured";
 
+/*
+relativeToOwnRange scales each SNR reading against the min/max this kernel's
+own ring has actually observed. SNR is an unbounded Mahalanobis/scalar
+quantity (divergence²/noise_variance) with no fixed "good" threshold declared
+anywhere in the backend, so there is no principled absolute [0,1] mapping to
+assert — asserting one (e.g. snr/(snr+k)) would invent a quality bar that
+doesn't exist in the domain. Scaling relative to the kernel's own recent
+range instead shows genuine relative movement without claiming any reading
+is universally strong or weak. A single reading (no range yet) reads as its
+own peak, at the top of the trace, since nothing else exists yet to compare
+it against.
+*/
+const relativeToOwnRange = (values: number[]): number[] => {
+	if (values.length === 0) return [];
+
+	const min = Math.min(...values);
+	const max = Math.max(...values);
+	const range = max - min;
+
+	return values.map((value) => (range > 0 ? (value - min) / range : 1));
+};
+
+/*
+Resonance is not an EnvelopeMeasurement (no SNR/metrics map — see
+getResonanceReadings) and its ring is not pre-scoped to the focused symbol,
+so it reads from resonanceArtifactStore directly instead of
+getMeasurementStore. Both selectors below run unconditionally (hooks cannot
+be conditional); only one of their results is actually used per row.
+*/
+const isResonance = (source: string) => source === "resonance";
+
 const KernelRow = ({
 	source,
 	compact,
@@ -93,14 +128,29 @@ const KernelRow = ({
 	source: string;
 	compact: boolean;
 }) => {
-	const ring = useSelector(getMeasurementStore(source), (state) => state);
-	const { points, latest } = getKernelReadings(ring);
+	const resonance = isResonance(source);
+	const measurementRing = useSelector(getMeasurementStore(source), (state) => state);
+	const resonanceRing = useSelector(resonanceArtifactStore, (state) => state);
+	const focusSymbol = useSelector(focusStore, (state) => state);
+
+	const { points, latest } = resonance
+		? getResonanceReadings(resonanceRing, focusSymbol)
+		: getKernelReadings(measurementRing);
 	const copy = kernelCopy(source, "");
 	const status = kernelStatus(latest);
 	const badge = kernelStatusMeta(status);
-	const paths = kernelSparkPaths(points, status);
-	const confidence =
-		latest !== null && Number.isFinite(latest) ? Math.min(1, Math.max(0, latest)) : 0;
+
+	// Confidence is already a real [0,1] quantity by construction (see
+	// getResonanceReadings) — only unbounded SNR needs scaling against its
+	// own observed range before it means anything as a bar/sparkline.
+	const relativePoints = resonance ? points : relativeToOwnRange(points);
+	const paths = kernelSparkPaths(relativePoints, status);
+	const confidence = relativePoints.length > 0 ? relativePoints[relativePoints.length - 1] : 0;
+	const barTitle = resonance
+		? "Predictive confidence for the focused symbol, once the head has calibrated"
+		: "SNR relative to this kernel's own recent range — not an absolute quality threshold";
+	const valueLabel = resonance ? "confidence" : "raw SNR";
+	const valueText = latest === null ? "—" : resonance ? `${(latest * 100).toFixed(0)}%` : latest.toFixed(2);
 
 	return (
 		<button
@@ -135,7 +185,10 @@ const KernelRow = ({
 				/>
 			</svg>
 			<Flex.Row align="center" gap={2} className="mt-1.5">
-				<div className="h-1 flex-1 overflow-hidden rounded-xs bg-(--line)">
+				<div
+					className="h-1 flex-1 overflow-hidden rounded-xs bg-(--line)"
+					title={barTitle}
+				>
 					<div
 						data-k="conf"
 						className="h-full transition-[width,background-color] duration-300 ease-out"
@@ -147,9 +200,10 @@ const KernelRow = ({
 				</div>
 				<span
 					data-k="snr1"
-					className="w-9 shrink-0 text-right font-mono text-[9px] tabular-nums text-(--f2)"
+					className="w-11 shrink-0 text-right font-mono text-[9px] tabular-nums text-(--f2)"
+					title={valueLabel}
 				>
-					{latest !== null ? `${(confidence * 100).toFixed(0)}%` : "—"}
+					{valueText}
 				</span>
 			</Flex.Row>
 		</button>

@@ -2,28 +2,67 @@ import { useEffect, useRef } from "react";
 import { useSelector } from "@tanstack/react-store";
 import { focusStore, getMeasurementStore } from "#/collections/app";
 import type { FrameBuffer } from "#/collections/app";
-import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
-import {
-	getRetainedHawkes,
-	intensitySeriesFromRingRows,
-	retainHawkesMetric,
-} from "#/components/terminal/xray-view";
+import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
 import { Typography } from "#/components/ui/typography";
-import { Metric } from "#/providers/telemetry/telemetry/metric";
+import { EnvelopeMeasurementMetric } from "#/providers/telemetry/telemetry/envelope-measurement-metric";
+import { EnvelopeMetric } from "#/providers/telemetry/telemetry/envelope-metric";
 
-const metricObj = new Metric();
+const metricObj = new EnvelopeMeasurementMetric();
+const valueObj = new EnvelopeMetric();
 
 /*
-HAWKES_INTENSITY_METRIC_RANK orders the candidate intensity metric names by
-preference, lowest wins: the fitted per-side conditional intensity is the
-real λ(t), while arrival_rate is the flat cumulative-average count/duration.
-Must match the ?? fallback chain the readout above uses for the same value.
+latestMetrics holds the last known value of every metric name seen anywhere
+in the store's ring, scanning back from the newest row. Each Hawkes emission
+carries only a handful of the ~30 named bindings (the rest are 0 elsewhere
+in this same commit, sharing one Frame) — reading only the latest row drops
+metrics like background_rate/excitation_decay whenever the newest tick didn't
+happen to report them, even though a recent tick did. This holds the last
+real value per key instead of treating that absence as "no data."
 */
-const HAWKES_INTENSITY_METRIC_RANK: Record<string, number> = {
-	"conditional_intensity:buy": 0,
-	conditional_intensity: 1,
-	"arrival_rate:buy": 2,
-	arrival_rate: 3,
+const latestMetrics = (state: FrameBuffer<EnvelopeMeasurement>): Record<string, number> => {
+	const values: Record<string, number> = {};
+	const count = state.getBufferLength();
+
+	for (let i = count - 1; i >= 0; i--) {
+		const row = state.get(i);
+		if (!row) continue;
+
+		for (let j = 0; j < row.metricsLength(); j++) {
+			const m = row.metrics(j, metricObj);
+			const value = m?.value(valueObj);
+			const key = m?.key() ?? "";
+			if (m && value && !(key in values)) {
+				values[key] = value.raw();
+			}
+		}
+	}
+
+	return values;
+};
+
+/*
+rowIntensity reads this row's own conditional_intensity — the fitted total
+λ(t) — falling back to arrival_rate only when conditional_intensity was not
+reported on this exact row (the model is still cold). The two are distinct,
+non-interchangeable statistics (fitted intensity vs. a cumulative empirical
+rate), so this never mixes a conditional_intensity from one row with an
+arrival_rate from another; each returned sample is one row's own reading.
+*/
+const rowIntensity = (row: EnvelopeMeasurement): number | null => {
+	console.log("envelope", envelope)
+	let conditionalIntensity: number | null = null;
+	let arrivalRate: number | null = null;
+
+	for (let j = 0; j < row.metricsLength(); j++) {
+		const m = row.metrics(j, metricObj);
+		const value = m?.value(valueObj);
+		if (!m || !value) continue;
+
+		if (m.key() === "conditional_intensity") conditionalIntensity = value.raw();
+		if (m.key() === "arrival_rate") arrivalRate = value.raw();
+	}
+
+	return conditionalIntensity ?? arrivalRate;
 };
 
 export const XrayHawkesPanel = () => {
@@ -34,20 +73,10 @@ export const XrayHawkesPanel = () => {
 	useEffect(() => {
 		const hawkesStore = getMeasurementStore("hawkes");
 
-		const updateFromState = (state: FrameBuffer<Measurement>) => {
+		const updateFromState = (state: FrameBuffer<EnvelopeMeasurement>) => {
 			if (!root.current) return;
-			const row = state.getLast();
-
-			if (row) {
-				for (let j = 0; j < row.metricsLength(); j++) {
-					const m = row.metrics(j, metricObj);
-					if (m) {
-						retainHawkesMetric(focusSymbol, m.name() ?? "", m.raw());
-					}
-				}
-			}
-
-			const retained = getRetainedHawkes(focusSymbol);
+			const retained = latestMetrics(state);
+			console.log("retained", retained)
 
 			const set = (q: string, value: string) => {
 				const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
@@ -78,24 +107,25 @@ export const XrayHawkesPanel = () => {
 				set("events", events.toFixed(0));
 			}
 
-			const lambda =
-				retained["conditional_intensity:buy"] ??
-				retained.conditional_intensity ??
-				retained["arrival_rate:buy"] ??
-				retained.arrival_rate;
+			// conditional_intensity is the fitted total λ(t) — buy-side plus
+			// sell-side excitation together — and arrival_rate is a distinct,
+			// unrelated empirical statistic (a cumulative average rate, not
+			// the fitted intensity). They must not stand in for each other:
+			// only fall back to arrival_rate when conditional_intensity has
+			// genuinely never been reported yet (the model is still cold).
+			const lambda = retained.conditional_intensity ?? retained.arrival_rate;
 			if (typeof lambda === "number") {
 				set("lambda", `${lambda.toFixed(4)} /s`);
 			}
 
-			const mu = retained["background_rate:buy"] ?? retained.background_rate;
+			const mu = retained.background_rate;
 			if (typeof mu === "number") {
 				set("mu", `${mu.toFixed(4)} /s`);
 			}
 
-			const sells =
-				retained["event_count:sell"] ??
-				retained["conditional_intensity:sell"] ??
-				retained["arrival_rate:sell"];
+			const beta = retained["excitation_decay:buy_from_buy"];
+
+			const sells = retained["event_count:sell"];
 			if (typeof sells === "number") {
 				set("sells", sells.toFixed(0));
 			}
@@ -129,48 +159,37 @@ export const XrayHawkesPanel = () => {
 						const r = state.get(i);
 						if (!r) continue;
 
-						// Preference order matches the readout above exactly
-						// (conditional_intensity:buy > conditional_intensity >
-						// arrival_rate:buy > arrival_rate): scanning metrics in
-						// whatever order they happen to sit in the row and
-						// taking the first name match ignores that ranking
-						// entirely, silently plotting arrival_rate — a flat,
-						// slowly-drifting cumulative average — whenever it
-						// happens to be enumerated before the real intensity.
-						let best: number | null = null;
-						let bestRank = Number.POSITIVE_INFINITY;
-
-						for (let j = 0; j < r.metricsLength(); j++) {
-							const m = r.metrics(j, metricObj);
-							if (!m) continue;
-
-							const rank = HAWKES_INTENSITY_METRIC_RANK[m.name() ?? ""];
-
-							if (rank !== undefined && rank < bestRank) {
-								bestRank = rank;
-								best = m.raw();
-							}
-						}
-
-						if (best !== null) {
-							intensityRows.push({ at: r.at(), raw: best });
+						const intensity = rowIntensity(r);
+						if (intensity !== null) {
+							intensityRows.push({ at: r.atNs(), raw: intensity });
 						}
 					}
-					const intensities = intensitySeriesFromRingRows(intensityRows);
+					// intensitySeriesFromRingRows collapses to a plain number[] (its
+					// tested contract), but the decay curve below needs each
+					// sample's own epoch too, so the same by-epoch dedup is redone
+					// here to pair each value back up with its timestamp.
+					const byEpoch = new Map<bigint, number>();
+					for (const row of intensityRows) {
+						byEpoch.set(row.at, row.raw);
+					}
+					const samples = [...byEpoch.entries()]
+						.sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))
+						.map(([at, raw]) => ({ at, raw }));
 
 					// Real intensity ranges from a few hundredths (quiet symbols)
 					// to several tens (a fresh burst), so the vertical scale must
 					// follow the series actually observed rather than a fixed
 					// floor: a constant tuned for one regime silently flattens
 					// every symbol whose scale sits far from it.
-					const observedMax = Math.max(0, ...intensities);
+					const observedMax = Math.max(0, ...samples.map((s) => s.raw));
 					const muFloor = typeof mu === "number" && mu > 0 ? mu : 0;
 					const maxL = Math.max(observedMax, muFloor, Number.EPSILON) * 1.1;
 					const pad = 14 * (window.devicePixelRatio || 1);
 					const base = h - 22 * (window.devicePixelRatio || 1);
 					const topMargin = 20 * (window.devicePixelRatio || 1);
-					const toX = (idx: number) =>
-						pad + (idx / Math.max(1, intensities.length - 1)) * (w - pad * 2);
+
+					const toX = (i: number, len: number) =>
+						pad + (i / Math.max(1, len - 1)) * (w - pad * 2);
 					const toY = (val: number) => base - (val / maxL) * (base - topMargin);
 
 					if (typeof mu === "number" && mu > 0) {
@@ -184,13 +203,51 @@ export const XrayHawkesPanel = () => {
 						ctx.setLineDash([]);
 					}
 
-					if (intensities.length > 1) {
-						ctx.beginPath();
-						ctx.moveTo(toX(0), base);
-						for (let i = 0; i < intensities.length; i++) {
-							ctx.lineTo(toX(i), toY(intensities[i] ?? 0));
+					// A Hawkes intensity jumps instantly at an arrival and decays
+					// exponentially toward μ afterward — it never ramps up smoothly
+					// into an arrival. So each real inter-sample gap is resampled by
+					// decaying prev.raw toward μ via μ + (λ_prev − μ)·e^(−β·Δt) for
+					// the whole gap, then landing on next.raw only at the final step
+					// as a vertical jump. Ramping the two endpoints together (as a
+					// straight interpolation would) draws a rising ramp into every
+					// spike that the real process never has.
+					if (samples.length > 1) {
+						const decayRate = typeof beta === "number" && beta > 0 ? beta : 1;
+						const restingRate = muFloor;
+						const STEPS_PER_GAP = 24;
+						const curve: number[] = [samples[0]?.raw ?? 0];
+
+						for (let i = 1; i < samples.length; i++) {
+							const prev = samples[i - 1];
+							const next = samples[i];
+							if (!prev || !next) continue;
+
+							const gapSeconds = Number(next.at - prev.at) / 1e9;
+
+							for (let step = 1; step <= STEPS_PER_GAP; step++) {
+								if (step === STEPS_PER_GAP) {
+									curve.push(next.raw);
+									continue;
+								}
+
+								const seconds = gapSeconds * (step / STEPS_PER_GAP);
+								curve.push(
+									restingRate + (prev.raw - restingRate) * Math.exp(-decayRate * seconds),
+								);
+							}
 						}
-						ctx.lineTo(toX(intensities.length - 1), base);
+
+						// Draw as a step-decay: a vertical rise straight to each
+						// arrival's observed intensity, then the decay curve back
+						// down, rather than one continuous line that would still
+						// interpolate the vertical jump as a slope.
+
+						ctx.beginPath();
+						ctx.moveTo(toX(0, curve.length), base);
+						for (let i = 0; i < curve.length; i++) {
+							ctx.lineTo(toX(i, curve.length), toY(curve[i] ?? 0));
+						}
+						ctx.lineTo(toX(curve.length - 1, curve.length), base);
 						ctx.closePath();
 						ctx.fillStyle = "rgba(235, 140, 50, 0.15)";
 						ctx.fill();
@@ -198,9 +255,9 @@ export const XrayHawkesPanel = () => {
 						ctx.strokeStyle = "rgba(235, 140, 50, 0.85)";
 						ctx.lineWidth = 1.6;
 						ctx.beginPath();
-						for (let i = 0; i < intensities.length; i++) {
-							const x = toX(i);
-							const y = toY(intensities[i] ?? 0);
+						for (let i = 0; i < curve.length; i++) {
+							const x = toX(i, curve.length);
+							const y = toY(curve[i] ?? 0);
 							if (i === 0) ctx.moveTo(x, y);
 							else ctx.lineTo(x, y);
 						}
@@ -244,7 +301,7 @@ export const XrayHawkesPanel = () => {
 					events <Typography.Span data-f="events" className="text-(--acc)" />
 				</div>
 				<div>
-					λ buy <Typography.Span data-f="lambda" className="text-(--f1)" />
+					λ(t) <Typography.Span data-f="lambda" className="text-(--f1)" />
 				</div>
 				<div>
 					μ rest <Typography.Span data-f="mu" className="text-(--f1)" />

@@ -7,23 +7,36 @@ import (
 )
 
 type EnvelopeBoundaryStampT struct {
-	Slot int32 `json:"slot"`
+	Label string `json:"label"`
 	AtNs int64 `json:"atNs"`
+	SeqCount int64 `json:"seqCount"`
+	AvgGapNs int64 `json:"avgGapNs"`
+	LastGapNs int64 `json:"lastGapNs"`
+	Backlog int64 `json:"backlog"`
 }
 
 func (t *EnvelopeBoundaryStampT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t == nil {
 		return 0
 	}
+	labelOffset := builder.CreateString(t.Label)
 	EnvelopeBoundaryStampStart(builder)
-	EnvelopeBoundaryStampAddSlot(builder, t.Slot)
+	EnvelopeBoundaryStampAddLabel(builder, labelOffset)
 	EnvelopeBoundaryStampAddAtNs(builder, t.AtNs)
+	EnvelopeBoundaryStampAddSeqCount(builder, t.SeqCount)
+	EnvelopeBoundaryStampAddAvgGapNs(builder, t.AvgGapNs)
+	EnvelopeBoundaryStampAddLastGapNs(builder, t.LastGapNs)
+	EnvelopeBoundaryStampAddBacklog(builder, t.Backlog)
 	return EnvelopeBoundaryStampEnd(builder)
 }
 
 func (rcv *EnvelopeBoundaryStamp) UnPackTo(t *EnvelopeBoundaryStampT) {
-	t.Slot = rcv.Slot()
+	t.Label = string(rcv.Label())
 	t.AtNs = rcv.AtNs()
+	t.SeqCount = rcv.SeqCount()
+	t.AvgGapNs = rcv.AvgGapNs()
+	t.LastGapNs = rcv.LastGapNs()
+	t.Backlog = rcv.Backlog()
 }
 
 func (rcv *EnvelopeBoundaryStamp) UnPack() *EnvelopeBoundaryStampT {
@@ -70,16 +83,12 @@ func (rcv *EnvelopeBoundaryStamp) Table() flatbuffers.Table {
 	return rcv._tab
 }
 
-func (rcv *EnvelopeBoundaryStamp) Slot() int32 {
+func (rcv *EnvelopeBoundaryStamp) Label() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(4))
 	if o != 0 {
-		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
-	return 0
-}
-
-func (rcv *EnvelopeBoundaryStamp) MutateSlot(n int32) bool {
-	return rcv._tab.MutateInt32Slot(4, n)
+	return nil
 }
 
 func (rcv *EnvelopeBoundaryStamp) AtNs() int64 {
@@ -94,14 +103,74 @@ func (rcv *EnvelopeBoundaryStamp) MutateAtNs(n int64) bool {
 	return rcv._tab.MutateInt64Slot(6, n)
 }
 
-func EnvelopeBoundaryStampStart(builder *flatbuffers.Builder) {
-	builder.StartObject(2)
+func (rcv *EnvelopeBoundaryStamp) SeqCount() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
 }
-func EnvelopeBoundaryStampAddSlot(builder *flatbuffers.Builder, slot int32) {
-	builder.PrependInt32Slot(0, slot, 0)
+
+func (rcv *EnvelopeBoundaryStamp) MutateSeqCount(n int64) bool {
+	return rcv._tab.MutateInt64Slot(8, n)
+}
+
+func (rcv *EnvelopeBoundaryStamp) AvgGapNs() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EnvelopeBoundaryStamp) MutateAvgGapNs(n int64) bool {
+	return rcv._tab.MutateInt64Slot(10, n)
+}
+
+func (rcv *EnvelopeBoundaryStamp) LastGapNs() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EnvelopeBoundaryStamp) MutateLastGapNs(n int64) bool {
+	return rcv._tab.MutateInt64Slot(12, n)
+}
+
+func (rcv *EnvelopeBoundaryStamp) Backlog() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EnvelopeBoundaryStamp) MutateBacklog(n int64) bool {
+	return rcv._tab.MutateInt64Slot(14, n)
+}
+
+func EnvelopeBoundaryStampStart(builder *flatbuffers.Builder) {
+	builder.StartObject(6)
+}
+func EnvelopeBoundaryStampAddLabel(builder *flatbuffers.Builder, label flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(label), 0)
 }
 func EnvelopeBoundaryStampAddAtNs(builder *flatbuffers.Builder, atNs int64) {
 	builder.PrependInt64Slot(1, atNs, 0)
+}
+func EnvelopeBoundaryStampAddSeqCount(builder *flatbuffers.Builder, seqCount int64) {
+	builder.PrependInt64Slot(2, seqCount, 0)
+}
+func EnvelopeBoundaryStampAddAvgGapNs(builder *flatbuffers.Builder, avgGapNs int64) {
+	builder.PrependInt64Slot(3, avgGapNs, 0)
+}
+func EnvelopeBoundaryStampAddLastGapNs(builder *flatbuffers.Builder, lastGapNs int64) {
+	builder.PrependInt64Slot(4, lastGapNs, 0)
+}
+func EnvelopeBoundaryStampAddBacklog(builder *flatbuffers.Builder, backlog int64) {
+	builder.PrependInt64Slot(5, backlog, 0)
 }
 func EnvelopeBoundaryStampEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

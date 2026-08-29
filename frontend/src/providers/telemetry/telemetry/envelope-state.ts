@@ -9,6 +9,8 @@ import { EnvelopeBoundaryStamp, EnvelopeBoundaryStampT } from '../telemetry/enve
 import { EnvelopeCategory, EnvelopeCategoryT } from '../telemetry/envelope-category.js';
 import { EnvelopeCausalOutput, EnvelopeCausalOutputT } from '../telemetry/envelope-causal-output.js';
 import { EnvelopeCognition, EnvelopeCognitionT } from '../telemetry/envelope-cognition.js';
+import { EnvelopeFuturesTickerData, EnvelopeFuturesTickerDataT } from '../telemetry/envelope-futures-ticker-data.js';
+import { EnvelopeFuturesTradeData, EnvelopeFuturesTradeDataT } from '../telemetry/envelope-futures-trade-data.js';
 import { EnvelopeGraphUpdate, EnvelopeGraphUpdateT } from '../telemetry/envelope-graph-update.js';
 import { EnvelopeLevel3Data, EnvelopeLevel3DataT } from '../telemetry/envelope-level3-data.js';
 import { EnvelopeManifoldState, EnvelopeManifoldStateT } from '../telemetry/envelope-manifold-state.js';
@@ -64,113 +66,128 @@ level3Data(obj?:EnvelopeLevel3Data):EnvelopeLevel3Data|null {
   return offset ? (obj || new EnvelopeLevel3Data()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-correlation(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
+futuresTickerData(obj?:EnvelopeFuturesTickerData):EnvelopeFuturesTickerData|null {
   const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+  return offset ? (obj || new EnvelopeFuturesTickerData()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-leadLag(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
+futuresTradeData(obj?:EnvelopeFuturesTradeData):EnvelopeFuturesTradeData|null {
   const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+  return offset ? (obj || new EnvelopeFuturesTradeData()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-liquidity(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
+correlation(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
   const offset = this.bb!.__offset(this.bb_pos, 18);
   return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-sentiment(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
+leadLag(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
   const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-cvd(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
+liquidity(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
   const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-depthFlow(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
+sentiment(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
   const offset = this.bb!.__offset(this.bb_pos, 24);
   return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-morphology(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
+cvd(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
   const offset = this.bb!.__offset(this.bb_pos, 26);
   return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-hawkes(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
+depthFlow(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
   const offset = this.bb!.__offset(this.bb_pos, 28);
   return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-pumpDump(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
+morphology(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
   const offset = this.bb!.__offset(this.bb_pos, 30);
   return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-toxicity(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
+hawkes(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
   const offset = this.bb!.__offset(this.bb_pos, 32);
   return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-categories(index: number, obj?:EnvelopeCategory):EnvelopeCategory|null {
+pumpDump(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
   const offset = this.bb!.__offset(this.bb_pos, 34);
+  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
+toxicity(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
+  const offset = this.bb!.__offset(this.bb_pos, 36);
+  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
+derivatives(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
+  const offset = this.bb!.__offset(this.bb_pos, 38);
+  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
+categories(index: number, obj?:EnvelopeCategory):EnvelopeCategory|null {
+  const offset = this.bb!.__offset(this.bb_pos, 40);
   return offset ? (obj || new EnvelopeCategory()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 categoriesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
+  const offset = this.bb!.__offset(this.bb_pos, 40);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 opportunities(index: number, obj?:EnvelopeOpportunityCandidate):EnvelopeOpportunityCandidate|null {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
+  const offset = this.bb!.__offset(this.bb_pos, 42);
   return offset ? (obj || new EnvelopeOpportunityCandidate()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 opportunitiesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
+  const offset = this.bb!.__offset(this.bb_pos, 42);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 graphUpdate(obj?:EnvelopeGraphUpdate):EnvelopeGraphUpdate|null {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
+  const offset = this.bb!.__offset(this.bb_pos, 44);
   return offset ? (obj || new EnvelopeGraphUpdate()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 resonance(obj?:EnvelopeResonanceArtifact):EnvelopeResonanceArtifact|null {
-  const offset = this.bb!.__offset(this.bb_pos, 40);
+  const offset = this.bb!.__offset(this.bb_pos, 46);
   return offset ? (obj || new EnvelopeResonanceArtifact()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 manifold(obj?:EnvelopeManifoldState):EnvelopeManifoldState|null {
-  const offset = this.bb!.__offset(this.bb_pos, 42);
+  const offset = this.bb!.__offset(this.bb_pos, 48);
   return offset ? (obj || new EnvelopeManifoldState()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 cognition(obj?:EnvelopeCognition):EnvelopeCognition|null {
-  const offset = this.bb!.__offset(this.bb_pos, 44);
+  const offset = this.bb!.__offset(this.bb_pos, 50);
   return offset ? (obj || new EnvelopeCognition()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 causalOutput(obj?:EnvelopeCausalOutput):EnvelopeCausalOutput|null {
-  const offset = this.bb!.__offset(this.bb_pos, 46);
+  const offset = this.bb!.__offset(this.bb_pos, 52);
   return offset ? (obj || new EnvelopeCausalOutput()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 boundaries(index: number, obj?:EnvelopeBoundaryStamp):EnvelopeBoundaryStamp|null {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
+  const offset = this.bb!.__offset(this.bb_pos, 54);
   return offset ? (obj || new EnvelopeBoundaryStamp()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 boundariesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
+  const offset = this.bb!.__offset(this.bb_pos, 54);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 static startEnvelopeState(builder:flatbuffers.Builder) {
-  builder.startObject(23);
+  builder.startObject(26);
 }
 
 static addKey(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset) {
@@ -193,48 +210,60 @@ static addLevel3Data(builder:flatbuffers.Builder, level3DataOffset:flatbuffers.O
   builder.addFieldOffset(4, level3DataOffset, 0);
 }
 
+static addFuturesTickerData(builder:flatbuffers.Builder, futuresTickerDataOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(5, futuresTickerDataOffset, 0);
+}
+
+static addFuturesTradeData(builder:flatbuffers.Builder, futuresTradeDataOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(6, futuresTradeDataOffset, 0);
+}
+
 static addCorrelation(builder:flatbuffers.Builder, correlationOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, correlationOffset, 0);
+  builder.addFieldOffset(7, correlationOffset, 0);
 }
 
 static addLeadLag(builder:flatbuffers.Builder, leadLagOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, leadLagOffset, 0);
+  builder.addFieldOffset(8, leadLagOffset, 0);
 }
 
 static addLiquidity(builder:flatbuffers.Builder, liquidityOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(7, liquidityOffset, 0);
+  builder.addFieldOffset(9, liquidityOffset, 0);
 }
 
 static addSentiment(builder:flatbuffers.Builder, sentimentOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, sentimentOffset, 0);
+  builder.addFieldOffset(10, sentimentOffset, 0);
 }
 
 static addCvd(builder:flatbuffers.Builder, cvdOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(9, cvdOffset, 0);
+  builder.addFieldOffset(11, cvdOffset, 0);
 }
 
 static addDepthFlow(builder:flatbuffers.Builder, depthFlowOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(10, depthFlowOffset, 0);
+  builder.addFieldOffset(12, depthFlowOffset, 0);
 }
 
 static addMorphology(builder:flatbuffers.Builder, morphologyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(11, morphologyOffset, 0);
+  builder.addFieldOffset(13, morphologyOffset, 0);
 }
 
 static addHawkes(builder:flatbuffers.Builder, hawkesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(12, hawkesOffset, 0);
+  builder.addFieldOffset(14, hawkesOffset, 0);
 }
 
 static addPumpDump(builder:flatbuffers.Builder, pumpDumpOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(13, pumpDumpOffset, 0);
+  builder.addFieldOffset(15, pumpDumpOffset, 0);
 }
 
 static addToxicity(builder:flatbuffers.Builder, toxicityOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(14, toxicityOffset, 0);
+  builder.addFieldOffset(16, toxicityOffset, 0);
+}
+
+static addDerivatives(builder:flatbuffers.Builder, derivativesOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(17, derivativesOffset, 0);
 }
 
 static addCategories(builder:flatbuffers.Builder, categoriesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(15, categoriesOffset, 0);
+  builder.addFieldOffset(18, categoriesOffset, 0);
 }
 
 static createCategoriesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -250,7 +279,7 @@ static startCategoriesVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addOpportunities(builder:flatbuffers.Builder, opportunitiesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(16, opportunitiesOffset, 0);
+  builder.addFieldOffset(19, opportunitiesOffset, 0);
 }
 
 static createOpportunitiesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -266,27 +295,27 @@ static startOpportunitiesVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addGraphUpdate(builder:flatbuffers.Builder, graphUpdateOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(17, graphUpdateOffset, 0);
+  builder.addFieldOffset(20, graphUpdateOffset, 0);
 }
 
 static addResonance(builder:flatbuffers.Builder, resonanceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(18, resonanceOffset, 0);
+  builder.addFieldOffset(21, resonanceOffset, 0);
 }
 
 static addManifold(builder:flatbuffers.Builder, manifoldOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(19, manifoldOffset, 0);
+  builder.addFieldOffset(22, manifoldOffset, 0);
 }
 
 static addCognition(builder:flatbuffers.Builder, cognitionOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(20, cognitionOffset, 0);
+  builder.addFieldOffset(23, cognitionOffset, 0);
 }
 
 static addCausalOutput(builder:flatbuffers.Builder, causalOutputOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(21, causalOutputOffset, 0);
+  builder.addFieldOffset(24, causalOutputOffset, 0);
 }
 
 static addBoundaries(builder:flatbuffers.Builder, boundariesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(22, boundariesOffset, 0);
+  builder.addFieldOffset(25, boundariesOffset, 0);
 }
 
 static createBoundariesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -314,6 +343,8 @@ unpack(): EnvelopeStateT {
     (this.tickerData() !== null ? this.tickerData()!.unpack() : null),
     (this.tradeData() !== null ? this.tradeData()!.unpack() : null),
     (this.level3Data() !== null ? this.level3Data()!.unpack() : null),
+    (this.futuresTickerData() !== null ? this.futuresTickerData()!.unpack() : null),
+    (this.futuresTradeData() !== null ? this.futuresTradeData()!.unpack() : null),
     (this.correlation() !== null ? this.correlation()!.unpack() : null),
     (this.leadLag() !== null ? this.leadLag()!.unpack() : null),
     (this.liquidity() !== null ? this.liquidity()!.unpack() : null),
@@ -324,6 +355,7 @@ unpack(): EnvelopeStateT {
     (this.hawkes() !== null ? this.hawkes()!.unpack() : null),
     (this.pumpDump() !== null ? this.pumpDump()!.unpack() : null),
     (this.toxicity() !== null ? this.toxicity()!.unpack() : null),
+    (this.derivatives() !== null ? this.derivatives()!.unpack() : null),
     this.bb!.createObjList<EnvelopeCategory, EnvelopeCategoryT>(this.categories.bind(this), this.categoriesLength()),
     this.bb!.createObjList<EnvelopeOpportunityCandidate, EnvelopeOpportunityCandidateT>(this.opportunities.bind(this), this.opportunitiesLength()),
     (this.graphUpdate() !== null ? this.graphUpdate()!.unpack() : null),
@@ -342,6 +374,8 @@ unpackTo(_o: EnvelopeStateT): void {
   _o.tickerData = (this.tickerData() !== null ? this.tickerData()!.unpack() : null);
   _o.tradeData = (this.tradeData() !== null ? this.tradeData()!.unpack() : null);
   _o.level3Data = (this.level3Data() !== null ? this.level3Data()!.unpack() : null);
+  _o.futuresTickerData = (this.futuresTickerData() !== null ? this.futuresTickerData()!.unpack() : null);
+  _o.futuresTradeData = (this.futuresTradeData() !== null ? this.futuresTradeData()!.unpack() : null);
   _o.correlation = (this.correlation() !== null ? this.correlation()!.unpack() : null);
   _o.leadLag = (this.leadLag() !== null ? this.leadLag()!.unpack() : null);
   _o.liquidity = (this.liquidity() !== null ? this.liquidity()!.unpack() : null);
@@ -352,6 +386,7 @@ unpackTo(_o: EnvelopeStateT): void {
   _o.hawkes = (this.hawkes() !== null ? this.hawkes()!.unpack() : null);
   _o.pumpDump = (this.pumpDump() !== null ? this.pumpDump()!.unpack() : null);
   _o.toxicity = (this.toxicity() !== null ? this.toxicity()!.unpack() : null);
+  _o.derivatives = (this.derivatives() !== null ? this.derivatives()!.unpack() : null);
   _o.categories = this.bb!.createObjList<EnvelopeCategory, EnvelopeCategoryT>(this.categories.bind(this), this.categoriesLength());
   _o.opportunities = this.bb!.createObjList<EnvelopeOpportunityCandidate, EnvelopeOpportunityCandidateT>(this.opportunities.bind(this), this.opportunitiesLength());
   _o.graphUpdate = (this.graphUpdate() !== null ? this.graphUpdate()!.unpack() : null);
@@ -370,6 +405,8 @@ constructor(
   public tickerData: EnvelopeTickerDataT|null = null,
   public tradeData: EnvelopeTradeDataT|null = null,
   public level3Data: EnvelopeLevel3DataT|null = null,
+  public futuresTickerData: EnvelopeFuturesTickerDataT|null = null,
+  public futuresTradeData: EnvelopeFuturesTradeDataT|null = null,
   public correlation: EnvelopeMeasurementT|null = null,
   public leadLag: EnvelopeMeasurementT|null = null,
   public liquidity: EnvelopeMeasurementT|null = null,
@@ -380,6 +417,7 @@ constructor(
   public hawkes: EnvelopeMeasurementT|null = null,
   public pumpDump: EnvelopeMeasurementT|null = null,
   public toxicity: EnvelopeMeasurementT|null = null,
+  public derivatives: EnvelopeMeasurementT|null = null,
   public categories: (EnvelopeCategoryT)[] = [],
   public opportunities: (EnvelopeOpportunityCandidateT)[] = [],
   public graphUpdate: EnvelopeGraphUpdateT|null = null,
@@ -396,6 +434,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const tickerData = (this.tickerData !== null ? this.tickerData!.pack(builder) : 0);
   const tradeData = (this.tradeData !== null ? this.tradeData!.pack(builder) : 0);
   const level3Data = (this.level3Data !== null ? this.level3Data!.pack(builder) : 0);
+  const futuresTickerData = (this.futuresTickerData !== null ? this.futuresTickerData!.pack(builder) : 0);
+  const futuresTradeData = (this.futuresTradeData !== null ? this.futuresTradeData!.pack(builder) : 0);
   const correlation = (this.correlation !== null ? this.correlation!.pack(builder) : 0);
   const leadLag = (this.leadLag !== null ? this.leadLag!.pack(builder) : 0);
   const liquidity = (this.liquidity !== null ? this.liquidity!.pack(builder) : 0);
@@ -406,6 +446,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const hawkes = (this.hawkes !== null ? this.hawkes!.pack(builder) : 0);
   const pumpDump = (this.pumpDump !== null ? this.pumpDump!.pack(builder) : 0);
   const toxicity = (this.toxicity !== null ? this.toxicity!.pack(builder) : 0);
+  const derivatives = (this.derivatives !== null ? this.derivatives!.pack(builder) : 0);
   const categories = EnvelopeState.createCategoriesVector(builder, builder.createObjectOffsetList(this.categories));
   const opportunities = EnvelopeState.createOpportunitiesVector(builder, builder.createObjectOffsetList(this.opportunities));
   const graphUpdate = (this.graphUpdate !== null ? this.graphUpdate!.pack(builder) : 0);
@@ -421,6 +462,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   EnvelopeState.addTickerData(builder, tickerData);
   EnvelopeState.addTradeData(builder, tradeData);
   EnvelopeState.addLevel3Data(builder, level3Data);
+  EnvelopeState.addFuturesTickerData(builder, futuresTickerData);
+  EnvelopeState.addFuturesTradeData(builder, futuresTradeData);
   EnvelopeState.addCorrelation(builder, correlation);
   EnvelopeState.addLeadLag(builder, leadLag);
   EnvelopeState.addLiquidity(builder, liquidity);
@@ -431,6 +474,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   EnvelopeState.addHawkes(builder, hawkes);
   EnvelopeState.addPumpDump(builder, pumpDump);
   EnvelopeState.addToxicity(builder, toxicity);
+  EnvelopeState.addDerivatives(builder, derivatives);
   EnvelopeState.addCategories(builder, categories);
   EnvelopeState.addOpportunities(builder, opportunities);
   EnvelopeState.addGraphUpdate(builder, graphUpdate);

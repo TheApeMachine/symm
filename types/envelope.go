@@ -1,6 +1,7 @@
 package types
 
 import (
+	"sync"
 	"time"
 
 	flatbuffers "github.com/google/flatbuffers/go"
@@ -66,25 +67,39 @@ type ManifoldState struct {
 }
 
 /*
-BoundaryStamp is one Observe group's "the envelope passed here" witness: the
-group's fixed slot index (see runtime.BoundarySlot*) and when it observed the
-envelope. A diagnostics Observe node derives each Compute stage's elapsed time
-by subtracting consecutive boundary stamps — it never times a Compute Node
-itself, since timing computation is a Compute concern (README §12/§13) and an
-Observe node may only witness already-committed state.
+BoundaryStamp is one diagnostics node's "the envelope passed here" witness:
+the node's own label, when it observed the envelope, and a running summary of
+how often and how regularly this exact stage runs (see system.Diagnostic).
+Every diagnostics node in a Workload's declared stage list appends its own
+stamp as the envelope passes, so Boundaries ends up as an ordered trace of
+every named stage boundary the envelope crossed. That trace is enough on its
+own for a consumer to derive topology (consecutive labels are an edge),
+per-hop latency (the AtNs delta between consecutive stamps), and per-stage
+rate/health (SeqCount/AvgGapNs/LastGapNs) — no hand-maintained graph.
 */
 type BoundaryStamp struct {
-	AtNs int64
-}
+	Label string
+	AtNs  int64
 
-/*
-BoundarySlots bounds Envelope.Boundaries. Every Observe group in a Workload's
-declared graph is assigned one fixed, exclusive slot at construction (see the
-runtime.BoundarySlot constants) — disjoint real memory, since an Observe
-group's own Nodes could otherwise race on a shared array cell the same way
-concurrent Compute Nodes must never share a slice header (README §8).
-*/
-const BoundarySlots = 8
+	// SeqCount is this stage's lifetime call count.
+	SeqCount int64
+
+	// AvgGapNs is an EMA of the time between consecutive calls to this exact
+	// stage — a smoothed read on its throughput independent of any single
+	// envelope's jitter.
+	AvgGapNs int64
+
+	// LastGapNs is the time since this stage's immediately preceding call,
+	// unsmoothed — the freshest possible reading of its current pace.
+	LastGapNs int64
+
+	// Backlog is how many sequence numbers behind the Workload's producer
+	// this envelope already was when this stage reached it — real ring
+	// pressure read from the same sequence numbers the disruptor itself uses
+	// for backpressure (see runtime.BacklogStepper), not estimated from
+	// rates. 0 means this stage is fully caught up with the producer.
+	Backlog int64
+}
 
 type TypeID uint8
 
@@ -94,15 +109,36 @@ const (
 	EnvelopeTrade
 	EnvelopeLevel3
 	EnvelopeExecution
+	EnvelopeFuturesTicker
+	EnvelopeFuturesTrade
+	EnvelopeCorrelation
+	EnvelopeCVD
+	EnvelopeDepthFlow
+	EnvelopeMorphology
+	EnvelopePumpDump
+	EnvelopeToxicity
+	EnvelopeDerivatives
+	EnvelopeLeadlag
+	EnvelopeLiquidity
+	EnvelopeResonance
+	EnvelopeManifold
+	EnvelopeGraph
+	EnvelopeCausal
+	EnvelopeCategory
+	EnvelopeCognition
+	EnvelopeAdvisor
+	EnvelopeMCTS
 )
 
 type Envelope struct {
 	Key    string
 	TypeID TypeID
 
-	TickerData kraken.TickerData
-	TradeData  kraken.TradeData
-	Level3Data kraken.Level3Data
+	TickerData        kraken.TickerData
+	TradeData         kraken.TradeData
+	Level3Data        kraken.Level3Data
+	FuturesTickerData kraken.FuturesTickerData
+	FuturesTradeData  kraken.FuturesTradeData
 
 	// Signal outputs, one field per signal so concurrent Nodes in the same
 	// disruptor HandlerGroup each own a distinct field and never race on a
@@ -117,6 +153,7 @@ type Envelope struct {
 	Hawkes      *data.Measurement[float64]
 	PumpDump    *data.Measurement[float64]
 	Toxicity    *data.Measurement[float64]
+	Derivatives *data.Measurement[float64]
 
 	// Categories is the ranked regime batch the category stage resolves from
 	// whichever signal outputs above are populated on this envelope.
@@ -145,11 +182,31 @@ type Envelope struct {
 	// from Resonance.
 	CausalOutput *CausalOutput
 
-	// Boundaries is every Observe group's "passed here at T" witness, one
-	// fixed slot per boundary (see BoundarySlots/runtime.BoundarySlot*). A
-	// diagnostics Observe node reads consecutive slots to report elapsed
-	// Compute-stage time; the Compute stage itself never writes here.
-	Boundaries [BoundarySlots]BoundaryStamp
+	// Boundaries is the ordered trace of every diagnostics node the envelope
+	// passed through, appended to via AppendBoundary as it crosses each one
+	// (see system.Diagnostic). Growable rather than fixed-size: stage count
+	// differs per workload and a diagnostics node has no way to know its
+	// ordinal position ahead of time. Unlike every other field above,
+	// concurrent Nodes in the same HandlerGroup CAN all write here (a
+	// per-signal Diagnostic wrapping each signal in a concurrent stage) —
+	// boundariesMu is the one exception to this type's lock-free discipline,
+	// guarding only the append itself.
+	boundariesMu sync.Mutex
+	Boundaries   []BoundaryStamp
+}
+
+/*
+AppendBoundary adds one diagnostics stamp to Boundaries under boundariesMu.
+The lock is held only across the append itself (no I/O, no allocation beyond
+the occasional slice growth), so contention is bounded by how many concurrent
+diagnostics nodes touch one envelope in a single stage (a handful, from the
+signal fan-out) — never by the number of symbols or envelopes in flight,
+since each envelope has its own independent Envelope and mutex.
+*/
+func (envelope *Envelope) AppendBoundary(stamp BoundaryStamp) {
+	envelope.boundariesMu.Lock()
+	envelope.Boundaries = append(envelope.Boundaries, stamp)
+	envelope.boundariesMu.Unlock()
 }
 
 func NewEnvelope(typeID TypeID) *Envelope {
@@ -642,6 +699,69 @@ func encodeTradeData(trade kraken.TradeData) *telemetry.EnvelopeTradeDataT {
 	}
 }
 
+func encodeFuturesTickerData(ticker kraken.FuturesTickerData) *telemetry.EnvelopeFuturesTickerDataT {
+	encoded := &telemetry.EnvelopeFuturesTickerDataT{
+		ProductId:    ticker.ProductID,
+		Symbol:       ticker.Symbol,
+		BidSize:      ticker.BidSize,
+		AskSize:      ticker.AskSize,
+		OpenInterest: ticker.OpenInterest,
+		Volume:       ticker.Volume,
+		TimestampNs:  timeNs(ticker.Timestamp),
+	}
+
+	if ticker.Bid != nil {
+		encoded.HasBid = true
+		encoded.Bid = ticker.Bid.Float64()
+	}
+
+	if ticker.Ask != nil {
+		encoded.HasAsk = true
+		encoded.Ask = ticker.Ask.Float64()
+	}
+
+	if ticker.Last != nil {
+		encoded.HasLast = true
+		encoded.Last = ticker.Last.Float64()
+	}
+
+	if ticker.MarkPrice != nil {
+		encoded.HasMarkPrice = true
+		encoded.MarkPrice = ticker.MarkPrice.Float64()
+	}
+
+	if ticker.IndexPrice != nil {
+		encoded.HasIndexPrice = true
+		encoded.IndexPrice = ticker.IndexPrice.Float64()
+	}
+
+	if ticker.FundingRate != nil {
+		encoded.HasFundingRate = true
+		encoded.FundingRate = ticker.FundingRate.Float64()
+	}
+
+	if ticker.FundingRatePrediction != nil {
+		encoded.HasFundingRatePrediction = true
+		encoded.FundingRatePrediction = ticker.FundingRatePrediction.Float64()
+	}
+
+	return encoded
+}
+
+func encodeFuturesTradeData(trade kraken.FuturesTradeData) *telemetry.EnvelopeFuturesTradeDataT {
+	price := trade.Price
+	return &telemetry.EnvelopeFuturesTradeDataT{
+		ProductId:   trade.ProductID,
+		Symbol:      trade.Symbol,
+		Price:       price.Float64(),
+		Qty:         trade.Qty,
+		Side:        trade.Side,
+		Type:        trade.Type,
+		Uid:         trade.UID,
+		TimestampNs: timeNs(trade.Timestamp),
+	}
+}
+
 func encodeLevel3Orders(orders []kraken.Level3Order) []*telemetry.EnvelopeLevel3OrderT {
 	if orders == nil {
 		return nil
@@ -683,15 +803,22 @@ func encodeLevel3Data(level3 kraken.Level3Data) *telemetry.EnvelopeLevel3DataT {
 	}
 }
 
-func encodeBoundaries(boundaries [BoundarySlots]BoundaryStamp) []*telemetry.EnvelopeBoundaryStampT {
-	encoded := make([]*telemetry.EnvelopeBoundaryStampT, 0, BoundarySlots)
+func encodeBoundaries(boundaries []BoundaryStamp) []*telemetry.EnvelopeBoundaryStampT {
+	if boundaries == nil {
+		return nil
+	}
 
-	for slot, stamp := range boundaries {
-		if stamp.AtNs == 0 {
-			continue
+	encoded := make([]*telemetry.EnvelopeBoundaryStampT, len(boundaries))
+
+	for i, stamp := range boundaries {
+		encoded[i] = &telemetry.EnvelopeBoundaryStampT{
+			Label:     stamp.Label,
+			AtNs:      stamp.AtNs,
+			SeqCount:  stamp.SeqCount,
+			AvgGapNs:  stamp.AvgGapNs,
+			LastGapNs: stamp.LastGapNs,
+			Backlog:   stamp.Backlog,
 		}
-
-		encoded = append(encoded, &telemetry.EnvelopeBoundaryStampT{Slot: int32(slot), AtNs: stamp.AtNs})
 	}
 
 	return encoded
@@ -710,29 +837,32 @@ func (envelope *Envelope) Encode() *telemetry.EnvelopeStateT {
 	}
 
 	return &telemetry.EnvelopeStateT{
-		Key:           envelope.Key,
-		TypeId:        byte(envelope.TypeID),
-		TickerData:    encodeTickerData(envelope.TickerData),
-		TradeData:     encodeTradeData(envelope.TradeData),
-		Level3Data:    encodeLevel3Data(envelope.Level3Data),
-		Correlation:   encodeMeasurement(envelope.Correlation),
-		LeadLag:       encodeMeasurement(envelope.LeadLag),
-		Liquidity:     encodeMeasurement(envelope.Liquidity),
-		Sentiment:     encodeMeasurement(envelope.Sentiment),
-		Cvd:           encodeMeasurement(envelope.CVD),
-		DepthFlow:     encodeMeasurement(envelope.DepthFlow),
-		Morphology:    encodeMeasurement(envelope.Morphology),
-		Hawkes:        encodeMeasurement(envelope.Hawkes),
-		PumpDump:      encodeMeasurement(envelope.PumpDump),
-		Toxicity:      encodeMeasurement(envelope.Toxicity),
-		Categories:    encodeCategories(envelope.Categories),
-		Opportunities: encodeOpportunities(envelope.Opportunities),
-		GraphUpdate:   encodeGraphUpdate(envelope.GraphUpdate),
-		Resonance:     encodeResonanceArtifact(envelope.Resonance),
-		Manifold:      encodeManifoldState(envelope.Manifold),
-		Cognition:     encodeCognition(envelope.Cognition),
-		CausalOutput:  encodeCausalOutput(envelope.CausalOutput),
-		Boundaries:    encodeBoundaries(envelope.Boundaries),
+		Key:               envelope.Key,
+		TypeId:            byte(envelope.TypeID),
+		TickerData:        encodeTickerData(envelope.TickerData),
+		TradeData:         encodeTradeData(envelope.TradeData),
+		Level3Data:        encodeLevel3Data(envelope.Level3Data),
+		FuturesTickerData: encodeFuturesTickerData(envelope.FuturesTickerData),
+		FuturesTradeData:  encodeFuturesTradeData(envelope.FuturesTradeData),
+		Correlation:       encodeMeasurement(envelope.Correlation),
+		LeadLag:           encodeMeasurement(envelope.LeadLag),
+		Liquidity:         encodeMeasurement(envelope.Liquidity),
+		Sentiment:         encodeMeasurement(envelope.Sentiment),
+		Cvd:               encodeMeasurement(envelope.CVD),
+		DepthFlow:         encodeMeasurement(envelope.DepthFlow),
+		Morphology:        encodeMeasurement(envelope.Morphology),
+		Hawkes:            encodeMeasurement(envelope.Hawkes),
+		PumpDump:          encodeMeasurement(envelope.PumpDump),
+		Toxicity:          encodeMeasurement(envelope.Toxicity),
+		Derivatives:       encodeMeasurement(envelope.Derivatives),
+		Categories:        encodeCategories(envelope.Categories),
+		Opportunities:     encodeOpportunities(envelope.Opportunities),
+		GraphUpdate:       encodeGraphUpdate(envelope.GraphUpdate),
+		Resonance:         encodeResonanceArtifact(envelope.Resonance),
+		Manifold:          encodeManifoldState(envelope.Manifold),
+		Cognition:         encodeCognition(envelope.Cognition),
+		CausalOutput:      encodeCausalOutput(envelope.CausalOutput),
+		Boundaries:        encodeBoundaries(envelope.Boundaries),
 	}
 }
 

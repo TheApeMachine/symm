@@ -4,52 +4,31 @@ import { useEffect } from "react";
 import {
 	addMeasurement,
 	appStore,
-	balanceStore,
 	causalStore,
+	categoryStore,
 	cognitionStore,
-	diagnosticStore,
-	diagnosticsFrameStore,
-	equityStore,
-	errorFrameStore,
 	errorStore,
-	fluidFrameStore,
 	focusStore,
-	graphStore,
 	onlineStore,
-	positionStore,
-	regulatorStore,
+	opportunityStore,
+	resonanceArtifactStore,
 	resonanceStore,
-	strategyStore,
 	tickStore,
 } from "#/collections/app";
+import { topologyStore } from "#/collections/topology";
 
-import { backtestFrameToState, hindsightFrameToReport } from "#/providers/backtest-wire";
-import { BacktestFrame } from "#/providers/telemetry/telemetry/backtest-frame";
-import { BalancesFrame } from "#/providers/telemetry/telemetry/balances-frame";
-import { Batch } from "#/providers/telemetry/telemetry/batch";
-import { CausalFrame } from "#/providers/telemetry/telemetry/causal-frame";
-import { CognitionFrame } from "#/providers/telemetry/telemetry/cognition-frame";
-import { DiagnosticsFrame } from "#/providers/telemetry/telemetry/diagnostics-frame";
-import { Envelope } from "#/providers/telemetry/telemetry/envelope";
-import { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
-import { ErrorFrame } from "#/providers/telemetry/telemetry/error-frame";
-import { FluidPhaseFrame } from "#/providers/telemetry/telemetry/fluid-phase-frame";
-import { Frame } from "#/providers/telemetry/telemetry/frame";
-import { FrameEntry } from "#/providers/telemetry/telemetry/frame-entry";
-import { GraphFrame } from "#/providers/telemetry/telemetry/graph-frame";
-import { HindsightFrame } from "#/providers/telemetry/telemetry/hindsight-frame";
-import { MeasurementsFrame } from "#/providers/telemetry/telemetry/measurements-frame";
-import { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
-import { RegulatorFrame } from "#/providers/telemetry/telemetry/regulator-frame";
+import { EnvelopeBoundaryStamp } from "#/providers/telemetry/telemetry/envelope-boundary-stamp";
+import { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
 import { ResonanceFrame } from "#/providers/telemetry/telemetry/resonance-frame";
-import { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
-import { TickFrame } from "#/providers/telemetry/telemetry/tick-frame";
+
+// Tags a ResonanceFrame buffer on the wire (see ui.Hub.encodeResonanceFrame)
+// so it can be told apart from an EnvelopeState buffer, which carries no
+// identifier of its own, on the same /ws connection.
+const RESONANCE_FRAME_IDENTIFIER = "RESO";
 
 let globalWsWorker: Worker | null = null;
-let globalWebrtcWorker: Worker | null = null;
 
 export const getWsWorker = () => globalWsWorker;
-export const getWebrtcWorker = () => globalWebrtcWorker;
 
 export const sendBacktestAction = (
 	action: "play" | "pause" | "seek" | "select" | "hindsight",
@@ -73,17 +52,6 @@ export const sendPositionExit = (symbol: string) => {
 	});
 };
 
-export const setDiagnosticsEnabled = (enabled: boolean) => {
-	const baseUrl =
-		import.meta.env.VITE_SYMM_WS_URL?.replace(/\/ws$/, "") ||
-		"http://127.0.0.1:8765";
-	globalWebrtcWorker?.postMessage({
-		type: "SET_DIAGNOSTICS",
-		url: baseUrl,
-		enabled,
-	});
-};
-
 const defaultWsUrl = () => {
 	if (typeof window === "undefined") return "ws://127.0.0.1:8765/ws";
 	const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -94,95 +62,88 @@ const defaultWsUrl = () => {
 	return `${protocol}//${host}:8765/ws`;
 };
 
-const defaultWebrtcUrl = () => {
-	if (typeof window === "undefined")
-		return "http://127.0.0.1:8765/webrtc/manifold";
-	const protocol = window.location.protocol === "https:" ? "https:" : "http:";
-	const host =
-		!window.location.hostname || window.location.hostname === "localhost"
-			? "127.0.0.1"
-			: window.location.hostname;
-	return `${protocol}//${host}:8765/webrtc/manifold`;
-};
-
-type FrameHandler<T> = {
-	table: new () => T;
-	update: (table: T) => void;
-};
-
-function frameBuilder<T>(
-	table: new () => T,
-	store: { actions: { add: (t: T) => void } },
-): FrameHandler<T> {
-	return {
-		table,
-		update: (t: T) => {
-			store.actions.add(t);
-		},
-	};
-}
-
 /*
-Measurement rows are flatbuffer view objects. `table.rows(r)` must mint a
-fresh view per row: reusing one shared view and storing it by reference makes
-every ring slot alias the same mutable object, so the "history" a kernel
-sparkline reads is really just the latest row repeated (and one sparse row
-blanks the whole trace).
+Dispatches one decoded EnvelopeState into the per-field stores it actually
+carries. EnvelopeState is a single envelope's state (one symbol, one point in
+time), not a batch of typed frames, so there is no frame-type union to switch
+on here — every populated field is pushed to its own store directly.
 */
-const builders: Partial<Record<Frame, FrameHandler<any>>> = {
-	[Frame.MeasurementsFrame]: {
-		table: MeasurementsFrame,
-		update: (table: MeasurementsFrame) => {
-			for (let r = 0; r < table.rowsLength(); r++) {
-				const row = table.rows(r);
-				if (!row) continue;
-				const source = row.source() ?? "";
-				const symbol = row.symbol() ?? "";
-				if (!source || !symbol) continue;
-				addMeasurement(source, row);
-			}
-		},
-	},
-	[Frame.TickFrame]: frameBuilder(TickFrame, tickStore),
-	[Frame.RegulatorFrame]: frameBuilder(RegulatorFrame, regulatorStore),
-	[Frame.ResonanceFrame]: frameBuilder(ResonanceFrame, resonanceStore),
-	[Frame.CognitionFrame]: frameBuilder(CognitionFrame, cognitionStore),
-	[Frame.CausalFrame]: frameBuilder(CausalFrame, causalStore),
-	[Frame.GraphFrame]: frameBuilder(GraphFrame, graphStore),
-	[Frame.StrategyFrame]: frameBuilder(StrategyFrame, strategyStore),
-	[Frame.PositionsFrame]: frameBuilder(PositionsFrame, positionStore),
-	[Frame.BalancesFrame]: frameBuilder(BalancesFrame, balanceStore),
-	[Frame.EquityFrame]: frameBuilder(EquityFrame, equityStore),
-	[Frame.FluidPhaseFrame]: frameBuilder(FluidPhaseFrame, fluidFrameStore),
-	[Frame.ErrorFrame]: frameBuilder(ErrorFrame, errorFrameStore),
-	[Frame.BacktestFrame]: {
-		table: BacktestFrame,
-		update: (table: BacktestFrame) => {
-			appStore.actions.updateBacktest(backtestFrameToState(table));
-		},
-	},
-	[Frame.HindsightFrame]: {
-		table: HindsightFrame,
-		update: (table: HindsightFrame) => {
-			appStore.actions.updateBacktest({
-				hindsight: hindsightFrameToReport(table),
-			});
-		},
-	},
-	[Frame.DiagnosticsFrame]: {
-		table: DiagnosticsFrame,
-		update: (table: DiagnosticsFrame) => {
-			diagnosticsFrameStore.actions.add(table);
-			for (let q = 0; q < table.queuesLength(); q++) {
-				const row = table.queues(q);
-				if (!row) continue;
-				const name = row.name() ?? "";
-				if (!name) continue;
-				diagnosticStore.actions.updateQueue(name, row);
-			}
-		},
-	},
-};
+function dispatchEnvelopeState(state: EnvelopeState) {
+	const symbol = state.key() ?? "";
+
+	const measurement = state.correlation();
+	if (measurement) addMeasurement("correlation", measurement);
+
+	const leadLag = state.leadLag();
+	if (leadLag) addMeasurement("leadlag", leadLag);
+
+	const liquidity = state.liquidity();
+	if (liquidity) addMeasurement("liquidity", liquidity);
+
+	const sentiment = state.sentiment();
+	if (sentiment) addMeasurement("sentiment", sentiment);
+
+	const cvd = state.cvd();
+	if (cvd) addMeasurement("cvd", cvd);
+
+	const depthFlow = state.depthFlow();
+	if (depthFlow) addMeasurement("depthflow", depthFlow);
+
+	const morphology = state.morphology();
+	if (morphology) addMeasurement("morphology", morphology);
+
+	const hawkes = state.hawkes();
+	if (hawkes) addMeasurement("hawkes", hawkes);
+
+	const pumpDump = state.pumpDump();
+	if (pumpDump) addMeasurement("pumpdump", pumpDump);
+
+	const toxicity = state.toxicity();
+	if (toxicity) addMeasurement("toxicity", toxicity);
+
+	const derivatives = state.derivatives();
+	if (derivatives) addMeasurement("derivatives", derivatives);
+
+	if (symbol) {
+		const tickerData = state.tickerData();
+		if (tickerData) tickStore.actions.add(tickerData);
+	}
+
+	const resonance = state.resonance();
+	if (resonance) resonanceArtifactStore.actions.add(resonance);
+
+	const cognition = state.cognition();
+	if (cognition) cognitionStore.actions.add(cognition);
+
+	const causalOutput = state.causalOutput();
+	if (causalOutput) causalStore.actions.add(causalOutput);
+
+	for (let i = 0; i < state.categoriesLength(); i++) {
+		const category = state.categories(i);
+		if (category) categoryStore.actions.add(category);
+	}
+
+	for (let i = 0; i < state.opportunitiesLength(); i++) {
+		const opportunity = state.opportunities(i);
+		if (opportunity) opportunityStore.actions.add(opportunity);
+	}
+
+	const boundaryCount = state.boundariesLength();
+
+	if (boundaryCount > 0) {
+		const stamps: EnvelopeBoundaryStamp[] = [];
+
+		for (let i = 0; i < boundaryCount; i++) {
+			// A fresh view per row: topologyStore.ingest reads the whole array at
+			// once, so a shared view object would have every entry alias the last
+			// row read (the same aliasing hazard as the ring-buffered stores).
+			const stamp = state.boundaries(i, new EnvelopeBoundaryStamp());
+			if (stamp) stamps.push(stamp);
+		}
+
+		topologyStore.actions.ingest(stamps);
+	}
+}
 
 export const WsFeed = () => {
 	useEffect(() => {
@@ -191,15 +152,7 @@ export const WsFeed = () => {
 		});
 		globalWsWorker = wsWorker;
 
-		const webrtcWorker = new Worker(
-			new URL("./webrtc-worker.ts", import.meta.url),
-			{ type: "module" },
-		);
-		globalWebrtcWorker = webrtcWorker;
-
 		const wsUrl = import.meta.env.VITE_SYMM_WS_URL || defaultWsUrl();
-		const webrtcUrl =
-			import.meta.env.VITE_SYMM_WEBRTC_URL || defaultWebrtcUrl();
 
 		wsWorker.addEventListener("message", (event: MessageEvent) => {
 			const data = event.data;
@@ -224,22 +177,19 @@ export const WsFeed = () => {
 					const buffer = new flatbuffers.ByteBuffer(
 						new Uint8Array(data.buffer),
 					);
-					const batch = Batch.getRootAsBatch(buffer);
-					const entry = new FrameEntry();
+
+					if (buffer.__has_identifier(RESONANCE_FRAME_IDENTIFIER)) {
+						const frame = ResonanceFrame.getRootAsResonanceFrame(buffer);
+						storeBatch(() => {
+							resonanceStore.actions.add(frame);
+						});
+						return;
+					}
+
+					const state = EnvelopeState.getRootAsEnvelopeState(buffer);
 
 					storeBatch(() => {
-						for (let i = 0; i < batch.framesLength(); i++) {
-							const frameEntry = batch.frames(i, entry);
-							if (frameEntry === null) continue;
-
-							const handler = builders[frameEntry.frameType()];
-							if (handler === undefined) continue;
-
-							const table = frameEntry.frame(new handler.table());
-							if (table === null) continue;
-
-							handler.update(table);
-						}
+						dispatchEnvelopeState(state);
 					});
 				} catch (err) {
 					errorStore.setState(() => err as Event);
@@ -247,39 +197,7 @@ export const WsFeed = () => {
 			}
 		});
 
-		webrtcWorker.addEventListener("message", (event: MessageEvent) => {
-			const data = event.data;
-			if (!data) return;
-
-			if (data.type === "FRAME" && data.buffer instanceof ArrayBuffer) {
-				try {
-					const buffer = new flatbuffers.ByteBuffer(
-						new Uint8Array(data.buffer),
-					);
-					if (Envelope.bufferHasIdentifier(buffer)) {
-						const envelope = Envelope.getRootAsEnvelope(buffer);
-						const frame = envelope.frame(new DiagnosticsFrame());
-						if (frame) {
-							storeBatch(() => {
-								diagnosticsFrameStore.actions.add(frame);
-								for (let q = 0; q < frame.queuesLength(); q++) {
-									const row = frame.queues(q);
-									if (!row) continue;
-									const name = row.name() ?? "";
-									if (!name) continue;
-									diagnosticStore.actions.updateQueue(name, row);
-								}
-							});
-						}
-					}
-				} catch (err) {
-					errorStore.setState(() => err as Event);
-				}
-			}
-		});
-
 		wsWorker.postMessage({ type: "CONNECT", url: wsUrl });
-		webrtcWorker.postMessage({ type: "CONNECT", url: webrtcUrl });
 
 		const unsubscribeFocus = focusStore.subscribe((symbol: string) => {
 			wsWorker.postMessage({ type: "FOCUS", symbol });
@@ -288,11 +206,8 @@ export const WsFeed = () => {
 		return () => {
 			unsubscribeFocus.unsubscribe();
 			wsWorker.postMessage({ type: "DISCONNECT" });
-			webrtcWorker.postMessage({ type: "DISCONNECT" });
 			wsWorker.terminate();
-			webrtcWorker.terminate();
 			globalWsWorker = null;
-			globalWebrtcWorker = null;
 		};
 	}, []);
 

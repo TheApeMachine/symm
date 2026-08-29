@@ -46,7 +46,7 @@ const TickCounter = () => {
 					Tick
 				</Typography.Label>
 				<Typography.Mono size="lg" tone="f1" data-tick="true">
-					{String(last?.count() ?? "—")}
+					{last ? new Date(Number(last.timestampNs() / 1000000n)).toISOString().slice(11, 19) : "—"}
 				</Typography.Mono>
 			</Flex.Column>
 		</Flex.Row>

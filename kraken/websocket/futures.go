@@ -13,6 +13,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
 
@@ -37,14 +38,18 @@ type FuturesLive struct {
 	subsMu        sync.RWMutex
 	subscriptions map[string]map[string]struct{}
 	observer      atomic.Pointer[func(string, time.Duration)]
+	ingress       map[string]*runtime.Workload[*types.Envelope]
 }
 
 /*
-NewFutures constructs a new Kraken Futures WebSocket connection.
+NewFutures constructs a new Kraken Futures WebSocket connection. ingress is
+keyed by feed name ("ticker"/"trade"), mirroring Live's ingress map, and is
+where DispatchFrame pushes the envelope it builds from each parsed frame.
 */
 func NewFutures(
 	ctx context.Context,
 	endpoint string,
+	ingress map[string]*runtime.Workload[*types.Envelope],
 ) *FuturesLive {
 	if endpoint == "" {
 		endpoint = FuturesWebSocketURL
@@ -58,6 +63,7 @@ func NewFutures(
 		status:        runtime.NewStatus(),
 		endpoint:      endpoint,
 		subscriptions: make(map[string]map[string]struct{}),
+		ingress:       ingress,
 	}
 
 	return futures
@@ -259,6 +265,12 @@ func (futures *FuturesLive) DispatchFrame(raw []byte) {
 }
 
 func (futures *FuturesLive) dispatchTicker(raw []byte) {
+	workload := futures.ingress["ticker"]
+
+	if workload == nil {
+		return
+	}
+
 	ticker := kraken.NewFuturesTicker(raw)
 
 	if ticker == nil || ticker.Data.ProductID == "" {
@@ -272,9 +284,19 @@ func (futures *FuturesLive) dispatchTicker(raw []byte) {
 	}
 
 	ticker.Data.Symbol = spotSymbol
+
+	envelope := types.NewEnvelope(types.EnvelopeFuturesTicker)
+	envelope.FuturesTickerData = ticker.Data
+	workload.Push(envelope)
 }
 
 func (futures *FuturesLive) dispatchTrades(raw []byte) {
+	workload := futures.ingress["trade"]
+
+	if workload == nil {
+		return
+	}
+
 	trades := kraken.NewFuturesTrade(raw)
 
 	if trades == nil || len(trades.Data) == 0 {
@@ -288,6 +310,12 @@ func (futures *FuturesLive) dispatchTrades(raw []byte) {
 		if spotSymbol == "" {
 			continue
 		}
+
+		trade.Symbol = spotSymbol
+
+		envelope := types.NewEnvelope(types.EnvelopeFuturesTrade)
+		envelope.FuturesTradeData = trade
+		workload.Push(envelope)
 	}
 }
 

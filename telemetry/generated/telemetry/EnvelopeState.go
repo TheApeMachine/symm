@@ -12,6 +12,8 @@ type EnvelopeStateT struct {
 	TickerData *EnvelopeTickerDataT `json:"tickerData"`
 	TradeData *EnvelopeTradeDataT `json:"tradeData"`
 	Level3Data *EnvelopeLevel3DataT `json:"level3Data"`
+	FuturesTickerData *EnvelopeFuturesTickerDataT `json:"futuresTickerData"`
+	FuturesTradeData *EnvelopeFuturesTradeDataT `json:"futuresTradeData"`
 	Correlation *EnvelopeMeasurementT `json:"correlation"`
 	LeadLag *EnvelopeMeasurementT `json:"leadLag"`
 	Liquidity *EnvelopeMeasurementT `json:"liquidity"`
@@ -22,6 +24,7 @@ type EnvelopeStateT struct {
 	Hawkes *EnvelopeMeasurementT `json:"hawkes"`
 	PumpDump *EnvelopeMeasurementT `json:"pumpDump"`
 	Toxicity *EnvelopeMeasurementT `json:"toxicity"`
+	Derivatives *EnvelopeMeasurementT `json:"derivatives"`
 	Categories []*EnvelopeCategoryT `json:"categories"`
 	Opportunities []*EnvelopeOpportunityCandidateT `json:"opportunities"`
 	GraphUpdate *EnvelopeGraphUpdateT `json:"graphUpdate"`
@@ -43,6 +46,8 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	tickerDataOffset := t.TickerData.Pack(builder)
 	tradeDataOffset := t.TradeData.Pack(builder)
 	level3DataOffset := t.Level3Data.Pack(builder)
+	futuresTickerDataOffset := t.FuturesTickerData.Pack(builder)
+	futuresTradeDataOffset := t.FuturesTradeData.Pack(builder)
 	correlationOffset := t.Correlation.Pack(builder)
 	leadLagOffset := t.LeadLag.Pack(builder)
 	liquidityOffset := t.Liquidity.Pack(builder)
@@ -53,6 +58,7 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	hawkesOffset := t.Hawkes.Pack(builder)
 	pumpDumpOffset := t.PumpDump.Pack(builder)
 	toxicityOffset := t.Toxicity.Pack(builder)
+	derivativesOffset := t.Derivatives.Pack(builder)
 	categoriesOffset := flatbuffers.UOffsetT(0)
 	if t.Categories != nil {
 		categoriesLength := len(t.Categories)
@@ -103,6 +109,8 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	EnvelopeStateAddTickerData(builder, tickerDataOffset)
 	EnvelopeStateAddTradeData(builder, tradeDataOffset)
 	EnvelopeStateAddLevel3Data(builder, level3DataOffset)
+	EnvelopeStateAddFuturesTickerData(builder, futuresTickerDataOffset)
+	EnvelopeStateAddFuturesTradeData(builder, futuresTradeDataOffset)
 	EnvelopeStateAddCorrelation(builder, correlationOffset)
 	EnvelopeStateAddLeadLag(builder, leadLagOffset)
 	EnvelopeStateAddLiquidity(builder, liquidityOffset)
@@ -113,6 +121,7 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	EnvelopeStateAddHawkes(builder, hawkesOffset)
 	EnvelopeStateAddPumpDump(builder, pumpDumpOffset)
 	EnvelopeStateAddToxicity(builder, toxicityOffset)
+	EnvelopeStateAddDerivatives(builder, derivativesOffset)
 	EnvelopeStateAddCategories(builder, categoriesOffset)
 	EnvelopeStateAddOpportunities(builder, opportunitiesOffset)
 	EnvelopeStateAddGraphUpdate(builder, graphUpdateOffset)
@@ -130,6 +139,8 @@ func (rcv *EnvelopeState) UnPackTo(t *EnvelopeStateT) {
 	t.TickerData = rcv.TickerData(nil).UnPack()
 	t.TradeData = rcv.TradeData(nil).UnPack()
 	t.Level3Data = rcv.Level3Data(nil).UnPack()
+	t.FuturesTickerData = rcv.FuturesTickerData(nil).UnPack()
+	t.FuturesTradeData = rcv.FuturesTradeData(nil).UnPack()
 	t.Correlation = rcv.Correlation(nil).UnPack()
 	t.LeadLag = rcv.LeadLag(nil).UnPack()
 	t.Liquidity = rcv.Liquidity(nil).UnPack()
@@ -140,6 +151,7 @@ func (rcv *EnvelopeState) UnPackTo(t *EnvelopeStateT) {
 	t.Hawkes = rcv.Hawkes(nil).UnPack()
 	t.PumpDump = rcv.PumpDump(nil).UnPack()
 	t.Toxicity = rcv.Toxicity(nil).UnPack()
+	t.Derivatives = rcv.Derivatives(nil).UnPack()
 	categoriesLength := rcv.CategoriesLength()
 	t.Categories = make([]*EnvelopeCategoryT, categoriesLength)
 	for j := 0; j < categoriesLength; j++ {
@@ -271,12 +283,12 @@ func (rcv *EnvelopeState) Level3Data(obj *EnvelopeLevel3Data) *EnvelopeLevel3Dat
 	return nil
 }
 
-func (rcv *EnvelopeState) Correlation(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
+func (rcv *EnvelopeState) FuturesTickerData(obj *EnvelopeFuturesTickerData) *EnvelopeFuturesTickerData {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
-			obj = new(EnvelopeMeasurement)
+			obj = new(EnvelopeFuturesTickerData)
 		}
 		obj.Init(rcv._tab.Bytes, x)
 		return obj
@@ -284,12 +296,12 @@ func (rcv *EnvelopeState) Correlation(obj *EnvelopeMeasurement) *EnvelopeMeasure
 	return nil
 }
 
-func (rcv *EnvelopeState) LeadLag(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
+func (rcv *EnvelopeState) FuturesTradeData(obj *EnvelopeFuturesTradeData) *EnvelopeFuturesTradeData {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
-			obj = new(EnvelopeMeasurement)
+			obj = new(EnvelopeFuturesTradeData)
 		}
 		obj.Init(rcv._tab.Bytes, x)
 		return obj
@@ -297,7 +309,7 @@ func (rcv *EnvelopeState) LeadLag(obj *EnvelopeMeasurement) *EnvelopeMeasurement
 	return nil
 }
 
-func (rcv *EnvelopeState) Liquidity(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
+func (rcv *EnvelopeState) Correlation(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -310,7 +322,7 @@ func (rcv *EnvelopeState) Liquidity(obj *EnvelopeMeasurement) *EnvelopeMeasureme
 	return nil
 }
 
-func (rcv *EnvelopeState) Sentiment(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
+func (rcv *EnvelopeState) LeadLag(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -323,7 +335,7 @@ func (rcv *EnvelopeState) Sentiment(obj *EnvelopeMeasurement) *EnvelopeMeasureme
 	return nil
 }
 
-func (rcv *EnvelopeState) Cvd(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
+func (rcv *EnvelopeState) Liquidity(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -336,7 +348,7 @@ func (rcv *EnvelopeState) Cvd(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
 	return nil
 }
 
-func (rcv *EnvelopeState) DepthFlow(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
+func (rcv *EnvelopeState) Sentiment(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -349,7 +361,7 @@ func (rcv *EnvelopeState) DepthFlow(obj *EnvelopeMeasurement) *EnvelopeMeasureme
 	return nil
 }
 
-func (rcv *EnvelopeState) Morphology(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
+func (rcv *EnvelopeState) Cvd(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -362,7 +374,7 @@ func (rcv *EnvelopeState) Morphology(obj *EnvelopeMeasurement) *EnvelopeMeasurem
 	return nil
 }
 
-func (rcv *EnvelopeState) Hawkes(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
+func (rcv *EnvelopeState) DepthFlow(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -375,7 +387,7 @@ func (rcv *EnvelopeState) Hawkes(obj *EnvelopeMeasurement) *EnvelopeMeasurement 
 	return nil
 }
 
-func (rcv *EnvelopeState) PumpDump(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
+func (rcv *EnvelopeState) Morphology(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -388,7 +400,7 @@ func (rcv *EnvelopeState) PumpDump(obj *EnvelopeMeasurement) *EnvelopeMeasuremen
 	return nil
 }
 
-func (rcv *EnvelopeState) Toxicity(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
+func (rcv *EnvelopeState) Hawkes(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
@@ -401,8 +413,47 @@ func (rcv *EnvelopeState) Toxicity(obj *EnvelopeMeasurement) *EnvelopeMeasuremen
 	return nil
 }
 
-func (rcv *EnvelopeState) Categories(obj *EnvelopeCategory, j int) bool {
+func (rcv *EnvelopeState) PumpDump(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(EnvelopeMeasurement)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
+func (rcv *EnvelopeState) Toxicity(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(EnvelopeMeasurement)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
+func (rcv *EnvelopeState) Derivatives(obj *EnvelopeMeasurement) *EnvelopeMeasurement {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(EnvelopeMeasurement)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
+func (rcv *EnvelopeState) Categories(obj *EnvelopeCategory, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -414,7 +465,7 @@ func (rcv *EnvelopeState) Categories(obj *EnvelopeCategory, j int) bool {
 }
 
 func (rcv *EnvelopeState) CategoriesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -422,7 +473,7 @@ func (rcv *EnvelopeState) CategoriesLength() int {
 }
 
 func (rcv *EnvelopeState) Opportunities(obj *EnvelopeOpportunityCandidate, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -434,7 +485,7 @@ func (rcv *EnvelopeState) Opportunities(obj *EnvelopeOpportunityCandidate, j int
 }
 
 func (rcv *EnvelopeState) OpportunitiesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -442,7 +493,7 @@ func (rcv *EnvelopeState) OpportunitiesLength() int {
 }
 
 func (rcv *EnvelopeState) GraphUpdate(obj *EnvelopeGraphUpdate) *EnvelopeGraphUpdate {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -455,7 +506,7 @@ func (rcv *EnvelopeState) GraphUpdate(obj *EnvelopeGraphUpdate) *EnvelopeGraphUp
 }
 
 func (rcv *EnvelopeState) Resonance(obj *EnvelopeResonanceArtifact) *EnvelopeResonanceArtifact {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -468,7 +519,7 @@ func (rcv *EnvelopeState) Resonance(obj *EnvelopeResonanceArtifact) *EnvelopeRes
 }
 
 func (rcv *EnvelopeState) Manifold(obj *EnvelopeManifoldState) *EnvelopeManifoldState {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -481,7 +532,7 @@ func (rcv *EnvelopeState) Manifold(obj *EnvelopeManifoldState) *EnvelopeManifold
 }
 
 func (rcv *EnvelopeState) Cognition(obj *EnvelopeCognition) *EnvelopeCognition {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -494,7 +545,7 @@ func (rcv *EnvelopeState) Cognition(obj *EnvelopeCognition) *EnvelopeCognition {
 }
 
 func (rcv *EnvelopeState) CausalOutput(obj *EnvelopeCausalOutput) *EnvelopeCausalOutput {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -507,7 +558,7 @@ func (rcv *EnvelopeState) CausalOutput(obj *EnvelopeCausalOutput) *EnvelopeCausa
 }
 
 func (rcv *EnvelopeState) Boundaries(obj *EnvelopeBoundaryStamp, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -519,7 +570,7 @@ func (rcv *EnvelopeState) Boundaries(obj *EnvelopeBoundaryStamp, j int) bool {
 }
 
 func (rcv *EnvelopeState) BoundariesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -527,7 +578,7 @@ func (rcv *EnvelopeState) BoundariesLength() int {
 }
 
 func EnvelopeStateStart(builder *flatbuffers.Builder) {
-	builder.StartObject(23)
+	builder.StartObject(26)
 }
 func EnvelopeStateAddKey(builder *flatbuffers.Builder, key flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(key), 0)
@@ -544,65 +595,74 @@ func EnvelopeStateAddTradeData(builder *flatbuffers.Builder, tradeData flatbuffe
 func EnvelopeStateAddLevel3Data(builder *flatbuffers.Builder, level3Data flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(level3Data), 0)
 }
+func EnvelopeStateAddFuturesTickerData(builder *flatbuffers.Builder, futuresTickerData flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(futuresTickerData), 0)
+}
+func EnvelopeStateAddFuturesTradeData(builder *flatbuffers.Builder, futuresTradeData flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(futuresTradeData), 0)
+}
 func EnvelopeStateAddCorrelation(builder *flatbuffers.Builder, correlation flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(correlation), 0)
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(correlation), 0)
 }
 func EnvelopeStateAddLeadLag(builder *flatbuffers.Builder, leadLag flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(leadLag), 0)
+	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(leadLag), 0)
 }
 func EnvelopeStateAddLiquidity(builder *flatbuffers.Builder, liquidity flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(liquidity), 0)
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(liquidity), 0)
 }
 func EnvelopeStateAddSentiment(builder *flatbuffers.Builder, sentiment flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(sentiment), 0)
+	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(sentiment), 0)
 }
 func EnvelopeStateAddCvd(builder *flatbuffers.Builder, cvd flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(cvd), 0)
+	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(cvd), 0)
 }
 func EnvelopeStateAddDepthFlow(builder *flatbuffers.Builder, depthFlow flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(depthFlow), 0)
+	builder.PrependUOffsetTSlot(12, flatbuffers.UOffsetT(depthFlow), 0)
 }
 func EnvelopeStateAddMorphology(builder *flatbuffers.Builder, morphology flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(morphology), 0)
+	builder.PrependUOffsetTSlot(13, flatbuffers.UOffsetT(morphology), 0)
 }
 func EnvelopeStateAddHawkes(builder *flatbuffers.Builder, hawkes flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(12, flatbuffers.UOffsetT(hawkes), 0)
+	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(hawkes), 0)
 }
 func EnvelopeStateAddPumpDump(builder *flatbuffers.Builder, pumpDump flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(13, flatbuffers.UOffsetT(pumpDump), 0)
+	builder.PrependUOffsetTSlot(15, flatbuffers.UOffsetT(pumpDump), 0)
 }
 func EnvelopeStateAddToxicity(builder *flatbuffers.Builder, toxicity flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(toxicity), 0)
+	builder.PrependUOffsetTSlot(16, flatbuffers.UOffsetT(toxicity), 0)
+}
+func EnvelopeStateAddDerivatives(builder *flatbuffers.Builder, derivatives flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(17, flatbuffers.UOffsetT(derivatives), 0)
 }
 func EnvelopeStateAddCategories(builder *flatbuffers.Builder, categories flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(15, flatbuffers.UOffsetT(categories), 0)
+	builder.PrependUOffsetTSlot(18, flatbuffers.UOffsetT(categories), 0)
 }
 func EnvelopeStateStartCategoriesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func EnvelopeStateAddOpportunities(builder *flatbuffers.Builder, opportunities flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(16, flatbuffers.UOffsetT(opportunities), 0)
+	builder.PrependUOffsetTSlot(19, flatbuffers.UOffsetT(opportunities), 0)
 }
 func EnvelopeStateStartOpportunitiesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func EnvelopeStateAddGraphUpdate(builder *flatbuffers.Builder, graphUpdate flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(17, flatbuffers.UOffsetT(graphUpdate), 0)
+	builder.PrependUOffsetTSlot(20, flatbuffers.UOffsetT(graphUpdate), 0)
 }
 func EnvelopeStateAddResonance(builder *flatbuffers.Builder, resonance flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(18, flatbuffers.UOffsetT(resonance), 0)
+	builder.PrependUOffsetTSlot(21, flatbuffers.UOffsetT(resonance), 0)
 }
 func EnvelopeStateAddManifold(builder *flatbuffers.Builder, manifold flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(19, flatbuffers.UOffsetT(manifold), 0)
+	builder.PrependUOffsetTSlot(22, flatbuffers.UOffsetT(manifold), 0)
 }
 func EnvelopeStateAddCognition(builder *flatbuffers.Builder, cognition flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(20, flatbuffers.UOffsetT(cognition), 0)
+	builder.PrependUOffsetTSlot(23, flatbuffers.UOffsetT(cognition), 0)
 }
 func EnvelopeStateAddCausalOutput(builder *flatbuffers.Builder, causalOutput flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(21, flatbuffers.UOffsetT(causalOutput), 0)
+	builder.PrependUOffsetTSlot(24, flatbuffers.UOffsetT(causalOutput), 0)
 }
 func EnvelopeStateAddBoundaries(builder *flatbuffers.Builder, boundaries flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(22, flatbuffers.UOffsetT(boundaries), 0)
+	builder.PrependUOffsetTSlot(25, flatbuffers.UOffsetT(boundaries), 0)
 }
 func EnvelopeStateStartBoundariesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)

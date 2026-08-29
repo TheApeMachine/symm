@@ -1,34 +1,40 @@
 package runtime
 
-import "github.com/theapemachine/symm/system"
+import (
+	"sync/atomic"
+
+	"github.com/theapemachine/symm/system"
+)
 
 type Node[T any] interface {
 	Step(T) T
 }
 
 /*
-BoundarySlot* names the fixed, exclusive types.Envelope.Boundaries index one
-Observe group in a Workload's declared graph stamps its "passed here at T"
-witness into — the Nth Observe group in the graph always uses the Nth slot,
-across every Workload (a Ticker envelope and a Level3 envelope never share
-memory, so reusing slot identity across different Workloads is safe; what
-must stay disjoint is concurrent writers within one HandlerGroup, and an
-Observe group has none of the Compute mutation that would race against it).
+BacklogStepper is a Node that also wants to know how many slots behind the
+Workload's producer this call is running — real ring pressure, read from the
+same sequence numbers the disruptor itself uses for backpressure, never
+estimated. A node opts in by implementing StepBacklog in addition to Step;
+Consumer favors StepBacklog when present and falls back to Step otherwise, so
+every existing Node implementation is unaffected.
 */
-const (
-	BoundarySlotAfterSignals = iota
-	BoundarySlotAfterCategory
-	BoundarySlotAfterLogic
-	BoundarySlotAfterStrategy
-)
-
-type Consumer[T any] struct {
-	node   Node[T]
-	buffer []T
+type BacklogStepper[T any] interface {
+	Node[T]
+	StepBacklog(value T, backlog int64) T
 }
 
-func NewConsumer[T any](node Node[T], buffer []T) *Consumer[T] {
-	return &Consumer[T]{node: node, buffer: buffer}
+type Consumer[T any] struct {
+	node        Node[T]
+	backlogNode BacklogStepper[T]
+	buffer      []T
+	headSeq     *atomic.Int64
+}
+
+func NewConsumer[T any](node Node[T], buffer []T, headSeq *atomic.Int64) *Consumer[T] {
+	consumer := &Consumer[T]{node: node, buffer: buffer, headSeq: headSeq}
+	consumer.backlogNode, _ = node.(BacklogStepper[T])
+
+	return consumer
 }
 
 /*
@@ -40,6 +46,15 @@ shared envelope. Step still returns T so a Node can be used standalone
 outside a group; Handle intentionally discards that return here.
 */
 func (consumer *Consumer[T]) Handle(lower, upper int64) {
+	if consumer.backlogNode != nil {
+		for seq := lower; seq <= upper; seq++ {
+			backlog := consumer.headSeq.Load() - seq
+			consumer.backlogNode.StepBacklog(consumer.buffer[seq&system.Cfg.Runtime.Workspace.Mask], backlog)
+		}
+
+		return
+	}
+
 	for seq := lower; seq <= upper; seq++ {
 		consumer.node.Step(consumer.buffer[seq&system.Cfg.Runtime.Workspace.Mask])
 	}

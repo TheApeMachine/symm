@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 
 	"github.com/smarty/go-disruptor"
 	"github.com/theapemachine/symm/system"
@@ -18,6 +19,12 @@ type Workload[T any] struct {
 	err     error
 	channel disruptor.Disruptor
 	buffer  []T
+	// headSeq is the highest sequence Push has committed to the ring — the
+	// producer's position. A BacklogStepper compares it against its own
+	// envelope's sequence (see Consumer.Handle) to read real ring pressure
+	// straight off the same numbers the disruptor uses for backpressure,
+	// never estimated from rates.
+	headSeq atomic.Int64
 }
 
 func NewWorkload[T any](
@@ -31,6 +38,7 @@ func NewWorkload[T any](
 		cancel: cancel,
 		buffer: make([]T, system.Cfg.Runtime.Workspace.Buffer),
 	}
+	workload.headSeq.Store(-1)
 
 	opts := optionList(
 		disruptor.Options.BufferCapacity(
@@ -42,7 +50,7 @@ func NewWorkload[T any](
 		group := make([]disruptor.Handler, len(stage))
 
 		for i, node := range stage {
-			group[i] = NewConsumer(node, workload.buffer)
+			group[i] = NewConsumer(node, workload.buffer, &workload.headSeq)
 		}
 
 		if len(group) > 0 {
@@ -81,6 +89,7 @@ func (workload *Workload[T]) Push(payload T) {
 
 	// Make available to Stage 1
 	workload.channel.Commit(seq, seq)
+	workload.headSeq.Store(seq)
 }
 
 func (workload *Workload[T]) Close() error {

@@ -19,12 +19,18 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic/category"
+	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
+	"github.com/theapemachine/symm/signal/derivatives"
+	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/signal/leadlag"
 	"github.com/theapemachine/symm/signal/liquidity"
 	"github.com/theapemachine/symm/signal/morphology"
+	"github.com/theapemachine/symm/signal/pumpdump"
+	"github.com/theapemachine/symm/signal/sentiment"
+	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/ui"
 
 	"github.com/spf13/cobra"
@@ -74,26 +80,41 @@ var (
 			hub := ui.NewHub(cmd.Context())
 			defer hub.Close()
 
+			thesis := types.NewThesis(cmd.Context())
+
 			publicIngress := map[string]*nmruntime.Workload[*types.Envelope]{
 				"ticker": nmruntime.NewWorkload(
 					cmd.Context(),
 					[][]nmruntime.Node[*types.Envelope]{
+						{system.NewDiagnostic("ticker.ingress")},
 						{
-							correlation.NewSignal(cmd.Context()),
-							leadlag.NewSignal(cmd.Context()),
-							liquidity.NewSignal(cmd.Context()),
+							system.NewTraced("ticker.correlation", correlation.NewSignal(cmd.Context())),
+							system.NewTraced("ticker.leadlag", leadlag.NewSignal(cmd.Context())),
+							system.NewTraced("ticker.liquidity", liquidity.NewSignal(cmd.Context())),
+							system.NewTraced("ticker.sentiment", sentiment.NewSignal(cmd.Context())),
+							system.NewTraced("ticker.pumpdump", pumpdump.NewSignal(cmd.Context())),
+							system.NewTraced("ticker.resonance", resonance.NewSolver(cmd.Context(), 0, thesis)),
 						},
 						{
 							category.NewSolver(cmd.Context()),
 						},
+						{system.NewDiagnostic("ticker.category")},
 						{hub},
+						{system.NewDiagnostic("ticker.hub")},
 					},
 				),
 				"trade": nmruntime.NewWorkload(
 					cmd.Context(),
 					[][]nmruntime.Node[*types.Envelope]{
-						{cvd.NewSignal(cmd.Context())},
+						{system.NewDiagnostic("trade.ingress")},
+						{
+							system.NewTraced("trade.cvd", cvd.NewSignal(cmd.Context())),
+							system.NewTraced("trade.hawkes", hawkes.NewSignal(cmd.Context())),
+							system.NewTraced("trade.pumpdump", pumpdump.NewSignal(cmd.Context())),
+							system.NewTraced("trade.toxicity", toxicity.NewSignal(cmd.Context())),
+						},
 						{hub},
+						{system.NewDiagnostic("trade.hub")},
 					},
 				),
 			}
@@ -102,11 +123,36 @@ var (
 				"level3": nmruntime.NewWorkload(
 					cmd.Context(),
 					[][]nmruntime.Node[*types.Envelope]{
+						{system.NewDiagnostic("level3.ingress")},
 						{
-							depthflow.NewSignal(cmd.Context()),
-							morphology.NewSignal(cmd.Context()),
+							system.NewTraced("level3.depthflow", depthflow.NewSignal(cmd.Context())),
+							system.NewTraced("level3.morphology", morphology.NewSignal(cmd.Context())),
+							system.NewTraced("level3.pumpdump", pumpdump.NewSignal(cmd.Context())),
+							system.NewTraced("level3.toxicity", toxicity.NewSignal(cmd.Context())),
 						},
 						{hub},
+						{system.NewDiagnostic("level3.hub")},
+					},
+				),
+			}
+
+			futuresIngress := map[string]*nmruntime.Workload[*types.Envelope]{
+				"ticker": nmruntime.NewWorkload(
+					cmd.Context(),
+					[][]nmruntime.Node[*types.Envelope]{
+						{system.NewDiagnostic("futures.ticker.ingress")},
+						{system.NewTraced("futures.ticker.derivatives", derivatives.NewSignal(cmd.Context()))},
+						{hub},
+						{system.NewDiagnostic("futures.ticker.hub")},
+					},
+				),
+				"trade": nmruntime.NewWorkload(
+					cmd.Context(),
+					[][]nmruntime.Node[*types.Envelope]{
+						{system.NewDiagnostic("futures.trade.ingress")},
+						{system.NewTraced("futures.trade.derivatives", derivatives.NewSignal(cmd.Context()))},
+						{hub},
+						{system.NewDiagnostic("futures.trade.hub")},
 					},
 				),
 			}
@@ -114,8 +160,11 @@ var (
 			workspace := nmruntime.NewWorkspace(
 				cmd.Context(),
 				append(
-					slices.Collect(maps.Values(publicIngress)),
-					slices.Collect(maps.Values(privateIngress))...,
+					append(
+						slices.Collect(maps.Values(publicIngress)),
+						slices.Collect(maps.Values(privateIngress))...,
+					),
+					slices.Collect(maps.Values(futuresIngress))...,
 				),
 			)
 
@@ -138,6 +187,15 @@ var (
 					system.Cfg.WebSocket.Endpoints.Private,
 				),
 			)
+
+			futures := websocket.NewFutures(cmd.Context(), system.Cfg.WebSocket.Endpoints.Futures, futuresIngress)
+			api.SetFutures(futures)
+
+			go func() {
+				errnie.Error(futures.Run())
+			}()
+
+			defer futures.Close()
 
 			instrument := broker.NewInstrument(
 				api,
