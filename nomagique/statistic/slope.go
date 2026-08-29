@@ -14,6 +14,11 @@ var (
 	SymbolSlopeSNR              = types.MustIntern("slope/snr")
 	SymbolSlopeIntercept        = types.MustIntern("slope/intercept")
 	SymbolSlopeResidualVariance = types.MustIntern("slope/residual_variance")
+	// SymbolSlopeHorizon is the optional causally derived horizon (seconds).
+	// When present, only prior path observations whose event time is within
+	// window = [now - horizon, now) participate in the fit. When absent, the
+	// whole retained path participates (backward-compatible).
+	SymbolSlopeHorizon = types.MustIntern("slope/horizon")
 )
 
 type slopeSlots struct {
@@ -95,7 +100,17 @@ func Slope(prefix string) types.Primitive {
 		}
 
 		currentTimestamp := int64(sec)*1_000_000_000 + int64(nsec)
-		slope, intercept, slopeVar, snr, resVar, ok := fitLocalRegression(series, input, count, currentTimestamp)
+
+		// Optional causally derived horizon: restrict the fit to prior
+		// observations within [now - horizon, now).
+		horizonSeconds, hasHorizon := input.Get(SymbolSlopeHorizon)
+		cutoff := int64(0)
+
+		if hasHorizon && horizonSeconds > 0 {
+			cutoff = currentTimestamp - int64(horizonSeconds*1e9)
+		}
+
+		slope, intercept, slopeVar, snr, resVar, ok := fitLocalRegression(series, input, count, currentTimestamp, cutoff)
 
 		if !ok {
 			input.Put(slots.slope, 0)
@@ -125,9 +140,18 @@ func fitLocalRegression(
 	frame *types.Frame,
 	count int,
 	currentTimestamp int64,
+	cutoff int64,
 ) (float64, float64, float64, float64, float64, bool) {
-	sumTau := 0.0
-	sumX := 0.0
+	// First collect the in-window samples (and their count), then fit. The
+	// current observation is never in the retained path (temporal.Path appends
+	// after Slope), so no explicit "exclude self" step is needed; the horizon
+	// only further restricts which PRIOR samples participate.
+	type windowed struct {
+		timestamp int64
+		value     float64
+	}
+
+	samples := make([]windowed, 0, count)
 
 	for index := range count {
 		timestamp, sampleValue, found := series.Sample(frame, index)
@@ -136,12 +160,28 @@ func fitLocalRegression(
 			return 0, 0, 0, 0, 0, false
 		}
 
-		tau := float64(timestamp-currentTimestamp) / 1e9
-		sumTau += tau
-		sumX += sampleValue
+		if cutoff > 0 && timestamp < cutoff {
+			continue
+		}
+
+		samples = append(samples, windowed{timestamp: timestamp, value: sampleValue})
 	}
 
-	sampleCount := float64(count)
+	sampleCount := float64(len(samples))
+
+	if sampleCount < 2 {
+		return 0, 0, 0, 0, 0, false
+	}
+
+	sumTau := 0.0
+	sumX := 0.0
+
+	for _, sample := range samples {
+		tau := float64(sample.timestamp-currentTimestamp) / 1e9
+		sumTau += tau
+		sumX += sample.value
+	}
+
 	meanTau := sumTau / sampleCount
 	meanX := sumX / sampleCount
 
@@ -149,11 +189,10 @@ func fitLocalRegression(
 	sumTauX := 0.0
 	sumXX := 0.0
 
-	for index := range count {
-		timestamp, sampleValue, _ := series.Sample(frame, index)
-		tau := float64(timestamp-currentTimestamp) / 1e9
+	for _, sample := range samples {
+		tau := float64(sample.timestamp-currentTimestamp) / 1e9
 		deltaTau := tau - meanTau
-		deltaX := sampleValue - meanX
+		deltaX := sample.value - meanX
 
 		sumTauTau += deltaTau * deltaTau
 		sumTauX += deltaTau * deltaX

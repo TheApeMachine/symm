@@ -125,7 +125,7 @@ func (instrument *Instrument) Pair(symbol string) kraken.InstrumentPair {
 	if !ok {
 		errnie.Error(errnie.Err(
 			errnie.NotFound,
-			"trader: instrument pair not found",
+			"trader: instrument pair not found for "+symbol,
 			nil,
 		))
 

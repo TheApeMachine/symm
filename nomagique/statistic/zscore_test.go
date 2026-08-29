@@ -60,10 +60,12 @@ func TestZScore(t *testing.T) {
 
 	Convey("Given an observation with missing inputs or regressed time", t, func() {
 		Convey("It should fail the transition", func() {
-			failed := ZScore("")(types.Frame{})
+			failed := types.Frame{}
+			ZScore("")(&failed)
 			So(failed.Err, ShouldNotBeNil)
 
-			failed = ZScore("")(zscoreObservationForTest(100, 1000, -5))
+			failed = zscoreObservationForTest(100, 1000, -5)
+			ZScore("")(&failed)
 			So(failed.Err, ShouldNotBeNil)
 		})
 

@@ -637,6 +637,7 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			feeRate,
 			feeRate,
 			&plan,
+			time.Now(),
 		)
 
 		if stopErr != nil {

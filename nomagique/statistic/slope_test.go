@@ -124,6 +124,54 @@ func TestSlope(t *testing.T) {
 	})
 }
 
+func TestSlopeIrregularGridInvariance(t *testing.T) {
+	Convey("Given one linear trajectory d(t) = a + b*t", t, func() {
+		const slope = 2.0
+		const intercept = 100.0
+
+		// Irregular grids expressed as integral (sec, nsec) event timestamps,
+		// since temporal.Path requires integral seconds with normalized nsec.
+		type stamp struct{ sec, nsec float64 }
+
+		runGrid := func(grid []stamp) float64 {
+			pipeline := types.Pipe(
+				temporal.Path(""),
+				Slope(""),
+			)
+			stream := types.NewStream(pipeline, types.Frame{})
+
+			var last float64
+
+			for _, timestamp := range grid {
+				elapsed := timestamp.sec + timestamp.nsec*1e-9
+				input := types.Frame{}
+				input.Put(types.SampleValue, intercept+slope*elapsed)
+				input.Put(SymbolUnixSec, timestamp.sec)
+				input.Put(SymbolUnixNsec, timestamp.nsec)
+
+				output := stream.Step(input)
+
+				if v, found := output.Get(SymbolSlope); found {
+					last = v
+				}
+			}
+
+			return last
+		}
+
+		Convey("the fitted beta equals b on two different irregular grids", func() {
+			gridA := []stamp{{1000, 0}, {1001, 700e6}, {1003, 100e6}, {1006, 500e6}, {1009, 900e6}, {1014, 200e6}}
+			gridB := []stamp{{1000, 0}, {1004, 900e6}, {1005, 300e6}, {1010, 800e6}, {1012, 100e6}, {1018, 900e6}}
+
+			betaA := runGrid(gridA)
+			betaB := runGrid(gridB)
+
+			So(betaA, ShouldAlmostEqual, slope, 1e-6)
+			So(betaB, ShouldAlmostEqual, slope, 1e-6)
+		})
+	})
+}
+
 func BenchmarkSlope(b *testing.B) {
 	pipeline := types.Pipe(
 		temporal.Path(""),

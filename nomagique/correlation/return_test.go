@@ -8,8 +8,8 @@ import (
 
 func TestReturn(t *testing.T) {
 	Convey("Given a retained positive price path", t, func() {
-		path := hayashiPath([]int64{0, 1}, []float64{100, 110})
-		output := Return(path)
+		output := hayashiPath([]int64{0, 1}, []float64{100, 110})
+		Return(&output)
 
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolReady), ShouldEqual, 1.0)
@@ -23,6 +23,7 @@ func BenchmarkReturn(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_ = Return(path)
+		output := path
+		Return(&output)
 	}
 }

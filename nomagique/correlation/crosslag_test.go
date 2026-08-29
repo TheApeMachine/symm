@@ -12,7 +12,8 @@ import (
 func TestCrossLag(t *testing.T) {
 	Convey("Given a follower carrying the anchor's prior return sequence", t, func() {
 		anchor, follower := delayedCrossLagPaths(32)
-		output := CrossLag("previous", "current")(pairPaths(anchor, follower))
+		output := pairPaths(anchor, follower)
+		CrossLag("previous", "current")(&output)
 
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolLeadLagReady), ShouldEqual, 1.0)
@@ -26,7 +27,8 @@ func TestCrossLag(t *testing.T) {
 		follower := hayashiEquationPath([]int64{0, 0, 0}, []float64{50, 51, 52})
 
 		Convey("It should mark the search unready instead of panicking", func() {
-			output := CrossLag("previous", "current")(pairPaths(anchor, follower))
+			output := pairPaths(anchor, follower)
+			CrossLag("previous", "current")(&output)
 
 			So(output.Err, ShouldBeNil)
 			So(output.MustGet(SymbolLeadLagReady), ShouldEqual, 0.0)
@@ -38,7 +40,8 @@ func TestCrossLag(t *testing.T) {
 		follower := hayashiEquationPath([]int64{0, 1_000_000_000, 2_000_000_000}, []float64{50, 51, 52})
 
 		Convey("It should mark the search unready without requiring both paths to lack spacing", func() {
-			output := CrossLag("previous", "current")(pairPaths(anchor, follower))
+			output := pairPaths(anchor, follower)
+			CrossLag("previous", "current")(&output)
 
 			So(output.Err, ShouldBeNil)
 			So(output.MustGet(SymbolLeadLagReady), ShouldEqual, 0.0)
@@ -50,7 +53,8 @@ func TestCrossLag(t *testing.T) {
 		follower := hayashiEquationPath([]int64{0, 0, 0}, []float64{50, 51, 52})
 
 		Convey("It should mark the search unready without requiring both paths to lack spacing", func() {
-			output := CrossLag("previous", "current")(pairPaths(anchor, follower))
+			output := pairPaths(anchor, follower)
+			CrossLag("previous", "current")(&output)
 
 			So(output.Err, ShouldBeNil)
 			So(output.MustGet(SymbolLeadLagReady), ShouldEqual, 0.0)
@@ -110,6 +114,7 @@ func BenchmarkCrossLag(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_ = CrossLag("previous", "current")(paired)
+		output := paired
+		CrossLag("previous", "current")(&output)
 	}
 }

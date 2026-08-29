@@ -37,10 +37,8 @@ func TestGeometry(t *testing.T) {
 	})
 
 	Convey("Given an interval wider than its center", t, func() {
-		output := nmtypes.Step(
-			Geometry(),
-			geometryInput(1, 4, 1, 1, 0),
-		)
+		output := geometryInput(1, 4, 1, 1, 0)
+		nmtypes.Step(Geometry(), &output)
 		So(output.Err, ShouldBeNil)
 
 		Convey("It keeps relative width raw and bounds symmetric dissimilarity", func() {
@@ -50,10 +48,8 @@ func TestGeometry(t *testing.T) {
 	})
 
 	Convey("Given a crossed or collapsed interval", t, func() {
-		output := nmtypes.Step(
-			Geometry(),
-			geometryInput(101, 101, 1, 1, 0),
-		)
+		output := geometryInput(101, 101, 1, 1, 0)
+		nmtypes.Step(Geometry(), &output)
 		So(output.Err, ShouldNotBeNil)
 		So(output.Err.Error(), ShouldEqual, "logic: positive order requires 0 < lower < upper")
 	})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -272,6 +273,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			feeRate,
 			feeRate,
 			&riskPlan,
+			time.Now(),
 		)
 
 		if err != nil {

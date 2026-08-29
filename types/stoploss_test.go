@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
@@ -44,6 +45,7 @@ func TestNewStoploss(t *testing.T) {
 			decimal.NewFromFloat64(0.01),
 			zeroRate,
 			zeroRate,
+			time.Now(),
 		)
 		So(err, ShouldBeNil)
 
@@ -71,6 +73,7 @@ func TestNewStoploss(t *testing.T) {
 				decimal.NewFromFloat64(0.01),
 				zeroRate,
 				zeroRate,
+				time.Now(),
 			)
 
 			So(err, ShouldBeNil)
@@ -93,6 +96,7 @@ func TestNewStoploss(t *testing.T) {
 				decimal.NewFromFloat64(0.01),
 				zeroRate,
 				zeroRate,
+				time.Now(),
 			)
 
 			So(err, ShouldBeNil)
@@ -116,6 +120,7 @@ func TestNewStoploss(t *testing.T) {
 				decimal.NewFromFloat64(0.01),
 				zeroRate,
 				zeroRate,
+				time.Now(),
 			)
 
 			So(err, ShouldBeNil)
@@ -146,6 +151,7 @@ func TestNewStoploss(t *testing.T) {
 			tick,
 			feeRate,
 			feeRate,
+			time.Now(),
 		)
 		So(err, ShouldBeNil)
 		profitLine, err := decimal.NewFromString("0.00991")
@@ -179,6 +185,7 @@ func TestNewStoploss(t *testing.T) {
 			decimal.NewFromFloat64(0.01),
 			zeroRate,
 			zeroRate,
+			time.Now(),
 		)
 		So(err, ShouldBeNil)
 
@@ -212,6 +219,7 @@ func TestNewStoploss(t *testing.T) {
 			decimal.NewFromFloat64(0.01),
 			zeroRate,
 			zeroRate,
+			time.Now(),
 		)
 
 		Convey("It should keep the executable one-tick lattice boundary", func() {
@@ -231,6 +239,7 @@ func TestStoplossRebindFill(t *testing.T) {
 			err := stoploss.RebindFill(
 				decimal.NewFromFloat64(100.05),
 				decimal.NewFromFloat64(100),
+				time.Now(),
 			)
 
 			So(err, ShouldBeNil)
@@ -530,6 +539,7 @@ func TestStoplossReconsider(t *testing.T) {
 			decimal.NewFromFloat64(0.01),
 			zeroRate,
 			zeroRate,
+			time.Now(),
 		)
 		So(err, ShouldBeNil)
 		stoploss.ArmClock()
@@ -870,6 +880,7 @@ func underwaterStoploss(testingTB testReporter, horizon int) *Stoploss {
 		decimal.NewFromFloat64(0.01),
 		zeroRate,
 		zeroRate,
+		time.Now(),
 	)
 
 	if err != nil {
@@ -902,6 +913,7 @@ func stoplossFixture(testingTB testReporter) *Stoploss {
 		decimal.NewFromFloat64(0.01),
 		zeroRate,
 		zeroRate,
+		time.Now(),
 	)
 
 	if err != nil {
@@ -931,6 +943,7 @@ func BenchmarkNewStoploss(b *testing.B) {
 			tick,
 			zeroRate,
 			zeroRate,
+			time.Now(),
 		)
 
 		if err != nil {

@@ -17,8 +17,10 @@ import (
 
 const positionStoplossSchema = `
 CREATE TABLE IF NOT EXISTS position_stoplosses (
-    symbol TEXT PRIMARY KEY,
-    state BLOB NOT NULL
+    symbol TEXT NOT NULL,
+    entry_at TEXT NOT NULL,
+    state BLOB NOT NULL,
+    PRIMARY KEY (symbol, entry_at)
 ) STRICT;`
 
 const thesisCheckpointSchema = `
@@ -190,13 +192,27 @@ WHERE id <= (SELECT id FROM thesis_checkpoints ORDER BY id DESC LIMIT 1 OFFSET ?
 }
 
 /*
-Save stores the current stoploss state for its position symbol.
+Save stores the current stoploss state, keyed by symbol and entry time. A
+symbol is re-entered many times over a session; keying on symbol alone would
+let a later entry's row be confused with — or silently overwrite — an
+already-closed trade's, which is exactly what let a stale, already-triggered
+stoploss survive to be read back as if it protected a different, still-open
+position. EntryAt is required: every stoploss reaching persistence has gone
+through RebindFill, which always stamps it.
 */
 func (store *PositionStore) Save(stoploss *types.Stoploss) error {
 	if store == nil || store.database == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"position store: database required",
+			nil,
+		))
+	}
+
+	if stoploss.EntryAt == nil || stoploss.EntryAt.IsZero() {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"position store: stoploss entry time required to save "+stoploss.Symbol,
 			nil,
 		))
 	}
@@ -211,13 +227,15 @@ func (store *PositionStore) Save(stoploss *types.Stoploss) error {
 		))
 	}
 
-	if err := store.saveStoploss(stoploss.Symbol, state); err != nil {
+	entryAt := stoploss.EntryAt.UTC().Format(time.RFC3339Nano)
+
+	if err := store.saveStoploss(stoploss.Symbol, entryAt, state); err != nil {
 		if isNoSuchTable(err) {
 			if schemaErr := store.EnsureSchema(); schemaErr != nil {
 				return schemaErr
 			}
 
-			if retryErr := store.saveStoploss(stoploss.Symbol, state); retryErr != nil {
+			if retryErr := store.saveStoploss(stoploss.Symbol, entryAt, state); retryErr != nil {
 				return errnie.Error(errnie.Err(
 					errnie.IO,
 					fmt.Sprintf("position store: save stoploss failed [%s]", retryErr.Error()),
@@ -238,11 +256,12 @@ func (store *PositionStore) Save(stoploss *types.Stoploss) error {
 	return nil
 }
 
-func (store *PositionStore) saveStoploss(symbol string, state []byte) error {
+func (store *PositionStore) saveStoploss(symbol string, entryAt string, state []byte) error {
 	_, err := store.database.Exec(`
-INSERT INTO position_stoplosses (symbol, state) VALUES (?, ?)
-ON CONFLICT(symbol) DO UPDATE SET state = excluded.state`,
+INSERT INTO position_stoplosses (symbol, entry_at, state) VALUES (?, ?, ?)
+ON CONFLICT(symbol, entry_at) DO UPDATE SET state = excluded.state`,
 		symbol,
+		entryAt,
 		state,
 	)
 
@@ -250,24 +269,29 @@ ON CONFLICT(symbol) DO UPDATE SET state = excluded.state`,
 }
 
 /*
-Load returns the stored stoploss for a symbol, or nil when none exists.
+Load returns the stoploss stored for a symbol at the given entry time, or nil
+when none exists. A row from a different entry time on the same symbol — an
+already-closed trade's leftover state — is never returned: recovery must not
+mistake one lot's protection for another's.
 */
 func (store *PositionStore) Load(
 	ctx context.Context,
 	symbol string,
+	entryAt time.Time,
 ) (*types.Stoploss, error) {
-	if store == nil || store.database == nil || symbol == "" {
+	if store == nil || store.database == nil || symbol == "" || entryAt.IsZero() {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
-			"position store: database required",
+			"position store: database, symbol, and entry time required",
 			nil,
 		))
 	}
 
 	var state []byte
 	err := store.database.QueryRow(
-		"SELECT state FROM position_stoplosses WHERE symbol = ?",
+		"SELECT state FROM position_stoplosses WHERE symbol = ? AND entry_at = ?",
 		symbol,
+		entryAt.UTC().Format(time.RFC3339Nano),
 	).Scan(&state)
 
 	if isNoSuchTable(err) {
@@ -294,7 +318,9 @@ func (store *PositionStore) Load(
 }
 
 /*
-Delete removes the stoploss after its position closes.
+Delete removes every stored stoploss for a symbol after its position closes.
+Deleting the whole symbol rather than just the closing entry's row also clears
+any already-stale rows a prior session left behind for the same symbol.
 */
 func (store *PositionStore) Delete(symbol string) error {
 	if store == nil || store.database == nil || symbol == "" {

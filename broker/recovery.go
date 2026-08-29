@@ -141,36 +141,53 @@ func (recovery *Recovery) Recover() error {
 }
 
 func (recovery *Recovery) cancelBuys(orders map[string]spot.Order) error {
+	var cancelErrors []error
+	canceled := false
+
 	for orderID, order := range orders {
 		if order.Description == nil || !strings.EqualFold(order.Description.Type, "buy") {
 			continue
 		}
 
 		if _, err := uuid.Parse(order.ClOrdID); err != nil {
-			return errnie.Error(errnie.Err(
+			cancelErrors = append(cancelErrors, errnie.Error(errnie.Err(
 				errnie.Conflict,
 				"desk: working buy "+orderID+" is not identifiable as a symm order",
 				nil,
-			))
+			)))
+
+			continue
 		}
 
 		result, err := recovery.api.CancelOrder(&spot.CancelOrderRequest{TxID: orderID})
 
 		if err != nil {
-			return errnie.Error(err)
+			cancelErrors = append(cancelErrors, errnie.Error(err))
+
+			continue
 		}
 
 		if result.Count <= 0 && !result.Pending {
-			return errnie.Error(errnie.Err(
+			cancelErrors = append(cancelErrors, errnie.Error(errnie.Err(
 				errnie.NotFound,
 				"desk: working entry "+orderID+" could not be canceled",
 				nil,
-			))
+			)))
+
+			continue
 		}
 
+		canceled = true
+	}
+
+	if len(cancelErrors) > 0 {
+		return errors.Join(cancelErrors...)
+	}
+
+	if canceled {
 		return errnie.Error(errnie.Err(
 			errnie.NotAcceptable,
-			"desk: canceled working entry "+orderID+"; restart after it reaches a terminal state",
+			"desk: canceled working entries; restart after they reach a terminal state",
 			nil,
 		))
 	}
@@ -187,22 +204,55 @@ func (recovery *Recovery) recoverAsset(
 ) error {
 	symbol := asset + "/" + quote
 	pair := recovery.instrument.Pair(symbol)
+
+	if pair.Symbol == "" {
+		return errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"recovery: no instrument pair for "+symbol+"; balance "+amount.String()+" cannot be recovered",
+			nil,
+		))
+	}
+
 	orderID, order, err := recovery.recoveredSell(pair, working)
 
 	if err != nil {
 		return err
 	}
 
-	entryPrice, entryFee, entryAt := recovery.recoverBasis(pair, history)
-
-	if entryPrice == nil && order == nil {
-		return nil
-	}
-
 	quantity, err := recovery.api.Normalizer().FormatSize(symbol, amount)
 
-	if err != nil || quantity == nil || quantity.Sign() <= 0 {
+	if err != nil {
 		return errnie.Error(err)
+	}
+
+	entryPrice, entryFee, entryAt, hasFullClose := recovery.recoverBasis(pair, history)
+
+	if entryPrice == nil && order == nil {
+		// recoverBasis found no open basis. If it genuinely observed this
+		// symbol's ledger go to zero at least once, the wallet's remaining
+		// balance is confirmed-closed dust — venue settlement leaves its own
+		// residue independent of what the reported trade rows sum to, so
+		// comparing exact quantities here would be the wrong tool. Anything
+		// else — no trade history at all for a symbol the wallet holds — is
+		// a real balance this recovery cannot account for, which must fail
+		// loudly instead of being skipped.
+		if hasFullClose {
+			return nil
+		}
+
+		return errnie.Error(errnie.Err(
+			errnie.Conflict,
+			"recovery: wallet balance "+amount.String()+" for "+symbol+" is not accounted for by trade history",
+			nil,
+		))
+	}
+
+	if quantity == nil || quantity.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Conflict,
+			"recovery: normalized size is non-positive for "+symbol,
+			nil,
+		))
 	}
 
 	if entryPrice == nil || entryPrice.Sign() <= 0 {
@@ -213,18 +263,20 @@ func (recovery *Recovery) recoverAsset(
 		))
 	}
 
-	stoploss, err := recovery.store.Load(recovery.ctx, symbol)
+	stoploss, err := recovery.store.Load(recovery.ctx, symbol, entryAt)
 
 	if err != nil {
 		return errnie.Error(err)
 	}
 
 	if stoploss == nil {
-		return errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"recovery: stored stoploss required for "+symbol,
-			nil,
-		))
+		stoploss, err = recovery.synthesizeStoploss(pair, symbol, quantity, entryPrice, entryAt)
+
+		if err != nil {
+			return err
+		}
+
+		errnie.Warn("recovery: no stored stoploss for " + symbol + " at this entry; rebuilt protection from current market")
 	}
 
 	position := recovery.recoveredPosition(
@@ -247,10 +299,116 @@ func (recovery *Recovery) recoverAsset(
 	return nil
 }
 
+/*
+synthesizeStoploss rebuilds protection for a position whose wallet inventory
+and trade history are intact but whose stored stoploss row is gone (the
+process died between a fill landing and its execution frame persisting one,
+or the row was otherwise lost). It mirrors the desk's live entry construction
+in NewDesk's admission path: same NewRiskPlan with DefaultRiskMultiples, same
+NewStoplossWithPlan call, priced off the current book instead of a fresh
+order. Horizon is forced to 0 so Reconsider can never expire a forecast this
+recovered lot never had.
+
+The wallet is authoritative for whether a position exists; the stoploss store
+only ever supplied its protection parameters. Refusing to track a real
+position for want of that row leaves it live and completely unprotected, which
+is strictly worse than a hard-floor stop rebuilt from current market geometry.
+*/
+func (recovery *Recovery) synthesizeStoploss(
+	pair kraken.InstrumentPair,
+	symbol string,
+	quantity *decimal.Decimal,
+	entryPrice *decimal.Decimal,
+	entryAt time.Time,
+) (*types.Stoploss, error) {
+	if pair.TickSize.Sign() <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"recovery: positive tick size required to rebuild protection for "+symbol,
+			nil,
+		))
+	}
+
+	fee := recovery.price.Fee(symbol)
+
+	if fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 ||
+		fee.Fee.Cmp(decimal.NewFromInt64(100)) >= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"recovery: valid taker fee required to rebuild protection for "+symbol,
+			nil,
+		))
+	}
+
+	cost, err := recovery.price.EntryCost(symbol, quantity)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"recovery: current market cannot price protection for "+symbol,
+			err,
+		))
+	}
+
+	feeRate := decimal.NewFromInt64(0).Add(fee.Fee).Div(decimal.NewFromInt64(100))
+
+	plan := types.NewRiskPlan(types.RiskInputs{
+		ReferencePrice: entryPrice,
+		Spread:         cost.Spread,
+		Impact:         cost.Impact,
+		TickSize:       &pair.TickSize,
+		ExitFeeRate:    feeRate,
+		EntryFeeRate:   feeRate,
+		MaxLoss:        decimal.NewFromInt64(0).Add(entryPrice).Mul(quantity),
+		Multiples:      types.DefaultRiskMultiples(),
+	})
+
+	if !plan.Present {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"recovery: current execution geometry cannot support rebuilt protection for "+symbol,
+			nil,
+		))
+	}
+
+	stoploss, err := types.NewStoplossWithPlan(
+		recovery.ctx,
+		symbol,
+		entryPrice,
+		cost.BestBid,
+		nil,
+		0,
+		&pair.TickSize,
+		feeRate,
+		feeRate,
+		&plan,
+		entryAt,
+	)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"recovery: could not rebuild protection for "+symbol,
+			err,
+		))
+	}
+
+	return stoploss, nil
+}
+
+/*
+recoverBasis nets one symbol's trade history into a per-unit entry price. The
+fourth return value, hasFullClose, is true when a sell fully or over-closed
+the tracked buy quantity at least once: proof this symbol's ledger genuinely
+went to zero, not merely that the running total happens to be small. Recovery
+uses it to tell a confirmed-closed wallet remainder (whatever dust the venue's
+own settlement leaves behind after a real round trip) apart from a balance
+this trade history simply never explains.
+*/
 func (recovery *Recovery) recoverBasis(
 	pair kraken.InstrumentPair,
 	history map[string]spot.Trade,
-) (*decimal.Decimal, *decimal.Decimal, time.Time) {
+) (*decimal.Decimal, *decimal.Decimal, time.Time, bool) {
 	trades := make([]spot.Trade, 0)
 	venue := strings.ToUpper(pair.Base + pair.Quote)
 
@@ -261,7 +419,7 @@ func (recovery *Recovery) recoverBasis(
 	}
 
 	if len(trades) == 0 {
-		return nil, decimal.NewFromInt64(0), time.Time{}
+		return nil, decimal.NewFromInt64(0), time.Time{}, false
 	}
 
 	sort.Slice(trades, func(left, right int) bool {
@@ -272,6 +430,7 @@ func (recovery *Recovery) recoverBasis(
 	cost := decimal.NewFromInt64(0)
 	fee := decimal.NewFromInt64(0)
 	entryAt := time.Time{}
+	hasFullClose := false
 
 	for _, trade := range trades {
 		if trade.Volume == nil || trade.Cost == nil || trade.Time == nil {
@@ -299,6 +458,7 @@ func (recovery *Recovery) recoverBasis(
 				cost = decimal.NewFromInt64(0)
 				fee = decimal.NewFromInt64(0)
 				entryAt = time.Time{}
+				hasFullClose = true
 				continue
 			}
 
@@ -310,10 +470,10 @@ func (recovery *Recovery) recoverBasis(
 	}
 
 	if quantity.Sign() > 0 && cost.Sign() > 0 {
-		return cost.Div(quantity), fee, entryAt
+		return cost.Div(quantity), fee, entryAt, hasFullClose
 	}
 
-	return nil, decimal.NewFromInt64(0), time.Time{}
+	return nil, decimal.NewFromInt64(0), time.Time{}, hasFullClose
 }
 
 func (recovery *Recovery) recoveredPosition(

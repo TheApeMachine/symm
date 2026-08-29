@@ -2,6 +2,7 @@ package liquidity
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
@@ -31,181 +32,34 @@ var (
 	symbolDiffNotional     = nmtypes.MustIntern("liquidity/diff_notional")
 	symbolImbalance        = nmtypes.MustIntern("liquidity/touch_notional_imbalance")
 
-	// Estimator chain slot tables (namespaced, one per measured quantity).
-	depthBidSlots = newEstimatorSlots("touch_bid")
-	depthAskSlots = newEstimatorSlots("touch_ask")
-	spreadSlots   = newEstimatorSlots("relative_spread")
+	symbolLogBidNotional = nmtypes.MustIntern("liquidity/log_touch_notional_bid")
+	symbolLogAskNotional = nmtypes.MustIntern("liquidity/log_touch_notional_ask")
+	symbolLogRelSpread   = nmtypes.MustIntern("liquidity/log_relative_spread")
 
-	// Log-space intermediates and estimator outputs.
-	symbolLogDepthBid           = nmtypes.MustIntern("liquidity/log_depth_bid")
-	symbolLogDepthAsk           = nmtypes.MustIntern("liquidity/log_depth_ask")
-	symbolLogRelativeSpread     = nmtypes.MustIntern("liquidity/log_relative_spread")
-	symbolDepthBidBaseline      = nmtypes.MustIntern("liquidity/touch_notional_baseline_bid")
-	symbolDepthBidRatio         = nmtypes.MustIntern("liquidity/depth_ratio_bid")
-	symbolDepthBidDivergenceVel = nmtypes.MustIntern("liquidity/divergence_velocity_bid")
-	symbolDepthAskBaseline      = nmtypes.MustIntern("liquidity/touch_notional_baseline_ask")
-	symbolDepthAskRatio         = nmtypes.MustIntern("liquidity/depth_ratio_ask")
-	symbolDepthAskDivergenceVel = nmtypes.MustIntern("liquidity/divergence_velocity_ask")
-	symbolRelativeSpreadBase    = nmtypes.MustIntern("liquidity/relative_spread_baseline")
-	symbolSpreadRatio           = nmtypes.MustIntern("liquidity/spread_ratio")
-	symbolSpreadDivergenceVel   = nmtypes.MustIntern("liquidity/spread_divergence_velocity")
+	// Observed baseline / ratio / divergence projection slots.
+	symbolBidBaseline  = nmtypes.MustIntern("liquidity/obs/touch_notional_baseline_bid")
+	symbolBidRatio     = nmtypes.MustIntern("liquidity/obs/depth_ratio_bid")
+	symbolAskBaseline  = nmtypes.MustIntern("liquidity/obs/touch_notional_baseline_ask")
+	symbolAskRatio     = nmtypes.MustIntern("liquidity/obs/depth_ratio_ask")
+	symbolSpreadBase   = nmtypes.MustIntern("liquidity/obs/relative_spread_baseline")
+	symbolSpreadRatio  = nmtypes.MustIntern("liquidity/obs/spread_ratio")
 
-	symbolDivergence    = nmtypes.MustIntern("divergence")
-	symbolNoiseVariance = nmtypes.MustIntern("noise_variance")
+	// Divergence-velocity regression slots (one causal local regression per
+	// divergence path, sharing the joint estimator's derived horizon).
+	symbolBidVelocity     = nmtypes.MustIntern(temporal.JoinPrefix("liquidity/vel_bid", "slope/beta"))
+	symbolAskVelocity     = nmtypes.MustIntern(temporal.JoinPrefix("liquidity/vel_ask", "slope/beta"))
+	symbolSpreadVelocity  = nmtypes.MustIntern(temporal.JoinPrefix("liquidity/vel_spread", "slope/beta"))
 )
 
 /*
-estimatorSlots resolves the namespaced slot table one estimator chain writes.
-Every estimator (baseline, z-score, velocity) is keyed by the same prefix, so
-several independent chains can share one frame without slot collisions.
+jointEstimator is the single coherent causal estimator over the three log-space
+dimensions. It drives baseline/ratio/divergence/noise/zscore per dimension,
+the joint SNR and the effective support from one event-time weighting.
 */
-type estimatorSlots struct {
-	prefix     string
-	series     temporal.Series
-	baseline   nmtypes.Symbol
-	residual   nmtypes.Symbol
-	dispersion nmtypes.Symbol
-	zscore     nmtypes.Symbol
-	ready      nmtypes.Symbol
-}
-
-func newEstimatorSlots(prefix string) estimatorSlots {
-	return estimatorSlots{
-		prefix:     prefix,
-		series:     temporal.NewSeries(prefix),
-		baseline:   nmtypes.MustIntern(temporal.JoinPrefix(prefix, "baseline/value")),
-		residual:   nmtypes.MustIntern(temporal.JoinPrefix(prefix, "z/residual")),
-		dispersion: nmtypes.MustIntern(temporal.JoinPrefix(prefix, "z/dispersion")),
-		zscore:     nmtypes.MustIntern(temporal.JoinPrefix(prefix, "z/value")),
-		ready:      nmtypes.MustIntern(temporal.JoinPrefix(prefix, "z/ready")),
-	}
-}
+var jointEstimator = statistic.NewJointDecayedEstimator("liquidity/joint", 3)
 
 /*
-readyPredicate turns one estimator's captured z-score readiness into a logic
-condition so downstream stages run only once a causal baseline exists.
-*/
-func readyPredicate(ready nmtypes.Symbol) nmtypes.Primitive {
-	return nmtypes.Wire(
-		nmtypes.Identity,
-		nmtypes.In(ready, logic.SymbolCondition),
-		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
-	)
-}
-
-/*
-logEstimator routes one strictly positive quantity through log space into its
-namespaced series and runs the causal ZScore → Baseline chain, then projects the
-baseline back into original units and forms the current-to-baseline ratio.
-
-The liquidity depth and spread families are positive and multiplicative by
-construction (signal/liquidity/README.md §6/§7), so historical comparison runs
-in log space: the baseline is the causal pre-observation mean, the residual is
-the log divergence d = log(value) - log(baseline), the dispersion is the
-event-time decayed residual RMS (the noise scale), and the z-score is the
-residual standardized by that dispersion.
-*/
-func logEstimator(
-	slots estimatorSlots,
-	source nmtypes.Symbol,
-	logSource nmtypes.Symbol,
-	expBaseline nmtypes.Symbol,
-	ratio nmtypes.Symbol,
-) nmtypes.Primitive {
-	return nmtypes.Pipe(
-		nmtypes.Wire(
-			calculus.Log,
-			nmtypes.In(source, calculus.PortX),
-			nmtypes.Out(calculus.PortResult, logSource),
-		),
-		nmtypes.Wire(
-			nmtypes.Identity,
-			nmtypes.In(logSource, slots.series.ValueSymbol),
-			nmtypes.Out(slots.series.ValueSymbol, slots.series.ValueSymbol),
-		),
-		nmtypes.Wire(
-			nmtypes.Identity,
-			nmtypes.In(nmtypes.EventTimeSec, slots.series.SecSymbol),
-			nmtypes.Out(slots.series.SecSymbol, slots.series.SecSymbol),
-		),
-		nmtypes.Wire(
-			nmtypes.Identity,
-			nmtypes.In(nmtypes.EventTimeNsec, slots.series.NsecSymbol),
-			nmtypes.Out(slots.series.NsecSymbol, slots.series.NsecSymbol),
-		),
-		statistic.ZScore(slots.prefix),
-		nmtypes.Wire(
-			nmtypes.Identity,
-			nmtypes.In(slots.series.ReadySymbol, slots.ready),
-			nmtypes.Out(slots.ready, slots.ready),
-		),
-		nmtypes.Configure(
-			statistic.Baseline(slots.prefix),
-			slots.series.SpanSymbol,
-			temporal.Window(slots.prefix),
-		),
-		nmtypes.Wire(
-			calculus.Exp,
-			nmtypes.In(slots.baseline, calculus.PortX),
-			nmtypes.Out(calculus.PortResult, expBaseline),
-		),
-		nmtypes.Wire(
-			calculus.Quotient,
-			nmtypes.In(source, calculus.PortA),
-			nmtypes.In(expBaseline, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, ratio),
-		),
-	)
-}
-
-/*
-velocityChain routes one quantity into its own namespaced series and emits its
-event-clock first difference per second. The first observation seeds the
-differencer and produces no rate; the gate keeps the rate absent rather than
-dividing by zero.
-*/
-func velocityChain(prefix string, source nmtypes.Symbol, rate nmtypes.Symbol) nmtypes.Primitive {
-	series := temporal.NewSeries(prefix)
-	delta := nmtypes.MustIntern(temporal.JoinPrefix(prefix, "velocity/delta"))
-	elapsed := nmtypes.MustIntern(temporal.JoinPrefix(prefix, "velocity/elapsed_sec"))
-
-	return nmtypes.Pipe(
-		nmtypes.Wire(
-			nmtypes.Identity,
-			nmtypes.In(source, series.ValueSymbol),
-			nmtypes.Out(series.ValueSymbol, series.ValueSymbol),
-		),
-		nmtypes.Wire(
-			nmtypes.Identity,
-			nmtypes.In(nmtypes.EventTimeSec, series.SecSymbol),
-			nmtypes.Out(series.SecSymbol, series.SecSymbol),
-		),
-		nmtypes.Wire(
-			nmtypes.Identity,
-			nmtypes.In(nmtypes.EventTimeNsec, series.NsecSymbol),
-			nmtypes.Out(series.NsecSymbol, series.NsecSymbol),
-		),
-		statistic.Velocity(prefix),
-		logic.If(
-			nmtypes.Wire(
-				nmtypes.Identity,
-				nmtypes.In(series.ReadySymbol, logic.SymbolCondition),
-				nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
-			),
-			nmtypes.Wire(
-				calculus.Quotient,
-				nmtypes.In(delta, calculus.PortA),
-				nmtypes.In(elapsed, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, rate),
-			),
-			nil,
-		),
-	)
-}
-
-/*
-Ticker is the touch-snapshot market entity. It owns exactly a Number pipeline
-and a projector, both declared in its constructor, plus Step and Close.
+Ticker is the touch-snapshot market entity.
 */
 type Ticker struct {
 	number    *nomagique.Number[string]
@@ -213,129 +67,49 @@ type Ticker struct {
 }
 
 /*
-NewTicker constructs the Ticker entity: one Number pipeline for the touch
-metric computation and one projector that names the output slots.
+NewTicker constructs the Ticker entity.
 */
 func NewTicker() *Ticker {
+	inValues := []nmtypes.Symbol{symbolLogBidNotional, symbolLogAskNotional, symbolLogRelSpread}
+
 	return &Ticker{
 		number: nomagique.NewNumber[string](nmtypes.Pipe(
-			// 0 < bid < ask: a crossed, missing, or non-positive book is rejected here.
 			logic.PositiveOrder(symbolBidPrice, symbolAskPrice),
-			// Bid notional: Db = bidPrice * bidQty
-			nmtypes.Wire(
-				calculus.Product,
-				nmtypes.In(symbolBidPrice, calculus.PortA),
-				nmtypes.In(symbolBidQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolBidNotional),
-			),
-			// Ask notional: Da = askPrice * askQty
-			nmtypes.Wire(
-				calculus.Product,
-				nmtypes.In(symbolAskPrice, calculus.PortA),
-				nmtypes.In(symbolAskQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolAskNotional),
-			),
-			// Midpoint: (bid+ask)/2
-			nmtypes.Wire(
-				calculus.Average,
-				nmtypes.In(symbolBidPrice, calculus.PortA),
-				nmtypes.In(symbolAskPrice, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolMidpoint),
-			),
-			// Spread: ask-bid
-			nmtypes.Wire(
-				calculus.Difference,
-				nmtypes.In(symbolAskPrice, calculus.PortA),
-				nmtypes.In(symbolBidPrice, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolSpread),
-			),
-			// Relative spread: spread / midpoint
-			nmtypes.Wire(
-				calculus.Quotient,
-				nmtypes.In(symbolSpread, calculus.PortA),
-				nmtypes.In(symbolMidpoint, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolRelativeSpread),
-			),
-			// Two-sided notional: min(Db, Da)
-			nmtypes.Wire(
-				calculus.Minimum,
-				nmtypes.In(symbolBidNotional, calculus.PortA),
-				nmtypes.In(symbolAskNotional, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolTwoSidedNotional),
-			),
-			// Sum notional: Db + Da
-			nmtypes.Wire(
-				calculus.Sum,
-				nmtypes.In(symbolBidNotional, calculus.PortA),
-				nmtypes.In(symbolAskNotional, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolSumNotional),
-			),
-			// Difference notional: Db - Da
-			nmtypes.Wire(
-				calculus.Difference,
-				nmtypes.In(symbolBidNotional, calculus.PortA),
-				nmtypes.In(symbolAskNotional, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolDiffNotional),
-			),
-			// Imbalance: (Db - Da) / (Db + Da)
-			nmtypes.Wire(
-				calculus.Quotient,
-				nmtypes.In(symbolDiffNotional, calculus.PortA),
-				nmtypes.In(symbolSumNotional, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolImbalance),
-			),
 
-			// Bid depth historical family (log space) and its divergence
-			// velocity, gated on the causal baseline.
-			logEstimator(depthBidSlots, symbolBidNotional, symbolLogDepthBid, symbolDepthBidBaseline, symbolDepthBidRatio),
-			logic.If(
-				readyPredicate(depthBidSlots.ready),
-				velocityChain("touch_bid_divergence_velocity", depthBidSlots.residual, symbolDepthBidDivergenceVel),
-				nil,
-			),
+			nmtypes.Wire(calculus.Product, nmtypes.In(symbolBidPrice, calculus.PortA), nmtypes.In(symbolBidQty, calculus.PortB), nmtypes.Out(calculus.PortResult, symbolBidNotional)),
+			nmtypes.Wire(calculus.Product, nmtypes.In(symbolAskPrice, calculus.PortA), nmtypes.In(symbolAskQty, calculus.PortB), nmtypes.Out(calculus.PortResult, symbolAskNotional)),
+			nmtypes.Wire(calculus.Average, nmtypes.In(symbolBidPrice, calculus.PortA), nmtypes.In(symbolAskPrice, calculus.PortB), nmtypes.Out(calculus.PortResult, symbolMidpoint)),
+			nmtypes.Wire(calculus.Difference, nmtypes.In(symbolAskPrice, calculus.PortA), nmtypes.In(symbolBidPrice, calculus.PortB), nmtypes.Out(calculus.PortResult, symbolSpread)),
+			nmtypes.Wire(calculus.Quotient, nmtypes.In(symbolSpread, calculus.PortA), nmtypes.In(symbolMidpoint, calculus.PortB), nmtypes.Out(calculus.PortResult, symbolRelativeSpread)),
+			nmtypes.Wire(calculus.Minimum, nmtypes.In(symbolBidNotional, calculus.PortA), nmtypes.In(symbolAskNotional, calculus.PortB), nmtypes.Out(calculus.PortResult, symbolTwoSidedNotional)),
+			nmtypes.Wire(calculus.Sum, nmtypes.In(symbolBidNotional, calculus.PortA), nmtypes.In(symbolAskNotional, calculus.PortB), nmtypes.Out(calculus.PortResult, symbolSumNotional)),
+			nmtypes.Wire(calculus.Difference, nmtypes.In(symbolBidNotional, calculus.PortA), nmtypes.In(symbolAskNotional, calculus.PortB), nmtypes.Out(calculus.PortResult, symbolDiffNotional)),
+			nmtypes.Wire(calculus.Quotient, nmtypes.In(symbolDiffNotional, calculus.PortA), nmtypes.In(symbolSumNotional, calculus.PortB), nmtypes.Out(calculus.PortResult, symbolImbalance)),
 
-			// Ask depth historical family (log space) and its divergence
-			// velocity, gated on the causal baseline.
-			logEstimator(depthAskSlots, symbolAskNotional, symbolLogDepthAsk, symbolDepthAskBaseline, symbolDepthAskRatio),
-			logic.If(
-				readyPredicate(depthAskSlots.ready),
-				velocityChain("touch_ask_divergence_velocity", depthAskSlots.residual, symbolDepthAskDivergenceVel),
-				nil,
-			),
+			nmtypes.Wire(calculus.Log, nmtypes.In(symbolBidNotional, calculus.PortX), nmtypes.Out(calculus.PortResult, symbolLogBidNotional)),
+			nmtypes.Wire(calculus.Log, nmtypes.In(symbolAskNotional, calculus.PortX), nmtypes.Out(calculus.PortResult, symbolLogAskNotional)),
+			nmtypes.Wire(calculus.Log, nmtypes.In(symbolRelativeSpread, calculus.PortX), nmtypes.Out(calculus.PortResult, symbolLogRelSpread)),
 
-			// Relative spread historical family (log space) and its divergence
-			// velocity, gated on the causal baseline.
-			logEstimator(spreadSlots, symbolRelativeSpread, symbolLogRelativeSpread, symbolRelativeSpreadBase, symbolSpreadRatio),
-			logic.If(
-				readyPredicate(spreadSlots.ready),
-				velocityChain("spread_divergence_velocity", spreadSlots.residual, symbolSpreadDivergenceVel),
-				nil,
-			),
+			// The one coherent estimator drives every historical fact.
+			jointEstimator.Primitive(inValues, nil),
 
-			// Estimator quality facts for data.Measurement.Finalize, gated on
-			// the bid-depth z-score readiness: surface the estimator support as
-			// the sample count (so Finalize derives Maturity = 1 - 1/support),
-			// and the divergence / noise variance from the causal estimator.
-			nmtypes.Wire(
-				nmtypes.Identity,
-				nmtypes.In(depthBidSlots.series.CountSymbol, nmtypes.SampleCount),
-				nmtypes.Out(nmtypes.SampleCount, nmtypes.SampleCount),
-			),
+			// Derive baseline and ratio from the emitted residuals (divergence)
+			// and the current log values: baseline = D_t * exp(-divergence),
+			// ratio = exp(divergence). log(ratio) == divergence holds exactly.
+			baselineRatioWiring(),
+
+			// Project estimator quality to the measurement: N_eff -> support
+			// (so Finalize yields Maturity = 1 - 1/N_eff), and the joint SNR
+			// only when defined — undefined SNR stays absent, never 0.
+			qualityWiring(),
+
+			// Divergence velocity: causal local-time regression over each
+			// divergence path, restricted to the derived horizon. Gated on the
+			// residual being produced (a causal baseline exists); before that
+			// the divergence and its velocity are undefined.
 			logic.If(
-				readyPredicate(depthBidSlots.ready),
-				nmtypes.Pipe(
-					nmtypes.Wire(
-						nmtypes.Identity,
-						nmtypes.In(depthBidSlots.residual, symbolDivergence),
-						nmtypes.Out(symbolDivergence, symbolDivergence),
-					),
-					nmtypes.Wire(
-						calculus.Product,
-						nmtypes.In(depthBidSlots.dispersion, calculus.PortA),
-						nmtypes.In(depthBidSlots.dispersion, calculus.PortB),
-						nmtypes.Out(calculus.PortResult, symbolNoiseVariance),
-					),
-				),
+				residualPredicate(jointEstimator.Residual(0)),
+				divergenceVelocityWiring(),
 				nil,
 			),
 		)),
@@ -352,37 +126,145 @@ func NewTicker() *Ticker {
 			data.Binding{From: symbolTwoSidedNotional, Name: "two_sided_touch_notional", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolImbalance, Name: "touch_notional_imbalance", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 
-			// Bid depth historical family.
-			data.Binding{From: symbolDepthBidBaseline, Name: "touch_notional_baseline:bid", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolDepthBidRatio, Name: "depth_ratio:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: depthBidSlots.residual, Name: "depth_divergence:bid", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: depthBidSlots.dispersion, Name: "depth_noise_scale:bid", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: depthBidSlots.zscore, Name: "depth_zscore:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolDepthBidDivergenceVel, Name: "divergence_velocity:bid", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: symbolBidBaseline, Name: "touch_notional_baseline:bid", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolBidRatio, Name: "depth_ratio:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: jointEstimator.Residual(0), Name: "depth_divergence:bid", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: jointEstimator.Noise(0), Name: "depth_noise_scale:bid", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: jointEstimator.ZScore(0), Name: "depth_zscore:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 
-			// Ask depth historical family.
-			data.Binding{From: symbolDepthAskBaseline, Name: "touch_notional_baseline:ask", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolDepthAskRatio, Name: "depth_ratio:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: depthAskSlots.residual, Name: "depth_divergence:ask", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: depthAskSlots.dispersion, Name: "depth_noise_scale:ask", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: depthAskSlots.zscore, Name: "depth_zscore:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolDepthAskDivergenceVel, Name: "divergence_velocity:ask", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: symbolAskBaseline, Name: "touch_notional_baseline:ask", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolAskRatio, Name: "depth_ratio:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: jointEstimator.Residual(1), Name: "depth_divergence:ask", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: jointEstimator.Noise(1), Name: "depth_noise_scale:ask", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: jointEstimator.ZScore(1), Name: "depth_zscore:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 
-			// Spread historical family.
-			data.Binding{From: symbolRelativeSpreadBase, Name: "relative_spread_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: symbolSpreadBase, Name: "relative_spread_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolSpreadRatio, Name: "spread_ratio", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: spreadSlots.residual, Name: "spread_divergence", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: spreadSlots.zscore, Name: "spread_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolSpreadDivergenceVel, Name: "spread_divergence_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: jointEstimator.Residual(2), Name: "spread_divergence", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: jointEstimator.Noise(2), Name: "spread_noise_scale", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: jointEstimator.ZScore(2), Name: "spread_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+
+			data.Binding{From: symbolBidVelocity, Name: "divergence_velocity:bid", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: symbolAskVelocity, Name: "divergence_velocity:ask", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: symbolSpreadVelocity, Name: "spread_divergence_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 		),
 	}
 }
 
 /*
+baselineRatioWiring derives the projected baseline and ratio from the emitted
+residuals. For dimension j: baseline_j = exp(log(X_j) - divergence_j) and
+ratio_j = exp(divergence_j), so log(ratio_j) == divergence_j exactly.
+*/
+func baselineRatioWiring() nmtypes.Primitive {
+	return func(frame *nmtypes.Frame) {
+		if divergence, found := frame.Get(jointEstimator.Residual(0)); found {
+			if logBid, found := frame.Get(symbolLogBidNotional); found {
+				frame.Put(symbolBidBaseline, math.Exp(logBid-divergence))
+				frame.Put(symbolBidRatio, math.Exp(divergence))
+			}
+		}
+
+		if divergence, found := frame.Get(jointEstimator.Residual(1)); found {
+			if logAsk, found := frame.Get(symbolLogAskNotional); found {
+				frame.Put(symbolAskBaseline, math.Exp(logAsk-divergence))
+				frame.Put(symbolAskRatio, math.Exp(divergence))
+			}
+		}
+
+		if divergence, found := frame.Get(jointEstimator.Residual(2)); found {
+			if logSpread, found := frame.Get(symbolLogRelSpread); found {
+				frame.Put(symbolSpreadBase, math.Exp(logSpread-divergence))
+				frame.Put(symbolSpreadRatio, math.Exp(divergence))
+			}
+		}
+	}
+}
+
+/*
+qualityWiring projects the single estimator's effective support and joint SNR
+onto the measurement-quality slots data.Measurement.Finalize consumes:
+
+	N_eff -> support      (Maturity = 1 - 1/N_eff, 0 when N_eff <= 1)
+	snr   -> mahalanobis/snr   only when ready (defined), else absent
+
+An undefined joint SNR is never mapped to a numeric zero: the slot simply stays
+absent, so Finalize leaves SNRDefined false.
+*/
+func qualityWiring() nmtypes.Primitive {
+	return func(frame *nmtypes.Frame) {
+		if neff, found := frame.Get(jointEstimator.Neff()); found {
+			frame.Put(nmtypes.SampleCount, neff)
+		}
+
+		if ready, found := frame.Get(jointEstimator.JointReady()); found && ready != 0 {
+			if snr, found := frame.Get(jointEstimator.SNR()); found {
+				frame.Put(nmtypes.MustIntern("mahalanobis/snr"), snr)
+			}
+		}
+	}
+}
+
+/*
+residualPredicate emits a logic condition that is true when the given residual
+slot is present (its estimator has a causal baseline) and false otherwise.
+Absence is a false condition, never a wire error: on the first observation the
+residual is legitimately undefined.
+*/
+func residualPredicate(slot nmtypes.Symbol) nmtypes.Primitive {
+	return func(frame *nmtypes.Frame) {
+		condition := 0.0
+
+		if _, found := frame.Get(slot); found {
+			condition = 1.0
+		}
+
+		frame.Put(logic.SymbolCondition, condition)
+	}
+}
+
+/*
+divergenceVelocityWiring routes each divergence residual into its own event-time
+path and runs a causal local-time regression restricted to the joint estimator's
+derived horizon. temporal.Path appends AFTER the fit, so the current divergence
+never participates in its own slope.
+*/
+func divergenceVelocityWiring() nmtypes.Primitive {
+	// One path + regression per divergence dimension, all sharing the joint
+	// estimator's derived horizon as the regression window.
+	horizon := jointEstimator.Horizon()
+
+	bidSeries := temporal.NewSeries("liquidity/vel_bid")
+	askSeries := temporal.NewSeries("liquidity/vel_ask")
+	spreadSeries := temporal.NewSeries("liquidity/vel_spread")
+
+	return nmtypes.Pipe(
+		// Feed each residual into its path's value+time slots.
+		nmtypes.Wire(nmtypes.Identity, nmtypes.In(jointEstimator.Residual(0), bidSeries.ValueSymbol), nmtypes.Out(bidSeries.ValueSymbol, bidSeries.ValueSymbol)),
+		nmtypes.Wire(nmtypes.Identity, nmtypes.In(nmtypes.EventTimeSec, bidSeries.SecSymbol), nmtypes.Out(bidSeries.SecSymbol, bidSeries.SecSymbol)),
+		nmtypes.Wire(nmtypes.Identity, nmtypes.In(nmtypes.EventTimeNsec, bidSeries.NsecSymbol), nmtypes.Out(bidSeries.NsecSymbol, bidSeries.NsecSymbol)),
+		nmtypes.Wire(nmtypes.Identity, nmtypes.In(jointEstimator.Residual(1), askSeries.ValueSymbol), nmtypes.Out(askSeries.ValueSymbol, askSeries.ValueSymbol)),
+		nmtypes.Wire(nmtypes.Identity, nmtypes.In(nmtypes.EventTimeSec, askSeries.SecSymbol), nmtypes.Out(askSeries.SecSymbol, askSeries.SecSymbol)),
+		nmtypes.Wire(nmtypes.Identity, nmtypes.In(nmtypes.EventTimeNsec, askSeries.NsecSymbol), nmtypes.Out(askSeries.NsecSymbol, askSeries.NsecSymbol)),
+		nmtypes.Wire(nmtypes.Identity, nmtypes.In(jointEstimator.Residual(2), spreadSeries.ValueSymbol), nmtypes.Out(spreadSeries.ValueSymbol, spreadSeries.ValueSymbol)),
+		nmtypes.Wire(nmtypes.Identity, nmtypes.In(nmtypes.EventTimeSec, spreadSeries.SecSymbol), nmtypes.Out(spreadSeries.SecSymbol, spreadSeries.SecSymbol)),
+		nmtypes.Wire(nmtypes.Identity, nmtypes.In(nmtypes.EventTimeNsec, spreadSeries.NsecSymbol), nmtypes.Out(spreadSeries.NsecSymbol, spreadSeries.NsecSymbol)),
+
+		// Horizon fact (shared derived cadence) made available to the fit.
+		nmtypes.Wire(nmtypes.Identity, nmtypes.In(horizon, statistic.SymbolSlopeHorizon), nmtypes.Out(statistic.SymbolSlopeHorizon, statistic.SymbolSlopeHorizon)),
+
+		statistic.LocalRegression("liquidity/vel_bid"),
+		statistic.LocalRegression("liquidity/vel_ask"),
+		statistic.LocalRegression("liquidity/vel_spread"),
+		temporal.Path("liquidity/vel_bid"),
+		temporal.Path("liquidity/vel_ask"),
+		temporal.Path("liquidity/vel_spread"),
+	)
+}
+
+/*
 Step receives one market data point, loads the touch facts, runs the Number
-pipeline, and projects exactly one Measurement. Validation happens inside the
-pipeline; any invalid input surfaces as a pipeline failure carried on the
-Measurement's own Err field rather than a Go error return.
+pipeline, and projects exactly one Measurement.
 */
 func (ticker *Ticker) Step(trade kraken.TickerData) *data.Measurement[float64] {
 	if trade.Bid == nil || trade.Ask == nil {

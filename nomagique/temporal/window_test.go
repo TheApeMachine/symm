@@ -63,13 +63,16 @@ func TestWindow(t *testing.T) {
 
 	Convey("Given an observation without a value or event time", t, func() {
 		Convey("It should fail the transition", func() {
-			output := Window("")(types.Frame{})
+			output := types.Frame{}
+			Window("")(&output)
 			So(output.Err, ShouldNotBeNil)
 
-			output = Window("")(windowObservationForTest(100, 0))
+			output = windowObservationForTest(100, 0)
+			Window("")(&output)
 			So(output.Err, ShouldNotBeNil)
 
-			output = Window("")(windowObservationForTest(100, nmtypes.MaxSamples+1))
+			output = windowObservationForTest(100, nmtypes.MaxSamples+1)
+			Window("")(&output)
 			So(output.Err, ShouldNotBeNil)
 		})
 	})

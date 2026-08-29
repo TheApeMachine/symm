@@ -183,17 +183,13 @@ func TestNumberCrossSectionAndSelection(t *testing.T) {
 			focal.MustGet(numberTotal)+peer.MustGet(numberTotal),
 		)
 	}
-	reduce := func(input types.Frame) types.Frame {
+	reduce := func(input *types.Frame) {
 		total, _ := input.Get(numberTotal)
 		total += input.MustGet(numberPairSum)
 		input.Put(numberTotal, total)
-
-		return input
 	}
-	score := func(input types.Frame) types.Frame {
+	score := func(input *types.Frame) {
 		input.Put(numberReady, 1)
-
-		return input
 	}
 
 	Convey("CrossSection folds peers without mutating keyed state", t, func() {

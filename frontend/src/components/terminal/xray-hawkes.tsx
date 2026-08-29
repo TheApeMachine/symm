@@ -5,6 +5,7 @@ import type { FrameBuffer } from "#/collections/app";
 import type { Measurement } from "#/providers/telemetry/telemetry/measurement";
 import {
 	getRetainedHawkes,
+	intensitySeriesFromRingRows,
 	retainHawkesMetric,
 } from "#/components/terminal/xray-view";
 import { Typography } from "#/components/ui/typography";
@@ -110,11 +111,10 @@ export const XrayHawkesPanel = () => {
 					ctx.clearRect(0, 0, w, h);
 
 					const count = state.getSize();
-					const intensities: number[] = [];
+					const intensityRows: Array<{ at: bigint; raw: number }> = [];
 					for (let i = 0; i < count; i++) {
 						const r = state.get(i);
 						if (!r) continue;
-						let intensityVal = 0;
 						for (let j = 0; j < r.metricsLength(); j++) {
 							const m = r.metrics(j, metricObj);
 							if (m) {
@@ -125,16 +125,17 @@ export const XrayHawkesPanel = () => {
 									name === "arrival_rate:buy" ||
 									name === "arrival_rate"
 								) {
-									intensityVal = m.raw();
+									intensityRows.push({ at: r.at(), raw: m.raw() });
 									break;
 								}
 							}
 						}
-						intensities.push(intensityVal);
 					}
+					const intensities = intensitySeriesFromRingRows(intensityRows);
 
 					const observedMax = Math.max(0, ...intensities);
-					const maxL = observedMax > 0 ? observedMax : 1;
+					const muFloor = typeof mu === "number" && mu > 0 ? mu : 0;
+					const maxL = Math.max(1.2, observedMax, muFloor) * 1.1;
 					const pad = 14 * (window.devicePixelRatio || 1);
 					const base = h - 22 * (window.devicePixelRatio || 1);
 					const topMargin = 20 * (window.devicePixelRatio || 1);

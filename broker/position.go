@@ -345,9 +345,16 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 			return
 		}
 
+		entryAt := time.Time{}
+
+		if position.Holding.EntryAt != nil {
+			entryAt = *position.Holding.EntryAt
+		}
+
 		if err := position.Holding.Stoploss.RebindFill(
 			position.Holding.EntryPrice,
 			ticker.Bid,
+			entryAt,
 		); err != nil {
 			position.Holding.Mark = ticker.Bid
 			position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
@@ -691,6 +698,7 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 		if err := position.Holding.Stoploss.RebindFill(
 			position.Holding.EntryPrice,
 			position.Holding.Mark,
+			execution.Timestamp,
 		); err != nil {
 			position.setStatus(types.ERROR)
 			position.Holding.Status = types.ERROR

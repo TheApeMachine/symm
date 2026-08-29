@@ -18,8 +18,8 @@ func TestSigmoid(t *testing.T) {
 		}
 
 		for _, c := range cases {
-			input := types.Frame{}.Set(calculus.PortX, c.x)
-			output := Sigmoid()(input)
+			output := types.Frame{}.Set(calculus.PortX, c.x)
+			Sigmoid()(&output)
 
 			So(output.Err, ShouldBeNil)
 			So(output.MustGet(SymbolSigmoid), ShouldAlmostEqual, c.want, 1e-12)

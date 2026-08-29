@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -74,6 +75,16 @@ type Stoploss struct {
 	BookObserved         bool                `json:"book_observed,omitempty"`
 	Status               Status              `json:"status"`
 	Symbol               string              `json:"symbol"`
+	/*
+		EntryAt identifies which specific lot this stored state belongs to.
+		The position_stoplosses table is keyed by symbol, and a symbol is
+		re-entered many times over a session — without this, a stored row
+		from an already-closed trade is indistinguishable from the row for
+		the position currently open on the same symbol, and recovery could
+		silently restore a position with another trade's stale floor,
+		trigger status, and geometry.
+	*/
+	EntryAt              *time.Time          `json:"entry_at,omitempty"`
 	Floor                *decimal.Decimal    `json:"floor,omitempty"`
 	Mark                 *decimal.Decimal    `json:"mark,omitempty"`
 	Peak                 *decimal.Decimal    `json:"peak,omitempty"`
@@ -103,6 +114,7 @@ func NewStoploss(
 	tickSize *decimal.Decimal,
 	entryFeeRate *decimal.Decimal,
 	exitFeeRate *decimal.Decimal,
+	entryAt time.Time,
 ) (*Stoploss, error) {
 	if symbol == "" {
 		return nil, fmt.Errorf("stoploss: symbol required")
@@ -137,7 +149,7 @@ func NewStoploss(
 	stoploss.RiskDistance = trailDistance
 	stoploss.NoiseBand = trailDistance
 
-	if err := stoploss.RebindFill(entryPrice, mark); err != nil {
+	if err := stoploss.RebindFill(entryPrice, mark, entryAt); err != nil {
 		cancel()
 		return nil, err
 	}
@@ -159,6 +171,7 @@ func NewStoplossWithPlan(
 	entryFeeRate *decimal.Decimal,
 	exitFeeRate *decimal.Decimal,
 	plan *RiskPlan,
+	entryAt time.Time,
 ) (*Stoploss, error) {
 	if symbol == "" {
 		return nil, fmt.Errorf("stoploss: symbol required")
@@ -181,6 +194,14 @@ func NewStoplossWithPlan(
 
 	if plan != nil && plan.Present {
 		stoploss.SetRiskPlan(*plan)
+
+		if entryPrice != nil && entryPrice.Sign() > 0 &&
+			stoploss.RiskDistance != nil && stoploss.RiskDistance.Sign() > 0 {
+			stoploss.Floor = floorToTick(
+				scaled(entryPrice).Sub(stoploss.RiskDistance),
+				tickSize,
+			)
+		}
 	}
 
 	if stoploss.TrailDistance == nil {
@@ -200,7 +221,7 @@ func NewStoplossWithPlan(
 	stoploss.Mark = mark
 	stoploss.Peak = mark
 
-	if err := stoploss.RebindFill(entryPrice, mark); err != nil {
+	if err := stoploss.RebindFill(entryPrice, mark, entryAt); err != nil {
 		cancel()
 		return nil, err
 	}
@@ -249,11 +270,15 @@ func (stoploss *Stoploss) Maturing() bool {
 }
 
 /*
-RebindFill updates the lot from its realized entry and current executable mark.
+RebindFill updates the lot from its realized entry and current executable
+mark, and stamps entryAt as this lot's identity for persistence. A symbol is
+re-entered many times over a session; entryAt is what lets a later restart
+tell this lot's stored protection apart from an already-closed trade's.
 */
 func (stoploss *Stoploss) RebindFill(
 	entryPrice *decimal.Decimal,
 	mark *decimal.Decimal,
+	entryAt time.Time,
 ) error {
 	profitLine, armAt, lockFloor, err := stoploss.entryGeometry(entryPrice, mark)
 
@@ -267,6 +292,7 @@ func (stoploss *Stoploss) RebindFill(
 	stoploss.ProfitLine = profitLine
 	stoploss.ArmAt = armAt
 	stoploss.LockFloor = lockFloor
+	stoploss.EntryAt = &entryAt
 	stoploss.Locked = false
 	stoploss.ProfitLatched = false
 	stoploss.DistinctNonPeakMarks = 0
@@ -851,7 +877,8 @@ func RestoreStoploss(ctx context.Context, encoded []byte) (*Stoploss, error) {
 		stoploss.Peak == nil || stoploss.Peak.Sign() <= 0 ||
 		stoploss.ProfitLine == nil || stoploss.ProfitLine.Sign() <= 0 ||
 		stoploss.ArmAt == nil || stoploss.ArmAt.Sign() <= 0 ||
-		stoploss.LockFloor == nil || stoploss.LockFloor.Sign() <= 0 {
+		stoploss.LockFloor == nil || stoploss.LockFloor.Sign() <= 0 ||
+		stoploss.EntryAt == nil || stoploss.EntryAt.IsZero() {
 		return nil, fmt.Errorf("stoploss: complete stored state required")
 	}
 

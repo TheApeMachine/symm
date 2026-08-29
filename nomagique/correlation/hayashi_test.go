@@ -16,7 +16,8 @@ func TestHayashi(t *testing.T) {
 			[]float64{100, 110, 121, 133.1})
 		right := hayashiPath([]int64{1, 1_000_000_001, 2_000_000_001, 3_000_000_001},
 			[]float64{50, 55, 60.5, 66.55})
-		output := Hayashi("previous", "current")(pairPaths(left, right))
+		output := pairPaths(left, right)
+		Hayashi("previous", "current")(&output)
 
 		Convey("It should correlate every overlapping return interval", func() {
 			So(output.Err, ShouldBeNil)
@@ -75,6 +76,7 @@ func BenchmarkHayashi(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_ = Hayashi("previous", "current")(paired)
+		output := paired
+		Hayashi("previous", "current")(&output)
 	}
 }

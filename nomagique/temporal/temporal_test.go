@@ -8,10 +8,10 @@ import (
 )
 
 func TestClockAndDuration(t *testing.T) {
-	clockInput := types.Frame{}
-	clockInput.Put(SymbolAge, 1)
-	clockInput.Put(SymbolSpan, 2)
-	clock := Clock(clockInput)
+	clock := types.Frame{}
+	clock.Put(SymbolAge, 1)
+	clock.Put(SymbolSpan, 2)
+	Clock(&clock)
 
 	if clock.Err != nil {
 		t.Fatal(clock.Err)
@@ -21,12 +21,12 @@ func TestClockAndDuration(t *testing.T) {
 		t.Fatalf("progress=%v; want 0.5", got)
 	}
 
-	durationInput := types.Frame{}
-	durationInput.Put(SymbolCurrentSec, 101)
-	durationInput.Put(SymbolCurrentNsec, 100_000_000)
-	durationInput.Put(SymbolPreviousSec, 100)
-	durationInput.Put(SymbolPreviousNsec, 900_000_000)
-	duration := Duration(durationInput)
+	duration := types.Frame{}
+	duration.Put(SymbolCurrentSec, 101)
+	duration.Put(SymbolCurrentNsec, 100_000_000)
+	duration.Put(SymbolPreviousSec, 100)
+	duration.Put(SymbolPreviousNsec, 900_000_000)
+	Duration(&duration)
 
 	if duration.Err != nil {
 		t.Fatal(duration.Err)

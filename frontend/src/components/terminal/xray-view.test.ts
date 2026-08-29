@@ -8,6 +8,7 @@ import {
 	getRetainedResonance,
 	hawkesMetricsFromBuffer,
 	hawkesMetricsFromFrames,
+	intensitySeriesFromRingRows,
 	latentPointsFromFrames,
 	retainCognitionRow,
 	retainHawkesMetric,
@@ -110,6 +111,30 @@ describe("xray-view", () => {
 			intensity: 0.5,
 			branching: 0.8,
 		});
+	});
+
+	it("collapses ring rows into one intensity sample per epoch, sorted by arrival", () => {
+		const series = intensitySeriesFromRingRows([
+			{ at: 3n, raw: 0.4 },
+			{ at: 1n, raw: 0.15 },
+			{ at: 2n, raw: 0.3 },
+			{ at: 1n, raw: 0.2 },
+		]);
+
+		expect(series).toEqual([0.2, 0.3, 0.4]);
+	});
+
+	it("never fabricates a zero for an epoch that reported no intensity", () => {
+		// A ring buffer holds one row per emission, not per epoch, and most
+		// emissions carry an unrelated Hawkes binding rather than intensity.
+		// Only epochs present in the input contribute a sample.
+		const series = intensitySeriesFromRingRows([
+			{ at: 1n, raw: 0.5 },
+			{ at: 4n, raw: 0.6 },
+		]);
+
+		expect(series).toEqual([0.5, 0.6]);
+		expect(series).not.toContain(0);
 	});
 
 	it("reads latent histories from live resonance frames", () => {

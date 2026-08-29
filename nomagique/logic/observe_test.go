@@ -18,7 +18,8 @@ func TestObserve(t *testing.T) {
 		input.Put(beta, 5)
 
 		Convey("It preserves the exact input", func() {
-			output := primitive(input)
+			output := input
+			primitive(&output)
 			So(output.Err, ShouldBeNil)
 			So(output.Equal(input), ShouldBeTrue)
 		})
@@ -29,7 +30,8 @@ func TestObserve(t *testing.T) {
 		input.Put(alpha, 3)
 
 		Convey("It rejects the incomplete observation by name", func() {
-			output := primitive(input)
+			output := input
+			primitive(&output)
 			So(output.Err, ShouldNotBeNil)
 			So(output.Err.Error(), ShouldContainSubstring, "observe/test/beta")
 		})

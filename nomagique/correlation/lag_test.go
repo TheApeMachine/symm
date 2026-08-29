@@ -13,7 +13,8 @@ func TestLag(t *testing.T) {
 		paired := pairPaths(left, right)
 		paired.Put(SymbolLagSpacing, 2)
 		paired.Put(SymbolMaximumLag, 2)
-		output := Lag("previous", "current")(paired)
+		output := paired
+		Lag("previous", "current")(&output)
 
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolReady), ShouldEqual, 1.0)
@@ -33,6 +34,7 @@ func BenchmarkLag(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_ = lagPrimitive(paired)
+		output := paired
+		lagPrimitive(&output)
 	}
 }

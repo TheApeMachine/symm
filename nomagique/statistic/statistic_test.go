@@ -8,8 +8,8 @@ import (
 )
 
 func TestMedianAndMaximum(t *testing.T) {
-	input := sampleFrame(7, 1, 5, 3)
-	median := Median(input)
+	median := sampleFrame(7, 1, 5, 3)
+	Median(&median)
 
 	if median.Err != nil {
 		t.Fatal(median.Err)
@@ -19,7 +19,8 @@ func TestMedianAndMaximum(t *testing.T) {
 		t.Fatalf("median=%v; want 4", got)
 	}
 
-	maximum := Maximum(input)
+	maximum := sampleFrame(7, 1, 5, 3)
+	Maximum(&maximum)
 
 	if maximum.Err != nil {
 		t.Fatal(maximum.Err)
@@ -31,7 +32,8 @@ func TestMedianAndMaximum(t *testing.T) {
 }
 
 func TestMedianEmptyIsProvisional(t *testing.T) {
-	output := Median(types.Frame{})
+	output := types.Frame{}
+	Median(&output)
 
 	if output.Err != nil {
 		t.Fatal(output.Err)
@@ -54,7 +56,8 @@ func TestMaxOf(t *testing.T) {
 	input.Put(symB, 4.2)
 	input.Put(symC, -0.8)
 
-	output := maxPrimitive(input)
+	output := input
+	maxPrimitive(&output)
 
 	if output.Err != nil {
 		t.Fatal(output.Err)
@@ -69,7 +72,8 @@ func TestMaxOf(t *testing.T) {
 	}
 
 	// Empty input
-	emptyOutput := maxPrimitive(types.Frame{})
+	emptyOutput := types.Frame{}
+	maxPrimitive(&emptyOutput)
 
 	if emptyOutput.Err != nil {
 		t.Fatal(emptyOutput.Err)
@@ -81,13 +85,13 @@ func TestMaxOf(t *testing.T) {
 }
 
 func TestBranchingAndLikelihood(t *testing.T) {
-	branchingInput := types.Frame{}
-	branchingInput.Put(SymbolAlphaAA, 1)
-	branchingInput.Put(SymbolAlphaAB, 0.5)
-	branchingInput.Put(SymbolAlphaBA, 0.5)
-	branchingInput.Put(SymbolAlphaBB, 1)
-	branchingInput.Put(SymbolBeta, 2)
-	branching := Branching(branchingInput)
+	branching := types.Frame{}
+	branching.Put(SymbolAlphaAA, 1)
+	branching.Put(SymbolAlphaAB, 0.5)
+	branching.Put(SymbolAlphaBA, 0.5)
+	branching.Put(SymbolAlphaBB, 1)
+	branching.Put(SymbolBeta, 2)
+	Branching(&branching)
 
 	if branching.Err != nil {
 		t.Fatal(branching.Err)
@@ -97,11 +101,11 @@ func TestBranchingAndLikelihood(t *testing.T) {
 		t.Fatalf("spectral radius=%v; want 0.75", got)
 	}
 
-	likelihoodInput := types.Frame{}
-	likelihoodInput.Put(SymbolLLHawkes, -120.5)
-	likelihoodInput.Put(SymbolLLPoisson, -150)
-	likelihoodInput.Put(SymbolLLSelf, -135)
-	likelihood := Likelihood(likelihoodInput)
+	likelihood := types.Frame{}
+	likelihood.Put(SymbolLLHawkes, -120.5)
+	likelihood.Put(SymbolLLPoisson, -150)
+	likelihood.Put(SymbolLLSelf, -135)
+	Likelihood(&likelihood)
 
 	if likelihood.Err != nil {
 		t.Fatal(likelihood.Err)

@@ -10,12 +10,12 @@ import (
 
 func TestMedianAbsolute(t *testing.T) {
 	Convey("Given a populated generic sample collection", t, func() {
-		input := types.Frame{}
-		input.Put(types.MustSampleSymbol(0), -2)
-		input.Put(types.MustSampleSymbol(1), -4)
-		input.Put(types.MustSampleSymbol(2), 9)
+		output := types.Frame{}
+		output.Put(types.MustSampleSymbol(0), -2)
+		output.Put(types.MustSampleSymbol(1), -4)
+		output.Put(types.MustSampleSymbol(2), 9)
 
-		output := MedianAbsolute(input)
+		MedianAbsolute(&output)
 
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolResult), ShouldEqual, 4.0)
@@ -24,13 +24,13 @@ func TestMedianAbsolute(t *testing.T) {
 	})
 
 	Convey("Given an even populated sample collection", t, func() {
-		input := types.Frame{}
-		input.Put(types.MustSampleSymbol(0), -8)
-		input.Put(types.MustSampleSymbol(1), 1)
-		input.Put(types.MustSampleSymbol(2), 3)
-		input.Put(types.MustSampleSymbol(3), -6)
+		output := types.Frame{}
+		output.Put(types.MustSampleSymbol(0), -8)
+		output.Put(types.MustSampleSymbol(1), 1)
+		output.Put(types.MustSampleSymbol(2), 3)
+		output.Put(types.MustSampleSymbol(3), -6)
 
-		output := MedianAbsolute(input)
+		MedianAbsolute(&output)
 
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolResult), ShouldEqual, 4.5)
@@ -38,18 +38,19 @@ func TestMedianAbsolute(t *testing.T) {
 	})
 
 	Convey("Given an empty sample collection", t, func() {
-		output := MedianAbsolute(types.Frame{})
+		output := types.Frame{}
+		MedianAbsolute(&output)
 
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolReady), ShouldEqual, 0.0)
 	})
 
 	Convey("Given a non-finite sample", t, func() {
-		input := types.Frame{}
-		input.Put(types.MustSampleSymbol(0), 1)
-		input.Put(types.MustSampleSymbol(1), math.Inf(1))
+		output := types.Frame{}
+		output.Put(types.MustSampleSymbol(0), 1)
+		output.Put(types.MustSampleSymbol(1), math.Inf(1))
 
-		output := MedianAbsolute(input)
+		MedianAbsolute(&output)
 
 		So(output.Err, ShouldNotBeNil)
 	})
@@ -88,6 +89,7 @@ func BenchmarkMedianAbsolute(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_ = MedianAbsolute(input)
+		output := input
+		MedianAbsolute(&output)
 	}
 }

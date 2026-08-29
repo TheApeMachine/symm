@@ -3,6 +3,7 @@ package broker
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -26,8 +27,8 @@ type recoveryConn struct {
 func (conn *recoveryConn) SubInstrument(callback chan any) {
 	callback <- &kraken.Instrument{Data: kraken.InstrumentData{
 		Pairs: []kraken.InstrumentPair{
-			{Symbol: "AAA/USD", Base: "AAA", Quote: "USD", Status: "online"},
-			{Symbol: "BBB/USD", Base: "BBB", Quote: "USD", Status: "online"},
+			{Symbol: "AAA/USD", Base: "AAA", Quote: "USD", Status: "online", TickSize: *decimal.NewFromFloat64(0.01)},
+			{Symbol: "BBB/USD", Base: "BBB", Quote: "USD", Status: "online", TickSize: *decimal.NewFromFloat64(0.01)},
 		},
 	}}
 }
@@ -75,6 +76,17 @@ func newTestRecovery(
 	instrument := NewInstrument(t.Context(), bus)
 	price := newTestPrice(t, api)
 
+	for _, symbol := range []string{"AAA/USD", "BBB/USD"} {
+		price.fees.Store(symbol, kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.25)})
+		price.Update(&kraken.TickerData{
+			Symbol: symbol,
+			Ask:    decimal.NewFromFloat64(2.0),
+			AskQty: 1000,
+			Bid:    decimal.NewFromFloat64(1.99),
+			BidQty: 1000,
+		})
+	}
+
 	storePath := t.TempDir() + "/recovery.sqlite"
 	store, err := NewPositionStore(storePath)
 	if err != nil {
@@ -107,6 +119,21 @@ func tradeFixture(pair string, volume, price, cost string) spot.Trade {
 }
 
 /*
+sellTradeFixture builds one filled-sell spot.Trade closing out a prior buy.
+*/
+func sellTradeFixture(pair string, volume, price, cost string, at int64) spot.Trade {
+	return spot.Trade{
+		Pair:   pair,
+		Type:   "sell",
+		Time:   decimal.NewFromInt64(at),
+		Volume: mustDecimal(volume),
+		Price:  mustDecimal(price),
+		Cost:   mustDecimal(cost),
+		Fee:    mustDecimal("0"),
+	}
+}
+
+/*
 A single asset's recovery failure must never cost every other asset its
 tracking and protection. balances is a plain Go map, so Recover used to
 iterate it in random order and RETURN on the very first recoverAsset error —
@@ -116,21 +143,24 @@ user was worried about after a restart. This proves recovery now attempts
 every asset regardless of an earlier failure.
 */
 func TestRecoverContinuesPastOneAssetFailure(t *testing.T) {
-	Convey("Given two open assets where one has no stored stoploss to restore", t, func() {
+	Convey("Given two open assets where one has no tradeable instrument pair", t, func() {
 		balances := map[string]*decimal.Decimal{
 			"AAA": mustDecimal("10"),
 			"BBB": mustDecimal("20"),
+			"CCC": mustDecimal("30"),
 		}
 		trades := map[string]spot.Trade{
 			"t-aaa": tradeFixture("AAA/USD", "10", "1.0", "10.0"),
 			"t-bbb": tradeFixture("BBB/USD", "20", "2.0", "40.0"),
+			"t-ccc": tradeFixture("CCC/USD", "30", "1.0", "30.0"),
 		}
 
 		recovery, positions := newTestRecovery(t, balances, trades)
 
-		// BBB gets a persisted stoploss row (recoverable); AAA does not, so
-		// its recoverAsset call hits the "stored stoploss required" NotFound
-		// path deliberately.
+		// EntryAt must match what recoverBasis derives from the BBB trade
+		// fixture's Time (decimal 1) — time.Unix(1, 0).UTC() — since Load
+		// now keys on (symbol, entry_at) rather than symbol alone.
+		bbbEntryAt := time.Unix(1, 0).UTC()
 		bbbStoploss := &types.Stoploss{
 			Symbol:        "BBB/USD",
 			Status:        types.ARMED,
@@ -142,22 +172,123 @@ func TestRecoverContinuesPastOneAssetFailure(t *testing.T) {
 			ProfitLine:    mustDecimal("1.8"),
 			ArmAt:         mustDecimal("1.7"),
 			LockFloor:     mustDecimal("1.6"),
+			EntryAt:       &bbbEntryAt,
 		}
 		if err := recovery.store.Save(bbbStoploss); err != nil {
 			t.Fatalf("failed to seed BBB stoploss: %v", err)
 		}
 
-		Convey("Recover reports the AAA failure but still restores BBB", func() {
+		// CCC has no registered instrument pair (recoveryConn.SubInstrument
+		// only publishes AAA/USD and BBB/USD), so its recoverAsset call hits
+		// the "no instrument pair" NotFound path deliberately.
+
+		Convey("Recover reports the CCC failure but still restores AAA and BBB", func() {
+			err := recovery.Recover()
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "CCC")
+
+			_, aaaRestored := positions.Load("AAA/USD")
+			_, bbbRestored := positions.Load("BBB/USD")
+			_, cccRestored := positions.Load("CCC/USD")
+
+			So(aaaRestored, ShouldBeTrue)
+			So(bbbRestored, ShouldBeTrue)
+			So(cccRestored, ShouldBeFalse)
+		})
+	})
+}
+
+/*
+A wallet balance with a real, unmatched buy in trade history is a genuinely
+open position even when the local SQLite stoploss row backing it is gone —
+the process can die between a fill landing and its execution frame persisting
+that row. Recovery used to treat the missing row as fatal and drop the
+position entirely: the exchange still shows the inventory, but the running
+system loses all track of it, unprotected and invisible in the UI. This
+proves the position is instead recovered with protection rebuilt from current
+market geometry.
+*/
+func TestRecoverSynthesizesStoplossWhenStoreRowMissing(t *testing.T) {
+	Convey("Given an open asset whose stoploss row is missing from the store", t, func() {
+		balances := map[string]*decimal.Decimal{
+			"AAA": mustDecimal("10"),
+		}
+		trades := map[string]spot.Trade{
+			"t-aaa": tradeFixture("AAA/USD", "10", "1.0", "10.0"),
+		}
+
+		recovery, positions := newTestRecovery(t, balances, trades)
+
+		Convey("Recover rebuilds protection and restores the position", func() {
+			err := recovery.Recover()
+
+			So(err, ShouldBeNil)
+
+			value, restored := positions.Load("AAA/USD")
+			So(restored, ShouldBeTrue)
+
+			position, ok := value.(*Position)
+			So(ok, ShouldBeTrue)
+			So(position.Holding.Stoploss, ShouldNotBeNil)
+			So(position.Holding.Stoploss.Status, ShouldEqual, types.ARMED)
+			So(position.Holding.Stoploss.Floor, ShouldNotBeNil)
+			So(position.Holding.Stoploss.Floor.Sign(), ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+/*
+A wallet balance that fully round-trips to zero across its own trade history
+(a completed buy-then-sell pair, left with only floating-point residue below
+the venue's own lot granularity) is a confirmed-closed position, not an
+unexplained one. Recovery must not report this as a failure — there is
+nothing left to recover — but it also must not be confused with a real
+balance recoverBasis simply failed to explain, which AGENTS.md's "no silent
+failures" rule requires to surface loudly instead of being skipped.
+*/
+func TestRecoverSkipsConfirmedClosedDustWithoutError(t *testing.T) {
+	Convey("Given a wallet balance left over after trade history shows a genuine full close", t, func() {
+		// The sell fully closes the buy in the reported trade rows
+		// (recoverBasis's own full-close reset fires), exactly as it would
+		// for a real completed round trip. The wallet still carries a tiny
+		// nonzero balance because venue settlement accumulates its own
+		// rounding independent of what the trade rows sum to — that
+		// leftover is confirmed-closed dust, not an unexplained balance.
+		balances := map[string]*decimal.Decimal{
+			"AAA": mustDecimal("0.00000003"),
+		}
+		trades := map[string]spot.Trade{
+			"t-aaa-buy":  tradeFixture("AAA/USD", "10", "1.0", "10.0"),
+			"t-aaa-sell": sellTradeFixture("AAA/USD", "10", "1.0", "10.0", 2),
+		}
+
+		recovery, positions := newTestRecovery(t, balances, trades)
+
+		Convey("Recover succeeds and leaves the dust asset untracked", func() {
+			err := recovery.Recover()
+
+			So(err, ShouldBeNil)
+
+			_, restored := positions.Load("AAA/USD")
+			So(restored, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given a real wallet balance with no trade history at all", t, func() {
+		balances := map[string]*decimal.Decimal{
+			"AAA": mustDecimal("10"),
+		}
+		trades := map[string]spot.Trade{}
+
+		recovery, _ := newTestRecovery(t, balances, trades)
+
+		Convey("Recover fails loudly instead of silently dropping the balance", func() {
 			err := recovery.Recover()
 
 			So(err, ShouldNotBeNil)
 			So(err.Error(), ShouldContainSubstring, "AAA")
-
-			_, aaaRestored := positions.Load("AAA/USD")
-			_, bbbRestored := positions.Load("BBB/USD")
-
-			So(aaaRestored, ShouldBeFalse)
-			So(bbbRestored, ShouldBeTrue)
+			So(err.Error(), ShouldContainSubstring, "not accounted for")
 		})
 	})
 }

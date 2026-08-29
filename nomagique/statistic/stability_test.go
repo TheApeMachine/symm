@@ -10,10 +10,10 @@ import (
 
 func TestStability(t *testing.T) {
 	Convey("Given a sample collection centered on its mean", t, func() {
-		input := stabilityRing(10, 50, 90)
-		input.Put(SymbolMean, 50)
+		output := stabilityRing(10, 50, 90)
+		output.Put(SymbolMean, 50)
 
-		output := Stability("")(input)
+		Stability("")(&output)
 
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolRange), ShouldEqual, 80.0)
@@ -22,19 +22,19 @@ func TestStability(t *testing.T) {
 	})
 
 	Convey("Given a collapsed sample range", t, func() {
-		input := stabilityRing(100, 100)
-		input.Put(SymbolMean, 100)
+		output := stabilityRing(100, 100)
+		output.Put(SymbolMean, 100)
 
-		output := Stability("")(input)
+		Stability("")(&output)
 
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolStability), ShouldEqual, 1.0)
 	})
 
 	Convey("Given too little evidence", t, func() {
-		input := stabilityRing(100)
+		output := stabilityRing(100)
 
-		output := Stability("")(input)
+		Stability("")(&output)
 
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolReady), ShouldEqual, 0.0)
@@ -73,6 +73,7 @@ func BenchmarkStability(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_ = Stability("")(input)
+		output := input
+		Stability("")(&output)
 	}
 }

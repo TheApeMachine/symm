@@ -196,6 +196,30 @@ export const hawkesEventCount = (frames: Measurement[] | undefined): number =>
 	frames?.length ?? 0;
 
 /*
+intensitySeriesFromRingRows collapses per-epoch intensity samples into a
+plotted series, sorted by arrival. A ring buffer holds one row per emission,
+not one row per epoch, and most emissions for an epoch carry an unrelated
+Hawkes binding (compensator, excitation decay, offspring, ...) rather than
+intensity — a caller that pushed a placeholder for every row lacking the
+metric turned a sparse impulse train into linearly-interpolated triangles.
+Only epochs that actually reported the metric are included, keeping the last
+sample per epoch when more than one row for the same epoch reports it.
+*/
+export const intensitySeriesFromRingRows = (
+	rows: Array<{ at: bigint; raw: number }>,
+): number[] => {
+	const byEpoch = new Map<bigint, number>();
+
+	for (const row of rows) {
+		byEpoch.set(row.at, row.raw);
+	}
+
+	return [...byEpoch.entries()]
+		.sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))
+		.map(([, value]) => value);
+};
+
+/*
 latentPointsFromFrames projects each symbol's latest resonance latent pair for
 the universe scatter without inventing coordinates.
 */

@@ -9,12 +9,12 @@ import (
 
 func TestMean(t *testing.T) {
 	Convey("Given a populated generic sample collection", t, func() {
-		input := types.Frame{}
-		input.Put(types.MustSampleSymbol(0), 2)
-		input.Put(types.MustSampleSymbol(1), 4)
-		input.Put(types.MustSampleSymbol(2), 9)
+		output := types.Frame{}
+		output.Put(types.MustSampleSymbol(0), 2)
+		output.Put(types.MustSampleSymbol(1), 4)
+		output.Put(types.MustSampleSymbol(2), 9)
 
-		output := Mean(input)
+		Mean(&output)
 
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolMean), ShouldEqual, 5.0)
@@ -22,7 +22,8 @@ func TestMean(t *testing.T) {
 	})
 
 	Convey("Given an empty sample collection", t, func() {
-		output := Mean(types.Frame{})
+		output := types.Frame{}
+		Mean(&output)
 
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolReady), ShouldEqual, 0.0)
@@ -39,6 +40,7 @@ func BenchmarkMean(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_ = Mean(input)
+		output := input
+		Mean(&output)
 	}
 }
