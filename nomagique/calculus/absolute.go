@@ -12,7 +12,7 @@ import (
 /*
 Absolute projects finite X onto its magnitude.
 */
-func Absolute(input types.Frame) types.Frame {
+func Absolute(input *types.Frame) {
 	x, found := input.Get(PortX)
 
 	if !found || !utils.IsFinite(x) {
@@ -22,10 +22,8 @@ func Absolute(input types.Frame) types.Frame {
 			nil,
 		))
 
-		return input
+		return
 	}
 
 	input.Put(PortResult, math.Abs(x))
-
-	return input
 }

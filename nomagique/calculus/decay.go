@@ -12,13 +12,13 @@ Decay walks a retained level toward zero. Input level replaces state when
 present. Clock supplies linear elapsed progress; shape, when present, is the
 explicit remaining multiplier.
 */
-func Decay(input types.Frame) types.Frame {
+func Decay(input *types.Frame) {
 	level, hasLevel := input.Get(SymbolLevel)
 
 	if !hasLevel || !utils.IsFinite(level) {
 		input.Err = fmt.Errorf("calculus: decay requires a finite level")
 
-		return input
+		return
 	}
 
 	remaining := 0.0
@@ -27,7 +27,7 @@ func Decay(input types.Frame) types.Frame {
 		if !utils.IsFinite(clock) {
 			input.Err = fmt.Errorf("calculus: decay clock must be finite")
 
-			return input
+			return
 		}
 
 		remaining = 1 - clock
@@ -41,7 +41,7 @@ func Decay(input types.Frame) types.Frame {
 		if !utils.IsFinite(shape) {
 			input.Err = fmt.Errorf("calculus: decay shape must be finite")
 
-			return input
+			return
 		}
 
 		remaining = shape
@@ -52,11 +52,9 @@ func Decay(input types.Frame) types.Frame {
 	if !utils.IsFinite(result) {
 		input.Err = fmt.Errorf("calculus: decay overflowed")
 
-		return input
+		return
 	}
 
 	input.Put(SymbolLevel, result)
 	input.Put(PortResult, result)
-
-	return input
 }

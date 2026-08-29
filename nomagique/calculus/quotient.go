@@ -10,26 +10,26 @@ import (
 /*
 Quotient divides finite A by finite, non-zero B.
 */
-func Quotient(input types.Frame) types.Frame {
+func Quotient(input *types.Frame) {
 	a, hasA := input.Get(PortA)
 	b, hasB := input.Get(PortB)
 
 	if !hasA || !hasB {
 		input.Err = fmt.Errorf("calculus: quotient requires a and b")
 
-		return input
+		return
 	}
 
 	if !utils.IsFinite(a) || !utils.IsFinite(b) {
 		input.Err = fmt.Errorf("calculus: quotient requires finite operands")
 
-		return input
+		return
 	}
 
 	if b == 0 {
 		input.Err = fmt.Errorf("calculus: quotient denominator must be non-zero")
 
-		return input
+		return
 	}
 
 	result := a / b
@@ -37,10 +37,8 @@ func Quotient(input types.Frame) types.Frame {
 	if !utils.IsFinite(result) {
 		input.Err = fmt.Errorf("calculus: quotient overflowed")
 
-		return input
+		return
 	}
 
 	input.Put(PortResult, result)
-
-	return input
 }

@@ -12,7 +12,7 @@ import (
 /*
 Center emits the arithmetic center of A and B.
 */
-func Center(input types.Frame) types.Frame {
+func Center(input *types.Frame) {
 	a, hasA := input.Get(PortA)
 	b, hasB := input.Get(PortB)
 
@@ -23,7 +23,7 @@ func Center(input types.Frame) types.Frame {
 			nil,
 		))
 
-		return input
+		return
 	}
 
 	result := a/2 + b/2
@@ -31,10 +31,8 @@ func Center(input types.Frame) types.Frame {
 	if !utils.IsFinite(result) {
 		input.Err = fmt.Errorf("calculus: center overflowed")
 
-		return input
+		return
 	}
 
 	input.Put(PortResult, result)
-
-	return input
 }

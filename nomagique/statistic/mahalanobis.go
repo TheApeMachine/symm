@@ -55,11 +55,11 @@ func Mahalanobis(prefix string, residualSlots ...types.Symbol) types.Primitive {
 		}
 	}
 
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		if dimensionCount == 0 {
 			input.Err = fmt.Errorf("statistic: mahalanobis requires at least one residual dimension")
 
-			return input
+			return
 		}
 
 		residuals := make([]float64, dimensionCount)
@@ -70,14 +70,14 @@ func Mahalanobis(prefix string, residualSlots ...types.Symbol) types.Primitive {
 			if !found {
 				input.Err = fmt.Errorf("statistic: mahalanobis missing residual slot %v", slot)
 
-				return input
+				return
 			}
 
 			residuals[index] = value
 		}
 
 		currentSupport, _ := input.Get(slots.support)
-		covariance := loadCovarianceMatrix(&input, covSlots, dimensionCount)
+		covariance := loadCovarianceMatrix(input, covSlots, dimensionCount)
 
 		if int(currentSupport) >= dimensionCount+1 {
 			snr, distance, invertible := evaluateMahalanobisSNR(residuals, covariance, dimensionCount)
@@ -97,10 +97,8 @@ func Mahalanobis(prefix string, residualSlots ...types.Symbol) types.Primitive {
 			input.Put(slots.ready, 0)
 		}
 
-		updateCausalCovariance(&input, covSlots, dimensionCount, residuals, currentSupport)
+		updateCausalCovariance(input, covSlots, dimensionCount, residuals, currentSupport)
 		input.Put(slots.support, currentSupport+1)
-
-		return input
 	}
 }
 

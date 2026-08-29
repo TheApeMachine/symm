@@ -253,13 +253,13 @@ func categoryStrength(items []evidenceItem) float64 {
 		frame.Put(nmtypes.MustSampleSymbol(index), item.Affinity)
 	}
 
-	result := nmtypes.Step(nomagique_probability.Geomean, frame)
+	nmtypes.Step(nomagique_probability.Geomean, &frame)
 
-	if result.Err != nil {
+	if frame.Err != nil {
 		return 0
 	}
 
-	return result.MustGet(nomagique_probability.SymbolResult)
+	return frame.MustGet(nomagique_probability.SymbolResult)
 }
 
 /*
@@ -324,7 +324,8 @@ func (solver *Solver) buildBatch(
 	evidence := lift(strengths)
 	confidences := make([]float64, count)
 
-	ambiguityFrame := nmtypes.Step(nomagique_probability.ShannonAmbiguity(), evidence)
+	ambiguityFrame := evidence
+	nmtypes.Step(nomagique_probability.ShannonAmbiguity(), &ambiguityFrame)
 	uncertainty := 0.0
 
 	if ambiguityFrame.Err == nil {
@@ -336,12 +337,12 @@ func (solver *Solver) buildBatch(
 		selected := evidence
 		selected.Put(nomagique_probability.SymbolWinner, float64(index))
 
-		result := nmtypes.Step(nomagique_probability.EvidenceShare(), selected)
+		nmtypes.Step(nomagique_probability.EvidenceShare(), &selected)
 
 		confidence := 1.0 / float64(count)
 
-		if result.Err == nil {
-			confidence = result.MustGet(nomagique_probability.SymbolConfidence)
+		if selected.Err == nil {
+			confidence = selected.MustGet(nomagique_probability.SymbolConfidence)
 		}
 
 		confidences[index] = confidence

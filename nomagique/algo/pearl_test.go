@@ -40,8 +40,8 @@ func TestPearlDegenerateWindow(t *testing.T) {
 		}
 
 		Convey("Pearl resolves to the non-identifiable state instead of a fatal error", func() {
-			output := Pearl()(frame)
-			So(errors.Is(output.Err, io.EOF), ShouldBeTrue)
+			Pearl()(&frame)
+			So(errors.Is(frame.Err, io.EOF), ShouldBeTrue)
 		})
 	})
 }

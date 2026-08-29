@@ -29,7 +29,7 @@ func Lag(leftPrefix string, rightPrefix string) types.Primitive {
 	leftSeries := temporal.NewSeries(leftPrefix)
 	rightSeries := temporal.NewSeries(rightPrefix)
 
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		spacing, hasSpacing := input.Get(SymbolLagSpacing)
 		maximumLagValue, hasMaximumLag := input.Get(SymbolMaximumLag)
 
@@ -39,11 +39,11 @@ func Lag(leftPrefix string, rightPrefix string) types.Primitive {
 				"correlation: lag requires integral spacing and maximum lag",
 			)
 
-			return input
+			return
 		}
 
-		left, leftCount := seriesPoints(leftSeries, &input)
-		right, rightCount := seriesPoints(rightSeries, &input)
+		left, leftCount := seriesPoints(leftSeries, input)
+		right, rightCount := seriesPoints(rightSeries, input)
 		leftReturns, leftReturnCount, leftVariance := seriesReturns(&left, leftCount)
 		rightReturns, rightReturnCount, rightVariance := seriesReturns(&right, rightCount)
 
@@ -121,7 +121,5 @@ func Lag(leftPrefix string, rightPrefix string) types.Primitive {
 				}
 			}
 		}
-
-		return input
 	}
 }

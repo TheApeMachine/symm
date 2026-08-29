@@ -26,7 +26,8 @@ func TestComparisonPrimitives(t *testing.T) {
 			{Equal, 2, 1, 0}, {Equal, 1, 1, 1}, {Equal, 0, math.Copysign(0, -1), 1},
 		}
 		for _, test := range cases {
-			output := test.primitive(input(test.a, test.b))
+			output := input(test.a, test.b)
+			test.primitive(&output)
 			So(output.Err, ShouldBeNil)
 			So(output.MustGet(SymbolCondition), ShouldEqual, test.expected)
 		}
@@ -37,7 +38,8 @@ func TestComparisonPrimitives(t *testing.T) {
 			for _, bad := range []types.Frame{
 				types.Frame{}, input(math.NaN(), 1), input(1, math.Inf(1)),
 			} {
-				output := primitive(bad)
+				output := bad
+				primitive(&output)
 				So(output.Err, ShouldNotBeNil)
 			}
 		}
@@ -47,11 +49,13 @@ func TestComparisonPrimitives(t *testing.T) {
 		lower := types.MustIntern("test/logic/lower")
 		upper := types.MustIntern("test/logic/upper")
 		validate := PositiveOrder(lower, upper)
-		output := validate(types.Frame{}.Set(lower, 1).Set(upper, 2))
+		output := types.Frame{}.Set(lower, 1).Set(upper, 2)
+		validate(&output)
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(lower), ShouldEqual, 1.0)
 		for _, pair := range [][2]float64{{0, 1}, {-1, 1}, {2, 2}, {3, 2}, {math.NaN(), 2}, {1, math.Inf(1)}} {
-			output = validate(types.Frame{}.Set(lower, pair[0]).Set(upper, pair[1]))
+			output = types.Frame{}.Set(lower, pair[0]).Set(upper, pair[1])
+			validate(&output)
 			So(output.Err, ShouldNotBeNil)
 		}
 	})

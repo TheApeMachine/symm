@@ -10,20 +10,20 @@ import (
 /*
 Average returns the overflow-resistant arithmetic center of A and B.
 */
-func Average(input types.Frame) types.Frame {
+func Average(input *types.Frame) {
 	a, hasA := input.Get(PortA)
 	b, hasB := input.Get(PortB)
 
 	if !hasA || !hasB {
 		input.Err = fmt.Errorf("calculus: average requires a and b")
 
-		return input
+		return
 	}
 
 	if !utils.IsFinite(a) || !utils.IsFinite(b) {
 		input.Err = fmt.Errorf("calculus: average requires finite operands")
 
-		return input
+		return
 	}
 
 	result := a/2 + b/2
@@ -31,10 +31,8 @@ func Average(input types.Frame) types.Frame {
 	if !utils.IsFinite(result) {
 		input.Err = fmt.Errorf("calculus: average overflowed")
 
-		return input
+		return
 	}
 
 	input.Put(PortResult, result)
-
-	return input
 }

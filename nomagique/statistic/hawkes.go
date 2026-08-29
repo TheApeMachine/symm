@@ -56,7 +56,7 @@ channel intensities between events, decays them by the observed delta, adds the
 arriving mark's jump, and emits the rates and likelihood inputs that Branching
 and Likelihood consume.
 */
-func HawkesIntensity(input types.Frame) types.Frame {
+func HawkesIntensity(input *types.Frame) {
 	mark, hasMark := input.Get(SymbolMark)
 	sec, hasSec := input.Get(SymbolUnixSec)
 	nsec, hasNsec := input.Get(SymbolUnixNsec)
@@ -64,7 +64,7 @@ func HawkesIntensity(input types.Frame) types.Frame {
 	if !hasMark || mark == 0 || !finite(mark) {
 		input.Err = fmt.Errorf("hawkes: a finite non-zero mark is required")
 
-		return input
+		return
 	}
 
 	if !hasSec || !hasNsec || !finite(sec, nsec) || nsec < 0 || nsec >= 1e9 {
@@ -72,20 +72,20 @@ func HawkesIntensity(input types.Frame) types.Frame {
 			"hawkes: timestamp coordinates must be finite and normalized",
 		)
 
-		return input
+		return
 	}
 
-	input.Put(SymbolBeta, value(input, SymbolBeta, 1))
-	input.Put(SymbolAlphaAA, value(input, SymbolAlphaAA, 0.2))
-	input.Put(SymbolAlphaAB, value(input, SymbolAlphaAB, 0.1))
-	input.Put(SymbolAlphaBA, value(input, SymbolAlphaBA, 0.1))
-	input.Put(SymbolAlphaBB, value(input, SymbolAlphaBB, 0.2))
+	input.Put(SymbolBeta, value(*input, SymbolBeta, 1))
+	input.Put(SymbolAlphaAA, value(*input, SymbolAlphaAA, 0.2))
+	input.Put(SymbolAlphaAB, value(*input, SymbolAlphaAB, 0.1))
+	input.Put(SymbolAlphaBA, value(*input, SymbolAlphaBA, 0.1))
+	input.Put(SymbolAlphaBB, value(*input, SymbolAlphaBB, 0.2))
 
-	eventCount := value(input, SymbolEventCount, 0)
-	lastSec := value(input, symbolLastSec, sec)
-	lastNsec := value(input, symbolLastNsec, nsec)
-	firstSec := value(input, symbolFirstSec, sec)
-	firstNsec := value(input, symbolFirstNsec, nsec)
+	eventCount := value(*input, SymbolEventCount, 0)
+	lastSec := value(*input, symbolLastSec, sec)
+	lastNsec := value(*input, symbolLastNsec, nsec)
+	firstSec := value(*input, symbolFirstSec, sec)
+	firstNsec := value(*input, symbolFirstNsec, nsec)
 
 	if eventCount == 0 {
 		input.Put(symbolFirstSec, sec)
@@ -93,21 +93,21 @@ func HawkesIntensity(input types.Frame) types.Frame {
 	} else if elapsed(sec, nsec, lastSec, lastNsec) < 0 {
 		input.Err = fmt.Errorf("hawkes: observation time cannot move backwards")
 
-		return input
+		return
 	}
 
-	beta := value(input, SymbolBeta, 1)
+	beta := value(*input, SymbolBeta, 1)
 
 	if beta <= 0 || !finite(beta) {
 		input.Err = fmt.Errorf("hawkes: beta must be positive and finite")
 
-		return input
+		return
 	}
 
-	muAlpha := value(input, SymbolMuAlpha, 0)
-	muBeta := value(input, SymbolMuBeta, 0)
-	lambdaAlpha := value(input, SymbolLambdaAlpha, 0)
-	lambdaBeta := value(input, SymbolLambdaBeta, 0)
+	muAlpha := value(*input, SymbolMuAlpha, 0)
+	muBeta := value(*input, SymbolMuBeta, 0)
+	lambdaAlpha := value(*input, SymbolLambdaAlpha, 0)
+	lambdaBeta := value(*input, SymbolLambdaBeta, 0)
 
 	delta := 0.0
 
@@ -118,19 +118,19 @@ func HawkesIntensity(input types.Frame) types.Frame {
 	lambdaAlpha = decay(lambdaAlpha, muAlpha, beta, delta)
 	lambdaBeta = decay(lambdaBeta, muBeta, beta, delta)
 
-	alphaCount := value(input, SymbolAlphaEventCount, 0)
-	betaCount := value(input, SymbolBetaEventCount, 0)
+	alphaCount := value(*input, SymbolAlphaEventCount, 0)
+	betaCount := value(*input, SymbolBetaEventCount, 0)
 
 	if mark > 0 {
 		alphaCount++
-		lambdaAlpha += value(input, SymbolAlphaAA, 0.2)
-		lambdaBeta += value(input, SymbolAlphaBA, 0.1)
+		lambdaAlpha += value(*input, SymbolAlphaAA, 0.2)
+		lambdaBeta += value(*input, SymbolAlphaBA, 0.1)
 	}
 
 	if mark < 0 {
 		betaCount++
-		lambdaBeta += value(input, SymbolAlphaBB, 0.2)
-		lambdaAlpha += value(input, SymbolAlphaAB, 0.1)
+		lambdaBeta += value(*input, SymbolAlphaBB, 0.2)
+		lambdaAlpha += value(*input, SymbolAlphaAB, 0.1)
 	}
 
 	eventCount++
@@ -164,15 +164,15 @@ func HawkesIntensity(input types.Frame) types.Frame {
 	input.Put(SymbolObservedFromSec, firstSec)
 	input.Put(SymbolObservedFromNsec, firstNsec)
 
-	lambdaSelfAlpha := decay(value(input, symbolLambdaSelfAlpha, rateAlpha), rateAlpha, beta, delta)
-	lambdaSelfBeta := decay(value(input, symbolLambdaSelfBeta, rateBeta), rateBeta, beta, delta)
+	lambdaSelfAlpha := decay(value(*input, symbolLambdaSelfAlpha, rateAlpha), rateAlpha, beta, delta)
+	lambdaSelfBeta := decay(value(*input, symbolLambdaSelfBeta, rateBeta), rateBeta, beta, delta)
 
 	if mark > 0 {
-		lambdaSelfAlpha += value(input, SymbolAlphaAA, 0.2)
+		lambdaSelfAlpha += value(*input, SymbolAlphaAA, 0.2)
 	}
 
 	if mark < 0 {
-		lambdaSelfBeta += value(input, SymbolAlphaBB, 0.2)
+		lambdaSelfBeta += value(*input, SymbolAlphaBB, 0.2)
 	}
 
 	input.Put(symbolLambdaSelfAlpha, lambdaSelfAlpha)
@@ -180,8 +180,6 @@ func HawkesIntensity(input types.Frame) types.Frame {
 	input.Put(SymbolLLHawkes, logSum(lambdaAlpha, lambdaBeta))
 	input.Put(SymbolLLPoisson, logSum(rateAlpha, rateBeta))
 	input.Put(SymbolLLSelf, logSum(lambdaSelfAlpha, lambdaSelfBeta))
-
-	return input
 }
 
 func decay(lambda float64, baseline float64, beta float64, delta float64) float64 {

@@ -13,7 +13,7 @@ import (
 /*
 Coherence emits central proximity within interval A..B, clamped to [0,1].
 */
-func Coherence(input types.Frame) types.Frame {
+func Coherence(input *types.Frame) {
 	x, hasX := input.Get(PortX)
 	a, hasA := input.Get(PortA)
 	b, hasB := input.Get(PortB)
@@ -26,7 +26,7 @@ func Coherence(input types.Frame) types.Frame {
 			nil,
 		))
 
-		return input
+		return
 	}
 
 	extent := math.Abs(b - a)
@@ -41,10 +41,8 @@ func Coherence(input types.Frame) types.Frame {
 	if !utils.IsFinite(result) {
 		input.Err = fmt.Errorf("calculus: coherence overflowed")
 
-		return input
+		return
 	}
 
 	input.Put(PortResult, result)
-
-	return input
 }

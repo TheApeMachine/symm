@@ -45,31 +45,31 @@ func CrossLag(leftPrefix string, rightPrefix string) types.Primitive {
 	rightSeries := temporal.NewSeries(rightPrefix)
 	lagPrimitive := Lag(leftPrefix, rightPrefix)
 
-	return func(input types.Frame) types.Frame {
-		leftCount := leftSeries.Count(input)
-		rightCount := rightSeries.Count(input)
+	return func(input *types.Frame) {
+		leftCount := leftSeries.Count(*input)
+		rightCount := rightSeries.Count(*input)
 		sampleCount := int(math.Min(float64(leftCount), float64(rightCount)))
 
 		if sampleCount < minimumLagPathSamples {
 			input.Put(SymbolLeadLagReady, 0)
 
-			return input
+			return
 		}
 
-		leftSpacing := leftSeries.Spacing(input)
+		leftSpacing := leftSeries.Spacing(*input)
 
 		if leftSpacing.Err != nil {
 			input.Err = leftSpacing.Err
 
-			return input
+			return
 		}
 
-		rightSpacing := rightSeries.Spacing(input)
+		rightSpacing := rightSeries.Spacing(*input)
 
 		if rightSpacing.Err != nil {
 			input.Err = rightSpacing.Err
 
-			return input
+			return
 		}
 
 		leftSpacingNanos, hasLeftSpacing := leftSpacing.Get(temporal.SymbolSpacingNanos)
@@ -78,20 +78,20 @@ func CrossLag(leftPrefix string, rightPrefix string) types.Primitive {
 		if !hasLeftSpacing || !hasRightSpacing {
 			input.Put(SymbolLeadLagReady, 0)
 
-			return input
+			return
 		}
 
 		spacing := math.Min(leftSpacingNanos, rightSpacingNanos)
 		maximumLag := sampleCount - minimumLagPathSamples + 1
-		lagInput := input
-		lagInput.Put(SymbolLagSpacing, spacing)
-		lagInput.Put(SymbolMaximumLag, float64(maximumLag))
-		scan := lagPrimitive(lagInput)
+		scan := *input
+		scan.Put(SymbolLagSpacing, spacing)
+		scan.Put(SymbolMaximumLag, float64(maximumLag))
+		lagPrimitive(&scan)
 
 		if scan.Err != nil {
 			input.Err = scan.Err
 
-			return input
+			return
 		}
 
 		bestLag := int(scan.MustGet(SymbolBestLag))
@@ -103,7 +103,7 @@ func CrossLag(leftPrefix string, rightPrefix string) types.Primitive {
 		if searchCount == 0 {
 			input.Put(SymbolLeadLagReady, 0)
 
-			return input
+			return
 		}
 
 		returnCount := sampleCount - 1
@@ -150,7 +150,5 @@ func CrossLag(leftPrefix string, rightPrefix string) types.Primitive {
 				input.Put(SymbolLagPeakCurvature, curvature)
 			}
 		}
-
-		return input
 	}
 }

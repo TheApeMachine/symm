@@ -35,7 +35,7 @@ func Hayashi(leftPrefix string, rightPrefix string) types.Primitive {
 	leftSeries := temporal.NewSeries(leftPrefix)
 	rightSeries := temporal.NewSeries(rightPrefix)
 
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		shiftValue, hasShift := input.Get(SymbolLeftShift)
 
 		if hasShift && shiftValue != math.Trunc(shiftValue) {
@@ -43,11 +43,11 @@ func Hayashi(leftPrefix string, rightPrefix string) types.Primitive {
 				"left shift must contain integral nanoseconds",
 			)
 
-			return input
+			return
 		}
 
-		left, leftCount := seriesPoints(leftSeries, &input)
-		right, rightCount := seriesPoints(rightSeries, &input)
+		left, leftCount := seriesPoints(leftSeries, input)
+		right, rightCount := seriesPoints(rightSeries, input)
 		leftReturns, leftReturnCount, leftVariance := seriesReturns(&left, leftCount)
 		rightReturns, rightReturnCount, rightVariance := seriesReturns(&right, rightCount)
 
@@ -74,8 +74,6 @@ func Hayashi(leftPrefix string, rightPrefix string) types.Primitive {
 			input.Put(SymbolRightToNanos, float64(right[rightCount-1].timestamp))
 			input.Put(SymbolRightEnergy, pathEnergyRate(&right, rightCount))
 		}
-
-		return input
 	}
 }
 

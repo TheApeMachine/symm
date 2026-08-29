@@ -11,13 +11,13 @@ import (
 /*
 Exponential computes e raised to negative finite progress.
 */
-func Exponential(input types.Frame) types.Frame {
+func Exponential(input *types.Frame) {
 	progress, found := input.Get(SymbolProgress)
 
 	if !found || !utils.IsFinite(progress) {
 		input.Err = fmt.Errorf("calculus: exponential requires finite progress")
 
-		return input
+		return
 	}
 
 	result := math.Exp(-progress)
@@ -25,10 +25,8 @@ func Exponential(input types.Frame) types.Frame {
 	if !utils.IsFinite(result) {
 		input.Err = fmt.Errorf("calculus: exponential overflowed")
 
-		return input
+		return
 	}
 
 	input.Put(PortResult, result)
-
-	return input
 }

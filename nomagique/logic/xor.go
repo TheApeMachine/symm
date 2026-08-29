@@ -11,14 +11,14 @@ import (
 /*
 Xor emits one when exactly one finite operand is non-zero.
 */
-func Xor(input types.Frame) types.Frame {
+func Xor(input *types.Frame) {
 	a, hasA := input.Get(calculus.PortA)
 	b, hasB := input.Get(calculus.PortB)
 
 	if !hasA || !hasB || !utils.IsFinite(a) || !utils.IsFinite(b) {
 		input.Err = fmt.Errorf("logic: xor requires finite a and b")
 
-		return input
+		return
 	}
 
 	condition := 0.0
@@ -29,6 +29,4 @@ func Xor(input types.Frame) types.Frame {
 
 	input.Put(SymbolCondition, condition)
 	input.Put(SymbolResult, condition)
-
-	return input
 }

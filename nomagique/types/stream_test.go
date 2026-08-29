@@ -8,18 +8,16 @@ import (
 func TestStreamRejectsFailedCandidate(t *testing.T) {
 	stateSymbol := MustIntern("stream_test/state")
 	inputSymbol := MustIntern("stream_test/input")
-	primitive := func(input Frame) Frame {
+	primitive := func(input *Frame) {
 		value := input.MustGet(inputSymbol)
 
 		if value < 0 {
 			input.Err = PrimitiveError("negative input")
 
-			return input
+			return
 		}
 
 		input.Put(stateSymbol, input.MustGet(stateSymbol)+value)
-
-		return input
 	}
 
 	initial := Frame{}
@@ -47,12 +45,10 @@ func TestStreamRejectsFailedCandidate(t *testing.T) {
 func TestAtomicStreamCommitsConcurrentTransitions(t *testing.T) {
 	totalSymbol := MustIntern("atomic_stream_test/total")
 	deltaSymbol := MustIntern("atomic_stream_test/delta")
-	primitive := func(input Frame) Frame {
+	primitive := func(input *Frame) {
 		total, _ := input.Get(totalSymbol)
 		delta := input.MustGet(deltaSymbol)
 		input.Put(totalSymbol, total+delta)
-
-		return input
 	}
 
 	stream := NewAtomicStream(primitive, Frame{})
@@ -85,10 +81,8 @@ func TestAtomicStreamCommitsConcurrentTransitions(t *testing.T) {
 func BenchmarkStreamStep(b *testing.B) {
 	stateSymbol := MustIntern("stream_benchmark/state")
 	inputSymbol := MustIntern("stream_benchmark/input")
-	primitive := func(input Frame) Frame {
+	primitive := func(input *Frame) {
 		input.Put(stateSymbol, input.MustGet(inputSymbol))
-
-		return input
 	}
 	stream := NewStream(primitive, Frame{})
 	input := Frame{}
@@ -104,10 +98,8 @@ func BenchmarkStreamStep(b *testing.B) {
 func BenchmarkAtomicStreamStep(b *testing.B) {
 	stateSymbol := MustIntern("atomic_stream_benchmark/state")
 	inputSymbol := MustIntern("atomic_stream_benchmark/input")
-	primitive := func(input Frame) Frame {
+	primitive := func(input *Frame) {
 		input.Put(stateSymbol, input.MustGet(inputSymbol))
-
-		return input
 	}
 	stream := NewAtomicStream(primitive, Frame{})
 	input := Frame{}

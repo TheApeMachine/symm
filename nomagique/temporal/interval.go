@@ -17,7 +17,7 @@ var (
 Interval computes elapsed time between sequential scalar timestamps and retains
 the last timestamp in state.
 */
-func Interval(input types.Frame) types.Frame {
+func Interval(input *types.Frame) {
 	timestamp, found := input.Get(SymbolTimestamp)
 
 	if !found || !utils.IsFinite(timestamp) {
@@ -25,7 +25,7 @@ func Interval(input types.Frame) types.Frame {
 			"temporal: interval requires a finite timestamp",
 		)
 
-		return input
+		return
 	}
 
 	previous, hasPrevious := input.Get(SymbolPrevious)
@@ -40,13 +40,11 @@ func Interval(input types.Frame) types.Frame {
 				"temporal: interval timestamp cannot move backwards",
 			)
 
-			return input
+			return
 		}
 	}
 
 	input.Put(SymbolPrevious, timestamp)
 	input.Put(SymbolHasSeen, 1)
 	input.Put(SymbolDelta, delta)
-
-	return input
 }

@@ -11,7 +11,7 @@ import (
 /*
 LogRatio computes log(current/previous) for positive finite observations.
 */
-func LogRatio(input types.Frame) types.Frame {
+func LogRatio(input *types.Frame) {
 	current, hasCurrent := input.Get(SymbolCurrent)
 	previous, hasPrevious := input.Get(SymbolPrevious)
 
@@ -19,13 +19,13 @@ func LogRatio(input types.Frame) types.Frame {
 		!utils.IsFinite(previous) {
 		input.Err = fmt.Errorf("calculus: log ratio requires finite current and previous")
 
-		return input
+		return
 	}
 
 	if current <= 0 || previous <= 0 {
 		input.Err = fmt.Errorf("calculus: log ratio requires positive operands")
 
-		return input
+		return
 	}
 
 	result := math.Log(current / previous)
@@ -33,10 +33,8 @@ func LogRatio(input types.Frame) types.Frame {
 	if !utils.IsFinite(result) {
 		input.Err = fmt.Errorf("calculus: log ratio produced a non-finite result")
 
-		return input
+		return
 	}
 
 	input.Put(PortResult, result)
-
-	return input
 }

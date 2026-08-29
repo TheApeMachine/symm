@@ -12,7 +12,7 @@ import (
 /*
 Difference subtracts B from A.
 */
-func Difference(input types.Frame) types.Frame {
+func Difference(input *types.Frame) {
 	a, hasA := input.Get(PortA)
 	b, hasB := input.Get(PortB)
 
@@ -23,7 +23,7 @@ func Difference(input types.Frame) types.Frame {
 			nil,
 		))
 
-		return input
+		return
 	}
 
 	if !utils.IsFinite(a) || !utils.IsFinite(b) {
@@ -33,7 +33,7 @@ func Difference(input types.Frame) types.Frame {
 			nil,
 		))
 
-		return input
+		return
 	}
 
 	result := a - b
@@ -41,10 +41,8 @@ func Difference(input types.Frame) types.Frame {
 	if !utils.IsFinite(result) {
 		input.Err = fmt.Errorf("calculus: difference overflowed")
 
-		return input
+		return
 	}
 
 	input.Put(PortResult, result)
-
-	return input
 }

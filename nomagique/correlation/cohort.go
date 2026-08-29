@@ -27,14 +27,14 @@ Cohort accumulates the sufficient statistics emitted by ready Hayashi pairs.
 Support weights each peer so asynchronous paths contribute in proportion to
 the return intervals that actually overlapped.
 */
-func Cohort(input nmtypes.Frame) nmtypes.Frame {
+func Cohort(input *nmtypes.Frame) {
 	ready, hasReady := input.Get(SymbolReady)
 	support, hasSupport := input.Get(SymbolSupport)
 
 	if !hasReady || ready == 0 || !hasSupport || support < minimumCorrelationSupport {
 		input.Put(SymbolReady, 0)
 
-		return input
+		return
 	}
 
 	correlation := input.MustGet(SymbolCorrelation)
@@ -79,8 +79,6 @@ func Cohort(input nmtypes.Frame) nmtypes.Frame {
 	input.Put(SymbolCohortDispersion, dispersion)
 	input.Put(SymbolEffectivePeers, effectivePeers)
 	input.Put(SymbolReady, 1)
-
-	return input
 }
 
 func clampCorrelation(value float64) float64 {

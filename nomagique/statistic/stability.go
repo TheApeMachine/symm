@@ -26,14 +26,14 @@ func Stability(prefix string) types.Primitive {
 	rangeSymbol := types.MustIntern(temporal.JoinPrefix(prefix, "range"))
 	meanSymbol := types.MustIntern(temporal.JoinPrefix(prefix, "mean"))
 
-	return func(input types.Frame) types.Frame {
-		count := series.Count(input)
+	return func(input *types.Frame) {
+		count := series.Count(*input)
 
 		if count < minimumStabilitySamples {
 			input.Put(stabilitySymbol, 0)
 			input.Put(series.ReadySymbol, 0)
 
-			return input
+			return
 		}
 
 		center, found := input.Get(meanSymbol)
@@ -43,7 +43,7 @@ func Stability(prefix string) types.Primitive {
 				"statistic: stability requires a mean",
 			)
 
-			return input
+			return
 		}
 
 		minimum := math.MaxFloat64
@@ -51,7 +51,7 @@ func Stability(prefix string) types.Primitive {
 		maximumDeparture := 0.0
 
 		for index := 0; index < count; index++ {
-			value, populated := series.SampleAt(&input, index)
+			value, populated := series.SampleAt(input, index)
 
 			if !populated {
 				continue
@@ -73,8 +73,6 @@ func Stability(prefix string) types.Primitive {
 		input.Put(rangeSymbol, rangeValue)
 		input.Put(stabilitySymbol, stability)
 		input.Put(series.ReadySymbol, 1)
-
-		return input
 	}
 }
 

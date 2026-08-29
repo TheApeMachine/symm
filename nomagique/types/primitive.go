@@ -9,70 +9,72 @@ import (
 )
 
 /*
-Primitive is the universal reducer contract. A primitive takes one Frame (the
-current committed state and input, unified) and returns one Frame (the next
-state and output, unified). Validation failures are recorded on the returned
-Frame's Err field; a non-nil Err short-circuits the enclosing pipeline.
+Primitive is the universal reducer contract. A primitive receives one *Frame
+(the current committed state and input, unified) and mutates it in place into
+the next state and output, unified — never copying the 64KB+ Frame value on
+call or return. Validation failures are recorded on frame.Err; a non-nil Err
+short-circuits the enclosing pipeline.
 */
-type Primitive func(input Frame) Frame
+type Primitive func(frame *Frame)
 
 /*
-Step evaluates one primitive. A primitive that fails returns the input Frame
-with Err set, so Step simply propagates it.
+Step evaluates one primitive in place on frame. A primitive that fails sets
+frame.Err; Step does not itself inspect or propagate it beyond running the
+primitive, since frame is the caller's own storage.
 */
-func Step(primitive Primitive, input Frame) Frame {
+func Step(primitive Primitive, frame *Frame) {
 	if primitive == nil {
-		input.Err = PrimitiveError("primitive is nil")
+		frame.Err = PrimitiveError("primitive is nil")
 
-		return input
+		return
 	}
 
-	return primitive(input)
+	primitive(frame)
 }
 
 /*
-Pipe chains primitives so each frame flows into the next. A non-nil Err stops
-the chain immediately and propagates the errored frame unchanged.
+Pipe chains primitives so each mutates the same frame in sequence. A non-nil
+Err stops the chain immediately, leaving frame as the failing primitive left
+it.
 */
 func Pipe(primitives ...Primitive) Primitive {
 	pipeline := append([]Primitive(nil), primitives...)
 
-	return func(input Frame) Frame {
-		output := input
-
+	return func(frame *Frame) {
 		for _, primitive := range pipeline {
-			output = Step(primitive, output)
+			Step(primitive, frame)
 
-			if output.Err != nil {
-				return output
+			if frame.Err != nil {
+				return
 			}
 		}
-
-		return output
 	}
 }
 
 /*
-Fork fans one frame out to every branch and merges their frames. Each branch
-receives the same input independently; results overlay in branch order.
+Fork fans one frame out to every branch and merges their results back into it.
+Each branch receives its own copy of the pre-fork frame independently (a
+branch must not see another branch's writes), and results overlay onto frame
+in branch order.
 */
 func Fork(primitives ...Primitive) Primitive {
 	branches := append([]Primitive(nil), primitives...)
 
-	return func(input Frame) Frame {
-		output := input
+	return func(frame *Frame) {
+		input := *frame
 
 		for _, primitive := range branches {
-			branch := Step(primitive, input)
+			branch := input
+			Step(primitive, &branch)
 
 			if branch.Err != nil {
-				return branch
+				*frame = branch
+
+				return
 			}
 
-			output.Merge(branch)
+			frame.Merge(branch)
 		}
-
-		return output
 	}
 }
 
@@ -90,24 +92,25 @@ mask-only check would wrongly forgive that as untouched.
 func TryFork(primitives ...Primitive) Primitive {
 	branches := append([]Primitive(nil), primitives...)
 
-	return func(input Frame) Frame {
-		output := input
+	return func(frame *Frame) {
+		input := *frame
 
 		for _, primitive := range branches {
-			branch := Step(primitive, input)
+			branch := input
+			Step(primitive, &branch)
 
 			if branch.Err != nil {
 				if branch.Equal(input) {
 					continue
 				}
 
-				return branch
+				*frame = branch
+
+				return
 			}
 
-			output.Merge(branch)
+			frame.Merge(branch)
 		}
-
-		return output
 	}
 }
 
@@ -118,61 +121,64 @@ slot fail rather than silently overwriting.
 func ForkStrict(primitives ...Primitive) Primitive {
 	branches := append([]Primitive(nil), primitives...)
 
-	return func(input Frame) Frame {
+	return func(frame *Frame) {
+		input := *frame
 		output := input
 
 		for _, primitive := range branches {
-			branch := Step(primitive, input)
+			branch := input
+			Step(primitive, &branch)
 
 			if branch.Err != nil {
-				return branch
+				*frame = branch
+
+				return
 			}
 
 			merged, err := mergeFrameChanges(input, output, branch, "fork")
 
 			if err != nil {
 				output.Err = err
+				*frame = output
 
-				return output
+				return
 			}
 
 			output = merged
 		}
 
-		return output
+		*frame = output
 	}
 }
 
 /*
-Configure runs a producer, copies one explicit control fact onto the input, and
-runs the consumer. Producer metrics survive; consumer output wins on an
+Configure runs a producer, copies one explicit control fact onto the frame,
+and runs the consumer. Producer metrics survive; consumer output wins on an
 intentional overlap.
 */
 func Configure(producer Primitive, channel Symbol, consumer Primitive) Primitive {
-	return func(input Frame) Frame {
-		control := Step(producer, input)
+	return func(frame *Frame) {
+		Step(producer, frame)
 
-		if control.Err != nil {
-			return control
+		if frame.Err != nil {
+			return
 		}
 
-		controlValue, found := control.Get(channel)
+		controlValue, found := frame.Get(channel)
 
 		if !found {
-			input.Err = PrimitiveError("configure: control channel missing")
+			frame.Err = PrimitiveError("configure: control channel missing")
 
-			return input
+			return
 		}
 
 		if !utils.IsFinite(controlValue) {
-			input.Err = PrimitiveError("configure: control channel must be finite")
+			frame.Err = PrimitiveError("configure: control channel must be finite")
 
-			return input
+			return
 		}
 
-		consumerInput := control
-
-		return Step(consumer, consumerInput)
+		Step(consumer, frame)
 	}
 }
 
@@ -180,18 +186,16 @@ func Configure(producer Primitive, channel Symbol, consumer Primitive) Primitive
 Relay copies one named fact into another. Deprecated in favor of Wire.
 */
 func Relay(from Symbol, to Symbol) Primitive {
-	return func(input Frame) Frame {
-		value, found := input.Get(from)
+	return func(frame *Frame) {
+		value, found := frame.Get(from)
 
 		if !found {
-			input.Err = PrimitiveError("relay: source slot missing")
+			frame.Err = PrimitiveError("relay: source slot missing")
 
-			return input
+			return
 		}
 
-		input.Put(to, value)
-
-		return input
+		frame.Put(to, value)
 	}
 }
 
@@ -199,16 +203,14 @@ func Relay(from Symbol, to Symbol) Primitive {
 Assign writes one explicit finite scalar.
 */
 func Assign(symbol Symbol, value float64) Primitive {
-	return func(input Frame) Frame {
+	return func(frame *Frame) {
 		if !utils.IsFinite(value) {
-			input.Err = PrimitiveError("assign value must be finite")
+			frame.Err = PrimitiveError("assign value must be finite")
 
-			return input
+			return
 		}
 
-		input.Put(symbol, value)
-
-		return input
+		frame.Put(symbol, value)
 	}
 }
 
@@ -220,11 +222,9 @@ func Join(primitives ...Primitive) Primitive {
 }
 
 /*
-Identity passes the input frame through unchanged.
+Identity leaves the frame unchanged.
 */
-func Identity(input Frame) Frame {
-	return input
-}
+func Identity(frame *Frame) {}
 
 func mergeFrameChanges(
 	base Frame,

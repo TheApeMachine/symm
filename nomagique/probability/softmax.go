@@ -26,21 +26,21 @@ the samples mean, only that they are finite scores to be exponentiated into a
 distribution. A non-finite or empty input sets Err.
 */
 func Softmax() types.Primitive {
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		var values [types.MaxSamples]float64
 
-		count, ok := collectSamples(&input, &values)
+		count, ok := collectSamples(input, &values)
 
 		if !ok {
 			input.Err = fmt.Errorf("probability: softmax requires finite samples")
 
-			return input
+			return
 		}
 
 		if count == 0 {
 			input.Err = fmt.Errorf("probability: softmax requires at least one sample")
 
-			return input
+			return
 		}
 
 		maximum := math.Inf(-1)
@@ -64,7 +64,7 @@ func Softmax() types.Primitive {
 		if denominator <= 0 || math.IsInf(denominator, 0) {
 			input.Err = fmt.Errorf("probability: softmax denominator is non-positive")
 
-			return input
+			return
 		}
 
 		// Write the normalized probabilities back into the original sample
@@ -85,7 +85,5 @@ func Softmax() types.Primitive {
 		}
 
 		input.Put(SymbolDistribution, 1.0)
-
-		return input
 	}
 }

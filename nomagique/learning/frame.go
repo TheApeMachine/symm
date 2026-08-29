@@ -72,10 +72,10 @@ FramePrimitive adapts the multi-timescale, overcomplete predictive coding manifo
 into types's universal Frame reducer interface.
 */
 func FramePrimitive(manifold *ResonanceManifold, learn bool) types.Primitive {
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		if manifold == nil {
 			input.Err = fmt.Errorf("resonance: manifold required")
-			return input
+			return
 		}
 
 		featureCountValue, hasFeatureCount := input.Get(SymbolFeatureCount)
@@ -89,7 +89,7 @@ func FramePrimitive(manifold *ResonanceManifold, learn bool) types.Primitive {
 				"resonance: feature count %d does not match input width %d",
 				featureCount, manifold.arch[0],
 			)
-			return input
+			return
 		}
 
 		var featureStorage [MaxFrameFeatures]float64
@@ -97,20 +97,20 @@ func FramePrimitive(manifold *ResonanceManifold, learn bool) types.Primitive {
 			feature, found := input.Get(featureSymbols[featureIndex])
 			if !found {
 				input.Err = fmt.Errorf("resonance: feature %d required", featureIndex)
-				return input
+				return
 			}
 			featureStorage[featureIndex] = feature
 		}
 
 		if err := manifold.Settle(featureStorage[:featureCount], !learn); err != nil {
 			input.Err = err
-			return input
+			return
 		}
 
 		if learn {
 			if err := manifold.Learn(nil); err != nil {
 				input.Err = err
-				return input
+				return
 			}
 		}
 
@@ -149,7 +149,5 @@ func FramePrimitive(manifold *ResonanceManifold, learn bool) types.Primitive {
 			totalInnovations += count
 		}
 		input.Put(SymbolInnovationCount, float64(totalInnovations))
-
-		return input
 	}
 }

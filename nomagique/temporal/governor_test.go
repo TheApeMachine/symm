@@ -19,10 +19,10 @@ func TestGovernor(t *testing.T) {
 
 		merged := state
 		merged.Merge(input)
-		output := Governor(merged)
+		Governor(&merged)
 
-		So(output.Err, ShouldBeNil)
-		So(output.MustGet(nmtypes.Span), ShouldEqual, 8.0)
+		So(merged.Err, ShouldBeNil)
+		So(merged.MustGet(nmtypes.Span), ShouldEqual, 8.0)
 	})
 
 	Convey("Given perfect stability with unused capacity", t, func() {
@@ -35,10 +35,10 @@ func TestGovernor(t *testing.T) {
 
 		merged := state
 		merged.Merge(input)
-		output := Governor(merged)
+		Governor(&merged)
 
-		So(output.Err, ShouldBeNil)
-		So(output.MustGet(nmtypes.Span), ShouldEqual, 4.0)
+		So(merged.Err, ShouldBeNil)
+		So(merged.MustGet(nmtypes.Span), ShouldEqual, 4.0)
 	})
 }
 
@@ -54,6 +54,6 @@ func BenchmarkGovernor(benchmark *testing.B) {
 	for benchmark.Loop() {
 		merged := state
 		merged.Merge(input)
-		_ = Governor(merged)
+		Governor(&merged)
 	}
 }

@@ -9,22 +9,24 @@ import (
 
 func TestCohort(t *testing.T) {
 	Convey("Given ready pair estimates with unequal support", t, func() {
-		state := Cohort(cohortPair(0.5, 2, 4, 1))
+		state := cohortPair(0.5, 2, 4, 1)
+		Cohort(&state)
 		So(state.Err, ShouldBeNil)
 		merged := state
 		merged.Merge(cohortPair(-0.25, 4, 4, 2))
-		output := Cohort(merged)
+		Cohort(&merged)
 
-		So(output.Err, ShouldBeNil)
-		So(output.MustGet(SymbolTotalSupport), ShouldEqual, 6.0)
-		So(output.MustGet(SymbolWeightedSigned), ShouldEqual, 0.0)
-		So(output.MustGet(SymbolWeightedAbsolute), ShouldEqual, 2.0)
-		So(output.MustGet(SymbolWeightedPeerEnergy), ShouldEqual, 10.0)
-		So(output.MustGet(SymbolPeerCount), ShouldEqual, 2.0)
+		So(merged.Err, ShouldBeNil)
+		So(merged.MustGet(SymbolTotalSupport), ShouldEqual, 6.0)
+		So(merged.MustGet(SymbolWeightedSigned), ShouldEqual, 0.0)
+		So(merged.MustGet(SymbolWeightedAbsolute), ShouldEqual, 2.0)
+		So(merged.MustGet(SymbolWeightedPeerEnergy), ShouldEqual, 10.0)
+		So(merged.MustGet(SymbolPeerCount), ShouldEqual, 2.0)
 	})
 
 	Convey("Given an unsupported pair", t, func() {
-		output := Cohort(cohortPair(1, 1, 1, 1))
+		output := cohortPair(1, 1, 1, 1)
+		Cohort(&output)
 
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolReady), ShouldEqual, 0.0)
@@ -55,6 +57,6 @@ func BenchmarkCohort(benchmark *testing.B) {
 	for benchmark.Loop() {
 		merged := state
 		merged.Merge(input)
-		_ = Cohort(merged)
+		Cohort(&merged)
 	}
 }

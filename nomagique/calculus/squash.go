@@ -14,14 +14,14 @@ is bounded by [-1,1], and emits zero only for the degenerate zero scale/value.
 A negative scale is treated as its absolute value so signed baselines do not
 poison the bound.
 */
-func Squash(input types.Frame) types.Frame {
+func Squash(input *types.Frame) {
 	value, hasX := input.Get(PortX)
 	scale, hasScale := input.Get(SymbolScale)
 
 	if !hasX || !hasScale || !utils.IsFinite(value) || !utils.IsFinite(scale) {
 		input.Err = fmt.Errorf("calculus: squash requires finite value and scale")
 
-		return input
+		return
 	}
 
 	// Normalize both magnitudes by their common maximum before summing so the
@@ -36,6 +36,4 @@ func Squash(input types.Frame) types.Frame {
 	}
 
 	input.Put(PortResult, result)
-
-	return input
 }

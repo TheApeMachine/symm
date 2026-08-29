@@ -27,7 +27,7 @@ so the current event's own jump never inflates its own compensator. It also
 emits the compensated count innovations M_x = N_x − Λ_x and their standardized
 forms M_x/√Λ_x, which form a martingale under a correctly specified process.
 */
-func Compensator(input types.Frame) types.Frame {
+func Compensator(input *types.Frame) {
 	sec, hasSec := input.Get(SymbolUnixSec)
 	nsec, hasNsec := input.Get(SymbolUnixNsec)
 
@@ -36,7 +36,7 @@ func Compensator(input types.Frame) types.Frame {
 			"statistic: compensator requires normalized event time",
 		)
 
-		return input
+		return
 	}
 
 	lastSec, hasLastSec := input.Get(symbolCompensatorLastSec)
@@ -49,7 +49,7 @@ func Compensator(input types.Frame) types.Frame {
 		input.Put(SymbolCompensatorBeta, 0)
 		input.Put(SymbolReady, 0)
 
-		return input
+		return
 	}
 
 	delta := elapsedSince(sec, nsec, lastSec, lastNsec)
@@ -59,10 +59,10 @@ func Compensator(input types.Frame) types.Frame {
 			"statistic: compensator event time must not regress",
 		)
 
-		return input
+		return
 	}
 
-	beta := value(input, SymbolBeta, 1)
+	beta := value(*input, SymbolBeta, 1)
 	mark, _ := input.Get(SymbolMark)
 	lambdaAlpha, _ := input.Get(SymbolLambdaAlpha)
 	lambdaBeta, _ := input.Get(SymbolLambdaBeta)
@@ -73,9 +73,9 @@ func Compensator(input types.Frame) types.Frame {
 	prevBeta := undecay(lambdaBeta, muBeta, beta, delta)
 
 	if mark > 0 {
-		prevAlpha -= value(input, SymbolAlphaAA, 0)
+		prevAlpha -= value(*input, SymbolAlphaAA, 0)
 	} else {
-		prevBeta -= value(input, SymbolAlphaBB, 0)
+		prevBeta -= value(*input, SymbolAlphaBB, 0)
 	}
 
 	prevAlpha = math.Max(prevAlpha, muAlpha)
@@ -110,8 +110,6 @@ func Compensator(input types.Frame) types.Frame {
 	input.Put(SymbolStandardInnovAlpha, standardAlpha)
 	input.Put(SymbolStandardInnovBeta, standardBeta)
 	input.Put(SymbolReady, 1)
-
-	return input
 }
 
 /*

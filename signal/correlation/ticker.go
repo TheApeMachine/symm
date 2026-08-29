@@ -249,7 +249,11 @@ func newCorrelationPair() func(focal *nmtypes.Frame, peer *nmtypes.Frame) nmtype
 		previous.CopyFrom(&paired, focal)
 		current.CopyFrom(&paired, peer)
 
-		return nmcorrelation.PValue(hayashi(paired))
+		hayashi(&paired)
+
+		nmcorrelation.PValue(&paired)
+
+		return paired
 	}
 }
 

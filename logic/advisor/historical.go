@@ -139,12 +139,12 @@ new observation when this call's own Measurement delivered the value.
 func freshPath(binding MetricBinding) nmtypes.Primitive {
 	path := temporal.Path(binding.Prefix)
 
-	return func(input nmtypes.Frame) nmtypes.Frame {
+	return func(input *nmtypes.Frame) {
 		if !input.Has(binding.Fresh) {
-			return input
+			return
 		}
 
-		return path(input)
+		path(input)
 	}
 }
 
@@ -156,20 +156,18 @@ timescale retained from an earlier, unrelated event is never re-written as if
 this event delivered it.
 */
 func horizonControl(binding MetricBinding) nmtypes.Primitive {
-	return func(input nmtypes.Frame) nmtypes.Frame {
+	return func(input *nmtypes.Frame) {
 		if !input.Has(binding.Fresh) {
-			return input
+			return
 		}
 
 		value, found := input.Get(binding.Series.ValueSymbol)
 
 		if !found {
-			return input
+			return
 		}
 
 		input.Put(recurrence.SymbolHorizon, value)
-
-		return input
 	}
 }
 

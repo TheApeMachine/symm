@@ -39,14 +39,17 @@ func TestFreshTemporalContext(t *testing.T) {
 			retained.Put(binding.Series.SecSymbol, 0)
 			retained.Put(binding.Series.NsecSymbol, 0)
 
-			output := branch(retained)
+			original := retained
+			output := retained
+			branch(&output)
 
 			So(output.Err, ShouldBeNil)
-			So(output.Equal(retained), ShouldBeTrue)
+			So(output.Equal(original), ShouldBeTrue)
 		})
 
 		Convey("a Fresh call advances the retained series", func() {
-			output := branch(freshFrame(binding, 0.01, 0, 0))
+			output := freshFrame(binding, 0.01, 0, 0)
+			branch(&output)
 
 			So(output.Err, ShouldBeNil)
 			So(binding.Series.Count(output), ShouldEqual, 1)
@@ -58,14 +61,15 @@ func TestFreshTemporalContext(t *testing.T) {
 			// regression guard rejecting it is a genuine defect that must
 			// surface, not something a composition layer could ever
 			// legitimately reinterpret as "not yet observed."
-			first := branch(freshFrame(binding, 0.01, 5, 0))
+			first := freshFrame(binding, 0.01, 5, 0)
+			branch(&first)
 			So(first.Err, ShouldBeNil)
 
 			merged := first
 			merged.Merge(freshFrame(binding, 0.02, 1, 0))
-			regressed := branch(merged)
+			branch(&merged)
 
-			So(regressed.Err, ShouldNotBeNil)
+			So(merged.Err, ShouldNotBeNil)
 		})
 	})
 
@@ -75,8 +79,8 @@ func TestFreshTemporalContext(t *testing.T) {
 		span := nmtypes.MustIntern("test/liquidity/pipeline_scrub/input/span")
 
 		Convey("Fresh never survives into the committed output, even on a successful step", func() {
-			frame := freshFrame(binding, 0.01, 0, 0)
-			output := pipeline(frame)
+			output := freshFrame(binding, 0.01, 0, 0)
+			pipeline(&output)
 
 			So(output.Err, ShouldBeNil)
 			So(output.Has(binding.Fresh), ShouldBeFalse)
@@ -87,17 +91,17 @@ func TestFreshTemporalContext(t *testing.T) {
 			// Baseline-fed span feedback, so a duplicate resubmission would be
 			// observable in Count rather than masked by a capacity pinned at
 			// one slot.
-			seed := freshFrame(binding, 0.01, 0, 0)
-			seed.Put(span, 4)
-			first := pipeline(seed)
+			first := freshFrame(binding, 0.01, 0, 0)
+			first.Put(span, 4)
+			pipeline(&first)
 			So(first.Err, ShouldBeNil)
 			So(binding.Series.Count(first), ShouldEqual, 1)
 
 			second := freshFrame(binding, 0.02, 1, 0)
 			second.Put(span, 4)
-			merged := first
-			merged.Merge(second)
-			afterSecond := pipeline(merged)
+			afterSecond := first
+			afterSecond.Merge(second)
+			pipeline(&afterSecond)
 			So(afterSecond.Err, ShouldBeNil)
 			So(binding.Series.Count(afterSecond), ShouldEqual, 2)
 			So(afterSecond.Has(binding.Fresh), ShouldBeFalse)
@@ -109,9 +113,9 @@ func TestFreshTemporalContext(t *testing.T) {
 			// branch's own gate makes this a deliberate no-op, so the composed
 			// step still succeeds overall, but the series itself must not
 			// advance a second time for the same observation.
-			staleInput := nmtypes.Frame{}
-			staleInput.Merge(afterSecond)
-			stale := pipeline(staleInput)
+			stale := nmtypes.Frame{}
+			stale.Merge(afterSecond)
+			pipeline(&stale)
 
 			So(stale.Err, ShouldBeNil)
 			So(binding.Series.Count(stale), ShouldEqual, 2)

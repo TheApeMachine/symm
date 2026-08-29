@@ -101,12 +101,12 @@ func freshTemporalContext(binding MetricBinding) nmtypes.Primitive {
 		statistic.Velocity(binding.Prefix),
 	)
 
-	return func(input nmtypes.Frame) nmtypes.Frame {
+	return func(input *nmtypes.Frame) {
 		if !input.Has(binding.Fresh) {
-			return input
+			return
 		}
 
-		return stage(input)
+		stage(input)
 	}
 }
 
@@ -122,12 +122,10 @@ later call regardless of what that call actually delivered, permanently
 defeating the gate after its first success.
 */
 func scrubFresh(bindings []MetricBinding) nmtypes.Primitive {
-	return func(input nmtypes.Frame) nmtypes.Frame {
+	return func(input *nmtypes.Frame) {
 		for _, binding := range bindings {
 			input.Delete(binding.Fresh)
 		}
-
-		return input
 	}
 }
 

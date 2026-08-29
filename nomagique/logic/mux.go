@@ -11,7 +11,7 @@ import (
 /*
 Mux selects A when condition is non-zero, otherwise B.
 */
-func Mux(input types.Frame) types.Frame {
+func Mux(input *types.Frame) {
 	condition, hasCondition := input.Get(SymbolCondition)
 	trueValue, hasA := input.Get(calculus.PortA)
 	falseValue, hasB := input.Get(calculus.PortB)
@@ -20,7 +20,7 @@ func Mux(input types.Frame) types.Frame {
 		!utils.IsFinite(trueValue) || !utils.IsFinite(falseValue) {
 		input.Err = fmt.Errorf("logic: mux requires finite condition, true value, and false value")
 
-		return input
+		return
 	}
 
 	result := falseValue
@@ -30,6 +30,4 @@ func Mux(input types.Frame) types.Frame {
 	}
 
 	input.Put(SymbolResult, result)
-
-	return input
 }

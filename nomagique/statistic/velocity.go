@@ -53,7 +53,7 @@ func Velocity(prefix string) types.Primitive {
 	series := temporal.NewSeries(prefix)
 	slots := newVelocitySlots(prefix)
 
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		value, hasValue := input.Get(series.ValueSymbol)
 		sec, hasSec := input.Get(series.SecSymbol)
 		nsec, hasNsec := input.Get(series.NsecSymbol)
@@ -63,7 +63,7 @@ func Velocity(prefix string) types.Primitive {
 				"statistic: velocity requires a value and event time",
 			)
 
-			return input
+			return
 		}
 
 		if nsec < 0 || nsec >= 1e9 {
@@ -71,7 +71,7 @@ func Velocity(prefix string) types.Primitive {
 				"statistic: velocity requires normalized nanoseconds",
 			)
 
-			return input
+			return
 		}
 
 		previousSec, hasLastSec := input.Get(slots.lastSec)
@@ -83,7 +83,7 @@ func Velocity(prefix string) types.Primitive {
 					"statistic: velocity event time must not regress",
 				)
 
-				return input
+				return
 			}
 		}
 
@@ -109,7 +109,5 @@ func Velocity(prefix string) types.Primitive {
 				input.Put(slots.acceleration, delta-lastDelta)
 			}
 		}
-
-		return input
 	}
 }

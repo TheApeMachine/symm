@@ -10,20 +10,20 @@ import (
 /*
 Product multiplies finite A and B operands.
 */
-func Product(input types.Frame) types.Frame {
+func Product(input *types.Frame) {
 	a, hasA := input.Get(PortA)
 	b, hasB := input.Get(PortB)
 
 	if !hasA || !hasB {
 		input.Err = fmt.Errorf("calculus: product requires a and b")
 
-		return input
+		return
 	}
 
 	if !utils.IsFinite(a) || !utils.IsFinite(b) {
 		input.Err = fmt.Errorf("calculus: product requires finite operands")
 
-		return input
+		return
 	}
 
 	result := a * b
@@ -31,10 +31,8 @@ func Product(input types.Frame) types.Frame {
 	if !utils.IsFinite(result) {
 		input.Err = fmt.Errorf("calculus: product overflowed")
 
-		return input
+		return
 	}
 
 	input.Put(PortResult, result)
-
-	return input
 }

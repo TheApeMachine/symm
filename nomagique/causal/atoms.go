@@ -100,20 +100,20 @@ func columnValues(table [][]float64, column int) []float64 {
 Association writes the Pearson correlation between the treatment and target
 columns to SymbolAssociation. A column with no dispersion reports io.EOF.
 */
-func Association(input types.Frame) types.Frame {
+func Association(input *types.Frame) {
 	target, hasTarget := input.Get(SymbolTarget)
 	treatment, hasTreatment := input.Get(SymbolTreatment)
 
 	if !hasTarget || !hasTreatment {
 		input.Err = fmt.Errorf("causal: association requires target and treatment roles")
-		return input
+		return
 	}
 
-	table, err := readWindow(input)
+	table, err := readWindow(*input)
 
 	if err != nil {
 		input.Err = err
-		return input
+		return
 	}
 
 	treatmentValues := columnValues(table, int(treatment))
@@ -122,19 +122,17 @@ func Association(input types.Frame) types.Frame {
 	if stat.Variance(treatmentValues, nil) <= 0 ||
 		stat.Variance(targetValues, nil) <= 0 {
 		input.Err = io.EOF
-		return input
+		return
 	}
 
 	association := stat.Correlation(treatmentValues, targetValues, nil)
 
 	if math.IsNaN(association) || math.IsInf(association, 0) {
 		input.Err = io.EOF
-		return input
+		return
 	}
 
 	input.Put(SymbolAssociation, association)
-
-	return input
 }
 
 /*
@@ -142,20 +140,20 @@ EffectScales writes the standard deviations of the treatment and target columns
 to SymbolTreatmentScale and SymbolTargetScale. A zero-dispersion column reports
 io.EOF.
 */
-func EffectScales(input types.Frame) types.Frame {
+func EffectScales(input *types.Frame) {
 	target, hasTarget := input.Get(SymbolTarget)
 	treatment, hasTreatment := input.Get(SymbolTreatment)
 
 	if !hasTarget || !hasTreatment {
 		input.Err = fmt.Errorf("causal: effect scales require target and treatment roles")
-		return input
+		return
 	}
 
-	table, err := readWindow(input)
+	table, err := readWindow(*input)
 
 	if err != nil {
 		input.Err = err
-		return input
+		return
 	}
 
 	treatmentScale := stat.StdDev(columnValues(table, int(treatment)), nil)
@@ -163,13 +161,11 @@ func EffectScales(input types.Frame) types.Frame {
 
 	if treatmentScale <= 0 || targetScale <= 0 {
 		input.Err = io.EOF
-		return input
+		return
 	}
 
 	input.Put(SymbolTreatmentScale, treatmentScale)
 	input.Put(SymbolTargetScale, targetScale)
-
-	return input
 }
 
 /*
@@ -177,32 +173,32 @@ Percentile writes the interpolated quantile of the treatment column to
 SymbolLevel using (n-1) indexing. The requested fraction is read from
 SymbolLevel before it is overwritten.
 */
-func Percentile(input types.Frame) types.Frame {
+func Percentile(input *types.Frame) {
 	treatment, hasTreatment := input.Get(SymbolTreatment)
 	fraction, hasFraction := input.Get(SymbolLevel)
 
 	if !hasTreatment || !hasFraction {
 		input.Err = fmt.Errorf("causal: percentile requires treatment role and level fraction")
-		return input
+		return
 	}
 
 	if fraction < 0 || fraction > 1 || math.IsNaN(fraction) {
 		input.Err = fmt.Errorf("causal: percentile fraction must lie in [0, 1]")
-		return input
+		return
 	}
 
-	table, err := readWindow(input)
+	table, err := readWindow(*input)
 
 	if err != nil {
 		input.Err = err
-		return input
+		return
 	}
 
 	values := columnValues(table, int(treatment))
 
 	if len(values) == 0 {
 		input.Err = fmt.Errorf("causal: percentile has no values")
-		return input
+		return
 	}
 
 	sorted := append([]float64(nil), values...)
@@ -215,12 +211,10 @@ func Percentile(input types.Frame) types.Frame {
 
 	if lower >= count-1 {
 		input.Put(SymbolLevel, sorted[count-1])
-		return input
+		return
 	}
 
 	input.Put(SymbolLevel, sorted[lower]+remainder*(sorted[lower+1]-sorted[lower]))
-
-	return input
 }
 
 /*
@@ -231,26 +225,26 @@ controls, applies a Gaussian kernel weighting by the standardized control
 distance of the current row, and normalizes by the weighted treatment square. A
 zero weight sum reports io.EOF.
 */
-func BackdoorEffect(input types.Frame) types.Frame {
+func BackdoorEffect(input *types.Frame) {
 	target, hasTarget := input.Get(SymbolTarget)
 	treatment, hasTreatment := input.Get(SymbolTreatment)
 	bandwidth, hasBandwidth := input.Get(SymbolBandwidth)
 
 	if !hasTarget || !hasTreatment || !hasBandwidth {
 		input.Err = fmt.Errorf("causal: backdoor requires roles and bandwidth")
-		return input
+		return
 	}
 
 	if bandwidth <= 0 {
 		input.Err = fmt.Errorf("causal: kernel bandwidth must be positive")
-		return input
+		return
 	}
 
-	table, err := readWindow(input)
+	table, err := readWindow(*input)
 
 	if err != nil {
 		input.Err = err
-		return input
+		return
 	}
 
 	targetValues := columnValues(table, int(target))
@@ -269,7 +263,7 @@ func BackdoorEffect(input types.Frame) types.Frame {
 
 	if len(controls) == 0 {
 		input.Put(SymbolBackdoor, 0)
-		return input
+		return
 	}
 
 	controlColumns := make([][]float64, len(controls))
@@ -282,7 +276,7 @@ func BackdoorEffect(input types.Frame) types.Frame {
 
 		if controlScales[index] <= 0 {
 			input.Err = io.EOF
-			return input
+			return
 		}
 	}
 
@@ -290,14 +284,14 @@ func BackdoorEffect(input types.Frame) types.Frame {
 
 	if err != nil {
 		input.Err = err
-		return input
+		return
 	}
 
 	residualTreatment, err := residualizeColumn(treatmentValues, controlColumns...)
 
 	if err != nil {
 		input.Err = err
-		return input
+		return
 	}
 
 	current := table[len(table)-1]
@@ -321,12 +315,10 @@ func BackdoorEffect(input types.Frame) types.Frame {
 
 	if weightSum <= 0 {
 		input.Err = io.EOF
-		return input
+		return
 	}
 
 	input.Put(SymbolBackdoor, numerator/weightSum)
-
-	return input
 }
 
 /*
@@ -388,21 +380,21 @@ DoExpectationFrame writes the average structural prediction at the intervening
 treatment level to SymbolDoExpectation, using the retained window as the
 observed control distribution and a linear structural fit.
 */
-func DoExpectationFrame(input types.Frame) types.Frame {
+func DoExpectationFrame(input *types.Frame) {
 	target, hasTarget := input.Get(SymbolTarget)
 	treatment, hasTreatment := input.Get(SymbolTreatment)
 	level, hasLevel := input.Get(SymbolLevel)
 
 	if !hasTarget || !hasTreatment || !hasLevel {
 		input.Err = fmt.Errorf("causal: do expectation requires roles and level")
-		return input
+		return
 	}
 
-	table, err := readWindow(input)
+	table, err := readWindow(*input)
 
 	if err != nil {
 		input.Err = err
-		return input
+		return
 	}
 
 	var controls []int
@@ -421,12 +413,10 @@ func DoExpectationFrame(input types.Frame) types.Frame {
 
 	if err != nil {
 		input.Err = err
-		return input
+		return
 	}
 
 	input.Put(SymbolDoExpectation, expectation)
-
-	return input
 }
 
 /*
@@ -434,26 +424,26 @@ CounterfactualFrame writes the structural counterfactual, its residual noise,
 and the uplift to SymbolCounterfactual, SymbolNoise, and SymbolUplift, using the
 retained window and the last row as the factual observation.
 */
-func CounterfactualFrame(input types.Frame) types.Frame {
+func CounterfactualFrame(input *types.Frame) {
 	target, hasTarget := input.Get(SymbolTarget)
 	treatment, hasTreatment := input.Get(SymbolTreatment)
 	level, hasLevel := input.Get(SymbolLevel)
 
 	if !hasTarget || !hasTreatment || !hasLevel {
 		input.Err = fmt.Errorf("causal: counterfactual requires roles and level")
-		return input
+		return
 	}
 
-	table, err := readWindow(input)
+	table, err := readWindow(*input)
 
 	if err != nil {
 		input.Err = err
-		return input
+		return
 	}
 
 	if len(table) < 1 || len(table[0]) <= int(target) {
 		input.Err = fmt.Errorf("causal: counterfactual requires a factual row with a target")
-		return input
+		return
 	}
 
 	actual := table[len(table)-1]
@@ -474,12 +464,10 @@ func CounterfactualFrame(input types.Frame) types.Frame {
 
 	if err != nil {
 		input.Err = err
-		return input
+		return
 	}
 
 	input.Put(SymbolCounterfactual, counterfactual)
 	input.Put(SymbolNoise, noise)
 	input.Put(SymbolUplift, counterfactual-actual[int(target)])
-
-	return input
 }

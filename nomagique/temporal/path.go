@@ -114,7 +114,7 @@ loss.
 func Path(prefix string) types.Primitive {
 	series := NewSeries(prefix)
 
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		value, hasValue := input.Get(series.ValueSymbol)
 		seconds, hasSeconds := input.Get(series.SecSymbol)
 		nanoseconds, hasNanoseconds := input.Get(series.NsecSymbol)
@@ -124,7 +124,7 @@ func Path(prefix string) types.Primitive {
 				"temporal: path requires a value and event time",
 			)
 
-			return input
+			return
 		}
 
 		if seconds != math.Trunc(seconds) || nanoseconds != math.Trunc(nanoseconds) ||
@@ -133,18 +133,18 @@ func Path(prefix string) types.Primitive {
 				"temporal: path requires integral seconds and normalized nanoseconds",
 			)
 
-			return input
+			return
 		}
 
 		timestamp := int64(seconds)*nanosecondsPerSecond + int64(nanoseconds)
-		count := series.Count(input)
-		head := series.Head(input)
-		capacity, err := pathCapacity(series, input, count)
+		count := series.CountPtr(input)
+		head := series.HeadPtr(input)
+		capacity, err := pathCapacity(series, *input, count)
 
 		if err != nil {
 			input.Err = err
 
-			return input
+			return
 		}
 
 		if capacity < count {
@@ -152,18 +152,18 @@ func Path(prefix string) types.Primitive {
 				"temporal: path capacity cannot be smaller than its retained count",
 			)
 
-			return input
+			return
 		}
 
 		if count > 0 {
-			latestTimestamp, _, found := series.Sample(&input, count-1)
+			latestTimestamp, _, found := series.Sample(input, count-1)
 
 			if !found || timestamp < latestTimestamp {
 				input.Err = fmt.Errorf(
 					"temporal: path event time must not regress",
 				)
 
-				return input
+				return
 			}
 		}
 
@@ -182,8 +182,6 @@ func Path(prefix string) types.Primitive {
 		input.Put(series.HeadSymbol, float64(head))
 		input.Put(series.ReadySymbol, 1)
 		input.Put(series.CapacitySymbol, float64(capacity))
-
-		return input
 	}
 }
 

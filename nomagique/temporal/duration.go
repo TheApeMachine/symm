@@ -18,7 +18,7 @@ var (
 /*
 Duration computes elapsed seconds from separate second and nanosecond coordinates.
 */
-func Duration(input types.Frame) types.Frame {
+func Duration(input *types.Frame) {
 	currentSec, hasCurrentSec := input.Get(SymbolCurrentSec)
 	currentNsec, hasCurrentNsec := input.Get(SymbolCurrentNsec)
 	previousSec, hasPreviousSec := input.Get(SymbolPreviousSec)
@@ -29,7 +29,7 @@ func Duration(input types.Frame) types.Frame {
 			"temporal: duration requires current and previous timestamp coordinates",
 		)
 
-		return input
+		return
 	}
 
 	if !utils.IsFinite(currentSec, currentNsec, previousSec, previousNsec) ||
@@ -38,11 +38,9 @@ func Duration(input types.Frame) types.Frame {
 			"temporal: duration coordinates must be finite and normalized",
 		)
 
-		return input
+		return
 	}
 
 	delta := currentSec - previousSec + (currentNsec-previousNsec)*1e-9
 	input.Put(SymbolDelta, delta)
-
-	return input
 }

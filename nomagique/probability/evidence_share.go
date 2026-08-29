@@ -25,7 +25,7 @@ SymbolWinner. It is independent of how strengths were produced or how they will
 be consumed, so it composes with EvidenceShare and any other consumer.
 */
 func Argmax() types.Primitive {
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		bestIndex := 0
 		bestValue := 0.0
 		found := false
@@ -43,7 +43,7 @@ func Argmax() types.Primitive {
 					index,
 				)
 
-				return input
+				return
 			}
 
 			if !found || value > bestValue {
@@ -56,12 +56,10 @@ func Argmax() types.Primitive {
 		if !found {
 			input.Err = fmt.Errorf("probability: argmax requires at least one sample")
 
-			return input
+			return
 		}
 
 		input.Put(SymbolWinner, float64(bestIndex))
-
-		return input
 	}
 }
 
@@ -80,19 +78,19 @@ under unbounded positive evidence. The winner index and the confidence are
 written back to SymbolWinner and SymbolConfidence.
 */
 func EvidenceShare() types.Primitive {
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		var strengths [types.MaxSamples]float64
 
-		count, ok := collectSamples(&input, &strengths)
+		count, ok := collectSamples(input, &strengths)
 
 		if !ok {
-			return input
+			return
 		}
 
 		if count == 0 {
 			input.Err = fmt.Errorf("probability: evidence share requires samples")
 
-			return input
+			return
 		}
 
 		selected := 0
@@ -106,7 +104,7 @@ func EvidenceShare() types.Primitive {
 		if selected < 0 || selected >= count {
 			input.Err = fmt.Errorf("probability: evidence share winner index out of range")
 
-			return input
+			return
 		}
 
 		selectedStrength := strengths[selected]
@@ -118,14 +116,14 @@ func EvidenceShare() types.Primitive {
 						"probability: evidence share requires positive selected evidence",
 					)
 
-					return input
+					return
 				}
 			}
 
 			input.Put(SymbolWinner, float64(selected))
 			input.Put(SymbolConfidence, 1.0/float64(count))
 
-			return input
+			return
 		}
 
 		exponent := evidenceExponent(strengths[:count])
@@ -143,8 +141,6 @@ func EvidenceShare() types.Primitive {
 
 		input.Put(SymbolWinner, float64(selected))
 		input.Put(SymbolConfidence, numerator/denominator)
-
-		return input
 	}
 }
 
@@ -159,19 +155,19 @@ present values into a probability distribution before measuring entropy, so it
 composes with a bare strength vector or a confidence vector alike.
 */
 func ShannonAmbiguity() types.Primitive {
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		var values [types.MaxSamples]float64
 
-		count, ok := collectSamples(&input, &values)
+		count, ok := collectSamples(input, &values)
 
 		if !ok {
-			return input
+			return
 		}
 
 		if count == 0 {
 			input.Err = fmt.Errorf("probability: shannon ambiguity requires samples")
 
-			return input
+			return
 		}
 
 		total := 0.0
@@ -180,7 +176,7 @@ func ShannonAmbiguity() types.Primitive {
 			if values[index] < 0 {
 				input.Err = fmt.Errorf("probability: shannon ambiguity requires non-negative values")
 
-				return input
+				return
 			}
 
 			total += values[index]
@@ -189,7 +185,7 @@ func ShannonAmbiguity() types.Primitive {
 		if total <= 0 {
 			input.Put(SymbolAmbiguity, 1.0)
 
-			return input
+			return
 		}
 
 		entropy := 0.0
@@ -208,14 +204,12 @@ func ShannonAmbiguity() types.Primitive {
 		if maximum <= 0 {
 			input.Put(SymbolAmbiguity, 0)
 
-			return input
+			return
 		}
 
 		ambiguity := entropy / maximum
 
 		input.Put(SymbolAmbiguity, clampUnit(ambiguity))
-
-		return input
 	}
 }
 

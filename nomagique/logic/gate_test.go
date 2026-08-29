@@ -12,8 +12,8 @@ import (
 func TestGateAndObservationPrimitives(t *testing.T) {
 	Convey("Gate passes the value only under a non-zero finite condition", t, func() {
 		for condition, expected := range map[float64]float64{0: 0, 1: 7, -1: 7, 0.25: 7} {
-			input := types.Frame{}.Set(SymbolCondition, condition).Set(SymbolValue, 7)
-			output := Gate(input)
+			output := types.Frame{}.Set(SymbolCondition, condition).Set(SymbolValue, 7)
+			Gate(&output)
 			So(output.Err, ShouldBeNil)
 			So(output.MustGet(SymbolResult), ShouldEqual, expected)
 		}
@@ -22,7 +22,8 @@ func TestGateAndObservationPrimitives(t *testing.T) {
 			types.Frame{}.Set(SymbolCondition, math.NaN()).Set(SymbolValue, 1),
 			types.Frame{}.Set(SymbolCondition, 1).Set(SymbolValue, math.Inf(1)),
 		} {
-			output := Gate(input)
+			output := input
+			Gate(&output)
 			So(output.Err, ShouldNotBeNil)
 		}
 	})
@@ -32,15 +33,18 @@ func TestGateAndObservationPrimitives(t *testing.T) {
 			Set(SymbolCondition, -1).
 			Set(calculus.PortA, 3).
 			Set(calculus.PortB, 9)
-		output := Mux(input)
+		output := input
+		Mux(&output)
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolResult), ShouldEqual, 3.0)
 		input.Put(SymbolCondition, 0)
-		output = Mux(input)
+		output = input
+		Mux(&output)
 		So(output.Err, ShouldBeNil)
 		So(output.MustGet(SymbolResult), ShouldEqual, 9.0)
 		input.Put(calculus.PortA, math.NaN())
-		output = Mux(input)
+		output = input
+		Mux(&output)
 		So(output.Err, ShouldNotBeNil)
 	})
 
@@ -48,14 +52,22 @@ func TestGateAndObservationPrimitives(t *testing.T) {
 		first := types.MustIntern("test/logic/observe/first")
 		second := types.MustIntern("test/logic/observe/second")
 		input := types.Frame{}.Set(first, math.NaN()).Set(second, 2)
-		output := Observe(first, second)(input)
+
+		output := input
+		Observe(first, second)(&output)
 		So(output.Err, ShouldBeNil)
 		So(output.Equal(input), ShouldBeTrue)
-		output = Observe(first, second)(types.Frame{}.Set(first, 1))
+
+		output = types.Frame{}.Set(first, 1)
+		Observe(first, second)(&output)
 		So(output.Err, ShouldNotBeNil)
-		output = EnsureFinite(first, second)(input)
+
+		output = input
+		EnsureFinite(first, second)(&output)
 		So(output.Err, ShouldNotBeNil)
-		output = EnsureFinite(first, second)(types.Frame{}.Set(first, 1).Set(second, 2))
+
+		output = types.Frame{}.Set(first, 1).Set(second, 2)
+		EnsureFinite(first, second)(&output)
 		So(output.Err, ShouldBeNil)
 		So(output.Count(), ShouldEqual, 2)
 	})

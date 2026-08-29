@@ -14,13 +14,13 @@ result is written to SymbolResult with readiness in SymbolReady and the sample
 count in SymbolCount. An empty sample set is a valid provisional result with
 ready zero.
 */
-func MedianAbsolute(input types.Frame) types.Frame {
-	values, count, err := collectSamples(&input, "median-absolute")
+func MedianAbsolute(input *types.Frame) {
+	values, count, err := collectSamples(input, "median-absolute")
 
 	if err != nil {
 		input.Err = err
 
-		return input
+		return
 	}
 
 	for index := 0; index < count; index++ {
@@ -45,8 +45,6 @@ func MedianAbsolute(input types.Frame) types.Frame {
 	input.Put(SymbolResult, result)
 	input.Put(SymbolReady, ready)
 	input.Put(SymbolCount, float64(count))
-
-	return input
 }
 
 /*
@@ -72,14 +70,14 @@ func MedianAbsoluteOf(values []float64) (float64, bool) {
 		frame.Put(types.MustSampleSymbol(index), value)
 	}
 
-	output := MedianAbsolute(frame)
+	MedianAbsolute(&frame)
 
-	if output.Err != nil {
+	if frame.Err != nil {
 		return 0, false
 	}
 
-	result, found := output.Get(SymbolResult)
-	ready, hasReady := output.Get(SymbolReady)
+	result, found := frame.Get(SymbolResult)
+	ready, hasReady := frame.Get(SymbolReady)
 
 	if !found || !hasReady || ready == 0 {
 		return 0, false

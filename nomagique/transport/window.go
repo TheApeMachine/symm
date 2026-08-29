@@ -12,7 +12,7 @@ var SymbolCapacity = types.MustIntern("capacity")
 /*
 Window retains a bounded ring of scalar samples entirely inside its Frame state.
 */
-func Window(input types.Frame) types.Frame {
+func Window(input *types.Frame) {
 	capacityValue, hasCapacity := input.Get(SymbolCapacity)
 	sample, hasSample := input.Get(types.SampleValue)
 
@@ -21,7 +21,7 @@ func Window(input types.Frame) types.Frame {
 			"transport: window requires capacity and sample",
 		)
 
-		return input
+		return
 	}
 
 	if capacityValue <= 0 || capacityValue != math.Trunc(capacityValue) ||
@@ -31,7 +31,7 @@ func Window(input types.Frame) types.Frame {
 			types.MaxSamples,
 		)
 
-		return input
+		return
 	}
 
 	capacity := int(capacityValue)
@@ -44,7 +44,7 @@ func Window(input types.Frame) types.Frame {
 			capacity,
 		)
 
-		return input
+		return
 	}
 
 	slot := count
@@ -61,8 +61,6 @@ func Window(input types.Frame) types.Frame {
 	input.Put(types.SampleCount, float64(count))
 	input.Put(types.SampleHead, float64(head))
 	input.Put(types.SampleReady, 1)
-
-	return input
 }
 
 /*
@@ -83,7 +81,7 @@ func Samples(state types.Frame) types.Frame {
 	return output
 }
 
-func integer(frame types.Frame, symbol types.Symbol) int {
+func integer(frame *types.Frame, symbol types.Symbol) int {
 	value, found := frame.Get(symbol)
 
 	if !found {

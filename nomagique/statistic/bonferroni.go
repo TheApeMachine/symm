@@ -18,7 +18,7 @@ PortB carries the sample count, and PortResult receives the threshold. The
 tail factor 2 is the standard two-tailed Bonferroni correction for a lag
 search, not an ad-hoc multiplier.
 */
-func Bonferroni(input types.Frame) types.Frame {
+func Bonferroni(input *types.Frame) {
 	searches, hasSearches := input.Get(types.PortA)
 	samples, hasSamples := input.Get(types.PortB)
 
@@ -27,7 +27,7 @@ func Bonferroni(input types.Frame) types.Frame {
 			"statistic: bonferroni requires a search count and a sample count",
 		)
 
-		return input
+		return
 	}
 
 	if !finite(searches, samples) {
@@ -35,7 +35,7 @@ func Bonferroni(input types.Frame) types.Frame {
 			"statistic: bonferroni requires finite operands",
 		)
 
-		return input
+		return
 	}
 
 	if searches < 0 {
@@ -43,7 +43,7 @@ func Bonferroni(input types.Frame) types.Frame {
 			"statistic: bonferroni search count cannot be negative",
 		)
 
-		return input
+		return
 	}
 
 	if samples <= 1 {
@@ -51,11 +51,9 @@ func Bonferroni(input types.Frame) types.Frame {
 			"statistic: bonferroni requires more than one sample",
 		)
 
-		return input
+		return
 	}
 
 	threshold := math.Sqrt(2 * math.Log(searches+1) / (samples - 1))
 	input.Put(types.PortResult, threshold)
-
-	return input
 }

@@ -59,7 +59,7 @@ func ZScore(prefix string) types.Primitive {
 	series := temporal.NewSeries(prefix)
 	slots := newZScoreSlots(prefix)
 
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		value, hasValue := input.Get(series.ValueSymbol)
 		sec, hasSec := input.Get(series.SecSymbol)
 		nsec, hasNsec := input.Get(series.NsecSymbol)
@@ -69,7 +69,7 @@ func ZScore(prefix string) types.Primitive {
 				"statistic: z-score requires a value and event time",
 			)
 
-			return input
+			return
 		}
 
 		if nsec < 0 || nsec >= 1e9 {
@@ -77,7 +77,7 @@ func ZScore(prefix string) types.Primitive {
 				"statistic: z-score requires normalized nanoseconds",
 			)
 
-			return input
+			return
 		}
 
 		halflife, hasHalflife := input.Get(slots.halflife)
@@ -87,7 +87,7 @@ func ZScore(prefix string) types.Primitive {
 				"statistic: z-score requires a non-negative dispersion halflife",
 			)
 
-			return input
+			return
 		}
 
 		if !hasHalflife || halflife == 0 {
@@ -104,7 +104,7 @@ func ZScore(prefix string) types.Primitive {
 			input.Put(series.ValueSymbol, value)
 			input.Put(series.ReadySymbol, 0)
 
-			return input
+			return
 		}
 
 		previousSec, hasLastSec := input.Get(slots.lastSec)
@@ -116,7 +116,7 @@ func ZScore(prefix string) types.Primitive {
 					"statistic: z-score event time must not regress",
 				)
 
-				return input
+				return
 			}
 		}
 
@@ -146,7 +146,5 @@ func ZScore(prefix string) types.Primitive {
 		input.Put(slots.residual, residual)
 		input.Put(slots.value, score)
 		input.Put(series.ReadySymbol, 1)
-
-		return input
 	}
 }

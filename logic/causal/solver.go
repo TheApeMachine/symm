@@ -437,7 +437,8 @@ func (solver *Solver) evaluatePearl(
 		}
 	}
 
-	output := algo.Pearl()(frame)
+	algo.Pearl()(&frame)
+	output := frame
 
 	if output.Err != nil {
 		return nil, false, output.Err

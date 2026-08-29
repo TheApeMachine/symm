@@ -10,7 +10,7 @@ var SymbolMean = types.MustIntern("mean")
 Mean computes the arithmetic center of the populated generic sample slots.
 An empty collection is a valid provisional result with ready zero.
 */
-func Mean(input types.Frame) types.Frame {
+func Mean(input *types.Frame) {
 	mean := 0.0
 	count := 0
 
@@ -35,6 +35,4 @@ func Mean(input types.Frame) types.Frame {
 	input.Put(SymbolResult, mean)
 	input.Put(SymbolCount, float64(count))
 	input.Put(SymbolReady, ready)
-
-	return input
 }

@@ -58,7 +58,7 @@ current observation into the previous slots for the next step. Every retained
 value is carried in Frame slots, so keyed streams can own the primitive without
 hidden mutable fields.
 */
-func PredictiveDynamics(input types.Frame) types.Frame {
+func PredictiveDynamics(input *types.Frame) {
 	observedAt, hasObservedAt := input.Get(SymbolDynamicsTime)
 	position, hasPosition := input.Get(SymbolDynamicsPosition)
 
@@ -66,7 +66,7 @@ func PredictiveDynamics(input types.Frame) types.Frame {
 		input.Err = fmt.Errorf(
 			"predictive dynamics: time and position required",
 		)
-		return input
+		return
 	}
 
 	activity, _ := input.Get(SymbolDynamicsActivity)
@@ -75,7 +75,7 @@ func PredictiveDynamics(input types.Frame) types.Frame {
 	previousAt, initialized := input.Get(SymbolDynamicsPreviousTime)
 
 	if !initialized {
-		return initializePredictiveDynamics(
+		initializePredictiveDynamics(
 			input,
 			observedAt,
 			position,
@@ -83,17 +83,18 @@ func PredictiveDynamics(input types.Frame) types.Frame {
 			phase,
 			hasPhase,
 		)
+		return
 	}
 
 	if observedAt < previousAt {
 		input.Err = fmt.Errorf(
 			"predictive dynamics: event time must not regress",
 		)
-		return input
+		return
 	}
 
 	if observedAt == previousAt {
-		return input
+		return
 	}
 
 	deltaTime := observedAt - previousAt
@@ -103,7 +104,7 @@ func PredictiveDynamics(input types.Frame) types.Frame {
 		input.Err = fmt.Errorf(
 			"predictive dynamics: previous position required",
 		)
-		return input
+		return
 	}
 
 	previousVelocity, _ := input.Get(SymbolDynamicsPreviousVelocity)
@@ -180,18 +181,16 @@ func PredictiveDynamics(input types.Frame) types.Frame {
 	input.Put(SymbolDynamicsRotorScalar, rotorScalar)
 	input.Put(SymbolDynamicsRotorBivector, rotorBivector)
 	input.Put(SymbolDynamicsEquivarianceNorm, equivarianceNorm)
-
-	return input
 }
 
 func initializePredictiveDynamics(
-	input types.Frame,
+	input *types.Frame,
 	observedAt float64,
 	position float64,
 	activity float64,
 	phase float64,
 	hasPhase bool,
-) types.Frame {
+) {
 	if !hasPhase {
 		phase = 0
 	}
@@ -215,12 +214,10 @@ func initializePredictiveDynamics(
 		SymbolDynamicsEquivarianceNorm,
 		rotorScalar*rotorScalar+rotorBivector*rotorBivector,
 	)
-
-	return input
 }
 
 func updateMoments(
-	input types.Frame,
+	input *types.Frame,
 	meanSymbol types.Symbol,
 	m2Symbol types.Symbol,
 	sample float64,

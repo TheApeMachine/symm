@@ -12,12 +12,12 @@ import (
 func TestCategoryClassify(t *testing.T) {
 	Convey("Given a strength vector in the sample slots", t, func() {
 		Convey("the equation wires Argmax, EvidenceShare, and ShannonAmbiguity", func() {
-			input := types.Frame{}
-			input.Put(types.MustSampleSymbol(0), 0.9)
-			input.Put(types.MustSampleSymbol(1), 0.2)
-			input.Put(types.MustSampleSymbol(2), 0.1)
+			output := types.Frame{}
+			output.Put(types.MustSampleSymbol(0), 0.9)
+			output.Put(types.MustSampleSymbol(1), 0.2)
+			output.Put(types.MustSampleSymbol(2), 0.1)
 
-			output := types.Step(CategoryClassify(), input)
+			types.Step(CategoryClassify(), &output)
 
 			So(output.Err, ShouldBeNil)
 			So(output.MustGet(probability.SymbolWinner), ShouldEqual, 0)
@@ -27,12 +27,12 @@ func TestCategoryClassify(t *testing.T) {
 		})
 
 		Convey("uniform strengths yield 1/K confidence and full ambiguity", func() {
-			input := types.Frame{}
-			input.Put(types.MustSampleSymbol(0), 1)
-			input.Put(types.MustSampleSymbol(1), 1)
-			input.Put(types.MustSampleSymbol(2), 1)
+			output := types.Frame{}
+			output.Put(types.MustSampleSymbol(0), 1)
+			output.Put(types.MustSampleSymbol(1), 1)
+			output.Put(types.MustSampleSymbol(2), 1)
 
-			output := types.Step(CategoryClassify(), input)
+			types.Step(CategoryClassify(), &output)
 
 			So(output.Err, ShouldBeNil)
 			So(output.MustGet(probability.SymbolConfidence), ShouldAlmostEqual, 1.0/3.0)

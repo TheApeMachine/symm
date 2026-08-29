@@ -30,12 +30,14 @@ func TestAccumulator(t *testing.T) {
 		})
 
 		Convey("It rejects a missing value", func() {
-			output := accumulator(types.Frame{})
+			output := types.Frame{}
+			accumulator(&output)
 			So(output.Err, ShouldNotBeNil)
 		})
 
 		Convey("It rejects a non-finite sample", func() {
-			output := accumulator(withValue(accValueSlot, math.Inf(1)))
+			output := withValue(accValueSlot, math.Inf(1))
+			accumulator(&output)
 			So(output.Err, ShouldNotBeNil)
 		})
 	})

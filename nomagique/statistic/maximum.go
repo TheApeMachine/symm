@@ -10,13 +10,13 @@ import (
 Maximum returns the greatest populated generic sample. An empty sample set is a
 valid provisional result with ready zero.
 */
-func Maximum(input types.Frame) types.Frame {
-	values, count, err := collectSamples(&input, "maximum")
+func Maximum(input *types.Frame) {
+	values, count, err := collectSamples(input, "maximum")
 
 	if err != nil {
 		input.Err = err
 
-		return input
+		return
 	}
 
 	result := 0.0
@@ -35,15 +35,13 @@ func Maximum(input types.Frame) types.Frame {
 	input.Put(SymbolResult, result)
 	input.Put(SymbolReady, ready)
 	input.Put(SymbolCount, float64(count))
-
-	return input
 }
 
 /*
 MaxOf returns a primitive that evaluates the maximum over specific named symbols in input.
 */
 func MaxOf(symbols ...types.Symbol) types.Primitive {
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		result := -math.MaxFloat64
 		count := 0
 
@@ -72,7 +70,5 @@ func MaxOf(symbols ...types.Symbol) types.Primitive {
 		input.Put(SymbolResult, result)
 		input.Put(SymbolReady, ready)
 		input.Put(SymbolCount, float64(count))
-
-		return input
 	}
 }

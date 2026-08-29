@@ -18,7 +18,7 @@ Governor controls a Window's next capacity from universal stability feedback.
 It expands after a stability decline, contracts to used evidence after perfect
 stability, and otherwise holds the current capacity.
 */
-func Governor(input types.Frame) types.Frame {
+func Governor(input *types.Frame) {
 	stability, hasStability := input.Get(symbolStability)
 	count, hasCount := input.Get(nmtypes.SampleCount)
 
@@ -27,7 +27,7 @@ func Governor(input types.Frame) types.Frame {
 			"temporal: governor requires stability and an integer sample count",
 		)
 
-		return input
+		return
 	}
 
 	capacity, found := input.Get(SymbolCapacity)
@@ -54,8 +54,6 @@ func Governor(input types.Frame) types.Frame {
 	input.Put(SymbolPreviousStability, stability)
 	input.Put(SymbolCapacity, target)
 	input.Put(nmtypes.Span, target)
-
-	return input
 }
 
 const minimumGovernorSamples = 2

@@ -79,7 +79,7 @@ func Baseline(prefix string) types.Primitive {
 	series := temporal.NewSeries(prefix)
 	slots := newBaselineSlots(prefix)
 
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		value, hasValue := input.Get(series.ValueSymbol)
 		sec, hasSec := input.Get(series.SecSymbol)
 		nsec, hasNsec := input.Get(series.NsecSymbol)
@@ -89,7 +89,7 @@ func Baseline(prefix string) types.Primitive {
 				"statistic: baseline requires a value and event time",
 			)
 
-			return input
+			return
 		}
 
 		if nsec < 0 || nsec >= 1e9 {
@@ -97,10 +97,10 @@ func Baseline(prefix string) types.Primitive {
 				"statistic: baseline requires normalized nanoseconds",
 			)
 
-			return input
+			return
 		}
 
-		count := series.Count(input)
+		count := series.Count(*input)
 
 		previousSec, hasLastSec := input.Get(slots.lastSec)
 		previousNsec, hasLastNsec := input.Get(slots.lastNsec)
@@ -111,7 +111,7 @@ func Baseline(prefix string) types.Primitive {
 					"statistic: baseline event time must not regress",
 				)
 
-				return input
+				return
 			}
 		}
 
@@ -128,19 +128,20 @@ func Baseline(prefix string) types.Primitive {
 			input.Put(slots.lastSec, sec)
 			input.Put(slots.lastNsec, nsec)
 
-			return baselineOutput(input, series, value, 1)
+			baselineOutput(input, series, value, 1)
+			return
 		}
 
-		efficiency := windowEfficiency(series, input, count)
+		efficiency := windowEfficiency(series, *input, count)
 		elapsed := elapsedSince(sec, nsec, previousSec, previousNsec)
-		halflife := baselineHalflife(elapsed, efficiency, input, slots)
+		halflife := baselineHalflife(elapsed, efficiency, *input, slots)
 
 		alpha := 1 - math.Exp(-elapsed*math.Ln2/halflife)
 
 		baseline, _ := input.Get(slots.value)
 		baseline += alpha * (value - baseline)
 
-		stability := ringStability(series, input, count, baseline)
+		stability := ringStability(series, *input, count, baseline)
 		previousStability, hasPreviousStability := input.Get(slots.stability)
 
 		// A zero alpha (elapsed == 0) has no finite effective window; fall back
@@ -162,24 +163,22 @@ func Baseline(prefix string) types.Primitive {
 		target := float64(count)
 
 		if hasPreviousStability {
-			target = windowModifier(series, input, count, stability, previousStability)
+			target = windowModifier(series, *input, count, stability, previousStability)
 		}
 
-		return baselineOutput(input, series, value, target)
+		baselineOutput(input, series, value, target)
 	}
 }
 
 func baselineOutput(
-	input types.Frame,
+	input *types.Frame,
 	series temporal.Series,
 	value float64,
 	target float64,
-) types.Frame {
+) {
 	input.Put(series.ValueSymbol, value)
 	input.Put(series.ReadySymbol, 1)
 	input.Put(series.SpanSymbol, target)
-
-	return input
 }
 
 /*

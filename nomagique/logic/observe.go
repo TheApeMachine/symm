@@ -11,7 +11,7 @@ import (
 func Observe(required ...types.Symbol) types.Primitive {
 	facts := append([]types.Symbol(nil), required...)
 
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		for _, symbol := range facts {
 			if input.Has(symbol) {
 				continue
@@ -20,15 +20,13 @@ func Observe(required ...types.Symbol) types.Primitive {
 			if name, found := types.SymbolName(symbol); found {
 				input.Err = fmt.Errorf("logic: observation is missing coordinate %s", name)
 
-				return input
+				return
 			}
 
 			input.Err = fmt.Errorf("logic: observation is missing coordinate %d", symbol)
 
-			return input
+			return
 		}
-
-		return input
 	}
 }
 
@@ -36,7 +34,7 @@ func Observe(required ...types.Symbol) types.Primitive {
 func EnsureFinite(required ...types.Symbol) types.Primitive {
 	facts := append([]types.Symbol(nil), required...)
 
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		for _, symbol := range facts {
 			value, found := input.Get(symbol)
 
@@ -44,15 +42,13 @@ func EnsureFinite(required ...types.Symbol) types.Primitive {
 				if name, named := types.SymbolName(symbol); named {
 					input.Err = fmt.Errorf("logic: coordinate %s must be present and finite", name)
 
-					return input
+					return
 				}
 
 				input.Err = fmt.Errorf("logic: coordinate %d must be present and finite", symbol)
 
-				return input
+				return
 			}
 		}
-
-		return input
 	}
 }

@@ -244,11 +244,11 @@ func newLeadLagPair() func(focal *nmtypes.Frame, peer *nmtypes.Frame) nmtypes.Fr
 	crossLag := nmcorrelation.CrossLag("previous", "current")
 
 	return func(focal *nmtypes.Frame, peer *nmtypes.Frame) nmtypes.Frame {
-		paired := nmtypes.Frame{}
-		previous.CopyFrom(&paired, focal)
-		current.CopyFrom(&paired, peer)
+		output := nmtypes.Frame{}
+		previous.CopyFrom(&output, focal)
+		current.CopyFrom(&output, peer)
 
-		output := crossLag(paired)
+		crossLag(&output)
 
 		if ready, found := output.Get(nmcorrelation.SymbolLeadLagReady); !found || ready == 0 {
 			return output
@@ -260,7 +260,9 @@ func newLeadLagPair() func(focal *nmtypes.Frame, peer *nmtypes.Frame) nmtypes.Fr
 		output.Put(nmcorrelation.SymbolSupport, output.MustGet(nmcorrelation.SymbolEffectiveSupport))
 		output.Put(nmcorrelation.SymbolSearchCount, output.MustGet(nmcorrelation.SymbolLeadLagSearchCount))
 
-		return nmcorrelation.PValue(output)
+		nmcorrelation.PValue(&output)
+
+		return output
 	}
 }
 

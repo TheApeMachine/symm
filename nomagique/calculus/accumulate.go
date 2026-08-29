@@ -12,7 +12,7 @@ import (
 /*
 Accumulate adds the explicit input delta to the total retained in state.
 */
-func Accumulate(input types.Frame) types.Frame {
+func Accumulate(input *types.Frame) {
 	delta, found := input.Get(SymbolDelta)
 
 	if !found || !utils.IsFinite(delta) {
@@ -22,7 +22,7 @@ func Accumulate(input types.Frame) types.Frame {
 			nil,
 		))
 
-		return input
+		return
 	}
 
 	total, hasTotal := input.Get(SymbolTotal)
@@ -34,7 +34,7 @@ func Accumulate(input types.Frame) types.Frame {
 			nil,
 		))
 
-		return input
+		return
 	}
 
 	result := total + delta
@@ -42,11 +42,9 @@ func Accumulate(input types.Frame) types.Frame {
 	if !utils.IsFinite(result) {
 		input.Err = fmt.Errorf("calculus: accumulate overflowed")
 
-		return input
+		return
 	}
 
 	input.Put(SymbolTotal, result)
 	input.Put(PortResult, result)
-
-	return input
 }

@@ -11,16 +11,14 @@ import (
 /*
 Exp projects the exponential e^x of a finite X.
 */
-func Exp(input types.Frame) types.Frame {
+func Exp(input *types.Frame) {
 	x, found := input.Get(PortX)
 
 	if !found || !utils.IsFinite(x) {
 		input.Err = fmt.Errorf("calculus: exp requires a finite x")
 
-		return input
+		return
 	}
 
 	input.Put(PortResult, math.Exp(x))
-
-	return input
 }

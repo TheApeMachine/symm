@@ -35,13 +35,13 @@ func (stream *Stream) Step(input Frame) Frame {
 
 	merged := stream.state
 	merged.Merge(input)
-	output := Step(stream.primitive, merged)
+	Step(stream.primitive, &merged)
 
-	if output.Err == nil {
-		stream.state = output
+	if merged.Err == nil {
+		stream.state = merged
 	}
 
-	return output
+	return merged
 }
 
 /*
@@ -123,17 +123,17 @@ func (stream *AtomicStream) Step(input Frame) Frame {
 		current := stream.state.Load()
 		merged := *current
 		merged.Merge(input)
-		output := Step(stream.primitive, merged)
+		Step(stream.primitive, &merged)
 
-		if output.Err != nil {
-			return output
+		if merged.Err != nil {
+			return merged
 		}
 
 		candidate := new(Frame)
-		*candidate = output
+		*candidate = merged
 
 		if stream.state.CompareAndSwap(current, candidate) {
-			return output
+			return merged
 		}
 	}
 }

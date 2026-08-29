@@ -61,13 +61,13 @@ func (number *Number[Key]) Step(key Key, input Frame) Frame {
 
 	merged := stream.frame
 	merged.Merge(input)
-	output := Step(number.primitive, merged)
+	Step(number.primitive, &merged)
 
-	if output.Err == nil {
-		stream.frame = output
+	if merged.Err == nil {
+		stream.frame = merged
 	}
 
-	return output
+	return merged
 }
 
 // Project returns the committed state for one key.
@@ -218,7 +218,7 @@ func (number *Number[Key]) CrossSection(
 		}
 
 		accumulator.Merge(out)
-		accumulator = Step(reduce, accumulator)
+		Step(reduce, &accumulator)
 
 		if accumulator.Err != nil {
 			crossSectionErr = accumulator.Err
@@ -234,9 +234,9 @@ func (number *Number[Key]) CrossSection(
 		return accumulator, reduced, crossSectionErr
 	}
 
-	final := Step(finalize, accumulator)
+	Step(finalize, &accumulator)
 
-	return final, true, final.Err
+	return accumulator, true, accumulator.Err
 }
 
 /*
@@ -257,15 +257,15 @@ func (number *Number[Key]) ArgMax(
 	var selectionErr error
 
 	number.Range(func(key Key, state Frame) bool {
-		output := Step(score, state)
+		Step(score, &state)
 
-		if output.Err != nil {
-			selectionErr = output.Err
+		if state.Err != nil {
+			selectionErr = state.Err
 			return false
 		}
 
-		ready, hasReady := output.Get(readySymbol)
-		value, hasValue := output.Get(valueSymbol)
+		ready, hasReady := state.Get(readySymbol)
+		value, hasValue := state.Get(valueSymbol)
 
 		if !hasReady || ready == 0 || !hasValue {
 			return true
@@ -429,12 +429,12 @@ func NewSingle(primitives ...Primitive) Single {
 	return func(input Frame) Frame {
 		merged := state
 		merged.Merge(input)
-		output := Step(pipeline, merged)
+		Step(pipeline, &merged)
 
-		if output.Err == nil {
-			state = output
+		if merged.Err == nil {
+			state = merged
 		}
 
-		return output
+		return merged
 	}
 }

@@ -464,7 +464,7 @@ func TestNonComparableType(t *testing.T) {
 				copy(result[len(a):], b)
 				return result
 			}
-			mr := Setup[[]int]([]string{"A"}, nil, reducer)
+			mr := Setup([]string{"A"}, nil, reducer)
 			consumerA := mr.consumersSnapshot()[0]
 
 			Convey("When pushing and popping slice items", func() {

@@ -39,19 +39,19 @@ the running total. It never decides whether a level is high or low.
 func Accumulator(prefix string) types.Primitive {
 	slots := newAccumulatorSlots(prefix)
 
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		sample, found := input.Get(slots.value)
 
 		if !found {
 			input.Err = fmt.Errorf("adaptive: accumulator requires a value")
 
-			return input
+			return
 		}
 
 		if !utils.IsFinite(sample) {
 			input.Err = fmt.Errorf("adaptive: accumulator value must be finite")
 
-			return input
+			return
 		}
 
 		total, hasTotal := input.Get(slots.total)
@@ -77,7 +77,7 @@ func Accumulator(prefix string) types.Primitive {
 		if !utils.IsFinite(next) {
 			input.Err = fmt.Errorf("adaptive: accumulator sum overflowed to non-finite")
 
-			return input
+			return
 		}
 
 		total = next
@@ -87,7 +87,5 @@ func Accumulator(prefix string) types.Primitive {
 		input.Put(slots.total, total)
 		input.Put(slots.carry, carry)
 		input.Put(slots.count, count)
-
-		return input
 	}
 }

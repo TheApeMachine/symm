@@ -15,7 +15,7 @@ Separation reports the normalized margin between two non-negative competing
 hypotheses. No evidence separates nothing; one supported hypothesis separates
 completely; equal support has zero separation.
 */
-func Separation(input types.Frame) types.Frame {
+func Separation(input *types.Frame) {
 	alpha, hasAlpha := input.Get(nmtypes.AlphaQuantity)
 	beta, hasBeta := input.Get(nmtypes.BetaQuantity)
 
@@ -24,7 +24,7 @@ func Separation(input types.Frame) types.Frame {
 			"statistic: separation requires non-negative alpha and beta quantities",
 		)
 
-		return input
+		return
 	}
 
 	winner := math.Max(alpha, beta)
@@ -35,6 +35,4 @@ func Separation(input types.Frame) types.Frame {
 	}
 
 	input.Put(SymbolSeparation, separation)
-
-	return input
 }

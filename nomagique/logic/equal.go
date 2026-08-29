@@ -11,14 +11,14 @@ import (
 /*
 Equal emits one when A and B are exactly equal.
 */
-func Equal(input types.Frame) types.Frame {
+func Equal(input *types.Frame) {
 	left, hasLeft := input.Get(calculus.PortA)
 	right, hasRight := input.Get(calculus.PortB)
 
 	if !hasLeft || !hasRight || !utils.IsFinite(left) || !utils.IsFinite(right) {
 		input.Err = fmt.Errorf("logic: equal requires finite left and right")
 
-		return input
+		return
 	}
 
 	condition := 0.0
@@ -29,6 +29,4 @@ func Equal(input types.Frame) types.Frame {
 
 	input.Put(SymbolCondition, condition)
 	input.Put(SymbolResult, condition)
-
-	return input
 }

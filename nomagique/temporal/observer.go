@@ -28,7 +28,7 @@ func Observer(prefix string, source types.Symbol) types.Primitive {
 	observedSec := types.MustIntern(JoinPrefix(prefix, "temporal/observed_sec"))
 	observedNsec := types.MustIntern(JoinPrefix(prefix, "temporal/observed_nsec"))
 
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		current, hasCurrent := input.Get(source)
 		seconds, hasSeconds := input.Get(SymbolUnixSec)
 		nanoseconds, hasNanoseconds := input.Get(SymbolUnixNsec)
@@ -39,7 +39,7 @@ func Observer(prefix string, source types.Symbol) types.Primitive {
 				"temporal: observer requires a value and normalized event time",
 			)
 
-			return input
+			return
 		}
 
 		previous, hasPrevious := input.Get(previousValue)
@@ -55,7 +55,7 @@ func Observer(prefix string, source types.Symbol) types.Primitive {
 					"temporal: observer event time must not regress",
 				)
 
-				return input
+				return
 			}
 		}
 
@@ -74,7 +74,5 @@ func Observer(prefix string, source types.Symbol) types.Primitive {
 			input.Put(observedSec, previousSeconds)
 			input.Put(observedNsec, previousNanoseconds)
 		}
-
-		return input
 	}
 }

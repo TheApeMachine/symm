@@ -22,7 +22,7 @@ so this primitive carries no knowledge of what those hypotheses mean.
 func HypothesisSeparation(symbols ...types.Symbol) types.Primitive {
 	hypotheses := append([]types.Symbol(nil), symbols...)
 
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		dominant := 0.0
 		runnerUp := 0.0
 		count := 0
@@ -39,7 +39,7 @@ func HypothesisSeparation(symbols ...types.Symbol) types.Primitive {
 					"statistic: hypothesis separation requires finite scores",
 				)
 
-				return input
+				return
 			}
 
 			count++
@@ -62,7 +62,5 @@ func HypothesisSeparation(symbols ...types.Symbol) types.Primitive {
 		}
 
 		input.Put(SymbolResult, separation)
-
-		return input
 	}
 }

@@ -20,7 +20,7 @@ upstream preset that emits an alpha quantity, a beta quantity, and the two
 prices can feed this stage; nothing about the quote's provenance leaks into
 the numeric contract.
 */
-func ExtractDepth(input types.Frame) types.Frame {
+func ExtractDepth(input *types.Frame) {
 	bidPrice, hasBidPrice := input.Get(nmtypes.AlphaPrice)
 	askPrice, hasAskPrice := input.Get(nmtypes.BetaPrice)
 	bidQty, hasBidQty := input.Get(nmtypes.AlphaQuantity)
@@ -31,7 +31,7 @@ func ExtractDepth(input types.Frame) types.Frame {
 			"statistic: extract depth requires both touch prices and both touch quantities",
 		)
 
-		return input
+		return
 	}
 
 	depth := 0.0
@@ -41,6 +41,4 @@ func ExtractDepth(input types.Frame) types.Frame {
 	}
 
 	input.Put(nmtypes.Quantity, depth)
-
-	return input
 }

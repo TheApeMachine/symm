@@ -11,7 +11,7 @@ import (
 /*
 Project emits the affine coordinate (X-A)/(B-A).
 */
-func Project(input types.Frame) types.Frame {
+func Project(input *types.Frame) {
 	x, hasX := input.Get(PortX)
 	a, hasA := input.Get(PortA)
 	b, hasB := input.Get(PortB)
@@ -23,7 +23,7 @@ func Project(input types.Frame) types.Frame {
 			nil,
 		))
 
-		return input
+		return
 	}
 
 	denominator := b - a
@@ -31,7 +31,7 @@ func Project(input types.Frame) types.Frame {
 	if denominator == 0 || !utils.IsFinite(denominator) {
 		input.Err = fmt.Errorf("calculus: project requires distinct finite endpoints")
 
-		return input
+		return
 	}
 
 	result := (x - a) / denominator
@@ -39,10 +39,8 @@ func Project(input types.Frame) types.Frame {
 	if !utils.IsFinite(result) {
 		input.Err = fmt.Errorf("calculus: project overflowed")
 
-		return input
+		return
 	}
 
 	input.Put(PortResult, result)
-
-	return input
 }

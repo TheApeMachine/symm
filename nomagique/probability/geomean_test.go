@@ -8,10 +8,10 @@ import (
 )
 
 func TestGeomean(t *testing.T) {
-	input := types.Frame{}
-	input.Put(types.MustSampleSymbol(0), 4)
-	input.Put(types.MustSampleSymbol(1), 9)
-	output := Geomean(input)
+	output := types.Frame{}
+	output.Put(types.MustSampleSymbol(0), 4)
+	output.Put(types.MustSampleSymbol(1), 9)
+	Geomean(&output)
 
 	if output.Err != nil {
 		t.Fatal(output.Err)
@@ -23,10 +23,11 @@ func TestGeomean(t *testing.T) {
 }
 
 func TestGeomeanRejectsInvalidEvidence(t *testing.T) {
-	input := types.Frame{}
-	input.Put(types.MustSampleSymbol(0), math.Inf(1))
+	output := types.Frame{}
+	output.Put(types.MustSampleSymbol(0), math.Inf(1))
 
-	if output := Geomean(input); output.Err == nil {
+	Geomean(&output)
+	if output.Err == nil {
 		t.Fatal("non-finite evidence should fail")
 	}
 }

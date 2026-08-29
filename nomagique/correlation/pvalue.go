@@ -25,7 +25,7 @@ the retained support is at least 4 (the Fisher standard error 1/sqrt(N-3) is
 defined). Otherwise the primitive reports not ready; no significance cutoff is
 embedded anywhere.
 */
-func PValue(input types.Frame) types.Frame {
+func PValue(input *types.Frame) {
 	correlationValue, hasCorrelation := input.Get(SymbolCorrelation)
 	support, hasSupport := input.Get(SymbolSupport)
 
@@ -34,7 +34,7 @@ func PValue(input types.Frame) types.Frame {
 		math.Abs(correlationValue) >= 1 {
 		input.Put(SymbolPValueReady, 0)
 
-		return input
+		return
 	}
 
 	z := math.Atanh(correlationValue) * math.Sqrt(support-3)
@@ -48,8 +48,6 @@ func PValue(input types.Frame) types.Frame {
 	if searchCount, hasSearch := input.Get(SymbolSearchCount); hasSearch && searchCount >= 1 {
 		input.Put(SymbolSearchAdjustedP, math.Min(1, searchCount*p))
 	}
-
-	return input
 }
 
 func finiteCorrelation(value float64) bool {

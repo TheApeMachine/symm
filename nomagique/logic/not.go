@@ -10,13 +10,13 @@ import (
 /*
 Not inverts one finite numeric condition.
 */
-func Not(input types.Frame) types.Frame {
+func Not(input *types.Frame) {
 	condition, found := input.Get(SymbolCondition)
 
 	if !found || !utils.IsFinite(condition) {
 		input.Err = fmt.Errorf("logic: not requires a finite condition")
 
-		return input
+		return
 	}
 
 	result := 0.0
@@ -27,6 +27,4 @@ func Not(input types.Frame) types.Frame {
 
 	input.Put(SymbolCondition, result)
 	input.Put(SymbolResult, result)
-
-	return input
 }

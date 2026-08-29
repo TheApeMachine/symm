@@ -11,7 +11,7 @@ import (
 PositiveOrder validates two configured facts as 0 < lower < upper.
 */
 func PositiveOrder(lower types.Symbol, upper types.Symbol) types.Primitive {
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		lowerValue, hasLower := input.Get(lower)
 		upperValue, hasUpper := input.Get(upper)
 
@@ -19,9 +19,7 @@ func PositiveOrder(lower types.Symbol, upper types.Symbol) types.Primitive {
 			!utils.IsFinite(upperValue) || lowerValue <= 0 || upperValue <= lowerValue {
 			input.Err = fmt.Errorf("logic: positive order requires 0 < lower < upper")
 
-			return input
+			return
 		}
-
-		return input
 	}
 }

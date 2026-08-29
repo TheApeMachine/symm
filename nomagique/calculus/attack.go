@@ -12,7 +12,7 @@ import (
 /*
 Attack applies a finite jump to a finite base level.
 */
-func Attack(input types.Frame) types.Frame {
+func Attack(input *types.Frame) {
 	base, hasBase := input.Get(SymbolBase)
 	jump, hasJump := input.Get(SymbolJump)
 
@@ -23,7 +23,7 @@ func Attack(input types.Frame) types.Frame {
 			nil,
 		))
 
-		return input
+		return
 	}
 
 	result := base + jump
@@ -31,11 +31,9 @@ func Attack(input types.Frame) types.Frame {
 	if !utils.IsFinite(result) {
 		input.Err = fmt.Errorf("calculus: attack overflowed")
 
-		return input
+		return
 	}
 
 	input.Put(SymbolBase, result)
 	input.Put(PortResult, result)
-
-	return input
 }

@@ -50,7 +50,8 @@ func TestStandardizer(t *testing.T) {
 		})
 
 		Convey("It rejects a missing value", func() {
-			output := standardizer(types.Frame{})
+			output := types.Frame{}
+			standardizer(&output)
 			So(output.Err, ShouldNotBeNil)
 		})
 	})
@@ -62,6 +63,7 @@ func BenchmarkStandardizer(benchmark *testing.B) {
 	benchmark.ReportAllocs()
 
 	for benchmark.Loop() {
-		_ = standardizer(withValue("bench/value", 1.5))
+		output := withValue("bench/value", 1.5)
+		standardizer(&output)
 	}
 }

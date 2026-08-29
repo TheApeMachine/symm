@@ -17,7 +17,7 @@ baseline cannot ground a fraction, so the lift is not ready rather than
 invented. The result slot is always emitted so Wire bindings remain
 satisfied; consumers must gate on SymbolReady.
 */
-func Lift(input types.Frame) types.Frame {
+func Lift(input *types.Frame) {
 	value, hasValue := input.Get(types.SampleValue)
 	baseline, hasBaseline := input.Get(SymbolBaseline)
 
@@ -26,7 +26,7 @@ func Lift(input types.Frame) types.Frame {
 			"statistic: lift requires a value and a baseline",
 		)
 
-		return input
+		return
 	}
 
 	input.Put(SymbolReady, 0)
@@ -36,6 +36,4 @@ func Lift(input types.Frame) types.Frame {
 		input.Put(SymbolResult, value/baseline-1)
 		input.Put(SymbolReady, 1)
 	}
-
-	return input
 }

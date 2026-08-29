@@ -10,7 +10,7 @@ import (
 /*
 Reflect mirrors X around the center of A and B: A+B-X.
 */
-func Reflect(input types.Frame) types.Frame {
+func Reflect(input *types.Frame) {
 	value, hasValue := input.Get(PortX)
 	axisA, hasAxisA := input.Get(PortA)
 	axisB, hasAxisB := input.Get(PortB)
@@ -19,7 +19,7 @@ func Reflect(input types.Frame) types.Frame {
 		!utils.IsFinite(axisA) || !utils.IsFinite(axisB) {
 		input.Err = fmt.Errorf("calculus: reflect requires finite x, a, and b")
 
-		return input
+		return
 	}
 
 	result := axisA + axisB - value
@@ -27,10 +27,8 @@ func Reflect(input types.Frame) types.Frame {
 	if !utils.IsFinite(result) {
 		input.Err = fmt.Errorf("calculus: reflect overflowed")
 
-		return input
+		return
 	}
 
 	input.Put(PortResult, result)
-
-	return input
 }

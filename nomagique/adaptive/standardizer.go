@@ -54,19 +54,19 @@ series while wiring the pipeline.
 func Standardizer(prefix string) types.Primitive {
 	slots := newStandardizerSlots(prefix)
 
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		sample, found := input.Get(slots.value)
 
 		if !found {
 			input.Err = fmt.Errorf("adaptive: standardizer requires a value")
 
-			return input
+			return
 		}
 
 		if !utils.IsFinite(sample) {
 			input.Err = fmt.Errorf("adaptive: standardizer value must be finite")
 
-			return input
+			return
 		}
 
 		mean, hasMean := input.Get(slots.mean)
@@ -115,8 +115,6 @@ func Standardizer(prefix string) types.Primitive {
 		} else {
 			input.Put(slots.ready, 0)
 		}
-
-		return input
 	}
 }
 

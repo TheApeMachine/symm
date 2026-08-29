@@ -54,7 +54,7 @@ func Slope(prefix string) types.Primitive {
 	series := temporal.NewSeries(prefix)
 	slots := newSlopeSlots(prefix)
 
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		_, hasValue := input.Get(series.ValueSymbol)
 		sec, hasSec := input.Get(series.SecSymbol)
 		nsec, hasNsec := input.Get(series.NsecSymbol)
@@ -62,13 +62,13 @@ func Slope(prefix string) types.Primitive {
 		if !hasValue || !hasSec || !hasNsec {
 			input.Err = fmt.Errorf("statistic: slope requires a value and event time")
 
-			return input
+			return
 		}
 
 		if nsec < 0 || nsec >= 1e9 {
 			input.Err = fmt.Errorf("statistic: slope requires normalized nanoseconds")
 
-			return input
+			return
 		}
 
 		previousSec, hasLastSec := input.Get(slots.lastSec)
@@ -78,30 +78,30 @@ func Slope(prefix string) types.Primitive {
 			if elapsedSince(sec, nsec, previousSec, previousNsec) < 0 {
 				input.Err = fmt.Errorf("statistic: slope event time must not regress")
 
-				return input
+				return
 			}
 		}
 
 		input.Put(slots.lastSec, sec)
 		input.Put(slots.lastNsec, nsec)
 
-		count := series.Count(input)
+		count := series.Count(*input)
 
 		if count < 2 {
 			input.Put(slots.slope, 0)
 			input.Put(series.ReadySymbol, 0)
 
-			return input
+			return
 		}
 
 		currentTimestamp := int64(sec)*1_000_000_000 + int64(nsec)
-		slope, intercept, slopeVar, snr, resVar, ok := fitLocalRegression(series, &input, count, currentTimestamp)
+		slope, intercept, slopeVar, snr, resVar, ok := fitLocalRegression(series, input, count, currentTimestamp)
 
 		if !ok {
 			input.Put(slots.slope, 0)
 			input.Put(series.ReadySymbol, 0)
 
-			return input
+			return
 		}
 
 		input.Put(slots.slope, slope)
@@ -110,8 +110,6 @@ func Slope(prefix string) types.Primitive {
 		input.Put(slots.snr, snr)
 		input.Put(slots.residualVariance, resVar)
 		input.Put(series.ReadySymbol, 1)
-
-		return input
 	}
 }
 

@@ -16,27 +16,21 @@ var (
 	numberPairSum = types.MustIntern("test/number/pair_sum")
 )
 
-func numberAccumulator(input types.Frame) types.Frame {
+func numberAccumulator(input *types.Frame) {
 	delta, found := input.Get(numberDelta)
 
 	if !found {
 		input.Err = errors.New("missing delta")
-
-		return input
 	}
 
 	if delta < 0 {
 		input.Put(numberTotal, 999)
 		input.Err = errors.New("negative delta")
-
-		return input
 	}
 
 	total, _ := input.Get(numberTotal)
 	total += delta
 	input.Put(numberTotal, total)
-
-	return input
 }
 
 func TestNumberIsolationAndTransactions(t *testing.T) {

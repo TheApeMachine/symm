@@ -29,7 +29,7 @@ fixed-sample ceiling.
 func Window(prefix string) nmtypes.Primitive {
 	series := NewSeries(prefix)
 
-	return func(input nmtypes.Frame) nmtypes.Frame {
+	return func(input *nmtypes.Frame) {
 		value, hasValue := input.Get(series.ValueSymbol)
 		_, hasSec := input.Get(series.SecSymbol)
 		nsec, hasNsec := input.Get(series.NsecSymbol)
@@ -39,7 +39,7 @@ func Window(prefix string) nmtypes.Primitive {
 				"temporal: window requires a value and event time",
 			)
 
-			return input
+			return
 		}
 
 		if nsec < 0 || nsec >= 1e9 {
@@ -47,15 +47,15 @@ func Window(prefix string) nmtypes.Primitive {
 				"temporal: window requires normalized nanoseconds",
 			)
 
-			return input
+			return
 		}
 
-		capacity, err := windowCapacity(series, input)
+		capacity, err := windowCapacity(series, *input)
 
 		if err != nil {
 			input.Err = err
 
-			return input
+			return
 		}
 
 		if capacity <= 0 || capacity > nmtypes.MaxSamples {
@@ -64,11 +64,11 @@ func Window(prefix string) nmtypes.Primitive {
 				nmtypes.MaxSamples,
 			)
 
-			return input
+			return
 		}
 
-		count := series.Count(input)
-		head := series.Head(input)
+		count := series.CountPtr(input)
+		head := series.HeadPtr(input)
 		oldCapacity := capacity
 
 		if current, found := input.Get(series.CapacitySymbol); found &&
@@ -82,7 +82,7 @@ func Window(prefix string) nmtypes.Primitive {
 				oldCapacity,
 			)
 
-			return input
+			return
 		}
 
 		// When the ring resizes while wrapped, its physical layout no longer
@@ -100,7 +100,7 @@ func Window(prefix string) nmtypes.Primitive {
 
 			for index := 0; index < retained; index++ {
 				source := (head + (count - retained) + index) % oldCapacity
-				values[index], _ = series.SampleAt(&input, source)
+				values[index], _ = series.SampleAt(input, source)
 			}
 
 			for index := 0; index < retained; index++ {
@@ -126,8 +126,6 @@ func Window(prefix string) nmtypes.Primitive {
 		input.Put(series.HeadSymbol, float64(head))
 		input.Put(series.ReadySymbol, 1)
 		input.Put(series.CapacitySymbol, float64(capacity))
-
-		return input
 	}
 }
 

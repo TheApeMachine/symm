@@ -16,19 +16,27 @@ func If(
 	whenTrue types.Primitive,
 	whenFalse types.Primitive,
 ) types.Primitive {
-	return func(input types.Frame) types.Frame {
-		predicateOutput := types.Step(predicate, input)
+	return func(input *types.Frame) {
+		// Any predicate or branch error rolls the whole transition back to
+		// the caller's original state: predicate/branch run on a copy, and
+		// input is overwritten with that copy only once the selected branch
+		// has succeeded.
+		predicateOutput := *input
+		types.Step(predicate, &predicateOutput)
 
 		if predicateOutput.Err != nil {
-			return predicateOutput
+			*input = predicateOutput
+
+			return
 		}
 
 		condition, found := predicateOutput.Get(SymbolCondition)
 
 		if !found || !utils.IsFinite(condition) {
 			predicateOutput.Err = fmt.Errorf("logic: if predicate must emit a finite condition")
+			*input = predicateOutput
 
-			return predicateOutput
+			return
 		}
 
 		branch := whenFalse
@@ -38,9 +46,12 @@ func If(
 		}
 
 		if branch == nil {
-			return predicateOutput
+			*input = predicateOutput
+
+			return
 		}
 
-		return types.Step(branch, predicateOutput)
+		types.Step(branch, &predicateOutput)
+		*input = predicateOutput
 	}
 }

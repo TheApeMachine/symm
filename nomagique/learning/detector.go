@@ -143,7 +143,7 @@ func (fd *FeatureDetector) Step(values ...float64) (FeatureOutput, error) {
 StepFrame accepts and updates a types.Frame in one line.
 */
 func (fd *FeatureDetector) StepFrame(input types.Frame) (types.Frame, error) {
-	output := fd.primitive(input)
+	fd.primitive(&input)
 
-	return output, output.Err
+	return input, input.Err
 }

@@ -11,14 +11,14 @@ import (
 /*
 Extent emits the absolute distance between A and B.
 */
-func Extent(input types.Frame) types.Frame {
+func Extent(input *types.Frame) {
 	a, hasA := input.Get(PortA)
 	b, hasB := input.Get(PortB)
 
 	if !hasA || !hasB || !utils.IsFinite(a) || !utils.IsFinite(b) {
 		input.Err = fmt.Errorf("calculus: extent requires finite a and b")
 
-		return input
+		return
 	}
 
 	result := math.Abs(b - a)
@@ -26,10 +26,8 @@ func Extent(input types.Frame) types.Frame {
 	if !utils.IsFinite(result) {
 		input.Err = fmt.Errorf("calculus: extent overflowed")
 
-		return input
+		return
 	}
 
 	input.Put(PortResult, result)
-
-	return input
 }

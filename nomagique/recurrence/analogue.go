@@ -121,11 +121,11 @@ func Analogue(prefixes ...string) types.Primitive {
 		series[index] = temporal.NewSeries(prefix)
 	}
 
-	return func(input types.Frame) types.Frame {
+	return func(input *types.Frame) {
 		if len(series) == 0 {
 			input.Err = types.PrimitiveError("recurrence: analogue requires at least one series")
 
-			return input
+			return
 		}
 
 		horizonSeconds, hasHorizon := input.Get(SymbolHorizon)
@@ -134,27 +134,27 @@ func Analogue(prefixes ...string) types.Primitive {
 			// The control fact has not arrived yet (its signal has not
 			// published a timescale). That is an absence, not a defect: the
 			// output stays undefined for this step.
-			return input
+			return
 		}
 
 		if horizonSeconds <= 0 || math.IsNaN(horizonSeconds) || math.IsInf(horizonSeconds, 0) {
 			input.Err = types.PrimitiveError("recurrence: analogue requires a positive finite horizon")
 
-			return input
+			return
 		}
 
 		horizonNanos := int64(horizonSeconds * float64(nanosecondsPerSecond))
 
-		nowNanos, ok := latestTimestamp(series, &input)
+		nowNanos, ok := latestTimestamp(series, input)
 
 		if !ok {
-			return input
+			return
 		}
 
-		oldestNanos, ok := oldestTimestamp(series, &input)
+		oldestNanos, ok := oldestTimestamp(series, input)
 
 		if !ok {
-			return input
+			return
 		}
 
 		queryStart := nowNanos - horizonNanos
@@ -162,13 +162,13 @@ func Analogue(prefixes ...string) types.Primitive {
 		if queryStart < oldestNanos {
 			// The query window opens before the earliest joint observation:
 			// the joint trajectory is not yet one full horizon long.
-			return input
+			return
 		}
 
-		query, ok := stepWindow(series, &input, queryStart, nowNanos)
+		query, ok := stepWindow(series, input, queryStart, nowNanos)
 
 		if !ok {
-			return input
+			return
 		}
 
 		// Sweep every earlier non-overlapping window of duration Q through the
@@ -183,7 +183,7 @@ func Analogue(prefixes ...string) types.Primitive {
 		for candidateEnd := queryStart; candidateEnd-horizonNanos >= oldestNanos; candidateEnd -= horizonNanos {
 			candidateStart := candidateEnd - horizonNanos
 
-			candidate, candidateOK := stepWindow(series, &input, candidateStart, candidateEnd)
+			candidate, candidateOK := stepWindow(series, input, candidateStart, candidateEnd)
 
 			if !candidateOK {
 				break
@@ -199,7 +199,7 @@ func Analogue(prefixes ...string) types.Primitive {
 		}
 
 		if candidateCount == 0 {
-			return input
+			return
 		}
 
 		matchSec := nearestStart / nanosecondsPerSecond
@@ -208,7 +208,7 @@ func Analogue(prefixes ...string) types.Primitive {
 		// The percentile ranks today's nearest distance against the bounded
 		// causal history of prior scans' nearest distances before appending
 		// today's, so today never ranks against itself.
-		percentile, ok := percentileOf(&input, nearestDistance)
+		percentile, ok := percentileOf(input, nearestDistance)
 
 		if !ok {
 			// No prior scan yet: the distance is still defined, but there is
@@ -216,7 +216,7 @@ func Analogue(prefixes ...string) types.Primitive {
 			percentile = -1
 		}
 
-		appendBaseline(&input, nearestDistance)
+		appendBaseline(input, nearestDistance)
 
 		maturity := 0.0
 
@@ -234,8 +234,6 @@ func Analogue(prefixes ...string) types.Primitive {
 		if percentile >= 0 {
 			input.Put(SymbolPercentile, percentile)
 		}
-
-		return input
 	}
 }
 
