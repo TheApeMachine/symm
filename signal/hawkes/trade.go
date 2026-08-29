@@ -11,6 +11,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/statistic"
+	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
@@ -261,17 +262,21 @@ Trade is the arrival-dynamics market entity. It owns exactly a Number pipeline
 and a projector, both declared in its constructor, plus Step and Close.
 */
 type Trade struct {
-	number    *nomagique.Number[string]
-	projector *data.Projector
+	number     *nomagique.Number[string]
+	projector  *data.Projector
+	estimators *nmhawkes.EstimatorRegistry
 }
 
 /*
 NewTrade constructs the Trade entity: one Number pipeline for the Hawkes
-process and one projector that names the output slots.
+process, one projector that names the output slots, and one per-symbol MLE
+estimator that fits the process's own excitation structure from accumulated
+arrivals rather than leaving HawkesIntensity on its fixed fallback amplitudes.
 */
 func NewTrade() *Trade {
 	return &Trade{
-		number: nomagique.NewNumber[string](hawkesPipeline()),
+		number:     nomagique.NewNumber[string](hawkesPipeline()),
+		estimators: nmhawkes.NewEstimatorRegistry(),
 		projector: data.NewProjector(
 			data.Binding{From: statistic.SymbolEventCount, Name: "event_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: statistic.SymbolAlphaEventCount, Name: "event_count:buy", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
@@ -341,10 +346,21 @@ func (trade *Trade) Step(observation kraken.TradeData) *data.Measurement[float64
 		)}
 	}
 
+	atSec := float64(observation.Timestamp.Unix()) + float64(observation.Timestamp.Nanosecond())*1e-9
+	isBuy := observation.Side == "buy"
+
 	input := nmtypes.Frame{}
 	input.Put(statistic.SymbolMark, markForSide(observation.Side))
 	input.Put(statistic.SymbolUnixSec, float64(observation.Timestamp.Unix()))
 	input.Put(statistic.SymbolUnixNsec, float64(observation.Timestamp.Nanosecond()))
+
+	if fitted, ok := trade.estimators.Observe(observation.Symbol, atSec, isBuy); ok {
+		input.Put(statistic.SymbolAlphaAA, fitted.AlphaAA)
+		input.Put(statistic.SymbolAlphaAB, fitted.AlphaAB)
+		input.Put(statistic.SymbolAlphaBA, fitted.AlphaBA)
+		input.Put(statistic.SymbolAlphaBB, fitted.AlphaBB)
+		input.Put(statistic.SymbolBeta, fitted.Beta)
+	}
 
 	output := trade.number.Step(observation.Symbol, input)
 

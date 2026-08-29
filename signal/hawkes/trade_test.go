@@ -8,6 +8,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func hawkesTrade(symbol string, side string, at time.Time) kraken.TradeData {
@@ -145,6 +146,31 @@ func TestTradeStep(t *testing.T) {
 			So(measurement.Metrics["arrival_rate:sell"].Raw, ShouldAlmostEqual, 1.0/3.0, 1e-12)
 
 			So(measurement.Metrics["conditional_intensity:buy"].Raw, ShouldAlmostEqual, 1.2135335283236613, 1e-9)
+		})
+	})
+
+	Convey("Given sustained clustered arrivals", t, func() {
+		entity := NewTrade()
+
+		Convey("the fitted MLE excitation eventually overrides the fallback amplitudes", func() {
+			base := time.Unix(1000, 0)
+			var last *data.Measurement[float64]
+
+			for index := 0; index < 400; index++ {
+				at := base.Add(time.Duration(index) * 300 * time.Millisecond)
+				last = entity.Step(hawkesTrade("BTC/USD", "buy", at))
+				So(last.Err, ShouldBeNil)
+
+				at = at.Add(120 * time.Millisecond)
+				last = entity.Step(hawkesTrade("BTC/USD", "sell", at))
+				So(last.Err, ShouldBeNil)
+			}
+
+			amplitude := last.Metrics["excitation_amplitude:buy_from_buy"].Raw
+			decay := last.Metrics["excitation_decay:buy_from_buy"].Raw
+
+			So(amplitude, ShouldNotAlmostEqual, 0.2, 1e-9)
+			So(decay, ShouldNotAlmostEqual, 1.0, 1e-9)
 		})
 	})
 

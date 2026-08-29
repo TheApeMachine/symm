@@ -79,7 +79,14 @@ func sortedCopy(times []float64) []float64 {
 }
 
 func (stream arrivalStream) merge() []markedEvent {
-	marked := make([]markedEvent, 0, len(stream.buy)+len(stream.sell))
+	return stream.mergeInto(make([]markedEvent, 0, len(stream.buy)+len(stream.sell)))
+}
+
+/*
+mergeInto chronologically merges buy/sell timestamps into caller-owned
+storage, avoiding an allocation when workspace reuse is available.
+*/
+func (stream arrivalStream) mergeInto(marked []markedEvent) []markedEvent {
 	buyIndex, sellIndex := 0, 0
 
 	for buyIndex < len(stream.buy) && sellIndex < len(stream.sell) {
@@ -120,6 +127,48 @@ func gapsFromMarked(marked []markedEvent) []float64 {
 	}
 
 	return gaps
+}
+
+/*
+observationOrigin returns the common left endpoint for both marked sides.
+*/
+func (stream arrivalStream) observationOrigin() float64 {
+	return stream.originSec
+}
+
+/*
+withObservationOrigin returns the same arrival support with a new common
+observation origin. Events at the origin remain available as prehistory.
+*/
+func (stream arrivalStream) withObservationOrigin(originSec float64) arrivalStream {
+	stream.originSec = originSec
+
+	return stream
+}
+
+/*
+buyTimes returns buy-side timestamps in seconds.
+*/
+func (stream arrivalStream) buyTimes() []float64 {
+	return stream.buy
+}
+
+/*
+sellTimes returns sell-side timestamps in seconds.
+*/
+func (stream arrivalStream) sellTimes() []float64 {
+	return stream.sell
+}
+
+/*
+bounds returns the earliest and latest marked arrival.
+*/
+func (stream arrivalStream) bounds() (float64, float64, bool) {
+	if len(stream.marked) == 0 {
+		return 0, 0, false
+	}
+
+	return stream.marked[0].atSec, stream.marked[len(stream.marked)-1].atSec, true
 }
 
 /*
