@@ -5,77 +5,36 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/signal/hawkes"
 	"github.com/theapemachine/symm/system"
+	"github.com/theapemachine/symm/types"
 )
 
-/*
-WaveMode is one resident ω-lattice spectral mode: its lattice frequency,
-complex spectral-head coefficient, and gate linewidth.
-*/
-type WaveMode struct {
-	Omega     float32
-	Real      float32
-	Imag      float32
-	Linewidth float32
-}
-
-/*
-State is everything Step returns for one advance of the resident domain: the
-per-particle sensorium.State and Reading, the packed Eulerian gas/wave grid
-fields, and the resident spectral mode lattice. Every field here is exactly
-what sensorium.Manifold already exposes through State/Reading/PackFields/
-SpectralModes/Grid — Step gathers all of it once per advance instead of a
-separate caller re-deriving any of it later.
-*/
-type State struct {
-	sensorium.State
-	sensorium.Reading
-
-	GridX, GridY, GridZ int
-	GridSpacing         float64
-
-	// MomRho is four floats per grid cell: momentum xyz then density.
-	MomRho []float32
-	// FieldEnergy is the packed Eulerian energy field, one value per grid
-	// cell — distinct from the embedded sensorium.State.Energy, which is
-	// per-particle.
-	FieldEnergy []float32
-	// WaveReal and WaveImag are the complex spatial wave field, one value per
-	// grid cell.
-	WaveReal []float32
-	WaveImag []float32
-	// DensityScale, MomentumScale, EnergyScale, and WaveScale are the peak
-	// magnitudes PackFields observed while packing MomRho/FieldEnergy/
-	// WaveReal/WaveImag, for normalizing a renderer's color/volume mapping.
-	DensityScale  float32
-	MomentumScale float32
-	EnergyScale   float32
-	WaveScale     float32
-
-	Modes []WaveMode
-}
+// WaveMode and State are defined in types so types.Envelope can carry a
+// manifold advance without an import cycle back to logic/manifold.
+type WaveMode = types.WaveMode
+type State = types.ManifoldState
 
 /*
 Solver owns one resident Sensorium domain for the complete market universe.
 Symbols contribute orders to the same gas and wave fields; they are not split
 into independent simulations that cannot interfere.
 
-The solver subscribes to the dedicated Hawkes channel, so its ring carries only
-the raw Hawkes measurements (the forcing term) — never every signal's converted
-measurement. Each Hawkes observation projects the resting orders into
-oscillators via the Dataset, loads them into the resident domain, and advances
-the field once.
+It satisfies nomagique/runtime.Node[*types.Envelope] and plays two roles
+depending on which envelope it sees: a Level3 envelope folds into Dataset's
+own accumulated order book (no field advance, no output); a Trade envelope
+carrying a Hawkes measurement — the forcing term — projects that book into
+oscillators via Dataset, loads them into the resident domain, and advances the
+field once, writing the result onto the envelope.
 */
 type Solver struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	mu            sync.Mutex
 	err           error
-	workspace     *runtime.Workspace
+	status        *runtime.Status
+	dataset       *Dataset
 	physics       *sensorium.Manifold
 	ObserveModule func(string, time.Duration)
 
@@ -89,20 +48,21 @@ type Solver struct {
 	fieldWaveImag []float32
 }
 
-func NewSolver(
-	ctx context.Context, workspace *runtime.Workspace,
-) *Solver {
+func NewSolver(ctx context.Context) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 
+	dataset := NewDataset()
+
 	solver := &Solver{
-		ctx:       ctx,
-		cancel:    cancel,
-		workspace: workspace,
+		ctx:     ctx,
+		cancel:  cancel,
+		status:  runtime.NewStatus(),
+		dataset: dataset,
 		physics: sensorium.NewManifold(
 			system.Cfg.Manifold.Grid.X,
 			system.Cfg.Manifold.Grid.Y,
 			system.Cfg.Manifold.Grid.Z,
-			NewDataset(workspace),
+			dataset,
 		),
 	}
 
@@ -115,20 +75,6 @@ func NewSolver(
 		solver.fieldWaveImag = make([]float32, cells)
 	}
 
-	if workspace != nil {
-		runtime.Register(
-			workspace,
-			nil,
-			func(measurement *hawkes.Measurement) *State {
-				if measurement == nil {
-					return nil
-				}
-
-				return solver.Step(measurement.Measurement)
-			},
-		)
-	}
-
 	return solver
 }
 
@@ -137,12 +83,31 @@ func (solver *Solver) Name() string { return "manifold" }
 func (solver *Solver) Error() error { return solver.err }
 
 /*
-Step advances the resident field once. It is fired by a Hawkes measurement:
-Hawkes is the forcing term, so each observation triggers a load-and-step of the
-resident domain.
+Step folds a Level3 envelope into Dataset's accumulated book (no output), or
+advances the resident field once for a Trade envelope carrying a Hawkes
+measurement — the forcing term — writing the resulting State onto the
+envelope. Any other envelope is a no-op.
 */
-func (solver *Solver) Step(measurement *data.Measurement[float64]) *State {
-	if measurement == nil || solver.physics == nil {
+func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
+	switch envelope.TypeID {
+	case types.EnvelopeLevel3:
+		solver.dataset.Step(envelope.Level3Data)
+	case types.EnvelopeTrade:
+		if envelope.Hawkes != nil {
+			envelope.Manifold = solver.advance()
+		}
+	}
+
+	return envelope
+}
+
+/*
+advance loads the current resident book into the field and advances it once.
+It is fired by a Hawkes measurement: Hawkes is the forcing term, so each
+observation triggers a load-and-step of the resident domain.
+*/
+func (solver *Solver) advance() *State {
+	if solver.physics == nil {
 		return nil
 	}
 

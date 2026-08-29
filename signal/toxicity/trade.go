@@ -1,17 +1,14 @@
 package toxicity
 
 import (
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/kraken/websocket"
 )
 
 /*
@@ -72,13 +69,13 @@ var (
 )
 
 /*
-Trade is the executed-flow market entity. It matches each trade against the
-current shared-book touch and attributes how much of the displayed touch the
-trade tape accounts for. It owns exactly one Number pipeline and one projector,
-plus the workspace it reads the shared book from.
+Trade is the executed-flow market entity. It would match each trade against
+the current book touch to attribute how much of the displayed touch the trade
+tape accounts for, but has no access to book state; the fill-attribution
+metrics are permanently undefined. It owns exactly one Number pipeline and one
+projector.
 */
 type Trade struct {
-	workspace *runtime.Workspace
 	number    *nomagique.Number[string]
 	projector *data.Projector
 }
@@ -87,9 +84,8 @@ type Trade struct {
 NewTrade constructs the Trade entity: one Number pipeline for fill attribution
 and one projector that names the output slots.
 */
-func NewTrade(workspace *runtime.Workspace) *Trade {
+func NewTrade() *Trade {
 	return &Trade{
-		workspace: workspace,
 		number: nomagique.NewNumber[string](nmtypes.Pipe(
 			// Bracket trade quantity: cumulative executed quantity.
 			nmtypes.Wire(
@@ -251,42 +247,16 @@ func NewTrade(workspace *runtime.Workspace) *Trade {
 }
 
 /*
-Step receives one trade data point, matches it against the current shared-book
-touch, runs the Number pipeline, and projects exactly one measurement.
+Step matches one trade against the given touch (the Level3 side of this
+signal's own last observation for the symbol — see Signal.Step) and projects
+the fill attribution. A zero touch (nothing observed yet for this symbol)
+yields no measurement.
 */
-func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
-	var hasQuote bool
-	var bidPrice, askPrice, bidQty, askQty float64
-
-	inspectBook := func(currentBook *book.Book) {
-		if currentBook == nil {
-			return
-		}
-		bestBid := currentBook.BestBid()
-		bestAsk := currentBook.BestAsk()
-
-		if bestBid != nil && bestAsk != nil {
-			bidPrice = bestBid.Price.Float64()
-			askPrice = bestAsk.Price.Float64()
-			bidQty = bestBid.Quantity.Float64()
-			askQty = bestAsk.Quantity.Float64()
-			hasQuote = true
-		}
-	}
-
-	if shared, found := trade.workspace.Shared("api", ""); found && shared != nil {
-		if api, ok := shared.(*websocket.API); ok && api != nil {
-			api.Book(tick.Symbol, inspectBook)
-		}
-	} else if sharedBook, found := trade.workspace.Shared("book", tick.Symbol); found && sharedBook != nil {
-		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
-			inspectBook(currentBook)
-		}
-	}
-
-	if !hasQuote {
+func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQty float64) *data.Measurement[float64] {
+	if bidPrice == 0 || askPrice == 0 {
 		return nil
 	}
+
 	sec := float64(tick.Timestamp.Unix())
 	nsec := float64(tick.Timestamp.Nanosecond())
 

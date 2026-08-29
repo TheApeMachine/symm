@@ -5,13 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/tests/mock"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -212,80 +210,11 @@ func TestPartialFillExitAccumulatesWholeOrder(t *testing.T) {
 }
 
 /*
-shapeBookPosition builds a SHAPE-like exposed position whose protected floor
-sits above break-even and whose authoritative book has collapsed: best bid still
-prints above the floor, but only 24000 of the 100000 sellable lot remains
-visible at or above the floor. The price surface reads the managed book through
-a mock API so no live websocket is required.
-*/
-func shapeBookPosition(t *testing.T, price *Price) *Position {
-	api := websocket.NewAPI(t.Context(), mock.NewConn(), mock.NewConn())
-
-	node := &Position{
-		pair:  kraken.InstrumentPair{Symbol: "SHAPE/USD"},
-		price: price,
-		api:   api,
-		Decision: types.Decision{
-			ID:     "shape-decision",
-			Symbol: "SHAPE/USD",
-		},
-		EntryOrder: &spot.AddOrderRequest{
-			ClOrdId: "shape-entry",
-			Type:    "buy",
-			Volume:  "100000",
-			Pair:    "SHAPE/USD",
-		},
-		Holding: &types.Holding{
-			Symbol: "SHAPE/USD",
-			Qty:     mustDecimal("100000"),
-			SellableQty: mustDecimal("100000"),
-			EntryPrice:  mustDecimal("0.000490"),
-			EntryFee:    mustDecimal("0.04"),
-			Stoploss: &types.Stoploss{
-				Status: types.ARMED,
-				Symbol: "SHAPE/USD",
-				Locked: true,
-				Floor:  mustDecimal("0.000506"),
-				Mark:   mustDecimal("0.000506"),
-				Peak:   mustDecimal("0.000520"),
-			},
-		},
-	}
-
-	node.setStatus(types.OPEN)
-
-	return node
-}
-
-func TestShapeL3FloorCoverageCollapse(t *testing.T) {
-	Convey("Given a SHAPE-style locked position", t, func() {
-		managed := entryEconomicsBook(
-			t,
-			bookLevel{book.Bid, 0.000520, 24000},
-			bookLevel{book.Bid, 0.000300, 1000000},
-			bookLevel{book.Ask, 0.000530, 1000000},
-		)
-		price := shapePriceFixture(t, managed)
-		position := shapeBookPosition(t, price)
-
-		Convey("an L3 frame that collapses depth below the floor triggers protection without any ticker", func() {
-			position.onLevel3(kraken.Level3Data{
-				Symbol:    "SHAPE/USD",
-				Timestamp: time.Now(),
-			})
-
-			So(position.Holding.Stoploss.Status, ShouldEqual, types.TRIGGERED)
-			So(position.Holding.Stoploss.TriggerReason, ShouldEqual, types.TriggerRegimeInvalidated)
-		})
-	})
-}
-
-/*
 triggeredExitPosition builds an open lot whose stoploss has already latched
 TRIGGERED, mirroring the state Exit() requires before it will submit anything.
 */
-func triggeredExitPosition(t *testing.T, private *mock.Conn) *Position {
-	api := websocket.NewAPI(t.Context(), mock.NewConn(), private)
+func triggeredExitPosition(t *testing.T, private *mockConn) *Position {
+	api := websocket.NewAPI(t.Context(), newMockConn(), private)
 
 	position := &Position{
 		pair: kraken.InstrumentPair{Symbol: "SHAPE/USD"},
@@ -330,7 +259,7 @@ silently no-op instead of retrying.
 */
 func TestExitRetriesAfterFailedSubmission(t *testing.T) {
 	Convey("Given a triggered stop whose first exit submission fails", t, func() {
-		private := mock.NewConn()
+		private := newMockConn()
 		private.AddOrderErr = errors.New("exchange rejected order")
 		position := triggeredExitPosition(t, private)
 
@@ -362,7 +291,7 @@ that a caller (or handleGuardian's log) can observe.
 */
 func TestExecuteManualExitReportsFailure(t *testing.T) {
 	Convey("Given a lot whose stoploss cannot be manually overridden", t, func() {
-		private := mock.NewConn()
+		private := newMockConn()
 		position := triggeredExitPosition(t, private)
 		// PENDING is neither ARMED (overridable) nor TRIGGERED (already an
 		// exit path) — TriggerManualOverride must refuse it.
@@ -375,21 +304,5 @@ func TestExecuteManualExitReportsFailure(t *testing.T) {
 			So(position.ExitOrder, ShouldBeNil)
 		})
 	})
-}
-
-/*
-shapePriceFixture builds a fee-loaded price surface whose authoritative book is
-the managed fixture, keyed under SHAPE/USD. It reuses the entry economics book
-mock so ExecutableSurface can read the collapsed depth without a live feed.
-*/
-func shapePriceFixture(t *testing.T, managed *book.Book) *Price {
-	private := &entryEconomicsBookConn{Conn: mock.NewConn(), managed: managed}
-	api := websocket.NewAPI(t.Context(), mock.NewConn(), private)
-	price := newTestPrice(t, api)
-	price.fees.Store("SHAPE/USD", kraken.TradeVolumeFee{
-		Fee: decimal.NewFromFloat64(0.25),
-	})
-
-	return price
 }
 

@@ -139,7 +139,6 @@ func newTestReasoner() *Reasoner {
 
 	graphSolver := graph.NewSolver(
 		context.Background(),
-		nil,
 		1,
 		2048,
 		RelationPlansFromSchema(schemaTemplate, 1, 30*time.Second),
@@ -174,7 +173,7 @@ func ingestSeries(reasoner *Reasoner, count int, seed int64, metadata float64) {
 	flow, gross, ret := syntheticSeries(count, seed)
 
 	for index := 0; index < count; index++ {
-		testHarness.Step(syntheticMeasurement(index, flow[index], gross[index], ret[index], metadata))
+		testHarness.StepMeasurement(syntheticMeasurement(index, flow[index], gross[index], ret[index], metadata))
 	}
 }
 
@@ -680,7 +679,7 @@ func TestConformanceCrossSignalParticipation(t *testing.T) {
 				),
 			},
 		}
-		testHarness.Step(hawkesMeasurement)
+		testHarness.StepMeasurement(hawkesMeasurement)
 
 		hawkesCoordinate := relation.Coordinate{
 			Symbol:    "TEST/USD",
@@ -935,7 +934,7 @@ func TestConformanceQueryLocalCausalGating(t *testing.T) {
 				),
 			},
 		}
-		testHarness.Step(sentimentMeasurement)
+		testHarness.StepMeasurement(sentimentMeasurement)
 
 		state := reasoner.CausalState("TEST/USD", at)
 		So(state, ShouldNotBeNil)
@@ -1238,7 +1237,7 @@ func TestConformanceNoGlobalWorldVeto(t *testing.T) {
 				),
 			},
 		}
-		testHarness.Step(toxMeasurement)
+		testHarness.StepMeasurement(toxMeasurement)
 
 		stateAfter := reasoner.CausalState("TEST/USD", at)
 

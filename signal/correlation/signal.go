@@ -3,37 +3,36 @@ package correlation
 import (
 	"context"
 
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
 Signal is the asynchronous price-path correlation instrument. It composes its
 per-symbol Ticker entity in its constructor and exposes the canonical signal
-structure: Constructor, Name, Error, Step, Close.
+structure: Constructor, Name, Error, Step, Close. It satisfies
+nomagique/runtime.Node[*types.Envelope], reading the envelope's TickerData and
+writing its projected Measurement into the envelope's Correlation field.
 */
 type Signal struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	err       error
-	workspace *runtime.Workspace
-	ticker    *Ticker
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	status *runtime.Status
+	ticker *Ticker
 }
 
 /*
-NewSignal composes the Ticker entity and retains the shared-object workspace
-pool for any future cross-signal shared state. The correlation README defines
-no downstream cross-symbol snapshot, so no shared object is registered here.
+NewSignal composes the Ticker entity.
 */
-func NewSignal(ctx context.Context, workspace *runtime.Workspace) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
-		ctx:       ctx,
-		cancel:    cancel,
-		workspace: workspace,
-		ticker:    NewTicker(),
+		ctx:    ctx,
+		cancel: cancel,
+		status: runtime.NewStatus(),
+		ticker: NewTicker(),
 	}
 }
 
@@ -41,8 +40,10 @@ func (signal *Signal) Name() string { return "correlation" }
 
 func (signal *Signal) Error() error { return signal.err }
 
-func (signal *Signal) Step(ticker kraken.TickerData) *data.Measurement[float64] {
-	return signal.ticker.Step(ticker)
+func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
+	envelope.Correlation = signal.ticker.Step(envelope.TickerData)
+
+	return envelope
 }
 
 func (signal *Signal) Close() error {

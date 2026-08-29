@@ -10,7 +10,7 @@ import (
 
 // awaitWorkers polls GetSpawnedWorkers until it satisfies the predicate or the
 // timeout elapses, returning the last observed value.
-func awaitWorkers(elasticPool *Pool[int], predicate func(int) bool, timeout time.Duration) int {
+func awaitWorkers[T any](elasticPool *Pool[T], predicate func(int) bool, timeout time.Duration) int {
 	deadline := time.Now().Add(timeout)
 
 	for {
@@ -99,7 +99,7 @@ func GetSpawnedWorkersTest(t *testing.T) {
 
 func StartTest(t *testing.T) {
 	Convey("Given an unstarted pool", t, func() {
-		loadPool := NewPool[int](func(task int) {})
+		loadPool := NewPool(func(task int) {})
 
 		Convey("Submitting before Start is rejected", func() {
 			err := loadPool.AddTask(1)
@@ -122,7 +122,7 @@ func StartTest(t *testing.T) {
 func AddTaskTest(t *testing.T) {
 	Convey("Given a started elastic pool", t, func() {
 		processed := make(chan int, 256)
-		loadPool := NewPool[int](func(task int) {
+		loadPool := NewPool(func(task int) {
 			processed <- task
 		})
 		loadPool.SetIdleWorkerLifetime(40 * time.Millisecond)
@@ -174,7 +174,7 @@ func AddTaskTest(t *testing.T) {
 func AddTaskWithBlockingTest(t *testing.T) {
 	Convey("Given a started elastic pool", t, func() {
 		var executed int64
-		loadPool := NewPool[int](func(task int) {
+		loadPool := NewPool(func(task int) {
 			atomic.AddInt64(&executed, 1)
 		})
 		loadPool.Start()
@@ -193,7 +193,7 @@ func AddTaskWithBlockingTest(t *testing.T) {
 
 func StopTest(t *testing.T) {
 	Convey("Given a started pool with no traffic", t, func() {
-		loadPool := NewPool[int](func(task int) {})
+		loadPool := NewPool(func(task int) {})
 		loadPool.Start()
 
 		Convey("StopAndWait returns promptly even with zero live workers", func() {
@@ -208,7 +208,7 @@ func StopTest(t *testing.T) {
 func StopAndWaitTest(t *testing.T) {
 	Convey("Given a started pool", t, func() {
 		var executed atomic.Int64
-		loadPool := NewPool[int](func(task int) {
+		loadPool := NewPool(func(task int) {
 			executed.Add(1)
 		})
 		loadPool.SetIdleWorkerLifetime(40 * time.Millisecond)
@@ -233,7 +233,7 @@ func StopAndWaitTest(t *testing.T) {
 
 func StopWithTimeoutTest(t *testing.T) {
 	Convey("Given a started pool", t, func() {
-		loadPool := NewPool[int](func(task int) {})
+		loadPool := NewPool(func(task int) {})
 		loadPool.Start()
 
 		Convey("StopWithTimeout reports a clean drain", func() {

@@ -31,6 +31,7 @@ type Solver struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	err           error
+	status        *runtime.Status
 	detectors     *sync.Map
 	queues        *sync.Map
 	schemas       *sync.Map
@@ -89,27 +90,20 @@ type Event struct {
 }
 
 /*
-NewSolver returns a feature detection solver using the configured pace.
+NewSolver returns a feature detection solver using the configured pace. thesis
+resolves a ticker symbol name to its canonical types.Symbol identity.
 */
 func NewSolver(
 	ctx context.Context,
 	pace float64,
-	bus *runtime.Workspace,
+	thesis *types.Thesis,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 
-	var thesis *types.Thesis
-	if bus != nil {
-		if shared, found := bus.Shared("thesis", ""); found {
-			if t, ok := shared.(*types.Thesis); ok {
-				thesis = t
-			}
-		}
-	}
-
-	solver := &Solver{
+	return &Solver{
 		ctx:           ctx,
 		cancel:        cancel,
+		status:        runtime.NewStatus(),
 		detectors:     &sync.Map{},
 		schemas:       &sync.Map{},
 		standardizers: &sync.Map{},
@@ -119,16 +113,6 @@ func NewSolver(
 		pace:          pace,
 		thesis:        thesis,
 	}
-
-	if bus != nil {
-		runtime.Register[kraken.TickerData, *types.ResonanceArtifact](
-			bus,
-			nil,
-			solver.Step,
-		)
-	}
-
-	return solver
 }
 
 func (solver *Solver) Name() string {
@@ -141,8 +125,23 @@ func (solver *Solver) Status() types.Status {
 	return types.READY
 }
 
-// Step advances one symbol's predictive coder over one ticker observation and returns the resulting artifact.
-func (solver *Solver) Step(ticker kraken.TickerData) *types.ResonanceArtifact {
+/*
+Step advances the symbol's predictive coder over this envelope's ticker
+observation and writes the resulting artifact back onto the envelope. An
+envelope carrying no TickerData (e.g. a Trade or Level3 envelope) is a no-op.
+*/
+func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
+	if envelope.TypeID != types.EnvelopeTicker {
+		return envelope
+	}
+
+	envelope.Resonance = solver.StepTicker(envelope.TickerData)
+
+	return envelope
+}
+
+// StepTicker advances one symbol's predictive coder over one ticker observation and returns the resulting artifact.
+func (solver *Solver) StepTicker(ticker kraken.TickerData) *types.ResonanceArtifact {
 	return solver.Update(
 		ticker.Symbol,
 		ticker.Timestamp,

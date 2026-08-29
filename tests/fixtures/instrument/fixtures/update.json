@@ -1,1 +1,0 @@
-{"channel":"instrument","type":"update","data":{"assets":[],"pairs":[{"symbol":"MATIC/USD","base":"MATIC","quote":"USD","status":"online","qty_precision":8,"qty_increment":0.00000001,"price_precision":4,"cost_precision":6,"marginable":false,"has_index":true,"cost_min":0.43,"tick_size":0.0001,"price_increment":0.0001,"qty_min":4.0}]}}

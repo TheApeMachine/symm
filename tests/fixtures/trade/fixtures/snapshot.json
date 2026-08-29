@@ -1,1 +1,0 @@
-{"channel":"trade","type":"snapshot","data":[{"symbol":"MATIC/USD","side":"buy","price":0.5147,"qty":6423.46326,"ord_type":"limit","trade_id":4665846,"timestamp":"2023-09-25T07:48:36.925533Z"},{"symbol":"MATIC/USD","side":"buy","price":0.5147,"qty":1136.19677815,"ord_type":"limit","trade_id":4665847,"timestamp":"2023-09-25T07:49:36.925603Z"}]}

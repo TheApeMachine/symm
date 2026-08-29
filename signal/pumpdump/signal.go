@@ -2,22 +2,25 @@ package pumpdump
 
 import (
 	"context"
-	"time"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
 Signal is the volume-clock activity measuring instrument. It composes its
 market entities in its constructor and exposes the canonical signal structure:
-Constructor, Name, Error, Step, Close.
+Constructor, Name, Error, Step, Close. It satisfies
+nomagique/runtime.Node[*types.Envelope], dispatching on the envelope's
+TypeID to whichever entity that data stream feeds.
 */
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
+	status *runtime.Status
 
 	ticker *Ticker
 	trade  *Trade
@@ -28,21 +31,35 @@ type Signal struct {
 NewSignal composes the Ticker (executable spread), Trade (volume clock), and
 Level3 (authoritative book touch) entities.
 */
-func NewSignal(ctx context.Context, workspace *runtime.Workspace) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
+		status: runtime.NewStatus(),
 		ticker: NewTicker(),
-		trade:  NewTrade(workspace),
-		level3: NewLevel3(workspace),
+		trade:  NewTrade(),
+		level3: NewLevel3(),
 	}
 }
 
 func (signal *Signal) Name() string { return "pumpdump" }
 
 func (signal *Signal) Error() error { return signal.err }
+
+func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
+	switch envelope.TypeID {
+	case types.EnvelopeTicker:
+		envelope.PumpDump = signal.StepTicker(envelope.TickerData)
+	case types.EnvelopeTrade:
+		envelope.PumpDump = signal.StepTrade(envelope.TradeData)
+	case types.EnvelopeLevel3:
+		envelope.PumpDump = signal.StepLevel3(envelope.Level3Data)
+	}
+
+	return envelope
+}
 
 func (signal *Signal) StepTicker(ticker kraken.TickerData) *data.Measurement[float64] {
 	return signal.ticker.Step(ticker)
@@ -52,8 +69,8 @@ func (signal *Signal) StepTrade(trade kraken.TradeData) *data.Measurement[float6
 	return signal.trade.Step(trade)
 }
 
-func (signal *Signal) StepLevel3(symbol string, at time.Time) *data.Measurement[float64] {
-	return signal.level3.Step(symbol, at)
+func (signal *Signal) StepLevel3(message kraken.Level3Data) *data.Measurement[float64] {
+	return signal.level3.Step(message)
 }
 
 func (signal *Signal) Close() error {

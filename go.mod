@@ -11,7 +11,6 @@ require (
 	github.com/klauspost/compress v1.18.7
 	github.com/krakenfx/api-go/v2 v2.0.0
 	github.com/mattn/go-sqlite3 v1.14.49
-	github.com/phuslu/log v1.0.124
 	github.com/pion/sctp v1.11.1
 	github.com/pion/webrtc/v4 v4.2.18
 	github.com/smarty/go-disruptor v0.5.0
@@ -48,6 +47,7 @@ require (
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
+	github.com/phuslu/log v1.0.124 // indirect
 	github.com/pion/datachannel v1.6.2 // indirect
 	github.com/pion/dtls/v3 v3.1.5 // indirect
 	github.com/pion/ice/v4 v4.4.0 // indirect

@@ -9,7 +9,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -18,13 +17,9 @@ func TestSolverStep(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		workspace := runtime.NewWorkspace(ctx)
-		defer workspace.Close()
-
 		thesis := types.NewThesis(ctx)
-		workspace.Share("thesis", thesis, "")
 
-		solver := NewSolver(ctx, workspace)
+		solver := NewSolver(ctx)
 		So(solver, ShouldNotBeNil)
 
 		Convey("When concurrent Hawkes measurements arrive across multiple symbols", func() {
@@ -39,12 +34,13 @@ func TestSolverStep(t *testing.T) {
 				go func(sym string) {
 					defer waitGroup.Done()
 
-					measurement := &data.Measurement[float64]{
+					envelope := types.NewEnvelope(types.EnvelopeTrade)
+					envelope.Hawkes = &data.Measurement[float64]{
 						Source: "hawkes",
 						Label:  sym,
 						At:     time.Now(),
 					}
-					_ = solver.Step(measurement)
+					_ = solver.Step(envelope)
 				}(symbol)
 			}
 
@@ -55,8 +51,12 @@ func TestSolverStep(t *testing.T) {
 			})
 		})
 
-		Convey("When measurement is nil", func() {
-			So(solver.Step(nil), ShouldBeNil)
+		Convey("When envelope carries no Hawkes measurement", func() {
+			envelope := types.NewEnvelope(types.EnvelopeTrade)
+			result := solver.Step(envelope)
+
+			So(result, ShouldNotBeNil)
+			So(result.Manifold, ShouldBeNil)
 		})
 	})
 }

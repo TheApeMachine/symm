@@ -2,39 +2,56 @@ package toxicity
 
 import (
 	"context"
-	"time"
+	"sync"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/types"
 )
+
+/*
+touch is one symbol's last observed best bid/ask price and resting quantity,
+retained so a later Trade envelope for the same symbol can be matched against
+it. Zero means nothing has been observed yet.
+*/
+type touch struct {
+	bidPrice, askPrice, bidQty, askQty float64
+}
 
 /*
 Signal is the book-touch liquidity-disposition instrument. It composes its
 market entities in its constructor and exposes the canonical signal structure:
-Constructor, Name, Error, Step, Close.
+Constructor, Name, Error, Step, Close. It satisfies
+nomagique/runtime.Node[*types.Envelope], dispatching on the envelope's TypeID:
+a Level3 envelope updates the retained per-symbol touch and projects the
+book-touch disposition measurement; a Trade envelope matches against that
+symbol's last retained touch to attribute fill.
 */
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
+	status *runtime.Status
+
+	touches sync.Map // symbol -> touch
 
 	level3 *Level3
 	trade  *Trade
 }
 
 /*
-NewSignal composes the Level3 (book-touch) and Trade (executed-flow) entities,
-which read the shared book from the workspace pool.
+NewSignal composes the Level3 (book-touch) and Trade (executed-flow) entities.
 */
-func NewSignal(ctx context.Context, workspace *runtime.Workspace) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
-		level3: NewLevel3(workspace),
-		trade:  NewTrade(workspace),
+		status: runtime.NewStatus(),
+		level3: NewLevel3(),
+		trade:  NewTrade(),
 	}
 }
 
@@ -42,8 +59,25 @@ func (signal *Signal) Name() string { return "toxicity" }
 
 func (signal *Signal) Error() error { return signal.err }
 
-func (signal *Signal) Step(symbol string, at time.Time) *data.Measurement[float64] {
-	measurement := signal.level3.Step(symbol, at)
+func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
+	switch envelope.TypeID {
+	case types.EnvelopeLevel3:
+		envelope.Toxicity = signal.StepLevel3(envelope.Level3Data)
+	case types.EnvelopeTrade:
+		envelope.Toxicity = signal.StepTrade(envelope.TradeData)
+	}
+
+	return envelope
+}
+
+func (signal *Signal) StepLevel3(message kraken.Level3Data) *data.Measurement[float64] {
+	bidPrice, askPrice, bidQty, askQty := bestTouch(message)
+
+	if bidPrice > 0 && askPrice > 0 {
+		signal.touches.Store(message.Symbol, touch{bidPrice, askPrice, bidQty, askQty})
+	}
+
+	measurement := signal.level3.Step(message)
 
 	if measurement != nil {
 		if measurement.Provenance == nil {
@@ -51,9 +85,9 @@ func (signal *Signal) Step(symbol string, at time.Time) *data.Measurement[float6
 		}
 
 		// README §11.1: preserve the attribution source. This entity observes
-		// the shared book touch only, so the attribution is always
-		// touch-only bracketing; full-book previous-level observation would be
-		// recorded here when a full-book feed supplies Q_1(P_0).
+		// the book touch only, so the attribution is always touch-only
+		// bracketing; full-book previous-level observation would be recorded
+		// here when a full-book feed supplies Q_1(P_0).
 		measurement.Provenance["previous_level_disposition"] = "touch_only_bracketing"
 	}
 
@@ -61,7 +95,15 @@ func (signal *Signal) Step(symbol string, at time.Time) *data.Measurement[float6
 }
 
 func (signal *Signal) StepTrade(tick kraken.TradeData) *data.Measurement[float64] {
-	return signal.trade.Step(tick)
+	last, found := signal.touches.Load(tick.Symbol)
+
+	if !found {
+		return nil
+	}
+
+	current := last.(touch)
+
+	return signal.trade.Step(tick, current.bidPrice, current.askPrice, current.bidQty, current.askQty)
 }
 
 func (signal *Signal) Close() error {

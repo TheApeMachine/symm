@@ -13,6 +13,7 @@ func init() {
 
 type Config struct {
 	mu        sync.RWMutex
+	Runtime   *Runtime
 	Resonance *Resonance
 	Risk      *Risk
 	Regulator *RegulatorConfig
@@ -26,6 +27,7 @@ type Config struct {
 
 func NewConfig() *Config {
 	return &Config{
+		Runtime:   NewRuntime(),
 		Resonance: NewResonance(),
 		Risk:      NewRisk(),
 		Regulator: NewRegulatorConfig(),

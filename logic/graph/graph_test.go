@@ -9,7 +9,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/theapemachine/symm/nomagique/relation"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
@@ -308,15 +307,12 @@ func TestPlanVersion(t *testing.T) {
 }
 
 func TestSolverStep(t *testing.T) {
-	Convey("Given a solver wired on a workspace", t, func() {
-		bus := runtime.NewWorkspace(t.Context())
-		defer bus.Close()
-
-		solver := NewSolver(context.Background(), bus, 1, 2048, testPlans(), 1)
+	Convey("Given a solver", t, func() {
+		solver := NewSolver(context.Background(), 1, 2048, testPlans(), 1)
 
 		Convey("stepping measurements appends observations and maintains the graph in place", func() {
 			for index := 0; index < 120; index++ {
-				update := solver.Step(testMeasurement(index))
+				update := solver.StepMeasurement(testMeasurement(index))
 				So(update, ShouldNotBeNil)
 			}
 
@@ -332,25 +328,6 @@ func TestSolverStep(t *testing.T) {
 	})
 }
 
-func TestSolverSharedObjects(t *testing.T) {
-	Convey("Given a solver on a workspace", t, func() {
-		bus := runtime.NewWorkspace(t.Context())
-		defer bus.Close()
-
-		solver := NewSolver(context.Background(), bus, 1, 2048, testPlans(), 1)
-
-		Convey("the store and graph are shared under their names", func() {
-			stored, found := bus.Shared(SharedObservationStore, "")
-			So(found, ShouldBeTrue)
-			So(stored, ShouldEqual, solver.Store())
-
-			sharedGraph, found := bus.Shared(SharedInfluenceGraph, "")
-			So(found, ShouldBeTrue)
-			So(sharedGraph, ShouldEqual, solver.Graph())
-		})
-	})
-}
-
 func TestSolverNameAndAccessors(t *testing.T) {
 	Convey("Given a nil solver", t, func() {
 		var solver *Solver
@@ -361,7 +338,7 @@ func TestSolverNameAndAccessors(t *testing.T) {
 		})
 
 		Convey("step is nil-safe", func() {
-			So(solver.Step(nil), ShouldBeNil)
+			So(solver.StepMeasurement(nil), ShouldBeNil)
 		})
 	})
 }
@@ -522,7 +499,7 @@ func BenchmarkRelationLookup(b *testing.B) {
 }
 
 func BenchmarkStepMeasurement(b *testing.B) {
-	solver := NewSolver(context.Background(), nil, 1, 2048, testPlans(), 1)
+	solver := NewSolver(context.Background(), 1, 2048, testPlans(), 1)
 
 	measurement := testMeasurement(0)
 
@@ -530,6 +507,6 @@ func BenchmarkStepMeasurement(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		_ = solver.Step(measurement)
+		_ = solver.StepMeasurement(measurement)
 	}
 }

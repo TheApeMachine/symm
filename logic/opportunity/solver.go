@@ -67,38 +67,31 @@ Delivery is serialized per subscriber (ObservationalFIFO), so resident slots are
 touched one symbol at a time and need no per-symbol lock.
 */
 type Solver struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
+	ctx    context.Context
+	cancel context.CancelFunc
+	err    error
+	status *runtime.Status
+
 	states        sync.Map // symbol -> map[OpportunityArchetype]*resident
 	ObserveModule func(string, time.Duration)
 }
 
 /*
-NewSolver constructs the synthesizer and, when a workspace is supplied, wires it
-on ChannelCategories → ChannelOpportunities.
+NewSolver constructs the opportunity synthesizer.
 */
-func NewSolver(ctx context.Context, bus *runtime.Workspace) *Solver {
+func NewSolver(ctx context.Context) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 
-	solver := &Solver{
+	return &Solver{
 		ctx:    ctx,
 		cancel: cancel,
+		status: runtime.NewStatus(),
 	}
-
-	if bus != nil {
-		runtime.Register[[]types.Category, []*types.OpportunityCandidate](
-			bus,
-			nil,
-			solver.Step,
-		)
-	}
-
-	return solver
 }
 
 func (solver *Solver) Name() string { return "opportunity" }
 
-func (solver *Solver) Error() error { return nil }
+func (solver *Solver) Error() error { return solver.err }
 
 /*
 Close cancels the solver context.
@@ -109,14 +102,16 @@ func (solver *Solver) Close() error {
 }
 
 /*
-Step folds one ranked category batch into the opportunity tracker and returns
-the updated candidates for that symbol. A batch with no active precursors or
-confirmation returns nil: computation follows opportunity density, so dormant
-symbols cost nothing.
+Step folds this envelope's ranked category batch into the opportunity tracker
+and writes the updated candidates back onto the envelope. An envelope with no
+categories, or no active precursors/confirmation, leaves Opportunities unset:
+computation follows opportunity density, so dormant symbols cost nothing.
 */
-func (solver *Solver) Step(categories []types.Category) []*types.OpportunityCandidate {
+func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
+	categories := envelope.Categories
+
 	if len(categories) == 0 {
-		return nil
+		return envelope
 	}
 
 	symbol := categories[0].Symbol
@@ -134,11 +129,11 @@ func (solver *Solver) Step(categories []types.Category) []*types.OpportunityCand
 		}
 	}
 
-	if len(candidates) == 0 {
-		return nil
+	if len(candidates) > 0 {
+		envelope.Opportunities = candidates
 	}
 
-	return candidates
+	return envelope
 }
 
 /*

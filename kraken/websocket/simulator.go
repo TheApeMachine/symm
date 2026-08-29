@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 type LatencyType uint8
@@ -65,7 +65,7 @@ a process-wide singleton.
 type Simulator struct {
 	ctx           context.Context
 	clock         Clock
-	status        types.Status
+	status        runtime.Stage
 	mu            sync.Mutex
 	wsLatencies   *ring.Ring
 	restLatencies *ring.Ring
@@ -94,7 +94,7 @@ func NewLatencySimulator(ctx context.Context, clock Clock, seed int64) *Simulato
 	simulator := &Simulator{
 		ctx:           ctx,
 		clock:         clock,
-		status:        types.INITIALIZING,
+		status:        runtime.INIT,
 		wsLatencies:   ring.New(64),
 		restLatencies: ring.New(64),
 		fillLatencies: ring.New(64),
@@ -124,7 +124,7 @@ func (simulator *Simulator) Seed() int64 {
 /*
 Status reports simulator readiness.
 */
-func (simulator *Simulator) Status() types.Status {
+func (simulator *Simulator) Status() runtime.Stage {
 	return simulator.status
 }
 
@@ -154,7 +154,7 @@ func (simulator *Simulator) Initialize() error {
 		fillLatencies = fillLatencies.Next()
 	}
 
-	simulator.status = types.READY
+	simulator.status = runtime.READY
 	return nil
 }
 

@@ -88,18 +88,6 @@ func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
 	dataChannel.OnOpen(channel.start)
 }
 
-func (peer *fluidPeer) enqueue(channel string, payload []byte) error {
-	peer.mutex.RLock()
-	writer := peer.channels[channel]
-	peer.mutex.RUnlock()
-
-	if writer == nil {
-		return nil
-	}
-
-	return writer.enqueue(payload)
-}
-
 func (peer *fluidPeer) close() {
 	peer.mutex.Lock()
 	channels := peer.channels
@@ -161,17 +149,6 @@ func newFluidChannel(
 
 func (channel *fluidChannel) start() {
 	channel.startOnce.Do(func() { go channel.run() })
-}
-
-func (channel *fluidChannel) enqueue(payload []byte) error {
-	select {
-	case <-channel.ctx.Done():
-		return channel.ctx.Err()
-	case channel.pending <- payload:
-		return nil
-	default:
-		return nil
-	}
 }
 
 func (channel *fluidChannel) run() {

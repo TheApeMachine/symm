@@ -4,14 +4,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/tests/mock"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -20,7 +17,7 @@ newPriceSurface creates a price surface with the symbol's executable fee row.
 */
 func newPriceSurface(t testing.TB, symbol string) (*Price, *websocket.API) {
 	t.Helper()
-	api := websocket.NewAPI(t.Context(), mock.NewConn(), mock.NewConn())
+	api := websocket.NewAPI(t.Context(), newMockConn(), newMockConn())
 	price := newTestPrice(t, api)
 	price.fees.Store(symbol, kraken.TradeVolumeFee{
 		Fee: decimal.NewFromFloat64(0.25),
@@ -30,15 +27,13 @@ func newPriceSurface(t testing.TB, symbol string) (*Price, *websocket.API) {
 }
 
 /*
-newTestPrice builds a Price from an api, wiring the shared workspace the
-constructor reads the api from.
+newTestPrice builds a Price directly from an api. recorder is optional and
+left nil for tests that don't need audit capture.
 */
 func newTestPrice(t testing.TB, api *websocket.API) *Price {
 	t.Helper()
-	bus := runtime.NewWorkspace(t.Context())
-	bus.Share("api", api, "")
 
-	return NewPrice(t.Context(), bus)
+	return NewPrice(api, nil)
 }
 
 /*
@@ -232,34 +227,46 @@ func TestExitValue(t *testing.T) {
 }
 
 func TestPriceWithFriction(t *testing.T) {
-	Convey("Given an exit spanning ordered bid levels", t, func() {
-		managed := entryEconomicsBook(
-			t,
-			bookLevel{book.Bid, 100, 1},
-			bookLevel{book.Bid, 99, 2},
-		)
-		price := entryEconomicsManagedFixture(t, managed, 101, 100, 3)
-		pair := kraken.InstrumentPair{Symbol: "EDGE/USD"}
-		holding := &types.Holding{Qty: decimal.NewFromFloat64(2)}
-		value := decimal.NewFromFloat64(10)
-
-		adjusted, err := price.WithFriction(pair, holding, value)
-
-		Convey("It should walk best bid downward without mutating the holding", func() {
-			So(err, ShouldBeNil)
-			So(adjusted.Float64(), ShouldAlmostEqual, 9.0025, 1e-12)
-			So(holding.Qty.Float64(), ShouldEqual, 2.0)
-		})
-	})
-
 	Convey("Given no authoritative exit book", t, func() {
 		price := entryEconomicsFixture(t, 101, 100, 3)
 		holding := &types.Holding{Qty: decimal.NewFromFloat64(1)}
 
-		Convey("It should return an explicit error instead of an unexplained nil value", func() {
+		Convey("It should return an explicit error instead of an unexplained nil value, since no full-depth book is ever available", func() {
 			adjusted, err := price.WithFriction(
 				kraken.InstrumentPair{Symbol: "EDGE/USD"},
 				holding,
+				decimal.NewFromFloat64(10),
+			)
+
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "visible bid book required")
+			So(adjusted, ShouldBeNil)
+		})
+	})
+
+	Convey("Given a well-formed holding, ticker, and fee row", t, func() {
+		price := entryEconomicsFixture(t, 101, 100, 3)
+		holding := &types.Holding{Qty: decimal.NewFromFloat64(2)}
+
+		Convey("It should still error, since ExecutableSurface/WithFriction never fabricate a book-derived adjustment", func() {
+			adjusted, err := price.WithFriction(
+				kraken.InstrumentPair{Symbol: "EDGE/USD"},
+				holding,
+				decimal.NewFromFloat64(10),
+			)
+
+			So(err, ShouldNotBeNil)
+			So(adjusted, ShouldBeNil)
+		})
+	})
+
+	Convey("Given a nil holding", t, func() {
+		price := entryEconomicsFixture(t, 101, 100, 3)
+
+		Convey("It should reject the incomplete request before ever reaching the book question", func() {
+			adjusted, err := price.WithFriction(
+				kraken.InstrumentPair{Symbol: "EDGE/USD"},
+				nil,
 				decimal.NewFromFloat64(10),
 			)
 
@@ -354,43 +361,17 @@ func TestPriceReturnPct(t *testing.T) {
 	})
 }
 
+/*
+TestPriceExecutableSurface asserts the current, intentional behavior:
+ExecutableSurface has no full-depth book to walk, so it always reports
+BookComplete=false (and therefore FullyExecutable=false, with no fabricated
+VWAP), regardless of ticker state, requested quantity, or floor.
+*/
 func TestPriceExecutableSurface(t *testing.T) {
-	Convey("Given a one-level full-coverage bid book", t, func() {
-		managed := entryEconomicsBook(
-			t,
-			bookLevel{book.Bid, 100, 100000},
-			bookLevel{book.Ask, 101, 100000},
-		)
-		price := entryEconomicsManagedFixture(t, managed, 101, 100, 100000)
+	Convey("Given a price surface with a live ticker", t, func() {
+		price := entryEconomicsFixture(t, 101, 100, 100000)
 
-		surface := price.ExecutableSurface(
-			"EDGE/USD",
-			decimal.NewFromFloat64(100000),
-			nil,
-			time.Now(),
-		)
-
-		Convey("it produces the expected executable mark and full coverage", func() {
-			So(surface.BookComplete, ShouldBeTrue)
-			So(surface.FullyExecutable, ShouldBeTrue)
-			So(surface.ExecutableQty.Float64(), ShouldAlmostEqual, 100000, 1e-9)
-			// ExecutableVWAP is the GROSS price coordinate (100), while
-			// ExecutableValue is the fee-net dollar proceeds (100000*100*0.9975).
-			So(surface.ExecutableVWAP.Float64(), ShouldAlmostEqual, 100, 1e-9)
-			So(surface.ExecutableValue.Float64(), ShouldAlmostEqual, 100*100000*0.9975, 1e-9)
-		})
-	})
-
-	Convey("Given a multi-level bid book", t, func() {
-		managed := entryEconomicsBook(
-			t,
-			bookLevel{book.Bid, 100, 50000},
-			bookLevel{book.Bid, 90, 50000},
-			bookLevel{book.Ask, 120, 100000},
-		)
-		price := entryEconomicsManagedFixture(t, managed, 120, 100, 100000)
-
-		Convey("it walks the levels and produces the correct executable VWAP", func() {
+		Convey("it always reports the book as incomplete, never a fabricated fill", func() {
 			surface := price.ExecutableSurface(
 				"EDGE/USD",
 				decimal.NewFromFloat64(100000),
@@ -398,58 +379,18 @@ func TestPriceExecutableSurface(t *testing.T) {
 				time.Now(),
 			)
 
-			gross := 100.0*50000 + 90.0*50000
-			expectedVWAP := gross / 100000
-
-			So(surface.FullyExecutable, ShouldBeTrue)
-			So(surface.ExecutableVWAP.Float64(), ShouldAlmostEqual, expectedVWAP, 1e-9)
-		})
-
-		Convey("the executable mark uses the actual SellableQty", func() {
-			surface := price.ExecutableSurface(
-				"EDGE/USD",
-				decimal.NewFromFloat64(50000),
-				nil,
-				time.Now(),
-			)
-
-			So(surface.FullyExecutable, ShouldBeTrue)
-			So(surface.ExecutableVWAP.Float64(), ShouldAlmostEqual, 100, 1e-9)
-		})
-	})
-
-	Convey("Given a book that cannot fill the complete lot", t, func() {
-		managed := entryEconomicsBook(
-			t,
-			bookLevel{book.Bid, 100, 24000},
-			bookLevel{book.Ask, 101, 100000},
-		)
-		price := entryEconomicsManagedFixture(t, managed, 101, 100, 24000)
-
-		Convey("insufficient visible quantity is explicitly incomplete, never ticker fallback", func() {
-			surface := price.ExecutableSurface(
-				"EDGE/USD",
-				decimal.NewFromFloat64(100000),
-				nil,
-				time.Now(),
-			)
-
-			So(surface.BookComplete, ShouldBeTrue)
+			So(surface.Symbol, ShouldEqual, "EDGE/USD")
+			So(surface.SellableQty.Float64(), ShouldAlmostEqual, 100000, 1e-9)
+			So(surface.BookComplete, ShouldBeFalse)
 			So(surface.FullyExecutable, ShouldBeFalse)
 			So(surface.ExecutableVWAP, ShouldBeNil)
 		})
 	})
 
 	Convey("Given a protected floor", t, func() {
-		managed := entryEconomicsBook(
-			t,
-			bookLevel{book.Bid, 110, 24000},
-			bookLevel{book.Bid, 95, 100000},
-			bookLevel{book.Ask, 120, 100000},
-		)
-		price := entryEconomicsManagedFixture(t, managed, 120, 110, 100000)
+		price := entryEconomicsFixture(t, 101, 100, 100000)
 
-		Convey("floor coverage reflects only quantity at or above the floor", func() {
+		Convey("it still reports incomplete rather than deriving floor coverage from ticker data", func() {
 			surface := price.ExecutableSurface(
 				"EDGE/USD",
 				decimal.NewFromFloat64(100000),
@@ -457,21 +398,31 @@ func TestPriceExecutableSurface(t *testing.T) {
 				time.Now(),
 			)
 
-			So(surface.FloorCoverageQty.Float64(), ShouldAlmostEqual, 24000, 1e-9)
-			So(surface.ExecutableQty.Float64(), ShouldAlmostEqual, 124000, 1e-9)
+			So(surface.BookComplete, ShouldBeFalse)
+			So(surface.FullyExecutable, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given no ticker at all for the symbol", t, func() {
+		price, _ := newPriceSurface(t, "COLD/USD")
+
+		Convey("it still reports incomplete without dereferencing a missing tick", func() {
+			So(func() {
+				surface := price.ExecutableSurface(
+					"COLD/USD",
+					decimal.NewFromFloat64(1),
+					nil,
+					time.Now(),
+				)
+
+				So(surface.BookComplete, ShouldBeFalse)
+			}, ShouldNotPanic)
 		})
 	})
 }
 
 func BenchmarkPriceExecutableSurface(b *testing.B) {
-	managed := entryEconomicsBook(
-		b,
-		bookLevel{book.Bid, 100, 50000},
-		bookLevel{book.Bid, 99, 50000},
-		bookLevel{book.Bid, 50, 50000},
-		bookLevel{book.Ask, 101, 100000},
-	)
-	price := entryEconomicsManagedFixture(b, managed, 101, 100, 100000)
+	price := entryEconomicsFixture(b, 101, 100, 100000)
 	sellable := decimal.NewFromFloat64(100000)
 	floor := decimal.NewFromFloat64(51)
 	at := time.Now()
@@ -566,20 +517,17 @@ func BenchmarkPriceExitValue(b *testing.B) {
 }
 
 func BenchmarkPriceWithFriction(b *testing.B) {
-	managed := entryEconomicsBook(
-		b,
-		bookLevel{book.Bid, 100, 1},
-		bookLevel{book.Bid, 99, 2},
-	)
-	price := entryEconomicsManagedFixture(b, managed, 101, 100, 3)
+	price := entryEconomicsFixture(b, 101, 100, 3)
 	pair := kraken.InstrumentPair{Symbol: "EDGE/USD"}
 	holding := &types.Holding{Qty: decimal.NewFromFloat64(2)}
 	value := decimal.NewFromFloat64(10)
 	b.ReportAllocs()
 
 	for b.Loop() {
-		if _, err := price.WithFriction(pair, holding, value); err != nil {
-			b.Fatal(err)
+		// WithFriction always errors (no full-depth book is ever available);
+		// this benchmark measures the cost of that fast-reject path.
+		if _, err := price.WithFriction(pair, holding, value); err == nil {
+			b.Fatal("expected WithFriction to error without a full-depth book")
 		}
 	}
 }

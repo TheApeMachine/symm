@@ -1,7 +1,6 @@
 package broker
 
 import (
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
@@ -43,61 +42,10 @@ func (price *Price) ExecutableQuantity(
 		))
 	}
 
-	visible := decimal.NewFromInt64(0)
-	bookObserved := false
-	bookCrossed := false
-
-	if price.api != nil {
-		price.api.Book(price.api.Normalizer().Name(symbol), func(managed *book.Book) {
-			if managed == nil || managed.Asks.Low == nil {
-				return
-			}
-
-			bookObserved = true
-			bestBid := tick.Bid
-
-			if managed.Bids.High != nil {
-				bestBid = managed.Bids.High.Price
-			}
-
-			if managed.Asks.Low.Price.Cmp(bestBid) < 0 {
-				bookCrossed = true
-				return
-			}
-
-			for level := managed.Asks.Low; level != nil; level = level.Higher {
-				if level.Quantity == nil || level.Quantity.Sign() <= 0 {
-					continue
-				}
-
-				visible = visible.Add(level.Quantity)
-			}
-		})
-	}
-
-	if bookCrossed {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"entry quantity: crossed visible book cannot price a long entry",
-			nil,
-		))
-	}
-
-	if bookObserved {
-		if visible.Sign() <= 0 {
-			return nil, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"entry quantity: visible ask depth is empty",
-				nil,
-			))
-		}
-
-		if requested.Cmp(visible) <= 0 {
-			return decimal.NewFromInt64(0).Add(requested), nil
-		}
-
-		return visible, nil
-	}
+	// No full-depth book is available to this signal, so the executable
+	// quantity is always priced off the ticker's own visible ask quantity
+	// rather than a walked ask-side depth chain.
+	var visible *decimal.Decimal
 
 	if tick.AskQty <= 0 {
 		return nil, errnie.Error(errnie.Err(
@@ -240,58 +188,14 @@ func (price *Price) EntryCost(
 	}, nil
 }
 
+/*
+entryDepthVWAP always reports unavailable: this signal has no access to a
+full-depth book to walk for a multi-level VWAP, so EntryCost's caller always
+takes its ticker-level fallback path instead.
+*/
 func (price *Price) entryDepthVWAP(
 	symbol string,
 	quantity *decimal.Decimal,
 ) (*decimal.Decimal, *decimal.Decimal, *decimal.Decimal) {
-	if price == nil || price.api == nil {
-		return nil, nil, nil
-	}
-
-	var entryPrice *decimal.Decimal
-	var bestAsk *decimal.Decimal
-	var bestBid *decimal.Decimal
-	price.api.Book(price.api.Normalizer().Name(symbol), func(managed *book.Book) {
-		if managed == nil || managed.Asks.Low == nil {
-			return
-		}
-
-		bestAsk = decimal.NewFromInt64(0).Add(managed.Asks.Low.Price)
-
-		if managed.Bids.High != nil {
-			bestBid = decimal.NewFromInt64(0).Add(managed.Bids.High.Price)
-		}
-
-		entryPrice = price.askVWAP(managed.Asks.Low, quantity)
-	})
-
-	return entryPrice, bestAsk, bestBid
-}
-
-func (price *Price) askVWAP(
-	level *book.Level,
-	quantity *decimal.Decimal,
-) *decimal.Decimal {
-	remaining := decimal.NewFromInt64(0).Add(quantity)
-	gross := decimal.NewFromInt64(0)
-
-	for level != nil && remaining.Sign() > 0 {
-		fillQuantity := level.Quantity
-
-		if fillQuantity.Cmp(remaining) > 0 {
-			fillQuantity = remaining
-		}
-
-		gross = gross.Add(
-			decimal.NewFromInt64(0).Add(level.Price).Mul(fillQuantity),
-		)
-		remaining = remaining.Sub(fillQuantity)
-		level = level.Higher
-	}
-
-	if remaining.Sign() > 0 {
-		return nil
-	}
-
-	return gross.Div(quantity)
+	return nil, nil, nil
 }

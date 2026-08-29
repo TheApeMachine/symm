@@ -5,11 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"os/exec"
 	"strings"
 	"sync"
-	"sync/atomic"
+
+	"github.com/theapemachine/symm/nomagique/runtime"
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/book"
@@ -29,14 +29,11 @@ Private frames publish onto explicit typed subscriptions so Desk and tests use
 the same direct wiring as the live transport.
 */
 type Paper struct {
-	ctx          context.Context
-	cancel       context.CancelFunc
-	simulator    *Simulator
-	commandMu    sync.Mutex
-	books        *spot.BookManager
-	thesis       atomic.Pointer[types.Thesis]
-	bus          *runtime.Workspace
-	feed         *runtime.Feed
+	ctx       context.Context
+	cancel    context.CancelFunc
+	simulator *Simulator
+	commandMu sync.Mutex
+	ingress   map[string]*runtime.Workload[*types.Envelope]
 }
 
 /*
@@ -45,7 +42,7 @@ NewPaper opens the paper spot transport with explicit private subscriptions.
 func NewPaper(
 	ctx context.Context,
 	simulator *Simulator,
-	bus *runtime.Workspace,
+	bus map[string]*runtime.Workload[*types.Envelope],
 ) *Paper {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -55,40 +52,7 @@ func NewPaper(
 		simulator: simulator,
 	}
 
-	paper.SetBus(bus)
-
-	if bus != nil {
-		if shared, _ := bus.Shared("thesis", ""); shared != nil {
-			if thesis, ok := shared.(*types.Thesis); ok {
-				paper.SetThesis(thesis)
-			}
-		}
-	}
-
 	return paper
-}
-
-/*
-SetThesis attaches the canonical execution destination.
-*/
-func (paper *Paper) SetThesis(thesis *types.Thesis) {
-	if paper == nil || thesis == nil {
-		panic("websocket: paper thesis required")
-	}
-
-	paper.thesis.Store(thesis)
-}
-
-/*
-SetBus attaches the system workspace bus and resolves the execution channel.
-*/
-func (paper *Paper) SetBus(bus *runtime.Workspace) {
-	if paper == nil || bus == nil {
-		return
-	}
-
-	paper.bus = bus
-	paper.feed = bus.NewFeed()
 }
 
 /*
@@ -101,7 +65,7 @@ func (paper *Paper) Initialize() error {
 /*
 Status reports the backing simulator status.
 */
-func (paper *Paper) Status() types.Status {
+func (paper *Paper) Status() runtime.Stage {
 	return paper.simulator.Status()
 }
 
@@ -669,10 +633,10 @@ func (paper *Paper) publish(channel string, message any) {
 			return
 		}
 
-		for index := range execution.Data {
-			if paper.feed != nil {
-				paper.feed.Emit(execution.Data[index])
-			}
+		for range execution.Data {
+			paper.ingress[channel].Push(types.NewEnvelope(
+				types.EnvelopeExecution,
+			))
 		}
 	case "balances", "add_order":
 		// Balances and order acks are consumed through the explicit REST

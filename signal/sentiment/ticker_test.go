@@ -8,7 +8,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 func ticker(symbol string, last float64, at time.Time) kraken.TickerData {
@@ -21,8 +20,7 @@ func ticker(symbol string, last float64, at time.Time) kraken.TickerData {
 
 func TestTickerStep(t *testing.T) {
 	Convey("Given a shared cross-section", t, func() {
-		workspace := runtime.NewWorkspace(nil)
-		entity := NewTicker(workspace)
+		entity := NewTicker()
 
 		Convey("the first observation yields a measurement with no return yet", func() {
 			measurement := entity.Step(ticker("AAA/USD", 100, time.Unix(1_700_000_000, 0)))

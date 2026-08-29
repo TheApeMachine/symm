@@ -3,7 +3,6 @@ package broker
 import (
 	"context"
 	"errors"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -27,7 +26,6 @@ type Recovery struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	api        *websocket.API
-	bus        *runtime.Workspace
 	instrument *Instrument
 	price      *Price
 	balance    *Balance
@@ -42,7 +40,6 @@ NewRecovery instantiates a Recovery processor with all broker dependencies.
 func NewRecovery(
 	ctx context.Context,
 	api *websocket.API,
-	bus *runtime.Workspace,
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
@@ -56,7 +53,6 @@ func NewRecovery(
 		ctx:        ctx,
 		cancel:     cancel,
 		api:        api,
-		bus:        bus,
 		instrument: instrument,
 		price:      price,
 		balance:    balance,
@@ -319,7 +315,6 @@ func (recovery *Recovery) recoverAsset(
 		delete(working, orderID)
 	}
 
-	position.Publish()
 	return nil
 }
 
@@ -523,7 +518,7 @@ func (recovery *Recovery) recoveredPosition(
 	stoploss *types.Stoploss,
 ) *Position {
 	position := NewPosition(
-		recovery.ctx, recovery.api, recovery.bus, recovery.instrument, recovery.price,
+		recovery.ctx, recovery.api, recovery.instrument, recovery.price,
 		recovery.balance, recovery.recorder, recovery.store, pair, types.Decision{
 			ID:               "recovered:" + pair.Symbol,
 			ProposedQuantity: quantity,

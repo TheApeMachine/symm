@@ -3,19 +3,21 @@ package liquidity
 import (
 	"context"
 
-	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
 Signal is the liquidity measuring instrument. It composes its market entities
 in its constructor and exposes the canonical signal structure: Constructor,
-Name, Error, Step, Close.
+Name, Error, Step, Close. It satisfies nomagique/runtime.Node[*types.Envelope],
+writing its projected Measurement into the envelope's Liquidity field.
 */
 type Signal struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
+	status *runtime.Status
 
 	ticker *Ticker
 }
@@ -28,6 +30,7 @@ func NewSignal(ctx context.Context) *Signal {
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
+		status: runtime.NewStatus(),
 		ticker: NewTicker(),
 	}
 }
@@ -36,14 +39,16 @@ func (signal *Signal) Name() string { return "liquidity" }
 
 func (signal *Signal) Error() error { return signal.err }
 
-func (signal *Signal) Step(ticker kraken.TickerData) *data.Measurement[float64] {
-	measurement := signal.ticker.Step(ticker)
+func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
+	measurement := signal.ticker.Step(envelope.TickerData)
 
 	if measurement != nil {
 		signal.err = measurement.Err
 	}
 
-	return measurement
+	envelope.Liquidity = measurement
+
+	return envelope
 }
 
 func (signal *Signal) Close() error {

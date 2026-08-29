@@ -8,12 +8,21 @@ import (
 /*
 Hawkes is a composite Primitive assembled entirely from atomic units in
 nomagique/statistic/hawkes. Composition order is the causal contract in
-signal/hawkes/README.md section 5.3: every primitive up through Compensator
-reads only the model fitted BEFORE the current event and the arrival path
-retained BEFORE it (ArrivalPath has not run yet), so the current event can
-neither excite nor refit the model that judges it. Fit and ArrivalPath run
-last, in that order, so a converged refit and the event's own retention both
-become visible only starting with the NEXT event.
+signal/hawkes/README.md section 5.3:
+
+	1. evaluate pre-arrival intensity from history/parameters before this event
+	2. evaluate likelihood and compensator contribution
+	3. emit the measurement
+	4. incorporate the event into process state
+	5. refit/update model parameters for subsequent observations
+
+Steps 1-3 (Accounting through Compensator) read only the model fitted BEFORE
+the current event and the arrival path retained BEFORE it — ArrivalPath has
+not run yet, so the current event can neither excite nor refit the model
+that judges it. ArrivalPath then performs step 4 (incorporate), and Fit runs
+LAST, performing step 5 (refit) from history that now INCLUDES the current
+event — the model Fit produces here first takes effect for the event AFTER
+this one, never this one.
 
 	empirical counts/rates, mark composition, From/At/Maturity (Accounting)
 	-> pre-arrival conditional intensity λ(t⁻) (ConditionalIntensity)
@@ -21,8 +30,8 @@ become visible only starting with the NEXT event.
 	-> branching matrix, spectral radius, descendants (Branching)
 	-> excess intensity, amplitude, decay/timescale (Excitation)
 	-> compensator, innovations, SNR (Compensator)
-	-> data-derived MLE refit of the model for subsequent events (Fit)
 	-> retain the current event in the bounded arrival path (ArrivalPath)
+	-> data-derived MLE refit of the model for subsequent events (Fit)
 */
 func Hawkes() types.Primitive {
 	return types.Pipe(
@@ -32,7 +41,7 @@ func Hawkes() types.Primitive {
 		hawkes.Branching,
 		hawkes.Excitation,
 		hawkes.Compensator,
-		hawkes.Fit,
 		hawkes.ArrivalPath,
+		hawkes.Fit,
 	)
 }

@@ -3,17 +3,14 @@ package cvd
 import (
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/kraken/websocket"
 )
 
 /*
@@ -574,7 +571,6 @@ estimator, and nomagique exposes no such types.Primitive. The README marks those
 metrics MAY-optional ("emitted only when the regression is estimable").
 */
 type Trade struct {
-	workspace *runtime.Workspace
 	number    *nomagique.Number[string]
 	projector *data.Projector
 }
@@ -583,10 +579,9 @@ type Trade struct {
 NewTrade constructs the Trade entity: one Number pipeline for executed-flow
 accounting and one projector that names the output slots.
 */
-func NewTrade(workspace *runtime.Workspace) *Trade {
+func NewTrade() *Trade {
 	return &Trade{
-		workspace: workspace,
-		number:    nomagique.NewNumber[string](cvdPipeline()),
+		number: nomagique.NewNumber[string](cvdPipeline()),
 		projector: data.NewProjector(
 			data.Binding{From: nmtypes.SampleCount, Name: "trade_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolBuyCountTotal, Name: "trade_count:buy", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
@@ -666,60 +661,13 @@ func (trade *Trade) Step(observation kraken.TradeData) *data.Measurement[float64
 }
 
 /*
-loadQuote loads the latest valid quote midpoint from the shared book when one
-is available and seeds the epoch midpoint on the first valid quote.
+loadQuote marks this observation as having no contemporaneous quote. cvd no
+longer has access to a shared book, so the response-price metrics (which need
+a bid/ask quote at the trade's own instant) are permanently undefined; the
+executed-flow accounting this signal actually measures is unaffected.
 */
 func (trade *Trade) loadQuote(symbol string, input *nmtypes.Frame) {
-	if trade == nil || trade.workspace == nil {
-		input.Put(symbolHasQuote, 0)
-		return
-	}
-
-	var hasQuote bool
-	var bidPrice, askPrice float64
-
-	inspectBook := func(resident *book.Book) {
-		if resident == nil {
-			return
-		}
-		bestBid := resident.BestBid()
-		bestAsk := resident.BestAsk()
-
-		if bestBid != nil && bestAsk != nil && bestBid.Price != nil && bestAsk.Price != nil {
-			bidPrice = bestBid.Price.Float64()
-			askPrice = bestAsk.Price.Float64()
-
-			if bidPrice > 0 && askPrice > bidPrice {
-				hasQuote = true
-			}
-		}
-	}
-
-	if shared, found := trade.workspace.Shared("api", ""); found && shared != nil {
-		if api, ok := shared.(*websocket.API); ok && api != nil {
-			api.Book(symbol, inspectBook)
-		}
-	} else if sharedBook, found := trade.workspace.Shared("book", symbol); found && sharedBook != nil {
-		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
-			inspectBook(currentBook)
-		}
-	}
-
-	if !hasQuote {
-		input.Put(symbolHasQuote, 0)
-		return
-	}
-
-	input.Put(symbolHasQuote, 1)
-	input.Put(symbolBidPrice, bidPrice)
-	input.Put(symbolAskPrice, askPrice)
-
-	committed, committedFound := trade.number.Project(symbol)
-
-	if !committedFound || !committed.Has(symbolBidFrom) {
-		input.Put(symbolBidFrom, bidPrice)
-		input.Put(symbolAskFrom, askPrice)
-	}
+	input.Put(symbolHasQuote, 0)
 }
 
 func (trade *Trade) Close() error { return nil }

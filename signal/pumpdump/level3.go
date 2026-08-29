@@ -2,36 +2,32 @@ package pumpdump
 
 import (
 	"fmt"
-	"time"
 
-	book "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-Level3 is the authoritative executable-touch market entity. It reads the shared
-book and owns exactly a Number pipeline and a projector, both declared in its
-constructor, plus Step and Close.
+Level3 is the authoritative executable-touch market entity. It owns exactly a
+Number pipeline and a projector, both declared in its constructor, plus Step
+and Close. It retains no book: each Step derives the touch directly from the
+message's own visible bid/ask orders.
 */
 type Level3 struct {
-	workspace *runtime.Workspace
 	number    *nomagique.Number[string]
 	projector *data.Projector
 }
 
 /*
 NewLevel3 constructs the Level3 entity: one Number pipeline for the executable
-touch read from the shared book, and one projector that names the output slots.
+touch, and one projector that names the output slots.
 */
-func NewLevel3(workspace *runtime.Workspace) *Level3 {
+func NewLevel3() *Level3 {
 	return &Level3{
-		workspace: workspace,
 		number: nomagique.NewNumber[string](nmtypes.Pipe(
 			// 0 < bid < ask: a crossed, missing, or non-positive book is rejected here.
 			logic.PositiveOrder(symbolBidPrice, symbolAskPrice),
@@ -65,46 +61,40 @@ func NewLevel3(workspace *runtime.Workspace) *Level3 {
 }
 
 /*
-Step reads the shared book for one symbol and projects the executable touch.
-The shared book is type-asserted to *book.Book; a missing book or a missing
-touch field panics rather than being silently swallowed.
+Step derives the executable touch directly from this message's own visible
+bid/ask orders (best bid, best ask) and projects it. A message with no usable
+touch on either side yields a rejection, not a panic.
 */
-func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float64] {
-	if level3 == nil || level3.workspace == nil {
-		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: workspace missing for %s", symbol)}
+func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64] {
+	if level3 == nil {
+		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: level3 entity missing for %s", message.Symbol)}
 	}
 
-	var hasQuote bool
-	var bidPrice, askPrice float64
+	bidPrice := 0.0
+	askPrice := 0.0
 
-	inspectBook := func(resident *book.Book) {
-		if resident == nil {
-			return
+	for _, order := range message.Bids {
+		if order.LimitPrice == nil {
+			continue
 		}
-		bestBid := resident.BestBid()
-		bestAsk := resident.BestAsk()
 
-		if bestBid != nil && bestAsk != nil && bestBid.Price != nil && bestAsk.Price != nil {
-			bidPrice = bestBid.Price.Float64()
-			askPrice = bestAsk.Price.Float64()
-			hasQuote = true
+		if price := order.LimitPrice.Float64(); price > bidPrice {
+			bidPrice = price
 		}
 	}
 
-	if shared, found := level3.workspace.Shared("api", ""); found && shared != nil {
-		if api, ok := shared.(*websocket.API); ok && api != nil {
-			api.Book(symbol, inspectBook)
+	for _, order := range message.Asks {
+		if order.LimitPrice == nil {
+			continue
 		}
-	} else if sharedBook, found := level3.workspace.Shared("book", symbol); found && sharedBook != nil {
-		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
-			inspectBook(currentBook)
+
+		if price := order.LimitPrice.Float64(); askPrice == 0 || price < askPrice {
+			askPrice = price
 		}
-	} else {
-		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: api missing for %s", symbol)}
 	}
 
-	if !hasQuote {
-		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: book touch missing for %s", symbol)}
+	if bidPrice == 0 || askPrice == 0 {
+		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: book touch missing for %s", message.Symbol)}
 	}
 
 	input := nmtypes.Frame{}
@@ -112,11 +102,11 @@ func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float6
 	input.Put(symbolAskPrice, askPrice)
 
 	return level3.projector.Project(
-		symbol,
+		message.Symbol,
 		"pumpdump",
-		at,
-		at,
-		level3.number.Step(symbol, input),
+		message.Timestamp,
+		message.Timestamp,
+		level3.number.Step(message.Symbol, input),
 	)
 }
 

@@ -1,807 +1,1297 @@
-# Runtime Workspace Specification
-
-## Status
-
-Normative specification for `nomagique/runtime`.
-
-Where the implementation and this specification disagree, this specification defines the intended architecture.
-
----
+# Workspace Runtime Specification
 
 ## 1. Purpose
 
-The runtime Workspace is a **data-management substrate**.
+Workspace is SYMM's real-time streaming execution fabric.
 
-Its primary responsibility is to provide efficient data routing between independently implemented components while abstracting concurrency, scheduling, buffering, and execution ownership away from those components.
+It is not a pub/sub bus.
 
-A component connected through the Workspace SHOULD reason in terms of:
+It is not a topic router.
 
-```text
-receive value
-process value
-optionally publish value
-```
+It is not a recursive event dispatcher.
 
-It SHOULD NOT need to reason about:
+It does not publish outputs from one node back into itself.
 
-```text
-goroutine ownership
-worker lifetime
-queue ownership
-per-symbol locks
-fan-out synchronization
-scheduler coordination
-```
+Instead, Workspace owns a small set of statically configured Workloads.
 
-The Workspace additionally provides:
+Each Workload represents one complete execution graph for one class of ingress
+event.
 
-1. a shared-object pool for runtime state that lives outside the components consuming it;
-2. a signaling layer for reactive event notification;
-3. an observer layer for side effects that should not participate in the primary data path;
-4. failure propagation and runtime diagnostics;
-5. a quiescence boundary for deterministic settlement in tests and replay.
+An ingress value enters a Workload exactly once.
 
-The Workspace does not interpret the data it transports.
+That value occupies one ring slot and advances through an ordered sequence of
+Disruptor HandlerGroups.
 
----
+Within a HandlerGroup, independent Nodes execute concurrently.
 
-## 2. Core Principle
+Between HandlerGroups, the Disruptor provides a barrier: every Node in the
+previous group must complete before any Node in the next group may observe the
+slot.
 
-The governing rule is:
+The central runtime model is:
 
-> Components own computation. The Workspace owns execution.
+    one ingress event
+        -> one ring reservation
+        -> one Envelope
+        -> one trip through one Workload
+        -> parallel computation where independent
+        -> barriers where dependent
+        -> observation at explicit boundaries
+        -> slot released for reuse
 
-A producer determines **what value exists**.
+No republishing is required.
 
-A consumer determines **what to do with that value**.
+The HandlerGroups ARE the fanout.
 
-The Workspace determines:
-
-- how the value reaches consumers;
-- how fan-out occurs;
-- where temporary buffering lives;
-- when work becomes runnable;
-- which worker executes it;
-- how ordering is preserved;
-- when execution ownership is released.
-
-Concurrency is therefore a property of the data-routing substrate rather than of each connected component.
+The barriers ARE the join.
 
 ---
 
-## 3. Workspace Topology
+## 2. Core Invariant
 
-One Workspace represents one connected runtime data plane.
+The Workspace execution model is summarized by:
 
-```text
-                     Workspace
-                         │
-        ┌────────────────┼────────────────┐
-        │                │                │
-    Channels         Shared State      Signals
-        │                │                │
-        │           Share / Shared     On / Notify
-        │
-        ├── subscriptions
-        │
-        ├── keyed lanes
-        │
-        └── bounded rings
-                │
-                ▼
-         shared worker pool
+> One event. One slot. One trip through the graph.
 
-                         │
-                         ▼
-                     Observers
-                         │
-            UI / telemetry / audit /
-             capture / other effects
-```
+An event MUST NOT be copied into intermediate queues merely to move between
+semantic stages.
 
-Components SHOULD communicate through named channels rather than directly coordinating execution with one another.
+A Node MUST NOT publish its result back into Workspace.
+
+A downstream Node observes upstream results by reading the same Envelope after
+the Disruptor barrier has established completion.
 
 ---
 
-## 4. Channels
+## 3. Terminology
 
-A channel is a named, typed stream of values.
+### 3.1 Workspace
 
-A channel definition consists logically of:
-
-```text
-Name
-Value type
-Key function
-```
-
-The key function assigns each published value to an execution lane.
-
-Examples:
-
-```text
-ticker      → ticker.Symbol
-trade       → trade.Symbol
-measurement → measurement.Symbol
-global UI   → one global key
-```
-
-All users of one named channel MUST agree on its value type and key semantics.
-
-A channel name MUST NOT acquire different scheduling semantics depending on which component happens to request it first.
-
-The channel is transport infrastructure. It MUST NOT attach domain interpretation to the values it carries.
-
----
-
-## 5. Fan-Out
-
-Publishing one value to a channel delivers that value independently to every subscription on that channel.
-
-Given:
-
-```text
-              ticker BTC/USD
-                    │
-             ChannelTickers
-          ┌─────────┼─────────┐
-          ▼         ▼         ▼
-      liquidity  resonance   desk
-```
-
-each subscription receives its own delivery.
-
-One slow consumer MUST NOT require another consumer to share its queue or processing position.
-
-For this reason buffering belongs to the subscription lane, not globally to the channel.
-
----
-
-## 6. Subscription Lanes
-
-For each:
-
-```text
-(subscription, key)
-```
-
-the Workspace maintains an independent bounded lane.
+A Workspace owns the configured Workloads and their lifetime.
 
 Conceptually:
 
-```text
-Channel
-  │
-  ├── Subscription A
-  │      ├── BTC/USD → Ring
-  │      ├── ETH/USD → Ring
-  │      └── SOL/USD → Ring
-  │
-  └── Subscription B
-         ├── BTC/USD → Ring
-         ├── ETH/USD → Ring
-         └── SOL/USD → Ring
-```
+    Workspace
+        -> Ticker Workload
+        -> Trade Workload
+        -> Level3 Workload
+        -> Execution Workload
+        -> other explicitly configured ingress Workloads
 
-A lane is the unit of scheduling and sequential execution.
+Workspace is responsible for routing a newly arriving Envelope to the correct
+Workload.
 
-Values belonging to one lane MUST be processed in FIFO order.
-
-At most one drain for one lane may execute at a time.
-
-Independent lanes MAY execute concurrently.
+It does not route intermediate computation results.
 
 ---
 
-## 7. Concurrency Contract
+### 3.2 Workload
 
-The Workspace MUST preserve sequential execution within one key while allowing independent keys to progress concurrently.
+A Workload is one Disruptor instance plus its preallocated ring storage and
+ordered HandlerGroups.
 
-For a symbol-keyed stream:
-
-```text
-BTC 1
-BTC 2
-BTC 3
-```
-
-the consumer MUST observe:
-
-```text
-BTC 1 → BTC 2 → BTC 3
-```
-
-for retained values.
-
-Meanwhile:
-
-```text
-BTC
-ETH
-SOL
-```
-
-MAY execute concurrently.
-
-This guarantee allows a keyed consumer to maintain per-key mutable estimator state without introducing synchronization solely to protect concurrent calls for the same key.
-
-The Workspace MUST NOT require every component to create its own goroutine or mutex topology.
-
----
-
-## 8. Runnable Work
-
-A lane does not permanently own a worker.
-
-A lane becomes runnable when data is present and no drain already owns responsibility for that lane.
-
-Conceptually:
-
-```text
-value published
-      │
-      ▼
- value enters ring
-      │
-      ▼
-is a drain already responsible?
-      │
-   ┌──┴──┐
-  yes    no
-   │      │
-   │      ▼
-   │   schedule drain
-   │
-   └──────────────► existing drain consumes it
-```
-
-Repeated writes to an already-active lane MUST NOT create one worker task per value.
-
-One scheduled drain owns responsibility for consuming that lane until it reaches an idle boundary.
-
----
-
-## 9. Worker Pool
-
-All runnable lane drains execute on a shared worker pool.
-
-Workers are execution capacity. They do not belong to channels, subscriptions, symbols, or components.
-
-```text
-active lane ─┐
-active lane ─┼──► shared worker pool
-active lane ─┘
-
-idle lane ──────► no worker ownership
-idle lane ──────► no worker ownership
-```
-
-When a drain completes, its worker is free to execute other runnable work.
-
-The pool MAY retain idle workers according to its own elasticity policy, but an idle lane MUST NOT retain a dedicated goroutine.
-
-This distinction is fundamental:
-
-> Worker lifetime is a pool concern. Lane lifetime is a data concern.
-
-The number of possible lanes may therefore be much greater than the number of active worker goroutines.
-
----
-
-## 10. Drain Lifecycle
-
-A drain consumes retained values from one lane sequentially.
-
-Its lifecycle is:
-
-```text
-scheduled
-   │
-   ▼
-drain next value
-   │
-   ▼
-execute subscription step
-   │
-   ├── more values ──► continue
-   │
-   └── empty
-          │
-          ▼
-    release ownership
-          │
-          ▼
-    verify still empty
-       ┌──┴──┐
-      yes    no
-       │      │
-       ▼      ▼
-    return   reacquire
-```
-
-The empty/recheck transition MUST prevent a value arriving during ownership release from becoming stranded without a future drain.
-
-Once the lane is genuinely idle, the drain returns and releases its worker.
-
----
-
-## 11. Bounded Retention
-
-Streaming lanes are bounded.
-
-A consumer that cannot keep pace MUST NOT create an indefinitely growing historical backlog.
-
-When a lane exceeds its retention capacity, the oldest retained values MAY be overwritten so the lane continues representing the freshest available stream.
-
-The runtime MUST make such loss observable.
-
-At minimum diagnostics SHOULD preserve:
-
-- submitted values;
-- completed values;
-- retained pending values;
-- lane capacity;
-- high-water mark;
-- dropped values;
-- active drains.
-
-The overload policy is therefore intentionally biased toward:
-
-```text
-current state
-```
-
-rather than:
-
-```text
-unbounded processing of stale state
-```
-
-A bounded streaming lane is not a durable event log.
-
-Components requiring lossless historical retention MUST use an appropriate persistence mechanism.
-
----
-
-## 12. Shared Object Pool
-
-The Workspace provides a shared-object pool for state that is authoritative at runtime but does not belong to the consuming components.
-
-```text
-producer
-   │
- Share("book", object, symbol)
-   │
-   ▼
-Workspace
-   │
- Shared("book", symbol)
-   │
-   ├──► signal A
-   ├──► signal B
-   └──► signal C
-```
-
-A shared object allows consumers to access common state without importing or coordinating directly with the component that produced it.
-
-Examples include:
-
-- authoritative order books;
-- cross-sectional state;
-- other runtime resources whose identity is shared across several components.
-
-`Share` / `Shared` is a state facility, not a stream.
-
-Publishing a new channel value and mutating a shared object are distinct operations.
-
-Consumers MUST NOT infer that a shared object changed merely because they hold a reference to it.
-
----
-
-## 13. Signaling
-
-The Workspace provides lightweight reactive signaling through named trigger topics.
-
-```text
-producer
-   │
- Notify("disconnect")
-   │
-   ▼
-Workspace
-   │
-   ├──► listener A
-   └──► listener B
-```
-
-Signals communicate:
-
-> Something happened; react.
-
-They do not carry the primary analytical data stream.
-
-Typical uses include lifecycle or invalidation events such as:
-
-- connection loss;
-- resource invalidation;
-- refresh requests;
-- shared-state change notification.
-
-A signal listener SHOULD NOT need to know which concrete component emitted the event.
-
-The signaling layer MUST NOT be used as a substitute for typed data channels when the event itself contains meaningful domain data.
-
----
-
-## 14. Observation and Side Effects
-
-Observers inspect published data without becoming participants in the primary computational routing graph.
-
-This layer exists for side effects.
-
-Examples include:
-
-- UI publishing;
-- telemetry;
-- diagnostics;
-- audit logging;
-- capture or replay-frame storage;
-- external instrumentation.
-
-Conceptually:
-
-```text
-                    published value
-                         │
-              ┌──────────┴──────────┐
-              ▼                     ▼
-       subscriptions             observers
-              │                     │
-       domain computation       side effects
-```
-
-An observer MUST NOT determine whether normal subscribers receive a value.
-
-An observer SHOULD NOT contain domain computation required for correctness of downstream analytical stages.
-
-If removing an observer changes the mathematical result of the pipeline, that observer is probably a subscriber instead.
-
-Observers SHOULD remain sufficiently lightweight that observational side effects do not dominate the hot publishing path.
-
----
-
-## 15. Data Plane and Side-Effect Plane
-
-The Workspace distinguishes two broad flows.
-
-### 15.1 Data plane
-
-The data plane carries values whose processing produces further domain state.
-
-Examples:
-
-```text
-tickers
-trades
-level3
-measurements
-categories
-resonance
-causal outputs
-cognition
-graphs
-decisions
-executions
-```
-
-These use typed channels and subscriptions.
-
-### 15.2 Side-effect plane
-
-The side-effect plane observes what occurred and exposes or records it elsewhere.
-
-Examples:
-
-```text
-dashboard projection
-telemetry
-audit
-diagnostics
-capture
-```
-
-These SHOULD use observers when they do not participate in domain computation.
-
-The side-effect plane MUST NOT become an implicit prerequisite of the analytical data plane.
-
----
-
-## 16. Failure Contract
-
-A subscription step may fail.
-
-A failure in a required processing stage MUST NOT disappear silently while the rest of the pipeline continues under the assumption that the stage succeeded.
-
-The Workspace therefore preserves the first stage failure and propagates it to the configured runtime failure handler.
-
-A fatal stage failure SHOULD cancel further Workspace processing.
-
-The error path MUST preserve enough context to identify the channel or stage responsible.
-
-Observation failures and optional side-effect failures MAY have a different policy when explicitly specified, because observational infrastructure is not necessarily part of the correctness boundary.
-
----
-
-## 17. Quiescence
-
-The Workspace exposes a quiescent state for replay, testing, and other deterministic settlement boundaries.
-
-A Workspace is idle when:
-
-```text
-no retained channel work is pending
-AND
-no subscription step is currently executing
-```
-
-`WaitForQuiescence` establishes the boundary:
-
-```text
-inject observation
-       │
-       ▼
-derived work fans through Workspace
-       │
-       ▼
-wait until no runnable/active work remains
-       │
-       ▼
-stable settlement point
-```
-
-Quiescence means that the streaming Workspace has drained.
-
-It does not necessarily mean that every independently owned background system in the process has completed unrelated work.
-
----
-
-## 18. Diagnostics
-
-Scheduling behavior is part of the observable runtime state.
-
-The Workspace SHOULD make it possible to inspect:
-
-```text
-lane count
-active drains
-pending values
-retention capacity
-high-water mark
-submitted values
-completed values
-dropped values
-stage execution duration
-```
-
-These quantities describe runtime pressure.
-
-They MUST NOT be interpreted as market measurements.
-
-A dropped-value count indicates scheduling or consumer pressure, not market significance.
-
----
-
-## 19. Explicit Non-Claims
-
-The Workspace does not:
-
-- interpret market data;
-- produce Measurements;
-- decide strategy;
-- classify regimes;
-- provide durable storage;
-- guarantee that every streamed value survives overload;
-- assign one goroutine to every channel;
-- assign one goroutine to every symbol;
-- assign one goroutine to every subscription;
-- make shared objects immutable;
-- make arbitrary component state thread-safe;
-- turn observer callbacks into part of the domain dependency graph.
-
-The Workspace guarantees execution properties only within the contracts it owns.
-
-For example, per-key sequential subscription execution does not make an object safe when unrelated goroutines mutate that same object outside the Workspace.
-
----
-
-## 20. Component Contract
-
-A component connected to the Workspace SHOULD have a narrow computational interface.
-
-Conceptually:
-
-```go
-func Step(value T) error
-```
-
-or:
-
-```go
-func Process(value In) (Out, bool, error)
-```
-
-The component SHOULD NOT need internal worker management merely to consume a Workspace stream.
-
-A keyed processor MAY retain mutable state per key under the Workspace's sequential-key execution guarantee.
-
-A component that creates independent asynchronous work outside the Workspace owns the synchronization and lifecycle of that work itself.
-
----
-
-## 21. Channel Declaration Contract
-
-A named channel is a system-level contract.
-
-For every channel, the architecture SHOULD define exactly one:
-
-```text
-name
-Go value type
-keying rule
-semantic payload
-```
+A Workload represents a complete execution graph for one ingress class.
 
 Example:
 
-| Channel | Payload | Key |
-|---|---|---|
-| `tickers` | ticker observation | symbol |
-| `trades` | trade observation | symbol |
-| `level3` | book update | symbol |
-| `measurements` | measurement | symbol |
-| `ui` | UI frame | global |
-| `fluid` | fluid frame | channel or global domain |
+    Ticker Workload
 
-Callers MUST NOT redefine the affinity semantics of an existing channel locally.
+        Group 1:
+            Correlation
+            LeadLag
+            Liquidity
 
-The key determines the concurrency boundary and is therefore part of the channel's contract, not an incidental implementation parameter.
+        Group 2:
+            ObserveAfterSignals
 
----
+        Group 3:
+            Category
 
-## 22. Shared-State Contract
+        Group 4:
+            ObserveAfterCategory
 
-A shared object SHOULD have:
-
-```text
-stable name
-optional identity components
-documented owner
-documented mutation rules
-documented reader expectations
-```
-
-The Workspace owns discovery of the object.
-
-It does not automatically own the object's internal synchronization.
-
-If an object is concurrently mutable, its owner MUST define the concurrency contract governing that mutation.
-
-Shared state SHOULD be used when consumers require the current authoritative object.
-
-Channels SHOULD be used when consumers require the sequence of changes.
+The Workload's ring is the transport for the entire computation.
 
 ---
 
-## 23. Signaling Contract
+### 3.3 Envelope
 
-A trigger topic SHOULD describe an event, not an object.
+An Envelope is the mutable domain object travelling through a Workload.
 
-Prefer:
+It contains:
 
-```text
-disconnect
-book_invalidated
-configuration_changed
-```
+1. the ingress event;
+2. semantic outputs produced by Nodes;
+3. downstream artifacts derived from those outputs.
 
-over:
+Example:
 
-```text
-book
-ticker
-measurement
-```
+    Envelope {
+        TypeID
 
-when the latter actually represent data.
+        TickerData
+        TradeData
+        Level3Data
 
-A listener receives notification that an event occurred. If the listener needs current state, it MAY subsequently retrieve that state from the shared-object pool or another authoritative source.
+        Correlation
+        LeadLag
+        Liquidity
+        CVD
+        DepthFlow
+        Morphology
+        Hawkes
+        ...
 
-This allows:
+        Categories
+        Opportunities
+        GraphUpdate
+        Resonance
+        Manifold
+        Cognition
+        CausalOutput
+        ...
+    }
 
-```text
-Notify
-   +
-Shared
-```
+The Envelope is not itself a message bus.
 
-to express:
-
-```text
-the shared state changed; inspect its current value
-```
-
-without duplicating the shared object into the signaling layer.
-
----
-
-## 24. Conformance Checklist
-
-An implementation conforms to the Workspace contract only if all answers are yes.
-
-1. Can a component consume data without owning a dedicated goroutine?
-2. Does one published value fan out independently to all subscriptions?
-3. Does each subscription/key combination have independent buffering?
-4. Is execution sequential for one key?
-5. Can independent keys execute concurrently?
-6. Can an idle lane exist without owning a worker goroutine?
-7. Does repeated input to an already-active lane avoid scheduling one task per value?
-8. Is lane retention bounded?
-9. Is overload visible through drop/pressure diagnostics?
-10. Can shared runtime objects be accessed without consumers depending directly on their producers?
-11. Can components react to lightweight events without abusing the typed data stream?
-12. Can side effects observe published values without becoming computational dependencies?
-13. Does a required stage failure propagate to the runtime failure boundary?
-14. Can replay or tests wait for the streaming graph to become quiescent?
-15. Is a named channel's type and keying rule consistent throughout the system?
-16. Are domain interpretation and trading logic absent from the Workspace?
-
-If any answer is no, the implementation is not conformant with this contract.
+It is the state of one computation as it advances through the graph.
 
 ---
 
-## 25. Files
+### 3.4 Node
 
-| File | Responsibility |
-|---|---|
-| `workspace.go` | Workspace, typed channels, subscriptions, shared objects, signaling, observation, failures, diagnostics, and quiescence. |
-| `pool.go` | Shared elastic worker execution pool and keyed shard affinity. |
-| `ring.go` | Bounded per-lane retained stream with overwrite-oldest overload behavior. |
-| `node.go` | Processor contracts that keep computation independent of scheduling. |
-| `stream.go` | Declarative connection of processors to named Workspace topics. |
-| `disruptor.go` | Specialized bounded ring infrastructure where required. |
-| `splitmix.go` | Runtime pseudo-random utility used by scheduling infrastructure. |
+A Node is one semantic processor inside a Workload.
+
+A Node consumes the current Envelope state and may write only the output state
+it owns.
+
+A Node does not publish.
+
+A Node does not route.
+
+A Node does not decide which Node executes next.
+
+The Workload graph determines execution order.
 
 ---
 
-## 26. Summary
+### 3.5 HandlerGroup
 
-The Workspace is not a collection of queues.
+A HandlerGroup is a set of Nodes that may execute concurrently.
 
-It is the runtime boundary between **data flow** and **execution mechanics**.
+For:
 
-Its primary contract is:
+    {
+        Correlation,
+        LeadLag,
+        Liquidity,
+    }
 
-```text
-data arrives
-    ↓
-Workspace routes it
-    ↓
-only runnable lanes consume execution capacity
-    ↓
-components process sequentially within their key
-    ↓
-idle lanes release execution ownership
-```
+the runtime means:
 
-Around that core, the Workspace supplies:
+                     Envelope
+                         |
+             +-----------+-----------+
+             |           |           |
+        Correlation   LeadLag    Liquidity
+             |           |           |
+             +-----------+-----------+
+                         |
+                      barrier
 
-```text
-shared state     → Share / Shared
-reactivity       → On / Notify
-side effects     → Observe
-failure boundary → Error / failure handler
-settlement       → WaitForQuiescence
-diagnostics      → channel pressure and execution timing
-```
+The group itself is the fanout.
 
-The intended result is a system in which concurrency is centralized, observable, bounded, and largely invisible to the components performing the actual computation.
+There is no separate fanout abstraction.
+
+---
+
+### 3.6 Barrier
+
+The boundary between HandlerGroups is a synchronization barrier supplied by the
+Disruptor.
+
+If Group N precedes Group N+1:
+
+    Group N
+        -> barrier
+        -> Group N+1
+
+then every write performed by Group N is complete and visible before Group N+1
+begins processing that slot.
+
+This is the dependency model of Workspace.
+
+---
+
+## 4. Static Execution Graph
+
+The execution graph MUST be declared when the Workload is constructed.
+
+Example:
+
+    NewWorkload(
+        ctx,
+        [][]Node[*types.Envelope]{
+            {
+                correlation.NewSignal(ctx),
+                leadlag.NewSignal(ctx),
+                liquidity.NewSignal(ctx),
+            },
+            {
+                category.NewSolver(ctx),
+            },
+        },
+    )
+
+means:
+
+    Ticker
+      |
+      +--> Correlation --+
+      +--> LeadLag ------+--> barrier --> Category
+      +--> Liquidity ----+
+
+Workspace MUST NOT dynamically discover downstream consumers from runtime types.
+
+Workspace MUST NOT recursively inspect returned values and dispatch them again.
+
+The graph is configuration, not runtime inference.
+
+---
+
+## 5. Ingress Routing
+
+Only values entering from outside an existing Workload require routing.
+
+Typical ingress sources include:
+
+- websocket market events;
+- exchange execution events;
+- system-control events;
+- replayed captured events.
+
+An ingress event is wrapped in an Envelope and routed exactly once to the
+appropriate Workload.
+
+Example:
+
+    TickerData
+        -> EnvelopeTicker
+        -> tickerWorkload.Push(envelope)
+
+    TradeData
+        -> EnvelopeTrade
+        -> tradeWorkload.Push(envelope)
+
+    Level3Data
+        -> EnvelopeLevel3
+        -> level3Workload.Push(envelope)
+
+Once inside the Workload, Workspace performs no further semantic routing.
+
+---
+
+## 6. No Publish Model
+
+There is no general-purpose:
+
+    Publish(value)
+
+operation for intermediate results.
+
+This pattern is forbidden:
+
+    Signal.Step(Ticker)
+        -> Measurement
+        -> Workspace.Publish(Measurement)
+        -> Category.Step(Measurement)
+        -> Category
+        -> Workspace.Publish(Category)
+
+The correct model is:
+
+    Envelope enters ring
+
+    Signal:
+        envelope.Liquidity = measurement
+
+    barrier
+
+    Category:
+        reads envelope.Liquidity
+
+The return value of a Node is therefore not a new Workspace event.
+
+The Envelope is the continuation.
+
+---
+
+## 7. Fanout and Join
+
+Workspace MUST rely on Disruptor HandlerGroups for fanout and dependency joins.
+
+Parallel independent work belongs in one group.
+
+Dependent work belongs in a later group.
+
+Example:
+
+    Group 1:
+        Correlation
+        LeadLag
+        Liquidity
+
+    Group 2:
+        Category
+
+Group 1 may execute concurrently.
+
+Group 2 may begin only after all Group 1 handlers have completed the slot.
+
+No manual WaitGroup, semaphore, completion counter, or fanout channel should be
+added to reproduce behavior already supplied by the Disruptor graph.
+
+---
+
+## 8. Envelope Ownership
+
+Concurrency safety is achieved through explicit field ownership.
+
+Nodes executing in the same HandlerGroup MUST NOT concurrently mutate the same
+semantic state.
+
+For example:
+
+    Correlation owns:
+        Envelope.Correlation
+
+    LeadLag owns:
+        Envelope.LeadLag
+
+    Liquidity owns:
+        Envelope.Liquidity
+
+Those three fields may therefore be written concurrently.
+
+The following is forbidden:
+
+    Group:
+        Node A appends to Envelope.Measurements
+        Node B appends to Envelope.Measurements
+        Node C appends to Envelope.Measurements
+
+because the slice header and backing storage become shared mutable state.
+
+Prefer explicit ownership:
+
+    Envelope.Correlation
+    Envelope.LeadLag
+    Envelope.Liquidity
+
+over generic concurrent result containers.
+
+---
+
+## 9. Read and Write Rules
+
+For a Node in Group N:
+
+It MAY:
+
+    read immutable ingress facts;
+    read outputs committed by groups < N;
+    write fields exclusively owned by itself in Group N.
+
+It MUST NOT:
+
+    mutate another Node's owned output;
+    mutate output belonging to a later group;
+    retain a pointer to the Envelope after Handle returns;
+    asynchronously mutate the Envelope;
+    hand the Envelope to another goroutine;
+    place the Envelope into another queue.
+
+Within one HandlerGroup, concurrent Nodes must have disjoint write ownership.
+
+After the group barrier, later Nodes may read all completed outputs.
+
+---
+
+## 10. Slot Lifetime
+
+The ring owns the lifetime of the Envelope reference while that sequence is in
+flight.
+
+Conceptually:
+
+    Reserve
+       |
+       v
+    slot = Envelope
+       |
+       v
+    Group 1
+       |
+    barrier
+       |
+    Group 2
+       |
+    barrier
+       |
+      ...
+       |
+    final handler completes
+       |
+       v
+    slot eventually reusable
+
+No Node may assume the Envelope remains valid after processing of its ring
+sequence has completed.
+
+A Node MUST NOT retain:
+
+    *Envelope
+
+or any mutable object owned exclusively by that Envelope unless ownership is
+explicitly transferred out of the ring.
+
+---
+
+## 11. Compute Groups
+
+A Compute Group changes semantic state.
+
+Examples:
+
+    signals
+    category
+    relationship reasoning
+    opportunity
+    valuation
+    cognition
+    planner
+    execution calculations
+    position-risk calculations
+
+Compute Nodes may mutate their owned Envelope outputs.
+
+A Compute Group should contain the maximal set of Nodes that:
+
+1. depend on the same previous barrier;
+2. are mutually independent;
+3. write disjoint state.
+
+This maximizes concurrency without inventing synchronization.
+
+---
+
+## 12. Observation Groups
+
+Workspace MAY place an Observation Group between semantic Compute Groups.
+
+Example:
+
+    Compute: Signals
+        |
+    barrier
+        |
+    Observe: Signal boundary
+        |
+    barrier
+        |
+    Compute: Category
+        |
+    barrier
+        |
+    Observe: Category boundary
+
+Observation Nodes perform external observation of the completed semantic state.
+
+Typical purposes include:
+
+    UI publication
+    telemetry
+    diagnostics
+    recording
+    tracing
+    Hindsight capture
+    validation capture
+
+Observation is downstream of computation.
+
+Observation MUST NOT influence computation.
+
+---
+
+## 13. Observation Invariant
+
+The core Observation invariant is:
+
+> Observation may report semantic state.
+> Observation may never create semantic state required by later computation.
+
+An Observation Node MUST NOT:
+
+- alter strategy state;
+- change a measurement;
+- modify readiness;
+- modify Opportunity state;
+- change Valuation;
+- influence Planner/MCTS;
+- write market-derived semantic facts;
+- provide an input that a later Compute Group requires.
+
+The next Compute Group must behave identically whether UI, telemetry, or
+recording is enabled or disabled.
+
+---
+
+## 14. Barrier Snapshots
+
+An Observation Group runs after a complete semantic barrier.
+
+Therefore it observes an exact causal boundary.
+
+For:
+
+    Signals
+        -> ObserveSignals
+        -> Category
+        -> ObserveCategory
+        -> Opportunity
+        -> ObserveOpportunity
+
+the observation points mean precisely:
+
+    after every Signal in this stage completed
+
+    after Category completed
+
+    after Opportunity completed
+
+There is no ambiguity about partially written state.
+
+This is the preferred basis for:
+
+- runtime diagnostics;
+- recording;
+- Hindsight state inspection;
+- performance attribution;
+- UI state publication.
+
+---
+
+## 15. Hindsight Compatibility
+
+The Workspace architecture should make Hindsight observation natural.
+
+Hindsight does not need to infer approximately what state existed between
+components.
+
+Explicit barriers already define those moments.
+
+A capture may record selected facts at boundaries such as:
+
+    ingress
+    after-signals
+    after-category
+    after-relationships
+    after-opportunity
+    after-valuation
+    after-planner
+    after-execution
+    after-position-risk
+
+Recording a boundary does not require cloning the entire Envelope.
+
+The observer should encode only the state required by the capture contract while
+the Envelope is valid.
+
+The observer MUST NOT retain the Envelope itself.
+
+---
+
+## 16. Observation Cost and Backpressure
+
+An Observation Group is a real HandlerGroup.
+
+It participates in the Workload dependency graph.
+
+Therefore:
+
+> A slow observer delays downstream computation.
+
+This is intentional and MUST NOT be disguised.
+
+Workspace MUST NOT solve slow telemetry by silently adding:
+
+    buffered channels
+    hidden queues
+    mailboxes
+    unbounded slices
+    background backlogs
+
+If an external system requires asynchronous delivery, that delivery mechanism
+must have an explicit bounded capacity and explicit overload semantics outside
+the semantic Workspace graph.
+
+Backpressure must remain visible.
+
+---
+
+## 17. Recording Semantics
+
+Recording policy must be explicit.
+
+If recording is required for correctness or reproducibility, the recorder may
+remain synchronous and therefore exert backpressure.
+
+If recording is allowed to lose observations under overload, that must be an
+explicit recorder policy.
+
+It MUST NOT silently drop because an undocumented internal queue filled.
+
+A recorded boundary represents state that genuinely existed after its preceding
+Compute Group completed.
+
+---
+
+## 18. UI Semantics
+
+UI publication belongs in Observation Groups.
+
+UI is a view of completed semantic state.
+
+UI code MUST NOT:
+
+    own semantic state;
+    become a dependency for a later Compute Group;
+    mutate the Envelope;
+    determine runtime correctness.
+
+A disconnected or slow UI must not change what the trading system believes.
+
+Any buffering required for remote UI transport belongs after the Workspace
+observation boundary with explicit overload behavior.
+
+---
+
+## 19. Telemetry Semantics
+
+Telemetry reports execution.
+
+It does not participate in execution.
+
+Useful telemetry at each boundary may include:
+
+    workload
+    group
+    sequence
+    event type
+    event key/symbol
+    processing duration
+    observer duration
+    saturation/backpressure
+    node failures
+
+Instrumentation MUST NOT create hidden scheduling behavior inside semantic
+Nodes.
+
+---
+
+## 20. Level 3 Market Data
+
+Level3 is a first-class Workspace ingress event.
+
+The Workspace architecture MUST NOT require a parallel global order-book manager
+merely to notify consumers that the book changed.
+
+The model is:
+
+    Kraken Level3
+        -> decode
+        -> EnvelopeLevel3
+        -> Level3 Workload
+
+Independent Level3 consumers belong in the same HandlerGroup where possible.
+
+Example:
+
+    Group 1:
+        DepthFlow
+        Morphology
+        ExecutableDepth
+        other independent L3 measurements
+
+Each consumer sees the same Level3 event exactly once.
+
+Each maintains only the resident state required by its own mathematics.
+
+There is no separate semaphore saying:
+
+    "the book changed"
+
+The event itself is the change.
+
+---
+
+## 21. Resident State
+
+Events move.
+
+State stays.
+
+A Node may retain bounded resident state required to interpret future events.
+
+Examples:
+
+    Hawkes retained arrival path
+    previous Morphology state
+    current executable depth
+    historical estimator state
+    current Opportunity state
+
+A Node MUST NOT retain an unbounded history merely because events are available.
+
+The Workspace does not provide a global history service.
+
+Historical retention belongs to the mathematical component that requires it and
+must obey that component's specification.
+
+---
+
+## 22. Reusable Stateful Reducers
+
+When multiple consumers genuinely require identical state-transition semantics,
+the implementation SHOULD extract reusable pure/stateful reduction mathematics
+rather than create a shared global manager.
+
+For example:
+
+    current L3 state + Level3Data
+        -> next L3 state
+
+may be reusable between:
+
+    live execution
+    PositionRisk
+    replay
+    Hindsight validation
+
+The shared concept is the transition semantics.
+
+The shared concept is NOT necessarily a globally mutable singleton.
+
+---
+
+## 23. Ordering
+
+Within one Workload, committed sequences are processed in ring order.
+
+For one ingress stream:
+
+    sequence N
+    sequence N+1
+    sequence N+2
+
+must preserve the Workload's configured ordering semantics.
+
+Nodes MUST NOT reorder events by spawning asynchronous semantic work.
+
+Same-event parallelism is provided by HandlerGroups.
+
+Event ordering remains owned by the Workload.
+
+---
+
+## 24. Writers
+
+The Disruptor WriterCount MUST match the actual ingress topology.
+
+If exactly one goroutine writes a Workload:
+
+    WriterCount(1)
+
+is correct.
+
+If multiple goroutines concurrently call Push on the same Workload, the
+Disruptor MUST be configured accordingly.
+
+The configured writer count is a concurrency fact, not a performance tuning
+guess.
+
+---
+
+## 25. Ring Capacity
+
+Ring capacity must satisfy the Disruptor's power-of-two requirements.
+
+The mask is:
+
+    mask = capacity - 1
+
+and slot access is:
+
+    buffer[sequence & mask]
+
+The ring is bounded.
+
+When downstream processing cannot keep up, producers experience backpressure.
+
+Workspace MUST NOT grow another unbounded structure to avoid this condition.
+
+---
+
+## 26. No Hidden Backlog
+
+There must be no hidden backlog after the Workload ring.
+
+Forbidden examples include:
+
+    []Work pending queues
+    buffered semantic channels
+    per-symbol mailboxes
+    arbitrary retry queues
+    asynchronous Envelope queues
+    observer-owned Envelope queues
+
+The Disruptor is the bounded queue.
+
+Do not build another one behind it.
+
+---
+
+## 27. Error Semantics
+
+Errors must be explicit.
+
+A Workload or Node must not silently corrupt the Envelope and allow later stages
+to treat partial state as valid.
+
+If a Node fails to produce an output:
+
+    the output remains absent
+
+unless its domain explicitly defines another state.
+
+Undefined is not zero.
+
+An infrastructure failure that makes continued Workload processing unsafe must
+surface through the Workload/Workspace error path.
+
+Workspace must not fabricate downstream results to preserve apparent liveness.
+
+---
+
+## 28. Cancellation and Shutdown
+
+Workspace owns the lifetime of its Workloads.
+
+Closing Workspace:
+
+    cancels Workspace context
+    closes Workloads
+    stops Disruptors
+    waits for accepted ring work according to Disruptor close semantics
+    releases runtime resources
+
+Shutdown must not create a second drain queue.
+
+Nodes should honor context cancellation where relevant.
+
+---
+
+## 29. Configuration Is the Graph
+
+The Workload declaration is executable architecture documentation.
+
+For example:
+
+    NewWorkload(
+        ctx,
+
+        Stage(
+            correlation,
+            leadlag,
+            liquidity,
+        ),
+
+        Observe(
+            telemetry,
+            recorder,
+            ui,
+        ),
+
+        Stage(
+            category,
+        ),
+
+        Observe(
+            telemetry,
+            recorder,
+            ui,
+        ),
+    )
+
+expresses:
+
+    Correlation ─┐
+    LeadLag ─────┼─> barrier
+    Liquidity ───┘
+
+                     ↓
+
+                Observation
+
+                     ↓
+
+                  Category
+
+                     ↓
+
+                Observation
+
+There should be no separate hidden dependency graph that disagrees with this
+configuration.
+
+---
+
+## 30. Stage and Observe Constructors
+
+The runtime MAY provide configuration helpers such as:
+
+    Stage(nodes...)
+    Observe(nodes...)
+
+for readability.
+
+These do not introduce new scheduling machinery.
+
+Both ultimately become Disruptor HandlerGroups.
+
+Their distinction exists to express semantic intent and enable validation of the
+different mutation rules.
+
+For example:
+
+    Stage(...)
+        semantic mutation allowed under field ownership rules
+
+    Observe(...)
+        semantic mutation forbidden
+
+---
+
+## 31. Workload Examples
+
+### 31.1 Ticker
+
+    Ingress: TickerData
+
+    Stage:
+        Correlation
+        LeadLag
+        Liquidity
+
+    Observe
+
+    Stage:
+        Category
+
+    Observe
+
+    Stage:
+        downstream reasoning as applicable
+
+    Observe
+
+---
+
+### 31.2 Trade
+
+    Ingress: TradeData
+
+    Stage:
+        CVD
+        Hawkes
+        other independent trade measurements
+
+    Observe
+
+    Stage:
+        downstream consumers
+
+    Observe
+
+---
+
+### 31.3 Level3
+
+    Ingress: Level3Data
+
+    Stage:
+        DepthFlow
+        Morphology
+        executable-depth state
+        other independent book measurements
+
+    Observe
+
+    Stage:
+        downstream consumers requiring completed L3 interpretations
+
+    Observe
+
+No external "book changed" semaphore is required.
+
+---
+
+## 32. Determinism
+
+Given:
+
+    identical ingress event sequence
+    identical initial resident state
+    identical Workload graph
+    identical configuration
+
+semantic outputs must be reproducible.
+
+Parallel Nodes within one HandlerGroup may execute in any physical order, but
+their outputs must be independent such that scheduling order cannot change the
+result.
+
+If execution ordering between two Nodes changes semantics, they do not belong in
+the same HandlerGroup.
+
+Place them in separate groups.
+
+---
+
+## 33. Testing the Graph
+
+Runtime tests must verify the actual scheduling contract.
+
+At minimum:
+
+### Parallel fanout
+
+Two Nodes in one group receive the same sequence and may execute concurrently.
+
+### Barrier ordering
+
+A Node in Group 2 never sees the slot until every Node in Group 1 has completed.
+
+### Disjoint writes
+
+Concurrent Nodes populate independent Envelope fields without races.
+
+### Same slot
+
+Downstream Nodes observe the exact same Envelope instance/state advanced by
+upstream Nodes rather than a clone or republished copy.
+
+### Ordering
+
+Ingress sequences preserve Workload order.
+
+### Backpressure
+
+A stalled downstream HandlerGroup eventually prevents unlimited producer
+progress; no hidden queue absorbs the work.
+
+### Observation read-only
+
+An observation handler attempting to alter semantic state must be considered an
+architectural violation.
+
+### No pointer escape
+
+Tests/review should detect observers or Nodes retaining ring-owned Envelope
+references after Handle returns.
+
+### Determinism
+
+Different scheduling orders inside a parallel group produce identical semantic
+results.
+
+---
+
+## 34. Architectural Anti-Patterns
+
+The following patterns violate the Workspace design:
+
+    Node -> Publish -> Workspace -> Node
+
+    Signal -> buffered channel -> Category
+
+    L3 -> global BookManager -> semaphore -> signal
+
+    observer -> semantic state mutation
+
+    concurrent Nodes appending to one shared results slice
+
+    Node retains Envelope pointer after Handle
+
+    Node launches goroutine that later mutates Envelope
+
+    downstream work hidden behind an async queue
+
+    runtime type discovery used to recursively route intermediate results
+
+    duplicate per-stage copies of the same event
+
+    global shared mutable state used only to avoid expressing a dependency
+    through HandlerGroups
+
+---
+
+## 35. Performance Model
+
+The design is intended to minimize:
+
+    allocations
+    copies
+    scheduler involvement
+    synchronization
+    cache movement
+    hidden queues
+
+One ingress event should normally require:
+
+    one Envelope
+    one ring reservation
+    one sequence traversal
+
+Parallel semantic work operates over that same slot.
+
+Later stages consume already-produced fields directly.
+
+Workspace should not allocate intermediate result envelopes merely to cross a
+stage boundary.
+
+---
+
+## 36. Architectural Consequence
+
+Workspace is not a message broker.
+
+It is a statically composed parallel execution pipeline.
+
+The Envelope is not a collection of messages.
+
+It is one travelling computation.
+
+HandlerGroups are not arbitrary batches of subscribers.
+
+They are the parallel layers of the computation graph.
+
+Barriers are not implementation details.
+
+They are the causal boundaries of the system.
+
+Observation layers are not another semantic pipeline.
+
+They are witnesses placed at those causal boundaries.
+
+---
+
+## 37. Core Laws
+
+The Workspace architecture is governed by these laws:
+
+### Law 1 — One Event, One Trip
+
+An ingress event enters one Workload once.
+
+### Law 2 — The Ring Is the Queue
+
+No hidden semantic backlog exists behind it.
+
+### Law 3 — Groups Are Fanout
+
+Independent Nodes execute concurrently in one HandlerGroup.
+
+### Law 4 — Barriers Are Join
+
+Dependent computation starts only after every required upstream Node completes.
+
+### Law 5 — Disjoint Concurrent Writes
+
+Nodes in the same HandlerGroup own separate semantic outputs.
+
+### Law 6 — The Envelope Is the Continuation
+
+Results move downstream by remaining on the same Envelope, not by republishing.
+
+### Law 7 — Observation Is Read-Only
+
+UI, telemetry, recording, tracing, and diagnostics may witness semantic state
+but may not influence it.
+
+### Law 8 — Events Move, State Stays
+
+Components retain only the bounded resident state required by their mathematics.
+
+### Law 9 — Backpressure Is Real
+
+Slow downstream work must not be concealed behind an unbounded queue.
+
+### Law 10 — Configuration Is Truth
+
+The declared Workload HandlerGroups are the execution graph.
+
+---
+
+## 38. Summary
+
+The complete model is:
+
+    ingress
+       |
+       v
+    reserve ring slot
+       |
+       v
+    Envelope
+       |
+       v
++--------------------------+
+| Compute Group N          |
+| A | B | C                |
++--------------------------+
+         |
+         barrier
+         |
++--------------------------+
+| Observe Group N          |
+| UI | telemetry | record  |
++--------------------------+
+         |
+         barrier
+         |
++--------------------------+
+| Compute Group N+1        |
++--------------------------+
+         |
+         ...
+         |
+   sequence complete
+         |
+   slot reusable
+
+The central theorem is:
+
+> One event enters one bounded ring and becomes one travelling computation.
+> HandlerGroups provide fanout, barriers provide dependency ordering, and
+> observers witness completed state between semantic stages.
+
+There is no publish loop.
+
+There is no hidden graph.
+
+There is no second queue.
+
+There is no side-channel required merely to communicate that state changed.
+
+The event is the change.

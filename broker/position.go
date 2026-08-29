@@ -16,7 +16,6 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
@@ -40,8 +39,6 @@ type Position struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	api            *websocket.API
-	bus            *runtime.Workspace
-	feed           *runtime.Feed
 	instrument     *Instrument
 	price          *Price
 	balance        *Balance
@@ -115,7 +112,6 @@ NewPosition constructs one desk-owned lot shell.
 func NewPosition(
 	ctx context.Context,
 	api *websocket.API,
-	bus *runtime.Workspace,
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
@@ -131,8 +127,6 @@ func NewPosition(
 		ctx:            ctx,
 		cancel:         cancel,
 		api:            api,
-		bus:            bus,
-		feed:           bus.NewFeed(),
 		instrument:     instrument,
 		price:          price,
 		balance:        balance,
@@ -271,23 +265,6 @@ func (position *Position) MarshalJSON() ([]byte, error) {
 		positionJSON: (*positionJSON)(position)})
 }
 
-/*
-Publish sends the position's typed FlatBuffers object to the UI queue. Wallet
-state remains a separate balance publication owned by the account readout.
-*/
-func (position *Position) Publish() {
-	if position.feed == nil {
-		return
-	}
-
-	position.feed.Emit(&types.UIFrame{
-		Type: wire.FramePositionsFrame,
-		Value: &wire.PositionsFrameT{
-			Rows: []*wire.PositionT{position.Wire()},
-		},
-	})
-}
-
 func (position *Position) Wire() *wire.PositionT {
 	return &wire.PositionT{
 		Status: string(position.status()),
@@ -306,7 +283,6 @@ bound stoploss regulator judge the price a sale would actually realise.
 */
 func (position *Position) onTicker(ticker kraken.TickerData) {
 	if position.Holding == nil {
-		position.Publish()
 		return
 	}
 
@@ -317,7 +293,6 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 			position.Holding.Mark = ticker.Bid
 		}
 
-		position.Publish()
 		return
 	}
 
@@ -325,7 +300,6 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 		position.Holding.Mark = ticker.Bid
 		position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
 		position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
-		position.Publish()
 		return
 	}
 
@@ -341,7 +315,6 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 	*/
 	if position.Holding.Stoploss.Status == types.ERROR {
 		if ticker.Bid == nil {
-			position.Publish()
 			return
 		}
 
@@ -359,7 +332,6 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 			position.Holding.Mark = ticker.Bid
 			position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
 			position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
-			position.Publish()
 			return
 		}
 
@@ -424,8 +396,6 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 			))
 		}
 	}
-
-	position.Publish()
 }
 
 /*
@@ -514,8 +484,6 @@ func (position *Position) evaluateExecutable(symbol string, at time.Time) {
 			))
 		}
 	}
-
-	position.Publish()
 }
 
 /*
@@ -613,7 +581,6 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 			if err != nil {
 				position.setStatus(types.ERROR)
 				position.Holding.Status = types.ERROR
-				position.Publish()
 				errnie.Error(err)
 				return false
 			}
@@ -622,7 +589,6 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 				if err = position.closeFill(execution); err != nil {
 					position.setStatus(types.ERROR)
 					position.Holding.Status = types.ERROR
-					position.Publish()
 					errnie.Error(err)
 					return false
 				}
@@ -638,7 +604,6 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 			if execution.CumQty != nil && execution.CumQty.Sign() > 0 {
 				position.setStatus(types.ERROR)
 				position.Holding.Status = types.ERROR
-				position.Publish()
 				errnie.Error(errnie.Err(
 					errnie.Conflict,
 					"position: terminal exit retained partial inventory",
@@ -652,7 +617,6 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 			position.exitClaim.Store(false)
 			position.setStatus(types.OPEN)
 			position.Holding.Status = types.OPEN
-			position.Publish()
 			continue
 		}
 
@@ -666,7 +630,6 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 		if err != nil {
 			position.setStatus(types.ERROR)
 			position.Holding.Status = types.ERROR
-			position.Publish()
 			errnie.Error(err)
 			return false
 		}
@@ -679,8 +642,6 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 			if position.store != nil {
 				_ = position.store.SaveTrade(position)
 			}
-
-			position.Publish()
 
 			if position.cancel != nil {
 				position.cancel()
@@ -857,8 +818,6 @@ func (position *Position) closeFill(execution kraken.ExecutionData) error {
 		errnie.Error(position.store.SaveTrade(position))
 	}
 
-	position.Publish()
-
 	return nil
 }
 
@@ -888,7 +847,6 @@ func (position *Position) Enter() (*Position, error) {
 		position.Holding.Status = types.PENDING
 	}
 
-	position.Publish()
 	return position, nil
 }
 
@@ -1014,7 +972,6 @@ func (position *Position) Exit() (*Position, error) {
 	position.setStatus(types.PENDING)
 	position.Holding.Status = types.PENDING
 
-	position.Publish()
 	return position, nil
 }
 

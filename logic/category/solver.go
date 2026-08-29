@@ -9,7 +9,6 @@ import (
 
 	"github.com/theapemachine/symm/nomagique/data"
 	nomagique_probability "github.com/theapemachine/symm/nomagique/probability"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -74,7 +73,7 @@ NewSolver creates the category solver. The declared vocabulary is the distinct
 set of categories appearing in types.CategorySchemas, in deterministic
 types.CategoryOrder order.
 */
-func NewSolver(ctx context.Context, bus *runtime.Workspace) *Solver {
+func NewSolver(ctx context.Context) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 
 	categories := distinctCategories(types.CategorySchemas)
@@ -85,26 +84,6 @@ func NewSolver(ctx context.Context, bus *runtime.Workspace) *Solver {
 		categories: categories,
 	}
 
-	if bus != nil {
-		runtime.Register(
-			bus,
-			func(measurement *data.Measurement[float64]) string {
-				if measurement == nil {
-					return ""
-				}
-
-				return measurement.Symbol()
-			},
-			func(measurement *data.Measurement[float64]) []types.Category {
-				if measurement == nil {
-					return nil
-				}
-
-				return solver.Step(measurement.ToTypesMeasurement())
-			},
-		)
-	}
-
 	return solver
 }
 
@@ -113,13 +92,45 @@ func (solver *Solver) Name() string { return "category" }
 func (solver *Solver) Error() error { return solver.err }
 
 /*
-Step consumes one measurement observation, updates the symbol's evidence
-snapshot, and runs the schema classifier against the latest coordinates. It
-replaces the current coordinate rather than accumulating votes: each
-measurement is an observation of current state that sets or updates the
-value of any coordinate it carries; it never appends another independent vote.
+Step folds every signal measurement populated on this envelope into their
+symbol's evidence snapshot and writes the resulting ranked category batch back
+onto the envelope. A ticker-workload envelope may carry several signal
+outputs at once (correlation, leadlag, liquidity, ...); each is its own
+observation of current state, applied in field order.
 */
-func (solver *Solver) Step(measurement *nmtypes.Measurement) []types.Category {
+func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
+	measurements := []*data.Measurement[float64]{
+		envelope.Correlation,
+		envelope.LeadLag,
+		envelope.Liquidity,
+		envelope.Sentiment,
+		envelope.CVD,
+		envelope.DepthFlow,
+		envelope.Morphology,
+	}
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		if categories := solver.StepMeasurement(measurement.ToTypesMeasurement()); categories != nil {
+			envelope.Categories = categories
+		}
+	}
+
+	return envelope
+}
+
+/*
+StepMeasurement consumes one measurement observation, updates the symbol's
+evidence snapshot, and runs the schema classifier against the latest
+coordinates. It replaces the current coordinate rather than accumulating
+votes: each measurement is an observation of current state that sets or
+updates the value of any coordinate it carries; it never appends another
+independent vote.
+*/
+func (solver *Solver) StepMeasurement(measurement *nmtypes.Measurement) []types.Category {
 	if measurement == nil || measurement.Symbol == "" {
 		return nil
 	}

@@ -7,7 +7,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -41,10 +40,7 @@ func categoryMeasurement(symbol string, normalized bool, value float64) *nmtypes
 
 func TestCategorySolverSingleSource(t *testing.T) {
 	Convey("Given one eligible metric supporting aggressive_drive", t, func() {
-		bus := runtime.NewWorkspace(nil)
-		defer bus.Close()
-
-		solver := NewSolver(context.Background(), bus)
+		solver := NewSolver(context.Background())
 		state := solver.symbolState("BTC/USD")
 		solver.accumulate(state, categoryMeasurement("BTC/USD", true, 0.8))
 
@@ -60,10 +56,7 @@ func TestCategorySolverSingleSource(t *testing.T) {
 
 func TestCategorySolverLatestStateReplacement(t *testing.T) {
 	Convey("Given the same coordinate published many times", t, func() {
-		bus := runtime.NewWorkspace(nil)
-		defer bus.Close()
-
-		solver := NewSolver(context.Background(), bus)
+		solver := NewSolver(context.Background())
 		state := solver.symbolState("BTC/USD")
 
 		for index := 0; index < 100; index++ {
@@ -82,10 +75,7 @@ func TestCategorySolverLatestStateReplacement(t *testing.T) {
 
 func TestCategorySolverCorroboration(t *testing.T) {
 	Convey("Given two distinct coordinates supporting aggressive_drive", t, func() {
-		bus := runtime.NewWorkspace(nil)
-		defer bus.Close()
-
-		solver := NewSolver(context.Background(), bus)
+		solver := NewSolver(context.Background())
 		state := solver.symbolState("BTC/USD")
 		solver.accumulate(state, categoryMeasurement("BTC/USD", true, 0.64))
 		// signed_net_fraction_divergence also maps to aggressive_drive.
@@ -114,10 +104,7 @@ func TestCategorySolverCorroboration(t *testing.T) {
 
 func TestCategorySolverPerSymbolIsolation(t *testing.T) {
 	Convey("Given interleaved measurements for two symbols", t, func() {
-		bus := runtime.NewWorkspace(nil)
-		defer bus.Close()
-
-		solver := NewSolver(context.Background(), bus)
+		solver := NewSolver(context.Background())
 		stateA := solver.symbolState("A/USD")
 		stateB := solver.symbolState("B/USD")
 
@@ -138,10 +125,7 @@ func TestCategorySolverPerSymbolIsolation(t *testing.T) {
 
 func TestCategorySolverMissingEvidence(t *testing.T) {
 	Convey("Given a symbol with no eligible evidence", t, func() {
-		bus := runtime.NewWorkspace(nil)
-		defer bus.Close()
-
-		solver := NewSolver(context.Background(), bus)
+		solver := NewSolver(context.Background())
 		state := solver.symbolState("BTC/USD")
 
 		Convey("classification is not measured", func() {
@@ -154,10 +138,7 @@ func TestCategorySolverMissingEvidence(t *testing.T) {
 
 func TestCategorySolverDeterministicTie(t *testing.T) {
 	Convey("Given equal evidence across categories", t, func() {
-		bus := runtime.NewWorkspace(nil)
-		defer bus.Close()
-
-		solver := NewSolver(context.Background(), bus)
+		solver := NewSolver(context.Background())
 
 		Convey("batch ordering is stable across repeated builds", func() {
 			first := solver.buildBatch("X/USD", make([]float64, len(solver.categories)), map[types.CategoryType][]evidenceItem{})
@@ -175,10 +156,7 @@ func TestCategorySolverDeterministicTie(t *testing.T) {
 
 func TestCategorySolverUncertaintyIsDistributionLevel(t *testing.T) {
 	Convey("Given a supported category", t, func() {
-		bus := runtime.NewWorkspace(nil)
-		defer bus.Close()
-
-		solver := NewSolver(context.Background(), bus)
+		solver := NewSolver(context.Background())
 		state := solver.symbolState("BTC/USD")
 		solver.accumulate(state, categoryMeasurement("BTC/USD", true, 0.8))
 

@@ -20,7 +20,6 @@ import (
 	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/nomagique/mcts"
 	"github.com/theapemachine/symm/nomagique/relation"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"golang.org/x/sync/errgroup"
@@ -82,7 +81,8 @@ func NewPlanner(
 	thesis *types.Thesis,
 	recorder *audit.Recorder,
 	desk *broker.Desk,
-	bus *runtime.Workspace,
+	store *relation.ObservationStore,
+	influenceGraph *graph.InfluenceGraph,
 ) *Planner {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -100,22 +100,9 @@ func NewPlanner(
 	}
 
 	// The reasoner is a pure consumer of the graph stage's authoritative store
-	// and influence graph. The graph stage (boot) shares them before the
-	// planner is constructed; resolving them here makes the reasoner a reader
-	// of one fitted state rather than a second, parallel estimator.
-	var store *relation.ObservationStore
-	var influenceGraph *graph.InfluenceGraph
-
-	if bus != nil {
-		if sharedStore, storeFound := bus.Shared(graph.SharedObservationStore, ""); storeFound {
-			store, _ = sharedStore.(*relation.ObservationStore)
-		}
-
-		if sharedGraph, graphFound := bus.Shared(graph.SharedInfluenceGraph, ""); graphFound {
-			influenceGraph, _ = sharedGraph.(*graph.InfluenceGraph)
-		}
-	}
-
+	// and influence graph: the caller passes the same graph.Solver's Store()
+	// and Graph() it constructed, so the reasoner reads one fitted state
+	// rather than a second, parallel estimator.
 	reasoner, reasonerErr := NewReasoner(epoch, store, influenceGraph, schemaTemplate)
 
 	if reasonerErr != nil {
@@ -138,33 +125,6 @@ func NewPlanner(
 		desk:       desk,
 		thesis:     thesis,
 		reasoner:   reasoner,
-	}
-
-	if bus != nil {
-		runtime.Register(
-			bus,
-			nil,
-			planner.StepTick,
-		)
-		// The reasoner consumes the graph stage's relation refreshes; it no
-		// longer subscribes to raw measurements and never re-fits relations.
-		runtime.RegisterSink(
-			bus,
-			func(update *graph.GraphUpdate) string {
-				if update == nil {
-					return ""
-				}
-
-				return update.Symbol
-			},
-			func(update *graph.GraphUpdate) {
-				if update == nil {
-					return
-				}
-
-				planner.reasoner.OnGraphUpdate(update.Symbol, update.At)
-			},
-		)
 	}
 
 	planner.reasoner.SetOnState(planner.publishCausalState)

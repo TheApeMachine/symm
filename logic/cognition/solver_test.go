@@ -8,8 +8,6 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/datura/dmt"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -18,17 +16,9 @@ func TestSolverStep(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		workspace := runtime.NewWorkspace(ctx)
-		defer workspace.Close()
-
 		thesis := types.NewThesis(ctx)
-		workspace.Share("thesis", thesis, "")
 
-		tree, err := dmt.NewTree("")
-		So(err, ShouldBeNil)
-		workspace.Share("tree", tree, "")
-
-		solver := NewSolver(ctx, workspace)
+		solver := NewSolver(ctx, thesis)
 		So(solver, ShouldNotBeNil)
 
 		Convey("When processing concurrent category batches across 64 symbols", func() {
@@ -50,7 +40,8 @@ func TestSolverStep(t *testing.T) {
 							categoryType = types.CategoryOrganicTrend
 						}
 
-						categories := []types.Category{
+						envelope := types.NewEnvelope(types.EnvelopeUnknown)
+						envelope.Categories = []types.Category{
 							{
 								At:         time.Now(),
 								Symbol:     sym,
@@ -61,7 +52,7 @@ func TestSolverStep(t *testing.T) {
 							},
 						}
 
-						_ = solver.Step(categories)
+						_ = solver.Step(envelope)
 					}
 				}(symbol)
 			}

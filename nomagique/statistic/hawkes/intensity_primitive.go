@@ -17,8 +17,10 @@ here to observation output, which is not committed state at all).
 var (
 	SymbolConditionalIntensityBuy  = types.MustIntern("hawkes/obs/conditional_intensity_buy")
 	SymbolConditionalIntensitySell = types.MustIntern("hawkes/obs/conditional_intensity_sell")
+	SymbolConditionalIntensity     = types.MustIntern("hawkes/obs/conditional_intensity")
 	SymbolBackgroundRateBuy        = types.MustIntern("hawkes/obs/background_rate_buy")
 	SymbolBackgroundRateSell       = types.MustIntern("hawkes/obs/background_rate_sell")
+	SymbolBackgroundRate           = types.MustIntern("hawkes/obs/background_rate")
 )
 
 /*
@@ -56,6 +58,8 @@ func ConditionalIntensity(input *types.Frame) {
 
 	input.Put(SymbolConditionalIntensityBuy, lambdaBuy)
 	input.Put(SymbolConditionalIntensitySell, lambdaSell)
+	input.Put(SymbolConditionalIntensity, lambdaBuy+lambdaSell)
 	input.Put(SymbolBackgroundRateBuy, muX)
 	input.Put(SymbolBackgroundRateSell, muY)
+	input.Put(SymbolBackgroundRate, muX+muY)
 }

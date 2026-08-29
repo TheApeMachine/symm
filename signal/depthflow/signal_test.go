@@ -7,23 +7,21 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
-
-	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestNewSignal(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 
-	Convey("Given a workspace with a shared book", t, func() {
-		orderBook := testBook()
-		addLevel(orderBook, book.Bid, 99, 2, now)
-		addLevel(orderBook, book.Ask, 101, 2, now)
+	Convey("Given a signal fed one Level3 envelope", t, func() {
+		signal := NewSignal(context.Background())
 
-		workspace := runtime.NewWorkspace(nil)
-		workspace.Share("book", orderBook, "BTC/USD")
-
-		signal := NewSignal(context.Background(), workspace)
+		envelope := types.NewEnvelope(types.EnvelopeLevel3)
+		envelope.Level3Data = level3Message("BTC/USD", now,
+			[]kraken.Level3Order{level3Order("add", 99, 2, now)},
+			[]kraken.Level3Order{level3Order("add", 101, 2, now)},
+		)
 
 		Convey("Name reports the signal identity", func() {
 			So(signal.Name(), ShouldEqual, "depthflow")
@@ -33,12 +31,12 @@ func TestNewSignal(t *testing.T) {
 			So(signal.Error(), ShouldBeNil)
 		})
 
-		Convey("Step delegates to the Level3 entity", func() {
-			measurement := signal.Step("BTC/USD", now)
+		Convey("Step delegates to the Level3 entity and writes DepthFlow", func() {
+			result := signal.Step(envelope)
 
-			So(measurement, ShouldNotBeNil)
-			So(measurement.Err, ShouldBeNil)
-			So(measurement.Metrics, ShouldNotBeEmpty)
+			So(result.DepthFlow, ShouldNotBeNil)
+			So(result.DepthFlow.Err, ShouldBeNil)
+			So(result.DepthFlow.Metrics, ShouldNotBeEmpty)
 		})
 
 		Convey("Close releases the signal", func() {

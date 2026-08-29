@@ -1,15 +1,12 @@
 package cvd
 
 import (
-	"math"
 	"testing"
 	"time"
 
-	book "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 func cvdTrade(symbol string, side string, price float64, qty float64, at time.Time) kraken.TradeData {
@@ -22,29 +19,9 @@ func cvdTrade(symbol string, side string, price float64, qty float64, at time.Ti
 	}
 }
 
-func cvdBook(bidPrice float64, askPrice float64) *book.Book {
-	resident := book.New()
-	resident.Update(&book.UpdateOptions{
-		Direction: book.Bid,
-		Price:     decimal.NewFromFloat64(bidPrice),
-		Quantity:  decimal.NewFromFloat64(1),
-		Timestamp: time.Unix(1_700_000_000, 0),
-	})
-	resident.Update(&book.UpdateOptions{
-		Direction: book.Ask,
-		Price:     decimal.NewFromFloat64(askPrice),
-		Quantity:  decimal.NewFromFloat64(1),
-		Timestamp: time.Unix(1_700_000_000, 0),
-	})
-
-	return resident
-}
-
 func TestTradeStep(t *testing.T) {
-	Convey("Given an executed-flow entity with a shared book", t, func() {
-		workspace := runtime.NewWorkspace(nil)
-		workspace.Share("book", cvdBook(99, 101), "BTC/USD")
-		entity := NewTrade(workspace)
+	Convey("Given an executed-flow entity", t, func() {
+		entity := NewTrade()
 
 		Convey("the first buy trade yields a measurement with no warmup gating", func() {
 			measurement := entity.Step(cvdTrade("BTC/USD", "buy", 100, 2, time.Unix(1000, 0)))
@@ -123,7 +100,6 @@ func TestTradeStep(t *testing.T) {
 			entity.Step(cvdTrade("BTC/USD", "buy", 100, 2, time.Unix(1000, 0)))
 			entity.Step(cvdTrade("BTC/USD", "sell", 100, 1, time.Unix(1001, 0)))
 
-			workspace.Share("book", cvdBook(109, 111), "BTC/USD")
 			measurement := entity.Step(cvdTrade("BTC/USD", "buy", 100, 1, time.Unix(1003, 0)))
 
 			So(measurement.Err, ShouldBeNil)
@@ -141,42 +117,15 @@ func TestTradeStep(t *testing.T) {
 			So(measurement.Metrics["signed_net_fraction_baseline"].Raw, ShouldAlmostEqual, 2.0/3.0, 1e-12)
 			So(measurement.Metrics["signed_net_fraction_divergence"].Raw, ShouldAlmostEqual, -1.0/6.0, 1e-12)
 
-			So(measurement.Metrics["gross_notional_rate_baseline"].Raw, ShouldAlmostEqual, 300.0, 1e-9)
-			So(measurement.Metrics["gross_notional_rate_ratio"].Raw, ShouldAlmostEqual, 4.0/9.0, 1e-12)
-			So(measurement.Metrics["gross_notional_rate_divergence"].Raw, ShouldAlmostEqual, math.Log(4.0/9.0), 1e-9)
-			So(measurement.Metrics["gross_notional_rate_zscore"].Raw, ShouldEqual, -1.0)
-
-			So(measurement.Metrics["net_notional_rate_velocity"].Raw, ShouldAlmostEqual, -50.0/3.0, 1e-9)
-			So(measurement.Metrics["gross_notional_rate_velocity"].Raw, ShouldAlmostEqual, math.Log(4.0/9.0)/2.0, 1e-9)
-
-			So(measurement.Metrics["midpoint_log_return"].Raw, ShouldAlmostEqual, math.Log(1.1), 1e-9)
-			So(measurement.Metrics["midpoint_return_rate"].Raw, ShouldAlmostEqual, math.Log(1.1)/3.0, 1e-9)
-			So(measurement.Metrics["flow_aligned_midpoint_return"].Raw, ShouldAlmostEqual, math.Log(1.1), 1e-9)
-			So(measurement.Metrics["midpoint_response_per_net_notional"].Raw, ShouldAlmostEqual, math.Log(1.1)/200.0, 1e-12)
-			So(measurement.Metrics["midpoint_return_rate_baseline"].Raw, ShouldEqual, 0.0)
-			So(measurement.Metrics["midpoint_return_rate_divergence"].Raw, ShouldAlmostEqual, math.Log(1.1)/3.0, 1e-9)
-			So(measurement.Metrics["midpoint_return_rate_zscore"].Raw, ShouldEqual, 1.0)
-		})
-	})
-
-	Convey("Given a symbol with no shared book", t, func() {
-		entity := NewTrade(runtime.NewWorkspace(nil))
-
-		Convey("executed-flow accounting still stands and response-price metrics are absent", func() {
-			entity.Step(cvdTrade("BTC/USD", "buy", 100, 2, time.Unix(1000, 0)))
-			measurement := entity.Step(cvdTrade("BTC/USD", "sell", 100, 1, time.Unix(1001, 0)))
-
-			So(measurement.Err, ShouldBeNil)
-			So(measurement.Metrics["trade_count"].Raw, ShouldEqual, 2.0)
-
+			// This entity has no access to book state, so the response-price
+			// family (midpoint_*, flow_aligned_*) never populates.
 			_, hasMidpoint := measurement.Metrics["midpoint_log_return"]
-
 			So(hasMidpoint, ShouldBeFalse)
 		})
 	})
 
 	Convey("Given a non-positive execution price", t, func() {
-		entity := NewTrade(nil)
+		entity := NewTrade()
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
 			measurement := entity.Step(cvdTrade("BTC/USD", "buy", 0, 1, time.Unix(1000, 0)))

@@ -8,12 +8,11 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/tests/mock"
 )
 
 /* priceFeeConn returns the requested TradeVolume fixture. */
 type priceFeeConn struct {
-	*mock.Conn
+	*mockConn
 	result *kraken.TradeVolumeResult
 }
 
@@ -29,7 +28,7 @@ func newTradeVolumePrice(
 	result *kraken.TradeVolumeResult,
 ) *Price {
 	testCase.Helper()
-	conn := &priceFeeConn{Conn: mock.NewConn(), result: result}
+	conn := &priceFeeConn{mockConn: newMockConn(), result: result}
 	api := websocket.NewAPI(testCase.Context(), conn, conn)
 	api.Normalizer().Update(&spot.AssetsManagerUpdate{
 		NewAssets: map[string]spot.AssetInfo{

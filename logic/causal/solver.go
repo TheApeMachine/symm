@@ -60,6 +60,7 @@ type Solver struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	err           error
+	status        *runtime.Status
 	thesis        *types.Thesis
 	price         *broker.Price
 	recorder      *audit.Recorder
@@ -77,7 +78,7 @@ Default layout (4-column row):
   - Col 2: Treatment (Resonance Task Prediction / Expected Return)
   - Col 3: Target (Realized Price Return)
 */
-func NewSolver(bus *runtime.Workspace, opts ...Option) *Solver {
+func NewSolver(thesis *types.Thesis, price *broker.Price, opts ...Option) *Solver {
 	ctx, cancel := context.WithCancel(context.Background())
 	defaultConfig := PearlConfig{
 		Target:                  3,
@@ -86,24 +87,10 @@ func NewSolver(bus *runtime.Workspace, opts ...Option) *Solver {
 		NonlinearCounterfactual: true,
 	}
 
-	var thesis *types.Thesis
-	var price *broker.Price
-	if bus != nil {
-		if shared, found := bus.Shared("thesis", ""); found {
-			if t, ok := shared.(*types.Thesis); ok {
-				thesis = t
-			}
-		}
-		if shared, found := bus.Shared("price", ""); found {
-			if p, ok := shared.(*broker.Price); ok {
-				price = p
-			}
-		}
-	}
-
 	solver := &Solver{
 		ctx:    ctx,
 		cancel: cancel,
+		status: runtime.NewStatus(),
 		thesis: thesis,
 		price:  price,
 		pearls: &sync.Map{},
@@ -115,21 +102,23 @@ func NewSolver(bus *runtime.Workspace, opts ...Option) *Solver {
 		opt(solver)
 	}
 
-	if bus != nil {
-		runtime.Register(
-			bus,
-			nil,
-			func(artifact *types.ResonanceArtifact) *types.CausalOutput {
-				if artifact == nil {
-					return nil
-				}
+	return solver
+}
 
-				return solver.Step(*artifact)
-			},
-		)
+/*
+StepEnvelope folds this envelope's Resonance artifact, when present, through
+the causal ladder and writes the result back onto the envelope.
+*/
+func (solver *Solver) StepEnvelope(envelope *types.Envelope) *types.Envelope {
+	if envelope.Resonance == nil {
+		return envelope
 	}
 
-	return solver
+	if output := solver.Step(*envelope.Resonance); output != nil {
+		envelope.CausalOutput = output
+	}
+
+	return envelope
 }
 
 func (solver *Solver) Name() string {

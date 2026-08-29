@@ -1,14 +1,11 @@
 package broker
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/theapemachine/symm/nomagique/runtime"
 
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -34,29 +31,15 @@ type Instrument struct {
 NewInstrument creates the market-instrument registry
 used by subscriptions and order validation.
 */
-func NewInstrument(
-	ctx context.Context,
-	bus *runtime.Workspace,
-) *Instrument {
-	if bus == nil {
-		panic("broker: workspace bus required")
-	}
-
-	var api *websocket.API
-	if shared, _ := bus.Shared("api", ""); shared != nil {
-		api, _ = shared.(*websocket.API)
-	}
+func NewInstrument(api *websocket.API, price *Price) *Instrument {
 	if api == nil {
-		panic("broker: api not found in workspace")
+		panic("broker: api required")
 	}
 
-	var price *Price
-	if shared, _ := bus.Shared("price", ""); shared != nil {
-		price, _ = shared.(*Price)
-	}
 	if price == nil {
-		panic("broker: price not found in workspace")
+		panic("broker: price required")
 	}
+
 	instrument := &Instrument{
 		status:  types.INITIALIZING,
 		api:     api,
@@ -81,10 +64,6 @@ func NewInstrument(
 	}
 
 	instrument.status = types.PENDING
-
-	bus.On(types.ChannelDisconnect, func() {
-		errnie.Info("instrument: channel disconnect received")
-	})
 
 	return instrument
 }
@@ -143,7 +122,6 @@ func (instrument *Instrument) Subscribe() error {
 
 	subscribers := []func([]string){
 		instrument.api.SubTrades,
-		instrument.api.SubBook,
 		instrument.api.SubTicker,
 		instrument.api.SubL3,
 	}

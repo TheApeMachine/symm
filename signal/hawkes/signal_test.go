@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestSignalStep(t *testing.T) {
@@ -17,11 +18,14 @@ func TestSignalStep(t *testing.T) {
 		})
 
 		Convey("Step delegates to the trade entity", func() {
-			measurement := signal.Step(hawkesTrade("BTC/USD", "buy", time.Unix(1000, 0)))
+			envelope := types.NewEnvelope(types.EnvelopeTrade)
+			envelope.TradeData = hawkesTrade("BTC/USD", "buy", time.Unix(1000, 0))
 
-			So(measurement, ShouldNotBeNil)
-			So(measurement.Err, ShouldBeNil)
-			So(measurement.Metrics["event_count"].Raw, ShouldEqual, 1.0)
+			result := signal.Step(envelope)
+
+			So(result.Hawkes, ShouldNotBeNil)
+			So(result.Hawkes.Err, ShouldBeNil)
+			So(result.Hawkes.Metrics["event_count"].Raw, ShouldEqual, 1.0)
 		})
 
 		Convey("Close releases without error", func() {

@@ -4,14 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
-	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 const (
@@ -23,15 +22,11 @@ const (
 Conn is the internal websocket and REST transport.
 */
 type Conn interface {
-	Status() types.Status
-	Books() *sync.Map
-	Book(string, func(*book.Book))
+	Status() runtime.Stage
 	SubInstrument(chan any)
 	SubTicker([]string)
-	SubBook([]string)
 	SubTrades([]string)
 	SubL3([]string)
-	SubCandles([]string)
 	Balance() (map[string]*decimal.Decimal, error)
 	TradesHistory() (spot.TradesHistoryResult, error)
 	TradeBalance() (kraken.TradeBalanceResult, error)
@@ -107,21 +102,11 @@ func NewAPI(
 		private:    private,
 	}
 
-	for _, connection := range []Conn{public, private} {
-		if live, valid := connection.(*Live); valid && live != nil {
-			live.SetFailureHandler(api.reportFailure)
-		}
-	}
-
 	return api
 }
 
 func (api *API) SetFutures(futures *FuturesLive) {
 	api.futures = futures
-
-	if futures != nil {
-		futures.SetFailureHandler(api.reportFailure)
-	}
 }
 
 func (api *API) Futures() *FuturesLive {
@@ -129,17 +114,6 @@ func (api *API) Futures() *FuturesLive {
 }
 
 func (api *API) Name() string { return "kraken" }
-
-/*
-SetObserver attaches the shared ingress clock to every live venue connection.
-*/
-func (api *API) SetObserver(observer func(string, time.Duration)) {
-	for _, connection := range []Conn{api.public, api.private} {
-		if live, valid := connection.(*Live); valid && live != nil {
-			live.SetObserver(observer)
-		}
-	}
-}
 
 func (api *API) Error() error {
 	api.errMu.RLock()
@@ -174,16 +148,16 @@ func (api *API) reportFailure(err error) {
 /*
 Status returns the API lifecycle state used by ordered system boot stages.
 */
-func (api *API) Status() types.Status {
+func (api *API) Status() runtime.Stage {
 	if api.public == nil || api.private == nil {
-		return types.PENDING
+		return runtime.INIT
 	}
 
-	if api.public.Status() != types.READY || api.private.Status() != types.READY {
-		return types.PENDING
+	if api.public.Status() != runtime.READY || api.private.Status() != runtime.READY {
+		return runtime.INIT
 	}
 
-	return types.READY
+	return runtime.READY
 }
 
 /*
@@ -193,14 +167,10 @@ func (api *API) Normalizer() *spot.Normalizer {
 	return api.normalizer
 }
 
-func (api *API) Books() *sync.Map                                 { return api.private.Books() }
-func (api *API) Book(symbol string, read func(*book.Book))        { api.private.Book(symbol, read) }
 func (api *API) SubInstrument(callback chan any)                  { api.public.SubInstrument(callback) }
 func (api *API) SubTicker(symbols []string)                       { api.public.SubTicker(symbols) }
-func (api *API) SubBook(symbols []string)                         { api.public.SubBook(symbols) }
 func (api *API) SubL3(symbols []string)                           { api.private.SubL3(symbols) }
 func (api *API) SubTrades(symbols []string)                       { api.public.SubTrades(symbols) }
-func (api *API) SubCandles(symbols []string)                      { api.public.SubCandles(symbols) }
 func (api *API) Balance() (map[string]*decimal.Decimal, error)    { return api.private.Balance() }
 func (api *API) TradesHistory() (spot.TradesHistoryResult, error) { return api.private.TradesHistory() }
 func (api *API) TradeBalance() (kraken.TradeBalanceResult, error) { return api.private.TradeBalance() }

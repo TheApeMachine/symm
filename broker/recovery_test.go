@@ -11,8 +11,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/tests/mock"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -21,7 +19,7 @@ recoveryConn seeds the instrument snapshot with two pairs so recovery has a
 real InstrumentPair to resolve for each recovered asset.
 */
 type recoveryConn struct {
-	*mock.Conn
+	*mockConn
 }
 
 func (conn *recoveryConn) SubInstrument(callback chan any) {
@@ -64,7 +62,7 @@ func newTestRecoveryWithOptions(
 	viper.Set("market.quote_currency", "USD")
 	t.Cleanup(viper.Reset)
 
-	conn := &recoveryConn{Conn: mock.NewConn()}
+	conn := &recoveryConn{mockConn: newMockConn()}
 	conn.BalanceResult = balances
 	conn.TradesHistoryResult = spot.TradesHistoryResult{Trades: trades}
 
@@ -87,11 +85,8 @@ func newTestRecoveryWithOptions(
 		},
 	})
 
-	bus := runtime.NewWorkspace(t.Context())
-	bus.Share("api", api, "")
-	bus.Share("price", newTestPrice(t, api), "")
-	instrument := NewInstrument(t.Context(), bus)
 	price := newTestPrice(t, api)
+	instrument := NewInstrument(api, price)
 
 	for _, symbol := range []string{"AAA/USD", "BBB/USD"} {
 		price.fees.Store(symbol, kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.25)})
@@ -116,7 +111,7 @@ func newTestRecoveryWithOptions(
 
 	positions := &sync.Map{}
 	recovery := NewRecovery(
-		t.Context(), api, bus, instrument, price, nil, nil, store, positions,
+		t.Context(), api, instrument, price, nil, nil, store, positions,
 	)
 
 	return recovery, positions

@@ -5,24 +5,34 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	pyroscope "github.com/grafana/pyroscope-go"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/logic/category"
+	"github.com/theapemachine/symm/signal/correlation"
+	"github.com/theapemachine/symm/signal/cvd"
+	"github.com/theapemachine/symm/signal/depthflow"
+	"github.com/theapemachine/symm/signal/leadlag"
+	"github.com/theapemachine/symm/signal/liquidity"
+	"github.com/theapemachine/symm/signal/morphology"
+	"github.com/theapemachine/symm/ui"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/backtest"
-	"github.com/theapemachine/symm/kraken/websocket"
-	nomagiqueruntime "github.com/theapemachine/symm/nomagique/runtime"
+	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -59,88 +69,92 @@ var (
 				"symm started with %d CPUs", runtime.NumCPU(),
 			))
 
-			startPprof()
+			// startPprof()
 
-			bus := nomagiqueruntime.NewWorkspace(cmd.Context())
+			hub := ui.NewHub(cmd.Context())
+			defer hub.Close()
 
-			thesis := types.NewThesis(cmd.Context())
+			publicIngress := map[string]*nmruntime.Workload[*types.Envelope]{
+				"ticker": nmruntime.NewWorkload(
+					cmd.Context(),
+					[][]nmruntime.Node[*types.Envelope]{
+						{
+							correlation.NewSignal(cmd.Context()),
+							leadlag.NewSignal(cmd.Context()),
+							liquidity.NewSignal(cmd.Context()),
+						},
+						{
+							category.NewSolver(cmd.Context()),
+						},
+						{hub},
+					},
+				),
+				"trade": nmruntime.NewWorkload(
+					cmd.Context(),
+					[][]nmruntime.Node[*types.Envelope]{
+						{cvd.NewSignal(cmd.Context())},
+						{hub},
+					},
+				),
+			}
 
-			captureStore, err := backtest.NewStore(
-				filepath.Join(utils.ResolveDataPath(), "symm.sqlite"),
+			privateIngress := map[string]*nmruntime.Workload[*types.Envelope]{
+				"level3": nmruntime.NewWorkload(
+					cmd.Context(),
+					[][]nmruntime.Node[*types.Envelope]{
+						{
+							depthflow.NewSignal(cmd.Context()),
+							morphology.NewSignal(cmd.Context()),
+						},
+						{hub},
+					},
+				),
+			}
+
+			workspace := nmruntime.NewWorkspace(
+				cmd.Context(),
+				append(
+					slices.Collect(maps.Values(publicIngress)),
+					slices.Collect(maps.Values(privateIngress))...,
+				),
 			)
 
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: open capture store",
-					err,
-				))
-			}
+			defer workspace.Close()
 
-			capture, err := captureStore.OpenCapture()
-
-			if err != nil {
-				_ = captureStore.Close()
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: open live capture",
-					err,
-				))
-			}
-
-			system := BootWithHub(
+			api := websocket.NewAPI(
 				cmd.Context(),
-				thesis,
 				websocket.New(
 					cmd.Context(),
-					bus,
+					publicIngress,
 					websocket.NewSimulator(),
 					false,
-					websocket.PublicWebSocketURL,
-					capture,
+					system.Cfg.WebSocket.Endpoints.Public,
 				),
 				websocket.New(
 					cmd.Context(),
-					bus,
+					privateIngress,
 					websocket.NewSimulator(),
 					true,
-					websocket.PrivateWebSocketURL,
-					capture,
+					system.Cfg.WebSocket.Endpoints.Private,
 				),
-				bus,
-				nil,
-				&audit.Recorder{EventSink: captureStore.WriteEvent},
 			)
 
-			if system == nil {
-				return errors.Join(
-					fmt.Errorf("symm: boot failed"),
-					capture.Close(),
-					captureStore.Close(),
-				)
+			instrument := broker.NewInstrument(
+				api,
+				broker.NewPrice(api, &audit.Recorder{}),
+			)
+
+			if err := instrument.Subscribe(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: subscribe to instrument universe",
+					err,
+				))
 			}
 
-			system.Hub.SetPlayback(nil, func() []backtest.CaptureInfo {
-				captures, err := captureStore.ListCaptures()
-
-				if err != nil {
-					errnie.Error(errnie.Err(
-						errnie.Internal,
-						"symm: list captures",
-						err,
-					))
-					return nil
-				}
-
-				return captures
-			})
-
-			err = system.Run()
 			return errors.Join(
 				err,
-				system.Close(),
-				capture.Close(),
-				captureStore.Close(),
+				hub.Run(),
 			)
 		},
 	}

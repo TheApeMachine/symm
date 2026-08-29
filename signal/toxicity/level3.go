@@ -2,18 +2,15 @@ package toxicity
 
 import (
 	"fmt"
-	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/kraken/websocket"
 )
 
 /*
@@ -126,14 +123,14 @@ func seriesFact(prefix string, name string) nmtypes.Symbol {
 }
 
 /*
-Level3 is the book-touch market entity. It reads the shared book from the
-workspace pool, attributes what happened to the previously displayed touch
-between two comparable book observations, and projects one measurement. The
-entity owns exactly one Number pipeline and one projector, both built in its
-constructor, plus the workspace it reads shared books from.
+Level3 is the book-touch market entity. It derives the current touch directly
+from each Level3Data message's own visible bid/ask orders, attributes what
+happened to the previously displayed touch between two comparable
+observations, and projects one measurement. The entity owns exactly one
+Number pipeline and one projector, both built in its constructor; it retains
+no book.
 */
 type Level3 struct {
-	workspace *runtime.Workspace
 	number    *nomagique.Number[string]
 	projector *data.Projector
 }
@@ -142,9 +139,8 @@ type Level3 struct {
 NewLevel3 constructs the Level3 entity: one Number pipeline for the touch
 disposition computation and one projector that names the output slots.
 */
-func NewLevel3(workspace *runtime.Workspace) *Level3 {
+func NewLevel3() *Level3 {
 	return &Level3{
-		workspace: workspace,
 		number: nomagique.NewNumber[string](nmtypes.Pipe(
 			// A crossed, missing, or non-positive book is rejected here.
 			logic.PositiveOrder(symbolBidPrice, symbolAskPrice),
@@ -456,50 +452,55 @@ func NewLevel3(workspace *runtime.Workspace) *Level3 {
 }
 
 /*
-Step receives one book observation for a symbol, loads the current touch facts,
-runs the Number pipeline, and projects exactly one measurement. The shared book
-is read through the workspace pool and type-asserted to *book.Book; a missing
-book or a missing touch panics by design rather than being silently skipped.
+bestTouch derives the current touch directly from one Level3Data message's own
+visible bid/ask orders: the best price on each side and its resting quantity.
+Either side is zero when that side had no usable order.
 */
-func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float64] {
-	if level3 == nil || level3.workspace == nil {
-		panic(fmt.Sprintf("toxicity: workspace missing for %s", symbol))
-	}
-
-	var hasQuote bool
-	var bidPrice, askPrice, bidQty, askQty float64
-
-	inspectBook := func(currentBook *book.Book) {
-		if currentBook == nil {
-			return
+func bestTouch(message kraken.Level3Data) (bidPrice, askPrice, bidQty, askQty float64) {
+	for _, order := range message.Bids {
+		if order.LimitPrice == nil || order.OrderQty == nil {
+			continue
 		}
-		bestBid := currentBook.BestBid()
-		bestAsk := currentBook.BestAsk()
 
-		if bestBid != nil && bestAsk != nil {
-			bidPrice = bestBid.Price.Float64()
-			askPrice = bestAsk.Price.Float64()
-			bidQty = bestBid.Quantity.Float64()
-			askQty = bestAsk.Quantity.Float64()
-			hasQuote = true
+		if price := order.LimitPrice.Float64(); price > bidPrice {
+			bidPrice = price
+			bidQty = order.OrderQty.Float64()
 		}
 	}
 
-	if shared, found := level3.workspace.Shared("api", ""); found && shared != nil {
-		if api, ok := shared.(*websocket.API); ok && api != nil {
-			api.Book(symbol, inspectBook)
+	for _, order := range message.Asks {
+		if order.LimitPrice == nil || order.OrderQty == nil {
+			continue
 		}
-	} else if sharedBook, found := level3.workspace.Shared("book", symbol); found && sharedBook != nil {
-		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
-			inspectBook(currentBook)
+
+		if price := order.LimitPrice.Float64(); askPrice == 0 || price < askPrice {
+			askPrice = price
+			askQty = order.OrderQty.Float64()
 		}
-	} else {
-		panic(fmt.Sprintf("toxicity: shared book or api missing for %s", symbol))
 	}
 
-	if !hasQuote {
-		panic(fmt.Sprintf("toxicity: book touch missing for %s", symbol))
+	return bidPrice, askPrice, bidQty, askQty
+}
+
+/*
+Step derives the current touch directly from this Level3Data message's own
+visible bid/ask orders, loads the touch facts, runs the Number pipeline, and
+projects exactly one measurement. A message with no usable touch on either
+side is rejected via the Measurement's Err field rather than by panicking.
+*/
+func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64] {
+	if level3 == nil {
+		return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: level3 entity missing for %s", message.Symbol)}
 	}
+
+	bidPrice, askPrice, bidQty, askQty := bestTouch(message)
+
+	if bidPrice == 0 || askPrice == 0 {
+		return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: book touch missing for %s", message.Symbol)}
+	}
+
+	symbol := message.Symbol
+	at := message.Timestamp
 	sec := float64(at.Unix())
 	nsec := float64(at.Nanosecond())
 

@@ -86,6 +86,7 @@ type Solver struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	err            error
+	status         *runtime.Status
 	thesis         *types.Thesis
 	recorder       *audit.Recorder
 	treeMu         sync.RWMutex
@@ -146,37 +147,22 @@ func (solver *Solver) getSymbolState(symbol string) *symbolCognitionState {
 }
 
 /*
-NewSolver returns a new cognition solver bound to a radix tree.
+NewSolver returns a new cognition solver bound to a radix tree. thesis
+resolves a symbol to its canonical sequence/state identity.
 */
 func NewSolver(
 	ctx context.Context,
-	bus *runtime.Workspace,
+	thesis *types.Thesis,
 	opts ...Option,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 
-	var thesis *types.Thesis
-	var tree *dmt.Tree
-	if bus != nil {
-		if shared, found := bus.Shared("thesis", ""); found {
-			if t, ok := shared.(*types.Thesis); ok {
-				thesis = t
-			}
-		}
-		if shared, found := bus.Shared("tree", ""); found {
-			if t, ok := shared.(*dmt.Tree); ok {
-				tree = t
-			}
-		}
-	}
-
-	if tree == nil {
-		tree, _ = dmt.NewTree("")
-	}
+	tree, _ := dmt.NewTree("")
 
 	solver := &Solver{
 		ctx:            ctx,
 		cancel:         cancel,
+		status:         runtime.NewStatus(),
 		thesis:         thesis,
 		tree:           tree,
 		maxSeqLen:      6,   // Max 6 category transitions per sequence window
@@ -192,14 +178,6 @@ func NewSolver(
 		opt(solver)
 	}
 
-	if bus != nil {
-		runtime.Register[[]types.Category, *types.Cognition](
-			bus,
-			nil,
-			solver.Step,
-		)
-	}
-
 	return solver
 }
 
@@ -209,9 +187,21 @@ func (solver *Solver) Name() string {
 
 func (solver *Solver) Error() error { return solver.err }
 
-// Step folds one category batch into the symbol's cognition state machine and
-// returns the freshest reading for downstream subscribers.
-func (solver *Solver) Step(categories []types.Category) *types.Cognition {
+/*
+Step folds this envelope's ranked category batch into the symbol's cognition
+state machine and writes the freshest reading back onto the envelope.
+*/
+func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
+	if reading := solver.StepCategories(envelope.Categories); reading != nil {
+		envelope.Cognition = reading
+	}
+
+	return envelope
+}
+
+// StepCategories folds one category batch into the symbol's cognition state
+// machine and returns the freshest reading for downstream subscribers.
+func (solver *Solver) StepCategories(categories []types.Category) *types.Cognition {
 	if len(categories) == 0 {
 		return nil
 	}

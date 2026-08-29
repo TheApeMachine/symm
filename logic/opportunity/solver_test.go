@@ -26,22 +26,33 @@ func activeBatch(symbol string, categories ...types.CategoryType) []types.Catego
 	return batch
 }
 
+/*
+stepBatch runs one category batch through the solver via an envelope and
+returns the resulting Opportunities (nil when none were produced).
+*/
+func stepBatch(solver *Solver, categories []types.Category) []*types.OpportunityCandidate {
+	envelope := types.NewEnvelope(types.EnvelopeUnknown)
+	envelope.Categories = categories
+
+	return solver.Step(envelope).Opportunities
+}
+
 func TestSolverStep(t *testing.T) {
 	Convey("Given an opportunity synthesizer", t, func() {
-		solver := NewSolver(t.Context(), nil)
+		solver := NewSolver(t.Context())
 
 		Convey("a batch with no categories yields nothing", func() {
-			So(solver.Step(nil), ShouldBeNil)
+			So(stepBatch(solver, nil), ShouldBeNil)
 		})
 
 		Convey("a dormant symbol with no precursor yields nothing", func() {
-			candidates := solver.Step(activeBatch("DORMANT", types.StochasticNoise))
+			candidates := stepBatch(solver, activeBatch("DORMANT", types.StochasticNoise))
 
 			So(candidates, ShouldBeNil)
 		})
 
 		Convey("one active precursor forms a candidate", func() {
-			candidates := solver.Step(activeBatch("HMAID", types.CoiledCompression))
+			candidates := stepBatch(solver, activeBatch("HMAID", types.CoiledCompression))
 
 			So(candidates, ShouldHaveLength, 1)
 
@@ -57,7 +68,7 @@ func TestSolverStep(t *testing.T) {
 		})
 
 		Convey("two agreeing precursors arm the candidate", func() {
-			candidates := solver.Step(activeBatch(
+			candidates := stepBatch(solver, activeBatch(
 				"HMAID",
 				types.CoiledCompression,
 				types.HiddenAbsorption,
@@ -68,7 +79,7 @@ func TestSolverStep(t *testing.T) {
 		})
 
 		Convey("the confirmation category ignites the candidate", func() {
-			candidates := solver.Step(activeBatch(
+			candidates := stepBatch(solver, activeBatch(
 				"HMAID",
 				types.CoiledCompression,
 				types.VerticalIgnition,
@@ -79,9 +90,9 @@ func TestSolverStep(t *testing.T) {
 		})
 
 		Convey("a formed candidate advances its sequence on update", func() {
-			solver.Step(activeBatch("HMAID", types.CoiledCompression))
+			stepBatch(solver, activeBatch("HMAID", types.CoiledCompression))
 
-			candidates := solver.Step(activeBatch(
+			candidates := stepBatch(solver, activeBatch(
 				"HMAID",
 				types.CoiledCompression,
 				types.HiddenAbsorption,
@@ -93,23 +104,23 @@ func TestSolverStep(t *testing.T) {
 		})
 
 		Convey("a dissolved precursor state invalidates exactly once", func() {
-			solver.Step(activeBatch("HMAID", types.CoiledCompression))
+			stepBatch(solver, activeBatch("HMAID", types.CoiledCompression))
 
-			invalidated := solver.Step(activeBatch("HMAID", types.StochasticNoise))
+			invalidated := stepBatch(solver, activeBatch("HMAID", types.StochasticNoise))
 
 			So(invalidated, ShouldHaveLength, 1)
 			So(invalidated[0].Phase, ShouldEqual, types.PhaseInvalidated)
 
-			again := solver.Step(activeBatch("HMAID", types.StochasticNoise))
+			again := stepBatch(solver, activeBatch("HMAID", types.StochasticNoise))
 
 			So(again, ShouldBeNil)
 		})
 
 		Convey("re-forming after invalidation starts a fresh candidate", func() {
-			solver.Step(activeBatch("HMAID", types.CoiledCompression))
-			solver.Step(activeBatch("HMAID", types.StochasticNoise))
+			stepBatch(solver, activeBatch("HMAID", types.CoiledCompression))
+			stepBatch(solver, activeBatch("HMAID", types.StochasticNoise))
 
-			candidates := solver.Step(activeBatch("HMAID", types.BookThinning))
+			candidates := stepBatch(solver, activeBatch("HMAID", types.BookThinning))
 
 			So(candidates, ShouldHaveLength, 1)
 			So(candidates[0].Phase, ShouldEqual, types.PhaseForming)

@@ -84,7 +84,7 @@ func TestMaxOf(t *testing.T) {
 	}
 }
 
-func TestBranchingAndLikelihood(t *testing.T) {
+func TestBranching(t *testing.T) {
 	branching := types.Frame{}
 	branching.Put(SymbolAlphaAA, 1)
 	branching.Put(SymbolAlphaAB, 0.5)
@@ -99,24 +99,6 @@ func TestBranchingAndLikelihood(t *testing.T) {
 
 	if got := branching.MustGet(SymbolSpectralRadius); math.Abs(got-0.75) > 1e-12 {
 		t.Fatalf("spectral radius=%v; want 0.75", got)
-	}
-
-	likelihood := types.Frame{}
-	likelihood.Put(SymbolLLHawkes, -120.5)
-	likelihood.Put(SymbolLLPoisson, -150)
-	likelihood.Put(SymbolLLSelf, -135)
-	Likelihood(&likelihood)
-
-	if likelihood.Err != nil {
-		t.Fatal(likelihood.Err)
-	}
-
-	if got := likelihood.MustGet(SymbolDeltaPoisson); got != 29.5 {
-		t.Fatalf("Poisson delta=%v; want 29.5", got)
-	}
-
-	if got := likelihood.MustGet(SymbolDeltaSelf); got != 14.5 {
-		t.Fatalf("self delta=%v; want 14.5", got)
 	}
 }
 

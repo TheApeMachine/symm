@@ -6,46 +6,70 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-
-	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
-func testBook() *book.Book {
-	return book.New()
+func morphOrder(price, qty float64, at time.Time) kraken.Level3Order {
+	return kraken.Level3Order{
+		Event:      "add",
+		OrderID:    "order",
+		LimitPrice: decimal.NewFromFloat64(price),
+		OrderQty:   decimal.NewFromFloat64(qty),
+		Timestamp:  at,
+	}
 }
 
-func addLevel(orderBook *book.Book, direction book.BookDirection, price, quantity float64, at time.Time) {
-	orderBook.Update(&book.UpdateOptions{
-		Direction: direction,
-		Price:     decimal.NewFromFloat64(price),
-		Quantity:  decimal.NewFromFloat64(quantity),
+func morphMessage(symbol string, at time.Time, bids, asks []kraken.Level3Order) kraken.Level3Data {
+	return kraken.Level3Data{
+		Symbol:    symbol,
 		Timestamp: at,
-	})
+		Bids:      bids,
+		Asks:      asks,
+	}
+}
+
+func morphMetric(measurement *data.Measurement[float64], name string) float64 {
+	if measurement == nil {
+		return 0
+	}
+
+	return measurement.Metrics[name].Raw
+}
+
+func morphHasMetric(measurement *data.Measurement[float64], name string) bool {
+	if measurement == nil {
+		return false
+	}
+
+	_, found := measurement.Metrics[name]
+
+	return found
 }
 
 func TestProjectShape(t *testing.T) {
-	Convey("Given a crossed or degenerate book", t, func() {
-		orderBook := testBook()
-		orderBook.NoBookCrossing = false
-		addLevel(orderBook, book.Bid, 101, 1, time.Now())
-		addLevel(orderBook, book.Ask, 99, 1, time.Now())
+	Convey("Given a crossed or degenerate message", t, func() {
+		message := morphMessage("BTC/USD", time.Now(),
+			[]kraken.Level3Order{morphOrder(101, 1, time.Now())},
+			[]kraken.Level3Order{morphOrder(99, 1, time.Now())},
+		)
 
-		_, _, _, ok := projectShape(orderBook)
+		_, _, _, ok := projectShape(message)
 
 		Convey("projectShape reports not-ok, never fabricating a shape", func() {
 			So(ok, ShouldBeFalse)
 		})
 	})
 
-	Convey("Given a single-level symmetric book", t, func() {
-		orderBook := testBook()
+	Convey("Given a single-level symmetric message", t, func() {
 		now := time.Now()
-		addLevel(orderBook, book.Bid, 99, 2, now)
-		addLevel(orderBook, book.Ask, 101, 2, now)
+		message := morphMessage("BTC/USD", now,
+			[]kraken.Level3Order{morphOrder(99, 2, now)},
+			[]kraken.Level3Order{morphOrder(101, 2, now)},
+		)
 
-		bidFolded, askFolded, whole, ok := projectShape(orderBook)
+		bidFolded, askFolded, whole, ok := projectShape(message)
 
 		Convey("bilateral shapes are folded onto the positive distance axis", func() {
 			So(ok, ShouldBeTrue)
@@ -69,189 +93,162 @@ func TestBookStep(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	later := time.Unix(1_700_000_001, 0)
 
-	Convey("Given an exactly mirrored multi-level book", t, func() {
-		orderBook := testBook()
+	Convey("Given an exactly mirrored multi-level message", t, func() {
 		// A mirrored book by notional: each level carries the same notional C
 		// (quantity = C/price), so the bid side's mass profile is identical to
 		// the ask side's when reflected — identical folded positions with
 		// identical mass at each.
 		const commonNotional = 100000.0
-		addLevel(orderBook, book.Bid, 98, commonNotional/98, now)
-		addLevel(orderBook, book.Bid, 99, commonNotional/99, now)
-		addLevel(orderBook, book.Ask, 101, commonNotional/101, now)
-		addLevel(orderBook, book.Ask, 102, commonNotional/102, now)
+		message := morphMessage("BTC/USD", now,
+			[]kraken.Level3Order{
+				morphOrder(98, commonNotional/98, now),
+				morphOrder(99, commonNotional/99, now),
+			},
+			[]kraken.Level3Order{
+				morphOrder(101, commonNotional/101, now),
+				morphOrder(102, commonNotional/102, now),
+			},
+		)
 
-		workspace := runtime.NewWorkspace(nil)
-		workspace.Share("book", orderBook, "BTC/USD")
-
-		entity := NewBook(workspace)
+		entity := NewBook()
 
 		Convey("bilateral distance and KS are exactly zero", func() {
-			measurement := entity.Step("BTC/USD", now)
+			measurement := entity.Step(message)
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
-			So(measurement.Metrics["book_shape_distance"].Raw, ShouldAlmostEqual, 0)
-			So(measurement.Metrics["book_shape_ks"].Raw, ShouldAlmostEqual, 0)
+			So(morphMetric(measurement, "book_shape_distance"), ShouldAlmostEqual, 0)
+			So(morphMetric(measurement, "book_shape_ks"), ShouldAlmostEqual, 0)
 		})
 	})
 
-	Convey("Given an asymmetric book", t, func() {
-		orderBook := testBook()
-		addLevel(orderBook, book.Bid, 99, 2, now)
-		addLevel(orderBook, book.Bid, 97, 1, now)
-		addLevel(orderBook, book.Ask, 101, 2, now)
+	Convey("Given an asymmetric message", t, func() {
+		message := morphMessage("BTC/USD", now,
+			[]kraken.Level3Order{
+				morphOrder(99, 2, now),
+				morphOrder(97, 1, now),
+			},
+			[]kraken.Level3Order{morphOrder(101, 2, now)},
+		)
 
-		workspace := runtime.NewWorkspace(nil)
-		workspace.Share("book", orderBook, "BTC/USD")
-
-		entity := NewBook(workspace)
+		entity := NewBook()
 
 		Convey("bilateral distance and KS are positive", func() {
-			measurement := entity.Step("BTC/USD", now)
+			measurement := entity.Step(message)
 
 			So(measurement, ShouldNotBeNil)
-			So(measurement.Metrics["book_shape_distance"].Raw, ShouldBeGreaterThan, 0)
-			So(measurement.Metrics["book_shape_ks"].Raw, ShouldBeGreaterThan, 0)
+			So(morphMetric(measurement, "book_shape_distance"), ShouldBeGreaterThan, 0)
+			So(morphMetric(measurement, "book_shape_ks"), ShouldBeGreaterThan, 0)
 		})
 	})
 
-	Convey("Given scale-equivalent books", t, func() {
+	Convey("Given scale-equivalent messages", t, func() {
 		Convey("rescaling all quantities yields equivalent normalized morphology", func() {
-			first := testBook()
-			addLevel(first, book.Bid, 98, 1, now)
-			addLevel(first, book.Bid, 99, 2, now)
-			addLevel(first, book.Ask, 101, 2, now)
-			addLevel(first, book.Ask, 102, 1, now)
+			first := morphMessage("BTC/USD", now,
+				[]kraken.Level3Order{
+					morphOrder(98, 1, now),
+					morphOrder(99, 2, now),
+				},
+				[]kraken.Level3Order{
+					morphOrder(101, 2, now),
+					morphOrder(102, 1, now),
+				},
+			)
 
-			second := testBook()
-			addLevel(second, book.Bid, 98, 10, now)
-			addLevel(second, book.Bid, 99, 20, now)
-			addLevel(second, book.Ask, 101, 20, now)
-			addLevel(second, book.Ask, 102, 10, now)
+			second := morphMessage("ETH/USD", now,
+				[]kraken.Level3Order{
+					morphOrder(98, 10, now),
+					morphOrder(99, 20, now),
+				},
+				[]kraken.Level3Order{
+					morphOrder(101, 20, now),
+					morphOrder(102, 10, now),
+				},
+			)
 
-			workspace1 := runtime.NewWorkspace(nil)
-			workspace1.Share("book", first, "BTC/USD")
-			workspace2 := runtime.NewWorkspace(nil)
-			workspace2.Share("book", second, "ETH/USD")
-
-			firstMeasurement := NewBook(workspace1).Step("BTC/USD", now)
-			secondMeasurement := NewBook(workspace2).Step("ETH/USD", now)
+			firstMeasurement := NewBook().Step(first)
+			secondMeasurement := NewBook().Step(second)
 
 			So(firstMeasurement, ShouldNotBeNil)
 			So(secondMeasurement, ShouldNotBeNil)
 
-			So(firstMeasurement.Metrics["book_shape_distance"].Raw, ShouldAlmostEqual, secondMeasurement.Metrics["book_shape_distance"].Raw)
-			So(firstMeasurement.Metrics["book_shape_ks"].Raw, ShouldAlmostEqual, secondMeasurement.Metrics["book_shape_ks"].Raw)
-			So(firstMeasurement.Metrics["concentration:bid"].Raw, ShouldAlmostEqual, secondMeasurement.Metrics["concentration:bid"].Raw)
-			So(firstMeasurement.Metrics["entropy:bid"].Raw, ShouldAlmostEqual, secondMeasurement.Metrics["entropy:bid"].Raw)
+			So(morphMetric(firstMeasurement, "book_shape_distance"), ShouldAlmostEqual, morphMetric(secondMeasurement, "book_shape_distance"))
+			So(morphMetric(firstMeasurement, "book_shape_ks"), ShouldAlmostEqual, morphMetric(secondMeasurement, "book_shape_ks"))
+			So(morphMetric(firstMeasurement, "concentration:bid"), ShouldAlmostEqual, morphMetric(secondMeasurement, "concentration:bid"))
+			So(morphMetric(firstMeasurement, "entropy:bid"), ShouldAlmostEqual, morphMetric(secondMeasurement, "entropy:bid"))
 		})
 	})
 
 	Convey("Given the first observation of a symbol", t, func() {
-		orderBook := testBook()
-		addLevel(orderBook, book.Bid, 99, 2, now)
-		addLevel(orderBook, book.Ask, 101, 2, now)
+		message := morphMessage("BTC/USD", now,
+			[]kraken.Level3Order{morphOrder(99, 2, now)},
+			[]kraken.Level3Order{morphOrder(101, 2, now)},
+		)
 
-		workspace := runtime.NewWorkspace(nil)
-		workspace.Share("book", orderBook, "BTC/USD")
-
-		entity := NewBook(workspace)
+		entity := NewBook()
 
 		Convey("structural change is undefined, never fabricated as zero", func() {
-			measurement := entity.Step("BTC/USD", now)
+			measurement := entity.Step(message)
 
 			So(measurement, ShouldNotBeNil)
-			So(measurement.Metrics, ShouldNotContainKey, "morphology_change")
+			So(morphHasMetric(measurement, "morphology_change"), ShouldBeFalse)
 		})
 
 		Convey("structural change appears once a prior shape exists", func() {
-			first := entity.Step("BTC/USD", now)
+			first := entity.Step(message)
 			So(first.Err, ShouldBeNil)
 
-			addLevel(orderBook, book.Bid, 98, 4, later)
-
-			second := entity.Step("BTC/USD", later)
+			second := entity.Step(morphMessage("BTC/USD", later,
+				[]kraken.Level3Order{
+					morphOrder(99, 2, later),
+					morphOrder(98, 4, later),
+				},
+				[]kraken.Level3Order{morphOrder(101, 2, later)},
+			))
 
 			So(second, ShouldNotBeNil)
 			So(second.Err, ShouldBeNil)
-			So(second.Metrics, ShouldContainKey, "morphology_change")
-			So(second.Metrics["morphology_change"].Raw, ShouldBeGreaterThan, 0.0)
+			So(morphHasMetric(second, "morphology_change"), ShouldBeTrue)
+			So(morphMetric(second, "morphology_change"), ShouldBeGreaterThan, 0.0)
 		})
 	})
 
-	Convey("Given a crossed shared book", t, func() {
-		orderBook := testBook()
-		orderBook.NoBookCrossing = false
-		addLevel(orderBook, book.Bid, 101, 1, now)
-		addLevel(orderBook, book.Ask, 99, 1, now)
+	Convey("Given a crossed message", t, func() {
+		message := morphMessage("BTC/USD", now,
+			[]kraken.Level3Order{morphOrder(101, 1, now)},
+			[]kraken.Level3Order{morphOrder(99, 1, now)},
+		)
 
-		workspace := runtime.NewWorkspace(nil)
-		workspace.Share("book", orderBook, "BTC/USD")
+		entity := NewBook()
 
-		entity := NewBook(workspace)
-
-		Convey("Step returns nil for a book with no shape", func() {
-			So(entity.Step("BTC/USD", now), ShouldBeNil)
+		Convey("Step returns nil for a message with no shape", func() {
+			So(entity.Step(message), ShouldBeNil)
 		})
 	})
 }
 
 /*
 BenchmarkStep measures the steady-state cost and allocation count of one
-morphology Step against a realistic ten-level book, once warm.
+morphology Step against a realistic ten-level message, once warm.
 */
 func BenchmarkStep(benchmark *testing.B) {
 	now := time.Unix(1_700_000_000, 0)
 
-	orderBook := testBook()
+	bids := make([]kraken.Level3Order, 0, 10)
+	asks := make([]kraken.Level3Order, 0, 10)
 
 	for level := 0; level < 10; level++ {
-		addLevel(orderBook, book.Bid, 99-float64(level), 2, now.Add(time.Duration(level)*time.Second))
-		addLevel(orderBook, book.Ask, 101+float64(level), 2, now.Add(time.Duration(level)*time.Second))
+		bids = append(bids, morphOrder(99-float64(level), 2, now))
+		asks = append(asks, morphOrder(101+float64(level), 2, now))
 	}
 
-	workspace := runtime.NewWorkspace(nil)
-	workspace.Share("book", orderBook, "BTC/USD")
-
-	entity := NewBook(workspace)
+	message := morphMessage("BTC/USD", now, bids, asks)
+	entity := NewBook()
 
 	benchmark.ReportAllocs()
 	benchmark.ResetTimer()
 
 	for index := 0; index < benchmark.N; index++ {
-		_ = entity.Step("BTC/USD", now)
+		_ = entity.Step(message)
 	}
-}
-
-/*
-TestReadBookScope proves the book is consumed entirely inside the protected
-read callback: readBook takes a callback and returns no value, so the caller
-can only observe floats copied out during the locked scope, and the callback
-runs to completion synchronously (a value set inside it is visible immediately
-after readBook returns). There is no path that returns or retains *book.Book.
-*/
-func TestReadBookScope(t *testing.T) {
-	Convey("Given a shared book", t, func() {
-		orderBook := testBook()
-		addLevel(orderBook, book.Bid, 99, 2, time.Now())
-		addLevel(orderBook, book.Ask, 101, 2, time.Now())
-
-		workspace := runtime.NewWorkspace(nil)
-		workspace.Share("book", orderBook, "BTC/USD")
-
-		entity := NewBook(workspace)
-
-		Convey("readBook runs its callback synchronously and returns nothing", func() {
-			completed := false
-
-			entity.readBook("BTC/USD", func(sharedBook *book.Book) {
-				completed = sharedBook != nil
-			})
-
-			// The callback has fully run by the time readBook returns: the
-			// book was consumed inside the locked scope, never handed out.
-			So(completed, ShouldBeTrue)
-		})
-	})
 }

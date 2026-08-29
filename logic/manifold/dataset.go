@@ -6,10 +6,8 @@ import (
 	"sort"
 	"sync"
 
-	mgrbook "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 )
 
@@ -17,6 +15,11 @@ import (
 Dataset projects the resident Level3 order book into Sensorium States. Every
 resting order becomes one oscillator carrying the structure the shared book
 actually holds, not a byte-valued summary of it.
+
+The book itself is Dataset's own accumulated state, maintained one message at
+a time by Step as Level3Data events stream through the Level3 workload — never
+a fully reconstructed venue book read from anywhere external. Generate walks
+that accumulated state; nothing here ever reads a shared/injected book.
 
 The mapping follows what the physics consumes directly:
 
@@ -37,9 +40,50 @@ The mapping follows what the physics consumes directly:
 */
 type Dataset struct {
 	mutex     sync.Mutex
-	workspace *runtime.Workspace
+	books     map[string]*symbolBook
 	scales    map[string]*scaleAccumulator
 	converged map[string]float64
+}
+
+/*
+bookSide is this side's currently resting orders, keyed by order ID.
+*/
+type bookSide map[string]kraken.Level3Order
+
+/*
+symbolBook is one symbol's accumulated resting-order state, maintained purely
+by applying Level3Data add/modify/delete events as they arrive. It is never a
+snapshot fetched from anywhere else.
+*/
+type symbolBook struct {
+	bids bookSide
+	asks bookSide
+}
+
+/*
+apply folds one Level3Data message's bid/ask events into this symbol's
+resident order state: add/modify set the order's current resting entry
+(order_qty is the new absolute remaining quantity, not a delta), delete
+removes it.
+*/
+func (book *symbolBook) apply(message kraken.Level3Data) {
+	applySide(book.bids, message.Bids)
+	applySide(book.asks, message.Asks)
+}
+
+func applySide(side bookSide, orders []kraken.Level3Order) {
+	for _, order := range orders {
+		if order.Event == "delete" {
+			delete(side, order.OrderID)
+			continue
+		}
+
+		if order.LimitPrice == nil || order.OrderQty == nil {
+			continue
+		}
+
+		side[order.OrderID] = order
+	}
 }
 
 /*
@@ -70,13 +114,11 @@ func (accumulator *scaleAccumulator) rms() float64 {
 }
 
 /*
-orderEntry couples a resting order with the side it rests on. The SDK Order
-carries price and quantity but not its side, so the pair is threaded through
-the projection.
+orderEntry couples one resident order with the side it rests on.
 */
 type orderEntry struct {
-	order *mgrbook.Order
-	side  mgrbook.BookDirection
+	order kraken.Level3Order
+	ask   bool
 }
 
 const (
@@ -86,9 +128,9 @@ const (
 	omegaHalfSpan        = 4.0
 )
 
-func NewDataset(workspace *runtime.Workspace) *Dataset {
+func NewDataset() *Dataset {
 	return &Dataset{
-		workspace: workspace,
+		books:     make(map[string]*symbolBook),
 		scales:    make(map[string]*scaleAccumulator),
 		converged: make(map[string]float64),
 	}
@@ -96,57 +138,55 @@ func NewDataset(workspace *runtime.Workspace) *Dataset {
 
 func (dataset *Dataset) Name() string { return "book" }
 
-type bookReader interface {
-	GetBooks() []string
-	Get(symbol string, read func(*mgrbook.Book))
+/*
+Step folds one Level3Data message into this symbol's accumulated resident
+order state. It is the sole way Dataset's book state ever changes.
+*/
+func (dataset *Dataset) Step(message kraken.Level3Data) {
+	if dataset == nil || message.Symbol == "" {
+		return
+	}
+
+	dataset.mutex.Lock()
+	defer dataset.mutex.Unlock()
+
+	book, found := dataset.books[message.Symbol]
+
+	if !found {
+		book = &symbolBook{bids: bookSide{}, asks: bookSide{}}
+		dataset.books[message.Symbol] = book
+	}
+
+	book.apply(message)
 }
 
 /*
-Generate yields one State per resting order across every book the shared
-manager owns, ask side first then bid side, level by level, in queue order.
+Generate yields one State per resident order across every symbol's
+accumulated book, ask side first then bid side, level by level, in queue
+order. The book is Dataset's own state, built exclusively by Step.
 */
 func (dataset *Dataset) Generate() iter.Seq[*sensorium.State] {
 	return func(yield func(*sensorium.State) bool) {
-		if dataset == nil || dataset.workspace == nil {
+		if dataset == nil {
 			return
 		}
 
-		shared, found := dataset.workspace.Shared("books")
+		dataset.mutex.Lock()
+		symbols := make([]string, 0, len(dataset.books))
+		booksBySymbol := make(map[string]*symbolBook, len(dataset.books))
 
-		if !found {
-			return
+		for symbol, book := range dataset.books {
+			symbols = append(symbols, symbol)
+			booksBySymbol[symbol] = book
 		}
+		dataset.mutex.Unlock()
 
-		manager, ok := shared.(bookReader)
-
-		if !ok || manager == nil {
-			errnie.Error(errnie.Err(
-				errnie.Internal,
-				"manifold: shared books value is not a bookReader",
-				nil,
-			))
-
-			return
-		}
-
-		symbols := manager.GetBooks()
+		sort.Strings(symbols)
 
 		for _, symbol := range symbols {
-			var entries []orderEntry
-			var mid float64
-
-			manager.Get(symbol, func(book *mgrbook.Book) {
-				if book == nil {
-					return
-				}
-
-				mid = midPrice(book)
-				if mid <= 0 {
-					return
-				}
-
-				entries = sideEntries(book)
-			})
+			book := booksBySymbol[symbol]
+			entries := sideEntries(book)
+			mid := midPrice(book)
 
 			if mid <= 0 || len(entries) == 0 {
 				continue
@@ -166,7 +206,7 @@ func (dataset *Dataset) Generate() iter.Seq[*sensorium.State] {
 
 			for seq, entry := range entries {
 				price := entry.order.LimitPrice.Float64()
-				quantity := entry.order.Quantity.Float64()
+				quantity := entry.order.OrderQty.Float64()
 
 				if price <= 0 || quantity <= 0 {
 					continue
@@ -188,55 +228,83 @@ func (dataset *Dataset) Generate() iter.Seq[*sensorium.State] {
 }
 
 /*
-sideEntries flattens one book into ask-then-bid entries, each tagged with its
-side, decoupled from Go map iteration order.
+sideEntries flattens one symbol's accumulated book into ask-then-bid entries,
+each tagged with its side, sorted by order ID so iteration never depends on Go
+map ordering.
 */
-func sideEntries(book *mgrbook.Book) []orderEntry {
-	entries := make([]orderEntry, 0, 1024)
+func sideEntries(book *symbolBook) []orderEntry {
+	entries := make([]orderEntry, 0, len(book.asks)+len(book.bids))
 
-	for _, side := range []*mgrbook.Side{book.Asks, book.Bids} {
-		if side == nil {
-			continue
-		}
+	entries = appendSide(entries, book.asks, true)
+	entries = appendSide(entries, book.bids, false)
 
-		for _, level := range side.Levels {
-			if level == nil {
-				continue
-			}
+	return entries
+}
 
-			for _, order := range level.Queue() {
-				if order == nil {
-					continue
-				}
+func appendSide(entries []orderEntry, side bookSide, ask bool) []orderEntry {
+	ids := make([]string, 0, len(side))
 
-				entries = append(entries, orderEntry{
-					order: order,
-					side:  side.Direction,
-				})
-			}
-		}
+	for id := range side {
+		ids = append(ids, id)
+	}
+
+	sort.Strings(ids)
+
+	for _, id := range ids {
+		entries = append(entries, orderEntry{order: side[id], ask: ask})
 	}
 
 	return entries
 }
 
-func midPrice(book *mgrbook.Book) float64 {
-	ask := book.BestAsk()
-	bid := book.BestBid()
+/*
+midPrice is the average of the best bid and best ask currently resident in the
+book. A one-sided book (no orders ever seen on the other side yet) has no
+defined midpoint.
+*/
+func midPrice(book *symbolBook) float64 {
+	bestBid := bestPrice(book.bids, true)
+	bestAsk := bestPrice(book.asks, false)
 
-	if (ask == nil || ask.Price == nil) && (bid == nil || bid.Price == nil) {
+	if bestBid <= 0 && bestAsk <= 0 {
 		return 0
 	}
 
-	if ask == nil || ask.Price == nil {
-		return bid.Price.Float64()
+	if bestBid <= 0 {
+		return bestAsk
 	}
 
-	if bid == nil || bid.Price == nil {
-		return ask.Price.Float64()
+	if bestAsk <= 0 {
+		return bestBid
 	}
 
-	return (ask.Price.Float64() + bid.Price.Float64()) / 2
+	return (bestBid + bestAsk) / 2
+}
+
+/*
+bestPrice finds the best resident price on one side: highest for bids, lowest
+for asks. Returns 0 when the side has no usable order.
+*/
+func bestPrice(side bookSide, highest bool) float64 {
+	best := 0.0
+
+	for _, order := range side {
+		if order.LimitPrice == nil {
+			continue
+		}
+
+		price := order.LimitPrice.Float64()
+
+		if price <= 0 {
+			continue
+		}
+
+		if best == 0 || (highest && price > best) || (!highest && price < best) {
+			best = price
+		}
+	}
+
+	return best
 }
 
 /*
@@ -252,7 +320,7 @@ func orderState(
 ) *sensorium.State {
 	sidePositive := 0
 
-	if entry.side == mgrbook.Ask {
+	if entry.ask {
 		sidePositive = 1
 	}
 
@@ -301,7 +369,7 @@ func packToken(symbolIndex uint32, sidePositive int) uint32 {
 orderHash mixes the order identity into a stable content fingerprint so the
 content ID does not depend on map iteration order.
 */
-func orderHash(order *mgrbook.Order) uint32 {
+func orderHash(order kraken.Level3Order) uint32 {
 	const (
 		offset = uint32(2166136261)
 		prime  = uint32(16777619)
@@ -309,7 +377,7 @@ func orderHash(order *mgrbook.Order) uint32 {
 
 	hash := offset
 
-	for _, char := range order.ID {
+	for _, char := range order.OrderID {
 		hash ^= uint32(char)
 		hash *= prime
 	}
@@ -403,7 +471,7 @@ func ageRanks(entries []orderEntry) []int {
 			return first.Timestamp.Before(second.Timestamp)
 		}
 
-		return first.ID < second.ID
+		return first.OrderID < second.OrderID
 	})
 
 	ranks := make([]int, len(entries))
@@ -431,12 +499,12 @@ func queueRanks(entries []orderEntry) []int {
 		first := entries[indices[left]]
 		second := entries[indices[right]]
 
-		if first.side != second.side {
-			return first.side == mgrbook.Bid
+		if first.ask != second.ask {
+			return !first.ask
 		}
 
 		if cmp := first.order.LimitPrice.Cmp(second.order.LimitPrice); cmp != 0 {
-			if first.side == mgrbook.Bid {
+			if !first.ask {
 				return cmp > 0
 			}
 
@@ -447,7 +515,7 @@ func queueRanks(entries []orderEntry) []int {
 			return first.order.Timestamp.Before(second.order.Timestamp)
 		}
 
-		return first.order.ID < second.order.ID
+		return first.order.OrderID < second.order.OrderID
 	})
 
 	ranks := make([]int, len(entries))
@@ -455,8 +523,7 @@ func queueRanks(entries []orderEntry) []int {
 	bidRank := 0
 
 	for _, index := range indices {
-		side := entries[index].side
-		if side == mgrbook.Ask {
+		if entries[index].ask {
 			ranks[index] = askRank
 			askRank++
 		} else {

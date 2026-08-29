@@ -15,6 +15,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
@@ -629,6 +630,7 @@ type Solver struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	err           error
+	status        *runtime.Status
 	epoch         uint64
 	store         *relation.ObservationStore
 	estimator     *relation.InfluenceEstimator
@@ -641,16 +643,12 @@ type Solver struct {
 }
 
 /*
-GraphUpdate is the domain event the solver publishes on ChannelRelations after
-each Measurement advances the Influence Graph. It carries only the symbol and
-as-of time; consumers read the shared Influence Graph for the data itself. The
-boot side-effect observer reacts to it, exactly as observers react to
-Measurements.
+GraphUpdate is the domain event the solver publishes after each Measurement
+advances the Influence Graph. It carries only the symbol and as-of time;
+consumers read the shared Influence Graph for the data itself. Defined in
+types so types.Envelope can carry it without an import cycle back to graph.
 */
-type GraphUpdate struct {
-	Symbol string
-	At     time.Time
-}
+type GraphUpdate = types.GraphUpdate
 
 /*
 SolverOption configures one graph-solver property at construction.
@@ -676,7 +674,6 @@ cadence.
 */
 func NewSolver(
 	ctx context.Context,
-	bus *runtime.Workspace,
 	epoch uint64,
 	historyCapacity int,
 	plans []*relation.RelationPlan,
@@ -688,6 +685,7 @@ func NewSolver(
 	solver := &Solver{
 		ctx:       ctx,
 		cancel:    cancel,
+		status:    runtime.NewStatus(),
 		epoch:     epoch,
 		store:     relation.NewObservationStore(historyCapacity),
 		estimator: relation.NewInfluenceEstimator("prequential-linear-v1"),
@@ -698,29 +696,6 @@ func NewSolver(
 
 	for _, opt := range opts {
 		opt(solver)
-	}
-
-	if bus != nil {
-		bus.Share(SharedObservationStore, solver.store, "")
-		bus.Share(SharedInfluenceGraph, solver.influence, "")
-
-		runtime.Register(
-			bus,
-			func(measurement *data.Measurement[float64]) string {
-				if measurement == nil {
-					return ""
-				}
-
-				return measurement.Symbol()
-			},
-			func(measurement *data.Measurement[float64]) *GraphUpdate {
-				if measurement == nil {
-					return nil
-				}
-
-				return solver.Step(measurement.ToTypesMeasurement())
-			},
-		)
 	}
 
 	return solver
@@ -762,12 +737,42 @@ func (solver *Solver) due(symbol string, at time.Time) bool {
 }
 
 /*
-Step appends one Measurement to the coordinate store, re-estimates the planned
-Relations for its symbol when due, and updates the Influence Graph in place. The workspace
-delivers values for one symbol in order, so the store and graph advance as data
-becomes available.
+Step folds every signal measurement populated on this envelope into the
+coordinate store, re-estimating the planned Relations for its symbol when due
+and updating the Influence Graph in place, then writes the last resulting
+GraphUpdate back onto the envelope.
 */
-func (solver *Solver) Step(measurement *nmtypes.Measurement) *GraphUpdate {
+func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
+	measurements := []*data.Measurement[float64]{
+		envelope.Correlation,
+		envelope.LeadLag,
+		envelope.Liquidity,
+		envelope.Sentiment,
+		envelope.CVD,
+		envelope.DepthFlow,
+		envelope.Morphology,
+	}
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		if update := solver.StepMeasurement(measurement.ToTypesMeasurement()); update != nil {
+			envelope.GraphUpdate = update
+		}
+	}
+
+	return envelope
+}
+
+/*
+StepMeasurement appends one Measurement to the coordinate store, re-estimates
+the planned Relations for its symbol when due, and updates the Influence Graph
+in place. The workspace delivers values for one symbol in order, so the store
+and graph advance as data becomes available.
+*/
+func (solver *Solver) StepMeasurement(measurement *nmtypes.Measurement) *GraphUpdate {
 	if solver == nil {
 		return nil
 	}

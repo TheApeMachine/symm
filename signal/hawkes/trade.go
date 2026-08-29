@@ -45,8 +45,10 @@ func NewTrade() *Trade {
 			data.Binding{From: nmhawkes.SymbolArrivalRateBuy, Name: "arrival_rate:buy", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 			data.Binding{From: nmhawkes.SymbolArrivalRateSell, Name: "arrival_rate:sell", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 
+			data.Binding{From: nmhawkes.SymbolConditionalIntensity, Name: "conditional_intensity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 			data.Binding{From: nmhawkes.SymbolConditionalIntensityBuy, Name: "conditional_intensity:buy", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 			data.Binding{From: nmhawkes.SymbolConditionalIntensitySell, Name: "conditional_intensity:sell", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
+			data.Binding{From: nmhawkes.SymbolBackgroundRate, Name: "background_rate", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 			data.Binding{From: nmhawkes.SymbolBackgroundRateBuy, Name: "background_rate:buy", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 			data.Binding{From: nmhawkes.SymbolBackgroundRateSell, Name: "background_rate:sell", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 
@@ -128,8 +130,24 @@ func (trade *Trade) Step(observation kraken.TradeData) *data.Measurement[float64
 		from = time.Unix(wholeSeconds, nanoseconds)
 	}
 
-	if eventCount, found := output.Get(nmhawkes.SymbolEventCount); found {
-		output.Put(nmtypes.SampleCount, eventCount)
+	// Maturity (README section 5.4) measures effective FITTED MODEL support,
+	// not raw market-event count: before any fit has converged the model has
+	// zero support regardless of how many trades have been observed, and
+	// after a fit the support is the event count that fit's own optimizer
+	// context judged sufficient (nmhawkes.SymbolModelSupport), which is not
+	// the same number as every event this signal has ever seen.
+	if support, found := output.Get(nmhawkes.SymbolModelSupport); found {
+		output.Put(nmtypes.SampleCount, support)
+	} else {
+		output.Put(nmtypes.SampleCount, 0)
+	}
+
+	// Projector.Project only derives Measurement.SNR/SNRDefined from a
+	// "mahalanobis/snr" Frame fact; relay the Hawkes-specific SNR (README
+	// section 20) onto that exact slot so the measurement envelope reflects
+	// it, in addition to it being separately projected as the "snr" metric.
+	if snr, found := output.Get(nmhawkes.SymbolSNR); found {
+		output.Put(nmtypes.MustIntern("mahalanobis/snr"), snr)
 	}
 
 	return trade.projector.Project(observation.Symbol, "hawkes", observation.Timestamp, from, output)

@@ -881,6 +881,343 @@ table DiagnosticsFrame {
   goroutines:[DiagnosticGoroutine];
 }
 
+// ---------------------------------------------------------------------------
+// EnvelopeState mirrors types.Envelope field-for-field, exactly as it exists
+// on the workspace ring at an Observe boundary. It is not a curated view: an
+// Observe node encodes the Envelope's own exported state, and consumers read
+// the fields that are actually populated for the workload that produced it
+// (a Ticker envelope carries Correlation/LeadLag/Liquidity/Categories; a
+// Level3 envelope carries DepthFlow/Morphology; and so on). Unexported solver
+// state with nothing to mirror (e.g. the resonance manifold's internal
+// matrices) is absent because there is nothing to encode, not because it was
+// curated away.
+// ---------------------------------------------------------------------------
+
+table EnvelopeMetric {
+  label:string (required);
+  raw:double;
+  hasNormalized:bool;
+  normalized:double;
+  hasStandardized:bool;
+  standardized:double;
+  unit:string;
+  timescale:string;
+}
+
+table EnvelopeMeasurementMetric { key:string (required); value:EnvelopeMetric (required); }
+
+table EnvelopeMeasurement {
+  id:string;
+  label:string;
+  source:string;
+  seqIdx:long;
+  atNs:long;
+  hasFrom:bool;
+  fromNs:long;
+  maturity:double;
+  snr:double;
+  snrDefined:bool;
+  metrics:[EnvelopeMeasurementMetric];
+  metadata:[NamedNumber];
+  provenance:[NamedString];
+}
+
+table EnvelopeCategory {
+  atNs:long;
+  symbol:string;
+  type:string;
+  confidence:double;
+  surprisal:double;
+  strength:double;
+  maturity:double;
+  uncertainty:double;
+  freshness:double;
+  supporting:[string];
+  opposing:[string];
+  missing:[string];
+}
+
+table EnvelopeGraphUpdate { symbol:string (required); atNs:long; }
+
+table EnvelopeCognitionBranch {
+  id:long;
+  parentId:long;
+  token:string;
+  prefix:string;
+  key:string;
+  depth:long;
+  probability:double;
+  count:ulong;
+}
+table EnvelopeCognitionBeam { sequence:string; key:string; score:double; }
+table EnvelopeCognitionClass { name:string; probability:double; }
+table EnvelopeCognitionContribution { token:string; bits:double; }
+table EnvelopeCognitionSymbol { symbol:string; className:string; score:double; purity:double; }
+table EnvelopeCognitionLexical { original:string; mapped:string; similarity:double; }
+table EnvelopeCognitionPrediction { key:string (required); value:double; }
+
+table EnvelopeCognition {
+  source:string;
+  symbol:string;
+  atNs:long;
+  sequence:string;
+  regimePrefix:string;
+  winner:string;
+  winnerClass:string;
+  candidateWinner:string;
+  stateHeld:bool;
+  predictionsHeld:bool;
+  switchConfidence:double;
+  switchThreshold:double;
+  error:string;
+  confidence:double;
+  classConfidence:double;
+  contrast:double;
+  contrastEvidence:double;
+  hasEntropyBits:bool;
+  entropyBits:double;
+  hasEntropyThreshold:bool;
+  entropyThreshold:double;
+  ambiguous:bool;
+  cohort:ulong;
+  lookaheadScore:double;
+  lookaheadPaths:long;
+  beamWidth:long;
+  maxHops:long;
+  nodeCount:long;
+  predictions:[EnvelopeCognitionPrediction];
+  branches:[EnvelopeCognitionBranch];
+  beams:[EnvelopeCognitionBeam];
+  classes:[EnvelopeCognitionClass];
+  remFromNs:long;
+  remThroughNs:long;
+  remReplays:long;
+  remDecayFactor:double;
+  remInhibitionPct:double;
+  remConsolidating:bool;
+  interpolatedSurprisal:double;
+  contributions:[EnvelopeCognitionContribution];
+  symbols:[EnvelopeCognitionSymbol];
+  lexical:[EnvelopeCognitionLexical];
+  dreams:[string];
+}
+
+// EnvelopeAnyValue mirrors one value out of a Go `map[string]any` (currently
+// only CausalOutput.Rows) — a closed union over the concrete types that map
+// is ever populated with, not a schema invented for the map's shape.
+union EnvelopeAnyValue { NamedNumber, NamedString, EnvelopeNamedInt, EnvelopeNamedTimeNs, EnvelopeNamedFloatMatrix }
+table EnvelopeNamedInt { name:string (required); value:long; }
+table EnvelopeNamedTimeNs { name:string (required); valueNs:long; }
+table EnvelopeFloatRow { values:[double] (required); }
+table EnvelopeNamedFloatMatrix { name:string (required); rows:[EnvelopeFloatRow] (required); }
+table EnvelopeAnyEntry { key:string (required); value:EnvelopeAnyValue (required); }
+
+table EnvelopeCausalOutput {
+  symbol:string (required);
+  rows:[EnvelopeAnyEntry];
+}
+
+table EnvelopeReturnForecastDistribution {
+  value:double;
+  scale:double;
+  degreesOfFreedom:double;
+  ready:bool;
+  innovation:double;
+  reset:bool;
+}
+
+table EnvelopeReturnForecast {
+  distribution:EnvelopeReturnForecastDistribution (required);
+  horizon:long;
+  candidateCall:double;
+  call:double;
+  stableCall:double;
+  held:bool;
+  switchConfidence:double;
+  switchThreshold:double;
+}
+
+// EnvelopeFrame mirrors nomagique/types.Frame: a sparse fixed-slot vector.
+// Data carries every slot dense (zero where unset); Mask is the same bitset
+// the solver uses to distinguish "unset" from "set to zero".
+table EnvelopeFrame { mask:[ulong] (required); data:[double] (required); }
+
+table EnvelopeResonanceArtifact {
+  symbol:string (required);
+  atNs:long;
+  forecast:EnvelopeReturnForecast;
+  dynamics:EnvelopeFrame;
+  forwardCurve:[double];
+  forwardRetention:[double];
+  supportedHorizon:long;
+  calibrated:bool;
+  resolvedSteps:long;
+  readout:[double];
+  confidence:double;
+  lastResolutionTarget:double;
+  lastResolutionError:double;
+}
+
+table EnvelopeSensoriumState {
+  n:long;
+  bytes:[long];
+  seqs:[long];
+  tokenIds:[long];
+  contentIds:[long];
+  phase:[float];
+  omega:[float];
+  energy:[float];
+  mass:[float];
+  heat:[float];
+  amp:[float];
+  pos:[float];
+  vel:[float];
+  clamped:[bool];
+  dark:[bool];
+}
+
+table EnvelopeSensoriumReading {
+  divergence:double;
+  guidanceSpeed:double;
+  coherenceMag2:double;
+  pressureGradNorm:double;
+  viscosityProxy:double;
+  kuramotoR:double;
+}
+
+table EnvelopeWaveMode { omega:float; real:float; imaginary:float; linewidth:float; }
+
+table EnvelopeManifoldState {
+  state:EnvelopeSensoriumState (required);
+  reading:EnvelopeSensoriumReading (required);
+  gridX:long;
+  gridY:long;
+  gridZ:long;
+  gridSpacing:double;
+  momRho:[float];
+  fieldEnergy:[float];
+  waveReal:[float];
+  waveImag:[float];
+  densityScale:float;
+  momentumScale:float;
+  energyScale:float;
+  waveScale:float;
+  modes:[EnvelopeWaveMode];
+}
+
+table EnvelopeExcursion { low:double; mid:double; high:double; }
+
+table EnvelopeOpportunityEconomics {
+  calibrated:bool;
+  transitionProbability:double;
+  profitFirst:double;
+  favorableExcursion:EnvelopeExcursion;
+  adverseExcursion:EnvelopeExcursion;
+  resolutionNs:long;
+  uncertainty:double;
+}
+
+table EnvelopeOpportunityCandidate {
+  symbol:string (required);
+  archetype:string;
+  phase:string;
+  direction:int;
+  firstSeenNs:long;
+  updatedNs:long;
+  sequence:ulong;
+  provenance:ubyte;
+  maturity:double;
+  economics:EnvelopeOpportunityEconomics;
+}
+
+table EnvelopeTickerData {
+  symbol:string (required);
+  hasBid:bool;
+  bid:double;
+  bidQty:double;
+  hasAsk:bool;
+  ask:double;
+  askQty:double;
+  hasLast:bool;
+  last:double;
+  volume:double;
+  vwap:double;
+  hasLow:bool;
+  low:double;
+  hasHigh:bool;
+  high:double;
+  hasChange:bool;
+  change:double;
+  changePct:double;
+  timestampNs:long;
+}
+
+table EnvelopeTradeData {
+  symbol:string (required);
+  side:string;
+  price:double;
+  qty:double;
+  orderType:string;
+  tradeId:long;
+  timestampNs:long;
+}
+
+table EnvelopeLevel3Order {
+  event:string;
+  orderId:string (required);
+  hasLimitPrice:bool;
+  limitPrice:double;
+  hasOrderQty:bool;
+  orderQty:double;
+  timestampNs:long;
+}
+
+table EnvelopeLevel3Data {
+  symbol:string (required);
+  type:string;
+  timestampNs:long;
+  checksum:uint;
+  bids:[EnvelopeLevel3Order];
+  asks:[EnvelopeLevel3Order];
+}
+
+// EnvelopeBoundaryStamp mirrors one fixed types.Envelope.Boundaries slot: the
+// Observe group's index in the Workload's declared graph and when it witnessed
+// the envelope. An all-zero entry (atNs 0) means that boundary has not been
+// reached/stamped yet for this envelope.
+table EnvelopeBoundaryStamp { slot:int; atNs:long; }
+
+table EnvelopeState {
+  key:string;
+  typeId:ubyte;
+
+  tickerData:EnvelopeTickerData;
+  tradeData:EnvelopeTradeData;
+  level3Data:EnvelopeLevel3Data;
+
+  correlation:EnvelopeMeasurement;
+  leadLag:EnvelopeMeasurement;
+  liquidity:EnvelopeMeasurement;
+  sentiment:EnvelopeMeasurement;
+  cvd:EnvelopeMeasurement;
+  depthFlow:EnvelopeMeasurement;
+  morphology:EnvelopeMeasurement;
+  hawkes:EnvelopeMeasurement;
+  pumpDump:EnvelopeMeasurement;
+  toxicity:EnvelopeMeasurement;
+
+  categories:[EnvelopeCategory];
+  opportunities:[EnvelopeOpportunityCandidate];
+  graphUpdate:EnvelopeGraphUpdate;
+  resonance:EnvelopeResonanceArtifact;
+  manifold:EnvelopeManifoldState;
+  cognition:EnvelopeCognition;
+  causalOutput:EnvelopeCausalOutput;
+  boundaries:[EnvelopeBoundaryStamp];
+}
+
+table EnvelopeStateFrame { state:EnvelopeState (required); }
+
 union Frame {
   MeasurementsFrame,
   TickFrame,
@@ -898,7 +1235,8 @@ union Frame {
   ErrorFrame,
   FluidPhaseFrame,
   DiagnosticsFrame,
-  ManifoldFrame
+  ManifoldFrame,
+  EnvelopeStateFrame
 }
 
 table Envelope {

@@ -2,6 +2,10 @@ experimental:
   # Presentation and diagnostic experiments are opt-in and paper-only.
   enabled: false
 
+runtime:
+  workspace:
+    buffer: 64
+
 system:
   data_path: ~/.symm/data
   audit:

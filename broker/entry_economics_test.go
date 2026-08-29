@@ -3,24 +3,11 @@ package broker
 import (
 	"math"
 	"testing"
-	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/tests/mock"
 )
-
-type entryEconomicsBookConn struct {
-	*mock.Conn
-	managed *book.Book
-}
-
-func (conn *entryEconomicsBookConn) Book(_ string, read func(*book.Book)) {
-	read(conn.managed)
-}
 
 func TestPriceEntryCost(t *testing.T) {
 	Convey("Given current quotes and a valid taker fee", t, func() {
@@ -39,21 +26,25 @@ func TestPriceEntryCost(t *testing.T) {
 		})
 	})
 
-	Convey("Given executable quantity distributed across current ask depth", t, func() {
-		price := entryEconomicsDepthFixture(t)
-		cost, err := price.EntryCost("EDGE/USD", decimal.NewFromFloat64(2))
+	Convey("Given a request exactly at the visible ask quantity", t, func() {
+		// entryDepthVWAP always returns unavailable now (no full-depth book to
+		// walk), so EntryCost always takes its ticker-level fallback path,
+		// pricing entirely off tick.Ask/tick.AskQty rather than a walked depth
+		// chain.
+		price := entryEconomicsFixture(t, 101, 100, 5)
+		cost, err := price.EntryCost("EDGE/USD", decimal.NewFromFloat64(5))
 
-		Convey("It should price the observed ask walk and impact", func() {
+		Convey("It should price entirely off the best ask, with zero impact", func() {
 			So(err, ShouldBeNil)
-			So(cost.EntryPrice.Float64(), ShouldAlmostEqual, 101.5, 1e-12)
+			So(cost.EntryPrice.Float64(), ShouldAlmostEqual, 101, 1e-12)
 			So(cost.BestAsk.Float64(), ShouldAlmostEqual, 101, 1e-12)
-			So(cost.Impact.Float64(), ShouldAlmostEqual, 0.5, 1e-12)
+			So(cost.Impact.Sign(), ShouldEqual, 0)
 		})
 
-		Convey("It should reject quantity beyond visible asks", func() {
+		Convey("It should reject quantity beyond the visible ask quantity", func() {
 			_, err := price.EntryCost("EDGE/USD", decimal.NewFromFloat64(6))
 			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "visible ask depth")
+			So(err.Error(), ShouldContainSubstring, "visible ask quantity")
 		})
 	})
 
@@ -74,10 +65,12 @@ func TestPriceEntryCost(t *testing.T) {
 }
 
 func TestPriceExecutableQuantity(t *testing.T) {
-	Convey("Given a request and current multi-level asks", t, func() {
-		price := entryEconomicsDepthFixture(t)
+	// ExecutableQuantity has no full-depth book to walk, so it always prices
+	// off tick.AskQty alone rather than a walked ask-side depth chain.
+	Convey("Given a request the visible ask quantity can fully cover", t, func() {
+		price := entryEconomicsFixture(t, 101, 100, 5)
 
-		Convey("It should preserve a request visible depth can fill", func() {
+		Convey("It should preserve the request unchanged", func() {
 			quantity, err := price.ExecutableQuantity(
 				"EDGE/USD", decimal.NewFromFloat64(4),
 			)
@@ -85,7 +78,7 @@ func TestPriceExecutableQuantity(t *testing.T) {
 			So(quantity.Float64(), ShouldAlmostEqual, 4, 1e-12)
 		})
 
-		Convey("It should cap only at total observable asks, not at a forecast", func() {
+		Convey("It should cap a request beyond the visible ask quantity at that quantity", func() {
 			quantity, err := price.ExecutableQuantity(
 				"EDGE/USD", decimal.NewFromFloat64(9),
 			)
@@ -94,7 +87,7 @@ func TestPriceExecutableQuantity(t *testing.T) {
 		})
 	})
 
-	Convey("Given ticker quotes without a managed book", t, func() {
+	Convey("Given ticker quotes with a smaller visible ask quantity", t, func() {
 		price := entryEconomicsFixture(t, 101, 100, 3)
 		quantity, err := price.ExecutableQuantity(
 			"EDGE/USD", decimal.NewFromFloat64(5),
@@ -103,16 +96,11 @@ func TestPriceExecutableQuantity(t *testing.T) {
 		So(quantity.Float64(), ShouldAlmostEqual, 3, 1e-12)
 	})
 
-	Convey("Given crossed managed depth", t, func() {
-		managed := entryEconomicsBook(
-			t,
-			bookLevel{book.Bid, 100, 5},
-			bookLevel{book.Ask, 99, 5},
-		)
-		price := entryEconomicsManagedFixture(t, managed, 101, 100, 5)
+	Convey("Given crossed best quotes", t, func() {
+		price := entryEconomicsFixture(t, 99, 100, 5)
 		_, err := price.ExecutableQuantity("EDGE/USD", decimal.NewFromFloat64(1))
 		So(err, ShouldNotBeNil)
-		So(err.Error(), ShouldContainSubstring, "crossed visible book")
+		So(err.Error(), ShouldContainSubstring, "crossed best quotes")
 	})
 
 	Convey("Given a non-finite or non-positive request", t, func() {
@@ -121,71 +109,6 @@ func TestPriceExecutableQuantity(t *testing.T) {
 		So(err, ShouldNotBeNil)
 		So(math.IsNaN(0), ShouldBeFalse)
 	})
-}
-
-type bookLevel struct {
-	direction book.BookDirection
-	price     float64
-	quantity  float64
-}
-
-func entryEconomicsDepthFixture(testingTB testing.TB) *Price {
-	managed := entryEconomicsBook(
-		testingTB,
-		bookLevel{book.Bid, 100, 1},
-		bookLevel{book.Bid, 99, 2},
-		bookLevel{book.Bid, 50, 2},
-		bookLevel{book.Ask, 101, 1},
-		bookLevel{book.Ask, 102, 2},
-		bookLevel{book.Ask, 150, 2},
-	)
-	return entryEconomicsManagedFixture(testingTB, managed, 101, 100, 1)
-}
-
-func entryEconomicsBook(
-	testingTB testing.TB,
-	levels ...bookLevel,
-) *book.Book {
-	testingTB.Helper()
-	managed := book.New()
-	managed.NoBookCrossing = false
-
-	for _, level := range levels {
-		managed.Update(&book.UpdateOptions{
-			Direction: level.direction,
-			Price:     decimal.NewFromFloat64(level.price),
-			Quantity:  decimal.NewFromFloat64(level.quantity),
-			Timestamp: time.Now(),
-		})
-	}
-
-	return managed
-}
-
-func entryEconomicsManagedFixture(
-	testingTB testing.TB,
-	managed *book.Book,
-	ask float64,
-	bid float64,
-	quoteQuantity float64,
-) *Price {
-	testingTB.Helper()
-
-	private := &entryEconomicsBookConn{Conn: mock.NewConn(), managed: managed}
-	api := websocket.NewAPI(testingTB.Context(), mock.NewConn(), private)
-	price := newTestPrice(testingTB, api)
-	price.fees.Store("EDGE/USD", kraken.TradeVolumeFee{
-		Fee: decimal.NewFromFloat64(0.25),
-	})
-	price.Update(&kraken.TickerData{
-		Symbol: "EDGE/USD",
-		Ask:    decimal.NewFromFloat64(ask),
-		AskQty: quoteQuantity,
-		Bid:    decimal.NewFromFloat64(bid),
-		BidQty: quoteQuantity,
-	})
-
-	return price
 }
 
 func entryEconomicsFixture(
@@ -213,17 +136,6 @@ func BenchmarkPriceEntryCost(b *testing.B) {
 
 	for b.Loop() {
 		if _, err := price.EntryCost("EDGE/USD", quantity); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkPriceExecutableQuantity(b *testing.B) {
-	price := entryEconomicsDepthFixture(b)
-	requested := decimal.NewFromFloat64(4)
-
-	for b.Loop() {
-		if _, err := price.ExecutableQuantity("EDGE/USD", requested); err != nil {
 			b.Fatal(err)
 		}
 	}

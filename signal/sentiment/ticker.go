@@ -8,7 +8,6 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
@@ -103,30 +102,20 @@ the workspace pool: each Step folds the member's price into it and folds the
 resulting Snapshot into the same single measurement.
 */
 type Ticker struct {
-	workspace *runtime.Workspace
 	section   *data.CrossSection
 	number    *nomagique.Number[string]
 	projector *data.Projector
 }
 
 /*
-NewTicker constructs the Ticker entity and registers (or adopts) the shared
-cross-section in the workspace pool.
+NewTicker constructs the Ticker entity and its cross-section. There is exactly
+one Ticker per process (the sentiment stage is a single Node), so the
+cross-section needs no cross-instance coordination.
 */
-func NewTicker(workspace *runtime.Workspace) *Ticker {
+func NewTicker() *Ticker {
 	section := data.NewCrossSection()
-	shared, found := workspace.Shared("cross_section")
-
-	if found {
-		section = shared.(*data.CrossSection)
-	}
-
-	if !found {
-		workspace.Share("cross_section", section)
-	}
 
 	return &Ticker{
-		workspace: workspace,
 		section:   section,
 		number: nomagique.NewNumber[string](nmtypes.Pipe(
 			temporal.Path(""),

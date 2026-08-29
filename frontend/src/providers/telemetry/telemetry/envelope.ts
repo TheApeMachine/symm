@@ -10,6 +10,7 @@ import { BalancesFrame, BalancesFrameT } from '../telemetry/balances-frame.js';
 import { CausalFrame, CausalFrameT } from '../telemetry/causal-frame.js';
 import { CognitionFrame, CognitionFrameT } from '../telemetry/cognition-frame.js';
 import { DiagnosticsFrame, DiagnosticsFrameT } from '../telemetry/diagnostics-frame.js';
+import { EnvelopeStateFrame, EnvelopeStateFrameT } from '../telemetry/envelope-state-frame.js';
 import { EquityFrame, EquityFrameT } from '../telemetry/equity-frame.js';
 import { ErrorFrame, ErrorFrameT } from '../telemetry/error-frame.js';
 import { FluidPhaseFrame, FluidPhaseFrameT } from '../telemetry/fluid-phase-frame.js';
@@ -128,7 +129,7 @@ export class EnvelopeT implements flatbuffers.IGeneratedObject {
 constructor(
   public sequence: bigint = BigInt('0'),
   public frameType: Frame = Frame.NONE,
-  public frame: BacktestFrameT|BalancesFrameT|CausalFrameT|CognitionFrameT|DiagnosticsFrameT|EquityFrameT|ErrorFrameT|FluidPhaseFrameT|GraphFrameT|HindsightFrameT|ManifoldFrameT|MeasurementsFrameT|PositionsFrameT|RegulatorFrameT|ResonanceFrameT|StrategyFrameT|TickFrameT|null = null
+  public frame: BacktestFrameT|BalancesFrameT|CausalFrameT|CognitionFrameT|DiagnosticsFrameT|EnvelopeStateFrameT|EquityFrameT|ErrorFrameT|FluidPhaseFrameT|GraphFrameT|HindsightFrameT|ManifoldFrameT|MeasurementsFrameT|PositionsFrameT|RegulatorFrameT|ResonanceFrameT|StrategyFrameT|TickFrameT|null = null
 ){}
 
 

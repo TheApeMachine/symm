@@ -7,14 +7,12 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/tests/mock"
 	"github.com/theapemachine/symm/types"
 )
 
 /* instrumentConn records market subscriptions after serving the instrument snapshot. */
 type instrumentConn struct {
-	*mock.Conn
+	*mockConn
 	marketSubscriptions int
 }
 
@@ -50,7 +48,7 @@ func TestInstrumentNewInstrument(t *testing.T) {
 		viper.Set("market.quote_currency", "USD")
 		Reset(viper.Reset)
 
-		conn := &instrumentConn{Conn: mock.NewConn()}
+		conn := &instrumentConn{mockConn: newMockConn()}
 		api := websocket.NewAPI(t.Context(), conn, conn)
 		instrument := newTestInstrument(t, api)
 
@@ -69,7 +67,7 @@ func TestInstrumentSubscribe(t *testing.T) {
 		viper.Set("market.subscribe.pace", 0)
 		Reset(viper.Reset)
 
-		conn := &instrumentConn{Conn: mock.NewConn()}
+		conn := &instrumentConn{mockConn: newMockConn()}
 		api := websocket.NewAPI(t.Context(), conn, conn)
 		instrument := newTestInstrument(t, api)
 
@@ -78,7 +76,9 @@ func TestInstrumentSubscribe(t *testing.T) {
 
 			Convey("It should start every market stream and become ready", func() {
 				So(err, ShouldBeNil)
-				So(conn.marketSubscriptions, ShouldEqual, 4)
+				// Trades, Ticker, L3 — no SubBook: no full order book is
+				// maintained anymore, so Subscribe never issues one.
+				So(conn.marketSubscriptions, ShouldEqual, 3)
 				So(instrument.Status(), ShouldEqual, types.READY)
 			})
 		})
@@ -86,14 +86,11 @@ func TestInstrumentSubscribe(t *testing.T) {
 }
 
 /*
-newTestInstrument builds an Instrument on a workspace that shares the api and a
-Price, matching how boot wires the two shared objects.
+newTestInstrument builds an Instrument directly from an api and a Price,
+matching how boot wires the two dependencies.
 */
 func newTestInstrument(t testing.TB, api *websocket.API) *Instrument {
 	t.Helper()
-	bus := runtime.NewWorkspace(t.Context())
-	bus.Share("api", api, "")
-	bus.Share("price", newTestPrice(t, api), "")
 
-	return NewInstrument(t.Context(), bus)
+	return NewInstrument(api, newTestPrice(t, api))
 }

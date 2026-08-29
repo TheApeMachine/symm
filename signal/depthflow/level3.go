@@ -1,19 +1,14 @@
 package depthflow
 
 import (
-	"time"
-
-	"github.com/krakenfx/api-go/v2/pkg/book"
-
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/kraken/websocket"
 )
 
 /*
@@ -22,15 +17,11 @@ metrics compare inside one frame. The "previous" and "current" prefixes follow
 the temporal series convention.
 */
 var (
-	currentBidSeries  = temporal.NewSeries("current/bid_notional")
-	currentAskSeries  = temporal.NewSeries("current/ask_notional")
-	previousBidSeries = temporal.NewSeries("previous/bid_notional")
-	previousAskSeries = temporal.NewSeries("previous/ask_notional")
-
-	symbolBookNotionalBid  = currentBidSeries.ValueSymbol
-	symbolBookNotionalAsk  = currentAskSeries.ValueSymbol
-	symbolPrevBidNotional  = previousBidSeries.ValueSymbol
-	symbolPrevAskNotional  = previousAskSeries.ValueSymbol
+	symbolBookNotionalBid  = nmtypes.MustIntern("depthflow/book_notional_bid")
+	symbolBookNotionalAsk  = nmtypes.MustIntern("depthflow/book_notional_ask")
+	symbolBidDelta         = nmtypes.MustIntern("depthflow/bid_notional_delta")
+	symbolAskDelta         = nmtypes.MustIntern("depthflow/ask_notional_delta")
+	symbolMessageDelta     = nmtypes.MustIntern("depthflow/message_notional_delta")
 	symbolTouchBidPrice    = nmtypes.MustIntern("depthflow/touch_bid_price")
 	symbolTouchAskPrice    = nmtypes.MustIntern("depthflow/touch_ask_price")
 	symbolTouchNotionalBid = nmtypes.MustIntern("depthflow/touch_notional_bid")
@@ -111,6 +102,36 @@ var (
 	turnoverPositive = nmtypes.Wire(
 		logic.GreaterThan,
 		nmtypes.In(symbolTurnoverRate, calculus.PortA),
+		nmtypes.In(symbolZero, calculus.PortB),
+		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+	)
+	// touchBothSidesPresent is true only when this message actually carried a
+	// touch price on both sides (each defaults to 0 when that side had no
+	// usable order). A one-sided update is common and must not be treated as
+	// a crossed/degenerate book.
+	touchBothSidesPresent = nmtypes.Wire(
+		logic.And,
+		nmtypes.In(symbolTouchBidPrice, calculus.PortA),
+		nmtypes.In(symbolTouchAskPrice, calculus.PortB),
+		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+	)
+	// bookNotionalPositive gates book_imbalance's division: a fully-deleted
+	// symbol (or a one-sided message where the untouched side has never seen
+	// an order) can leave book_notional at exactly zero, which is not a
+	// defined imbalance rather than an error.
+	bookNotionalPositive = nmtypes.Wire(
+		logic.GreaterThan,
+		nmtypes.In(symbolBookNotional, calculus.PortA),
+		nmtypes.In(symbolZero, calculus.PortB),
+		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+	)
+	// scaleDenominatorPositive gates the scale-free rate metrics: the scale
+	// denominator is reference depth * elapsed interval, and reference depth
+	// (average of current and previous book notional) can land at zero on a
+	// side that has never carried displayed depth.
+	scaleDenominatorPositive = nmtypes.Wire(
+		logic.GreaterThan,
+		nmtypes.In(symbolScaleDenominator, calculus.PortA),
 		nmtypes.In(symbolZero, calculus.PortB),
 		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
 	)
@@ -285,32 +306,51 @@ func velocityChain(prefix string, source nmtypes.Symbol, rate nmtypes.Symbol) nm
 }
 
 /*
-Level3 is the full-book market entity. It owns exactly one Number pipeline and
-one projector, both declared in its constructor, plus Step and Close. The book
-itself lives in the workspace shared-object pool; this signal never reconstructs
-it.
+Level3 is the depth-flow market entity. It owns exactly one Number pipeline and
+one projector, both declared in its constructor, plus Step and Close. It
+retains no book: each Step derives this message's own signed notional deltas
+from its visible bid/ask orders, and the Number pipeline accumulates the
+running per-symbol book notional as its own committed state.
 */
 type Level3 struct {
 	number    *nomagique.Number[string]
 	projector *data.Projector
-	workspace *runtime.Workspace
 }
 
 /*
 NewLevel3 constructs the Level3 entity: one Number pipeline for the depth-flow
 metric computation and one projector that names the output slots.
 */
-func NewLevel3(workspace *runtime.Workspace) *Level3 {
+func NewLevel3() *Level3 {
 	return &Level3{
-		workspace: workspace,
 		number: nomagique.NewNumber[string](nmtypes.Pipe(
 			nmtypes.Assign(symbolZero, 0),
-			// 0 < touch bid < touch ask: a crossed book is rejected here.
-			logic.PositiveOrder(symbolTouchBidPrice, symbolTouchAskPrice),
-			// Elapsed interval between this observation and the previous one.
-			temporal.Duration,
 
-			// Static book metrics.
+			// Running book notional per side: this message's own signed delta
+			// (add/modify contribute +price*qty, delete contributes -price*qty;
+			// no per-order state is retained) accumulates into the pipeline's
+			// own committed state, keyed by symbol. This must run before the
+			// touch gate below: Kraken sends one-sided update messages
+			// routinely, and Pipe short-circuits on the gate's Err, so
+			// accumulation would otherwise silently stall on every one-sided
+			// message instead of just leaving that message's touch metrics
+			// absent.
+			nmtypes.Wire(
+				calculus.Accumulate,
+				nmtypes.In(symbolBidDelta, calculus.SymbolDelta),
+				nmtypes.State(symbolBookNotionalBid, calculus.SymbolTotal),
+			),
+			nmtypes.Wire(
+				calculus.Accumulate,
+				nmtypes.In(symbolAskDelta, calculus.SymbolDelta),
+				nmtypes.State(symbolBookNotionalAsk, calculus.SymbolTotal),
+			),
+
+			// Static book metrics and displayed flow metrics are both derived
+			// from the running accumulation above, with no touch dependency,
+			// so they run before the touch gate: this message's own signed
+			// notional delta per side is the net displayed flow directly, then
+			// its positive/negative decomposition into additions and removals.
 			nmtypes.Wire(
 				calculus.Sum,
 				nmtypes.In(symbolBookNotionalBid, calculus.PortA),
@@ -323,55 +363,25 @@ func NewLevel3(workspace *runtime.Workspace) *Level3 {
 				nmtypes.In(symbolBookNotionalAsk, calculus.PortB),
 				nmtypes.Out(calculus.PortResult, symbolBookDiff),
 			),
-			nmtypes.Wire(
-				calculus.Quotient,
-				nmtypes.In(symbolBookDiff, calculus.PortA),
-				nmtypes.In(symbolBookNotional, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolBookImbalance),
+			logic.If(
+				bookNotionalPositive,
+				nmtypes.Wire(
+					calculus.Quotient,
+					nmtypes.In(symbolBookDiff, calculus.PortA),
+					nmtypes.In(symbolBookNotional, calculus.PortB),
+					nmtypes.Out(calculus.PortResult, symbolBookImbalance),
+				),
+				nil,
 			),
 			nmtypes.Wire(
-				calculus.Difference,
-				nmtypes.In(symbolTouchNotionalBid, calculus.PortA),
-				nmtypes.In(symbolTouchNotionalAsk, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolTouchDiff),
+				nmtypes.Identity,
+				nmtypes.In(symbolBidDelta, calculus.PortX),
+				nmtypes.Out(calculus.PortX, symbolNetBid),
 			),
 			nmtypes.Wire(
-				calculus.Sum,
-				nmtypes.In(symbolTouchNotionalBid, calculus.PortA),
-				nmtypes.In(symbolTouchNotionalAsk, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolTouchNotional),
-			),
-			nmtypes.Wire(
-				calculus.Quotient,
-				nmtypes.In(symbolTouchDiff, calculus.PortA),
-				nmtypes.In(symbolTouchNotional, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolTouchImbalance),
-			),
-			nmtypes.Wire(
-				calculus.Difference,
-				nmtypes.In(symbolTouchImbalance, calculus.PortA),
-				nmtypes.In(symbolBookImbalance, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolResolutionGap),
-			),
-			nmtypes.Wire(
-				calculus.Absolute,
-				nmtypes.In(symbolResolutionGap, calculus.PortX),
-				nmtypes.Out(calculus.PortResult, symbolResolutionDist),
-			),
-
-			// Displayed flow metrics: net change, then its positive/negative
-			// decomposition into additions and removals per side.
-			nmtypes.Wire(
-				calculus.Difference,
-				nmtypes.In(symbolBookNotionalBid, calculus.PortA),
-				nmtypes.In(symbolPrevBidNotional, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolNetBid),
-			),
-			nmtypes.Wire(
-				calculus.Difference,
-				nmtypes.In(symbolBookNotionalAsk, calculus.PortA),
-				nmtypes.In(symbolPrevAskNotional, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolNetAsk),
+				nmtypes.Identity,
+				nmtypes.In(symbolAskDelta, calculus.PortX),
+				nmtypes.Out(calculus.PortX, symbolNetAsk),
 			),
 			nmtypes.Wire(
 				calculus.Positive,
@@ -398,6 +408,67 @@ func NewLevel3(workspace *runtime.Workspace) *Level3 {
 				nmtypes.In(symbolNetAsk, calculus.PortX),
 				nmtypes.Out(calculus.PortResult, symbolNegNetAsk),
 			),
+
+			// 0 < touch bid < touch ask, but only enforced when this message
+			// actually saw both sides: a one-sided update (the common case —
+			// Kraken sends only the side that changed) has a legitimately
+			// absent touch on one side, which must not reject the whole
+			// Measurement (Projector.Project discards every metric, including
+			// the notional accumulation above, once Err is set). A genuinely
+			// crossed two-sided touch is still rejected.
+			logic.If(
+				touchBothSidesPresent,
+				logic.PositiveOrder(symbolTouchBidPrice, symbolTouchAskPrice),
+				nil,
+			),
+			// Elapsed interval between this observation and the previous one.
+			temporal.Duration,
+
+			// Touch imbalance and the book/touch resolution gap both need a
+			// genuine two-sided touch (touch notional > 0 on each side, so
+			// their quotient is defined) and a defined book_imbalance; a
+			// one-sided message or a zero-notional book leaves them absent.
+			logic.If(
+				touchBothSidesPresent,
+				nmtypes.Pipe(
+					nmtypes.Wire(
+						calculus.Difference,
+						nmtypes.In(symbolTouchNotionalBid, calculus.PortA),
+						nmtypes.In(symbolTouchNotionalAsk, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolTouchDiff),
+					),
+					nmtypes.Wire(
+						calculus.Sum,
+						nmtypes.In(symbolTouchNotionalBid, calculus.PortA),
+						nmtypes.In(symbolTouchNotionalAsk, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolTouchNotional),
+					),
+					nmtypes.Wire(
+						calculus.Quotient,
+						nmtypes.In(symbolTouchDiff, calculus.PortA),
+						nmtypes.In(symbolTouchNotional, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolTouchImbalance),
+					),
+					logic.If(
+						bookNotionalPositive,
+						nmtypes.Pipe(
+							nmtypes.Wire(
+								calculus.Difference,
+								nmtypes.In(symbolTouchImbalance, calculus.PortA),
+								nmtypes.In(symbolBookImbalance, calculus.PortB),
+								nmtypes.Out(calculus.PortResult, symbolResolutionGap),
+							),
+							nmtypes.Wire(
+								calculus.Absolute,
+								nmtypes.In(symbolResolutionGap, calculus.PortX),
+								nmtypes.Out(calculus.PortResult, symbolResolutionDist),
+							),
+						),
+						nil,
+					),
+				),
+				nil,
+			),
 			nmtypes.Wire(
 				calculus.Positive,
 				nmtypes.In(symbolNegNetAsk, calculus.PortX),
@@ -423,10 +494,19 @@ func NewLevel3(workspace *runtime.Workspace) *Level3 {
 				nmtypes.In(symbolMutationAsk, calculus.PortB),
 				nmtypes.Out(calculus.PortResult, symbolMutation),
 			),
+			// Previous total = current total minus this message's own delta
+			// (bid delta + ask delta), since book notional is now a running
+			// accumulation rather than a recomputed absolute sum.
 			nmtypes.Wire(
 				calculus.Sum,
-				nmtypes.In(symbolPrevBidNotional, calculus.PortA),
-				nmtypes.In(symbolPrevAskNotional, calculus.PortB),
+				nmtypes.In(symbolBidDelta, calculus.PortA),
+				nmtypes.In(symbolAskDelta, calculus.PortB),
+				nmtypes.Out(calculus.PortResult, symbolMessageDelta),
+			),
+			nmtypes.Wire(
+				calculus.Difference,
+				nmtypes.In(symbolBookNotional, calculus.PortA),
+				nmtypes.In(symbolMessageDelta, calculus.PortB),
 				nmtypes.Out(calculus.PortResult, symbolPrevBookNotional),
 			),
 			nmtypes.Wire(
@@ -455,18 +535,38 @@ func NewLevel3(workspace *runtime.Workspace) *Level3 {
 			),
 
 			// Book imbalance and resolution gap estimator chains, plus their
-			// velocities.
-			additiveEstimator(bookImbalanceSlots, symbolBookImbalance),
-			// Surface the book-imbalance estimator support as the measurement's
-			// sample count so Finalize derives Maturity (1 - 1/support).
-			nmtypes.Wire(
-				nmtypes.Identity,
-				nmtypes.In(bookImbalanceSlots.series.CountSymbol, nmtypes.SampleCount),
-				nmtypes.Out(nmtypes.SampleCount, nmtypes.SampleCount),
+			// velocities. Both require their source symbol, which is only
+			// defined when book_notional (respectively, a two-sided touch) was
+			// established above; a one-sided or zero-notional message skips
+			// its estimator step entirely rather than erroring.
+			logic.If(
+				bookNotionalPositive,
+				nmtypes.Pipe(
+					additiveEstimator(bookImbalanceSlots, symbolBookImbalance),
+					// Surface the book-imbalance estimator support as the
+					// measurement's sample count so Finalize derives Maturity
+					// (1 - 1/support).
+					nmtypes.Wire(
+						nmtypes.Identity,
+						nmtypes.In(bookImbalanceSlots.series.CountSymbol, nmtypes.SampleCount),
+						nmtypes.Out(nmtypes.SampleCount, nmtypes.SampleCount),
+					),
+					velocityChain("book_imbalance_velocity", symbolBookImbalance, symbolBookImbalanceVelocity),
+				),
+				nil,
 			),
-			velocityChain("book_imbalance_velocity", symbolBookImbalance, symbolBookImbalanceVelocity),
-			additiveEstimator(resolutionGapSlots, symbolResolutionGap),
-			velocityChain("resolution_gap_velocity", symbolResolutionGap, symbolResolutionGapVelocity),
+			logic.If(
+				touchBothSidesPresent,
+				logic.If(
+					bookNotionalPositive,
+					nmtypes.Pipe(
+						additiveEstimator(resolutionGapSlots, symbolResolutionGap),
+						velocityChain("resolution_gap_velocity", symbolResolutionGap, symbolResolutionGapVelocity),
+					),
+					nil,
+				),
+				nil,
+			),
 
 			// Per-second and scale-free rates, gated on a positive interval.
 			logic.If(
@@ -508,23 +608,32 @@ func NewLevel3(workspace *runtime.Workspace) *Level3 {
 						nmtypes.In(temporal.SymbolDelta, calculus.PortB),
 						nmtypes.Out(calculus.PortResult, symbolRemovedAskRate),
 					),
-					nmtypes.Wire(
-						calculus.Quotient,
-						nmtypes.In(symbolMutation, calculus.PortA),
-						nmtypes.In(symbolScaleDenominator, calculus.PortB),
-						nmtypes.Out(calculus.PortResult, symbolTurnoverRate),
-					),
-					nmtypes.Wire(
-						calculus.Quotient,
-						nmtypes.In(symbolBookNotionalDiff, calculus.PortA),
-						nmtypes.In(symbolScaleDenominator, calculus.PortB),
-						nmtypes.Out(calculus.PortResult, symbolNetBookChangeRate),
-					),
-					nmtypes.Wire(
-						calculus.Quotient,
-						nmtypes.In(symbolNetDiff, calculus.PortA),
-						nmtypes.In(symbolScaleDenominator, calculus.PortB),
-						nmtypes.Out(calculus.PortResult, symbolSignedNetFlowRate),
+					// The scale-free rates additionally need a non-zero scale
+					// denominator (reference depth * elapsed interval); a side
+					// that has never carried displayed depth leaves it zero.
+					logic.If(
+						scaleDenominatorPositive,
+						nmtypes.Pipe(
+							nmtypes.Wire(
+								calculus.Quotient,
+								nmtypes.In(symbolMutation, calculus.PortA),
+								nmtypes.In(symbolScaleDenominator, calculus.PortB),
+								nmtypes.Out(calculus.PortResult, symbolTurnoverRate),
+							),
+							nmtypes.Wire(
+								calculus.Quotient,
+								nmtypes.In(symbolBookNotionalDiff, calculus.PortA),
+								nmtypes.In(symbolScaleDenominator, calculus.PortB),
+								nmtypes.Out(calculus.PortResult, symbolNetBookChangeRate),
+							),
+							nmtypes.Wire(
+								calculus.Quotient,
+								nmtypes.In(symbolNetDiff, calculus.PortA),
+								nmtypes.In(symbolScaleDenominator, calculus.PortB),
+								nmtypes.Out(calculus.PortResult, symbolSignedNetFlowRate),
+							),
+						),
+						nil,
 					),
 				),
 				nil,
@@ -548,21 +657,26 @@ func NewLevel3(workspace *runtime.Workspace) *Level3 {
 				nil,
 			),
 
-			// Log-space turnover estimator chain, gated on a positive turnover
-			// rate (the zero-turnover state is retained, not logged).
+			// Log-space turnover estimator chain, gated on a defined
+			// (scaleDenominatorPositive) and positive (turnoverPositive)
+			// turnover rate — the zero-turnover state is retained, not logged.
 			logic.If(
 				deltaPositive,
 				logic.If(
-					turnoverPositive,
-					nmtypes.Pipe(
-						logEstimator(
-							turnoverSlots,
-							symbolTurnoverRate,
-							symbolLogTurnover,
-							symbolTurnoverBaseline,
-							symbolTurnoverRatio,
+					scaleDenominatorPositive,
+					logic.If(
+						turnoverPositive,
+						nmtypes.Pipe(
+							logEstimator(
+								turnoverSlots,
+								symbolTurnoverRate,
+								symbolLogTurnover,
+								symbolTurnoverBaseline,
+								symbolTurnoverRatio,
+							),
+							velocityChain("turnover_velocity", symbolLogTurnover, symbolTurnoverVelocity),
 						),
-						velocityChain("turnover_velocity", symbolLogTurnover, symbolTurnoverVelocity),
+						nil,
 					),
 					nil,
 				),
@@ -570,25 +684,30 @@ func NewLevel3(workspace *runtime.Workspace) *Level3 {
 			),
 
 			// Estimator quality facts for data.Measurement.Finalize, gated on
-			// the book-imbalance z-score readiness.
+			// the book-imbalance estimator having run at all (bookNotionalPositive)
+			// and, within that, its z-score readiness.
 			logic.If(
-				nmtypes.Wire(
-					nmtypes.Identity,
-					nmtypes.In(bookImbalanceSlots.ready, logic.SymbolCondition),
-					nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
-				),
-				nmtypes.Pipe(
+				bookNotionalPositive,
+				logic.If(
 					nmtypes.Wire(
 						nmtypes.Identity,
-						nmtypes.In(bookImbalanceSlots.residual, symbolDivergence),
-						nmtypes.Out(symbolDivergence, symbolDivergence),
+						nmtypes.In(bookImbalanceSlots.ready, logic.SymbolCondition),
+						nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
 					),
-					nmtypes.Wire(
-						calculus.Product,
-						nmtypes.In(bookImbalanceSlots.dispersion, calculus.PortA),
-						nmtypes.In(bookImbalanceSlots.dispersion, calculus.PortB),
-						nmtypes.Out(calculus.PortResult, symbolNoiseVariance),
+					nmtypes.Pipe(
+						nmtypes.Wire(
+							nmtypes.Identity,
+							nmtypes.In(bookImbalanceSlots.residual, symbolDivergence),
+							nmtypes.Out(symbolDivergence, symbolDivergence),
+						),
+						nmtypes.Wire(
+							calculus.Product,
+							nmtypes.In(bookImbalanceSlots.dispersion, calculus.PortA),
+							nmtypes.In(bookImbalanceSlots.dispersion, calculus.PortB),
+							nmtypes.Out(calculus.PortResult, symbolNoiseVariance),
+						),
 					),
+					nil,
 				),
 				nil,
 			),
@@ -634,86 +753,82 @@ func NewLevel3(workspace *runtime.Workspace) *Level3 {
 }
 
 /*
-Step reads the shared book for one symbol, aggregates the displayed depth
-facts, runs the Number pipeline, and projects exactly one Measurement. A missing
-or type-mismatched book yields no measurement; the caller skips it rather than
-panicking.
+Step walks this one Level3Data message's visible bid/ask orders exactly once.
+Each order contributes a signed notional delta on its side: add/modify
+contribute +price*qty (the order's own currently-visible notional), delete
+contributes -price*qty. No per-order state is retained across messages — the
+running book notional is accumulated inside the Number pipeline itself (see
+calculus.Accumulate wiring in NewLevel3), keyed by symbol. Touch price/notional
+reflect the best price visible among this message's own orders; a one-sided
+update (common — Kraken sends only the side that changed) still accumulates
+notional but carries a non-nil Err on the touch-dependent metrics, since no
+positive touch price exists on the untouched side. A message with both sides
+empty yields no measurement at all.
 */
-func (level3 *Level3) Step(symbol string, at time.Time) *data.Measurement[float64] {
-	if level3 == nil || level3.workspace == nil {
+func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64] {
+	if level3 == nil || (len(message.Bids) == 0 && len(message.Asks) == 0) {
 		return nil
 	}
 
-	bidNotional := 0.0
-	askNotional := 0.0
-	var touchBidPrice, touchAskPrice, touchBidNotional, touchAskNotional float64
-	var foundBook bool
+	bidDelta := 0.0
+	askDelta := 0.0
+	touchBidPrice, touchBidNotional := 0.0, 0.0
+	touchAskPrice, touchAskNotional := 0.0, 0.0
 
-	inspectBook := func(orderBook *book.Book) {
-		if orderBook == nil {
-			return
-		}
-		if orderBook.Bids != nil {
-			// Walk the sorted high→low linked chain instead of iterating the
-			// price-keyed map: totals are order-independent, and the chain walk
-			// visits each level exactly once with no map iteration overhead.
-			for priceLevel := orderBook.Bids.High; priceLevel != nil; priceLevel = priceLevel.Lower {
-				if priceLevel.Price != nil && priceLevel.Quantity != nil {
-					bidNotional += priceLevel.Price.Float64() * priceLevel.Quantity.Float64()
-				}
-			}
-		}
-		if orderBook.Asks != nil {
-			for priceLevel := orderBook.Asks.Low; priceLevel != nil; priceLevel = priceLevel.Higher {
-				if priceLevel.Price != nil && priceLevel.Quantity != nil {
-					askNotional += priceLevel.Price.Float64() * priceLevel.Quantity.Float64()
-				}
-			}
+	for _, order := range message.Bids {
+		if order.LimitPrice == nil || order.OrderQty == nil {
+			continue
 		}
 
-		touchBid := orderBook.BestBid()
-		touchAsk := orderBook.BestAsk()
+		price, qty := order.LimitPrice.Float64(), order.OrderQty.Float64()
+		notional := price * qty
 
-		if touchBid != nil && touchAsk != nil && touchBid.Price != nil && touchAsk.Price != nil {
-			foundBook = true
-			touchBidPrice = touchBid.Price.Float64()
-			touchAskPrice = touchAsk.Price.Float64()
-			touchBidNotional = touchBidPrice * touchBid.Quantity.Float64()
-			touchAskNotional = touchAskPrice * touchAsk.Quantity.Float64()
+		if order.Event == "delete" {
+			bidDelta -= notional
+		} else {
+			bidDelta += notional
+		}
+
+		if order.Event != "delete" && price > touchBidPrice {
+			touchBidPrice = price
+			touchBidNotional = notional
 		}
 	}
 
-	if shared, found := level3.workspace.Shared("api", ""); found && shared != nil {
-		if api, ok := shared.(*websocket.API); ok && api != nil {
-			api.Book(symbol, inspectBook)
+	for _, order := range message.Asks {
+		if order.LimitPrice == nil || order.OrderQty == nil {
+			continue
 		}
-	} else if sharedBook, found := level3.workspace.Shared("book", symbol); found && sharedBook != nil {
-		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
-			inspectBook(currentBook)
+
+		price, qty := order.LimitPrice.Float64(), order.OrderQty.Float64()
+		notional := price * qty
+
+		if order.Event == "delete" {
+			askDelta -= notional
+		} else {
+			askDelta += notional
+		}
+
+		if order.Event != "delete" && (touchAskPrice == 0 || price < touchAskPrice) {
+			touchAskPrice = price
+			touchAskNotional = notional
 		}
 	}
 
-	if !foundBook {
-		return nil
-	}
+	symbol := message.Symbol
+	at := message.Timestamp
 
-	previousBidNotional := bidNotional
-	previousAskNotional := askNotional
 	previousSec := float64(at.Unix())
 	previousNsec := float64(at.Nanosecond())
 
 	if committed, found := level3.number.Project(symbol); found {
-		previousBidNotional, _ = committed.Get(symbolBookNotionalBid)
-		previousAskNotional, _ = committed.Get(symbolBookNotionalAsk)
 		previousSec, _ = committed.Get(nmtypes.EventTimeSec)
 		previousNsec, _ = committed.Get(nmtypes.EventTimeNsec)
 	}
 
 	input := nmtypes.Frame{}
-	input.Put(symbolBookNotionalBid, bidNotional)
-	input.Put(symbolBookNotionalAsk, askNotional)
-	input.Put(symbolPrevBidNotional, previousBidNotional)
-	input.Put(symbolPrevAskNotional, previousAskNotional)
+	input.Put(symbolBidDelta, bidDelta)
+	input.Put(symbolAskDelta, askDelta)
 	input.Put(symbolTouchBidPrice, touchBidPrice)
 	input.Put(symbolTouchAskPrice, touchAskPrice)
 	input.Put(symbolTouchNotionalBid, touchBidNotional)

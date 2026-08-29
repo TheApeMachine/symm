@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -13,7 +12,7 @@ import (
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/utils"
 )
 
@@ -28,20 +27,15 @@ It ingests tickers (OI, basis, index, funding), trades (aggressor flow,
 liquidations), and order books, routing them to the thesis symbol stream.
 */
 type FuturesLive struct {
-	status        atomic.Pointer[types.Status]
 	ctx           context.Context
 	cancel        context.CancelFunc
+	err           error
+	status        *runtime.Status
 	endpoint      string
-	thesis        atomic.Pointer[types.Thesis]
-	bus           atomic.Pointer[runtime.Workspace]
-	feed          atomic.Pointer[runtime.Feed]
-	capture       CaptureSink
 	conn          *gorillawebsocket.Conn
 	connMu        sync.Mutex
 	subsMu        sync.RWMutex
 	subscriptions map[string]map[string]struct{}
-	failureMu     sync.RWMutex
-	failure       func(error)
 	observer      atomic.Pointer[func(string, time.Duration)]
 }
 
@@ -50,7 +44,6 @@ NewFutures constructs a new Kraken Futures WebSocket connection.
 */
 func NewFutures(
 	ctx context.Context,
-	bus *runtime.Workspace,
 	endpoint string,
 ) *FuturesLive {
 	if endpoint == "" {
@@ -62,29 +55,9 @@ func NewFutures(
 	futures := &FuturesLive{
 		ctx:           childCtx,
 		cancel:        cancel,
+		status:        runtime.NewStatus(),
 		endpoint:      endpoint,
 		subscriptions: make(map[string]map[string]struct{}),
-	}
-
-	initialStatus := types.INITIALIZING
-	futures.status.Store(&initialStatus)
-
-	futures.SetBus(bus)
-
-	if bus == nil {
-		return futures
-	}
-
-	if shared, _ := bus.Shared("thesis", ""); shared != nil {
-		if thesis, ok := shared.(*types.Thesis); ok {
-			futures.thesis.Store(thesis)
-		}
-	}
-
-	if shared, _ := bus.Shared("recorder", ""); shared != nil {
-		if capture, ok := shared.(CaptureSink); ok {
-			futures.capture = capture
-		}
 	}
 
 	return futures
@@ -93,46 +66,11 @@ func NewFutures(
 func (futures *FuturesLive) Name() string { return "kraken_futures" }
 
 func (futures *FuturesLive) Error() error {
-	futures.failureMu.RLock()
-	defer futures.failureMu.RUnlock()
-	return nil
+	return futures.err
 }
 
-func (futures *FuturesLive) Status() types.Status {
-	st := futures.status.Load()
-
-	if st == nil {
-		return types.PENDING
-	}
-
-	return *st
-}
-
-func (futures *FuturesLive) SetBus(bus *runtime.Workspace) {
-	if futures == nil || bus == nil {
-		return
-	}
-
-	futures.bus.Store(bus)
-	futures.feed.Store(bus.NewFeed())
-}
-
-func (futures *FuturesLive) SetThesis(thesis *types.Thesis) {
-	if futures == nil || thesis == nil {
-		return
-	}
-
-	futures.thesis.Store(thesis)
-}
-
-func (futures *FuturesLive) SetFailureHandler(handler func(error)) {
-	if futures == nil {
-		return
-	}
-
-	futures.failureMu.Lock()
-	futures.failure = handler
-	futures.failureMu.Unlock()
+func (futures *FuturesLive) Status() runtime.Stage {
+	return futures.status.Current()
 }
 
 /*
@@ -232,8 +170,7 @@ func (futures *FuturesLive) dialAndServe() error {
 	futures.conn = conn
 	futures.connMu.Unlock()
 
-	readyStatus := types.READY
-	futures.status.Store(&readyStatus)
+	futures.status.Transition(runtime.READY)
 
 	futures.resubscribe()
 
@@ -303,10 +240,6 @@ func (futures *FuturesLive) DispatchFrame(raw []byte) {
 		return
 	}
 
-	if futures.capture != nil {
-		_ = futures.capture.Capture("futures", raw, time.Now().UTC())
-	}
-
 	event := utils.GetString(raw, "event")
 
 	if event == "pong" || event == "heartbeat" || event == "subscribed" {
@@ -332,12 +265,6 @@ func (futures *FuturesLive) dispatchTicker(raw []byte) {
 		return
 	}
 
-	thesis := futures.thesis.Load()
-
-	if thesis == nil {
-		return
-	}
-
 	spotSymbol := kraken.FuturesProductIDToSpot(ticker.Data.ProductID)
 
 	if spotSymbol == "" {
@@ -345,12 +272,6 @@ func (futures *FuturesLive) dispatchTicker(raw []byte) {
 	}
 
 	ticker.Data.Symbol = spotSymbol
-
-	if thesis.Symbol(spotSymbol).AcceptFuturesTicker(ticker.Data.Timestamp) {
-		if feed := futures.feed.Load(); feed != nil {
-			feed.Emit(ticker.Data)
-		}
-	}
 }
 
 func (futures *FuturesLive) dispatchTrades(raw []byte) {
@@ -360,26 +281,12 @@ func (futures *FuturesLive) dispatchTrades(raw []byte) {
 		return
 	}
 
-	thesis := futures.thesis.Load()
-
-	if thesis == nil {
-		return
-	}
-
 	for index := range trades.Data {
 		trade := trades.Data[index]
 		spotSymbol := kraken.FuturesProductIDToSpot(trade.ProductID)
 
 		if spotSymbol == "" {
 			continue
-		}
-
-		trade.Symbol = spotSymbol
-
-		if thesis.Symbol(spotSymbol).AcceptFuturesTrade(trade.Timestamp) {
-			if feed := futures.feed.Load(); feed != nil {
-				feed.Emit(trade)
-			}
 		}
 	}
 }
@@ -391,12 +298,6 @@ func (futures *FuturesLive) dispatchBook(raw []byte) {
 		return
 	}
 
-	thesis := futures.thesis.Load()
-
-	if thesis == nil {
-		return
-	}
-
 	spotSymbol := kraken.FuturesProductIDToSpot(book.Data.ProductID)
 
 	if spotSymbol == "" {
@@ -404,12 +305,6 @@ func (futures *FuturesLive) dispatchBook(raw []byte) {
 	}
 
 	book.Data.Symbol = spotSymbol
-
-	if thesis.Symbol(spotSymbol).AcceptFuturesBook(book.Data.Timestamp) {
-		if feed := futures.feed.Load(); feed != nil {
-			feed.Emit(book.Data)
-		}
-	}
 }
 
 func (futures *FuturesLive) Close() error {

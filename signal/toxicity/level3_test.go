@@ -5,57 +5,45 @@ import (
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/kraken"
 )
 
-func bookFixture(bid float64, bidQty float64, ask float64, askQty float64) *book.Book {
-	currentBook := book.New()
-	currentBook.Update(&book.UpdateOptions{
-		Direction: book.Bid,
-		Price:     decimal.NewFromFloat64(bid),
-		Quantity:  decimal.NewFromFloat64(bidQty),
-		Timestamp: time.Unix(1_700_000_000, 0),
-	})
-	currentBook.Update(&book.UpdateOptions{
-		Direction: book.Ask,
-		Price:     decimal.NewFromFloat64(ask),
-		Quantity:  decimal.NewFromFloat64(askQty),
-		Timestamp: time.Unix(1_700_000_000, 0),
-	})
-
-	return currentBook
+func toxicityOrder(price, qty float64, at time.Time) kraken.Level3Order {
+	return kraken.Level3Order{
+		Event:      "add",
+		OrderID:    "order",
+		LimitPrice: decimal.NewFromFloat64(price),
+		OrderQty:   decimal.NewFromFloat64(qty),
+		Timestamp:  at,
+	}
 }
 
-func crossedBookFixture() *book.Book {
-	currentBook := book.New()
-	currentBook.NoBookCrossing = false
-	currentBook.Update(&book.UpdateOptions{
-		Direction: book.Bid,
-		Price:     decimal.NewFromFloat64(101),
-		Quantity:  decimal.NewFromFloat64(10),
-		Timestamp: time.Unix(1_700_000_000, 0),
-	})
-	currentBook.Update(&book.UpdateOptions{
-		Direction: book.Ask,
-		Price:     decimal.NewFromFloat64(99),
-		Quantity:  decimal.NewFromFloat64(12),
-		Timestamp: time.Unix(1_700_000_000, 0),
-	})
+func toxicityMessage(symbol string, at time.Time, bidPrice, bidQty, askPrice, askQty float64) kraken.Level3Data {
+	return kraken.Level3Data{
+		Symbol:    symbol,
+		Timestamp: at,
+		Bids:      []kraken.Level3Order{toxicityOrder(bidPrice, bidQty, at)},
+		Asks:      []kraken.Level3Order{toxicityOrder(askPrice, askQty, at)},
+	}
+}
 
-	return currentBook
+func crossedToxicityMessage(symbol string, at time.Time) kraken.Level3Data {
+	return kraken.Level3Data{
+		Symbol:    symbol,
+		Timestamp: at,
+		Bids:      []kraken.Level3Order{toxicityOrder(101, 10, at)},
+		Asks:      []kraken.Level3Order{toxicityOrder(99, 12, at)},
+	}
 }
 
 func TestLevel3Step(t *testing.T) {
-	Convey("Given a shared book", t, func() {
-		workspace := runtime.NewWorkspace(nil)
-		entity := NewLevel3(workspace)
-		workspace.Share("book", bookFixture(99, 10, 101, 12), "BTC/USD")
+	Convey("Given a sequence of touch observations", t, func() {
+		entity := NewLevel3()
 
 		Convey("the first observation anchors the previous touch", func() {
-			measurement := entity.Step("BTC/USD", time.Unix(1_700_000_000, 0))
+			measurement := entity.Step(toxicityMessage("BTC/USD", time.Unix(1_700_000_000, 0), 99, 10, 101, 12))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
@@ -73,10 +61,9 @@ func TestLevel3Step(t *testing.T) {
 		})
 
 		Convey("a later observation attributes a bid retreat", func() {
-			entity.Step("BTC/USD", time.Unix(1_700_000_000, 0))
-			workspace.Share("book", bookFixture(98, 5, 101, 12), "BTC/USD")
+			entity.Step(toxicityMessage("BTC/USD", time.Unix(1_700_000_000, 0), 99, 10, 101, 12))
 
-			measurement := entity.Step("BTC/USD", time.Unix(1_700_000_001, 0))
+			measurement := entity.Step(toxicityMessage("BTC/USD", time.Unix(1_700_000_001, 0), 98, 5, 101, 12))
 
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["previous_best_price:bid"].Raw, ShouldEqual, 99.0)
@@ -91,10 +78,9 @@ func TestLevel3Step(t *testing.T) {
 		})
 
 		Convey("a later observation attributes an unchanged-touch withdrawal", func() {
-			entity.Step("BTC/USD", time.Unix(1_700_000_000, 0))
-			workspace.Share("book", bookFixture(99, 4, 101, 12), "BTC/USD")
+			entity.Step(toxicityMessage("BTC/USD", time.Unix(1_700_000_000, 0), 99, 10, 101, 12))
 
-			measurement := entity.Step("BTC/USD", time.Unix(1_700_000_001, 0))
+			measurement := entity.Step(toxicityMessage("BTC/USD", time.Unix(1_700_000_001, 0), 99, 4, 101, 12))
 
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["touch_price_log_change:bid"].Raw, ShouldEqual, 0.0)
@@ -109,27 +95,28 @@ func TestLevel3Step(t *testing.T) {
 		})
 	})
 
-	Convey("Given a crossed shared book", t, func() {
-		workspace := runtime.NewWorkspace(nil)
-		entity := NewLevel3(workspace)
-		workspace.Share("book", crossedBookFixture(), "BTC/USD")
+	Convey("Given a crossed message", t, func() {
+		entity := NewLevel3()
 
 		Convey("the measurement carries the pipeline rejection in its Err field", func() {
-			measurement := entity.Step("BTC/USD", time.Unix(1_700_000_000, 0))
+			measurement := entity.Step(crossedToxicityMessage("BTC/USD", time.Unix(1_700_000_000, 0)))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldNotBeNil)
 		})
 	})
 
-	Convey("Given a missing shared book", t, func() {
-		workspace := runtime.NewWorkspace(nil)
-		entity := NewLevel3(workspace)
+	Convey("Given a message with no usable touch on either side", t, func() {
+		entity := NewLevel3()
 
-		Convey("Step panics rather than silently skipping", func() {
-			So(func() {
-				entity.Step("BTC/USD", time.Unix(1_700_000_000, 0))
-			}, ShouldPanic)
+		Convey("Step returns a descriptive measurement error rather than panicking", func() {
+			measurement := entity.Step(kraken.Level3Data{
+				Symbol:    "BTC/USD",
+				Timestamp: time.Unix(1_700_000_000, 0),
+			})
+
+			So(measurement, ShouldNotBeNil)
+			So(measurement.Err, ShouldNotBeNil)
 		})
 	})
 }

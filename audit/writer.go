@@ -183,6 +183,41 @@ func (recorder *Recorder) Write(event any) error {
 }
 
 /*
+WriteEvent pushes an already-encoded payload directly onto the ring, skipping
+Write's JSON marshal step. It satisfies the same (kind, payload) signature as
+backtest.Store.WriteEvent so a Recorder can back an EnvelopeRecorder or any
+other caller written against that narrow interface. kind is not currently
+segmented into the file; callers that need per-kind separation should route to
+distinct Recorders instead.
+*/
+func (recorder *Recorder) WriteEvent(kind string, payload []byte) error {
+	if recorder == nil {
+		return types.ClosedError{Component: "audit"}
+	}
+
+	if recorder.ring == nil || recorder.closing.Load() {
+		return types.ClosedError{Component: "audit"}
+	}
+
+	recorder.inFlight.Add(1)
+	defer recorder.inFlight.Add(-1)
+
+	if recorder.closing.Load() {
+		return types.ClosedError{Component: "audit"}
+	}
+
+	framed := append(append([]byte(nil), payload...), '\n')
+
+	if !recorder.ring.Push(framed) {
+		recorder.dropped.Add(1)
+
+		return types.SaturatedError{Component: "audit"}
+	}
+
+	return nil
+}
+
+/*
 drain is the single consumer. It owns the file handle, Pop's encoded rows off
 the ring, and buffers writes to disk. Overflow is emitted on a bounded timer so
 sustained saturation still records loss. It exits after cancel and quiescence.

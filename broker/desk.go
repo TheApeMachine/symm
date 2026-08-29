@@ -7,9 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
-	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
@@ -33,8 +31,6 @@ type Desk struct {
 	err            error
 	status         types.Status
 	api            *websocket.API
-	bus            *runtime.Workspace
-	feed           *runtime.Feed
 	instrument     *Instrument
 	price          *Price
 	balance        *Balance
@@ -70,120 +66,18 @@ type MarkObserver interface {
 /*
 NewDesk constructs the serial broker owner.
 */
-func NewDesk(
-	ctx context.Context,
-	bus *runtime.Workspace,
-) *Desk {
-	if bus == nil {
-		panic("broker: workspace bus required")
-	}
-
-	var api *websocket.API
-	if shared, _ := bus.Shared("api", ""); shared != nil {
-		api, _ = shared.(*websocket.API)
-	}
-
-	var instrument *Instrument
-	if shared, _ := bus.Shared("instrument", ""); shared != nil {
-		instrument, _ = shared.(*Instrument)
-	}
-
-	var price *Price
-	if shared, _ := bus.Shared("price", ""); shared != nil {
-		price, _ = shared.(*Price)
-	}
-
-	var balance *Balance
-	if shared, _ := bus.Shared("balance", ""); shared != nil {
-		balance, _ = shared.(*Balance)
-	}
-
-	var thesis *types.Thesis
-	if shared, _ := bus.Shared("thesis", ""); shared != nil {
-		thesis, _ = shared.(*types.Thesis)
-	}
-
-	var equityObserver EquityObserver
-	if shared, _ := bus.Shared("regulator", ""); shared != nil {
-		equityObserver, _ = shared.(EquityObserver)
-	}
-
-	var recorder *audit.Recorder
-	if shared, _ := bus.Shared("recorder", ""); shared != nil {
-		recorder, _ = shared.(*audit.Recorder)
-	}
-
-	var store *PositionStore
-	if shared, _ := bus.Shared("positionStore", ""); shared != nil {
-		store, _ = shared.(*PositionStore)
-	}
-
-	if api == nil || instrument == nil || price == nil || balance == nil || thesis == nil || equityObserver == nil || store == nil {
-		panic("broker: missing core dependencies in workspace for desk")
-	}
+func NewDesk(ctx context.Context) *Desk {
 	ctx, cancel := context.WithCancel(ctx)
 
-	viper.SetDefault("trading.slots.normal", 2)
-	viper.SetDefault("trading.slots.reserved", 2)
-
 	desk := &Desk{
-		ctx:            ctx,
-		cancel:         cancel,
-		status:         types.READY,
-		api:            api,
-		instrument:     instrument,
-		price:          price,
-		balance:        balance,
-		thesis:         thesis,
-		equityObserver: equityObserver,
-		recorder:       recorder,
-		PositionStore:  store,
-		positions:      &sync.Map{},
-		passage:        types.NewPassageModel(),
-		maxPositions:   viper.GetViper().GetInt("trading.slots.normal"),
-		maxReserved:    viper.GetViper().GetInt("trading.slots.reserved"),
-		bus:            bus,
-		feed:           bus.NewFeed(),
+		ctx:          ctx,
+		cancel:       cancel,
+		status:       types.READY,
+		positions:    &sync.Map{},
+		passage:      types.NewPassageModel(),
+		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
+		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
 	}
-
-	desk.recovery = NewRecovery(
-		ctx, api, bus, instrument, price, balance, recorder, store, desk.positions,
-	)
-
-	// The desk's ticker/execution ingress subscriptions are priority
-	// control: they route open-position protection directly to each
-	// PositionGuardian's dedicated LMAX Disruptor before, and independent
-	// of, any analytical fan-out. They never acquire the analytical
-	// semaphore.
-	runtime.RegisterSinkClass(
-		bus,
-		runtime.ServicePriorityControl,
-		runtime.DeliveryPriorityFIFO,
-		func(ticker kraken.TickerData) string { return ticker.Symbol },
-		func(ticker kraken.TickerData) {
-			_ = desk.StepTicker(ticker)
-		},
-	)
-
-	runtime.RegisterSinkClass(
-		bus,
-		runtime.ServicePriorityControl,
-		runtime.DeliveryPriorityFIFO,
-		func(execution kraken.ExecutionData) string { return execution.Symbol },
-		func(execution kraken.ExecutionData) {
-			_ = desk.StepExecution(execution)
-		},
-	)
-
-	runtime.RegisterSinkClass(
-		bus,
-		runtime.ServicePriorityControl,
-		runtime.DeliveryPriorityFIFO,
-		func(level3 kraken.Level3Data) string { return level3.Symbol },
-		func(level3 kraken.Level3Data) {
-			_ = desk.StepLevel3(level3)
-		},
-	)
 
 	if err := desk.recovery.Recover(); err != nil {
 		desk.status = types.ERROR
@@ -458,17 +352,6 @@ func (desk *Desk) PublishEquity() error {
 		))
 	}
 
-	if desk.feed != nil {
-		desk.feed.Emit(&types.UIFrame{
-			Type: wire.FrameEquityFrame,
-			Value: &wire.EquityFrameT{
-				Cash:       desk.balance.Cash().String(),
-				Unrealized: tradeBalance.UnrealizedPnL.String(),
-				Equity:     tradeBalance.Equity.String(),
-			},
-		})
-	}
-
 	return nil
 }
 
@@ -483,16 +366,6 @@ func (desk *Desk) Positions() iter.Seq[*Position] {
 
 			return yield(position)
 		})
-	}
-}
-
-/*
-PublishPositions sends all current non-terminal positions to the UI channel
-so newly connected clients can see open positions immediately.
-*/
-func (desk *Desk) PublishPositions() {
-	for position := range desk.Positions() {
-		position.Publish()
 	}
 }
 
@@ -682,7 +555,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		position := NewPosition(
 			desk.ctx,
 			desk.api,
-			desk.bus,
 			desk.instrument,
 			desk.price,
 			desk.balance,

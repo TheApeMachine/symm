@@ -5,7 +5,6 @@ import (
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /*
@@ -26,7 +25,7 @@ type Signal struct {
 NewSignal composes the Ticker (derivative/reference basis and open interest)
 and Trade (liquidation accounting) entities.
 */
-func NewSignal(ctx context.Context, workspace *runtime.Workspace) *Signal {
+func NewSignal(ctx context.Context) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Signal{

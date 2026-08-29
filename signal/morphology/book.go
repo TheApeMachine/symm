@@ -31,14 +31,10 @@ package morphology
 import (
 	"sort"
 	"sync"
-	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
-
-	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/distribution"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -62,17 +58,15 @@ shape per symbol — a single overwritten shape each, the same bounded-resident-
 state contract as the shared book — so structural change is measured causally.
 */
 type Book struct {
-	workspace *runtime.Workspace
 	projector *data.Projector
 
 	mu       sync.Mutex
 	previous map[string][]distribution.WeightedPoint
 }
 
-func NewBook(workspace *runtime.Workspace) *Book {
+func NewBook() *Book {
 	return &Book{
-		workspace: workspace,
-		previous:  make(map[string][]distribution.WeightedPoint),
+		previous: make(map[string][]distribution.WeightedPoint),
 		projector: data.NewProjector(
 			data.Binding{From: symbolShapeDistance, Name: "book_shape_distance", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolShapeKS, Name: "book_shape_ks", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
@@ -88,48 +82,29 @@ func NewBook(workspace *runtime.Workspace) *Book {
 func (morphology *Book) Close() error { return nil }
 
 /*
-Step reads the shared book for one symbol inside its protected read callback,
-projects the shape facts there (the pointer never escapes), and emits exactly
-one descriptive Measurement. A missing or degenerate book (crossed, no spread,
-one empty side) yields no measurement; the caller skips it rather than panicking.
+Step projects this one Level3Data message's visible bid/ask orders into shape
+facts in a single pass and emits exactly one descriptive Measurement. A
+degenerate message (crossed, no spread, one empty side) yields no measurement.
 */
-func (morphology *Book) Step(symbol string, at time.Time) *data.Measurement[float64] {
-	if morphology == nil || morphology.workspace == nil {
+func (morphology *Book) Step(message kraken.Level3Data) *data.Measurement[float64] {
+	if morphology == nil {
 		return nil
 	}
 
-	var shapeDistance, shapeKS float64
-	var concentrationBid, concentrationAsk float64
-	var entropyBid, entropyAsk float64
-	var foldedOK bool
-	var currentWhole []distribution.WeightedPoint
+	bidFolded, askFolded, whole, ok := projectShape(message)
 
-	morphology.readBook(symbol, func(orderBook *book.Book) {
-		if orderBook == nil {
-			return
-		}
-
-		bidFolded, askFolded, whole, ok := projectShape(orderBook)
-
-		if !ok {
-			return
-		}
-
-		foldedOK = true
-		shapeDistance = distribution.Wasserstein1Pairs(bidFolded, askFolded)
-		shapeKS = distribution.KolmogorovSmirnovPairs(bidFolded, askFolded)
-		concentrationBid = distribution.ConcentrationPoints(bidFolded)
-		concentrationAsk = distribution.ConcentrationPoints(askFolded)
-		entropyBid = distribution.EntropyPoints(bidFolded)
-		entropyAsk = distribution.EntropyPoints(askFolded)
-		currentWhole = whole
-	})
-
-	if !foldedOK {
+	if !ok {
 		return nil
 	}
 
-	morphologyChange, changed := morphology.recordChange(symbol, currentWhole)
+	shapeDistance := distribution.Wasserstein1Pairs(bidFolded, askFolded)
+	shapeKS := distribution.KolmogorovSmirnovPairs(bidFolded, askFolded)
+	concentrationBid := distribution.ConcentrationPoints(bidFolded)
+	concentrationAsk := distribution.ConcentrationPoints(askFolded)
+	entropyBid := distribution.EntropyPoints(bidFolded)
+	entropyAsk := distribution.EntropyPoints(askFolded)
+
+	morphologyChange, changed := morphology.recordChange(message.Symbol, whole)
 
 	input := nmtypes.Frame{}
 	input.Put(symbolShapeDistance, shapeDistance)
@@ -143,28 +118,7 @@ func (morphology *Book) Step(symbol string, at time.Time) *data.Measurement[floa
 		input.Put(symbolMorphologyChange, morphologyChange)
 	}
 
-	return morphology.projector.Project(symbol, "morphology", at, at, input)
-}
-
-/*
-readBook invokes the supplied callback with the authoritative book while its
-protected read lock is held. The callback must not retain the pointer; it copies
-the values it needs and returns. The book is never returned or stored.
-*/
-func (morphology *Book) readBook(symbol string, read func(*book.Book)) {
-	if shared, found := morphology.workspace.Shared("api", ""); found && shared != nil {
-		if api, isAPI := shared.(*websocket.API); isAPI && api != nil {
-			api.Book(symbol, read)
-
-			return
-		}
-	}
-
-	if sharedBook, found := morphology.workspace.Shared("book", symbol); found && sharedBook != nil {
-		if currentBook, isBook := sharedBook.(*book.Book); isBook {
-			read(currentBook)
-		}
-	}
+	return morphology.projector.Project(message.Symbol, "morphology", message.Timestamp, message.Timestamp, input)
 }
 
 /*
@@ -188,24 +142,41 @@ func (morphology *Book) recordChange(symbol string, current []distribution.Weigh
 }
 
 /*
-projectShape reads one book into folded bilateral shapes and a signed
-whole-book shape. The bilateral shapes reflect both sides onto the positive
-distance-from-mid axis (bid r = (mid−price)/spread, ask r = (price−mid)/spread),
-so a perfectly mirrored book yields identical streams. The whole-book shape
-retains the signed position ((price−mid)/spread) so physical bid/ask placement
-stays part of structural change. ok is false on a degenerate book — missing
-touch, non-positive spread, or an empty side.
+projectShape walks one Level3Data message's visible bid/ask orders into folded
+bilateral shapes and a signed whole-book shape. The bilateral shapes reflect
+both sides onto the positive distance-from-mid axis (bid r = (mid−price)/spread,
+ask r = (price−mid)/spread), so a perfectly mirrored book yields identical
+streams. The whole-book shape retains the signed position ((price−mid)/spread)
+so physical bid/ask placement stays part of structural change. ok is false on
+a degenerate message — missing touch, non-positive spread, or an empty side.
 */
-func projectShape(orderBook *book.Book) ([]distribution.WeightedPoint, []distribution.WeightedPoint, []distribution.WeightedPoint, bool) {
-	bestBid := orderBook.BestBid()
-	bestAsk := orderBook.BestAsk()
+func projectShape(message kraken.Level3Data) ([]distribution.WeightedPoint, []distribution.WeightedPoint, []distribution.WeightedPoint, bool) {
+	bidPrice, askPrice := 0.0, 0.0
 
-	if bestBid == nil || bestAsk == nil || bestBid.Price == nil || bestAsk.Price == nil {
+	for _, order := range message.Bids {
+		if order.LimitPrice == nil {
+			continue
+		}
+
+		if price := order.LimitPrice.Float64(); price > bidPrice {
+			bidPrice = price
+		}
+	}
+
+	for _, order := range message.Asks {
+		if order.LimitPrice == nil {
+			continue
+		}
+
+		if price := order.LimitPrice.Float64(); askPrice == 0 || price < askPrice {
+			askPrice = price
+		}
+	}
+
+	if bidPrice == 0 || askPrice == 0 {
 		return nil, nil, nil, false
 	}
 
-	bidPrice := bestBid.Price.Float64()
-	askPrice := bestAsk.Price.Float64()
 	spread := askPrice - bidPrice
 
 	if spread <= 0 {
@@ -214,48 +185,44 @@ func projectShape(orderBook *book.Book) ([]distribution.WeightedPoint, []distrib
 
 	midpoint := (bidPrice + askPrice) / 2
 
-	bidFolded := make([]distribution.WeightedPoint, 0)
-	askFolded := make([]distribution.WeightedPoint, 0)
-	whole := make([]distribution.WeightedPoint, 0)
+	bidFolded := make([]distribution.WeightedPoint, 0, len(message.Bids))
+	askFolded := make([]distribution.WeightedPoint, 0, len(message.Asks))
+	whole := make([]distribution.WeightedPoint, 0, len(message.Bids)+len(message.Asks))
 
-	if orderBook.Bids != nil {
-		for _, level := range orderBook.Bids.Levels {
-			if level == nil || level.Price == nil || level.Quantity == nil {
-				continue
-			}
-
-			price := level.Price.Float64()
-			weight := price * level.Quantity.Float64()
-
-			if weight <= 0 {
-				continue
-			}
-
-			signed := (price - midpoint) / spread
-
-			bidFolded = append(bidFolded, distribution.WeightedPoint{Position: -signed, Weight: weight})
-			whole = append(whole, distribution.WeightedPoint{Position: signed, Weight: weight})
+	for _, order := range message.Bids {
+		if order.LimitPrice == nil || order.OrderQty == nil {
+			continue
 		}
+
+		price := order.LimitPrice.Float64()
+		weight := price * order.OrderQty.Float64()
+
+		if weight <= 0 {
+			continue
+		}
+
+		signed := (price - midpoint) / spread
+
+		bidFolded = append(bidFolded, distribution.WeightedPoint{Position: -signed, Weight: weight})
+		whole = append(whole, distribution.WeightedPoint{Position: signed, Weight: weight})
 	}
 
-	if orderBook.Asks != nil {
-		for _, level := range orderBook.Asks.Levels {
-			if level == nil || level.Price == nil || level.Quantity == nil {
-				continue
-			}
-
-			price := level.Price.Float64()
-			weight := price * level.Quantity.Float64()
-
-			if weight <= 0 {
-				continue
-			}
-
-			signed := (price - midpoint) / spread
-
-			askFolded = append(askFolded, distribution.WeightedPoint{Position: signed, Weight: weight})
-			whole = append(whole, distribution.WeightedPoint{Position: signed, Weight: weight})
+	for _, order := range message.Asks {
+		if order.LimitPrice == nil || order.OrderQty == nil {
+			continue
 		}
+
+		price := order.LimitPrice.Float64()
+		weight := price * order.OrderQty.Float64()
+
+		if weight <= 0 {
+			continue
+		}
+
+		signed := (price - midpoint) / spread
+
+		askFolded = append(askFolded, distribution.WeightedPoint{Position: signed, Weight: weight})
+		whole = append(whole, distribution.WeightedPoint{Position: signed, Weight: weight})
 	}
 
 	if len(bidFolded) == 0 || len(askFolded) == 0 {

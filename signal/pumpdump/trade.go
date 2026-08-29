@@ -3,18 +3,15 @@ package pumpdump
 import (
 	"time"
 
-	book "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
-	"github.com/theapemachine/symm/kraken/websocket"
 )
 
 /*
@@ -49,7 +46,6 @@ Trade is the volume-clock activity market entity. It owns exactly a Number
 pipeline and a projector, both declared in its constructor, plus Step and Close.
 */
 type Trade struct {
-	workspace *runtime.Workspace
 	number    *nomagique.Number[string]
 	projector *data.Projector
 }
@@ -59,9 +55,8 @@ NewTrade constructs the Trade entity: one Number pipeline for the quantity
 clock, completed-bar rates, notional-rate context, and midpoint response, and
 one projector that names the output slots.
 */
-func NewTrade(workspace *runtime.Workspace) *Trade {
+func NewTrade() *Trade {
 	return &Trade{
-		workspace: workspace,
 		number: nomagique.NewNumberWithInitial[string](
 			func(key string) nmtypes.Frame {
 				initial := nmtypes.Frame{}
@@ -303,38 +298,11 @@ func (trade *Trade) Step(point kraken.TradeData) *data.Measurement[float64] {
 	input.Put(nmtypes.EventTimeSec, float64(point.Timestamp.Unix()))
 	input.Put(nmtypes.EventTimeNsec, float64(point.Timestamp.Nanosecond()))
 
-	// The midpoint response family requires the executable touch from the shared
-	// book; when the book is absent those metrics are simply undefined.
-	var hasMidpoint bool
-	inspectBook := func(resident *book.Book) {
-		if resident == nil {
-			return
-		}
-		bestBid := resident.BestBid()
-		bestAsk := resident.BestAsk()
-
-		if bestBid != nil && bestAsk != nil && bestBid.Price != nil && bestAsk.Price != nil {
-			input.Put(symbolBidPrice, bestBid.Price.Float64())
-			input.Put(symbolAskPrice, bestAsk.Price.Float64())
-			hasMidpoint = true
-		}
-	}
-
-	if shared, found := trade.workspace.Shared("api", ""); found && shared != nil {
-		if api, ok := shared.(*websocket.API); ok && api != nil {
-			api.Book(point.Symbol, inspectBook)
-		}
-	} else if sharedBook, found := trade.workspace.Shared("book", point.Symbol); found && sharedBook != nil {
-		if currentBook, ok := sharedBook.(*book.Book); ok && currentBook != nil {
-			inspectBook(currentBook)
-		}
-	}
-
-	if hasMidpoint {
-		input.Put(symbolHasMidpoint, 1)
-	} else {
-		input.Put(symbolHasMidpoint, 0)
-	}
+	// The midpoint response family requires the executable touch from a book,
+	// which this signal has no access to; those metrics are permanently
+	// undefined. The volume-clock accounting this Step actually measures is
+	// unaffected.
+	input.Put(symbolHasMidpoint, 0)
 
 	output := trade.number.Step(point.Symbol, input)
 	from := point.Timestamp
