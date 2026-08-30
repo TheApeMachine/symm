@@ -122,6 +122,50 @@ func TestBookStep(t *testing.T) {
 		})
 	})
 
+	Convey("Given a symbol observed only once", t, func() {
+		entity := NewBook()
+
+		Convey("the measurement reports no SNR, having no structural change yet", func() {
+			measurement := entity.Step(morphMessage("BTC/USD", now,
+				[]kraken.Level3Order{morphOrder(99, 2, now)},
+				[]kraken.Level3Order{morphOrder(101, 2, now)},
+			))
+
+			So(measurement, ShouldNotBeNil)
+			So(measurement.SNRDefined, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given a symbol whose shape keeps moving", t, func() {
+		entity := NewBook()
+
+		// Walk the book so every step carries a genuine structural change, which
+		// is what the change estimator needs before it can report a noise model.
+		var measurement *data.Measurement[float64]
+
+		for step := range 12 {
+			at := now.Add(time.Duration(step) * time.Second)
+			offset := float64(step)
+
+			measurement = entity.Step(morphMessage("BTC/USD", at,
+				[]kraken.Level3Order{morphOrder(99-offset, 2, at)},
+				[]kraken.Level3Order{morphOrder(101+offset, 2, at)},
+			))
+		}
+
+		Convey("the measurement reports a defined, finite SNR", func() {
+			So(measurement, ShouldNotBeNil)
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.SNRDefined, ShouldBeTrue)
+			So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)
+		})
+
+		Convey("the change estimator's own baseline and z-score are projected", func() {
+			So(morphHasMetric(measurement, "morphology_change_baseline"), ShouldBeTrue)
+			So(morphHasMetric(measurement, "morphology_change_zscore"), ShouldBeTrue)
+		})
+	})
+
 	Convey("Given an asymmetric message", t, func() {
 		message := morphMessage("BTC/USD", now,
 			[]kraken.Level3Order{

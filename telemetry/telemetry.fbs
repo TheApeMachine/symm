@@ -546,218 +546,6 @@ table RegulatorFrame {
   sparkline:[double];
 }
 
-table Capture { id:long; startedAt:long; endedAt:long; hasEndedAt:bool; frames:long; }
-table BacktestFrame {
-  captureId:long;
-  playing:bool;
-  position:long;
-  startedAt:long;
-  endedAt:long;
-  rebooting:bool;
-  captures:[Capture];
-}
-table HindsightLeg {
-  symbol:string;
-  buyAt:long;
-  sellAt:long;
-  buyPrice:double;
-  sellPrice:double;
-  profitPct:double;
-  grossProfitPct:double;
-  frictionPct:double;
-}
-table HindsightMCTSBranch { action:string; visits:long; meanReward:double; }
-table HindsightMCTS {
-  recommendedAction:string;
-  iterations:long;
-  branches:[HindsightMCTSBranch];
-}
-table HindsightEntryCost {
-  entryPrice:double;
-  bestAsk:double;
-  bestBid:double;
-  grossNotional:double;
-  entryFee:double;
-  spread:double;
-  impact:double;
-  breakEven:double;
-}
-table HindsightRisk {
-  present:bool;
-  riskDistance:double;
-  maxLoss:double;
-  entryFeeRate:double;
-  exitFeeRate:double;
-}
-table HindsightExecutable {
-  symbol:string;
-  buyAt:long;
-  sellAt:long;
-  theoreticalBuyPrice:double;
-  theoreticalSellPrice:double;
-  theoreticalReturn:double;
-  requestedQty:double;
-  requestedNotional:double;
-  executableEntryQty:double;
-  executableEntryVWAP:double;
-  executableEntryValue:double;
-  executableEntryFees:double;
-  entryImpact:double;
-  executableExitQty:double;
-  executableExitVWAP:double;
-  executableExitValue:double;
-  executableExitFees:double;
-  exitImpact:double;
-  fullyExecutable:bool;
-  executableReturn:double;
-  executablePnL:double;
-}
-table HindsightRegret {
-  detection:bool;
-  valuation:bool;
-  selection:bool;
-  execution:bool;
-  management:bool;
-}
-table HindsightSignal {
-  id:string;
-  at:long;
-  action:string;
-  reason:string;
-  cause:string;
-  opportunity:bool;
-  opportunityType:string;
-  opportunityPhase:string;
-  valuationAttempted:bool;
-  valuationAvailable:bool;
-  valuationStatus:string;
-  causalIdentification:string;
-  causalBlockingCoordinate:string;
-  utility:double;
-  utilityAvailable:bool;
-  proposedQuantity:double;
-  proposedNotional:double;
-  availableCapital:double;
-  allocationClass:string;
-  allocationHaircut:double;
-  expectedReturn:double;
-  expectedFees:double;
-  expectedSpread:double;
-  expectedImpact:double;
-  adverseSelection:double;
-  uncertainty:double;
-  openPositions:long;
-  slotCapacity:long;
-  entryCost:HindsightEntryCost;
-  risk:HindsightRisk;
-  mcts:HindsightMCTS;
-  alternatives:[NamedNumber];
-}
-table HindsightBlocker {
-  key:string;
-  category:string;
-  label:string;
-  source:string;
-  observed:double;
-  target:double;
-  hasTarget:bool;
-  gap:double;
-  severity:double;
-  explanation:string;
-}
-table HindsightRecommendation {
-  key:string;
-  kind:string;
-  target:string;
-  title:string;
-  action:string;
-  rationale:string;
-  current:double;
-  suggested:double;
-  hasCurrent:bool;
-  hasSuggested:bool;
-  adjustment:string;
-  confidence:double;
-  impactPct:double;
-  occurrences:long;
-  symbols:[string];
-}
-table HindsightDiagnosis {
-  category:string;
-  summary:string;
-  evidenceQuality:double;
-  evidenceStatus:string;
-  blockers:[HindsightBlocker];
-  recommendation:HindsightRecommendation;
-}
-table HindsightRootCause {
-  category:string;
-  impactPct:double;
-  occurrences:long;
-  symbols:[string];
-}
-table HindsightOpportunity {
-  leg:HindsightLeg;
-  signal:HindsightSignal;
-  journal:[HindsightSignal];
-  executable:HindsightExecutable;
-  regret:HindsightRegret;
-  why:string;
-  captured:bool;
-  missed:bool;
-  diagnosis:HindsightDiagnosis;
-}
-table HindsightLoss {
-  symbol:string;
-  decisionId:string;
-  entryAt:long;
-  exitAt:long;
-  entryPrice:double;
-  exitPrice:double;
-  pnl:double;
-  returnPct:double;
-  grossPct:double;
-  frictionPct:double;
-  triggerReason:string;
-  diagnosis:HindsightDiagnosis;
-  signal:HindsightSignal;
-  journal:[HindsightSignal];
-}
-table HindsightSymbol {
-  symbol:string;
-  priceTheoreticalCeiling:double;
-  executableCeiling:double;
-  executableLegsDefined:long;
-  executableLegsTotal:long;
-  realizedPct:double;
-  missedPct:double;
-  lossPct:double;
-  legs:long;
-  missedLegs:long;
-  lossPositions:long;
-  opportunities:[HindsightOpportunity];
-  losses:[HindsightLoss];
-}
-table HindsightFrame {
-  captureId:long;
-  status:string;
-  symbols:[HindsightSymbol];
-  priceTheoreticalCeiling:double;
-  executableCeiling:double;
-  missedPct:double;
-  missedLegs:long;
-  totalLegs:long;
-  realizedPct:double;
-  lossPct:double;
-  lossPositions:long;
-  valueCaptureRate:double;
-  legCaptureRate:double;
-  diagnosticCoverage:double;
-  rootCauses:[HindsightRootCause];
-  recommendations:[HindsightRecommendation];
-  lossRootCauses:[HindsightRootCause];
-  lossRecommendations:[HindsightRecommendation];
-}
 table ErrorFrame {
   level:string;
   source:string;
@@ -1252,6 +1040,16 @@ table EnvelopeState {
   key:string;
   typeId:ubyte;
 
+  // Hindsight capture provenance: the exact raw external input this envelope
+  // was parsed from, carried unchanged through the ring so a persisted
+  // historical state can be joined back to its raw frame by identity.
+  captureRun:string;
+  captureSeq:ulong;
+  captureStream:string;
+  captureEpoch:ulong;
+  captureStreamSeq:ulong;
+  captureOrdinal:ulong;
+
   tickerData:EnvelopeTickerData;
   tradeData:EnvelopeTradeData;
   level3Data:EnvelopeLevel3Data;
@@ -1281,6 +1079,12 @@ table EnvelopeState {
   strategy:StrategyFrame;
   perspectives:[PerspectiveFrame];
   tick:long;
+
+  // The account valuation as of this envelope. It rides the envelope rather
+  // than a frame of its own so a reconnecting dashboard recovers the balance
+  // from the next market event, instead of waiting for a broker poll it has
+  // no way to trigger.
+  equity:EquityFrame;
 }
 
 table EnvelopeStateFrame { state:EnvelopeState (required); }
@@ -1297,8 +1101,6 @@ union Frame {
   StrategyFrame,
   PositionsFrame,
   RegulatorFrame,
-  BacktestFrame,
-  HindsightFrame,
   ErrorFrame,
   FluidPhaseFrame,
   DiagnosticsFrame,

@@ -18,9 +18,9 @@ type Symbol struct {
 	Status Status   `json:"status,omitempty"`
 	Tick   int64    `json:"tick,omitempty"`
 
-	lastTickerNano       atomic.Int64 `json:"-"`
-	lastTradeNano        atomic.Int64 `json:"-"`
-	lastLevel3Nano       atomic.Int64 `json:"-"`
+	lastTickerNano        atomic.Int64 `json:"-"`
+	lastTradeNano         atomic.Int64 `json:"-"`
+	lastLevel3Nano        atomic.Int64 `json:"-"`
 	lastFuturesTickerNano atomic.Int64 `json:"-"`
 	lastFuturesTradeNano  atomic.Int64 `json:"-"`
 	lastFuturesBookNano   atomic.Int64 `json:"-"`

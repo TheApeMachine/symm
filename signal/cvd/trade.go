@@ -406,6 +406,11 @@ func cvdPipeline() nmtypes.Primitive {
 		// Directional-flow baseline and z-score (additive, bounded quantity).
 		adaptiveEstimator(prefixNetFrac, symbolNetFraction),
 
+		// The signed net fraction is this signal's headline metric, so its
+		// estimator is the one whose departure and noise power become the
+		// measurement's SNR.
+		statistic.QualityFrom(prefixNetFrac),
+
 		// Execution rates, velocities, and response-price metrics, defined only
 		// once a positive interval elapsed.
 		logic.If(

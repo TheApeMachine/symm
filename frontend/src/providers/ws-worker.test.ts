@@ -158,11 +158,6 @@ describe("ws-worker", () => {
 		expect(socket.sent).toContainEqual(
 			JSON.stringify({ type: "position.exit", symbol: "ETH/USD" }),
 		);
-
-		await scope.emit("message", { type: "BACKTEST", action: "play", captureId: 42 });
-		expect(socket.sent).toContainEqual(
-			JSON.stringify({ type: "backtest.play", captureId: 42 }),
-		);
 	});
 });
 

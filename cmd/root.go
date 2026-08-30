@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -91,6 +92,14 @@ func (node tickNode) Step(envelope *types.Envelope) *types.Envelope {
 
 	envelope.StrategyRound = node.planner.StepTick(envelope.TickerData)
 
+	// Stamp the account valuation the desk has most recently published, so the
+	// dashboard's balance rides the market stream it is already consuming. The
+	// snapshot is whatever the broker last reported: this reads it, never polls
+	// for it, so a tick costs nothing extra when the valuation has not changed.
+	if balance, _, found := node.thesis.EquitySnapshot(); found {
+		envelope.Equity = types.NewEquityReading(balance)
+	}
+
 	return envelope
 }
 
@@ -137,6 +146,7 @@ resident reading; the perspectives then flow to whatever consumes them
 */
 type advisorNode struct {
 	advisors []*advisor.Advisor
+	store    *advisor.Store
 }
 
 func (node advisorNode) Step(envelope *types.Envelope) *types.Envelope {
@@ -144,30 +154,20 @@ func (node advisorNode) Step(envelope *types.Envelope) *types.Envelope {
 		return envelope
 	}
 
-	measurements := []*data.Measurement[float64]{
-		envelope.CVD,
-		envelope.Liquidity,
-		envelope.DepthFlow,
-		envelope.Hawkes,
-		envelope.Correlation,
-		envelope.LeadLag,
-		envelope.Sentiment,
-		envelope.Morphology,
-		envelope.PumpDump,
-		envelope.Toxicity,
-		envelope.Derivatives,
-	}
-
 	var perspectives []*types.Perspective
 
 	for _, advisorInstance := range node.advisors {
-		for _, measurement := range measurements {
+		for _, measurement := range envelope.SignalMeasurements() {
 			if measurement == nil {
 				continue
 			}
 
 			if perspective := advisorInstance.Step(measurement); perspective != nil {
 				perspectives = append(perspectives, perspective)
+
+				if node.store != nil {
+					node.store.Put(perspective)
+				}
 			}
 		}
 	}
@@ -207,6 +207,21 @@ func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
 		Origin:  envelope.CaptureID,
 		Ordinal: envelope.CaptureOrdinal,
 	}
+
+	// One "state" witness per envelope persists the complete EnvelopeState — the
+	// exact system state at this Observe boundary — so inspection can scrub to
+	// any capture and see precisely what the running binary produced, joined back
+	// to its raw frame by the capture provenance carried in the state itself.
+	_ = node.writer.WriteWitness(hindsight.ArtifactWitness{
+		Envelope: ref,
+		Boundary: "observe",
+		Artifact: hindsight.ArtifactID{
+			Kind:     "state",
+			Identity: string(ref.Origin.Run) + ":" + strconv.FormatUint(uint64(ref.Origin.Sequence), 10) + ":" + strconv.FormatUint(ref.Ordinal, 10),
+		},
+		ImmediateParents: nil,
+		Payload:          envelope.EncodeBytes(),
+	})
 
 	for _, category := range envelope.Categories {
 		node.record(
@@ -347,6 +362,10 @@ var (
 
 			defer storageEngine.Close()
 
+			// The Hindsight inspection reads (runs / captures / persisted states)
+			// are served by the hub over this store.
+			hub.SetHindsightStore(storageEngine)
+
 			// The Hindsight Run identity distinguishes this process capture
 			// session from every other run. It is derived from the process start
 			// instant plus a nonce, so two runs can never share an identity, and
@@ -448,6 +467,29 @@ var (
 			price := broker.NewPrice(api, recorder)
 			instrument := broker.NewInstrument(api, price)
 
+			// Reconnect is a soft-reboot of the ONE subscription authority:
+			// re-running instrument.Subscribe re-issues the same paced market
+			// data batches that boot used, and rawCapture.Reconnect advances the
+			// Hindsight stream epoch so pre/post-reconnect frames stay
+			// distinguishable. There is no second subscription path anywhere.
+			softReboot := func(endpoint string) func() {
+				return func() {
+					rawCapture.Reconnect(endpoint)
+
+					if err := instrument.Subscribe(); err != nil {
+						errnie.Error(errnie.Err(
+							errnie.IO,
+							"symm: reconnect resubscribe",
+							err,
+						))
+					}
+				}
+			}
+
+			publicSession.SetReconnect(softReboot(system.Cfg.WebSocket.Endpoints.Public))
+			privateSession.SetReconnect(softReboot(system.Cfg.WebSocket.Endpoints.Private))
+			futures.SetReconnect(softReboot(system.Cfg.WebSocket.Endpoints.Futures))
+
 			// The shared graph stage owns the authoritative observation store
 			// and influence graph. Both the envelope pipeline (which folds
 			// measurements into it) and the strategy reasoner (which reads it)
@@ -472,6 +514,12 @@ var (
 			// instead of being stranded on their own rings.
 			categorySolver := category.NewSolver(cmd.Context())
 
+			// The shared manifold solver owns the one resident physics domain.
+			// It reads Hawkes excitation fractions on the Trade workload (as
+			// forcing state, without advancing the field) and advances on the
+			// Level3 workload (applying the latest causally-available forcing).
+			manifoldSolver := manifold.NewSolver(cmd.Context())
+
 			// The broker desk owns positions and execution. Recovery adopts the
 			// exchange's open inventory before the decision path engages. The
 			// position store persists stoploss state across restarts.
@@ -492,14 +540,21 @@ var (
 
 			balance := broker.NewBalance(api)
 			positions := &sync.Map{}
+
+			// The shared Perspective store feeds PositionRisk's non-blocking
+			// latest-by-key reads. It is constructed before the desk so the
+			// guardian path can capture entry snapshots from the same store the
+			// advisory layer writes to.
+			perspectiveStore := advisor.NewStore()
+
 			recovery := broker.NewRecovery(
 				cmd.Context(), api, instrument, price, balance, recorder,
-				positionStore, positions,
+				positionStore, positions, perspectiveStore,
 			)
 
 			desk, err := broker.NewDesk(
 				cmd.Context(), api, instrument, price, balance, thesis, recorder,
-				recovery, positions,
+				recovery, positions, perspectiveStore,
 			)
 
 			if err != nil {
@@ -531,16 +586,31 @@ var (
 			defer planner.Close()
 
 			// The advisory layer composes the signals' measurements into
+			// The advisory layer composes the signals' measurements into
 			// descriptive Perspectives — context for decision and risk, never
-			// decisions themselves. Three families exist today: liquidity
-			// terrain, historical analogue recurrence, and execution context
-			// (flow conditioned by displayed capacity and crossing cost).
-			advisors := advisorNode{advisors: []*advisor.Advisor{
-				advisor.NewLiquidityAdvisor("advisor.liquidity"),
-				advisor.NewHistoricalAdvisor("advisor.historical"),
-				advisor.NewExecutionAdvisor("advisor.execution"),
-				advisor.NewDecompositionAdvisor("advisor.decomposition"),
-			}}
+			// decisions. Sixteen families in deterministic order; all instances
+			// stay shared across the ticker/trade/Level3/futures workloads.
+			advisors := advisorNode{
+				store: perspectiveStore,
+				advisors: []*advisor.Advisor{
+					advisor.NewLiquidityAdvisor("advisor.liquidity"),
+					advisor.NewLiquidityDynamicsAdvisor("advisor.liquidity_dynamics"),
+					advisor.NewFlowAdvisor("advisor.flow"),
+					advisor.NewOrderDispositionAdvisor("advisor.order_disposition"),
+					advisor.NewArrivalAdvisor("advisor.arrival"),
+					advisor.NewArrivalQualityAdvisor("advisor.arrival_quality"),
+					advisor.NewMorphologyAdvisor("advisor.morphology"),
+					advisor.NewMorphologyDynamicsAdvisor("advisor.morphology_dynamics"),
+					advisor.NewCoordinationAdvisor("advisor.coordination"),
+					advisor.NewCoordinationSupportAdvisor("advisor.coordination_support"),
+					advisor.NewRelativeStateAdvisor("advisor.relative_state"),
+					advisor.NewActivityAdvisor("advisor.activity"),
+					advisor.NewDerivativesAdvisor("advisor.derivatives"),
+					advisor.NewHistoricalAdvisor("advisor.historical"),
+					advisor.NewExecutionAdvisor("advisor.execution"),
+					advisor.NewDecompositionAdvisor("advisor.decomposition"),
+				},
+			}
 
 			// Phase 2 — populate the workload maps now that every shared
 			// dependency exists. The ticker stage folds measurements into the
@@ -591,6 +661,7 @@ var (
 							system.NewTraced("trade.pumpdump", pumpdump.NewSignal(cmd.Context())),
 							system.NewTraced("trade.toxicity", toxicity.NewSignal(cmd.Context())),
 						},
+						{system.NewTraced("trade.manifold", manifoldSolver)},
 					},
 					append(
 						semanticCore("trade", advisors, graphSolver, categorySolver),
@@ -615,7 +686,7 @@ var (
 							system.NewTraced("level3.toxicity", toxicity.NewSignal(cmd.Context())),
 						},
 						{
-							system.NewTraced("level3.manifold", manifold.NewSolver(cmd.Context())),
+							system.NewTraced("level3.manifold", manifoldSolver),
 						},
 					},
 					append(

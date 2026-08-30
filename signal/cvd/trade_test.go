@@ -64,6 +64,34 @@ func TestTradeStep(t *testing.T) {
 			So(hasMidpoint, ShouldBeFalse)
 		})
 
+		Convey("the first trade reports no SNR, its estimator having no baseline yet", func() {
+			measurement := entity.Step(cvdTrade("BTC/USD", "buy", 100, 2, time.Unix(1000, 0)))
+
+			So(measurement, ShouldNotBeNil)
+			So(measurement.SNRDefined, ShouldBeFalse)
+		})
+
+		Convey("a directional flow that keeps moving yields a defined SNR", func() {
+			// Alternate the aggressor side so the signed net fraction actually
+			// moves, which is what gives its estimator a noise model to report.
+			for step := range 12 {
+				side := "buy"
+
+				if step%2 == 1 {
+					side = "sell"
+				}
+
+				entity.Step(cvdTrade("BTC/USD", side, 100, 2, time.Unix(int64(1000+step), 0)))
+			}
+
+			measurement := entity.Step(cvdTrade("BTC/USD", "buy", 100, 5, time.Unix(1012, 0)))
+
+			So(measurement, ShouldNotBeNil)
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.SNRDefined, ShouldBeTrue)
+			So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)
+		})
+
 		Convey("a second sell trade advances accounting, rates, and baselines", func() {
 			entity.Step(cvdTrade("BTC/USD", "buy", 100, 2, time.Unix(1000, 0)))
 			measurement := entity.Step(cvdTrade("BTC/USD", "sell", 100, 1, time.Unix(1001, 0)))

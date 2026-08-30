@@ -13,6 +13,7 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/store"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
@@ -31,6 +32,7 @@ type Hub struct {
 	app        *fiber.App
 	listenAddr string
 	clients    *sync.Map
+	store      *store.SQLite
 }
 
 type Client struct {
@@ -96,6 +98,53 @@ func NewHub(ctx context.Context) *Hub {
 		// the desk/broker migration, out of scope here. Until then this
 		// route reports "no trades" rather than fail the request.
 		return c.JSON([]*wire.PositionT{})
+	})
+
+	// Hindsight inspection reads: the capture tape and its persisted
+	// historical EnvelopeStates, joined by identity for scrub-and-inspect.
+	hub.app.Get("/hindsight/runs", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return c.JSON([]any{})
+		}
+
+		runs, err := hub.store.ListRuns()
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(runs)
+	})
+
+	hub.app.Get("/hindsight/captures", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return c.JSON([]any{})
+		}
+
+		captures, err := hub.store.ListCaptures(c.Query("run"), 0)
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(captures)
+	})
+
+	// /hindsight/states returns every persisted historical EnvelopeState of a
+	// run as the raw flatbuffer bytes, one per record, so the dashboard decodes
+	// them with the same EnvelopeState class it uses for the live stream.
+	hub.app.Get("/hindsight/states", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return c.JSON([]any{})
+		}
+
+		states, err := hub.store.ListStates(c.Query("run"))
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(states)
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
@@ -167,6 +216,19 @@ func (hub *Hub) Step(envelope *types.Envelope) *types.Envelope {
 
 func (hub *Hub) Name() string { return "hub" }
 func (hub *Hub) Error() error { return hub.err }
+
+/*
+SetHindsightStore attaches the capture store so the Hindsight inspection reads
+(runs, captures, persisted states) can answer without the live path. It is set
+after boot because the store opens after the hub in cmd/root.go.
+*/
+func (hub *Hub) SetHindsightStore(store *store.SQLite) {
+	if hub == nil {
+		return
+	}
+
+	hub.store = store
+}
 
 /*
 handleCommand dispatches one inbound JSON command from the dashboard socket.

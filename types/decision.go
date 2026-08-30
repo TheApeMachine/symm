@@ -43,7 +43,7 @@ type Decision struct {
 	ValuationAttempted        bool                        `json:"valuationAttempted"`
 	ValuationAvailable        bool                        `json:"valuationAvailable"`
 	ValuationStatus           string                      `json:"valuationStatus,omitempty"`
-	CausalIdentification     string                      `json:"causalIdentification,omitempty"`
+	CausalIdentification      string                      `json:"causalIdentification,omitempty"`
 	CausalBlockingCoordinate  string                      `json:"causalBlockingCoordinate,omitempty"`
 	GraphScore                float64                     `json:"graphScore" validate:"finite"`
 	ThesisScore               float64                     `json:"thesisScore" validate:"finite,min=-1,max=1"`

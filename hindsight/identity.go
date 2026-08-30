@@ -38,11 +38,11 @@ The zero value is deliberately rejected by validation: there is no meaningful
 "empty" capture identity, and a parsed event must never be assigned one.
 */
 type CaptureIdentity struct {
-	Run            RunID
-	Sequence       CaptureSequence
-	Stream         Stream
-	StreamEpoch    StreamEpoch
-	StreamSequence uint64
+	Run            RunID           `json:"run"`
+	Sequence       CaptureSequence `json:"sequence"`
+	Stream         Stream          `json:"stream"`
+	StreamEpoch    StreamEpoch     `json:"streamEpoch"`
+	StreamSequence uint64          `json:"streamSequence"`
 }
 
 /*
@@ -85,8 +85,8 @@ produce zero, one, or many Envelopes; the Ordinal disambiguates them in
 deterministic parser order.
 */
 type EnvelopeRef struct {
-	Origin  CaptureIdentity
-	Ordinal uint64
+	Origin  CaptureIdentity `json:"origin"`
+	Ordinal uint64          `json:"ordinal"`
 }
 
 /*
@@ -95,8 +95,8 @@ names the artifact family and applies only to diagnostics the identity carries
 verbatim, never to how two artifacts are compared.
 */
 type ArtifactID struct {
-	Kind     string
-	Identity string
+	Kind     string `json:"kind"`
+	Identity string `json:"identity"`
 }
 
 /*

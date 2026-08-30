@@ -25,14 +25,20 @@ AggregateView is one cross-sectional aggregate with its causal estimator
 state. Baseline, Divergence, ZScore, and Velocity describe the aggregate's own
 history strictly before the current observation, so a current value can never
 reduce its own apparent divergence.
+
+NoiseVariance is the decayed residual energy the ZScore normalizes by — the
+same quantity, before the square root — carried so a consumer can derive the
+scalar SNR (divergence²/noise_variance) without re-deriving the estimator's
+own noise model.
 */
 type AggregateView struct {
-	Value      float64
-	Baseline   float64
-	Divergence float64
-	ZScore     float64
-	Velocity   float64
-	Ready      bool
+	Value         float64
+	Baseline      float64
+	Divergence    float64
+	ZScore        float64
+	Velocity      float64
+	NoiseVariance float64
+	Ready         bool
 }
 
 type aggregateEstimator struct {
@@ -365,6 +371,7 @@ func (section *CrossSection) snapshot(at time.Time, focal string) Snapshot {
 
 			if estimator.energy > 0 {
 				view.Divergence = view.Value - estimator.baseline
+				view.NoiseVariance = estimator.energy
 				view.ZScore = view.Divergence / math.Sqrt(estimator.energy)
 			}
 

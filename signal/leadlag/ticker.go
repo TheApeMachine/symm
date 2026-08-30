@@ -89,7 +89,13 @@ func NewTicker() *Ticker {
 		pairHistory: nomagique.NewNumber[string](nmtypes.Fork(
 			pairHistoryStage(prefixLagSeconds),
 			pairHistoryStage(prefixGain),
-			pairHistoryStage(prefixBestLagCorrelation),
+			nmtypes.Pipe(
+				pairHistoryStage(prefixBestLagCorrelation),
+				// best_lag_correlation is this signal's headline metric, so its
+				// estimator is the one whose departure and noise power become
+				// the measurement's SNR.
+				statistic.QualityFrom(prefixBestLagCorrelation),
+			),
 		)),
 		projector: data.NewProjector(
 			data.Binding{From: temporal.DefaultSeries.ValueSymbol, Name: "last_price", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},

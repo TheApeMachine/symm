@@ -6,6 +6,7 @@ import {
 	appStore,
 	categoryStore,
 	cognitionStore,
+	equityStore,
 	errorStore,
 	focusStore,
 	onlineStore,
@@ -21,6 +22,7 @@ import { topologyStore } from "#/collections/topology";
 
 import { EnvelopeBoundaryStamp } from "#/providers/telemetry/telemetry/envelope-boundary-stamp";
 import { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
+import { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
 import { ResonanceFrame } from "#/providers/telemetry/telemetry/resonance-frame";
 
 // Tags a ResonanceFrame buffer on the wire (see ui.Hub.encodeResonanceFrame)
@@ -31,21 +33,6 @@ const RESONANCE_FRAME_IDENTIFIER = "RESO";
 let globalWsWorker: Worker | null = null;
 
 export const getWsWorker = () => globalWsWorker;
-
-export const sendBacktestAction = (
-	action: "play" | "pause" | "seek" | "select" | "hindsight",
-	at?: string,
-	captureId?: number,
-) => {
-	globalWsWorker?.postMessage({
-		type: "BACKTEST",
-		action,
-		at,
-		captureId,
-	});
-};
-
-export const publishBacktestCommand = sendBacktestAction;
 
 export const sendPositionExit = (symbol: string) => {
 	globalWsWorker?.postMessage({
@@ -119,6 +106,13 @@ function dispatchEnvelopeState(state: EnvelopeState) {
 		const tickerData = state.tickerData();
 		if (tickerData) tickStore.actions.add(tickerData);
 	}
+
+	// The account valuation rides ticker envelopes, so the balance recovers on
+	// the next market event after a connect or refresh. A fresh view per push:
+	// the ring holds the decoded rows, and a shared view object would leave
+	// every stored row aliasing the last one read.
+	const equity = state.equity(new EquityFrame());
+	if (equity) equityStore.actions.add(equity);
 
 	const resonance = state.resonance();
 	if (resonance) resonanceArtifactStore.actions.add(resonance);

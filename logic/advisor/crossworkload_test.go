@@ -101,19 +101,20 @@ func TestCrossStreamFutureLeakRejected(t *testing.T) {
 
 /*
 TestSharedAdvisorComposesAcrossWorkloadStreams asserts the one shared advisor
-instance's resident state contains the causally available facts from three
+instance's resident state contains the causally available facts from two
 different producer streams in the declared order: trade (CVD), Level3
-(depthflow), ticker (liquidity). It is the advisor-level mirror of the cmd
-topology test and fails under the old ticker-only mounting because the
-depthflow and cvd facts would never reach a ticker-only advisor.
+(depthflow). It is the advisor-level mirror of the cmd topology test and fails
+under the old ticker-only mounting because the depthflow and cvd facts would
+never reach a ticker-only advisor. The Flow advisor composes exactly these two
+cross-ring domains.
 */
 func TestSharedAdvisorComposesAcrossWorkloadStreams(t *testing.T) {
-	Convey("Given one shared liquidity advisor", t, func() {
-		advisor := NewLiquidityAdvisor("advisor.liquidity.shared:" + t.Name())
+	Convey("Given one shared flow advisor", t, func() {
+		advisor := NewFlowAdvisor("advisor.flow.shared:" + t.Name())
 
-		// liquidity (ticker) + depthflow (level3) are Liquidity's declared inputs.
-		advisor.Step(testMeasurement("TEST/USD", "liquidity", time.Unix(100, 0), map[string]float64{
-			"relative_spread": 0.01,
+		// cvd (trade) + depthflow (level3) are Flow's declared inputs.
+		advisor.Step(testMeasurement("TEST/USD", "cvd", time.Unix(100, 0), map[string]float64{
+			"signed_net_fraction": 0.4,
 		}))
 		advisor.Step(testMeasurement("TEST/USD", "depthflow", time.Unix(200, 0), map[string]float64{
 			"book_imbalance": 0.5,
@@ -123,12 +124,12 @@ func TestSharedAdvisorComposesAcrossWorkloadStreams(t *testing.T) {
 			state, found := advisor.number.Project("TEST/USD")
 			So(found, ShouldBeTrue)
 
-			bindings := LiquidityBindings()
-			spreadValue, hasSpread := state.Get(bindings[0].Series.ValueSymbol)
-			So(hasSpread, ShouldBeTrue)
-			So(spreadValue, ShouldEqual, 0.01)
+			bindings := FlowBindings()
+			signedValue, hasSigned := state.Get(bindings[0].Series.ValueSymbol)
+			So(hasSigned, ShouldBeTrue)
+			So(signedValue, ShouldEqual, 0.4)
 
-			bookValue, hasBook := state.Get(bindings[2].Series.ValueSymbol)
+			bookValue, hasBook := state.Get(bindings[6].Series.ValueSymbol)
 			So(hasBook, ShouldBeTrue)
 			So(bookValue, ShouldEqual, 0.5)
 		})

@@ -33,10 +33,10 @@ other queries.
 var defaultMarketCatalog = []MarketCoordinateSpec{
 	// Tier 1: Latent Arrival, Cross-Asset & Macro State
 	{Selector: relation.Selector{Source: "hawkes", Metric: "branching_spectral_radius"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
-	{Selector: relation.Selector{Source: "hawkes", Metric: "background_rate"}, Unit: nmtypes.UnitEventsPerSecond, Timescale: nmtypes.TimescalePerSecond},
+	{Selector: relation.Selector{Source: "hawkes", Metric: "background_rate"}, Unit: nmtypes.UnitPerSecond, Timescale: nmtypes.TimescalePerSecond},
 	{Selector: relation.Selector{Source: "derivatives", Metric: "basis_zscore"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "derivatives", Metric: "open_interest_growth_zscore"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
-	{Selector: relation.Selector{Source: "derivatives", Metric: "liquidation_notional_rate"}, Unit: nmtypes.UnitEventsPerSecond, Timescale: nmtypes.TimescalePerSecond},
+	{Selector: relation.Selector{Source: "derivatives", Metric: "liquidation_notional_rate"}, Unit: nmtypes.UnitPerSecond, Timescale: nmtypes.TimescalePerSecond},
 	{Selector: relation.Selector{Source: "leadlag", Metric: "best_lag_correlation"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "leadlag", Metric: "best_lag_seconds"}, Unit: nmtypes.UnitSecond, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "correlation", Metric: "signed_correlation"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
@@ -46,24 +46,23 @@ var defaultMarketCatalog = []MarketCoordinateSpec{
 	// Tier 2: Displayed Liquidity & Book Morphology (Passive Intent)
 	{Selector: relation.Selector{Source: "depthflow", Metric: "book_imbalance"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "depthflow", Metric: "touch_imbalance"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
-	{Selector: relation.Selector{Source: "depthflow", Metric: "book_turnover_rate"}, Unit: nmtypes.UnitEventsPerSecond, Timescale: nmtypes.TimescalePerSecond},
+	{Selector: relation.Selector{Source: "depthflow", Metric: "book_turnover_rate"}, Unit: nmtypes.UnitPerSecond, Timescale: nmtypes.TimescalePerSecond},
 	{Selector: relation.Selector{Source: "depthflow", Metric: "imbalance_resolution_gap"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "liquidity", Metric: "touch_notional_imbalance"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "liquidity", Metric: "relative_spread"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "depthflow", Metric: "book_imbalance_zscore"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "liquidity", Metric: "spread_zscore"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
-	{Selector: relation.Selector{Source: "pumpdump", Metric: "relative_spread"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 
 	// Tier 3: Aggressive Execution, Fill Dynamics & Toxicity (Active Flow)
-	{Selector: relation.Selector{Source: "hawkes", Metric: "conditional_intensity", Side: "buy"}, Unit: nmtypes.UnitEventsPerSecond, Timescale: nmtypes.TimescalePerSecond},
-	{Selector: relation.Selector{Source: "hawkes", Metric: "conditional_intensity", Side: "sell"}, Unit: nmtypes.UnitEventsPerSecond, Timescale: nmtypes.TimescalePerSecond},
+	{Selector: relation.Selector{Source: "hawkes", Metric: "conditional_intensity", Side: "buy"}, Unit: nmtypes.UnitPerSecond, Timescale: nmtypes.TimescalePerSecond},
+	{Selector: relation.Selector{Source: "hawkes", Metric: "conditional_intensity", Side: "sell"}, Unit: nmtypes.UnitPerSecond, Timescale: nmtypes.TimescalePerSecond},
 	{Selector: relation.Selector{Source: "cvd", Metric: "signed_net_fraction_zscore"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "cvd", Metric: "gross_notional_rate_zscore"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "toxicity", Metric: "withdrawal_fraction_zscore", Side: "bid"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "toxicity", Metric: "withdrawal_fraction_zscore", Side: "ask"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "toxicity", Metric: "fill_fraction_zscore", Side: "bid"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "toxicity", Metric: "fill_fraction_zscore", Side: "ask"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
-	{Selector: relation.Selector{Source: "toxicity", Metric: "retreat_rate", Side: "ask"}, Unit: nmtypes.UnitEventsPerSecond, Timescale: nmtypes.TimescaleInstantaneous},
+	{Selector: relation.Selector{Source: "toxicity", Metric: "retreat_rate", Side: "ask"}, Unit: nmtypes.UnitPerSecond, Timescale: nmtypes.TimescaleInstantaneous},
 
 	// Tier 4: Outcome & Response Mechanics
 	{Selector: relation.Selector{Source: "cvd", Metric: "midpoint_log_return"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
@@ -203,14 +202,6 @@ func DefaultCausalSchema(epoch uint64, step time.Duration) *causal.CausalSchema 
 		Parents: []causal.AllowedParent{
 			{Parent: variable("liquidity", "relative_spread", ""), Lag: step, LagSource: "schema"},
 			{Parent: variable("sentiment", "breadth_zscore", ""), Lag: step, LagSource: "schema"},
-		},
-	})
-	schema.AddMarketVariable(causal.MarketVariable{
-		Variable: variable("pumpdump", "relative_spread", ""),
-		SelfLag:  step,
-		Parents: []causal.AllowedParent{
-			{Parent: variable("liquidity", "relative_spread", ""), Lag: step, LagSource: "schema"},
-			{Parent: variable("derivatives", "basis_zscore", ""), Lag: step, LagSource: "schema"},
 		},
 	})
 

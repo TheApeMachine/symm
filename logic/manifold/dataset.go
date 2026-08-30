@@ -72,7 +72,7 @@ them. Nothing accumulates: the message is walked once, its best bid/ask feed the
 touch composer for the symbol's center, and its orders become the projected
 output.
 */
-func (dataset *Dataset) Step(message kraken.Level3Data) iter.Seq[*sensorium.State] {
+func (dataset *Dataset) Step(message kraken.Level3Data, forcing forcingState) iter.Seq[*sensorium.State] {
 	return func(yield func(*sensorium.State) bool) {
 		if dataset == nil || message.Symbol == "" {
 			return
@@ -102,7 +102,7 @@ func (dataset *Dataset) Step(message kraken.Level3Data) iter.Seq[*sensorium.Stat
 			state := dataset.orderState(
 				entry, seq, len(entries),
 				price, quantity, mid, scale,
-				symbolIndex, grid,
+				symbolIndex, grid, forcing,
 			)
 
 			if !yield(state) {
@@ -196,6 +196,7 @@ func (dataset *Dataset) orderState(
 	price, quantity, mid, scale float64,
 	symbolIndex uint32,
 	grid [3]int,
+	forcing forcingState,
 ) *sensorium.State {
 	sidePositive := 0
 
@@ -208,16 +209,27 @@ func (dataset *Dataset) orderState(
 
 	state, _ := sensorium.StatePool.Get().(*sensorium.State)
 
+	// The Hawkes excitation fraction is the forcing amplitude above the unit
+	// baseline: aggressive buy arrivals interact with resting asks, aggressive
+	// sell arrivals with resting bids. No forcing observed yet leaves the
+	// unit baseline.
+	energy := unitOscillatorEnergy
+	if entry.ask {
+		energy = unitOscillatorEnergy + forcing.buyExcitation
+	} else {
+		energy = unitOscillatorEnergy + forcing.sellExcitation
+	}
+
 	state.Bytes[0] = int64(token)
 	state.Seqs[0] = int64(seq)
 	state.TokenIDs[0] = int64(token)
 	state.ContentIDs[0] = int64(orderHash(entry.order))
 	state.Phase[0] = orderPhase(seq, sidePositive)
 	state.Omega[0] = orderOmega(price, mid, scale)
-	state.Energy[0] = unitOscillatorEnergy
+	state.Energy[0] = energy
 	state.Mass[0] = unitCarrierMass
 	state.Heat[0] = 0.3 + 0.7*float32(orderHash(entry.order)&0xFF)/255
-	state.Amp[0] = float32(math.Sqrt(float64(unitOscillatorEnergy)))
+	state.Amp[0] = float32(math.Sqrt(float64(energy)))
 	state.Pos[0] = x
 	state.Pos[1] = y
 	state.Pos[2] = z

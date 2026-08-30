@@ -38,6 +38,7 @@ type Desk struct {
 	equityObserver EquityObserver
 	recorder       *audit.Recorder
 	recovery       *Recovery
+	perspective    PerspectiveReader
 	positions      *sync.Map
 	passage        *types.PassageModel
 	balanceRefresh atomic.Bool
@@ -81,6 +82,7 @@ func NewDesk(
 	recorder *audit.Recorder,
 	recovery *Recovery,
 	positions *sync.Map,
+	perspective PerspectiveReader,
 ) (*Desk, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -95,6 +97,7 @@ func NewDesk(
 		thesis:       thesis,
 		recorder:     recorder,
 		recovery:     recovery,
+		perspective:  perspective,
 		positions:    positions,
 		passage:      types.NewPassageModel(),
 		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
@@ -599,6 +602,7 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			desk.PositionStore,
 			pair,
 			decision,
+			desk.perspective,
 		)
 
 		// The exit snapshot belongs to the stoploss moment: the trigger is

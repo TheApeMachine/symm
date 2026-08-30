@@ -675,7 +675,7 @@ func TestConformanceCrossSignalParticipation(t *testing.T) {
 			Metrics: map[string]*nmtypes.Metric[float64]{
 				"conditional_intensity:buy": nmtypes.NewMetric(
 					"conditional_intensity:buy", 0.4,
-					nmtypes.Descriptor{Unit: nmtypes.UnitEventsPerSecond, Timescale: nmtypes.TimescalePerSecond},
+					nmtypes.Descriptor{Unit: nmtypes.UnitPerSecond, Timescale: nmtypes.TimescalePerSecond},
 				),
 			},
 		}
@@ -686,7 +686,7 @@ func TestConformanceCrossSignalParticipation(t *testing.T) {
 			Source:    "hawkes",
 			Metric:    "conditional_intensity",
 			Side:      "buy",
-			Unit:      nmtypes.UnitEventsPerSecond,
+			Unit:      nmtypes.UnitPerSecond,
 			Timescale: nmtypes.TimescalePerSecond,
 			Epoch:     1,
 		}

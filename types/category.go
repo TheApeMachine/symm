@@ -267,11 +267,9 @@ var CategorySchemas = []CategorySchema{
 	// CVD / executed flow: aggressive execution economics and midpoint response.
 	{Source: SourceCVD, Metric: "signed_net_fraction_zscore", Category: AggressiveDrive},
 	{Source: SourceCVD, Metric: "signed_net_fraction_divergence", Category: AggressiveDrive},
-	{Source: SourceCVD, Metric: "gross_notional_rate_zscore", Category: HiddenAbsorption},
 	{Source: SourceCVD, Metric: "gross_notional_rate_divergence", Category: VolumeStarvation},
 	{Source: SourceCVD, Metric: "midpoint_return_rate_zscore", Category: StochasticBalance},
 	{Source: SourceCVD, Metric: "flow_aligned_midpoint_return", Category: StochasticBalance},
-	{Source: SourceCVD, Metric: "midpoint_response_per_net_notional", Category: HiddenAbsorption},
 
 	// Hawkes: arrival/excitation dynamics.
 	{Source: SourceHawkes, Metric: "branching_spectral_radius", Category: Turbulent},

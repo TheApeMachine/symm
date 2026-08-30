@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/network"
 	"github.com/theapemachine/symm/nomagique/relation"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -743,21 +742,7 @@ and updating the Influence Graph in place, then writes the last resulting
 GraphUpdate back onto the envelope.
 */
 func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
-	measurements := []*data.Measurement[float64]{
-		envelope.Correlation,
-		envelope.LeadLag,
-		envelope.Liquidity,
-		envelope.Sentiment,
-		envelope.CVD,
-		envelope.DepthFlow,
-		envelope.Morphology,
-		envelope.Hawkes,
-		envelope.PumpDump,
-		envelope.Toxicity,
-		envelope.Derivatives,
-	}
-
-	for _, measurement := range measurements {
+	for _, measurement := range envelope.SignalMeasurements() {
 		if measurement == nil {
 			continue
 		}

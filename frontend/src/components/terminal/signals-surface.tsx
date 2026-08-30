@@ -27,8 +27,14 @@ export const SignalsSurface = () => {
 
 	return (
 		<div className="grid h-full min-w-270 grid-cols-[230px_minmax(420px,1fr)_320px]">
-			<div className="min-h-0 overflow-auto border-(--line) border-r bg-(--surface)">
-				<div className="sticky top-0 border-(--line) border-b bg-(--surface) px-3 py-2.5 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
+			{/*
+				Unlike the dashboard's fixed kernel set, this list merges in sources
+				discovered from the backend, so its length is not known up front and
+				the column stays a scrolling one — the rows share the height when
+				they fit and scroll when they genuinely cannot.
+			*/}
+			<div className="flex min-h-0 flex-col border-(--line) border-r bg-(--surface)">
+				<div className="shrink-0 border-(--line) border-b bg-(--surface) px-3 py-2.5 font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">
 					Kernels
 				</div>
 				<KernelList sources={kernels} compact />

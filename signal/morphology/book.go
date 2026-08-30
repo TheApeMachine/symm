@@ -33,8 +33,11 @@ import (
 	"sync"
 
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/distribution"
+	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -52,12 +55,25 @@ var (
 )
 
 /*
+The structural-change estimator. morphology_change is this signal's headline
+metric, and it is the only emitted fact with a history to speak of: the other
+facts describe the shape standing right now, while the change is a step-to-step
+distance. Its causal baseline and dispersion are what let a measurement report
+how far the current move stands from this symbol's own recent structural churn,
+which is the quality verdict data.Measurement.Finalize turns into the SNR.
+*/
+const prefixChange = "morphology/change"
+
+var changeSeries = temporal.NewSeries(prefixChange)
+
+/*
 Book is the book-shape market entity. It reads the shared book per step and
 projects one dimensionless shape Measurement. It retains the prior whole-book
 shape per symbol — a single overwritten shape each, the same bounded-resident-
 state contract as the shared book — so structural change is measured causally.
 */
 type Book struct {
+	number    *nomagique.Number[string]
 	projector *data.Projector
 
 	mu       sync.Mutex
@@ -67,6 +83,15 @@ type Book struct {
 func NewBook() *Book {
 	return &Book{
 		previous: make(map[string][]distribution.WeightedPoint),
+		number: nomagique.NewNumber[string](nmtypes.Pipe(
+			// The causal estimator over structural change: evaluate this step's
+			// distance against the baseline built strictly from previous steps,
+			// then let the baseline adapt and the window retain the observation.
+			temporal.Window(prefixChange),
+			statistic.ZScore(prefixChange),
+			statistic.Baseline(prefixChange),
+			statistic.QualityFrom(prefixChange),
+		)),
 		projector: data.NewProjector(
 			data.Binding{From: symbolShapeDistance, Name: "book_shape_distance", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolShapeKS, Name: "book_shape_ks", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
@@ -75,6 +100,8 @@ func NewBook() *Book {
 			data.Binding{From: symbolEntropyBid, Name: "entropy:bid", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolEntropyAsk, Name: "entropy:ask", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolMorphologyChange, Name: "morphology_change", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: nmtypes.MustIntern(temporal.JoinPrefix(prefixChange, "baseline/value")), Name: "morphology_change_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: nmtypes.MustIntern(temporal.JoinPrefix(prefixChange, "z/value")), Name: "morphology_change_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 		),
 	}
 }
@@ -114,11 +141,25 @@ func (morphology *Book) Step(message kraken.Level3Data) *data.Measurement[float6
 	input.Put(symbolEntropyBid, entropyBid)
 	input.Put(symbolEntropyAsk, entropyAsk)
 
-	if changed {
-		input.Put(symbolMorphologyChange, morphologyChange)
+	// Only a step that actually had a prior shape carries a structural change,
+	// and only then is there anything for the estimator to measure. Without it
+	// the shape facts still project; the measurement simply reports no SNR.
+	if !changed {
+		return morphology.projector.Project(message.Symbol, "morphology", message.Timestamp, message.Timestamp, input)
 	}
 
-	return morphology.projector.Project(message.Symbol, "morphology", message.Timestamp, message.Timestamp, input)
+	input.Put(symbolMorphologyChange, morphologyChange)
+	input.Put(changeSeries.ValueSymbol, morphologyChange)
+	input.Put(changeSeries.SecSymbol, float64(message.Timestamp.Unix()))
+	input.Put(changeSeries.NsecSymbol, float64(message.Timestamp.Nanosecond()))
+
+	return morphology.projector.Project(
+		message.Symbol,
+		"morphology",
+		message.Timestamp,
+		message.Timestamp,
+		morphology.number.Step(message.Symbol, input),
+	)
 }
 
 /*

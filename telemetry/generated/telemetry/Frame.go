@@ -22,13 +22,11 @@ const (
 	FrameStrategyFrame      Frame = 9
 	FramePositionsFrame     Frame = 10
 	FrameRegulatorFrame     Frame = 11
-	FrameBacktestFrame      Frame = 12
-	FrameHindsightFrame     Frame = 13
-	FrameErrorFrame         Frame = 14
-	FrameFluidPhaseFrame    Frame = 15
-	FrameDiagnosticsFrame   Frame = 16
-	FrameManifoldFrame      Frame = 17
-	FrameEnvelopeStateFrame Frame = 18
+	FrameErrorFrame         Frame = 12
+	FrameFluidPhaseFrame    Frame = 13
+	FrameDiagnosticsFrame   Frame = 14
+	FrameManifoldFrame      Frame = 15
+	FrameEnvelopeStateFrame Frame = 16
 )
 
 var EnumNamesFrame = map[Frame]string{
@@ -44,8 +42,6 @@ var EnumNamesFrame = map[Frame]string{
 	FrameStrategyFrame:      "StrategyFrame",
 	FramePositionsFrame:     "PositionsFrame",
 	FrameRegulatorFrame:     "RegulatorFrame",
-	FrameBacktestFrame:      "BacktestFrame",
-	FrameHindsightFrame:     "HindsightFrame",
 	FrameErrorFrame:         "ErrorFrame",
 	FrameFluidPhaseFrame:    "FluidPhaseFrame",
 	FrameDiagnosticsFrame:   "DiagnosticsFrame",
@@ -66,8 +62,6 @@ var EnumValuesFrame = map[string]Frame{
 	"StrategyFrame":      FrameStrategyFrame,
 	"PositionsFrame":     FramePositionsFrame,
 	"RegulatorFrame":     FrameRegulatorFrame,
-	"BacktestFrame":      FrameBacktestFrame,
-	"HindsightFrame":     FrameHindsightFrame,
 	"ErrorFrame":         FrameErrorFrame,
 	"FluidPhaseFrame":    FrameFluidPhaseFrame,
 	"DiagnosticsFrame":   FrameDiagnosticsFrame,
@@ -114,10 +108,6 @@ func (t *FrameT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 		return t.Value.(*PositionsFrameT).Pack(builder)
 	case FrameRegulatorFrame:
 		return t.Value.(*RegulatorFrameT).Pack(builder)
-	case FrameBacktestFrame:
-		return t.Value.(*BacktestFrameT).Pack(builder)
-	case FrameHindsightFrame:
-		return t.Value.(*HindsightFrameT).Pack(builder)
 	case FrameErrorFrame:
 		return t.Value.(*ErrorFrameT).Pack(builder)
 	case FrameFluidPhaseFrame:
@@ -178,14 +168,6 @@ func (rcv Frame) UnPack(table flatbuffers.Table) *FrameT {
 		var x RegulatorFrame
 		x.Init(table.Bytes, table.Pos)
 		return &FrameT{Type: FrameRegulatorFrame, Value: x.UnPack()}
-	case FrameBacktestFrame:
-		var x BacktestFrame
-		x.Init(table.Bytes, table.Pos)
-		return &FrameT{Type: FrameBacktestFrame, Value: x.UnPack()}
-	case FrameHindsightFrame:
-		var x HindsightFrame
-		x.Init(table.Bytes, table.Pos)
-		return &FrameT{Type: FrameHindsightFrame, Value: x.UnPack()}
 	case FrameErrorFrame:
 		var x ErrorFrame
 		x.Init(table.Bytes, table.Pos)

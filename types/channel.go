@@ -74,4 +74,3 @@ CausalOutput carries one symbol's causal reading to the graph stage.
 // that duplicated the real causal engine (logic/causal/model.go CausalModel).
 // No other stage consumed it, so it was removed rather than left as a
 // publish-only surface. Field spacing is intentionally preserved.
-

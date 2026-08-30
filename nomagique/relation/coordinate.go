@@ -205,6 +205,8 @@ func ParseCoordinate(id string) (Coordinate, error) {
 				coordinate.Unit = nmtypes.UnitBaseCurrency
 			case nmtypes.UnitEventsPerSecond.String():
 				coordinate.Unit = nmtypes.UnitEventsPerSecond
+			case nmtypes.UnitPerSecond.String():
+				coordinate.Unit = nmtypes.UnitPerSecond
 			case nmtypes.UnitInverseSecond.String():
 				coordinate.Unit = nmtypes.UnitInverseSecond
 			case nmtypes.UnitNat.String():

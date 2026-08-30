@@ -577,8 +577,6 @@ func TestStoplossReconsider(t *testing.T) {
 	})
 }
 
-
-
 func TestRestoreStoploss(t *testing.T) {
 	Convey("Given a stored stoploss after its floor ratchets", t, func() {
 		original := stoplossFixture(t)

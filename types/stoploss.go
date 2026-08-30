@@ -72,9 +72,9 @@ type Stoploss struct {
 	// bootstrap (no book yet, stay armed and wait) from feed-integrity failure
 	// after protection was live (a valid book that becomes invalid owns an
 	// execution-regime invalidation).
-	BookObserved         bool                `json:"book_observed,omitempty"`
-	Status               Status              `json:"status"`
-	Symbol               string              `json:"symbol"`
+	BookObserved bool   `json:"book_observed,omitempty"`
+	Status       Status `json:"status"`
+	Symbol       string `json:"symbol"`
 	/*
 		EntryAt identifies which specific lot this stored state belongs to.
 		The position_stoplosses table is keyed by symbol, and a symbol is
@@ -84,21 +84,28 @@ type Stoploss struct {
 		silently restore a position with another trade's stale floor,
 		trigger status, and geometry.
 	*/
-	EntryAt              *time.Time          `json:"entry_at,omitempty"`
-	Floor                *decimal.Decimal    `json:"floor,omitempty"`
-	Mark                 *decimal.Decimal    `json:"mark,omitempty"`
-	Peak                 *decimal.Decimal    `json:"peak,omitempty"`
-	ProfitLine           *decimal.Decimal    `json:"profit_line,omitempty"`
-	ArmAt                *decimal.Decimal    `json:"arm_at,omitempty"`
-	LockFloor            *decimal.Decimal    `json:"lock_floor,omitempty"`
-	Locked               bool                `json:"locked,omitempty"`
-	TriggerReason        string              `json:"trigger_reason,omitempty"`
-	TriggerMark          *decimal.Decimal    `json:"trigger_mark,omitempty"`
-	SurgeArmed           bool                `json:"surge_armed,omitempty"`
-	LastMove             *decimal.Decimal    `json:"last_move,omitempty"`
-	SurgeMove            *decimal.Decimal    `json:"surge_move,omitempty"`
-	MomentumFloor        *decimal.Decimal    `json:"momentum_floor,omitempty"`
-	Plan                 *RiskPlan           `json:"plan,omitempty"`
+	EntryAt       *time.Time       `json:"entry_at,omitempty"`
+	Floor         *decimal.Decimal `json:"floor,omitempty"`
+	Mark          *decimal.Decimal `json:"mark,omitempty"`
+	Peak          *decimal.Decimal `json:"peak,omitempty"`
+	ProfitLine    *decimal.Decimal `json:"profit_line,omitempty"`
+	ArmAt         *decimal.Decimal `json:"arm_at,omitempty"`
+	LockFloor     *decimal.Decimal `json:"lock_floor,omitempty"`
+	Locked        bool             `json:"locked,omitempty"`
+	TriggerReason string           `json:"trigger_reason,omitempty"`
+	TriggerMark   *decimal.Decimal `json:"trigger_mark,omitempty"`
+	SurgeArmed    bool             `json:"surge_armed,omitempty"`
+	LastMove      *decimal.Decimal `json:"last_move,omitempty"`
+	SurgeMove     *decimal.Decimal `json:"surge_move,omitempty"`
+	MomentumFloor *decimal.Decimal `json:"momentum_floor,omitempty"`
+	Plan          *RiskPlan        `json:"plan,omitempty"`
+
+	// ProtectContinuation is an optional continuation-context callback that,
+	// when it returns true, defers ONLY the soft profit-stagnation trigger for
+	// this observation. It never affects hard floor, protected floor, trailing
+	// floor, execution-regime invalidation, quantity coverage, or manual exit.
+	// When nil, profit stagnation fires exactly as before.
+	ProtectContinuation func() bool `json:"-"`
 }
 
 /*
@@ -507,6 +514,13 @@ func (stoploss *Stoploss) observeMark(mark *decimal.Decimal) {
 
 		if stoploss.DistinctNonPeakMarks >= confirmMarks &&
 			giveback.Cmp(stoploss.stagnationTolerance()) >= 0 {
+			// Continuation context is the ONLY semantic deferral allowed this
+			// pass, and only for the soft profit-stagnation trigger. It never
+			// suppresses hard/protected floors or invalidation.
+			if stoploss.ProtectContinuation != nil && stoploss.ProtectContinuation() {
+				return
+			}
+
 			stoploss.Status = TRIGGERED
 			stoploss.TriggerReason = TriggerProfitStagnation
 			stoploss.TriggerMark = mark

@@ -3,11 +3,9 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-export { BacktestFrame, BacktestFrameT } from './telemetry/backtest-frame.js';
 export { Balance, BalanceT } from './telemetry/balance.js';
 export { BalancesFrame, BalancesFrameT } from './telemetry/balances-frame.js';
 export { Batch, BatchT } from './telemetry/batch.js';
-export { Capture, CaptureT } from './telemetry/capture.js';
 export { Causal, CausalT } from './telemetry/causal.js';
 export { CausalFrame, CausalFrameT } from './telemetry/causal-frame.js';
 export { Cognition, CognitionT } from './telemetry/cognition.js';
@@ -77,22 +75,6 @@ export { GraphEdge, GraphEdgeT } from './telemetry/graph-edge.js';
 export { GraphFrame, GraphFrameT } from './telemetry/graph-frame.js';
 export { GraphMetadata, GraphMetadataT } from './telemetry/graph-metadata.js';
 export { GraphNode, GraphNodeT } from './telemetry/graph-node.js';
-export { HindsightBlocker, HindsightBlockerT } from './telemetry/hindsight-blocker.js';
-export { HindsightDiagnosis, HindsightDiagnosisT } from './telemetry/hindsight-diagnosis.js';
-export { HindsightEntryCost, HindsightEntryCostT } from './telemetry/hindsight-entry-cost.js';
-export { HindsightExecutable, HindsightExecutableT } from './telemetry/hindsight-executable.js';
-export { HindsightFrame, HindsightFrameT } from './telemetry/hindsight-frame.js';
-export { HindsightLeg, HindsightLegT } from './telemetry/hindsight-leg.js';
-export { HindsightLoss, HindsightLossT } from './telemetry/hindsight-loss.js';
-export { HindsightMCTS, HindsightMCTST } from './telemetry/hindsight-mcts.js';
-export { HindsightMCTSBranch, HindsightMCTSBranchT } from './telemetry/hindsight-mctsbranch.js';
-export { HindsightOpportunity, HindsightOpportunityT } from './telemetry/hindsight-opportunity.js';
-export { HindsightRecommendation, HindsightRecommendationT } from './telemetry/hindsight-recommendation.js';
-export { HindsightRegret, HindsightRegretT } from './telemetry/hindsight-regret.js';
-export { HindsightRisk, HindsightRiskT } from './telemetry/hindsight-risk.js';
-export { HindsightRootCause, HindsightRootCauseT } from './telemetry/hindsight-root-cause.js';
-export { HindsightSignal, HindsightSignalT } from './telemetry/hindsight-signal.js';
-export { HindsightSymbol, HindsightSymbolT } from './telemetry/hindsight-symbol.js';
 export { Holding, HoldingT } from './telemetry/holding.js';
 export { Hydrodynamics, HydrodynamicsT } from './telemetry/hydrodynamics.js';
 export { MCTSBranch, MCTSBranchT } from './telemetry/mctsbranch.js';

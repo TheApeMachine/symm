@@ -3,7 +3,6 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import { BacktestFrame, BacktestFrameT } from '../telemetry/backtest-frame.js';
 import { BalancesFrame, BalancesFrameT } from '../telemetry/balances-frame.js';
 import { CausalFrame, CausalFrameT } from '../telemetry/causal-frame.js';
 import { CognitionFrame, CognitionFrameT } from '../telemetry/cognition-frame.js';
@@ -13,7 +12,6 @@ import { EquityFrame, EquityFrameT } from '../telemetry/equity-frame.js';
 import { ErrorFrame, ErrorFrameT } from '../telemetry/error-frame.js';
 import { FluidPhaseFrame, FluidPhaseFrameT } from '../telemetry/fluid-phase-frame.js';
 import { GraphFrame, GraphFrameT } from '../telemetry/graph-frame.js';
-import { HindsightFrame, HindsightFrameT } from '../telemetry/hindsight-frame.js';
 import { ManifoldFrame, ManifoldFrameT } from '../telemetry/manifold-frame.js';
 import { MeasurementsFrame, MeasurementsFrameT } from '../telemetry/measurements-frame.js';
 import { PositionsFrame, PositionsFrameT } from '../telemetry/positions-frame.js';
@@ -36,19 +34,17 @@ export enum Frame {
   StrategyFrame = 9,
   PositionsFrame = 10,
   RegulatorFrame = 11,
-  BacktestFrame = 12,
-  HindsightFrame = 13,
-  ErrorFrame = 14,
-  FluidPhaseFrame = 15,
-  DiagnosticsFrame = 16,
-  ManifoldFrame = 17,
-  EnvelopeStateFrame = 18
+  ErrorFrame = 12,
+  FluidPhaseFrame = 13,
+  DiagnosticsFrame = 14,
+  ManifoldFrame = 15,
+  EnvelopeStateFrame = 16
 }
 
 export function unionToFrame(
   type: Frame,
-  accessor: (obj:BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null
-): BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null {
+  accessor: (obj:BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null
+): BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null {
   switch(Frame[type]) {
     case 'NONE': return null; 
     case 'MeasurementsFrame': return accessor(new MeasurementsFrame())! as MeasurementsFrame;
@@ -62,8 +58,6 @@ export function unionToFrame(
     case 'StrategyFrame': return accessor(new StrategyFrame())! as StrategyFrame;
     case 'PositionsFrame': return accessor(new PositionsFrame())! as PositionsFrame;
     case 'RegulatorFrame': return accessor(new RegulatorFrame())! as RegulatorFrame;
-    case 'BacktestFrame': return accessor(new BacktestFrame())! as BacktestFrame;
-    case 'HindsightFrame': return accessor(new HindsightFrame())! as HindsightFrame;
     case 'ErrorFrame': return accessor(new ErrorFrame())! as ErrorFrame;
     case 'FluidPhaseFrame': return accessor(new FluidPhaseFrame())! as FluidPhaseFrame;
     case 'DiagnosticsFrame': return accessor(new DiagnosticsFrame())! as DiagnosticsFrame;
@@ -75,9 +69,9 @@ export function unionToFrame(
 
 export function unionListToFrame(
   type: Frame, 
-  accessor: (index: number, obj:BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null, 
+  accessor: (index: number, obj:BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null, 
   index: number
-): BacktestFrame|BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|HindsightFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null {
+): BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null {
   switch(Frame[type]) {
     case 'NONE': return null; 
     case 'MeasurementsFrame': return accessor(index, new MeasurementsFrame())! as MeasurementsFrame;
@@ -91,8 +85,6 @@ export function unionListToFrame(
     case 'StrategyFrame': return accessor(index, new StrategyFrame())! as StrategyFrame;
     case 'PositionsFrame': return accessor(index, new PositionsFrame())! as PositionsFrame;
     case 'RegulatorFrame': return accessor(index, new RegulatorFrame())! as RegulatorFrame;
-    case 'BacktestFrame': return accessor(index, new BacktestFrame())! as BacktestFrame;
-    case 'HindsightFrame': return accessor(index, new HindsightFrame())! as HindsightFrame;
     case 'ErrorFrame': return accessor(index, new ErrorFrame())! as ErrorFrame;
     case 'FluidPhaseFrame': return accessor(index, new FluidPhaseFrame())! as FluidPhaseFrame;
     case 'DiagnosticsFrame': return accessor(index, new DiagnosticsFrame())! as DiagnosticsFrame;

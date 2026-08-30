@@ -20,6 +20,21 @@ var (
 	symbolExecutionSellFromNsec = nmtypes.MustIntern("advisor/execution/sell_flow_per_bid_touch/from_nsec")
 	symbolExecutionSellAtSec    = nmtypes.MustIntern("advisor/execution/sell_flow_per_bid_touch/at_sec")
 	symbolExecutionSellAtNsec   = nmtypes.MustIntern("advisor/execution/sell_flow_per_bid_touch/at_nsec")
+
+	// Arrival-per-capacity derived outputs: Hawkes conditional intensity over
+	// the displayed touch capacity (liquidity ↔ hawkes CONDITIONS_EFFECT).
+	symbolExecutionBuyArrival  = nmtypes.MustIntern("advisor/execution/buy_arrival_per_ask_touch")
+	symbolExecutionSellArrival = nmtypes.MustIntern("advisor/execution/sell_arrival_per_bid_touch")
+	symbolExecutionBuyArrMatur = nmtypes.MustIntern("advisor/execution/buy_arrival_per_ask_touch/maturity")
+	symbolExecutionSellArrMatur = nmtypes.MustIntern("advisor/execution/sell_arrival_per_bid_touch/maturity")
+	symbolExecutionBuyArrFromSec  = nmtypes.MustIntern("advisor/execution/buy_arrival_per_ask_touch/from_sec")
+	symbolExecutionBuyArrFromNsec = nmtypes.MustIntern("advisor/execution/buy_arrival_per_ask_touch/from_nsec")
+	symbolExecutionBuyArrAtSec    = nmtypes.MustIntern("advisor/execution/buy_arrival_per_ask_touch/at_sec")
+	symbolExecutionBuyArrAtNsec   = nmtypes.MustIntern("advisor/execution/buy_arrival_per_ask_touch/at_nsec")
+	symbolExecutionSellArrFromSec  = nmtypes.MustIntern("advisor/execution/sell_arrival_per_bid_touch/from_sec")
+	symbolExecutionSellArrFromNsec = nmtypes.MustIntern("advisor/execution/sell_arrival_per_bid_touch/from_nsec")
+	symbolExecutionSellArrAtSec    = nmtypes.MustIntern("advisor/execution/sell_arrival_per_bid_touch/at_sec")
+	symbolExecutionSellArrAtNsec   = nmtypes.MustIntern("advisor/execution/sell_arrival_per_bid_touch/at_nsec")
 )
 
 /*
@@ -69,6 +84,8 @@ func ExecutionBindings() []MetricBinding {
 		NewMetricBinding("liquidity", "touch_notional:bid", "advisor/execution/bid_capacity"),
 		NewMetricBinding("cvd", "signed_net_fraction_zscore", "advisor/execution/flow_structure"),
 		NewMetricBinding("liquidity", "relative_spread", "advisor/execution/spread"),
+		NewMetricBinding("hawkes", "conditional_intensity:buy", "advisor/execution/buy_arrival"),
+		NewMetricBinding("hawkes", "conditional_intensity:sell", "advisor/execution/sell_arrival"),
 	}
 }
 
@@ -96,6 +113,8 @@ func ExecutionPipeline(bindings []MetricBinding) nmtypes.Primitive {
 	sellFlow := bindings[1]
 	askCap := bindings[2]
 	bidCap := bindings[3]
+	buyArrival := bindings[6]
+	sellArrival := bindings[7]
 
 	return nmtypes.Pipe(
 		nmtypes.ForkStrict(branches...),
@@ -116,6 +135,24 @@ func ExecutionPipeline(bindings []MetricBinding) nmtypes.Primitive {
 			symbolExecutionSellCoverage, symbolExecutionSellMatur,
 			symbolExecutionSellFromSec, symbolExecutionSellFromNsec,
 			symbolExecutionSellAtSec, symbolExecutionSellAtNsec,
+		),
+		ratioNamed(
+			buyArrival.Series.ValueSymbol, buyArrival.Series.SecSymbol, buyArrival.Series.NsecSymbol,
+			buyArrival.FromSec, buyArrival.FromNsec,
+			askCap.Series.ValueSymbol, askCap.Series.SecSymbol, askCap.Series.NsecSymbol,
+			buyArrival.Maturity, askCap.Maturity,
+			symbolExecutionBuyArrival, symbolExecutionBuyArrMatur,
+			symbolExecutionBuyArrFromSec, symbolExecutionBuyArrFromNsec,
+			symbolExecutionBuyArrAtSec, symbolExecutionBuyArrAtNsec,
+		),
+		ratioNamed(
+			sellArrival.Series.ValueSymbol, sellArrival.Series.SecSymbol, sellArrival.Series.NsecSymbol,
+			sellArrival.FromSec, sellArrival.FromNsec,
+			bidCap.Series.ValueSymbol, bidCap.Series.SecSymbol, bidCap.Series.NsecSymbol,
+			sellArrival.Maturity, bidCap.Maturity,
+			symbolExecutionSellArrival, symbolExecutionSellArrMatur,
+			symbolExecutionSellArrFromSec, symbolExecutionSellArrFromNsec,
+			symbolExecutionSellArrAtSec, symbolExecutionSellArrAtNsec,
 		),
 		scrubFresh(bindings),
 	)
@@ -140,6 +177,16 @@ func ExecutionOutputs(bindings []MetricBinding) []Output {
 			symbolExecutionSellCoverage, symbolExecutionSellMatur,
 			symbolExecutionSellFromSec, symbolExecutionSellFromNsec,
 			symbolExecutionSellAtSec, symbolExecutionSellAtNsec,
+		),
+		NewDerivedOutputWithTime(
+			symbolExecutionBuyArrival, symbolExecutionBuyArrMatur,
+			symbolExecutionBuyArrFromSec, symbolExecutionBuyArrFromNsec,
+			symbolExecutionBuyArrAtSec, symbolExecutionBuyArrAtNsec,
+		),
+		NewDerivedOutputWithTime(
+			symbolExecutionSellArrival, symbolExecutionSellArrMatur,
+			symbolExecutionSellArrFromSec, symbolExecutionSellArrFromNsec,
+			symbolExecutionSellArrAtSec, symbolExecutionSellArrAtNsec,
 		),
 		NewMetricOutput(bindings[0].Series.ValueSymbol, bindings[0]), // aggressive_notional:buy
 		NewMetricOutput(bindings[1].Series.ValueSymbol, bindings[1]), // aggressive_notional:sell

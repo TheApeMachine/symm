@@ -26,7 +26,7 @@ func DecisionWire(
 		ValuationAttempted:        decision.ValuationAttempted,
 		ValuationAvailable:        decision.ValuationAvailable,
 		ValuationStatus:           decision.ValuationStatus,
-		CausalIdentification:     decision.CausalIdentification,
+		CausalIdentification:      decision.CausalIdentification,
 		CausalBlockingCoordinate:  decision.CausalBlockingCoordinate,
 		GraphScore:                decision.GraphScore,
 		ThesisScore:               decision.ThesisScore,

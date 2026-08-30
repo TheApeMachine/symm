@@ -11,7 +11,6 @@ type RingBuffer<T> = RingBufferType<T>;
 export { RingBuffer };
 
 import type { FluidFields } from "#/components/fluid-3d/wire";
-import type { BacktestFrame } from "#/providers/telemetry/telemetry/backtest-frame";
 import type { BalancesFrame } from "#/providers/telemetry/telemetry/balances-frame";
 import type { EnvelopeCategory } from "#/providers/telemetry/telemetry/envelope-category";
 import type { EnvelopeCognition } from "#/providers/telemetry/telemetry/envelope-cognition";
@@ -23,12 +22,11 @@ import type { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
 import type { ErrorFrame } from "#/providers/telemetry/telemetry/error-frame";
 import type { FluidPhaseFrame } from "#/providers/telemetry/telemetry/fluid-phase-frame";
 import type { GraphFrame } from "#/providers/telemetry/telemetry/graph-frame";
-import type { HindsightFrame } from "#/providers/telemetry/telemetry/hindsight-frame";
+import type { PerspectiveFrame } from "#/providers/telemetry/telemetry/perspective-frame";
 import type { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
 import type { RegulatorFrame } from "#/providers/telemetry/telemetry/regulator-frame";
 import type { ResonanceFrame } from "#/providers/telemetry/telemetry/resonance-frame";
 import type { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
-import type { PerspectiveFrame } from "#/providers/telemetry/telemetry/perspective-frame";
 
 export const DEFAULT_KERNELS = [
 	"correlation",
@@ -37,22 +35,14 @@ export const DEFAULT_KERNELS = [
 	"derivatives",
 	"hawkes",
 	"leadlag",
-	"morphology",
 	"liquidity",
+	"morphology",
 	"pumpdump",
-	"resonance",
 	"sentiment",
 	"toxicity",
 ];
 
 export const DEFAULT_FOCUS_SYMBOL = "BTC/USD";
-
-export type BacktestCapture = {
-	id: number;
-	startedAt: string;
-	endedAt?: string;
-	frames: number;
-};
 
 /*
 TradeRecord mirrors the JSON shape of wire.PositionT as returned by the hub's
@@ -121,239 +111,6 @@ export type TradeRecord = {
 	} | null;
 };
 
-export type HindsightBlocker = {
-	key: string;
-	category: string;
-	label: string;
-	source?: string;
-	observed: number;
-	target: number;
-	hasTarget: boolean;
-	gap: number;
-	severity: number;
-	explanation: string;
-};
-
-export type HindsightRecommendation = {
-	key: string;
-	kind: string;
-	target: string;
-	title: string;
-	action: string;
-	rationale: string;
-	current: number;
-	suggested: number;
-	hasCurrent: boolean;
-	hasSuggested: boolean;
-	adjustment?: string;
-	confidence: number;
-	impactPct: number;
-	occurrences: number;
-	symbols: string[];
-};
-
-export type HindsightDiagnosis = {
-	category: string;
-	summary: string;
-	evidenceQuality: number;
-	evidenceStatus: string;
-	blockers: HindsightBlocker[];
-	recommendation: HindsightRecommendation | null;
-};
-
-export type HindsightRootCause = {
-	category: string;
-	impactPct: number;
-	occurrences: number;
-	symbols: string[];
-};
-
-export type HindsightMCTSBranch = {
-	action: string;
-	visits: number;
-	meanReward: number;
-};
-
-export type HindsightMCTS = {
-	recommendedAction?: string;
-	iterations?: number;
-	branches?: HindsightMCTSBranch[];
-};
-
-export type HindsightEntryCost = {
-	entryPrice?: number;
-	bestAsk?: number;
-	bestBid?: number;
-	grossNotional?: number;
-	entryFee?: number;
-	spread?: number;
-	impact?: number;
-	breakEven?: number;
-};
-
-export type HindsightRisk = {
-	present?: boolean;
-	riskDistance?: number;
-	maxLoss?: number;
-	entryFeeRate?: number;
-	exitFeeRate?: number;
-};
-
-export type HindsightSignal = {
-	id: string;
-	at: string | null;
-	action?: string;
-	reason?: string;
-	cause?: string;
-	opportunity: boolean;
-	opportunityType?: string;
-	opportunityPhase?: string;
-	valuationAttempted?: boolean;
-	valuationAvailable?: boolean;
-	valuationStatus?: string;
-	causalIdentification?: string;
-	causalBlockingCoordinate?: string;
-	utility?: number;
-	utilityAvailable?: boolean;
-	proposedQuantity?: number;
-	proposedNotional?: number;
-	availableCapital?: number;
-	allocationClass?: string;
-	allocationHaircut?: number;
-	expectedReturn?: number;
-	expectedFees?: number;
-	expectedSpread?: number;
-	expectedImpact?: number;
-	adverseSelection?: number;
-	uncertainty?: number;
-	openPositions?: number;
-	slotCapacity?: number;
-	entryCost?: HindsightEntryCost | null;
-	risk?: HindsightRisk | null;
-	mcts?: HindsightMCTS | null;
-	alternatives: Record<string, number> | null;
-};
-
-export type HindsightExecutable = {
-	symbol: string;
-	buyAt: string;
-	sellAt: string;
-	theoreticalBuyPrice: number;
-	theoreticalSellPrice: number;
-	theoreticalReturn: number;
-	requestedQty: number;
-	requestedNotional: number;
-	executableEntryQty: number;
-	executableEntryVWAP: number;
-	executableEntryValue: number;
-	executableEntryFees: number;
-	entryImpact: number;
-	executableExitQty: number;
-	executableExitVWAP: number;
-	executableExitValue: number;
-	executableExitFees: number;
-	exitImpact: number;
-	fullyExecutable: boolean;
-	executableReturn: number;
-	executablePnL: number;
-};
-
-export type HindsightRegret = {
-	detection: boolean;
-	valuation: boolean;
-	selection: boolean;
-	execution: boolean;
-	management: boolean;
-};
-
-export type HindsightLeg = {
-	symbol: string;
-	buyAt: string;
-	buyPrice: number;
-	sellAt: string;
-	sellPrice: number;
-	profitPct: number;
-	grossProfitPct?: number;
-	frictionPct?: number;
-};
-
-export type HindsightLoss = {
-	symbol: string;
-	decisionId: string;
-	entryAt: string | null;
-	exitAt: string | null;
-	entryPrice: number;
-	exitPrice: number;
-	lossPerUnit: number;
-	returnPct: number;
-	grossPct: number;
-	frictionPct: number;
-	triggerReason?: string;
-	diagnosis?: HindsightDiagnosis | null;
-	signal: HindsightSignal;
-	journal?: HindsightSignal[];
-};
-
-export type HindsightOpportunity = {
-	leg: HindsightLeg;
-	signal: HindsightSignal;
-	journal?: HindsightSignal[];
-	executable?: HindsightExecutable | null;
-	regret?: HindsightRegret | null;
-	why?: string;
-	diagnosis?: HindsightDiagnosis | null;
-	captured: boolean;
-	missed: boolean;
-};
-
-export type HindsightSymbol = {
-	symbol: string;
-	priceTheoreticalCeiling: number;
-	executableCeiling: number;
-	executableLegsDefined?: number;
-	executableLegsTotal?: number;
-	realizedPct: number;
-	missedPct: number;
-	lossPct?: number;
-	legs: number;
-	missedLegs: number;
-	lossPositions?: number;
-	opportunities: HindsightOpportunity[];
-	losses?: HindsightLoss[];
-};
-
-export type HindsightReport = {
-	captureId: number;
-	status?: string;
-	symbols: HindsightSymbol[];
-	priceTheoreticalCeiling: number;
-	executableCeiling: number;
-	missedPct: number;
-	missedLegs: number;
-	totalLegs: number;
-	realizedPct?: number;
-	lossPct?: number;
-	lossPositions?: number;
-	valueCaptureRate?: number;
-	legCaptureRate?: number;
-	diagnosticCoverage?: number;
-	rootCauses?: HindsightRootCause[];
-	recommendations?: HindsightRecommendation[];
-	lossRootCauses?: HindsightRootCause[];
-	lossRecommendations?: HindsightRecommendation[];
-};
-
-export type BacktestState = {
-	captureId: number | null;
-	playing: boolean;
-	position: string | null;
-	startedAt: string | null;
-	endedAt: string | null;
-	rebooting: boolean;
-	captures: BacktestCapture[];
-	hindsight: HindsightReport | null;
-};
-
 export interface FrameBuffer<T> {
 	version: number;
 	getLast(): T | undefined;
@@ -400,19 +157,16 @@ export const createFrameStore = <T>(capacity = 50) => {
 		add: (...items: T[]) => buffer.add(...items),
 	};
 
-	return createStore(
-		state,
-		({ setState }) => ({
-			add: (frame: T) => {
-				buffer.add(frame);
-				setState((prev) => ({ ...prev, version: prev.version + 1 }));
-			},
-			reset: () => {
-				buffer.clear();
-				setState((prev) => ({ ...prev, version: 0 }));
-			},
-		}),
-	);
+	return createStore(state, ({ setState }) => ({
+		add: (frame: T) => {
+			buffer.add(frame);
+			setState((prev) => ({ ...prev, version: prev.version + 1 }));
+		},
+		reset: () => {
+			buffer.clear();
+			setState((prev) => ({ ...prev, version: 0 }));
+		},
+	}));
 };
 
 /*
@@ -434,16 +188,6 @@ export const startedAtMsStore = createStore<number | null>(null);
 // EnvelopeState.tick and read by the dashboard's tick counter. It is a single
 // scalar, not a ring: the latest committed tick is the only value that matters.
 export const tickCountStore = createStore<number>(0);
-export const backtestStateStore = createStore<BacktestState>({
-	captureId: null,
-	playing: false,
-	position: null,
-	startedAt: null,
-	endedAt: null,
-	rebooting: false,
-	captures: [],
-	hindsight: null,
-});
 
 /*
 Typed FlatBuffer Frame Stores (RingBuffer instances with TanStack Store actions)
@@ -465,7 +209,10 @@ Sources are created lazily on first sight rather than pre-seeded from
 DEFAULT_KERNELS, so a source the frontend doesn't yet know about by name
 (e.g. a newly added kernel) still gets its own ring instead of being dropped.
 */
-const measurementStores: Record<string, ReturnType<typeof createFrameStore<EnvelopeMeasurement>>> = {};
+const measurementStores: Record<
+	string,
+	ReturnType<typeof createFrameStore<EnvelopeMeasurement>>
+> = {};
 
 export const measurementSourcesStore = createStore<string[]>([]);
 
@@ -495,10 +242,12 @@ export const regulatorStore = createFrameStore<RegulatorFrame>(50);
 // (confidence/calibrated) that arrives on every envelope and feeds the
 // kernel list's live health row.
 export const resonanceStore = createFrameStore<ResonanceFrame>(50);
-export const resonanceArtifactStore = createFrameStore<EnvelopeResonanceArtifact>(50);
+export const resonanceArtifactStore =
+	createFrameStore<EnvelopeResonanceArtifact>(50);
 export const cognitionStore = createFrameStore<EnvelopeCognition>(50);
 export const categoryStore = createFrameStore<EnvelopeCategory>(50);
-export const opportunityStore = createFrameStore<EnvelopeOpportunityCandidate>(50);
+export const opportunityStore =
+	createFrameStore<EnvelopeOpportunityCandidate>(50);
 export const graphStore = createFrameStore<GraphFrame>(50);
 export const strategyStore = createFrameStore<StrategyFrame>(50);
 export const perspectiveStore = createFrameStore<PerspectiveFrame>(50);
@@ -508,21 +257,16 @@ export const equityStore = createFrameStore<EquityFrame>(50);
 
 const fluidPhases: Record<string, RingBuffer<FluidFields>> = {};
 
-export const fluidPhaseStore = createStore(
-	fluidPhases,
-	({ setState }) => ({
-		updatePhase: (name: string, fields: FluidFields) => {
-			if (!fluidPhases[name]) fluidPhases[name] = new RingBuffer(50);
-			fluidPhases[name].add(fields);
-			setState((prev) => ({ ...prev }));
-		},
-	}),
-);
+export const fluidPhaseStore = createStore(fluidPhases, ({ setState }) => ({
+	updatePhase: (name: string, fields: FluidFields) => {
+		if (!fluidPhases[name]) fluidPhases[name] = new RingBuffer(50);
+		fluidPhases[name].add(fields);
+		setState((prev) => ({ ...prev }));
+	},
+}));
 
 export const fluidFrameStore = createFrameStore<FluidPhaseFrame>(50);
 export const errorFrameStore = createFrameStore<ErrorFrame>(50);
-export const backtestStore = createFrameStore<BacktestFrame>(50);
-export const hindsightStore = createFrameStore<HindsightFrame>(50);
 
 /*
 tradeHistoryStore holds the durable trade journal fetched from GET /trades.
@@ -546,32 +290,8 @@ export const appStore = createStore(
 		observedSources: new Set<string>(),
 		symbols: [] as string[],
 		startedAtMs: null as number | null,
-		backtest: {
-			captureId: null,
-			playing: false,
-			position: null,
-			startedAt: null,
-			endedAt: null,
-			rebooting: false,
-			captures: [],
-			hindsight: null,
-		} as BacktestState,
 	},
 	({ setState }) => ({
-		updateBacktest: (frame: Partial<BacktestState>) => {
-			setState((prev) => ({
-				...prev,
-				backtest: { ...prev.backtest, ...frame },
-			}));
-			backtestStateStore.setState((prev) => ({ ...prev, ...frame }));
-		},
-		setBacktestCaptures: (captures: BacktestCapture[]) => {
-			setState((prev) => ({
-				...prev,
-				backtest: { ...prev.backtest, captures },
-			}));
-			backtestStateStore.setState((prev) => ({ ...prev, captures }));
-		},
 		updateOnline: (online: boolean) => {
 			setState((prev) => ({
 				...prev,

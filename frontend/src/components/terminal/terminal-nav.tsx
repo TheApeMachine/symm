@@ -21,7 +21,7 @@ type TerminalRoutePath =
 	| "/allocation"
 	| "/regulator"
 	| "/diagnostics"
-	| "/backtest";
+	| "/hindsight";
 
 const SURFACE_ITEMS: Array<{
 	key: TerminalSurface;
@@ -62,7 +62,7 @@ const SURFACE_ITEMS: Array<{
 	{ key: "xray", label: "Latent x-ray", icon: "scan", to: "/xray" },
 	{ key: "cortex", label: "Cognitive tree", icon: "cortex", to: "/cortex" },
 	{ key: "allocation", label: "Allocation", icon: "bars", to: "/allocation" },
-	{ key: "backtest", label: "Backtest", icon: "lanes", to: "/backtest" },
+	{ key: "hindsight", label: "Hindsight", icon: "lanes", to: "/hindsight" },
 ];
 
 export const TerminalNav = ({ active }: { active: TerminalSurface }) => {

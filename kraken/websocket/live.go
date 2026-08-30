@@ -79,6 +79,7 @@ type Live struct {
 	capture        CaptureSink
 	manifestSink   ManifestSink
 	captureName    string
+	reconnect      func()
 	failureMu      sync.RWMutex
 	failure        func(error)
 	observer       atomic.Pointer[func(string, time.Duration)]
@@ -99,6 +100,20 @@ func (live *Live) Capture() CaptureSink {
 	}
 
 	return live.capture
+}
+
+/*
+SetReconnect installs the callback invoked when this session's transport
+reconnects (a second or later connect within one process lifetime). It is the
+single seam through which reconnect soft-reboots the subscription universe and
+advances the Hindsight stream epochs — nothing else in the session owns that.
+*/
+func (live *Live) SetReconnect(handler func()) {
+	if live == nil {
+		return
+	}
+
+	live.reconnect = handler
 }
 
 /*
@@ -308,6 +323,14 @@ func NewWithClient(
 		if auth {
 			errnie.Error(live.authenticate())
 			return
+		}
+
+		// A second (or later) connect in this process lifetime is a reconnect:
+		// the same subscription universe must be soft-rebooted through the one
+		// subscription authority, and the Hindsight epoch advanced, rather than
+		// a second subscription path being invented here.
+		if count > 1 && live.reconnect != nil {
+			live.reconnect()
 		}
 
 		if live.captureName == "level3" {

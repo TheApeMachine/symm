@@ -22,8 +22,8 @@ func TestExecutionBindings(t *testing.T) {
 	Convey("Given ExecutionBindings", t, func() {
 		bindings := ExecutionBindings()
 
-		Convey("it binds side-correct flow and capacity facts, never imbalance as capacity", func() {
-			So(len(bindings), ShouldEqual, 6)
+		Convey("it binds side-correct flow, capacity, and arrival facts, never imbalance as capacity", func() {
+			So(len(bindings), ShouldEqual, 8)
 
 			metrics := map[string]bool{}
 			sources := map[string]bool{}
@@ -39,6 +39,10 @@ func TestExecutionBindings(t *testing.T) {
 			// Side-correct capacity facts (quote currency).
 			So(metrics["touch_notional:ask"], ShouldBeTrue)
 			So(metrics["touch_notional:bid"], ShouldBeTrue)
+
+			// Hawkes arrival conditioning (liquidity ↔ hawkes CONDITIONS_EFFECT).
+			So(metrics["conditional_intensity:buy"], ShouldBeTrue)
+			So(metrics["conditional_intensity:sell"], ShouldBeTrue)
 
 			// Context facts, not capacity.
 			So(metrics["signed_net_fraction_zscore"], ShouldBeTrue)
@@ -151,10 +155,12 @@ func TestExecutionOutputs(t *testing.T) {
 		bindings := ExecutionBindings()
 		outputs := ExecutionOutputs(bindings)
 
-		Convey("it declares two derived side-correct ratios plus four measured facts and two context facts", func() {
-			So(len(outputs), ShouldEqual, 8)
+		Convey("it declares four derived side-correct ratios plus six measured facts", func() {
+			So(len(outputs), ShouldEqual, 10)
 			So(outputs[0].Slot, ShouldEqual, symbolExecutionBuyCoverage)
 			So(outputs[1].Slot, ShouldEqual, symbolExecutionSellCoverage)
+			So(outputs[2].Slot, ShouldEqual, symbolExecutionBuyArrival)
+			So(outputs[3].Slot, ShouldEqual, symbolExecutionSellArrival)
 		})
 
 		Convey("the derived ratios carry derived (min) maturity, not a single parent's", func() {

@@ -160,19 +160,27 @@ const KernelRow = ({
 				kernelDetailStore.setState(() => source);
 				terminalStore.actions.inspectSource(source);
 			}}
-			className="block w-full cursor-pointer border-(--line) border-b border-l-2 border-l-transparent bg-transparent px-3 py-2.5 text-left font-[inherit] hover:bg-(--raised)"
+			className="flex min-h-0 w-full flex-1 cursor-pointer flex-col justify-center border-(--line) border-b border-l-2 border-l-transparent bg-transparent px-3 py-1.5 text-left font-[inherit] hover:bg-(--raised)"
 		>
-			<Flex.Row align="center" justify="between" gap={2}>
+			<Flex.Row align="center" justify="between" gap={2} className="shrink-0">
 				<span className={cn("truncate font-semibold text-(--f1)", compact && "text-[10px]")}>
 					{copy.name}
 				</span>
 				<Badge label={badge.label} variant={kernelStatusVariant(status)} size="xxs" />
 			</Flex.Row>
-			<div className="mt-0.5 truncate font-mono text-[9px] text-(--f4)">{copy.sub}</div>
+			<div className="mt-0.5 shrink-0 truncate font-mono text-[9px] text-(--f4)">{copy.sub}</div>
+			{/*
+				The sparkline is the row's elastic part: the name, sub, bar and
+				readout are all text that must keep its size, so the trace is what
+				absorbs whatever height the pane has left after them. min-h-0 lets
+				it shrink below the SVG's natural size, and preserveAspectRatio
+				"none" means the fixed 0..30 viewBox stretches to whatever height it
+				ends up with, so the trace stays correct at any size.
+			*/}
 			<svg
 				viewBox="0 0 150 30"
 				preserveAspectRatio="none"
-				className="mt-1.5 block h-6.5 w-full"
+				className="mt-1 block min-h-2.5 w-full flex-1"
 			>
 				<title>{`${copy.name} sparkline`}</title>
 				<polyline points={paths.area} fill={paths.fill} stroke="none" />
@@ -184,7 +192,7 @@ const KernelRow = ({
 					vectorEffect="non-scaling-stroke"
 				/>
 			</svg>
-			<Flex.Row align="center" gap={2} className="mt-1.5">
+			<Flex.Row align="center" gap={2} className="mt-1 shrink-0">
 				<div
 					className="h-1 flex-1 overflow-hidden rounded-xs bg-(--line)"
 					title={barTitle}
@@ -219,8 +227,24 @@ export const KernelList = ({
 	sources = DEFAULT_KERNELS,
 	compact = false,
 }: KernelListProps = {}) => {
+	/*
+		The rows share the pane rather than each claiming a fixed height: twelve
+		fixed rows overflow a normal viewport, and the scrollbar that produced hid
+		the last kernels behind a gesture. As a flex column of flex-1 rows they
+		divide whatever height there is, so the whole set is always visible at a
+		glance — which is the point of a kernel list.
+
+		The floor is the rows' own min-height, not a fixed one here: once the pane
+		is too short for even the compressed rows the list scrolls again, which is
+		the honest outcome for a genuinely tiny viewport.
+	*/
 	return (
-		<div className={cn("min-h-0 overflow-auto", compact && "text-[10px]")}>
+		<div
+			className={cn(
+				"flex min-h-0 flex-1 flex-col overflow-auto",
+				compact && "text-[10px]",
+			)}
+		>
 			{sources.map((source) => (
 				<KernelRow key={source} source={source} compact={compact} />
 			))}

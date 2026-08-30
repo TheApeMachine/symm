@@ -73,10 +73,10 @@ func TestFreshTemporalContext(t *testing.T) {
 		})
 	})
 
-	Convey("Given the composed LiquidityPipeline over one binding", t, func() {
-		binding := NewMetricBinding("liquidity", "relative_spread", "test/liquidity/pipeline_scrub")
-		pipeline := LiquidityPipeline([]MetricBinding{binding})
-		span := nmtypes.MustIntern("test/liquidity/pipeline_scrub/input/span")
+	Convey("Given the composed MorphologyDynamicsPipeline over one binding", t, func() {
+		binding := NewMetricBinding("morphology", "morphology_change", "test/morphology_dynamics/pipeline_scrub")
+		pipeline := MorphologyDynamicsPipeline([]MetricBinding{binding})
+		span := nmtypes.MustIntern("test/morphology_dynamics/pipeline_scrub/input/span")
 
 		Convey("Fresh never survives into the committed output, even on a successful step", func() {
 			output := freshFrame(binding, 0.01, 0, 0)

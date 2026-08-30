@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
@@ -293,6 +294,10 @@ func foldSnapshot(frame *nmtypes.Frame, snapshot data.Snapshot) {
 		snapshot.Aggregates["signed_fraction"],
 		sBreadth, sBreadthBaseline, sBreadthDivergence, sBreadthZScore, sBreadthVelocity,
 	)
+
+	// breadth is this signal's headline metric, so its cross-sectional estimator
+	// is the one whose departure and noise power become the measurement's SNR.
+	emitQuality(frame, snapshot.Aggregates["signed_fraction"])
 	emitAggregate(
 		frame,
 		snapshot.Aggregates["signed_median"],
@@ -386,6 +391,24 @@ func emitAggregate(
 	if velocity != 0 {
 		frame.Put(velocity, view.Velocity)
 	}
+}
+
+/*
+emitQuality projects one aggregate's departure and noise power onto the shared
+quality slots data.Measurement.Finalize derives the scalar SNR from.
+
+An estimator that is not ready, or that has not yet accumulated any residual
+energy, leaves both slots absent rather than writing a zero — an absent noise
+model stays distinguishable from a genuine zero departure, which is the
+distinction SNRDefined exists to preserve.
+*/
+func emitQuality(frame *nmtypes.Frame, view data.AggregateView) {
+	if !view.Ready || view.NoiseVariance <= 0 {
+		return
+	}
+
+	frame.Put(statistic.SymbolDivergence, view.Divergence)
+	frame.Put(statistic.SymbolNoiseVariance, view.NoiseVariance)
 }
 
 func putRatio(frame *nmtypes.Frame, slot nmtypes.Symbol, numerator float64, denominator float64) {

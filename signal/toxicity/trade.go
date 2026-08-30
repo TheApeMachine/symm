@@ -188,6 +188,10 @@ func NewTrade() *Trade {
 			statistic.ZScore(prefixFillBid),
 			statistic.Baseline(prefixFillBid),
 			statistic.Velocity(prefixFillBid),
+			// The bid-side fill fraction is this signal's headline metric, so its
+			// estimator is the one whose departure and noise power become the
+			// measurement's SNR.
+			statistic.QualityFrom(prefixFillBid),
 			temporal.Window(prefixFillAsk),
 			statistic.ZScore(prefixFillAsk),
 			statistic.Baseline(prefixFillAsk),

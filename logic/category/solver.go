@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/data"
 	nomagique_probability "github.com/theapemachine/symm/nomagique/probability"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
@@ -99,21 +98,7 @@ outputs at once (correlation, leadlag, liquidity, ...); each is its own
 observation of current state, applied in field order.
 */
 func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
-	measurements := []*data.Measurement[float64]{
-		envelope.Correlation,
-		envelope.LeadLag,
-		envelope.Liquidity,
-		envelope.Sentiment,
-		envelope.CVD,
-		envelope.DepthFlow,
-		envelope.Morphology,
-		envelope.Hawkes,
-		envelope.PumpDump,
-		envelope.Toxicity,
-		envelope.Derivatives,
-	}
-
-	for _, measurement := range measurements {
+	for _, measurement := range envelope.SignalMeasurements() {
 		if measurement == nil {
 			continue
 		}

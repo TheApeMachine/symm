@@ -201,6 +201,13 @@ type Envelope struct {
 	// envelope that carried the logic inputs carries the decisions it produced.
 	StrategyRound *StrategyRound
 
+	// Equity is the account valuation as of this envelope: cash, unrealized
+	// profit/loss, and total equity, read from the thesis the broker desk
+	// publishes into. It is stamped on ticker envelopes alongside the engine
+	// tick, so a dashboard that connects (or reconnects) mid-session recovers
+	// the balance from the next market event rather than never at all.
+	Equity *EquityReading
+
 	// Perspectives is the advisory layer's descriptive context: one
 	// Perspective per advisor family, composed from this envelope's signal
 	// measurements. Perspectives describe the current state; they are never
@@ -237,6 +244,38 @@ func (envelope *Envelope) AppendBoundary(stamp BoundaryStamp) {
 func NewEnvelope(typeID TypeID) *Envelope {
 	return &Envelope{
 		TypeID: typeID,
+	}
+}
+
+/*
+SignalMeasurements returns the eleven canonical signal measurement fields in
+their fixed declaration order, so a consumer that folds "every populated signal
+measurement" iterates ONE authoritative list instead of re-enumerating the
+fields by hand. A new signal family added as an Envelope field is only ever a
+one-line change here — it can no longer be silently stranded because some
+downstream consumer's hard-coded slice was not updated.
+
+The return is a fixed-size array (not a slice), so the call allocates nothing
+and each consumer iterates the same canonical order. Nil entries mean that
+signal did not fire on this envelope.
+*/
+func (envelope *Envelope) SignalMeasurements() [11]*data.Measurement[float64] {
+	if envelope == nil {
+		return [11]*data.Measurement[float64]{}
+	}
+
+	return [11]*data.Measurement[float64]{
+		envelope.Correlation,
+		envelope.LeadLag,
+		envelope.Liquidity,
+		envelope.Sentiment,
+		envelope.CVD,
+		envelope.DepthFlow,
+		envelope.Morphology,
+		envelope.Hawkes,
+		envelope.PumpDump,
+		envelope.Toxicity,
+		envelope.Derivatives,
 	}
 }
 
@@ -805,6 +844,67 @@ func encodeBoundaries(boundaries []BoundaryStamp) []*telemetry.EnvelopeBoundaryS
 }
 
 /*
+EquityReading is one account valuation: the cash balance, the unrealized
+profit/loss on open positions, and the total equity of the two together.
+
+The values are carried as their decimal strings rather than float64 because
+that is what the broker reports and what the wire type declares; rounding an
+account balance through a binary float to save three string fields is not a
+trade worth making.
+*/
+type EquityReading struct {
+	Cash       string
+	Unrealized string
+	Equity     string
+}
+
+/*
+NewEquityReading projects a broker trade balance into an EquityReading.
+
+A valuation is only meaningful once the broker has reported a total equity, so
+a balance without one yields no reading rather than a reading of zeros — the
+dashboard's "—" is the honest rendering of "not yet known", and a fabricated
+0.00 would be indistinguishable from a genuinely empty account.
+
+Cash is the trade balance (the account's own funds) and Unrealized is the
+open-position profit/loss, matching how Desk.PublishEquity documents the three.
+*/
+func NewEquityReading(balance kraken.TradeBalanceResult) *EquityReading {
+	if balance.Equity == nil {
+		return nil
+	}
+
+	reading := &EquityReading{Equity: balance.Equity.String()}
+
+	if balance.TradeBalance != nil {
+		reading.Cash = balance.TradeBalance.String()
+	}
+
+	if balance.UnrealizedPnL != nil {
+		reading.Unrealized = balance.UnrealizedPnL.String()
+	}
+
+	return reading
+}
+
+/*
+encodeEquity projects the account valuation onto the wire. A nil reading stays
+absent, so an envelope produced before the first broker valuation carries no
+equity rather than a zeroed one.
+*/
+func encodeEquity(reading *EquityReading) *telemetry.EquityFrameT {
+	if reading == nil {
+		return nil
+	}
+
+	return &telemetry.EquityFrameT{
+		Cash:       reading.Cash,
+		Unrealized: reading.Unrealized,
+		Equity:     reading.Equity,
+	}
+}
+
+/*
 Encode converts the Envelope's exported state into its FlatBuffers mirror,
 verbatim: every populated field crosses as itself, with only the type
 coercions FlatBuffers requires (time.Time -> UnixNano, *decimal.Decimal ->
@@ -820,6 +920,12 @@ func (envelope *Envelope) Encode() *telemetry.EnvelopeStateT {
 		Key:               envelope.Key,
 		TypeId:            byte(envelope.TypeID),
 		Tick:              envelope.Tick,
+		CaptureRun:        string(envelope.CaptureID.Run),
+		CaptureSeq:        uint64(envelope.CaptureID.Sequence),
+		CaptureStream:     string(envelope.CaptureID.Stream),
+		CaptureEpoch:      uint64(envelope.CaptureID.StreamEpoch),
+		CaptureStreamSeq:  envelope.CaptureID.StreamSequence,
+		CaptureOrdinal:    envelope.CaptureOrdinal,
 		TickerData:        encodeTickerData(envelope.TickerData),
 		TradeData:         encodeTradeData(envelope.TradeData),
 		Level3Data:        encodeLevel3Data(envelope.Level3Data),
@@ -845,6 +951,7 @@ func (envelope *Envelope) Encode() *telemetry.EnvelopeStateT {
 		Strategy:          encodeStrategyRound(envelope.StrategyRound),
 		Perspectives:      encodePerspectives(envelope.Perspectives),
 		Boundaries:        encodeBoundaries(envelope.Boundaries),
+		Equity:            encodeEquity(envelope.Equity),
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-
 /*
 AdmissionPolicy is the explicit temporary entry contract requested by the
 operator. It lives in one typed value so strategy and the broker's final
@@ -147,4 +146,3 @@ type HindsightFeedback struct {
 	ContradictionMargin float64       `json:"contradictionMargin"`
 	GraphMargin         float64       `json:"graphMargin"`
 }
-

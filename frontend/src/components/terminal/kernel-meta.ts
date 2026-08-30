@@ -169,6 +169,8 @@ const SOURCE_METRICS: Record<string, string[]> = {
 	],
 	morphology: [
 		"morphology_change",
+		"morphology_change_baseline",
+		"morphology_change_zscore",
 		"book_shape_distance",
 		"book_shape_ks",
 		"concentration:bid",

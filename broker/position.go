@@ -66,6 +66,14 @@ type Position struct {
 	ExitOrderResult  *spot.AddOrderResult  `json:"exit_order_result"`
 	Holding          *types.Holding        `json:"holding"`
 
+	// perspective is the shared latest-by-key Perspective store. perspective is
+	// the entry snapshot captured when the lot's fill lands, used for the
+	// entry-vs-current continuation comparison; both feed the profit-stagnation
+	// continuation context. Missing/mistale state never suppresses an exit.
+	perspective   PerspectiveReader
+	entryContext  positionEntryContext
+	entryCaptured bool
+
 	/*
 		Priority transport: one dedicated LMAX Disruptor plus its contiguous
 		slot storage and a single guardian consumer handler. The guardian
@@ -119,6 +127,7 @@ func NewPosition(
 	store *PositionStore,
 	pair kraken.InstrumentPair,
 	decision types.Decision,
+	perspective PerspectiveReader,
 ) *Position {
 	errnie.Info("creating position for: " + pair.Symbol)
 	ctx, cancel := context.WithCancel(ctx)
@@ -134,6 +143,7 @@ func NewPosition(
 		store:          store,
 		pair:           pair,
 		seenExecutions: make(map[string]struct{}),
+		perspective:    perspective,
 		Decision:       decision,
 		EntryOrder: &spot.AddOrderRequest{
 			ClOrdId:   decision.ID,
@@ -152,6 +162,12 @@ func NewPosition(
 			IsOpportunity: decision.Opportunity,
 			Stoploss:      decision.Stoploss,
 		},
+	}
+
+	if position.Holding.Stoploss != nil {
+		position.Holding.Stoploss.ProtectContinuation = func() bool {
+			return continuationSupportive(position.perspective, position.entryContext, pair.Symbol)
+		}
 	}
 
 	guardian := &guardianHandler{position: position}
@@ -670,6 +686,14 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 		position.Holding.EntryVWAP = executionVWAP(execution)
 		position.Holding.EntryQty = decimal.NewFromInt64(0).Add(execution.CumQty)
 		position.Holding.EntryFees = decimal.NewFromInt64(0).Add(execution.FeeUsdEquiv)
+
+		// Capture the entry snapshot of the latest Perspectives once, when the
+		// lot opens, so the continuation context can compare current vs entry
+		// depth/spread without any per-tick snapshot machinery.
+		if !position.entryCaptured {
+			position.entryContext = captureEntryContext(position.perspective, position.pair.Symbol)
+			position.entryCaptured = true
+		}
 
 		if err := position.Holding.Stoploss.RebindFill(
 			position.Holding.EntryPrice,

@@ -17,8 +17,7 @@ import { Stoploss } from "#/providers/telemetry/telemetry/stoploss";
 
 /*
 journalBaseUrl locates the hub's REST endpoints, mirroring the websocket
-origin (env override with a localhost default) — same derivation as
-routes/backtest.tsx's backtestBaseUrl.
+origin (env override with a localhost default).
 */
 const journalBaseUrl = () => {
 	if (import.meta.env.VITE_SYMM_WS_URL) {

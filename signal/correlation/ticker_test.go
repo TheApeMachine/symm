@@ -91,6 +91,21 @@ func TestTickerStep(t *testing.T) {
 			So(last.Metrics, ShouldContainKey, "relative_return_energy_baseline")
 		})
 
+		Convey("a settled correlation estimator yields a defined SNR", func() {
+			// The signed correlation has to actually move from cut to cut before
+			// its Fisher-space estimator has a noise model to report, so the two
+			// paths drift in and out of step rather than tracking each other.
+			drive(entity, "BTC/USD", []float64{100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111})
+			measurements := drive(entity, "ETH/USD", []float64{200, 202, 201, 205, 203, 208, 204, 211, 206, 214, 208, 217})
+
+			last := measurements[len(measurements)-1]
+
+			So(last, ShouldNotBeNil)
+			So(last.Err, ShouldBeNil)
+			So(last.SNRDefined, ShouldBeTrue)
+			So(last.SNR, ShouldBeGreaterThanOrEqualTo, 0.0)
+		})
+
 		Convey("time regression surfaces as measurement.Err", func() {
 			entity.Step(ticker("BTC/USD", 100.0, timestamp(2)))
 

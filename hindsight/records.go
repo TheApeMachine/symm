@@ -9,13 +9,13 @@ commit, build identity, configuration digest, and schema versions — plus the
 explicit capture-integrity state the run currently exposes.
 */
 type Run struct {
-	ID             RunID
-	StartedAt      time.Time
-	CodeCommit     string
-	BuildID        string
-	ConfigDigest   string
-	SchemaVersions map[string]string
-	Integrity      Integrity
+	ID             RunID             `json:"id"`
+	StartedAt      time.Time         `json:"startedAt"`
+	CodeCommit     string            `json:"codeCommit"`
+	BuildID        string            `json:"buildId"`
+	ConfigDigest   string            `json:"configDigest"`
+	SchemaVersions map[string]string `json:"schemaVersions,omitempty"`
+	Integrity      Integrity         `json:"integrity"`
 }
 
 /*
@@ -58,13 +58,13 @@ It records what the running binary actually produced. It never recomputes that
 output.
 */
 type ArtifactWitness struct {
-	Envelope              EnvelopeRef
-	Boundary              string
-	Artifact              ArtifactID
-	ArtifactKind          string
-	ProducedAt            time.Time
-	Component             string
-	ComponentStateVersion uint64
-	ImmediateParents      []EnvelopeRef
-	Payload               []byte
+	Envelope              EnvelopeRef   `json:"envelope"`
+	Boundary              string        `json:"boundary"`
+	Artifact              ArtifactID    `json:"artifact"`
+	ArtifactKind          string        `json:"artifactKind,omitempty"`
+	ProducedAt            time.Time     `json:"producedAt,omitempty"`
+	Component             string        `json:"component,omitempty"`
+	ComponentStateVersion uint64        `json:"componentStateVersion,omitempty"`
+	ImmediateParents      []EnvelopeRef `json:"immediateParents,omitempty"`
+	Payload               []byte        `json:"payload,omitempty"`
 }

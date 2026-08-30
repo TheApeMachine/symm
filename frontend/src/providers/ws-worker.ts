@@ -9,16 +9,6 @@ let socketGeneration = 0;
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 10_000;
 
-const sendBacktest = (
-	action: "play" | "pause" | "seek" | "select" | "hindsight",
-	at?: string,
-	captureId?: number,
-) => {
-	if (socket !== null && socket.readyState === WebSocket.OPEN) {
-		socket.send(JSON.stringify({ type: `backtest.${action}`, at, captureId }));
-	}
-};
-
 const sendPositionExit = (symbol: string) => {
 	if (socket !== null && socket.readyState === WebSocket.OPEN) {
 		socket.send(JSON.stringify({ type: "position.exit", symbol }));
@@ -141,9 +131,6 @@ self.addEventListener("message", (event: MessageEvent) => {
 	const message = event.data as {
 		type: string;
 		url?: string;
-		action?: "play" | "pause" | "seek" | "select" | "hindsight";
-		at?: string;
-		captureId?: number;
 		symbol?: string;
 	};
 
@@ -164,9 +151,6 @@ self.addEventListener("message", (event: MessageEvent) => {
 			return;
 		case "FOCUS":
 			sendFocus(message.symbol ?? "");
-			return;
-		case "BACKTEST":
-			sendBacktest(message.action ?? "play", message.at, message.captureId);
 			return;
 		case "POSITION_EXIT":
 			sendPositionExit(message.symbol ?? "");

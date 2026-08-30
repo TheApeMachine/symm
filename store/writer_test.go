@@ -64,6 +64,36 @@ func TestWriterCapture(t *testing.T) {
 	})
 }
 
+func TestWriterReconnectTest(t *testing.T) {
+	Convey("Given a writer minting on one endpoint", t, func() {
+		repository := newRecordingRepository()
+		sequencer, _ := hindsight.NewSequencer("run-1")
+		writer, _ := NewWriter(repository, sequencer)
+
+		before, err := writer.Capture("ticker", "wss://example", []byte("a"), time.Now())
+		So(err, ShouldBeNil)
+
+		Convey("Reconnect advances the epoch and resets the stream sequence, keeping capture order", func() {
+			writer.Reconnect("wss://example")
+
+			after, err := writer.Capture("ticker", "wss://example", []byte("b"), time.Now())
+			So(err, ShouldBeNil)
+
+			So(after.StreamEpoch, ShouldEqual, before.StreamEpoch+1)
+			So(after.StreamSequence, ShouldEqual, uint64(1))
+			So(after.Sequence, ShouldBeGreaterThan, before.Sequence)
+		})
+
+		Convey("Reconnect on an unknown endpoint is a no-op, never a silent epoch bump", func() {
+			writer.Reconnect("wss://unseen")
+
+			after, err := writer.Capture("ticker", "wss://example", []byte("c"), time.Now())
+			So(err, ShouldBeNil)
+			So(after.StreamEpoch, ShouldEqual, before.StreamEpoch)
+		})
+	})
+}
+
 /*
 recordingRepository is a minimal in-memory Repository used to assert the writer
 records the right identity, kind, endpoint, and payload without a SQLite file.

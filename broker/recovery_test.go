@@ -111,7 +111,7 @@ func newTestRecoveryWithOptions(
 
 	positions := &sync.Map{}
 	recovery := NewRecovery(
-		t.Context(), api, instrument, price, nil, nil, store, positions,
+		t.Context(), api, instrument, price, nil, nil, store, positions, nil,
 	)
 
 	return recovery, positions

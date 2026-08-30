@@ -92,8 +92,16 @@
       "file": "signal/correlation/ticker.go",
       "line": 132,
       "unit": "data.UnitNat",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination.go",
+          "line": 18
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -104,8 +112,16 @@
       "file": "signal/correlation/ticker.go",
       "line": 124,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination_support (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination_support.go",
+          "line": 19
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -116,8 +132,16 @@
       "file": "signal/correlation/ticker.go",
       "line": 125,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination_support (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination_support.go",
+          "line": 20
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -140,8 +164,16 @@
       "file": "signal/correlation/ticker.go",
       "line": 133,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination.go",
+          "line": 19
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -164,8 +196,16 @@
       "file": "signal/correlation/ticker.go",
       "line": 123,
       "unit": "data.UnitCount",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination_support (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination_support.go",
+          "line": 17
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -224,8 +264,16 @@
       "file": "signal/correlation/ticker.go",
       "line": 122,
       "unit": "data.UnitCount",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination_support (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination_support.go",
+          "line": 18
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -260,8 +308,16 @@
       "file": "signal/correlation/ticker.go",
       "line": 129,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination.go",
+          "line": 20
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -386,6 +442,13 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
+          "kind": "bound",
+          "consumer": "advisor:coordination (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination.go",
+          "line": 17
+        },
+        {
           "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
@@ -429,7 +492,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 594,
+      "line": 599,
       "unit": "data.UnitRate",
       "consumers": [],
       "dead": true,
@@ -442,7 +505,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 595,
+      "line": 600,
       "unit": "data.UnitRate",
       "consumers": [],
       "dead": true,
@@ -454,7 +517,7 @@
       "metric": "buy_notional_rate",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 603,
+      "line": 608,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -466,7 +529,7 @@
       "metric": "cumulative_notional_delta",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 606,
+      "line": 611,
       "unit": "data.UnitRate",
       "consumers": [],
       "dead": true,
@@ -478,7 +541,7 @@
       "metric": "cumulative_volume_delta",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 605,
+      "line": 610,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -490,7 +553,7 @@
       "metric": "cvd_epoch_from",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 607,
+      "line": 612,
       "unit": "data.UnitSecond",
       "consumers": [],
       "dead": true,
@@ -503,7 +566,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 590,
+      "line": 595,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -516,7 +579,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 591,
+      "line": 596,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -528,15 +591,22 @@
       "metric": "flow_aligned_midpoint_return",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 621,
+      "line": 626,
       "unit": "data.UnitDimensionless",
       "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:flow (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/flow.go",
+          "line": 27
+        },
         {
           "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
-          "line": 70
+          "line": 69
         }
       ],
       "dead": false,
@@ -548,7 +618,7 @@
       "metric": "gross_executed_quantity",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 592,
+      "line": 597,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -560,7 +630,7 @@
       "metric": "gross_notional",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 596,
+      "line": 601,
       "unit": "data.UnitRate",
       "consumers": [],
       "dead": true,
@@ -572,7 +642,7 @@
       "metric": "gross_notional_rate",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 601,
+      "line": 606,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -584,7 +654,7 @@
       "metric": "gross_notional_rate_baseline",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 611,
+      "line": 616,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -596,7 +666,7 @@
       "metric": "gross_notional_rate_divergence",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 613,
+      "line": 618,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -608,7 +678,7 @@
       "metric": "gross_notional_rate_ratio",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 612,
+      "line": 617,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -620,7 +690,7 @@
       "metric": "gross_notional_rate_velocity",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 616,
+      "line": 621,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -632,15 +702,22 @@
       "metric": "gross_notional_rate_zscore",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 614,
+      "line": 619,
       "unit": "data.UnitDimensionless",
       "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:flow (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/flow.go",
+          "line": 26
+        },
         {
           "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
-          "line": 61
+          "line": 60
         }
       ],
       "dead": false,
@@ -652,7 +729,7 @@
       "metric": "mean_trade_notional",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 599,
+      "line": 604,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -672,7 +749,7 @@
       "metric": "midpoint_log_return",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 619,
+      "line": 624,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -680,7 +757,7 @@
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
-          "line": 69
+          "line": 68
         }
       ],
       "dead": false,
@@ -692,10 +769,18 @@
       "metric": "midpoint_response_per_net_notional",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 622,
+      "line": 627,
       "unit": "data.UnitRate",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:flow (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/flow.go",
+          "line": 28
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -704,7 +789,7 @@
       "metric": "midpoint_return_rate",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 620,
+      "line": 625,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -716,7 +801,7 @@
       "metric": "midpoint_return_rate_baseline",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 623,
+      "line": 628,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -728,7 +813,7 @@
       "metric": "midpoint_return_rate_divergence",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 624,
+      "line": 629,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -740,7 +825,7 @@
       "metric": "midpoint_return_rate_zscore",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 625,
+      "line": 630,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -752,7 +837,7 @@
       "metric": "net_executed_quantity",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 593,
+      "line": 598,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -764,7 +849,7 @@
       "metric": "net_notional",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 597,
+      "line": 602,
       "unit": "data.UnitRate",
       "consumers": [],
       "dead": true,
@@ -776,10 +861,18 @@
       "metric": "net_notional_rate",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 602,
+      "line": 607,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:flow (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/flow.go",
+          "line": 25
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -788,7 +881,7 @@
       "metric": "net_notional_rate_velocity",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 615,
+      "line": 620,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -801,7 +894,7 @@
       "side": "at",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 618,
+      "line": 623,
       "unit": "data.UnitRate",
       "consumers": [],
       "dead": true,
@@ -814,7 +907,7 @@
       "side": "from",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 617,
+      "line": 622,
       "unit": "data.UnitRate",
       "consumers": [],
       "dead": true,
@@ -826,7 +919,7 @@
       "metric": "sell_notional_rate",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 604,
+      "line": 609,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -838,7 +931,7 @@
       "metric": "signed_count_fraction",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 589,
+      "line": 594,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -850,10 +943,18 @@
       "metric": "signed_net_fraction",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 598,
+      "line": 603,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:flow (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/flow.go",
+          "line": 23
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -862,7 +963,7 @@
       "metric": "signed_net_fraction_baseline",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 608,
+      "line": 613,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -874,7 +975,7 @@
       "metric": "signed_net_fraction_divergence",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 609,
+      "line": 614,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -886,7 +987,7 @@
       "metric": "signed_net_fraction_zscore",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 610,
+      "line": 615,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -894,7 +995,14 @@
           "consumer": "advisor:execution (github.com/theapemachine/symm/logic/advisor)",
           "package": "github.com/theapemachine/symm/logic/advisor",
           "file": "logic/advisor/execution.go",
-          "line": 70
+          "line": 85
+        },
+        {
+          "kind": "bound",
+          "consumer": "advisor:flow (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/flow.go",
+          "line": 24
         },
         {
           "kind": "bound",
@@ -908,7 +1016,7 @@
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
-          "line": 60
+          "line": 59
         }
       ],
       "dead": false,
@@ -920,7 +1028,7 @@
       "metric": "trade_count",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 586,
+      "line": 591,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -933,7 +1041,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 587,
+      "line": 592,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -946,7 +1054,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 588,
+      "line": 593,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -958,7 +1066,7 @@
       "metric": "trade_rate",
       "package": "github.com/theapemachine/symm/signal/cvd",
       "file": "signal/cvd/trade.go",
-      "line": 600,
+      "line": 605,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -1035,10 +1143,10 @@
       "consumers": [
         {
           "kind": "bound",
-          "consumer": "advisor:liquidity (github.com/theapemachine/symm/logic/advisor)",
+          "consumer": "advisor:flow (github.com/theapemachine/symm/logic/advisor)",
           "package": "github.com/theapemachine/symm/logic/advisor",
-          "file": "logic/advisor/liquidity.go",
-          "line": 21
+          "file": "logic/advisor/flow.go",
+          "line": 29
         },
         {
           "kind": "catalog",
@@ -1096,6 +1204,13 @@
       "line": 741,
       "unit": "data.UnitDimensionless",
       "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:flow (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/flow.go",
+          "line": 30
+        },
         {
           "kind": "bound",
           "consumer": "advisor:historical (github.com/theapemachine/symm/logic/advisor)",
@@ -1162,6 +1277,13 @@
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
+          "kind": "bound",
+          "consumer": "advisor:flow (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/flow.go",
+          "line": 32
+        },
+        {
           "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
@@ -1180,8 +1302,16 @@
       "file": "signal/depthflow/level3.go",
       "line": 738,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:flow (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/flow.go",
+          "line": 31
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -1468,8 +1598,16 @@
       "file": "signal/derivatives/ticker.go",
       "line": 269,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:derivatives_advisor (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/derivatives_advisor.go",
+          "line": 16
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -1516,8 +1654,16 @@
       "file": "signal/derivatives/ticker.go",
       "line": 282,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:derivatives_advisor (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/derivatives_advisor.go",
+          "line": 18
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -1541,6 +1687,13 @@
       "line": 285,
       "unit": "data.UnitDimensionless",
       "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:derivatives_advisor (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/derivatives_advisor.go",
+          "line": 17
+        },
         {
           "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
@@ -1620,8 +1773,16 @@
       "file": "signal/derivatives/trade.go",
       "line": 161,
       "unit": "data.UnitRate",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:derivatives_advisor (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/derivatives_advisor.go",
+          "line": 25
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -1690,8 +1851,16 @@
       "file": "signal/derivatives/trade.go",
       "line": 166,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:derivatives_advisor (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/derivatives_advisor.go",
+          "line": 27
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -1738,8 +1907,16 @@
       "file": "signal/derivatives/trade.go",
       "line": 162,
       "unit": "data.UnitRate",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:derivatives_advisor (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/derivatives_advisor.go",
+          "line": 26
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -1750,8 +1927,16 @@
       "file": "signal/derivatives/ticker.go",
       "line": 268,
       "unit": "data.UnitCount",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:derivatives_advisor (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/derivatives_advisor.go",
+          "line": 19
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -1786,8 +1971,16 @@
       "file": "signal/derivatives/ticker.go",
       "line": 277,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:derivatives_advisor (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/derivatives_advisor.go",
+          "line": 20
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -1798,8 +1991,16 @@
       "file": "signal/derivatives/ticker.go",
       "line": 278,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:derivatives_advisor (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/derivatives_advisor.go",
+          "line": 22
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -1811,6 +2012,13 @@
       "line": 280,
       "unit": "data.UnitDimensionless",
       "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:derivatives_advisor (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/derivatives_advisor.go",
+          "line": 21
+        },
         {
           "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
@@ -1866,8 +2074,16 @@
       "file": "signal/derivatives/ticker.go",
       "line": 288,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:derivatives_advisor (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/derivatives_advisor.go",
+          "line": 23
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -1890,8 +2106,16 @@
       "file": "signal/derivatives/ticker.go",
       "line": 290,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:derivatives_advisor (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/derivatives_advisor.go",
+          "line": 24
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -1902,8 +2126,16 @@
       "file": "signal/hawkes/trade.go",
       "line": 44,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:arrival (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/arrival.go",
+          "line": 17
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -1941,6 +2173,13 @@
       "line": 51,
       "unit": "data.UnitPerSecond",
       "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:arrival (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/arrival.go",
+          "line": 23
+        },
         {
           "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
@@ -1988,6 +2227,13 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
+          "kind": "bound",
+          "consumer": "advisor:arrival_quality (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/arrival_quality.go",
+          "line": 21
+        },
+        {
           "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
@@ -2032,8 +2278,16 @@
       "file": "signal/hawkes/trade.go",
       "line": 48,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:arrival (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/arrival.go",
+          "line": 20
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2051,7 +2305,7 @@
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
-          "line": 58
+          "line": 57
         }
       ],
       "dead": false,
@@ -2072,7 +2326,7 @@
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
-          "line": 59
+          "line": 58
         }
       ],
       "dead": false,
@@ -2384,8 +2638,16 @@
       "file": "signal/hawkes/trade.go",
       "line": 82,
       "unit": "data.UnitCount",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:arrival_quality (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/arrival_quality.go",
+          "line": 30
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2396,8 +2658,16 @@
       "file": "signal/hawkes/trade.go",
       "line": 83,
       "unit": "data.UnitCount",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:arrival_quality (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/arrival_quality.go",
+          "line": 31
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2447,8 +2717,16 @@
       "file": "signal/hawkes/trade.go",
       "line": 91,
       "unit": "data.UnitNat",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:arrival_quality (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/arrival_quality.go",
+          "line": 24
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2459,8 +2737,16 @@
       "file": "signal/hawkes/trade.go",
       "line": 92,
       "unit": "data.UnitNat",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:arrival_quality (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/arrival_quality.go",
+          "line": 25
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2471,8 +2757,16 @@
       "file": "signal/hawkes/trade.go",
       "line": 89,
       "unit": "data.UnitNat",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:arrival_quality (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/arrival_quality.go",
+          "line": 22
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2483,8 +2777,16 @@
       "file": "signal/hawkes/trade.go",
       "line": 90,
       "unit": "data.UnitNat",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:arrival_quality (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/arrival_quality.go",
+          "line": 23
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2596,10 +2898,18 @@
       "metric": "absolute_correlation_gain",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 101,
+      "line": 107,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination.go",
+          "line": 24
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2608,9 +2918,16 @@
       "metric": "best_lag_correlation",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 98,
+      "line": 104,
       "unit": "data.UnitDimensionless",
       "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination.go",
+          "line": 22
+        },
         {
           "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
@@ -2628,7 +2945,7 @@
       "metric": "best_lag_correlation_baseline",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 122,
+      "line": 128,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -2640,10 +2957,18 @@
       "metric": "best_lag_correlation_zscore",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 123,
+      "line": 129,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination.go",
+          "line": 27
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2652,7 +2977,7 @@
       "metric": "best_lag_index",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 99,
+      "line": 105,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -2664,9 +2989,16 @@
       "metric": "best_lag_seconds",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 100,
+      "line": 106,
       "unit": "data.UnitSecond",
       "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination.go",
+          "line": 23
+        },
         {
           "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
@@ -2684,10 +3016,18 @@
       "metric": "contemporaneous_correlation",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 97,
+      "line": 103,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination.go",
+          "line": 21
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2696,7 +3036,7 @@
       "metric": "correlation_gain_baseline",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 119,
+      "line": 125,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -2708,7 +3048,7 @@
       "metric": "correlation_gain_velocity",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 121,
+      "line": 127,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -2720,10 +3060,18 @@
       "metric": "correlation_gain_zscore",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 120,
+      "line": 126,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination.go",
+          "line": 26
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2732,10 +3080,18 @@
       "metric": "correlation_p_value",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 112,
+      "line": 118,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination_support (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination_support.go",
+          "line": 23
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2744,10 +3100,18 @@
       "metric": "effective_sample_count",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 108,
+      "line": 114,
       "unit": "data.UnitCount",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination_support (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination_support.go",
+          "line": 21
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2756,7 +3120,7 @@
       "metric": "lag_baseline_seconds",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 114,
+      "line": 120,
       "unit": "data.UnitSecond",
       "consumers": [],
       "dead": true,
@@ -2768,7 +3132,7 @@
       "metric": "lag_divergence_seconds",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 115,
+      "line": 121,
       "unit": "data.UnitSecond",
       "consumers": [],
       "dead": true,
@@ -2780,7 +3144,7 @@
       "metric": "lag_fraction",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 102,
+      "line": 108,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -2792,7 +3156,7 @@
       "metric": "lag_noise_scale_seconds",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 116,
+      "line": 122,
       "unit": "data.UnitSecond",
       "consumers": [],
       "dead": true,
@@ -2804,10 +3168,18 @@
       "metric": "lag_peak_curvature",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 111,
+      "line": 117,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination_support (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination_support.go",
+          "line": 26
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2816,10 +3188,18 @@
       "metric": "lag_peak_prominence",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 110,
+      "line": 116,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination_support (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination_support.go",
+          "line": 25
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2828,10 +3208,18 @@
       "metric": "lag_search_resolution_seconds",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 103,
+      "line": 109,
       "unit": "data.UnitSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination_support (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination_support.go",
+          "line": 27
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2840,10 +3228,18 @@
       "metric": "lag_search_span",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 104,
+      "line": 110,
       "unit": "data.UnitSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination_support (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination_support.go",
+          "line": 28
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2852,10 +3248,18 @@
       "metric": "lag_velocity",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 118,
+      "line": 124,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination.go",
+          "line": 28
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2864,10 +3268,18 @@
       "metric": "lag_zscore",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 117,
+      "line": 123,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination.go",
+          "line": 25
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2876,7 +3288,7 @@
       "metric": "last_price",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 95,
+      "line": 101,
       "unit": "data.UnitRate",
       "consumers": [],
       "dead": true,
@@ -2888,7 +3300,7 @@
       "metric": "measured_return_count",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 106,
+      "line": 112,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -2900,7 +3312,7 @@
       "metric": "observation_count",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 96,
+      "line": 102,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -2912,7 +3324,7 @@
       "metric": "overlap_pair_count",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 107,
+      "line": 113,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -2924,7 +3336,7 @@
       "metric": "reference_return_count",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 105,
+      "line": 111,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -2936,10 +3348,18 @@
       "metric": "search_adjusted_p_value",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 113,
+      "line": 119,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination_support (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination_support.go",
+          "line": 24
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -2948,10 +3368,18 @@
       "metric": "search_count",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 109,
+      "line": 115,
       "unit": "data.UnitCount",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:coordination_support (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/coordination_support.go",
+          "line": 22
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3160,14 +3588,14 @@
           "consumer": "advisor:execution (github.com/theapemachine/symm/logic/advisor)",
           "package": "github.com/theapemachine/symm/logic/advisor",
           "file": "logic/advisor/execution.go",
-          "line": 71
+          "line": 86
         },
         {
           "kind": "bound",
           "consumer": "advisor:liquidity (github.com/theapemachine/symm/logic/advisor)",
           "package": "github.com/theapemachine/symm/logic/advisor",
           "file": "logic/advisor/liquidity.go",
-          "line": 19
+          "line": 18
         },
         {
           "kind": "catalog",
@@ -3188,8 +3616,16 @@
       "file": "signal/liquidity/ticker.go",
       "line": 147,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:liquidity_dynamics (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/liquidity_dynamics.go",
+          "line": 19
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3212,8 +3648,16 @@
       "file": "signal/liquidity/ticker.go",
       "line": 149,
       "unit": "data.UnitNat",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:liquidity_dynamics (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/liquidity_dynamics.go",
+          "line": 24
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3224,8 +3668,16 @@
       "file": "signal/liquidity/ticker.go",
       "line": 155,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:liquidity_dynamics (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/liquidity_dynamics.go",
+          "line": 28
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3260,8 +3712,16 @@
       "file": "signal/liquidity/ticker.go",
       "line": 148,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:liquidity (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/liquidity.go",
+          "line": 25
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3273,6 +3733,13 @@
       "line": 151,
       "unit": "data.UnitDimensionless",
       "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:liquidity_dynamics (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/liquidity_dynamics.go",
+          "line": 25
+        },
         {
           "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
@@ -3350,7 +3817,7 @@
           "consumer": "advisor:liquidity (github.com/theapemachine/symm/logic/advisor)",
           "package": "github.com/theapemachine/symm/logic/advisor",
           "file": "logic/advisor/liquidity.go",
-          "line": 20
+          "line": 22
         },
         {
           "kind": "catalog",
@@ -3397,8 +3864,16 @@
       "file": "signal/liquidity/ticker.go",
       "line": 132,
       "unit": "data.UnitRate",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:liquidity (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/liquidity.go",
+          "line": 21
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3407,10 +3882,18 @@
       "metric": "book_shape_distance",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 71,
+      "line": 96,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:morphology_dynamics (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/morphology_dynamics.go",
+          "line": 19
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3419,10 +3902,18 @@
       "metric": "book_shape_ks",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 72,
+      "line": 97,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:morphology_dynamics (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/morphology_dynamics.go",
+          "line": 20
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3432,7 +3923,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 74,
+      "line": 99,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -3445,7 +3936,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 73,
+      "line": 98,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -3458,7 +3949,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 76,
+      "line": 101,
       "unit": "data.UnitNat",
       "consumers": [],
       "dead": true,
@@ -3471,7 +3962,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 75,
+      "line": 100,
       "unit": "data.UnitNat",
       "consumers": [],
       "dead": true,
@@ -3483,7 +3974,39 @@
       "metric": "morphology_change",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 77,
+      "line": 102,
+      "unit": "data.UnitDimensionless",
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:morphology_dynamics (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/morphology_dynamics.go",
+          "line": 18
+        }
+      ],
+      "dead": false,
+      "kernelOnly": false
+    },
+    {
+      "id": "morphology/morphology_change_baseline",
+      "source": "morphology",
+      "metric": "morphology_change_baseline",
+      "package": "github.com/theapemachine/symm/signal/morphology",
+      "file": "signal/morphology/book.go",
+      "line": 103,
+      "unit": "data.UnitDimensionless",
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "morphology/morphology_change_zscore",
+      "source": "morphology",
+      "metric": "morphology_change_zscore",
+      "package": "github.com/theapemachine/symm/signal/morphology",
+      "file": "signal/morphology/book.go",
+      "line": 104,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -3559,8 +4082,16 @@
       "file": "signal/pumpdump/trade.go",
       "line": 276,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:activity (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/activity.go",
+          "line": 25
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3595,8 +4126,16 @@
       "file": "signal/pumpdump/trade.go",
       "line": 277,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:activity (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/activity.go",
+          "line": 26
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3619,8 +4158,16 @@
       "file": "signal/pumpdump/trade.go",
       "line": 282,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:activity (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/activity.go",
+          "line": 27
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3643,8 +4190,16 @@
       "file": "signal/pumpdump/trade.go",
       "line": 266,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:activity (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/activity.go",
+          "line": 21
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3691,8 +4246,16 @@
       "file": "signal/pumpdump/trade.go",
       "line": 268,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:activity (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/activity.go",
+          "line": 24
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3703,8 +4266,16 @@
       "file": "signal/pumpdump/trade.go",
       "line": 272,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:activity (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/activity.go",
+          "line": 23
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3727,16 +4298,8 @@
       "file": "signal/pumpdump/level3.go",
       "line": 58,
       "unit": "data.UnitDimensionless",
-      "consumers": [
-        {
-          "kind": "catalog",
-          "consumer": "graph.Solver (causal-influence catalog)",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/defaults.go",
-          "line": 55
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3867,8 +4430,16 @@
       "file": "signal/pumpdump/trade.go",
       "line": 267,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:activity (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/activity.go",
+          "line": 22
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3879,8 +4450,16 @@
       "file": "signal/pumpdump/trade.go",
       "line": 264,
       "unit": "data.UnitSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:activity (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/activity.go",
+          "line": 19
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3891,8 +4470,16 @@
       "file": "signal/pumpdump/trade.go",
       "line": 262,
       "unit": "data.UnitRate",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:activity (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/activity.go",
+          "line": 17
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3903,8 +4490,16 @@
       "file": "signal/pumpdump/trade.go",
       "line": 261,
       "unit": "data.UnitCount",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:activity (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/activity.go",
+          "line": 16
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3927,8 +4522,16 @@
       "file": "signal/pumpdump/trade.go",
       "line": 263,
       "unit": "data.UnitCount",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:activity (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/activity.go",
+          "line": 18
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3939,8 +4542,16 @@
       "file": "signal/pumpdump/trade.go",
       "line": 265,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:activity (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/activity.go",
+          "line": 20
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3949,7 +4560,7 @@
       "metric": "absolute_return",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 126,
+      "line": 127,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -3961,7 +4572,7 @@
       "metric": "advance_count",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 128,
+      "line": 129,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -3973,10 +4584,18 @@
       "metric": "advance_fraction",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 139,
+      "line": 140,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:relative_state (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/relative_state.go",
+          "line": 18
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3985,7 +4604,7 @@
       "metric": "asof_age_seconds",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 198,
+      "line": 199,
       "unit": "data.UnitSecond",
       "consumers": [],
       "dead": true,
@@ -3997,10 +4616,18 @@
       "metric": "breadth",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 149,
+      "line": 150,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:relative_state (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/relative_state.go",
+          "line": 23
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -4009,7 +4636,7 @@
       "metric": "breadth_baseline",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 150,
+      "line": 151,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4021,7 +4648,7 @@
       "metric": "breadth_divergence",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 151,
+      "line": 152,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4033,7 +4660,7 @@
       "metric": "breadth_velocity",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 152,
+      "line": 153,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -4045,9 +4672,16 @@
       "metric": "breadth_zscore",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 153,
+      "line": 154,
       "unit": "data.UnitDimensionless",
       "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:relative_state (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/relative_state.go",
+          "line": 24
+        },
         {
           "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
@@ -4065,7 +4699,7 @@
       "metric": "cohort_horizon_seconds",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 197,
+      "line": 198,
       "unit": "data.UnitSecond",
       "consumers": [],
       "dead": true,
@@ -4077,7 +4711,7 @@
       "metric": "cohort_member_count",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 132,
+      "line": 133,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -4089,7 +4723,7 @@
       "metric": "decline_count",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 129,
+      "line": 130,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -4101,10 +4735,18 @@
       "metric": "decline_fraction",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 140,
+      "line": 141,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:relative_state (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/relative_state.go",
+          "line": 19
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -4113,10 +4755,18 @@
       "metric": "directional_agreement",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 143,
+      "line": 144,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:relative_state (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/relative_state.go",
+          "line": 21
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -4125,9 +4775,16 @@
       "metric": "directional_consensus",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 144,
+      "line": 145,
       "unit": "data.UnitDimensionless",
       "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:relative_state (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/relative_state.go",
+          "line": 22
+        },
         {
           "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
@@ -4145,10 +4802,18 @@
       "metric": "directional_participation",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 142,
+      "line": 143,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:relative_state (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/relative_state.go",
+          "line": 20
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -4157,7 +4822,7 @@
       "metric": "excluded_member_count",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 133,
+      "line": 134,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -4169,7 +4834,7 @@
       "metric": "from_age_seconds",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 199,
+      "line": 200,
       "unit": "data.UnitSecond",
       "consumers": [],
       "dead": true,
@@ -4181,7 +4846,7 @@
       "metric": "largest_absolute_return",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 179,
+      "line": 180,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4193,7 +4858,7 @@
       "metric": "largest_move_excess",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 181,
+      "line": 182,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4205,7 +4870,7 @@
       "metric": "largest_move_mad_excess",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 182,
+      "line": 183,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4217,7 +4882,7 @@
       "metric": "largest_move_ratio",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 184,
+      "line": 185,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4229,7 +4894,7 @@
       "metric": "largest_move_ratio_baseline",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 185,
+      "line": 186,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4241,7 +4906,7 @@
       "metric": "largest_move_ratio_zscore",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 186,
+      "line": 187,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4253,7 +4918,7 @@
       "metric": "largest_move_share",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 187,
+      "line": 188,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4265,7 +4930,7 @@
       "metric": "largest_move_share_baseline",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 188,
+      "line": 189,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4277,7 +4942,7 @@
       "metric": "largest_move_share_zscore",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 189,
+      "line": 190,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4289,7 +4954,7 @@
       "metric": "largest_move_tie_count",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 180,
+      "line": 181,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -4301,7 +4966,7 @@
       "metric": "largest_signed_return",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 183,
+      "line": 184,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4313,7 +4978,7 @@
       "metric": "magnitude_mad",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 177,
+      "line": 178,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4325,7 +4990,7 @@
       "metric": "max_asof_age_seconds",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 195,
+      "line": 196,
       "unit": "data.UnitSecond",
       "consumers": [],
       "dead": true,
@@ -4337,7 +5002,7 @@
       "metric": "mean_absolute_return",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 167,
+      "line": 168,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4349,10 +5014,18 @@
       "metric": "median_absolute_return",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 161,
+      "line": 162,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:relative_state (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/relative_state.go",
+          "line": 26
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -4361,7 +5034,7 @@
       "metric": "median_absolute_return_baseline",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 162,
+      "line": 163,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4373,7 +5046,7 @@
       "metric": "median_absolute_return_ratio",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 163,
+      "line": 164,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4385,7 +5058,7 @@
       "metric": "median_absolute_return_velocity",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 164,
+      "line": 165,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -4397,10 +5070,18 @@
       "metric": "median_absolute_return_zscore",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 165,
+      "line": 166,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:relative_state (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/relative_state.go",
+          "line": 27
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -4409,7 +5090,7 @@
       "metric": "median_asof_age_seconds",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 194,
+      "line": 195,
       "unit": "data.UnitSecond",
       "consumers": [],
       "dead": true,
@@ -4421,7 +5102,7 @@
       "metric": "median_from_age_seconds",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 196,
+      "line": 197,
       "unit": "data.UnitSecond",
       "consumers": [],
       "dead": true,
@@ -4433,10 +5114,18 @@
       "metric": "median_return",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 155,
+      "line": 156,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:relative_state (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/relative_state.go",
+          "line": 25
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -4445,7 +5134,7 @@
       "metric": "median_return_baseline",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 156,
+      "line": 157,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4457,7 +5146,7 @@
       "metric": "median_return_divergence",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 157,
+      "line": 158,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4469,7 +5158,7 @@
       "metric": "median_return_velocity",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 158,
+      "line": 159,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -4481,7 +5170,7 @@
       "metric": "median_return_zscore",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 159,
+      "line": 160,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4493,7 +5182,7 @@
       "metric": "opposite_direction_peer_count",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 136,
+      "line": 137,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -4505,7 +5194,7 @@
       "metric": "opposite_direction_peer_fraction",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 146,
+      "line": 147,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4517,7 +5206,7 @@
       "metric": "peer_magnitude_mad",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 192,
+      "line": 193,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4529,7 +5218,7 @@
       "metric": "peer_median_absolute_return",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 191,
+      "line": 192,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4541,10 +5230,18 @@
       "metric": "return",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 125,
+      "line": 126,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:relative_state (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/relative_state.go",
+          "line": 17
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -4553,7 +5250,7 @@
       "metric": "return_dispersion_baseline",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 171,
+      "line": 172,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4565,7 +5262,7 @@
       "metric": "return_dispersion_ratio",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 172,
+      "line": 173,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4577,7 +5274,7 @@
       "metric": "return_dispersion_velocity",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 173,
+      "line": 174,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -4589,7 +5286,7 @@
       "metric": "return_dispersion_zscore",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 174,
+      "line": 175,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4601,10 +5298,18 @@
       "metric": "return_interquartile_range",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 169,
+      "line": 170,
       "unit": "data.UnitDimensionless",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:relative_state (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/relative_state.go",
+          "line": 28
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -4613,7 +5318,7 @@
       "metric": "return_mad",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 176,
+      "line": 177,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4625,7 +5330,7 @@
       "metric": "rms_return",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 168,
+      "line": 169,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4637,7 +5342,7 @@
       "metric": "same_direction_peer_count",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 135,
+      "line": 136,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -4649,7 +5354,7 @@
       "metric": "same_direction_peer_fraction",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 145,
+      "line": 146,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4661,7 +5366,7 @@
       "metric": "unchanged_count",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 130,
+      "line": 131,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -4673,7 +5378,7 @@
       "metric": "unchanged_fraction",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 141,
+      "line": 142,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4685,7 +5390,7 @@
       "metric": "valid_member_count",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 131,
+      "line": 132,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -4697,7 +5402,7 @@
       "metric": "zero_return_peer_count",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 137,
+      "line": 138,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -4709,7 +5414,7 @@
       "metric": "zero_return_peer_fraction",
       "package": "github.com/theapemachine/symm/signal/sentiment",
       "file": "signal/sentiment/ticker.go",
-      "line": 147,
+      "line": 148,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4747,7 +5452,7 @@
       "metric": "bracket_trade_quantity",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 227,
+      "line": 231,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -4760,7 +5465,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 238,
+      "line": 242,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4773,7 +5478,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 237,
+      "line": 241,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4786,7 +5491,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 240,
+      "line": 244,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4799,7 +5504,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 239,
+      "line": 243,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4812,7 +5517,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 244,
+      "line": 248,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -4825,7 +5530,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 243,
+      "line": 247,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -4838,28 +5543,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 242,
-      "unit": "data.UnitDimensionless",
-      "consumers": [
-        {
-          "kind": "catalog",
-          "consumer": "graph.Solver (causal-influence catalog)",
-          "package": "github.com/theapemachine/symm/strategy",
-          "file": "strategy/defaults.go",
-          "line": 65
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "toxicity/fill_fraction_zscore:bid",
-      "source": "toxicity",
-      "metric": "fill_fraction_zscore",
-      "side": "bid",
-      "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 241,
+      "line": 246,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -4874,13 +5558,34 @@
       "kernelOnly": false
     },
     {
+      "id": "toxicity/fill_fraction_zscore:bid",
+      "source": "toxicity",
+      "metric": "fill_fraction_zscore",
+      "side": "bid",
+      "package": "github.com/theapemachine/symm/signal/toxicity",
+      "file": "signal/toxicity/trade.go",
+      "line": 245,
+      "unit": "data.UnitDimensionless",
+      "consumers": [
+        {
+          "kind": "catalog",
+          "consumer": "graph.Solver (causal-influence catalog)",
+          "package": "github.com/theapemachine/symm/strategy",
+          "file": "strategy/defaults.go",
+          "line": 63
+        }
+      ],
+      "dead": false,
+      "kernelOnly": false
+    },
+    {
       "id": "toxicity/matched_touch_trade_quantity:ask",
       "source": "toxicity",
       "metric": "matched_touch_trade_quantity",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 229,
+      "line": 233,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -4893,7 +5598,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 228,
+      "line": 232,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -5200,7 +5905,7 @@
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
-          "line": 66
+          "line": 65
         }
       ],
       "dead": false,
@@ -5252,7 +5957,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 233,
+      "line": 237,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -5265,7 +5970,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 232,
+      "line": 236,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -5278,7 +5983,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 231,
+      "line": 235,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -5291,7 +5996,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 230,
+      "line": 234,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -5304,7 +6009,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 235,
+      "line": 239,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -5317,7 +6022,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
       "file": "signal/toxicity/trade.go",
-      "line": 234,
+      "line": 238,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -5494,7 +6199,7 @@
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
-          "line": 63
+          "line": 62
         }
       ],
       "dead": false,
@@ -5515,7 +6220,7 @@
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
-          "line": 62
+          "line": 61
         }
       ],
       "dead": false,
@@ -5523,6 +6228,109 @@
     }
   ],
   "consumers": [
+    {
+      "consumer": "advisor:activity (github.com/theapemachine/symm/logic/advisor)",
+      "kind": "bound",
+      "package": "github.com/theapemachine/symm/logic/advisor",
+      "file": "logic/advisor/activity.go",
+      "line": 16,
+      "targets": [
+        "pumpdump/midpoint_log_return",
+        "pumpdump/midpoint_return_rate",
+        "pumpdump/midpoint_return_zscore",
+        "pumpdump/notional_rate",
+        "pumpdump/notional_rate_velocity",
+        "pumpdump/notional_rate_zscore",
+        "pumpdump/trade_rate",
+        "pumpdump/volume_bar_duration",
+        "pumpdump/volume_bar_notional",
+        "pumpdump/volume_bar_quantity",
+        "pumpdump/volume_bar_trade_count",
+        "pumpdump/volume_rate"
+      ]
+    },
+    {
+      "consumer": "advisor:arrival (github.com/theapemachine/symm/logic/advisor)",
+      "kind": "bound",
+      "package": "github.com/theapemachine/symm/logic/advisor",
+      "file": "logic/advisor/arrival.go",
+      "line": 17,
+      "targets": [
+        "hawkes/arrival_rate",
+        "hawkes/arrival_rate:buy",
+        "hawkes/arrival_rate:sell",
+        "hawkes/background_rate",
+        "hawkes/background_rate:buy",
+        "hawkes/background_rate:sell",
+        "hawkes/conditional_intensity",
+        "hawkes/conditional_intensity:buy",
+        "hawkes/conditional_intensity:sell",
+        "hawkes/excitation_fraction:buy",
+        "hawkes/excitation_fraction:sell"
+      ]
+    },
+    {
+      "consumer": "advisor:arrival_quality (github.com/theapemachine/symm/logic/advisor)",
+      "kind": "bound",
+      "package": "github.com/theapemachine/symm/logic/advisor",
+      "file": "logic/advisor/arrival_quality.go",
+      "line": 21,
+      "targets": [
+        "hawkes/branching_spectral_radius",
+        "hawkes/compensator:buy",
+        "hawkes/compensator:sell",
+        "hawkes/expected_descendants_from_buy",
+        "hawkes/expected_descendants_from_sell",
+        "hawkes/log_likelihood_gain_per_event_vs_poisson",
+        "hawkes/log_likelihood_gain_per_event_vs_self_only",
+        "hawkes/log_likelihood_gain_vs_poisson",
+        "hawkes/log_likelihood_gain_vs_self_only",
+        "hawkes/standardized_innovation:buy",
+        "hawkes/standardized_innovation:sell"
+      ]
+    },
+    {
+      "consumer": "advisor:coordination (github.com/theapemachine/symm/logic/advisor)",
+      "kind": "bound",
+      "package": "github.com/theapemachine/symm/logic/advisor",
+      "file": "logic/advisor/coordination.go",
+      "line": 17,
+      "targets": [
+        "correlation/correlation_divergence",
+        "correlation/correlation_zscore",
+        "correlation/relative_return_energy",
+        "correlation/signed_correlation",
+        "leadlag/absolute_correlation_gain",
+        "leadlag/best_lag_correlation",
+        "leadlag/best_lag_correlation_zscore",
+        "leadlag/best_lag_seconds",
+        "leadlag/contemporaneous_correlation",
+        "leadlag/correlation_gain_zscore",
+        "leadlag/lag_velocity",
+        "leadlag/lag_zscore"
+      ]
+    },
+    {
+      "consumer": "advisor:coordination_support (github.com/theapemachine/symm/logic/advisor)",
+      "kind": "bound",
+      "package": "github.com/theapemachine/symm/logic/advisor",
+      "file": "logic/advisor/coordination_support.go",
+      "line": 17,
+      "targets": [
+        "correlation/correlation_p_value",
+        "correlation/correlation_standard_error_fisher",
+        "correlation/effective_sample_count",
+        "correlation/overlap_pair_count",
+        "leadlag/correlation_p_value",
+        "leadlag/effective_sample_count",
+        "leadlag/lag_peak_curvature",
+        "leadlag/lag_peak_prominence",
+        "leadlag/lag_search_resolution_seconds",
+        "leadlag/lag_search_span",
+        "leadlag/search_adjusted_p_value",
+        "leadlag/search_count"
+      ]
+    },
     {
       "consumer": "advisor:decomposition (github.com/theapemachine/symm/logic/advisor)",
       "kind": "bound",
@@ -5535,18 +6343,60 @@
       ]
     },
     {
+      "consumer": "advisor:derivatives_advisor (github.com/theapemachine/symm/logic/advisor)",
+      "kind": "bound",
+      "package": "github.com/theapemachine/symm/logic/advisor",
+      "file": "logic/advisor/derivatives_advisor.go",
+      "line": 16,
+      "targets": [
+        "derivatives/basis",
+        "derivatives/basis_rate",
+        "derivatives/basis_zscore",
+        "derivatives/gross_liquidation_notional",
+        "derivatives/liquidation_share",
+        "derivatives/net_liquidation_notional",
+        "derivatives/open_interest",
+        "derivatives/open_interest_growth_rate",
+        "derivatives/open_interest_growth_velocity",
+        "derivatives/open_interest_growth_zscore",
+        "derivatives/return_gap",
+        "derivatives/return_gap_zscore"
+      ]
+    },
+    {
       "consumer": "advisor:execution (github.com/theapemachine/symm/logic/advisor)",
       "kind": "bound",
       "package": "github.com/theapemachine/symm/logic/advisor",
       "file": "logic/advisor/execution.go",
-      "line": 66,
+      "line": 81,
       "targets": [
         "cvd/aggressive_notional:buy",
         "cvd/aggressive_notional:sell",
         "cvd/signed_net_fraction_zscore",
+        "hawkes/conditional_intensity:buy",
+        "hawkes/conditional_intensity:sell",
         "liquidity/relative_spread",
         "liquidity/touch_notional:ask",
         "liquidity/touch_notional:bid"
+      ]
+    },
+    {
+      "consumer": "advisor:flow (github.com/theapemachine/symm/logic/advisor)",
+      "kind": "bound",
+      "package": "github.com/theapemachine/symm/logic/advisor",
+      "file": "logic/advisor/flow.go",
+      "line": 23,
+      "targets": [
+        "cvd/flow_aligned_midpoint_return",
+        "cvd/gross_notional_rate_zscore",
+        "cvd/midpoint_response_per_net_notional",
+        "cvd/net_notional_rate",
+        "cvd/signed_net_fraction",
+        "cvd/signed_net_fraction_zscore",
+        "depthflow/book_imbalance",
+        "depthflow/book_imbalance_zscore",
+        "depthflow/book_turnover_rate",
+        "depthflow/flow_activity_imbalance"
       ]
     },
     {
@@ -5567,11 +6417,104 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/logic/advisor",
       "file": "logic/advisor/liquidity.go",
-      "line": 19,
+      "line": 18,
       "targets": [
-        "depthflow/book_imbalance",
+        "liquidity/depth_ratio:ask",
+        "liquidity/depth_ratio:bid",
         "liquidity/relative_spread",
-        "liquidity/touch_notional_imbalance"
+        "liquidity/spread_ratio",
+        "liquidity/touch_notional:ask",
+        "liquidity/touch_notional:bid",
+        "liquidity/touch_notional_imbalance",
+        "liquidity/two_sided_touch_notional"
+      ]
+    },
+    {
+      "consumer": "advisor:liquidity_dynamics (github.com/theapemachine/symm/logic/advisor)",
+      "kind": "bound",
+      "package": "github.com/theapemachine/symm/logic/advisor",
+      "file": "logic/advisor/liquidity_dynamics.go",
+      "line": 17,
+      "targets": [
+        "liquidity/depth_divergence:ask",
+        "liquidity/depth_divergence:bid",
+        "liquidity/depth_zscore:ask",
+        "liquidity/depth_zscore:bid",
+        "liquidity/divergence_velocity:ask",
+        "liquidity/divergence_velocity:bid",
+        "liquidity/relative_spread_baseline",
+        "liquidity/spread_divergence",
+        "liquidity/spread_divergence_velocity",
+        "liquidity/spread_zscore",
+        "liquidity/touch_notional_baseline:ask",
+        "liquidity/touch_notional_baseline:bid"
+      ]
+    },
+    {
+      "consumer": "advisor:morphology (github.com/theapemachine/symm/logic/advisor)",
+      "kind": "bound",
+      "package": "github.com/theapemachine/symm/logic/advisor",
+      "file": "logic/advisor/morphology.go",
+      "line": 14,
+      "targets": [
+        "morphology/concentration:ask",
+        "morphology/concentration:bid",
+        "morphology/entropy:ask",
+        "morphology/entropy:bid"
+      ]
+    },
+    {
+      "consumer": "advisor:morphology_dynamics (github.com/theapemachine/symm/logic/advisor)",
+      "kind": "bound",
+      "package": "github.com/theapemachine/symm/logic/advisor",
+      "file": "logic/advisor/morphology_dynamics.go",
+      "line": 18,
+      "targets": [
+        "morphology/book_shape_distance",
+        "morphology/book_shape_ks",
+        "morphology/morphology_change"
+      ]
+    },
+    {
+      "consumer": "advisor:order_disposition (github.com/theapemachine/symm/logic/advisor)",
+      "kind": "bound",
+      "package": "github.com/theapemachine/symm/logic/advisor",
+      "file": "logic/advisor/order_disposition.go",
+      "line": 22,
+      "targets": [
+        "toxicity/net_replenishment_fraction:ask",
+        "toxicity/net_replenishment_fraction:bid",
+        "toxicity/net_withdrawal_fraction:ask",
+        "toxicity/net_withdrawal_fraction:bid",
+        "toxicity/retreat_fraction:ask",
+        "toxicity/retreat_fraction:bid",
+        "toxicity/retreat_fraction_zscore:ask",
+        "toxicity/retreat_fraction_zscore:bid",
+        "toxicity/touch_fill_fraction:ask",
+        "toxicity/touch_fill_fraction:bid",
+        "toxicity/withdrawal_fraction_zscore:ask",
+        "toxicity/withdrawal_fraction_zscore:bid"
+      ]
+    },
+    {
+      "consumer": "advisor:relative_state (github.com/theapemachine/symm/logic/advisor)",
+      "kind": "bound",
+      "package": "github.com/theapemachine/symm/logic/advisor",
+      "file": "logic/advisor/relative_state.go",
+      "line": 17,
+      "targets": [
+        "sentiment/advance_fraction",
+        "sentiment/breadth",
+        "sentiment/breadth_zscore",
+        "sentiment/decline_fraction",
+        "sentiment/directional_agreement",
+        "sentiment/directional_consensus",
+        "sentiment/directional_participation",
+        "sentiment/median_absolute_return",
+        "sentiment/median_absolute_return_zscore",
+        "sentiment/median_return",
+        "sentiment/return",
+        "sentiment/return_interquartile_range"
       ]
     },
     {
@@ -5603,7 +6546,6 @@
         "liquidity/relative_spread",
         "liquidity/spread_zscore",
         "liquidity/touch_notional_imbalance",
-        "pumpdump/relative_spread",
         "sentiment/breadth_zscore",
         "sentiment/directional_consensus",
         "toxicity/fill_fraction_zscore:ask",
@@ -5616,12 +6558,12 @@
   ],
   "unresolved": null,
   "summary": {
-    "totalProducers": 422,
-    "deadProducers": 390,
-    "referencedProducers": 32,
+    "totalProducers": 424,
+    "deadProducers": 320,
+    "referencedProducers": 104,
     "kernelOnlyProducers": 0,
-    "boundConsumerEdges": 15,
-    "catalogConsumerEdges": 30,
+    "boundConsumerEdges": 145,
+    "catalogConsumerEdges": 29,
     "kernelConsumerEdges": 0,
     "genericConsumerEdges": 0,
     "unresolved": 0

@@ -32,6 +32,7 @@ type Recovery struct {
 	recorder   *audit.Recorder
 	store      *PositionStore
 	positions  *sync.Map
+	perspective PerspectiveReader
 }
 
 /*
@@ -46,19 +47,21 @@ func NewRecovery(
 	recorder *audit.Recorder,
 	store *PositionStore,
 	positions *sync.Map,
+	perspective PerspectiveReader,
 ) *Recovery {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Recovery{
-		ctx:        ctx,
-		cancel:     cancel,
-		api:        api,
-		instrument: instrument,
-		price:      price,
-		balance:    balance,
-		recorder:   recorder,
-		store:      store,
-		positions:  positions,
+		ctx:         ctx,
+		cancel:      cancel,
+		api:         api,
+		instrument:  instrument,
+		price:       price,
+		balance:     balance,
+		recorder:    recorder,
+		store:       store,
+		positions:   positions,
+		perspective: perspective,
 	}
 }
 
@@ -527,6 +530,7 @@ func (recovery *Recovery) recoveredPosition(
 			Mark:             stoploss.Mark,
 			Stoploss:         stoploss,
 		},
+		recovery.perspective,
 	)
 
 	position.setStatus(types.OPEN)

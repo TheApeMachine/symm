@@ -2,10 +2,12 @@ package manifold
 
 import (
 	"context"
+	"math"
 	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
@@ -38,6 +40,13 @@ type Solver struct {
 	physics       *sensorium.Manifold
 	ObserveModule func(string, time.Duration)
 
+	// forcing retains the latest causally-available Hawkes excitation fraction
+	// per symbol. A Trade event records it; the next Level3 event lifts the
+	// matching side's resting-order energy above the unit baseline. It is
+	// guarded by mu (shared with advance) so concurrent Trade and Level3 rings
+	// never race on the same symbol's forcing.
+	forcing map[string]forcingState
+
 	// fieldMomRho/fieldEnergy/fieldWaveReal/fieldWaveImag are Step's private
 	// working buffers for PackFields, reused across advances so gathering the
 	// grid fields does not itself allocate; State.MomRho etc. is always a
@@ -46,6 +55,16 @@ type Solver struct {
 	fieldEnergy   []float32
 	fieldWaveReal []float32
 	fieldWaveImag []float32
+}
+
+/*
+forcingState is one symbol's retained Hawkes excitation fractions above the
+unit oscillator baseline: buy excitation lifts ask-side resting orders, sell
+excitation lifts bid-side resting orders.
+*/
+type forcingState struct {
+	buyExcitation  float32
+	sellExcitation float32
 }
 
 func NewSolver(ctx context.Context) *Solver {
@@ -58,6 +77,7 @@ func NewSolver(ctx context.Context) *Solver {
 		cancel:  cancel,
 		status:  runtime.NewStatus(),
 		dataset: dataset,
+		forcing: make(map[string]forcingState),
 		physics: sensorium.NewManifold(
 			system.Cfg.Manifold.Grid.X,
 			system.Cfg.Manifold.Grid.Y,
@@ -82,17 +102,102 @@ func (solver *Solver) Name() string { return "manifold" }
 func (solver *Solver) Error() error { return solver.err }
 
 /*
-Step projects one Level3 message into a particle batch and advances the field
-once. Any other envelope is a no-op.
+Step dispatches on the envelope kind:
+
+  - EnvelopeTrade: if envelope.Hawkes carries valid excitation fractions, record
+    them as the symbol's forcing state. No physics field advance and no
+    envelope.Manifold emission happen here — the trade event only updates the
+    resident forcing, never steps the domain.
+  - EnvelopeLevel3: project the message's orders into a batch, loading the
+    latest causally-available forcing into the resting-order energy, and
+    advance the field once.
+  - Any other kind is a no-op.
 */
 func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
-	if envelope.TypeID != types.EnvelopeLevel3 {
+	if envelope == nil {
 		return envelope
 	}
 
-	envelope.Manifold = solver.advance(envelope.Level3Data)
+	switch envelope.TypeID {
+	case types.EnvelopeTrade:
+		symbol := ""
+
+		if envelope.Hawkes != nil {
+			symbol = envelope.Hawkes.Label
+		}
+
+		if symbol == "" {
+			symbol = envelope.TradeData.Symbol
+		}
+
+		solver.recordForcing(symbol, envelope.Hawkes)
+
+		return envelope
+
+	case types.EnvelopeLevel3:
+		envelope.Manifold = solver.advance(envelope.Level3Data)
+
+		return envelope
+	}
 
 	return envelope
+}
+
+/*
+recordForcing stores the symbol's latest Hawkes excitation fractions under the
+solver mutex. A non-finite or invalid fraction is rejected rather than silently
+poisoning resident forcing state. Trade events never advance the field.
+*/
+func (solver *Solver) recordForcing(symbol string, hawkes *data.Measurement[float64]) {
+	if hawkes == nil || hawkes.Err != nil || symbol == "" {
+		return
+	}
+
+	buyMetric, buyFound := hawkes.Metrics["excitation_fraction:buy"]
+	sellMetric, sellFound := hawkes.Metrics["excitation_fraction:sell"]
+
+	if !buyFound && !sellFound {
+		return
+	}
+
+	buy := float32(0)
+	sell := float32(0)
+
+	if buyFound {
+		if !isFiniteFloat(buyMetric.Raw) || buyMetric.Raw < 0 {
+			return
+		}
+		buy = float32(buyMetric.Raw)
+	}
+
+	if sellFound {
+		if !isFiniteFloat(sellMetric.Raw) || sellMetric.Raw < 0 {
+			return
+		}
+		sell = float32(sellMetric.Raw)
+	}
+
+	solver.mu.Lock()
+	defer solver.mu.Unlock()
+
+	solver.forcing[symbol] = forcingState{buyExcitation: buy, sellExcitation: sell}
+}
+
+/*
+latestForcing returns a symbol's retained forcing state (or the zero-value
+unit baseline when none has been observed yet). It is called only while the
+solver mutex is held by advance.
+*/
+func (solver *Solver) latestForcing(symbol string) forcingState {
+	if solver.forcing == nil {
+		return forcingState{}
+	}
+
+	return solver.forcing[symbol]
+}
+
+func isFiniteFloat(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 /*
@@ -114,7 +219,9 @@ func (solver *Solver) advance(message kraken.Level3Data) *State {
 		}
 	}()
 
-	batch := solver.project(message)
+	forcing := solver.latestForcing(message.Symbol)
+
+	batch := solver.project(message, forcing)
 
 	if batch == nil || batch.N == 0 {
 		return nil
@@ -176,7 +283,7 @@ project folds one Level3 message's orders into a single State batch. Entries
 are packed in arrival order with no sort; the batch is sized exactly to the
 message so one message costs one forward pass and nothing is retained.
 */
-func (solver *Solver) project(message kraken.Level3Data) *sensorium.State {
+func (solver *Solver) project(message kraken.Level3Data, forcing forcingState) *sensorium.State {
 	count := len(message.Bids) + len(message.Asks)
 
 	if count == 0 {
@@ -203,7 +310,7 @@ func (solver *Solver) project(message kraken.Level3Data) *sensorium.State {
 
 	index := 0
 
-	for state := range solver.dataset.Step(message) {
+	for state := range solver.dataset.Step(message, forcing) {
 		if state == nil || state.N != 1 {
 			sensorium.StatePool.Put(state)
 			continue

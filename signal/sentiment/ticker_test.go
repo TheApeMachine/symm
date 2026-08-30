@@ -94,5 +94,31 @@ func TestTickerStep(t *testing.T) {
 			So(measurement.Metrics["breadth_divergence"].Raw, ShouldNotEqual, 0.0)
 			So(measurement.Metrics["median_return_baseline"].Raw, ShouldNotEqual, 0.0)
 		})
+
+		Convey("the first cut reports no SNR, the breadth estimator having no history", func() {
+			measurement := entity.Step(ticker("AAA/USD", 100, time.Unix(1_700_000_000, 0)))
+
+			So(measurement, ShouldNotBeNil)
+			So(measurement.SNRDefined, ShouldBeFalse)
+		})
+
+		Convey("a settled breadth estimator yields a defined SNR", func() {
+			// Move the cohort's direction from cut to cut so breadth actually
+			// varies, which is what gives its estimator a noise model to report.
+			for step := range 12 {
+				at := time.Unix(1_700_000_000+int64(step), 0)
+				drift := float64(step % 3)
+
+				entity.Step(ticker("AAA/USD", 100+drift, at))
+				entity.Step(ticker("BBB/USD", 200-drift, at))
+			}
+
+			measurement := entity.Step(ticker("AAA/USD", 140, time.Unix(1_700_000_012, 0)))
+
+			So(measurement, ShouldNotBeNil)
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.SNRDefined, ShouldBeTrue)
+			So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)
+		})
 	})
 }

@@ -14,7 +14,6 @@ import { Icon } from "#/components/ui/icon";
 import { Key } from "#/components/ui/key";
 import { Toolbar } from "#/components/ui/toolbar";
 import { Typography } from "#/components/ui/typography";
-import { BacktestControls } from "./backtest-controls";
 
 const SymmLogo = () => (
 	<svg
@@ -77,7 +76,6 @@ export const TerminalTopBar = () => {
 			<Count />
 
 			<Toolbar.Spacer />
-			<BacktestControls />
 
 			<Toolbar.Group className="gap-6">
 				<Button

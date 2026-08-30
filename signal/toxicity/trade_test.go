@@ -7,6 +7,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func trade(symbol string, side string, price float64, qty float64, at time.Time) kraken.TradeData {
@@ -53,6 +54,31 @@ func TestTradeStep(t *testing.T) {
 			So(measurement.Metrics["touch_fill_rate:bid"].Raw, ShouldAlmostEqual, 5.0, 1e-12)
 			So(measurement.Metrics["fill_fraction_baseline:bid"].Raw, ShouldNotEqual, 0.0)
 			So(measurement.Metrics["fill_fraction_divergence:bid"].Raw, ShouldNotEqual, 0.0)
+		})
+
+		Convey("the first trade reports no SNR, its estimator having no baseline yet", func() {
+			measurement := entity.Step(trade("BTC/USD", "sell", 100, 3, time.Unix(1_700_000_001, 0)), bidPrice, askPrice, bidQty, askQty)
+
+			So(measurement, ShouldNotBeNil)
+			So(measurement.SNRDefined, ShouldBeFalse)
+		})
+
+		Convey("a varying fill fraction yields a defined SNR once the estimator settles", func() {
+			var measurement *data.Measurement[float64]
+
+			// Vary the traded quantity so the bid fill fraction actually moves,
+			// which is what gives its estimator a noise model to report.
+			for step := range 12 {
+				at := time.Unix(1_700_000_001+int64(step), 0)
+				quantity := 2.0 + float64(step%3)
+
+				measurement = entity.Step(trade("BTC/USD", "sell", 100, quantity, at), bidPrice, askPrice, bidQty, askQty)
+			}
+
+			So(measurement, ShouldNotBeNil)
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.SNRDefined, ShouldBeTrue)
+			So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)
 		})
 
 		Convey("a buy away from the ask touch does not match", func() {

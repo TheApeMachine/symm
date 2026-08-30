@@ -28,8 +28,8 @@ const RouteComponent = () => {
 					className="h-full min-h-0 min-w-0 flex-1 grid-cols-[282px_minmax(360px,1fr)_332px]"
 				>
 					<Section
-						fit="content"
-						className="min-h-0 overflow-auto border-(--line) border-r"
+						fit="pane"
+						className="min-h-0 border-(--line) border-r"
 					>
 						<Section.Header
 							sticky

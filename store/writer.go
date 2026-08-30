@@ -1,6 +1,7 @@
 package store
 
 import (
+	"sync"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -18,6 +19,9 @@ per-stream epoch/sequence stays distinct.
 type Writer struct {
 	repository Repository
 	sequencer  *hindsight.Sequencer
+
+	mu      sync.Mutex
+	streams map[string][]hindsight.Stream
 }
 
 /*
@@ -37,6 +41,7 @@ func NewWriter(repository Repository, sequencer *hindsight.Sequencer) (*Writer, 
 	return &Writer{
 		repository: repository,
 		sequencer:  sequencer,
+		streams:    make(map[string][]hindsight.Stream),
 	}, nil
 }
 
@@ -59,6 +64,12 @@ func (writer *Writer) Capture(
 	// The stream identity comes from the endpoint kind; the writer derives the
 	// stable stream name once so minting and persistence agree.
 	stream := writer.streamFor(endpoint, kind)
+
+	// Track the stream under its endpoint so a reconnect can bump every epoch
+	// the endpoint carries, without the caller enumerating kinds.
+	writer.mu.Lock()
+	writer.streams[endpoint] = appendUnique(writer.streams[endpoint], stream)
+	writer.mu.Unlock()
 
 	identity, err := writer.sequencer.Assign(stream)
 
@@ -90,6 +101,42 @@ stable and independent of the endpoint string's exact URL.
 */
 func (writer *Writer) streamFor(endpoint, kind string) hindsight.Stream {
 	return hindsight.Stream(endpoint + ":" + kind)
+}
+
+/*
+Reconnect advances the stream epoch for every stream the writer has seen arrive
+on the given endpoint. It is the Hindsight side of a transport reconnect: a new
+connection span is a new StreamEpoch, so a frame with StreamSequence N before
+the reconnect is distinguishable from frame N after it (§7). The capture sequence
+keeps increasing across the reconnect; only the epoch/stream-sequence reset.
+*/
+func (writer *Writer) Reconnect(endpoint string) {
+	if writer == nil || writer.sequencer == nil || endpoint == "" {
+		return
+	}
+
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+
+	for _, stream := range writer.streams[endpoint] {
+		writer.sequencer.Reconnect(stream)
+	}
+}
+
+/*
+appendUnique appends a stream to a slice only if it is not already present,
+preserving the seed order. Duplicate tracking of the same stream across frames
+is expected (every frame on a stream mints under it), and re-bumping an epoch for
+the same stream twice would be wrong, so the set is deduplicated.
+*/
+func appendUnique(streams []hindsight.Stream, stream hindsight.Stream) []hindsight.Stream {
+	for _, existing := range streams {
+		if existing == stream {
+			return streams
+		}
+	}
+
+	return append(streams, stream)
 }
 
 /*

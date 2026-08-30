@@ -44,6 +44,8 @@ type FuturesLive struct {
 	capture       CaptureSink
 	manifestSink  ManifestSink
 	pendingID     hindsight.CaptureIdentity
+	reconnect     func()
+	connectCount  atomic.Int32
 }
 
 /*
@@ -83,6 +85,20 @@ func NewFutures(
 	}
 
 	return futures
+}
+
+/*
+SetReconnect installs the callback invoked when this futures session's transport
+reconnects (a second or later dial within one process lifetime). It is the single
+seam through which reconnect soft-reboots the subscription universe and advances
+the Hindsight stream epochs.
+*/
+func (futures *FuturesLive) SetReconnect(handler func()) {
+	if futures == nil {
+		return
+	}
+
+	futures.reconnect = handler
 }
 
 func (futures *FuturesLive) Name() string { return "kraken_futures" }
@@ -193,6 +209,13 @@ func (futures *FuturesLive) dialAndServe() error {
 	futures.connMu.Unlock()
 
 	futures.status.Transition(runtime.READY)
+
+	// A second (or later) dial in this process lifetime is a reconnect: fire
+	// the soft-reboot seam so the subscription universe re-issues and the
+	// Hindsight epoch advances, exactly as the spot session does.
+	if futures.connectCount.Add(1) > 1 && futures.reconnect != nil {
+		futures.reconnect()
+	}
 
 	futures.resubscribe()
 

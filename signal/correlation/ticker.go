@@ -405,6 +405,11 @@ func correlationHistoryStage() nmtypes.Primitive {
 		statistic.Baseline(prefixSignedCorrelation),
 		statistic.Velocity(prefixSignedCorrelation),
 		tanhBaselineStage(prefixSignedCorrelation),
+		// signed_correlation is this signal's headline metric, so its Fisher-space
+		// estimator is the one whose departure and noise power become the
+		// measurement's SNR. The residual is measured in Fisher space, where the
+		// dispersion that normalizes it also lives, so the ratio is consistent.
+		statistic.QualityFrom(prefixSignedCorrelation),
 	)
 }
 

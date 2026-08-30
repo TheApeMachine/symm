@@ -13,6 +13,7 @@ const (
 	UnitQuoteCurrency
 	UnitBaseCurrency
 	UnitEventsPerSecond
+	UnitPerSecond
 	UnitInverseSecond
 	UnitNat
 	UnitSecond
@@ -41,6 +42,8 @@ func (unit Unit) String() string {
 		return "base_currency"
 	case UnitEventsPerSecond:
 		return "events_per_second"
+	case UnitPerSecond:
+		return "per_second"
 	case UnitInverseSecond:
 		return "inverse_second"
 	case UnitNat:
@@ -79,9 +82,10 @@ func ParseUnit(name string) Unit {
 	case "events_per_second":
 		return UnitEventsPerSecond
 	case "per_second":
-		// The data-layer spelling of an arrival/rate unit; events per second
-		// is the natural reading for arrival rates.
-		return UnitEventsPerSecond
+		// The data-layer spelling of a generic reciprocal-second rate: a rate
+		// whose numerator is not a unit count of events. It is distinct from
+		// "events_per_second", which names a count of events per unit time.
+		return UnitPerSecond
 	case "inverse_second":
 		return UnitInverseSecond
 	case "nat":

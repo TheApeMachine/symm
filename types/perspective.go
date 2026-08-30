@@ -37,6 +37,39 @@ const (
 	// few-large" activity is read from two facts rather than one conflated
 	// throughput scalar.
 	KindDecomposition
+	// KindLiquidityDynamics names the Liquidity signal's own causal historical
+	// state: depth/spread baselines, divergences, z-scores and velocities.
+	KindLiquidityDynamics
+	// KindFlow names the executed-flow / price-response / displayed-structure
+	// composition: CVD flow facts beside DepthFlow book structure.
+	KindFlow
+	// KindOrderDisposition names the Toxicity disposition composition: fill,
+	// withdrawal, replenishment, and retreat as distinguishable mechanisms.
+	KindOrderDisposition
+	// KindArrival names the Hawkes arrival-process state: empirical rates,
+	// conditional intensities, background rates and excitation fractions.
+	KindArrival
+	// KindArrivalQuality names the Hawkes model-behaviour / epistemic context:
+	// branching radius, likelihood gains, innovations, expected descendants.
+	KindArrivalQuality
+	// KindMorphology names the static dimensionless book-shape composition.
+	KindMorphology
+	// KindMorphologyDynamics names Morphology's causal historical context:
+	// baseline, departure z-score and velocity of its shape-change facts.
+	KindMorphologyDynamics
+	// KindCoordination names the cohort price-path coupling composition:
+	// correlation and lead-lag geometry.
+	KindCoordination
+	// KindCoordinationSupport names the inference/support facts behind a
+	// coordination reading: sample counts, p-values, search provenance.
+	KindCoordinationSupport
+	// KindRelativeState names the cross-sectional price-state composition
+	// (breadth, dispersion, directional consensus).
+	KindRelativeState
+	// KindActivity names the volume-clock activity composition.
+	KindActivity
+	// KindDerivatives names the leverage/basis/OI/liquidation composition.
+	KindDerivatives
 )
 
 /*
@@ -55,6 +88,30 @@ func (kind PerspectiveKind) String() string {
 		return "execution_context"
 	case KindDecomposition:
 		return "decomposition"
+	case KindLiquidityDynamics:
+		return "liquidity_dynamics"
+	case KindFlow:
+		return "flow"
+	case KindOrderDisposition:
+		return "order_disposition"
+	case KindArrival:
+		return "arrival"
+	case KindArrivalQuality:
+		return "arrival_quality"
+	case KindMorphology:
+		return "morphology"
+	case KindMorphologyDynamics:
+		return "morphology_dynamics"
+	case KindCoordination:
+		return "coordination"
+	case KindCoordinationSupport:
+		return "coordination_support"
+	case KindRelativeState:
+		return "relative_state"
+	case KindActivity:
+		return "activity"
+	case KindDerivatives:
+		return "derivatives"
 	default:
 		return "unknown"
 	}
