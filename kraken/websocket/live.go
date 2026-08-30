@@ -77,8 +77,8 @@ type Live struct {
 	paper          *Paper
 	model          string
 	capture        CaptureSink
+	manifestSink   ManifestSink
 	captureName    string
-	sequencer      *hindsight.Sequencer
 	failureMu      sync.RWMutex
 	failure        func(error)
 	observer       atomic.Pointer[func(string, time.Duration)]
@@ -99,41 +99,6 @@ func (live *Live) Capture() CaptureSink {
 	}
 
 	return live.capture
-}
-
-/*
-SetSequencer attaches a Hindsight capture Sequencer to this session. When set,
-every received frame is assigned a stable CaptureIdentity before parsing, and
-every envelope parsed from that frame carries the same identity. The session's
-captureName (public/private/level3) names the Stream in the assigned identity.
-*/
-func (live *Live) SetSequencer(sequencer *hindsight.Sequencer) {
-	if live == nil {
-		return
-	}
-
-	live.sequencer = sequencer
-}
-
-/*
-assignCaptureID mints a CaptureIdentity for one received raw frame, returning
-the zero identity when no sequencer is attached so the ingress path stays a
-no-op for sessions constructed without Hindsight wiring. It is called once per
-frame, before the frame is parsed, so the identity never depends on the parser
-or the eventual persistence backend.
-*/
-func (live *Live) assignCaptureID() hindsight.CaptureIdentity {
-	if live == nil || live.sequencer == nil {
-		return hindsight.CaptureIdentity{}
-	}
-
-	identity, err := live.sequencer.Assign(hindsight.Stream(live.captureName))
-
-	if err != nil {
-		return hindsight.CaptureIdentity{}
-	}
-
-	return identity
 }
 
 /*
@@ -205,6 +170,10 @@ func NewWithClient(
 
 	if len(recorders) == 1 {
 		live.capture = recorders[0]
+
+		if manifestSink, ok := recorders[0].(ManifestSink); ok {
+			live.manifestSink = manifestSink
+		}
 	}
 
 	if err := live.normalizer.Use(live.client.REST); err != nil {
@@ -249,17 +218,15 @@ func NewWithClient(
 			}
 		}
 
-		// Assign the Hindsight capture identity for this raw frame before it
-		// is parsed, so every envelope derived from it carries the exact same
-		// origin regardless of how the parser fans it out.
-		captureID := live.assignCaptureID()
-
 		// Every spot frame — public, private, or level3 — reaches the same
 		// capture sink as the futures stream, so the events store sees the
-		// whole system rather than futures alone. The frame's channel/method
-		// is recorded as its kind instead of a blanket websocket_frame tag.
+		// whole system rather than futures alone. Capture mints the Hindsight
+		// capture identity, persists the raw frame with it, and returns it so
+		// every envelope parsed from this frame carries the exact same origin.
+		var captureID hindsight.CaptureIdentity
+
 		if live.capture != nil {
-			_ = live.capture.Capture(channel, live.client.URL, bytes.Clone(raw), time.Now().UTC())
+			captureID, _ = live.capture.Capture(channel, live.client.URL, bytes.Clone(raw), time.Now().UTC())
 		}
 
 		// An unsubscribe acknowledgement answers the instrument's paced
@@ -320,26 +287,15 @@ func NewWithClient(
 			}
 
 			return
-		case "ticker":
-			for _, tickerData := range out.(*kraken.Ticker).Data {
-				envelope := types.NewEnvelope(types.EnvelopeTicker)
-				envelope.TickerData = tickerData
-				envelope.CaptureID = captureID
+		case "ticker", "trade", "level3":
+			envelopes, manifests := IngestEnvelopes(channel, out, captureID)
+
+			for index, envelope := range envelopes {
 				live.ingress[channel].Push(envelope)
-			}
-		case "trade":
-			for _, tradeData := range out.(*kraken.Trade).Data {
-				envelope := types.NewEnvelope(types.EnvelopeTrade)
-				envelope.TradeData = tradeData
-				envelope.CaptureID = captureID
-				live.ingress[channel].Push(envelope)
-			}
-		case "level3":
-			for _, level3Data := range out.(*kraken.Level3).Data {
-				envelope := types.NewEnvelope(types.EnvelopeLevel3)
-				envelope.Level3Data = level3Data
-				envelope.CaptureID = captureID
-				live.ingress[channel].Push(envelope)
+
+				if live.manifestSink != nil {
+					_ = live.manifestSink.WriteManifest(manifests[index])
+				}
 			}
 		}
 	})
@@ -434,17 +390,31 @@ func (live *Live) captureFrame(kind, endpoint string, payload []byte) error {
 	// The SDK hands back a view into a buffer it reuses for the next frame,
 	// so an asynchronously flushed recorder would write neighbouring frames
 	// concatenated into it. The capture owns its own copy of the exact bytes.
-	return live.capture.Capture(kind, endpoint, bytes.Clone(payload), time.Now().UTC())
+	_, err := live.capture.Capture(kind, endpoint, bytes.Clone(payload), time.Now().UTC())
+
+	return err
 }
 
 /*
 CaptureSink receives one untouched transport payload with its origin kind,
-endpoint, and arrival time. kind identifies the frame's channel/method/feed
-(e.g. "ticker", "trade", "book", "level3", "pong"); endpoint names the stream it
-arrived on. Implementations own persistence; the transport only reports.
+endpoint, and arrival time, and returns the CaptureIdentity it minted for that
+frame. kind identifies the frame's channel/method/feed (e.g. "ticker", "trade",
+"book", "level3", "pong"); endpoint names the stream it arrived on. The returned
+identity is what the caller stamps onto every envelope parsed from the frame.
+Implementations own persistence; the transport only reports.
 */
 type CaptureSink interface {
-	Capture(kind, endpoint string, payload []byte, receivedAt time.Time) error
+	Capture(kind, endpoint string, payload []byte, receivedAt time.Time) (hindsight.CaptureIdentity, error)
+}
+
+/*
+ManifestSink receives one EnvelopeManifest — how a raw frame entered Workspace —
+keyed by its EnvelopeRef. A capture recorder that also implements this interface
+gets the manifests for the envelopes it produced a capture identity for, so raw
+capture and semantic ingress are persisted together and joinable by identity.
+*/
+type ManifestSink interface {
+	WriteManifest(manifest hindsight.EnvelopeManifest) error
 }
 
 func (live *Live) Status() runtime.Stage {

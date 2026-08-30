@@ -2,22 +2,50 @@ package store
 
 import (
 	"time"
+
+	"github.com/theapemachine/symm/hindsight"
 )
 
 /*
 Repository is the common persistence boundary every store-backed component
-writes through. It deliberately exposes the narrowest uniform write surface —
-one entry per raw websocket frame, tagged by its origin kind and endpoint — so
-the storage engine behind it (SQLite today, an S3-compatible object store later)
-can be swapped without any pipeline wiring changing. Implementations own their
-own durability, batching, and backpressure policy; the writer only reports.
+writes through. It exposes a narrow, uniform write surface: one run record and
+one raw frame record (tagged with its Hindsight CaptureIdentity, origin kind,
+and endpoint) per captured external input — so the storage engine behind it
+(SQLite today, an S3-compatible object store later) can be swapped without any
+pipeline wiring changing. Implementations own their own durability, batching,
+and backpressure policy; the writer only reports.
 */
 type Repository interface {
-	// WriteFrame persists one raw transport frame. endpoint names the source
-	// stream (the websocket URL); kind names the frame's channel/method/feed
-	// (e.g. "ticker", "trade", "book", "level3"); payload is the exact bytes
-	// off the wire, unmodified; at is the arrival instant.
+	// WriteRun persists one Run record — the process capture session's
+	// identity and interpretability metadata (§5).
+	WriteRun(run hindsight.Run) error
+
+	// WriteCapture persists one raw transport frame together with the stable
+	// CaptureIdentity assigned to it before parsing. endpoint names the source
+	// stream (the websocket URL); kind names the frame's channel/method/feed;
+	// payload is the exact bytes off the wire, unmodified; at is the arrival
+	// instant. The identity is durable, not transient.
+	WriteCapture(
+		identity hindsight.CaptureIdentity,
+		endpoint, kind string,
+		payload []byte,
+		at time.Time,
+	) error
+
+	// WriteFrame persists one raw transport frame without a Hindsight
+	// identity. It remains for callers that capture bytes before a sequencer
+	// is available; such frames are not traceable with exact provenance.
 	WriteFrame(endpoint, kind string, payload []byte, at time.Time) error
+
+	// WriteManifest persists one EnvelopeManifest — how one raw frame entered
+	// Workspace — keyed by its EnvelopeRef so raw capture and semantic ingress
+	// are joinable by identity.
+	WriteManifest(manifest hindsight.EnvelopeManifest) error
+
+	// WriteWitness persists one ArtifactWitness — the semantic artifact the
+	// running binary actually produced at a Workspace boundary, with its exact
+	// parent and resident-state provenance.
+	WriteWitness(witness hindsight.ArtifactWitness) error
 
 	// Close releases the store's underlying resources.
 	Close() error

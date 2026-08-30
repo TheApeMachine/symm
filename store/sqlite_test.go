@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/hindsight"
 )
 
 func TestNewSQLite(t *testing.T) {
@@ -130,6 +131,74 @@ CREATE TABLE events (
 
 			// New records default to an empty endpoint, not a welded URL.
 			So(endpoint, ShouldEqual, "")
+		})
+	})
+}
+
+func TestSQLiteWriteRunAndCapture(t *testing.T) {
+	Convey("Given an open sqlite engine", t, func() {
+		path := t.TempDir() + "/events.sqlite"
+		engine, err := NewSQLite(path)
+		So(err, ShouldBeNil)
+
+		Reset(func() {
+			_ = engine.Close()
+		})
+
+		Convey("A run record and a captured frame round-trip their identities", func() {
+			run := hindsight.Run{
+				ID:           "run-abc",
+				StartedAt:    time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
+				ConfigDigest: "digest-1",
+			}
+
+			So(engine.WriteRun(run), ShouldBeNil)
+
+			identity := hindsight.CaptureIdentity{
+				Run:            "run-abc",
+				Sequence:       9,
+				Stream:         "wss://example:ticker",
+				StreamEpoch:    2,
+				StreamSequence: 7,
+			}
+
+			So(engine.WriteCapture(identity, "wss://example", "ticker", []byte("payload"), time.Now()), ShouldBeNil)
+
+			var (
+				runID        string
+				configDigest string
+			)
+
+			So(engine.database.QueryRow(
+				"SELECT id, config_digest FROM runs WHERE id = 'run-abc'",
+			).Scan(&runID, &configDigest), ShouldBeNil)
+
+			So(runID, ShouldEqual, "run-abc")
+			So(configDigest, ShouldEqual, "digest-1")
+
+			var (
+				runValue  string
+				seq       uint64
+				stream    string
+				epoch     uint64
+				streamSeq uint64
+			)
+
+			So(engine.database.QueryRow(
+				`SELECT run_id, capture_seq, stream, stream_epoch, stream_seq
+				 FROM events WHERE kind = 'ticker'`,
+			).Scan(&runValue, &seq, &stream, &epoch, &streamSeq), ShouldBeNil)
+
+			So(runValue, ShouldEqual, "run-abc")
+			So(seq, ShouldEqual, uint64(9))
+			So(stream, ShouldEqual, "wss://example:ticker")
+			So(epoch, ShouldEqual, uint64(2))
+			So(streamSeq, ShouldEqual, uint64(7))
+		})
+
+		Convey("WriteCapture rejects an invalid identity", func() {
+			err := engine.WriteCapture(hindsight.CaptureIdentity{}, "wss://example", "ticker", []byte("x"), time.Now())
+			So(err, ShouldNotBeNil)
 		})
 	})
 }

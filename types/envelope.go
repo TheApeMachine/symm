@@ -147,6 +147,11 @@ type Envelope struct {
 	// means the ingress stream was not wired with a capture sequencer.
 	CaptureID hindsight.CaptureIdentity
 
+	// CaptureOrdinal is this envelope's deterministic ordinal within the raw
+	// frame that produced it (§12). A single raw frame may yield zero, one, or
+	// many envelopes; the ordinal disambiguates them in parser order.
+	CaptureOrdinal uint64
+
 	TickerData        kraken.TickerData
 	TradeData         kraken.TradeData
 	Level3Data        kraken.Level3Data

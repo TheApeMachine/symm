@@ -107,6 +107,10 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 		envelope.CVD,
 		envelope.DepthFlow,
 		envelope.Morphology,
+		envelope.Hawkes,
+		envelope.PumpDump,
+		envelope.Toxicity,
+		envelope.Derivatives,
 	}
 
 	for _, measurement := range measurements {

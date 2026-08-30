@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -13,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
@@ -180,8 +183,104 @@ func (node advisorNode) StepBacklog(envelope *types.Envelope, backlog int64) *ty
 	return node.Step(envelope)
 }
 
+/*
+witnessNode is the Hindsight witness boundary of the live pipeline. It observes
+the semantic artifacts the running binary actually produced on an envelope —
+Categories and signal Measurements — and records an ArtifactWitness for each,
+keyed to the exact EnvelopeRef (CaptureIdentity + ordinal) that carried it. The
+witness is historical evidence: what actually ran, not what replay would produce.
+*/
+type witnessNode struct {
+	writer *store.Writer
+}
+
+func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
+	if envelope == nil || node.writer == nil {
+		return envelope
+	}
+
+	if !envelope.CaptureID.Valid() {
+		return envelope
+	}
+
+	ref := hindsight.EnvelopeRef{
+		Origin:  envelope.CaptureID,
+		Ordinal: envelope.CaptureOrdinal,
+	}
+
+	for _, category := range envelope.Categories {
+		node.record(
+			ref,
+			"after-category",
+			"category",
+			string(category.Type),
+			[]hindsight.EnvelopeRef{ref},
+		)
+	}
+
+	measurements := []*data.Measurement[float64]{
+		envelope.CVD,
+		envelope.Hawkes,
+		envelope.DepthFlow,
+		envelope.Morphology,
+		envelope.Liquidity,
+		envelope.PumpDump,
+		envelope.Toxicity,
+		envelope.Derivatives,
+		envelope.Correlation,
+		envelope.LeadLag,
+		envelope.Sentiment,
+	}
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		node.record(
+			ref,
+			"after-signals",
+			"measurement",
+			measurement.ID,
+			[]hindsight.EnvelopeRef{ref},
+		)
+	}
+
+	return envelope
+}
+
+func (node witnessNode) record(
+	ref hindsight.EnvelopeRef,
+	boundary, kind, identity string,
+	parents []hindsight.EnvelopeRef,
+) {
+	if identity == "" {
+		return
+	}
+
+	_ = node.writer.WriteWitness(hindsight.ArtifactWitness{
+		Envelope: ref,
+		Boundary: boundary,
+		Artifact: hindsight.ArtifactID{
+			Kind:     kind,
+			Identity: identity,
+		},
+		ImmediateParents: parents,
+		Payload:          nil,
+	})
+}
+
+func (node witnessNode) StepBacklog(envelope *types.Envelope, backlog int64) *types.Envelope {
+	return node.Step(envelope)
+}
+
 var (
 	cfgFile string
+
+	// processStartedAt is the process start instant the Hindsight Run identity
+	// is anchored to. It is captured once at process start so a run's identity
+	// never shifts as the process runs.
+	processStartedAt = time.Now()
 
 	rootCmd = &cobra.Command{
 		Use:   "symm",
@@ -248,20 +347,52 @@ var (
 
 			defer storageEngine.Close()
 
-			rawCapture := store.NewWriter(storageEngine)
+			// The Hindsight Run identity distinguishes this process capture
+			// session from every other run. It is derived from the process start
+			// instant plus a nonce, so two runs can never share an identity, and
+			// it carries the config digest actually loaded for this run.
+			runID, err := hindsight.NewRunID(processStartedAt)
 
-			// The Hindsight capture Sequencer mints a stable CaptureIdentity
-			// for every raw frame before it is parsed, so each envelope carries
-			// the exact external input that produced it. The Run identity is
-			// the process start instant; one Sequencer serves every stream.
-			captureSequencer, err := hindsight.NewSequencer(hindsight.RunID(
-				filepath.Base(filepath.Dir(dataPath)),
-			))
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: derive run identity",
+					err,
+				))
+			}
+
+			if err := storageEngine.WriteRun(hindsight.RunIdentity{
+				StartedAt:    processStartedAt,
+				ConfigDigest: configDigest(),
+			}.Resolve(runID)); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: persist run identity",
+					err,
+				))
+			}
+
+			// The capture Sequencer mints a stable CaptureIdentity for every
+			// raw frame, and the storage writer persists each frame together
+			// with that identity — minting and persistence are one step, so raw
+			// capture and semantic ingress are joinable by identity, never by
+			// timestamp.
+			captureSequencer, err := hindsight.NewSequencer(runID)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.Internal,
 					"symm: construct capture sequencer",
+					err,
+				))
+			}
+
+			rawCapture, err := store.NewWriter(storageEngine, captureSequencer)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: construct capture writer",
 					err,
 				))
 			}
@@ -284,9 +415,6 @@ var (
 				rawCapture,
 			)
 
-			publicSession.SetSequencer(captureSequencer)
-			privateSession.SetSequencer(captureSequencer)
-
 			api := websocket.NewAPI(
 				cmd.Context(),
 				publicSession,
@@ -294,7 +422,6 @@ var (
 			)
 
 			futures := websocket.NewFutures(cmd.Context(), system.Cfg.WebSocket.Endpoints.Futures, futuresIngress, rawCapture)
-			futures.SetSequencer(captureSequencer)
 			api.SetFutures(futures)
 
 			go func() {
@@ -445,6 +572,7 @@ var (
 							{strategyNode{planner: planner}},
 							{tickNode{thesis: thesis, desk: desk, planner: planner}},
 							{system.NewDiagnostic("ticker.trade")},
+							{witnessNode{writer: rawCapture}},
 							{hub},
 							{system.NewDiagnostic("ticker.hub")},
 						}...,
@@ -467,6 +595,7 @@ var (
 					append(
 						semanticCore("trade", advisors, graphSolver, categorySolver),
 						[][]nmruntime.Node[*types.Envelope]{
+							{witnessNode{writer: rawCapture}},
 							{hub},
 							{system.NewDiagnostic("trade.hub")},
 						}...,
@@ -492,6 +621,7 @@ var (
 					append(
 						semanticCore("level3", advisors, graphSolver, categorySolver),
 						[][]nmruntime.Node[*types.Envelope]{
+							{witnessNode{writer: rawCapture}},
 							{hub},
 							{system.NewDiagnostic("level3.hub")},
 						}...,
@@ -501,22 +631,38 @@ var (
 
 			futuresIngress["ticker"] = nmruntime.NewWorkload(
 				cmd.Context(),
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("futures.ticker.ingress")},
-					{system.NewTraced("futures.ticker.derivatives", derivatives.NewSignal(cmd.Context()))},
-					{hub},
-					{system.NewDiagnostic("futures.ticker.hub")},
-				},
+				append(
+					[][]nmruntime.Node[*types.Envelope]{
+						{system.NewDiagnostic("futures.ticker.ingress")},
+						{system.NewTraced("futures.ticker.derivatives", derivatives.NewSignal(cmd.Context()))},
+					},
+					append(
+						semanticCore("futures.ticker", advisors, graphSolver, categorySolver),
+						[][]nmruntime.Node[*types.Envelope]{
+							{witnessNode{writer: rawCapture}},
+							{hub},
+							{system.NewDiagnostic("futures.ticker.hub")},
+						}...,
+					)...,
+				),
 			)
 
 			futuresIngress["trade"] = nmruntime.NewWorkload(
 				cmd.Context(),
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("futures.trade.ingress")},
-					{system.NewTraced("futures.trade.derivatives", derivatives.NewSignal(cmd.Context()))},
-					{hub},
-					{system.NewDiagnostic("futures.trade.hub")},
-				},
+				append(
+					[][]nmruntime.Node[*types.Envelope]{
+						{system.NewDiagnostic("futures.trade.ingress")},
+						{system.NewTraced("futures.trade.derivatives", derivatives.NewSignal(cmd.Context()))},
+					},
+					append(
+						semanticCore("futures.trade", advisors, graphSolver, categorySolver),
+						[][]nmruntime.Node[*types.Envelope]{
+							{witnessNode{writer: rawCapture}},
+							{hub},
+							{system.NewDiagnostic("futures.trade.hub")},
+						}...,
+					)...,
+				),
 			)
 
 			workspace := nmruntime.NewWorkspace(
@@ -577,6 +723,30 @@ func startPprof() {
 	go func() {
 		errnie.Error(http.ListenAndServe(addr, nil))
 	}()
+}
+
+/*
+configDigest returns a stable digest of the configuration actually loaded for
+this run. It hashes the raw bytes of the config file viper resolved; when no
+file was used (the embedded default), it returns empty. The digest is what the
+Hindsight Run records so replay can distinguish one configuration from another.
+*/
+func configDigest() string {
+	configFile := viper.ConfigFileUsed()
+
+	if configFile == "" {
+		return ""
+	}
+
+	raw, err := os.ReadFile(configFile)
+
+	if err != nil {
+		return ""
+	}
+
+	sum := sha256.Sum256(raw)
+
+	return hex.EncodeToString(sum[:])
 }
 
 func init() {

@@ -42,8 +42,7 @@ type FuturesLive struct {
 	observer      atomic.Pointer[func(string, time.Duration)]
 	ingress       map[string]*runtime.Workload[*types.Envelope]
 	capture       CaptureSink
-	sequencer     *hindsight.Sequencer
-	stream        hindsight.Stream
+	manifestSink  ManifestSink
 	pendingID     hindsight.CaptureIdentity
 }
 
@@ -77,24 +76,13 @@ func NewFutures(
 
 	if len(recorders) == 1 {
 		futures.capture = recorders[0]
-	}
 
-	futures.stream = "futures"
+		if manifestSink, ok := recorders[0].(ManifestSink); ok {
+			futures.manifestSink = manifestSink
+		}
+	}
 
 	return futures
-}
-
-/*
-SetSequencer attaches a Hindsight capture Sequencer to this futures session.
-When set, every received frame is assigned a stable CaptureIdentity before
-parsing, and every envelope parsed from that frame carries the same identity.
-*/
-func (futures *FuturesLive) SetSequencer(sequencer *hindsight.Sequencer) {
-	if futures == nil {
-		return
-	}
-
-	futures.sequencer = sequencer
 }
 
 func (futures *FuturesLive) Name() string { return "kraken_futures" }
@@ -266,14 +254,15 @@ func (futures *FuturesLive) readLoop(conn *gorillawebsocket.Conn, done chan<- er
 			// The reader reuses the payload buffer for the next frame, so the
 			// capture owns its own copy of the exact bytes. The frame's feed
 			// (falling back to its event) is recorded as the kind instead of a
-			// blanket websocket_frame tag, mirroring the spot stream.
-			_ = futures.capture.Capture(frameKind(payload), futures.endpoint, bytes.Clone(payload), time.Now().UTC())
-		}
-
-		// Assign the Hindsight capture identity before DispatchFrame parses
-		// the frame, so every envelope derived from it carries the same origin.
-		if futures.sequencer != nil {
-			if identity, err := futures.sequencer.Assign(futures.stream); err == nil {
+			// blanket websocket_frame tag, mirroring the spot stream. Capture
+			// mints the Hindsight identity, persists the frame with it, and
+			// returns it so envelopes parsed from this frame carry the origin.
+			if identity, captureErr := futures.capture.Capture(
+				frameKind(payload),
+				futures.endpoint,
+				bytes.Clone(payload),
+				time.Now().UTC(),
+			); captureErr == nil {
 				futures.pendingID = identity
 			}
 		}
@@ -349,7 +338,10 @@ func (futures *FuturesLive) dispatchTicker(raw []byte) {
 	envelope := types.NewEnvelope(types.EnvelopeFuturesTicker)
 	envelope.FuturesTickerData = ticker.Data
 	envelope.CaptureID = futures.pendingID
+	envelope.CaptureOrdinal = 0
 	workload.Push(envelope)
+
+	futures.writeManifest("futures.ticker", ticker.Data.Symbol, 0)
 }
 
 func (futures *FuturesLive) dispatchTrades(raw []byte) {
@@ -378,8 +370,31 @@ func (futures *FuturesLive) dispatchTrades(raw []byte) {
 		envelope := types.NewEnvelope(types.EnvelopeFuturesTrade)
 		envelope.FuturesTradeData = trade
 		envelope.CaptureID = futures.pendingID
+		envelope.CaptureOrdinal = uint64(index)
 		workload.Push(envelope)
+
+		futures.writeManifest("futures.trade", trade.Symbol, uint64(index))
 	}
+}
+
+/*
+writeManifest persists the EnvelopeManifest for one futures envelope, keyed by
+the same CaptureIdentity and ordinal the envelope carries.
+*/
+func (futures *FuturesLive) writeManifest(workload, symbol string, ordinal uint64) {
+	if futures.manifestSink == nil {
+		return
+	}
+
+	_ = futures.manifestSink.WriteManifest(hindsight.EnvelopeManifest{
+		Envelope: hindsight.EnvelopeRef{
+			Origin:  futures.pendingID,
+			Ordinal: ordinal,
+		},
+		Workload:   workload,
+		DomainKind: workload,
+		Symbol:     symbol,
+	})
 }
 
 func (futures *FuturesLive) dispatchBook(raw []byte) {

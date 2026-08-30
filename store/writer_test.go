@@ -5,50 +5,111 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/hindsight"
 )
 
 func TestWriterCapture(t *testing.T) {
-	Convey("Given a writer over an in-memory store", t, func() {
-		engine := newRecordingRepository()
-		writer := NewWriter(engine)
+	Convey("Given a writer over a recording repository", t, func() {
+		repository := newRecordingRepository()
+		sequencer, err := hindsight.NewSequencer("run-1")
+		So(err, ShouldBeNil)
 
-		Convey("Capturing a frame writes it under its channel/feed kind with its endpoint", func() {
-			err := writer.Capture("ticker", "wss://example", []byte("raw"), time.Now())
+		writer, err := NewWriter(repository, sequencer)
+		So(err, ShouldBeNil)
+
+		Convey("Capturing a frame mints an identity, persists it, and returns it", func() {
+			identity, err := writer.Capture("ticker", "wss://example", []byte("raw"), time.Now())
 
 			So(err, ShouldBeNil)
-			So(engine.kinds, ShouldResemble, []string{"ticker"})
-			So(engine.endpoints, ShouldResemble, []string{"wss://example"})
+			So(identity.Valid(), ShouldBeTrue)
+			So(repository.captures, ShouldHaveLength, 1)
+			So(repository.captures[0].identity, ShouldResemble, identity)
+			So(repository.captures[0].kind, ShouldEqual, "ticker")
+			So(repository.captures[0].endpoint, ShouldEqual, "wss://example")
 
 			// The payload is the exact bytes off the wire; nothing is prefixed.
-			So(string(engine.payloads[0]), ShouldEqual, "raw")
+			So(string(repository.captures[0].payload), ShouldEqual, "raw")
 		})
 
-		Convey("Capturing with a nil repository is a no-op", func() {
-			writer := NewWriter(nil)
+		Convey("Two frames earn distinct run-local capture sequences", func() {
+			first, err := writer.Capture("ticker", "wss://example", []byte("1"), time.Now())
+			So(err, ShouldBeNil)
 
-			So(writer.Capture("ticker", "x", []byte("y"), time.Now()), ShouldBeNil)
+			second, err := writer.Capture("ticker", "wss://example", []byte("2"), time.Now())
+			So(err, ShouldBeNil)
+
+			So(second.Sequence, ShouldBeGreaterThan, first.Sequence)
+			So(second.Run, ShouldEqual, first.Run)
+		})
+	})
+
+	Convey("Given a nil sequencer", t, func() {
+		Convey("NewWriter rejects it", func() {
+			writer, err := NewWriter(newRecordingRepository(), nil)
+			So(writer, ShouldBeNil)
+			So(err, ShouldNotBeNil)
+		})
+	})
+
+	Convey("Given a writer with a nil repository", t, func() {
+		sequencer, _ := hindsight.NewSequencer("run-1")
+		writer, err := NewWriter(nil, sequencer)
+		So(err, ShouldBeNil)
+
+		Convey("Capture still mints an identity without persisting", func() {
+			identity, err := writer.Capture("ticker", "x", []byte("y"), time.Now())
+			So(err, ShouldBeNil)
+			So(identity.Valid(), ShouldBeTrue)
 		})
 	})
 }
 
 /*
 recordingRepository is a minimal in-memory Repository used to assert the writer
-records the right kind, endpoint, and payload without a SQLite file.
+records the right identity, kind, endpoint, and payload without a SQLite file.
 */
 type recordingRepository struct {
-	kinds     []string
-	payloads  [][]byte
-	endpoints []string
+	captures []recordedCapture
+}
+
+type recordedCapture struct {
+	identity hindsight.CaptureIdentity
+	endpoint string
+	kind     string
+	payload  []byte
 }
 
 func newRecordingRepository() *recordingRepository {
 	return &recordingRepository{}
 }
 
+func (repo *recordingRepository) WriteRun(run hindsight.Run) error { return nil }
+
+func (repo *recordingRepository) WriteCapture(
+	identity hindsight.CaptureIdentity,
+	endpoint, kind string,
+	payload []byte,
+	at time.Time,
+) error {
+	repo.captures = append(repo.captures, recordedCapture{
+		identity: identity,
+		endpoint: endpoint,
+		kind:     kind,
+		payload:  payload,
+	})
+
+	return nil
+}
+
 func (repo *recordingRepository) WriteFrame(endpoint, kind string, payload []byte, at time.Time) error {
-	repo.kinds = append(repo.kinds, kind)
-	repo.payloads = append(repo.payloads, payload)
-	repo.endpoints = append(repo.endpoints, endpoint)
+	return nil
+}
+
+func (repo *recordingRepository) WriteManifest(manifest hindsight.EnvelopeManifest) error {
+	return nil
+}
+
+func (repo *recordingRepository) WriteWitness(witness hindsight.ArtifactWitness) error {
 	return nil
 }
 
