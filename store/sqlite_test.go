@@ -202,3 +202,79 @@ func TestSQLiteWriteRunAndCapture(t *testing.T) {
 		})
 	})
 }
+
+func TestSQLiteMarkGappedTest(t *testing.T) {
+	Convey("Given an open sqlite engine with a COMPLETE run", t, func() {
+		path := t.TempDir() + "/events.sqlite"
+		engine, err := NewSQLite(path)
+		So(err, ShouldBeNil)
+
+		Reset(func() {
+			_ = engine.Close()
+		})
+
+		run := hindsight.Run{
+			ID:        "run-1",
+			StartedAt: time.Now(),
+			Integrity: hindsight.IntegrityComplete,
+		}
+		So(engine.WriteRun(run), ShouldBeNil)
+
+		Convey("MarkGapped flips the run to GAPPED and persists a Gap row", func() {
+			So(engine.MarkGapped("run-1", 42, "capture_persistence_failure", "boom"), ShouldBeNil)
+
+			var integrity string
+			So(engine.database.QueryRow(
+				"SELECT integrity FROM runs WHERE id = 'run-1'",
+			).Scan(&integrity), ShouldBeNil)
+			So(integrity, ShouldEqual, "GAPPED")
+
+			var (
+				encoding string
+				sequence uint64
+				detail   string
+			)
+			So(engine.database.QueryRow(
+				"SELECT encoding, sequence, detail FROM gaps WHERE run_id = 'run-1'",
+			).Scan(&encoding, &sequence, &detail), ShouldBeNil)
+			So(encoding, ShouldEqual, "capture_persistence_failure")
+			So(sequence, ShouldEqual, uint64(42))
+			So(detail, ShouldEqual, "boom")
+		})
+	})
+}
+
+func TestSQLiteLifecycleEventTest(t *testing.T) {
+	Convey("Given an open sqlite engine", t, func() {
+		path := t.TempDir() + "/events.sqlite"
+		engine, err := NewSQLite(path)
+		So(err, ShouldBeNil)
+
+		Reset(func() {
+			_ = engine.Close()
+		})
+
+		Convey("a lifecycle event round-trips with its decision correlation", func() {
+			So(engine.WriteRun(hindsight.Run{ID: "run-1", StartedAt: time.Now()}), ShouldBeNil)
+
+			So(engine.WriteLifecycleEvent("run-1", hindsight.LifecycleEvent{
+				DecisionID: "entry-1",
+				Symbol:     "XBT/USD",
+				Kind:       "position_open",
+				Action:     "enter",
+				At:         time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC),
+			}), ShouldBeNil)
+
+			events, err := engine.ListLifecycleEvents("run-1")
+			So(err, ShouldBeNil)
+			So(len(events), ShouldEqual, 1)
+			So(events[0].DecisionID, ShouldEqual, "entry-1")
+			So(events[0].Symbol, ShouldEqual, "XBT/USD")
+			So(events[0].Kind, ShouldEqual, "position_open")
+		})
+
+		Convey("an event without a decision id or kind is rejected", func() {
+			So(engine.WriteLifecycleEvent("run-1", hindsight.LifecycleEvent{Symbol: "XBT/USD"}), ShouldNotBeNil)
+		})
+	})
+}

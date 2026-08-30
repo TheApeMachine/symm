@@ -2,21 +2,26 @@ package broker
 
 import (
 	"strings"
+	"time"
 
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-readingValue returns the defined value of a Perspective reading matched by its
-metric slot's trailing "/<metric>/sample" suffix. It is the structural read the
-continuation context needs from a Perspective without importing the advisor
-package: the reading identity is the interned slot name the advisor publishes,
-whose canonical suffix is "/<metric>/sample".
+reading returns the defined value AND observed instant of a Perspective reading
+matched by its metric slot's trailing "/<metric>/sample" suffix. Definability
+and observation time are both reported so a caller can enforce causal freshness:
+an undefined reading has no value, and a zero/absent ObservedAt carries no
+usable observation instant.
+
+It is the structural read the continuation context needs from a Perspective
+without importing the advisor package: the reading identity is the interned slot
+name the advisor publishes, whose canonical suffix is "/<metric>/sample".
 */
-func readingValue(perspective *types.Perspective, metric string) (float64, bool) {
+func reading(perspective *types.Perspective, metric string) (float64, time.Time, bool) {
 	if perspective == nil {
-		return 0, false
+		return 0, time.Time{}, false
 	}
 
 	for index := 0; index < perspective.Count; index++ {
@@ -30,14 +35,28 @@ func readingValue(perspective *types.Perspective, metric string) (float64, bool)
 
 		if strings.HasSuffix(name, "/"+metric+"/sample") {
 			if !reading.Defined {
-				return 0, false
+				return 0, time.Time{}, false
 			}
 
-			return reading.Value, true
+			return reading.Value, reading.ObservedAt, true
 		}
 	}
 
-	return 0, false
+	return 0, time.Time{}, false
+}
+
+/*
+fresh reports whether an observed reading is causally current for the given
+observation instant: its observation time must be present, not future-dated,
+and not after the market state being evaluated. It does NOT apply a wall-clock
+expiration constant — it uses the reading's own temporal provenance.
+*/
+func fresh(observedAt, observationTime time.Time) bool {
+	if observedAt.IsZero() {
+		return false
+	}
+
+	return !observedAt.After(observationTime)
 }
 
 /*
@@ -67,6 +86,7 @@ func continuationSupportive(
 	reader PerspectiveReader,
 	entry positionEntryContext,
 	symbol string,
+	observationTime time.Time,
 ) bool {
 	if reader == nil {
 		return false
@@ -78,32 +98,33 @@ func continuationSupportive(
 		return false
 	}
 
-	// 1. Flow/price alignment (mandatory).
-	flowAligned, aligned := readingValue(&flow, "flow_aligned_midpoint_return")
+	// 1. Flow/price alignment (mandatory): defined value, causally current.
+	flowAligned, flowAlignedAt, aligned := reading(&flow, "flow_aligned_midpoint_return")
 
-	if !aligned || flowAligned <= 0 {
+	if !aligned || flowAligned <= 0 || !fresh(flowAlignedAt, observationTime) {
 		return false
 	}
 
 	// 2. Flow/book alignment (mandatory).
-	flowBook, bookAligned := readingValue(&flow, "flow_book_alignment")
+	flowBook, flowBookAt, bookAligned := reading(&flow, "flow_book_alignment")
 
-	if !bookAligned || flowBook <= 0 {
+	if !bookAligned || flowBook <= 0 || !fresh(flowBookAt, observationTime) {
 		return false
 	}
 
 	// 3-5. Liquidity/disposition comparisons: every available one must be
-	// supportive; at least one must be available.
+	// supportive and causally current; at least one must be available; any
+	// available contradiction refutes support.
 	supportive := false
 	contradicted := false
 
 	liquidity, liquidityFound := reader.Latest(types.PerspectiveKey{Symbol: symbol, Kind: types.KindLiquidity})
 
 	if liquidityFound {
-		currentBid, currentBidFound := readingValue(&liquidity, "depth_ratio:bid")
-		entryBid, entryBidFound := readingValue(&entry.liquidity, "depth_ratio:bid")
+		currentBid, currentBidAt, currentBidFound := reading(&liquidity, "depth_ratio:bid")
+		entryBid, _, entryBidFound := reading(&entry.liquidity, "depth_ratio:bid")
 
-		if currentBidFound && entryBidFound {
+		if currentBidFound && entryBidFound && fresh(currentBidAt, observationTime) {
 			supportive = true
 
 			if currentBid < entryBid {
@@ -111,10 +132,10 @@ func continuationSupportive(
 			}
 		}
 
-		currentSpread, currentSpreadFound := readingValue(&liquidity, "spread_ratio")
-		entrySpread, entrySpreadFound := readingValue(&entry.liquidity, "spread_ratio")
+		currentSpread, currentSpreadAt, currentSpreadFound := reading(&liquidity, "spread_ratio")
+		entrySpread, _, entrySpreadFound := reading(&entry.liquidity, "spread_ratio")
 
-		if currentSpreadFound && entrySpreadFound {
+		if currentSpreadFound && entrySpreadFound && fresh(currentSpreadAt, observationTime) {
 			supportive = true
 
 			if currentSpread > entrySpread {
@@ -126,10 +147,11 @@ func continuationSupportive(
 	disposition, dispositionFound := reader.Latest(types.PerspectiveKey{Symbol: symbol, Kind: types.KindOrderDisposition})
 
 	if dispositionFound {
-		withdrawal, withdrawalFound := readingValue(&disposition, "net_withdrawal_fraction:bid")
-		replenishment, replenishmentFound := readingValue(&disposition, "net_replenishment_fraction:bid")
+		withdrawal, withdrawalAt, withdrawalFound := reading(&disposition, "net_withdrawal_fraction:bid")
+		replenishment, replenishmentAt, replenishmentFound := reading(&disposition, "net_replenishment_fraction:bid")
 
-		if withdrawalFound && replenishmentFound {
+		if withdrawalFound && replenishmentFound &&
+			fresh(withdrawalAt, observationTime) && fresh(replenishmentAt, observationTime) {
 			supportive = true
 
 			if withdrawal > replenishment {

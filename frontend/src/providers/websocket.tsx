@@ -3,6 +3,7 @@ import * as flatbuffers from "flatbuffers";
 import { useEffect } from "react";
 import {
 	addMeasurement,
+	addResonanceReading,
 	appStore,
 	categoryStore,
 	cognitionStore,
@@ -12,7 +13,6 @@ import {
 	onlineStore,
 	opportunityStore,
 	perspectiveStore,
-	resonanceArtifactStore,
 	resonanceStore,
 	strategyStore,
 	tickCountStore,
@@ -115,7 +115,7 @@ function dispatchEnvelopeState(state: EnvelopeState) {
 	if (equity) equityStore.actions.add(equity);
 
 	const resonance = state.resonance();
-	if (resonance) resonanceArtifactStore.actions.add(resonance);
+	if (resonance) addResonanceReading(resonance);
 
 	const cognition = state.cognition();
 	if (cognition) cognitionStore.actions.add(cognition);

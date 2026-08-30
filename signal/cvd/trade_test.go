@@ -163,3 +163,48 @@ func TestTradeStep(t *testing.T) {
 		})
 	})
 }
+
+/*
+TestResponsePriceWithQuote proves the restored quote path: with a shared quote
+provider, the response-price metrics (midpoint and midpoint_log_return) become
+computable from real bid/ask, so the causal outcome coordinate the decision
+loop depends on is no longer permanently undefined. A second causally ordered
+quote yields a defined midpoint_log_return.
+*/
+func TestResponsePriceWithQuote(t *testing.T) {
+	Convey("Given a Trade entity with a moving quote provider", t, func() {
+		entity := NewTrade()
+		quote := 100.0
+
+		entity.SetQuote(func(symbol string) (bid, ask *decimal.Decimal) {
+			bidValue := decimal.NewFromFloat64(quote)
+			askValue := decimal.NewFromFloat64(quote + 1.0)
+
+			return bidValue, askValue
+		})
+
+		Convey("the first trade has no prior quote, so the midpoint is undefined", func() {
+			measurement := entity.Step(cvdTrade("BTC/USD", "buy", 100, 1, time.Unix(1000, 0)))
+
+			So(measurement, ShouldNotBeNil)
+			_, hasMidpoint := measurement.Metrics["midpoint_log_return"]
+			So(hasMidpoint, ShouldBeFalse)
+		})
+
+		Convey("a second trade with a moved quote yields a defined midpoint log return", func() {
+			entity.Step(cvdTrade("BTC/USD", "buy", 100, 1, time.Unix(1000, 0)))
+
+			// Move the quote up: the midpoint at the second observation is
+			// higher than the prior retained midpoint, so midpoint_log_return
+			// is a defined non-zero value.
+			quote = 110.0
+
+			measurement := entity.Step(cvdTrade("BTC/USD", "buy", 101, 1, time.Unix(1001, 0)))
+
+			So(measurement, ShouldNotBeNil)
+			midpoint, hasMidpoint := measurement.Metrics["midpoint_log_return"]
+			So(hasMidpoint, ShouldBeTrue)
+			So(midpoint.Raw, ShouldNotEqual, 0.0)
+		})
+	})
+}

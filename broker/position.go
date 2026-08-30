@@ -165,8 +165,8 @@ func NewPosition(
 	}
 
 	if position.Holding.Stoploss != nil {
-		position.Holding.Stoploss.ProtectContinuation = func() bool {
-			return continuationSupportive(position.perspective, position.entryContext, pair.Symbol)
+		position.Holding.Stoploss.ProtectContinuation = func(observationTime time.Time) bool {
+			return continuationSupportive(position.perspective, position.entryContext, pair.Symbol, observationTime)
 		}
 	}
 
@@ -378,6 +378,7 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 	}
 
 	stoploss := position.Holding.Stoploss
+	stoploss.SetObservationTime(ticker.Timestamp)
 	stoploss.Update(mark)
 	position.Holding.Mark = mark
 	position.Holding.PnL = position.price.PnL(position.pair, position.Holding)

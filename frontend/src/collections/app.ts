@@ -228,8 +228,88 @@ export const getMeasurementStore = (source: string) => {
 	return store;
 };
 
+/*
+kernelReadingStores holds each kernel's usable readings — the SNR values that
+were actually defined — separately from the raw measurement ring.
+
+The two cannot be the same ring. Backend rows are sparse: a kernel emits a
+measurement on every observation but only carries an SNR once its estimator has
+a noise model, so a run of SNR-less rows is normal and says nothing about the
+kernel's health. Deriving the trace from the raw ring made those rows
+destructive — 50 of them evicted every real reading, and the row fell back to
+Standby with a blue empty trace despite nothing having gone wrong.
+
+This ring only ever advances on a real reading, so an update carrying no data
+leaves the kernel exactly as it was. That is the honest reading of a sparse
+update: no data means no change, never "the value is now nothing".
+*/
+const kernelReadingStores: Record<
+	string,
+	ReturnType<typeof createFrameStore<number>>
+> = {};
+
+export const getKernelReadingStore = (source: string) => {
+	let store = kernelReadingStores[source];
+
+	if (!store) {
+		store = createFrameStore<number>(50);
+		kernelReadingStores[source] = store;
+	}
+
+	return store;
+};
+
 export const addMeasurement = (source: string, row: EnvelopeMeasurement) => {
 	getMeasurementStore(source).actions.add(row);
+
+	// SNRDefined is the backend's own "this reading is real" flag (see
+	// data.Measurement.Finalize): an undefined SNR is absent, not zero, so a row
+	// without one contributes nothing rather than a fabricated reading.
+	if (!row.snrDefined()) {
+		return;
+	}
+
+	const snr = row.snr();
+
+	if (Number.isFinite(snr)) {
+		getKernelReadingStore(source).actions.add(snr);
+	}
+};
+
+/*
+kernelResonanceReadings mirrors kernelReadingStores for resonance, which is not
+a measurement source: it carries a calibrated confidence rather than an SNR, and
+its frames arrive for the whole cross-section rather than one focused symbol, so
+its readings are kept per symbol.
+*/
+const kernelResonanceReadings: Record<
+	string,
+	ReturnType<typeof createFrameStore<number>>
+> = {};
+
+export const getResonanceReadingStore = (symbol: string) => {
+	let store = kernelResonanceReadings[symbol];
+
+	if (!store) {
+		store = createFrameStore<number>(50);
+		kernelResonanceReadings[symbol] = store;
+	}
+
+	return store;
+};
+
+export const addResonanceReading = (row: EnvelopeResonanceArtifact) => {
+	resonanceArtifactStore.actions.add(row);
+
+	if (!row.calibrated()) {
+		return;
+	}
+
+	const confidence = row.confidence();
+
+	if (Number.isFinite(confidence)) {
+		getResonanceReadingStore(row.symbol() ?? "").actions.add(confidence);
+	}
 };
 
 export const tickStore = createFrameStore<EnvelopeTickerData>(50);

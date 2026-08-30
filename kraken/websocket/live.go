@@ -89,6 +89,69 @@ type Live struct {
 	// inject the level3 listener's client here so a replay's level3 frames
 	// feed the session's book manager instead of dialing the real venue.
 	level3Client func() *spot.WebSocket
+
+	// l3forward funnels level3 envelopes from this session to the shared
+	// ingestion sequencer. It is set on every Level3 child session so all
+	// children push through exactly one writer goroutine instead of calling
+	// Push on the shared ring concurrently. The parent/private/ticker/trade
+	// sessions leave it nil and push directly.
+	l3forward *level3Sequencer
+}
+
+/*
+level3Sequencer owns the single writer goroutine for the shared Level3 ingress
+ring. SubL3 chunks the universe into many child websocket sessions, each of
+which would otherwise call Push concurrently on the same ring; go-disruptor
+requires WriterCount(2+) for concurrent Reserve/Commit, so a single producer is
+forwarded through here. Every child hands its envelope to the one writer, which
+commits it to the ring in arrival order.
+*/
+type level3Sequencer struct {
+	ingress chan *types.Envelope
+	done    chan struct{}
+}
+
+func newLevel3Sequencer(workload *runtime.Workload[*types.Envelope], capacity int) *level3Sequencer {
+	sequencer := &level3Sequencer{
+		ingress: make(chan *types.Envelope, capacity),
+		done:    make(chan struct{}),
+	}
+
+	go func() {
+		for {
+			select {
+			case envelope := <-sequencer.ingress:
+				workload.Push(envelope)
+			case <-sequencer.done:
+				return
+			}
+		}
+	}()
+
+	return sequencer
+}
+
+/*
+Push forwards one level3 envelope to the shared ring's single writer. It drops
+the envelope when the sequencer is closed rather than pushing onto a dead ring.
+*/
+func (sequencer *level3Sequencer) Push(envelope *types.Envelope) {
+	if sequencer == nil || envelope == nil {
+		return
+	}
+
+	select {
+	case sequencer.ingress <- envelope:
+	case <-sequencer.done:
+	}
+}
+
+func (sequencer *level3Sequencer) Close() {
+	if sequencer == nil {
+		return
+	}
+
+	close(sequencer.done)
 }
 
 /*
@@ -238,10 +301,30 @@ func NewWithClient(
 		// whole system rather than futures alone. Capture mints the Hindsight
 		// capture identity, persists the raw frame with it, and returns it so
 		// every envelope parsed from this frame carries the exact same origin.
+		// A failed capture fails loudly and skips this frame's dispatch: no
+		// envelope may carry a zero/ambiguous identity while Hindsight is on.
 		var captureID hindsight.CaptureIdentity
 
 		if live.capture != nil {
-			captureID, _ = live.capture.Capture(channel, live.client.URL, bytes.Clone(raw), time.Now().UTC())
+			var captureErr error
+
+			captureID, captureErr = live.capture.Capture(
+				channel,
+				live.client.URL,
+				bytes.Clone(raw),
+				time.Now().UTC(),
+			)
+
+			if captureErr != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					fmt.Sprintf("websocket: capture failed for %s frame: %s", channel, captureErr.Error()),
+					captureErr,
+				))
+
+				live.status.Transition(runtime.ERROR)
+				return
+			}
 		}
 
 		// An unsubscribe acknowledgement answers the instrument's paced
@@ -306,7 +389,11 @@ func NewWithClient(
 			envelopes, manifests := IngestEnvelopes(channel, out, captureID)
 
 			for index, envelope := range envelopes {
-				live.ingress[channel].Push(envelope)
+				if channel == "level3" && live.l3forward != nil {
+					live.l3forward.Push(envelope)
+				} else {
+					live.ingress[channel].Push(envelope)
+				}
 
 				if live.manifestSink != nil {
 					_ = live.manifestSink.WriteManifest(manifests[index])
@@ -520,6 +607,16 @@ func (live *Live) SubL3(symbols []string) {
 		live.level3 = &sync.Map{}
 	}
 
+	// One sequencer owns the shared level3 ring for this whole session. Child
+	// sessions forward through it so the ring has a single writer regardless
+	// of how the universe is chunked across websocket children.
+	if live.l3forward == nil {
+		live.l3forward = newLevel3Sequencer(
+			live.ingress["level3"],
+			int(system.Cfg.Runtime.Workspace.Buffer),
+		)
+	}
+
 	for groups := range slices.Chunk(symbols, 200) {
 		conn := NewWithClient(
 			live.ctx,
@@ -541,6 +638,7 @@ func (live *Live) SubL3(symbols []string) {
 			continue
 		}
 
+		conn.l3forward = live.l3forward
 		groupKey := strings.Join(groups, "|")
 		live.level3.Store(groupKey, conn)
 		conn.symbols = append([]string{}, groups...)
@@ -837,6 +935,10 @@ func (live *Live) Post(
 
 func (live *Live) Close() {
 	live.cancel()
+
+	if live.l3forward != nil {
+		live.l3forward.Close()
+	}
 
 	if live.level3 != nil {
 		live.level3.Range(func(_, value any) bool {

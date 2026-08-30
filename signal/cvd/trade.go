@@ -1,8 +1,11 @@
 package cvd
 
 import (
+	"math"
+	"sync"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
@@ -578,6 +581,23 @@ metrics MAY-optional ("emitted only when the regression is estimable").
 type Trade struct {
 	number    *nomagique.Number[string]
 	projector *data.Projector
+
+	// quote supplies the contemporaneous top-of-book bid/ask for a symbol so
+	// the response-price metrics (midpoint and midpoint_log_return) can be
+	// computed. A nil provider leaves those metrics permanently undefined
+	// (they need a quote at the trade's instant). priorQuote retains each
+	// symbol's last observed quote so the interval-start midpoint (From) can
+	// be reconstructed; it is guarded by a small mutex because trades for the
+	// same symbol arrive on one ring, but the shared quote may arrive on the
+	// ticker ring concurrently.
+	quote      func(symbol string) (bid, ask *decimal.Decimal)
+	quoteMu    sync.Mutex
+	priorQuote map[string]quotePair
+}
+
+type quotePair struct {
+	bid *decimal.Decimal
+	ask *decimal.Decimal
 }
 
 /*
@@ -629,7 +649,17 @@ func NewTrade() *Trade {
 			data.Binding{From: prefixed(prefixMidRate, "z/residual"), Name: "midpoint_return_rate_divergence", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
 			data.Binding{From: prefixed(prefixMidRate, "z/value"), Name: "midpoint_return_rate_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
 		),
+		priorQuote: make(map[string]quotePair),
 	}
+}
+
+/*
+SetQuote installs the shared top-of-book quote source. Without it, the
+response-price metrics stay permanently undefined; with it, loadQuote marks
+each trade as quote-backed when the supplied touch is a valid uncrossed book.
+*/
+func (trade *Trade) SetQuote(quote func(symbol string) (bid, ask *decimal.Decimal)) {
+	trade.quote = quote
 }
 
 /*
@@ -666,13 +696,53 @@ func (trade *Trade) Step(observation kraken.TradeData) *data.Measurement[float64
 }
 
 /*
-loadQuote marks this observation as having no contemporaneous quote. cvd no
-longer has access to a shared book, so the response-price metrics (which need
-a bid/ask quote at the trade's own instant) are permanently undefined; the
-executed-flow accounting this signal actually measures is unaffected.
+loadQuote loads the contemporaneous top-of-book quote for the trade's symbol
+into the response-price input slots and marks the observation quote-backed.
+When no quote provider exists, the quote is cross/zero/non-finite, or this is
+the symbol's first quote, the response-price metrics stay undefined (the flow
+accounting still stands). The interval-start (From) quote is the symbol's
+previously retained quote, so midpoint_log_return reflects the midpoint move
+across consecutive observations rather than being fabricated.
 */
 func (trade *Trade) loadQuote(symbol string, input *nmtypes.Frame) {
-	input.Put(symbolHasQuote, 0)
+	if trade == nil || trade.quote == nil {
+		input.Put(symbolHasQuote, 0)
+		return
+	}
+
+	bid, ask := trade.quote(symbol)
+
+	if bid == nil || ask == nil {
+		input.Put(symbolHasQuote, 0)
+		return
+	}
+
+	bidValue := bid.Float64()
+	askValue := ask.Float64()
+
+	if bidValue <= 0 || askValue <= bidValue || math.IsNaN(bidValue) || math.IsInf(bidValue, 0) || math.IsNaN(askValue) || math.IsInf(askValue, 0) {
+		input.Put(symbolHasQuote, 0)
+		return
+	}
+
+	// Retain the prior quote as the interval-start midpoint source; on the
+	// first observation for a symbol there is no From, so the response metrics
+	// stay undefined until a second causally ordered quote exists.
+	trade.quoteMu.Lock()
+	prior, hasPrior := trade.priorQuote[symbol]
+	trade.priorQuote[symbol] = quotePair{bid: bid, ask: ask}
+	trade.quoteMu.Unlock()
+
+	if !hasPrior || prior.bid == nil || prior.ask == nil {
+		input.Put(symbolHasQuote, 0)
+		return
+	}
+
+	input.Put(symbolHasQuote, 1)
+	input.Put(symbolBidPrice, bidValue)
+	input.Put(symbolAskPrice, askValue)
+	input.Put(symbolBidFrom, prior.bid.Float64())
+	input.Put(symbolAskFrom, prior.ask.Float64())
 }
 
 func (trade *Trade) Close() error { return nil }

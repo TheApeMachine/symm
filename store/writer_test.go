@@ -5,6 +5,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 )
 
@@ -94,12 +95,94 @@ func TestWriterReconnectTest(t *testing.T) {
 	})
 }
 
+func TestWriterCaptureFailureTest(t *testing.T) {
+	Convey("Given a writer whose repository fails to persist", t, func() {
+		repository := &failingRepository{}
+		sequencer, _ := hindsight.NewSequencer("run-1")
+		writer, _ := NewWriter(repository, sequencer)
+
+		Convey("Capture returns a zero identity, an error, and marks the run GAPPED", func() {
+			identity, err := writer.Capture("ticker", "wss://example", []byte("x"), time.Now())
+
+			So(err, ShouldNotBeNil)
+			So(identity.Valid(), ShouldBeFalse)
+
+			So(repository.gaps, ShouldHaveLength, 1)
+			So(repository.gaps[0].runID, ShouldEqual, hindsight.RunID("run-1"))
+			So(repository.gaps[0].encoding, ShouldEqual, "capture_persistence_failure")
+			So(repository.gaps[0].detail, ShouldContainSubstring, "boom")
+		})
+	})
+}
+
+/*
+failingRepository always fails WriteCapture so the writer's gap-marking path is
+exercised directly.
+*/
+type failingRepository struct {
+	gaps []recordedGap
+}
+
+func (repo *failingRepository) WriteRun(run hindsight.Run) error { return nil }
+func (repo *failingRepository) WriteFrame(endpoint, kind string, payload []byte, at time.Time) error {
+	return nil
+}
+func (repo *failingRepository) WriteManifest(manifest hindsight.EnvelopeManifest) error {
+	return nil
+}
+func (repo *failingRepository) WriteWitness(witness hindsight.ArtifactWitness) error {
+	return nil
+}
+func (repo *failingRepository) Close() error { return nil }
+
+func (repo *failingRepository) WriteCapture(
+	identity hindsight.CaptureIdentity,
+	endpoint, kind string,
+	payload []byte,
+	at time.Time,
+) error {
+	return errnie.Error(errnie.Err(errnie.IO, "boom", nil))
+}
+
+func (repo *failingRepository) MarkGapped(
+	runID hindsight.RunID,
+	sequence hindsight.CaptureSequence,
+	encoding string,
+	detail string,
+) error {
+	repo.gaps = append(repo.gaps, recordedGap{
+		runID:    runID,
+		sequence: sequence,
+		encoding: encoding,
+		detail:   detail,
+	})
+
+	return nil
+}
+
+func (repo *failingRepository) MarkCorrupt(
+	runID hindsight.RunID,
+	sequence hindsight.CaptureSequence,
+	encoding string,
+	detail string,
+) error {
+	return repo.MarkGapped(runID, sequence, encoding, detail)
+}
+
 /*
 recordingRepository is a minimal in-memory Repository used to assert the writer
 records the right identity, kind, endpoint, and payload without a SQLite file.
 */
 type recordingRepository struct {
 	captures []recordedCapture
+	gaps     []recordedGap
+}
+
+type recordedGap struct {
+	runID    hindsight.RunID
+	sequence hindsight.CaptureSequence
+	encoding string
+	detail   string
 }
 
 type recordedCapture struct {
@@ -141,6 +224,31 @@ func (repo *recordingRepository) WriteManifest(manifest hindsight.EnvelopeManife
 
 func (repo *recordingRepository) WriteWitness(witness hindsight.ArtifactWitness) error {
 	return nil
+}
+
+func (repo *recordingRepository) MarkGapped(
+	runID hindsight.RunID,
+	sequence hindsight.CaptureSequence,
+	encoding string,
+	detail string,
+) error {
+	repo.gaps = append(repo.gaps, recordedGap{
+		runID:    runID,
+		sequence: sequence,
+		encoding: encoding,
+		detail:   detail,
+	})
+
+	return nil
+}
+
+func (repo *recordingRepository) MarkCorrupt(
+	runID hindsight.RunID,
+	sequence hindsight.CaptureSequence,
+	encoding string,
+	detail string,
+) error {
+	return repo.MarkGapped(runID, sequence, encoding, detail)
 }
 
 func (repo *recordingRepository) Close() error { return nil }

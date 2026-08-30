@@ -44,7 +44,21 @@ type Desk struct {
 	balanceRefresh atomic.Bool
 	maxPositions   int
 	maxReserved    int
-	ObserveModule  func(string, time.Duration)
+	// lifecycleRecorder is the optional Hindsight trading-lifecycle sink. It
+	// records entry/fill/position-open/exit/close transitions observationally;
+	// it is nil when Hindsight is not wired, and its failure never affects
+	// trading progress.
+	lifecycleRecorder LifecycleRecorder
+	ObserveModule     func(string, time.Duration)
+}
+
+/*
+LifecycleRecorder receives one real trading-lifecycle transition keyed by the
+decision ID that caused it. Implementors own persistence; the desk only reports
+and never blocks or fails the trade on it.
+*/
+type LifecycleRecorder interface {
+	RecordLifecycle(decisionID, symbol, kind, action string, at time.Time)
 }
 
 /*
@@ -620,6 +634,12 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 
 		position.onClose = func() {
 			desk.positions.CompareAndDelete(decision.Symbol, position)
+
+			if desk.lifecycleRecorder != nil {
+				desk.lifecycleRecorder.RecordLifecycle(
+					decision.ID, decision.Symbol, "position_close", "", time.Now().UTC(),
+				)
+			}
 		}
 		desk.positions.Store(decision.Symbol, position)
 
@@ -628,6 +648,12 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		if err != nil {
 			desk.positions.CompareAndDelete(decision.Symbol, position)
 			return err
+		}
+
+		if desk.lifecycleRecorder != nil {
+			desk.lifecycleRecorder.RecordLifecycle(
+				decision.ID, decision.Symbol, "position_open", string(decision.Action), time.Now().UTC(),
+			)
 		}
 
 	}
@@ -641,6 +667,19 @@ conditions, before any reserve is drawn on.
 */
 func (desk *Desk) MaxPositions() int {
 	return desk.maxPositions
+}
+
+/*
+SetLifecycleRecorder attaches the Hindsight trading-lifecycle sink. It is set
+after construction so the live wiring can hand in the store without the desk
+owning it; a nil recorder is the "Hindsight off" case and records nothing.
+*/
+func (desk *Desk) SetLifecycleRecorder(recorder LifecycleRecorder) {
+	if desk == nil {
+		return
+	}
+
+	desk.lifecycleRecorder = recorder
 }
 
 /*

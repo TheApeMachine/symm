@@ -3,10 +3,13 @@ package manifold
 import (
 	"context"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/types"
 )
@@ -112,6 +115,62 @@ func TestForcingSideCorrectness(t *testing.T) {
 
 			askState := dataset.orderState(ask, 0, 2, price, quantity, mid, scale, symbolIndex, grid, forcing)
 			So(askState.Energy[0], ShouldAlmostEqual, 1.0)
+		})
+	})
+}
+
+/*
+TestForcingAdvanceConcurrent proves the lock split between recordForcing (Trade
+path) and advance (Level3 physics path). The two now guard separate mutexes, so
+a Trade forcing update is never serialized behind a full field advance. Running
+both paths concurrently must be race-free (enforced by -race) and must leave the
+resident forcing coherent: every forcing write is a whole forcingState, read as a
+snapshot under the read lock.
+*/
+func TestForcingAdvanceConcurrent(t *testing.T) {
+	Convey("Given a manifold solver stepped from many goroutines", t, func() {
+		solver := testSolver()
+		defer solver.Close()
+
+		level3 := types.NewEnvelope(types.EnvelopeLevel3)
+		level3.Level3Data = kraken.Level3Data{
+			Symbol:    "SYM/USD",
+			Timestamp: time.Now(),
+			Bids: []kraken.Level3Order{
+				{Event: "add", OrderID: "b1", LimitPrice: decimal.NewFromFloat64(10.0), OrderQty: decimal.NewFromFloat64(1.0), Timestamp: time.Now()},
+			},
+			Asks: []kraken.Level3Order{
+				{Event: "add", OrderID: "a1", LimitPrice: decimal.NewFromFloat64(10.1), OrderQty: decimal.NewFromFloat64(1.5), Timestamp: time.Now()},
+			},
+		}
+
+		trade := testForcingEnvelope("SYM/USD", 0.3, 0.1)
+
+		var wait sync.WaitGroup
+
+		for index := 0; index < 64; index++ {
+			wait.Add(1)
+
+			go func(iteration int) {
+				defer wait.Done()
+
+				if iteration%2 == 0 {
+					solver.Step(trade)
+					return
+				}
+
+				solver.Step(level3)
+			}(index)
+		}
+
+		wait.Wait()
+
+		Convey("resident forcing reflects the last recorded Trade state", func() {
+			solver.forcingMu.RLock()
+			defer solver.forcingMu.RUnlock()
+
+			So(solver.forcing["SYM/USD"].buyExcitation, ShouldAlmostEqual, 0.3, 1e-6)
+			So(solver.forcing["SYM/USD"].sellExcitation, ShouldAlmostEqual, 0.1, 1e-6)
 		})
 	})
 }

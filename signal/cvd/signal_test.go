@@ -11,7 +11,7 @@ import (
 
 func TestSignalStep(t *testing.T) {
 	Convey("Given a CVD signal without a workspace", t, func() {
-		signal := NewSignal(context.Background())
+		signal := NewSignal(context.Background(), nil)
 
 		Convey("Name reports the signal identity", func() {
 			So(signal.Name(), ShouldEqual, "cvd")

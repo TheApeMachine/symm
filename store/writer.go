@@ -88,6 +88,16 @@ func (writer *Writer) Capture(
 		payload,
 		receivedAt,
 	); err != nil {
+		// Raw persistence failed: the run is no longer complete, and the exact
+		// failure is recorded so inspection can say why. Never let this frame
+		// silently appear as captured under an unpersisted identity.
+		_ = writer.repository.MarkGapped(
+			identity.Run,
+			identity.Sequence,
+			"capture_persistence_failure",
+			err.Error(),
+		)
+
 		return hindsight.CaptureIdentity{}, err
 	}
 

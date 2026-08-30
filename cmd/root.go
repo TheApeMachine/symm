@@ -12,12 +12,14 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
@@ -184,6 +186,29 @@ func (node advisorNode) StepBacklog(envelope *types.Envelope, backlog int64) *ty
 }
 
 /*
+cvdQuoteProvider yields the shared top-of-book quote for the CVD signal's
+response-price metrics, read synchronously from the broker desk's live tick
+cache. It restores the contemporaneous-quote dependency that was severed during
+the workspace refactor, so midpoint_log_return (the causal outcome) is once
+again computable from real market data rather than permanently undefined.
+*/
+func cvdQuoteProvider(price *broker.Price) func(symbol string) (bid, ask *decimal.Decimal) {
+	return func(symbol string) (bid, ask *decimal.Decimal) {
+		if price == nil {
+			return nil, nil
+		}
+
+		tick := price.Tick(symbol)
+
+		if tick == nil {
+			return nil, nil
+		}
+
+		return tick.Bid, tick.Ask
+	}
+}
+
+/*
 witnessNode is the Hindsight witness boundary of the live pipeline. It observes
 the semantic artifacts the running binary actually produced on an envelope —
 Categories and signal Measurements — and records an ArtifactWitness for each,
@@ -191,7 +216,9 @@ keyed to the exact EnvelopeRef (CaptureIdentity + ordinal) that carried it. The
 witness is historical evidence: what actually ran, not what replay would produce.
 */
 type witnessNode struct {
-	writer *store.Writer
+	writer         *store.Writer
+	categorySolver *category.Solver
+	graphSolver    *graph.Solver
 }
 
 func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
@@ -230,6 +257,8 @@ func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
 			"category",
 			string(category.Type),
 			[]hindsight.EnvelopeRef{ref},
+			"category",
+			node.categoryVersion(),
 		)
 	}
 
@@ -258,16 +287,87 @@ func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
 			"measurement",
 			measurement.ID,
 			[]hindsight.EnvelopeRef{ref},
+			"graph",
+			node.graphVersion(),
 		)
 	}
 
+	// The strategy decision round is a first-class historical artifact: what
+	// the planner actually decided on this envelope, keyed to the same exact
+	// EnvelopeRef so an inspector can trace a decision back to the semantic
+	// state that produced it. This is observational — recording never alters
+	// trading, and a nil/empty round is simply not recorded.
+	if envelope.StrategyRound != nil {
+		for _, decision := range envelope.StrategyRound.Decisions {
+			if decision == nil {
+				continue
+			}
+
+			node.recordDecision(ref, decision)
+		}
+	}
+
 	return envelope
+}
+
+/*
+recordDecision persists one planner decision as a first-class historical
+artifact. Its identity is the decision's own ID (stable across the trade), and
+its semantic parents are the decision's declared perspective sources plus its
+causal identification — the exact shared inputs that produced it, named so a
+consumer can traverse each source to its own witness by identity.
+*/
+func (node witnessNode) recordDecision(ref hindsight.EnvelopeRef, decision *types.Decision) {
+	if decision == nil || decision.ID == "" {
+		return
+	}
+
+	semanticParents := make([]string, 0, len(decision.PerspectiveSources)+1)
+
+	for _, source := range decision.PerspectiveSources {
+		semanticParents = append(semanticParents, source.Source)
+	}
+
+	if decision.CausalIdentification != "" {
+		semanticParents = append(semanticParents, decision.CausalIdentification)
+	}
+
+	_ = node.writer.WriteWitness(hindsight.ArtifactWitness{
+		Envelope: ref,
+		Boundary: "after-planner",
+		Artifact: hindsight.ArtifactID{
+			Kind:     "decision",
+			Identity: decision.ID,
+		},
+		Component:             "planner",
+		ComponentStateVersion: node.graphVersion(),
+		ImmediateParents:      []hindsight.EnvelopeRef{ref},
+		SemanticParents:       semanticParents,
+	})
+}
+
+func (node witnessNode) categoryVersion() uint64 {
+	if node.categorySolver == nil {
+		return 0
+	}
+
+	return node.categorySolver.Version()
+}
+
+func (node witnessNode) graphVersion() uint64 {
+	if node.graphSolver == nil || node.graphSolver.Store() == nil {
+		return 0
+	}
+
+	return node.graphSolver.Store().Version()
 }
 
 func (node witnessNode) record(
 	ref hindsight.EnvelopeRef,
 	boundary, kind, identity string,
 	parents []hindsight.EnvelopeRef,
+	component string,
+	stateVersion uint64,
 ) {
 	if identity == "" {
 		return
@@ -280,13 +380,49 @@ func (node witnessNode) record(
 			Kind:     kind,
 			Identity: identity,
 		},
-		ImmediateParents: parents,
-		Payload:          nil,
+		Component:             component,
+		ComponentStateVersion: stateVersion,
+		ImmediateParents:      parents,
+		Payload:               nil,
 	})
 }
 
 func (node witnessNode) StepBacklog(envelope *types.Envelope, backlog int64) *types.Envelope {
 	return node.Step(envelope)
+}
+
+/*
+hindsightLifecycleRecorder adapts the broker's LifecycleRecorder seam to the
+Hindsight store. It turns one trading-lifecycle transition into a durable
+LifecycleEvent keyed by the decision ID, tagged with the run. Recording is
+fire-and-forget: a persistence failure is logged and never blocks the trade.
+*/
+type hindsightLifecycleRecorder struct {
+	engine *store.SQLite
+	runID  hindsight.RunID
+}
+
+func (recorder hindsightLifecycleRecorder) RecordLifecycle(
+	decisionID, symbol, kind, action string,
+	at time.Time,
+) {
+	if recorder.engine == nil || decisionID == "" || kind == "" {
+		return
+	}
+
+	if err := recorder.engine.WriteLifecycleEvent(recorder.runID, hindsight.LifecycleEvent{
+		DecisionID: decisionID,
+		Symbol:     symbol,
+		Kind:       kind,
+		Action:     action,
+		At:         at,
+	}); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"symm: record lifecycle event",
+			err,
+		))
+	}
 }
 
 var (
@@ -381,8 +517,11 @@ var (
 			}
 
 			if err := storageEngine.WriteRun(hindsight.RunIdentity{
-				StartedAt:    processStartedAt,
-				ConfigDigest: configDigest(),
+				StartedAt:      processStartedAt,
+				CodeCommit:     buildCodeCommit(),
+				BuildID:        buildBuildID(),
+				ConfigDigest:   configDigest(),
+				SchemaVersions: hindsightSchemaVersions(),
 			}.Resolve(runID)); err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.Internal,
@@ -567,6 +706,11 @@ var (
 
 			defer desk.Close()
 
+			// Wire the Hindsight trading-lifecycle recorder so real entry/exit
+			// transitions persist as first-class, decision-correlated artifacts.
+			// It is observational and never affects trading.
+			desk.SetLifecycleRecorder(hindsightLifecycleRecorder{engine: storageEngine, runID: runID})
+
 			// The strategy planner is the one authoritative live decision path:
 			// it consumes the graph's fitted influence state, runs economic
 			// MCTS per symbol, and executes through the desk.
@@ -642,7 +786,7 @@ var (
 							{strategyNode{planner: planner}},
 							{tickNode{thesis: thesis, desk: desk, planner: planner}},
 							{system.NewDiagnostic("ticker.trade")},
-							{witnessNode{writer: rawCapture}},
+							{witnessNode{writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
 							{hub},
 							{system.NewDiagnostic("ticker.hub")},
 						}...,
@@ -656,7 +800,7 @@ var (
 					[][]nmruntime.Node[*types.Envelope]{
 						{system.NewDiagnostic("trade.ingress")},
 						{
-							system.NewTraced("trade.cvd", cvd.NewSignal(cmd.Context())),
+							system.NewTraced("trade.cvd", cvd.NewSignal(cmd.Context(), cvdQuoteProvider(price))),
 							system.NewTraced("trade.hawkes", hawkes.NewSignal(cmd.Context())),
 							system.NewTraced("trade.pumpdump", pumpdump.NewSignal(cmd.Context())),
 							system.NewTraced("trade.toxicity", toxicity.NewSignal(cmd.Context())),
@@ -666,7 +810,7 @@ var (
 					append(
 						semanticCore("trade", advisors, graphSolver, categorySolver),
 						[][]nmruntime.Node[*types.Envelope]{
-							{witnessNode{writer: rawCapture}},
+							{witnessNode{writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
 							{hub},
 							{system.NewDiagnostic("trade.hub")},
 						}...,
@@ -692,7 +836,7 @@ var (
 					append(
 						semanticCore("level3", advisors, graphSolver, categorySolver),
 						[][]nmruntime.Node[*types.Envelope]{
-							{witnessNode{writer: rawCapture}},
+							{witnessNode{writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
 							{hub},
 							{system.NewDiagnostic("level3.hub")},
 						}...,
@@ -710,7 +854,7 @@ var (
 					append(
 						semanticCore("futures.ticker", advisors, graphSolver, categorySolver),
 						[][]nmruntime.Node[*types.Envelope]{
-							{witnessNode{writer: rawCapture}},
+							{witnessNode{writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
 							{hub},
 							{system.NewDiagnostic("futures.ticker.hub")},
 						}...,
@@ -728,7 +872,7 @@ var (
 					append(
 						semanticCore("futures.trade", advisors, graphSolver, categorySolver),
 						[][]nmruntime.Node[*types.Envelope]{
-							{witnessNode{writer: rawCapture}},
+							{witnessNode{writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
 							{hub},
 							{system.NewDiagnostic("futures.trade.hub")},
 						}...,
@@ -818,6 +962,61 @@ func configDigest() string {
 	sum := sha256.Sum256(raw)
 
 	return hex.EncodeToString(sum[:])
+}
+
+/*
+buildCodeCommit returns the VCS commit the binary was built from, or the special
+"unknown" marker when the build information carries no VCS revision. It never
+fabricates a commit string.
+*/
+func buildCodeCommit() string {
+	info, ok := debug.ReadBuildInfo()
+
+	if !ok {
+		return "unknown"
+	}
+
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" {
+			return setting.Value
+		}
+	}
+
+	return "unknown"
+}
+
+/*
+buildBuildID returns a stable build identity from the main module's version and
+checksum. When the module carries neither (a from-source `go run`), it falls
+back to the Go version that built it, so two different binaries are still
+distinguishable without inventing a value.
+*/
+func buildBuildID() string {
+	info, ok := debug.ReadBuildInfo()
+
+	if !ok {
+		return "unknown"
+	}
+
+	mainVersion := info.Main.Version
+
+	if mainVersion != "" && mainVersion != "(devel)" {
+		return mainVersion + "." + info.Main.Sum
+	}
+
+	return "go-" + info.GoVersion
+}
+
+/*
+hindsightSchemaVersions records the wire/Hindsight schema identities needed to
+interpret persisted state: the FlatBuffers file identifier (SYMM) and the
+Hindsight schema version. These are stable strings, not a fabricated digest.
+*/
+func hindsightSchemaVersions() map[string]string {
+	return map[string]string{
+		"wire_file_identifier": "SYMM",
+		"hindsight_schema":     "1",
+	}
 }
 
 func init() {

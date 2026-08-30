@@ -54,6 +54,27 @@ func TestCategorySolverSingleSource(t *testing.T) {
 	})
 }
 
+func TestCategorySolverVersionMonotonic(t *testing.T) {
+	Convey("Given a category solver committing several measured classifications", t, func() {
+		solver := NewSolver(context.Background())
+
+		Convey("the committed version is monotonic across transitions", func() {
+			first := solver.StepMeasurement(categoryMeasurement("BTC/USD", true, 0.8))
+			So(first, ShouldNotBeNil)
+
+			versionAfterFirst := solver.Version()
+
+			second := solver.StepMeasurement(categoryMeasurement("BTC/USD", true, 0.4))
+			So(second, ShouldNotBeNil)
+
+			versionAfterSecond := solver.Version()
+
+			So(versionAfterFirst, ShouldBeGreaterThan, 0)
+			So(versionAfterSecond, ShouldBeGreaterThan, versionAfterFirst)
+		})
+	})
+}
+
 func TestCategorySolverLatestStateReplacement(t *testing.T) {
 	Convey("Given the same coordinate published many times", t, func() {
 		solver := NewSolver(context.Background())

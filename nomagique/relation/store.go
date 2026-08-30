@@ -378,6 +378,20 @@ func (store *ObservationStore) Count(coordinate Coordinate) int {
 }
 
 /*
+Version returns the monotonic committed-transition version of this store: the
+cumulative number of observations ever appended. It is the per-component state
+version Hindsight records so replay can reconstruct the exact transition order of
+shared resident state, independent of external CaptureSequence.
+*/
+func (store *ObservationStore) Version() uint64 {
+	if store == nil {
+		return 0
+	}
+
+	return store.appended.Load()
+}
+
+/*
 Snapshot returns the current observation counts. The conformance suite uses
 it to verify that MCTS rollouts never become observational evidence.
 */

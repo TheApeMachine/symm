@@ -3,6 +3,7 @@ package cvd
 import (
 	"context"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
@@ -21,16 +22,22 @@ type Signal struct {
 }
 
 /*
-NewSignal composes the Trade (executed-flow) entity.
+NewSignal composes the Trade (executed-flow) entity. quote, when non-nil,
+supplies the contemporaneous top-of-book bid/ask so the response-price metrics
+(midpoint and midpoint_log_return) can be computed; without it they remain
+permanently undefined and only the executed-flow accounting is measured.
 */
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal(ctx context.Context, quote func(symbol string) (bid, ask *decimal.Decimal)) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
+
+	trade := NewTrade()
+	trade.SetQuote(quote)
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
 		status: runtime.NewStatus(),
-		trade:  NewTrade(),
+		trade:  trade,
 	}
 }
 

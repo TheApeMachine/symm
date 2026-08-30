@@ -31,6 +31,73 @@ type StateEntry struct {
 }
 
 /*
+GapView is one concrete capture/integrity defect the store recorded: its
+encoding, the capture sequence it affects (0 when not pinned to a frame), and
+the exact failure detail.
+*/
+type GapView struct {
+	RunID    string `json:"runId"`
+	Encoding string `json:"encoding"`
+	Sequence uint64 `json:"sequence"`
+	Detail   string `json:"detail"`
+}
+
+/*
+ListGaps returns every recorded defect for one run, oldest first, so the UI can
+show exactly why a run is GAPPED or CORRUPT.
+*/
+func (store *SQLite) ListGaps(runID string) ([]GapView, error) {
+	if store == nil || store.database == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: sqlite database required",
+			nil,
+		))
+	}
+
+	if runID == "" {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: run identity required",
+			nil,
+		))
+	}
+
+	rows, err := store.database.Query(
+		"SELECT run_id, encoding, sequence, detail FROM gaps WHERE run_id = ? ORDER BY id ASC",
+		runID,
+	)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: list gaps failed",
+			err,
+		))
+	}
+
+	defer rows.Close()
+
+	gaps := make([]GapView, 0)
+
+	for rows.Next() {
+		var view GapView
+
+		if err := rows.Scan(&view.RunID, &view.Encoding, &view.Sequence, &view.Detail); err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO,
+				"store: scan gap row",
+				err,
+			))
+		}
+
+		gaps = append(gaps, view)
+	}
+
+	return gaps, nil
+}
+
+/*
 ListRuns returns every captured Run, newest first, as the actual Run records
 persisted to the runs table.
 */
@@ -177,6 +244,88 @@ func (store *SQLite) ListCaptures(runID string, limit int) ([]CaptureEntry, erro
 }
 
 /*
+ListCapturesAfter returns the raw captured frames with capture_seq strictly
+greater than afterSeq, in capture order, bounded by limit. It is the paginated
+timeline read: the UI walks the causal tape in fixed pages without ever loading
+a whole run. The ordering is CaptureSequence — never venue/receive time.
+*/
+func (store *SQLite) ListCapturesAfter(runID string, afterSeq uint64, limit int) ([]CaptureEntry, error) {
+	if store == nil || store.database == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: sqlite database required",
+			nil,
+		))
+	}
+
+	if runID == "" {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: run identity required",
+			nil,
+		))
+	}
+
+	if limit <= 0 {
+		limit = 500
+	}
+
+	rows, err := store.database.Query(
+		`SELECT run_id, capture_seq, stream, stream_epoch, stream_seq,
+		        kind, endpoint, at
+		 FROM events
+		 WHERE run_id = ? AND capture_seq > ?
+		 ORDER BY capture_seq ASC
+		 LIMIT ?`,
+		runID,
+		afterSeq,
+		limit,
+	)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: list captures after failed",
+			err,
+		))
+	}
+
+	defer rows.Close()
+
+	captures := make([]CaptureEntry, 0)
+
+	for rows.Next() {
+		var (
+			entry      CaptureEntry
+			receivedAt string
+		)
+
+		if err := rows.Scan(
+			&entry.Identity.Run,
+			&entry.Identity.Sequence,
+			&entry.Identity.Stream,
+			&entry.Identity.StreamEpoch,
+			&entry.Identity.StreamSequence,
+			&entry.Kind,
+			&entry.Endpoint,
+			&receivedAt,
+		); err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO,
+				"store: scan capture-after row",
+				err,
+			))
+		}
+
+		entry.ReceivedAt, _ = time.Parse(time.RFC3339Nano, receivedAt)
+
+		captures = append(captures, entry)
+	}
+
+	return captures, nil
+}
+
+/*
 ListStates returns every persisted historical EnvelopeState of one Run, in
 capture order, each carrying its EnvelopeRef and the exact flatbuffer bytes.
 */
@@ -240,6 +389,271 @@ func (store *SQLite) ListStates(runID string) ([]StateEntry, error) {
 	}
 
 	return states, nil
+}
+
+/*
+ReadState returns the single persisted EnvelopeState for one exact EnvelopeRef
+(run + capture sequence + ordinal), rather than every state of the run. It is
+the exact-identity reverse of the witness node's "state" write.
+*/
+func (store *SQLite) ReadState(runID string, sequence uint64, ordinal uint64) (StateEntry, bool, error) {
+	if store == nil || store.database == nil {
+		return StateEntry{}, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: sqlite database required",
+			nil,
+		))
+	}
+
+	if runID == "" {
+		return StateEntry{}, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: run identity required",
+			nil,
+		))
+	}
+
+	rows, err := store.database.Query(
+		`SELECT witness FROM witnesses
+		 WHERE origin_run = ? AND origin_seq = ? AND artifact_kind = 'state'`,
+		runID,
+		sequence,
+	)
+
+	if err != nil {
+		return StateEntry{}, false, errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: read state failed",
+			err,
+		))
+	}
+
+	defer rows.Close()
+
+	for rows.Next() {
+		var encoded string
+
+		if err := rows.Scan(&encoded); err != nil {
+			return StateEntry{}, false, errnie.Error(errnie.Err(
+				errnie.IO,
+				"store: scan state row",
+				err,
+			))
+		}
+
+		var witness hindsight.ArtifactWitness
+
+		if err := decodeWitness(encoded, &witness); err != nil {
+			return StateEntry{}, false, err
+		}
+
+		if witness.Envelope.Ordinal != ordinal {
+			continue
+		}
+
+		return StateEntry{
+			Envelope: witness.Envelope,
+			Payload:  witness.Payload,
+		}, true, nil
+	}
+
+	return StateEntry{}, false, nil
+}
+
+/*
+ListManifestsForCapture returns every EnvelopeManifest whose origin is one exact
+capture sequence, in ordinal order — the raw-frame → envelope fan-out for a
+single capture.
+*/
+func (store *SQLite) ListManifestsForCapture(runID string, sequence uint64) ([]hindsight.EnvelopeManifest, error) {
+	if store == nil || store.database == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: sqlite database required",
+			nil,
+		))
+	}
+
+	if runID == "" {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: run identity required",
+			nil,
+		))
+	}
+
+	rows, err := store.database.Query(
+		`SELECT manifest FROM envelopes
+		 WHERE origin_run = ? AND origin_seq = ?
+		 ORDER BY ordinal ASC`,
+		runID,
+		sequence,
+	)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: list manifests for capture failed",
+			err,
+		))
+	}
+
+	defer rows.Close()
+
+	manifests := make([]hindsight.EnvelopeManifest, 0)
+
+	for rows.Next() {
+		var encoded string
+
+		if err := rows.Scan(&encoded); err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO,
+				"store: scan manifest row",
+				err,
+			))
+		}
+
+		var manifest hindsight.EnvelopeManifest
+
+		if err := json.Unmarshal([]byte(encoded), &manifest); err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO,
+				"store: decode manifest failed",
+				err,
+			))
+		}
+
+		manifests = append(manifests, manifest)
+	}
+
+	return manifests, nil
+}
+
+/*
+ListWitnessesForCapture returns every artifact witness whose origin is one exact
+capture sequence, in ordinal then boundary order — what the running binary
+produced from that raw frame.
+*/
+func (store *SQLite) ListWitnessesForCapture(runID string, sequence uint64) ([]hindsight.ArtifactWitness, error) {
+	if store == nil || store.database == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: sqlite database required",
+			nil,
+		))
+	}
+
+	if runID == "" {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: run identity required",
+			nil,
+		))
+	}
+
+	rows, err := store.database.Query(
+		`SELECT witness FROM witnesses
+		 WHERE origin_run = ? AND origin_seq = ?
+		 ORDER BY id ASC`,
+		runID,
+		sequence,
+	)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: list witnesses for capture failed",
+			err,
+		))
+	}
+
+	defer rows.Close()
+
+	witnesses := make([]hindsight.ArtifactWitness, 0)
+
+	for rows.Next() {
+		var encoded string
+
+		if err := rows.Scan(&encoded); err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO,
+				"store: scan witness row",
+				err,
+			))
+		}
+
+		var witness hindsight.ArtifactWitness
+
+		if err := decodeWitness(encoded, &witness); err != nil {
+			return nil, err
+		}
+
+		witnesses = append(witnesses, witness)
+	}
+
+	return witnesses, nil
+}
+
+/*
+ListLifecycleEvents returns every trading-lifecycle event for one run, oldest
+first, each carrying its decision-ID correlation so the UI can join it to the
+decision witness that caused it.
+*/
+func (store *SQLite) ListLifecycleEvents(runID string) ([]hindsight.LifecycleEvent, error) {
+	if store == nil || store.database == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: sqlite database required",
+			nil,
+		))
+	}
+
+	if runID == "" {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: run identity required",
+			nil,
+		))
+	}
+
+	rows, err := store.database.Query(
+		`SELECT decision_id, symbol, kind, action, at
+		 FROM lifecycle WHERE run_id = ? ORDER BY id ASC`,
+		runID,
+	)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: list lifecycle events failed",
+			err,
+		))
+	}
+
+	defer rows.Close()
+
+	events := make([]hindsight.LifecycleEvent, 0)
+
+	for rows.Next() {
+		var (
+			event   hindsight.LifecycleEvent
+			atValue string
+		)
+
+		if err := rows.Scan(&event.DecisionID, &event.Symbol, &event.Kind, &event.Action, &atValue); err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO,
+				"store: scan lifecycle event row",
+				err,
+			))
+		}
+
+		event.At, _ = time.Parse(time.RFC3339Nano, atValue)
+
+		events = append(events, event)
+	}
+
+	return events, nil
 }
 
 /*

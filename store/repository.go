@@ -47,6 +47,17 @@ type Repository interface {
 	// parent and resident-state provenance.
 	WriteWitness(witness hindsight.ArtifactWitness) error
 
+	// MarkGapped persists a concrete capture defect and flips the run's
+	// integrity to GAPPED (the highest severity wins if already CORRUPT).
+	// detail names the exact failure so an inspector sees why the run is not
+	// complete.
+	MarkGapped(runID hindsight.RunID, sequence hindsight.CaptureSequence, encoding string, detail string) error
+
+	// MarkCorrupt persists a concrete integrity/provenance defect and flips
+	// the run to CORRUPT. Corruption is the strongest verdict and always wins
+	// over COMPLETE or GAPPED.
+	MarkCorrupt(runID hindsight.RunID, sequence hindsight.CaptureSequence, encoding string, detail string) error
+
 	// Close releases the store's underlying resources.
 	Close() error
 }

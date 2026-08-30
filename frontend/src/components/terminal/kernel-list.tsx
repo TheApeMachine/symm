@@ -2,9 +2,9 @@ import { useSelector } from "@tanstack/react-store";
 import {
 	DEFAULT_KERNELS,
 	focusStore,
-	getMeasurementStore,
+	getKernelReadingStore,
+	getResonanceReadingStore,
 	kernelDetailStore,
-	resonanceArtifactStore,
 } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import {
@@ -17,68 +17,31 @@ import {
 import { Flex } from "#/components/ui";
 import { Badge } from "#/components/ui/badge";
 import { cn } from "#/lib/utils";
-import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
-import type { EnvelopeResonanceArtifact } from "#/providers/telemetry/telemetry/envelope-resonance-artifact";
 import type { FrameBuffer } from "#/collections/app";
 
 /*
-getKernelReadings walks a kernel's own ring (already scoped to the focused
-symbol server-side — the backend never ships a measurement for any other
-symbol) and collects each row's signal-to-noise ratio. SNR is a top-level
-field on the wire measurement (data.Measurement.SNR/SNRDefined on the Go
-side), not an entry in its metrics map — Finalize() only sets SNRDefined
-once a real noise model or covariance was estimable, so a row with
-snrDefined() false has no SNR reading yet and is skipped rather than
-plotting some other metric in its place.
+readingsOf collects a kernel's accumulated readings.
+
+The ring it walks holds only readings that were actually defined — the sparse
+rows a kernel emits before its estimator has a noise model never enter it (see
+addMeasurement in collections/app). So a run of empty updates leaves this
+history untouched rather than evicting the real readings out of it, and a
+kernel that has measured once stays measured until it says otherwise.
 */
-const getKernelReadings = (ring: FrameBuffer<EnvelopeMeasurement>) => {
-	const len = ring.getBufferLength();
+const readingsOf = (ring: FrameBuffer<number>) => {
 	const points: number[] = [];
+	const len = ring.getBufferLength();
 
 	for (let i = 0; i < len; i++) {
-		const row = ring.get(i);
-		if (!row) continue;
-		if (!row.snrDefined()) continue;
+		const value = ring.get(i);
 
-		const snr = row.snr();
-		if (Number.isFinite(snr)) points.push(snr);
+		if (value !== undefined && Number.isFinite(value)) {
+			points.push(value);
+		}
 	}
 
 	const latest = points.length > 0 ? points[points.length - 1] : null;
-	return { points, latest };
-};
 
-/*
-getResonanceReadings walks the shared resonanceArtifactStore ring for the
-frames that belong to the focused symbol — unlike every other kernel's ring, resonance is
-not pre-scoped to one symbol server-side (logic/resonance.Solver.Update keys
-its predictive coder per symbol across the whole cross-section), so the
-symbol filter has to happen here, the same way live-resonance-title.tsx and
-xray.tsx already do. Confidence is the collected reading: unlike SNR it is
-already a real [0,1] quantity by construction (learning.PredictiveOutput's
-own doc comment), but it is only meaningful once the predictive head has
-resolved enough outcomes to calibrate — calibrated() is that honest gate, the
-same role snrDefined() plays for the other kernels, so an uncalibrated frame
-is skipped rather than plotting a confidence value that isn't real yet.
-*/
-const getResonanceReadings = (
-	ring: FrameBuffer<EnvelopeResonanceArtifact>,
-	focusSymbol: string,
-) => {
-	const len = ring.getBufferLength();
-	const points: number[] = [];
-
-	for (let i = 0; i < len; i++) {
-		const row = ring.get(i);
-		if (!row) continue;
-		if (row.symbol() !== focusSymbol) continue;
-		if (!row.calibrated()) continue;
-
-		const confidence = row.confidence();
-		if (Number.isFinite(confidence)) points.push(confidence);
-	}
-
-	const latest = points.length > 0 ? points[points.length - 1] : null;
 	return { points, latest };
 };
 
@@ -113,11 +76,11 @@ const relativeToOwnRange = (values: number[]): number[] => {
 };
 
 /*
-Resonance is not an EnvelopeMeasurement (no SNR/metrics map — see
-getResonanceReadings) and its ring is not pre-scoped to the focused symbol,
-so it reads from resonanceArtifactStore directly instead of
-getMeasurementStore. Both selectors below run unconditionally (hooks cannot
-be conditional); only one of their results is actually used per row.
+Resonance is not a measurement source: it carries a calibrated confidence
+rather than an SNR, and its frames arrive for the whole cross-section rather
+than one focused symbol, so its readings are kept per symbol. Both selectors
+below run unconditionally (hooks cannot be conditional); only one of their
+results is actually used per row.
 */
 const isResonance = (source: string) => source === "resonance";
 
@@ -129,20 +92,26 @@ const KernelRow = ({
 	compact: boolean;
 }) => {
 	const resonance = isResonance(source);
-	const measurementRing = useSelector(getMeasurementStore(source), (state) => state);
-	const resonanceRing = useSelector(resonanceArtifactStore, (state) => state);
 	const focusSymbol = useSelector(focusStore, (state) => state);
+	const measurementReadings = useSelector(
+		getKernelReadingStore(source),
+		(state) => state,
+	);
+	const resonanceReadings = useSelector(
+		getResonanceReadingStore(focusSymbol),
+		(state) => state,
+	);
 
-	const { points, latest } = resonance
-		? getResonanceReadings(resonanceRing, focusSymbol)
-		: getKernelReadings(measurementRing);
+	const { points, latest } = readingsOf(
+		resonance ? resonanceReadings : measurementReadings,
+	);
 	const copy = kernelCopy(source, "");
 	const status = kernelStatus(latest);
 	const badge = kernelStatusMeta(status);
 
-	// Confidence is already a real [0,1] quantity by construction (see
-	// getResonanceReadings) — only unbounded SNR needs scaling against its
-	// own observed range before it means anything as a bar/sparkline.
+	// Confidence is already a real [0,1] quantity by construction — only
+	// unbounded SNR needs scaling against its own observed range before it
+	// means anything as a bar/sparkline.
 	const relativePoints = resonance ? points : relativeToOwnRange(points);
 	const paths = kernelSparkPaths(relativePoints, status);
 	const confidence = relativePoints.length > 0 ? relativePoints[relativePoints.length - 1] : 0;

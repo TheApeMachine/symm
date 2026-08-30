@@ -1,5 +1,8 @@
 import type {
 	HindsightCapture,
+	HindsightEnvelope,
+	HindsightGap,
+	HindsightLifecycleEvent,
 	HindsightRun,
 	HindsightState,
 } from "./hindsight-types";
@@ -35,9 +38,10 @@ export const fetchHindsightRuns = async (): Promise<HindsightRun[]> => {
 
 export const fetchHindsightCaptures = async (
 	run: string,
+	after = 0,
 ): Promise<HindsightCapture[]> => {
 	const response = await fetch(
-		`${hindsightBaseUrl()}/hindsight/captures?run=${encodeURIComponent(run)}`,
+		`${hindsightBaseUrl()}/hindsight/captures?run=${encodeURIComponent(run)}&after=${after}`,
 	);
 
 	if (!response.ok) {
@@ -59,4 +63,65 @@ export const fetchHindsightStates = async (
 	}
 
 	return (await response.json()) as HindsightState[];
+};
+
+export const fetchHindsightState = async (
+	run: string,
+	sequence: number,
+	ordinal: number,
+): Promise<HindsightState | null> => {
+	const response = await fetch(
+		`${hindsightBaseUrl()}/hindsight/state?run=${encodeURIComponent(run)}&seq=${sequence}&ordinal=${ordinal}`,
+	);
+
+	if (!response.ok) {
+		return null;
+	}
+
+	const state = (await response.json()) as HindsightState;
+
+	return state.payload ? state : null;
+};
+
+export const fetchHindsightEnvelope = async (
+	run: string,
+	sequence: number,
+): Promise<HindsightEnvelope | null> => {
+	const response = await fetch(
+		`${hindsightBaseUrl()}/hindsight/envelope?run=${encodeURIComponent(run)}&seq=${sequence}`,
+	);
+
+	if (!response.ok) {
+		return null;
+	}
+
+	return (await response.json()) as HindsightEnvelope;
+};
+
+export const fetchHindsightGaps = async (
+	run: string,
+): Promise<HindsightGap[]> => {
+	const response = await fetch(
+		`${hindsightBaseUrl()}/hindsight/gaps?run=${encodeURIComponent(run)}`,
+	);
+
+	if (!response.ok) {
+		return [];
+	}
+
+	return (await response.json()) as HindsightGap[];
+};
+
+export const fetchHindsightLifecycle = async (
+	run: string,
+): Promise<HindsightLifecycleEvent[]> => {
+	const response = await fetch(
+		`${hindsightBaseUrl()}/hindsight/lifecycle?run=${encodeURIComponent(run)}`,
+	);
+
+	if (!response.ok) {
+		return [];
+	}
+
+	return (await response.json()) as HindsightLifecycleEvent[];
 };

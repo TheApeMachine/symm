@@ -71,6 +71,31 @@ CREATE TABLE IF NOT EXISTS witnesses (
 CREATE INDEX IF NOT EXISTS idx_witnesses_origin ON witnesses(origin_run, origin_seq);
 `
 
+const gapSchema = `
+CREATE TABLE IF NOT EXISTS gaps (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id     TEXT    NOT NULL,
+    encoding   TEXT    NOT NULL,
+    sequence   INTEGER NOT NULL DEFAULT 0,
+    detail     TEXT    NOT NULL DEFAULT ''
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_gaps_run ON gaps(run_id);
+`
+
+const lifecycleSchema = `
+CREATE TABLE IF NOT EXISTS lifecycle (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      TEXT    NOT NULL DEFAULT '',
+    decision_id TEXT    NOT NULL DEFAULT '',
+    symbol      TEXT    NOT NULL DEFAULT '',
+    kind        TEXT    NOT NULL,
+    action      TEXT    NOT NULL DEFAULT '',
+    at          TEXT    NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS idx_lifecycle_run ON lifecycle(run_id);
+CREATE INDEX IF NOT EXISTS idx_lifecycle_decision ON lifecycle(decision_id);
+`
+
 const endpointIndex = `
 CREATE INDEX IF NOT EXISTS idx_events_endpoint ON events(endpoint);
 `
@@ -186,6 +211,22 @@ func (store *SQLite) EnsureSchema() error {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"store: ensure witness schema failed",
+			err,
+		))
+	}
+
+	if _, err := store.database.Exec(gapSchema); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: ensure gap schema failed",
+			err,
+		))
+	}
+
+	if _, err := store.database.Exec(lifecycleSchema); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: ensure lifecycle schema failed",
 			err,
 		))
 	}
@@ -540,6 +581,152 @@ func (store *SQLite) WriteWitness(witness hindsight.ArtifactWitness) error {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			fmt.Sprintf("store: write artifact witness failed [%s]", err.Error()),
+			err,
+		))
+	}
+
+	return nil
+}
+
+/*
+MarkGapped persists one concrete capture defect and flips the run's integrity
+to GAPPED. It never demotes a run that is already CORRUPT: the highest-severity
+verdict wins. detail carries the exact failure message so an inspector can read
+why the run is not complete.
+*/
+func (store *SQLite) MarkGapped(
+	runID hindsight.RunID,
+	sequence hindsight.CaptureSequence,
+	encoding string,
+	detail string,
+) error {
+	return store.recordGap(runID, sequence, encoding, detail, "GAPPED")
+}
+
+/*
+MarkCorrupt persists one concrete integrity/provenance defect and flips the run
+to CORRUPT. Corruption is the strongest verdict: it always overrides COMPLETE or
+GAPPED.
+*/
+func (store *SQLite) MarkCorrupt(
+	runID hindsight.RunID,
+	sequence hindsight.CaptureSequence,
+	encoding string,
+	detail string,
+) error {
+	return store.recordGap(runID, sequence, encoding, detail, "CORRUPT")
+}
+
+/*
+recordGap is the shared write path for a concrete defect: persist the Gap row,
+then raise the run's integrity to the given severity. GAPPED is not applied over
+an existing CORRUPT so the stronger verdict survives; CORRUPT always applies.
+*/
+func (store *SQLite) recordGap(
+	runID hindsight.RunID,
+	sequence hindsight.CaptureSequence,
+	encoding string,
+	detail string,
+	severity string,
+) error {
+	if store == nil || store.database == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: sqlite database required",
+			nil,
+		))
+	}
+
+	if runID == "" {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: run identity required",
+			nil,
+		))
+	}
+
+	if _, err := store.database.Exec(
+		"INSERT INTO gaps (run_id, encoding, sequence, detail) VALUES (?, ?, ?, ?)",
+		string(runID),
+		encoding,
+		uint64(sequence),
+		detail,
+	); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: record gap failed",
+			err,
+		))
+	}
+
+	if severity == "CORRUPT" {
+		if _, err := store.database.Exec(
+			"UPDATE runs SET integrity = 'CORRUPT' WHERE id = ?",
+			string(runID),
+		); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.IO,
+				"store: mark run corrupt failed",
+				err,
+			))
+		}
+
+		return nil
+	}
+
+	if _, err := store.database.Exec(
+		`UPDATE runs SET integrity = 'GAPPED'
+		 WHERE id = ? AND integrity != 'CORRUPT'`,
+		string(runID),
+	); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: mark run gapped failed",
+			err,
+		))
+	}
+
+	return nil
+}
+
+/*
+WriteLifecycleEvent persists one real trading-lifecycle transition, correlated
+by the decision ID that caused it and tagged with the run. This is observational
+recording — a failure here must never affect trading progress.
+*/
+func (store *SQLite) WriteLifecycleEvent(
+	runID hindsight.RunID,
+	event hindsight.LifecycleEvent,
+) error {
+	if store == nil || store.database == nil {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: sqlite database required",
+			nil,
+		))
+	}
+
+	if event.DecisionID == "" || event.Kind == "" {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: lifecycle decision id and kind required",
+			nil,
+		))
+	}
+
+	if _, err := store.database.Exec(
+		`INSERT INTO lifecycle (run_id, decision_id, symbol, kind, action, at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		string(runID),
+		event.DecisionID,
+		event.Symbol,
+		event.Kind,
+		event.Action,
+		event.At.UTC().Format(time.RFC3339Nano),
+	); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: write lifecycle event failed",
 			err,
 		))
 	}

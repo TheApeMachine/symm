@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	nomagique_probability "github.com/theapemachine/symm/nomagique/probability"
@@ -24,11 +25,17 @@ measurements jointly support. It never predicts, never consults Cognition, and
 never lets signal publication cadence count as extra evidence.
 */
 type Solver struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	err           error
-	categories    []types.CategoryType
-	states        sync.Map
+	ctx        context.Context
+	cancel     context.CancelFunc
+	err        error
+	categories []types.CategoryType
+	states     sync.Map
+	// version is the monotonic committed-transition version of the shared
+	// per-symbol category evidence state. Every StepMeasurement that updates a
+	// symbol's snapshot advances it, so Hindsight can record the exact order
+	// concurrent workloads committed category transitions — independent of
+	// external CaptureSequence.
+	version       atomic.Uint64
 	ObserveModule func(string, time.Duration)
 }
 
@@ -145,7 +152,22 @@ func (solver *Solver) StepMeasurement(measurement *nmtypes.Measurement) []types.
 		return nil
 	}
 
+	solver.version.Add(1)
+
 	return categories
+}
+
+/*
+Version returns the monotonic committed-transition version of the shared
+category evidence state. Hindsight records it as the ComponentStateVersion of
+every category witness so replay can reconstruct transition order.
+*/
+func (solver *Solver) Version() uint64 {
+	if solver == nil {
+		return 0
+	}
+
+	return solver.version.Load()
 }
 
 func (solver *Solver) symbolState(symbol string) *categoryState {

@@ -101,11 +101,17 @@ type Stoploss struct {
 	Plan          *RiskPlan        `json:"plan,omitempty"`
 
 	// ProtectContinuation is an optional continuation-context callback that,
-	// when it returns true, defers ONLY the soft profit-stagnation trigger for
-	// this observation. It never affects hard floor, protected floor, trailing
-	// floor, execution-regime invalidation, quantity coverage, or manual exit.
-	// When nil, profit stagnation fires exactly as before.
-	ProtectContinuation func() bool `json:"-"`
+	// when it returns true for the given market observation instant, defers
+	// ONLY the soft profit-stagnation trigger for this observation. It never
+	// affects hard floor, protected floor, trailing floor, execution-regime
+	// invalidation, quantity coverage, or manual exit. When nil, profit
+	// stagnation fires exactly as before.
+	ProtectContinuation func(observationTime time.Time) bool `json:"-"`
+
+	// lastObservationAt is the observation instant of the current executable
+	// mark, set by the guardian before Update runs. It is the causal "now"
+	// the continuation context's freshness check is measured against.
+	lastObservationAt time.Time `json:"-"`
 }
 
 /*
@@ -335,6 +341,20 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 }
 
 /*
+SetObservationTime records the observation instant of the current executable
+mark. The guardian sets it before Update/observeMark so the continuation
+context's causal-freshness check measures readings against the correct "now"
+rather than a wall-clock stale/non-future heuristic.
+*/
+func (stoploss *Stoploss) SetObservationTime(at time.Time) {
+	if stoploss == nil {
+		return
+	}
+
+	stoploss.lastObservationAt = at
+}
+
+/*
 ObserveExecutable applies the authoritative executable-liquidation state from
 one committed L3 book frame. It is the economic-state path: it updates the
 executable mark, realizable peak, and trailing floor, and owns every
@@ -517,7 +537,7 @@ func (stoploss *Stoploss) observeMark(mark *decimal.Decimal) {
 			// Continuation context is the ONLY semantic deferral allowed this
 			// pass, and only for the soft profit-stagnation trigger. It never
 			// suppresses hard/protected floors or invalidation.
-			if stoploss.ProtectContinuation != nil && stoploss.ProtectContinuation() {
+			if stoploss.ProtectContinuation != nil && stoploss.ProtectContinuation(stoploss.lastObservationAt) {
 				return
 			}
 

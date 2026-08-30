@@ -66,5 +66,11 @@ type ArtifactWitness struct {
 	Component             string        `json:"component,omitempty"`
 	ComponentStateVersion uint64        `json:"componentStateVersion,omitempty"`
 	ImmediateParents      []EnvelopeRef `json:"immediateParents,omitempty"`
-	Payload               []byte        `json:"payload,omitempty"`
+	// SemanticParents names the shared semantic inputs this artifact consumed
+	// whose origin envelope was NOT the triggering envelope — e.g. a Flow
+	// Perspective on a Level3 event reading CVD last updated by an earlier
+	// Trade. Names are stable source/metric identifiers, traversable to their
+	// own witnesses by identity.
+	SemanticParents []string `json:"semanticParents,omitempty"`
+	Payload         []byte   `json:"payload,omitempty"`
 }

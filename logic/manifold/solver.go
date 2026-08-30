@@ -33,7 +33,7 @@ input, and each message is one load-and-step.
 type Solver struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	mu            sync.Mutex
+	advanceMu     sync.Mutex
 	err           error
 	status        *runtime.Status
 	dataset       *Dataset
@@ -43,9 +43,11 @@ type Solver struct {
 	// forcing retains the latest causally-available Hawkes excitation fraction
 	// per symbol. A Trade event records it; the next Level3 event lifts the
 	// matching side's resting-order energy above the unit baseline. It is
-	// guarded by mu (shared with advance) so concurrent Trade and Level3 rings
-	// never race on the same symbol's forcing.
-	forcing map[string]forcingState
+	// guarded by forcingMu alone — a Trade's two-float update never waits on a
+	// full physics advance, and advance reads only a coherent per-symbol
+	// snapshot under the read lock.
+	forcingMu sync.RWMutex
+	forcing   map[string]forcingState
 
 	// fieldMomRho/fieldEnergy/fieldWaveReal/fieldWaveImag are Step's private
 	// working buffers for PackFields, reused across advances so gathering the
@@ -145,8 +147,9 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 
 /*
 recordForcing stores the symbol's latest Hawkes excitation fractions under the
-solver mutex. A non-finite or invalid fraction is rejected rather than silently
-poisoning resident forcing state. Trade events never advance the field.
+forcing lock alone. A non-finite or invalid fraction is rejected rather than
+silently poisoning resident forcing state. Trade events never advance the field,
+so this path never contends with the physics advance lock.
 */
 func (solver *Solver) recordForcing(symbol string, hawkes *data.Measurement[float64]) {
 	if hawkes == nil || hawkes.Err != nil || symbol == "" {
@@ -177,16 +180,15 @@ func (solver *Solver) recordForcing(symbol string, hawkes *data.Measurement[floa
 		sell = float32(sellMetric.Raw)
 	}
 
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
-
+	solver.forcingMu.Lock()
 	solver.forcing[symbol] = forcingState{buyExcitation: buy, sellExcitation: sell}
+	solver.forcingMu.Unlock()
 }
 
 /*
 latestForcing returns a symbol's retained forcing state (or the zero-value
-unit baseline when none has been observed yet). It is called only while the
-solver mutex is held by advance.
+unit baseline when none has been observed yet). It must be called while the
+forcing read lock is held by advance.
 */
 func (solver *Solver) latestForcing(symbol string) forcingState {
 	if solver.forcing == nil {
@@ -209,8 +211,16 @@ func (solver *Solver) advance(message kraken.Level3Data) *State {
 		return nil
 	}
 
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
+	// Read the latest causally-available forcing under the read lock only, so
+	// a Trade's forcing update never blocks behind this physics advance. The
+	// snapshot is coherent: recordForcing writes the whole forcingState under
+	// the write lock, and this copies it under the read lock.
+	solver.forcingMu.RLock()
+	forcing := solver.latestForcing(message.Symbol)
+	solver.forcingMu.RUnlock()
+
+	solver.advanceMu.Lock()
+	defer solver.advanceMu.Unlock()
 
 	started := time.Now()
 	defer func() {
@@ -218,8 +228,6 @@ func (solver *Solver) advance(message kraken.Level3Data) *State {
 			solver.ObserveModule("manifold", time.Since(started))
 		}
 	}()
-
-	forcing := solver.latestForcing(message.Symbol)
 
 	batch := solver.project(message, forcing)
 
@@ -353,8 +361,8 @@ func (solver *Solver) Close() error {
 		return nil
 	}
 
-	solver.mu.Lock()
-	defer solver.mu.Unlock()
+	solver.advanceMu.Lock()
+	defer solver.advanceMu.Unlock()
 
 	if solver.cancel != nil {
 		solver.cancel()

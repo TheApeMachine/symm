@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	neturl "net/url"
+	"strconv"
 	"sync"
 
 	"github.com/bytedance/sonic"
@@ -13,6 +14,7 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/store"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -121,7 +123,9 @@ func NewHub(ctx context.Context) *Hub {
 			return c.JSON([]any{})
 		}
 
-		captures, err := hub.store.ListCaptures(c.Query("run"), 0)
+		after := parseUintQuery(c.Query("after"))
+
+		captures, err := hub.store.ListCapturesAfter(c.Query("run"), after, 0)
 
 		if err != nil {
 			return err
@@ -145,6 +149,109 @@ func NewHub(ctx context.Context) *Hub {
 		}
 
 		return c.JSON(states)
+	})
+
+	// /hindsight/gaps returns every concrete capture/integrity defect recorded
+	// for a run, so the UI can show why a run is not COMPLETE.
+	hub.app.Get("/hindsight/gaps", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return c.JSON([]any{})
+		}
+
+		gaps, err := hub.store.ListGaps(c.Query("run"))
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(gaps)
+	})
+
+	// /hindsight/envelope returns a single EnvelopeRef's full inspection record:
+	// the exact CaptureIdentity, raw payload, its manifests, and its artifact
+	// witnesses — fetched by identity, not by scanning a whole run.
+	hub.app.Get("/hindsight/envelope", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return c.JSON(map[string]any{})
+		}
+
+		run := c.Query("run")
+		sequence := parseUintQuery(c.Query("seq"))
+
+		payload, err := hub.store.ReadCapture(hindsight.CaptureIdentity{
+			Run:      hindsight.RunID(run),
+			Sequence: hindsight.CaptureSequence(sequence),
+		})
+
+		if err != nil {
+			return err
+		}
+
+		manifests, err := hub.store.ListManifestsForCapture(run, sequence)
+
+		if err != nil {
+			return err
+		}
+
+		witnesses, err := hub.store.ListWitnessesForCapture(run, sequence)
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(struct {
+			Run       string                       `json:"run"`
+			Sequence  uint64                       `json:"sequence"`
+			Payload   []byte                       `json:"payload"`
+			Manifests []hindsight.EnvelopeManifest `json:"manifests"`
+			Witnesses []hindsight.ArtifactWitness  `json:"witnesses"`
+		}{
+			Run:       run,
+			Sequence:  sequence,
+			Payload:   payload,
+			Manifests: manifests,
+			Witnesses: witnesses,
+		})
+	})
+
+	// /hindsight/state returns the single EnvelopeState for one exact capture
+	// + ordinal, instead of shipping every state of the run.
+	hub.app.Get("/hindsight/state", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return c.JSON(map[string]any{})
+		}
+
+		run := c.Query("run")
+		sequence := parseUintQuery(c.Query("seq"))
+		ordinal := parseUintQuery(c.Query("ordinal"))
+
+		state, found, err := hub.store.ReadState(run, sequence, ordinal)
+
+		if err != nil {
+			return err
+		}
+
+		if !found {
+			return c.JSON(map[string]any{})
+		}
+
+		return c.JSON(state)
+	})
+
+	// /hindsight/lifecycle returns every trading-lifecycle transition of a run,
+	// correlated by decision ID.
+	hub.app.Get("/hindsight/lifecycle", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return c.JSON([]any{})
+		}
+
+		events, err := hub.store.ListLifecycleEvents(c.Query("run"))
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(events)
 	})
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
@@ -228,6 +335,21 @@ func (hub *Hub) SetHindsightStore(store *store.SQLite) {
 	}
 
 	hub.store = store
+}
+
+/*
+parseUintQuery parses a uint64 query parameter, returning 0 on absence or
+malformation so a missing selector reads as "no match" rather than crashing the
+handler.
+*/
+func parseUintQuery(raw string) uint64 {
+	value, err := strconv.ParseUint(raw, 10, 64)
+
+	if err != nil {
+		return 0
+	}
+
+	return value
 }
 
 /*
