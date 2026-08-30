@@ -5,6 +5,7 @@ import (
 	"time"
 
 	flatbuffers "github.com/google/flatbuffers/go"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
@@ -139,6 +140,12 @@ type Envelope struct {
 	// It is the "tick counter" the dashboard renders, distinct from the
 	// per-ticker wall-clock Timestamp carried in TickerData.
 	Tick int64
+
+	// CaptureID is the Hindsight capture identity of the exact raw external
+	// input this envelope was parsed from. It is assigned before parsing and
+	// carried unchanged for the envelope's whole ring traversal; a zero value
+	// means the ingress stream was not wired with a capture sequencer.
+	CaptureID hindsight.CaptureIdentity
 
 	TickerData        kraken.TickerData
 	TradeData         kraken.TradeData

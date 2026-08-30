@@ -13,16 +13,25 @@ func TestDecompositionBindings(t *testing.T) {
 	Convey("Given DecompositionBindings", t, func() {
 		bindings := DecompositionBindings()
 
-		Convey("it binds frequency and throughput", func() {
+		Convey("it binds CVD's canonical mean trade notional and its coherent trade rate", func() {
 			So(len(bindings), ShouldEqual, 2)
 
 			metrics := map[string]bool{}
+			sources := map[string]bool{}
 			for _, binding := range bindings {
 				metrics[binding.Metric] = true
+				sources[binding.Source] = true
 			}
 
-			So(metrics["arrival_rate"], ShouldBeTrue)
-			So(metrics["gross_notional_rate"], ShouldBeTrue)
+			So(sources["cvd"], ShouldBeTrue)
+			So(metrics["trade_rate"], ShouldBeTrue)
+			So(metrics["mean_trade_notional"], ShouldBeTrue)
+
+			// The cross-signal Hawkes arrival_rate is NOT consumed: dividing
+			// CVD's gross-notional rate by Hawkes' arrival rate would equate
+			// two possibly different retained populations.
+			So(sources["hawkes"], ShouldBeFalse)
+			So(metrics["arrival_rate"], ShouldBeFalse)
 		})
 
 		Convey("each binding has a unique prefix", func() {
@@ -41,126 +50,47 @@ func TestDecompositionPipeline(t *testing.T) {
 		bindings := DecompositionBindings()
 		pipeline := DecompositionPipeline(bindings)
 
-		freq := bindings[0]
-		throughput := bindings[1]
+		frequency := bindings[0]
+		meanSize := bindings[1]
 
-		Convey("the hand-calculated mean event size is exact", func() {
-			// arrival_rate = 10 events/sec, gross_notional_rate = 1000 quote/sec
-			// => mean event size = 1000 / 10 = 100 quote/event.
+		Convey("it relays the canonical mean trade notional and trade rate unchanged", func() {
 			frame := nmtypes.Frame{}
-			frame.Put(symbolCurrentAtSec, 100)
-			frame.Put(symbolCurrentAtNsec, 0)
 
-			frame.Put(throughput.Series.ValueSymbol, 1000.0)
-			frame.Put(throughput.Series.SecSymbol, 100)
-			frame.Put(throughput.Series.NsecSymbol, 0)
-			frame.Put(throughput.Fresh, 1)
-			frame.Put(throughput.Maturity, 0.9)
-
-			frame.Put(freq.Series.ValueSymbol, 10.0)
-			frame.Put(freq.Series.SecSymbol, 100)
-			frame.Put(freq.Series.NsecSymbol, 0)
-			frame.Put(freq.Fresh, 1)
-			frame.Put(freq.Maturity, 0.8)
+			frame.Put(frequency.Series.ValueSymbol, 10.0) // events/sec
+			frame.Put(frequency.Fresh, 1)
+			frame.Put(meanSize.Series.ValueSymbol, 100.0) // quote/event
+			frame.Put(meanSize.Fresh, 1)
 
 			pipeline(&frame)
 
 			So(frame.Err, ShouldBeNil)
 
-			mean, defined := frame.Get(symbolDecompMeanNotional)
-			So(defined, ShouldBeTrue)
-			So(mean, ShouldAlmostEqual, 100.0, 1e-9)
+			freq, foundFreq := frame.Get(frequency.Series.ValueSymbol)
+			So(foundFreq, ShouldBeTrue)
+			So(freq, ShouldAlmostEqual, 10.0, 1e-9)
+
+			size, foundSize := frame.Get(meanSize.Series.ValueSymbol)
+			So(foundSize, ShouldBeTrue)
+			So(size, ShouldAlmostEqual, 100.0, 1e-9)
+
+			// No Fresh marker survives.
+			for _, binding := range bindings {
+				So(frame.Has(binding.Fresh), ShouldBeFalse)
+			}
 		})
 
-		Convey("zero arrival rate leaves mean event size undefined, not zero or infinity", func() {
+		Convey("it performs no division; only the two bound slots are touched", func() {
 			frame := nmtypes.Frame{}
-			frame.Put(symbolCurrentAtSec, 100)
-			frame.Put(symbolCurrentAtNsec, 0)
-
-			frame.Put(throughput.Series.ValueSymbol, 1000.0)
-			frame.Put(throughput.Series.SecSymbol, 100)
-			frame.Put(throughput.Series.NsecSymbol, 0)
-			frame.Put(throughput.Fresh, 1)
-			frame.Put(throughput.Maturity, 0.9)
-
-			frame.Put(freq.Series.ValueSymbol, 0.0)
-			frame.Put(freq.Series.SecSymbol, 100)
-			frame.Put(freq.Series.NsecSymbol, 0)
-			frame.Put(freq.Fresh, 1)
-			frame.Put(freq.Maturity, 0.8)
+			frame.Put(frequency.Series.ValueSymbol, 10.0)
+			frame.Put(frequency.Fresh, 1)
+			frame.Put(meanSize.Series.ValueSymbol, 100.0)
+			frame.Put(meanSize.Fresh, 1)
 
 			pipeline(&frame)
 
 			So(frame.Err, ShouldBeNil)
-
-			_, defined := frame.Get(symbolDecompMeanNotional)
-			So(defined, ShouldBeFalse)
-		})
-
-		Convey("mutating either input breaks the derived quantity", func() {
-			base := nmtypes.Frame{}
-			base.Put(symbolCurrentAtSec, 100)
-			base.Put(symbolCurrentAtNsec, 0)
-			base.Put(throughput.Series.ValueSymbol, 1000.0)
-			base.Put(throughput.Series.SecSymbol, 100)
-			base.Put(throughput.Series.NsecSymbol, 0)
-			base.Put(throughput.Fresh, 1)
-			base.Put(throughput.Maturity, 0.9)
-			base.Put(freq.Series.ValueSymbol, 10.0)
-			base.Put(freq.Series.SecSymbol, 100)
-			base.Put(freq.Series.NsecSymbol, 0)
-			base.Put(freq.Fresh, 1)
-			base.Put(freq.Maturity, 0.8)
-
-			reference := nmtypes.Frame{}
-			reference.Merge(base)
-			pipeline(&reference)
-			refMean, _ := reference.Get(symbolDecompMeanNotional)
-
-			// Mutate throughput.
-			mutatedThroughput := nmtypes.Frame{}
-			mutatedThroughput.Merge(base)
-			mutatedThroughput.Put(throughput.Series.ValueSymbol, 2000.0)
-			pipeline(&mutatedThroughput)
-			throughputMean, _ := mutatedThroughput.Get(symbolDecompMeanNotional)
-			So(throughputMean, ShouldNotAlmostEqual, refMean, 1e-9)
-
-			// Mutate arrival rate.
-			mutatedArrival := nmtypes.Frame{}
-			mutatedArrival.Merge(base)
-			mutatedArrival.Put(freq.Series.ValueSymbol, 20.0)
-			pipeline(&mutatedArrival)
-			arrivalMean, _ := mutatedArrival.Get(symbolDecompMeanNotional)
-			So(arrivalMean, ShouldNotAlmostEqual, refMean, 1e-9)
-		})
-
-		Convey("future-leaked denominator leaves the derived quantity undefined", func() {
-			// The denominator (arrival_rate) is retained from a LATER event
-			// (t=200) while the current evaluation is at t=100. The joint must
-			// not use it.
-			frame := nmtypes.Frame{}
-			frame.Put(symbolCurrentAtSec, 100)
-			frame.Put(symbolCurrentAtNsec, 0)
-
-			frame.Put(throughput.Series.ValueSymbol, 1000.0)
-			frame.Put(throughput.Series.SecSymbol, 100)
-			frame.Put(throughput.Series.NsecSymbol, 0)
-			frame.Put(throughput.Fresh, 1)
-			frame.Put(throughput.Maturity, 0.9)
-
-			// Denom retained at t=200 > current 100.
-			frame.Put(freq.Series.ValueSymbol, 10.0)
-			frame.Put(freq.Series.SecSymbol, 200)
-			frame.Put(freq.Series.NsecSymbol, 0)
-			frame.Put(freq.Fresh, 1)
-			frame.Put(freq.Maturity, 0.8)
-
-			pipeline(&frame)
-
-			So(frame.Err, ShouldBeNil)
-
-			_, defined := frame.Get(symbolDecompMeanNotional)
-			So(defined, ShouldBeFalse)
+			// DecompositionOutputs declares exactly two outputs; the pipeline
+			// writes no additional derived slot, so there is no third quantity.
 		})
 	})
 }
@@ -170,52 +100,47 @@ func TestDecompositionOutputs(t *testing.T) {
 		bindings := DecompositionBindings()
 		outputs := DecompositionOutputs(bindings)
 
-		Convey("it declares the derived mean event size plus the two inputs", func() {
-			So(len(outputs), ShouldEqual, 3)
-			So(outputs[0].Slot, ShouldEqual, symbolDecompMeanNotional)
-		})
-
-		Convey("the derived mean borrows its own maturity slot", func() {
-			So(outputs[0].Maturity, ShouldEqual, symbolDecompMeanMatur)
+		Convey("it exposes exactly the canonical two facts, no derived quantity", func() {
+			So(len(outputs), ShouldEqual, 2)
+			So(outputs[0].Slot, ShouldEqual, bindings[0].Series.ValueSymbol)
+			So(outputs[1].Slot, ShouldEqual, bindings[1].Series.ValueSymbol)
 		})
 	})
 }
 
 /*
-TestDecompositionMeanEventSizeEndToEnd asserts the full advisor path produces
-the hand-calculated mean event size, not merely a side-by-side relay.
+TestDecompositionUsesCanonicalMeanTradeNotional asserts that the decomposition
+advisor surfaces CVD's own mean_trade_notional (G/N) — the quantity its spec
+already defines for many-small vs few-large — rather than manufacturing a
+cross-horizon duplicate. Two CVD measurements with the same mean trade notional
+but different retained horizons must report the same mean size, because the
+quantity is already horizon-normalized inside the signal.
 */
-func TestDecompositionMeanEventSizeEndToEnd(t *testing.T) {
-	Convey("Given a decomposition advisor fed frequency then throughput", t, func() {
-		advisor := NewDecompositionAdvisor("advisor.decomposition.e2e:" + t.Name())
+func TestDecompositionUsesCanonicalMeanTradeNotional(t *testing.T) {
+	Convey("Given a decomposition advisor fed a CVD measurement", t, func() {
+		advisor := NewDecompositionAdvisor("advisor.decomposition.canonical:" + t.Name())
 		at := time.Unix(100, 0)
 
-		advisor.Step(testMeasurement("TEST/USD", "hawkes", at, map[string]float64{
-			"arrival_rate": 10.0,
-		}))
-
 		perspective := advisor.Step(testMeasurement("TEST/USD", "cvd", at, map[string]float64{
-			"gross_notional_rate": 1000.0,
+			"trade_rate":        10.0,
+			"mean_trade_notional": 100.0,
 		}))
 
 		So(perspective, ShouldNotBeNil)
 		So(perspective.Err, ShouldBeNil)
 
-		mean, found := readingFor(perspective, symbolDecompMeanNotional)
+		bindings := DecompositionBindings()
+		meanReading, found := readingFor(perspective, bindings[1].Series.ValueSymbol)
 		So(found, ShouldBeTrue)
-		So(mean.Defined, ShouldBeTrue)
-		So(mean.Value, ShouldAlmostEqual, 100.0, 1e-9)
+		So(meanReading.Defined, ShouldBeTrue)
+		So(meanReading.Value, ShouldAlmostEqual, 100.0, 1e-9)
 
-		// The two input facts are still exposed with their own provenance.
-		freqReading, freqFound := readingFor(perspective, bindingsArrivalRateSlot())
+		freqReading, freqFound := readingFor(perspective, bindings[0].Series.ValueSymbol)
 		So(freqFound, ShouldBeTrue)
-		So(freqReading.Defined, ShouldBeTrue)
 		So(freqReading.Value, ShouldAlmostEqual, 10.0, 1e-9)
-	})
-}
 
-// bindingsArrivalRateSlot returns the interned slot for the arrival_rate input
-// fact in the current DecompositionBindings ordering.
-func bindingsArrivalRateSlot() nmtypes.Symbol {
-	return DecompositionBindings()[0].Series.ValueSymbol
+		Convey("there is no fabricated derived slot beyond the two canonical facts", func() {
+			So(perspective.Count, ShouldEqual, 2)
+		})
+	})
 }

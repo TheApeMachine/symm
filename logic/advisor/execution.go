@@ -5,14 +5,21 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-// Execution output symbols: the two side-correct flow/share-of-capacity facts
-// and the crossing-cost fact. Interned once so bindings/outputs/pipeline all
-// read the same derived slots.
+// Execution output symbols: the two side-correct executed-flow-per-displayed-
+// capacity facts and their per-reading temporal provenance slots.
 var (
-	symbolExecutionBuyShare  = nmtypes.MustIntern("advisor/execution/buy_flow_to_ask_capacity")
-	symbolExecutionSellShare = nmtypes.MustIntern("advisor/execution/sell_flow_to_bid_capacity")
-	symbolExecutionBuyMatur  = nmtypes.MustIntern("advisor/execution/buy_flow_to_ask_capacity/maturity")
-	symbolExecutionSellMatur = nmtypes.MustIntern("advisor/execution/sell_flow_to_bid_capacity/maturity")
+	symbolExecutionBuyCoverage  = nmtypes.MustIntern("advisor/execution/buy_flow_per_ask_touch")
+	symbolExecutionSellCoverage = nmtypes.MustIntern("advisor/execution/sell_flow_per_bid_touch")
+	symbolExecutionBuyMatur     = nmtypes.MustIntern("advisor/execution/buy_flow_per_ask_touch/maturity")
+	symbolExecutionSellMatur    = nmtypes.MustIntern("advisor/execution/sell_flow_per_bid_touch/maturity")
+	symbolExecutionBuyFromSec   = nmtypes.MustIntern("advisor/execution/buy_flow_per_ask_touch/from_sec")
+	symbolExecutionBuyFromNsec  = nmtypes.MustIntern("advisor/execution/buy_flow_per_ask_touch/from_nsec")
+	symbolExecutionBuyAtSec     = nmtypes.MustIntern("advisor/execution/buy_flow_per_ask_touch/at_sec")
+	symbolExecutionBuyAtNsec    = nmtypes.MustIntern("advisor/execution/buy_flow_per_ask_touch/at_nsec")
+	symbolExecutionSellFromSec  = nmtypes.MustIntern("advisor/execution/sell_flow_per_bid_touch/from_sec")
+	symbolExecutionSellFromNsec = nmtypes.MustIntern("advisor/execution/sell_flow_per_bid_touch/from_nsec")
+	symbolExecutionSellAtSec    = nmtypes.MustIntern("advisor/execution/sell_flow_per_bid_touch/at_sec")
+	symbolExecutionSellAtNsec   = nmtypes.MustIntern("advisor/execution/sell_flow_per_bid_touch/at_nsec")
 )
 
 /*
@@ -31,8 +38,28 @@ Displayed capacity is the exact side-notional the Liquidity spec defines as
 (touch_notional:ask / touch_notional:bid). touch_notional_imbalance is NOT
 capacity: it is a dimensionless asymmetry ratio, and a $100/$100 touch and a
 $10,000,000/$10,000,000 touch both have imbalance 0 while their actual
-capacity differs by five orders of magnitude. Side-correct capacity is the
-quantity a flow-vs-capacity reading must use.
+capacity differs by five orders of magnitude.
+
+TEMPORAL COORDINATE. The two ratio inputs have deliberately different scopes,
+and the derived quantity is defined in terms of them rather than papering the
+difference over:
+
+  - cvd/aggressive_notional:buy/sell is an INTERVAL quantity: the accumulated
+    aggressive notional over the CVD signal's retained path [From, At], where
+    From is the first retained trade and At the last. Its TimescaleInstantaneous
+    label marks that it is a state value at At, not that it is a point
+    measurement.
+  - liquidity/touch_notional:ask/bid is a POINT-IN-TIME displayed quantity: the
+    book state at the liquidity snapshot.
+
+Therefore the derived ratio is NOT "the fraction of current displayed capacity
+that current flow consumed." It is the CVD §18 / Liquidity §13.1 coverage
+factor: executed aggressive notional over the retained interval, relative to
+the latest causally-available displayed touch on the aggressive side. A longer
+retained flow interval increases the numerator without changing the book, so
+the ratio reports coverage-over-interval, never instantaneous consumption. The
+reading carries its own From and ObservedAt so a consumer can see exactly which
+interval the numerator spans and which snapshot the denominator reflects.
 */
 func ExecutionBindings() []MetricBinding {
 	return []MetricBinding{
@@ -47,24 +74,21 @@ func ExecutionBindings() []MetricBinding {
 
 /*
 ExecutionPipeline relays each bound metric's raw value into its own slot
-(gated on Fresh, exactly as liquidity/historical do) and then computes the two
-side-correct flow-vs-capacity ratios from whichever values are causally
-available in the committed state — regardless of which producer ring delivered
+(gated on Fresh) and computes the two side-correct coverage factors from the
+causally available committed state — regardless of which producer ring delivered
 the freshest fact. buy flow is read against ask capacity, sell flow against
 bid capacity: an aggressive buy consumes the ask side, never the bid.
 
-The ratios are undefined-safe: a missing or zero capacity, a future-leaked
-retained input, or a non-finite quotient leaves the derived slot unset rather
-than fabricating a value (see ratioNamed). This is the actual economic
-relation the Liquidity §13.1 / CVD §18 decrees, not `flow * confidence` and not
-the imbalance asymmetry.
+The coverage factor is future-leak-rejected but explicitly interval-aware: it
+uses the interval flow (numerator) against the point capacity (denominator), as
+defined in the ExecutionBindings temporal coordinate. It is named per-ask-touch
+and per-bid-touch — a coverage ratio with unit quote/quote, dimensionless —
+never a claim that current flow "filled" current capacity.
 */
 func ExecutionPipeline(bindings []MetricBinding) nmtypes.Primitive {
 	branches := make([]nmtypes.Primitive, 0, len(bindings))
 
 	for _, binding := range bindings {
-		// The flow-structure and spread facts are descriptive context
-		// relayed unchanged; the capacity and flow facts are the ratio inputs.
 		branches = append(branches, jointFact(binding))
 	}
 
@@ -77,33 +101,46 @@ func ExecutionPipeline(bindings []MetricBinding) nmtypes.Primitive {
 		nmtypes.ForkStrict(branches...),
 		ratioNamed(
 			buyFlow.Series.ValueSymbol, buyFlow.Series.SecSymbol, buyFlow.Series.NsecSymbol,
+			buyFlow.FromSec, buyFlow.FromNsec,
 			askCap.Series.ValueSymbol, askCap.Series.SecSymbol, askCap.Series.NsecSymbol,
 			buyFlow.Maturity, askCap.Maturity,
-			symbolExecutionBuyShare, symbolExecutionBuyMatur,
+			symbolExecutionBuyCoverage, symbolExecutionBuyMatur,
+			symbolExecutionBuyFromSec, symbolExecutionBuyFromNsec,
+			symbolExecutionBuyAtSec, symbolExecutionBuyAtNsec,
 		),
 		ratioNamed(
 			sellFlow.Series.ValueSymbol, sellFlow.Series.SecSymbol, sellFlow.Series.NsecSymbol,
+			sellFlow.FromSec, sellFlow.FromNsec,
 			bidCap.Series.ValueSymbol, bidCap.Series.SecSymbol, bidCap.Series.NsecSymbol,
 			sellFlow.Maturity, bidCap.Maturity,
-			symbolExecutionSellShare, symbolExecutionSellMatur,
+			symbolExecutionSellCoverage, symbolExecutionSellMatur,
+			symbolExecutionSellFromSec, symbolExecutionSellFromNsec,
+			symbolExecutionSellAtSec, symbolExecutionSellAtNsec,
 		),
 		scrubFresh(bindings),
 	)
 }
 
 /*
-ExecutionOutputs declares the two derived side-correct flow-vs-capacity ratios
-plus the underlying measured facts themselves. The raw flow and capacity facts
-are exposed with their own observation times (NewMetricOutput), so a consumer
-can see that buy flow was observed at t1 while ask capacity was observed at t2;
-the derived ratios carry their own min-maturity and no borrowed observation
-time. The crossing-cost and flow-structure context facts stay attached for
-interpretation.
+ExecutionOutputs declares the two side-correct coverage factors plus the
+underlying measured facts themselves. The raw flow and capacity facts are
+exposed with their own observation times (and From intervals), so a consumer
+can see that buy flow spanned [From, At] while ask capacity is the point
+snapshot at ObservedAt; the derived coverage factors carry their own min-
+maturity and no borrowed observation time.
 */
 func ExecutionOutputs(bindings []MetricBinding) []Output {
 	return []Output{
-		NewDerivedOutput(symbolExecutionBuyShare, symbolExecutionBuyMatur),
-		NewDerivedOutput(symbolExecutionSellShare, symbolExecutionSellMatur),
+		NewDerivedOutputWithTime(
+			symbolExecutionBuyCoverage, symbolExecutionBuyMatur,
+			symbolExecutionBuyFromSec, symbolExecutionBuyFromNsec,
+			symbolExecutionBuyAtSec, symbolExecutionBuyAtNsec,
+		),
+		NewDerivedOutputWithTime(
+			symbolExecutionSellCoverage, symbolExecutionSellMatur,
+			symbolExecutionSellFromSec, symbolExecutionSellFromNsec,
+			symbolExecutionSellAtSec, symbolExecutionSellAtNsec,
+		),
 		NewMetricOutput(bindings[0].Series.ValueSymbol, bindings[0]), // aggressive_notional:buy
 		NewMetricOutput(bindings[1].Series.ValueSymbol, bindings[1]), // aggressive_notional:sell
 		NewMetricOutput(bindings[2].Series.ValueSymbol, bindings[2]), // touch_notional:ask
@@ -116,8 +153,10 @@ func ExecutionOutputs(bindings []MetricBinding) []Output {
 /*
 NewExecutionAdvisor constructs the single concrete execution-context Advisor
 instance over ExecutionPipeline and ExecutionBindings. It answers the named
-question: how much of the displayed ask/bid capacity did the current aggressive
-buy/sell flow represent — side-correct, never an imbalance asymmetry.
+question: how much executed aggressive flow (over its retained interval) sits
+relative to the side of the book it executed into — side-correct, never an
+imbalance asymmetry, and with the interval-vs-point temporal coordinate stated
+explicitly in the binding.
 */
 func NewExecutionAdvisor(name string) *Advisor {
 	bindings := ExecutionBindings()

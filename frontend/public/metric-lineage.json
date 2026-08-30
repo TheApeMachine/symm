@@ -574,16 +574,8 @@
       "file": "signal/cvd/trade.go",
       "line": 601,
       "unit": "data.UnitPerSecond",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "advisor:decomposition (github.com/theapemachine/symm/logic/advisor)",
-          "package": "github.com/theapemachine/symm/logic/advisor",
-          "file": "logic/advisor/decomposition.go",
-          "line": 29
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -662,8 +654,16 @@
       "file": "signal/cvd/trade.go",
       "line": 599,
       "unit": "data.UnitRate",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:decomposition (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/decomposition.go",
+          "line": 36
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -894,7 +894,7 @@
           "consumer": "advisor:execution (github.com/theapemachine/symm/logic/advisor)",
           "package": "github.com/theapemachine/symm/logic/advisor",
           "file": "logic/advisor/execution.go",
-          "line": 43
+          "line": 70
         },
         {
           "kind": "bound",
@@ -960,8 +960,16 @@
       "file": "signal/cvd/trade.go",
       "line": 600,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:decomposition (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/decomposition.go",
+          "line": 35
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -1894,16 +1902,8 @@
       "file": "signal/hawkes/trade.go",
       "line": 44,
       "unit": "data.UnitPerSecond",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "advisor:decomposition (github.com/theapemachine/symm/logic/advisor)",
-          "package": "github.com/theapemachine/symm/logic/advisor",
-          "file": "logic/advisor/decomposition.go",
-          "line": 28
-        }
-      ],
-      "dead": false,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3160,7 +3160,7 @@
           "consumer": "advisor:execution (github.com/theapemachine/symm/logic/advisor)",
           "package": "github.com/theapemachine/symm/logic/advisor",
           "file": "logic/advisor/execution.go",
-          "line": 44
+          "line": 71
         },
         {
           "kind": "bound",
@@ -5528,10 +5528,10 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/logic/advisor",
       "file": "logic/advisor/decomposition.go",
-      "line": 28,
+      "line": 35,
       "targets": [
-        "cvd/gross_notional_rate",
-        "hawkes/arrival_rate"
+        "cvd/mean_trade_notional",
+        "cvd/trade_rate"
       ]
     },
     {
@@ -5539,7 +5539,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/logic/advisor",
       "file": "logic/advisor/execution.go",
-      "line": 39,
+      "line": 66,
       "targets": [
         "cvd/aggressive_notional:buy",
         "cvd/aggressive_notional:sell",
@@ -5618,6 +5618,7 @@
   "summary": {
     "totalProducers": 422,
     "deadProducers": 390,
+    "referencedProducers": 32,
     "kernelOnlyProducers": 0,
     "boundConsumerEdges": 15,
     "catalogConsumerEdges": 30,

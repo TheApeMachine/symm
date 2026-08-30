@@ -25,6 +25,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
@@ -77,6 +78,7 @@ type Live struct {
 	model          string
 	capture        CaptureSink
 	captureName    string
+	sequencer      *hindsight.Sequencer
 	failureMu      sync.RWMutex
 	failure        func(error)
 	observer       atomic.Pointer[func(string, time.Duration)]
@@ -97,6 +99,41 @@ func (live *Live) Capture() CaptureSink {
 	}
 
 	return live.capture
+}
+
+/*
+SetSequencer attaches a Hindsight capture Sequencer to this session. When set,
+every received frame is assigned a stable CaptureIdentity before parsing, and
+every envelope parsed from that frame carries the same identity. The session's
+captureName (public/private/level3) names the Stream in the assigned identity.
+*/
+func (live *Live) SetSequencer(sequencer *hindsight.Sequencer) {
+	if live == nil {
+		return
+	}
+
+	live.sequencer = sequencer
+}
+
+/*
+assignCaptureID mints a CaptureIdentity for one received raw frame, returning
+the zero identity when no sequencer is attached so the ingress path stays a
+no-op for sessions constructed without Hindsight wiring. It is called once per
+frame, before the frame is parsed, so the identity never depends on the parser
+or the eventual persistence backend.
+*/
+func (live *Live) assignCaptureID() hindsight.CaptureIdentity {
+	if live == nil || live.sequencer == nil {
+		return hindsight.CaptureIdentity{}
+	}
+
+	identity, err := live.sequencer.Assign(hindsight.Stream(live.captureName))
+
+	if err != nil {
+		return hindsight.CaptureIdentity{}
+	}
+
+	return identity
 }
 
 /*
@@ -212,6 +249,11 @@ func NewWithClient(
 			}
 		}
 
+		// Assign the Hindsight capture identity for this raw frame before it
+		// is parsed, so every envelope derived from it carries the exact same
+		// origin regardless of how the parser fans it out.
+		captureID := live.assignCaptureID()
+
 		// Every spot frame — public, private, or level3 — reaches the same
 		// capture sink as the futures stream, so the events store sees the
 		// whole system rather than futures alone. The frame's channel/method
@@ -282,18 +324,21 @@ func NewWithClient(
 			for _, tickerData := range out.(*kraken.Ticker).Data {
 				envelope := types.NewEnvelope(types.EnvelopeTicker)
 				envelope.TickerData = tickerData
+				envelope.CaptureID = captureID
 				live.ingress[channel].Push(envelope)
 			}
 		case "trade":
 			for _, tradeData := range out.(*kraken.Trade).Data {
 				envelope := types.NewEnvelope(types.EnvelopeTrade)
 				envelope.TradeData = tradeData
+				envelope.CaptureID = captureID
 				live.ingress[channel].Push(envelope)
 			}
 		case "level3":
 			for _, level3Data := range out.(*kraken.Level3).Data {
 				envelope := types.NewEnvelope(types.EnvelopeLevel3)
 				envelope.Level3Data = level3Data
+				envelope.CaptureID = captureID
 				live.ingress[channel].Push(envelope)
 			}
 		}

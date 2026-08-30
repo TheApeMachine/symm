@@ -12,6 +12,7 @@ import (
 
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
@@ -41,6 +42,9 @@ type FuturesLive struct {
 	observer      atomic.Pointer[func(string, time.Duration)]
 	ingress       map[string]*runtime.Workload[*types.Envelope]
 	capture       CaptureSink
+	sequencer     *hindsight.Sequencer
+	stream        hindsight.Stream
+	pendingID     hindsight.CaptureIdentity
 }
 
 /*
@@ -75,7 +79,22 @@ func NewFutures(
 		futures.capture = recorders[0]
 	}
 
+	futures.stream = "futures"
+
 	return futures
+}
+
+/*
+SetSequencer attaches a Hindsight capture Sequencer to this futures session.
+When set, every received frame is assigned a stable CaptureIdentity before
+parsing, and every envelope parsed from that frame carries the same identity.
+*/
+func (futures *FuturesLive) SetSequencer(sequencer *hindsight.Sequencer) {
+	if futures == nil {
+		return
+	}
+
+	futures.sequencer = sequencer
 }
 
 func (futures *FuturesLive) Name() string { return "kraken_futures" }
@@ -251,6 +270,14 @@ func (futures *FuturesLive) readLoop(conn *gorillawebsocket.Conn, done chan<- er
 			_ = futures.capture.Capture(frameKind(payload), futures.endpoint, bytes.Clone(payload), time.Now().UTC())
 		}
 
+		// Assign the Hindsight capture identity before DispatchFrame parses
+		// the frame, so every envelope derived from it carries the same origin.
+		if futures.sequencer != nil {
+			if identity, err := futures.sequencer.Assign(futures.stream); err == nil {
+				futures.pendingID = identity
+			}
+		}
+
 		futures.DispatchFrame(payload)
 	}
 }
@@ -321,6 +348,7 @@ func (futures *FuturesLive) dispatchTicker(raw []byte) {
 
 	envelope := types.NewEnvelope(types.EnvelopeFuturesTicker)
 	envelope.FuturesTickerData = ticker.Data
+	envelope.CaptureID = futures.pendingID
 	workload.Push(envelope)
 }
 
@@ -349,6 +377,7 @@ func (futures *FuturesLive) dispatchTrades(raw []byte) {
 
 		envelope := types.NewEnvelope(types.EnvelopeFuturesTrade)
 		envelope.FuturesTradeData = trade
+		envelope.CaptureID = futures.pendingID
 		workload.Push(envelope)
 	}
 }

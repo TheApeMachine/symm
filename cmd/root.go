@@ -16,6 +16,7 @@ import (
 
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic/advisor"
 	"github.com/theapemachine/symm/logic/category"
@@ -249,27 +250,51 @@ var (
 
 			rawCapture := store.NewWriter(storageEngine)
 
+			// The Hindsight capture Sequencer mints a stable CaptureIdentity
+			// for every raw frame before it is parsed, so each envelope carries
+			// the exact external input that produced it. The Run identity is
+			// the process start instant; one Sequencer serves every stream.
+			captureSequencer, err := hindsight.NewSequencer(hindsight.RunID(
+				filepath.Base(filepath.Dir(dataPath)),
+			))
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: construct capture sequencer",
+					err,
+				))
+			}
+
+			publicSession := websocket.New(
+				cmd.Context(),
+				publicIngress,
+				websocket.NewSimulator(),
+				false,
+				system.Cfg.WebSocket.Endpoints.Public,
+				rawCapture,
+			)
+
+			privateSession := websocket.New(
+				cmd.Context(),
+				privateIngress,
+				websocket.NewSimulator(),
+				true,
+				system.Cfg.WebSocket.Endpoints.Private,
+				rawCapture,
+			)
+
+			publicSession.SetSequencer(captureSequencer)
+			privateSession.SetSequencer(captureSequencer)
+
 			api := websocket.NewAPI(
 				cmd.Context(),
-				websocket.New(
-					cmd.Context(),
-					publicIngress,
-					websocket.NewSimulator(),
-					false,
-					system.Cfg.WebSocket.Endpoints.Public,
-					rawCapture,
-				),
-				websocket.New(
-					cmd.Context(),
-					privateIngress,
-					websocket.NewSimulator(),
-					true,
-					system.Cfg.WebSocket.Endpoints.Private,
-					rawCapture,
-				),
+				publicSession,
+				privateSession,
 			)
 
 			futures := websocket.NewFutures(cmd.Context(), system.Cfg.WebSocket.Endpoints.Futures, futuresIngress, rawCapture)
+			futures.SetSequencer(captureSequencer)
 			api.SetFutures(futures)
 
 			go func() {

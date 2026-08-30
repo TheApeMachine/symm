@@ -228,8 +228,12 @@ func TestTopologyLevel3ReachesSharedGraph(t *testing.T) {
 }
 
 /*
-TestTopologyTradeReachesSharedCategory proves trade and Level3 measurements
-reach the ONE authoritative per-symbol Category evidence snapshot.
+TestTopologyCrossWorkloadReachesSharedCategory proves trade and Level3
+measurements reach the ONE authoritative per-symbol Category evidence snapshot
+and jointly shape its verdict. It feeds trade's CVD (AggressiveDrive) through
+one ring and Level3's depthflow (LoadedImbalance) through another, then steps
+the SAME shared solver and asserts the resulting batch carries supporting
+evidence from BOTH source families — not just "some category exists".
 */
 func TestTopologyCrossWorkloadReachesSharedCategory(t *testing.T) {
 	Convey("Given one shared category solver mounted on trade and Level3", t, func() {
@@ -276,18 +280,36 @@ func TestTopologyCrossWorkloadReachesSharedCategory(t *testing.T) {
 			t.Fatal("level3 envelope did not reach the sink")
 		}
 
-		Convey("the shared category state classifies from the composed evidence", func() {
-			// category.Step produces a batch on each envelope; the shared
-			// per-symbol state accumulates both coordinates (cvd and depthflow).
-			// We assert the solver's resident evidence snapshot contains both by
-			// stepping the shared solver directly with a third envelope and
-			// checking a category batch is produced from the joint state.
+		Convey("the shared category state jointly reflects both streams' evidence", func() {
+			// Re-classify through the SAME shared solver: one more measurement
+			// re-runs the classifier against the resident snapshot, which now
+			// holds both the trade cvd coordinate and the level3 depthflow
+			// coordinate folded in by the two rings above.
 			envelope := types.NewEnvelope(types.EnvelopeTicker)
 			envelope.CVD = buildMetric("TEST/USD", "cvd", time.Unix(101, 0), "signed_net_fraction_zscore", 1.0)
 			categorySolver.Step(envelope)
 
 			So(len(envelope.Categories), ShouldBeGreaterThan, 0)
 			So(envelope.Categories[0].Symbol, ShouldEqual, "TEST/USD")
+
+			// The per-symbol snapshot must retain BOTH the cvd coordinate
+			// (trade) and the depthflow coordinate (level3): the solver is the
+			// one authority, and each ring delivered its own declared input.
+			hasCVD := false
+			hasDepthflow := false
+			for _, category := range envelope.Categories {
+				for _, supporting := range category.Supporting {
+					if supporting == "cvd:signed_net_fraction_zscore" {
+						hasCVD = true
+					}
+					if supporting == "depthflow:book_imbalance_zscore" {
+						hasDepthflow = true
+					}
+				}
+			}
+
+			So(hasCVD, ShouldBeTrue)
+			So(hasDepthflow, ShouldBeTrue)
 		})
 	})
 }

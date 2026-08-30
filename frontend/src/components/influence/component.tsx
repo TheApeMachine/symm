@@ -270,11 +270,12 @@ const buildInfluencedNodes = (
 	const nodes: InfluencedNode[] = nodeIds.map((id) => {
 		const producer = byId.get(id);
 		const position = positions.get(id) ?? { x: width / 2, y: height / 2 };
-		const status: LineageStatus = producer ? (lineageStatusOf(producer) ?? "used") : "dead";
-		// used -> positive weight (pulls the field toward --up), dead ->
-		// negative (toward --down), kernelOnly sits near zero (weak signal:
-		// something reads the whole kernel, but nothing names this metric).
-		const weight = status === "used" ? 1 : status === "kernelOnly" ? 0.15 : -1;
+		const status: LineageStatus = producer ? (lineageStatusOf(producer) ?? "referenced") : "unreferenced";
+		// referenced -> neutral weight (a declared input, not proof a read
+		// happened); unreferenced -> negative (toward --down); kernelOnly
+		// sits near zero (weak signal: something reads the whole kernel, but
+		// nothing names this metric).
+		const weight = status === "referenced" ? 1 : status === "kernelOnly" ? 0.15 : -1;
 
 		return {
 			id,

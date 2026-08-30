@@ -206,6 +206,33 @@ func NewDerivedOutput(slot nmtypes.Symbol, maturity nmtypes.Symbol) Output {
 }
 
 /*
+NewDerivedOutputWithTime declares one derived output whose temporal provenance
+is computed by the pipeline and read back from dedicated slots: the reading's
+interval origin (From) and evaluation instant (ObservedAt). It is for derived
+quantities that have a definite temporal coordinate — e.g. a flow-vs-capacity
+coverage factor whose numerator spans the flow's retained interval [From, At]
+and whose denominator is the point snapshot at At. The pipeline writes those
+slots next to the value; the generic Outline shape (maturity supplied, SNR
+undeclared) is otherwise identical to NewDerivedOutput.
+*/
+func NewDerivedOutputWithTime(
+	slot nmtypes.Symbol,
+	maturity nmtypes.Symbol,
+	fromSec, fromNsec, atSec, atNsec nmtypes.Symbol,
+) Output {
+	return Output{
+		Slot:           slot,
+		Maturity:       maturity,
+		SNR:            undeclaredProvenance,
+		SNRDefined:     undeclaredProvenance,
+		ObservedAtSec:  atSec,
+		ObservedAtNsec: atNsec,
+		FromSec:        fromSec,
+		FromNsec:       fromNsec,
+	}
+}
+
+/*
 Advisor is the single context-producer type. It owns one nomagique.Number
 pipeline — supplied at construction, never assumed — keyed by the logical
 subject (the symbol) so every composed metric for that subject folds into the

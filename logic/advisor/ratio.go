@@ -10,8 +10,8 @@ Current-at and derived-provenance symbols. The advisor injects the current
 event's observation time into the Frame before running the pipeline so a
 cross-stream derived stage can reject future-leaked retained inputs and read
 back each composed reading's own observation time. They are interned once here
-because both the Execution Context and Decomposition families compose facts
-from distinct producer rings and share the same causal-alignment discipline.
+because cross-stream composition depends on the same causal-alignment
+discipline regardless of which family performs it.
 */
 var (
 	symbolCurrentAtSec  = nmtypes.MustIntern("advisor/current_at_unix_sec")
@@ -36,15 +36,37 @@ an undefined reading's zero Value is never mistaken for a real zero. Maturity
 is derived as the minimum of the two inputs' maturities (the weakest estimator
 support); SNR stays undeclared (no causal noise model applies to a
 cross-stream ratio of already-measured facts).
+
+Temporal provenance. ratioNamed also writes the derived reading's own temporal
+coordinate so a consumer does not have to guess which interval the numerator
+spanned nor which instant the ratio describes:
+
+  - outFromSec/outFromNsec receive the NUMERATOR's interval start (copied from
+    numeratorFromSec/numeratorFromNsec) — because the numerator is the interval
+    quantity (accumulated flow) and its From is the honest interval origin of
+    the joint reading.
+  - outAtSec/outAtNsec receive the current event time — the evaluation instant,
+    which is never allowed to precede any retained input (enforced below).
+
+So two readings covering different interpreter intervals remain distinguishable
+by their own From/ObservedAt, exactly as the Perspective contract requires; the
+division is refused (out left unset) when either input is absent, future-
+leaked, or the denominator is zero.
 */
 func ratioNamed(
 	numeratorValue, numeratorSec, numeratorNsec nmtypes.Symbol,
+	numeratorFromSec, numeratorFromNsec nmtypes.Symbol,
 	denominatorValue, denominatorSec, denominatorNsec nmtypes.Symbol,
 	numeratorMaturity, denominatorMaturity nmtypes.Symbol,
 	out, outMaturity nmtypes.Symbol,
+	outFromSec, outFromNsec, outAtSec, outAtNsec nmtypes.Symbol,
 ) nmtypes.Primitive {
 	return func(input *nmtypes.Frame) {
 		input.Delete(out)
+		input.Delete(outFromSec)
+		input.Delete(outFromNsec)
+		input.Delete(outAtSec)
+		input.Delete(outAtNsec)
 
 		num, hasNum := input.Get(numeratorValue)
 		numSec, hasNumSec := input.Get(numeratorSec)
@@ -96,6 +118,17 @@ func ratioNamed(
 		}
 
 		input.Put(outMaturity, maturity)
+
+		// Carve the derived reading's temporal coordinate: interval origin from
+		// the numerator, evaluation instant from the current event.
+		if fromSec, hasFrom := input.Get(numeratorFromSec); hasFrom {
+			fromNsec, _ := input.Get(numeratorFromNsec)
+			input.Put(outFromSec, fromSec)
+			input.Put(outFromNsec, fromNsec)
+		}
+
+		input.Put(outAtSec, curSec)
+		input.Put(outAtNsec, curNsec)
 	}
 }
 

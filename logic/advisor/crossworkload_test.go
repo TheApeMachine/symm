@@ -1,6 +1,7 @@
 package advisor
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -84,7 +85,7 @@ func TestCrossStreamFutureLeakRejected(t *testing.T) {
 
 		So(perspective, ShouldNotBeNil)
 
-		buyShare, found := executionReading(perspective, symbolExecutionBuyShare)
+		buyShare, found := executionReading(perspective, symbolExecutionBuyCoverage)
 		So(found, ShouldBeTrue)
 		So(buyShare.Defined, ShouldBeFalse)
 
@@ -130,6 +131,58 @@ func TestSharedAdvisorComposesAcrossWorkloadStreams(t *testing.T) {
 			bookValue, hasBook := state.Get(bindings[2].Series.ValueSymbol)
 			So(hasBook, ShouldBeTrue)
 			So(bookValue, ShouldEqual, 0.5)
+		})
+	})
+}
+
+/*
+TestSharedAdvisorConcurrentRings steps ONE shared advisor instance from two
+goroutines — one delivering the flow fact (trade), the other the capacity fact
+(ticker) — exactly as the two producer Workloads would, and asserts the derived
+cross-stream coverage converges to the correct value under the race detector.
+Same symbol + same semantic state must stay serializable: no race, no lost
+update, and the derived quantity is defined with the right value, not merely
+"some CVD reached the graph".
+*/
+func TestSharedAdvisorConcurrentRings(t *testing.T) {
+	Convey("Given one shared execution advisor stepped from two concurrent rings", t, func() {
+		advisor := NewExecutionAdvisor("advisor.execution.concurrent:" + t.Name())
+		at := time.Unix(100, 0)
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+
+			for range 50 {
+				advisor.Step(testMeasurement("TEST/USD", "cvd", at, map[string]float64{
+					"aggressive_notional:buy": 500.0,
+				}))
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			for range 50 {
+				advisor.Step(testMeasurement("TEST/USD", "liquidity", at, map[string]float64{
+					"touch_notional:ask": 1000.0,
+				}))
+			}
+		}()
+
+		wg.Wait()
+
+		Convey("the derived coverage is correct and defined", func() {
+			perspective := advisor.Step(testMeasurement("TEST/USD", "cvd", at, map[string]float64{
+				"aggressive_notional:buy": 500.0,
+			}))
+
+			coverage, found := executionReading(perspective, symbolExecutionBuyCoverage)
+			So(found, ShouldBeTrue)
+			So(coverage.Defined, ShouldBeTrue)
+			So(coverage.Value, ShouldAlmostEqual, 0.5, 1e-9)
 		})
 	})
 }

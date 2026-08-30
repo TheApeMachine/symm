@@ -161,7 +161,16 @@ type unresolvedOut struct {
 
 type summaryOut struct {
 	TotalProducers      int `json:"totalProducers"`
-	DeadProducers       int `json:"deadProducers"`
+	// DeadProducers is the honest count of UNREFERENCED producers: metrics no
+	// bound/catalog reference names at all. It is not "unused but bound" — a
+	// bound/catalog reference clears Dead even though it is only a declaration,
+	// never proof that a calculation reads the value.
+	DeadProducers int `json:"deadProducers"`
+	// ReferencedProducers is the count of producers that have at least one
+	// bound/catalog reference. A referenced producer is a DECLARED INPUT, not a
+	// proven value-read; the frontend renders it a distinct neutral status, and
+	// nothing counts it as "used".
+	ReferencedProducers int `json:"referencedProducers"`
 	KernelOnlyProducers int `json:"kernelOnlyProducers"`
 	BoundConsumers      int `json:"boundConsumerEdges"`
 	CatalogConsumers    int `json:"catalogConsumerEdges"`
@@ -804,9 +813,13 @@ func buildReport(producers []producer, consumers []consumerEdge, unresolved []un
 	})
 
 	kernelOnlyCount := 0
+	referencedCount := 0
 	for _, po := range outProducers {
 		if po.KernelOnly {
 			kernelOnlyCount++
+		}
+		if !po.Dead && !po.KernelOnly {
+			referencedCount++
 		}
 	}
 
@@ -817,6 +830,7 @@ func buildReport(producers []producer, consumers []consumerEdge, unresolved []un
 		Summary: summaryOut{
 			TotalProducers:      len(outProducers),
 			DeadProducers:       deadCount,
+			ReferencedProducers: referencedCount,
 			KernelOnlyProducers: kernelOnlyCount,
 			BoundConsumers:      boundEdgeCount,
 			CatalogConsumers:    catalogEdgeCount,

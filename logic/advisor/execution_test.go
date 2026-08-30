@@ -153,8 +153,8 @@ func TestExecutionOutputs(t *testing.T) {
 
 		Convey("it declares two derived side-correct ratios plus four measured facts and two context facts", func() {
 			So(len(outputs), ShouldEqual, 8)
-			So(outputs[0].Slot, ShouldEqual, symbolExecutionBuyShare)
-			So(outputs[1].Slot, ShouldEqual, symbolExecutionSellShare)
+			So(outputs[0].Slot, ShouldEqual, symbolExecutionBuyCoverage)
+			So(outputs[1].Slot, ShouldEqual, symbolExecutionSellCoverage)
 		})
 
 		Convey("the derived ratios carry derived (min) maturity, not a single parent's", func() {
@@ -196,8 +196,8 @@ func TestExecutionCapacityDistinguishesNotional(t *testing.T) {
 		tinyPerspective := tiny.Step(testMeasurement("TEST/USD", "cvd", at, flow))
 		hugePerspective := huge.Step(testMeasurement("TEST/USD", "cvd", at, flow))
 
-		tinyBuy, _ := executionReading(tinyPerspective, symbolExecutionBuyShare)
-		hugeBuy, _ := executionReading(hugePerspective, symbolExecutionBuyShare)
+		tinyBuy, _ := executionReading(tinyPerspective, symbolExecutionBuyCoverage)
+		hugeBuy, _ := executionReading(hugePerspective, symbolExecutionBuyCoverage)
 
 		So(tinyBuy.Defined, ShouldBeTrue)
 		So(hugeBuy.Defined, ShouldBeTrue)
@@ -212,6 +212,71 @@ func TestExecutionCapacityDistinguishesNotional(t *testing.T) {
 		Convey("the old imbalance-only semantics would score both identically", func() {
 			// 10 vs 10 and 1_000_000 vs 1_000_000 both yield imbalance 0.
 			So(0.0, ShouldAlmostEqual, 0.0) // self-documenting: imbalance matches
+		})
+	})
+}
+
+/*
+TestExecutionTemporalCoordinate asserts the formally-defined temporal scope of
+the coverage factor: its From is the flow (numerator) interval origin, and its
+ObservedAt is the evaluation instant — never the Perspective's At stamped onto
+the underlying facts, never a fabricated interval. Feed a flow with a non-zero
+From and a capacity with a different observation time; the derived coverage
+reading must carry the flow's From and the current evaluation At.
+*/
+func TestExecutionTemporalCoordinate(t *testing.T) {
+	Convey("Given an execution advisor fed flow spanning [From, At] and a point capacity", t, func() {
+		advisor := NewExecutionAdvisor("advisor.execution.temporal:" + t.Name())
+
+		flowFrom := time.Unix(50, 0)
+		flowAt := time.Unix(100, 0)
+		capacityAt := time.Unix(90, 0)
+
+		// Capacity snapshot first (t=90), then flow over [50, 100]. At the flow
+		// step the capacity is retained (past) and the flow is current, so the
+		// coverage is causally defined with numerator interval [50, 100].
+		advisor.Step(testMeasurement("TEST/USD", "liquidity", capacityAt, map[string]float64{
+			"touch_notional:ask": 1000.0,
+		}))
+
+		flowMeasurement := testMeasurement("TEST/USD", "cvd", flowAt, map[string]float64{
+			"aggressive_notional:buy": 500.0,
+		})
+		flowMeasurement.From = flowFrom
+
+		perspective := advisor.Step(flowMeasurement)
+
+		So(perspective, ShouldNotBeNil)
+
+		coverage, found := executionReading(perspective, symbolExecutionBuyCoverage)
+		So(found, ShouldBeTrue)
+		So(coverage.Defined, ShouldBeTrue)
+		So(coverage.Value, ShouldAlmostEqual, 0.5, 1e-9)
+
+		Convey("the coverage reading's From is the flow interval origin, distinct from any snapshot", func() {
+			So(coverage.From, ShouldEqual, flowFrom)
+			So(coverage.ObservedAt, ShouldEqual, flowAt)
+		})
+
+		Convey("a longer flow interval raises the coverage without touching the book", func() {
+			// The same point capacity (1000) with a much larger retained flow
+			// (100000) yields a 200x coverage — the ratio is coverage-over-
+			// interval, NOT instantaneous fill. This documents, rather than
+			// hides, the interval semantics the critic identified.
+			wider := NewExecutionAdvisor("advisor.execution.temporal.wide:" + t.Name())
+			wider.Step(testMeasurement("TEST/USD", "liquidity", capacityAt, map[string]float64{
+				"touch_notional:ask": 1000.0,
+			}))
+			wideFlow := testMeasurement("TEST/USD", "cvd", flowAt, map[string]float64{
+				"aggressive_notional:buy": 1000000.0,
+			})
+			wideFlow.From = time.Unix(0, 0) // much longer retained interval
+			widePerspective := wider.Step(wideFlow)
+
+			wideCoverage, wideFound := executionReading(widePerspective, symbolExecutionBuyCoverage)
+			So(wideFound, ShouldBeTrue)
+			So(wideCoverage.Value, ShouldAlmostEqual, 1000.0, 1e-9)
+			So(wideCoverage.From, ShouldEqual, time.Unix(0, 0))
 		})
 	})
 }

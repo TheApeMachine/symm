@@ -16,9 +16,9 @@ import {
 } from "#/components/terminal/lineage-report";
 import { cn } from "#/lib/utils";
 
-type StatusFilter = "all" | "dead" | "used" | "kernelOnly";
+type StatusFilter = "all" | "unreferenced" | "referenced" | "kernelOnly";
 
-const statusOf = (p: ProducerRow): "dead" | "used" | "kernelOnly" => lineageStatusOf(p) ?? "used";
+const statusOf = (p: ProducerRow): "unreferenced" | "referenced" | "kernelOnly" => lineageStatusOf(p) ?? "referenced";
 
 /*
 Point is one laid-out node: a kernel, a metric, or a consumer, positioned in
@@ -214,13 +214,14 @@ export const MetricLineage = () => {
 					Metric lineage
 				</Typography.Label>
 				<Chip label="metrics" value={summary.totalProducers} />
-				<Chip label="dead" value={summary.deadProducers} />
+				<Chip label="unreferenced" value={summary.deadProducers} />
+				<Chip label="referenced" value={summary.referencedProducers} />
 				<Chip label="kernel-only" value={summary.kernelOnlyProducers} />
 				<Chip label="bound refs" value={summary.boundConsumerEdges} />
 				<Chip label="catalog refs" value={summary.catalogConsumerEdges} />
 
 				<div className="ml-4 flex items-center gap-1">
-					{(["all", "used", "kernelOnly", "dead"] as StatusFilter[]).map((filter) => (
+					{(["all", "referenced", "kernelOnly", "unreferenced"] as StatusFilter[]).map((filter) => (
 						<button
 							key={filter}
 							type="button"
@@ -303,7 +304,7 @@ export const MetricLineage = () => {
 											y1={m.y}
 											x2={target.x}
 											y2={target.y}
-											stroke={STATUS_COLOR.used}
+											stroke={STATUS_COLOR.referenced}
 											strokeWidth={activeMetricId === m.id ? 2 : 1}
 										/>
 									);
