@@ -245,12 +245,31 @@ func (futures *FuturesLive) readLoop(conn *gorillawebsocket.Conn, done chan<- er
 
 		if futures.capture != nil {
 			// The reader reuses the payload buffer for the next frame, so the
-			// capture owns its own copy of the exact bytes.
-			_ = futures.capture.Capture(futures.endpoint, bytes.Clone(payload), time.Now().UTC())
+			// capture owns its own copy of the exact bytes. The frame's feed
+			// (falling back to its event) is recorded as the kind instead of a
+			// blanket websocket_frame tag, mirroring the spot stream.
+			_ = futures.capture.Capture(frameKind(payload), futures.endpoint, bytes.Clone(payload), time.Now().UTC())
 		}
 
 		futures.DispatchFrame(payload)
 	}
+}
+
+/*
+frameKind names the origin of a raw futures frame for the capture sink: the
+feed when present ("ticker"/"trade"/"book"), falling back to the control event
+("pong"/"heartbeat"/"subscribed"/"info") for frames that carry no feed.
+*/
+func frameKind(raw []byte) string {
+	if feed := utils.GetString(raw, "feed"); feed != "" {
+		return feed
+	}
+
+	if event := utils.GetString(raw, "event"); event != "" {
+		return event
+	}
+
+	return "unknown"
 }
 
 /*

@@ -4,7 +4,6 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"log"
 	"maps"
 	"net/http"
 	_ "net/http/pprof"
@@ -15,7 +14,6 @@ import (
 	"strings"
 	"sync"
 
-	pyroscope "github.com/grafana/pyroscope-go"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -189,15 +187,15 @@ var (
 		Short: "S.Y.M.M. is not financial advice.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := pyroscope.Start(pyroscope.Config{
-				ApplicationName: "symm.theapemachine.app",
-				ServerAddress:   "http://localhost:4040",
-				Logger:          pyroscope.StandardLogger,
-			})
+			// _, err := pyroscope.Start(pyroscope.Config{
+			// 	ApplicationName: "symm.theapemachine.app",
+			// 	ServerAddress:   "http://localhost:4040",
+			// 	Logger:          pyroscope.StandardLogger,
+			// })
 
-			if err != nil {
-				log.Fatalf("error starting pyroscope profiler: %v", err)
-			}
+			// if err != nil {
+			// 	log.Fatalf("error starting pyroscope profiler: %v", err)
+			// }
 
 			errnie.Apply(&errnie.Config{
 				Level: viper.GetString("system.log.level"),
@@ -229,12 +227,11 @@ var (
 			dataPath := utils.ResolveDataPath()
 
 			// The storage writer is the single CaptureSink for every raw
-			// websocket stream (public/private/futures). Raw frames are the
-			// replay substrate the whole system builds on: each frame is
-			// written exactly once, tagged with its endpoint. The full-envelope
-			// per-layer snapshots that previously duplicated the accumulating
-			// envelope dozens of times are intentionally gone — raw capture is
-			// the irreducible stream, not a re-serialized copy of derived state.
+			// websocket stream (public/private/futures). Each frame is written
+			// exactly once, byte-for-byte as it left the wire, tagged with its
+			// origin kind (channel/feed) and endpoint. Nothing else is recorded
+			// here — raw capture is the irreducible stream, not a re-serialized
+			// copy of pipeline state.
 			storageEngine, err := store.NewSQLite(filepath.Join(
 				dataPath,
 				"events.sqlite",
@@ -315,6 +312,14 @@ var (
 				graph.WithInterval(system.Cfg.Snapshot().Planner.RelationInterval),
 			)
 
+			// The shared category solver owns the authoritative per-symbol
+			// evidence snapshot. It and the graph solver and the advisory layer
+			// are mounted at every producer Workload that delivers one of their
+			// declared inputs, so trade (CVD/Hawkes) and Level3
+			// (DepthFlow/Morphology) measurements reach the same semantic state
+			// instead of being stranded on their own rings.
+			categorySolver := category.NewSolver(cmd.Context())
+
 			// The broker desk owns positions and execution. Recovery adopts the
 			// exchange's open inventory before the decision path engages. The
 			// position store persists stoploss state across restarts.
@@ -391,68 +396,82 @@ var (
 			// causal readings, and advances the desk/planner on the thesis tick.
 			publicIngress["ticker"] = nmruntime.NewWorkload(
 				cmd.Context(),
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("ticker.ingress")},
-					{
-						system.NewTraced("ticker.correlation", correlation.NewSignal(cmd.Context())),
-						system.NewTraced("ticker.leadlag", leadlag.NewSignal(cmd.Context())),
-						system.NewTraced("ticker.liquidity", liquidity.NewSignal(cmd.Context())),
-						system.NewTraced("ticker.sentiment", sentiment.NewSignal(cmd.Context())),
-						system.NewTraced("ticker.pumpdump", pumpdump.NewSignal(cmd.Context())),
-						system.NewTraced("ticker.resonance", resonance.NewSolver(cmd.Context(), 0, thesis)),
+				append(
+					[][]nmruntime.Node[*types.Envelope]{
+						{system.NewDiagnostic("ticker.ingress")},
+						{
+							system.NewTraced("ticker.correlation", correlation.NewSignal(cmd.Context())),
+							system.NewTraced("ticker.leadlag", leadlag.NewSignal(cmd.Context())),
+							system.NewTraced("ticker.liquidity", liquidity.NewSignal(cmd.Context())),
+							system.NewTraced("ticker.sentiment", sentiment.NewSignal(cmd.Context())),
+							system.NewTraced("ticker.pumpdump", pumpdump.NewSignal(cmd.Context())),
+							system.NewTraced("ticker.resonance", resonance.NewSolver(cmd.Context(), 0, thesis)),
+						},
 					},
-					{advisors},
-					{
-						system.NewTraced("ticker.graph", graphSolver),
-					},
-					{
-						category.NewSolver(cmd.Context()),
-					},
-					{system.NewDiagnostic("ticker.category")},
-					{
-						system.NewTraced("ticker.cognition", cognition.NewSolver(cmd.Context(), thesis)),
-						system.NewTraced("ticker.opportunity", opportunity.NewSolver(cmd.Context())),
-					},
-					{system.NewDiagnostic("ticker.logic")},
-					{strategyNode{planner: planner}},
-					{tickNode{thesis: thesis, desk: desk, planner: planner}},
-					{system.NewDiagnostic("ticker.trade")},
-					{hub},
-					{system.NewDiagnostic("ticker.hub")},
-				},
+					append(
+						semanticCore("ticker", advisors, graphSolver, categorySolver),
+						[][]nmruntime.Node[*types.Envelope]{
+							{system.NewDiagnostic("ticker.category")},
+							{
+								system.NewTraced("ticker.cognition", cognition.NewSolver(cmd.Context(), thesis)),
+								system.NewTraced("ticker.opportunity", opportunity.NewSolver(cmd.Context())),
+							},
+							{system.NewDiagnostic("ticker.logic")},
+							{strategyNode{planner: planner}},
+							{tickNode{thesis: thesis, desk: desk, planner: planner}},
+							{system.NewDiagnostic("ticker.trade")},
+							{hub},
+							{system.NewDiagnostic("ticker.hub")},
+						}...,
+					)...,
+				),
 			)
 
 			publicIngress["trade"] = nmruntime.NewWorkload(
 				cmd.Context(),
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("trade.ingress")},
-					{
-						system.NewTraced("trade.cvd", cvd.NewSignal(cmd.Context())),
-						system.NewTraced("trade.hawkes", hawkes.NewSignal(cmd.Context())),
-						system.NewTraced("trade.pumpdump", pumpdump.NewSignal(cmd.Context())),
-						system.NewTraced("trade.toxicity", toxicity.NewSignal(cmd.Context())),
+				append(
+					[][]nmruntime.Node[*types.Envelope]{
+						{system.NewDiagnostic("trade.ingress")},
+						{
+							system.NewTraced("trade.cvd", cvd.NewSignal(cmd.Context())),
+							system.NewTraced("trade.hawkes", hawkes.NewSignal(cmd.Context())),
+							system.NewTraced("trade.pumpdump", pumpdump.NewSignal(cmd.Context())),
+							system.NewTraced("trade.toxicity", toxicity.NewSignal(cmd.Context())),
+						},
 					},
-					{hub},
-					{system.NewDiagnostic("trade.hub")},
-				},
+					append(
+						semanticCore("trade", advisors, graphSolver, categorySolver),
+						[][]nmruntime.Node[*types.Envelope]{
+							{hub},
+							{system.NewDiagnostic("trade.hub")},
+						}...,
+					)...,
+				),
 			)
 
 			privateIngress["level3"] = nmruntime.NewWorkload(
 				cmd.Context(),
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("level3.ingress")},
-					{
-						system.NewTraced("level3.depthflow", depthflow.NewSignal(cmd.Context())),
-						system.NewTraced("level3.morphology", morphology.NewSignal(cmd.Context())),
-						system.NewTraced("level3.pumpdump", pumpdump.NewSignal(cmd.Context())),
-						system.NewTraced("level3.toxicity", toxicity.NewSignal(cmd.Context())),
+				append(
+					[][]nmruntime.Node[*types.Envelope]{
+						{system.NewDiagnostic("level3.ingress")},
+						{
+							system.NewTraced("level3.depthflow", depthflow.NewSignal(cmd.Context())),
+							system.NewTraced("level3.morphology", morphology.NewSignal(cmd.Context())),
+							system.NewTraced("level3.pumpdump", pumpdump.NewSignal(cmd.Context())),
+							system.NewTraced("level3.toxicity", toxicity.NewSignal(cmd.Context())),
+						},
+						{
+							system.NewTraced("level3.manifold", manifold.NewSolver(cmd.Context())),
+						},
 					},
-					{
-						system.NewTraced("level3.manifold", manifold.NewSolver(cmd.Context())),
-					},
-					{hub},
-					{system.NewDiagnostic("level3.hub")},
-				},
+					append(
+						semanticCore("level3", advisors, graphSolver, categorySolver),
+						[][]nmruntime.Node[*types.Envelope]{
+							{hub},
+							{system.NewDiagnostic("level3.hub")},
+						}...,
+					)...,
+				),
 			)
 
 			futuresIngress["ticker"] = nmruntime.NewWorkload(

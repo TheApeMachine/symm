@@ -864,6 +864,8 @@ func encodePerspectives(perspectives []*Perspective) []*telemetry.PerspectiveFra
 				Metric:     name,
 				Value:      reading.Value,
 				Defined:    reading.Defined,
+				ObservedAt: timeNs(reading.ObservedAt),
+				From:       timeNs(reading.From),
 				Maturity:   reading.Maturity,
 				Snr:        reading.SNR,
 				SnrDefined: reading.SNRDefined,

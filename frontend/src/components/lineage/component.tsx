@@ -216,7 +216,8 @@ export const MetricLineage = () => {
 				<Chip label="metrics" value={summary.totalProducers} />
 				<Chip label="dead" value={summary.deadProducers} />
 				<Chip label="kernel-only" value={summary.kernelOnlyProducers} />
-				<Chip label="fine edges" value={summary.fineConsumerEdges} />
+				<Chip label="bound refs" value={summary.boundConsumerEdges} />
+				<Chip label="catalog refs" value={summary.catalogConsumerEdges} />
 
 				<div className="ml-4 flex items-center gap-1">
 					{(["all", "used", "kernelOnly", "dead"] as StatusFilter[]).map((filter) => (
@@ -291,7 +292,7 @@ export const MetricLineage = () => {
 							const row = layout.metricById.get(m.id);
 							if (!row) return null;
 							return row.consumers
-								.filter((c) => c.kind === "fine")
+								.filter((c) => c.kind === "bound" || c.kind === "catalog")
 								.map((c) => {
 									const target = consumerPointById.get(c.consumer);
 									if (!target) return null;
@@ -386,7 +387,7 @@ export const MetricLineage = () => {
 								<circle
 									r={5}
 									fill={
-										row?.kind === "fine"
+										row?.kind === "bound" || row?.kind === "catalog"
 											? "var(--acc, #5b8def)"
 											: row?.kind === "kernel"
 												? STATUS_COLOR.kernelOnly
@@ -469,7 +470,7 @@ export const MetricLineage = () => {
 										>
 											<Typography.Span
 												className={cn(
-													c.kind === "fine"
+													c.kind === "bound" || c.kind === "catalog"
 														? "text-(--f1)"
 														: c.kind === "kernel"
 															? "text-(--f3)"

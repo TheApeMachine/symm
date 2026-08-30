@@ -10,6 +10,8 @@ type PerspectiveReadingT struct {
 	Metric string `json:"metric"`
 	Value float64 `json:"value"`
 	Defined bool `json:"defined"`
+	ObservedAt int64 `json:"observedAt"`
+	From int64 `json:"from"`
 	Maturity float64 `json:"maturity"`
 	Snr float64 `json:"snr"`
 	SnrDefined bool `json:"snrDefined"`
@@ -24,6 +26,8 @@ func (t *PerspectiveReadingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOf
 	PerspectiveReadingAddMetric(builder, metricOffset)
 	PerspectiveReadingAddValue(builder, t.Value)
 	PerspectiveReadingAddDefined(builder, t.Defined)
+	PerspectiveReadingAddObservedAt(builder, t.ObservedAt)
+	PerspectiveReadingAddFrom(builder, t.From)
 	PerspectiveReadingAddMaturity(builder, t.Maturity)
 	PerspectiveReadingAddSnr(builder, t.Snr)
 	PerspectiveReadingAddSnrDefined(builder, t.SnrDefined)
@@ -34,6 +38,8 @@ func (rcv *PerspectiveReading) UnPackTo(t *PerspectiveReadingT) {
 	t.Metric = string(rcv.Metric())
 	t.Value = rcv.Value()
 	t.Defined = rcv.Defined()
+	t.ObservedAt = rcv.ObservedAt()
+	t.From = rcv.From()
 	t.Maturity = rcv.Maturity()
 	t.Snr = rcv.Snr()
 	t.SnrDefined = rcv.SnrDefined()
@@ -115,8 +121,32 @@ func (rcv *PerspectiveReading) MutateDefined(n bool) bool {
 	return rcv._tab.MutateBoolSlot(8, n)
 }
 
-func (rcv *PerspectiveReading) Maturity() float64 {
+func (rcv *PerspectiveReading) ObservedAt() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *PerspectiveReading) MutateObservedAt(n int64) bool {
+	return rcv._tab.MutateInt64Slot(10, n)
+}
+
+func (rcv *PerspectiveReading) From() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *PerspectiveReading) MutateFrom(n int64) bool {
+	return rcv._tab.MutateInt64Slot(12, n)
+}
+
+func (rcv *PerspectiveReading) Maturity() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -124,11 +154,11 @@ func (rcv *PerspectiveReading) Maturity() float64 {
 }
 
 func (rcv *PerspectiveReading) MutateMaturity(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(10, n)
+	return rcv._tab.MutateFloat64Slot(14, n)
 }
 
 func (rcv *PerspectiveReading) Snr() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -136,11 +166,11 @@ func (rcv *PerspectiveReading) Snr() float64 {
 }
 
 func (rcv *PerspectiveReading) MutateSnr(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(12, n)
+	return rcv._tab.MutateFloat64Slot(16, n)
 }
 
 func (rcv *PerspectiveReading) SnrDefined() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
@@ -148,11 +178,11 @@ func (rcv *PerspectiveReading) SnrDefined() bool {
 }
 
 func (rcv *PerspectiveReading) MutateSnrDefined(n bool) bool {
-	return rcv._tab.MutateBoolSlot(14, n)
+	return rcv._tab.MutateBoolSlot(18, n)
 }
 
 func PerspectiveReadingStart(builder *flatbuffers.Builder) {
-	builder.StartObject(6)
+	builder.StartObject(8)
 }
 func PerspectiveReadingAddMetric(builder *flatbuffers.Builder, metric flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(metric), 0)
@@ -163,14 +193,20 @@ func PerspectiveReadingAddValue(builder *flatbuffers.Builder, value float64) {
 func PerspectiveReadingAddDefined(builder *flatbuffers.Builder, defined bool) {
 	builder.PrependBoolSlot(2, defined, false)
 }
+func PerspectiveReadingAddObservedAt(builder *flatbuffers.Builder, observedAt int64) {
+	builder.PrependInt64Slot(3, observedAt, 0)
+}
+func PerspectiveReadingAddFrom(builder *flatbuffers.Builder, from int64) {
+	builder.PrependInt64Slot(4, from, 0)
+}
 func PerspectiveReadingAddMaturity(builder *flatbuffers.Builder, maturity float64) {
-	builder.PrependFloat64Slot(3, maturity, 0.0)
+	builder.PrependFloat64Slot(5, maturity, 0.0)
 }
 func PerspectiveReadingAddSnr(builder *flatbuffers.Builder, snr float64) {
-	builder.PrependFloat64Slot(4, snr, 0.0)
+	builder.PrependFloat64Slot(6, snr, 0.0)
 }
 func PerspectiveReadingAddSnrDefined(builder *flatbuffers.Builder, snrDefined bool) {
-	builder.PrependBoolSlot(5, snrDefined, false)
+	builder.PrependBoolSlot(7, snrDefined, false)
 }
 func PerspectiveReadingEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

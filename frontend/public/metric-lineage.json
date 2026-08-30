@@ -386,7 +386,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -532,7 +532,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -574,8 +574,16 @@
       "file": "signal/cvd/trade.go",
       "line": 601,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:decomposition (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/decomposition.go",
+          "line": 29
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -636,7 +644,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -668,7 +676,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -882,21 +890,21 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "bound",
           "consumer": "advisor:execution (github.com/theapemachine/symm/logic/advisor)",
           "package": "github.com/theapemachine/symm/logic/advisor",
           "file": "logic/advisor/execution.go",
-          "line": 25
+          "line": 43
         },
         {
-          "kind": "fine",
+          "kind": "bound",
           "consumer": "advisor:historical (github.com/theapemachine/symm/logic/advisor)",
           "package": "github.com/theapemachine/symm/logic/advisor",
           "file": "logic/advisor/historical.go",
           "line": 43
         },
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -1018,14 +1026,14 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "bound",
           "consumer": "advisor:liquidity (github.com/theapemachine/symm/logic/advisor)",
           "package": "github.com/theapemachine/symm/logic/advisor",
           "file": "logic/advisor/liquidity.go",
           "line": 21
         },
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -1081,14 +1089,14 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "bound",
           "consumer": "advisor:historical (github.com/theapemachine/symm/logic/advisor)",
           "package": "github.com/theapemachine/symm/logic/advisor",
           "file": "logic/advisor/historical.go",
           "line": 44
         },
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -1146,7 +1154,7 @@
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -1190,7 +1198,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -1386,7 +1394,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -1526,7 +1534,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -1656,7 +1664,7 @@
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -1796,7 +1804,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -1886,8 +1894,16 @@
       "file": "signal/hawkes/trade.go",
       "line": 44,
       "unit": "data.UnitPerSecond",
-      "consumers": [],
-      "dead": true,
+      "consumers": [
+        {
+          "kind": "bound",
+          "consumer": "advisor:decomposition (github.com/theapemachine/symm/logic/advisor)",
+          "package": "github.com/theapemachine/symm/logic/advisor",
+          "file": "logic/advisor/decomposition.go",
+          "line": 28
+        }
+      ],
+      "dead": false,
       "kernelOnly": false
     },
     {
@@ -1926,7 +1942,7 @@
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -1972,7 +1988,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -2031,7 +2047,7 @@
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -2052,7 +2068,7 @@
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -2596,7 +2612,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -2652,7 +2668,7 @@
       "unit": "data.UnitSecond",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -3140,21 +3156,21 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "bound",
           "consumer": "advisor:execution (github.com/theapemachine/symm/logic/advisor)",
           "package": "github.com/theapemachine/symm/logic/advisor",
           "file": "logic/advisor/execution.go",
-          "line": 27
+          "line": 44
         },
         {
-          "kind": "fine",
+          "kind": "bound",
           "consumer": "advisor:liquidity (github.com/theapemachine/symm/logic/advisor)",
           "package": "github.com/theapemachine/symm/logic/advisor",
           "file": "logic/advisor/liquidity.go",
           "line": 19
         },
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -3258,7 +3274,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -3330,21 +3346,14 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
-          "consumer": "advisor:execution (github.com/theapemachine/symm/logic/advisor)",
-          "package": "github.com/theapemachine/symm/logic/advisor",
-          "file": "logic/advisor/execution.go",
-          "line": 26
-        },
-        {
-          "kind": "fine",
+          "kind": "bound",
           "consumer": "advisor:liquidity (github.com/theapemachine/symm/logic/advisor)",
           "package": "github.com/theapemachine/symm/logic/advisor",
           "file": "logic/advisor/liquidity.go",
           "line": 20
         },
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -3720,7 +3729,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -4040,7 +4049,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -4120,7 +4129,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -4833,7 +4842,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -4854,7 +4863,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -5187,7 +5196,7 @@
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -5481,7 +5490,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -5502,7 +5511,7 @@
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
-          "kind": "fine",
+          "kind": "catalog",
           "consumer": "graph.Solver (causal-influence catalog)",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/defaults.go",
@@ -5515,20 +5524,34 @@
   ],
   "consumers": [
     {
+      "consumer": "advisor:decomposition (github.com/theapemachine/symm/logic/advisor)",
+      "kind": "bound",
+      "package": "github.com/theapemachine/symm/logic/advisor",
+      "file": "logic/advisor/decomposition.go",
+      "line": 28,
+      "targets": [
+        "cvd/gross_notional_rate",
+        "hawkes/arrival_rate"
+      ]
+    },
+    {
       "consumer": "advisor:execution (github.com/theapemachine/symm/logic/advisor)",
-      "kind": "fine",
+      "kind": "bound",
       "package": "github.com/theapemachine/symm/logic/advisor",
       "file": "logic/advisor/execution.go",
-      "line": 25,
+      "line": 39,
       "targets": [
+        "cvd/aggressive_notional:buy",
+        "cvd/aggressive_notional:sell",
         "cvd/signed_net_fraction_zscore",
         "liquidity/relative_spread",
-        "liquidity/touch_notional_imbalance"
+        "liquidity/touch_notional:ask",
+        "liquidity/touch_notional:bid"
       ]
     },
     {
       "consumer": "advisor:historical (github.com/theapemachine/symm/logic/advisor)",
-      "kind": "fine",
+      "kind": "bound",
       "package": "github.com/theapemachine/symm/logic/advisor",
       "file": "logic/advisor/historical.go",
       "line": 43,
@@ -5541,7 +5564,7 @@
     },
     {
       "consumer": "advisor:liquidity (github.com/theapemachine/symm/logic/advisor)",
-      "kind": "fine",
+      "kind": "bound",
       "package": "github.com/theapemachine/symm/logic/advisor",
       "file": "logic/advisor/liquidity.go",
       "line": 19,
@@ -5553,7 +5576,7 @@
     },
     {
       "consumer": "graph.Solver (causal-influence catalog)",
-      "kind": "fine",
+      "kind": "catalog",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/defaults.go",
       "line": 35,
@@ -5594,9 +5617,10 @@
   "unresolved": null,
   "summary": {
     "totalProducers": 422,
-    "deadProducers": 392,
+    "deadProducers": 390,
     "kernelOnlyProducers": 0,
-    "fineConsumerEdges": 38,
+    "boundConsumerEdges": 15,
+    "catalogConsumerEdges": 30,
     "kernelConsumerEdges": 0,
     "genericConsumerEdges": 0,
     "unresolved": 0

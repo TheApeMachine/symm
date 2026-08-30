@@ -92,11 +92,23 @@ Maturity, SNR, and SNRDefined carry forward the source Measurement's own
 quality facts for the composed metric this reading belongs to — an Advisor
 composes already-produced Measurements and must not discard or re-derive the
 provenance they already established.
+
+ObservedAt and From are the reading's own temporal provenance: the event-time
+instant this fact was last observed and the interval it represents. They are
+NOT the Perspective's At — a Perspective composing facts from multiple producer
+Workloads (trade CVD, ticker liquidity, Level3 depthflow) carries readings
+observed at different instants, and stamping every underlying fact with the
+outermost Perspective.At would erase that distinction. A consumer distinguishes
+readings by their own ObservedAt/From; an undefined reading has a zero
+ObservedAt, never a fabricated copy of the Perspective's clock. From is zero
+when the source measurement declared no interval (instantaneous facts).
 */
 type MetricReading struct {
 	Metric     nmtypes.Symbol
 	Value      float64
 	Defined    bool
+	ObservedAt time.Time
+	From       time.Time
 	Maturity   float64
 	SNR        float64
 	SNRDefined bool

@@ -212,6 +212,14 @@ func NewWithClient(
 			}
 		}
 
+		// Every spot frame — public, private, or level3 — reaches the same
+		// capture sink as the futures stream, so the events store sees the
+		// whole system rather than futures alone. The frame's channel/method
+		// is recorded as its kind instead of a blanket websocket_frame tag.
+		if live.capture != nil {
+			_ = live.capture.Capture(channel, live.client.URL, bytes.Clone(raw), time.Now().UTC())
+		}
+
 		// An unsubscribe acknowledgement answers the instrument's paced
 		// recovery of a checksum-diverged symbol; there is nothing to
 		// dispatch for it.
@@ -365,10 +373,11 @@ func NewWithClient(
 }
 
 /*
-captureFrame records one untouched websocket payload with its receive order and
-canonical endpoint so the live feed is directly consumable by market replay.
+captureFrame records one untouched websocket payload with its origin kind,
+receive order, and canonical endpoint so the live feed is directly consumable by
+market replay.
 */
-func (live *Live) captureFrame(endpoint string, payload []byte) error {
+func (live *Live) captureFrame(kind, endpoint string, payload []byte) error {
 	if live.capture == nil {
 		return nil
 	}
@@ -380,15 +389,17 @@ func (live *Live) captureFrame(endpoint string, payload []byte) error {
 	// The SDK hands back a view into a buffer it reuses for the next frame,
 	// so an asynchronously flushed recorder would write neighbouring frames
 	// concatenated into it. The capture owns its own copy of the exact bytes.
-	return live.capture.Capture(endpoint, bytes.Clone(payload), time.Now().UTC())
+	return live.capture.Capture(kind, endpoint, bytes.Clone(payload), time.Now().UTC())
 }
 
 /*
-CaptureSink receives one untouched transport payload with its endpoint and
-arrival time. Implementations own persistence; the transport only reports.
+CaptureSink receives one untouched transport payload with its origin kind,
+endpoint, and arrival time. kind identifies the frame's channel/method/feed
+(e.g. "ticker", "trade", "book", "level3", "pong"); endpoint names the stream it
+arrived on. Implementations own persistence; the transport only reports.
 */
 type CaptureSink interface {
-	Capture(endpoint string, payload []byte, receivedAt time.Time) error
+	Capture(kind, endpoint string, payload []byte, receivedAt time.Time) error
 }
 
 func (live *Live) Status() runtime.Stage {
@@ -664,7 +675,7 @@ func (live *Live) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, erro
 	)
 
 	if len(response) > 0 {
-		captureErr := live.captureFrame(TradeVolumeEndpoint, response)
+		captureErr := live.captureFrame("trade_volume", TradeVolumeEndpoint, response)
 
 		if captureErr != nil {
 			return nil, captureErr

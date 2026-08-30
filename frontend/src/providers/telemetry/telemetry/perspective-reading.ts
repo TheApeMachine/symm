@@ -42,23 +42,33 @@ defined():boolean {
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
-maturity():number {
+observedAt():bigint {
   const offset = this.bb!.__offset(this.bb_pos, 10);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+from():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 12);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+maturity():number {
+  const offset = this.bb!.__offset(this.bb_pos, 14);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 snr():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
+  const offset = this.bb!.__offset(this.bb_pos, 16);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 snrDefined():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
+  const offset = this.bb!.__offset(this.bb_pos, 18);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
 static startPerspectiveReading(builder:flatbuffers.Builder) {
-  builder.startObject(6);
+  builder.startObject(8);
 }
 
 static addMetric(builder:flatbuffers.Builder, metricOffset:flatbuffers.Offset) {
@@ -73,16 +83,24 @@ static addDefined(builder:flatbuffers.Builder, defined:boolean) {
   builder.addFieldInt8(2, +defined, +false);
 }
 
+static addObservedAt(builder:flatbuffers.Builder, observedAt:bigint) {
+  builder.addFieldInt64(3, observedAt, BigInt('0'));
+}
+
+static addFrom(builder:flatbuffers.Builder, from:bigint) {
+  builder.addFieldInt64(4, from, BigInt('0'));
+}
+
 static addMaturity(builder:flatbuffers.Builder, maturity:number) {
-  builder.addFieldFloat64(3, maturity, 0.0);
+  builder.addFieldFloat64(5, maturity, 0.0);
 }
 
 static addSnr(builder:flatbuffers.Builder, snr:number) {
-  builder.addFieldFloat64(4, snr, 0.0);
+  builder.addFieldFloat64(6, snr, 0.0);
 }
 
 static addSnrDefined(builder:flatbuffers.Builder, snrDefined:boolean) {
-  builder.addFieldInt8(5, +snrDefined, +false);
+  builder.addFieldInt8(7, +snrDefined, +false);
 }
 
 static endPerspectiveReading(builder:flatbuffers.Builder):flatbuffers.Offset {
@@ -91,11 +109,13 @@ static endPerspectiveReading(builder:flatbuffers.Builder):flatbuffers.Offset {
   return offset;
 }
 
-static createPerspectiveReading(builder:flatbuffers.Builder, metricOffset:flatbuffers.Offset, value:number, defined:boolean, maturity:number, snr:number, snrDefined:boolean):flatbuffers.Offset {
+static createPerspectiveReading(builder:flatbuffers.Builder, metricOffset:flatbuffers.Offset, value:number, defined:boolean, observedAt:bigint, from:bigint, maturity:number, snr:number, snrDefined:boolean):flatbuffers.Offset {
   PerspectiveReading.startPerspectiveReading(builder);
   PerspectiveReading.addMetric(builder, metricOffset);
   PerspectiveReading.addValue(builder, value);
   PerspectiveReading.addDefined(builder, defined);
+  PerspectiveReading.addObservedAt(builder, observedAt);
+  PerspectiveReading.addFrom(builder, from);
   PerspectiveReading.addMaturity(builder, maturity);
   PerspectiveReading.addSnr(builder, snr);
   PerspectiveReading.addSnrDefined(builder, snrDefined);
@@ -107,6 +127,8 @@ unpack(): PerspectiveReadingT {
     this.metric(),
     this.value(),
     this.defined(),
+    this.observedAt(),
+    this.from(),
     this.maturity(),
     this.snr(),
     this.snrDefined()
@@ -118,6 +140,8 @@ unpackTo(_o: PerspectiveReadingT): void {
   _o.metric = this.metric();
   _o.value = this.value();
   _o.defined = this.defined();
+  _o.observedAt = this.observedAt();
+  _o.from = this.from();
   _o.maturity = this.maturity();
   _o.snr = this.snr();
   _o.snrDefined = this.snrDefined();
@@ -129,6 +153,8 @@ constructor(
   public metric: string|Uint8Array|null = null,
   public value: number = 0.0,
   public defined: boolean = false,
+  public observedAt: bigint = BigInt('0'),
+  public from: bigint = BigInt('0'),
   public maturity: number = 0.0,
   public snr: number = 0.0,
   public snrDefined: boolean = false
@@ -142,6 +168,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     metric,
     this.value,
     this.defined,
+    this.observedAt,
+    this.from,
     this.maturity,
     this.snr,
     this.snrDefined

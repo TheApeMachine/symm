@@ -475,6 +475,8 @@ table PerspectiveReading {
   metric:string (required);
   value:double;
   defined:bool;
+  observedAt:long;
+  from:long;
   maturity:double;
   snr:double;
   snrDefined:bool;

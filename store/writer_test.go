@@ -5,8 +5,6 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-
-	"github.com/theapemachine/symm/types"
 )
 
 func TestWriterCapture(t *testing.T) {
@@ -14,60 +12,43 @@ func TestWriterCapture(t *testing.T) {
 		engine := newRecordingRepository()
 		writer := NewWriter(engine)
 
-		Convey("Capturing a frame writes a websocket_frame event", func() {
-			err := writer.Capture("wss://example", []byte("raw"), time.Now())
+		Convey("Capturing a frame writes it under its channel/feed kind with its endpoint", func() {
+			err := writer.Capture("ticker", "wss://example", []byte("raw"), time.Now())
 
 			So(err, ShouldBeNil)
-			So(engine.kinds, ShouldResemble, []string{FrameKind})
-			So(string(engine.payloads[0][:len("wss://example")]), ShouldEqual, "wss://example")
+			So(engine.kinds, ShouldResemble, []string{"ticker"})
+			So(engine.endpoints, ShouldResemble, []string{"wss://example"})
+
+			// The payload is the exact bytes off the wire; nothing is prefixed.
+			So(string(engine.payloads[0]), ShouldEqual, "raw")
 		})
 
 		Convey("Capturing with a nil repository is a no-op", func() {
 			writer := NewWriter(nil)
 
-			So(writer.Capture("x", []byte("y"), time.Now()), ShouldBeNil)
-		})
-	})
-}
-
-func TestLayerStep(t *testing.T) {
-	Convey("Given a writer over an in-memory store", t, func() {
-		engine := newRecordingRepository()
-		writer := NewWriter(engine)
-		layer := NewLayer(writer, "ticker.signals")
-
-		Convey("Stepping an envelope records it under the layer name", func() {
-			envelope := types.NewEnvelope(types.EnvelopeTicker)
-			result := layer.Step(envelope)
-
-			So(result, ShouldEqual, envelope)
-			So(engine.kinds, ShouldResemble, []string{"ticker.signals"})
-		})
-
-		Convey("Stepping a nil envelope is a no-op", func() {
-			layer.Step(nil)
-
-			So(len(engine.kinds), ShouldEqual, 0)
+			So(writer.Capture("ticker", "x", []byte("y"), time.Now()), ShouldBeNil)
 		})
 	})
 }
 
 /*
 recordingRepository is a minimal in-memory Repository used to assert the writer
-and layer record the right kinds and payloads without a SQLite file.
+records the right kind, endpoint, and payload without a SQLite file.
 */
 type recordingRepository struct {
-	kinds    []string
-	payloads [][]byte
+	kinds     []string
+	payloads  [][]byte
+	endpoints []string
 }
 
 func newRecordingRepository() *recordingRepository {
 	return &recordingRepository{}
 }
 
-func (repo *recordingRepository) WriteEvent(kind string, payload []byte, at time.Time) error {
+func (repo *recordingRepository) WriteFrame(endpoint, kind string, payload []byte, at time.Time) error {
 	repo.kinds = append(repo.kinds, kind)
 	repo.payloads = append(repo.payloads, payload)
+	repo.endpoints = append(repo.endpoints, endpoint)
 	return nil
 }
 

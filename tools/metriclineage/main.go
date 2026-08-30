@@ -16,13 +16,22 @@ nomagique/data/projector.go's Project), not the internal MustIntern series-slot
 prefix used for temporal-context bookkeeping, which is a different, private
 namespace.
 
-Consumer identity, by kind — only "fine" determines whether a metric is
-"used." A metric is used if and only if something references it BY NAME:
-  - fine: a literal (source, metric) pair passed to
-    logic/advisor.NewMetricBinding / NewControlBinding, or appearing as a
-    relation.Selector{Source:, Metric:} literal in strategy/defaults.go's
-    defaultMarketCatalog (the causal-influence graph's declared catalog).
-    This is the ONLY kind that marks a metric as used.
+Consumer identity, by kind — only "bound" and "catalog" mark a metric as
+REFERENCED (not dead). Neither is proof that a named semantic calculation
+reads the value: they are declared inputs, and this tool does not trace
+dataflow past the string reference.
+
+  - bound: a literal (source, metric) pair passed to
+    logic/advisor.NewMetricBinding / NewControlBinding — an Advisor declares
+    this metric as an input. A binding alone is a REFERENCE, not proof the
+    value is read by a named calculation: an advisor may relay the value
+    verbatim, or the live topology may never deliver the measurement to the
+    ring that hosts the binding. It clears "dead" (the metric is at least
+    declared) but is recorded as "bound", never as a read.
+  - catalog: a relation.Selector{Source:, Metric:} literal in
+    strategy/defaults.go's defaultMarketCatalog (the causal-influence graph's
+    declared catalog). Same caveat: a declared graph coordinate is a
+    reference, not a witnessed read.
   - kernel: a runtime.Register call whose callback parameter type names a
     specific kernel's own Measurement type (e.g. *hawkes.Measurement) rather
     than the generic *data.Measurement[float64] — the consumer receives the
@@ -36,11 +45,13 @@ Consumer identity, by kind — only "fine" determines whether a metric is
     cmd/boot.go) — every metric flows through here, so it is even weaker
     evidence than a kernel edge and likewise never marks a metric as used.
 
-A metric with zero fine consumer edges is reported dead, regardless of how
-many kernel/generic edges it has — those are recorded for context (so the
+A metric with zero bound/catalog references is reported dead, regardless of
+how many kernel/generic edges it has — those are recorded for context (so the
 report never claims a metric touches nothing when its raw bytes do flow
 somewhere), but "the struct passed through a bulk subscription" is not the
-same claim as "this metric's value is read by anything."
+same claim as "this metric's value is read by anything." A bound/catalog
+reference is only ever that: a declared input. The report never treats a
+binding as evidence that a calculation performed a semantic role on the value.
 */
 package main
 
@@ -87,7 +98,7 @@ type producer struct {
 
 type consumerEdge struct {
 	ID       metricID
-	Kind     string // "fine" | "kernel" | "generic"
+	Kind     string // "bound" | "catalog" | "kernel" | "generic"
 	Consumer string // human label: package/function or subsystem name
 	Package  string
 	File     string
@@ -152,7 +163,8 @@ type summaryOut struct {
 	TotalProducers      int `json:"totalProducers"`
 	DeadProducers       int `json:"deadProducers"`
 	KernelOnlyProducers int `json:"kernelOnlyProducers"`
-	FineConsumers       int `json:"fineConsumerEdges"`
+	BoundConsumers      int `json:"boundConsumerEdges"`
+	CatalogConsumers    int `json:"catalogConsumerEdges"`
 	KernelConsumers     int `json:"kernelConsumerEdges"`
 	GenericConsumers    int `json:"genericConsumerEdges"`
 	Unresolved          int `json:"unresolved"`
@@ -240,9 +252,10 @@ func main() {
 	}
 
 	fmt.Printf(
-		"metriclineage: %d producers (%d dead), %d fine edges, %d kernel edges, %d generic edges, %d unresolved -> %s\n",
+		"metriclineage: %d producers (%d dead), %d bound refs, %d catalog refs, %d kernel edges, %d generic edges, %d unresolved -> %s\n",
 		rep.Summary.TotalProducers, rep.Summary.DeadProducers,
-		rep.Summary.FineConsumers, rep.Summary.KernelConsumers, rep.Summary.GenericConsumers,
+		rep.Summary.BoundConsumers, rep.Summary.CatalogConsumers,
+		rep.Summary.KernelConsumers, rep.Summary.GenericConsumers,
 		rep.Summary.Unresolved, out,
 	)
 }
@@ -417,7 +430,7 @@ func scanFineConsumers(pkg *packages.Package, file *ast.File, relFile string) []
 			pos := pkg.Fset.Position(n.Pos())
 			out = append(out, consumerEdge{
 				ID:       metricID{Source: source, Metric: metric},
-				Kind:     "fine",
+				Kind:     "bound",
 				Consumer: describeAdvisorConsumer(pkg, relFile),
 				Package:  pkg.PkgPath,
 				File:     relFile,
@@ -454,7 +467,7 @@ func scanFineConsumers(pkg *packages.Package, file *ast.File, relFile string) []
 			pos := pkg.Fset.Position(n.Pos())
 			out = append(out, consumerEdge{
 				ID:       metricID{Source: source, Metric: metric, Side: side},
-				Kind:     "fine",
+				Kind:     "catalog",
 				Consumer: "graph.Solver (causal-influence catalog)",
 				Package:  pkg.PkgPath,
 				File:     relFile,
@@ -683,9 +696,10 @@ func buildReport(producers []producer, consumers []consumerEdge, unresolved []un
 		order = append(order, p.ID)
 	}
 
-	fineByID := map[metricID][]consumerRef{}
+	referencedByID := map[metricID][]consumerRef{}
 	var kernelWide, genericWide []consumerRef
 	consumerOutMap := map[string]*consumerOut{}
+	boundEdgeCount, catalogEdgeCount := 0, 0
 
 	for _, c := range consumers {
 		key := c.Consumer + "|" + c.Kind
@@ -696,10 +710,15 @@ func buildReport(producers []producer, consumers []consumerEdge, unresolved []un
 		}
 
 		switch c.Kind {
-		case "fine":
+		case "bound", "catalog":
 			ref := consumerRef{Kind: c.Kind, Consumer: c.Consumer, Package: c.Package, File: c.File, Line: c.Line}
-			fineByID[c.ID] = append(fineByID[c.ID], ref)
+			referencedByID[c.ID] = append(referencedByID[c.ID], ref)
 			co.Targets = append(co.Targets, c.ID.String())
+			if c.Kind == "bound" {
+				boundEdgeCount++
+			} else {
+				catalogEdgeCount++
+			}
 		case "kernel":
 			ref := consumerRef{Kind: c.Kind, Consumer: c.Consumer, Package: c.Package, File: c.File, Line: c.Line}
 			kernelWide = append(kernelWide, ref)
@@ -727,38 +746,39 @@ func buildReport(producers []producer, consumers []consumerEdge, unresolved []un
 	sort.Slice(order, func(i, j int) bool { return order[i].String() < order[j].String() })
 
 	deadCount := 0
-	fineEdgeCount, kernelEdgeCount, genericEdgeCount := 0, 0, 0
+	kernelEdgeCount, genericEdgeCount := 0, 0
 
 	outProducers := make([]producerOut, 0, len(order))
 	for _, id := range order {
 		po := seenProducer[id]
 
-		refs := append([]consumerRef{}, fineByID[id]...)
+		refs := append([]consumerRef{}, referencedByID[id]...)
 		if scoped, ok := kernelScopes[id.Source]; ok {
 			refs = append(refs, scoped...)
 		}
 		refs = append(refs, genericWide...)
 
-		hasFine := len(fineByID[id]) > 0
+		hasReference := len(referencedByID[id]) > 0
 		hasKernel := len(kernelScopes[id.Source]) > 0
 
 		po.Consumers = refs
-		// A metric is used only if something references it BY NAME (a
+		// A metric is NOT dead only if something references it BY NAME (a
 		// literal (source, metric) lookup — an advisor binding, or a schema
-		// catalog entry). A bulk/type-level subscription (kernel edge) proves
+		// catalog entry). That reference is a DECLARED INPUT, not proof the
+		// value is read by a named calculation; the report records the kind
+		// ("bound" vs "catalog") and never promotes either to "used by a
+		// semantic read". A bulk/type-level subscription (kernel edge) proves
 		// nothing about whether THIS metric's value is read by anything —
 		// the manifold subscribing to *hawkes.Measurement receives the whole
-		// struct regardless of which of its 50+ fields anyone downstream
-		// actually looks at, so it cannot answer "is this metric used." Such
-		// edges stay attached to Consumers as context (kernelOnly), but never
-		// flip Dead to false.
-		po.Dead = !hasFine
-		po.KernelOnly = !hasFine && hasKernel
+		// struct regardless of which fields anyone actually looks at, so it
+		// cannot answer "is this metric used." Such edges stay attached to
+		// Consumers as context (kernelOnly), but never flip Dead to false.
+		po.Dead = !hasReference
+		po.KernelOnly = !hasReference && hasKernel
 		if po.Dead {
 			deadCount++
 		}
 
-		fineEdgeCount += len(fineByID[id])
 		outProducers = append(outProducers, po)
 	}
 	kernelEdgeCount = len(kernelWide)
@@ -798,7 +818,8 @@ func buildReport(producers []producer, consumers []consumerEdge, unresolved []un
 			TotalProducers:      len(outProducers),
 			DeadProducers:       deadCount,
 			KernelOnlyProducers: kernelOnlyCount,
-			FineConsumers:       fineEdgeCount,
+			BoundConsumers:      boundEdgeCount,
+			CatalogConsumers:    catalogEdgeCount,
 			KernelConsumers:     kernelEdgeCount,
 			GenericConsumers:    genericEdgeCount,
 			Unresolved:          len(unresolved),

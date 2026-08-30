@@ -71,6 +71,13 @@ type MetricBinding struct {
 	SNR        nmtypes.Symbol
 	SNRDefined nmtypes.Symbol
 
+	// FromSec/FromNsec name where Step projects the source Measurement's
+	// interval start (From) for this metric, so a composed reading can carry
+	// the interval it represents forward instead of treating an instantaneous
+	// fact and a retained-interval fact as the same temporal scope.
+	FromSec  nmtypes.Symbol
+	FromNsec nmtypes.Symbol
+
 	// Control marks a binding whose metric is a control fact (a duration,
 	// threshold, or timescale) feeding the pipeline's mathematics rather than a
 	// trajectory dimension retained as an observation. A trajectory pipeline
@@ -97,6 +104,8 @@ func NewMetricBinding(source, metric, seriesPrefix string) MetricBinding {
 		Maturity:   nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "advisor/maturity")),
 		SNR:        nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "advisor/snr")),
 		SNRDefined: nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "advisor/snr_defined")),
+		FromSec:    nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "advisor/from_sec")),
+		FromNsec:   nmtypes.MustIntern(temporal.JoinPrefix(seriesPrefix, "advisor/from_nsec")),
 	}
 }
 
@@ -136,6 +145,17 @@ type Output struct {
 	Maturity   nmtypes.Symbol
 	SNR        nmtypes.Symbol
 	SNRDefined nmtypes.Symbol
+
+	// ObservedAtSec/ObservedAtNsec name where the reading's own observation
+	// time is read back from, and FromSec/FromNsec its interval start. They
+	// are the reading's temporal provenance, distinct from the Perspective's
+	// At. For a single-metric output they are the bound metric's own Series
+	// time slots; for a derived output they stay undeclared (no single honest
+	// observation instant exists for a joint quantity).
+	ObservedAtSec  nmtypes.Symbol
+	ObservedAtNsec nmtypes.Symbol
+	FromSec        nmtypes.Symbol
+	FromNsec       nmtypes.Symbol
 }
 
 /*
@@ -155,10 +175,14 @@ populated by Advisor.Step from the source Measurement that fed that binding.
 */
 func NewMetricOutput(slot nmtypes.Symbol, binding MetricBinding) Output {
 	return Output{
-		Slot:       slot,
-		Maturity:   binding.Maturity,
-		SNR:        binding.SNR,
-		SNRDefined: binding.SNRDefined,
+		Slot:           slot,
+		Maturity:       binding.Maturity,
+		SNR:            binding.SNR,
+		SNRDefined:     binding.SNRDefined,
+		ObservedAtSec:  binding.Series.SecSymbol,
+		ObservedAtNsec: binding.Series.NsecSymbol,
+		FromSec:        binding.FromSec,
+		FromNsec:       binding.FromNsec,
 	}
 }
 
@@ -170,10 +194,14 @@ SNR has no principled definition for this quantity and stays undeclared.
 */
 func NewDerivedOutput(slot nmtypes.Symbol, maturity nmtypes.Symbol) Output {
 	return Output{
-		Slot:       slot,
-		Maturity:   maturity,
-		SNR:        undeclaredProvenance,
-		SNRDefined: undeclaredProvenance,
+		Slot:           slot,
+		Maturity:       maturity,
+		SNR:            undeclaredProvenance,
+		SNRDefined:     undeclaredProvenance,
+		ObservedAtSec:  undeclaredProvenance,
+		ObservedAtNsec: undeclaredProvenance,
+		FromSec:        undeclaredProvenance,
+		FromNsec:       undeclaredProvenance,
 	}
 }
 
@@ -263,6 +291,8 @@ func (advisor *Advisor) Step(measurement *data.Measurement[float64]) *types.Pers
 	started := time.Now()
 
 	frame := nmtypes.Frame{}
+	frame.Put(symbolCurrentAtSec, float64(measurement.At.Unix()))
+	frame.Put(symbolCurrentAtNsec, float64(measurement.At.Nanosecond()))
 	relevant := false
 
 	for _, binding := range advisor.bindings {
@@ -282,6 +312,16 @@ func (advisor *Advisor) Step(measurement *data.Measurement[float64]) *types.Pers
 		frame.Put(binding.Fresh, 1)
 		frame.Put(binding.Maturity, measurement.Maturity)
 		frame.Put(binding.SNR, measurement.SNR)
+
+		fromSec, fromNsec := 0.0, 0.0
+
+		if !measurement.From.IsZero() {
+			fromSec = float64(measurement.From.Unix())
+			fromNsec = float64(measurement.From.Nanosecond())
+		}
+
+		frame.Put(binding.FromSec, fromSec)
+		frame.Put(binding.FromNsec, fromNsec)
 
 		snrDefined := 0.0
 
@@ -338,10 +378,25 @@ func (advisor *Advisor) project(
 		snr, _ := state.Get(output.SNR)
 		snrDefined, _ := state.Get(output.SNRDefined)
 
+		observedAt := time.Time{}
+		from := time.Time{}
+
+		if obsSec, hasObs := state.Get(output.ObservedAtSec); hasObs {
+			obsNsec, _ := state.Get(output.ObservedAtNsec)
+			observedAt = time.Unix(int64(obsSec), int64(obsNsec))
+		}
+
+		if fromSec, hasFrom := state.Get(output.FromSec); hasFrom {
+			fromNsec, _ := state.Get(output.FromNsec)
+			from = time.Unix(int64(fromSec), int64(fromNsec))
+		}
+
 		perspective.Readings[count] = types.MetricReading{
 			Metric:     output.Slot,
 			Value:      value,
 			Defined:    defined,
+			ObservedAt: observedAt,
+			From:       from,
 			Maturity:   maturity,
 			SNR:        snr,
 			SNRDefined: snrDefined != 0,

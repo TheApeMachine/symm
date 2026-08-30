@@ -5,100 +5,119 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+// Execution output symbols: the two side-correct flow/share-of-capacity facts
+// and the crossing-cost fact. Interned once so bindings/outputs/pipeline all
+// read the same derived slots.
+var (
+	symbolExecutionBuyShare  = nmtypes.MustIntern("advisor/execution/buy_flow_to_ask_capacity")
+	symbolExecutionSellShare = nmtypes.MustIntern("advisor/execution/sell_flow_to_bid_capacity")
+	symbolExecutionBuyMatur  = nmtypes.MustIntern("advisor/execution/buy_flow_to_ask_capacity/maturity")
+	symbolExecutionSellMatur = nmtypes.MustIntern("advisor/execution/sell_flow_to_bid_capacity/maturity")
+)
+
 /*
-ExecutionBindings declares the executed-flow fact and the two displayed-capacity
+ExecutionBindings declares the executed-flow facts and the displayed-capacity
 facts the Execution Context Advisor composes for one symbol:
 
-  - cvd/signed_net_fraction_zscore — executed flow: aggressor-side imbalance,
-    already causally standardized against its own history by the CVD signal.
-  - liquidity/touch_notional_imbalance — displayed capacity asymmetry: the sign
-    and size of bid/ask touch notional tilt.
-  - liquidity/relative_spread — the cost of crossing the touch, dimensionless.
+  - cvd/aggressive_notional:buy — executed aggressive buy notional (quote).
+  - cvd/aggressive_notional:sell — executed aggressive sell notional (quote).
+  - liquidity/touch_notional:ask — displayed ask-side capacity (quote).
+  - liquidity/touch_notional:bid — displayed bid-side capacity (quote).
+  - cvd/signed_net_fraction_zscore — flow structure, standardized.
+  - liquidity/relative_spread — crossing cost, dimensionless.
 
-Every metric is already causally standardized or dimensionless as published by
-its own signal, so this Advisor performs no renormalization: recomputing a
-second normalization universe here would silently redefine what "aggressive" or
-"thin" means without the caller's knowledge.
+Displayed capacity is the exact side-notional the Liquidity spec defines as
+"quote-currency notional immediately displayed to market buyers/sellers"
+(touch_notional:ask / touch_notional:bid). touch_notional_imbalance is NOT
+capacity: it is a dimensionless asymmetry ratio, and a $100/$100 touch and a
+$10,000,000/$10,000,000 touch both have imbalance 0 while their actual
+capacity differs by five orders of magnitude. Side-correct capacity is the
+quantity a flow-vs-capacity reading must use.
 */
 func ExecutionBindings() []MetricBinding {
 	return []MetricBinding{
-		NewMetricBinding("cvd", "signed_net_fraction_zscore", "advisor/execution/flow"),
-		NewMetricBinding("liquidity", "touch_notional_imbalance", "advisor/execution/imbalance"),
+		NewMetricBinding("cvd", "aggressive_notional:buy", "advisor/execution/buy_flow"),
+		NewMetricBinding("cvd", "aggressive_notional:sell", "advisor/execution/sell_flow"),
+		NewMetricBinding("liquidity", "touch_notional:ask", "advisor/execution/ask_capacity"),
+		NewMetricBinding("liquidity", "touch_notional:bid", "advisor/execution/bid_capacity"),
+		NewMetricBinding("cvd", "signed_net_fraction_zscore", "advisor/execution/flow_structure"),
 		NewMetricBinding("liquidity", "relative_spread", "advisor/execution/spread"),
 	}
 }
 
 /*
-ExecutionPipeline projects each bound metric's raw value into its own output
-slot, gated per binding on Fresh. It is a joint-facts composition, not a score:
-the two capacity facts and the flow fact are carried side by side, each with its
-own definedness, so a consumer reads "flow is +σ while ask-side touch is thin
-and spread is wide" — never a single multiplied scalar. The METRIC_MAP forbids
-collapsing the conditional meaning of flow-under-shallow-liquidity into
-`flow * liquidityConfidence`; a joint reading preserves the condition instead of
-erasing it.
+ExecutionPipeline relays each bound metric's raw value into its own slot
+(gated on Fresh, exactly as liquidity/historical do) and then computes the two
+side-correct flow-vs-capacity ratios from whichever values are causally
+available in the committed state — regardless of which producer ring delivered
+the freshest fact. buy flow is read against ask capacity, sell flow against
+bid capacity: an aggressive buy consumes the ask side, never the bid.
 
-ForkStrict composes the branches for the same reason LiquidityPipeline does:
-two bindings fresh on the same Measurement each return a copy of the shared input
-including the other's prior state, and a blind overlay would revert the first
-branch back to stale. scrubFresh removes every marker before commit so a Fresh
-bit set once can never read as fresh again.
+The ratios are undefined-safe: a missing or zero capacity, a future-leaked
+retained input, or a non-finite quotient leaves the derived slot unset rather
+than fabricating a value (see ratioNamed). This is the actual economic
+relation the Liquidity §13.1 / CVD §18 decrees, not `flow * confidence` and not
+the imbalance asymmetry.
 */
 func ExecutionPipeline(bindings []MetricBinding) nmtypes.Primitive {
 	branches := make([]nmtypes.Primitive, 0, len(bindings))
 
 	for _, binding := range bindings {
+		// The flow-structure and spread facts are descriptive context
+		// relayed unchanged; the capacity and flow facts are the ratio inputs.
 		branches = append(branches, jointFact(binding))
 	}
 
-	return nmtypes.Pipe(nmtypes.ForkStrict(branches...), scrubFresh(bindings))
+	buyFlow := bindings[0]
+	sellFlow := bindings[1]
+	askCap := bindings[2]
+	bidCap := bindings[3]
+
+	return nmtypes.Pipe(
+		nmtypes.ForkStrict(branches...),
+		ratioNamed(
+			buyFlow.Series.ValueSymbol, buyFlow.Series.SecSymbol, buyFlow.Series.NsecSymbol,
+			askCap.Series.ValueSymbol, askCap.Series.SecSymbol, askCap.Series.NsecSymbol,
+			buyFlow.Maturity, askCap.Maturity,
+			symbolExecutionBuyShare, symbolExecutionBuyMatur,
+		),
+		ratioNamed(
+			sellFlow.Series.ValueSymbol, sellFlow.Series.SecSymbol, sellFlow.Series.NsecSymbol,
+			bidCap.Series.ValueSymbol, bidCap.Series.SecSymbol, bidCap.Series.NsecSymbol,
+			sellFlow.Maturity, bidCap.Maturity,
+			symbolExecutionSellShare, symbolExecutionSellMatur,
+		),
+		scrubFresh(bindings),
+	)
 }
 
 /*
-jointFact relays one binding's projected raw value into that binding's output
-slot, gated on Fresh. It is the joint-facts analogue of freshTemporalContext:
-the metric's already-defined value is carried forward unchanged, with its own
-provenance, rather than run through a derived-statistic stage.
-*/
-func jointFact(binding MetricBinding) nmtypes.Primitive {
-	return func(input *nmtypes.Frame) {
-		if !input.Has(binding.Fresh) {
-			return
-		}
-
-		value, found := input.Get(binding.Series.ValueSymbol)
-
-		if !found {
-			return
-		}
-
-		input.Put(binding.Series.ValueSymbol, value)
-	}
-}
-
-/*
-ExecutionOutputs declares the three named joint facts the pipeline emits: the
-executed-flow z-score, the touch-notional imbalance, and the relative spread.
-Each borrows its bound metric's own Maturity/SNR/SNRDefined provenance through
-NewMetricOutput because each fact is exactly one measurement's honest reading,
-not a derived combination.
+ExecutionOutputs declares the two derived side-correct flow-vs-capacity ratios
+plus the underlying measured facts themselves. The raw flow and capacity facts
+are exposed with their own observation times (NewMetricOutput), so a consumer
+can see that buy flow was observed at t1 while ask capacity was observed at t2;
+the derived ratios carry their own min-maturity and no borrowed observation
+time. The crossing-cost and flow-structure context facts stay attached for
+interpretation.
 */
 func ExecutionOutputs(bindings []MetricBinding) []Output {
-	outputs := make([]Output, 0, len(bindings))
-
-	for _, binding := range bindings {
-		outputs = append(outputs, NewMetricOutput(binding.Series.ValueSymbol, binding))
+	return []Output{
+		NewDerivedOutput(symbolExecutionBuyShare, symbolExecutionBuyMatur),
+		NewDerivedOutput(symbolExecutionSellShare, symbolExecutionSellMatur),
+		NewMetricOutput(bindings[0].Series.ValueSymbol, bindings[0]), // aggressive_notional:buy
+		NewMetricOutput(bindings[1].Series.ValueSymbol, bindings[1]), // aggressive_notional:sell
+		NewMetricOutput(bindings[2].Series.ValueSymbol, bindings[2]), // touch_notional:ask
+		NewMetricOutput(bindings[3].Series.ValueSymbol, bindings[3]), // touch_notional:bid
+		NewMetricOutput(bindings[4].Series.ValueSymbol, bindings[4]), // signed_net_fraction_zscore
+		NewMetricOutput(bindings[5].Series.ValueSymbol, bindings[5]), // relative_spread
 	}
-
-	return outputs
 }
 
 /*
 NewExecutionAdvisor constructs the single concrete execution-context Advisor
 instance over ExecutionPipeline and ExecutionBindings. It answers the named
-question: what does the current executed flow mean against the displayed
-capacity it executed into — flow, capacity asymmetry, and crossing cost presented
-jointly, never reduced to one score.
+question: how much of the displayed ask/bid capacity did the current aggressive
+buy/sell flow represent — side-correct, never an imbalance asymmetry.
 */
 func NewExecutionAdvisor(name string) *Advisor {
 	bindings := ExecutionBindings()

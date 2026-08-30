@@ -12,7 +12,7 @@ the same in-memory store so there is exactly one notion of "used" across the
 app, not two independently-fetched copies that could drift.
 */
 export type ConsumerRef = {
-	kind: "fine" | "kernel" | "generic";
+	kind: "bound" | "catalog" | "kernel" | "generic";
 	consumer: string;
 	package: string;
 	file: string;
@@ -35,7 +35,7 @@ export type ProducerRow = {
 
 export type ConsumerRow = {
 	consumer: string;
-	kind: "fine" | "kernel" | "generic";
+	kind: "bound" | "catalog" | "kernel" | "generic";
 	package: string;
 	file: string;
 	line: number;
@@ -50,7 +50,8 @@ export type LineageReport = {
 		totalProducers: number;
 		deadProducers: number;
 		kernelOnlyProducers: number;
-		fineConsumerEdges: number;
+		boundConsumerEdges: number;
+		catalogConsumerEdges: number;
 		kernelConsumerEdges: number;
 		genericConsumerEdges: number;
 		unresolved: number;

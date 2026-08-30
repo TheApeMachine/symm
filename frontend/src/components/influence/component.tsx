@@ -25,10 +25,10 @@ motion against a snapshot that's fetched once and doesn't change until the
 underlying JSON is regenerated (`go run ./tools/metriclineage . frontend/public/metric-lineage.json`,
 wired into `make run`).
 
-Node = one metric (a ProducerRow). Edge = one metric's "fine" (named)
-consumer link to another metric that shares that same consumer — e.g. two
-metrics both bound by the same advisor are drawn connected, mirroring how the
-original regression graph connected metrics that predicted one another.
+Node = one metric (a ProducerRow). Edge = one metric's "bound"/"catalog"
+(named) consumer link to another metric that shares that same consumer — e.g.
+two metrics both bound by the same advisor are drawn connected, mirroring how
+the original regression graph connected metrics that predicted one another.
 Weight (the field's "influence," fed into every ring/arrow/hub radius below)
 is no longer a regression coefficient rank; it's a signed rank of maturity
 for used metrics and a fixed negative rank for dead ones — used pulls the
@@ -195,10 +195,12 @@ const layoutNodes = (
 /*
 buildInfluencedNodes turns the static lineage report's producers into the
 same {nodes, edges} shape the field's rendering code has always consumed.
-Two metrics get an edge when they share at least one "fine" (named) consumer
-— the closest honest analogue to the original regression graph's "these two
-predict one another" edge, since the lineage data only records
-metric-to-consumer links, not metric-to-metric ones.
+Two metrics get an edge when they share at least one "bound" or "catalog"
+(named) consumer — the closest honest analogue to the original regression
+graph's "these two predict one another" edge, since the lineage data only
+records metric-to-consumer links, not metric-to-metric ones. Both kinds are
+declared inputs (a reference), so both are treated identically here; neither
+is proof that a calculation reads the value.
 */
 const buildInfluencedNodes = (
 	producers: ProducerRow[],
@@ -212,7 +214,7 @@ const buildInfluencedNodes = (
 	const byConsumer = new Map<string, ProducerRow[]>();
 	for (const producer of producers) {
 		for (const consumer of producer.consumers) {
-			if (consumer.kind !== "fine") continue;
+			if (consumer.kind !== "bound" && consumer.kind !== "catalog") continue;
 			const list = byConsumer.get(consumer.consumer) ?? [];
 			list.push(producer);
 			byConsumer.set(consumer.consumer, list);
