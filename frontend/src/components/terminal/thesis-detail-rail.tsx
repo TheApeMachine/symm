@@ -1,7 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { shallow } from "@tanstack/store";
 import {
-	causalStore,
 	cognitionStore,
 	positionStore,
 	strategyStore,
@@ -10,8 +9,6 @@ import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 import { Typography } from "#/components/ui/typography";
 import { cn } from "#/lib/utils";
-import { Causal } from "#/providers/telemetry/telemetry/causal";
-import { Cognition } from "#/providers/telemetry/telemetry/cognition";
 import { Decision } from "#/providers/telemetry/telemetry/decision";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { NamedNumber } from "#/providers/telemetry/telemetry/named-number";
@@ -81,8 +78,6 @@ const posObj = new Position();
 const holdObj = new Holding();
 const stopObj = new Stoploss();
 const decObj = new Decision();
-const causalObj = new Causal();
-const cogObj = new Cognition();
 const altObj = new NamedNumber();
 
 const readAlternative = (decision: Decision, name: string): number | null => {
@@ -198,30 +193,14 @@ const selectDecision = (
 		},
 	);
 
-const selectCausal = (
-	state: ReturnType<typeof causalStore.get>,
-	symbol: string,
-) =>
-	scanLatest(
-		state.toArray(),
-		(frame) => frame.rowsLength(),
-		(frame, index) => frame.rows(index, causalObj),
-		(row) => row.symbol() === symbol,
-		(row) => ({
-			association: num(row.association(), 4),
-			confidence: num(row.confidence(), 4),
-			strength: num(row.strength(), 4),
-		}),
-	);
-
 const selectCognition = (
 	state: ReturnType<typeof cognitionStore.get>,
 	symbol: string,
 ) =>
 	scanLatest(
 		state.toArray(),
-		(frame) => frame.rowsLength(),
-		(frame, index) => frame.rows(index, cogObj),
+		() => 1,
+		(frame) => (typeof frame.symbol() === "string" ? frame : null),
 		(row) => row.symbol() === symbol,
 		(row) => ({
 			winner: row.winner() ?? "",
@@ -240,11 +219,6 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
 	const decision = useSelector(
 		strategyStore,
 		(state) => selectDecision(state, symbol),
-		{ compare: shallow },
-	);
-	const causal = useSelector(
-		causalStore,
-		(state) => selectCausal(state, symbol),
 		{ compare: shallow },
 	);
 	const cognition = useSelector(
@@ -289,12 +263,6 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
 				<Row label="at" value={decision?.at} />
 				<Row label="proposed notional" value={decision?.proposedNotional} />
 				<Row label="proposed qty" value={decision?.proposedQuantity} />
-			</Card>
-
-			<Card title="Causal">
-				<Row label="association" value={causal?.association} />
-				<Row label="confidence" value={causal?.confidence} />
-				<Row label="strength" value={causal?.strength} />
 			</Card>
 
 			<Card title="Cognition">

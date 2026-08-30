@@ -52,3 +52,6 @@ scripts/new_dump.csv/instrument.csv
 scripts/new_dump.csv/status.csv
 scripts/new_dump.csv/ticker.csv
 scripts/new_dump.csv/trade.csv
+~/.symm/data/events.sqlite
+*sqlite*
+*.jsonl

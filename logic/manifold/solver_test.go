@@ -2,13 +2,12 @@ package manifold
 
 import (
 	"context"
-	"fmt"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -17,46 +16,58 @@ func TestSolverStep(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		thesis := types.NewThesis(ctx)
-
 		solver := NewSolver(ctx)
 		So(solver, ShouldNotBeNil)
 
-		Convey("When concurrent Hawkes measurements arrive across multiple symbols", func() {
-			var waitGroup sync.WaitGroup
-			symbolCount := 16
-
-			for symbolIndex := 0; symbolIndex < symbolCount; symbolIndex++ {
-				symbol := fmt.Sprintf("SYM%d/USD", symbolIndex)
-				_ = thesis.Symbol(symbol)
-
-				waitGroup.Add(1)
-				go func(sym string) {
-					defer waitGroup.Done()
-
-					envelope := types.NewEnvelope(types.EnvelopeTrade)
-					envelope.Hawkes = &data.Measurement[float64]{
-						Source: "hawkes",
-						Label:  sym,
-						At:     time.Now(),
-					}
-					_ = solver.Step(envelope)
-				}(symbol)
+		Convey("Stepping a Level3 envelope projects its orders and advances once", func() {
+			envelope := types.NewEnvelope(types.EnvelopeLevel3)
+			envelope.Level3Data = kraken.Level3Data{
+				Symbol:    "SYM/USD",
+				Timestamp: time.Now(),
+				Bids: []kraken.Level3Order{
+					{Event: "add", OrderID: "b1", LimitPrice: decimalPtr(10.0), OrderQty: decimalPtr(1.0), Timestamp: time.Now()},
+					{Event: "add", OrderID: "b2", LimitPrice: decimalPtr(9.9), OrderQty: decimalPtr(2.0), Timestamp: time.Now()},
+				},
+				Asks: []kraken.Level3Order{
+					{Event: "add", OrderID: "a1", LimitPrice: decimalPtr(10.1), OrderQty: decimalPtr(1.5), Timestamp: time.Now()},
+				},
 			}
 
-			waitGroup.Wait()
+			result := solver.Step(envelope)
 
-			Convey("Execution should complete cleanly without Metal command buffer assertions", func() {
-				So(solver.Name(), ShouldEqual, "manifold")
-			})
+			So(result, ShouldNotBeNil)
+			So(result.Manifold, ShouldNotBeNil)
+			So(result.Manifold.State.N, ShouldEqual, 3)
 		})
 
-		Convey("When envelope carries no Hawkes measurement", func() {
+		Convey("Stepping a non-Level3 envelope is a no-op", func() {
 			envelope := types.NewEnvelope(types.EnvelopeTrade)
 			result := solver.Step(envelope)
 
 			So(result, ShouldNotBeNil)
 			So(result.Manifold, ShouldBeNil)
 		})
+
+		Convey("A one-sided Level3 message yields ready particles without a center", func() {
+			envelope := types.NewEnvelope(types.EnvelopeLevel3)
+			envelope.Level3Data = kraken.Level3Data{
+				Symbol:    "SYM/USD",
+				Timestamp: time.Now(),
+				Bids: []kraken.Level3Order{
+					{Event: "add", OrderID: "b1", LimitPrice: decimalPtr(10.0), OrderQty: decimalPtr(1.0), Timestamp: time.Now()},
+				},
+			}
+
+			result := solver.Step(envelope)
+
+			So(result, ShouldNotBeNil)
+			// A one-sided book has no defined center; the solver projects no
+			// particles because mid <= 0, so Manifold stays unset.
+			So(result.Manifold, ShouldBeNil)
+		})
 	})
+}
+
+func decimalPtr(value float64) *decimal.Decimal {
+	return decimal.NewFromFloat64(value)
 }

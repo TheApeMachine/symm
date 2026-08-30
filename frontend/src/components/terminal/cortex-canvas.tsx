@@ -5,17 +5,16 @@ import {
 	drawCortexTree,
 } from "#/components/terminal/cortex-draw";
 import { cortexTreeFromReading } from "#/components/terminal/cortex-tree";
-import { Cognition } from "#/providers/telemetry/telemetry/cognition";
-import { CognitionBeam } from "#/providers/telemetry/telemetry/cognition-beam";
-import { CognitionBranch } from "#/providers/telemetry/telemetry/cognition-branch";
-import { CognitionClass } from "#/providers/telemetry/telemetry/cognition-class";
+import { EnvelopeCognition } from "#/providers/telemetry/telemetry/envelope-cognition";
+import { EnvelopeCognitionBeam } from "#/providers/telemetry/telemetry/envelope-cognition-beam";
+import { EnvelopeCognitionBranch } from "#/providers/telemetry/telemetry/envelope-cognition-branch";
+import { EnvelopeCognitionClass } from "#/providers/telemetry/telemetry/envelope-cognition-class";
 
-const cogObj = new Cognition();
-const branchObj = new CognitionBranch();
-const beamObj = new CognitionBeam();
-const classObj = new CognitionClass();
+const branchObj = new EnvelopeCognitionBranch();
+const beamObj = new EnvelopeCognitionBeam();
+const classObj = new EnvelopeCognitionClass();
 
-const cognitionToRecord = (cog: Cognition | null): Record<string, unknown> | null => {
+const cognitionToRecord = (cog: EnvelopeCognition | null): Record<string, unknown> | null => {
 	if (!cog) return null;
 
 	const branches: any[] = [];
@@ -123,14 +122,10 @@ export const CortexCanvas = ({
 			const last = state.getLast();
 			if (!last) return;
 
-			let targetRow: Cognition | null = null;
-			for (let i = 0; i < last.rowsLength(); i++) {
-				const row = last.rows(i, cogObj);
-				if (row && row.symbol() === symbol) {
-					targetRow = row;
-					break;
-				}
-			}
+			const targetRow: EnvelopeCognition | null =
+				typeof last.symbol() === "string" && last.symbol() === symbol
+					? last
+					: null;
 
 			if (!targetRow) return;
 			paint(cognitionToRecord(targetRow));

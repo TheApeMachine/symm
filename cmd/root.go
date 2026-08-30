@@ -13,12 +13,17 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 
 	pyroscope "github.com/grafana/pyroscope-go"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic/category"
+	"github.com/theapemachine/symm/logic/cognition"
+	"github.com/theapemachine/symm/logic/graph"
+	"github.com/theapemachine/symm/logic/manifold"
+	"github.com/theapemachine/symm/logic/opportunity"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
@@ -37,6 +42,8 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/store"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -48,6 +55,72 @@ which allows a developer to easily override the config file.
 */
 //go:embed cfg/config.yml
 var embedded embed.FS
+
+/*
+tickNode drives the live decision clock off the ticker stream. One market
+ticker observation commits an engine tick, advances the broker desk's live
+marks, and runs the strategy planner's portfolio pass. It is the single place
+the thesis clock advances, so the resonance, graph, and causal stages all read
+one coherent tick watermark.
+*/
+type tickNode struct {
+	thesis  *types.Thesis
+	desk    *broker.Desk
+	planner *strategy.Planner
+}
+
+func (node tickNode) Step(envelope *types.Envelope) *types.Envelope {
+	if envelope == nil || envelope.TypeID != types.EnvelopeTicker {
+		return envelope
+	}
+
+	envelope.Tick = node.thesis.AdvanceTick(envelope.TickerData.Timestamp)
+
+	if err := node.desk.StepTicker(envelope.TickerData); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"symm: desk ticker step",
+			err,
+		))
+	}
+
+	node.planner.StepTick(envelope.TickerData)
+
+	return envelope
+}
+
+func (node tickNode) StepBacklog(envelope *types.Envelope, backlog int64) *types.Envelope {
+	return node.Step(envelope)
+}
+
+/*
+strategyNode is the strategy layer's stream boundary. It receives the envelope
+the logic layer finished — reading the GraphUpdate the graph stage just stamped
+— and hands that symbol/at to the reasoner so it re-fits its causal transition
+models from the shared store the graph stage already advanced. Because it sits
+after the logic stages and before tickNode, the reasoner observes a fully-formed
+logic result once per envelope, in stream order, and never reaches sideways.
+*/
+type strategyNode struct {
+	planner *strategy.Planner
+}
+
+func (node strategyNode) Step(envelope *types.Envelope) *types.Envelope {
+	if envelope == nil || envelope.GraphUpdate == nil || node.planner == nil {
+		return envelope
+	}
+
+	node.planner.Reasoner().OnGraphUpdate(
+		envelope.GraphUpdate.Symbol,
+		envelope.GraphUpdate.At,
+	)
+
+	return envelope
+}
+
+func (node strategyNode) StepBacklog(envelope *types.Envelope, backlog int64) *types.Envelope {
+	return node.Step(envelope)
+}
 
 var (
 	cfgFile string
@@ -82,80 +155,255 @@ var (
 
 			thesis := types.NewThesis(cmd.Context())
 
-			publicIngress := map[string]*nmruntime.Workload[*types.Envelope]{
-				"ticker": nmruntime.NewWorkload(
-					cmd.Context(),
-					[][]nmruntime.Node[*types.Envelope]{
-						{system.NewDiagnostic("ticker.ingress")},
-						{
-							system.NewTraced("ticker.correlation", correlation.NewSignal(cmd.Context())),
-							system.NewTraced("ticker.leadlag", leadlag.NewSignal(cmd.Context())),
-							system.NewTraced("ticker.liquidity", liquidity.NewSignal(cmd.Context())),
-							system.NewTraced("ticker.sentiment", sentiment.NewSignal(cmd.Context())),
-							system.NewTraced("ticker.pumpdump", pumpdump.NewSignal(cmd.Context())),
-							system.NewTraced("ticker.resonance", resonance.NewSolver(cmd.Context(), 0, thesis)),
-						},
-						{
-							category.NewSolver(cmd.Context()),
-						},
-						{system.NewDiagnostic("ticker.category")},
-						{hub},
-						{system.NewDiagnostic("ticker.hub")},
-					},
-				),
-				"trade": nmruntime.NewWorkload(
-					cmd.Context(),
-					[][]nmruntime.Node[*types.Envelope]{
-						{system.NewDiagnostic("trade.ingress")},
-						{
-							system.NewTraced("trade.cvd", cvd.NewSignal(cmd.Context())),
-							system.NewTraced("trade.hawkes", hawkes.NewSignal(cmd.Context())),
-							system.NewTraced("trade.pumpdump", pumpdump.NewSignal(cmd.Context())),
-							system.NewTraced("trade.toxicity", toxicity.NewSignal(cmd.Context())),
-						},
-						{hub},
-						{system.NewDiagnostic("trade.hub")},
-					},
-				),
+			// Phase 1 — the brokers' transport and account objects, which the
+			// logic stages and the decision path both consume. The workload
+			// maps are built empty here and populated in Phase 2: websocket.New
+			// stores the map by reference and only indexes it when envelopes
+			// flow, so the maps are complete well before instrument.Subscribe
+			// opens the stream.
+			publicIngress := map[string]*nmruntime.Workload[*types.Envelope]{}
+			privateIngress := map[string]*nmruntime.Workload[*types.Envelope]{}
+			futuresIngress := map[string]*nmruntime.Workload[*types.Envelope]{}
+
+			// The storage writer is the single capture sink every stream (spot,
+			// private, futures) and every layer recorder share, backed by one
+			// swappable repository engine (SQLite now, S3-compatible later).
+			storageEngine, err := store.NewSQLite(filepath.Join(
+				viper.GetString("system.data_path"),
+				"events.sqlite",
+			))
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: open storage engine",
+					err,
+				))
 			}
 
-			privateIngress := map[string]*nmruntime.Workload[*types.Envelope]{
-				"level3": nmruntime.NewWorkload(
+			defer storageEngine.Close()
+
+			storage := store.NewWriter(storageEngine)
+
+			api := websocket.NewAPI(
+				cmd.Context(),
+				websocket.New(
 					cmd.Context(),
-					[][]nmruntime.Node[*types.Envelope]{
-						{system.NewDiagnostic("level3.ingress")},
-						{
-							system.NewTraced("level3.depthflow", depthflow.NewSignal(cmd.Context())),
-							system.NewTraced("level3.morphology", morphology.NewSignal(cmd.Context())),
-							system.NewTraced("level3.pumpdump", pumpdump.NewSignal(cmd.Context())),
-							system.NewTraced("level3.toxicity", toxicity.NewSignal(cmd.Context())),
-						},
-						{hub},
-						{system.NewDiagnostic("level3.hub")},
-					},
+					publicIngress,
+					websocket.NewSimulator(),
+					false,
+					system.Cfg.WebSocket.Endpoints.Public,
+					storage,
 				),
+				websocket.New(
+					cmd.Context(),
+					privateIngress,
+					websocket.NewSimulator(),
+					true,
+					system.Cfg.WebSocket.Endpoints.Private,
+					storage,
+				),
+			)
+
+			futures := websocket.NewFutures(cmd.Context(), system.Cfg.WebSocket.Endpoints.Futures, futuresIngress, storage)
+			api.SetFutures(futures)
+
+			go func() {
+				errnie.Error(futures.Run())
+			}()
+
+			defer futures.Close()
+
+			recorder, err := audit.NewRecorder(filepath.Join(
+				viper.GetString("system.data_path"),
+				"audit.jsonl",
+			))
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: open audit recorder",
+					err,
+				))
 			}
 
-			futuresIngress := map[string]*nmruntime.Workload[*types.Envelope]{
-				"ticker": nmruntime.NewWorkload(
-					cmd.Context(),
-					[][]nmruntime.Node[*types.Envelope]{
-						{system.NewDiagnostic("futures.ticker.ingress")},
-						{system.NewTraced("futures.ticker.derivatives", derivatives.NewSignal(cmd.Context()))},
-						{hub},
-						{system.NewDiagnostic("futures.ticker.hub")},
-					},
-				),
-				"trade": nmruntime.NewWorkload(
-					cmd.Context(),
-					[][]nmruntime.Node[*types.Envelope]{
-						{system.NewDiagnostic("futures.trade.ingress")},
-						{system.NewTraced("futures.trade.derivatives", derivatives.NewSignal(cmd.Context()))},
-						{hub},
-						{system.NewDiagnostic("futures.trade.hub")},
-					},
-				),
+			defer recorder.Close()
+
+			price := broker.NewPrice(api, recorder)
+			instrument := broker.NewInstrument(api, price)
+
+			// The shared graph stage owns the authoritative observation store
+			// and influence graph. Both the envelope pipeline (which folds
+			// measurements into it) and the strategy reasoner (which reads it)
+			// bind this single instance — there is no second estimator.
+			epoch := uint64(1)
+			measurementStep := system.Cfg.Snapshot().Planner.MeasurementStep
+			schemaTemplate := strategy.DefaultCausalSchema(epoch, measurementStep)
+			graphSolver := graph.NewSolver(
+				cmd.Context(),
+				epoch,
+				2048,
+				strategy.RelationPlansFromSchema(schemaTemplate, epoch, system.Cfg.Snapshot().Planner.RelationMaxLag),
+				schemaTemplate.Version,
+				graph.WithInterval(system.Cfg.Snapshot().Planner.RelationInterval),
+			)
+
+			// The broker desk owns positions and execution. Recovery adopts the
+			// exchange's open inventory before the decision path engages. The
+			// position store persists stoploss state across restarts.
+			positionStore, err := broker.NewPositionStore(filepath.Join(
+				viper.GetString("system.data_path"),
+				"positions.sqlite",
+			))
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: open position store",
+					err,
+				))
 			}
+
+			defer positionStore.Close()
+
+			balance := broker.NewBalance(api)
+			positions := &sync.Map{}
+			recovery := broker.NewRecovery(
+				cmd.Context(), api, instrument, price, balance, recorder,
+				positionStore, positions,
+			)
+
+			desk, err := broker.NewDesk(
+				cmd.Context(), api, instrument, price, balance, thesis, recorder,
+				recovery, positions,
+			)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: construct broker desk",
+					err,
+				))
+			}
+
+			defer desk.Close()
+
+			// The strategy planner is the one authoritative live decision path:
+			// it consumes the graph's fitted influence state, runs economic
+			// MCTS per symbol, and executes through the desk.
+			planner := strategy.NewPlanner(
+				cmd.Context(), thesis, recorder, desk,
+				graphSolver.Store(), graphSolver.Graph(),
+			)
+
+			if planner == nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: construct strategy planner",
+					nil,
+				))
+			}
+
+			defer planner.Close()
+
+			// Phase 2 — populate the workload maps now that every shared
+			// dependency exists. The ticker stage folds measurements into the
+			// shared graph, resolves categories, cognition, opportunity, and
+			// causal readings, and advances the desk/planner on the thesis tick.
+			publicIngress["ticker"] = nmruntime.NewWorkload(
+				cmd.Context(),
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewDiagnostic("ticker.ingress")},
+					{
+						system.NewTraced("ticker.correlation", correlation.NewSignal(cmd.Context())),
+						system.NewTraced("ticker.leadlag", leadlag.NewSignal(cmd.Context())),
+						system.NewTraced("ticker.liquidity", liquidity.NewSignal(cmd.Context())),
+						system.NewTraced("ticker.sentiment", sentiment.NewSignal(cmd.Context())),
+						system.NewTraced("ticker.pumpdump", pumpdump.NewSignal(cmd.Context())),
+						system.NewTraced("ticker.resonance", resonance.NewSolver(cmd.Context(), 0, thesis)),
+					},
+					{store.NewLayer(storage, "ticker.signals")},
+					{
+						system.NewTraced("ticker.graph", graphSolver),
+					},
+					{store.NewLayer(storage, "ticker.graph")},
+					{
+						category.NewSolver(cmd.Context()),
+					},
+					{system.NewDiagnostic("ticker.category")},
+					{store.NewLayer(storage, "ticker.category")},
+					{
+						system.NewTraced("ticker.cognition", cognition.NewSolver(cmd.Context(), thesis)),
+						system.NewTraced("ticker.opportunity", opportunity.NewSolver(cmd.Context())),
+					},
+					{system.NewDiagnostic("ticker.logic")},
+					{store.NewLayer(storage, "ticker.logic")},
+					{strategyNode{planner: planner}},
+					{tickNode{thesis: thesis, desk: desk, planner: planner}},
+					{system.NewDiagnostic("ticker.trade")},
+					{store.NewLayer(storage, "ticker.strategy")},
+					{hub},
+					{system.NewDiagnostic("ticker.hub")},
+				},
+			)
+
+			publicIngress["trade"] = nmruntime.NewWorkload(
+				cmd.Context(),
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewDiagnostic("trade.ingress")},
+					{
+						system.NewTraced("trade.cvd", cvd.NewSignal(cmd.Context())),
+						system.NewTraced("trade.hawkes", hawkes.NewSignal(cmd.Context())),
+						system.NewTraced("trade.pumpdump", pumpdump.NewSignal(cmd.Context())),
+						system.NewTraced("trade.toxicity", toxicity.NewSignal(cmd.Context())),
+					},
+					{store.NewLayer(storage, "trade.signals")},
+					{hub},
+					{system.NewDiagnostic("trade.hub")},
+				},
+			)
+
+			privateIngress["level3"] = nmruntime.NewWorkload(
+				cmd.Context(),
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewDiagnostic("level3.ingress")},
+					{
+						system.NewTraced("level3.depthflow", depthflow.NewSignal(cmd.Context())),
+						system.NewTraced("level3.morphology", morphology.NewSignal(cmd.Context())),
+						system.NewTraced("level3.pumpdump", pumpdump.NewSignal(cmd.Context())),
+						system.NewTraced("level3.toxicity", toxicity.NewSignal(cmd.Context())),
+					},
+					{store.NewLayer(storage, "level3.signals")},
+					{
+						system.NewTraced("level3.manifold", manifold.NewSolver(cmd.Context())),
+					},
+					{store.NewLayer(storage, "level3.manifold")},
+					{hub},
+					{system.NewDiagnostic("level3.hub")},
+				},
+			)
+
+			futuresIngress["ticker"] = nmruntime.NewWorkload(
+				cmd.Context(),
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewDiagnostic("futures.ticker.ingress")},
+					{system.NewTraced("futures.ticker.derivatives", derivatives.NewSignal(cmd.Context()))},
+					{store.NewLayer(storage, "futures.ticker.derivatives")},
+					{hub},
+					{system.NewDiagnostic("futures.ticker.hub")},
+				},
+			)
+
+			futuresIngress["trade"] = nmruntime.NewWorkload(
+				cmd.Context(),
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewDiagnostic("futures.trade.ingress")},
+					{system.NewTraced("futures.trade.derivatives", derivatives.NewSignal(cmd.Context()))},
+					{store.NewLayer(storage, "futures.trade.derivatives")},
+					{hub},
+					{system.NewDiagnostic("futures.trade.hub")},
+				},
+			)
 
 			workspace := nmruntime.NewWorkspace(
 				cmd.Context(),
@@ -169,38 +417,6 @@ var (
 			)
 
 			defer workspace.Close()
-
-			api := websocket.NewAPI(
-				cmd.Context(),
-				websocket.New(
-					cmd.Context(),
-					publicIngress,
-					websocket.NewSimulator(),
-					false,
-					system.Cfg.WebSocket.Endpoints.Public,
-				),
-				websocket.New(
-					cmd.Context(),
-					privateIngress,
-					websocket.NewSimulator(),
-					true,
-					system.Cfg.WebSocket.Endpoints.Private,
-				),
-			)
-
-			futures := websocket.NewFutures(cmd.Context(), system.Cfg.WebSocket.Endpoints.Futures, futuresIngress)
-			api.SetFutures(futures)
-
-			go func() {
-				errnie.Error(futures.Run())
-			}()
-
-			defer futures.Close()
-
-			instrument := broker.NewInstrument(
-				api,
-				broker.NewPrice(api, &audit.Recorder{}),
-			)
 
 			if err := instrument.Subscribe(); err != nil {
 				return errnie.Error(errnie.Err(

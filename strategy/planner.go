@@ -137,6 +137,18 @@ func (planner *Planner) Name() string { return "planner" }
 
 func (planner *Planner) Error() error { return planner.err }
 
+/*
+Reasoner exposes the causal-reasoning stage the planner owns, so the strategy
+workload's Step can feed it the graph stage's GraphUpdate off the envelope in
+stream order — the same signal → logic → strategy hand-off the rest of the
+pipeline uses. The reasoner re-fits its transition models from the shared store
+the graph stage already advanced, then republishes the per-symbol CausalState
+the planner's search consumes.
+*/
+func (planner *Planner) Reasoner() *Reasoner {
+	return planner.reasoner
+}
+
 func (planner *Planner) Stager() *audit.Stager {
 	return planner.stager
 }

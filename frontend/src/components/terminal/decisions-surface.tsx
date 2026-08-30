@@ -2,7 +2,6 @@ import { useState } from "react";
 import { strategyStore } from "#/collections/app";
 import { DecisionChain } from "#/components/terminal/decision-chain";
 import { DecisionSideRail } from "#/components/terminal/decision-side-rail";
-import { LiveDecisionsEntryLine } from "#/components/terminal/decisions-entry-line";
 import { Panel } from "#/components/ui/panel";
 import { Decision } from "#/providers/telemetry/telemetry/decision";
 
@@ -38,7 +37,6 @@ export const DecisionsSurface = () => {
 	return (
 		<div className="grid h-full min-h-0 min-w-260 grid-cols-[minmax(640px,1fr)_332px]">
 			<div className="min-h-0 overflow-auto px-5 py-4.5">
-				<LiveDecisionsEntryLine />
 
 				<div className="mb-2 flex items-baseline justify-between">
 					<span className="font-semibold text-[10px] text-(--f3) uppercase tracking-[0.13em]">

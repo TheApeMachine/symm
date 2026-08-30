@@ -33,7 +33,6 @@ export { EnvelopeAnyEntry, EnvelopeAnyEntryT } from './telemetry/envelope-any-en
 export { EnvelopeAnyValue } from './telemetry/envelope-any-value.js';
 export { EnvelopeBoundaryStamp, EnvelopeBoundaryStampT } from './telemetry/envelope-boundary-stamp.js';
 export { EnvelopeCategory, EnvelopeCategoryT } from './telemetry/envelope-category.js';
-export { EnvelopeCausalOutput, EnvelopeCausalOutputT } from './telemetry/envelope-causal-output.js';
 export { EnvelopeCognition, EnvelopeCognitionT } from './telemetry/envelope-cognition.js';
 export { EnvelopeCognitionBeam, EnvelopeCognitionBeamT } from './telemetry/envelope-cognition-beam.js';
 export { EnvelopeCognitionBranch, EnvelopeCognitionBranchT } from './telemetry/envelope-cognition-branch.js';

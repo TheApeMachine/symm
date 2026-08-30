@@ -7,7 +7,6 @@ import * as flatbuffers from 'flatbuffers';
 
 import { EnvelopeBoundaryStamp, EnvelopeBoundaryStampT } from '../telemetry/envelope-boundary-stamp.js';
 import { EnvelopeCategory, EnvelopeCategoryT } from '../telemetry/envelope-category.js';
-import { EnvelopeCausalOutput, EnvelopeCausalOutputT } from '../telemetry/envelope-causal-output.js';
 import { EnvelopeCognition, EnvelopeCognitionT } from '../telemetry/envelope-cognition.js';
 import { EnvelopeFuturesTickerData, EnvelopeFuturesTickerDataT } from '../telemetry/envelope-futures-ticker-data.js';
 import { EnvelopeFuturesTradeData, EnvelopeFuturesTradeDataT } from '../telemetry/envelope-futures-trade-data.js';
@@ -171,19 +170,19 @@ cognition(obj?:EnvelopeCognition):EnvelopeCognition|null {
   return offset ? (obj || new EnvelopeCognition()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-causalOutput(obj?:EnvelopeCausalOutput):EnvelopeCausalOutput|null {
-  const offset = this.bb!.__offset(this.bb_pos, 52);
-  return offset ? (obj || new EnvelopeCausalOutput()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
 boundaries(index: number, obj?:EnvelopeBoundaryStamp):EnvelopeBoundaryStamp|null {
-  const offset = this.bb!.__offset(this.bb_pos, 54);
+  const offset = this.bb!.__offset(this.bb_pos, 52);
   return offset ? (obj || new EnvelopeBoundaryStamp()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 boundariesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 54);
+  const offset = this.bb!.__offset(this.bb_pos, 52);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+tick():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 54);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
 static startEnvelopeState(builder:flatbuffers.Builder) {
@@ -310,12 +309,8 @@ static addCognition(builder:flatbuffers.Builder, cognitionOffset:flatbuffers.Off
   builder.addFieldOffset(23, cognitionOffset, 0);
 }
 
-static addCausalOutput(builder:flatbuffers.Builder, causalOutputOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(24, causalOutputOffset, 0);
-}
-
 static addBoundaries(builder:flatbuffers.Builder, boundariesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(25, boundariesOffset, 0);
+  builder.addFieldOffset(24, boundariesOffset, 0);
 }
 
 static createBoundariesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -328,6 +323,10 @@ static createBoundariesVector(builder:flatbuffers.Builder, data:flatbuffers.Offs
 
 static startBoundariesVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
+}
+
+static addTick(builder:flatbuffers.Builder, tick:bigint) {
+  builder.addFieldInt64(25, tick, BigInt('0'));
 }
 
 static endEnvelopeState(builder:flatbuffers.Builder):flatbuffers.Offset {
@@ -362,8 +361,8 @@ unpack(): EnvelopeStateT {
     (this.resonance() !== null ? this.resonance()!.unpack() : null),
     (this.manifold() !== null ? this.manifold()!.unpack() : null),
     (this.cognition() !== null ? this.cognition()!.unpack() : null),
-    (this.causalOutput() !== null ? this.causalOutput()!.unpack() : null),
-    this.bb!.createObjList<EnvelopeBoundaryStamp, EnvelopeBoundaryStampT>(this.boundaries.bind(this), this.boundariesLength())
+    this.bb!.createObjList<EnvelopeBoundaryStamp, EnvelopeBoundaryStampT>(this.boundaries.bind(this), this.boundariesLength()),
+    this.tick()
   );
 }
 
@@ -393,8 +392,8 @@ unpackTo(_o: EnvelopeStateT): void {
   _o.resonance = (this.resonance() !== null ? this.resonance()!.unpack() : null);
   _o.manifold = (this.manifold() !== null ? this.manifold()!.unpack() : null);
   _o.cognition = (this.cognition() !== null ? this.cognition()!.unpack() : null);
-  _o.causalOutput = (this.causalOutput() !== null ? this.causalOutput()!.unpack() : null);
   _o.boundaries = this.bb!.createObjList<EnvelopeBoundaryStamp, EnvelopeBoundaryStampT>(this.boundaries.bind(this), this.boundariesLength());
+  _o.tick = this.tick();
 }
 }
 
@@ -424,8 +423,8 @@ constructor(
   public resonance: EnvelopeResonanceArtifactT|null = null,
   public manifold: EnvelopeManifoldStateT|null = null,
   public cognition: EnvelopeCognitionT|null = null,
-  public causalOutput: EnvelopeCausalOutputT|null = null,
-  public boundaries: (EnvelopeBoundaryStampT)[] = []
+  public boundaries: (EnvelopeBoundaryStampT)[] = [],
+  public tick: bigint = BigInt('0')
 ){}
 
 
@@ -453,7 +452,6 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const resonance = (this.resonance !== null ? this.resonance!.pack(builder) : 0);
   const manifold = (this.manifold !== null ? this.manifold!.pack(builder) : 0);
   const cognition = (this.cognition !== null ? this.cognition!.pack(builder) : 0);
-  const causalOutput = (this.causalOutput !== null ? this.causalOutput!.pack(builder) : 0);
   const boundaries = EnvelopeState.createBoundariesVector(builder, builder.createObjectOffsetList(this.boundaries));
 
   EnvelopeState.startEnvelopeState(builder);
@@ -481,8 +479,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   EnvelopeState.addResonance(builder, resonance);
   EnvelopeState.addManifold(builder, manifold);
   EnvelopeState.addCognition(builder, cognition);
-  EnvelopeState.addCausalOutput(builder, causalOutput);
   EnvelopeState.addBoundaries(builder, boundaries);
+  EnvelopeState.addTick(builder, this.tick);
 
   return EnvelopeState.endEnvelopeState(builder);
 }

@@ -6,9 +6,6 @@ import {
 	retainCognitionRow,
 } from "#/components/terminal/xray-view";
 import { Typography } from "#/components/ui/typography";
-import { Cognition } from "#/providers/telemetry/telemetry/cognition";
-
-const cogObj = new Cognition();
 
 export const XrayFactsPanel = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
@@ -19,19 +16,19 @@ export const XrayFactsPanel = () => {
 			if (!root.current) return;
 			const last = state.getLast();
 			if (last) {
-				for (let i = 0; i < last.rowsLength(); i++) {
-					const row = last.rows(i, cogObj);
-					const symbol = row?.symbol();
-					if (row && typeof symbol === "string") {
-						retainCognitionRow(symbol, {
-							winner: row.winner() ?? undefined,
-							confidence: row.confidence(),
-							contrast: row.contrast(),
-							entropyBits: row.entropyBits(),
-							ambiguous: row.ambiguous(),
-							sequence: row.sequence() ?? undefined,
-						});
-					}
+				// EnvelopeCognition is already a flat per-symbol reading: the
+				// scalar facts (winner, confidence, contrast, entropy, ambiguity,
+				// sequence) are direct accessors on the frame, keyed by symbol().
+				const symbol = last.symbol();
+				if (typeof symbol === "string" && symbol) {
+					retainCognitionRow(symbol, {
+						winner: last.winner() ?? undefined,
+						confidence: last.confidence(),
+						contrast: last.contrast(),
+						entropyBits: last.entropyBits(),
+						ambiguous: last.ambiguous(),
+						sequence: last.sequence() ?? undefined,
+					});
 				}
 			}
 

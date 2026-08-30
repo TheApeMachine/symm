@@ -64,49 +64,78 @@ type MarkObserver interface {
 }
 
 /*
-NewDesk constructs the serial broker owner.
+NewDesk constructs the serial broker owner from its explicit dependencies. The
+desk owns no transport or account objects itself: the caller supplies the API,
+instrument, price, balance, thesis, recorder, and recovery handler it will
+route through, so the live wiring and tests share one construction path rather
+than a half-built struct. positions is the shared open-position map the recovery
+publisher repopulates on boot.
 */
-func NewDesk(ctx context.Context) *Desk {
+func NewDesk(
+	ctx context.Context,
+	api *websocket.API,
+	instrument *Instrument,
+	price *Price,
+	balance *Balance,
+	thesis *types.Thesis,
+	recorder *audit.Recorder,
+	recovery *Recovery,
+	positions *sync.Map,
+) (*Desk, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	desk := &Desk{
 		ctx:          ctx,
 		cancel:       cancel,
 		status:       types.READY,
-		positions:    &sync.Map{},
+		api:          api,
+		instrument:   instrument,
+		price:        price,
+		balance:      balance,
+		thesis:       thesis,
+		recorder:     recorder,
+		recovery:     recovery,
+		positions:    positions,
 		passage:      types.NewPassageModel(),
 		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
 		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
 	}
 
-	if err := desk.recovery.Recover(); err != nil {
-		desk.status = types.ERROR
-
-		desk.err = errnie.Error(errnie.Err(
-			errnie.Internal,
-			"desk: failed to recover account positions",
-			err,
-		))
-
-		return desk
+	if desk.positions == nil {
+		desk.positions = &sync.Map{}
 	}
 
-	go func() {
-		ticker := time.NewTicker(3 * time.Second)
-		defer ticker.Stop()
+	if recovery != nil {
+		if err := recovery.Recover(); err != nil {
+			desk.status = types.ERROR
+			desk.err = errnie.Error(errnie.Err(
+				errnie.Internal,
+				"desk: failed to recover account positions",
+				err,
+			))
 
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				desk.balance.Update()
-				_ = desk.PublishEquity()
-			}
+			return desk, desk.err
 		}
-	}()
+	}
 
-	return desk
+	if balance != nil {
+		go func() {
+			ticker := time.NewTicker(3 * time.Second)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					desk.balance.Update()
+					_ = desk.PublishEquity()
+				}
+			}
+		}()
+	}
+
+	return desk, nil
 }
 
 func (desk *Desk) Name() string { return "desk" }
@@ -318,10 +347,10 @@ profit/loss only; equity is cash plus the basis committed to open positions plus
 that profit/loss.
 */
 func (desk *Desk) PublishEquity() error {
-	if desk == nil || desk.api == nil || desk.thesis == nil || desk.equityObserver == nil {
+	if desk == nil || desk.api == nil || desk.thesis == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"desk: API, thesis, and equity observer required",
+			"desk: API and thesis required",
 			nil,
 		))
 	}
@@ -342,6 +371,14 @@ func (desk *Desk) PublishEquity() error {
 			"desk: could not publish account equity",
 			err,
 		))
+	}
+
+	// The equity observer is an optional downstream veto hook (e.g. a
+	// whole-account regulator). Publishing equity to the thesis is the desk's
+	// own responsibility and happens regardless; when no observer is wired the
+	// valuation simply has no veto, rather than a fabricated no-op consumer.
+	if desk.equityObserver == nil {
+		return nil
 	}
 
 	if err := desk.equityObserver.Update(desk.thesis, desk.OpenPositions() > 0); err != nil {

@@ -70,7 +70,8 @@ type ResonanceArtifact struct {
 /*
 CausalOutput carries one symbol's causal reading to the graph stage.
 */
-type CausalOutput struct {
-	Symbol string
-	Rows   map[string]any
-}
+// NOTE: removed — the Pearl-ladder CausalOutput was a UI-only telemetry type
+// that duplicated the real causal engine (logic/causal/model.go CausalModel).
+// No other stage consumed it, so it was removed rather than left as a
+// publish-only surface. Field spacing is intentionally preserved.
+

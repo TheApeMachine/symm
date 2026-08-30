@@ -44,7 +44,25 @@ const EDGE_HEALTH_STROKE: Record<HealthTone, string> = {
 	high: "hsl(0 72% 51%)",
 };
 
-const HALF = { w: 6.5, h: 4.5 };
+/*
+Node geometry and grid pitch live in one abstract coordinate space that the
+view scales to fit (see DiagnosticsGraph's viewBox). HALF is the node box's
+half-extent; the pitches are deliberately larger, and the difference between
+them is the channel every edge routes through. Keeping the gap wider than a
+node is what stops boxes colliding once the topology grows past a handful of
+stages.
+*/
+export const HALF = { w: 9, h: 5.5 };
+const COL_PITCH = 22;
+const ROW_PITCH = 17;
+
+/*
+MIN_NODE_PX is the smallest a card may render before its type stops being
+readable. The view scales the whole diagram so a card meets this, scrolling
+when the topology is too big to fit — a card is never squeezed to fit the
+viewport, because an unreadable card defeats the diagram's purpose.
+*/
+const MIN_NODE_PX = { w: 150, h: 92 };
 
 export const formatCount = (count: number): string =>
 	new Intl.NumberFormat("en", { notation: "compact" }).format(count);
@@ -168,23 +186,146 @@ const autoLayout = (
 		byLayer.set(l, [...(byLayer.get(l) ?? []), id]);
 	}
 
-	const layerCount = Math.max(1, byLayer.size);
 	const placements = new Map<string, Placement>();
 
-	for (const [l, ids] of byLayer) {
-		// Stable, readable order within a layer: most-connected first, then
-		// alphabetical — keeps a hub node centered rather than jittering
-		// position as unrelated nodes come and go.
-		const ordered = [...ids].sort((a, b) => {
-			const degreeA = (outgoing.get(a)?.length ?? 0) + (incoming.get(a)?.length ?? 0);
-			const degreeB = (outgoing.get(b)?.length ?? 0) + (incoming.get(b)?.length ?? 0);
-			return degreeB - degreeA || a.localeCompare(b);
+	const layerIndices = [...byLayer.keys()].sort((a, b) => a - b);
+
+	// Seed each layer's order deterministically (most-connected first, then
+	// alphabetical) so the sweeps below start from a stable arrangement and a
+	// node doesn't jitter position as unrelated stages come and go.
+	const order = new Map<number, string[]>();
+
+	for (const l of layerIndices) {
+		const ids = byLayer.get(l) ?? [];
+		order.set(
+			l,
+			[...ids].sort((a, b) => {
+				const degreeA = (outgoing.get(a)?.length ?? 0) + (incoming.get(a)?.length ?? 0);
+				const degreeB = (outgoing.get(b)?.length ?? 0) + (incoming.get(b)?.length ?? 0);
+				return degreeB - degreeA || a.localeCompare(b);
+			}),
+		);
+	}
+
+	/*
+	Barycenter ordering: a node wants to sit at the average position of the
+	neighbours it connects to in the adjacent layer, because an edge between
+	two nodes that are near-aligned across layers can't cross much. Sweeping
+	down then up repeatedly is the standard Sugiyama crossing-reduction pass —
+	without it, layer order is arbitrary and edges tangle even though the
+	layering itself is correct.
+	*/
+	const positionsIn = (l: number): Map<string, number> => {
+		const ids = order.get(l) ?? [];
+		return new Map(ids.map((id, index) => [id, index]));
+	};
+
+	const sweep = (from: number, to: number, neighboursOf: Map<string, string[]>) => {
+		const reference = positionsIn(from);
+		const ids = order.get(to) ?? [];
+
+		const barycenter = new Map<string, number>();
+
+		ids.forEach((id, index) => {
+			const neighbours = (neighboursOf.get(id) ?? []).filter((n) => reference.has(n));
+
+			// A node with no neighbour in the reference layer has no opinion —
+			// keep it where it is rather than collapsing it to zero, which
+			// would drag unrelated nodes to the left edge.
+			barycenter.set(
+				id,
+				neighbours.length === 0
+					? index
+					: neighbours.reduce((sum, n) => sum + (reference.get(n) ?? 0), 0) / neighbours.length,
+			);
 		});
 
-		const y = ((l + 1) / (layerCount + 1)) * 100;
+		order.set(
+			to,
+			[...ids].sort((a, b) => (barycenter.get(a) ?? 0) - (barycenter.get(b) ?? 0) || a.localeCompare(b)),
+		);
+	};
 
-		ordered.forEach((id, index) => {
-			const x = ((index + 1) / (ordered.length + 1)) * 100;
+	const crossingsBetween = (upper: number, lower: number): number => {
+		const upperPos = positionsIn(upper);
+		const lowerPos = positionsIn(lower);
+		const spans: { u: number; v: number }[] = [];
+
+		for (const id of order.get(upper) ?? []) {
+			for (const target of outgoing.get(id) ?? []) {
+				const u = upperPos.get(id);
+				const v = lowerPos.get(target);
+				if (u === undefined || v === undefined) continue;
+				spans.push({ u, v });
+			}
+		}
+
+		let count = 0;
+
+		// Two edges cross exactly when their endpoints are in opposite order
+		// on the two layers.
+		for (let i = 0; i < spans.length; i++) {
+			for (let j = i + 1; j < spans.length; j++) {
+				const a = spans[i];
+				const b = spans[j];
+				if ((a.u - b.u) * (a.v - b.v) < 0) count++;
+			}
+		}
+
+		return count;
+	};
+
+	const totalCrossings = (): number => {
+		let total = 0;
+		for (let i = 0; i + 1 < layerIndices.length; i++) {
+			total += crossingsBetween(layerIndices[i], layerIndices[i + 1]);
+		}
+		return total;
+	};
+
+	// Keep the best arrangement seen rather than whatever the last sweep
+	// produced — barycenter sweeps aren't monotonic and can end worse than
+	// they started.
+	let best = new Map([...order].map(([l, ids]) => [l, [...ids]] as const));
+	let bestScore = totalCrossings();
+
+	for (let pass = 0; pass < 8 && bestScore > 0; pass++) {
+		for (let i = 1; i < layerIndices.length; i++) {
+			sweep(layerIndices[i - 1], layerIndices[i], incoming);
+		}
+
+		for (let i = layerIndices.length - 2; i >= 0; i--) {
+			sweep(layerIndices[i + 1], layerIndices[i], outgoing);
+		}
+
+		const score = totalCrossings();
+
+		if (score < bestScore) {
+			bestScore = score;
+			best = new Map([...order].map(([l, ids]) => [l, [...ids]] as const));
+		}
+	}
+
+	/*
+	Place on a grid whose cell is strictly larger than a node box, then report
+	the extent so the view can scale to fit. Spacing nodes as a fraction of a
+	fixed 0–100 space (the previous approach) shrinks the gap as stages are
+	discovered: at 31 stages the per-layer pitch fell below the node's own
+	height and boxes simply overlapped. Deriving the space from the content
+	instead means a node never collides regardless of how big the topology
+	grows, and leaves real channels between layers for edges to route through.
+	*/
+	const widest = Math.max(1, ...[...best.values()].map((ids) => ids.length));
+
+	for (const [l, ids] of best) {
+		const y = (l + 0.5) * ROW_PITCH;
+
+		// Centre each layer against the widest one so the graph reads as a
+		// centred column rather than everything jammed to the left.
+		const indent = (widest - ids.length) / 2;
+
+		ids.forEach((id, index) => {
+			const x = (indent + index + 0.5) * COL_PITCH;
 			placements.set(id, { id, label: id, x, y });
 		});
 	}
@@ -221,45 +362,218 @@ const portPoint = (
 	return { x: placement.x + HALF.w, y: placement.y + offset };
 };
 
+// Stub length must exceed the corner radius, or every bend's rounding gets
+// clamped by the short run leading into it and the curve never appears.
+const STUB = 3.5;
+
 const stubPoint = (point: Point, side: NodeSide): Point => {
-	if (side === "top") return { x: point.x, y: point.y - 1.0 };
-	if (side === "bottom") return { x: point.x, y: point.y + 1.0 };
-	if (side === "left") return { x: point.x - 1.0, y: point.y };
-	return { x: point.x + 1.0, y: point.y };
+	if (side === "top") return { x: point.x, y: point.y - STUB };
+	if (side === "bottom") return { x: point.x, y: point.y + STUB };
+	if (side === "left") return { x: point.x - STUB, y: point.y };
+	return { x: point.x + STUB, y: point.y };
 };
 
+// Routes are drawn as hard orthogonal polylines — square corners read as
+// circuit wiring, which is what this diagram is.
 const pathOf = (points: Point[]): string =>
 	points
 		.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(3)} ${point.y.toFixed(3)}`)
 		.join(" ");
 
+/*
+labelPointOf centres the latency pill on the route's longest straight run.
+Taking a fixed midpoint index instead (the previous approach) could land the
+label right on a bend or hard against a node, where it overlaps the box it
+belongs to; the longest segment is by definition the one with room for it.
+*/
 const labelPointOf = (points: Point[]): Point => {
-	const mid = Math.floor(points.length / 2);
-	const a = points[Math.max(0, mid - 1)];
-	const b = points[mid];
-	return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+	let best = { x: points[0].x, y: points[0].y };
+	let bestLength = -1;
+
+	for (let i = 1; i < points.length; i++) {
+		const a = points[i - 1];
+		const b = points[i];
+		const length = Math.hypot(b.x - a.x, b.y - a.y);
+
+		if (length > bestLength) {
+			bestLength = length;
+			best = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+		}
+	}
+
+	return best;
 };
 
 /*
-routeEdge draws a clean 2-bend orthogonal route between two ports: straight
-down/across from the source, a single elbow, straight into the target. With
-positions auto-laid-out into clean layers (see autoLayout), a simple elbow
-route stays legible without the old fixed-topology router's obstacle-avoidance
-machinery — that complexity existed to route around a large, hand-placed,
-overlapping diagram; a layered auto-layout keeps lanes naturally separated.
+routeEdge draws an orthogonal route between two ports. A single elbow (the
+previous approach) bends at the target's coordinate, which drives the run hard
+against the receiving node's edge and makes many edges share the same line —
+the "weird routing" that shows up as overlapping right angles.
+
+Instead this routes through the channel *between* the two layers: out of the
+source, across at a mid-channel line, then into the target. `lane` shifts that
+mid-line per edge so parallel runs occupy visibly distinct tracks rather than
+stacking on top of each other. A back-edge (target above the source) can't use
+the channel at all, so it detours around the side instead of cutting straight
+back through the nodes in between.
 */
-const routeEdge = (fromPort: Point, toPort: Point, fromSide: NodeSide, toSide: NodeSide): Point[] => {
+const CLEARANCE = 1.6;
+
+type Box = { x: number; y: number; w: number; h: number };
+
+const boxOf = (placement: Placement): Box => ({
+	x: placement.x,
+	y: placement.y,
+	w: HALF.w + CLEARANCE,
+	h: HALF.h + CLEARANCE,
+});
+
+/*
+segmentHitsBox tests one axis-aligned run against a node's padded box. Routes
+here are always orthogonal, so a cheap interval overlap on each axis is exact
+— no general segment/rectangle intersection needed.
+*/
+const segmentHitsBox = (a: Point, b: Point, box: Box): boolean => {
+	const minX = Math.min(a.x, b.x);
+	const maxX = Math.max(a.x, b.x);
+	const minY = Math.min(a.y, b.y);
+	const maxY = Math.max(a.y, b.y);
+
+	return (
+		maxX > box.x - box.w &&
+		minX < box.x + box.w &&
+		maxY > box.y - box.h &&
+		minY < box.y + box.h
+	);
+};
+
+const routeHitCount = (points: Point[], obstacles: Box[]): number => {
+	let hits = 0;
+
+	for (let i = 1; i < points.length; i++) {
+		for (const box of obstacles) {
+			if (segmentHitsBox(points[i - 1], points[i], box)) hits++;
+		}
+	}
+
+	return hits;
+};
+
+/*
+routeEdge picks the least-obstructed orthogonal route between two ports rather
+than committing to one shape. Every candidate is scored against the node boxes
+it would cut through (the previous router had no obstacle awareness at all, so
+a wire happily crossed whatever sat between its endpoints), and the cleanest
+wins; ties break toward fewer bends, then shorter length.
+
+Candidates, in rough order of preference: a straight shot, a mid-channel
+Z-route through the gap between layers, Z-routes hugging either layer, and
+finally wide detours around the outside of the node column for edges that
+travel backwards or sideways past intervening stages.
+*/
+const routeEdge = (
+	fromPort: Point,
+	toPort: Point,
+	fromSide: NodeSide,
+	toSide: NodeSide,
+	lane: number,
+	obstacles: Box[],
+	bounds: { minX: number; maxX: number },
+): Point[] => {
 	const start = stubPoint(fromPort, fromSide);
 	const end = stubPoint(toPort, toSide);
 
+	const candidates: Point[][] = [];
+
+	// Straight (or near-straight) shot: only viable when the stubs already
+	// line up on one axis.
 	if (Math.abs(start.x - end.x) < 0.001 || Math.abs(start.y - end.y) < 0.001) {
-		return [fromPort, start, end, toPort];
+		candidates.push([fromPort, start, end, toPort]);
 	}
 
 	const vertical = fromSide === "top" || fromSide === "bottom";
-	const bend = vertical ? { x: start.x, y: end.y } : { x: end.x, y: start.y };
 
-	return [fromPort, start, bend, end, toPort];
+	if (vertical) {
+		// Z-routes crossing the channel at various depths. The lane offset
+		// keeps parallel edges on their own tracks.
+		for (const t of [0.5, 0.25, 0.75]) {
+			const channel = start.y + (end.y - start.y) * t + lane;
+			candidates.push([
+				fromPort,
+				start,
+				{ x: start.x, y: channel },
+				{ x: end.x, y: channel },
+				end,
+				toPort,
+			]);
+		}
+
+		// Detour around the outside of the whole column — the reliable escape
+		// for back-edges and long hops that would otherwise plough through
+		// every node in between.
+		for (const side of [-1, 1]) {
+			const outside =
+				side < 0 ? bounds.minX - HALF.w - CLEARANCE - 2 - lane : bounds.maxX + HALF.w + CLEARANCE + 2 + lane;
+
+			candidates.push([
+				fromPort,
+				start,
+				{ x: outside, y: start.y },
+				{ x: outside, y: end.y },
+				end,
+				toPort,
+			]);
+		}
+	} else {
+		for (const t of [0.5, 0.25, 0.75]) {
+			const channel = start.x + (end.x - start.x) * t + lane;
+			candidates.push([
+				fromPort,
+				start,
+				{ x: channel, y: start.y },
+				{ x: channel, y: end.y },
+				end,
+				toPort,
+			]);
+		}
+
+		// Route above or below the row rather than straight along it.
+		for (const side of [-1, 1]) {
+			const over = start.y + side * (HALF.h + CLEARANCE + 2) + lane;
+			candidates.push([
+				fromPort,
+				start,
+				{ x: start.x, y: over },
+				{ x: end.x, y: over },
+				end,
+				toPort,
+			]);
+		}
+	}
+
+	const lengthOf = (points: Point[]) => {
+		let total = 0;
+		for (let i = 1; i < points.length; i++) {
+			total += Math.abs(points[i].x - points[i - 1].x) + Math.abs(points[i].y - points[i - 1].y);
+		}
+		return total;
+	};
+
+	let best = candidates[0];
+	let bestScore = Number.POSITIVE_INFINITY;
+
+	for (const candidate of candidates) {
+		// Hits dominate: a route that misses every node beats any shorter
+		// route that cuts through one.
+		const score = routeHitCount(candidate, obstacles) * 1000 + candidate.length * 4 + lengthOf(candidate) * 0.05;
+
+		if (score < bestScore) {
+			bestScore = score;
+			best = candidate;
+		}
+	}
+
+	return best;
 };
 
 export const buildDiagnosticsGraph = (nodes: Map<string, NodeStats>, edges: Map<string, EdgeStats>) => {
@@ -321,6 +635,44 @@ export const buildDiagnosticsGraph = (nodes: Map<string, NodeStats>, edges: Map<
 
 	const edgesOut: DiagEdge[] = [];
 
+	/*
+	Edges crossing the same channel get distinct lanes. Grouping by the pair of
+	layers an edge spans (rounded, since a layer's y is shared by every node in
+	it) means everything travelling the same gap is spread across parallel
+	tracks instead of collapsing onto one line.
+	*/
+	const LANE_STEP = 1.1;
+	const laneOf = new Map<string, number>();
+	const channelGroups = new Map<string, string[]>();
+
+	for (const edge of edgeList) {
+		const id = `${edge.from}>${edge.to}`;
+		const from = placements.get(edge.from);
+		const to = placements.get(edge.to);
+		if (!from || !to) continue;
+
+		const key = `${from.y.toFixed(1)}>${to.y.toFixed(1)}`;
+		channelGroups.set(key, [...(channelGroups.get(key) ?? []), id]);
+	}
+
+	for (const ids of channelGroups.values()) {
+		// Centre the lane fan on the channel so a single edge stays dead
+		// straight and a group spreads symmetrically either side of it.
+		const sorted = [...ids].sort();
+		const middle = (sorted.length - 1) / 2;
+		sorted.forEach((id, index) => {
+			laneOf.set(id, (index - middle) * LANE_STEP);
+		});
+	}
+
+	const allBoxes = [...placements.values()].map((placement) => ({ id: placement.id, box: boxOf(placement) }));
+
+	const xs = [...placements.values()].map((placement) => placement.x);
+	const bounds = {
+		minX: xs.length > 0 ? Math.min(...xs) : 0,
+		maxX: xs.length > 0 ? Math.max(...xs) : 0,
+	};
+
 	for (const edge of edgeList) {
 		const id = `${edge.from}>${edge.to}`;
 		const from = placements.get(edge.from);
@@ -330,7 +682,20 @@ export const buildDiagnosticsGraph = (nodes: Map<string, NodeStats>, edges: Map<
 		const toPort = portsMap.get(`${id}:to`);
 		if (!from || !to || !side || !fromPort || !toPort) continue;
 
-		const points = routeEdge(fromPort, toPort, side.from, side.to);
+		// An edge's own endpoints aren't obstacles — it has to touch them.
+		const obstacles = allBoxes
+			.filter((entry) => entry.id !== edge.from && entry.id !== edge.to)
+			.map((entry) => entry.box);
+
+		const points = routeEdge(
+			fromPort,
+			toPort,
+			side.from,
+			side.to,
+			laneOf.get(id) ?? 0,
+			obstacles,
+			bounds,
+		);
 
 		edgesOut.push({
 			id,
@@ -343,7 +708,26 @@ export const buildDiagnosticsGraph = (nodes: Map<string, NodeStats>, edges: Map<
 		});
 	}
 
-	return { placements, edges: edgesOut, ports };
+	/*
+	extent is the drawn bounding box in layout units, padded for the outside
+	detour tracks. The view maps this onto its viewBox, so the diagram scales
+	to fit whatever size the topology turns out to be instead of being squeezed
+	into a fixed 0–100 space.
+	*/
+	const ys = [...placements.values()].map((placement) => placement.y);
+	const pad = HALF.w + CLEARANCE + 6;
+
+	const extent =
+		placements.size === 0
+			? { x: 0, y: 0, w: 100, h: 100 }
+			: {
+					x: Math.min(...xs) - pad,
+					y: Math.min(...ys) - HALF.h - 4,
+					w: Math.max(...xs) - Math.min(...xs) + pad * 2,
+					h: Math.max(...ys) - Math.min(...ys) + (HALF.h + 4) * 2,
+				};
+
+	return { placements, edges: edgesOut, ports, extent };
 };
 
 const pathsFrom = (selection: DiagnosticsSelection | null, edges: DiagEdge[]) => {
@@ -421,8 +805,18 @@ const BACKLOG_TONE_FILL: Record<BacklogTone, string> = {
 	"backed-up": "bg-(--down)",
 };
 
+type Extent = { x: number; y: number; w: number; h: number };
+
+// Layout units are abstract; HTML overlays position in percentages of the
+// drawn extent, so both layers agree on where a point sits.
+const toPercent = (point: Point, extent: Extent) => ({
+	left: ((point.x - extent.x) / extent.w) * 100,
+	top: ((point.y - extent.y) / extent.h) * 100,
+});
+
 const StageNode = ({
 	placement,
+	extent,
 	stage,
 	state,
 	selected,
@@ -431,6 +825,7 @@ const StageNode = ({
 	onSelect,
 }: {
 	placement: Placement;
+	extent: Extent;
 	stage: NodeStats | undefined;
 	state: StageState;
 	selected: boolean;
@@ -455,16 +850,20 @@ const StageNode = ({
 			className={cn(
 				"diag-node absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-pointer overflow-hidden rounded-xs border bg-(--surface) px-2 py-1.5 text-left transition-all hover:bg-(--raised)",
 				"flex flex-col justify-between",
+				state === "live" && !dimmed && "diag-node-live",
 				selected && "outline outline-(--acc) outline-offset-1 ring-1 ring-(--acc)/40",
 				highlight === "up" && !selected && "outline outline-(--warn)/70 outline-offset-1",
 				highlight === "down" && !selected && "outline outline-(--info)/70 outline-offset-1",
 				dimmed && "opacity-20",
 			)}
 			style={{
-				left: `${placement.x}%`,
-				top: `${placement.y}%`,
-				width: `${HALF.w * 2}%`,
-				height: `${HALF.h * 2}%`,
+				left: `${toPercent(placement, extent).left}%`,
+				top: `${toPercent(placement, extent).top}%`,
+				// A share of the extent, which the surface has already sized so
+				// this lands at or above MIN_NODE_PX — the card scales with the
+				// diagram without ever dropping below readable.
+				width: `${((HALF.w * 2) / extent.w) * 100}%`,
+				height: `${((HALF.h * 2) / extent.h) * 100}%`,
 				borderColor: tone.borderColor,
 			}}
 		>
@@ -479,31 +878,37 @@ const StageNode = ({
 			/>
 			<div className="relative flex items-center gap-1">
 				<span className={`size-1.5 shrink-0 rounded-full ${tone.dot}`} />
-				<span className="truncate font-mono text-[9px] font-semibold uppercase tracking-wide text-(--f1)">
+				<span
+					className="truncate font-mono text-[11px] font-semibold uppercase tracking-wide text-(--f1)"
+					title={placement.label}
+				>
 					{placement.label}
 				</span>
 			</div>
-			<div className="relative grid grid-cols-[3ch_7ch_6ch] items-baseline gap-1 font-mono">
-				<span className="text-[7px] uppercase text-(--f4)">rate</span>
+			{/* Columns are sized in fr rather than fixed ch so a long value
+			borrows room from its neighbours instead of being clipped — the
+			fixed 3ch/7ch/6ch grid truncated real readings like "peak 1.5K". */}
+			<div className="relative grid grid-cols-[auto_1fr_auto] items-baseline gap-1.5 font-mono">
+				<span className="text-[9px] uppercase text-(--f4)">rate</span>
 				<span
 					className={cn(
-						"text-right text-[10px] font-bold tabular-nums text-(--acc)",
+						"text-right text-[13px] font-bold tabular-nums text-(--acc)",
 						stage === undefined && "text-(--f4)",
 					)}
 				>
 					{stage === undefined ? "—" : formatRate(stage.avgGapNs)}
 				</span>
-				<span className={`truncate text-right text-[7px] uppercase ${tone.text}`}>{state}</span>
+				<span className={`text-right text-[9px] uppercase ${tone.text}`}>{state}</span>
 			</div>
-			<div className="relative grid grid-cols-[3ch_7ch_6ch] items-baseline gap-1 font-mono text-[7px] text-(--f4)">
-				<span>last</span>
+			<div className="relative grid grid-cols-[auto_1fr_auto] items-baseline gap-1.5 font-mono text-[9px] text-(--f3)">
+				<span className="text-(--f4)">last</span>
 				<span className="text-right tabular-nums">{formatNanos(stage?.lastGapNs)}</span>
-				<span className="truncate text-right tabular-nums">
+				<span className="text-right tabular-nums">
 					{stage !== undefined ? `${formatCount(stage.seqCount)} ops` : "unseen"}
 				</span>
 			</div>
-			<div className="relative grid grid-cols-[3ch_7ch_6ch] items-baseline gap-1 font-mono text-[7px] text-(--f4)">
-				<span>bklg</span>
+			<div className="relative grid grid-cols-[auto_1fr_auto] items-baseline gap-1.5 font-mono text-[9px] text-(--f3)">
+				<span className="text-(--f4)">bklg</span>
 				<span
 					className={cn(
 						"text-right font-bold tabular-nums",
@@ -514,7 +919,7 @@ const StageNode = ({
 				>
 					{formatCount(backlog)}
 				</span>
-				<span className="truncate text-right tabular-nums">peak {formatCount(maxBacklog)}</span>
+				<span className="text-right tabular-nums">peak {formatCount(maxBacklog)}</span>
 			</div>
 		</button>
 	);
@@ -558,29 +963,51 @@ const EdgePath = ({
 				fill="none"
 				stroke={stroke}
 				strokeWidth={hovered ? 1.8 : 1.2}
-				strokeOpacity={dimmed && !hovered ? 0.15 : 0.65}
+				strokeOpacity={dimmed && !hovered ? 0.15 : flowing ? 0.4 : 0.6}
 				vectorEffect="non-scaling-stroke"
 				pathLength={100}
 				strokeLinecap="round"
 				strokeLinejoin="round"
-				strokeDasharray={flowing ? "4 5" : undefined}
-				className={cn("diag-edge transition-all", flowing && "diag-flow", !flowing && "diag-solid")}
+				className="diag-edge transition-all"
 			/>
+			{/* On a live edge a bright dashed overlay rides the same path as the
+			base stroke, so flow reads as motion along a still-visible wire
+			rather than as the wire itself blinking in and out. */}
+			{flowing && !dimmed && (
+				<path
+					d={edge.d}
+					fill="none"
+					stroke={stroke}
+					strokeWidth={hovered ? 2.4 : 1.8}
+					strokeOpacity={0.95}
+					vectorEffect="non-scaling-stroke"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+					className="diag-flow"
+				/>
+			)}
 		</g>
 	);
 };
 
-const EdgeLatency = ({ edge, dimmed, hovered }: { edge: DiagEdge; dimmed: boolean; hovered: boolean }) => {
+const EdgeLatency = ({
+	edge,
+	extent,
+	dimmed,
+	hovered,
+}: { edge: DiagEdge; extent: Extent; dimmed: boolean; hovered: boolean }) => {
 	if (edge.stats.avgLatencyNs <= 0) return null;
+
+	const at = toPercent(edge.labelPoint, extent);
 
 	return (
 		<div
 			className={cn(
-				"pointer-events-none absolute z-5 min-w-[7ch] -translate-x-1/2 -translate-y-1/2 rounded-sm border border-(--line) bg-(--bg)/95 px-1 py-px text-center font-mono text-[7px] tabular-nums text-(--f3) shadow-sm transition-all",
+				"pointer-events-none absolute z-5 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-sm border border-(--line) bg-(--bg)/95 px-1 py-px text-center font-mono text-[9px] tabular-nums text-(--f3) shadow-sm transition-all",
 				dimmed && !hovered && "opacity-15",
 				hovered && "border-(--acc) text-(--acc) opacity-100 z-20 scale-110",
 			)}
-			style={{ left: `${edge.labelPoint.x}%`, top: `${edge.labelPoint.y}%` }}
+			style={{ left: `${at.left}%`, top: `${at.top}%` }}
 			title={`${edge.from} to ${edge.to} average hop latency`}
 		>
 			{formatNanos(edge.stats.avgLatencyNs)}
@@ -614,6 +1041,19 @@ export const DiagnosticsGraph = ({ nodes, edges, atNs, selection, onSelect }: Di
 
 	const { upstream, downstream } = useMemo(() => pathsFrom(selection, graph.edges), [selection, graph.edges]);
 
+	/*
+	The diagram is drawn at whatever pixel size keeps a node card readable, and
+	the container scrolls if that exceeds the viewport. Sizing the canvas to the
+	viewport instead (the previous behaviour) shrank every card as stages were
+	discovered, which is what made the metrics unreadable — and because the
+	extent's aspect ratio tracks the topology's shape, a tall graph squashed
+	cards in one axis only.
+	*/
+	const surface = {
+		width: (graph.extent.w / (HALF.w * 2)) * MIN_NODE_PX.w,
+		height: (graph.extent.h / (HALF.h * 2)) * MIN_NODE_PX.h,
+	};
+
 	if (nodes.size === 0) {
 		return (
 			<div className="flex h-full items-center justify-center font-mono text-[10px] uppercase tracking-widest text-(--f4)">
@@ -625,23 +1065,54 @@ export const DiagnosticsGraph = ({ nodes, edges, atNs, selection, onSelect }: Di
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: click-outside-to-deselect on the background; every real interaction (selecting a stage) has its own keyboard-accessible button.
 		// biome-ignore lint/a11y/useKeyWithClickEvents: same as above — this is a convenience dismiss, not the primary interaction path.
-		<div className="relative h-full w-full overflow-hidden select-none" onClick={() => onSelect(null)}>
+		<div className="relative h-full w-full overflow-auto select-none" onClick={() => onSelect(null)}>
 			<style>{`
 				@keyframes diag-dash-flow {
-					from { stroke-dashoffset: 0; }
-					to { stroke-dashoffset: -27; }
+					from { stroke-dashoffset: 18; }
+					to { stroke-dashoffset: 0; }
+				}
+				@keyframes diag-node-live {
+					0%, 100% { box-shadow: 0 0 0 0 var(--up); opacity: 1; }
+					50% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--up) 22%, transparent); opacity: 1; }
 				}
 				.diag-edge { stroke-linecap: round; }
+				/* Dash pattern is in user units against pathLength-free geometry,
+				   so it stays consistent whatever the route's length; the offset
+				   runs source-to-target (positive to zero) to read as travel in
+				   the direction of flow. */
 				.diag-flow {
-					stroke-dasharray: 4 5;
-					animation: diag-dash-flow 0.9s linear infinite;
+					stroke-dasharray: 3 15;
+					animation: diag-dash-flow 1.1s linear infinite;
 				}
-				.diag-solid {
-					stroke-dasharray: none;
-					animation: none;
+				.diag-node-live::after {
+					content: "";
+					position: absolute;
+					inset: -1px;
+					border-radius: inherit;
+					pointer-events: none;
+					animation: diag-node-live 2s ease-in-out infinite;
+				}
+				@media (prefers-reduced-motion: reduce) {
+					.diag-flow { animation: none; stroke-dasharray: none; stroke-opacity: 0.9; }
+					.diag-node-live::after { animation: none; }
 				}
 			`}</style>
-			<svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full" aria-hidden="true">
+			{/* The sized surface: at least as large as readability demands, and
+			at least as large as the viewport so a small topology still fills
+			the panel rather than huddling in a corner. */}
+			<div
+				className="relative"
+				style={{ width: `max(100%, ${Math.round(surface.width)}px)`, height: `max(100%, ${Math.round(surface.height)}px)` }}
+			>
+			{/* preserveAspectRatio="none" stretches the routes to match the HTML
+			overlay, which is itself positioned in percentages of the same
+			extent — both layers therefore land on identical geometry. */}
+			<svg
+				viewBox={`${graph.extent.x} ${graph.extent.y} ${graph.extent.w} ${graph.extent.h}`}
+				preserveAspectRatio="none"
+				className="absolute inset-0 h-full w-full"
+				aria-hidden="true"
+			>
 				<g className="diag-edges">
 					{graph.edges.map((edge) => {
 						const flowing = atNs - edge.stats.lastAtNs <= TOPOLOGY_LIVE_WINDOW_NS;
@@ -677,7 +1148,13 @@ export const DiagnosticsGraph = ({ nodes, edges, atNs, selection, onSelect }: Di
 				const hovered = hoveredEdgeId === edge.id;
 
 				return (
-					<EdgeLatency key={`latency:${edge.id}`} edge={edge} dimmed={selection !== null && !connected} hovered={hovered} />
+					<EdgeLatency
+						key={`latency:${edge.id}`}
+						edge={edge}
+						extent={graph.extent}
+						dimmed={selection !== null && !connected}
+						hovered={hovered}
+					/>
 				);
 			})}
 
@@ -693,6 +1170,7 @@ export const DiagnosticsGraph = ({ nodes, edges, atNs, selection, onSelect }: Di
 					<StageNode
 						key={placement.id}
 						placement={placement}
+						extent={graph.extent}
 						stage={stage}
 						state={stageState(stage, atNs)}
 						selected={selectedHere}
@@ -702,6 +1180,7 @@ export const DiagnosticsGraph = ({ nodes, edges, atNs, selection, onSelect }: Di
 					/>
 				);
 			})}
+			</div>
 		</div>
 	);
 };

@@ -2,9 +2,9 @@ import { useSelector } from "@tanstack/react-store";
 import { useRef } from "react";
 import { focusStore, getMeasurementStore } from "#/collections/app";
 import { Panel } from "#/components/ui/panel";
-import { Metric } from "#/providers/telemetry/telemetry/metric";
+import { EnvelopeMeasurementMetric } from "#/providers/telemetry/telemetry/envelope-measurement-metric";
 
-const metricObj = new Metric();
+const metricObj = new EnvelopeMeasurementMetric();
 
 const fmt = (value: unknown, digits: number): string =>
 	typeof value === "number" ? value.toFixed(digits) : "—";
@@ -33,9 +33,9 @@ export const CrossSectionPanel = () => {
 			for (let j = 0; j < row.metricsLength(); j++) {
 				const m = row.metrics(j, metricObj);
 				if (m) {
-					metricsMap[m.name() ?? ""] = {
-						raw: m.raw(),
-						normalized: m.normalized(),
+					metricsMap[m.key() ?? ""] = {
+						raw: m.value()?.raw() ?? 0,
+						normalized: m.value()?.normalized() ?? 0,
 					};
 				}
 			}
@@ -45,8 +45,8 @@ export const CrossSectionPanel = () => {
 		set("symbol", focusSymbol.length === 0 ? "no focus" : focusSymbol);
 		set("rel", fmt(metricsMap.relative_touch_depth?.raw, 3));
 		set("at", (() => {
-			if (row?.at() === undefined) return "—";
-			const parsed = new Date(Number(row.at()));
+			if (row?.atNs() === undefined) return "—";
+			const parsed = new Date(Number(row.atNs() / 1000000n));
 			return Number.isNaN(parsed.getTime()) ? "—" : parsed.toISOString().slice(11, 19);
 		})());
 		set("norm", fmt(metricsMap.executable_touch_depth?.normalized, 2));

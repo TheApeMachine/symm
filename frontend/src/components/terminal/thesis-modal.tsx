@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
-import { graphStore, strategyStore, tickStore } from "#/collections/app";
+import { graphStore, strategyStore, tickCountStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { ModelScope } from "#/components/graph/component";
 import {
@@ -59,14 +59,11 @@ const ThesisActionBadge = ({ symbol }: { symbol: string }) => {
 const ThesisTickCounter = () => {
 	const root = useRef<HTMLDivElement>(null);
 
-	tickStore.subscribe((state) => {
+	tickCountStore.subscribe((tick) => {
 		if (!root.current) return;
 		const el = root.current.querySelector<HTMLElement>("[data-tick]");
-		const last = state.getLast();
 		if (el) {
-			el.textContent = last
-				? new Date(Number(last.timestampNs() / 1000000n)).toISOString().slice(11, 19)
-				: "—";
+			el.textContent = String(tick);
 		}
 	});
 

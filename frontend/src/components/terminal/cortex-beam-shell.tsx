@@ -3,8 +3,7 @@ import { cognitionStore } from "#/collections/app";
 import { meterTrackVariants } from "#/components/ui/meter";
 import { Panel } from "#/components/ui/panel";
 import { Typography } from "#/components/ui/typography";
-import { Cognition } from "#/providers/telemetry/telemetry/cognition";
-import { NamedNumber } from "#/providers/telemetry/telemetry/named-number";
+import { EnvelopeCognitionPrediction } from "#/providers/telemetry/telemetry/envelope-cognition-prediction";
 
 type PredictionEntry = {
 	name: string;
@@ -17,8 +16,7 @@ type PredictionQueryEntry = {
 };
 
 const queryCache: Record<string, PredictionQueryEntry> = {};
-const cogObj = new Cognition();
-const predObj = new NamedNumber();
+const predObj = new EnvelopeCognitionPrediction();
 
 export const CortexBeamShell = ({ symbol }: { symbol: string }) => {
 	const root = useRef<HTMLDivElement>(null);
@@ -29,14 +27,10 @@ export const CortexBeamShell = ({ symbol }: { symbol: string }) => {
 		const last = state.getLast();
 		if (!last) return;
 
-		let targetRow: Cognition | null = null;
-		for (let i = 0; i < last.rowsLength(); i++) {
-			const row = last.rows(i, cogObj);
-			if (row && row.symbol() === symbol) {
-				targetRow = row;
-				break;
-			}
-		}
+		const targetRow =
+			typeof last.symbol() === "string" && last.symbol() === symbol
+				? last
+				: null;
 
 		if (!targetRow) return;
 
@@ -45,7 +39,7 @@ export const CortexBeamShell = ({ symbol }: { symbol: string }) => {
 		for (let j = 0; j < targetRow.predictionsLength(); j++) {
 			const pred = targetRow.predictions(j, predObj);
 			if (!pred) continue;
-			const name = pred.name() ?? "";
+			const name = pred.key() ?? "";
 			const val = pred.value();
 			if (!name) continue;
 

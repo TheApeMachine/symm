@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
@@ -21,12 +22,11 @@ Solver owns one resident Sensorium domain for the complete market universe.
 Symbols contribute orders to the same gas and wave fields; they are not split
 into independent simulations that cannot interfere.
 
-It satisfies nomagique/runtime.Node[*types.Envelope] and plays two roles
-depending on which envelope it sees: a Level3 envelope folds into Dataset's
-own accumulated order book (no field advance, no output); a Trade envelope
-carrying a Hawkes measurement — the forcing term — projects that book into
-oscillators via Dataset, loads them into the resident domain, and advances the
-field once, writing the result onto the envelope.
+It satisfies nomagique/runtime.Node[*types.Envelope]. A Level3 envelope projects
+its message's orders into oscillators exactly once, loads them into the resident
+domain, and advances the field once — every message, forward only. There is no
+retained book and no separate trade trigger: the Level3 stream is the whole
+input, and each message is one load-and-step.
 */
 type Solver struct {
 	ctx           context.Context
@@ -62,7 +62,6 @@ func NewSolver(ctx context.Context) *Solver {
 			system.Cfg.Manifold.Grid.X,
 			system.Cfg.Manifold.Grid.Y,
 			system.Cfg.Manifold.Grid.Z,
-			dataset,
 		),
 	}
 
@@ -83,30 +82,24 @@ func (solver *Solver) Name() string { return "manifold" }
 func (solver *Solver) Error() error { return solver.err }
 
 /*
-Step folds a Level3 envelope into Dataset's accumulated book (no output), or
-advances the resident field once for a Trade envelope carrying a Hawkes
-measurement — the forcing term — writing the resulting State onto the
-envelope. Any other envelope is a no-op.
+Step projects one Level3 message into a particle batch and advances the field
+once. Any other envelope is a no-op.
 */
 func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
-	switch envelope.TypeID {
-	case types.EnvelopeLevel3:
-		solver.dataset.Step(envelope.Level3Data)
-	case types.EnvelopeTrade:
-		if envelope.Hawkes != nil {
-			envelope.Manifold = solver.advance()
-		}
+	if envelope.TypeID != types.EnvelopeLevel3 {
+		return envelope
 	}
+
+	envelope.Manifold = solver.advance(envelope.Level3Data)
 
 	return envelope
 }
 
 /*
-advance loads the current resident book into the field and advances it once.
-It is fired by a Hawkes measurement: Hawkes is the forcing term, so each
-observation triggers a load-and-step of the resident domain.
+advance projects one Level3 message's orders into a single batch, loads it into
+the resident domain, and advances the field once.
 */
-func (solver *Solver) advance() *State {
+func (solver *Solver) advance(message kraken.Level3Data) *State {
 	if solver.physics == nil {
 		return nil
 	}
@@ -121,7 +114,13 @@ func (solver *Solver) advance() *State {
 		}
 	}()
 
-	if err := solver.physics.Load(); err != nil {
+	batch := solver.project(message)
+
+	if batch == nil || batch.N == 0 {
+		return nil
+	}
+
+	if _, err := solver.physics.Step(batch); err != nil {
 		solver.err = err
 		return nil
 	}
@@ -170,6 +169,76 @@ func (solver *Solver) advance() *State {
 
 		Modes: modes,
 	}
+}
+
+/*
+project folds one Level3 message's orders into a single State batch. Entries
+are packed in arrival order with no sort; the batch is sized exactly to the
+message so one message costs one forward pass and nothing is retained.
+*/
+func (solver *Solver) project(message kraken.Level3Data) *sensorium.State {
+	count := len(message.Bids) + len(message.Asks)
+
+	if count == 0 {
+		return nil
+	}
+
+	batch := &sensorium.State{
+		N:          count,
+		Bytes:      make([]int64, count),
+		Seqs:       make([]int64, count),
+		TokenIDs:   make([]int64, count),
+		ContentIDs: make([]int64, count),
+		Phase:      make([]float32, count),
+		Omega:      make([]float32, count),
+		Energy:     make([]float32, count),
+		Mass:       make([]float32, count),
+		Heat:       make([]float32, count),
+		Amp:        make([]float32, count),
+		Pos:        make([]float32, count*3),
+		Vel:        make([]float32, count*3),
+		Clamped:    make([]bool, count),
+		Dark:       make([]bool, count),
+	}
+
+	index := 0
+
+	for state := range solver.dataset.Step(message) {
+		if state == nil || state.N != 1 {
+			sensorium.StatePool.Put(state)
+			continue
+		}
+
+		batch.Bytes[index] = state.Bytes[0]
+		batch.Seqs[index] = state.Seqs[0]
+		batch.TokenIDs[index] = state.TokenIDs[0]
+		batch.ContentIDs[index] = state.ContentIDs[0]
+		batch.Phase[index] = state.Phase[0]
+		batch.Omega[index] = state.Omega[0]
+		batch.Energy[index] = state.Energy[0]
+		batch.Mass[index] = state.Mass[0]
+		batch.Heat[index] = state.Heat[0]
+		batch.Amp[index] = state.Amp[0]
+		batch.Pos[index*3+0] = state.Pos[0]
+		batch.Pos[index*3+1] = state.Pos[1]
+		batch.Pos[index*3+2] = state.Pos[2]
+		batch.Vel[index*3+0] = state.Vel[0]
+		batch.Vel[index*3+1] = state.Vel[1]
+		batch.Vel[index*3+2] = state.Vel[2]
+		batch.Clamped[index] = state.Clamped[0]
+		batch.Dark[index] = state.Dark[0]
+		index++
+
+		sensorium.StatePool.Put(state)
+	}
+
+	batch.N = index
+
+	if batch.N == 0 {
+		return nil
+	}
+
+	return batch
 }
 
 func (solver *Solver) Close() error {

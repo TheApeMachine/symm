@@ -134,6 +134,12 @@ type Envelope struct {
 	Key    string
 	TypeID TypeID
 
+	// Tick is the engine clock at which this envelope was produced: the
+	// monotonic thesis counter, stamped when the ingress observation commits.
+	// It is the "tick counter" the dashboard renders, distinct from the
+	// per-ticker wall-clock Timestamp carried in TickerData.
+	Tick int64
+
 	TickerData        kraken.TickerData
 	TradeData         kraken.TradeData
 	Level3Data        kraken.Level3Data
@@ -177,10 +183,6 @@ type Envelope struct {
 	// Cognition is the cognition stage's freshest reading, resolved from
 	// Categories.
 	Cognition *Cognition
-
-	// CausalOutput is the causal stage's Pearl-ladder evaluation, resolved
-	// from Resonance.
-	CausalOutput *CausalOutput
 
 	// Boundaries is the ordered trace of every diagnostics node the envelope
 	// passed through, appended to via AppendBoundary as it crosses each one
@@ -483,51 +485,6 @@ func encodeCognition(cognition *Cognition) *telemetry.EnvelopeCognitionT {
 	}
 
 	return encoded
-}
-
-func encodeCausalRowValue(value any) *telemetry.EnvelopeAnyValueT {
-	switch typed := value.(type) {
-	case string:
-		return &telemetry.EnvelopeAnyValueT{Type: telemetry.EnvelopeAnyValueNamedString, Value: &telemetry.NamedStringT{Value: typed}}
-	case float64:
-		return &telemetry.EnvelopeAnyValueT{Type: telemetry.EnvelopeAnyValueNamedNumber, Value: &telemetry.NamedNumberT{Value: typed}}
-	case int:
-		return &telemetry.EnvelopeAnyValueT{Type: telemetry.EnvelopeAnyValueEnvelopeNamedInt, Value: &telemetry.EnvelopeNamedIntT{Value: int64(typed)}}
-	case int64:
-		return &telemetry.EnvelopeAnyValueT{Type: telemetry.EnvelopeAnyValueEnvelopeNamedInt, Value: &telemetry.EnvelopeNamedIntT{Value: typed}}
-	case time.Time:
-		return &telemetry.EnvelopeAnyValueT{Type: telemetry.EnvelopeAnyValueEnvelopeNamedTimeNs, Value: &telemetry.EnvelopeNamedTimeNsT{ValueNs: timeNs(typed)}}
-	case [][]float64:
-		rows := make([]*telemetry.EnvelopeFloatRowT, len(typed))
-
-		for index, row := range typed {
-			rows[index] = &telemetry.EnvelopeFloatRowT{Values: row}
-		}
-
-		return &telemetry.EnvelopeAnyValueT{Type: telemetry.EnvelopeAnyValueEnvelopeNamedFloatMatrix, Value: &telemetry.EnvelopeNamedFloatMatrixT{Rows: rows}}
-	default:
-		return nil
-	}
-}
-
-func encodeCausalOutput(causal *CausalOutput) *telemetry.EnvelopeCausalOutputT {
-	if causal == nil {
-		return nil
-	}
-
-	rows := make([]*telemetry.EnvelopeAnyEntryT, 0, len(causal.Rows))
-
-	for key, value := range causal.Rows {
-		encodedValue := encodeCausalRowValue(value)
-
-		if encodedValue == nil {
-			continue
-		}
-
-		rows = append(rows, &telemetry.EnvelopeAnyEntryT{Key: key, Value: encodedValue})
-	}
-
-	return &telemetry.EnvelopeCausalOutputT{Symbol: causal.Symbol, Rows: rows}
 }
 
 func encodeFrame(frame nmtypes.Frame) *telemetry.EnvelopeFrameT {
@@ -839,6 +796,7 @@ func (envelope *Envelope) Encode() *telemetry.EnvelopeStateT {
 	return &telemetry.EnvelopeStateT{
 		Key:               envelope.Key,
 		TypeId:            byte(envelope.TypeID),
+		Tick:              envelope.Tick,
 		TickerData:        encodeTickerData(envelope.TickerData),
 		TradeData:         encodeTradeData(envelope.TradeData),
 		Level3Data:        encodeLevel3Data(envelope.Level3Data),
@@ -861,7 +819,6 @@ func (envelope *Envelope) Encode() *telemetry.EnvelopeStateT {
 		Resonance:         encodeResonanceArtifact(envelope.Resonance),
 		Manifold:          encodeManifoldState(envelope.Manifold),
 		Cognition:         encodeCognition(envelope.Cognition),
-		CausalOutput:      encodeCausalOutput(envelope.CausalOutput),
 		Boundaries:        encodeBoundaries(envelope.Boundaries),
 	}
 }

@@ -3,9 +3,9 @@ import { useRef } from "react";
 import { focusStore, getMeasurementStore } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
-import { Metric } from "#/providers/telemetry/telemetry/metric";
+import { EnvelopeMeasurementMetric } from "#/providers/telemetry/telemetry/envelope-measurement-metric";
 
-const metricObj = new Metric();
+const metricObj = new EnvelopeMeasurementMetric();
 
 const radarAxes = [
 	{ label: "volatility", source: "hawkes", metric: "spectral_radius", x: 0, y: -1 },
@@ -29,8 +29,8 @@ export const RadarPanel = () => {
 			if (row) {
 				for (let j = 0; j < row.metricsLength(); j++) {
 					const m = row.metrics(j, metricObj);
-					if (m && m.name() === axis.metric) {
-						normalized = m.normalized();
+					if (m && m.key() === axis.metric) {
+						normalized = m.value()?.normalized() ?? 0;
 						break;
 					}
 				}

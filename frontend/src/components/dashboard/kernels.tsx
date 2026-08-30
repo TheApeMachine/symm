@@ -3,9 +3,9 @@ import { DEFAULT_KERNELS, getMeasurementStore } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
-import { Metric } from "#/providers/telemetry/telemetry/metric";
+import { EnvelopeMeasurementMetric } from "#/providers/telemetry/telemetry/envelope-measurement-metric";
 
-const metricObj = new Metric();
+const metricObj = new EnvelopeMeasurementMetric();
 
 type QueryEntry = {
 	status: HTMLElement | null;
@@ -46,8 +46,8 @@ export const KernelList = () => {
 				let snrVal: number | null = null;
 				for (let j = 0; j < last.metricsLength(); j++) {
 					const m = last.metrics(j, metricObj);
-					if (m && m.name() === "snr") {
-						snrVal = m.raw();
+					if (m && m.key() === "snr") {
+						snrVal = m.value()?.raw() ?? null;
 						break;
 					}
 				}

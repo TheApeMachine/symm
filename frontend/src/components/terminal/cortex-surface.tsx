@@ -1,11 +1,8 @@
 import { useSelector } from "@tanstack/react-store";
 import { useRef } from "react";
 import { cognitionStore, focusStore } from "#/collections/app";
-import { Cognition } from "#/providers/telemetry/telemetry/cognition";
 import { CortexCanvas } from "./cortex-canvas";
 import { CortexPanelsShell } from "./cortex-panels-shell";
-
-const cogObj = new Cognition();
 
 export const CortexSurface = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
@@ -16,14 +13,11 @@ export const CortexSurface = () => {
 		const last = state.getLast();
 		if (!last) return;
 
-		let targetRow: Cognition | null = null;
-		for (let i = 0; i < last.rowsLength(); i++) {
-			const row = last.rows(i, cogObj);
-			if (row && row.symbol() === focusSymbol) {
-				targetRow = row;
-				break;
-			}
-		}
+		// Flat per-symbol reading: the frame is the row when its symbol matches.
+		const targetRow =
+			typeof last.symbol() === "string" && last.symbol() === focusSymbol
+				? last
+				: null;
 
 		const winner = root.current.querySelector<HTMLElement>("[data-winner]");
 		const sequence = root.current.querySelector<HTMLElement>("[data-sequence]");

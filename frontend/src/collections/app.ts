@@ -14,7 +14,6 @@ import type { FluidFields } from "#/components/fluid-3d/wire";
 import type { BacktestFrame } from "#/providers/telemetry/telemetry/backtest-frame";
 import type { BalancesFrame } from "#/providers/telemetry/telemetry/balances-frame";
 import type { EnvelopeCategory } from "#/providers/telemetry/telemetry/envelope-category";
-import type { EnvelopeCausalOutput } from "#/providers/telemetry/telemetry/envelope-causal-output";
 import type { EnvelopeCognition } from "#/providers/telemetry/telemetry/envelope-cognition";
 import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
 import type { EnvelopeOpportunityCandidate } from "#/providers/telemetry/telemetry/envelope-opportunity-candidate";
@@ -430,6 +429,10 @@ export const queryStore = createStore<string>("");
 export const symbolsStore = createStore<string[]>([]);
 export const observedSourcesStore = createStore<Set<string>>(new Set<string>());
 export const startedAtMsStore = createStore<number | null>(null);
+// tickCountStore is the monotonic engine clock (thesis.Tick), published on
+// EnvelopeState.tick and read by the dashboard's tick counter. It is a single
+// scalar, not a ring: the latest committed tick is the only value that matters.
+export const tickCountStore = createStore<number>(0);
 export const backtestStateStore = createStore<BacktestState>({
 	captureId: null,
 	playing: false,
@@ -493,7 +496,6 @@ export const regulatorStore = createFrameStore<RegulatorFrame>(50);
 export const resonanceStore = createFrameStore<ResonanceFrame>(50);
 export const resonanceArtifactStore = createFrameStore<EnvelopeResonanceArtifact>(50);
 export const cognitionStore = createFrameStore<EnvelopeCognition>(50);
-export const causalStore = createFrameStore<EnvelopeCausalOutput>(50);
 export const categoryStore = createFrameStore<EnvelopeCategory>(50);
 export const opportunityStore = createFrameStore<EnvelopeOpportunityCandidate>(50);
 export const graphStore = createFrameStore<GraphFrame>(50);

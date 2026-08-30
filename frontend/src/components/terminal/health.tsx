@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { tickStore } from "#/collections/app";
+import { tickCountStore } from "#/collections/app";
 import type { Measurement } from "#/collections/types";
 import { sourceHeadlineMetric } from "#/components/terminal/kernel-meta";
 import { Badge } from "#/components/ui/badge";
@@ -84,14 +84,11 @@ export const terminalHealthSummary = (
 export const HealthPanel = () => {
 	const root = useRef<HTMLDivElement>(null);
 
-	tickStore.subscribe((state) => {
+	tickCountStore.subscribe((tick) => {
 		if (!root.current) return;
 		const el = root.current.querySelector<HTMLElement>("[data-tick]");
-		const last = state.getLast();
 		if (el) {
-			el.textContent = last
-				? new Date(Number(last.timestampNs() / 1000000n)).toISOString().slice(11, 19)
-				: "—";
+			el.textContent = String(tick);
 		}
 	});
 

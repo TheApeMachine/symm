@@ -5,7 +5,7 @@ import { useDecisionsScopeSymbol } from "#/components/terminal/decision-side";
 import { meterTrackVariants } from "#/components/ui/meter";
 import { Panel } from "#/components/ui/panel";
 import { Typography } from "#/components/ui/typography";
-import { Cognition } from "#/providers/telemetry/telemetry/cognition";
+import { EnvelopeCognition } from "#/providers/telemetry/telemetry/envelope-cognition";
 
 import type { CognitiveReading } from "#/collections/types";
 
@@ -39,13 +39,10 @@ const isConcreteSymbol = (symbol: string | undefined): symbol is string =>
 	symbol !== undefined && symbol !== "" && symbol !== "stream";
 
 const METERS = [
-	{ key: "confidence", label: "Class confidence", getter: (c: Cognition) => c.confidence(), variant: "info" },
-	{ key: "lookahead", label: "Lookahead beam", getter: (c: Cognition) => c.lookaheadScore(), variant: "warning" },
-	{ key: "contrast", label: "Class contrast", getter: (c: Cognition) => c.contrast(), variant: "success" },
+	{ key: "confidence", label: "Class confidence", getter: (c: EnvelopeCognition) => c.confidence(), variant: "info" },
+	{ key: "lookahead", label: "Lookahead beam", getter: (c: EnvelopeCognition) => c.lookaheadScore(), variant: "warning" },
+	{ key: "contrast", label: "Class contrast", getter: (c: EnvelopeCognition) => c.contrast(), variant: "success" },
 ] as const;
-
-const cogObj = new Cognition();
-
 
 export const CognitiveBeam = () => {
 	const scope = useDecisionsScopeSymbol();
@@ -58,13 +55,9 @@ export const CognitiveBeam = () => {
 		const last = state.getLast();
 		if (!last) return;
 
-		let targetRow: Cognition | null = null;
-		for (let i = 0; i < last.rowsLength(); i++) {
-			const row = last.rows(i, cogObj);
-			if (row && row.symbol() === symbol) {
-				targetRow = row;
-				break;
-			}
+		let targetRow: EnvelopeCognition | null = null;
+		if (typeof last.symbol() === "string" && last.symbol() === symbol) {
+			targetRow = last;
 		}
 
 		const set = (q: string, value: string) => {

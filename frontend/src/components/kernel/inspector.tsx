@@ -38,8 +38,8 @@ export const KernelInspector = () => {
 			};
 
 			set("unit", headline === "" ? "" : headline);
-			set("symbol", row?.symbol() ?? focusSymbol);
-			set("at", row?.at() === undefined ? "" : new Date(Number(row.at())).toISOString().slice(11, 19));
+			set("symbol", focusSymbol);
+			set("at", row?.atNs() === undefined ? "" : new Date(Number(row.atNs() / 1000000n)).toISOString().slice(11, 19));
 		};
 
 		applyState();

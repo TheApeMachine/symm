@@ -1012,11 +1012,6 @@ table EnvelopeFloatRow { values:[double] (required); }
 table EnvelopeNamedFloatMatrix { name:string (required); rows:[EnvelopeFloatRow] (required); }
 table EnvelopeAnyEntry { key:string (required); value:EnvelopeAnyValue (required); }
 
-table EnvelopeCausalOutput {
-  symbol:string (required);
-  rows:[EnvelopeAnyEntry];
-}
-
 table EnvelopeReturnForecastDistribution {
   value:double;
   scale:double;
@@ -1261,8 +1256,9 @@ table EnvelopeState {
   resonance:EnvelopeResonanceArtifact;
   manifold:EnvelopeManifoldState;
   cognition:EnvelopeCognition;
-  causalOutput:EnvelopeCausalOutput;
   boundaries:[EnvelopeBoundaryStamp];
+
+  tick:long;
 }
 
 table EnvelopeStateFrame { state:EnvelopeState (required); }

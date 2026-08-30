@@ -4,7 +4,6 @@ import { useEffect } from "react";
 import {
 	addMeasurement,
 	appStore,
-	causalStore,
 	categoryStore,
 	cognitionStore,
 	errorStore,
@@ -13,6 +12,7 @@ import {
 	opportunityStore,
 	resonanceArtifactStore,
 	resonanceStore,
+	tickCountStore,
 	tickStore,
 } from "#/collections/app";
 import { topologyStore } from "#/collections/topology";
@@ -71,6 +71,15 @@ on here — every populated field is pushed to its own store directly.
 function dispatchEnvelopeState(state: EnvelopeState) {
 	const symbol = state.key() ?? "";
 
+	// The engine tick is a whole-market fact, but only Ticker envelopes carry a
+	// stamped tick — trade/level3/futures envelopes serialize tick=0. A zero
+	// tick means "no engine tick on this envelope", so skip it instead of
+	// resetting the counter back to zero on every non-ticker frame.
+	const tick = state.tick();
+	if (tick > 0n) {
+		tickCountStore.setState(() => Number(tick));
+	}
+
 	const measurement = state.correlation();
 	if (measurement) addMeasurement("correlation", measurement);
 
@@ -114,9 +123,6 @@ function dispatchEnvelopeState(state: EnvelopeState) {
 
 	const cognition = state.cognition();
 	if (cognition) cognitionStore.actions.add(cognition);
-
-	const causalOutput = state.causalOutput();
-	if (causalOutput) causalStore.actions.add(causalOutput);
 
 	for (let i = 0; i < state.categoriesLength(); i++) {
 		const category = state.categories(i);

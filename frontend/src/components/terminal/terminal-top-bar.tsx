@@ -2,7 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import {
 	focusStore,
 	onlineStore,
-	tickStore,
+	tickCountStore,
 } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
 import { Balance } from "#/components/balance";
@@ -37,7 +37,7 @@ const SymmLogo = () => (
 );
 
 const TickCounter = () => {
-	const last = useSelector(tickStore, (state) => state.getLast());
+	const tick = useSelector(tickCountStore, (state) => state);
 
 	return (
 		<Flex.Row align="center" gap={6}>
@@ -46,7 +46,7 @@ const TickCounter = () => {
 					Tick
 				</Typography.Label>
 				<Typography.Mono size="lg" tone="f1" data-tick="true">
-					{last ? new Date(Number(last.timestampNs() / 1000000n)).toISOString().slice(11, 19) : "—"}
+					{tick}
 				</Typography.Mono>
 			</Flex.Column>
 		</Flex.Row>

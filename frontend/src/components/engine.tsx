@@ -3,7 +3,7 @@ import {
 	measurementSourcesStore,
 	positionStore,
 	strategyStore,
-	tickStore,
+	tickCountStore,
 } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
@@ -16,7 +16,7 @@ const Row = ({ label, children }: { label: string; children: React.ReactNode }) 
 );
 
 export const Engine = () => {
-	const lastTick = useSelector(tickStore, (state) => state.getLast());
+	const tick = useSelector(tickCountStore, (state) => state);
 	const lastStrategy = useSelector(strategyStore, (state) =>
 		state.findLast((f) => !!f.outcome() || f.decisionsLength() > 0),
 	);
@@ -32,7 +32,7 @@ export const Engine = () => {
 		<Panel size="bare" className="p-2.5 font-mono text-[11px] leading-[1.7]">
 			<Row label="seq">
 				<Flex data-e="seq" className="text-(--f1)">
-					{lastTick ? new Date(Number(lastTick.timestampNs() / 1000000n)).toISOString().slice(11, 19) : "—"}
+					{tick}
 				</Flex>
 			</Row>
 			<Row label="phase">

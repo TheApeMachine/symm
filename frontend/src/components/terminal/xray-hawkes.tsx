@@ -1,9 +1,8 @@
 import { useEffect, useRef } from "react";
-import { useSelector } from "@tanstack/react-store";
-import { focusStore, getMeasurementStore } from "#/collections/app";
 import type { FrameBuffer } from "#/collections/app";
-import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
+import { getMeasurementStore } from "#/collections/app";
 import { Typography } from "#/components/ui/typography";
+import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
 import { EnvelopeMeasurementMetric } from "#/providers/telemetry/telemetry/envelope-measurement-metric";
 import { EnvelopeMetric } from "#/providers/telemetry/telemetry/envelope-metric";
 
@@ -19,7 +18,9 @@ metrics like background_rate/excitation_decay whenever the newest tick didn't
 happen to report them, even though a recent tick did. This holds the last
 real value per key instead of treating that absence as "no data."
 */
-const latestMetrics = (state: FrameBuffer<EnvelopeMeasurement>): Record<string, number> => {
+const latestMetrics = (
+	state: FrameBuffer<EnvelopeMeasurement>,
+): Record<string, number> => {
 	const values: Record<string, number> = {};
 	const count = state.getBufferLength();
 
@@ -49,7 +50,7 @@ rate), so this never mixes a conditional_intensity from one row with an
 arrival_rate from another; each returned sample is one row's own reading.
 */
 const rowIntensity = (row: EnvelopeMeasurement): number | null => {
-	console.log("envelope", envelope)
+	console.log("envelope", row);
 	let conditionalIntensity: number | null = null;
 	let arrivalRate: number | null = null;
 
@@ -66,7 +67,6 @@ const rowIntensity = (row: EnvelopeMeasurement): number | null => {
 };
 
 export const XrayHawkesPanel = () => {
-	const focusSymbol = useSelector(focusStore, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 	const hawkesCanvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -76,7 +76,6 @@ export const XrayHawkesPanel = () => {
 		const updateFromState = (state: FrameBuffer<EnvelopeMeasurement>) => {
 			if (!root.current) return;
 			const retained = latestMetrics(state);
-			console.log("retained", retained)
 
 			const set = (q: string, value: string) => {
 				const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
@@ -136,7 +135,8 @@ export const XrayHawkesPanel = () => {
 				retained.branching;
 			if (typeof eta === "number") {
 				set("eta", eta.toFixed(3));
-				const etaBar = root.current.querySelector<HTMLElement>("[data-eta-bar]");
+				const etaBar =
+					root.current.querySelector<HTMLElement>("[data-eta-bar]");
 				if (etaBar instanceof HTMLElement) {
 					etaBar.style.width = `calc(${Math.min(1, Math.max(0, eta))} * 100%)`;
 				}
@@ -173,7 +173,9 @@ export const XrayHawkesPanel = () => {
 						byEpoch.set(row.at, row.raw);
 					}
 					const samples = [...byEpoch.entries()]
-						.sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))
+						.sort((left, right) =>
+							left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0,
+						)
 						.map(([at, raw]) => ({ at, raw }));
 
 					// Real intensity ranges from a few hundredths (quiet symbols)
@@ -232,7 +234,8 @@ export const XrayHawkesPanel = () => {
 
 								const seconds = gapSeconds * (step / STEPS_PER_GAP);
 								curve.push(
-									restingRate + (prev.raw - restingRate) * Math.exp(-decayRate * seconds),
+									restingRate +
+										(prev.raw - restingRate) * Math.exp(-decayRate * seconds),
 								);
 							}
 						}
@@ -275,7 +278,7 @@ export const XrayHawkesPanel = () => {
 		return () => {
 			subscription.unsubscribe();
 		};
-	}, [focusSymbol]);
+	}, []);
 
 	return (
 		<div

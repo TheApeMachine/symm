@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -39,17 +40,21 @@ type FuturesLive struct {
 	subscriptions map[string]map[string]struct{}
 	observer      atomic.Pointer[func(string, time.Duration)]
 	ingress       map[string]*runtime.Workload[*types.Envelope]
+	capture       CaptureSink
 }
 
 /*
 NewFutures constructs a new Kraken Futures WebSocket connection. ingress is
 keyed by feed name ("ticker"/"trade"), mirroring Live's ingress map, and is
 where DispatchFrame pushes the envelope it builds from each parsed frame.
+recorders, when present, receives every untouched transport payload exactly as
+Live's recorder does, so futures frames reach the same capture sink as spot.
 */
 func NewFutures(
 	ctx context.Context,
 	endpoint string,
 	ingress map[string]*runtime.Workload[*types.Envelope],
+	recorders ...CaptureSink,
 ) *FuturesLive {
 	if endpoint == "" {
 		endpoint = FuturesWebSocketURL
@@ -64,6 +69,10 @@ func NewFutures(
 		endpoint:      endpoint,
 		subscriptions: make(map[string]map[string]struct{}),
 		ingress:       ingress,
+	}
+
+	if len(recorders) == 1 {
+		futures.capture = recorders[0]
 	}
 
 	return futures
@@ -232,6 +241,12 @@ func (futures *FuturesLive) readLoop(conn *gorillawebsocket.Conn, done chan<- er
 
 		if messageType != gorillawebsocket.TextMessage && messageType != gorillawebsocket.BinaryMessage {
 			continue
+		}
+
+		if futures.capture != nil {
+			// The reader reuses the payload buffer for the next frame, so the
+			// capture owns its own copy of the exact bytes.
+			_ = futures.capture.Capture(futures.endpoint, bytes.Clone(payload), time.Now().UTC())
 		}
 
 		futures.DispatchFrame(payload)

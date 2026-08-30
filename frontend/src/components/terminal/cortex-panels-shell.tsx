@@ -5,9 +5,6 @@ import { meterTrackVariants } from "#/components/ui/meter";
 import { Panel } from "#/components/ui/panel";
 import { Stat } from "#/components/ui/stat";
 import { Typography } from "#/components/ui/typography";
-import { Cognition } from "#/providers/telemetry/telemetry/cognition";
-
-const cogObj = new Cognition();
 
 export const CortexPanelsShell = ({ symbol }: { symbol: string }) => {
 	const root = useRef<HTMLDivElement>(null);
@@ -17,14 +14,12 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => {
 		const last = state.getLast();
 		if (!last) return;
 
-		let targetRow: Cognition | null = null;
-		for (let i = 0; i < last.rowsLength(); i++) {
-			const row = last.rows(i, cogObj);
-			if (row && row.symbol() === symbol) {
-				targetRow = row;
-				break;
-			}
-		}
+		// EnvelopeCognition is a flat per-symbol reading; the row is the frame
+		// itself when its symbol() matches, not a nested rows vector.
+		const targetRow =
+			typeof last.symbol() === "string" && last.symbol() === symbol
+				? last
+				: null;
 
 		const set = (q: string, value: string) => {
 			const el = root.current?.querySelector<HTMLElement>(`[data-f="${q}"]`);
@@ -36,8 +31,8 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => {
 		set("contrast", targetRow ? targetRow.contrast().toFixed(3) : "—");
 		set("entropy", targetRow ? targetRow.entropyBits().toFixed(3) : "—");
 		set("ambiguous", targetRow ? String(targetRow.ambiguous()) : "—");
-		set("remFrom", targetRow ? String(targetRow.remFrom()) : "—");
-		set("remThrough", targetRow ? String(targetRow.remThrough()) : "—");
+		set("remFrom", targetRow ? String(targetRow.remFromNs()) : "—");
+		set("remThrough", targetRow ? String(targetRow.remThroughNs()) : "—");
 		set("remReplays", targetRow ? String(targetRow.remReplays()) : "—");
 
 		const replays = root.current.querySelector<HTMLElement>("[data-replays]");

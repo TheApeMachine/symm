@@ -8,6 +8,8 @@ using namespace metal;
 // - Particle-to-field scatter (gravity, heat)
 // - Field-to-particle gather + integrated state update
 // - Carrier-oscillator coupling
+// - Eulerian pilot-wave (Bohmian) guidance
+// - Periodic minimum-image particle collisions
 //
 // Design principles:
 // - Fused operations to minimize memory bandwidth
@@ -167,7 +169,7 @@ kernel void reduce_float_stats_finalize(
         // [FORMULA] var = max(E[x^2] - E[x]^2, 0)
         // [REASON] rounding can produce tiny negative; project back to ℝ_{\ge 0}
         float var = (sum_sq / count) - mean * mean;
-        float std = sqrt(var);
+        float std = sqrt(max(var, 0.0f));
 
         out_stats[0] = mean_abs;
         out_stats[1] = mean;
@@ -268,8 +270,20 @@ struct SpatialCollisionParams {
 };
 
 // -----------------------------------------------------------------------------
-// Utility: Trilinear Interpolation
+// Utility: Minimum-Image Displacement & Trilinear Interpolation
 // -----------------------------------------------------------------------------
+
+// Return the shortest displacement vector on a periodic rectangular torus.
+//
+// [CHOICE] minimum-image convention
+// [FORMULA] d_min = d - L * floor(d/L + 1/2)
+// [REASON] particles near opposite faces of a periodic box are physically nearby.
+// [NOTES] callers must ensure every component of domain is strictly positive.
+inline float3 min_image_delta(float3 d, float3 domain) {
+    float3 q = d / domain;
+    float3 nearest_image = floor(q + 0.5f);
+    return d - domain * nearest_image;
+}
 
 // Compute trilinear weights and grid indices for a position
 inline void trilinear_coords(
@@ -288,8 +302,10 @@ inline void trilinear_coords(
     // Wrap into [0, grid_dims)
     g = g - gd * floor(g / gd);
 
-    base_idx = uint3(floor(g));        // 0..dims-1
-    frac = g - float3(base_idx);       // [0,1)
+    // The periodic reduction above should already give g in [0,dims). The min()
+    // is a final floating-point edge guard against an index equal to dims.
+    base_idx = min(uint3(floor(g)), grid_dims - 1u); // 0..dims-1
+    frac = g - float3(base_idx);                    // [0,1)
 }
 
 // Sample a 3D field with trilinear interpolation
@@ -310,9 +326,9 @@ inline float sample_field_trilinear(
     uint x0 = base_idx.x;
     uint y0 = base_idx.y;
     uint z0 = base_idx.z;
-    uint x1 = (x0 + 1) % grid_dims.x;
-    uint y1 = (y0 + 1) % grid_dims.y;
-    uint z1 = (z0 + 1) % grid_dims.z;
+    uint x1 = (x0 + 1u) % grid_dims.x;
+    uint y1 = (y0 + 1u) % grid_dims.y;
+    uint z1 = (z0 + 1u) % grid_dims.z;
 
     auto idx3 = [&](uint x, uint y, uint z) -> uint {
         return x * stride_x + y * stride_y + z * stride_z;
@@ -363,9 +379,9 @@ inline float3 sample_gradient_trilinear(
     uint x0 = base_idx.x;
     uint y0 = base_idx.y;
     uint z0 = base_idx.z;
-    uint x1 = (x0 + 1) % grid_dims.x;
-    uint y1 = (y0 + 1) % grid_dims.y;
-    uint z1 = (z0 + 1) % grid_dims.z;
+    uint x1 = (x0 + 1u) % grid_dims.x;
+    uint y1 = (y0 + 1u) % grid_dims.y;
+    uint z1 = (z0 + 1u) % grid_dims.z;
 
     auto idx3 = [&](uint x, uint y, uint z) -> uint {
         return x * stride_x + y * stride_y + z * stride_z;
@@ -391,6 +407,8 @@ inline float3 sample_gradient_trilinear(
     
     float fx = frac.x;
     // dF/dy
+    // IMPORTANT: the y=1 face must use {c010,c110,c011,c111}. Mixing c100/c001
+    // into this face corrupts the Bohmian Y-current because these gradients feed ∇Ψ.
     float face_y0 = c000 * (1-fx) * (1-fz) + c100 * fx * (1-fz) + c001 * (1-fx) * fz + c101 * fx * fz;
     float face_y1 = c010 * (1-fx) * (1-fz) + c110 * fx * (1-fz) + c011 * (1-fx) * fz + c111 * fx * fz;
     float grad_y = (face_y1 - face_y0) * inv_spacing;
@@ -471,6 +489,11 @@ struct ParticleInteractionParams {
     float thermal_conductivity;  // k: heat transfer on contact
     float specific_heat;         // c_v: heat capacity per unit mass
     float restitution;           // e: coefficient of restitution (0-1)
+    // Periodic domain extents. If all three are >0, minimum-image collision
+    // distances are used; otherwise this kernel falls back to non-periodic distance.
+    float domain_x;
+    float domain_y;
+    float domain_z;
 };
 
 kernel void particle_interactions(
@@ -516,6 +539,8 @@ kernel void particle_interactions(
     
     // Particle radius (from material property)
     float r_i = p.particle_radius;
+    float3 domain = float3(p.domain_x, p.domain_y, p.domain_z);
+    bool periodic_domain = (domain.x > 0.0f) && (domain.y > 0.0f) && (domain.z > 0.0f);
     
     // Accumulate impulses and heat changes
     float3 impulse_total = float3(0.0f);
@@ -550,8 +575,10 @@ kernel void particle_interactions(
         float r_j = p.particle_radius;
         float combined_radius = r_i + r_j;
         
-        // Distance vector from j to i
-        float3 delta = pos_i - pos_j;
+        // Distance vector from j to i. In periodic mode use the minimum image so
+        // particles on opposite box faces collide exactly as neighboring particles do.
+        float3 raw_delta = pos_i - pos_j;
+        float3 delta = periodic_domain ? min_image_delta(raw_delta, domain) : raw_delta;
         float dist = length(delta);
         
         if (dist < combined_radius && dist > 1e-6f) {
@@ -711,7 +738,7 @@ kernel void spatial_hash_assign(
     uint linear_idx = cell_to_linear(cell, grid_dims);
     
     particle_cell_idx[gid] = linear_idx;
-    atomic_fetch_add_explicit(&cell_counts[linear_idx], 1, memory_order_relaxed);
+    atomic_fetch_add_explicit(&cell_counts[linear_idx], 1u, memory_order_relaxed);
 }
 
 // -----------------------------------------------------------------------------
@@ -883,7 +910,7 @@ kernel void spatial_hash_scatter(
     if (gid >= num_particles) return;
     
     uint cell_idx = particle_cell_idx[gid];
-    uint slot = atomic_fetch_add_explicit(&cell_offsets[cell_idx], 1, memory_order_relaxed);
+    uint slot = atomic_fetch_add_explicit(&cell_offsets[cell_idx], 1u, memory_order_relaxed);
     sorted_particle_idx[slot] = gid;
 }
 
@@ -1072,6 +1099,14 @@ kernel void spatial_hash_collisions(
     
     float r_i = p.particle_radius;
     uint3 grid_dims = uint3(p.grid_x, p.grid_y, p.grid_z);
+
+    // Exact periodic extent represented by the hash grid. Neighbor-cell indices already
+    // wrap below; this domain is also required to minimum-image the particle displacement.
+    float3 domain = float3(
+        (float)p.grid_x * p.cell_size,
+        (float)p.grid_y * p.cell_size,
+        (float)p.grid_z * p.cell_size
+    );
     
     // Get this particle's cell
     float3 domain_min = float3(p.domain_min_x, p.domain_min_y, p.domain_min_z);
@@ -1108,7 +1143,9 @@ kernel void spatial_hash_collisions(
                         particle_pos[j * 3 + 2]
                     );
                     
-                    float3 delta = pos_i - pos_j;
+                    // The neighbor cell may have wrapped across the domain boundary.
+                    // Therefore the geometric displacement must use the same periodic topology.
+                    float3 delta = min_image_delta(pos_i - pos_j, domain);
                     float dist_sq = dot(delta, delta);
                     float r_j = p.particle_radius;
                     float combined_radius = r_i + r_j;
@@ -1510,9 +1547,9 @@ kernel void scatter_sorted(
 
     uint gx = p.grid_x, gy = p.grid_y, gz = p.grid_z;
     uint x0 = base_idx.x, y0 = base_idx.y, z0 = base_idx.z;
-    uint x1 = (x0 + 1) % gx;
-    uint y1 = (y0 + 1) % gy;
-    uint z1 = (z0 + 1) % gz;
+    uint x1 = (x0 + 1u) % gx;
+    uint y1 = (y0 + 1u) % gy;
+    uint z1 = (z0 + 1u) % gz;
 
     uint stride_z = 1;
     uint stride_y = gz;
@@ -2134,9 +2171,9 @@ kernel void pic_gather_update_particles(
 
     uint gx = p.grid_x, gy = p.grid_y, gz = p.grid_z;
     uint x0 = base_idx.x, y0 = base_idx.y, z0 = base_idx.z;
-    uint x1 = (x0 + 1) % gx;
-    uint y1 = (y0 + 1) % gy;
-    uint z1 = (z0 + 1) % gz;
+    uint x1 = (x0 + 1u) % gx;
+    uint y1 = (y0 + 1u) % gy;
+    uint z1 = (z0 + 1u) % gz;
 
     uint stride_z = 1;
     uint stride_y = gz;
@@ -2533,17 +2570,6 @@ inline float resonance_from_freq(float omega_i, float omega_k, float gate_width)
     return g2 / (d * d + g2);
 }
 
-inline float3 min_image_delta(float3 d, float3 domain) {
-    // [CHOICE] minimum-image convention on a torus
-    // [FORMULA] d := d - domain * round(d/domain)
-    // [REASON] shortest displacement in periodic domain
-    float3 q = d / domain;
-    // round(x) = floor(x + 0.5) for x>=0; for negatives, use symmetric form
-    float3 r = floor(q + 0.5f);
-    return d - domain * r;
-}
-
-
 // -----------------------------------------------------------------------------
 // Kernel: Project ω-modes into a spatial complex field Ψ(x)
 // -----------------------------------------------------------------------------
@@ -2617,17 +2643,27 @@ kernel void project_modes_to_spatial_psi(
     float wy1 = fy;
     float wz1 = fz;
 
-    uint gx = p.grid_x;
+    // IMPORTANT: use the same z-fastest / x-major flattening convention used by
+    // sample_field_trilinear(): idx = x*(gy*gz) + y*gz + z. A different flattening
+    // convention here writes Ψ into a permuted field and corrupts pilot-wave guidance.
     uint gy = p.grid_y;
+    uint gz = p.grid_z;
+    uint stride_z = 1u;
+    uint stride_y = gz;
+    uint stride_x = gy * gz;
 
-    uint i000 = (uint)ix0 + gx * ((uint)iy0 + gy * (uint)iz0);
-    uint i100 = (uint)ix1 + gx * ((uint)iy0 + gy * (uint)iz0);
-    uint i010 = (uint)ix0 + gx * ((uint)iy1 + gy * (uint)iz0);
-    uint i110 = (uint)ix1 + gx * ((uint)iy1 + gy * (uint)iz0);
-    uint i001 = (uint)ix0 + gx * ((uint)iy0 + gy * (uint)iz1);
-    uint i101 = (uint)ix1 + gx * ((uint)iy0 + gy * (uint)iz1);
-    uint i011 = (uint)ix0 + gx * ((uint)iy1 + gy * (uint)iz1);
-    uint i111 = (uint)ix1 + gx * ((uint)iy1 + gy * (uint)iz1);
+    auto idx3 = [&](uint x, uint y, uint z) -> uint {
+        return x * stride_x + y * stride_y + z * stride_z;
+    };
+
+    uint i000 = idx3((uint)ix0, (uint)iy0, (uint)iz0);
+    uint i100 = idx3((uint)ix1, (uint)iy0, (uint)iz0);
+    uint i010 = idx3((uint)ix0, (uint)iy1, (uint)iz0);
+    uint i110 = idx3((uint)ix1, (uint)iy1, (uint)iz0);
+    uint i001 = idx3((uint)ix0, (uint)iy0, (uint)iz1);
+    uint i101 = idx3((uint)ix1, (uint)iy0, (uint)iz1);
+    uint i011 = idx3((uint)ix0, (uint)iy1, (uint)iz1);
+    uint i111 = idx3((uint)ix1, (uint)iy1, (uint)iz1);
 
     float w000 = wx0 * wy0 * wz0;
     float w100 = wx1 * wy0 * wz0;
@@ -2707,15 +2743,20 @@ kernel void pic_gather_update_particles_pilot_wave(
 
     float3 pos_new = pos + v * p.dt;
 
-    // Periodic wrap in domain
-    if (pos_new.x < 0.0f) pos_new.x += p.domain_x;
-    if (pos_new.x >= p.domain_x) pos_new.x -= p.domain_x;
-
-    if (pos_new.y < 0.0f) pos_new.y += p.domain_y;
-    if (pos_new.y >= p.domain_y) pos_new.y -= p.domain_y;
-
-    if (pos_new.z < 0.0f) pos_new.z += p.domain_z;
-    if (pos_new.z >= p.domain_z) pos_new.z -= p.domain_z;
+    // Periodic wrap in domain. Modulo-style wrapping remains correct even when one
+    // timestep crosses more than one full box length; one-shot +/-L corrections do not.
+    float3 domain = float3(p.domain_x, p.domain_y, p.domain_z);
+    if (!(domain.x > 0.0f) || !(domain.y > 0.0f) || !(domain.z > 0.0f)) {
+        float qn = qnan_f();
+        particle_pos_out[gid * 3 + 0] = qn;
+        particle_pos_out[gid * 3 + 1] = qn;
+        particle_pos_out[gid * 3 + 2] = qn;
+        particle_vel_out[gid * 3 + 0] = qn;
+        particle_vel_out[gid * 3 + 1] = qn;
+        particle_vel_out[gid * 3 + 2] = qn;
+        return;
+    }
+    pos_new = pos_new - floor(pos_new / domain) * domain;
 
     particle_pos_out[gid * 3 + 0] = pos_new.x;
     particle_pos_out[gid * 3 + 1] = pos_new.y;
@@ -3118,7 +3159,15 @@ kernel void coherence_gpe_step(
         psi = c_mul(psi, c_exp_i(theta));
     }
 
-    // kinetic/tunneling (1D Laplacian on ω lattice index space)
+    // Kinetic/tunneling (1D Laplacian on ω lattice index space).
+    //
+    // NUMERICAL NOTE:
+    // This is an explicit local discretization of i*(ħ/2m)∇²Ψ. It is NOT an exact
+    // unitary propagator by itself; a truly unitary kinetic step would require an
+    // additional global/implicit operation (e.g. FFT spectral phase multiplication,
+    // Crank-Nicolson solve, or multiple checkerboard pair-rotation passes).
+    // Keep gp.dt small enough for the chosen ω spacing, and do not relabel a local
+    // sine/cosine neighbor blend as "unitary" unless its full-lattice norm is proven.
     if (gp.mass_eff > 0.0f && gp.inv_domega2 > 0.0f) {
         uint left = (gid > 0u) ? (gid - 1u) : 0u;
         uint right = (gid + 1u < current) ? (gid + 1u) : (current - 1u);

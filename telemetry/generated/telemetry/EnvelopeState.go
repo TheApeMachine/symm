@@ -31,8 +31,8 @@ type EnvelopeStateT struct {
 	Resonance *EnvelopeResonanceArtifactT `json:"resonance"`
 	Manifold *EnvelopeManifoldStateT `json:"manifold"`
 	Cognition *EnvelopeCognitionT `json:"cognition"`
-	CausalOutput *EnvelopeCausalOutputT `json:"causalOutput"`
 	Boundaries []*EnvelopeBoundaryStampT `json:"boundaries"`
+	Tick int64 `json:"tick"`
 }
 
 func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -89,7 +89,6 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	resonanceOffset := t.Resonance.Pack(builder)
 	manifoldOffset := t.Manifold.Pack(builder)
 	cognitionOffset := t.Cognition.Pack(builder)
-	causalOutputOffset := t.CausalOutput.Pack(builder)
 	boundariesOffset := flatbuffers.UOffsetT(0)
 	if t.Boundaries != nil {
 		boundariesLength := len(t.Boundaries)
@@ -128,8 +127,8 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	EnvelopeStateAddResonance(builder, resonanceOffset)
 	EnvelopeStateAddManifold(builder, manifoldOffset)
 	EnvelopeStateAddCognition(builder, cognitionOffset)
-	EnvelopeStateAddCausalOutput(builder, causalOutputOffset)
 	EnvelopeStateAddBoundaries(builder, boundariesOffset)
+	EnvelopeStateAddTick(builder, t.Tick)
 	return EnvelopeStateEnd(builder)
 }
 
@@ -170,7 +169,6 @@ func (rcv *EnvelopeState) UnPackTo(t *EnvelopeStateT) {
 	t.Resonance = rcv.Resonance(nil).UnPack()
 	t.Manifold = rcv.Manifold(nil).UnPack()
 	t.Cognition = rcv.Cognition(nil).UnPack()
-	t.CausalOutput = rcv.CausalOutput(nil).UnPack()
 	boundariesLength := rcv.BoundariesLength()
 	t.Boundaries = make([]*EnvelopeBoundaryStampT, boundariesLength)
 	for j := 0; j < boundariesLength; j++ {
@@ -178,6 +176,7 @@ func (rcv *EnvelopeState) UnPackTo(t *EnvelopeStateT) {
 		rcv.Boundaries(&x, j)
 		t.Boundaries[j] = x.UnPack()
 	}
+	t.Tick = rcv.Tick()
 }
 
 func (rcv *EnvelopeState) UnPack() *EnvelopeStateT {
@@ -544,21 +543,8 @@ func (rcv *EnvelopeState) Cognition(obj *EnvelopeCognition) *EnvelopeCognition {
 	return nil
 }
 
-func (rcv *EnvelopeState) CausalOutput(obj *EnvelopeCausalOutput) *EnvelopeCausalOutput {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
-	if o != 0 {
-		x := rcv._tab.Indirect(o + rcv._tab.Pos)
-		if obj == nil {
-			obj = new(EnvelopeCausalOutput)
-		}
-		obj.Init(rcv._tab.Bytes, x)
-		return obj
-	}
-	return nil
-}
-
 func (rcv *EnvelopeState) Boundaries(obj *EnvelopeBoundaryStamp, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -570,11 +556,23 @@ func (rcv *EnvelopeState) Boundaries(obj *EnvelopeBoundaryStamp, j int) bool {
 }
 
 func (rcv *EnvelopeState) BoundariesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
 	return 0
+}
+
+func (rcv *EnvelopeState) Tick() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EnvelopeState) MutateTick(n int64) bool {
+	return rcv._tab.MutateInt64Slot(54, n)
 }
 
 func EnvelopeStateStart(builder *flatbuffers.Builder) {
@@ -658,14 +656,14 @@ func EnvelopeStateAddManifold(builder *flatbuffers.Builder, manifold flatbuffers
 func EnvelopeStateAddCognition(builder *flatbuffers.Builder, cognition flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(23, flatbuffers.UOffsetT(cognition), 0)
 }
-func EnvelopeStateAddCausalOutput(builder *flatbuffers.Builder, causalOutput flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(24, flatbuffers.UOffsetT(causalOutput), 0)
-}
 func EnvelopeStateAddBoundaries(builder *flatbuffers.Builder, boundaries flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(25, flatbuffers.UOffsetT(boundaries), 0)
+	builder.PrependUOffsetTSlot(24, flatbuffers.UOffsetT(boundaries), 0)
 }
 func EnvelopeStateStartBoundariesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
+}
+func EnvelopeStateAddTick(builder *flatbuffers.Builder, tick int64) {
+	builder.PrependInt64Slot(25, tick, 0)
 }
 func EnvelopeStateEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -13,7 +13,6 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/nomagique/data"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
@@ -147,24 +146,6 @@ Observe HandlerGroup, so a disconnected or slow UI cannot change what the
 system believes.
 */
 func (hub *Hub) Step(envelope *types.Envelope) *types.Envelope {
-	for _, measurement := range []*data.Measurement[float64]{
-		envelope.Toxicity,
-		envelope.CVD,
-		envelope.Correlation,
-		envelope.DepthFlow,
-		envelope.Derivatives,
-		envelope.Hawkes,
-		envelope.LeadLag,
-		envelope.Liquidity,
-		envelope.Morphology,
-		envelope.PumpDump,
-		envelope.Sentiment,
-	} {
-		if measurement != nil && measurement.Symbol() != types.Focus() {
-			return nil
-		}
-	}
-
 	payload := envelope.EncodeBytes()
 
 	hub.clients.Range(func(key, value any) bool {
