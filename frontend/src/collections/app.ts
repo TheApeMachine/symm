@@ -28,6 +28,7 @@ import type { PositionsFrame } from "#/providers/telemetry/telemetry/positions-f
 import type { RegulatorFrame } from "#/providers/telemetry/telemetry/regulator-frame";
 import type { ResonanceFrame } from "#/providers/telemetry/telemetry/resonance-frame";
 import type { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
+import type { PerspectiveFrame } from "#/providers/telemetry/telemetry/perspective-frame";
 
 export const DEFAULT_KERNELS = [
 	"correlation",
@@ -500,6 +501,7 @@ export const categoryStore = createFrameStore<EnvelopeCategory>(50);
 export const opportunityStore = createFrameStore<EnvelopeOpportunityCandidate>(50);
 export const graphStore = createFrameStore<GraphFrame>(50);
 export const strategyStore = createFrameStore<StrategyFrame>(50);
+export const perspectiveStore = createFrameStore<PerspectiveFrame>(50);
 export const positionStore = createFrameStore<PositionsFrame>(50);
 export const balanceStore = createFrameStore<BalancesFrame>(50);
 export const equityStore = createFrameStore<EquityFrame>(50);

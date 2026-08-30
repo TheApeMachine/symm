@@ -18,6 +18,8 @@ import { EnvelopeOpportunityCandidate, EnvelopeOpportunityCandidateT } from '../
 import { EnvelopeResonanceArtifact, EnvelopeResonanceArtifactT } from '../telemetry/envelope-resonance-artifact.js';
 import { EnvelopeTickerData, EnvelopeTickerDataT } from '../telemetry/envelope-ticker-data.js';
 import { EnvelopeTradeData, EnvelopeTradeDataT } from '../telemetry/envelope-trade-data.js';
+import { PerspectiveFrame, PerspectiveFrameT } from '../telemetry/perspective-frame.js';
+import { StrategyFrame, StrategyFrameT } from '../telemetry/strategy-frame.js';
 
 
 export class EnvelopeState implements flatbuffers.IUnpackableObject<EnvelopeStateT> {
@@ -180,13 +182,28 @@ boundariesLength():number {
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
-tick():bigint {
+strategy(obj?:StrategyFrame):StrategyFrame|null {
   const offset = this.bb!.__offset(this.bb_pos, 54);
+  return offset ? (obj || new StrategyFrame()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
+perspectives(index: number, obj?:PerspectiveFrame):PerspectiveFrame|null {
+  const offset = this.bb!.__offset(this.bb_pos, 56);
+  return offset ? (obj || new PerspectiveFrame()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+perspectivesLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 56);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+tick():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 58);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
 static startEnvelopeState(builder:flatbuffers.Builder) {
-  builder.startObject(26);
+  builder.startObject(28);
 }
 
 static addKey(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset) {
@@ -325,8 +342,28 @@ static startBoundariesVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
+static addStrategy(builder:flatbuffers.Builder, strategyOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(25, strategyOffset, 0);
+}
+
+static addPerspectives(builder:flatbuffers.Builder, perspectivesOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(26, perspectivesOffset, 0);
+}
+
+static createPerspectivesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startPerspectivesVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
 static addTick(builder:flatbuffers.Builder, tick:bigint) {
-  builder.addFieldInt64(25, tick, BigInt('0'));
+  builder.addFieldInt64(27, tick, BigInt('0'));
 }
 
 static endEnvelopeState(builder:flatbuffers.Builder):flatbuffers.Offset {
@@ -362,6 +399,8 @@ unpack(): EnvelopeStateT {
     (this.manifold() !== null ? this.manifold()!.unpack() : null),
     (this.cognition() !== null ? this.cognition()!.unpack() : null),
     this.bb!.createObjList<EnvelopeBoundaryStamp, EnvelopeBoundaryStampT>(this.boundaries.bind(this), this.boundariesLength()),
+    (this.strategy() !== null ? this.strategy()!.unpack() : null),
+    this.bb!.createObjList<PerspectiveFrame, PerspectiveFrameT>(this.perspectives.bind(this), this.perspectivesLength()),
     this.tick()
   );
 }
@@ -393,6 +432,8 @@ unpackTo(_o: EnvelopeStateT): void {
   _o.manifold = (this.manifold() !== null ? this.manifold()!.unpack() : null);
   _o.cognition = (this.cognition() !== null ? this.cognition()!.unpack() : null);
   _o.boundaries = this.bb!.createObjList<EnvelopeBoundaryStamp, EnvelopeBoundaryStampT>(this.boundaries.bind(this), this.boundariesLength());
+  _o.strategy = (this.strategy() !== null ? this.strategy()!.unpack() : null);
+  _o.perspectives = this.bb!.createObjList<PerspectiveFrame, PerspectiveFrameT>(this.perspectives.bind(this), this.perspectivesLength());
   _o.tick = this.tick();
 }
 }
@@ -424,6 +465,8 @@ constructor(
   public manifold: EnvelopeManifoldStateT|null = null,
   public cognition: EnvelopeCognitionT|null = null,
   public boundaries: (EnvelopeBoundaryStampT)[] = [],
+  public strategy: StrategyFrameT|null = null,
+  public perspectives: (PerspectiveFrameT)[] = [],
   public tick: bigint = BigInt('0')
 ){}
 
@@ -453,6 +496,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const manifold = (this.manifold !== null ? this.manifold!.pack(builder) : 0);
   const cognition = (this.cognition !== null ? this.cognition!.pack(builder) : 0);
   const boundaries = EnvelopeState.createBoundariesVector(builder, builder.createObjectOffsetList(this.boundaries));
+  const strategy = (this.strategy !== null ? this.strategy!.pack(builder) : 0);
+  const perspectives = EnvelopeState.createPerspectivesVector(builder, builder.createObjectOffsetList(this.perspectives));
 
   EnvelopeState.startEnvelopeState(builder);
   EnvelopeState.addKey(builder, key);
@@ -480,6 +525,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   EnvelopeState.addManifold(builder, manifold);
   EnvelopeState.addCognition(builder, cognition);
   EnvelopeState.addBoundaries(builder, boundaries);
+  EnvelopeState.addStrategy(builder, strategy);
+  EnvelopeState.addPerspectives(builder, perspectives);
   EnvelopeState.addTick(builder, this.tick);
 
   return EnvelopeState.endEnvelopeState(builder);

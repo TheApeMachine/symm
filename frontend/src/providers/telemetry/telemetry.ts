@@ -106,6 +106,8 @@ export { NamedBool, NamedBoolT } from './telemetry/named-bool.js';
 export { NamedNumber, NamedNumberT } from './telemetry/named-number.js';
 export { NamedString, NamedStringT } from './telemetry/named-string.js';
 export { NamedStrings, NamedStringsT } from './telemetry/named-strings.js';
+export { PerspectiveFrame, PerspectiveFrameT } from './telemetry/perspective-frame.js';
+export { PerspectiveReading, PerspectiveReadingT } from './telemetry/perspective-reading.js';
 export { PhaseOutcome, PhaseOutcomeT } from './telemetry/phase-outcome.js';
 export { PhaseResponse, PhaseResponseT } from './telemetry/phase-response.js';
 export { Position, PositionT } from './telemetry/position.js';

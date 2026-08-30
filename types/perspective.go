@@ -27,6 +27,16 @@ const (
 	// composition (nearest historical path distance, its percentile, match
 	// count, and match location) the historical analogue advisor maintains.
 	KindHistoricalAnalogue
+	// KindExecutionContext names the joint-facts execution-terrain composition:
+	// executed flow presented alongside displayed touch-capacity asymmetry and
+	// crossing cost, so "what this flow means" is read against the book it
+	// executed into rather than reduced to a single score.
+	KindExecutionContext
+	// KindDecomposition names the joint-facts event-decomposition composition:
+	// arrival frequency alongside economic throughput, so "many-small vs
+	// few-large" activity is read from two facts rather than one conflated
+	// throughput scalar.
+	KindDecomposition
 )
 
 /*
@@ -41,6 +51,10 @@ func (kind PerspectiveKind) String() string {
 		return "liquidity"
 	case KindHistoricalAnalogue:
 		return "historical_analogue"
+	case KindExecutionContext:
+		return "execution_context"
+	case KindDecomposition:
+		return "decomposition"
 	default:
 		return "unknown"
 	}

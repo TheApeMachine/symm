@@ -19,12 +19,14 @@ import (
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/logic/advisor"
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/opportunity"
 	"github.com/theapemachine/symm/logic/resonance"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -37,6 +39,7 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/ui"
+	"github.com/theapemachine/symm/utils"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -84,7 +87,7 @@ func (node tickNode) Step(envelope *types.Envelope) *types.Envelope {
 		))
 	}
 
-	node.planner.StepTick(envelope.TickerData)
+	envelope.StrategyRound = node.planner.StepTick(envelope.TickerData)
 
 	return envelope
 }
@@ -119,6 +122,62 @@ func (node strategyNode) Step(envelope *types.Envelope) *types.Envelope {
 }
 
 func (node strategyNode) StepBacklog(envelope *types.Envelope, backlog int64) *types.Envelope {
+	return node.Step(envelope)
+}
+
+/*
+advisorNode is the advisory layer's stream boundary. It composes this envelope's
+signal measurements through the declared advisor families and attaches the
+resulting Perspectives — descriptive context, never decisions. Each advisor sees
+the measurements it declares once, in stream order, and produces a bounded
+resident reading; the perspectives then flow to whatever consumes them
+(decision context and position/risk management), not to the UI as a gate.
+*/
+type advisorNode struct {
+	advisors []*advisor.Advisor
+}
+
+func (node advisorNode) Step(envelope *types.Envelope) *types.Envelope {
+	if envelope == nil {
+		return envelope
+	}
+
+	measurements := []*data.Measurement[float64]{
+		envelope.CVD,
+		envelope.Liquidity,
+		envelope.DepthFlow,
+		envelope.Hawkes,
+		envelope.Correlation,
+		envelope.LeadLag,
+		envelope.Sentiment,
+		envelope.Morphology,
+		envelope.PumpDump,
+		envelope.Toxicity,
+		envelope.Derivatives,
+	}
+
+	var perspectives []*types.Perspective
+
+	for _, advisorInstance := range node.advisors {
+		for _, measurement := range measurements {
+			if measurement == nil {
+				continue
+			}
+
+			if perspective := advisorInstance.Step(measurement); perspective != nil {
+				perspectives = append(perspectives, perspective)
+			}
+		}
+	}
+
+	if len(perspectives) > 0 {
+		envelope.Perspectives = perspectives
+	}
+
+	return envelope
+}
+
+func (node advisorNode) StepBacklog(envelope *types.Envelope, backlog int64) *types.Envelope {
 	return node.Step(envelope)
 }
 
@@ -165,11 +224,19 @@ var (
 			privateIngress := map[string]*nmruntime.Workload[*types.Envelope]{}
 			futuresIngress := map[string]*nmruntime.Workload[*types.Envelope]{}
 
-			// The storage writer is the single capture sink every stream (spot,
-			// private, futures) and every layer recorder share, backed by one
-			// swappable repository engine (SQLite now, S3-compatible later).
+			// dataPath resolves ~ and cwd so there is exactly one durable path,
+			// in the configured location, not a stray literal-~ directory.
+			dataPath := utils.ResolveDataPath()
+
+			// The storage writer is the single CaptureSink for every raw
+			// websocket stream (public/private/futures). Raw frames are the
+			// replay substrate the whole system builds on: each frame is
+			// written exactly once, tagged with its endpoint. The full-envelope
+			// per-layer snapshots that previously duplicated the accumulating
+			// envelope dozens of times are intentionally gone — raw capture is
+			// the irreducible stream, not a re-serialized copy of derived state.
 			storageEngine, err := store.NewSQLite(filepath.Join(
-				viper.GetString("system.data_path"),
+				dataPath,
 				"events.sqlite",
 			))
 
@@ -183,7 +250,7 @@ var (
 
 			defer storageEngine.Close()
 
-			storage := store.NewWriter(storageEngine)
+			rawCapture := store.NewWriter(storageEngine)
 
 			api := websocket.NewAPI(
 				cmd.Context(),
@@ -193,7 +260,7 @@ var (
 					websocket.NewSimulator(),
 					false,
 					system.Cfg.WebSocket.Endpoints.Public,
-					storage,
+					rawCapture,
 				),
 				websocket.New(
 					cmd.Context(),
@@ -201,11 +268,11 @@ var (
 					websocket.NewSimulator(),
 					true,
 					system.Cfg.WebSocket.Endpoints.Private,
-					storage,
+					rawCapture,
 				),
 			)
 
-			futures := websocket.NewFutures(cmd.Context(), system.Cfg.WebSocket.Endpoints.Futures, futuresIngress, storage)
+			futures := websocket.NewFutures(cmd.Context(), system.Cfg.WebSocket.Endpoints.Futures, futuresIngress, rawCapture)
 			api.SetFutures(futures)
 
 			go func() {
@@ -215,7 +282,7 @@ var (
 			defer futures.Close()
 
 			recorder, err := audit.NewRecorder(filepath.Join(
-				viper.GetString("system.data_path"),
+				dataPath,
 				"audit.jsonl",
 			))
 
@@ -252,7 +319,7 @@ var (
 			// exchange's open inventory before the decision path engages. The
 			// position store persists stoploss state across restarts.
 			positionStore, err := broker.NewPositionStore(filepath.Join(
-				viper.GetString("system.data_path"),
+				dataPath,
 				"positions.sqlite",
 			))
 
@@ -306,6 +373,18 @@ var (
 
 			defer planner.Close()
 
+			// The advisory layer composes the signals' measurements into
+			// descriptive Perspectives — context for decision and risk, never
+			// decisions themselves. Three families exist today: liquidity
+			// terrain, historical analogue recurrence, and execution context
+			// (flow conditioned by displayed capacity and crossing cost).
+			advisors := advisorNode{advisors: []*advisor.Advisor{
+				advisor.NewLiquidityAdvisor("advisor.liquidity"),
+				advisor.NewHistoricalAdvisor("advisor.historical"),
+				advisor.NewExecutionAdvisor("advisor.execution"),
+				advisor.NewDecompositionAdvisor("advisor.decomposition"),
+			}}
+
 			// Phase 2 — populate the workload maps now that every shared
 			// dependency exists. The ticker stage folds measurements into the
 			// shared graph, resolves categories, cognition, opportunity, and
@@ -322,26 +401,22 @@ var (
 						system.NewTraced("ticker.pumpdump", pumpdump.NewSignal(cmd.Context())),
 						system.NewTraced("ticker.resonance", resonance.NewSolver(cmd.Context(), 0, thesis)),
 					},
-					{store.NewLayer(storage, "ticker.signals")},
+					{advisors},
 					{
 						system.NewTraced("ticker.graph", graphSolver),
 					},
-					{store.NewLayer(storage, "ticker.graph")},
 					{
 						category.NewSolver(cmd.Context()),
 					},
 					{system.NewDiagnostic("ticker.category")},
-					{store.NewLayer(storage, "ticker.category")},
 					{
 						system.NewTraced("ticker.cognition", cognition.NewSolver(cmd.Context(), thesis)),
 						system.NewTraced("ticker.opportunity", opportunity.NewSolver(cmd.Context())),
 					},
 					{system.NewDiagnostic("ticker.logic")},
-					{store.NewLayer(storage, "ticker.logic")},
 					{strategyNode{planner: planner}},
 					{tickNode{thesis: thesis, desk: desk, planner: planner}},
 					{system.NewDiagnostic("ticker.trade")},
-					{store.NewLayer(storage, "ticker.strategy")},
 					{hub},
 					{system.NewDiagnostic("ticker.hub")},
 				},
@@ -357,7 +432,6 @@ var (
 						system.NewTraced("trade.pumpdump", pumpdump.NewSignal(cmd.Context())),
 						system.NewTraced("trade.toxicity", toxicity.NewSignal(cmd.Context())),
 					},
-					{store.NewLayer(storage, "trade.signals")},
 					{hub},
 					{system.NewDiagnostic("trade.hub")},
 				},
@@ -373,11 +447,9 @@ var (
 						system.NewTraced("level3.pumpdump", pumpdump.NewSignal(cmd.Context())),
 						system.NewTraced("level3.toxicity", toxicity.NewSignal(cmd.Context())),
 					},
-					{store.NewLayer(storage, "level3.signals")},
 					{
 						system.NewTraced("level3.manifold", manifold.NewSolver(cmd.Context())),
 					},
-					{store.NewLayer(storage, "level3.manifold")},
 					{hub},
 					{system.NewDiagnostic("level3.hub")},
 				},
@@ -388,7 +460,6 @@ var (
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("futures.ticker.ingress")},
 					{system.NewTraced("futures.ticker.derivatives", derivatives.NewSignal(cmd.Context()))},
-					{store.NewLayer(storage, "futures.ticker.derivatives")},
 					{hub},
 					{system.NewDiagnostic("futures.ticker.hub")},
 				},
@@ -399,7 +470,6 @@ var (
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("futures.trade.ingress")},
 					{system.NewTraced("futures.trade.derivatives", derivatives.NewSignal(cmd.Context()))},
-					{store.NewLayer(storage, "futures.trade.derivatives")},
 					{hub},
 					{system.NewDiagnostic("futures.trade.hub")},
 				},

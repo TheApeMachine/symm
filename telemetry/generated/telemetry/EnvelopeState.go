@@ -32,6 +32,8 @@ type EnvelopeStateT struct {
 	Manifold *EnvelopeManifoldStateT `json:"manifold"`
 	Cognition *EnvelopeCognitionT `json:"cognition"`
 	Boundaries []*EnvelopeBoundaryStampT `json:"boundaries"`
+	Strategy *StrategyFrameT `json:"strategy"`
+	Perspectives []*PerspectiveFrameT `json:"perspectives"`
 	Tick int64 `json:"tick"`
 }
 
@@ -102,6 +104,20 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 		}
 		boundariesOffset = builder.EndVector(boundariesLength)
 	}
+	strategyOffset := t.Strategy.Pack(builder)
+	perspectivesOffset := flatbuffers.UOffsetT(0)
+	if t.Perspectives != nil {
+		perspectivesLength := len(t.Perspectives)
+		perspectivesOffsets := make([]flatbuffers.UOffsetT, perspectivesLength)
+		for j := 0; j < perspectivesLength; j++ {
+			perspectivesOffsets[j] = t.Perspectives[j].Pack(builder)
+		}
+		EnvelopeStateStartPerspectivesVector(builder, perspectivesLength)
+		for j := perspectivesLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(perspectivesOffsets[j])
+		}
+		perspectivesOffset = builder.EndVector(perspectivesLength)
+	}
 	EnvelopeStateStart(builder)
 	EnvelopeStateAddKey(builder, keyOffset)
 	EnvelopeStateAddTypeId(builder, t.TypeId)
@@ -128,6 +144,8 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	EnvelopeStateAddManifold(builder, manifoldOffset)
 	EnvelopeStateAddCognition(builder, cognitionOffset)
 	EnvelopeStateAddBoundaries(builder, boundariesOffset)
+	EnvelopeStateAddStrategy(builder, strategyOffset)
+	EnvelopeStateAddPerspectives(builder, perspectivesOffset)
 	EnvelopeStateAddTick(builder, t.Tick)
 	return EnvelopeStateEnd(builder)
 }
@@ -175,6 +193,14 @@ func (rcv *EnvelopeState) UnPackTo(t *EnvelopeStateT) {
 		x := EnvelopeBoundaryStamp{}
 		rcv.Boundaries(&x, j)
 		t.Boundaries[j] = x.UnPack()
+	}
+	t.Strategy = rcv.Strategy(nil).UnPack()
+	perspectivesLength := rcv.PerspectivesLength()
+	t.Perspectives = make([]*PerspectiveFrameT, perspectivesLength)
+	for j := 0; j < perspectivesLength; j++ {
+		x := PerspectiveFrame{}
+		rcv.Perspectives(&x, j)
+		t.Perspectives[j] = x.UnPack()
 	}
 	t.Tick = rcv.Tick()
 }
@@ -563,8 +589,41 @@ func (rcv *EnvelopeState) BoundariesLength() int {
 	return 0
 }
 
-func (rcv *EnvelopeState) Tick() int64 {
+func (rcv *EnvelopeState) Strategy(obj *StrategyFrame) *StrategyFrame {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(StrategyFrame)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
+func (rcv *EnvelopeState) Perspectives(obj *PerspectiveFrame, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *EnvelopeState) PerspectivesLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *EnvelopeState) Tick() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
@@ -572,11 +631,11 @@ func (rcv *EnvelopeState) Tick() int64 {
 }
 
 func (rcv *EnvelopeState) MutateTick(n int64) bool {
-	return rcv._tab.MutateInt64Slot(54, n)
+	return rcv._tab.MutateInt64Slot(58, n)
 }
 
 func EnvelopeStateStart(builder *flatbuffers.Builder) {
-	builder.StartObject(26)
+	builder.StartObject(28)
 }
 func EnvelopeStateAddKey(builder *flatbuffers.Builder, key flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(key), 0)
@@ -662,8 +721,17 @@ func EnvelopeStateAddBoundaries(builder *flatbuffers.Builder, boundaries flatbuf
 func EnvelopeStateStartBoundariesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
+func EnvelopeStateAddStrategy(builder *flatbuffers.Builder, strategy flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(25, flatbuffers.UOffsetT(strategy), 0)
+}
+func EnvelopeStateAddPerspectives(builder *flatbuffers.Builder, perspectives flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(26, flatbuffers.UOffsetT(perspectives), 0)
+}
+func EnvelopeStateStartPerspectivesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
 func EnvelopeStateAddTick(builder *flatbuffers.Builder, tick int64) {
-	builder.PrependInt64Slot(25, tick, 0)
+	builder.PrependInt64Slot(27, tick, 0)
 }
 func EnvelopeStateEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

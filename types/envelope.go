@@ -184,6 +184,17 @@ type Envelope struct {
 	// Categories.
 	Cognition *Cognition
 
+	// StrategyRound is the strategy stage's last decision round, produced by
+	// the planner once per engine tick and stamped by tickNode so the same
+	// envelope that carried the logic inputs carries the decisions it produced.
+	StrategyRound *StrategyRound
+
+	// Perspectives is the advisory layer's descriptive context: one
+	// Perspective per advisor family, composed from this envelope's signal
+	// measurements. Perspectives describe the current state; they are never
+	// decisions, gates, or scores, and are consumed by decision and risk.
+	Perspectives []*Perspective
+
 	// Boundaries is the ordered trace of every diagnostics node the envelope
 	// passed through, appended to via AppendBoundary as it crosses each one
 	// (see system.Diagnostic). Growable rather than fixed-size: stage count
@@ -819,7 +830,84 @@ func (envelope *Envelope) Encode() *telemetry.EnvelopeStateT {
 		Resonance:         encodeResonanceArtifact(envelope.Resonance),
 		Manifold:          encodeManifoldState(envelope.Manifold),
 		Cognition:         encodeCognition(envelope.Cognition),
+		Strategy:          encodeStrategyRound(envelope.StrategyRound),
+		Perspectives:      encodePerspectives(envelope.Perspectives),
 		Boundaries:        encodeBoundaries(envelope.Boundaries),
+	}
+}
+
+/*
+encodePerspectives projects the advisory layer's descriptive context into the
+wire. Each Perspective becomes one PerspectiveFrame; each reading's interned
+Metric symbol resolves to its name for serialization (diagnostics/UI only, never
+a hot-path comparison).
+*/
+func encodePerspectives(perspectives []*Perspective) []*telemetry.PerspectiveFrameT {
+	if len(perspectives) == 0 {
+		return nil
+	}
+
+	frames := make([]*telemetry.PerspectiveFrameT, 0, len(perspectives))
+
+	for _, perspective := range perspectives {
+		if perspective == nil {
+			continue
+		}
+
+		readings := make([]*telemetry.PerspectiveReadingT, 0, perspective.Count)
+
+		for index := 0; index < perspective.Count; index++ {
+			reading := perspective.Readings[index]
+			name, _ := nmtypes.SymbolName(reading.Metric)
+
+			readings = append(readings, &telemetry.PerspectiveReadingT{
+				Metric:     name,
+				Value:      reading.Value,
+				Defined:    reading.Defined,
+				Maturity:   reading.Maturity,
+				Snr:        reading.SNR,
+				SnrDefined: reading.SNRDefined,
+			})
+		}
+
+		frames = append(frames, &telemetry.PerspectiveFrameT{
+			Symbol:   perspective.Symbol,
+			Peer:     perspective.Peer,
+			Kind:     uint8(perspective.Kind),
+			At:       timeNs(perspective.At),
+			Sequence: int64(perspective.Sequence),
+			Readings: readings,
+		})
+	}
+
+	return frames
+}
+
+/*
+encodeStrategyRound projects the planner's decision round into the StrategyFrame
+the dashboard's strategyStore renders. It is the strategy layer's one wire
+output: the same decisions the planner executed, carried on the envelope that
+bore the logic inputs producing them.
+*/
+func encodeStrategyRound(round *StrategyRound) *telemetry.StrategyFrameT {
+	if round == nil {
+		return nil
+	}
+
+	decisions := make([]*telemetry.DecisionT, 0, len(round.Decisions))
+
+	for _, decision := range round.Decisions {
+		if decision == nil {
+			continue
+		}
+
+		decisions = append(decisions, DecisionWire(*decision, 2, false))
+	}
+
+	return &telemetry.StrategyFrameT{
+		Evaluated: round.Evaluated,
+		Outcome:   round.Outcome,
+		Decisions: decisions,
 	}
 }
 

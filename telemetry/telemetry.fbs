@@ -471,6 +471,24 @@ table Decision {
 }
 table StrategyFrame { evaluated:bool; outcome:string; decisions:[Decision]; }
 
+table PerspectiveReading {
+  metric:string (required);
+  value:double;
+  defined:bool;
+  maturity:double;
+  snr:double;
+  snrDefined:bool;
+}
+
+table PerspectiveFrame {
+  symbol:string (required);
+  peer:string;
+  kind:ubyte;
+  at:long;
+  sequence:long;
+  readings:[PerspectiveReading];
+}
+
 table Holding {
   status:string;
   symbol:string;
@@ -1258,6 +1276,8 @@ table EnvelopeState {
   cognition:EnvelopeCognition;
   boundaries:[EnvelopeBoundaryStamp];
 
+  strategy:StrategyFrame;
+  perspectives:[PerspectiveFrame];
   tick:long;
 }
 

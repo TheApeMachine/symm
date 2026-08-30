@@ -10,8 +10,10 @@ import {
 	focusStore,
 	onlineStore,
 	opportunityStore,
+	perspectiveStore,
 	resonanceArtifactStore,
 	resonanceStore,
+	strategyStore,
 	tickCountStore,
 	tickStore,
 } from "#/collections/app";
@@ -123,6 +125,14 @@ function dispatchEnvelopeState(state: EnvelopeState) {
 
 	const cognition = state.cognition();
 	if (cognition) cognitionStore.actions.add(cognition);
+
+	const strategy = state.strategy();
+	if (strategy) strategyStore.actions.add(strategy);
+
+	for (let i = 0; i < state.perspectivesLength(); i++) {
+		const perspective = state.perspectives(i);
+		if (perspective) perspectiveStore.actions.add(perspective);
+	}
 
 	for (let i = 0; i < state.categoriesLength(); i++) {
 		const category = state.categories(i);
