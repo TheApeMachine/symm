@@ -5,7 +5,7 @@ import {
 	DEFAULT_FOCUS_SYMBOL,
 	appStore,
 	focusStore,
-	resonanceStore,
+	resonanceArtifactStore,
 	symbolsStore,
 } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
@@ -27,19 +27,16 @@ const XrayPaintBridge = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
 
 	useEffect(() => {
-		const updatePaint = (state: typeof resonanceStore.state) => {
+		const updatePaint = (state: typeof resonanceArtifactStore.state) => {
 			const last = state.getLast();
+
 			if (last) {
-				const unpacked = last.unpack();
-				for (const row of unpacked.rows) {
-					const sym = typeof row.symbol === "string" ? row.symbol : "";
-					if (sym) {
-						retainResonanceRow(
-							sym,
-							row as unknown as Record<string, unknown>,
-						);
-						appStore.actions.observeSymbols([sym]);
-					}
+				const row = last.unpack() as unknown as Record<string, unknown>;
+				const sym = typeof row.symbol === "string" ? row.symbol : "";
+
+				if (sym) {
+					retainResonanceRow(sym, row);
+					appStore.actions.observeSymbols([sym]);
 				}
 			}
 
@@ -48,8 +45,8 @@ const XrayPaintBridge = () => {
 			paintXrayLatent(universe, focusSymbol);
 		};
 
-		updatePaint(resonanceStore.state);
-		const subscription = resonanceStore.subscribe((state) => {
+		updatePaint(resonanceArtifactStore.state);
+		const subscription = resonanceArtifactStore.subscribe((state) => {
 			updatePaint(state);
 		});
 
@@ -85,7 +82,7 @@ const XrayCarrierBar = () => {
 
 		syncSymbols();
 		const sub1 = symbolsStore.subscribe(syncSymbols);
-		const sub2 = resonanceStore.subscribe(syncSymbols);
+		const sub2 = resonanceArtifactStore.subscribe(syncSymbols);
 
 		return () => {
 			sub1.unsubscribe();

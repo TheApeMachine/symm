@@ -100,6 +100,51 @@ func TestForkContracts(t *testing.T) {
 		So(output.MustGet(primitiveSecondOut), ShouldEqual, 20.0)
 	})
 
+	Convey("Given forked branches that each accumulate their own state", t, func() {
+		// Every branch starts from the same pre-fork snapshot, so each carries
+		// that snapshot's whole populated mask. Merging a branch wholesale
+		// therefore wrote the stale snapshot value back over the branches
+		// before it, and only the last branch's state ever advanced.
+		count := func(slot Symbol) Primitive {
+			return func(input *Frame) {
+				previous, _ := input.Get(slot)
+				input.Put(slot, previous+1)
+			}
+		}
+
+		machine := Fork(count(primitiveFirstState), count(primitiveSecondState))
+		output := Frame{}
+
+		for range 4 {
+			machine(&output)
+		}
+
+		Convey("every branch's state advances, not only the last one's", func() {
+			So(output.Err, ShouldBeNil)
+			So(output.MustGet(primitiveFirstState), ShouldEqual, 4.0)
+			So(output.MustGet(primitiveSecondState), ShouldEqual, 4.0)
+		})
+	})
+
+	Convey("Given a forked branch that writes nothing at all", t, func() {
+		machine := Fork(
+			func(input *Frame) {
+				previous, _ := input.Get(primitiveFirstState)
+				input.Put(primitiveFirstState, previous+1)
+			},
+			func(input *Frame) {},
+		)
+		output := Frame{}
+
+		for range 4 {
+			machine(&output)
+		}
+
+		Convey("it leaves the other branch's state alone", func() {
+			So(output.MustGet(primitiveFirstState), ShouldEqual, 4.0)
+		})
+	})
+
 	Convey("ForkStrict rejects conflicting writes transactionally", t, func() {
 		write := func(value float64) Primitive {
 			return func(input *Frame) {

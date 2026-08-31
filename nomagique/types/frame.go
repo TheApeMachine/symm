@@ -146,6 +146,36 @@ func (frame *Frame) Merge(other Frame) {
 	}
 }
 
+/*
+MergeChanged overlays only the slots where branch differs from the baseline it
+started out as: a slot the branch newly populated, or one it populated
+differently. A slot the branch merely carried through untouched is left alone.
+
+It is what lets independent branches of one Fork write into the same frame
+without the later ones reverting the earlier ones' work to the shared
+pre-fork snapshot they all began from.
+*/
+func (frame *Frame) MergeChanged(baseline Frame, branch Frame) {
+	if frame == nil {
+		panic("nomagique: cannot merge into a nil Frame")
+	}
+
+	for maskIndex, mask := range branch.Mask {
+		for remaining := mask; remaining != 0; remaining &= remaining - 1 {
+			bit := bits.TrailingZeros64(remaining)
+			index := (maskIndex << 6) + bit
+			populated := baseline.Mask[maskIndex]&(uint64(1)<<uint(bit)) != 0
+
+			if populated && baseline.Data[index] == branch.Data[index] {
+				continue
+			}
+
+			frame.Mask[maskIndex] |= uint64(1) << uint(bit)
+			frame.Data[index] = branch.Data[index]
+		}
+	}
+}
+
 // Merged returns a copied Frame with other overlaid.
 func (frame Frame) Merged(other Frame) Frame {
 	frame.Merge(other)

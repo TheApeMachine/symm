@@ -1,5 +1,8 @@
 import type {
 	HindsightCapture,
+	HindsightMetricMap,
+	HindsightTimeline,
+	HindsightTimelineQuery,
 	HindsightEnvelope,
 	HindsightGap,
 	HindsightLifecycleEvent,
@@ -125,3 +128,50 @@ export const fetchHindsightLifecycle = async (
 
 	return (await response.json()) as HindsightLifecycleEvent[];
 };
+
+/*
+fetchHindsightTimeline reads the Episode projection of one Run: the declared
+coordinate bucketed along the chosen axis, the episodes a declared selector
+found on it, the transport spans, and the instrument index. Every parameter of
+the selector is a query argument, so what the view calls interesting is always
+stated in the request that produced it.
+*/
+export const fetchHindsightTimeline = async (
+	query: HindsightTimelineQuery,
+): Promise<HindsightTimeline | null> => {
+	const params = new URLSearchParams({ run: query.run });
+
+	if (query.symbol) params.set("symbol", query.symbol);
+	if (query.coordinate) params.set("coordinate", query.coordinate);
+	if (query.axis) params.set("axis", query.axis);
+	if (query.buckets) params.set("buckets", String(query.buckets));
+	if (query.from) params.set("from", String(query.from));
+	if (query.to) params.set("to", String(query.to));
+	if (query.symbols) params.set("symbols", "1");
+
+	const response = await fetch(
+		`${hindsightBaseUrl()}/hindsight/timeline?${params.toString()}`,
+	);
+
+	if (!response.ok) {
+		return null;
+	}
+
+	return (await response.json()) as HindsightTimeline;
+};
+
+/*
+fetchHindsightMetricMap reads the declared semantics of every production
+metric. It is the same answer for every run and every capture, so it is fetched
+once per session rather than per inspected frame.
+*/
+export const fetchHindsightMetricMap =
+	async (): Promise<HindsightMetricMap | null> => {
+		const response = await fetch(`${hindsightBaseUrl()}/hindsight/metric-map`);
+
+		if (!response.ok) {
+			return null;
+		}
+
+		return (await response.json()) as HindsightMetricMap;
+	};

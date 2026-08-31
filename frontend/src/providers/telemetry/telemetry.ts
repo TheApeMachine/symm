@@ -57,6 +57,8 @@ export { EnvelopeNamedTimeNs, EnvelopeNamedTimeNsT } from './telemetry/envelope-
 export { EnvelopeOpportunityCandidate, EnvelopeOpportunityCandidateT } from './telemetry/envelope-opportunity-candidate.js';
 export { EnvelopeOpportunityEconomics, EnvelopeOpportunityEconomicsT } from './telemetry/envelope-opportunity-economics.js';
 export { EnvelopeResonanceArtifact, EnvelopeResonanceArtifactT } from './telemetry/envelope-resonance-artifact.js';
+export { EnvelopeResonanceDynamics, EnvelopeResonanceDynamicsT } from './telemetry/envelope-resonance-dynamics.js';
+export { EnvelopeResonanceLayer, EnvelopeResonanceLayerT } from './telemetry/envelope-resonance-layer.js';
 export { EnvelopeReturnForecast, EnvelopeReturnForecastT } from './telemetry/envelope-return-forecast.js';
 export { EnvelopeReturnForecastDistribution, EnvelopeReturnForecastDistributionT } from './telemetry/envelope-return-forecast-distribution.js';
 export { EnvelopeSensoriumReading, EnvelopeSensoriumReadingT } from './telemetry/envelope-sensorium-reading.js';

@@ -20,6 +20,7 @@ import { EnvelopeTickerData, EnvelopeTickerDataT } from '../telemetry/envelope-t
 import { EnvelopeTradeData, EnvelopeTradeDataT } from '../telemetry/envelope-trade-data.js';
 import { EquityFrame, EquityFrameT } from '../telemetry/equity-frame.js';
 import { PerspectiveFrame, PerspectiveFrameT } from '../telemetry/perspective-frame.js';
+import { PositionsFrame, PositionsFrameT } from '../telemetry/positions-frame.js';
 import { StrategyFrame, StrategyFrameT } from '../telemetry/strategy-frame.js';
 
 
@@ -242,8 +243,13 @@ equity(obj?:EquityFrame):EquityFrame|null {
   return offset ? (obj || new EquityFrame()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
+positions(obj?:PositionsFrame):PositionsFrame|null {
+  const offset = this.bb!.__offset(this.bb_pos, 74);
+  return offset ? (obj || new PositionsFrame()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
 static startEnvelopeState(builder:flatbuffers.Builder) {
-  builder.startObject(35);
+  builder.startObject(36);
 }
 
 static addKey(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset) {
@@ -434,6 +440,10 @@ static addEquity(builder:flatbuffers.Builder, equityOffset:flatbuffers.Offset) {
   builder.addFieldOffset(34, equityOffset, 0);
 }
 
+static addPositions(builder:flatbuffers.Builder, positionsOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(35, positionsOffset, 0);
+}
+
 static endEnvelopeState(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
@@ -476,7 +486,8 @@ unpack(): EnvelopeStateT {
     (this.strategy() !== null ? this.strategy()!.unpack() : null),
     this.bb!.createObjList<PerspectiveFrame, PerspectiveFrameT>(this.perspectives.bind(this), this.perspectivesLength()),
     this.tick(),
-    (this.equity() !== null ? this.equity()!.unpack() : null)
+    (this.equity() !== null ? this.equity()!.unpack() : null),
+    (this.positions() !== null ? this.positions()!.unpack() : null)
   );
 }
 
@@ -517,6 +528,7 @@ unpackTo(_o: EnvelopeStateT): void {
   _o.perspectives = this.bb!.createObjList<PerspectiveFrame, PerspectiveFrameT>(this.perspectives.bind(this), this.perspectivesLength());
   _o.tick = this.tick();
   _o.equity = (this.equity() !== null ? this.equity()!.unpack() : null);
+  _o.positions = (this.positions() !== null ? this.positions()!.unpack() : null);
 }
 }
 
@@ -556,7 +568,8 @@ constructor(
   public strategy: StrategyFrameT|null = null,
   public perspectives: (PerspectiveFrameT)[] = [],
   public tick: bigint = BigInt('0'),
-  public equity: EquityFrameT|null = null
+  public equity: EquityFrameT|null = null,
+  public positions: PositionsFrameT|null = null
 ){}
 
 
@@ -590,6 +603,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const strategy = (this.strategy !== null ? this.strategy!.pack(builder) : 0);
   const perspectives = EnvelopeState.createPerspectivesVector(builder, builder.createObjectOffsetList(this.perspectives));
   const equity = (this.equity !== null ? this.equity!.pack(builder) : 0);
+  const positions = (this.positions !== null ? this.positions!.pack(builder) : 0);
 
   EnvelopeState.startEnvelopeState(builder);
   EnvelopeState.addKey(builder, key);
@@ -627,6 +641,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   EnvelopeState.addPerspectives(builder, perspectives);
   EnvelopeState.addTick(builder, this.tick);
   EnvelopeState.addEquity(builder, equity);
+  EnvelopeState.addPositions(builder, positions);
 
   return EnvelopeState.endEnvelopeState(builder);
 }

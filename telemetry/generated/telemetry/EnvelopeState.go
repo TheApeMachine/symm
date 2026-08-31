@@ -42,6 +42,7 @@ type EnvelopeStateT struct {
 	Perspectives []*PerspectiveFrameT `json:"perspectives"`
 	Tick int64 `json:"tick"`
 	Equity *EquityFrameT `json:"equity"`
+	Positions *PositionsFrameT `json:"positions"`
 }
 
 func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -134,6 +135,7 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 		perspectivesOffset = builder.EndVector(perspectivesLength)
 	}
 	equityOffset := t.Equity.Pack(builder)
+	positionsOffset := t.Positions.Pack(builder)
 	EnvelopeStateStart(builder)
 	EnvelopeStateAddKey(builder, keyOffset)
 	EnvelopeStateAddTypeId(builder, t.TypeId)
@@ -170,6 +172,7 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	EnvelopeStateAddPerspectives(builder, perspectivesOffset)
 	EnvelopeStateAddTick(builder, t.Tick)
 	EnvelopeStateAddEquity(builder, equityOffset)
+	EnvelopeStateAddPositions(builder, positionsOffset)
 	return EnvelopeStateEnd(builder)
 }
 
@@ -233,6 +236,7 @@ func (rcv *EnvelopeState) UnPackTo(t *EnvelopeStateT) {
 	}
 	t.Tick = rcv.Tick()
 	t.Equity = rcv.Equity(nil).UnPack()
+	t.Positions = rcv.Positions(nil).UnPack()
 }
 
 func (rcv *EnvelopeState) UnPack() *EnvelopeStateT {
@@ -741,8 +745,21 @@ func (rcv *EnvelopeState) Equity(obj *EquityFrame) *EquityFrame {
 	return nil
 }
 
+func (rcv *EnvelopeState) Positions(obj *PositionsFrame) *PositionsFrame {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(PositionsFrame)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
 func EnvelopeStateStart(builder *flatbuffers.Builder) {
-	builder.StartObject(35)
+	builder.StartObject(36)
 }
 func EnvelopeStateAddKey(builder *flatbuffers.Builder, key flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(key), 0)
@@ -860,6 +877,9 @@ func EnvelopeStateAddTick(builder *flatbuffers.Builder, tick int64) {
 }
 func EnvelopeStateAddEquity(builder *flatbuffers.Builder, equity flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(34, flatbuffers.UOffsetT(equity), 0)
+}
+func EnvelopeStateAddPositions(builder *flatbuffers.Builder, positions flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(35, flatbuffers.UOffsetT(positions), 0)
 }
 func EnvelopeStateEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

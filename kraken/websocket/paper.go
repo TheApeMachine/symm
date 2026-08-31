@@ -50,6 +50,7 @@ func NewPaper(
 		ctx:       ctx,
 		cancel:    cancel,
 		simulator: simulator,
+		ingress:   bus,
 	}
 
 	return paper
@@ -394,6 +395,65 @@ func (paper *Paper) TradeBalance() (kraken.TradeBalanceResult, error) {
 }
 
 /*
+TradeVolume returns the paper account's taker-fee schedule for the requested
+pairs. Paper charges one configured fee rate across every pair, so the schedule
+is the same fee reproduced under each compact pair key the fee resolver looks
+up. The simulator reports fee_rate as a fraction; TradeVolumeFee.Fee is a
+percentage, so the fraction is scaled into its percent form.
+*/
+func (paper *Paper) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {
+	var model datura.Map[any]
+	var err error
+
+	paper.simulator.Do(REST, func() {
+		model, err = paper.execute("status", "status", "--verbose")
+	})
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to get paper fee schedule",
+			err,
+		))
+	}
+
+	feeRate, ok := model["fee_rate"].(float64)
+
+	if !ok || feeRate <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"paper fee schedule requires a positive fee rate",
+			nil,
+		))
+	}
+
+	feePercent := decimal.NewFromFloat64(feeRate).Mul(decimal.NewFromInt64(100))
+	fees := make(map[string]kraken.TradeVolumeFee, len(symbols))
+	feesMaker := make(map[string]kraken.TradeVolumeFee, len(symbols))
+
+	for _, symbol := range symbols {
+		fee := kraken.TradeVolumeFee{
+			Fee:    decimal.NewFromInt64(0).Add(feePercent),
+			Minfee: decimal.NewFromInt64(0).Add(feePercent),
+			Maxfee: decimal.NewFromInt64(0).Add(feePercent),
+		}
+
+		// The fee resolver matches by the compact REST pair identifier
+		// (pair.AltName / base+quote), while callers hand in the websocket
+		// symbol (e.g. "UAI/USD"). Key the schedule under both forms so the
+		// resolver matches regardless of which identifier it probes.
+		compact := strings.ReplaceAll(symbol, "/", "")
+
+		fees[symbol] = fee
+		fees[compact] = fee
+		feesMaker[symbol] = fee
+		feesMaker[compact] = fee
+	}
+
+	return &kraken.TradeVolumeResult{Fees: fees, FeesMaker: feesMaker}, nil
+}
+
+/*
 AddOrder places through `kraken paper buy|sell` under simulator latency.
 */
 func (paper *Paper) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, error) {
@@ -633,13 +693,21 @@ func (paper *Paper) publish(channel string, message any) {
 			return
 		}
 
-		for range execution.Data {
-			paper.ingress[channel].Push(types.NewEnvelope(
-				types.EnvelopeExecution,
-			))
+		// A paper fill lands synchronously through AddOrder; deliver each
+		// execution record as its own envelope so the desk can advance the
+		// matching position's state, mirroring the live execution stream.
+		for ordinal, data := range execution.Data {
+			envelope := types.NewEnvelope(types.EnvelopeExecution)
+			envelope.ExecutionData = data
+			envelope.CaptureOrdinal = uint64(ordinal)
+
+			if workload := paper.ingress[channel]; workload != nil {
+				workload.Push(envelope)
+			}
 		}
 	case "balances", "add_order":
 		// Balances and order acks are consumed through the explicit REST
-		// methods (Balance, AddOrder) rather than a private fan-out channel.
+		// methods (Balance, AddOrder) and their callbacks rather than a
+		// private ingress fan-out.
 	}
 }

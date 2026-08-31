@@ -45,17 +45,45 @@ export type HindsightGap = {
 	detail: string;
 };
 
+/*
+ExecutionFact is the venue's authoritative fill record for one execution. Every
+quantity is the string the venue reported, kept verbatim rather than parsed into
+a float on the wire, so no precision is lost before inspection sees it.
+*/
+export type HindsightExecutionFact = {
+	orderId?: string;
+	clientOrderId?: string;
+	execId?: string;
+	side?: string;
+	orderStatus?: string;
+	lastQty?: string;
+	lastPrice?: string;
+	cumQty?: string;
+	cumCost?: string;
+	avgPrice?: string;
+	feeUsdEquiv?: string;
+	fillAt?: string;
+};
+
 export type HindsightLifecycleEvent = {
 	decisionId: string;
 	symbol: string;
 	kind: string;
 	action: string;
 	at: string;
+	/* Present only on transitions that carried a fill. */
+	execution?: HindsightExecutionFact | null;
 };
 
 export type HindsightEnvelope = {
 	run: string;
 	sequence: number;
+	/*
+		The full CaptureIdentity of the frame at this sequence, answered by the
+		read itself so the inspector never has to reconstruct it from a listing
+		it happens to be holding.
+	*/
+	capture: HindsightCapture;
 	payload: string;
 	manifests: Array<{
 		envelope: {
@@ -73,11 +101,228 @@ export type HindsightEnvelope = {
 		};
 		boundary: string;
 		artifact: { kind: string; identity: string };
-		component: string;
-		componentStateVersion: number;
-		immediateParents: Array<{
+		component?: string;
+		componentStateVersion?: number;
+		/*
+			Omitted entirely when the artifact named no parent — an absent field,
+			not an empty one. The witness record marks these optional, so the read
+			model does too rather than assuming a shape the wire never promised.
+		*/
+		immediateParents?: Array<{
 			origin: HindsightCaptureIdentity;
 			ordinal: number;
 		}>;
+		semanticParents?: string[];
 	}>;
+};
+
+/*
+The Episode read-model: the horizontal timeline projection the hub assembles
+from one Run's raw capture tape. These mirror hindsight.Timeline / Episode /
+SymbolSummary exactly — the UI reads the discovery result, it does not re-derive
+one, and it never relabels observed market geometry as anything a trade would
+have captured.
+*/
+
+export type EpisodeKind =
+	| "upward_excursion"
+	| "downward_excursion"
+	| "reversal"
+	| "volatility_expansion"
+	| "volatility_contraction"
+	| "spread_expansion"
+	| "liquidity_collapse"
+	| "arrival_cluster";
+
+export type ReferenceRole =
+	| "anchor"
+	| "peak"
+	| "trough"
+	| "reversal"
+	| "exit_anchor"
+	| "shock_onset";
+
+export type MarketCoordinate = "midpoint" | "trade" | "last" | "bid" | "ask";
+
+export type TimelineAxis = "capture" | "time";
+
+export type HindsightReferencePoint = {
+	role: ReferenceRole;
+	capture: HindsightCaptureIdentity;
+	ordinal: number;
+	venueAt: string;
+	receivedAt: string;
+	value: number;
+	hasValue: boolean;
+};
+
+export type HindsightEpisode = {
+	id: string;
+	symbol: string;
+	kind: EpisodeKind;
+	coordinate: MarketCoordinate;
+	fromSequence: number;
+	toSequence: number;
+	fromAt: string;
+	toAt: string;
+	observations: number;
+	observedExcursion: number;
+	hasObservedExcursion: boolean;
+	confirmed: boolean;
+	ratio: number;
+	hasRatio: boolean;
+	traversed: number;
+	hasTraversed: boolean;
+	threshold: number;
+	hasThreshold: boolean;
+	references: HindsightReferencePoint[];
+};
+
+export type HindsightDiscoveryPolicy = {
+	coordinate: MarketCoordinate;
+	floorExcursion: number;
+	excursionSigmas: number;
+	excursionHorizon: number;
+	retraceFraction: number;
+	regimeWindow: number;
+	regimeBaseline: number;
+	volatilityRatio: number;
+	spreadRatio: number;
+	depthRatio: number;
+	arrivalRatio: number;
+	minRegimeSpan: number;
+	minObservations: number;
+	maxEpisodesPerSet: number;
+};
+
+export type HindsightDiscovery = {
+	symbol: string;
+	coordinate: MarketCoordinate;
+	policy: HindsightDiscoveryPolicy;
+	observations: number;
+	defined: number;
+	undefined: number;
+	sigma: number;
+	hasSigma: boolean;
+	qualifyingMove: number;
+	episodes: HindsightEpisode[];
+	insufficientData: boolean;
+};
+
+export type HindsightSymbolSummary = {
+	symbol: string;
+	observations: number;
+	defined: number;
+	tickers: number;
+	trades: number;
+	firstSequence: number;
+	lastSequence: number;
+	firstAt: string;
+	lastAt: string;
+	episodes: number;
+	insufficientData: boolean;
+	topExcursion: number;
+	topKind?: EpisodeKind;
+	priceEpisodes: number;
+	regimeEpisodes: number;
+};
+
+export type HindsightStreamSpan = {
+	stream: string;
+	epoch: number;
+	fromSequence: number;
+	toSequence: number;
+	fromAt: string;
+	toAt: string;
+	frames: number;
+	reconnect: boolean;
+};
+
+export type HindsightTimelineBucket = {
+	index: number;
+	fromSequence: number;
+	toSequence: number;
+	fromAt: string;
+	toAt: string;
+	observedFromSequence: number;
+	observedToSequence: number;
+	observedFromAt: string;
+	observedToAt: string;
+	observations: number;
+	tickers: number;
+	trades: number;
+	tradeQty: number;
+	defined: boolean;
+	open: number;
+	high: number;
+	low: number;
+	close: number;
+	spreadFraction: number;
+	hasSpreadFraction: boolean;
+	touchDepth: number;
+	hasTouchDepth: boolean;
+	captureRate: number;
+	hasCaptureRate: boolean;
+};
+
+export type HindsightTimelineSpan = {
+	fromSequence: number;
+	toSequence: number;
+	fromAt: string;
+	toAt: string;
+};
+
+export type HindsightTimeline = {
+	run: string;
+	symbol: string;
+	coordinate: MarketCoordinate;
+	policy: HindsightDiscoveryPolicy;
+	axis: TimelineAxis;
+	span: HindsightTimelineSpan;
+	runSpan: HindsightTimelineSpan;
+	buckets: HindsightTimelineBucket[];
+	discovery: HindsightDiscovery;
+	streams: HindsightStreamSpan[];
+	symbols: HindsightSymbolSummary[];
+	totalObservations: number;
+	totalSymbols: number;
+	indexedAt: string;
+};
+
+export type HindsightTimelineQuery = {
+	run: string;
+	symbol?: string;
+	coordinate?: MarketCoordinate;
+	axis?: TimelineAxis;
+	buckets?: number;
+	from?: number;
+	to?: number;
+	/*
+		The instrument index is the same answer for every window of a run, so
+		only the overview asks for it; a pan or a zoom asks for the window.
+	*/
+	symbols?: boolean;
+};
+
+/*
+The declared semantic identity of a production metric, as METRIC_MAP.md records
+it. `forbidden` is the statement that matters most on an inspection surface: it
+says what may never be inferred from the number, which is a boundary this UI is
+required to respect rather than a caveat it may summarise away.
+*/
+export type MetricSemantics = {
+	identity: string;
+	source: string;
+	metric: string;
+	class?: string;
+	role?: string;
+	purpose?: string;
+	destinations?: string;
+	forbidden?: string;
+	status?: string;
+};
+
+export type HindsightMetricMap = {
+	baselineCommit: string;
+	metrics: Record<string, MetricSemantics>;
 };

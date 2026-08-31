@@ -14,11 +14,21 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/store"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
+
+/*
+TradeJournalSource supplies the persisted trade journal. It is the narrow slice
+of the broker PositionStore the hub needs to serve GET /trades, kept as an
+interface so the UI layer never depends on the broker package's concrete type.
+*/
+type TradeJournalSource interface {
+	RecentTrades(limit int) ([]*wire.PositionT, error)
+}
 
 /*
 Hub owns the dashboard websocket and broadcasts schema-tagged binary frames.
@@ -35,6 +45,9 @@ type Hub struct {
 	listenAddr string
 	clients    *sync.Map
 	store      *store.SQLite
+	tradeStore TradeJournalSource
+	timelines  *timelineCache
+	fluid      *FluidRTC
 }
 
 type Client struct {
@@ -62,7 +75,9 @@ func NewHub(ctx context.Context) *Hub {
 			ReadBufferSize:  4194304,
 			WriteBufferSize: 4194304,
 		}),
-		clients: &sync.Map{},
+		clients:   &sync.Map{},
+		timelines: newTimelineCache(),
+		fluid:     NewFluidRTC(ctx, "hub"),
 	}
 
 	// The dashboard is a separate origin from the hub (vite dev server on
@@ -96,10 +111,27 @@ func NewHub(ctx context.Context) *Hub {
 	})
 
 	hub.app.Get("/trades", func(c fiber.Ctx) error {
-		// No broker.PositionStore is wired to the hub yet — that lands with
-		// the desk/broker migration, out of scope here. Until then this
-		// route reports "no trades" rather than fail the request.
-		return c.JSON([]*wire.PositionT{})
+		if hub.tradeStore == nil {
+			return c.JSON([]*wire.PositionT{})
+		}
+
+		limit := parseUintQuery(c.Query("limit"))
+
+		if limit > 2000 {
+			limit = 2000
+		}
+
+		trades, err := hub.tradeStore.RecentTrades(int(limit))
+
+		if err != nil {
+			return err
+		}
+
+		if trades == nil {
+			trades = []*wire.PositionT{}
+		}
+
+		return c.JSON(trades)
 	})
 
 	// Hindsight inspection reads: the capture tape and its persisted
@@ -178,13 +210,18 @@ func NewHub(ctx context.Context) *Hub {
 		run := c.Query("run")
 		sequence := parseUintQuery(c.Query("seq"))
 
-		payload, err := hub.store.ReadCapture(hindsight.CaptureIdentity{
-			Run:      hindsight.RunID(run),
-			Sequence: hindsight.CaptureSequence(sequence),
-		})
+		// The URL carries the run-local coordinate, which already names one
+		// external input; the frame read answers with the complete identity
+		// rather than requiring the caller to already hold the transport
+		// fields it came here to look up.
+		capture, payload, found, err := hub.store.ReadCaptureFrame(run, sequence)
 
 		if err != nil {
 			return err
+		}
+
+		if !found {
+			return c.JSON(map[string]any{})
 		}
 
 		manifests, err := hub.store.ListManifestsForCapture(run, sequence)
@@ -199,15 +236,25 @@ func NewHub(ctx context.Context) *Hub {
 			return err
 		}
 
+		// The provenance view needs the shape of what was witnessed, not the
+		// artifacts' bytes: one observe witness alone carries a serialized
+		// EnvelopeState that has averaged megabytes on real runs. /hindsight/state
+		// serves that payload for the exact envelope a reader asked to open.
+		for index := range witnesses {
+			witnesses[index].Payload = nil
+		}
+
 		return c.JSON(struct {
 			Run       string                       `json:"run"`
 			Sequence  uint64                       `json:"sequence"`
+			Capture   store.CaptureEntry           `json:"capture"`
 			Payload   []byte                       `json:"payload"`
 			Manifests []hindsight.EnvelopeManifest `json:"manifests"`
 			Witnesses []hindsight.ArtifactWitness  `json:"witnesses"`
 		}{
 			Run:       run,
 			Sequence:  sequence,
+			Capture:   capture,
 			Payload:   payload,
 			Manifests: manifests,
 			Witnesses: witnesses,
@@ -253,6 +300,8 @@ func NewHub(ctx context.Context) *Hub {
 
 		return c.JSON(events)
 	})
+
+	hub.registerTimeline()
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		key := uuid.NewString()
@@ -318,6 +367,20 @@ func (hub *Hub) Step(envelope *types.Envelope) *types.Envelope {
 		return true
 	})
 
+	// The manifold transport publishes the resident field advance to any
+	// connected viewer directly, outside the websocket bus. A busy viewer
+	// queues frames rather than losing them silently; a queue overflow is
+	// reported and never blocks the pipeline.
+	if envelope.Manifold != nil {
+		if err := hub.fluid.Publish(envelope.Manifold); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"hub: publish manifold frame",
+				err,
+			))
+		}
+	}
+
 	return envelope
 }
 
@@ -335,6 +398,19 @@ func (hub *Hub) SetHindsightStore(store *store.SQLite) {
 	}
 
 	hub.store = store
+}
+
+/*
+SetTradeStore attaches the broker's trade journal so GET /trades can serve the
+persisted position_trades table. It is set after boot because the position
+store opens after the hub in cmd/root.go.
+*/
+func (hub *Hub) SetTradeStore(source TradeJournalSource) {
+	if hub == nil {
+		return
+	}
+
+	hub.tradeStore = source
 }
 
 /*
@@ -375,10 +451,21 @@ func (hub *Hub) handleCommand(payload []byte) {
 }
 
 /*
-Serve listens for dashboard websocket clients.
+Run listens for dashboard clients on the configured address.
+
+It honours ui.addr, which NewHub already reads: the field existed but the
+listener ignored it, so configuring the address had no effect. The default
+(127.0.0.1:8765) is loopback-only, which is what the CORS policy above already
+assumes the dashboard to be.
 */
 func (hub *Hub) Run() error {
-	return hub.app.Listen(":8765")
+	address := hub.listenAddr
+
+	if address == "" {
+		address = "127.0.0.1:8765"
+	}
+
+	return hub.app.Listen(address)
 }
 
 /*
@@ -389,8 +476,12 @@ func (hub *Hub) Close() error {
 
 	hub.cancel()
 
+	if hub.fluid != nil {
+		err = hub.fluid.Close()
+	}
+
 	if hub.app != nil {
-		err = hub.app.Shutdown()
+		err = errors.Join(err, hub.app.Shutdown())
 	}
 
 	if errors.Is(err, net.ErrClosed) {

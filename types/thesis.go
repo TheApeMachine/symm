@@ -2,7 +2,6 @@ package types
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -301,48 +300,6 @@ func (thesis *Thesis) Equity() (kraken.TradeBalanceResult, bool) {
 	}
 
 	return *thesis.equity, true
-}
-
-func (thesis *Thesis) MarshalState() ([]byte, error) {
-	symbols := make(map[string]any)
-
-	thesis.Symbols.Range(func(key, value any) bool {
-		name, valid := key.(string)
-
-		if !valid || name == "" {
-			return true
-		}
-
-		symbol, valid := value.(*Symbol)
-
-		if !valid || symbol == nil {
-			return true
-		}
-
-		symbols[name] = symbol
-		return true
-	})
-	equity, _, hasEquity := thesis.EquitySnapshot()
-	checkpoint := struct {
-		Status       Status                     `json:"status"`
-		Tick         int64                      `json:"tick"`
-		At           time.Time                  `json:"at"`
-		CrossSection *CrossSection              `json:"crossSection"`
-		Symbols      map[string]any             `json:"symbols"`
-		Equity       *kraken.TradeBalanceResult `json:"equity,omitempty"`
-	}{
-		Status:       thesis.Status,
-		Tick:         thesis.Tick,
-		At:           thesis.At,
-		CrossSection: thesis.CrossSection,
-		Symbols:      symbols,
-	}
-
-	if hasEquity {
-		checkpoint.Equity = &equity
-	}
-
-	return json.Marshal(checkpoint)
 }
 
 func (thesis *Thesis) Close() error {

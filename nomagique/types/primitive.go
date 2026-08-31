@@ -56,6 +56,16 @@ Fork fans one frame out to every branch and merges their results back into it.
 Each branch receives its own copy of the pre-fork frame independently (a
 branch must not see another branch's writes), and results overlay onto frame
 in branch order.
+
+Only the slots a branch actually changed are merged back. Every branch starts
+from the same pre-fork snapshot, so each one carries that snapshot's whole
+populated mask, changed or not — a plain merge would therefore have every
+branch write the stale snapshot value back over whatever the branches before it
+had just produced, and only the last branch's work would survive. That is
+silent: nothing errors, the slot simply stops advancing. It is what froze every
+forked estimator except the last one at its first observation, since a
+per-branch accumulator reading its own previous value back saw the same number
+forever.
 */
 func Fork(primitives ...Primitive) Primitive {
 	branches := append([]Primitive(nil), primitives...)
@@ -73,7 +83,7 @@ func Fork(primitives ...Primitive) Primitive {
 				return
 			}
 
-			frame.Merge(branch)
+			frame.MergeChanged(input, branch)
 		}
 	}
 }

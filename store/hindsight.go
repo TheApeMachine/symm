@@ -1,7 +1,9 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -19,6 +21,78 @@ type CaptureEntry struct {
 	Kind       string                    `json:"kind"`
 	Endpoint   string                    `json:"endpoint"`
 	ReceivedAt time.Time                 `json:"receivedAt"`
+}
+
+/*
+ReadCaptureFrame returns the raw frame at one capture sequence of one Run,
+together with the full CaptureIdentity the process assigned it.
+
+CaptureSequence is monotonic within a Run (§6), so (run, sequence) already
+names exactly one external input. This is the read for a caller holding that
+run-local coordinate — a UI addressing a frame it has on screen — and it
+answers with the complete identity rather than making the caller reconstruct
+the transport fields it did not have.
+*/
+func (store *SQLite) ReadCaptureFrame(
+	runID string,
+	sequence uint64,
+) (CaptureEntry, []byte, bool, error) {
+	if store == nil || store.database == nil {
+		return CaptureEntry{}, nil, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: sqlite database required",
+			nil,
+		))
+	}
+
+	if runID == "" {
+		return CaptureEntry{}, nil, false, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: run identity required",
+			nil,
+		))
+	}
+
+	var (
+		entry      CaptureEntry
+		receivedAt string
+		payload    []byte
+	)
+
+	entry.Identity.Run = hindsight.RunID(runID)
+
+	err := store.database.QueryRow(
+		`SELECT capture_seq, stream, stream_epoch, stream_seq, kind, endpoint, at, data
+		 FROM events
+		 WHERE run_id = ? AND capture_seq = ?`,
+		runID,
+		sequence,
+	).Scan(
+		&entry.Identity.Sequence,
+		&entry.Identity.Stream,
+		&entry.Identity.StreamEpoch,
+		&entry.Identity.StreamSequence,
+		&entry.Kind,
+		&entry.Endpoint,
+		&receivedAt,
+		&payload,
+	)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return CaptureEntry{}, nil, false, nil
+	}
+
+	if err != nil {
+		return CaptureEntry{}, nil, false, errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: read capture frame failed",
+			err,
+		))
+	}
+
+	entry.ReceivedAt, _ = time.Parse(time.RFC3339Nano, receivedAt)
+
+	return entry, payload, true, nil
 }
 
 /*
@@ -617,7 +691,7 @@ func (store *SQLite) ListLifecycleEvents(runID string) ([]hindsight.LifecycleEve
 	}
 
 	rows, err := store.database.Query(
-		`SELECT decision_id, symbol, kind, action, at
+		`SELECT decision_id, symbol, kind, action, at, execution
 		 FROM lifecycle WHERE run_id = ? ORDER BY id ASC`,
 		runID,
 	)
@@ -636,11 +710,19 @@ func (store *SQLite) ListLifecycleEvents(runID string) ([]hindsight.LifecycleEve
 
 	for rows.Next() {
 		var (
-			event   hindsight.LifecycleEvent
-			atValue string
+			event     hindsight.LifecycleEvent
+			atValue   string
+			execution string
 		)
 
-		if err := rows.Scan(&event.DecisionID, &event.Symbol, &event.Kind, &event.Action, &atValue); err != nil {
+		if err := rows.Scan(
+			&event.DecisionID,
+			&event.Symbol,
+			&event.Kind,
+			&event.Action,
+			&atValue,
+			&execution,
+		); err != nil {
 			return nil, errnie.Error(errnie.Err(
 				errnie.IO,
 				"store: scan lifecycle event row",
@@ -649,6 +731,23 @@ func (store *SQLite) ListLifecycleEvents(runID string) ([]hindsight.LifecycleEve
 		}
 
 		event.At, _ = time.Parse(time.RFC3339Nano, atValue)
+
+		// The venue's fill facts are the authoritative execution record for
+		// this transition. They were being written and then dropped on read,
+		// which left every recorded fill invisible to inspection.
+		if execution != "" {
+			var fact hindsight.ExecutionFact
+
+			if err := json.Unmarshal([]byte(execution), &fact); err != nil {
+				return nil, errnie.Error(errnie.Err(
+					errnie.IO,
+					"store: decode lifecycle execution fact",
+					err,
+				))
+			}
+
+			event.Execution = &fact
+		}
 
 		events = append(events, event)
 	}

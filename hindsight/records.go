@@ -40,12 +40,12 @@ the symbol/key where applicable, and the venue time and sequence where the
 protocol supplied them.
 */
 type EnvelopeManifest struct {
-	Envelope      EnvelopeRef
-	Workload      string
-	DomainKind    string
-	Symbol        string
-	VenueAt       time.Time
-	VenueSequence string
+	Envelope      EnvelopeRef `json:"envelope"`
+	Workload      string      `json:"workload"`
+	DomainKind    string      `json:"domainKind"`
+	Symbol        string      `json:"symbol"`
+	VenueAt       time.Time   `json:"venueAt"`
+	VenueSequence string      `json:"venueSequence,omitempty"`
 }
 
 /*

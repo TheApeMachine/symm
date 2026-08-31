@@ -31,7 +31,19 @@ func (hub *Hub) registerFluidWebRTC() {
 			return fiber.NewError(fiber.StatusBadRequest, "fluid WebRTC offer is incomplete")
 		}
 
-		return nil
+		answer, err := hub.fluid.Answer(webrtc.SessionDescription{
+			Type: webrtc.SDPTypeOffer,
+			SDP:  request.SDP,
+		})
+
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "unable to answer fluid WebRTC offer")
+		}
+
+		return ctx.JSON(fluidOffer{
+			Type: answer.Type.String(),
+			SDP:  answer.SDP,
+		})
 	})
 
 	hub.app.Options("/diagnostics", func(ctx fiber.Ctx) error {

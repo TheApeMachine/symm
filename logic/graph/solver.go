@@ -928,9 +928,8 @@ func (solver *Solver) estimateCandidate(candidate relation.CompiledCandidate) {
 /*
 InfluenceGraphWire projects the Influence Graph's subgraph for one symbol into
 the dashboard GraphFrameT. It is a free projection function, not a method on the
-domain type, exactly as ResonanceWire projects a ResonanceArtifact: the domain
-graph carries no wire knowledge, and the projection runs only when the boot
-side-effect observer needs to render the focused symbol.
+domain type: the domain graph carries no wire knowledge, and the projection runs
+only when the boot side-effect observer needs to render the focused symbol.
 
 The view is read-only and reversible: every node is a Measurement coordinate
 identity (never a collapsed signal rollup) stamped with the store's latest

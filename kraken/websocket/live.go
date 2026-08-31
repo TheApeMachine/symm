@@ -84,6 +84,11 @@ type Live struct {
 	failure        func(error)
 	observer       atomic.Pointer[func(string, time.Duration)]
 	connectedCount atomic.Int32
+	// executionsReady is flipped to READY once the caller has wired the
+	// executions ingress workload into the shared ingress map. The account
+	// subscription waits on it (an atomic status) before submitting, so the
+	// private execution stream never delivers into a not-yet-wired workload.
+	executionsReady *runtime.Status
 
 	// level3Client overrides the venue client SubL3 dials when set. Fixtures
 	// inject the level3 listener's client here so a replay's level3 frames
@@ -229,21 +234,22 @@ func NewWithClient(
 	}
 
 	live := &Live{
-		ctx:         ctx,
-		cancel:      cancel,
-		status:      runtime.NewStatus(),
-		simulator:   simulator,
-		client:      client,
-		normalizer:  spot.NewNormalizer(),
-		auth:        auth,
-		subscribers: &sync.Map{},
-		callbacks:   &sync.Map{},
-		public:      make(map[string][][]string),
-		paper:       NewPaper(ctx, NewSimulator(), workloads),
-		ingress:     workloads,
-		model:       viper.GetViper().GetString("trading.model"),
-		quote:       viper.GetViper().GetString("market.quote_currency"),
-		captureName: captureName,
+		ctx:             ctx,
+		cancel:          cancel,
+		status:          runtime.NewStatus(),
+		simulator:       simulator,
+		client:          client,
+		normalizer:      spot.NewNormalizer(),
+		auth:            auth,
+		subscribers:     &sync.Map{},
+		callbacks:       &sync.Map{},
+		public:          make(map[string][][]string),
+		paper:           NewPaper(ctx, simulator, workloads),
+		ingress:         workloads,
+		model:           viper.GetViper().GetString("trading.model"),
+		quote:           viper.GetViper().GetString("market.quote_currency"),
+		captureName:     captureName,
+		executionsReady: runtime.NewStatus(),
 	}
 
 	if len(recorders) == 1 {
@@ -385,7 +391,7 @@ func NewWithClient(
 			}
 
 			return
-		case "ticker", "trade", "level3":
+		case "ticker", "trade", "level3", "executions":
 			envelopes, manifests := IngestEnvelopes(channel, out, captureID)
 
 			for index, envelope := range envelopes {
@@ -451,9 +457,7 @@ func NewWithClient(
 			errnie.Info(fmt.Sprintf("websocket: authenticated to %s", live.client.URL))
 
 			if endpoint == system.Cfg.WebSocket.Endpoints.Private {
-				err := live.subscribeAccount(event.Data)
-
-				if err != nil {
+				if err := live.subscribeAccount(event.Data); err != nil {
 					errnie.Error(errnie.Err(
 						errnie.IO,
 						"websocket: failed to subscribe to private account channels",
@@ -568,13 +572,84 @@ subscribeAccount activates Kraken's private wallet and execution streams after
 each token refresh. Kraken closes an authenticated socket that does not submit
 a private subscription within its token deadline, so reconnect authentication
 must always repeat these requests with the new token.
+
+The execution subscription fans out into the executions ingress workload, which
+is wired after the desk exists — later in boot than the private session's first
+authenticate. Subscribing before that workload is ready would deliver execution
+frames into a nil workload. The subscription therefore waits on the executions
+workload's readiness before it writes, within the token deadline.
 */
 func (live *Live) subscribeAccount(token string) error {
+	// The balance subscription is submitted immediately: it satisfies Kraken's
+	// authenticated-socket deadline (which closes a socket that submits no
+	// private subscription) and its frames flow through callbacks, never the
+	// executions ingress.
 	if err := live.Write(kraken.NewBalanceSubscription(token)); err != nil {
 		return err
 	}
 
-	return live.Write(kraken.NewExecutionSubscription(token))
+	// The execution subscription fans out into the executions ingress workload,
+	// which is wired later in boot than the private session's first authenticate.
+	// Submitting it before that workload exists would deliver execution frames
+	// into a nil workload, so it is submitted asynchronously once the workload
+	// is ready — without blocking the auth goroutine and stalling readiness.
+	go live.subscribeExecutionsWhenReady(token)
+
+	return nil
+}
+
+/*
+subscribeExecutionsWhenReady submits the private execution subscription once the
+executions ingress workload is ready. It owns the gate so the initial
+authenticate returns immediately (and the balance subscription already satisfied
+the token deadline), while execution frames cannot arrive before their consumer.
+*/
+func (live *Live) subscribeExecutionsWhenReady(token string) {
+	live.waitExecutionsReady()
+
+	if err := live.Write(kraken.NewExecutionSubscription(token)); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"websocket: failed to subscribe to executions",
+			err,
+		))
+	}
+}
+
+/*
+MarkExecutionsReady is called by the bootstrap once the executions ingress
+workload has been wired into the shared ingress map. It unblocks any pending
+account subscription so the private execution stream only starts delivering
+after its consumer exists.
+*/
+func (live *Live) MarkExecutionsReady() {
+	if live == nil || live.executionsReady == nil {
+		return
+	}
+
+	live.executionsReady.Transition(runtime.READY)
+}
+
+/*
+waitExecutionsReady blocks until MarkExecutionsReady has been called, or the
+session context ends. It waits on the atomic status rather than polling the
+shared ingress map, so it never reads a map that another goroutine is writing.
+*/
+func (live *Live) waitExecutionsReady() {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if live.executionsReady != nil && live.executionsReady.Current() == runtime.READY {
+			return
+		}
+
+		select {
+		case <-live.ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func (live *Live) Client() *spot.WebSocket {
@@ -805,6 +880,10 @@ func (live *Live) TradeBalance() (kraken.TradeBalanceResult, error) {
 }
 
 func (live *Live) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {
+	if live.model != "real" {
+		return live.paper.TradeVolume(symbols)
+	}
+
 	response, err := live.Post(
 		TradeVolumeEndpoint,
 		kraken.NewTradeVolumeRequest(symbols),

@@ -180,6 +180,64 @@ func TestFrameContracts(t *testing.T) {
 	})
 }
 
+func TestFrameMergeChanged(t *testing.T) {
+	slot := MustIntern("test/merge/slot")
+	other := MustIntern("test/merge/other")
+
+	Convey("Given a branch that changed one slot it started with", t, func() {
+		baseline := Frame{}.Set(slot, 1)
+		branch := baseline
+		branch.Put(slot, 2)
+
+		target := Frame{}.Set(slot, 9)
+		target.MergeChanged(baseline, branch)
+
+		Convey("the changed value is overlaid", func() {
+			So(target.MustGet(slot), ShouldEqual, 2.0)
+		})
+	})
+
+	Convey("Given a branch that carried a slot through untouched", t, func() {
+		baseline := Frame{}.Set(slot, 1)
+		branch := baseline
+
+		// The target already moved past the baseline — another branch of the
+		// same fork wrote here. An untouched carry-through must not revert it.
+		target := Frame{}.Set(slot, 9)
+		target.MergeChanged(baseline, branch)
+
+		Convey("the target keeps its own newer value", func() {
+			So(target.MustGet(slot), ShouldEqual, 9.0)
+		})
+	})
+
+	Convey("Given a branch that populated a slot the baseline lacked", t, func() {
+		baseline := Frame{}
+		branch := baseline
+		branch.Put(other, 5)
+
+		target := Frame{}
+		target.MergeChanged(baseline, branch)
+
+		Convey("the new slot is carried over", func() {
+			So(target.MustGet(other), ShouldEqual, 5.0)
+		})
+	})
+
+	Convey("Given a branch that wrote a slot back to the value it already held", t, func() {
+		baseline := Frame{}.Set(slot, 1)
+		branch := baseline
+		branch.Put(slot, 1)
+
+		target := Frame{}.Set(slot, 9)
+		target.MergeChanged(baseline, branch)
+
+		Convey("it reads as unchanged, since the value is what it was", func() {
+			So(target.MustGet(slot), ShouldEqual, 9.0)
+		})
+	})
+}
+
 func BenchmarkFrameGet(b *testing.B) {
 	symbol := MustIntern("benchmark/frame/value")
 	frame := Frame{}.Set(symbol, 7)

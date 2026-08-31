@@ -44,8 +44,8 @@ type Position struct {
 	balance        *Balance
 	recorder       *audit.Recorder
 	store          *PositionStore
-	checkpoint     func()
 	onClose        func()
+	recordFill     func(kind string, execution kraken.ExecutionData)
 	pair           kraken.InstrumentPair
 	seenExecutions map[string]struct{}
 	passage        *passageTracker
@@ -504,17 +504,11 @@ func (position *Position) evaluateExecutable(symbol string, at time.Time) {
 }
 
 /*
-initiateProtectiveExit checkpoints the trigger and submits the initial exit
-order through Exit, which claims the exit atomically. It is idempotent: repeated
-triggering ticks before the exchange acknowledges cannot re-submit, and ordering
-with persistence is preserved by submitting the exit before any checkpoint or
-audit work.
+initiateProtectiveExit submits the initial exit order through Exit, which claims
+the exit atomically. It is idempotent: repeated triggering ticks before the
+exchange acknowledges cannot re-submit.
 */
 func (position *Position) initiateProtectiveExit() {
-	if position.checkpoint != nil {
-		position.checkpoint()
-	}
-
 	if _, err := position.Exit(); err != nil {
 		errnie.Error(err)
 	}
@@ -718,6 +712,10 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 		position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
 		position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
 
+		if position.recordFill != nil {
+			position.recordFill("entry_fill", execution)
+		}
+
 		if position.store != nil {
 			errnie.Error(position.store.Save(position.Holding.Stoploss))
 			errnie.Error(position.store.SaveTrade(position))
@@ -829,6 +827,10 @@ func (position *Position) closeFill(execution kraken.ExecutionData) error {
 	).Div(entryValue)
 	position.Holding.SellableQty = decimal.NewFromInt64(0)
 
+	if position.recordFill != nil {
+		position.recordFill("exit_fill", execution)
+	}
+
 	if position.store != nil {
 		if err := position.store.Delete(position.pair.Symbol); err != nil {
 			return err
@@ -925,10 +927,6 @@ func (position *Position) executeManualExit() error {
 				err,
 			))
 		}
-	}
-
-	if position.checkpoint != nil {
-		position.checkpoint()
 	}
 
 	_, err := position.Exit()

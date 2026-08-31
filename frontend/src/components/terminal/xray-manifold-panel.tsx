@@ -1,6 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
-import { focusStore, resonanceStore } from "#/collections/app";
+import { focusStore, resonanceArtifactStore } from "#/collections/app";
 import {
 	getRetainedResonance,
 	retainResonanceRow,
@@ -14,16 +14,15 @@ const num = (value: unknown, digits: number): string =>
 const ROWS = [
 	{ label: "energy", read: (row: Record<string, unknown>) => num(row.energy, 3) },
 	{ label: "surprise", read: (row: Record<string, unknown>) => num(row.surprise, 3) },
-	{ label: "base alpha", read: (row: Record<string, unknown>) => num(row.taskForecast, 3) },
-	{ label: "horizon", read: (row: Record<string, unknown>) => {
-		const fcast = row.forecast as Record<string, unknown> | undefined;
-		return fcast?.supportedHorizon != null ? `${num(Number(fcast.supportedHorizon), 0)} ticks` : "—";
-	} },
-	{ label: "reach", read: (row: Record<string, unknown>) => {
-		const fcast = row.forecast as Record<string, unknown> | undefined;
-		return fcast?.probeHorizon != null ? `${num(Number(fcast.probeHorizon), 0)} ticks` : "—";
-	} },
-	{ label: "samples", read: (row: Record<string, unknown>) => row.samples != null ? num(Number(row.samples), 0) : "—" },
+	{ label: "base alpha", read: (row: Record<string, unknown>) =>
+		Array.isArray(row.forwardCurve) && row.forwardCurve.length > 0
+			? num(row.forwardCurve[row.forwardCurve.length - 1], 3)
+			: "—" },
+	{ label: "horizon", read: (row: Record<string, unknown>) =>
+		row.supportedHorizon != null ? `${num(Number(row.supportedHorizon), 0)} ticks` : "—" },
+	{ label: "reach", read: (row: Record<string, unknown>) =>
+		Array.isArray(row.forwardCurve) ? `${row.forwardCurve.length} ticks` : "—" },
+	{ label: "samples", read: (row: Record<string, unknown>) => row.resolvedSteps != null ? num(Number(row.resolvedSteps), 0) : "—" },
 	{ label: "task skill", read: (row: Record<string, unknown>) => num(row.taskSkill, 3) },
 	{ label: "task scale", read: (row: Record<string, unknown>) => num(row.taskRelativePrecision, 8) },
 ] as const;
@@ -48,16 +47,16 @@ export const XrayManifoldPanel = () => {
 	const root = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		const updateFromState = (state: typeof resonanceStore.state) => {
+		const updateFromState = (state: typeof resonanceArtifactStore.state) => {
 			if (!root.current) return;
 			const last = state.getLast();
+
 			if (last) {
-				const unpacked = last.unpack();
-				for (const row of unpacked.rows) {
-					const sym = typeof row.symbol === "string" ? row.symbol : "";
-					if (sym) {
-						retainResonanceRow(sym, row as unknown as Record<string, unknown>);
-					}
+				const row = last.unpack() as unknown as Record<string, unknown>;
+				const sym = typeof row.symbol === "string" ? row.symbol : "";
+
+				if (sym) {
+					retainResonanceRow(sym, row);
 				}
 			}
 
@@ -81,15 +80,15 @@ export const XrayManifoldPanel = () => {
 					set(`r${index}`, entry.read(targetRow));
 				}
 
-				const dyn = targetRow.dynamics as Record<string, unknown> | undefined;
+				const dyn = targetRow.dynamicsNamed as Record<string, unknown> | undefined;
 				for (const [index, entry] of DYNAMICS_FIELDS.entries()) {
 					set(`d${index}`, entry.read(dyn));
 				}
 			}
 		};
 
-		updateFromState(resonanceStore.state);
-		const subscription = resonanceStore.subscribe((state) => {
+		updateFromState(resonanceArtifactStore.state);
+		const subscription = resonanceArtifactStore.subscribe((state) => {
 			updateFromState(state);
 		});
 

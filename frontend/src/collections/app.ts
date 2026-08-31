@@ -25,7 +25,6 @@ import type { GraphFrame } from "#/providers/telemetry/telemetry/graph-frame";
 import type { PerspectiveFrame } from "#/providers/telemetry/telemetry/perspective-frame";
 import type { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
 import type { RegulatorFrame } from "#/providers/telemetry/telemetry/regulator-frame";
-import type { ResonanceFrame } from "#/providers/telemetry/telemetry/resonance-frame";
 import type { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
 
 export const DEFAULT_KERNELS = [
@@ -314,14 +313,12 @@ export const addResonanceReading = (row: EnvelopeResonanceArtifact) => {
 
 export const tickStore = createFrameStore<EnvelopeTickerData>(50);
 export const regulatorStore = createFrameStore<RegulatorFrame>(50);
-// resonanceStore carries the ResonanceFrame broadcast (ui.Hub's tagged
-// "RESO" buffer, built from logic/resonance.ResonanceWire) — the manifold's
-// full per-layer/task-skill/energy/surprise diagnostics prediction.tsx
-// renders, none of which EnvelopeState's own flattened resonance field
-// carries. resonanceArtifactStore is the separate, simpler artifact
-// (confidence/calibrated) that arrives on every envelope and feeds the
-// kernel list's live health row.
-export const resonanceStore = createFrameStore<ResonanceFrame>(50);
+// resonanceArtifactStore carries types.Envelope.Resonance, which rides every
+// envelope like every other measurement. It is the whole resonance surface:
+// the predictive coder's per-layer states, latent vector, task-head quality,
+// and forward curve, alongside the confidence/calibrated pair the kernel row
+// reads. There is no second, curated resonance frame — the hub broadcasts the
+// envelope as-is and never reshapes it per consumer.
 export const resonanceArtifactStore =
 	createFrameStore<EnvelopeResonanceArtifact>(50);
 export const cognitionStore = createFrameStore<EnvelopeCognition>(50);

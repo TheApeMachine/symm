@@ -13,8 +13,10 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -58,7 +60,7 @@ decision ID that caused it. Implementors own persistence; the desk only reports
 and never blocks or fails the trade on it.
 */
 type LifecycleRecorder interface {
-	RecordLifecycle(decisionID, symbol, kind, action string, at time.Time)
+	RecordLifecycle(event hindsight.LifecycleEvent)
 }
 
 /*
@@ -84,7 +86,9 @@ desk owns no transport or account objects itself: the caller supplies the API,
 instrument, price, balance, thesis, recorder, and recovery handler it will
 route through, so the live wiring and tests share one construction path rather
 than a half-built struct. positions is the shared open-position map the recovery
-publisher repopulates on boot.
+publisher repopulates on boot. store persists position stoploss and thesis
+checkpoint state; the desk embeds it so SaveThesis and Save resolve against a
+live database rather than a nil pointer.
 */
 func NewDesk(
 	ctx context.Context,
@@ -95,27 +99,29 @@ func NewDesk(
 	thesis *types.Thesis,
 	recorder *audit.Recorder,
 	recovery *Recovery,
+	store *PositionStore,
 	positions *sync.Map,
 	perspective PerspectiveReader,
 ) (*Desk, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	desk := &Desk{
-		ctx:          ctx,
-		cancel:       cancel,
-		status:       types.READY,
-		api:          api,
-		instrument:   instrument,
-		price:        price,
-		balance:      balance,
-		thesis:       thesis,
-		recorder:     recorder,
-		recovery:     recovery,
-		perspective:  perspective,
-		positions:    positions,
-		passage:      types.NewPassageModel(),
-		maxPositions: viper.GetViper().GetInt("trading.slots.normal"),
-		maxReserved:  viper.GetViper().GetInt("trading.slots.reserved"),
+		ctx:           ctx,
+		cancel:        cancel,
+		status:        types.READY,
+		api:           api,
+		instrument:    instrument,
+		price:         price,
+		balance:       balance,
+		thesis:        thesis,
+		recorder:      recorder,
+		recovery:      recovery,
+		PositionStore: store,
+		perspective:   perspective,
+		positions:     positions,
+		passage:       types.NewPassageModel(),
+		maxPositions:  viper.GetViper().GetInt("trading.slots.normal"),
+		maxReserved:   viper.GetViper().GetInt("trading.slots.reserved"),
 	}
 
 	if desk.positions == nil {
@@ -424,6 +430,29 @@ func (desk *Desk) Positions() iter.Seq[*Position] {
 }
 
 /*
+OpenPositionWire projects every open lot into its wire Position shape, excluding
+closed lots. It is the account-state snapshot the positions panel consumes, one
+wire.Position per open lot, in no guaranteed order.
+*/
+func (desk *Desk) OpenPositionWire() []*wire.PositionT {
+	if desk == nil {
+		return nil
+	}
+
+	positions := make([]*wire.PositionT, 0)
+
+	for position := range desk.Positions() {
+		if position.status() == types.CLOSED {
+			continue
+		}
+
+		positions = append(positions, position.Wire())
+	}
+
+	return positions
+}
+
+/*
 Execute turns an arbitrated decision round into desk-owned order work. Entries
 are recorded before submission so the next arbitration round sees committed
 capacity even while the venue acknowledgement or fill is still pending.
@@ -597,15 +626,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		decision.Utility = 0
 		decision.OpportunityMargin = 0
 
-		if err = desk.SaveThesis(desk.thesis); err != nil {
-			_ = stoploss.Close()
-			return errnie.Error(errnie.Err(
-				errnie.IO,
-				"desk: checkpoint admitted entry",
-				err,
-			))
-		}
-
 		position := NewPosition(
 			desk.ctx,
 			desk.api,
@@ -619,27 +639,34 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			desk.perspective,
 		)
 
-		// The exit snapshot belongs to the stoploss moment: the trigger is
-		// the decision that closes the lot, so the thesis is checkpointed
-		// exactly there, mirroring the entry checkpoint above.
-		position.checkpoint = func() {
-			if err := desk.SaveThesis(desk.thesis); err != nil {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					"desk: checkpoint triggered exit",
-					err,
-				))
-			}
-		}
-
 		position.onClose = func() {
 			desk.positions.CompareAndDelete(decision.Symbol, position)
 
 			if desk.lifecycleRecorder != nil {
-				desk.lifecycleRecorder.RecordLifecycle(
-					decision.ID, decision.Symbol, "position_close", "", time.Now().UTC(),
-				)
+				desk.lifecycleRecorder.RecordLifecycle(hindsight.LifecycleEvent{
+					DecisionID: decision.ID,
+					Symbol:     decision.Symbol,
+					Kind:       "position_close",
+					At:         time.Now().UTC(),
+				})
 			}
+		}
+
+		// recordFill persists the authoritative venue fill (entry or exit) as a
+		// decision-correlated Hindsight lifecycle event. It is observational and
+		// never affects the position's transition itself.
+		position.recordFill = func(kind string, execution kraken.ExecutionData) {
+			if desk.lifecycleRecorder == nil {
+				return
+			}
+
+			desk.lifecycleRecorder.RecordLifecycle(hindsight.LifecycleEvent{
+				DecisionID: decision.ID,
+				Symbol:     decision.Symbol,
+				Kind:       kind,
+				At:         execution.Timestamp,
+				Execution:  executionFact(execution),
+			})
 		}
 		desk.positions.Store(decision.Symbol, position)
 
@@ -651,9 +678,13 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		}
 
 		if desk.lifecycleRecorder != nil {
-			desk.lifecycleRecorder.RecordLifecycle(
-				decision.ID, decision.Symbol, "position_open", string(decision.Action), time.Now().UTC(),
-			)
+			desk.lifecycleRecorder.RecordLifecycle(hindsight.LifecycleEvent{
+				DecisionID: decision.ID,
+				Symbol:     decision.Symbol,
+				Kind:       "position_open",
+				Action:     string(decision.Action),
+				At:         time.Now().UTC(),
+			})
 		}
 
 	}
@@ -680,6 +711,48 @@ func (desk *Desk) SetLifecycleRecorder(recorder LifecycleRecorder) {
 	}
 
 	desk.lifecycleRecorder = recorder
+}
+
+/*
+executionFact projects one venue execution record into the Hindsight fill fact
+shape: every field the exchange reported, as strings so a zero decimal never
+distinguishes itself from an absent one on the wire.
+*/
+func executionFact(execution kraken.ExecutionData) *hindsight.ExecutionFact {
+	fact := &hindsight.ExecutionFact{
+		OrderID:       execution.OrderID,
+		ClientOrderID: execution.ClientOrderID,
+		ExecID:        execution.ExecID,
+		Side:          execution.Side,
+		OrderStatus:   execution.OrderStatus,
+		FillAt:        execution.Timestamp,
+	}
+
+	if execution.LastQty != nil {
+		fact.LastQty = execution.LastQty.String()
+	}
+
+	if execution.LastPrice != nil {
+		fact.LastPrice = execution.LastPrice.String()
+	}
+
+	if execution.CumQty != nil {
+		fact.CumQty = execution.CumQty.String()
+	}
+
+	if execution.CumCost != nil {
+		fact.CumCost = execution.CumCost.String()
+	}
+
+	if execution.AvgPrice != nil {
+		fact.AvgPrice = execution.AvgPrice.String()
+	}
+
+	if execution.FeeUsdEquiv != nil {
+		fact.FeeUsdEquiv = execution.FeeUsdEquiv.String()
+	}
+
+	return fact
 }
 
 /*

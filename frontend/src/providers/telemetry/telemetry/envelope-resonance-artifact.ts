@@ -6,6 +6,8 @@
 import * as flatbuffers from 'flatbuffers';
 
 import { EnvelopeFrame, EnvelopeFrameT } from '../telemetry/envelope-frame.js';
+import { EnvelopeResonanceDynamics, EnvelopeResonanceDynamicsT } from '../telemetry/envelope-resonance-dynamics.js';
+import { EnvelopeResonanceLayer, EnvelopeResonanceLayerT } from '../telemetry/envelope-resonance-layer.js';
 import { EnvelopeReturnForecast, EnvelopeReturnForecastT } from '../telemetry/envelope-return-forecast.js';
 
 
@@ -124,8 +126,78 @@ lastResolutionError():number {
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
+layers(index: number, obj?:EnvelopeResonanceLayer):EnvelopeResonanceLayer|null {
+  const offset = this.bb!.__offset(this.bb_pos, 30);
+  return offset ? (obj || new EnvelopeResonanceLayer()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+layersLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 30);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+latent(index: number):number|null {
+  const offset = this.bb!.__offset(this.bb_pos, 32);
+  return offset ? this.bb!.readFloat64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : 0;
+}
+
+latentLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 32);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+latentArray():Float64Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 32);
+  return offset ? new Float64Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
+}
+
+energy():number {
+  const offset = this.bb!.__offset(this.bb_pos, 34);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+surprise():number {
+  const offset = this.bb!.__offset(this.bb_pos, 36);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+taskSkill():number {
+  const offset = this.bb!.__offset(this.bb_pos, 38);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+taskSkillReady():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 40);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+taskRelativePrecision():number {
+  const offset = this.bb!.__offset(this.bb_pos, 42);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+taskRelativePrecisionReady():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 44);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+taskScale():number {
+  const offset = this.bb!.__offset(this.bb_pos, 46);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+taskScaleReady():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 48);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+dynamicsNamed(obj?:EnvelopeResonanceDynamics):EnvelopeResonanceDynamics|null {
+  const offset = this.bb!.__offset(this.bb_pos, 50);
+  return offset ? (obj || new EnvelopeResonanceDynamics()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
 static startEnvelopeResonanceArtifact(builder:flatbuffers.Builder) {
-  builder.startObject(13);
+  builder.startObject(24);
 }
 
 static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
@@ -231,6 +303,79 @@ static addLastResolutionError(builder:flatbuffers.Builder, lastResolutionError:n
   builder.addFieldFloat64(12, lastResolutionError, 0.0);
 }
 
+static addLayers(builder:flatbuffers.Builder, layersOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(13, layersOffset, 0);
+}
+
+static createLayersVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startLayersVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
+static addLatent(builder:flatbuffers.Builder, latentOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(14, latentOffset, 0);
+}
+
+static createLatentVector(builder:flatbuffers.Builder, data:number[]|Float64Array):flatbuffers.Offset;
+/**
+ * @deprecated This Uint8Array overload will be removed in the future.
+ */
+static createLatentVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset;
+static createLatentVector(builder:flatbuffers.Builder, data:number[]|Float64Array|Uint8Array):flatbuffers.Offset {
+  builder.startVector(8, data.length, 8);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addFloat64(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startLatentVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(8, numElems, 8);
+}
+
+static addEnergy(builder:flatbuffers.Builder, energy:number) {
+  builder.addFieldFloat64(15, energy, 0.0);
+}
+
+static addSurprise(builder:flatbuffers.Builder, surprise:number) {
+  builder.addFieldFloat64(16, surprise, 0.0);
+}
+
+static addTaskSkill(builder:flatbuffers.Builder, taskSkill:number) {
+  builder.addFieldFloat64(17, taskSkill, 0.0);
+}
+
+static addTaskSkillReady(builder:flatbuffers.Builder, taskSkillReady:boolean) {
+  builder.addFieldInt8(18, +taskSkillReady, +false);
+}
+
+static addTaskRelativePrecision(builder:flatbuffers.Builder, taskRelativePrecision:number) {
+  builder.addFieldFloat64(19, taskRelativePrecision, 0.0);
+}
+
+static addTaskRelativePrecisionReady(builder:flatbuffers.Builder, taskRelativePrecisionReady:boolean) {
+  builder.addFieldInt8(20, +taskRelativePrecisionReady, +false);
+}
+
+static addTaskScale(builder:flatbuffers.Builder, taskScale:number) {
+  builder.addFieldFloat64(21, taskScale, 0.0);
+}
+
+static addTaskScaleReady(builder:flatbuffers.Builder, taskScaleReady:boolean) {
+  builder.addFieldInt8(22, +taskScaleReady, +false);
+}
+
+static addDynamicsNamed(builder:flatbuffers.Builder, dynamicsNamedOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(23, dynamicsNamedOffset, 0);
+}
+
 static endEnvelopeResonanceArtifact(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 4) // symbol
@@ -252,7 +397,18 @@ unpack(): EnvelopeResonanceArtifactT {
     this.bb!.createScalarList<number>(this.readout.bind(this), this.readoutLength()),
     this.confidence(),
     this.lastResolutionTarget(),
-    this.lastResolutionError()
+    this.lastResolutionError(),
+    this.bb!.createObjList<EnvelopeResonanceLayer, EnvelopeResonanceLayerT>(this.layers.bind(this), this.layersLength()),
+    this.bb!.createScalarList<number>(this.latent.bind(this), this.latentLength()),
+    this.energy(),
+    this.surprise(),
+    this.taskSkill(),
+    this.taskSkillReady(),
+    this.taskRelativePrecision(),
+    this.taskRelativePrecisionReady(),
+    this.taskScale(),
+    this.taskScaleReady(),
+    (this.dynamicsNamed() !== null ? this.dynamicsNamed()!.unpack() : null)
   );
 }
 
@@ -271,6 +427,17 @@ unpackTo(_o: EnvelopeResonanceArtifactT): void {
   _o.confidence = this.confidence();
   _o.lastResolutionTarget = this.lastResolutionTarget();
   _o.lastResolutionError = this.lastResolutionError();
+  _o.layers = this.bb!.createObjList<EnvelopeResonanceLayer, EnvelopeResonanceLayerT>(this.layers.bind(this), this.layersLength());
+  _o.latent = this.bb!.createScalarList<number>(this.latent.bind(this), this.latentLength());
+  _o.energy = this.energy();
+  _o.surprise = this.surprise();
+  _o.taskSkill = this.taskSkill();
+  _o.taskSkillReady = this.taskSkillReady();
+  _o.taskRelativePrecision = this.taskRelativePrecision();
+  _o.taskRelativePrecisionReady = this.taskRelativePrecisionReady();
+  _o.taskScale = this.taskScale();
+  _o.taskScaleReady = this.taskScaleReady();
+  _o.dynamicsNamed = (this.dynamicsNamed() !== null ? this.dynamicsNamed()!.unpack() : null);
 }
 }
 
@@ -288,7 +455,18 @@ constructor(
   public readout: (number)[] = [],
   public confidence: number = 0.0,
   public lastResolutionTarget: number = 0.0,
-  public lastResolutionError: number = 0.0
+  public lastResolutionError: number = 0.0,
+  public layers: (EnvelopeResonanceLayerT)[] = [],
+  public latent: (number)[] = [],
+  public energy: number = 0.0,
+  public surprise: number = 0.0,
+  public taskSkill: number = 0.0,
+  public taskSkillReady: boolean = false,
+  public taskRelativePrecision: number = 0.0,
+  public taskRelativePrecisionReady: boolean = false,
+  public taskScale: number = 0.0,
+  public taskScaleReady: boolean = false,
+  public dynamicsNamed: EnvelopeResonanceDynamicsT|null = null
 ){}
 
 
@@ -299,6 +477,9 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const forwardCurve = EnvelopeResonanceArtifact.createForwardCurveVector(builder, this.forwardCurve);
   const forwardRetention = EnvelopeResonanceArtifact.createForwardRetentionVector(builder, this.forwardRetention);
   const readout = EnvelopeResonanceArtifact.createReadoutVector(builder, this.readout);
+  const layers = EnvelopeResonanceArtifact.createLayersVector(builder, builder.createObjectOffsetList(this.layers));
+  const latent = EnvelopeResonanceArtifact.createLatentVector(builder, this.latent);
+  const dynamicsNamed = (this.dynamicsNamed !== null ? this.dynamicsNamed!.pack(builder) : 0);
 
   EnvelopeResonanceArtifact.startEnvelopeResonanceArtifact(builder);
   EnvelopeResonanceArtifact.addSymbol(builder, symbol);
@@ -314,6 +495,17 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   EnvelopeResonanceArtifact.addConfidence(builder, this.confidence);
   EnvelopeResonanceArtifact.addLastResolutionTarget(builder, this.lastResolutionTarget);
   EnvelopeResonanceArtifact.addLastResolutionError(builder, this.lastResolutionError);
+  EnvelopeResonanceArtifact.addLayers(builder, layers);
+  EnvelopeResonanceArtifact.addLatent(builder, latent);
+  EnvelopeResonanceArtifact.addEnergy(builder, this.energy);
+  EnvelopeResonanceArtifact.addSurprise(builder, this.surprise);
+  EnvelopeResonanceArtifact.addTaskSkill(builder, this.taskSkill);
+  EnvelopeResonanceArtifact.addTaskSkillReady(builder, this.taskSkillReady);
+  EnvelopeResonanceArtifact.addTaskRelativePrecision(builder, this.taskRelativePrecision);
+  EnvelopeResonanceArtifact.addTaskRelativePrecisionReady(builder, this.taskRelativePrecisionReady);
+  EnvelopeResonanceArtifact.addTaskScale(builder, this.taskScale);
+  EnvelopeResonanceArtifact.addTaskScaleReady(builder, this.taskScaleReady);
+  EnvelopeResonanceArtifact.addDynamicsNamed(builder, dynamicsNamed);
 
   return EnvelopeResonanceArtifact.endEnvelopeResonanceArtifact(builder);
 }

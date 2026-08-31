@@ -859,6 +859,62 @@ table EnvelopeResonanceArtifact {
   confidence:double;
   lastResolutionTarget:double;
   lastResolutionError:double;
+
+  // The predictive coder's own state, projected from the ResonanceManifold the
+  // artifact already carries. Without these the envelope described the forecast
+  // but not the model that produced it, so the predictive-coding surface had
+  // nothing to render.
+  layers:[EnvelopeResonanceLayer];
+  latent:[double];
+  energy:double;
+  surprise:double;
+  taskSkill:double;
+  taskSkillReady:bool;
+  taskRelativePrecision:double;
+  taskRelativePrecisionReady:bool;
+  taskScale:double;
+  taskScaleReady:bool;
+
+  // The continuous dynamics as named scalars. The dynamics field above crosses
+  // as an opaque mask/data frame, which a consumer cannot read a named quantity
+  // out of, so the physical frame is projected here too.
+  dynamicsNamed:EnvelopeResonanceDynamics;
+}
+
+/*
+The predictive coder's physical dynamics frame, named. Mirrors the slots
+nomagique/learning stamps into the dynamics Frame.
+*/
+table EnvelopeResonanceDynamics {
+  ready:double;
+  deltaTime:double;
+  position:double;
+  velocity:double;
+  acceleration:double;
+  memory:double;
+  memoryScale:double;
+  storedEnergy:double;
+  suppliedPower:double;
+  dissipation:double;
+  passivityResidue:double;
+  continuousVariance:double;
+  jumpAmplitude:double;
+  jumpVariance:double;
+  sampleCount:double;
+  rotorScalar:double;
+  rotorBivector:double;
+  equivarianceNorm:double;
+}
+
+/*
+One layer of the hierarchical predictive coder: what it believes (state), what
+it predicted for the layer below, and how wrong that prediction was.
+*/
+table EnvelopeResonanceLayer {
+  state:[double];
+  prediction:[double];
+  errorNorm:double;
+  temporal:bool;
 }
 
 table EnvelopeSensoriumState {
@@ -1085,6 +1141,12 @@ table EnvelopeState {
   // from the next market event, instead of waiting for a broker poll it has
   // no way to trigger.
   equity:EquityFrame;
+
+  // Open positions, riding the envelope for the same reason as equity: a
+  // reconnect recovers the account from the next market event rather than a
+  // poll it cannot trigger. positions is the desk's open-lot set (one Position
+  // per row, closed lots excluded).
+  positions:PositionsFrame;
 }
 
 table EnvelopeStateFrame { state:EnvelopeState (required); }

@@ -1,10 +1,9 @@
 import { useSelector } from "@tanstack/react-store";
 import type { CSSProperties } from "react";
-import { focusStore, resonanceStore } from "#/collections/app";
+import { focusStore, resonanceArtifactStore } from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
-import { Resonance } from "#/providers/telemetry/telemetry/resonance";
-import { ResonanceForecast } from "#/providers/telemetry/telemetry/resonance-forecast";
-import { ResonanceLayer } from "#/providers/telemetry/telemetry/resonance-layer";
+import type { EnvelopeResonanceArtifact } from "#/providers/telemetry/telemetry/envelope-resonance-artifact";
+import { EnvelopeResonanceLayer } from "#/providers/telemetry/telemetry/envelope-resonance-layer";
 
 export const vectorSlotTransform = (slot: number, slotCount: number): string =>
 	`translateX(${(slot / slotCount) * 100}%) scaleX(${1 / slotCount})`;
@@ -30,36 +29,55 @@ const dir = (value: number | undefined | null): string => {
 	return "flat";
 };
 
-const resObj = new Resonance();
-const forecastObj = new ResonanceForecast();
-const layerObj = new ResonanceLayer();
+const layerObj = new EnvelopeResonanceLayer();
+
+/*
+The resonance artifact rides every envelope (types.Envelope.Resonance), and the
+artifact store is not pre-scoped to one symbol — the solver keys its coder per
+symbol across the cross-section — so the focused symbol is selected here, the
+same way the other resonance surfaces do it.
+*/
+const useArtifact = (): EnvelopeResonanceArtifact | undefined => {
+	const symbol = useSelector(focusStore, (state) => state);
+
+	return useSelector(resonanceArtifactStore, (state) =>
+		state.findLast((row) => row.symbol() === symbol),
+	);
+};
+
+/*
+taskCalibration and taskSkillStatus read the coder's own readiness as words.
+They were assembled backend-side when the panel had a curated frame of its own;
+with the artifact carrying the raw quantities, the wording belongs here — it is
+presentation, and the envelope stays the numbers it measured.
+*/
+const taskCalibration = (artifact: EnvelopeResonanceArtifact): string =>
+	artifact.calibrated() ? "calibrated" : "calibrating";
+
+const taskSkillStatus = (artifact: EnvelopeResonanceArtifact): string => {
+	if (!artifact.taskSkillReady()) return "calibrating";
+
+	const skill = artifact.taskSkill();
+
+	if (skill > 1) return "above baseline";
+	if (skill >= 0.5) return "baseline";
+
+	return "below baseline";
+};
+
+/*
+The forward curve is cumulative per horizon: element k predicts the direction of
+the move over the next k+1 ticks, so the call for the supported horizon is the
+curve's last element.
+*/
+const horizonCall = (artifact: EnvelopeResonanceArtifact): number | null => {
+	const length = artifact.forwardCurveLength();
+
+	return length === 0 ? null : artifact.forwardCurve(length - 1);
+};
 
 const ScalarDiagnostics = () => {
-	const symbol = useSelector(focusStore, (state) => state);
-	const frameWithSymbol = useSelector(resonanceStore, (state) =>
-		state.findLast((frame) => {
-			for (let i = 0; i < frame.rowsLength(); i++) {
-				const row = frame.rows(i, resObj);
-				if (row && row.symbol() === symbol) {
-					return true;
-				}
-			}
-			return false;
-		}),
-	);
-
-	let res: Resonance | null = null;
-	if (frameWithSymbol) {
-		for (let i = 0; i < frameWithSymbol.rowsLength(); i++) {
-			const row = frameWithSymbol.rows(i, resObj);
-			if (row && row.symbol() === symbol) {
-				res = row;
-				break;
-			}
-		}
-	}
-
-	const fcast = res ? res.forecast(forecastObj) : null;
+	const res = useArtifact();
 
 	return (
 		<div className="grid grid-cols-5 gap-px overflow-hidden border border-(--line) bg-(--line)">
@@ -78,33 +96,33 @@ const ScalarDiagnostics = () => {
 			<div className="bg-[#0a0907] px-2 py-1.5">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">issued t</div>
 				<div data-p="issued" className="mt-0.5 font-mono text-[11px] text-(--f2)">
-					{res ? dir(res.lastResolvedForecast()) : "—"}
+					{res ? dir(res.lastResolutionTarget()) : "—"}
 				</div>
 			</div>
 			<div className="bg-[#0a0907] px-2 py-1.5">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">realized t+1</div>
 				<div data-p="realized" className="mt-0.5 font-mono text-[11px] text-(--f2)">
-					{res ? dir(res.lastRealizedReturn()) : "—"}
+					{res ? dir(res.lastResolutionTarget()) : "—"}
 				</div>
 			</div>
 			<div className="bg-[#0a0907] px-2 py-1.5">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">forecast error</div>
 				<div data-p="error" className="mt-0.5 font-mono text-[11px] text-(--f2)">
-					{res ? fmt(res.lastForecastError(), 0) : "—"}
+					{res ? fmt(res.lastResolutionError(), 0) : "—"}
 				</div>
 			</div>
 			<div className="bg-[#0a0907] px-2 py-1.5">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">horizon / reach</div>
 				<div className="mt-0.5 flex gap-1 font-mono text-[11px] text-(--f2)">
-					<span data-p="horizon">{fcast ? fmt(Number(fcast.supportedHorizon()), 0) : "—"}</span>
+					<span data-p="horizon">{res ? fmt(Number(res.supportedHorizon()), 0) : "—"}</span>
 					<span>/</span>
-					<span data-p="reach">{fcast ? fmt(Number(fcast.probeHorizon()), 0) : "—"}</span>
+					<span data-p="reach">{res ? fmt(res.forwardCurveLength(), 0) : "—"}</span>
 				</div>
 			</div>
 			<div className="bg-[#0a0907] px-2 py-1.5">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">resolved samples</div>
 				<div data-p="samples" className="mt-0.5 font-mono text-[11px] text-(--acc)">
-					{res ? String(res.samples()) : "—"}
+					{res ? String(res.resolvedSteps()) : "—"}
 				</div>
 			</div>
 			<div className="bg-[#0a0907] px-2 py-1.5">
@@ -124,29 +142,7 @@ const ScalarDiagnostics = () => {
 };
 
 const VerdictRow = () => {
-	const symbol = useSelector(focusStore, (state) => state);
-	const frameWithSymbol = useSelector(resonanceStore, (state) =>
-		state.findLast((frame) => {
-			for (let i = 0; i < frame.rowsLength(); i++) {
-				const row = frame.rows(i, resObj);
-				if (row && row.symbol() === symbol) {
-					return true;
-				}
-			}
-			return false;
-		}),
-	);
-
-	let res: Resonance | null = null;
-	if (frameWithSymbol) {
-		for (let i = 0; i < frameWithSymbol.rowsLength(); i++) {
-			const row = frameWithSymbol.rows(i, resObj);
-			if (row && row.symbol() === symbol) {
-				res = row;
-				break;
-			}
-		}
-	}
+	const res = useArtifact();
 
 	return (
 		<div className="grid grid-cols-3 gap-px border border-(--line) bg-(--line)">
@@ -155,7 +151,7 @@ const VerdictRow = () => {
 				<div className="flex items-baseline gap-2">
 					<span className="size-1.5 shrink-0 self-center rounded-full bg-(--acc)" />
 					<span data-p="calibration" className="truncate font-mono text-[13px] uppercase tracking-wide text-(--f2)">
-						{res ? String(res.taskCalibration() ?? "—") : "—"}
+						{res ? taskCalibration(res) : "—"}
 					</span>
 				</div>
 			</div>
@@ -164,7 +160,7 @@ const VerdictRow = () => {
 				<div className="flex items-baseline gap-2">
 					<span className="size-1.5 shrink-0 self-center rounded-full bg-(--acc)" />
 					<span data-p="skillStatus" className="truncate font-mono text-[13px] uppercase tracking-wide text-(--f2)">
-						{res ? String(res.taskSkillStatus() ?? "—") : "—"}
+						{res ? taskSkillStatus(res) : "—"}
 					</span>
 				</div>
 			</div>
@@ -173,7 +169,7 @@ const VerdictRow = () => {
 				<div className="flex items-center gap-2">
 					<span className="inline-block shrink-0 text-[15px] leading-none text-(--acc)">▶</span>
 					<span data-p="forecast" className="truncate font-mono text-[13px] text-(--acc)">
-						{res ? dir(res.taskForecast()) : "—"}
+						{res ? dir(horizonCall(res)) : "—"}
 					</span>
 				</div>
 			</div>
@@ -265,29 +261,7 @@ pair, followed by the settled latent vector and the signed forward-direction
 curve. All lanes read the focused carrier row from the resonance store.
 */
 const HierarchyLanes = () => {
-	const symbol = useSelector(focusStore, (state) => state);
-	const frameWithSymbol = useSelector(resonanceStore, (state) =>
-		state.findLast((frame) => {
-			for (let i = 0; i < frame.rowsLength(); i++) {
-				const row = frame.rows(i, resObj);
-				if (row && row.symbol() === symbol) {
-					return true;
-				}
-			}
-			return false;
-		}),
-	);
-
-	let res: Resonance | null = null;
-	if (frameWithSymbol) {
-		for (let i = 0; i < frameWithSymbol.rowsLength(); i++) {
-			const row = frameWithSymbol.rows(i, resObj);
-			if (row && row.symbol() === symbol) {
-				res = row;
-				break;
-			}
-		}
-	}
+	const res = useArtifact();
 
 	const layerCount = res ? res.layersLength() : 0;
 	const layers = Array.from({ length: layerCount }, (_, index) => {
@@ -301,8 +275,6 @@ const HierarchyLanes = () => {
 			ghost: toVector(layer?.predictionArray()),
 		};
 	});
-	const forecast = res ? res.forecast(forecastObj) : null;
-
 	return (
 		<>
 			{layers.map((layer) => (
@@ -318,7 +290,7 @@ const HierarchyLanes = () => {
 				label="Forward direction shape"
 				meta="signed direction lean · t+1 → t+k"
 				color="bg-(--acc)"
-				values={toVector(forecast?.forwardCurveArray())}
+				values={toVector(res?.forwardCurveArray())}
 			/>
 		</>
 	);

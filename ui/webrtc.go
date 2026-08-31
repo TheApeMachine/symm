@@ -5,11 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/pion/webrtc/v4"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/telemetry/generated/telemetry"
+	"github.com/theapemachine/symm/types"
 )
 
 const (
@@ -90,6 +94,121 @@ func (fluidTransport *FluidRTC) Run() error {
 	<-fluidTransport.ctx.Done()
 
 	return fluidTransport.Error()
+}
+
+/*
+Publish encodes one manifold advance into a ManifoldFrame and fans it to every
+connected viewer that owns the manifold channel. A viewer without that channel
+is skipped; a fully-booked channel returns an error so the caller can observe
+backpressure rather than silently dropping a state.
+*/
+func (fluidTransport *FluidRTC) Publish(state *types.ManifoldState) error {
+	if state == nil {
+		return nil
+	}
+
+	sequence := atomic.AddUint64(&fluidTransport.sequence, 1)
+	payload := encodeManifold(state, sequence)
+
+	fluidTransport.peersMutex.RLock()
+	defer fluidTransport.peersMutex.RUnlock()
+
+	for _, peer := range fluidTransport.peers {
+		peer.mutex.RLock()
+		channel := peer.channels[types.ManifoldChannel]
+		peer.mutex.RUnlock()
+
+		if channel == nil {
+			continue
+		}
+
+		select {
+		case channel.pending <- payload:
+		case <-channel.ctx.Done():
+		case <-fluidTransport.ctx.Done():
+			return fluidTransport.ctx.Err()
+		default:
+			return fluidError("manifold channel queue is full", nil)
+		}
+	}
+
+	return nil
+}
+
+/*
+encodeManifold mirrors one *types.ManifoldState into the ManifoldFrame the
+browser decodes, wrapped in the SYMM-identified Envelope the frontend's
+decodeManifold expects: the resident sensorium State and Reading, the packed
+Eulerian grid fields, and the spectral mode lattice, field for field.
+*/
+func encodeManifold(state *types.ManifoldState, sequence uint64) []byte {
+	builder := flatbuffers.NewBuilder(0)
+
+	reading := &telemetry.ManifoldReadingT{
+		Divergence:       state.Reading.Divergence,
+		GuidanceSpeed:    state.Reading.GuidanceSpeed,
+		CoherenceMag2:    state.Reading.CoherenceMag2,
+		PressureGradNorm: state.Reading.PressureGradNorm,
+		ViscosityProxy:   state.Reading.ViscosityProxy,
+		KuramotoR:        state.Reading.KuramotoR,
+	}
+
+	modes := make([]*telemetry.WaveModeT, len(state.Modes))
+
+	for index, mode := range state.Modes {
+		modes[index] = &telemetry.WaveModeT{
+			Omega:     mode.Omega,
+			Real:      mode.Real,
+			Imaginary: mode.Imag,
+			Linewidth: mode.Linewidth,
+		}
+	}
+
+	frame := &telemetry.ManifoldFrameT{
+		Sequence:      sequence,
+		N:             int64(state.State.N),
+		Bytes:         state.State.Bytes,
+		Seqs:          state.State.Seqs,
+		TokenIds:      state.State.TokenIDs,
+		ContentIds:    state.State.ContentIDs,
+		Phase:         state.State.Phase,
+		Omega:         state.State.Omega,
+		Energy:        state.State.Energy,
+		Mass:          state.State.Mass,
+		Heat:          state.State.Heat,
+		Amp:           state.State.Amp,
+		Pos:           state.State.Pos,
+		Vel:           state.State.Vel,
+		Clamped:       state.State.Clamped,
+		Dark:          state.State.Dark,
+		Reading:       reading,
+		GridX:         int32(state.GridX),
+		GridY:         int32(state.GridY),
+		GridZ:         int32(state.GridZ),
+		GridSpacing:   state.GridSpacing,
+		MomRho:        state.MomRho,
+		FieldEnergy:   state.FieldEnergy,
+		WaveReal:      state.WaveReal,
+		WaveImag:      state.WaveImag,
+		DensityScale:  state.DensityScale,
+		MomentumScale: state.MomentumScale,
+		EnergyScale:   state.EnergyScale,
+		WaveScale:     state.WaveScale,
+		Modes:         modes,
+	}
+
+	envelope := &telemetry.EnvelopeT{
+		Sequence: sequence,
+		Frame: &telemetry.FrameT{
+			Type:  telemetry.FrameManifoldFrame,
+			Value: frame,
+		},
+	}
+
+	offset := envelope.Pack(builder)
+	telemetry.FinishEnvelopeBuffer(builder, offset)
+
+	return builder.FinishedBytes()
 }
 
 /*

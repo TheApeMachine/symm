@@ -20,6 +20,17 @@ type EnvelopeResonanceArtifactT struct {
 	Confidence float64 `json:"confidence"`
 	LastResolutionTarget float64 `json:"lastResolutionTarget"`
 	LastResolutionError float64 `json:"lastResolutionError"`
+	Layers []*EnvelopeResonanceLayerT `json:"layers"`
+	Latent []float64 `json:"latent"`
+	Energy float64 `json:"energy"`
+	Surprise float64 `json:"surprise"`
+	TaskSkill float64 `json:"taskSkill"`
+	TaskSkillReady bool `json:"taskSkillReady"`
+	TaskRelativePrecision float64 `json:"taskRelativePrecision"`
+	TaskRelativePrecisionReady bool `json:"taskRelativePrecisionReady"`
+	TaskScale float64 `json:"taskScale"`
+	TaskScaleReady bool `json:"taskScaleReady"`
+	DynamicsNamed *EnvelopeResonanceDynamicsT `json:"dynamicsNamed"`
 }
 
 func (t *EnvelopeResonanceArtifactT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -56,6 +67,29 @@ func (t *EnvelopeResonanceArtifactT) Pack(builder *flatbuffers.Builder) flatbuff
 		}
 		readoutOffset = builder.EndVector(readoutLength)
 	}
+	layersOffset := flatbuffers.UOffsetT(0)
+	if t.Layers != nil {
+		layersLength := len(t.Layers)
+		layersOffsets := make([]flatbuffers.UOffsetT, layersLength)
+		for j := 0; j < layersLength; j++ {
+			layersOffsets[j] = t.Layers[j].Pack(builder)
+		}
+		EnvelopeResonanceArtifactStartLayersVector(builder, layersLength)
+		for j := layersLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(layersOffsets[j])
+		}
+		layersOffset = builder.EndVector(layersLength)
+	}
+	latentOffset := flatbuffers.UOffsetT(0)
+	if t.Latent != nil {
+		latentLength := len(t.Latent)
+		EnvelopeResonanceArtifactStartLatentVector(builder, latentLength)
+		for j := latentLength - 1; j >= 0; j-- {
+			builder.PrependFloat64(t.Latent[j])
+		}
+		latentOffset = builder.EndVector(latentLength)
+	}
+	dynamicsNamedOffset := t.DynamicsNamed.Pack(builder)
 	EnvelopeResonanceArtifactStart(builder)
 	EnvelopeResonanceArtifactAddSymbol(builder, symbolOffset)
 	EnvelopeResonanceArtifactAddAtNs(builder, t.AtNs)
@@ -70,6 +104,17 @@ func (t *EnvelopeResonanceArtifactT) Pack(builder *flatbuffers.Builder) flatbuff
 	EnvelopeResonanceArtifactAddConfidence(builder, t.Confidence)
 	EnvelopeResonanceArtifactAddLastResolutionTarget(builder, t.LastResolutionTarget)
 	EnvelopeResonanceArtifactAddLastResolutionError(builder, t.LastResolutionError)
+	EnvelopeResonanceArtifactAddLayers(builder, layersOffset)
+	EnvelopeResonanceArtifactAddLatent(builder, latentOffset)
+	EnvelopeResonanceArtifactAddEnergy(builder, t.Energy)
+	EnvelopeResonanceArtifactAddSurprise(builder, t.Surprise)
+	EnvelopeResonanceArtifactAddTaskSkill(builder, t.TaskSkill)
+	EnvelopeResonanceArtifactAddTaskSkillReady(builder, t.TaskSkillReady)
+	EnvelopeResonanceArtifactAddTaskRelativePrecision(builder, t.TaskRelativePrecision)
+	EnvelopeResonanceArtifactAddTaskRelativePrecisionReady(builder, t.TaskRelativePrecisionReady)
+	EnvelopeResonanceArtifactAddTaskScale(builder, t.TaskScale)
+	EnvelopeResonanceArtifactAddTaskScaleReady(builder, t.TaskScaleReady)
+	EnvelopeResonanceArtifactAddDynamicsNamed(builder, dynamicsNamedOffset)
 	return EnvelopeResonanceArtifactEnd(builder)
 }
 
@@ -99,6 +144,27 @@ func (rcv *EnvelopeResonanceArtifact) UnPackTo(t *EnvelopeResonanceArtifactT) {
 	t.Confidence = rcv.Confidence()
 	t.LastResolutionTarget = rcv.LastResolutionTarget()
 	t.LastResolutionError = rcv.LastResolutionError()
+	layersLength := rcv.LayersLength()
+	t.Layers = make([]*EnvelopeResonanceLayerT, layersLength)
+	for j := 0; j < layersLength; j++ {
+		x := EnvelopeResonanceLayer{}
+		rcv.Layers(&x, j)
+		t.Layers[j] = x.UnPack()
+	}
+	latentLength := rcv.LatentLength()
+	t.Latent = make([]float64, latentLength)
+	for j := 0; j < latentLength; j++ {
+		t.Latent[j] = rcv.Latent(j)
+	}
+	t.Energy = rcv.Energy()
+	t.Surprise = rcv.Surprise()
+	t.TaskSkill = rcv.TaskSkill()
+	t.TaskSkillReady = rcv.TaskSkillReady()
+	t.TaskRelativePrecision = rcv.TaskRelativePrecision()
+	t.TaskRelativePrecisionReady = rcv.TaskRelativePrecisionReady()
+	t.TaskScale = rcv.TaskScale()
+	t.TaskScaleReady = rcv.TaskScaleReady()
+	t.DynamicsNamed = rcv.DynamicsNamed(nil).UnPack()
 }
 
 func (rcv *EnvelopeResonanceArtifact) UnPack() *EnvelopeResonanceArtifactT {
@@ -341,8 +407,163 @@ func (rcv *EnvelopeResonanceArtifact) MutateLastResolutionError(n float64) bool 
 	return rcv._tab.MutateFloat64Slot(28, n)
 }
 
+func (rcv *EnvelopeResonanceArtifact) Layers(obj *EnvelopeResonanceLayer, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *EnvelopeResonanceArtifact) LayersLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *EnvelopeResonanceArtifact) Latent(j int) float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.GetFloat64(a + flatbuffers.UOffsetT(j*8))
+	}
+	return 0
+}
+
+func (rcv *EnvelopeResonanceArtifact) LatentLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *EnvelopeResonanceArtifact) MutateLatent(j int, n float64) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.MutateFloat64(a+flatbuffers.UOffsetT(j*8), n)
+	}
+	return false
+}
+
+func (rcv *EnvelopeResonanceArtifact) Energy() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *EnvelopeResonanceArtifact) MutateEnergy(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(34, n)
+}
+
+func (rcv *EnvelopeResonanceArtifact) Surprise() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *EnvelopeResonanceArtifact) MutateSurprise(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(36, n)
+}
+
+func (rcv *EnvelopeResonanceArtifact) TaskSkill() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *EnvelopeResonanceArtifact) MutateTaskSkill(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(38, n)
+}
+
+func (rcv *EnvelopeResonanceArtifact) TaskSkillReady() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *EnvelopeResonanceArtifact) MutateTaskSkillReady(n bool) bool {
+	return rcv._tab.MutateBoolSlot(40, n)
+}
+
+func (rcv *EnvelopeResonanceArtifact) TaskRelativePrecision() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *EnvelopeResonanceArtifact) MutateTaskRelativePrecision(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(42, n)
+}
+
+func (rcv *EnvelopeResonanceArtifact) TaskRelativePrecisionReady() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *EnvelopeResonanceArtifact) MutateTaskRelativePrecisionReady(n bool) bool {
+	return rcv._tab.MutateBoolSlot(44, n)
+}
+
+func (rcv *EnvelopeResonanceArtifact) TaskScale() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *EnvelopeResonanceArtifact) MutateTaskScale(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(46, n)
+}
+
+func (rcv *EnvelopeResonanceArtifact) TaskScaleReady() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *EnvelopeResonanceArtifact) MutateTaskScaleReady(n bool) bool {
+	return rcv._tab.MutateBoolSlot(48, n)
+}
+
+func (rcv *EnvelopeResonanceArtifact) DynamicsNamed(obj *EnvelopeResonanceDynamics) *EnvelopeResonanceDynamics {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(EnvelopeResonanceDynamics)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
 func EnvelopeResonanceArtifactStart(builder *flatbuffers.Builder) {
-	builder.StartObject(13)
+	builder.StartObject(24)
 }
 func EnvelopeResonanceArtifactAddSymbol(builder *flatbuffers.Builder, symbol flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(symbol), 0)
@@ -391,6 +612,45 @@ func EnvelopeResonanceArtifactAddLastResolutionTarget(builder *flatbuffers.Build
 }
 func EnvelopeResonanceArtifactAddLastResolutionError(builder *flatbuffers.Builder, lastResolutionError float64) {
 	builder.PrependFloat64Slot(12, lastResolutionError, 0.0)
+}
+func EnvelopeResonanceArtifactAddLayers(builder *flatbuffers.Builder, layers flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(13, flatbuffers.UOffsetT(layers), 0)
+}
+func EnvelopeResonanceArtifactStartLayersVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func EnvelopeResonanceArtifactAddLatent(builder *flatbuffers.Builder, latent flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(latent), 0)
+}
+func EnvelopeResonanceArtifactStartLatentVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(8, numElems, 8)
+}
+func EnvelopeResonanceArtifactAddEnergy(builder *flatbuffers.Builder, energy float64) {
+	builder.PrependFloat64Slot(15, energy, 0.0)
+}
+func EnvelopeResonanceArtifactAddSurprise(builder *flatbuffers.Builder, surprise float64) {
+	builder.PrependFloat64Slot(16, surprise, 0.0)
+}
+func EnvelopeResonanceArtifactAddTaskSkill(builder *flatbuffers.Builder, taskSkill float64) {
+	builder.PrependFloat64Slot(17, taskSkill, 0.0)
+}
+func EnvelopeResonanceArtifactAddTaskSkillReady(builder *flatbuffers.Builder, taskSkillReady bool) {
+	builder.PrependBoolSlot(18, taskSkillReady, false)
+}
+func EnvelopeResonanceArtifactAddTaskRelativePrecision(builder *flatbuffers.Builder, taskRelativePrecision float64) {
+	builder.PrependFloat64Slot(19, taskRelativePrecision, 0.0)
+}
+func EnvelopeResonanceArtifactAddTaskRelativePrecisionReady(builder *flatbuffers.Builder, taskRelativePrecisionReady bool) {
+	builder.PrependBoolSlot(20, taskRelativePrecisionReady, false)
+}
+func EnvelopeResonanceArtifactAddTaskScale(builder *flatbuffers.Builder, taskScale float64) {
+	builder.PrependFloat64Slot(21, taskScale, 0.0)
+}
+func EnvelopeResonanceArtifactAddTaskScaleReady(builder *flatbuffers.Builder, taskScaleReady bool) {
+	builder.PrependBoolSlot(22, taskScaleReady, false)
+}
+func EnvelopeResonanceArtifactAddDynamicsNamed(builder *flatbuffers.Builder, dynamicsNamed flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(23, flatbuffers.UOffsetT(dynamicsNamed), 0)
 }
 func EnvelopeResonanceArtifactEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

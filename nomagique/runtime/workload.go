@@ -17,6 +17,7 @@ type Workload[T any] struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	err     error
+	status  *Status
 	channel disruptor.Disruptor
 	buffer  []T
 	// headSeq is the highest sequence Push has committed to the ring — the
@@ -36,6 +37,7 @@ func NewWorkload[T any](
 	workload := &Workload[T]{
 		ctx:    ctx,
 		cancel: cancel,
+		status: NewStatus(),
 		buffer: make([]T, system.Cfg.Runtime.Workspace.Buffer),
 	}
 	workload.headSeq.Store(-1)
@@ -63,6 +65,7 @@ func NewWorkload[T any](
 	)
 
 	go workload.channel.Listen()
+	workload.status.Transition(READY)
 	return workload
 }
 
@@ -95,4 +98,13 @@ func (workload *Workload[T]) Push(payload T) {
 func (workload *Workload[T]) Close() error {
 	workload.cancel()
 	return workload.channel.Close()
+}
+
+/*
+Status reports the workload's readiness. It is READY once the ring and its
+listener are live — i.e. the moment NewWorkload returns — so a consumer can
+gate on it before producing into the ring.
+*/
+func (workload *Workload[T]) Status() *Status {
+	return workload.status
 }

@@ -30,6 +30,8 @@ func IngestEnvelopes(
 		return fromTrade(parsed, captureID)
 	case "level3":
 		return fromLevel3(parsed, captureID)
+	case "executions":
+		return fromExecution(parsed, captureID)
 	default:
 		return nil, nil
 	}
@@ -99,6 +101,29 @@ func fromLevel3(parsed any, captureID hindsight.CaptureIdentity) ([]*types.Envel
 
 		envelopes = append(envelopes, envelope)
 		manifests = append(manifests, manifestFor(envelope, captureID, uint64(ordinal), "level3", data.Symbol))
+	}
+
+	return envelopes, manifests
+}
+
+func fromExecution(parsed any, captureID hindsight.CaptureIdentity) ([]*types.Envelope, []hindsight.EnvelopeManifest) {
+	execution, valid := parsed.(*kraken.Execution)
+
+	if !valid || execution == nil {
+		return nil, nil
+	}
+
+	envelopes := make([]*types.Envelope, 0, len(execution.Data))
+	manifests := make([]hindsight.EnvelopeManifest, 0, len(execution.Data))
+
+	for ordinal, data := range execution.Data {
+		envelope := types.NewEnvelope(types.EnvelopeExecution)
+		envelope.ExecutionData = data
+		envelope.CaptureID = captureID
+		envelope.CaptureOrdinal = uint64(ordinal)
+
+		envelopes = append(envelopes, envelope)
+		manifests = append(manifests, manifestFor(envelope, captureID, uint64(ordinal), "executions", data.Symbol))
 	}
 
 	return envelopes, manifests

@@ -102,11 +102,43 @@ func (node tickNode) Step(envelope *types.Envelope) *types.Envelope {
 		envelope.Equity = types.NewEquityReading(balance)
 	}
 
+	// Stamp the open-lot set so the positions panel recovers from the same
+	// market event as equity, rather than a broker poll the dashboard has no
+	// way to trigger.
+	envelope.Positions = node.desk.OpenPositionWire()
+
 	return envelope
 }
 
 func (node tickNode) StepBacklog(envelope *types.Envelope, backlog int64) *types.Envelope {
 	return node.Step(envelope)
+}
+
+/*
+executionNode routes one confirmed execution record to the broker desk so the
+matching open position can advance its fill state. It is the account-execution
+analogue of tickNode: the private execution stream's frames land on this node
+and are dispatched to the desk's serial guardian ring, never shared with the
+public market-data pipeline.
+*/
+type executionNode struct {
+	desk *broker.Desk
+}
+
+func (node executionNode) Step(envelope *types.Envelope) *types.Envelope {
+	if envelope == nil || envelope.TypeID != types.EnvelopeExecution || node.desk == nil {
+		return envelope
+	}
+
+	if err := node.desk.StepExecution(envelope.ExecutionData); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"symm: desk execution step",
+			err,
+		))
+	}
+
+	return envelope
 }
 
 /*
@@ -402,21 +434,12 @@ type hindsightLifecycleRecorder struct {
 	runID  hindsight.RunID
 }
 
-func (recorder hindsightLifecycleRecorder) RecordLifecycle(
-	decisionID, symbol, kind, action string,
-	at time.Time,
-) {
-	if recorder.engine == nil || decisionID == "" || kind == "" {
+func (recorder hindsightLifecycleRecorder) RecordLifecycle(event hindsight.LifecycleEvent) {
+	if recorder.engine == nil || event.DecisionID == "" || event.Kind == "" {
 		return
 	}
 
-	if err := recorder.engine.WriteLifecycleEvent(recorder.runID, hindsight.LifecycleEvent{
-		DecisionID: decisionID,
-		Symbol:     symbol,
-		Kind:       kind,
-		Action:     action,
-		At:         at,
-	}); err != nil {
+	if err := recorder.engine.WriteLifecycleEvent(recorder.runID, event); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.IO,
 			"symm: record lifecycle event",
@@ -677,6 +700,11 @@ var (
 
 			defer positionStore.Close()
 
+			// The hub serves the trade journal from the position store's
+			// persisted position_trades table, so closed trades survive restarts
+			// independently of the live ring buffer.
+			hub.SetTradeStore(positionStore)
+
 			balance := broker.NewBalance(api)
 			positions := &sync.Map{}
 
@@ -693,7 +721,7 @@ var (
 
 			desk, err := broker.NewDesk(
 				cmd.Context(), api, instrument, price, balance, thesis, recorder,
-				recovery, positions, perspectiveStore,
+				recovery, positionStore, positions, perspectiveStore,
 			)
 
 			if err != nil {
@@ -843,6 +871,27 @@ var (
 					)...,
 				),
 			)
+
+			// The private execution stream delivers confirmed fills to the
+			// desk. It carries no signal workload: each execution record is
+			// routed straight to the matching position's guardian ring, so the
+			// workload is a thin dispatch stage plus observability boundaries.
+			privateIngress["executions"] = nmruntime.NewWorkload(
+				cmd.Context(),
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewDiagnostic("executions.ingress")},
+					{executionNode{desk: desk}},
+					{witnessNode{writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
+					{hub},
+					{system.NewDiagnostic("executions.hub")},
+				},
+			)
+
+			// The private session subscribed to the account execution stream
+			// during its own boot (before the desk existed), so its account
+			// subscription was gated on this workload. Now that the executions
+			// ingress is wired, release the gate so execution frames can flow.
+			privateSession.MarkExecutionsReady()
 
 			futuresIngress["ticker"] = nmruntime.NewWorkload(
 				cmd.Context(),

@@ -90,10 +90,15 @@ CREATE TABLE IF NOT EXISTS lifecycle (
     symbol      TEXT    NOT NULL DEFAULT '',
     kind        TEXT    NOT NULL,
     action      TEXT    NOT NULL DEFAULT '',
-    at          TEXT    NOT NULL
+    at          TEXT    NOT NULL,
+    execution   TEXT    NOT NULL DEFAULT ''
 ) STRICT;
 CREATE INDEX IF NOT EXISTS idx_lifecycle_run ON lifecycle(run_id);
 CREATE INDEX IF NOT EXISTS idx_lifecycle_decision ON lifecycle(decision_id);
+`
+
+const lifecycleExecutionMigration = `
+ALTER TABLE lifecycle ADD COLUMN execution TEXT NOT NULL DEFAULT '';
 `
 
 const endpointIndex = `
@@ -231,6 +236,10 @@ func (store *SQLite) EnsureSchema() error {
 		))
 	}
 
+	if err := store.migrateLifecycleExecution(); err != nil {
+		return err
+	}
+
 	if err := store.migrateEndpoint(); err != nil {
 		return err
 	}
@@ -245,6 +254,17 @@ func (store *SQLite) EnsureSchema() error {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"store: ensure endpoint index failed",
+			err,
+		))
+	}
+
+	// The capture-market index likewise depends on the identity columns the
+	// migration may just have added. It serves the per-run market read that
+	// Episode discovery walks, in capture order.
+	if _, err := store.database.Exec(captureMarketIndex); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: ensure capture market index failed",
 			err,
 		))
 	}
@@ -287,6 +307,27 @@ func (store *SQLite) migrateIdentity() error {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"store: add capture identity columns to events",
+			err,
+		))
+	}
+
+	return nil
+}
+
+/*
+migrateLifecycleExecution adds the execution column to lifecycle databases
+created before fill facts were recorded. Pre-existing rows default to an empty
+execution payload, marking them as transition-only events.
+*/
+func (store *SQLite) migrateLifecycleExecution() error {
+	if store.hasColumn("lifecycle", "execution") {
+		return nil
+	}
+
+	if _, err := store.database.Exec(lifecycleExecutionMigration); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: add execution column to lifecycle",
 			err,
 		))
 	}
@@ -714,15 +755,32 @@ func (store *SQLite) WriteLifecycleEvent(
 		))
 	}
 
+	executionJSON := ""
+
+	if event.Execution != nil {
+		encoded, err := json.Marshal(event.Execution)
+
+		if err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.IO,
+				"store: marshal lifecycle execution failed",
+				err,
+			))
+		}
+
+		executionJSON = string(encoded)
+	}
+
 	if _, err := store.database.Exec(
-		`INSERT INTO lifecycle (run_id, decision_id, symbol, kind, action, at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO lifecycle (run_id, decision_id, symbol, kind, action, at, execution)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		string(runID),
 		event.DecisionID,
 		event.Symbol,
 		event.Kind,
 		event.Action,
 		event.At.UTC().Format(time.RFC3339Nano),
+		executionJSON,
 	); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,

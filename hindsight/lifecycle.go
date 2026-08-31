@@ -21,4 +21,30 @@ type LifecycleEvent struct {
 	Kind       string    `json:"kind"`
 	Action     string    `json:"action,omitempty"`
 	At         time.Time `json:"at"`
+
+	// Execution carries the authoritative venue fill facts when the transition
+	// is an entry_fill or exit_fill. It is nil for transitions that carry no
+	// fill (order submission, position open, position close).
+	Execution *ExecutionFact `json:"execution,omitempty"`
+}
+
+/*
+ExecutionFact is the authoritative fill record for one execution: the venue's
+reported order, quantity, price, cumulative economics, fee, and the resulting
+position transition. It is correlated to the decision that produced the order
+through the enclosing LifecycleEvent's DecisionID.
+*/
+type ExecutionFact struct {
+	OrderID       string    `json:"orderId"`
+	ClientOrderID string    `json:"clientOrderId"`
+	ExecID        string    `json:"execId"`
+	Side          string    `json:"side"`
+	OrderStatus   string    `json:"orderStatus"`
+	LastQty       string    `json:"lastQty,omitempty"`
+	LastPrice     string    `json:"lastPrice,omitempty"`
+	CumQty        string    `json:"cumQty,omitempty"`
+	CumCost       string    `json:"cumCost,omitempty"`
+	AvgPrice      string    `json:"avgPrice,omitempty"`
+	FeeUsdEquiv   string    `json:"feeUsdEquiv,omitempty"`
+	FillAt        time.Time `json:"fillAt"`
 }

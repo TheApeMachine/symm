@@ -8,6 +8,7 @@ import (
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -155,6 +156,7 @@ type Envelope struct {
 	TickerData        kraken.TickerData
 	TradeData         kraken.TradeData
 	Level3Data        kraken.Level3Data
+	ExecutionData     kraken.ExecutionData
 	FuturesTickerData kraken.FuturesTickerData
 	FuturesTradeData  kraken.FuturesTradeData
 
@@ -207,6 +209,13 @@ type Envelope struct {
 	// tick, so a dashboard that connects (or reconnects) mid-session recovers
 	// the balance from the next market event rather than never at all.
 	Equity *EquityReading
+
+	// Positions is the desk's open-lot snapshot as of this envelope, one
+	// wire.Position per open lot (closed lots excluded), projected into a
+	// PositionsFrame. It rides ticker envelopes exactly like equity, so the
+	// positions panel recovers on the next market event after a connect rather
+	// than waiting for a poll.
+	Positions []*telemetry.PositionT
 
 	// Perspectives is the advisory layer's descriptive context: one
 	// Perspective per advisor family, composed from this envelope's signal
@@ -560,6 +569,41 @@ func encodeFrame(frame nmtypes.Frame) *telemetry.EnvelopeFrameT {
 	return &telemetry.EnvelopeFrameT{Mask: mask, Data: data}
 }
 
+/*
+encodeResonanceDynamics reads the physical dynamics frame's slots by name onto
+the wire. The frame itself crosses as an opaque mask/data pair, which a
+consumer cannot pull a named quantity out of, so the named projection is what
+makes the continuous dynamics readable at all.
+*/
+func encodeResonanceDynamics(dynamics nmtypes.Frame) *telemetry.EnvelopeResonanceDynamicsT {
+	value := func(symbol nmtypes.Symbol) float64 {
+		reading, _ := dynamics.Get(symbol)
+
+		return reading
+	}
+
+	return &telemetry.EnvelopeResonanceDynamicsT{
+		Ready:              value(learning.SymbolDynamicsReady),
+		DeltaTime:          value(learning.SymbolDynamicsDeltaTime),
+		Position:           value(learning.SymbolDynamicsPosition),
+		Velocity:           value(learning.SymbolDynamicsVelocity),
+		Acceleration:       value(learning.SymbolDynamicsAcceleration),
+		Memory:             value(learning.SymbolDynamicsMemory),
+		MemoryScale:        value(learning.SymbolDynamicsMemoryScale),
+		StoredEnergy:       value(learning.SymbolDynamicsStoredEnergy),
+		SuppliedPower:      value(learning.SymbolDynamicsSuppliedPower),
+		Dissipation:        value(learning.SymbolDynamicsDissipation),
+		PassivityResidue:   value(learning.SymbolDynamicsPassivityResidue),
+		ContinuousVariance: value(learning.SymbolDynamicsContinuousVariance),
+		JumpAmplitude:      value(learning.SymbolDynamicsJumpAmplitude),
+		JumpVariance:       value(learning.SymbolDynamicsJumpVariance),
+		SampleCount:        value(learning.SymbolDynamicsSampleCount),
+		RotorScalar:        value(learning.SymbolDynamicsRotorScalar),
+		RotorBivector:      value(learning.SymbolDynamicsRotorBivector),
+		EquivarianceNorm:   value(learning.SymbolDynamicsEquivarianceNorm),
+	}
+}
+
 func encodeResonanceArtifact(resonance *ResonanceArtifact) *telemetry.EnvelopeResonanceArtifactT {
 	if resonance == nil {
 		return nil
@@ -579,6 +623,35 @@ func encodeResonanceArtifact(resonance *ResonanceArtifact) *telemetry.EnvelopeRe
 		LastResolutionTarget: resonance.LastResolutionTarget,
 		LastResolutionError:  resonance.LastResolutionError,
 	}
+
+	// The manifold is the coder itself: its per-layer states, latent vector, and
+	// task-head quality are what the predictive-coding surface renders. A
+	// solver that has not built one yet leaves them absent rather than zeroed,
+	// so "no model" stays distinguishable from "a model reading zero".
+	if manifold := resonance.Manifold; manifold != nil {
+		layers, surprise, energy := manifold.WireSnapshot()
+
+		encoded.Layers = make([]*telemetry.EnvelopeResonanceLayerT, 0, len(layers))
+
+		for _, layer := range layers {
+			encoded.Layers = append(encoded.Layers, &telemetry.EnvelopeResonanceLayerT{
+				State:      layer.State,
+				Prediction: layer.Prediction,
+				ErrorNorm:  layer.ErrorNorm,
+				Temporal:   layer.Temporal,
+			})
+		}
+
+		encoded.Latent = manifold.LatentState()
+		encoded.Energy = energy
+		encoded.Surprise = surprise
+
+		encoded.TaskSkill, encoded.TaskSkillReady = manifold.TaskSkill()
+		encoded.TaskRelativePrecision, encoded.TaskRelativePrecisionReady = manifold.TaskPrecision()
+		encoded.TaskScale, encoded.TaskScaleReady = manifold.TaskScale()
+	}
+
+	encoded.DynamicsNamed = encodeResonanceDynamics(resonance.Dynamics)
 
 	if resonance.Forecast != nil {
 		encoded.Forecast = &telemetry.EnvelopeReturnForecastT{
@@ -905,6 +978,19 @@ func encodeEquity(reading *EquityReading) *telemetry.EquityFrameT {
 }
 
 /*
+encodePositions wraps the desk's open-lot rows in a PositionsFrame. A nil or
+empty slice stays absent, so an envelope produced before any position exists
+carries no frame rather than an empty one.
+*/
+func encodePositions(positions []*telemetry.PositionT) *telemetry.PositionsFrameT {
+	if len(positions) == 0 {
+		return nil
+	}
+
+	return &telemetry.PositionsFrameT{Rows: positions}
+}
+
+/*
 Encode converts the Envelope's exported state into its FlatBuffers mirror,
 verbatim: every populated field crosses as itself, with only the type
 coercions FlatBuffers requires (time.Time -> UnixNano, *decimal.Decimal ->
@@ -952,6 +1038,7 @@ func (envelope *Envelope) Encode() *telemetry.EnvelopeStateT {
 		Perspectives:      encodePerspectives(envelope.Perspectives),
 		Boundaries:        encodeBoundaries(envelope.Boundaries),
 		Equity:            encodeEquity(envelope.Equity),
+		Positions:         encodePositions(envelope.Positions),
 	}
 }
 

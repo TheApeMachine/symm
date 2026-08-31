@@ -13,7 +13,7 @@ import {
 	onlineStore,
 	opportunityStore,
 	perspectiveStore,
-	resonanceStore,
+	positionStore,
 	strategyStore,
 	tickCountStore,
 	tickStore,
@@ -23,12 +23,7 @@ import { topologyStore } from "#/collections/topology";
 import { EnvelopeBoundaryStamp } from "#/providers/telemetry/telemetry/envelope-boundary-stamp";
 import { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
 import { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
-import { ResonanceFrame } from "#/providers/telemetry/telemetry/resonance-frame";
-
-// Tags a ResonanceFrame buffer on the wire (see ui.Hub.encodeResonanceFrame)
-// so it can be told apart from an EnvelopeState buffer, which carries no
-// identifier of its own, on the same /ws connection.
-const RESONANCE_FRAME_IDENTIFIER = "RESO";
+import { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
 
 let globalWsWorker: Worker | null = null;
 
@@ -114,6 +109,11 @@ function dispatchEnvelopeState(state: EnvelopeState) {
 	const equity = state.equity(new EquityFrame());
 	if (equity) equityStore.actions.add(equity);
 
+	// Open positions ride the envelope exactly like equity, so the positions
+	// panel recovers on the next market event.
+	const positions = state.positions(new PositionsFrame());
+	if (positions && positions.rowsLength() > 0) positionStore.actions.add(positions);
+
 	const resonance = state.resonance();
 	if (resonance) addResonanceReading(resonance);
 
@@ -187,14 +187,6 @@ export const WsFeed = () => {
 					const buffer = new flatbuffers.ByteBuffer(
 						new Uint8Array(data.buffer),
 					);
-
-					if (buffer.__has_identifier(RESONANCE_FRAME_IDENTIFIER)) {
-						const frame = ResonanceFrame.getRootAsResonanceFrame(buffer);
-						storeBatch(() => {
-							resonanceStore.actions.add(frame);
-						});
-						return;
-					}
 
 					const state = EnvelopeState.getRootAsEnvelopeState(buffer);
 

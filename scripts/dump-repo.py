@@ -40,7 +40,6 @@ SKIP_DIRECTORY_NAMES: frozenset[str] = frozenset(
         "scripts",
         "telemetry",
         "specs",
-        "frontend",
     }
 )
 
@@ -61,7 +60,6 @@ ALLOWED_SUFFIXES: tuple[str, ...] = (
     ".go",
     ".ts",
     ".tsx",
-    ".yaml",
     ".yml",
     ".metal",
     ".mm",

@@ -1,56 +1,110 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
-import * as flatbuffers from "flatbuffers";
-import { Button } from "#/components/ui/button";
-import { Flex } from "#/components/ui/flex";
-import { Section } from "#/components/ui/section";
-import { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
-import { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	fetchHindsightCaptures,
 	fetchHindsightEnvelope,
 	fetchHindsightGaps,
 	fetchHindsightLifecycle,
+	fetchHindsightMetricMap,
 	fetchHindsightRuns,
 	fetchHindsightState,
+	fetchHindsightTimeline,
 } from "#/components/hindsight/hindsight-api";
 import type {
 	HindsightCapture,
 	HindsightEnvelope,
+	HindsightEpisode,
 	HindsightGap,
 	HindsightLifecycleEvent,
+	HindsightMetricMap,
 	HindsightRun,
+	HindsightTimeline,
+	MarketCoordinate,
+	TimelineAxis,
 } from "#/components/hindsight/hindsight-types";
+import { ComparePanel, type Mark, MarkBar } from "#/components/hindsight/compare";
+import {
+	CaptureCard,
+	decodeEnvelopeState,
+	FrameStrip,
+	ProvenancePanel,
+	StatePanel,
+} from "#/components/hindsight/inspector";
+import {
+	EpisodeTargets,
+	SymbolTargets,
+} from "#/components/hindsight/targets";
+import {
+	buildPositions,
+	type Position,
+} from "#/components/hindsight/positions";
+import { Overview, Timeline } from "#/components/hindsight/timeline";
+import { formatClock, formatCount } from "#/components/hindsight/timeline-scale";
+import type { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
+import { Button } from "#/components/ui/button";
+import { Flex } from "#/components/ui/flex";
 
-const decodeEnvelopeState = (payload: unknown): EnvelopeState | null => {
-	if (typeof payload !== "string") {
-		return null;
-	}
+/*
+Hindsight — a microscope over a captured running system.
 
-	const bytes = Uint8Array.from(atob(payload), (char) => char.charCodeAt(0));
+The market tells us which slides are interesting; the capture tape tells us what
+reality reached SYMM; the witness tape tells us what SYMM produced from it. This
+surface puts those three in one horizontal frame: a declared market coordinate
+across the capture axis, the episodes a declared selector found on it, and — for
+whichever exact frame the playhead is parked on — the state the running binary
+actually held there, navigable back to the raw bytes by identity.
 
-	return EnvelopeState.getRootAsEnvelopeState(new flatbuffers.ByteBuffer(bytes));
-};
+Two rules shape the layout. Episode discovery never consults a SYMM output, so
+what the desk did is drawn in its own band beside the market record rather than
+inside it. And the future may choose where to look but may never change what was
+known there, so nothing below the timeline is ever recomputed from what happened
+afterwards.
+*/
 
-const formatDigest = (digest?: string | null): string =>
-	digest == null || digest === "" ? "—" : digest.slice(0, 12);
+const COORDINATES: MarketCoordinate[] = ["midpoint", "trade", "last"];
+const AXES: TimelineAxis[] = ["time", "capture"];
+const DETAIL_BUCKETS = 320;
+const OVERVIEW_BUCKETS = 200;
+
+const digest = (value?: string | null): string =>
+	value == null || value === "" ? "—" : value.slice(0, 10);
 
 const HindsightRoute = () => {
 	const [runs, setRuns] = useState<HindsightRun[]>([]);
-	const [selectedRun, setSelectedRun] = useState<string | null>(null);
-	const [captures, setCaptures] = useState<HindsightCapture[]>([]);
-	const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
-	const [selectedOrdinal, setSelectedOrdinal] = useState<number>(0);
-	const [state, setState] = useState<EnvelopeState | null>(null);
-	const [envelope, setEnvelope] = useState<HindsightEnvelope | null>(null);
+	const [run, setRun] = useState<string | null>(null);
+	const [coordinate, setCoordinate] = useState<MarketCoordinate>("midpoint");
+	const [axis, setAxis] = useState<TimelineAxis>("time");
+	const [symbol, setSymbol] = useState<string | null>(null);
+
+	const [overview, setOverview] = useState<HindsightTimeline | null>(null);
+	const [detail, setDetail] = useState<HindsightTimeline | null>(null);
+	const [viewport, setViewport] = useState<{ from: number; to: number } | null>(
+		null,
+	);
+
 	const [gaps, setGaps] = useState<HindsightGap[]>([]);
 	const [lifecycle, setLifecycle] = useState<HindsightLifecycleEvent[]>([]);
 
+	const [playhead, setPlayhead] = useState<number | null>(null);
+	const [episode, setEpisode] = useState<string | null>(null);
+	const [captures, setCaptures] = useState<HindsightCapture[]>([]);
+	const [envelope, setEnvelope] = useState<HindsightEnvelope | null>(null);
+	const [state, setState] = useState<EnvelopeState | null>(null);
+	const [loading, setLoading] = useState(false);
+	const [semantics, setSemantics] = useState<HindsightMetricMap | null>(null);
+	const [position, setPosition] = useState<string | null>(null);
+	const [marks, setMarks] = useState<Mark[]>([]);
+	const [markStates, setMarkStates] = useState<Array<EnvelopeState | null>>([]);
+
+	const surface = useRef<HTMLDivElement | null>(null);
+
+	// The declared metric semantics are the same answer for every run and every
+	// capture, so they are read once per session.
 	useEffect(() => {
 		let cancelled = false;
 
-		fetchHindsightRuns().then((loaded) => {
-			if (!cancelled) setRuns(loaded);
+		fetchHindsightMetricMap().then((loaded) => {
+			if (!cancelled) setSemantics(loaded);
 		});
 
 		return () => {
@@ -59,511 +113,707 @@ const HindsightRoute = () => {
 	}, []);
 
 	useEffect(() => {
-		if (selectedRun === null) return;
+		let cancelled = false;
+
+		fetchHindsightRuns().then((loaded) => {
+			if (cancelled) return;
+
+			setRuns(loaded);
+			setRun((current) => current ?? loaded[0]?.id ?? null);
+		});
+
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	useEffect(() => {
+		if (run === null) return;
 
 		let cancelled = false;
 
-		fetchHindsightCaptures(selectedRun, 0).then((loaded) => {
-			if (cancelled) return;
-			setCaptures(loaded);
-			setSelectedSeq(null);
-			setSelectedOrdinal(0);
-			setState(null);
-			setEnvelope(null);
-		});
+		setSymbol(null);
+		setViewport(null);
+		setPlayhead(null);
+		setEpisode(null);
+		setEnvelope(null);
+		setState(null);
+		setCaptures([]);
+		setMarks([]);
+		setMarkStates([]);
+		setPosition(null);
 
-		fetchHindsightGaps(selectedRun).then((loaded) => {
+		fetchHindsightGaps(run).then((loaded) => {
 			if (!cancelled) setGaps(loaded);
 		});
 
-		fetchHindsightLifecycle(selectedRun).then((loaded) => {
+		fetchHindsightLifecycle(run).then((loaded) => {
 			if (!cancelled) setLifecycle(loaded);
 		});
 
 		return () => {
 			cancelled = true;
 		};
-	}, [selectedRun]);
+	}, [run]);
 
+	// The overview is the whole run for the selected instrument. It is also what
+	// answers "which instrument?" on first load: with no symbol declared, the hub
+	// projects the instrument whose declared coordinate travelled furthest.
 	useEffect(() => {
-		if (selectedRun === null || selectedSeq === null) return;
+		if (run === null) return;
 
 		let cancelled = false;
+		setLoading(true);
 
-		fetchHindsightState(selectedRun, selectedSeq, selectedOrdinal).then((loaded) => {
+		fetchHindsightTimeline({
+			run,
+			symbol: symbol ?? undefined,
+			coordinate,
+			axis,
+			buckets: OVERVIEW_BUCKETS,
+			symbols: true,
+		}).then((loaded) => {
 			if (cancelled) return;
-			setState(loaded ? decodeEnvelopeState(loaded.payload) : null);
-		});
 
-		fetchHindsightEnvelope(selectedRun, selectedSeq).then((loaded) => {
-			if (!cancelled) setEnvelope(loaded);
+			setOverview(loaded);
+			setLoading(false);
+
+			if (loaded !== null && symbol === null && loaded.symbol !== "") {
+				setSymbol(loaded.symbol);
+			}
 		});
 
 		return () => {
 			cancelled = true;
 		};
-	}, [selectedRun, selectedSeq, selectedOrdinal]);
+	}, [run, symbol, coordinate, axis]);
 
-	const selectedRunMeta = useMemo(
-		() => runs.find((run) => run.id === selectedRun) ?? null,
-		[runs, selectedRun],
+	// The detail view is the same projection at the plotted window's resolution.
+	// With no window it is the overview at full resolution.
+	useEffect(() => {
+		if (run === null || symbol === null) {
+			setDetail(null);
+			return;
+		}
+
+		let cancelled = false;
+
+		fetchHindsightTimeline({
+			run,
+			symbol,
+			coordinate,
+			axis,
+			buckets: DETAIL_BUCKETS,
+			from: viewport?.from,
+			to: viewport?.to,
+		}).then((loaded) => {
+			if (!cancelled) setDetail(loaded);
+		});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [run, symbol, coordinate, axis, viewport]);
+
+	// Everything below the timeline is addressed by the playhead's exact capture
+	// identity: the neighbouring raw frames, the envelopes this frame produced,
+	// and the historical state witnessed at its observe boundary.
+	useEffect(() => {
+		if (run === null || playhead === null) return;
+
+		let cancelled = false;
+		const from = Math.max(playhead - 24, 0);
+
+		fetchHindsightCaptures(run, from).then((loaded) => {
+			if (!cancelled) setCaptures(loaded.slice(0, 48));
+		});
+
+		fetchHindsightEnvelope(run, playhead).then((loaded) => {
+			if (!cancelled) setEnvelope(loaded);
+		});
+
+		fetchHindsightState(run, playhead, 0).then((loaded) => {
+			if (!cancelled) setState(decodeEnvelopeState(loaded?.payload));
+		});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [run, playhead]);
+
+	const positions = useMemo<Position[]>(
+		() => buildPositions(lifecycle),
+		[lifecycle],
 	);
 
-	const ordinals = useMemo(
-		() =>
-			envelope === null
-				? [0]
-				: Array.from(
-						new Set(envelope.manifests.map((manifest) => manifest.envelope.ordinal)),
-					).sort((left, right) => left - right),
-		[envelope],
+	/*
+		Each mark's state is read by its own exact capture identity, never
+		reconstructed from the neighbouring one. A mark whose envelope witnessed
+		no state stays null, and the comparison reports it as unavailable rather
+		than carrying the previous mark's values forward.
+	*/
+	useEffect(() => {
+		if (run === null || marks.length === 0) {
+			setMarkStates([]);
+			return;
+		}
+
+		let cancelled = false;
+
+		Promise.all(
+			marks.map((mark) =>
+				fetchHindsightState(run, mark.sequence, 0).then((loaded) =>
+					decodeEnvelopeState(loaded?.payload),
+				),
+			),
+		).then((loaded) => {
+			if (!cancelled) setMarkStates(loaded);
+		});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [run, marks]);
+
+	const runMeta = useMemo(
+		() => runs.find((entry) => entry.id === run) ?? null,
+		[runs, run],
 	);
+
+	/*
+		The capture card reads the identity the envelope read answered with. The
+		surrounding frame strip is a listing, not the source of truth: a playhead
+		parked outside the loaded neighbourhood must still name its own frame.
+	*/
+	const capture = useMemo(() => {
+		if (envelope?.capture?.identity?.sequence === playhead) {
+			return envelope.capture;
+		}
+
+		return captures.find((entry) => entry.identity.sequence === playhead) ?? null;
+	}, [envelope, captures, playhead]);
+
+	/*
+		Reference points are the navigable targets of the whole surface: [ and ]
+		step through them in capture order, which is exactly the walk an inspection
+		session wants — one interesting boundary to the next, never a scroll.
+	*/
+	const references = useMemo(() => {
+		const points = (detail ?? overview)?.discovery.episodes.flatMap(
+			(entry) => entry.references,
+		);
+
+		return [...new Set((points ?? []).map((point) => point.capture.sequence))].sort(
+			(left, right) => left - right,
+		);
+	}, [detail, overview]);
+
+	const stepReference = useCallback(
+		(direction: 1 | -1) => {
+			if (references.length === 0) return;
+
+			if (playhead === null) {
+				setPlayhead(references[direction === 1 ? 0 : references.length - 1]);
+				return;
+			}
+
+			const next =
+				direction === 1
+					? references.find((sequence) => sequence > playhead)
+					: [...references].reverse().find((sequence) => sequence < playhead);
+
+			if (next !== undefined) setPlayhead(next);
+		},
+		[references, playhead],
+	);
+
+	const mark = useCallback(() => {
+		if (playhead === null) return;
+
+		setMarks((current) => {
+			if (current.length >= 3) return current;
+			if (current.some((entry) => entry.sequence === playhead)) return current;
+
+			return [...current, { sequence: playhead, label: `#${playhead}` }].sort(
+				(left, right) => left.sequence - right.sequence,
+			);
+		});
+	}, [playhead]);
+
+	/*
+		Focusing a position parks the playhead on the nearest frame that really
+		was captured around the venue's reported fill instant. The position's own
+		identity stays its decision — the playhead is where you inspect from, not
+		a claim that this frame caused the fill.
+	*/
+	const focusPosition = useCallback(
+		(selected: Position) => {
+			setPosition(selected.decisionId);
+
+			const source = detail ?? overview;
+			const at = new Date(selected.entry?.at ?? "").getTime();
+
+			if (source === null || Number.isNaN(at)) return;
+
+			let nearest: number | null = null;
+			let distance = Number.POSITIVE_INFINITY;
+
+			for (const bucket of source.buckets) {
+				if (bucket.observations === 0) continue;
+
+				const from = new Date(bucket.observedFromAt).getTime();
+
+				if (Number.isNaN(from)) continue;
+
+				const gap = Math.abs(from - at);
+
+				if (gap < distance) {
+					distance = gap;
+					nearest = bucket.observedFromSequence;
+				}
+			}
+
+			if (nearest !== null) setPlayhead(nearest);
+		},
+		[detail, overview],
+	);
+
+	const focusEpisode = useCallback((selected: HindsightEpisode) => {
+		setEpisode(selected.id);
+
+		const pad = Math.max(
+			Math.round((selected.toSequence - selected.fromSequence) * 0.15),
+			1,
+		);
+
+		setViewport({
+			from: Math.max(selected.fromSequence - pad, 0),
+			to: selected.toSequence + pad,
+		});
+
+		const anchor =
+			selected.references.find((reference) => reference.role === "anchor") ??
+			selected.references[0];
+
+		if (anchor !== undefined) setPlayhead(anchor.capture.sequence);
+	}, []);
+
+	useEffect(() => {
+		const onKey = (event: KeyboardEvent) => {
+			if (event.target instanceof HTMLInputElement) return;
+
+			switch (event.key) {
+				case "[":
+					stepReference(-1);
+					break;
+				case "]":
+					stepReference(1);
+					break;
+				case "f":
+					setViewport(null);
+					break;
+				case "m":
+					mark();
+					break;
+				case "Escape":
+					setViewport(null);
+					setEpisode(null);
+					setPosition(null);
+					break;
+				default:
+					return;
+			}
+
+			event.preventDefault();
+		};
+
+		globalThis.addEventListener("keydown", onKey);
+
+		return () => globalThis.removeEventListener("keydown", onKey);
+	}, [stepReference, mark]);
 
 	return (
-		<div className="flex h-full min-w-275 overflow-hidden bg-(--bg)">
-			{/* Left — runs */}
-			<Section fit="pane" surface="surface" className="w-64 shrink-0 border-r border-(--line)">
-				<Section.Header title="Runs" size="lg" rule sticky />
-				<Section.Body>
-					{runs.length === 0 ? (
-						<p className="px-3 py-3 font-mono text-[10px] text-(--f4)">
-							No capture runs recorded yet.
-						</p>
-					) : null}
-					<ul className="flex flex-col divide-y divide-(--line)">
-						{runs.map((run) => {
-							const active = selectedRun === run.id;
+		<div
+			ref={surface}
+			className="flex h-full min-w-275 flex-col overflow-hidden bg-(--bg)"
+		>
+			<RunBar
+				runs={runs}
+				run={run}
+				runMeta={runMeta}
+				overview={overview}
+				coordinate={coordinate}
+				axis={axis}
+				gaps={gaps}
+				onRun={setRun}
+				onCoordinate={setCoordinate}
+				onAxis={setAxis}
+			/>
 
-							return (
-								<li key={run.id}>
-									<Button
-										variant="bare"
-										className={`flex w-full flex-col items-start gap-1 px-3 py-2.5 text-left hover:bg-(--raised) ${active ? "bg-(--raised)" : ""}`}
-										onClick={() => setSelectedRun(run.id)}
-									>
-										<Flex.Row align="center" justify="between" className="w-full">
-											<span className="truncate font-mono text-[10px] font-semibold text-(--f1)">
-												{formatDigest(run.id)}
-											</span>
-											<span
-												className={`font-mono text-[8px] uppercase tracking-widest ${
-													run.integrity === "COMPLETE" ? "text-(--up)" : "text-(--warn)"
-												}`}
-											>
-												{run.integrity}
-											</span>
-										</Flex.Row>
-										<span className="font-mono text-[9px] text-(--f4)">
-											{run.startedAt ? new Date(run.startedAt).toLocaleString() : "—"}
-										</span>
-										<span className="truncate font-mono text-[8px] text-(--f4)">
-											commit {formatDigest(run.codeCommit)} · build {formatDigest(run.buildId)}
-										</span>
-										<span className="font-mono text-[8px] text-(--f4)">
-											cfg {formatDigest(run.configDigest)}
-										</span>
-									</Button>
-								</li>
-							);
-						})}
-					</ul>
-				</Section.Body>
-			</Section>
-
-			{/* Middle — capture tape */}
-			<Section fit="pane" surface="surface" className="w-72 shrink-0 border-r border-(--line)">
-				<Section.Header title="Capture tape" size="lg" rule sticky />
-				<Section.Body>
-					{selectedRunMeta === null ? (
-						<p className="px-3 py-3 font-mono text-[10px] text-(--f4)">
-							Select a run to scrub its capture tape.
-						</p>
-					) : null}
-					{captures.length === 0 && selectedRunMeta !== null ? (
-						<p className="px-3 py-3 font-mono text-[10px] text-(--f4)">
-							No captured frames in this run.
-						</p>
-					) : null}
-					<ul className="flex flex-col divide-y divide-(--line)">
-						{captures.map((capture) => {
-							const active = selectedSeq === capture.identity.sequence;
-
-							return (
-								<li key={capture.identity.sequence}>
-									<Button
-										variant="bare"
-										className={`flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-(--raised) ${active ? "bg-(--raised)" : ""}`}
-										onClick={() => {
-											setSelectedSeq(capture.identity.sequence);
-											setSelectedOrdinal(0);
-										}}
-									>
-										<Flex.Row align="center" justify="between" className="w-full">
-											<span className="font-mono text-[10px] font-semibold tabular-nums text-(--f1)">
-												#{capture.identity.sequence}
-											</span>
-											<span className="font-mono text-[9px] text-(--acc)">
-												{capture.kind}
-											</span>
-										</Flex.Row>
-										<span className="truncate font-mono text-[8px] text-(--f4)">
-											{capture.identity.stream} · ep {capture.identity.streamEpoch} ·{" "}
-											{capture.identity.streamSequence}
-										</span>
-									</Button>
-								</li>
-							);
-						})}
-					</ul>
-				</Section.Body>
-				{captures.length > 0 && selectedRun !== null ? (
-					<div className="shrink-0 border-t border-(--line) px-3 py-2">
-						<Button
-							variant="outline"
-							size="xs"
-							className="w-full"
-							onClick={() => {
-								const last = captures[captures.length - 1];
-								if (!last) return;
-
-								fetchHindsightCaptures(
-									selectedRun,
-									last.identity.sequence,
-								).then((loaded) => {
-									setCaptures((previous) => [...previous, ...loaded]);
-								});
-							}}
-						>
-							Load more
-						</Button>
-					</div>
-				) : null}
-			</Section>
-
-			{/* Right — inspection */}
-			<Flex.Column className="min-h-0 min-w-0 flex-1 overflow-hidden">
-				<Flex.Row
-					align="center"
-					justify="between"
-					className="h-11 shrink-0 border-b border-(--line) bg-(--surface) px-4"
-				>
-					<span className="font-mono text-[8px] uppercase tracking-widest text-(--up)">
-						HISTORICAL · witness
-					</span>
-					<span className="font-mono text-[12px] font-semibold text-(--f1)">
-						{selectedSeq === null ? "No capture selected" : `capture #${selectedSeq}`}
-					</span>
-					{selectedSeq !== null && ordinals.length > 0 ? (
-						<Flex.Row align="center" gap={1}>
-							{ordinals.map((ordinal) => (
-								<Button
-									key={ordinal}
-									variant={selectedOrdinal === ordinal ? "solid" : "bare"}
-									size="xs"
-									className="h-5 px-2 font-mono text-[9px]"
-									onClick={() => setSelectedOrdinal(ordinal)}
-								>
-									ord {ordinal}
-								</Button>
-							))}
-						</Flex.Row>
-					) : null}
-				</Flex.Row>
-
-				<div className="min-h-0 flex-1 overflow-auto">
-					{gaps.length > 0 ? <GapsPanel gaps={gaps} /> : null}
-					{lifecycle.length > 0 ? <LifecyclePanel events={lifecycle} /> : null}
-					{state === null && envelope !== null ? (
-						<EnvelopeDetail envelope={envelope} />
-					) : null}
-					{state !== null ? <StateDetail state={state} /> : null}
-					{state === null && envelope === null ? (
-						<p className="px-4 py-8 font-mono text-[10px] text-(--f4)">
-							Scrub to a capture to inspect its exact recorded state and provenance.
-						</p>
-					) : null}
+			<div className="flex min-h-0 flex-1 overflow-hidden">
+				<div className="flex w-56 shrink-0 flex-col border-(--line) border-r">
+					<SymbolTargets
+						summaries={overview?.symbols ?? []}
+						selected={symbol}
+						onSelect={(next) => {
+							setSymbol(next);
+							setViewport(null);
+							setEpisode(null);
+						}}
+					/>
 				</div>
-			</Flex.Column>
+
+				<Flex.Column className="min-h-0 min-w-0 flex-1 overflow-hidden">
+					<TimelineHeader
+						timeline={detail ?? overview}
+						window={viewport}
+						loading={loading}
+						references={references.length}
+						marks={marks}
+						playhead={playhead}
+						onMark={mark}
+						onReset={() => {
+							setViewport(null);
+							setEpisode(null);
+						}}
+					/>
+
+					<div className="shrink-0 border-(--line) border-b">
+						<Timeline
+							timeline={detail ?? overview}
+							gaps={gaps}
+							lifecycle={lifecycle}
+							positions={positions}
+							playhead={playhead}
+							marks={marks.map((entry) => entry.sequence)}
+							selectedEpisode={episode}
+							selectedPosition={position}
+							onPlayhead={setPlayhead}
+							onEpisode={focusEpisode}
+							onPosition={focusPosition}
+							onZoom={(from, to) => setViewport({ from, to })}
+							onResetZoom={() => setViewport(null)}
+						/>
+						<div className="flex items-center gap-2 border-(--line) border-t px-3 pt-1 font-mono text-[8px] text-(--f4) uppercase tracking-widest">
+							<span>whole run</span>
+							<span className="normal-case tracking-normal text-(--f4)">
+								drag here to move the plotted window
+							</span>
+						</div>
+						<Overview
+							timeline={overview}
+							window={
+								viewport ??
+								(detail === null
+									? null
+									: {
+											from: detail.span.fromSequence,
+											to: detail.span.toSequence,
+										})
+							}
+							onZoom={(from, to) => setViewport({ from, to })}
+							onResetZoom={() => setViewport(null)}
+						/>
+					</div>
+
+					<div className="flex min-h-0 flex-1 overflow-hidden">
+						<div className="flex w-80 shrink-0 flex-col border-(--line) border-r">
+							<EpisodeTargets
+								timeline={detail ?? overview}
+								selected={episode}
+								onSelect={focusEpisode}
+								onReference={setPlayhead}
+							/>
+						</div>
+
+						<Flex.Column className="min-h-0 min-w-0 flex-1 overflow-hidden">
+							{marks.length >= 2 ? (
+								<ComparePanel
+									marks={marks}
+									states={markStates}
+									onPlayhead={setPlayhead}
+									onClear={() => setMarks([])}
+									onRemove={(sequence) =>
+										setMarks((current) =>
+											current.filter((entry) => entry.sequence !== sequence),
+										)
+									}
+								/>
+							) : playhead === null ? (
+								<p className="px-3 py-8 font-mono text-[10px] text-(--f4) leading-relaxed">
+									Pick an episode, or click the timeline, to park the playhead on an
+									exact captured frame.
+									<br />
+									Everything here is then read from that identity — the raw frame, the
+									envelopes it produced, and the state the running binary actually held.
+									Never from a nearby timestamp.
+								</p>
+							) : (
+								<>
+									<CaptureCard capture={capture} run={runMeta} />
+									<FrameStrip
+										captures={captures}
+										playhead={playhead}
+										onSelect={setPlayhead}
+									/>
+									<div className="min-h-0 flex-1 overflow-auto">
+										<div className="grid grid-cols-2">
+											<div className="min-w-0 border-(--line) border-r">
+												<ProvenancePanel envelope={envelope} onSelect={setPlayhead} />
+											</div>
+											<div className="min-w-0">
+												<StatePanel
+												state={state}
+												envelope={envelope}
+												semantics={semantics}
+											/>
+											</div>
+										</div>
+									</div>
+								</>
+							)}
+						</Flex.Column>
+					</div>
+				</Flex.Column>
+			</div>
 		</div>
 	);
 };
 
-const GapsPanel = ({ gaps }: { gaps: HindsightGap[] }) => (
-	<Flex.Column gap={1} className="border-b border-(--line) bg-(--sunken) px-4 py-2.5">
-		<span className="font-mono text-[8px] uppercase tracking-widest text-(--warn)">
-			Integrity defects ({gaps.length})
-		</span>
-		{gaps.map((gap, index) => (
-			<div key={`${gap.encoding}-${index}`} className="font-mono text-[9px] text-(--f3)">
-				<span className="text-(--warn)">{gap.encoding}</span>
-				{gap.sequence > 0 ? <span className="text-(--f4)"> @ seq {gap.sequence}</span> : null}
-				{" · "}
-				<span className="text-(--f4)">{gap.detail}</span>
-			</div>
-		))}
-	</Flex.Column>
-);
-
-const LifecyclePanel = ({ events }: { events: HindsightLifecycleEvent[] }) => (
-	<Flex.Column gap={1} className="border-b border-(--line) bg-(--sunken) px-4 py-2.5">
-		<span className="font-mono text-[8px] uppercase tracking-widest text-(--acc)">
-			Trading lifecycle ({events.length})
-		</span>
-		{events.map((event, index) => (
-			<div key={`${event.decisionId}-${index}`} className="font-mono text-[9px] text-(--f3)">
-				<span className="text-(--acc)">{event.kind}</span>
-				{" · "}
-				<span className="text-(--f1)">{event.symbol}</span>
-				{event.action ? <span className="text-(--f4)"> ({event.action})</span> : null}
-				{" · "}
-				<span className="text-(--f4)">decision {event.decisionId}</span>
-			</div>
-		))}
-	</Flex.Column>
-);
-
-const EnvelopeDetail = ({ envelope }: { envelope: HindsightEnvelope }) => {
-	const rawPreview = useMemo(() => {
-		if (typeof envelope.payload !== "string" || envelope.payload === "") return null;
-
-		try {
-			return atob(envelope.payload).slice(0, 200);
-		} catch {
-			return null;
-		}
-	}, [envelope.payload]);
-
-	return (
-		<Flex.Column gap={3} className="p-4">
-			<span className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-				Envelope #{envelope.sequence}
+const RunBar = ({
+	runs,
+	run,
+	runMeta,
+	overview,
+	coordinate,
+	axis,
+	gaps,
+	onRun,
+	onCoordinate,
+	onAxis,
+}: {
+	runs: HindsightRun[];
+	run: string | null;
+	runMeta: HindsightRun | null;
+	overview: HindsightTimeline | null;
+	coordinate: MarketCoordinate;
+	axis: TimelineAxis;
+	gaps: HindsightGap[];
+	onRun: (id: string) => void;
+	onCoordinate: (next: MarketCoordinate) => void;
+	onAxis: (next: TimelineAxis) => void;
+}) => (
+	<Flex.Column className="shrink-0 border-(--line) border-b bg-(--surface)">
+		<Flex.Row
+			align="center"
+			gap={3}
+			className="h-10 shrink-0 overflow-x-auto px-3"
+		>
+			<span className="shrink-0 font-mono text-[8px] text-(--f4) uppercase tracking-widest">
+				run
 			</span>
-			<Flex.Column gap={1}>
-				<span className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-					manifests
+			{runs.length === 0 ? (
+				<span className="font-mono text-[10px] text-(--f4)">
+					No capture run recorded yet.
 				</span>
-				{envelope.manifests.length === 0 ? (
-					<p className="font-mono text-[10px] text-(--f4)">none</p>
-				) : (
-					<ul className="flex flex-col divide-y divide-(--line)">
-						{envelope.manifests.map((manifest, index) => (
-							<li key={index} className="py-1 font-mono text-[10px] text-(--f1)">
-								ord {manifest.envelope.ordinal} · {manifest.workload} · {manifest.symbol}
-							</li>
-						))}
-					</ul>
-				)}
-			</Flex.Column>
-			<Flex.Column gap={1}>
-				<span className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-					artifact witnesses
-				</span>
-				{envelope.witnesses.length === 0 ? (
-					<p className="font-mono text-[10px] text-(--f4)">none</p>
-				) : (
-					<ul className="flex flex-col divide-y divide-(--line)">
-						{envelope.witnesses.map((witness, index) => (
-							<li key={index} className="py-1 font-mono text-[10px] text-(--f1)">
-								{witness.boundary} · {witness.artifact.kind}:{witness.artifact.identity}
-								{witness.component ? (
-									<span className="text-(--f4)">
-										{" · "}
-										{witness.component}@v{witness.componentStateVersion}
-									</span>
-								) : null}
-								{witness.immediateParents.length > 0 ? (
-									<span className="text-(--f4)">
-										{" · parents "}
-										{witness.immediateParents
-											.map((parent) => `${parent.origin.sequence}:${parent.ordinal}`)
-											.join(", ")}
-									</span>
-								) : null}
-							</li>
-						))}
-					</ul>
-				)}
-			</Flex.Column>
-			{rawPreview !== null ? (
-				<Flex.Column gap={1}>
-					<span className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
-						raw bytes (prefix)
-					</span>
-					<pre className="overflow-x-auto font-mono text-[9px] leading-relaxed text-(--f3)">
-						{rawPreview}
-					</pre>
-				</Flex.Column>
 			) : null}
-		</Flex.Column>
-	);
-};
+			{runs.map((entry) => {
+				const active = entry.id === run;
 
-const StateDetail = ({ state }: { state: EnvelopeState }) => {
-	const categoryCount = state.categoriesLength();
-	const perspectiveCount = state.perspectivesLength();
-	const boundaryCount = state.boundariesLength();
+				return (
+					<Button
+						key={entry.id}
+						variant="bare"
+						title={`${entry.id}\ncommit ${entry.codeCommit || "—"} · build ${entry.buildId || "—"} · config ${entry.configDigest || "—"}`}
+						className={`shrink-0 rounded-[3px] border px-2 py-1 font-mono text-[9px] ${
+							active
+								? "border-(--acc) bg-(--raised) text-(--f1)"
+								: "border-(--line) text-(--f4) hover:border-(--line2) hover:text-(--f2)"
+						}`}
+						onClick={() => onRun(entry.id)}
+					>
+						{new Date(entry.startedAt).toLocaleString([], {
+							month: "short",
+							day: "2-digit",
+							hour: "2-digit",
+							minute: "2-digit",
+						})}
+						<span
+							className={`ml-1.5 ${entry.integrity === "COMPLETE" ? "text-(--up)" : "text-(--warn)"}`}
+						>
+							{entry.integrity === "COMPLETE" ? "●" : "◐"}
+						</span>
+					</Button>
+				);
+			})}
 
-	const measurementFields = useMemo(
-		() =>
-			[
-				{ label: "cvd", value: state.cvd() },
-				{ label: "hawkes", value: state.hawkes() },
-				{ label: "depthFlow", value: state.depthFlow() },
-				{ label: "morphology", value: state.morphology() },
-				{ label: "liquidity", value: state.liquidity() },
-				{ label: "correlation", value: state.correlation() },
-				{ label: "leadLag", value: state.leadLag() },
-				{ label: "sentiment", value: state.sentiment() },
-				{ label: "pumpDump", value: state.pumpDump() },
-				{ label: "toxicity", value: state.toxicity() },
-				{ label: "derivatives", value: state.derivatives() },
-			].filter(
-				(
-					entry,
-				): entry is { label: string; value: EnvelopeMeasurement } =>
-					entry.value !== null,
-			),
-		[state],
-	);
+			<span className="ml-auto shrink-0" />
 
-	return (
-		<Flex.Column gap={4} className="p-4">
-			<Flex.Row gap={4} className="font-mono text-[9px] text-(--f4)">
-				<span>
-					run <span className="text-(--f1)">{formatDigest(state.captureRun())}</span>
+			<Flex.Row align="center" gap={1} className="shrink-0">
+				<span className="font-mono text-[8px] text-(--f4) uppercase tracking-widest">
+					coordinate
 				</span>
-				<span>
-					seq <span className="text-(--f1)">{state.captureSeq().toString()}</span>
-				</span>
-				<span>
-					type <span className="text-(--f1)">{state.typeId()}</span>
-				</span>
-				<span>
-					tick <span className="text-(--f1)">{state.tick().toString()}</span>
-				</span>
+				{COORDINATES.map((option) => (
+					<Button
+						key={option}
+						variant="bare"
+						title={`Declare the market coordinate the selector measures. "${option}" means exactly that quantity — never a realisable price.`}
+						className={`rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] ${
+							coordinate === option
+								? "border-(--acc) text-(--f1)"
+								: "border-(--line) text-(--f4) hover:text-(--f2)"
+						}`}
+						onClick={() => onCoordinate(option)}
+					>
+						{option}
+					</Button>
+				))}
 			</Flex.Row>
 
-			{categoryCount > 0 ? (
-				<Section fit="content" surface="sunken">
-					<Section.Header title="Categories" size="s" rule />
-					<Section.Body>
-						{Array.from({ length: categoryCount }, (_, index) => {
-							const category = state.categories(index);
-							if (!category) return null;
-							return (
-								<div
-									key={`${category.type()}-${index}`}
-									className="flex items-center justify-between py-1 font-mono text-[10px]"
-								>
-									<span className="text-(--f1)">{category.type()}</span>
-									<span className="tabular-nums text-(--f4)">
-										conf {category.confidence().toFixed(2)}
-									</span>
-								</div>
-							);
-						})}
-					</Section.Body>
-				</Section>
-			) : null}
+			<Flex.Row align="center" gap={1} className="shrink-0">
+				<span className="font-mono text-[8px] text-(--f4) uppercase tracking-widest">
+					axis
+				</span>
+				{AXES.map((option) => (
+					<Button
+						key={option}
+						variant="bare"
+						title={
+							option === "time"
+								? "Position by wall clock. Identity stays capture sequence."
+								: "Position by capture sequence — the order SYMM observed the world in."
+						}
+						className={`rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] ${
+							axis === option
+								? "border-(--acc) text-(--f1)"
+								: "border-(--line) text-(--f4) hover:text-(--f2)"
+						}`}
+						onClick={() => onAxis(option)}
+					>
+						{option}
+					</Button>
+				))}
+			</Flex.Row>
+		</Flex.Row>
 
-			{measurementFields.length > 0 ? (
-				<Section fit="content" surface="sunken">
-					<Section.Header title="Signal measurements" size="s" rule />
-					<Section.Body>
-						{measurementFields.map(({ label, value }) => (
-							<div
-								key={label}
-								className="flex items-center justify-between py-1 font-mono text-[10px]"
-							>
-								<span className="text-(--f1)">{label}</span>
-								<span className="tabular-nums text-(--f4)">
-									{value.metricsLength()} metrics
-								</span>
-							</div>
-						))}
-					</Section.Body>
-				</Section>
-			) : null}
+		<Flex.Row
+			align="center"
+			gap={4}
+			className="h-7 shrink-0 flex-wrap border-(--line) border-t px-3 font-mono text-[9px] text-(--f4)"
+		>
+			<span>
+				commit <span className="text-(--f2)">{digest(runMeta?.codeCommit)}</span>
+			</span>
+			<span>
+				build <span className="text-(--f2)">{digest(runMeta?.buildId)}</span>
+			</span>
+			<span>
+				config <span className="text-(--f2)">{digest(runMeta?.configDigest)}</span>
+			</span>
+			<span>
+				captured{" "}
+				<span className="text-(--f2)">
+					{formatClock(overview?.runSpan.fromAt ?? "")} →{" "}
+					{formatClock(overview?.runSpan.toAt ?? "")}
+				</span>
+			</span>
+			<span>
+				observations{" "}
+				<span className="text-(--f2) tabular-nums">
+					{formatCount(overview?.totalObservations ?? 0)}
+				</span>{" "}
+				over{" "}
+				<span className="text-(--f2) tabular-nums">
+					{formatCount(overview?.totalSymbols ?? 0)}
+				</span>{" "}
+				instruments
+			</span>
+			{gaps.length > 0 ? (
+				<span
+					className="text-(--down)"
+					title={gaps
+						.slice(0, 8)
+						.map((gap) => `${gap.encoding} @ ${gap.sequence}: ${gap.detail}`)
+						.join("\n")}
+				>
+					{gaps.length} capture integrity defect{gaps.length === 1 ? "" : "s"} —
+					inspection certainty is broken across them
+				</span>
+			) : (
+				<span className="text-(--up)">no capture integrity defect recorded</span>
+			)}
+		</Flex.Row>
+	</Flex.Column>
+);
 
-			{perspectiveCount > 0 ? (
-				<Section fit="content" surface="sunken">
-					<Section.Header title="Perspectives" size="s" rule />
-					<Section.Body>
-						{Array.from({ length: perspectiveCount }, (_, index) => {
-							const perspective = state.perspectives(index);
-							if (!perspective) return null;
-							return (
-								<div
-									key={`${perspective.symbol()}-${index}`}
-									className="flex items-center justify-between py-1 font-mono text-[10px]"
-								>
-									<span className="text-(--f1)">{perspective.symbol()}</span>
-									<span className="tabular-nums text-(--f4)">
-										{perspective.readingsLength()} readings
-									</span>
-								</div>
-							);
-						})}
-					</Section.Body>
-				</Section>
-			) : null}
+const TimelineHeader = ({
+	timeline,
+	window,
+	loading,
+	references,
+	marks,
+	playhead,
+	onMark,
+	onReset,
+}: {
+	timeline: HindsightTimeline | null;
+	window: { from: number; to: number } | null;
+	loading: boolean;
+	references: number;
+	marks: Mark[];
+	playhead: number | null;
+	onMark: () => void;
+	onReset: () => void;
+}) => (
+	<Flex.Row
+		align="center"
+		gap={4}
+		className="h-9 shrink-0 border-(--line) border-b bg-(--surface) px-3"
+	>
+		<span className="font-mono text-[12px] font-semibold text-(--f1)">
+			{timeline?.symbol || "—"}
+		</span>
+		<span className="font-mono text-[9px] text-(--f4)">
+			observed {timeline?.coordinate ?? "—"} across{" "}
+			<span className="text-(--f2) tabular-nums">
+				{formatCount(timeline?.discovery.defined ?? 0)}
+			</span>{" "}
+			defined observations
+		</span>
+		<span className="font-mono text-[9px] text-(--f4)">
+			capture{" "}
+			<span className="text-(--f2) tabular-nums">
+				{timeline?.span.fromSequence ?? 0}–{timeline?.span.toSequence ?? 0}
+			</span>
+		</span>
+		<span className="font-mono text-[9px] text-(--f4)">
+			<span className="text-(--f2) tabular-nums">{references}</span> reference
+			points ·{" "}
+			<span className="rounded-[2px] border border-(--line2) px-1">[</span>{" "}
+			<span className="rounded-[2px] border border-(--line2) px-1">]</span> to walk
+			them
+		</span>
 
-			{state.strategy() !== null ? (
-				<Section fit="content" surface="sunken">
-					<Section.Header title="Strategy / decision" size="s" rule />
-					<Section.Body>
-						<div className="py-1 font-mono text-[10px] text-(--f1)">
-							{state.strategy()?.outcome() ?? "—"} · decisions{" "}
-							{state.strategy()?.decisionsLength() ?? 0}
-						</div>
-					</Section.Body>
-				</Section>
-			) : null}
+		<span className="ml-auto" />
 
-			{state.equity() !== null ? (
-				<Section fit="content" surface="sunken">
-					<Section.Header title="Account equity" size="s" rule />
-					<Section.Body>
-						<div className="py-1 font-mono text-[10px] text-(--f1)">
-							equity {state.equity()?.equity() ?? "—"}
-						</div>
-					</Section.Body>
-				</Section>
-			) : null}
+		<MarkBar marks={marks} playhead={playhead} onMark={onMark} />
 
-			{boundaryCount > 0 ? (
-				<Section fit="content" surface="sunken">
-					<Section.Header title="Boundary trace" size="s" rule />
-					<Section.Body>
-						{Array.from({ length: boundaryCount }, (_, index) => {
-							const stamp = state.boundaries(index);
-							if (!stamp) return null;
-							return (
-								<div
-									key={`${stamp.label()}-${index}`}
-									className="flex items-center justify-between py-1 font-mono text-[10px]"
-								>
-									<span className="text-(--f1)">{stamp.label()}</span>
-									<span className="tabular-nums text-(--f4)">
-										{stamp.seqCount().toString()}
-									</span>
-								</div>
-							);
-						})}
-					</Section.Body>
-				</Section>
-			) : null}
+		{loading ? (
+			<span className="font-mono text-[9px] text-(--acc)">indexing tape…</span>
+		) : null}
 
-			{categoryCount === 0 &&
-			measurementFields.length === 0 &&
-			boundaryCount === 0 ? (
-				<p className="font-mono text-[10px] text-(--f4)">
-					This envelope produced no semantic artifacts at its Observe boundary.
-				</p>
-			) : null}
-		</Flex.Column>
-	);
-};
+		{window !== null ? (
+			<Button
+				variant="outline"
+				size="xs"
+				className="font-mono text-[9px]"
+				onClick={onReset}
+			>
+				fit run (f)
+			</Button>
+		) : null}
+	</Flex.Row>
+);
 
 export const Route = createFileRoute("/hindsight")({
 	component: HindsightRoute,
