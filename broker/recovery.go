@@ -551,11 +551,12 @@ func (recovery *Recovery) recoveredPosition(
 	recovery.positions.Store(pair.Symbol, position)
 
 	// Restore persisted protection and immediately derive the current
-	// executable state from the authoritative book, so a recovered exposed
-	// position is evaluated at startup rather than left waiting for the next
-	// ticker. During clean bootstrap the book is not yet valid and ObserveExecutable
-	// stays armed; a valid feed that has already diverged surfaces execution
-	// risk immediately. No magic bootstrap timeout is introduced.
+	// executable state from the continuously-resident execution reducer, so a
+	// recovered exposed position is evaluated at startup rather than left
+	// waiting for the next ticker. During clean bootstrap the execution state
+	// is not yet valid and ObserveExecutable stays armed; a valid feed that has
+	// already diverged surfaces execution risk immediately. No magic bootstrap
+	// timeout is introduced.
 	position.evaluateExecutable(pair.Symbol, time.Now())
 
 	return position

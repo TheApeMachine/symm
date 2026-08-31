@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pion/sctp"
 	"github.com/pion/webrtc/v4"
@@ -15,7 +16,16 @@ import (
 )
 
 /*
-fluidPeer owns the ordered data channels for one browser connection.
+errFrameSuperseded is the sender's internal result for a logical frame that was
+abandoned midway because a fresher payload arrived. It is not a transport
+failure: the sender loop immediately picks up the newest pending record.
+*/
+var errFrameSuperseded = errors.New("fluid frame superseded")
+
+/*
+fluidPeer owns the per-viewer data channels for one browser connection. These
+channels are unordered and non-retransmitting (see attach), despite the wording
+below; the transport sets that policy at channel creation.
 */
 type fluidPeer struct {
 	ctx           context.Context
@@ -121,18 +131,48 @@ a newer frame is available.
 type fluidChannel struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	dataChannel   *webrtc.DataChannel
+	transport     fluidTransport
 	drained       chan struct{}
 	bufferedLimit uint64
 	fail          func(error)
 	startOnce     sync.Once
 
 	// latest holds the freshest unsent record; latestMu guards it and
-	// latestReady wakes the sender. frameID names the next logical frame.
+	// latestReady wakes the sender. frameID names the next logical frame and
+	// sendGen increments whenever a newer record supersedes the one currently
+	// being transmitted, so a stale in-flight frame is abandoned mid-chunk.
 	latestMu    sync.Mutex
 	latest      []byte
 	latestReady chan struct{}
 	frameID     uint32
+	sendGen     atomic.Uint64
+}
+
+/*
+fluidTransport is the narrow SCTP-boundary slice the sender touches: buffered
+bytes, send, and close. The live implementation is *webrtc.DataChannel; tests
+inject a fake to drive deterministic mid-frame preemption.
+*/
+type fluidTransport interface {
+	BufferedAmount() uint64
+	Send([]byte) error
+	Close() error
+}
+
+type dataChannelTransport struct {
+	channel *webrtc.DataChannel
+}
+
+func (transport dataChannelTransport) BufferedAmount() uint64 {
+	return transport.channel.BufferedAmount()
+}
+
+func (transport dataChannelTransport) Send(segment []byte) error {
+	return transport.channel.Send(segment)
+}
+
+func (transport dataChannelTransport) Close() error {
+	return transport.channel.Close()
 }
 
 func newFluidChannel(
@@ -143,7 +183,7 @@ func newFluidChannel(
 ) *fluidChannel {
 	ctx, cancel := context.WithCancel(ctx)
 	channel := &fluidChannel{
-		ctx: ctx, cancel: cancel, dataChannel: dataChannel,
+		ctx: ctx, cancel: cancel, transport: dataChannelTransport{channel: dataChannel},
 		drained: make(chan struct{}, 1),
 		bufferedLimit: bufferedLimit, fail: fail,
 		latestReady: make(chan struct{}, 1),
@@ -187,6 +227,11 @@ func (channel *fluidChannel) enqueue(payload []byte) {
 	channel.latest = payload
 	channel.latestMu.Unlock()
 
+	// A fresher record supersedes any logical frame currently mid-flight: the
+	// sender abandons the old frame's remaining chunks and starts the newest
+	// one immediately.
+	channel.sendGen.Add(1)
+
 	select {
 	case channel.latestReady <- struct{}{}:
 	default:
@@ -206,6 +251,10 @@ func (channel *fluidChannel) run() {
 			}
 
 			if err := channel.send(payload); err != nil {
+				if errors.Is(err, errFrameSuperseded) {
+					continue
+				}
+
 				channel.failSend(err)
 				return
 			}
@@ -223,9 +272,7 @@ func (channel *fluidChannel) takeLatest() []byte {
 }
 
 func (channel *fluidChannel) failSend(err error) {
-	if channel.ctx.Err() != nil ||
-		(channel.dataChannel != nil &&
-			channel.dataChannel.ReadyState() != webrtc.DataChannelStateOpen) {
+	if channel.ctx.Err() != nil || channel.transport == nil {
 		return
 	}
 
@@ -250,11 +297,16 @@ func (channel *fluidChannel) send(payload []byte) error {
 
 	frameID := channel.frameID
 	chunkCount := uint32((len(payload) + fluidSegmentSize - 1) / fluidSegmentSize)
+	generation := channel.sendGen.Load()
 
 	for offset, index := 0, uint32(0); offset < len(payload); offset += fluidSegmentSize {
+		if channel.sendGen.Load() != generation {
+			return errFrameSuperseded
+		}
+
 		end := min(offset+fluidSegmentSize, len(payload))
 
-		if err := channel.sendChunk(frameID, index, chunkCount, payload[offset:end]); err != nil {
+		if err := channel.sendChunk(frameID, index, chunkCount, payload[offset:end], generation); err != nil {
 			return err
 		}
 
@@ -276,8 +328,12 @@ func (channel *fluidChannel) sendChunk(
 	chunkIndex uint32,
 	chunkCount uint32,
 	payload []byte,
+	generation uint64,
 ) error {
-	return channel.sendSegment(encodeFluidChunk(frameID, chunkIndex, chunkCount, payload))
+	return channel.sendSegment(
+		encodeFluidChunk(frameID, chunkIndex, chunkCount, payload),
+		generation,
+	)
 }
 
 /*
@@ -300,21 +356,33 @@ func encodeFluidChunk(
 	return segment
 }
 
-func (channel *fluidChannel) sendSegment(segment []byte) error {
-	for channel.dataChannel.BufferedAmount()+uint64(len(segment)) > channel.bufferedLimit {
+func (channel *fluidChannel) sendSegment(segment []byte, generation uint64) error {
+	for channel.transport.BufferedAmount()+uint64(len(segment)) > channel.bufferedLimit {
+		// A newer record may arrive while the sender waits for the transport
+		// to drain; abandon the stale frame rather than holding the fresher
+		// one behind it.
+		if channel.sendGen.Load() != generation {
+			return errFrameSuperseded
+		}
+
 		select {
 		case <-channel.ctx.Done():
 			return channel.ctx.Err()
 		case <-channel.drained:
+		case <-channel.latestReady:
+			if channel.sendGen.Load() != generation {
+				return errFrameSuperseded
+			}
 		}
 	}
 
-	return channel.dataChannel.Send(segment)
+	return channel.transport.Send(segment)
 }
 
 func (channel *fluidChannel) close() {
 	channel.cancel()
-	if channel.dataChannel != nil {
-		_ = channel.dataChannel.Close()
+
+	if channel.transport != nil {
+		_ = channel.transport.Close()
 	}
 }

@@ -467,15 +467,18 @@ func (index *RunIndex) CapturesBefore(
 }
 
 /*
-ObservationAt returns the instrument's observation at one exact capture
-coordinate, when it has one.
+ObservationAt returns the instrument's observation at one exact envelope
+coordinate (CaptureSequence and Ordinal), when it has one. An ordinal mismatch
+with the same CaptureSequence is a different causal coordinate and must never
+be returned for the other ordinal.
 */
 func (index *RunIndex) ObservationAt(
 	symbol string,
-	sequence CaptureSequence,
+	target EnvelopeRef,
 ) (Observation, bool) {
 	for _, observation := range index.symbols[symbol] {
-		if observation.Capture.Sequence == sequence {
+		if observation.Capture.Sequence == target.Origin.Sequence &&
+			observation.Ordinal == target.Ordinal {
 			return observation, true
 		}
 	}

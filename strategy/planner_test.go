@@ -289,6 +289,124 @@ func TestMCTSExitProvenanceTest(t *testing.T) {
 	})
 }
 
+func TestWorkingDecisionsClonesOnlyActionable(t *testing.T) {
+	Convey("Given a frontier mixing actionable and wait decisions", t, func() {
+		enter := types.NewDecision(types.ActionEnter, "A/USD")
+		exit := types.NewDecision(types.ActionExit, "B/USD")
+		wait := types.NewDecision(types.ActionNothing, "C/USD")
+
+		working := workingDecisions([]*types.Decision{enter, exit, wait})
+
+		Convey("only Enter and Exit shells are cloned; wait shares the resident record", func() {
+			So(len(working), ShouldEqual, 3)
+			So(working[0], ShouldNotPointTo, enter)
+			So(working[1], ShouldNotPointTo, exit)
+			So(working[2], ShouldPointTo, wait)
+		})
+	})
+}
+
+func TestResidentFrontierIncrementalOrder(t *testing.T) {
+	Convey("Given a resident frontier", t, func() {
+		planner, _ := frontierPlanner(false)
+		at := time.Unix(0, 149*int64(time.Second))
+
+		planner.pending.Store("C/USD", frontierState("C/USD", at))
+		planner.pending.Store("A/USD", frontierState("A/USD", at))
+		planner.pending.Store("B/USD", frontierState("B/USD", at))
+
+		_ = planner.residentDecisions(system.Cfg.Snapshot())
+
+		planner.frontierMu.RLock()
+		symbols := make([]string, 0, len(planner.frontier))
+
+		for _, entry := range planner.frontier {
+			symbols = append(symbols, entry.symbol)
+		}
+		planner.frontierMu.RUnlock()
+
+		Convey("candidates are inserted in deterministic symbol order without a per-pass sort", func() {
+			So(symbols, ShouldResemble, []string{"A/USD", "B/USD", "C/USD"})
+		})
+	})
+}
+func TestRecordEntryEconomicTest(t *testing.T) {
+	Convey("Given a search that explored Enter and Wait", t, func() {
+		result := &mcts.SearchResult{
+			SelectedAction: mcts.Enter,
+			Trace: &mcts.Trace{
+				Branches: []mcts.BranchTrace{
+					{Action: mcts.Enter, MeanReward: 1.0},
+					{Action: mcts.Wait, MeanReward: 0.2},
+				},
+			},
+		}
+
+		decision := types.NewDecision(types.ActionEnter, "TEST/USD")
+		enterMean, enterFound, waitMean, waitFound, advantage := recordEntryEconomic(decision, result)
+
+		Convey("both means and the advantage are recorded when both are explored", func() {
+			So(enterFound, ShouldBeTrue)
+			So(waitFound, ShouldBeTrue)
+			So(enterMean, ShouldEqual, 1.0)
+			So(waitMean, ShouldEqual, 0.2)
+			So(advantage, ShouldAlmostEqual, 0.8)
+			So(decision.Alternatives["economic:enter_mean"], ShouldEqual, 1.0)
+			So(decision.Alternatives["economic:wait_mean"], ShouldEqual, 0.2)
+			So(decision.Alternatives["economic:enter_advantage"], ShouldAlmostEqual, 0.8)
+			So(decision.Alternatives["economic:enter_explored"], ShouldEqual, 1)
+		})
+	})
+
+	Convey("Given a search that did not explore Enter", t, func() {
+		result := &mcts.SearchResult{
+			SelectedAction: mcts.Wait,
+			Trace: &mcts.Trace{
+				Branches: []mcts.BranchTrace{
+					{Action: mcts.Wait, MeanReward: 0.2},
+				},
+			},
+		}
+
+		decision := types.NewDecision(types.ActionNothing, "TEST/USD")
+		enterMean, enterFound, waitMean, waitFound, advantage := recordEntryEconomic(decision, result)
+
+		Convey("the absent branch stays absent rather than reading as economic zero", func() {
+			So(enterFound, ShouldBeFalse)
+			So(waitFound, ShouldBeTrue)
+			So(enterMean, ShouldEqual, 0)
+			So(waitMean, ShouldEqual, 0.2)
+			So(advantage, ShouldEqual, 0)
+			So(decision.Alternatives, ShouldNotContainKey, "economic:enter_mean")
+			So(decision.Alternatives, ShouldContainKey, "economic:wait_mean")
+			So(decision.Alternatives, ShouldNotContainKey, "economic:enter_advantage")
+			So(decision.Alternatives["economic:enter_explored"], ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given a search that did not explore Wait", t, func() {
+		result := &mcts.SearchResult{
+			SelectedAction: mcts.Enter,
+			Trace: &mcts.Trace{
+				Branches: []mcts.BranchTrace{
+					{Action: mcts.Enter, MeanReward: 1.0},
+				},
+			},
+		}
+
+		decision := types.NewDecision(types.ActionEnter, "TEST/USD")
+		_, enterFound, _, waitFound, advantage := recordEntryEconomic(decision, result)
+
+		Convey("the advantage is absent when either branch is unexplored", func() {
+			So(enterFound, ShouldBeTrue)
+			So(waitFound, ShouldBeFalse)
+			So(advantage, ShouldEqual, 0)
+			So(decision.Alternatives, ShouldNotContainKey, "economic:wait_mean")
+			So(decision.Alternatives, ShouldNotContainKey, "economic:enter_advantage")
+		})
+	})
+}
+
 func TestMCTSExitAuthorityProvenanceTest(t *testing.T) {
 	Convey("Given an MCTS-selected Exit", t, func() {
 		result := &mcts.SearchResult{

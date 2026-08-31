@@ -152,6 +152,108 @@ func coherentL3(symbol, bid, ask string) kraken.Level3Data {
 }
 
 /*
+TestDeskPositionOpenedAfterSnapshotConsumesContinuousState covers the P0
+mid-stream bootstrap bug end to end. The L3 reducer is continuously advanced
+from the genuine snapshot regardless of position existence, so a position opened
+after several updates must see truthful current state on the next update — the
+update must never be promoted to a snapshot merely because the position-local
+reducer had no prior state.
+*/
+func TestDeskPositionOpenedAfterSnapshotConsumesContinuousState(t *testing.T) {
+	Convey("Given a desk whose L3 reducer consumed a snapshot then several updates", t, func() {
+		conn := newExecutingConn(nil)
+		desk, workload := newDeliveryDesk(t, conn)
+		conn.workload = workload
+
+		desk.price.fees.Store("TEST/USD", kraken.TradeVolumeFee{
+			Fee: decimal.NewFromFloat64(0.25),
+		})
+
+		So(desk.StepLevel3(coherentL3("TEST/USD", "2.50", "2.51")), ShouldBeNil)
+
+		// Two mutations against the seeded state: the executable bid mark
+		// moves from 2.50 to 2.60 before any position exists.
+		So(desk.StepLevel3(kraken.Level3Data{
+			Symbol: "TEST/USD", Type: "update",
+			Bids: []kraken.Level3Order{mustDecimalOrder("b2", "2.60", "100000")},
+			Asks: []kraken.Level3Order{mustDecimalOrder("a1", "2.61", "100000")},
+		}), ShouldBeNil)
+
+		entry := mustDecimal("2.00")
+		stoploss, err := types.NewStoploss(
+			t.Context(),
+			"TEST/USD",
+			entry,
+			entry,
+			&learning.RLSOutput{Ready: true},
+			nil,
+			mustDecimal("0.01"),
+			mustDecimal("0"),
+			mustDecimal("0"),
+			time.Now(),
+		)
+
+		if err != nil {
+			t.Fatalf("construct stoploss: %v", err)
+		}
+
+		stoploss.ArmClock()
+
+		decision := types.Decision{
+			ID:               "l3-continuous-1",
+			Action:           types.ActionEnter,
+			Symbol:           "TEST/USD",
+			ProposedQuantity: mustDecimal("100000"),
+			ProposedNotional: mustDecimal("200.00"),
+			ForecastHorizon:  1,
+			Stoploss:         stoploss,
+		}
+
+		pair := kraken.InstrumentPair{Symbol: "TEST/USD", TickSize: *decimal.NewFromFloat64(0.01)}
+		position := NewPosition(
+			t.Context(), desk.api, desk.instrument, desk.price, desk.balance,
+			nil, desk.PositionStore, pair, decision, nil,
+		)
+		position.Holding.Qty = mustDecimal("100000")
+		position.Holding.SellableQty = mustDecimal("100000")
+		position.Holding.EntryPrice = entry
+		position.Holding.EntryFee = mustDecimal("0")
+		position.setStatus(types.OPEN)
+		position.Holding.Status = types.OPEN
+
+		desk.positions.Store("TEST/USD", position)
+
+		Convey("the next update reads truthful continuous state rather than reconstructing from the update", func() {
+			before := position.guardianWatermark.Load()
+
+			// Deleting the order added before the position opened reveals
+			// whether the resident state really contains it: the mutation is
+			// meaningful only against a seeded baseline. Had this delete been
+			// promoted to a fresh snapshot (the old lazy-adoption bug), there
+			// would be no bid left and the surface would stay incomplete.
+			So(desk.StepLevel3(kraken.Level3Data{
+				Symbol: "TEST/USD", Type: "update",
+				Bids: []kraken.Level3Order{{Event: "delete", OrderID: "b2"}},
+			}), ShouldBeNil)
+
+			deadline := time.Now().Add(3 * time.Second)
+
+			for position.guardianWatermark.Load() <= before &&
+				time.Now().Before(deadline) {
+				time.Sleep(2 * time.Millisecond)
+			}
+
+			// b2's deletion leaves the pre-position b1 at 2.50 as the best
+			// executable bid, proving the continuously-resident state was
+			// consumed rather than discarded and re-seeded from the delete.
+			So(position.Holding.Stoploss.BookObserved, ShouldBeTrue)
+			So(position.Holding.Mark, ShouldNotBeNil)
+			So(position.Holding.Mark.Cmp(mustDecimal("2.50")), ShouldEqual, 0)
+		})
+	})
+}
+
+/*
 TestDeskLevel3DrivesExecutableMark proves the production path: a realistic L3
 snapshot reaches the desk, commits the canonical book, the guardian derives the
 executable VWAP, BookObserved latches, and Holding.Mark becomes the full-lot

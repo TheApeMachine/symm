@@ -15,6 +15,24 @@ export type HindsightRun = {
 	integrity: "COMPLETE" | "GAPPED" | "CORRUPT" | "UNKNOWN";
 };
 
+/*
+HindsightRef is the full causal coordinate of one selected envelope: the
+capture sequence and the deterministic ordinal within that capture. Sequence
+alone is a chart rendering coordinate, never an artifact identity.
+*/
+export type HindsightRef = {
+	sequence: number;
+	ordinal: number;
+};
+
+export const sameHindsightRef = (left: HindsightRef, right: HindsightRef): boolean =>
+	left.sequence === right.sequence && left.ordinal === right.ordinal;
+
+export const compareHindsightRef = (left: HindsightRef, right: HindsightRef): number =>
+	left.sequence !== right.sequence
+		? left.sequence - right.sequence
+		: left.ordinal - right.ordinal;
+
 export type HindsightCaptureIdentity = {
 	run: string;
 	sequence: number;

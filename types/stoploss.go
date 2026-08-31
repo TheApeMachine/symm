@@ -68,11 +68,11 @@ type Stoploss struct {
 	Horizon              int                 `json:"horizon,omitempty"`
 	Observed             int                 `json:"observed,omitempty"`
 	ClockArmed           bool                `json:"clock_armed,omitempty"`
-	// BookObserved latches true once a valid authoritative L3 book has been
-	// read after the stop became live. It distinguishes clean initial
-	// bootstrap (no book yet, stay armed and wait) from feed-integrity failure
-	// after protection was live (a valid book that becomes invalid owns an
-	// execution-regime invalidation).
+	// BookObserved latches true once valid executable L3 state has been
+	// observed after the stop became live. It distinguishes clean initial
+	// bootstrap (no executable state yet, stay armed and wait) from
+	// feed-integrity failure after protection was live (valid executable
+	// state that becomes invalid owns an execution-regime invalidation).
 	BookObserved bool   `json:"book_observed,omitempty"`
 	Status       Status `json:"status"`
 	Symbol       string `json:"symbol"`

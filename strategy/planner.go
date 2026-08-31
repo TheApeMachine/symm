@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	goruntime "runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -76,10 +75,27 @@ type Planner struct {
 	// evaluated under stops matching current truth. Passes arbitrate among
 	// these already-evaluated candidates; they never rescan the universe.
 	resident sync.Map
+	// frontier is the resident candidate set kept in deterministic symbol
+	// order, maintained incrementally on each evaluation so an arbitration
+	// pass never re-sorts the whole universe.
+	frontierMu sync.RWMutex
+	frontier   []frontierEntry
+	// portfolioGen advances when a genuinely global portfolio fact (account
+	// cash) changes materially, so global invalidation is an explicit
+	// generation rather than a per-ticker poll over every candidate.
+	portfolioGen atomic.Uint64
 	// evaluate runs the expensive causal/MCTS evaluation for one symbol.
 	// The live default is decisionFromCausalState; tests inject a counting
 	// wrapper to prove unrelated passes do not rerun evaluations.
 	evaluate func(*CausalState, *system.Config, marketInputs) *types.Decision
+}
+
+/*
+frontierEntry is one symbol's ordered position in the resident frontier,
+alongside its deterministic key for stable in-place replacement.
+*/
+type frontierEntry struct {
+	symbol string
 }
 
 /*
@@ -91,13 +107,14 @@ economics are no longer truthful and the candidate is re-evaluated. It is a
 state-identity check, never an arbitrary freshness TTL.
 */
 type residentCandidate struct {
-	state        *CausalState
-	stateKey     string
-	inputs       marketInputs
-	heldQty      float64
-	entryPrice   float64
-	cash         float64
-	decision     *types.Decision
+	state      *CausalState
+	stateKey   string
+	inputs     marketInputs
+	heldQty    float64
+	entryPrice float64
+	cash       float64
+	portGen    uint64
+	decision   *types.Decision
 }
 
 /*
@@ -335,10 +352,15 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.StrategyRound {
 		}
 	}
 
+	// Materialise working shells only for the decisions allocation or
+	// execution will actually mutate; the resident evaluated records for
+	// every other candidate stay shared and immutable.
+	working := workingDecisions(decisions)
+
 	if planner.allocation != nil {
 		allocationStarted := time.Now()
 
-		if err := planner.allocation.Calculate(decisions); err != nil {
+		if err := planner.allocation.Calculate(working); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.Internal,
 				"planner: allocation calculation failed",
@@ -352,7 +374,7 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.StrategyRound {
 		}
 	}
 
-	if err := planner.executeDecisions(decisions); err != nil {
+	if err := planner.executeDecisions(working); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Internal,
 			"planner: decision execution failed",
@@ -361,36 +383,59 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.StrategyRound {
 		return nil
 	}
 
-	for _, decision := range decisions {
+	for _, decision := range working {
 		planner.stager.Stage(decision, 10*time.Minute)
 	}
 
 	return &types.StrategyRound{
 		Evaluated: true,
 		Outcome:   "decisions",
-		Decisions: decisions,
+		Decisions: working,
 	}
 }
 
 /*
-residentDecisions evaluates the dirty frontier once, then materialises one
-decision per resident candidate for arbitration. Expensive causal/MCTS
-evaluation runs only when a symbol holds a newer CausalState than the evaluated
-record or when the cheap execution/portfolio signature changed; an unrelated
-ticker leaves every other resident record untouched. Cheap allocation/arbitration
-still inspects every resident candidate each pass, so a freed or newly opened
-slot is contested by all currently eligible residents.
+workingDecisions materialises mutable shells for exactly the decisions
+allocation or execution will act on (entry and exit). Every other evaluated
+candidate keeps its shared resident reference: a Wait or ActionNothing decision
+is read-only on this path and is never copied merely to discover who wins.
+*/
+func workingDecisions(decisions []*types.Decision) []*types.Decision {
+	working := make([]*types.Decision, 0, len(decisions))
 
-The returned decisions are fresh shells: allocation mutates them in place, so
-the stored evaluated record must never be handed out directly.
+	for _, decision := range decisions {
+		if decision == nil {
+			continue
+		}
+
+		if decision.Action == types.ActionEnter || decision.Action == types.ActionExit {
+			working = append(working, cloneDecision(decision))
+			continue
+		}
+
+		working = append(working, decision)
+	}
+
+	return working
+}
+
+/*
+residentDecisions evaluates the dirty frontier once, then materialises the
+already-maintained resident frontier in deterministic symbol order for
+arbitration. Expensive causal/MCTS evaluation runs only when a symbol holds a
+newer CausalState than the evaluated record or when the cheap
+execution/portfolio signature changed; an unrelated ticker leaves every other
+resident record untouched.
+
+The returned decisions are direct references to the evaluated records: they are
+immutable here. Allocation and execution materialise their own working shells
+for the few actionable candidates, never the whole universe.
 */
 func (planner *Planner) residentDecisions(
 	config *system.Config,
 ) []*types.Decision {
-	// First sweep: refresh the evaluated records that are out of date.
-	dirty := make([]string, 0)
-	pendingStates := make(map[string]*CausalState)
-
+	// Evaluate the arriving states once, in causal arrival order. A dirty
+	// symbol is replaced in place; no dirty slice or pending map materialised.
 	planner.pending.Range(func(key, value any) bool {
 		symbol, ok := key.(string)
 
@@ -404,7 +449,6 @@ func (planner *Planner) residentDecisions(
 			return true
 		}
 
-		pendingStates[symbol] = state
 		stateKey := causalStateKey(state)
 
 		if record, found := planner.resident.Load(symbol); found {
@@ -415,12 +459,10 @@ func (planner *Planner) residentDecisions(
 			}
 		}
 
-		dirty = append(dirty, symbol)
+		planner.evaluateResident(symbol, state, config, planner.evaluate)
 
 		return true
 	})
-
-	sort.Strings(dirty)
 
 	evaluate := planner.evaluate
 
@@ -428,77 +470,50 @@ func (planner *Planner) residentDecisions(
 		evaluate = planner.decisionFromCausalState
 	}
 
-	var g errgroup.Group
-	g.SetLimit(goruntime.GOMAXPROCS(0))
+	// Second sweep: cheap signature invalidation over the maintained ordered
+	// frontier. A candidate whose stored economics no longer match current
+	// truth is re-evaluated in place rather than arbitrated with stale
+	// economics; nothing is cloned or re-sorted.
+	planner.frontierMu.RLock()
+	frontier := append([]frontierEntry(nil), planner.frontier...)
+	planner.frontierMu.RUnlock()
 
-	for _, symbol := range dirty {
-		symbol := symbol
-		state := pendingStates[symbol]
-		g.Go(func() error {
-			planner.evaluateResident(symbol, state, config, evaluate)
-			return nil
-		})
+	decisions := make([]*types.Decision, 0, len(frontier))
+
+	for _, entry := range frontier {
+		loaded, found := planner.resident.Load(entry.symbol)
+
+		if !found {
+			continue
+		}
+
+		candidate, ok := loaded.(*residentCandidate)
+
+		if !ok || candidate == nil || candidate.decision == nil {
+			continue
+		}
+
+		if !planner.signatureCurrent(entry.symbol, candidate) {
+			planner.evaluateResident(entry.symbol, candidate.state, config, evaluate)
+			loaded, _ = planner.resident.Load(entry.symbol)
+			candidate, _ = loaded.(*residentCandidate)
+
+			if candidate == nil || candidate.decision == nil {
+				continue
+			}
+		}
+
+		decisions = append(decisions, candidate.decision)
 	}
-
-	if err := g.Wait(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"planner: resident evaluation group failed",
-			err,
-		))
-		return nil
-	}
-
-	// Second sweep: arbitration over every resident evaluated candidate.
-	decisions := make([]*types.Decision, 0)
-
-	planner.resident.Range(func(key, value any) bool {
-		symbol, ok := key.(string)
-
-		if !ok {
-			return true
-		}
-
-		record := value.(*residentCandidate)
-
-		if record == nil || record.decision == nil {
-			return true
-		}
-
-		// A candidate whose stored economics no longer match current truth is
-		// re-evaluated here rather than arbitrated with stale economics.
-		if !planner.signatureCurrent(symbol, record) {
-			planner.evaluateResident(symbol, record.state, config, evaluate)
-		}
-
-		loaded, _ := planner.resident.Load(symbol)
-
-		if loaded == nil {
-			return true
-		}
-
-		candidate := loaded.(*residentCandidate)
-
-		if candidate.decision == nil {
-			return true
-		}
-
-		decisions = append(decisions, cloneDecision(candidate.decision))
-
-		return true
-	})
-
-	sort.SliceStable(decisions, func(left, right int) bool {
-		return decisions[left].Symbol < decisions[right].Symbol
-	})
 
 	return decisions
 }
 
 /*
-evaluateResident runs the expensive evaluation for one symbol and replaces its
-resident record. It reports through the missing-execution-market decision so an
-unpriced symbol stays observable rather than being silently dropped.
+evaluateResident runs the expensive evaluation for one symbol, replaces its
+resident record, and maintains its position in the ordered frontier in place.
+It reports through the missing-execution-market decision so an unpriced symbol
+stays observable rather than being silently dropped.
 */
 func (planner *Planner) evaluateResident(
 	symbol string,
@@ -520,25 +535,81 @@ func (planner *Planner) evaluateResident(
 		}
 	}
 
-	planner.resident.Store(symbol, &residentCandidate{
+	record := &residentCandidate{
 		state:      state,
 		stateKey:   causalStateKey(state),
 		inputs:     inputs,
 		heldQty:    heldQty,
 		entryPrice: entryPrice,
 		cash:       cash,
+		portGen:    planner.portfolioGen.Load(),
 		decision:   evaluate(state, config, inputs),
-	})
+	}
+
+	// Release the evaluated record only once: it replaces any older resident
+	// record for the symbol and updates the ordered frontier in place.
+	planner.resident.Store(symbol, record)
+	planner.updateFrontier(symbol)
+}
+
+/*
+updateFrontier inserts or replaces the symbol's slot in the symbol-ordered
+frontier without rescanning the resident map or re-sorting the frontier.
+*/
+func (planner *Planner) updateFrontier(symbol string) {
+	planner.frontierMu.Lock()
+	defer planner.frontierMu.Unlock()
+
+	position, found := sortSearchFrontier(planner.frontier, symbol)
+
+	if found {
+		planner.frontier[position].symbol = symbol
+
+		return
+	}
+
+	planner.frontier = append(planner.frontier, frontierEntry{})
+	copy(planner.frontier[position+1:], planner.frontier[position:])
+	planner.frontier[position] = frontierEntry{symbol: symbol}
+}
+
+/*
+sortSearchFrontier finds the symbol's insertion position in the symbol-ordered
+frontier via binary search, reporting whether it is already present.
+*/
+func sortSearchFrontier(entries []frontierEntry, symbol string) (int, bool) {
+	low, high := 0, len(entries)
+
+	for low < high {
+		mid := (low + high) / 2
+
+		if entries[mid].symbol < symbol {
+			low = mid + 1
+		} else {
+			high = mid
+		}
+	}
+
+	if low < len(entries) && entries[low].symbol == symbol {
+		return low, true
+	}
+
+	return low, false
 }
 
 /*
 signatureCurrent reports whether the cheap execution/portfolio facts a
-candidate was evaluated under still match current truth. Any difference makes
-the stored economics stale. This is identity comparison, not a freshness
-window: a candidate stays valid across arbitrarily many unrelated passes.
+candidate was evaluated under still match current truth and whether the
+explicit portfolio generation is unchanged. Any difference makes the stored
+economics stale. This is identity comparison, not a freshness window: a
+candidate stays valid across arbitrarily many unrelated passes.
 */
 func (planner *Planner) signatureCurrent(symbol string, candidate *residentCandidate) bool {
 	if candidate == nil {
+		return false
+	}
+
+	if candidate.portGen != planner.portfolioGen.Load() {
 		return false
 	}
 
@@ -759,12 +830,10 @@ func (planner *Planner) decisionFromCausalState(
 	// not a valuable opportunity, regardless of how it ranks against other
 	// candidates in the round. Entries only: exits are governed by their own
 	// authority and are never gated by an enter advantage they cannot have.
-	enterMean, enterFound := branchMean(result, mcts.Enter)
-	waitMean, waitFound := branchMean(result, mcts.Wait)
-	enterAdvantage := enterMean - waitMean
-	alternatives["economic:enter_mean"] = enterMean
-	alternatives["economic:wait_mean"] = waitMean
-	alternatives["economic:enter_advantage"] = enterAdvantage
+	_, enterFound, _, waitFound, enterAdvantage := recordEntryEconomic(
+		decision,
+		result,
+	)
 
 	// Exit economics are symmetrical to entry economics: for a held position,
 	// the decision MCTS actually explores is Exit versus Wait, so the branch
@@ -1056,6 +1125,51 @@ func branchMean(result *mcts.SearchResult, action mcts.Action) (float64, bool) {
 }
 
 /*
+recordEntryEconomic records the Entry-versus-Wait branch economics for the
+decision search, symmetrical to recordExitEconomic. Each mean key is present
+only when the branch was actually explored; the exploration flags make absence
+explicit so a zero is never fabricated for an unexplored branch. The entry
+advantage is defined only when both branches were explored and is returned for
+the caller's action gate.
+*/
+func recordEntryEconomic(
+	decision *types.Decision,
+	result *mcts.SearchResult,
+) (enterMean float64, enterFound bool, waitMean float64, waitFound bool, advantage float64) {
+	if decision == nil || result == nil {
+		return 0, false, 0, false, 0
+	}
+
+	alternatives := decision.Alternatives
+
+	if alternatives == nil {
+		alternatives = make(map[string]float64)
+		decision.Alternatives = alternatives
+	}
+
+	enterMean, enterFound = branchMean(result, mcts.Enter)
+	waitMean, waitFound = branchMean(result, mcts.Wait)
+
+	if enterFound {
+		alternatives["economic:enter_mean"] = enterMean
+		alternatives["economic:enter_explored"] = 1
+	} else {
+		alternatives["economic:enter_explored"] = 0
+	}
+
+	if waitFound {
+		alternatives["economic:wait_mean"] = waitMean
+	}
+
+	if enterFound && waitFound {
+		advantage = enterMean - waitMean
+		alternatives["economic:enter_advantage"] = advantage
+	}
+
+	return enterMean, enterFound, waitMean, waitFound, advantage
+}
+
+/*
 recordExitEconomic records the Exit-versus-Wait branch economics for a held
 position, symmetrical to the entry advantage. Each key is present only when the
 branch was actually explored; the exploration flag makes absence explicit so a
@@ -1185,7 +1299,11 @@ func (planner *Planner) executeDecisions(
 				if !errnie.IsNotAcceptable(err) {
 					return fmt.Errorf("planner: execute exit %s: %w", decision.Symbol, err)
 				}
+				return nil
 			}
+
+			planner.portfolioGen.Add(1)
+
 			return nil
 		})
 	}
@@ -1218,7 +1336,11 @@ func (planner *Planner) executeDecisions(
 				if !errnie.IsNotAcceptable(err) {
 					return fmt.Errorf("planner: execute %s: %w", decision.Symbol, err)
 				}
+				return nil
 			}
+
+			planner.portfolioGen.Add(1)
+
 			return nil
 		})
 	}

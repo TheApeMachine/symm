@@ -154,7 +154,7 @@ func (hub *Hub) registerTimeline() {
 
 		at := time.Time{}
 
-		if observation, known := index.ObservationAt(symbol, sequence); known {
+		if observation, known := index.ObservationAt(symbol, target); known {
 			at = observation.At()
 		}
 

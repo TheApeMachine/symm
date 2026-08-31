@@ -66,11 +66,12 @@ type Position struct {
 	ExitOrderResult  *spot.AddOrderResult  `json:"exit_order_result"`
 	Holding          *types.Holding        `json:"holding"`
 
-	// liquidation is the bounded resident execution state for this symbol,
-	// owned here so L3 traffic for symbols without an execution lifecycle
-	// never allocates or maintains resident book state. It is created lazily
-	// on the first L3 frame and released when the position closes.
-	liquidation *liquidationBook
+	// liquidation is this symbol's continuously-resident execution reducer,
+	// owned by the Desk and injected at creation. It is advanced by the
+	// authoritative L3 stream from the genuine snapshot onward regardless of
+	// when this position opened, so the position never bootstraps book state
+	// from an arbitrary mid-stream update. The position only reads from it.
+	liquidation *liquidationReducer
 
 	// perspective is the shared latest-by-key Perspective store. perspective is
 	// the entry snapshot captured when the lot's fill lands, used for the
@@ -378,14 +379,15 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 		}
 	}
 
-	// One economic mark: once the authoritative L3 book has been read
+	// One economic mark: once valid executable L3 state has been observed
 	// (BookObserved), the executable-liquidation VWAP owns Holding.Mark and the
 	// stoploss geometry. A later ticker must refresh the cache (price.Update
 	// above) and advance the forecast-horizon clock, but must NOT overwrite the
 	// mark with best-bid or re-run the stoploss against it — otherwise a
 	// mid-run ticker undoes the L3 mark ("never mind, mark is best bid Y, now
-	// run the stoploss again"). Before the book has produced a coherent frame,
-	// best-bid is the only available mark and seeds the position.
+	// run the stoploss again"). Before executable L3 state has produced a
+	// coherent frame, best-bid is the only available mark and seeds the
+	// position.
 	mark := ticker.Bid
 
 	if position.Holding.Stoploss.BookObserved && position.Holding.Mark != nil {
@@ -429,13 +431,14 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 
 /*
 onLevel3 derives the current executable-liquidation surface for this position's
-actual SellableQty from the authoritative post-frame book and feeds it to the
-bound stoploss through ObserveExecutable. It is the L3 market-state clock: the
-mark, peak, floor, and any execution-regime trigger are driven by the complete
-book, never by ticker.Bid, and never once per intermediate order mutation.
+actual SellableQty from the continuously-resident execution state and feeds it
+to the bound stoploss through ObserveExecutable. It is the L3 market-state
+clock: the mark, peak, floor, and any execution-regime trigger are driven by
+the complete executable state, never by ticker.Bid, and never once per
+intermediate order mutation.
 
 It only runs for positions with positive sellable inventory, so a closed or
-unfilled lot performs no L3 book work.
+unfilled lot performs no L3 execution work.
 */
 func (position *Position) onLevel3(level3 kraken.Level3Data) {
 	if position.Holding == nil ||
@@ -444,28 +447,21 @@ func (position *Position) onLevel3(level3 kraken.Level3Data) {
 		return
 	}
 
-	// Lazy adoption: the reducer is created for the symbol the moment its
-	// open position first needs execution truth. No book state exists for
-	// symbols without an open execution lifecycle.
-	if position.liquidation == nil {
-		position.liquidation = newLiquidationBook(level3.Symbol)
-	}
-
-	position.liquidation.Apply(level3)
 	position.evaluateExecutable(level3.Symbol, level3.Timestamp)
 }
 
 /*
 evaluateExecutable derives the current executable-liquidation surface for this
-position's actual SellableQty from the authoritative book and feeds it to the
-bound stoploss through ObserveExecutable. It is the single evaluation path for
-the L3 market-state clock, used by both live L3 frames and recovery. It only
+position's actual SellableQty from the continuously-resident execution state
+and feeds it to the bound stoploss through ObserveExecutable. It is the single
+evaluation path for the L3 market-state clock, used by both live L3 frames and
+recovery. It only
 runs for positions with positive sellable inventory, so a closed or unfilled
-lot performs no L3 book work.
+lot performs no L3 execution work.
 
 The mark, peak, floor, and any execution-regime trigger are driven by the
-complete book, never by ticker.Bid, and never once per intermediate order
-mutation.
+complete executable state, never by ticker.Bid, and never once per intermediate
+order mutation.
 */
 func (position *Position) evaluateExecutable(symbol string, at time.Time) {
 	if position.Holding == nil {
@@ -1048,9 +1044,11 @@ func (position *Position) Close() (err error) {
 
 	position.setStatus(types.CLOSED)
 
-	// Release the bounded liquidation state: the position's execution
-	// lifecycle is over, and no other lifecycle needs that symbol's book.
-	// Recovery must never adopt stale state from a previous lot.
+	// Drop the reference to the shared execution reducer: the position's
+	// lifecycle is over. The reducer itself is owned by the Desk and keeps
+	// advancing for the symbol, so a later position on the same symbol starts
+	// from the same continuous resident state, never from stale or lazily
+	// reconstructed book state.
 	position.liquidation = nil
 
 	if position.onClose != nil {

@@ -116,10 +116,11 @@ func (node tickNode) StepBacklog(envelope *types.Envelope, backlog int64) *types
 
 /*
 level3Node routes one parsed Level3 frame to the broker desk so the canonical
-per-symbol L3 book is committed and the matching open position's guardian can
-evaluate the post-frame executable surface. It is the Level3 analogue of
-executionNode: each frame lands on this node and is applied to the desk's
-authoritative book before any signal or downstream stage reads it.
+per-symbol execution state is advanced and the matching open position's
+guardian can evaluate the post-frame executable surface. It is the Level3
+analogue of executionNode: each frame lands on this node and is applied to the
+desk's continuously-resident execution reducer before any signal or downstream
+stage reads it.
 */
 type level3Node struct {
 	desk *broker.Desk
@@ -130,7 +131,10 @@ func (node level3Node) Step(envelope *types.Envelope) *types.Envelope {
 		return envelope
 	}
 
-	if err := node.desk.StepLevel3(envelope.Level3Data); err != nil {
+	if err := node.desk.StepLevel3Epoch(
+		envelope.Level3Data,
+		uint64(envelope.CaptureID.StreamEpoch),
+	); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Internal,
 			"symm: desk level3 step",

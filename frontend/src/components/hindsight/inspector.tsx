@@ -165,7 +165,7 @@ export const ProvenancePanel = ({
 	onSelect,
 }: {
 	envelope: HindsightEnvelope | null;
-	onSelect: (sequence: number) => void;
+	onSelect: (sequence: number, ordinal: number) => void;
 }) => {
 	const boundaries = useMemo(() => {
 		const grouped = new Map<string, HindsightEnvelope["witnesses"]>();
@@ -291,7 +291,7 @@ export const ProvenancePanel = ({
 															key={`${parent.origin.sequence}-${parent.ordinal}`}
 															variant="bare"
 															className="rounded-[2px] border border-(--line2) px-1 font-mono text-[8px] text-(--f3) tabular-nums hover:border-(--acc) hover:text-(--f1)"
-															onClick={() => onSelect(parent.origin.sequence)}
+															onClick={() => onSelect(parent.origin.sequence, parent.ordinal)}
 														>
 															{parent.origin.sequence}:{parent.ordinal}
 														</Button>

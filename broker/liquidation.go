@@ -10,83 +10,122 @@ import (
 )
 
 /*
-liquidationBook is the bounded resident execution state for ONE symbol that has
-an open execution lifecycle. It is owned by a Position, created lazily when L3
-traffic first needs to price that position's liquidation, and released when the
-position closes. It is deliberately not a general-purpose exchange book: it
-retains only the bid chain needed to price the held SellableQty plus the best
-ask needed to keep the book coherent, and its capacity is bounded by the venue
-depth present in the feed.
-
-It is the exact inverse of a market-wide BookOwner: no map[string]*SymbolBook,
-no registry, no state for symbols without a position. The signal pipeline keeps
-consuming raw L3 frames directly and never passes through this reducer.
+executionDepth is the physical bound of one liquidationReducer side. It is the
+venue's L3 subscription depth — the maximum number of price levels Kraken will
+send for one symbol — plus one slot of headroom for the add/displace ordering
+inside a single update frame, in which the new order can be observed one slot
+before the displaced order's delete. This is a fixed, preallocated bound, never
+grown at runtime.
 */
-type liquidationBook struct {
-	mu     sync.RWMutex
-	symbol string
-	bids   []kraken.BookOrder
-	bidIdx map[string]int
-	asks   []kraken.BookOrder
-	askIdx map[string]int
-	valid  bool
-	saw    bool
+const executionDepth = 32
+
+/*
+liquidationOrder is one resident order stored by the liquidationReducer. The
+decimal quantities are owned by the reducer: they are cloned once on admission
+so the resident state never aliases a transport-held observation that a later
+frame reuses.
+*/
+type liquidationOrder struct {
+	orderID    string
+	limitPrice *decimal.Decimal
+	orderQty   *decimal.Decimal
 }
 
-func newLiquidationBook(symbol string) *liquidationBook {
-	return &liquidationBook{
+/*
+liquidationReducer is the bounded resident execution state for ONE symbol. It
+is deliberately not a queryable book: it retains only what is sufficient to
+advance the executable-liquidation surface — a bounded, best-first ordered bid
+chain (sellable into), a bounded ordered ask chain, and the minimal identity
+index needed for exact Level3 delete/modify semantics.
+
+It is continuously advanced by the authoritative L3 stream from the genuine
+Kraken snapshot onward, independently of whether a Position currently exists,
+so a position opened midway through a stream immediately consumes truthful
+current state rather than promoting the next update to a snapshot.
+*/
+type liquidationReducer struct {
+	mu      sync.RWMutex
+	symbol  string
+	epoch   uint64
+	seeded  bool
+	valid   bool
+	bids    [executionDepth]liquidationOrder
+	bidLen  int
+	bidIdx  map[string]int
+	asks    [executionDepth]liquidationOrder
+	askLen  int
+	askIdx  map[string]int
+}
+
+func newLiquidationReducer(symbol string) *liquidationReducer {
+	return &liquidationReducer{
 		symbol: symbol,
-		bidIdx: make(map[string]int),
-		askIdx: make(map[string]int),
+		bidIdx: make(map[string]int, executionDepth),
+		askIdx: make(map[string]int, executionDepth),
 	}
 }
 
 /*
-Apply folds one L3 frame into the resident liquidation state. A snapshot (or
-the first frame) replaces the sides; an update applies each add/modify/delete
-exactly once in causal arrival order.
+Apply folds one L3 frame into the resident execution state.
+
+Bootstrap is truthful: only a genuine `snapshot` frame seeds (or reseeds) the
+state. An `update` observed before any snapshot is a set of mutations against
+an unknown baseline, so it is discarded and the surface stays incomplete. A
+StreamEpoch change invalidates the old epoch's state until the new epoch's
+genuine snapshot arrives.
 */
-func (book *liquidationBook) Apply(data kraken.Level3Data) {
-	if book == nil || data.Symbol == "" {
+func (reducer *liquidationReducer) Apply(
+	data kraken.Level3Data,
+	epoch uint64,
+) {
+	if reducer == nil || data.Symbol == "" {
 		return
 	}
 
-	book.mu.Lock()
-	defer book.mu.Unlock()
+	reducer.mu.Lock()
+	defer reducer.mu.Unlock()
 
-	if data.Type == "snapshot" || !book.saw {
-		book.bids = book.bids[:0]
-		book.asks = book.asks[:0]
-		clear(book.bidIdx)
-		clear(book.askIdx)
+	if epoch != 0 && epoch != reducer.epoch {
+		reducer.epoch = epoch
+		reducer.seeded = false
+		reducer.valid = false
+		reducer.clear()
+	}
+
+	if data.Type == "snapshot" {
+		reducer.clear()
 
 		for _, order := range data.Bids {
 			if usableLiquidationOrder(order) {
-				book.upsert(order, kraken.SideBid)
+				reducer.upsert(order, kraken.SideBid)
 			}
 		}
 
 		for _, order := range data.Asks {
 			if usableLiquidationOrder(order) {
-				book.upsert(order, kraken.SideAsk)
+				reducer.upsert(order, kraken.SideAsk)
 			}
 		}
 
-		book.saw = true
-		book.valid = book.coherent()
+		reducer.seeded = true
+		reducer.valid = reducer.coherent()
 
 		return
 	}
 
+	if !reducer.seeded {
+		return
+	}
+
 	for _, order := range data.Bids {
-		book.applyOrder(order, kraken.SideBid)
+		reducer.applyOrder(order, kraken.SideBid)
 	}
 
 	for _, order := range data.Asks {
-		book.applyOrder(order, kraken.SideAsk)
+		reducer.applyOrder(order, kraken.SideAsk)
 	}
 
-	book.valid = book.coherent()
+	reducer.valid = reducer.coherent()
 }
 
 func usableLiquidationOrder(order kraken.Level3Order) bool {
@@ -95,13 +134,23 @@ func usableLiquidationOrder(order kraken.Level3Order) bool {
 		order.OrderQty.Sign() > 0
 }
 
-func (book *liquidationBook) applyOrder(order kraken.Level3Order, side kraken.Side) {
+func (reducer *liquidationReducer) clear() {
+	reducer.bidLen = 0
+	reducer.askLen = 0
+	clear(reducer.bidIdx)
+	clear(reducer.askIdx)
+}
+
+func (reducer *liquidationReducer) applyOrder(
+	order kraken.Level3Order,
+	side kraken.Side,
+) {
 	if order.OrderID == "" {
 		return
 	}
 
 	if order.Event == "delete" {
-		book.remove(order.OrderID, side)
+		reducer.remove(order.OrderID, side)
 
 		return
 	}
@@ -110,136 +159,180 @@ func (book *liquidationBook) applyOrder(order kraken.Level3Order, side kraken.Si
 		return
 	}
 
-	book.upsert(order, side)
+	reducer.upsert(order, side)
 }
 
-func (book *liquidationBook) upsert(order kraken.Level3Order, side kraken.Side) {
-	resident := residentLiquidationOrder(order)
+func (reducer *liquidationReducer) upsert(
+	order kraken.Level3Order,
+	side kraken.Side,
+) {
+	resident := liquidationOrder{
+		orderID:    order.OrderID,
+		limitPrice: cloneDecimal(order.LimitPrice),
+		orderQty:   cloneDecimal(order.OrderQty),
+	}
 
 	if side == kraken.SideBid {
-		if index, found := book.bidIdx[order.OrderID]; found {
-			book.bids[index] = resident
-			book.resortBids()
+		if reducer.bidLen >= executionDepth {
+			return
+		}
+
+		if index, found := reducer.bidIdx[order.OrderID]; found {
+			reducer.bids[index] = resident
+			reducer.reposition(index, kraken.SideBid)
 
 			return
 		}
 
-		book.bids = append(book.bids, resident)
-		book.reindexBids()
+		reducer.bids[reducer.bidLen] = resident
+		reducer.bidIdx[order.OrderID] = reducer.bidLen
+		reducer.bidLen++
+		reducer.reposition(reducer.bidLen-1, kraken.SideBid)
 
 		return
 	}
 
-	if index, found := book.askIdx[order.OrderID]; found {
-		book.asks[index] = resident
-		book.resortAsks()
+	if reducer.askLen >= executionDepth {
+		return
+	}
+
+	if index, found := reducer.askIdx[order.OrderID]; found {
+		reducer.asks[index] = resident
+		reducer.reposition(index, kraken.SideAsk)
 
 		return
 	}
 
-	book.asks = append(book.asks, resident)
-	book.reindexAsks()
+	reducer.asks[reducer.askLen] = resident
+	reducer.askIdx[order.OrderID] = reducer.askLen
+	reducer.askLen++
+	reducer.reposition(reducer.askLen-1, kraken.SideAsk)
 }
 
-func (book *liquidationBook) remove(orderID string, side kraken.Side) {
+/*
+remove deletes one order by identity and closes the gap with a swap-with-last
+shrink, then repositions only the moved element. The identity index is updated
+in place for exactly one slot — never rebuilt.
+*/
+func (reducer *liquidationReducer) remove(orderID string, side kraken.Side) {
 	if side == kraken.SideBid {
-		index, found := book.bidIdx[orderID]
+		index, found := reducer.bidIdx[orderID]
 
 		if !found {
 			return
 		}
 
-		book.bids = append(book.bids[:index], book.bids[index+1:]...)
-		book.reindexBids()
+		delete(reducer.bidIdx, orderID)
+		reducer.bidLen--
+
+		if index != reducer.bidLen {
+			reducer.bids[index] = reducer.bids[reducer.bidLen]
+			reducer.bidIdx[reducer.bids[index].orderID] = index
+			reducer.reposition(index, kraken.SideBid)
+		}
+
+		reducer.bids[reducer.bidLen] = liquidationOrder{}
 
 		return
 	}
 
-	index, found := book.askIdx[orderID]
+	index, found := reducer.askIdx[orderID]
 
 	if !found {
 		return
 	}
 
-	book.asks = append(book.asks[:index], book.asks[index+1:]...)
-	book.reindexAsks()
-}
+	delete(reducer.askIdx, orderID)
+	reducer.askLen--
 
-func (book *liquidationBook) reindexBids() {
-	book.bidIdx = make(map[string]int, len(book.bids))
-	insertionSortLiquidation(book.bids, kraken.SideBid)
-
-	for index := range book.bids {
-		book.bidIdx[book.bids[index].OrderID] = index
+	if index != reducer.askLen {
+		reducer.asks[index] = reducer.asks[reducer.askLen]
+		reducer.askIdx[reducer.asks[index].orderID] = index
+		reducer.reposition(index, kraken.SideAsk)
 	}
+
+	reducer.asks[reducer.askLen] = liquidationOrder{}
 }
 
-func (book *liquidationBook) reindexAsks() {
-	book.askIdx = make(map[string]int, len(book.asks))
-	insertionSortLiquidation(book.asks, kraken.SideAsk)
+/*
+reposition restores best-first order around one mutated slot by bubbling it
+in both directions. This touches a bounded neighbourhood of the changed level
+only — never a full sort of the side.
+*/
+func (reducer *liquidationReducer) reposition(index int, side kraken.Side) {
+	if side == kraken.SideBid {
+		orders := reducer.bids[:reducer.bidLen]
 
-	for index := range book.asks {
-		book.askIdx[book.asks[index].OrderID] = index
-	}
-}
-
-func (book *liquidationBook) resortBids() {
-	insertionSortLiquidation(book.bids, kraken.SideBid)
-
-	for index := range book.bids {
-		book.bidIdx[book.bids[index].OrderID] = index
-	}
-}
-
-func (book *liquidationBook) resortAsks() {
-	insertionSortLiquidation(book.asks, kraken.SideAsk)
-
-	for index := range book.asks {
-		book.askIdx[book.asks[index].OrderID] = index
-	}
-}
-
-func residentLiquidationOrder(order kraken.Level3Order) kraken.BookOrder {
-	return kraken.BookOrder{
-		OrderID:    order.OrderID,
-		LimitPrice: decimal.NewFromInt64(0).Add(order.LimitPrice),
-		OrderQty:   decimal.NewFromInt64(0).Add(order.OrderQty),
-	}
-}
-
-func insertionSortLiquidation(orders []kraken.BookOrder, side kraken.Side) {
-	for index := 0; index < len(orders); index++ {
-		current := orders[index]
-		position := index
-
-		for position > 0 && liquidationOrderedBefore(orders[position-1], current, side) {
-			orders[position] = orders[position-1]
-			position--
+		for index > 0 && !liquidationOrderedBefore(orders[index-1], orders[index], side) {
+			orders[index-1], orders[index] = orders[index], orders[index-1]
+			reducer.bidIdx[orders[index].orderID] = index
+			index--
 		}
 
-		orders[position] = current
+		reducer.bidIdx[orders[index].orderID] = index
+
+		for index < reducer.bidLen-1 && !liquidationOrderedBefore(orders[index], orders[index+1], side) {
+			orders[index], orders[index+1] = orders[index+1], orders[index]
+			reducer.bidIdx[orders[index].orderID] = index
+			index++
+		}
+
+		reducer.bidIdx[orders[index].orderID] = index
+
+		return
 	}
+
+	orders := reducer.asks[:reducer.askLen]
+
+	for index > 0 && !liquidationOrderedBefore(orders[index-1], orders[index], side) {
+		orders[index-1], orders[index] = orders[index], orders[index-1]
+		reducer.askIdx[orders[index].orderID] = index
+		index--
+	}
+
+	reducer.askIdx[orders[index].orderID] = index
+
+	for index < reducer.askLen-1 && !liquidationOrderedBefore(orders[index], orders[index+1], side) {
+		orders[index], orders[index+1] = orders[index+1], orders[index]
+		reducer.askIdx[orders[index].orderID] = index
+		index++
+	}
+
+	reducer.askIdx[orders[index].orderID] = index
 }
 
-func liquidationOrderedBefore(left, right kraken.BookOrder, side kraken.Side) bool {
-	if side == kraken.SideBid {
-		return left.LimitPrice.Cmp(right.LimitPrice) < 0
+/*
+liquidationOrderedBefore reports whether left precedes right in best-first
+order: bids descend (highest first), asks ascend (lowest first).
+*/
+func liquidationOrderedBefore(
+	left, right liquidationOrder,
+	side kraken.Side,
+) bool {
+	if left.limitPrice == nil || right.limitPrice == nil {
+		return false
 	}
 
-	return left.LimitPrice.Cmp(right.LimitPrice) > 0
+	if side == kraken.SideBid {
+		return left.limitPrice.Cmp(right.limitPrice) > 0
+	}
+
+	return left.limitPrice.Cmp(right.limitPrice) < 0
 }
 
 /*
 coherent reports whether the resident state is usable and non-crossed. It
-requires a best bid and a best ask, ordered strictly below/above.
+requires a best bid and a best ask, ordered strictly below/above. It never
+infers completeness from the presence of both sides alone: the caller still
+requires a genuine snapshot seed.
 */
-func (book *liquidationBook) coherent() bool {
-	if len(book.bids) == 0 || len(book.asks) == 0 {
+func (reducer *liquidationReducer) coherent() bool {
+	if reducer.bidLen == 0 || reducer.askLen == 0 {
 		return false
 	}
 
-	bestBid := book.bids[0].LimitPrice
-	bestAsk := book.asks[0].LimitPrice
+	bestBid := reducer.bids[0].limitPrice
+	bestAsk := reducer.asks[0].limitPrice
 
 	if bestBid == nil || bestAsk == nil {
 		return false
@@ -254,16 +347,16 @@ SellableQty from the resident bid chain, under the read lock. It returns a
 surface with BookComplete/FullExecutable set truthfully; it never synthesizes a
 VWAP for insufficient depth and never falls back to ticker.
 */
-func (book *liquidationBook) Surface(
+func (reducer *liquidationReducer) Surface(
 	sellableQty *decimal.Decimal,
 	floor *decimal.Decimal,
 	fee *kraken.TradeVolumeFee,
 	at time.Time,
 ) *types.ExecutionSurface {
 	surface := &types.ExecutionSurface{
-		Symbol:      book.symbol,
+		Symbol:      reducer.symbol,
 		At:          at,
-		SellableQty: decimal.NewFromInt64(0).Add(sellableQty),
+		SellableQty: cloneDecimal(sellableQty),
 	}
 
 	if sellableQty == nil || sellableQty.Sign() <= 0 ||
@@ -272,17 +365,17 @@ func (book *liquidationBook) Surface(
 		return surface
 	}
 
-	book.mu.RLock()
-	defer book.mu.RUnlock()
+	reducer.mu.RLock()
+	defer reducer.mu.RUnlock()
 
-	if !book.valid || len(book.bids) == 0 {
+	if !reducer.seeded || !reducer.valid || reducer.bidLen == 0 {
 		return surface
 	}
 
 	surface.BookComplete = true
 
-	if book.bids[0].LimitPrice != nil {
-		surface.BestBid = decimal.NewFromInt64(0).Add(book.bids[0].LimitPrice)
+	if reducer.bids[0].limitPrice != nil {
+		surface.BestBid = cloneDecimal(reducer.bids[0].limitPrice)
 	}
 
 	executableQty := decimal.NewFromInt64(0)
@@ -290,29 +383,31 @@ func (book *liquidationBook) Surface(
 	grossProceeds := decimal.NewFromInt64(0)
 	remaining := decimal.NewFromInt64(0).Add(sellableQty)
 
-	for _, order := range book.bids {
-		if order.LimitPrice == nil || order.OrderQty == nil ||
-			order.LimitPrice.Sign() <= 0 || order.OrderQty.Sign() <= 0 {
+	for index := 0; index < reducer.bidLen; index++ {
+		order := reducer.bids[index]
+
+		if order.limitPrice == nil || order.orderQty == nil ||
+			order.limitPrice.Sign() <= 0 || order.orderQty.Sign() <= 0 {
 			continue
 		}
 
-		executableQty = executableQty.Add(order.OrderQty)
+		executableQty = executableQty.Add(order.orderQty)
 
-		if floor != nil && order.LimitPrice.Cmp(floor) >= 0 {
-			floorCoverageQty = floorCoverageQty.Add(order.OrderQty)
+		if floor != nil && order.limitPrice.Cmp(floor) >= 0 {
+			floorCoverageQty = floorCoverageQty.Add(order.orderQty)
 		}
 
 		if remaining.Sign() <= 0 {
 			continue
 		}
 
-		fill := order.OrderQty
+		fill := order.orderQty
 
 		if remaining.Cmp(fill) < 0 {
 			fill = remaining
 		}
 
-		grossProceeds = grossProceeds.Add(order.LimitPrice.Mul(fill))
+		grossProceeds = grossProceeds.Add(order.limitPrice.Mul(fill))
 		remaining = remaining.Sub(fill)
 	}
 
@@ -331,4 +426,18 @@ func (book *liquidationBook) Surface(
 	surface.ExecutableValue = grossProceeds.Sub(grossProceeds.Mul(feeRate))
 
 	return surface
+}
+
+/*
+cloneDecimal retains ownership of a received decimal in the resident state
+without aliasing a transport-held observation a later frame reuses. It returns
+nil for a nil input so optional geometry stays absent rather than becoming a
+zero value.
+*/
+func cloneDecimal(source *decimal.Decimal) *decimal.Decimal {
+	if source == nil {
+		return nil
+	}
+
+	return decimal.NewFromInt64(0).Add(source)
 }

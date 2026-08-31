@@ -22,6 +22,75 @@ func indexSeries() []Observation {
 	return series
 }
 
+func TestRunIndexObservationAtExactOrdinalTest(t *testing.T) {
+	Convey("Given two envelopes sharing one CaptureSequence", t, func() {
+		identity := CaptureIdentity{
+			Run:            "run-test",
+			Sequence:       CaptureSequence(42),
+			Stream:         "level3",
+			StreamEpoch:    StreamEpoch(1),
+			StreamSequence: 42,
+		}
+
+		first := Observation{
+			Capture:    identity,
+			Ordinal:    0,
+			Symbol:     "TEST/USD",
+			Kind:       "ticker",
+			ReceivedAt: time.Unix(100, 0),
+			HasBid:     true,
+			Bid:        1.0,
+			HasAsk:     true,
+			Ask:        1.1,
+		}
+
+		second := Observation{
+			Capture:    identity,
+			Ordinal:    1,
+			Symbol:     "TEST/USD",
+			Kind:       "ticker",
+			ReceivedAt: time.Unix(200, 0),
+			HasBid:     true,
+			Bid:        2.0,
+			HasAsk:     true,
+			Ask:        2.1,
+		}
+
+		index := NewRunIndex("run-test", []Observation{first, second})
+
+		Convey("N/0 returns only ordinal 0", func() {
+			observation, found := index.ObservationAt("TEST/USD", EnvelopeRef{
+				Origin:  identity,
+				Ordinal: 0,
+			})
+
+			So(found, ShouldBeTrue)
+			So(observation.Ordinal, ShouldEqual, 0)
+			So(observation.Bid, ShouldEqual, 1.0)
+		})
+
+		Convey("N/1 returns only ordinal 1", func() {
+			observation, found := index.ObservationAt("TEST/USD", EnvelopeRef{
+				Origin:  identity,
+				Ordinal: 1,
+			})
+
+			So(found, ShouldBeTrue)
+			So(observation.Ordinal, ShouldEqual, 1)
+			So(observation.Bid, ShouldEqual, 2.0)
+		})
+
+		Convey("an ordinal the capture never produced is absent", func() {
+			_, found := index.ObservationAt("TEST/USD", EnvelopeRef{
+				Origin:  identity,
+				Ordinal: 2,
+			})
+
+			So(found, ShouldBeFalse)
+		})
+	})
+}
+
 func TestRunIndexProjectTest(t *testing.T) {
 	Convey("Given a run index over captured observations", t, func() {
 		index := NewRunIndex("run-test", indexSeries())

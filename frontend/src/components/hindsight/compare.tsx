@@ -4,7 +4,6 @@ import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import type { HindsightResident } from "./hindsight-types";
 import type { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
-
 /*
 Comparing what SYMM held at two or three exact capture coordinates.
 
@@ -54,7 +53,7 @@ type Fact = {
 	/* One entry per mark: a number, null for undefined, undefined for absent. */
 	values: Array<number | null | undefined>;
 	/* Where each value came from, in resident mode. */
-	origins: Array<{ sequence: number; ageMs: number | null; carried: boolean } | null>;
+	origins: Array<{ sequence: number; ordinal: number; ageMs: number | null; carried: boolean } | null>;
 	unit: string;
 };
 
@@ -63,7 +62,7 @@ type Reading = {
 	name: string;
 	unit: string;
 	value: number | null;
-	origin: { sequence: number; ageMs: number | null; carried: boolean } | null;
+	origin: { sequence: number; ordinal: number; ageMs: number | null; carried: boolean } | null;
 };
 
 /*
@@ -81,6 +80,7 @@ const readResident = (
 	for (const signal of resident.signals) {
 		const origin = {
 			sequence: signal.origin.origin.sequence,
+			ordinal: signal.origin.ordinal,
 			ageMs: signal.hasAge ? signal.ageNs / 1e6 : null,
 			carried: signal.carried,
 		};
@@ -106,6 +106,7 @@ const readResident = (
 			value: category.confidence,
 			origin: {
 				sequence: category.origin.origin.sequence,
+				ordinal: category.origin.ordinal,
 				ageMs: category.hasAge ? category.ageNs / 1e6 : null,
 				carried: category.carried,
 			},
@@ -115,6 +116,7 @@ const readResident = (
 	for (const view of resident.perspectives) {
 		const origin = {
 			sequence: view.origin.origin.sequence,
+			ordinal: view.origin.ordinal,
 			ageMs: view.hasAge ? view.ageNs / 1e6 : null,
 			carried: view.carried,
 		};
@@ -268,9 +270,9 @@ export const ComparePanel = ({
 	mode: CompareMode;
 	loading: boolean;
 	onMode: (next: CompareMode) => void;
-	onPlayhead: (sequence: number) => void;
+	onPlayhead: (sequence: number, ordinal: number) => void;
 	onClear: () => void;
-	onRemove: (sequence: number) => void;
+	onRemove: (sequence: number, ordinal: number) => void;
 }) => {
 	const [onlyChanged, setOnlyChanged] = useState(true);
 	const [group, setGroup] = useState<string | null>(null);
@@ -378,7 +380,10 @@ export const ComparePanel = ({
 					<span className="ml-2">
 						{residents.map((resident, index) =>
 							resident === null ? null : (
-								<span key={marks[index]?.sequence ?? index} className="mr-3">
+								<span
+									key={`${marks[index]?.sequence ?? index}:${marks[index]?.ordinal ?? 0}`}
+									className="mr-3"
+								>
 									<span className="text-(--info)">
 										{String.fromCharCode(65 + index)}
 									</span>{" "}
@@ -415,7 +420,7 @@ export const ComparePanel = ({
 				<Flex.Row gap={2} className="flex-wrap items-center">
 					{marks.map((mark, index) => (
 						<Flex.Row
-							key={mark.sequence}
+							key={`${mark.sequence}:${mark.ordinal}`}
 							align="center"
 							className="rounded-[3px] border border-(--info) px-1"
 						>
@@ -423,18 +428,18 @@ export const ComparePanel = ({
 								variant="bare"
 								className="font-mono text-[9px] text-(--f1)"
 								title="Park the playhead back on this mark."
-								onClick={() => onPlayhead(mark.sequence)}
+								onClick={() => onPlayhead(mark.sequence, mark.ordinal)}
 							>
 								<span className="text-(--info)">
 									{String.fromCharCode(65 + index)}
 								</span>{" "}
-								#{mark.sequence}
+								#{mark.sequence}:{mark.ordinal}
 							</Button>
 							<Button
 								variant="bare"
 								className="pl-1 font-mono text-[9px] text-(--f4) hover:text-(--down)"
 								title="Drop this mark."
-								onClick={() => onRemove(mark.sequence)}
+								onClick={() => onRemove(mark.sequence, mark.ordinal)}
 							>
 								×
 							</Button>
@@ -498,11 +503,14 @@ export const ComparePanel = ({
 							<tr className="text-left text-(--f4)">
 								<th className="px-2.5 py-1 font-normal">fact</th>
 								{marks.map((mark, index) => (
-									<th key={mark.sequence} className="px-2 py-1 text-right font-normal">
+									<th
+										key={`${mark.sequence}:${mark.ordinal}`}
+										className="px-2 py-1 text-right font-normal"
+									>
 										<span className="text-(--info)">
 											{String.fromCharCode(65 + index)}
 										</span>{" "}
-										#{mark.sequence}
+										#{mark.sequence}:{mark.ordinal}
 									</th>
 								))}
 								<th className="px-2 py-1 font-normal">unit</th>
@@ -532,7 +540,7 @@ export const ComparePanel = ({
 
 										return (
 											<td
-												key={`${fact.id}-${marks[index]?.sequence ?? index}`}
+												key={`${fact.id}-${marks[index]?.sequence ?? index}:${marks[index]?.ordinal ?? 0}`}
 												className={`px-2 py-0.5 text-right tabular-nums ${
 													value === undefined
 														? "text-(--f4)"
@@ -551,13 +559,13 @@ export const ComparePanel = ({
 												{origin === null ? null : (
 													<div
 														className={`text-[7.5px] ${origin.carried ? "text-(--warn)" : "text-(--f4)"}`}
-														title={`Resolved from capture #${origin.sequence}${
+														title={`Resolved from capture #${origin.sequence}:${origin.ordinal}${
 															origin.carried
 																? " — carried from an earlier envelope, not produced at this mark"
 																: " — produced at this mark"
 														}`}
 													>
-														#{origin.sequence}
+														#{origin.sequence}:{origin.ordinal}
 														{origin.ageMs === null
 															? ""
 															: ` · ${
@@ -610,9 +618,9 @@ export const MarkBar = ({
 			<span>no marks</span>
 		) : (
 			marks.map((mark, index) => (
-				<span key={mark.sequence} className="text-(--info)">
+				<span key={`${mark.sequence}:${mark.ordinal}`} className="text-(--info)">
 					{String.fromCharCode(65 + index)}
-					<span className="text-(--f4)"> #{mark.sequence}</span>
+					<span className="text-(--f4)"> #{mark.sequence}:{mark.ordinal}</span>
 					{index < marks.length - 1 ? " →" : ""}
 				</span>
 			))

@@ -42,7 +42,13 @@ type Desk struct {
 	recovery       *Recovery
 	perspective    PerspectiveReader
 	positions      *sync.Map
-	passage        *types.PassageModel
+	// execution holds the continuously-advanced bounded execution state per
+	// subscribed symbol. It is advanced by the authoritative L3 stream from
+	// the genuine snapshot onward regardless of whether a Position exists, so
+	// a position opened midway through a stream consumes truthful current
+	// state instead of promoting the next update to a snapshot.
+	execution       *sync.Map
+	passage         *types.PassageModel
 	balanceRefresh atomic.Bool
 	maxPositions   int
 	maxReserved    int
@@ -119,6 +125,7 @@ func NewDesk(
 		PositionStore: store,
 		perspective:   perspective,
 		positions:     positions,
+		execution:     &sync.Map{},
 		passage:       types.NewPassageModel(),
 		maxPositions:  viper.GetViper().GetInt("trading.slots.normal"),
 		maxReserved:   viper.GetViper().GetInt("trading.slots.reserved"),
@@ -228,12 +235,34 @@ func (desk *Desk) StepExecution(execution kraken.ExecutionData) error {
 	return nil
 }
 
-// StepLevel3 routes one L3 frame to the symbol's open position, which folds it
-// into its bounded resident liquidation state and derives the committed
-// post-frame executable state for the guardian. Symbols with no open execution
-// lifecycle perform no book work; the signal pipeline consumes the raw frame
-// directly elsewhere.
+// StepLevel3 advances the symbol's continuously-resident execution reducer
+// from the authoritative L3 stream and routes the same frame to the symbol's
+// open position, which derives the committed post-frame executable state for
+// the guardian. The reducer is advanced for every subscribed symbol regardless
+// of whether a Position exists, exactly once in causal order; the signal
+// pipeline consumes the raw frame directly elsewhere and never passes through
+// this reducer.
 func (desk *Desk) StepLevel3(level3 kraken.Level3Data) error {
+	return desk.stepLevel3(level3, 0)
+}
+
+/*
+StepLevel3Epoch advances one L3 frame together with its Hindsight StreamEpoch,
+so a reconnect invalidates the previous epoch's execution state until the new
+epoch's genuine snapshot seeds it.
+*/
+func (desk *Desk) StepLevel3Epoch(level3 kraken.Level3Data, epoch uint64) error {
+	return desk.stepLevel3(level3, epoch)
+}
+
+func (desk *Desk) stepLevel3(level3 kraken.Level3Data, epoch uint64) error {
+	if desk == nil || level3.Symbol == "" {
+		return nil
+	}
+
+	reducer := desk.executionReducer(level3.Symbol)
+	reducer.Apply(level3, epoch)
+
 	found, ok := desk.positions.Load(level3.Symbol)
 
 	if !ok || found == nil {
@@ -246,6 +275,13 @@ func (desk *Desk) StepLevel3(level3 kraken.Level3Data) error {
 		return nil
 	}
 
+	// A recovered position is adopted before the desk has seen any L3 frame;
+	// bind it to the continuously-resident reducer on first L3 ingress so it
+	// reads the same current state every freshly-created position does.
+	if position.liquidation == nil {
+		position.liquidation = reducer
+	}
+
 	if err := position.publishGuardian(level3); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.NotAcceptable,
@@ -255,6 +291,29 @@ func (desk *Desk) StepLevel3(level3 kraken.Level3Data) error {
 	}
 
 	return nil
+}
+
+/*
+executionReducer returns the symbol's continuously-resident execution reducer,
+creating the fixed-capacity record the first time the symbol is observed. The
+reducer is shared by the desk ingress path and every Position on the symbol, so
+the L3 state lives exactly once per symbol rather than once per position.
+*/
+func (desk *Desk) executionReducer(symbol string) *liquidationReducer {
+	if desk.execution == nil {
+		desk.execution = &sync.Map{}
+	}
+
+	loaded, _ := desk.execution.Load(symbol)
+
+	if reducer, ok := loaded.(*liquidationReducer); ok && reducer != nil {
+		return reducer
+	}
+
+	reducer := newLiquidationReducer(symbol)
+	desk.execution.Store(symbol, reducer)
+
+	return reducer
 }
 
 /*
@@ -640,6 +699,11 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			decision,
 			desk.perspective,
 		)
+
+		// The position consumes the symbol's continuously-resident execution
+		// reducer rather than reconstructing book state from the next update
+		// it happens to see.
+		position.liquidation = desk.executionReducer(decision.Symbol)
 
 		position.onClose = func() {
 			desk.positions.CompareAndDelete(decision.Symbol, position)

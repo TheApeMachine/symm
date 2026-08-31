@@ -8,10 +8,11 @@ import (
 
 /*
 ExecutionSurface is the compact, immutable executable-liquidation fact a
-PositionGuardian consumes after one committed L3 book frame. It never retains
-the book: every field is derived synchronously while the authoritative book is
-safely readable, then the book pointer is released. It carries no history and
-no snapshots; one open position holds exactly one current surface.
+PositionGuardian consumes after one committed L3 frame. It never retains the
+execution state: every field is derived synchronously while the continuously-
+resident execution state is safely readable, then the reducer read lock is
+released. It carries no history and no snapshots; one open position holds
+exactly one current surface.
 */
 type ExecutionSurface struct {
 	Symbol string

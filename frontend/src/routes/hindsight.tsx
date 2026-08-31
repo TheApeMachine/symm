@@ -93,6 +93,7 @@ const HindsightRoute = () => {
 	const [lifecycle, setLifecycle] = useState<HindsightLifecycleEvent[]>([]);
 
 	const [playhead, setPlayhead] = useState<number | null>(null);
+	const [playheadOrdinal, setPlayheadOrdinal] = useState(0);
 	const [episode, setEpisode] = useState<string | null>(null);
 	const [captures, setCaptures] = useState<HindsightCapture[]>([]);
 	const [envelope, setEnvelope] = useState<HindsightEnvelope | null>(null);
@@ -145,6 +146,7 @@ const HindsightRoute = () => {
 		setSymbol(null);
 		setViewport(null);
 		setPlayhead(null);
+		setPlayheadOrdinal(0);
 		setEpisode(null);
 		setEnvelope(null);
 		setState(null);
@@ -243,14 +245,14 @@ const HindsightRoute = () => {
 			if (!cancelled) setEnvelope(loaded);
 		});
 
-		fetchHindsightState(run, playhead, 0).then((loaded) => {
+		fetchHindsightState(run, playhead, playheadOrdinal).then((loaded) => {
 			if (!cancelled) setState(decodeEnvelopeState(loaded?.payload));
 		});
 
 		return () => {
 			cancelled = true;
 		};
-	}, [run, playhead]);
+	}, [run, playhead, playheadOrdinal]);
 
 	const positions = useMemo<Position[]>(
 		() => buildPositions(lifecycle),
@@ -273,7 +275,7 @@ const HindsightRoute = () => {
 
 		Promise.all(
 			marks.map((mark) =>
-				fetchHindsightState(run, mark.sequence, 0).then((loaded) =>
+				fetchHindsightState(run, mark.sequence, mark.ordinal).then((loaded) =>
 					decodeEnvelopeState(loaded?.payload),
 				),
 			),
@@ -367,18 +369,39 @@ const HindsightRoute = () => {
 		[references, playhead],
 	);
 
+	const jumpSequence = useCallback((sequence: number) => {
+		setPlayhead(sequence);
+		setPlayheadOrdinal(0);
+	}, []);
+
+	const jumpRef = useCallback((sequence: number, ordinal: number) => {
+		setPlayhead(sequence);
+		setPlayheadOrdinal(ordinal);
+	}, []);
+
 	const mark = useCallback(() => {
 		if (playhead === null) return;
 
 		setMarks((current) => {
 			if (current.length >= 3) return current;
-			if (current.some((entry) => entry.sequence === playhead)) return current;
+			if (
+				current.some(
+					(entry) => entry.sequence === playhead && entry.ordinal === playheadOrdinal,
+				)
+			) {
+				return current;
+			}
 
-			return [...current, { sequence: playhead, ordinal: 0, label: `#${playhead}` }].sort(
-				(left, right) => left.sequence - right.sequence,
+			return [
+				...current,
+				{ sequence: playhead, ordinal: playheadOrdinal, label: `#${playhead}:${playheadOrdinal}` },
+			].sort((left, right) =>
+				left.sequence !== right.sequence
+					? left.sequence - right.sequence
+					: left.ordinal - right.ordinal,
 			);
 		});
-	}, [playhead]);
+	}, [playhead, playheadOrdinal]);
 
 	/*
 		Focusing a position parks the playhead on the nearest frame that really
@@ -528,7 +551,7 @@ const HindsightRoute = () => {
 							marks={marks.map((entry) => entry.sequence)}
 							selectedEpisode={episode}
 							selectedPosition={position}
-							onPlayhead={setPlayhead}
+							onPlayhead={jumpSequence}
 							onEpisode={focusEpisode}
 							onPosition={focusPosition}
 							onZoom={(from, to) => setViewport({ from, to })}
@@ -575,11 +598,17 @@ const HindsightRoute = () => {
 									mode={compareMode}
 									loading={resolving}
 									onMode={setCompareMode}
-									onPlayhead={setPlayhead}
+									onPlayhead={(sequence, ordinal) => {
+										setPlayhead(sequence);
+										setPlayheadOrdinal(ordinal);
+									}}
 									onClear={() => setMarks([])}
-									onRemove={(sequence) =>
+									onRemove={(sequence, ordinal) =>
 										setMarks((current) =>
-											current.filter((entry) => entry.sequence !== sequence),
+											current.filter(
+												(entry) =>
+													entry.sequence !== sequence || entry.ordinal !== ordinal,
+											),
 										)
 									}
 								/>
@@ -598,12 +627,12 @@ const HindsightRoute = () => {
 									<FrameStrip
 										captures={captures}
 										playhead={playhead}
-										onSelect={setPlayhead}
+										onSelect={jumpSequence}
 									/>
 									<div className="min-h-0 flex-1 overflow-auto">
 										<div className="grid grid-cols-2">
 											<div className="min-w-0 border-(--line) border-r">
-												<ProvenancePanel envelope={envelope} onSelect={setPlayhead} />
+												<ProvenancePanel envelope={envelope} onSelect={jumpRef} />
 											</div>
 											<div className="min-w-0">
 												<StatePanel

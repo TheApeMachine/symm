@@ -30,9 +30,10 @@ const (
 var fluidRecordMagic = [4]byte{'S', 'F', 'D', '1'}
 
 /*
-FluidRTC owns the ordered WebRTC publication plane for the manifold, resonance,
-and diagnostics channels. Every channel is latest-wins, so the transport never
-queues a backlog of stale snapshots and never blocks the market pipeline.
+FluidRTC owns the unordered, non-retransmitting WebRTC publication plane for
+the manifold, resonance, and diagnostics channels. Every channel is
+latest-wins, so the transport never queues a backlog of stale snapshots and
+never blocks the market pipeline.
 */
 type FluidRTC struct {
 	ctx           context.Context
