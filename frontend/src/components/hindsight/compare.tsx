@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
+import type { HindsightResident } from "./hindsight-types";
 import type { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
 
 /*
@@ -21,7 +22,23 @@ Three states are kept apart everywhere here, and never merged:
 
 Collapsing "absent" into "0" would manufacture a delta out of nothing, which is
 precisely the reasoning error this whole surface exists to prevent.
+
+There are two honest answers to "what was the state here", and they are offered
+as explicit modes rather than blended:
+
+    exact capture     what this one envelope produced and carried
+    resident as-of    the latest value causally available at this coordinate,
+                      for every signal family, however long ago it was produced
+
+Exact capture is the mode for provenance: it shows what this frame did. But a
+signal is only recomputed on the envelopes that feed it, so in that mode a
+family reads as absent on every frame that did not touch it — which looks
+exactly like "SYMM did not know this" and is not. Resident as-of answers the
+question a post-mortem actually asks, and every carried value shows the capture
+it came from and how old it was, so the difference stays visible.
 */
+
+export type CompareMode = "exact" | "resident";
 
 export type Mark = {
 	sequence: number;
@@ -35,7 +52,86 @@ type Fact = {
 	name: string;
 	/* One entry per mark: a number, null for undefined, undefined for absent. */
 	values: Array<number | null | undefined>;
+	/* Where each value came from, in resident mode. */
+	origins: Array<{ sequence: number; ageMs: number | null; carried: boolean } | null>;
 	unit: string;
+};
+
+type Reading = {
+	group: string;
+	name: string;
+	unit: string;
+	value: number | null;
+	origin: { sequence: number; ageMs: number | null; carried: boolean } | null;
+};
+
+/*
+readResident flattens one as-of answer into the same named facts the exact-
+capture mode produces, so the two modes line up row for row and switching
+between them compares like with like.
+*/
+const readResident = (
+	resident: HindsightResident | null,
+): Map<string, Reading> => {
+	const facts = new Map<string, Reading>();
+
+	if (resident === null) return facts;
+
+	for (const signal of resident.signals) {
+		const origin = {
+			sequence: signal.origin.origin.sequence,
+			ageMs: signal.hasAge ? signal.ageNs / 1e6 : null,
+			carried: signal.carried,
+		};
+
+		for (const metric of signal.metrics) {
+			const name = `${signal.source}/${metric.key}`;
+
+			facts.set(name, {
+				group: "measurement",
+				name,
+				unit: metric.unit ?? "",
+				value: Number.isFinite(metric.raw) ? metric.raw : null,
+				origin,
+			});
+		}
+	}
+
+	for (const category of resident.categories) {
+		facts.set(`category/${category.type}`, {
+			group: "category",
+			name: `${category.type} · confidence`,
+			unit: "",
+			value: category.confidence,
+			origin: {
+				sequence: category.origin.origin.sequence,
+				ageMs: category.hasAge ? category.ageNs / 1e6 : null,
+				carried: category.carried,
+			},
+		});
+	}
+
+	for (const view of resident.perspectives) {
+		const origin = {
+			sequence: view.origin.origin.sequence,
+			ageMs: view.hasAge ? view.ageNs / 1e6 : null,
+			carried: view.carried,
+		};
+
+		for (const reading of view.readings) {
+			const name = `${view.symbol}/${reading.metric}`;
+
+			facts.set(`perspective/${name}`, {
+				group: "perspective",
+				name,
+				unit: "",
+				value: reading.defined ? reading.value : null,
+				origin,
+			});
+		}
+	}
+
+	return facts;
 };
 
 const FACT_GROUPS = ["measurement", "category", "perspective"] as const;
@@ -45,11 +141,8 @@ readFacts flattens one decoded state into the named facts a comparison can line
 up: every signal metric by "source/metric", every category by its confidence,
 and every perspective reading by "symbol/metric".
 */
-const readFacts = (state: EnvelopeState | null): Map<string, { group: string; name: string; unit: string; value: number | null }> => {
-	const facts = new Map<
-		string,
-		{ group: string; name: string; unit: string; value: number | null }
-	>();
+const readFacts = (state: EnvelopeState | null): Map<string, Reading> => {
+	const facts = new Map<string, Reading>();
 
 	if (state === null) return facts;
 
@@ -83,6 +176,7 @@ const readFacts = (state: EnvelopeState | null): Map<string, { group: string; na
 				name,
 				unit: metric.unit() ?? "",
 				value: Number.isFinite(metric.raw()) ? metric.raw() : null,
+				origin: null,
 			});
 		}
 	}
@@ -99,6 +193,7 @@ const readFacts = (state: EnvelopeState | null): Map<string, { group: string; na
 			name: `${name} · confidence`,
 			unit: "",
 			value: category.confidence(),
+			origin: null,
 		});
 	}
 
@@ -122,6 +217,7 @@ const readFacts = (state: EnvelopeState | null): Map<string, { group: string; na
 				name,
 				unit: "",
 				value: entry.defined() ? entry.value() : null,
+				origin: null,
 			});
 		}
 	}
@@ -155,12 +251,20 @@ const formatCell = (value: number | null | undefined): string => {
 export const ComparePanel = ({
 	marks,
 	states,
+	residents,
+	mode,
+	loading,
+	onMode,
 	onPlayhead,
 	onClear,
 	onRemove,
 }: {
 	marks: Mark[];
 	states: Array<EnvelopeState | null>;
+	residents: Array<HindsightResident | null>;
+	mode: CompareMode;
+	loading: boolean;
+	onMode: (next: CompareMode) => void;
 	onPlayhead: (sequence: number) => void;
 	onClear: () => void;
 	onRemove: (sequence: number) => void;
@@ -170,7 +274,8 @@ export const ComparePanel = ({
 	const [filter, setFilter] = useState("");
 
 	const facts = useMemo(() => {
-		const perMark = states.map(readFacts);
+		const perMark =
+			mode === "resident" ? residents.map(readResident) : states.map(readFacts);
 		const identities = new Set<string>();
 
 		for (const mark of perMark) {
@@ -194,6 +299,7 @@ export const ComparePanel = ({
 
 					return fact === undefined ? undefined : fact.value;
 				}),
+				origins: perMark.map((mark) => mark.get(id)?.origin ?? null),
 			});
 		}
 
@@ -204,7 +310,7 @@ export const ComparePanel = ({
 		});
 
 		return rows;
-	}, [states]);
+	}, [states, residents, mode]);
 
 	const rows = useMemo(() => {
 		const needle = filter.trim().toLowerCase();
@@ -229,10 +335,78 @@ export const ComparePanel = ({
 				sticky
 				meta={
 					<span className="font-mono text-[9px] text-(--f4)">
-						{moved} of {facts.length} facts changed
+						{loading ? "resolving…" : `${moved} of ${facts.length} facts changed`}
 					</span>
 				}
 			/>
+
+			<Flex.Row
+				align="center"
+				gap={2}
+				className="shrink-0 flex-wrap border-(--line) border-b bg-(--sunken) px-2.5 py-1.5 font-mono text-[8px] text-(--f4)"
+			>
+				<span className="uppercase tracking-widest">state</span>
+				<Button
+					variant="bare"
+					title="What this exact envelope produced and carried. A family absent here was not recomputed on this frame — which is not the same as the system not holding it."
+					className={`rounded-[2px] border px-1 py-0.5 font-mono text-[9px] ${
+						mode === "exact"
+							? "border-(--acc) text-(--f1)"
+							: "border-(--line) text-(--f4) hover:text-(--f2)"
+					}`}
+					onClick={() => onMode("exact")}
+				>
+					exact capture
+				</Button>
+				<Button
+					variant="bare"
+					title="The latest value causally available at this coordinate for every signal family, however long ago it was produced. Resolved by capture order, never by nearest timestamp."
+					className={`rounded-[2px] border px-1 py-0.5 font-mono text-[9px] ${
+						mode === "resident"
+							? "border-(--acc) text-(--f1)"
+							: "border-(--line) text-(--f4) hover:text-(--f2)"
+					}`}
+					onClick={() => onMode("resident")}
+				>
+					resident as-of
+				</Button>
+
+				{mode === "resident" ? (
+					<span className="ml-2">
+						{residents.map((resident, index) =>
+							resident === null ? null : (
+								<span key={marks[index]?.sequence ?? index} className="mr-3">
+									<span className="text-(--info)">
+										{String.fromCharCode(65 + index)}
+									</span>{" "}
+									walked {resident.examined} envelopes back{" "}
+									{resident.reachedBack} captures
+									{resident.exhausted ? (
+										<span
+											className="text-(--warn)"
+											title="The walk hit its budget before it ran out of history. Unresolved families here mean the search stopped, not that the system held nothing."
+										>
+											{" "}
+											· budget reached
+										</span>
+									) : null}
+									{resident.unresolved && resident.unresolved.length > 0 ? (
+										<span className="text-(--warn)">
+											{" "}
+											· unresolved {resident.unresolved.join(", ")}
+										</span>
+									) : null}
+								</span>
+							),
+						)}
+					</span>
+				) : (
+					<span className="ml-2">
+						showing only what each envelope itself carried — absent means this frame
+						did not produce it
+					</span>
+				)}
+			</Flex.Row>
 
 			<div className="shrink-0 border-(--line) border-b px-2.5 py-1.5">
 				<Flex.Row gap={2} className="flex-wrap items-center">
@@ -339,6 +513,7 @@ export const ComparePanel = ({
 										{fact.name}
 									</td>
 									{fact.values.map((value, index) => {
+										const origin = fact.origins[index];
 										const previous = index === 0 ? undefined : fact.values[index - 1];
 										const moves =
 											index > 0 &&
@@ -370,6 +545,25 @@ export const ComparePanel = ({
 												}`}
 											>
 												{formatCell(value)}
+												{origin === null ? null : (
+													<div
+														className={`text-[7.5px] ${origin.carried ? "text-(--warn)" : "text-(--f4)"}`}
+														title={`Resolved from capture #${origin.sequence}${
+															origin.carried
+																? " — carried from an earlier envelope, not produced at this mark"
+																: " — produced at this mark"
+														}`}
+													>
+														#{origin.sequence}
+														{origin.ageMs === null
+															? ""
+															: ` · ${
+																	origin.ageMs < 1000
+																		? `${Math.round(origin.ageMs)}ms`
+																		: `${(origin.ageMs / 1000).toFixed(1)}s`
+																} old`}
+													</div>
+												)}
 											</td>
 										);
 									})}

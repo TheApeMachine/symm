@@ -24,6 +24,26 @@ type CaptureEntry struct {
 }
 
 /*
+ReadStatePayload returns the persisted EnvelopeState bytes for one exact
+EnvelopeRef, and whether one was witnessed there at all. It is the narrow read
+the as-of resolution walks backwards with: a point read by identity, never a
+scan and never a search.
+*/
+func (store *SQLite) ReadStatePayload(
+	runID string,
+	sequence uint64,
+	ordinal uint64,
+) ([]byte, bool, error) {
+	entry, found, err := store.ReadState(runID, sequence, ordinal)
+
+	if err != nil || !found {
+		return nil, false, err
+	}
+
+	return entry.Payload, true, nil
+}
+
+/*
 ReadCaptureFrame returns the raw frame at one capture sequence of one Run,
 together with the full CaptureIdentity the process assigned it.
 

@@ -106,6 +106,66 @@ func (hub *Hub) registerTimeline() {
 		return c.JSON(signal.Semantics())
 	})
 
+	// /hindsight/resident answers "what did SYMM actually hold here?" as opposed
+	// to "what did this envelope carry?". For each signal family it walks the
+	// instrument's own captures backwards from the coordinate and takes the
+	// latest value causally available there, reporting the exact origin and the
+	// age of every carried fact (§18, §19). It never looks forward (§31), and it
+	// never resolves by timestamp proximity (§9).
+	hub.app.Get("/hindsight/resident", func(c fiber.Ctx) error {
+		if hub.store == nil {
+			return fiber.NewError(
+				fiber.StatusServiceUnavailable,
+				"capture store unavailable",
+			)
+		}
+
+		run := query(c, "run")
+		symbol := query(c, "symbol")
+		sequence := hindsight.CaptureSequence(parseUintQuery(c.Query("seq")))
+
+		if run == "" || symbol == "" || sequence == 0 {
+			return fiber.NewError(
+				fiber.StatusBadRequest,
+				"run, symbol and seq are required",
+			)
+		}
+
+		index, err := hub.timelines.index(hub.store, hindsight.RunID(run))
+
+		if err != nil {
+			return err
+		}
+
+		budget := intQuery(c, "budget", 64)
+
+		if budget > 512 {
+			budget = 512
+		}
+
+		at := time.Time{}
+
+		if observation, known := index.ObservationAt(symbol, sequence); known {
+			at = observation.At()
+		}
+
+		resident, err := hindsight.ResolveResident(
+			hindsight.RunID(run),
+			symbol,
+			sequence,
+			at,
+			index.CapturesBefore(symbol, sequence, budget),
+			hub.store,
+			budget,
+		)
+
+		if err != nil {
+			return err
+		}
+
+		return c.JSON(resident)
+	})
+
 	// /hindsight/timeline projects one Run onto the capture axis for one
 	// instrument: the declared coordinate's bucketed shape, the Episodes the
 	// declared selector found on it, the transport spans that carried it, and

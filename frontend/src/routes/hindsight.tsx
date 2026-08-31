@@ -6,6 +6,7 @@ import {
 	fetchHindsightGaps,
 	fetchHindsightLifecycle,
 	fetchHindsightMetricMap,
+	fetchHindsightResident,
 	fetchHindsightRuns,
 	fetchHindsightState,
 	fetchHindsightTimeline,
@@ -17,12 +18,18 @@ import type {
 	HindsightGap,
 	HindsightLifecycleEvent,
 	HindsightMetricMap,
+	HindsightResident,
 	HindsightRun,
 	HindsightTimeline,
 	MarketCoordinate,
 	TimelineAxis,
 } from "#/components/hindsight/hindsight-types";
-import { ComparePanel, type Mark, MarkBar } from "#/components/hindsight/compare";
+import {
+	type CompareMode,
+	ComparePanel,
+	type Mark,
+	MarkBar,
+} from "#/components/hindsight/compare";
 import {
 	CaptureCard,
 	decodeEnvelopeState,
@@ -95,6 +102,9 @@ const HindsightRoute = () => {
 	const [position, setPosition] = useState<string | null>(null);
 	const [marks, setMarks] = useState<Mark[]>([]);
 	const [markStates, setMarkStates] = useState<Array<EnvelopeState | null>>([]);
+	const [residents, setResidents] = useState<Array<HindsightResident | null>>([]);
+	const [compareMode, setCompareMode] = useState<CompareMode>("resident");
+	const [resolving, setResolving] = useState(false);
 
 	const surface = useRef<HTMLDivElement | null>(null);
 
@@ -141,6 +151,7 @@ const HindsightRoute = () => {
 		setCaptures([]);
 		setMarks([]);
 		setMarkStates([]);
+		setResidents([]);
 		setPosition(null);
 
 		fetchHindsightGaps(run).then((loaded) => {
@@ -274,6 +285,35 @@ const HindsightRoute = () => {
 			cancelled = true;
 		};
 	}, [run, marks]);
+
+	/*
+		Resident resolution is per (run, symbol, mark): the walk is over the
+		instrument's own captures, so changing instrument changes the answer.
+	*/
+	useEffect(() => {
+		if (run === null || symbol === null || marks.length === 0) {
+			setResidents([]);
+			return;
+		}
+
+		let cancelled = false;
+		setResolving(true);
+
+		Promise.all(
+			marks.map((entry) =>
+				fetchHindsightResident(run, symbol, entry.sequence),
+			),
+		).then((loaded) => {
+			if (cancelled) return;
+
+			setResidents(loaded);
+			setResolving(false);
+		});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [run, symbol, marks]);
 
 	const runMeta = useMemo(
 		() => runs.find((entry) => entry.id === run) ?? null,
@@ -531,6 +571,10 @@ const HindsightRoute = () => {
 								<ComparePanel
 									marks={marks}
 									states={markStates}
+									residents={residents}
+									mode={compareMode}
+									loading={resolving}
+									onMode={setCompareMode}
 									onPlayhead={setPlayhead}
 									onClear={() => setMarks([])}
 									onRemove={(sequence) =>

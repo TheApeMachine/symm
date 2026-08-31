@@ -422,6 +422,64 @@ func (index *RunIndex) Summaries(policy DiscoveryPolicy) []SymbolSummary {
 }
 
 /*
+CapturesBefore returns the instrument's own envelopes at or before one capture
+coordinate, newest first and bounded by limit.
+
+These are the only envelopes that could have carried this instrument's signals,
+so an as-of walk over them reaches the latest causally available value without
+touching the rest of the run's tape. Ordering is CaptureSequence descending —
+the causal order run backwards, never a time sort.
+*/
+func (index *RunIndex) CapturesBefore(
+	symbol string,
+	sequence CaptureSequence,
+	limit int,
+) []EnvelopeRef {
+	observations := index.symbols[symbol]
+	refs := make([]EnvelopeRef, 0, limit)
+
+	if limit <= 0 {
+		limit = 64
+	}
+
+	for position := len(observations) - 1; position >= 0; position-- {
+		observation := observations[position]
+
+		if observation.Capture.Sequence > sequence {
+			continue
+		}
+
+		refs = append(refs, EnvelopeRef{
+			Origin:  observation.Capture,
+			Ordinal: observation.Ordinal,
+		})
+
+		if len(refs) >= limit {
+			break
+		}
+	}
+
+	return refs
+}
+
+/*
+ObservationAt returns the instrument's observation at one exact capture
+coordinate, when it has one.
+*/
+func (index *RunIndex) ObservationAt(
+	symbol string,
+	sequence CaptureSequence,
+) (Observation, bool) {
+	for _, observation := range index.symbols[symbol] {
+		if observation.Capture.Sequence == sequence {
+			return observation, true
+		}
+	}
+
+	return Observation{}, false
+}
+
+/*
 Project assembles the horizontal timeline for one request: the coordinate's
 shape bucketed along the capture axis, the Episodes the declared selector
 found, the transport spans, and the instrument index.

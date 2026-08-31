@@ -1,6 +1,7 @@
 import type {
 	HindsightCapture,
 	HindsightMetricMap,
+	HindsightResident,
 	HindsightTimeline,
 	HindsightTimelineQuery,
 	HindsightEnvelope,
@@ -175,3 +176,33 @@ export const fetchHindsightMetricMap =
 
 		return (await response.json()) as HindsightMetricMap;
 	};
+
+/*
+fetchHindsightResident reads what the running system actually held at one exact
+capture coordinate, rather than what that one envelope carried. The budget
+bounds how far back the causal walk may reach; the answer reports how far it
+actually went.
+*/
+export const fetchHindsightResident = async (
+	run: string,
+	symbol: string,
+	sequence: number,
+	budget = 96,
+): Promise<HindsightResident | null> => {
+	const params = new URLSearchParams({
+		run,
+		symbol,
+		seq: String(sequence),
+		budget: String(budget),
+	});
+
+	const response = await fetch(
+		`${hindsightBaseUrl()}/hindsight/resident?${params.toString()}`,
+	);
+
+	if (!response.ok) {
+		return null;
+	}
+
+	return (await response.json()) as HindsightResident;
+};
