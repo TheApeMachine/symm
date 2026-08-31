@@ -3,7 +3,6 @@ import * as flatbuffers from "flatbuffers";
 import { useEffect } from "react";
 import {
 	addMeasurement,
-	addResonanceReading,
 	appStore,
 	categoryStore,
 	cognitionStore,
@@ -18,9 +17,7 @@ import {
 	tickCountStore,
 	tickStore,
 } from "#/collections/app";
-import { topologyStore } from "#/collections/topology";
 
-import { EnvelopeBoundaryStamp } from "#/providers/telemetry/telemetry/envelope-boundary-stamp";
 import { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
 import { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
 import { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
@@ -114,9 +111,6 @@ function dispatchEnvelopeState(state: EnvelopeState) {
 	const positions = state.positions(new PositionsFrame());
 	if (positions && positions.rowsLength() > 0) positionStore.actions.add(positions);
 
-	const resonance = state.resonance();
-	if (resonance) addResonanceReading(resonance);
-
 	const cognition = state.cognition();
 	if (cognition) cognitionStore.actions.add(cognition);
 
@@ -138,21 +132,10 @@ function dispatchEnvelopeState(state: EnvelopeState) {
 		if (opportunity) opportunityStore.actions.add(opportunity);
 	}
 
-	const boundaryCount = state.boundariesLength();
-
-	if (boundaryCount > 0) {
-		const stamps: EnvelopeBoundaryStamp[] = [];
-
-		for (let i = 0; i < boundaryCount; i++) {
-			// A fresh view per row: topologyStore.ingest reads the whole array at
-			// once, so a shared view object would have every entry alias the last
-			// row read (the same aliasing hazard as the ring-buffered stores).
-			const stamp = state.boundaries(i, new EnvelopeBoundaryStamp());
-			if (stamp) stamps.push(stamp);
-		}
-
-		topologyStore.actions.ingest(stamps);
-	}
+	// The resonance artifact and the per-stage boundary trace no longer ride
+	// this socket: they arrive on their own WebRTC channels (see providers/rtc),
+	// where the same stores are fed. The websocket carries only the lean,
+	// latency-relevant envelope state.
 }
 
 export const WsFeed = () => {

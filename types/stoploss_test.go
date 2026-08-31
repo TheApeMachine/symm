@@ -854,6 +854,67 @@ func BenchmarkStoplossObserveExecutable(b *testing.B) {
 	}
 }
 
+/*
+TestStoplossRegulatorRevision proves the explicit state-change contract: the
+regulator revision changes whenever any future-affecting persisted field moves,
+not only when Status/Locked/Floor/Peak happen to change. A durable save keyed on
+this revision therefore can't claim a materially older regulator state on an
+observation that only advanced, say, the learned positive-move statistics or the
+surge arming.
+*/
+func TestStoplossRegulatorRevision(t *testing.T) {
+	Convey("Given a live stoploss", t, func() {
+		stoploss := stoplossFixture(t)
+		before := stoploss.RegulatorRevision()
+
+		Convey("an observation that only advances the learned move statistics still changes the revision", func() {
+			stoploss.ObserveExecutable(executableSurface(110, 100000, 100000))
+			stoploss.ObserveExecutable(executableSurface(115, 100000, 100000))
+
+			So(stoploss.RegulatorRevision(), ShouldNotEqual, before)
+
+			Convey("and the future-affecting fields are reflected in the changed fingerprint", func() {
+				So(stoploss.PositiveMoveCount, ShouldBeGreaterThan, 0)
+			})
+		})
+
+		Convey("surge arming alone changes the revision even with no floor/peak move", func() {
+			stoploss.ObserveExecutable(executableSurface(110, 100000, 100000))
+			middle := stoploss.RegulatorRevision()
+
+			// Fold a large enough profitable move to arm the surge regime.
+			stoploss.ObserveExecutable(executableSurface(140, 100000, 100000))
+			stoploss.ObserveExecutable(executableSurface(150, 100000, 100000))
+
+			So(stoploss.RegulatorRevision(), ShouldNotEqual, middle)
+		})
+
+		Convey("two logically identical states share one revision", func() {
+			left := stoploss.RegulatorRevision()
+			right := stoploss.RegulatorRevision()
+
+			So(left, ShouldEqual, right)
+		})
+
+		Convey("BookObserved latching changes the revision", func() {
+			stoploss.ObserveExecutable(executableSurface(110, 100000, 100000))
+
+			So(stoploss.BookObserved, ShouldBeTrue)
+			So(stoploss.RegulatorRevision(), ShouldNotEqual, before)
+		})
+	})
+}
+
+func BenchmarkStoplossRegulatorRevision(b *testing.B) {
+	stoploss := stoplossFixture(b)
+	stoploss.Update(stoploss.ArmAt)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = stoploss.RegulatorRevision()
+	}
+}
+
 type testReporter interface {
 	Helper()
 	Fatalf(string, ...any)

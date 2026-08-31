@@ -1131,3 +1131,54 @@ func (envelope *Envelope) EncodeBytes() []byte {
 
 	return builder.FinishedBytes()
 }
+
+/*
+EncodeWebsocket packs the envelope's websocket mirror with the three
+high-volume, WebRTC-migrated fields omitted: Manifold, Resonance, and
+Boundaries. Those ride their own WebRTC data channels, so the dashboard socket
+carries only the lean, latency-relevant state and never the multi-megabyte
+volumetric field arrays or the replaceable resonance/telemetry payloads.
+
+This returns the same EnvelopeStateT shape Encode produces (so the frontend
+websocket decoder is unchanged) but with those fields absent. It exists
+alongside EncodeBytes — which stays full for the Hindsight witness path — so
+"persisted for audit" and "broadcast to the dashboard" are two versions of the
+same envelope with deliberately different transport budgets.
+*/
+func (envelope *Envelope) EncodeWebsocket() []byte {
+	state := envelope.Encode()
+	state.Manifold = nil
+	state.Resonance = nil
+	state.Boundaries = nil
+
+	builder := flatbuffers.NewBuilder(0)
+	offset := state.Pack(builder)
+	telemetry.FinishEnvelopeStateBuffer(builder, offset)
+
+	return builder.FinishedBytes()
+}
+
+/*
+EncodeResonanceArtifactWire projects only the resonance artifact into its wire
+mirror, for the WebRTC resonance channel. It reuses the same encoder Encode
+uses so the WebRTC frame and the (now omitted) websocket field can never drift.
+*/
+func (envelope *Envelope) EncodeResonanceArtifactWire() *telemetry.EnvelopeResonanceArtifactT {
+	return encodeResonanceArtifact(envelope.Resonance)
+}
+
+/*
+EncodeManifoldWire projects only the resident manifold advance into its wire
+mirror, for the WebRTC manifold channel.
+*/
+func (envelope *Envelope) EncodeManifoldWire() *telemetry.EnvelopeManifoldStateT {
+	return encodeManifoldState(envelope.Manifold)
+}
+
+/*
+EncodeBoundariesWire projects only the ordered boundary trace into its wire
+mirror, for the WebRTC diagnostics channel.
+*/
+func (envelope *Envelope) EncodeBoundariesWire() []*telemetry.EnvelopeBoundaryStampT {
+	return encodeBoundaries(envelope.Boundaries)
+}

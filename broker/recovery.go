@@ -23,15 +23,15 @@ import (
 Recovery reconstructs active positions and working orders from exchange state on boot.
 */
 type Recovery struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	api        *websocket.API
-	instrument *Instrument
-	price      *Price
-	balance    *Balance
-	recorder   *audit.Recorder
-	store      *PositionStore
-	positions  *sync.Map
+	ctx         context.Context
+	cancel      context.CancelFunc
+	api         *websocket.API
+	instrument  *Instrument
+	price       *Price
+	balance     *Balance
+	recorder    *audit.Recorder
+	store       *PositionStore
+	positions   *sync.Map
 	perspective PerspectiveReader
 }
 
@@ -292,6 +292,8 @@ func (recovery *Recovery) recoverAsset(
 		return errnie.Error(err)
 	}
 
+	degraded := false
+
 	if stoploss == nil {
 		stoploss, err = recovery.synthesizeStoploss(pair, symbol, quantity, entryPrice, entryAt)
 
@@ -299,12 +301,15 @@ func (recovery *Recovery) recoverAsset(
 			return err
 		}
 
-		errnie.Warn("recovery: no stored stoploss for " + symbol + " at this entry; rebuilt protection from current market")
+		degraded = true
+		errnie.Warn("recovery: DEGRADED RECOVERY for " + symbol +
+			" — no stored stoploss at this entry; rebuilt protection from current market (entry-only synthesis, NOT the lost historical StopLoss)")
 	}
 
 	position := recovery.recoveredPosition(
 		pair, asset, quantity, entryPrice, entryFee, entryAt, stoploss,
 	)
+	position.DegradedRecovery = degraded
 
 	if order != nil {
 		position.ExitOrder = &spot.AddOrderRequest{

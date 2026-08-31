@@ -17,6 +17,7 @@ import { TerminalTopBar } from "#/components/terminal/terminal-top-bar";
 import { Dialog } from "#/components/ui/dialog";
 import { Flex } from "#/components/ui/flex";
 import { Scanlines } from "#/components/ui/scanlines";
+import { RtcFeed } from "#/providers/rtc";
 import { WsFeed } from "#/providers/websocket";
 import appCss from "../app.css?url";
 
@@ -178,6 +179,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 			<body className="flex h-full min-h-svh flex-col" suppressHydrationWarning>
 				<ClientOnly fallback={null}>
 					<WsFeed />
+					<RtcFeed />
 					<Flex.Column className="fixed inset-0 z-50 min-h-0 overflow-hidden bg-[#0e0c0a] text-[13px] text-[#cbc2b4]">
 						{scanlines ? <Scanlines variant="screen" className="z-60" /> : null}
 						<SymbolFocusLayer>

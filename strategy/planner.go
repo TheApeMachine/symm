@@ -272,7 +272,7 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.StrategyRound {
 		return nil
 	}
 
-	states := planner.drainPending()
+	states := planner.pendingStates()
 	decisions := make([]*types.Decision, len(states))
 
 	plannerStarted := time.Now()
@@ -384,9 +384,16 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.StrategyRound {
 }
 
 /*
-drainPending collects and clears the retained causal states.
+pendingStates snapshots the resident candidate frontier without clearing it.
+Each tradable symbol keeps exactly one bounded latest CausalState; a new state
+replaces, never appends. Retaining candidates across passes means a slot opener
+is contested by every currently resident symbol whose latest state still
+selects Enter, not just the symbol whose ticker happened to arrive this tick.
+A symbol whose newest state no longer enters naturally stops competing: its
+decision is Wait or ActionNothing and allocation declines it, so no explicit
+eviction policy is invented.
 */
-func (planner *Planner) drainPending() []*CausalState {
+func (planner *Planner) pendingStates() []*CausalState {
 	states := make([]*CausalState, 0)
 
 	planner.pending.Range(func(key, value any) bool {
@@ -394,7 +401,6 @@ func (planner *Planner) drainPending() []*CausalState {
 			states = append(states, state)
 		}
 
-		planner.pending.Delete(key)
 		return true
 	})
 
@@ -554,6 +560,28 @@ func (planner *Planner) decisionFromCausalState(
 	decision.UtilityAvailable = true
 	decision.Utility = result.ExpectedEconomicOutcome
 	recordEconomic(decision, result, state)
+
+	// Incremental economic advantage: Enter mean less Wait mean, read from the
+	// explored root branches. Zero is the natural indifference point — a
+	// candidate whose marginal value over waiting is not strictly positive is
+	// not a valuable opportunity, regardless of how it ranks against other
+	// candidates in the round. Entries only: exits are governed by their own
+	// authority and are never gated by an enter advantage they cannot have.
+	enterMean, enterFound := branchMean(result, mcts.Enter)
+	waitMean, waitFound := branchMean(result, mcts.Wait)
+	enterAdvantage := enterMean - waitMean
+	alternatives["economic:enter_mean"] = enterMean
+	alternatives["economic:wait_mean"] = waitMean
+	alternatives["economic:enter_advantage"] = enterAdvantage
+
+	if result.SelectedAction == mcts.Enter {
+		if !enterFound || !waitFound || !(enterAdvantage > 0) {
+			decision.Action = types.ActionNothing
+			decision.Reason = "planner: entering is not economically better than waiting"
+			decision.Trace = economicTrace(state, result)
+			return decision
+		}
+	}
 
 	switch result.SelectedAction {
 	case mcts.Enter:
@@ -799,6 +827,26 @@ func marketValue(state *CausalState, source, metric, side string) (float64, bool
 	for coordinate, value := range state.MarketState.Current {
 		if coordinate.Source == source && coordinate.Metric == metric && coordinate.Side == side {
 			return value, true
+		}
+	}
+
+	return 0, false
+}
+
+/*
+branchMean returns the mean economic reward observed for one root action
+branch, read directly off the search provenance. It reports whether the
+branch was actually explored, so callers never fabricate a zero for an
+absent alternative.
+*/
+func branchMean(result *mcts.SearchResult, action mcts.Action) (float64, bool) {
+	if result == nil || result.Trace == nil {
+		return 0, false
+	}
+
+	for _, branch := range result.Trace.Branches {
+		if branch.Action == action {
+			return branch.MeanReward, true
 		}
 	}
 

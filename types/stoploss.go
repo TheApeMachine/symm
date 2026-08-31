@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -888,6 +889,68 @@ func (stoploss *Stoploss) MarshalState() ([]byte, error) {
 	}
 
 	return json.Marshal(stoploss)
+}
+
+/*
+RegulatorRevision is a deterministic fingerprint of every persisted field whose
+current value can alter future regulator behavior. It is the explicit
+state-change contract: a caller compares the revision before and after an
+observation to decide whether the durable state materially advanced. It never
+depends on which subset of fields "changed most recently" — any future-affecting
+state difference (peak, floor, lock, profit latch, learned move mean/M2,
+positive-step count, stagnation marks, observation/horizon clock, book latching,
+surge arming, momentum floor, trigger reason/mark, and status) produces a
+different revision.
+
+The values are encoded through the fixed-point decimal string for monetary
+quantities and strconv.FormatFloat(…, 'g', -1, 64) for the float statistics, so
+two logically equal regulators always share one revision and no representation
+drift (float round-trip or trailing-zero) introduces a false "change".
+*/
+func (stoploss *Stoploss) RegulatorRevision() string {
+	if stoploss == nil {
+		return ""
+	}
+
+	return fmt.Sprintf(
+		"status:%s|lock:%t|floor:%s|peak:%s|mark:%s|profit:%s|arm:%s|lockfloor:%s|profitlatched:%t|distinct:%d|stag:%s|movecount:%d|movemean:%s|movem2:%s|observed:%d|clock:%t|book:%t|surge:%t|lastmove:%s|surgemove:%s|momentum:%s|reason:%s|triggermark:%s",
+		string(stoploss.Status),
+		stoploss.Locked,
+		decString(stoploss.Floor),
+		decString(stoploss.Peak),
+		decString(stoploss.Mark),
+		decString(stoploss.ProfitLine),
+		decString(stoploss.ArmAt),
+		decString(stoploss.LockFloor),
+		stoploss.ProfitLatched,
+		stoploss.DistinctNonPeakMarks,
+		decString(stoploss.LastStagnationMark),
+		stoploss.PositiveMoveCount,
+		strconv.FormatFloat(stoploss.PositiveMoveMean, 'g', -1, 64),
+		strconv.FormatFloat(stoploss.PositiveMoveM2, 'g', -1, 64),
+		stoploss.Observed,
+		stoploss.ClockArmed,
+		stoploss.BookObserved,
+		stoploss.SurgeArmed,
+		decString(stoploss.LastMove),
+		decString(stoploss.SurgeMove),
+		decString(stoploss.MomentumFloor),
+		stoploss.TriggerReason,
+		decString(stoploss.TriggerMark),
+	)
+}
+
+/*
+decString renders a fixed-point decimal for the revision fingerprint. A nil or
+non-positive value is rendered as an explicit empty marker so "absent" and
+"zero" never collide into one fingerprint.
+*/
+func decString(value *decimal.Decimal) string {
+	if value == nil {
+		return "-"
+	}
+
+	return value.String()
 }
 
 /*

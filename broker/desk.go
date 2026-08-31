@@ -190,9 +190,10 @@ func (desk *Desk) StepTicker(ticker kraken.TickerData) error {
 	}
 
 	if err := position.publishGuardian(ticker); err != nil {
-		// Priority ring saturation is a critical failure: surface the alarm and
-		// invoke the risk failure path rather than queueing or dropping the mark.
-		errnie.Error(errnie.Err(
+		// Priority ring saturation is a critical failure: the caller must
+		// receive a non-nil error and observe the risk failure rather than a
+		// mark silently disappearing behind a log line.
+		return errnie.Error(errnie.Err(
 			errnie.NotAcceptable,
 			"desk: position guardian priority ring saturated for "+ticker.Symbol,
 			err,
@@ -217,7 +218,7 @@ func (desk *Desk) StepExecution(execution kraken.ExecutionData) error {
 	}
 
 	if err := position.publishGuardian(execution); err != nil {
-		errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.NotAcceptable,
 			"desk: position guardian priority ring saturated for "+execution.Symbol,
 			err,
@@ -227,11 +228,15 @@ func (desk *Desk) StepExecution(execution kraken.ExecutionData) error {
 	return nil
 }
 
-// StepLevel3 routes one completed, committed L3 book frame to the symbol's
-// open position. The frame has already been applied to the authoritative book
-// before it is emitted, so the guardian evaluates one coherent post-frame
-// state, never an intermediate per-order mutation.
+// StepLevel3 folds one L3 frame into the canonical book then routes the
+// committed post-frame state to the symbol's open position. The frame is
+// applied to the authoritative book first, so the guardian evaluates one
+// coherent post-frame state, never an intermediate per-order mutation.
 func (desk *Desk) StepLevel3(level3 kraken.Level3Data) error {
+	if desk.price != nil {
+		desk.price.ApplyLevel3(level3)
+	}
+
 	found, ok := desk.positions.Load(level3.Symbol)
 
 	if !ok || found == nil {
@@ -245,7 +250,7 @@ func (desk *Desk) StepLevel3(level3 kraken.Level3Data) error {
 	}
 
 	if err := position.publishGuardian(level3); err != nil {
-		errnie.Error(errnie.Err(
+		return errnie.Error(errnie.Err(
 			errnie.NotAcceptable,
 			"desk: position guardian priority ring saturated for "+level3.Symbol,
 			err,

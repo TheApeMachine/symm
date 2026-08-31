@@ -518,6 +518,43 @@ func TestConformanceNoFinalGate(t *testing.T) {
 	})
 }
 
+/*
+TestConformanceEnterRequiresValue verifies the entry-admission value requirement:
+an enter candidate must be economically better than waiting, not merely the best
+available action. The natural indifference point is zero advantage; at or below
+it the decision must decline entry.
+*/
+func TestConformanceEnterRequiresValue(t *testing.T) {
+	inputs := marketInputs{cash: 100000, mark: 1, feeRate: 0.001, spreadFraction: 0, available: true}
+	newPlanner := func() *Planner {
+		return &Planner{marketProvider: func(symbol string) marketInputs {
+			return inputs
+		}}
+	}
+
+	Convey("Given MCTS selects Enter on a deterministic positive path", t, func() {
+		at := time.Unix(0, 149*int64(time.Second))
+		state := deterministicCausalState(at, 0.005)
+		decision := newPlanner().decisionFromCausalState(state, testConfig(), inputs)
+
+		Convey("entering is economically better than waiting, so it enters", func() {
+			So(decision.Action, ShouldEqual, types.ActionEnter)
+			So(decision.Alternatives["economic:enter_advantage"], ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given MCTS faces a non-positive market path", t, func() {
+		at := time.Unix(0, 149*int64(time.Second))
+		state := deterministicCausalState(at, 0)
+		decision := newPlanner().decisionFromCausalState(state, testConfig(), inputs)
+
+		Convey("it must not enter merely because Wait carries no edge", func() {
+			So(decision.Action, ShouldNotEqual, types.ActionEnter)
+			So(decision.Alternatives["economic:enter_advantage"], ShouldBeLessThanOrEqualTo, 0)
+		})
+	})
+}
+
 func TestConformanceActionDoesNotMutateMarket(t *testing.T) {
 	Convey("Given the same causal market model", t, func() {
 		at := time.Unix(0, 149*int64(time.Second))

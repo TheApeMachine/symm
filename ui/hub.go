@@ -351,7 +351,7 @@ Observe HandlerGroup, so a disconnected or slow UI cannot change what the
 system believes.
 */
 func (hub *Hub) Step(envelope *types.Envelope) *types.Envelope {
-	payload := envelope.EncodeBytes()
+	payload := envelope.EncodeWebsocket()
 
 	hub.clients.Range(func(key, value any) bool {
 		client, valid := value.(*Client)
@@ -367,10 +367,12 @@ func (hub *Hub) Step(envelope *types.Envelope) *types.Envelope {
 		return true
 	})
 
-	// The manifold transport publishes the resident field advance to any
-	// connected viewer directly, outside the websocket bus. A busy viewer
-	// queues frames rather than losing them silently; a queue overflow is
-	// reported and never blocks the pipeline.
+	// The three high-volume, loss-tolerant payloads leave the websocket and
+	// ride their own WebRTC channels instead. The resident manifold field
+	// advance, the predictive-coder resonance artifact, and the per-stage
+	// boundary trace are each published at most once — never duplicated back
+	// onto the socket — and a busy viewer queues them rather than losing them
+	// silently.
 	if envelope.Manifold != nil {
 		if err := hub.fluid.Publish(envelope.Manifold); err != nil {
 			errnie.Error(errnie.Err(
@@ -379,6 +381,22 @@ func (hub *Hub) Step(envelope *types.Envelope) *types.Envelope {
 				err,
 			))
 		}
+	}
+
+	if err := hub.fluid.PublishResonance(envelope); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"hub: publish resonance frame",
+			err,
+		))
+	}
+
+	if err := hub.fluid.PublishDiagnostics(envelope); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"hub: publish diagnostics frame",
+			err,
+		))
 	}
 
 	return envelope

@@ -302,13 +302,16 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 }
 
 /*
-economicOrder ranks candidates by their expected economic outcome under the
-causal model (MCTS mean economic reward), then by search visits, then by
-symbol identity for replay determinism. No semantic score participates.
+economicOrder ranks candidates by their incremental economic advantage over
+waiting (Enter mean less Wait mean under the causal model), then by search
+visits, then by symbol identity for replay determinism. Ranking by the selected
+branch's raw expected outcome would let a symbol whose absolute reward is
+inflated beat genuinely better alternatives; the advantage isolates the value
+the candidate actually adds. No semantic score participates.
 */
 func economicOrder(left, right *types.Decision) int {
-	leftOutcome := alternativesOf(left)["economic:expected_outcome"]
-	rightOutcome := alternativesOf(right)["economic:expected_outcome"]
+	leftOutcome := alternativesOf(left)["economic:enter_advantage"]
+	rightOutcome := alternativesOf(right)["economic:enter_advantage"]
 
 	if leftOutcome != rightOutcome {
 		if leftOutcome > rightOutcome {

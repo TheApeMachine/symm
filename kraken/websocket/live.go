@@ -359,13 +359,18 @@ func NewWithClient(
 			errMessage := utils.GetString(raw, "error")
 
 			if errMessage != "" {
+				// A rejected subscription is a per-request acknowledgement, not
+				// a transport failure. Kraken answers duplicate subscriptions
+				// (e.g. the soft-reboot resubscribe path re-issuing the same
+				// universe) with "Already subscribed", which is benign and
+				// recoverable. It must not poison the session lifecycle status
+				// — the transport is still connected and READY.
 				live.err = errnie.Error(errnie.Err(
 					errnie.IO,
 					fmt.Sprintf("[websocket] subscription rejected: %s", errMessage),
 					nil,
 				))
 
-				live.status.Transition(runtime.ERROR)
 				return
 			}
 		}

@@ -362,16 +362,17 @@ func TestPriceReturnPct(t *testing.T) {
 }
 
 /*
-TestPriceExecutableSurface asserts the current, intentional behavior:
-ExecutableSurface has no full-depth book to walk, so it always reports
-BookComplete=false (and therefore FullyExecutable=false, with no fabricated
-VWAP), regardless of ticker state, requested quantity, or floor.
+TestPriceExecutableSurface asserts the real executable-liquidation contract:
+ExecutableSurface walks the authoritative L3 book's visible bid depth (already
+best-first) to derive BookComplete, ExecutableQty, FloorCoverageQty,
+FullyExecutable, ExecutableVWAP, and fee-net ExecutableValue — with no ticker
+fallback and no fabricated fill when the book is missing, crossed, or shallow.
 */
 func TestPriceExecutableSurface(t *testing.T) {
-	Convey("Given a price surface with a live ticker", t, func() {
+	Convey("Given a price surface with no book for the symbol", t, func() {
 		price := entryEconomicsFixture(t, 101, 100, 100000)
 
-		Convey("it always reports the book as incomplete, never a fabricated fill", func() {
+		Convey("it reports the book as incomplete, never a fabricated fill", func() {
 			surface := price.ExecutableSurface(
 				"EDGE/USD",
 				decimal.NewFromFloat64(100000),
@@ -380,49 +381,171 @@ func TestPriceExecutableSurface(t *testing.T) {
 			)
 
 			So(surface.Symbol, ShouldEqual, "EDGE/USD")
-			So(surface.SellableQty.Float64(), ShouldAlmostEqual, 100000, 1e-9)
 			So(surface.BookComplete, ShouldBeFalse)
 			So(surface.FullyExecutable, ShouldBeFalse)
 			So(surface.ExecutableVWAP, ShouldBeNil)
+			So(surface.ExecutableValue, ShouldBeNil)
 		})
 	})
 
-	Convey("Given a protected floor", t, func() {
-		price := entryEconomicsFixture(t, 101, 100, 100000)
+	Convey("Given a coherent two-sided L3 book", t, func() {
+		price, _ := newPriceSurface(t, "EDGE/USD")
 
-		Convey("it still reports incomplete rather than deriving floor coverage from ticker data", func() {
+		Convey("an exact full-lot fill at one level yields the book's gross VWAP and fee-net value", func() {
+			price.ApplyLevel3(kraken.Level3Data{
+				Symbol: "EDGE/USD",
+				Type:   "snapshot",
+				Bids: []kraken.Level3Order{
+					mustDecimalOrder("b1", "100", "1000"),
+				},
+				Asks: []kraken.Level3Order{
+					mustDecimalOrder("a1", "101", "1000"),
+				},
+			})
+
 			surface := price.ExecutableSurface(
 				"EDGE/USD",
-				decimal.NewFromFloat64(100000),
-				decimal.NewFromFloat64(100),
+				decimal.NewFromFloat64(1000),
+				decimal.NewFromFloat64(90),
 				time.Now(),
 			)
 
-			So(surface.BookComplete, ShouldBeFalse)
-			So(surface.FullyExecutable, ShouldBeFalse)
+			So(surface.BookComplete, ShouldBeTrue)
+			So(surface.FullyExecutable, ShouldBeTrue)
+			So(surface.ExecutableQty.Cmp(decimal.NewFromFloat64(1000)), ShouldEqual, 0)
+			So(surface.FloorCoverageQty.Cmp(decimal.NewFromFloat64(1000)), ShouldEqual, 0)
+			So(surface.ExecutableVWAP.Cmp(decimal.NewFromFloat64(100)), ShouldEqual, 0)
+
+			// gross proceeds 100*1000 = 100000; fee 0.25% → 250; net 99750
+			So(surface.ExecutableValue.Cmp(mustDecimal("99750")), ShouldEqual, 0)
 		})
-	})
 
-	Convey("Given no ticker at all for the symbol", t, func() {
-		price, _ := newPriceSurface(t, "COLD/USD")
+		Convey("an exact fill spanning multiple bid levels computes the true VWAP", func() {
+			price.ApplyLevel3(kraken.Level3Data{
+				Symbol: "EDGE/USD",
+				Type:   "snapshot",
+				Bids: []kraken.Level3Order{
+					mustDecimalOrder("b1", "100", "500"),
+					mustDecimalOrder("b2", "99", "500"),
+				},
+				Asks: []kraken.Level3Order{
+					mustDecimalOrder("a1", "101", "1000"),
+				},
+			})
 
-		Convey("it still reports incomplete without dereferencing a missing tick", func() {
-			So(func() {
-				surface := price.ExecutableSurface(
-					"COLD/USD",
-					decimal.NewFromFloat64(1),
-					nil,
-					time.Now(),
-				)
+			surface := price.ExecutableSurface(
+				"EDGE/USD",
+				decimal.NewFromFloat64(1000),
+				nil,
+				time.Now(),
+			)
 
-				So(surface.BookComplete, ShouldBeFalse)
-			}, ShouldNotPanic)
+			So(surface.FullyExecutable, ShouldBeTrue)
+			// VWAP = (100*500 + 99*500) / 1000 = 99.5
+			So(surface.ExecutableVWAP.Cmp(mustDecimal("99.5")), ShouldEqual, 0)
+			// gross = 99500; fee 0.25% → 248.75; net 99251.25
+			So(surface.ExecutableValue.Cmp(mustDecimal("99251.25")), ShouldEqual, 0)
+		})
+
+		Convey("a shallow book cannot complete the lot and reports no VWAP", func() {
+			price.ApplyLevel3(kraken.Level3Data{
+				Symbol: "EDGE/USD",
+				Type:   "snapshot",
+				Bids: []kraken.Level3Order{
+					mustDecimalOrder("b1", "100", "100"),
+				},
+				Asks: []kraken.Level3Order{
+					mustDecimalOrder("a1", "101", "100"),
+				},
+			})
+
+			surface := price.ExecutableSurface(
+				"EDGE/USD",
+				decimal.NewFromFloat64(1000),
+				nil,
+				time.Now(),
+			)
+
+			So(surface.BookComplete, ShouldBeTrue)
+			So(surface.FullyExecutable, ShouldBeFalse)
+			So(surface.ExecutableQty.Cmp(decimal.NewFromFloat64(100)), ShouldEqual, 0)
+			So(surface.ExecutableVWAP, ShouldBeNil)
+			So(surface.ExecutableValue, ShouldBeNil)
+		})
+
+		Convey("floor coverage smaller than SellableQty is reported independently", func() {
+			price.ApplyLevel3(kraken.Level3Data{
+				Symbol: "EDGE/USD",
+				Type:   "snapshot",
+				Bids: []kraken.Level3Order{
+					mustDecimalOrder("b1", "100", "800"),
+					mustDecimalOrder("b2", "95", "500"),
+				},
+				Asks: []kraken.Level3Order{
+					mustDecimalOrder("a1", "101", "2000"),
+				},
+			})
+
+			surface := price.ExecutableSurface(
+				"EDGE/USD",
+				decimal.NewFromFloat64(1000),
+				decimal.NewFromFloat64(97),
+				time.Now(),
+			)
+
+			// coverable at or above 97 = only the 800 at 100.
+			So(surface.FloorCoverageQty.Cmp(decimal.NewFromFloat64(800)), ShouldEqual, 0)
+			So(surface.FullyExecutable, ShouldBeTrue)
+		})
+
+		Convey("a tiny fixed-point quantity keeps its decimal precision", func() {
+			price.ApplyLevel3(kraken.Level3Data{
+				Symbol: "EDGE/USD",
+				Type:   "snapshot",
+				Bids: []kraken.Level3Order{
+					mustDecimalOrder("b1", "65000", "0.00051057"),
+				},
+				Asks: []kraken.Level3Order{
+					mustDecimalOrder("a1", "65001", "1"),
+				},
+			})
+
+			surface := price.ExecutableSurface(
+				"EDGE/USD",
+				decimal.NewFromFloat64(0.00051057),
+				nil,
+				time.Now(),
+			)
+
+			So(surface.FullyExecutable, ShouldBeTrue)
+			So(surface.ExecutableQty.Cmp(mustDecimal("0.00051057")), ShouldEqual, 0)
+			So(surface.ExecutableVWAP.Cmp(decimal.NewFromFloat64(65000)), ShouldEqual, 0)
 		})
 	})
 }
 
+func mustDecimalOrder(orderID, price, qty string) kraken.Level3Order {
+	return kraken.Level3Order{
+		OrderID:    orderID,
+		LimitPrice: mustDecimal(price),
+		OrderQty:   mustDecimal(qty),
+	}
+}
+
 func BenchmarkPriceExecutableSurface(b *testing.B) {
 	price := entryEconomicsFixture(b, 101, 100, 100000)
+	price.ApplyLevel3(kraken.Level3Data{
+		Symbol: "EDGE/USD",
+		Type:   "snapshot",
+		Bids: []kraken.Level3Order{
+			mustDecimalOrder("b1", "100", "40000"),
+			mustDecimalOrder("b2", "99", "30000"),
+			mustDecimalOrder("b3", "98", "30000"),
+		},
+		Asks: []kraken.Level3Order{
+			mustDecimalOrder("a1", "101", "100000"),
+		},
+	})
 	sellable := decimal.NewFromFloat64(100000)
 	floor := decimal.NewFromFloat64(51)
 	at := time.Now()
@@ -430,6 +553,70 @@ func BenchmarkPriceExecutableSurface(b *testing.B) {
 
 	for b.Loop() {
 		price.ExecutableSurface("EDGE/USD", sellable, floor, at)
+	}
+}
+
+/*
+BenchmarkPriceExecutableSurfaceSmallLot measures a small ($10–$100) notional
+liquidation that fills entirely at the touch, the common fast path.
+*/
+func BenchmarkPriceExecutableSurfaceSmallLot(b *testing.B) {
+	price := entryEconomicsFixture(b, 65, 64, 100000)
+	price.ApplyLevel3(kraken.Level3Data{
+		Symbol: "EDGE/USD",
+		Type:   "snapshot",
+		Bids: []kraken.Level3Order{
+			mustDecimalOrder("b1", "64", "100000"),
+		},
+		Asks: []kraken.Level3Order{
+			mustDecimalOrder("a1", "65", "100000"),
+		},
+	})
+	sellable := decimal.NewFromFloat64(1)
+	at := time.Now()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		price.ExecutableSurface("EDGE/USD", sellable, nil, at)
+	}
+}
+
+/*
+BenchmarkPriceExecutableSurfaceDeepBook measures evaluation against a deep,
+many-level book so the consumed-level-count cost is observable.
+*/
+func BenchmarkPriceExecutableSurfaceDeepBook(b *testing.B) {
+	price := entryEconomicsFixture(b, 201, 200, 100000)
+
+	bids := make([]kraken.Level3Order, 0, 200)
+	asks := make([]kraken.Level3Order, 0, 200)
+
+	for level := 0; level < 200; level++ {
+		bidPrice := 200 - level
+		bids = append(bids, mustDecimalOrder(
+			"b"+decimal.NewFromInt64(int64(level)).String(),
+			decimal.NewFromInt64(int64(bidPrice)).String(),
+			"100",
+		))
+		asks = append(asks, mustDecimalOrder(
+			"a"+decimal.NewFromInt64(int64(level)).String(),
+			decimal.NewFromInt64(int64(201+level)).String(),
+			"100",
+		))
+	}
+
+	price.ApplyLevel3(kraken.Level3Data{
+		Symbol: "EDGE/USD",
+		Type:   "snapshot",
+		Bids:   bids,
+		Asks:   asks,
+	})
+	sellable := decimal.NewFromFloat64(10000)
+	at := time.Now()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		price.ExecutableSurface("EDGE/USD", sellable, nil, at)
 	}
 }
 

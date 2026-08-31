@@ -89,6 +89,14 @@ func (status *Status) Transition(stage Stage) *Status {
 			return status
 		}
 
+		// Re-entering the current stage is a benign no-op, not an error: every
+		// hot path that reports a same-stage condition (a repeated subscription
+		// rejection, a repeated ERROR) calls Transition with the state already
+		// held. Treating that as illegal wedges callers and floods the log.
+		if current == stage {
+			return status
+		}
+
 		valid := slices.Contains(transitions[current], stage)
 
 		if !valid {

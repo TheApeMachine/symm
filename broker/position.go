@@ -87,6 +87,18 @@ type Position struct {
 	// transition so that only one goroutine may claim and submit the exit.
 	exitMu    sync.Mutex
 	exitClaim atomic.Bool
+
+	// DegradedRecovery is true when the position was reconstructed at boot
+	// without its exact persisted StopLoss (the row was missing), so protection
+	// had to be synthesized from entry economics. It is an explicit, inspectable
+	// marker that the recovered protection is NOT the lost historical StopLoss.
+	DegradedRecovery bool `json:"degraded_recovery,omitempty"`
+
+	// guardianWatermark counts the priority events the guardian has fully
+	// processed. It is the guardian's causal processing cursor: an observer can
+	// read it atomically and, once it has advanced past an event's ordinal, read
+	// the position's derived state with a happens-before edge to that event.
+	guardianWatermark atomic.Uint64
 }
 
 /*
@@ -232,6 +244,8 @@ It is the sole consumer of the guardian ring and runs without any analytical
 semaphore, so position protection can never be delayed by bulk analytics.
 */
 func (position *Position) handleGuardian(value any) {
+	defer position.guardianWatermark.Add(1)
+
 	switch payload := value.(type) {
 	case kraken.TickerData:
 		position.onTicker(payload)
@@ -358,11 +372,6 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 		}
 	}
 
-	previousStatus := position.Holding.Stoploss.Status
-	previousLocked := position.Holding.Stoploss.Locked
-	previousFloor := position.Holding.Stoploss.Floor
-	previousPeak := position.Holding.Stoploss.Peak
-
 	// One economic mark: once the authoritative L3 book has been read
 	// (BookObserved), the executable-liquidation VWAP owns Holding.Mark and the
 	// stoploss geometry. A later ticker must refresh the cache (price.Update
@@ -376,6 +385,8 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 	if position.Holding.Stoploss.BookObserved && position.Holding.Mark != nil {
 		mark = position.Holding.Mark
 	}
+
+	previousRevision := position.Holding.Stoploss.RegulatorRevision()
 
 	stoploss := position.Holding.Stoploss
 	stoploss.SetObservationTime(ticker.Timestamp)
@@ -399,12 +410,7 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 		position.initiateProtectiveExit()
 	}
 
-	changed := previousStatus != stoploss.Status ||
-		previousLocked != stoploss.Locked ||
-		previousFloor.Cmp(stoploss.Floor) != 0 ||
-		previousPeak.Cmp(stoploss.Peak) != 0
-
-	if changed && position.store != nil {
+	if stoploss.RegulatorRevision() != previousRevision && position.store != nil {
 		if err := position.store.Save(stoploss); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.IO,
@@ -463,10 +469,7 @@ func (position *Position) evaluateExecutable(symbol string, at time.Time) {
 		at,
 	)
 
-	previousStatus := stoploss.Status
-	previousLocked := stoploss.Locked
-	previousFloor := stoploss.Floor
-	previousPeak := stoploss.Peak
+	previousRevision := stoploss.RegulatorRevision()
 
 	stoploss.ObserveExecutable(surface)
 
@@ -487,12 +490,7 @@ func (position *Position) evaluateExecutable(symbol string, at time.Time) {
 		position.initiateProtectiveExit()
 	}
 
-	changed := previousStatus != stoploss.Status ||
-		previousLocked != stoploss.Locked ||
-		previousFloor.Cmp(stoploss.Floor) != 0 ||
-		previousPeak.Cmp(stoploss.Peak) != 0
-
-	if changed && position.store != nil {
+	if stoploss.RegulatorRevision() != previousRevision && position.store != nil {
 		if err := position.store.Save(stoploss); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.IO,

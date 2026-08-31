@@ -20,7 +20,6 @@ fluidPeer owns the ordered data channels for one browser connection.
 type fluidPeer struct {
 	ctx           context.Context
 	fail          func(error)
-	queueLimit    int
 	bufferedLimit uint64
 	mutex         sync.RWMutex
 	channels      map[string]*fluidChannel
@@ -29,12 +28,11 @@ type fluidPeer struct {
 func newFluidPeer(
 	ctx context.Context,
 	fail func(error),
-	queueLimit int,
 	bufferedLimit uint64,
 ) *fluidPeer {
 	return &fluidPeer{
-		ctx: ctx, fail: fail, queueLimit: queueLimit, bufferedLimit: bufferedLimit,
-		channels: make(map[string]*fluidChannel, 3),
+		ctx: ctx, fail: fail, bufferedLimit: bufferedLimit,
+		channels: make(map[string]*fluidChannel, 4),
 	}
 }
 
@@ -56,6 +54,7 @@ func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
 	label := dataChannel.Label()
 
 	if label != types.ManifoldChannel &&
+		label != types.ResonanceChannel &&
 		label != types.DiagnosticsChannel {
 		errnie.Error(fluidError("unsupported data channel "+label, nil))
 		_ = dataChannel.Close()
@@ -72,7 +71,6 @@ func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
 	channel := newFluidChannel(
 		peer.ctx,
 		dataChannel,
-		peer.queueLimit,
 		peer.bufferedLimit,
 		peer.fail,
 	)
@@ -91,7 +89,7 @@ func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
 func (peer *fluidPeer) close() {
 	peer.mutex.Lock()
 	channels := peer.channels
-	peer.channels = make(map[string]*fluidChannel, 3)
+	peer.channels = make(map[string]*fluidChannel, 4)
 	peer.mutex.Unlock()
 
 	for _, channel := range channels {
@@ -101,30 +99,44 @@ func (peer *fluidPeer) close() {
 
 /*
 fluidChannel serializes complete records through one reliable SCTP channel.
+
+Every channel is latest-wins: the manifold field advance, the resonance
+artifact, and the diagnostics trace are all continuously-refreshed snapshots,
+not message streams a viewer must replay in full. The publisher drops the
+previous pending record into this single slot, the sender always drains the
+freshest one, and neither can ever block the market pipeline or fill a queue
+whose stale frames would only be shipped late. "Ordered and reliable" holds at
+the transport layer (SCTP ordered, no retransmit limit); latest-wins is the
+application policy on top of it.
 */
 type fluidChannel struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	dataChannel   *webrtc.DataChannel
-	pending       chan []byte
 	drained       chan struct{}
 	bufferedLimit uint64
 	fail          func(error)
 	startOnce     sync.Once
+
+	// latest holds the freshest unsent record; latestMu guards it and
+	// latestReady wakes the sender.
+	latestMu    sync.Mutex
+	latest      []byte
+	latestReady chan struct{}
 }
 
 func newFluidChannel(
 	ctx context.Context,
 	dataChannel *webrtc.DataChannel,
-	queueLimit int,
 	bufferedLimit uint64,
 	fail func(error),
 ) *fluidChannel {
 	ctx, cancel := context.WithCancel(ctx)
 	channel := &fluidChannel{
 		ctx: ctx, cancel: cancel, dataChannel: dataChannel,
-		pending: make(chan []byte, queueLimit), drained: make(chan struct{}, 1),
+		drained: make(chan struct{}, 1),
 		bufferedLimit: bufferedLimit, fail: fail,
+		latestReady: make(chan struct{}, 1),
 	}
 	dataChannel.SetBufferedAmountLowThreshold(bufferedLimit - fluidSegmentSize)
 	dataChannel.OnBufferedAmountLow(func() {
@@ -151,18 +163,53 @@ func (channel *fluidChannel) start() {
 	channel.startOnce.Do(func() { go channel.run() })
 }
 
+/*
+enqueue stores payload as the channel's latest-wins record and wakes the sender.
+It never blocks and never errors: a fresher record simply replaces the pending
+one, which is the only behaviour a live replaceable snapshot can want.
+*/
+func (channel *fluidChannel) enqueue(payload []byte) {
+	if channel.ctx.Err() != nil {
+		return
+	}
+
+	channel.latestMu.Lock()
+	channel.latest = payload
+	channel.latestMu.Unlock()
+
+	select {
+	case channel.latestReady <- struct{}{}:
+	default:
+	}
+}
+
 func (channel *fluidChannel) run() {
 	for {
 		select {
 		case <-channel.ctx.Done():
 			return
-		case payload := <-channel.pending:
+		case <-channel.latestReady:
+			payload := channel.takeLatest()
+
+			if payload == nil {
+				continue
+			}
+
 			if err := channel.send(payload); err != nil {
 				channel.failSend(err)
 				return
 			}
 		}
 	}
+}
+
+func (channel *fluidChannel) takeLatest() []byte {
+	channel.latestMu.Lock()
+	payload := channel.latest
+	channel.latest = nil
+	channel.latestMu.Unlock()
+
+	return payload
 }
 
 func (channel *fluidChannel) failSend(err error) {

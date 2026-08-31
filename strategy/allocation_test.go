@@ -10,7 +10,7 @@ import (
 
 func economicCandidate(symbol string, expectedOutcome float64, visits float64) *types.Decision {
 	decision := types.NewDecision(types.ActionEnter, symbol)
-	alternativesOf(decision)["economic:expected_outcome"] = expectedOutcome
+	alternativesOf(decision)["economic:enter_advantage"] = expectedOutcome
 	alternativesOf(decision)["economic:visits"] = visits
 	return decision
 }

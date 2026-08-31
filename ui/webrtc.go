@@ -26,7 +26,9 @@ const (
 var fluidRecordMagic = [4]byte{'S', 'F', 'D', '1'}
 
 /*
-FluidRTC owns the lossless, ordered WebRTC manifold publication plane.
+FluidRTC owns the ordered WebRTC publication plane for the manifold, resonance,
+and diagnostics channels. Every channel is latest-wins, so the transport never
+queues a backlog of stale snapshots and never blocks the market pipeline.
 */
 type FluidRTC struct {
 	ctx           context.Context
@@ -36,7 +38,6 @@ type FluidRTC struct {
 	peersMutex    sync.RWMutex
 	peers         map[*webrtc.PeerConnection]*fluidPeer
 	consumerID    string
-	queueLimit    int
 	bufferedLimit uint64
 	sequence      uint64
 	ObserveModule func(string, time.Duration)
@@ -50,22 +51,19 @@ func NewFluidRTC(
 	consumerID string,
 ) *FluidRTC {
 	ctx, cancel := context.WithCancel(ctx)
-	viper.SetDefault("ui.webrtc.client_queue_frames", 4)
 	viper.SetDefault("ui.webrtc.buffered_segments", 64)
-	queueLimit := viper.GetInt("ui.webrtc.client_queue_frames")
 	bufferedSegments := viper.GetUint64("ui.webrtc.buffered_segments")
 	fluidTransport := &FluidRTC{
 		ctx:           ctx,
 		cancel:        cancel,
 		peers:         make(map[*webrtc.PeerConnection]*fluidPeer),
 		consumerID:    consumerID,
-		queueLimit:    queueLimit,
 		bufferedLimit: bufferedSegments * fluidSegmentSize,
 	}
 
-	if queueLimit < 1 || bufferedSegments < 1 {
+	if bufferedSegments < 1 {
 		fluidTransport.err = fmt.Errorf(
-			"webrtc: client_queue_frames and buffered_segments must be positive",
+			"webrtc: buffered_segments must be positive",
 		)
 	}
 
@@ -110,29 +108,89 @@ func (fluidTransport *FluidRTC) Publish(state *types.ManifoldState) error {
 	sequence := atomic.AddUint64(&fluidTransport.sequence, 1)
 	payload := encodeManifold(state, sequence)
 
+	return fluidTransport.publishBytes(types.ManifoldChannel, payload)
+}
+
+/*
+PublishResonance fans one envelope's resonance artifact to every viewer owning
+the resonance channel, wrapped in a lean EnvelopeState the frontend decodes
+with the same EnvelopeState accessor it already uses for the websocket.
+*/
+func (fluidTransport *FluidRTC) PublishResonance(envelope *types.Envelope) error {
+	if envelope == nil || envelope.Resonance == nil {
+		return nil
+	}
+
+	state := &telemetry.EnvelopeStateT{
+		Resonance: envelope.EncodeResonanceArtifactWire(),
+	}
+	payload := wrapStateFrame(state)
+
+	return fluidTransport.publishBytes(types.ResonanceChannel, payload)
+}
+
+/*
+PublishDiagnostics fans one envelope's ordered boundary trace to every viewer
+owning the diagnostics channel, wrapped in a lean EnvelopeState carrying only
+the boundaries the topology page ingests.
+*/
+func (fluidTransport *FluidRTC) PublishDiagnostics(envelope *types.Envelope) error {
+	if envelope == nil || len(envelope.Boundaries) == 0 {
+		return nil
+	}
+
+	state := &telemetry.EnvelopeStateT{
+		Boundaries: envelope.EncodeBoundariesWire(),
+	}
+	payload := wrapStateFrame(state)
+
+	return fluidTransport.publishBytes(types.DiagnosticsChannel, payload)
+}
+
+/*
+publishBytes fans one encoded record to every viewer that owns the named
+channel. Every channel is latest-wins, so a busy viewer receives the freshest
+record and the market pipeline is never blocked or error-flooded.
+*/
+func (fluidTransport *FluidRTC) publishBytes(channelName string, payload []byte) error {
 	fluidTransport.peersMutex.RLock()
 	defer fluidTransport.peersMutex.RUnlock()
 
 	for _, peer := range fluidTransport.peers {
 		peer.mutex.RLock()
-		channel := peer.channels[types.ManifoldChannel]
+		channel := peer.channels[channelName]
 		peer.mutex.RUnlock()
 
 		if channel == nil {
 			continue
 		}
 
-		select {
-		case channel.pending <- payload:
-		case <-channel.ctx.Done():
-		case <-fluidTransport.ctx.Done():
-			return fluidTransport.ctx.Err()
-		default:
-			return fluidError("manifold channel queue is full", nil)
-		}
+		channel.enqueue(payload)
 	}
 
 	return nil
+}
+
+/*
+wrapStateFrame wraps a lean EnvelopeState mirror in the SYMM-identified Envelope
+envelope the browser uses for every WebRTC channel, so resonance and diagnostics
+share the manifold transport's framing and identifier.
+*/
+func wrapStateFrame(state *telemetry.EnvelopeStateT) []byte {
+	builder := flatbuffers.NewBuilder(0)
+
+	frame := &telemetry.EnvelopeStateFrameT{State: state}
+	envelope := &telemetry.EnvelopeT{
+		Frame: &telemetry.FrameT{
+			Type:  telemetry.FrameEnvelopeStateFrame,
+			Value: frame,
+		},
+	}
+
+	offset := envelope.Pack(builder)
+	telemetry.FinishEnvelopeBuffer(builder, offset)
+
+	return builder.FinishedBytes()
 }
 
 /*
@@ -264,7 +322,6 @@ func (fluidTransport *FluidRTC) Answer(
 		func(err error) {
 			fluidTransport.remove(peerConnection)
 		},
-		fluidTransport.queueLimit,
 		fluidTransport.bufferedLimit,
 	)
 	fluidTransport.add(peerConnection, peer)
