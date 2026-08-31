@@ -80,7 +80,10 @@ export const RtcFeed = () => {
 		const connection = new RTCPeerConnection();
 
 		const attach = (label: string, onRecord: (state: unknown) => void) => {
-			const channel = connection.createDataChannel(label, { ordered: true });
+			const channel = connection.createDataChannel(label, {
+				ordered: false,
+				maxRetransmits: 0,
+			});
 			const reader = new FluidRecordReader();
 			channel.binaryType = "arraybuffer";
 			channel.addEventListener("message", (event) => {

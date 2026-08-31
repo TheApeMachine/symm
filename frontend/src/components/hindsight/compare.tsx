@@ -42,6 +42,7 @@ export type CompareMode = "exact" | "resident";
 
 export type Mark = {
 	sequence: number;
+	ordinal: number;
 	label: string;
 };
 
@@ -118,8 +119,10 @@ const readResident = (
 			carried: view.carried,
 		};
 
+		const family = view.kind === undefined ? "" : `${view.kind}/`;
+
 		for (const reading of view.readings) {
-			const name = `${view.symbol}/${reading.metric}`;
+			const name = `${view.symbol}/${family}${reading.metric}`;
 
 			facts.set(`perspective/${name}`, {
 				group: "perspective",

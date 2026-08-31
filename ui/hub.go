@@ -53,6 +53,65 @@ type Hub struct {
 type Client struct {
 	conn *websocket.Conn
 	mu   sync.Mutex
+	// queue is the bounded publication boundary for one dashboard socket:
+	// capacity one, latest-wins. Step never blocks on it; the per-client
+	// sender both drains the freshest replaceable snapshot and applies the
+	// disconnect policy when the socket dies.
+	queue  chan []byte
+	closed chan struct{}
+}
+
+/*
+enqueue replaces any pending dashboard snapshot and wakes the sender without
+blocking. A slow consumer therefore receives a fresher replaceable state when
+it catches up, never a backlog of stale frames, and Hub.Step is never stalled
+by an external browser.
+*/
+func (client *Client) enqueue(payload []byte) {
+	if client == nil || client.queue == nil {
+		return
+	}
+
+	select {
+	case <-client.closed:
+		return
+	default:
+	}
+
+	select {
+	case client.queue <- payload:
+	default:
+		// Latest-wins: drop the stale pending snapshot.
+		select {
+		case <-client.queue:
+		default:
+		}
+		select {
+		case client.queue <- payload:
+		default:
+		}
+	}
+}
+
+/*
+runSender drains the freshest pending snapshot and writes it under the client
+mutex. It exits when the client closes, never leaking a goroutine.
+*/
+func (client *Client) runSender() {
+	for {
+		select {
+		case <-client.closed:
+			return
+		case payload := <-client.queue:
+			client.mu.Lock()
+			err := client.conn.WriteMessage(websocket.BinaryMessage, payload)
+			client.mu.Unlock()
+
+			if err != nil {
+				return
+			}
+		}
+	}
 }
 
 /*
@@ -305,11 +364,17 @@ func NewHub(ctx context.Context) *Hub {
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		key := uuid.NewString()
-		hub.clients.Store(key, &Client{
-			conn: conn,
-		})
+		client := &Client{
+			conn:   conn,
+			queue:  make(chan []byte, 1),
+			closed: make(chan struct{}),
+		}
+		hub.clients.Store(key, client)
+
+		go client.runSender()
 
 		defer func() {
+			close(client.closed)
 			hub.clients.Delete(key)
 			conn.Conn.Close()
 		}()
@@ -360,20 +425,19 @@ func (hub *Hub) Step(envelope *types.Envelope) *types.Envelope {
 			return true
 		}
 
-		client.mu.Lock()
-		_ = client.conn.WriteMessage(websocket.BinaryMessage, payload)
-		client.mu.Unlock()
+		client.enqueue(payload)
 
 		return true
 	})
 
 	// The three high-volume, loss-tolerant payloads leave the websocket and
-	// ride their own WebRTC channels instead. The resident manifold field
-	// advance, the predictive-coder resonance artifact, and the per-stage
-	// boundary trace are each published at most once — never duplicated back
-	// onto the socket — and a busy viewer queues them rather than losing them
-	// silently.
-	if envelope.Manifold != nil {
+	// ride their own WebRTC channels instead. Each is encoded only when a
+	// connected viewer actually owns that channel: observer serialization
+	// work is demand-driven, so a run with no resonance/diagnostics/manifold
+	// viewer spends none of it. Observer snapshots are replaceable; durable
+	// historical truth lives in Hindsight/raw capture; external viewers can
+	// never backpressure trading computation.
+	if envelope.Manifold != nil && hub.fluid.HasChannel(types.ManifoldChannel) {
 		if err := hub.fluid.Publish(envelope.Manifold); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.IO,
@@ -383,20 +447,24 @@ func (hub *Hub) Step(envelope *types.Envelope) *types.Envelope {
 		}
 	}
 
-	if err := hub.fluid.PublishResonance(envelope); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"hub: publish resonance frame",
-			err,
-		))
+	if envelope.Resonance != nil && hub.fluid.HasChannel(types.ResonanceChannel) {
+		if err := hub.fluid.PublishResonance(envelope); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"hub: publish resonance frame",
+				err,
+			))
+		}
 	}
 
-	if err := hub.fluid.PublishDiagnostics(envelope); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"hub: publish diagnostics frame",
-			err,
-		))
+	if len(envelope.Boundaries) > 0 && hub.fluid.HasChannel(types.DiagnosticsChannel) {
+		if err := hub.fluid.PublishDiagnostics(envelope); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"hub: publish diagnostics frame",
+				err,
+			))
+		}
 	}
 
 	return envelope

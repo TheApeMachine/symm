@@ -66,6 +66,12 @@ type Position struct {
 	ExitOrderResult  *spot.AddOrderResult  `json:"exit_order_result"`
 	Holding          *types.Holding        `json:"holding"`
 
+	// liquidation is the bounded resident execution state for this symbol,
+	// owned here so L3 traffic for symbols without an execution lifecycle
+	// never allocates or maintains resident book state. It is created lazily
+	// on the first L3 frame and released when the position closes.
+	liquidation *liquidationBook
+
 	// perspective is the shared latest-by-key Perspective store. perspective is
 	// the entry snapshot captured when the lot's fill lands, used for the
 	// entry-vs-current continuation comparison; both feed the profit-stagnation
@@ -432,6 +438,20 @@ It only runs for positions with positive sellable inventory, so a closed or
 unfilled lot performs no L3 book work.
 */
 func (position *Position) onLevel3(level3 kraken.Level3Data) {
+	if position.Holding == nil ||
+		position.Holding.SellableQty == nil ||
+		position.Holding.SellableQty.Sign() <= 0 {
+		return
+	}
+
+	// Lazy adoption: the reducer is created for the symbol the moment its
+	// open position first needs execution truth. No book state exists for
+	// symbols without an open execution lifecycle.
+	if position.liquidation == nil {
+		position.liquidation = newLiquidationBook(level3.Symbol)
+	}
+
+	position.liquidation.Apply(level3)
 	position.evaluateExecutable(level3.Symbol, level3.Timestamp)
 }
 
@@ -462,10 +482,20 @@ func (position *Position) evaluateExecutable(symbol string, at time.Time) {
 		return
 	}
 
-	surface := position.price.ExecutableSurface(
-		symbol,
+	if position.liquidation == nil {
+		return
+	}
+
+	fee := position.price.FeeIfAvailable(symbol)
+
+	if fee == nil {
+		return
+	}
+
+	surface := position.liquidation.Surface(
 		position.Holding.SellableQty,
 		stoploss.Floor,
+		fee,
 		at,
 	)
 
@@ -1017,6 +1047,11 @@ func (position *Position) Close() (err error) {
 	}
 
 	position.setStatus(types.CLOSED)
+
+	// Release the bounded liquidation state: the position's execution
+	// lifecycle is over, and no other lifecycle needs that symbol's book.
+	// Recovery must never adopt stale state from a previous lot.
+	position.liquidation = nil
 
 	if position.onClose != nil {
 		position.onClose()

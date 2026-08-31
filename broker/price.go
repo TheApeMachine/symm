@@ -2,7 +2,6 @@ package broker
 
 import (
 	"sync"
-	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
@@ -21,16 +20,16 @@ const (
 )
 
 /*
-Price is the broker price surface for symm. It owns fee tiers, ticker cache,
-the canonical per-symbol L3 book, and all money math so the rest of the broker
-never drifts from Kraken's precision and executable boundaries.
+Price is the broker price surface for symm. It owns fee tiers, ticker cache, and
+all money math so the rest of the broker never drifts from Kraken's precision
+and executable boundaries. Executable L3 liquidation state no longer lives here:
+each open Position owns the bounded execution state for its own symbol.
 */
 type Price struct {
 	status     types.Status
 	api        *websocket.API
 	fees       *sync.Map
 	tickers    *sync.Map
-	books      *kraken.BookOwner
 	normalizer *spot.Normalizer
 	capture    *audit.Recorder
 }
@@ -48,24 +47,9 @@ func NewPrice(api *websocket.API, recorder *audit.Recorder) *Price {
 		api:        api,
 		fees:       &sync.Map{},
 		tickers:    &sync.Map{},
-		books:      kraken.NewBookOwner(),
 		normalizer: api.Normalizer(),
 		capture:    recorder,
 	}
-}
-
-/*
-ApplyLevel3 folds one L3 frame into the canonical per-symbol book. The broker
-owns the single authoritative L3 state; every other consumer of executable
-liquidity reads it through ExecutableSurface or the protected Fold path rather
-than reconstructing their own book from raw frames.
-*/
-func (price *Price) ApplyLevel3(level3 kraken.Level3Data) {
-	if price == nil || price.books == nil {
-		return
-	}
-
-	price.books.Apply(level3)
 }
 
 /*
@@ -198,127 +182,6 @@ func (price *Price) ExitValue(
 		decimal.NewFromInt64(0).Add(holding.Mark).Mul(holding.Qty),
 		SELL,
 	)
-}
-
-/*
-ExecutableSurface derives the full-lot executable-liquidation state for one
-position's actual current SellableQty from the authoritative L3 book, under the
-protected read callback. It is the single authoritative executable-liquidation
-calculation: it walks the book's high→low bid chain (already price ordered, so
-no per-evaluation sort or full copy is made), filling the position's complete
-SellableQty to produce the gross executable VWAP alongside the fee-net
-executable value. It never falls back to ticker and never lets the managed book
-escape the callback.
-
-Derived independently for the exact SellableQty:
-
-	ExecutableQty    — total quantity fillable from the whole visible valid bid
-	                   depth (how much the book can absorb before running out).
-	FloorCoverageQty — quantity visible at or above the protected floor (how much
-	                   of the sellable lot the floor can still realize).
-	ExecutableVWAP   — the full-lot liquidation-equivalent GROSS price (raw filled
-	                   VWAP consumed best-bid-first until the entire SellableQty
-	                   is filled). Defined ONLY when the entire lot is executable.
-	ExecutableValue  — the actual gross proceeds of that full-lot fill minus the
-	                   current taker exit fee, per the existing fee semantics. It
-	                   is never divided back into a "fee-net price".
-
-BookComplete=false (and ExecutableVWAP/ExecutableValue undefined) when the book
-cannot truthfully price the position: missing bid side, crossed, or otherwise
-invalid. FullyExecutable=false when visible valid depth cannot fill the complete
-SellableQty, with no fabricated VWAP and no ticker fallback.
-*/
-func (price *Price) ExecutableSurface(
-	symbol string,
-	sellableQty *decimal.Decimal,
-	floor *decimal.Decimal,
-	at time.Time,
-) *types.ExecutionSurface {
-	surface := &types.ExecutionSurface{
-		Symbol:      symbol,
-		At:          at,
-		SellableQty: decimal.NewFromInt64(0).Add(sellableQty),
-	}
-
-	if price == nil || price.books == nil || sellableQty == nil ||
-		sellableQty.Sign() <= 0 {
-		return surface
-	}
-
-	fee := price.FeeIfAvailable(symbol)
-
-	if fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 ||
-		fee.Fee.Cmp(decimal.NewFromInt64(100)) >= 0 {
-		return surface
-	}
-
-	found := price.books.Fold(symbol, func(view kraken.BookView) {
-		if !view.Valid {
-			return
-		}
-
-		surface.BookComplete = true
-
-		if len(view.Bids) > 0 && view.Bids[0].LimitPrice != nil {
-			surface.BestBid = decimal.NewFromInt64(0).Add(view.Bids[0].LimitPrice)
-		}
-
-		// Walk visible bids best-first (already descending by price), summing
-		// total executable quantity, floor coverage, and the full-lot fill.
-		var executableQty, floorCoverageQty *decimal.Decimal
-		var grossProceeds *decimal.Decimal
-		remaining := decimal.NewFromInt64(0).Add(sellableQty)
-
-		executableQty = decimal.NewFromInt64(0)
-		floorCoverageQty = decimal.NewFromInt64(0)
-		grossProceeds = decimal.NewFromInt64(0)
-
-		for _, order := range view.Bids {
-			if order.LimitPrice == nil || order.OrderQty == nil ||
-				order.LimitPrice.Sign() <= 0 || order.OrderQty.Sign() <= 0 {
-				continue
-			}
-
-			executableQty = executableQty.Add(order.OrderQty)
-
-			if floor != nil && order.LimitPrice.Cmp(floor) >= 0 {
-				floorCoverageQty = floorCoverageQty.Add(order.OrderQty)
-			}
-
-			if remaining.Sign() <= 0 {
-				continue
-			}
-
-			fill := order.OrderQty
-
-			if remaining.Cmp(fill) < 0 {
-				fill = remaining
-			}
-
-			grossProceeds = grossProceeds.Add(order.LimitPrice.Mul(fill))
-			remaining = remaining.Sub(fill)
-		}
-
-		surface.ExecutableQty = executableQty
-		surface.FloorCoverageQty = floorCoverageQty
-
-		if remaining.Sign() > 0 || executableQty.Cmp(sellableQty) < 0 {
-			return
-		}
-
-		feeRate := decimal.NewFromInt64(0).Add(fee.Fee).Div(
-			decimal.NewFromInt64(100),
-		)
-		surface.FullyExecutable = true
-		surface.ExecutableVWAP = grossProceeds.Div(sellableQty)
-		surface.ExecutableValue = grossProceeds.Sub(grossProceeds.Mul(feeRate))
-	})
-
-	if !found {
-		return surface
-	}
-
-	return surface
 }
 
 /*

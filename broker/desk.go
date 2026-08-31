@@ -228,15 +228,12 @@ func (desk *Desk) StepExecution(execution kraken.ExecutionData) error {
 	return nil
 }
 
-// StepLevel3 folds one L3 frame into the canonical book then routes the
-// committed post-frame state to the symbol's open position. The frame is
-// applied to the authoritative book first, so the guardian evaluates one
-// coherent post-frame state, never an intermediate per-order mutation.
+// StepLevel3 routes one L3 frame to the symbol's open position, which folds it
+// into its bounded resident liquidation state and derives the committed
+// post-frame executable state for the guardian. Symbols with no open execution
+// lifecycle perform no book work; the signal pipeline consumes the raw frame
+// directly elsewhere.
 func (desk *Desk) StepLevel3(level3 kraken.Level3Data) error {
-	if desk.price != nil {
-		desk.price.ApplyLevel3(level3)
-	}
-
 	found, ok := desk.positions.Load(level3.Symbol)
 
 	if !ok || found == nil {

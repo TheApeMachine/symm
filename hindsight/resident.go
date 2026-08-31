@@ -2,6 +2,7 @@ package hindsight
 
 import (
 	"sort"
+	"strconv"
 	"time"
 
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -87,10 +88,14 @@ type ResidentCategory struct {
 
 /*
 ResidentPerspective is one advisor Perspective resident at the coordinate.
+Kind is the advisor family identity carried on the wire (a PerspectiveKind
+interned as a byte); it participates in identity so two advisor families for
+the same symbol/peer never collapse into one resident row.
 */
 type ResidentPerspective struct {
 	Symbol   string            `json:"symbol"`
 	Peer     string            `json:"peer,omitempty"`
+	Kind     uint8             `json:"kind"`
 	Origin   EnvelopeRef       `json:"origin"`
 	AgeNs    int64             `json:"ageNs"`
 	HasAge   bool              `json:"hasAge"`
@@ -98,10 +103,23 @@ type ResidentPerspective struct {
 	Readings []ResidentReading `json:"readings"`
 }
 
+/*
+ResidentReading is one constituent reading of a resident Perspective, with the
+temporal/evidence attributes the live PerspectiveReading carried preserved
+verbatim. ObservedAt/From are declared instants in nanoseconds; presence is not
+synthesised when the live artifact left them undefined.
+*/
 type ResidentReading struct {
-	Metric  string  `json:"metric"`
-	Value   float64 `json:"value"`
-	Defined bool    `json:"defined"`
+	Metric     string  `json:"metric"`
+	Value      float64 `json:"value"`
+	Defined    bool    `json:"defined"`
+	ObservedAt int64   `json:"observedAt,omitempty"`
+	HasAt      bool    `json:"hasAt"`
+	From       int64   `json:"from,omitempty"`
+	HasFrom    bool    `json:"hasFrom"`
+	Maturity   float64 `json:"maturity"`
+	SNR        float64 `json:"snr"`
+	SNRDefined bool    `json:"snrDefined"`
 }
 
 /*
@@ -116,6 +134,7 @@ type ResidentState struct {
 	Run        RunID                 `json:"run"`
 	Symbol     string                `json:"symbol"`
 	Sequence   CaptureSequence       `json:"sequence"`
+	Ordinal    uint64                `json:"ordinal"`
 	At         time.Time             `json:"at"`
 	Signals    []ResidentMeasurement `json:"signals"`
 	Categories []ResidentCategory    `json:"categories"`
@@ -161,24 +180,34 @@ ResolveResident walks the instrument's own captures backwards from the
 inspected coordinate and takes, for each signal family, the first value it
 finds — which is by construction the latest one causally available there.
 
+target is the complete EnvelopeRef being inspected: causal availability is
+lexicographic over (CaptureSequence, Ordinal). An envelope with the same
+CaptureSequence but a higher ordinal was produced by the same raw capture and
+is future with respect to target — never consulted (§12, §31).
+
 candidates must be the instrument's envelopes at or before the coordinate, in
-descending CaptureSequence order. budget bounds how far back the walk may
-reach; a walk that ends without resolving every family reports what is missing
-rather than presenting a partial view as complete.
+descending causal order (CaptureSequence and then Ordinal descending). budget
+bounds how far back the walk may reach; a walk that ends without resolving
+every family reports what is missing rather than presenting a partial view as
+complete.
 */
 func ResolveResident(
 	run RunID,
 	symbol string,
-	sequence CaptureSequence,
+	target EnvelopeRef,
 	at time.Time,
 	candidates []EnvelopeRef,
 	reader StateReader,
 	budget int,
 ) (ResidentState, error) {
+	sequence := target.Origin.Sequence
+	ordinal := target.Ordinal
+
 	resident := ResidentState{
 		Run:        run,
 		Symbol:     symbol,
 		Sequence:   sequence,
+		Ordinal:    ordinal,
 		At:         at,
 		Signals:    make([]ResidentMeasurement, 0, len(residentSources)),
 		Categories: make([]ResidentCategory, 0),
@@ -205,7 +234,7 @@ func ResolveResident(
 			break
 		}
 
-		if candidate.Origin.Sequence > sequence {
+		if causalAfter(candidate, target) {
 			// The future may select a coordinate but may never contribute state
 			// to it. A candidate after the mark is skipped outright.
 			continue
@@ -234,7 +263,7 @@ func ResolveResident(
 			continue
 		}
 
-		carried := candidate.Origin.Sequence != sequence
+		carried := candidate.Origin.Sequence != sequence || candidate.Ordinal != ordinal
 
 		for _, source := range residentSources {
 			if found[source] {
@@ -292,7 +321,8 @@ func ResolveResident(
 				continue
 			}
 
-			key := string(frame.Symbol()) + "|" + string(frame.Peer())
+			key := string(frame.Symbol()) + "|" + string(frame.Peer()) +
+				"|" + strconv.Itoa(int(frame.Kind()))
 
 			if seenView[key] {
 				continue
@@ -309,15 +339,23 @@ func ResolveResident(
 				}
 
 				readings = append(readings, ResidentReading{
-					Metric:  string(reading.Metric()),
-					Value:   reading.Value(),
-					Defined: reading.Defined(),
+					Metric:     string(reading.Metric()),
+					Value:      reading.Value(),
+					Defined:    reading.Defined(),
+					ObservedAt: reading.ObservedAt(),
+					HasAt:      reading.ObservedAt() > 0,
+					From:       reading.From(),
+					HasFrom:    reading.From() > 0,
+					Maturity:   reading.Maturity(),
+					SNR:        reading.Snr(),
+					SNRDefined: reading.SnrDefined(),
 				})
 			}
 
 			resident.Views = append(resident.Views, ResidentPerspective{
 				Symbol:   string(frame.Symbol()),
 				Peer:     string(frame.Peer()),
+				Kind:     frame.Kind(),
 				Origin:   candidate,
 				AgeNs:    markNs - frame.At(),
 				HasAge:   frame.At() > 0,
@@ -447,4 +485,18 @@ func stringList(length int, at func(int) []byte) []string {
 	}
 
 	return values
+}
+
+/*
+causalAfter reports whether candidate is strictly future with respect to target
+under the complete causal ordering: (CaptureSequence, Ordinal) lexicographic.
+A candidate with the same sequence but a greater ordinal is future, and a
+candidate with a greater sequence is future regardless of ordinal.
+*/
+func causalAfter(candidate, target EnvelopeRef) bool {
+	if candidate.Origin.Sequence != target.Origin.Sequence {
+		return candidate.Origin.Sequence > target.Origin.Sequence
+	}
+
+	return candidate.Ordinal > target.Ordinal
 }

@@ -65,7 +65,8 @@ export class FluidWebRTCFeed {
 		});
 
 		const channel = connection.createDataChannel(manifoldChannel, {
-			ordered: true,
+			ordered: false,
+			maxRetransmits: 0,
 		});
 		const reader = new FluidRecordReader();
 		channel.binaryType = "arraybuffer";

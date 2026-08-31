@@ -301,7 +301,7 @@ const HindsightRoute = () => {
 
 		Promise.all(
 			marks.map((entry) =>
-				fetchHindsightResident(run, symbol, entry.sequence),
+				fetchHindsightResident(run, symbol, entry.sequence, entry.ordinal),
 			),
 		).then((loaded) => {
 			if (cancelled) return;
@@ -374,7 +374,7 @@ const HindsightRoute = () => {
 			if (current.length >= 3) return current;
 			if (current.some((entry) => entry.sequence === playhead)) return current;
 
-			return [...current, { sequence: playhead, label: `#${playhead}` }].sort(
+			return [...current, { sequence: playhead, ordinal: 0, label: `#${playhead}` }].sort(
 				(left, right) => left.sequence - right.sequence,
 			);
 		});

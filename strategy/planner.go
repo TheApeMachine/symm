@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	goruntime "runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -69,6 +70,34 @@ type Planner struct {
 	// are observed filled. Until then the stage stays dormant while the
 	// observational layers keep filling underneath.
 	engaged atomic.Bool
+	// resident holds the evaluated candidate frontier: exactly one evaluated
+	// candidate per symbol, replaced when that symbol receives a newer
+	// CausalState or when the cheap execution/portfolio signature it was
+	// evaluated under stops matching current truth. Passes arbitrate among
+	// these already-evaluated candidates; they never rescan the universe.
+	resident sync.Map
+	// evaluate runs the expensive causal/MCTS evaluation for one symbol.
+	// The live default is decisionFromCausalState; tests inject a counting
+	// wrapper to prove unrelated passes do not rerun evaluations.
+	evaluate func(*CausalState, *system.Config, marketInputs) *types.Decision
+}
+
+/*
+residentCandidate is one symbol's evaluated frontier record, together with the
+exact state coordinate and the cheap execution/portfolio signature it was
+evaluated under. The signature decides cheap current arbitration invalidation:
+when the inputs, held quantity, or cash changed since evaluation, the stored
+economics are no longer truthful and the candidate is re-evaluated. It is a
+state-identity check, never an arbitrary freshness TTL.
+*/
+type residentCandidate struct {
+	state        *CausalState
+	stateKey     string
+	inputs       marketInputs
+	heldQty      float64
+	entryPrice   float64
+	cash         float64
+	decision     *types.Decision
 }
 
 /*
@@ -272,8 +301,7 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.StrategyRound {
 		return nil
 	}
 
-	states := planner.pendingStates()
-	decisions := make([]*types.Decision, len(states))
+	decisions := planner.residentDecisions(config)
 
 	plannerStarted := time.Now()
 	defer func() {
@@ -281,45 +309,6 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.StrategyRound {
 			planner.ObserveModule("planner", time.Since(plannerStarted))
 		}
 	}()
-
-	var g errgroup.Group
-	g.SetLimit(goruntime.GOMAXPROCS(0))
-
-	for i, state := range states {
-		i, state := i, state
-		g.Go(func() error {
-			if state == nil || isExcludedSymbol(state.Symbol) {
-				return nil
-			}
-
-			// A symbol with no executable quote (or no cash/fee surface yet) is
-			// not priced: it is still reported as a missing execution market
-			// decision rather than silently dropped, so the valuation state
-			// reaches the telemetry path without entering allocation.
-			inputs := planner.marketInputsFor(state.Symbol)
-
-			decision := planner.decisionFromCausalState(state, config, inputs)
-			decisions[i] = decision
-			return nil
-		})
-	}
-
-	if err := g.Wait(); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"planner: evaluation group failed",
-			err,
-		))
-		return nil
-	}
-
-	validDecisions := make([]*types.Decision, 0, len(decisions))
-	for _, decision := range decisions {
-		if decision != nil {
-			validDecisions = append(validDecisions, decision)
-		}
-	}
-	decisions = validDecisions
 
 	if len(decisions) == 0 {
 		return nil
@@ -384,27 +373,230 @@ func (planner *Planner) Update(thesis *types.Thesis) *types.StrategyRound {
 }
 
 /*
-pendingStates snapshots the resident candidate frontier without clearing it.
-Each tradable symbol keeps exactly one bounded latest CausalState; a new state
-replaces, never appends. Retaining candidates across passes means a slot opener
-is contested by every currently resident symbol whose latest state still
-selects Enter, not just the symbol whose ticker happened to arrive this tick.
-A symbol whose newest state no longer enters naturally stops competing: its
-decision is Wait or ActionNothing and allocation declines it, so no explicit
-eviction policy is invented.
+residentDecisions evaluates the dirty frontier once, then materialises one
+decision per resident candidate for arbitration. Expensive causal/MCTS
+evaluation runs only when a symbol holds a newer CausalState than the evaluated
+record or when the cheap execution/portfolio signature changed; an unrelated
+ticker leaves every other resident record untouched. Cheap allocation/arbitration
+still inspects every resident candidate each pass, so a freed or newly opened
+slot is contested by all currently eligible residents.
+
+The returned decisions are fresh shells: allocation mutates them in place, so
+the stored evaluated record must never be handed out directly.
 */
-func (planner *Planner) pendingStates() []*CausalState {
-	states := make([]*CausalState, 0)
+func (planner *Planner) residentDecisions(
+	config *system.Config,
+) []*types.Decision {
+	// First sweep: refresh the evaluated records that are out of date.
+	dirty := make([]string, 0)
+	pendingStates := make(map[string]*CausalState)
 
 	planner.pending.Range(func(key, value any) bool {
-		if state, ok := value.(*CausalState); ok && state != nil {
-			states = append(states, state)
+		symbol, ok := key.(string)
+
+		if !ok {
+			return true
 		}
+
+		state, ok := value.(*CausalState)
+
+		if !ok || state == nil || isExcludedSymbol(symbol) {
+			return true
+		}
+
+		pendingStates[symbol] = state
+		stateKey := causalStateKey(state)
+
+		if record, found := planner.resident.Load(symbol); found {
+			candidate := record.(*residentCandidate)
+
+			if candidate.stateKey == stateKey && planner.signatureCurrent(symbol, candidate) {
+				return true
+			}
+		}
+
+		dirty = append(dirty, symbol)
 
 		return true
 	})
 
-	return states
+	sort.Strings(dirty)
+
+	evaluate := planner.evaluate
+
+	if evaluate == nil {
+		evaluate = planner.decisionFromCausalState
+	}
+
+	var g errgroup.Group
+	g.SetLimit(goruntime.GOMAXPROCS(0))
+
+	for _, symbol := range dirty {
+		symbol := symbol
+		state := pendingStates[symbol]
+		g.Go(func() error {
+			planner.evaluateResident(symbol, state, config, evaluate)
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.Internal,
+			"planner: resident evaluation group failed",
+			err,
+		))
+		return nil
+	}
+
+	// Second sweep: arbitration over every resident evaluated candidate.
+	decisions := make([]*types.Decision, 0)
+
+	planner.resident.Range(func(key, value any) bool {
+		symbol, ok := key.(string)
+
+		if !ok {
+			return true
+		}
+
+		record := value.(*residentCandidate)
+
+		if record == nil || record.decision == nil {
+			return true
+		}
+
+		// A candidate whose stored economics no longer match current truth is
+		// re-evaluated here rather than arbitrated with stale economics.
+		if !planner.signatureCurrent(symbol, record) {
+			planner.evaluateResident(symbol, record.state, config, evaluate)
+		}
+
+		loaded, _ := planner.resident.Load(symbol)
+
+		if loaded == nil {
+			return true
+		}
+
+		candidate := loaded.(*residentCandidate)
+
+		if candidate.decision == nil {
+			return true
+		}
+
+		decisions = append(decisions, cloneDecision(candidate.decision))
+
+		return true
+	})
+
+	sort.SliceStable(decisions, func(left, right int) bool {
+		return decisions[left].Symbol < decisions[right].Symbol
+	})
+
+	return decisions
+}
+
+/*
+evaluateResident runs the expensive evaluation for one symbol and replaces its
+resident record. It reports through the missing-execution-market decision so an
+unpriced symbol stays observable rather than being silently dropped.
+*/
+func (planner *Planner) evaluateResident(
+	symbol string,
+	state *CausalState,
+	config *system.Config,
+	evaluate func(*CausalState, *system.Config, marketInputs) *types.Decision,
+) {
+	if evaluate == nil {
+		evaluate = planner.decisionFromCausalState
+	}
+
+	inputs := planner.marketInputsFor(symbol)
+	heldQty, entryPrice := planner.heldPosition(symbol)
+	cash := inputs.cash
+
+	if !inputs.available && planner.desk != nil {
+		if balance := planner.desk.Balance().Cash(); balance != nil {
+			cash = balance.Float64()
+		}
+	}
+
+	planner.resident.Store(symbol, &residentCandidate{
+		state:      state,
+		stateKey:   causalStateKey(state),
+		inputs:     inputs,
+		heldQty:    heldQty,
+		entryPrice: entryPrice,
+		cash:       cash,
+		decision:   evaluate(state, config, inputs),
+	})
+}
+
+/*
+signatureCurrent reports whether the cheap execution/portfolio facts a
+candidate was evaluated under still match current truth. Any difference makes
+the stored economics stale. This is identity comparison, not a freshness
+window: a candidate stays valid across arbitrarily many unrelated passes.
+*/
+func (planner *Planner) signatureCurrent(symbol string, candidate *residentCandidate) bool {
+	if candidate == nil {
+		return false
+	}
+
+	inputs := planner.marketInputsFor(symbol)
+	heldQty, entryPrice := planner.heldPosition(symbol)
+	cash := inputs.cash
+
+	if !inputs.available && planner.desk != nil {
+		if balance := planner.desk.Balance().Cash(); balance != nil {
+			cash = balance.Float64()
+		}
+	}
+
+	return candidate.inputs == inputs &&
+		candidate.heldQty == heldQty &&
+		candidate.entryPrice == entryPrice &&
+		candidate.cash == cash
+}
+
+/*
+causalStateKey identifies a CausalState by its causal coordinate: epoch,
+schema version, model version, publication instant, and identification status.
+A newer state (any differing field) replaces the resident record on the next
+pass.
+*/
+func causalStateKey(state *CausalState) string {
+	if state == nil {
+		return ""
+	}
+
+	return strconv.FormatUint(state.Epoch, 10) +
+		":" + strconv.FormatUint(state.SchemaVersion, 10) +
+		":" + state.ModelVersion +
+		":" + strconv.FormatInt(state.At.UnixNano(), 10) +
+		":" + state.Identification.String()
+}
+
+/*
+cloneDecision produces a fresh decision shell sharing the immutable provenance
+of the evaluated record. Allocation mutates the clone (action, reason,
+stoploss, allocation class), so the resident record itself stays reusable.
+*/
+func cloneDecision(source *types.Decision) *types.Decision {
+	if source == nil {
+		return nil
+	}
+
+	clone := *source
+
+	if source.Alternatives != nil {
+		clone.Alternatives = make(map[string]float64, len(source.Alternatives))
+
+		for key, value := range source.Alternatives {
+			clone.Alternatives[key] = value
+		}
+	}
+
+	return &clone
 }
 
 /*
@@ -574,6 +766,12 @@ func (planner *Planner) decisionFromCausalState(
 	alternatives["economic:wait_mean"] = waitMean
 	alternatives["economic:enter_advantage"] = enterAdvantage
 
+	// Exit economics are symmetrical to entry economics: for a held position,
+	// the decision MCTS actually explores is Exit versus Wait, so the branch
+	// means for those two explorations are recorded explicitly. An unexplored
+	// branch stays absent — never zero-filled.
+	recordExitEconomic(decision, result, position)
+
 	if result.SelectedAction == mcts.Enter {
 		if !enterFound || !waitFound || !(enterAdvantage > 0) {
 			decision.Action = types.ActionNothing
@@ -588,6 +786,10 @@ func (planner *Planner) decisionFromCausalState(
 		decision.Action = types.ActionEnter
 	case mcts.Exit:
 		decision.Action = types.ActionExit
+		// The lifecycle/audit provenance must make unambiguous that this
+		// exit is the Planner's MCTS decision, never a StopLoss trigger.
+		decision.Cause = "planner_mcts"
+		decision.Reason = "planner_mcts: exit selected over wait"
 	case mcts.Scale:
 		// Defensive: Scale cannot fire while the exposure cap is one unit,
 		// but if it ever does it must not be reported as an executable
@@ -851,6 +1053,47 @@ func branchMean(result *mcts.SearchResult, action mcts.Action) (float64, bool) {
 	}
 
 	return 0, false
+}
+
+/*
+recordExitEconomic records the Exit-versus-Wait branch economics for a held
+position, symmetrical to the entry advantage. Each key is present only when the
+branch was actually explored; the exploration flag makes absence explicit so a
+zero is never fabricated for an unexplored branch.
+*/
+func recordExitEconomic(
+	decision *types.Decision,
+	result *mcts.SearchResult,
+	position float64,
+) {
+	if decision == nil || result == nil || position <= 0 {
+		return
+	}
+
+	alternatives := decision.Alternatives
+
+	if alternatives == nil {
+		alternatives = make(map[string]float64)
+		decision.Alternatives = alternatives
+	}
+
+	if exitMean, found := branchMean(result, mcts.Exit); found {
+		alternatives["economic:exit_mean"] = exitMean
+		alternatives["economic:exit_explored"] = 1
+	} else {
+		alternatives["economic:exit_explored"] = 0
+	}
+
+	if waitMean, found := branchMean(result, mcts.Wait); found {
+		alternatives["economic:wait_mean_exit"] = waitMean
+	}
+
+	exitMean, exitFound := branchMean(result, mcts.Exit)
+	waitMean, waitFound := branchMean(result, mcts.Wait)
+
+	if exitFound && waitFound {
+		alternatives["economic:exit_advantage"] = exitMean - waitMean
+	}
 }
 
 /*

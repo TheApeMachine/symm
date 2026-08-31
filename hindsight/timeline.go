@@ -427,12 +427,14 @@ coordinate, newest first and bounded by limit.
 
 These are the only envelopes that could have carried this instrument's signals,
 so an as-of walk over them reaches the latest causally available value without
-touching the rest of the run's tape. Ordering is CaptureSequence descending —
-the causal order run backwards, never a time sort.
+touching the rest of the run's tape. Ordering is causal order run backwards —
+CaptureSequence and then Ordinal descending — never a time sort. The full
+EnvelopeRef coordinate is honoured: an envelope on the same raw capture with a
+greater ordinal is future with respect to target and is excluded.
 */
 func (index *RunIndex) CapturesBefore(
 	symbol string,
-	sequence CaptureSequence,
+	target EnvelopeRef,
 	limit int,
 ) []EnvelopeRef {
 	observations := index.symbols[symbol]
@@ -445,14 +447,16 @@ func (index *RunIndex) CapturesBefore(
 	for position := len(observations) - 1; position >= 0; position-- {
 		observation := observations[position]
 
-		if observation.Capture.Sequence > sequence {
+		ref := EnvelopeRef{
+			Origin:  observation.Capture,
+			Ordinal: observation.Ordinal,
+		}
+
+		if causalAfter(ref, target) {
 			continue
 		}
 
-		refs = append(refs, EnvelopeRef{
-			Origin:  observation.Capture,
-			Ordinal: observation.Ordinal,
-		})
+		refs = append(refs, ref)
 
 		if len(refs) >= limit {
 			break

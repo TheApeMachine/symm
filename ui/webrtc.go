@@ -17,7 +17,11 @@ import (
 )
 
 const (
-	fluidRecordHeaderSize = 8
+	// fluidChunkHeaderSize is the per-SCTP-message framing: magic(4) +
+	// frameID(4) + chunkIndex(4) + chunkCount(4). Every chunk is self-
+	// identifying, so unordered, non-retransmitting channels can reassemble
+	// one complete frame and discard obsolete/incomplete ones.
+	fluidChunkHeaderSize = 16
 	// RFC 8831 recommends messages no larger than 16 KiB when SCTP message
 	// interleaving is unavailable. Records are segmented and reassembled.
 	fluidSegmentSize = 16 * 1024
@@ -81,8 +85,10 @@ func (fluidTransport *FluidRTC) Error() error {
 
 /*
 Run drains direct manifold publications until shutdown or the first transport
-failure. A live viewer never loses a queued state silently: when its bounded
-queue fills, publication applies backpressure until the reliable channel drains.
+failure. Observer snapshots are replaceable: a bounded latest-wins boundary
+means a slow viewer receives a fresher replaceable state and, on a feed
+failure, the transport fails explicitly rather than silently losing frames.
+Durable historical truth lives in Hindsight/raw capture, never in this path.
 */
 func (fluidTransport *FluidRTC) Run() error {
 	if err := fluidTransport.Error(); err != nil {

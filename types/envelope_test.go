@@ -199,3 +199,40 @@ func TestEnvelopeEncode(t *testing.T) {
 		})
 	})
 }
+
+/*
+TestEnvelopeEncodeWebsocketLean proves the observer projection never serializes
+the heavy Manifold/Resonance/Boundaries fields, while full Hindsight EncodeBytes
+still carries every populated field.
+*/
+func TestEnvelopeEncodeWebsocketLean(t *testing.T) {
+	Convey("Given an envelope with heavy fields populated", t, func() {
+		envelope := &Envelope{
+			Key:        "BTC/USD",
+			Resonance:  &ResonanceArtifact{Symbol: "BTC/USD", At: time.Now()},
+			Boundaries: []BoundaryStamp{{AtNs: time.Now().UnixNano()}},
+			Equity: &EquityReading{
+				Cash: "1000", Unrealized: "0", Equity: "1000",
+			},
+		}
+
+		Convey("the websocket encoding contains no heavy fields", func() {
+			decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeWebsocket(), 0)
+
+			So(decoded, ShouldNotBeNil)
+			So(decoded.Resonance(nil), ShouldBeNil)
+			So(decoded.Manifold(nil), ShouldBeNil)
+			So(decoded.BoundariesLength(), ShouldEqual, 0)
+			So(decoded.Equity(nil), ShouldNotBeNil)
+		})
+
+		Convey("the full Hindsight encoding still contains every field", func() {
+			decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeBytes(), 0)
+
+			So(decoded, ShouldNotBeNil)
+			So(decoded.Resonance(nil), ShouldNotBeNil)
+			So(decoded.BoundariesLength(), ShouldEqual, 1)
+			So(decoded.Equity(nil), ShouldNotBeNil)
+		})
+	})
+}

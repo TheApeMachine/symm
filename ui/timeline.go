@@ -123,6 +123,7 @@ func (hub *Hub) registerTimeline() {
 		run := query(c, "run")
 		symbol := query(c, "symbol")
 		sequence := hindsight.CaptureSequence(parseUintQuery(c.Query("seq")))
+		ordinal := parseUintQuery(c.Query("ordinal"))
 
 		if run == "" || symbol == "" || sequence == 0 {
 			return fiber.NewError(
@@ -143,6 +144,14 @@ func (hub *Hub) registerTimeline() {
 			budget = 512
 		}
 
+		target := hindsight.EnvelopeRef{
+			Origin: hindsight.CaptureIdentity{
+				Run:      hindsight.RunID(run),
+				Sequence: sequence,
+			},
+			Ordinal: ordinal,
+		}
+
 		at := time.Time{}
 
 		if observation, known := index.ObservationAt(symbol, sequence); known {
@@ -152,9 +161,9 @@ func (hub *Hub) registerTimeline() {
 		resident, err := hindsight.ResolveResident(
 			hindsight.RunID(run),
 			symbol,
-			sequence,
+			target,
 			at,
-			index.CapturesBefore(symbol, sequence, budget),
+			index.CapturesBefore(symbol, target, budget),
 			hub.store,
 			budget,
 		)

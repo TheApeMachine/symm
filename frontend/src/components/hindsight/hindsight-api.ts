@@ -179,20 +179,24 @@ export const fetchHindsightMetricMap =
 
 /*
 fetchHindsightResident reads what the running system actually held at one exact
-capture coordinate, rather than what that one envelope carried. The budget
-bounds how far back the causal walk may reach; the answer reports how far it
-actually went.
+capture coordinate, rather than what that one envelope carried. The full
+coordinate is (sequence, ordinal): one raw capture can produce several
+envelopes, and an ordinal outside the target's causal past is future state and
+never consulted. The budget bounds how far back the causal walk may reach; the
+answer reports how far it actually went.
 */
 export const fetchHindsightResident = async (
 	run: string,
 	symbol: string,
 	sequence: number,
+	ordinal: number,
 	budget = 96,
 ): Promise<HindsightResident | null> => {
 	const params = new URLSearchParams({
 		run,
 		symbol,
 		seq: String(sequence),
+		ordinal: String(ordinal),
 		budget: String(budget),
 	});
 

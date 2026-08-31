@@ -1,64 +1,102 @@
-const RECORD_HEADER_BYTES = 8;
+const CHUNK_HEADER_BYTES = 16;
 const RECORD_MAGIC = new Uint8Array([0x53, 0x46, 0x44, 0x31]);
 
+type PendingFrame = {
+	frameId: number;
+	chunkCount: number;
+	chunks: Map<number, Uint8Array>;
+	totalBytes: number;
+};
+
 /*
-FluidRecordReader reassembles one ordered WebRTC record without interpreting or
-reshaping the JSON value carried inside it.
+FluidRecordReader reassembles one self-identifying chunked WebRTC frame.
+
+Every SCTP message carries a 16-byte header — magic, frame ID, chunk index,
+chunk count — so unordered, non-retransmitting delivery can reassemble exactly
+one complete frame and discard incomplete or obsolete frames the moment a
+newer frame is observed.
 */
 export class FluidRecordReader {
-	private expectedBytes = 0;
-	private offset = 0;
-	private record: Uint8Array | null = null;
+	private latestFrameId = -1;
+	private pending: PendingFrame | null = null;
 
 	push(message: ArrayBuffer): ArrayBuffer | null {
 		const bytes = new Uint8Array(message);
 
-		if (this.record === null) {
-			this.begin(bytes);
-			return null;
-		}
-
-		if (this.offset + bytes.byteLength > this.expectedBytes) {
-			this.reset();
-			throw new Error("fluid WebRTC record exceeded its declared length");
-		}
-
-		this.record.set(bytes, this.offset);
-		this.offset += bytes.byteLength;
-
-		if (this.offset !== this.expectedBytes) {
-			return null;
-		}
-
-		const complete = this.record.buffer as ArrayBuffer;
-		this.reset();
-		return complete;
-	}
-
-	private begin(header: Uint8Array) {
-		if (header.byteLength !== RECORD_HEADER_BYTES) {
-			throw new Error("fluid WebRTC record header must contain 8 bytes");
+		if (bytes.byteLength < CHUNK_HEADER_BYTES) {
+			throw new Error("fluid WebRTC chunk is shorter than its 16-byte header");
 		}
 
 		for (let index = 0; index < RECORD_MAGIC.length; index += 1) {
-			if (header[index] !== RECORD_MAGIC[index]) {
-				throw new Error("fluid WebRTC record has an invalid SFD1 header");
+			if (bytes[index] !== RECORD_MAGIC[index]) {
+				throw new Error("fluid WebRTC chunk has an invalid SFD1 header");
 			}
 		}
 
-		this.expectedBytes = new DataView(header.buffer).getUint32(4, true);
+		const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+		const frameId = view.getUint32(4, true);
+		const chunkIndex = view.getUint32(8, true);
+		const chunkCount = view.getUint32(12, true);
 
-		if (this.expectedBytes === 0) {
-			throw new Error("fluid WebRTC record cannot be empty");
+		if (chunkCount === 0) {
+			throw new Error("fluid WebRTC frame cannot have zero chunks");
 		}
 
-		this.record = new Uint8Array(this.expectedBytes);
-		this.offset = 0;
+		if (frameId < this.latestFrameId) {
+			// An obsolete frame arrived after its successor: discard it.
+			return null;
+		}
+
+		if (frameId > this.latestFrameId) {
+			this.latestFrameId = frameId;
+			this.pending = {
+				frameId,
+				chunkCount,
+				chunks: new Map(),
+				totalBytes: 0,
+			};
+		}
+
+		const pending = this.pending;
+
+		if (pending === null || pending.frameId !== frameId) {
+			return null;
+		}
+
+		if (chunkIndex >= chunkCount || pending.chunks.has(chunkIndex)) {
+			return null;
+		}
+
+		const payload = bytes.slice(CHUNK_HEADER_BYTES);
+		pending.chunks.set(chunkIndex, payload);
+		pending.totalBytes += payload.byteLength;
+
+		if (pending.chunks.size !== pending.chunkCount) {
+			return null;
+		}
+
+		return this.finish(pending);
 	}
 
-	private reset() {
-		this.expectedBytes = 0;
-		this.offset = 0;
-		this.record = null;
+	private finish(frame: PendingFrame): ArrayBuffer {
+		const assembled = new Uint8Array(frame.totalBytes);
+		let offset = 0;
+
+		for (let index = 0; index < frame.chunkCount; index += 1) {
+			const chunk = frame.chunks.get(index);
+
+			if (!chunk) {
+				throw new Error(
+					`fluid WebRTC frame ${frame.frameId} is missing chunk ${index}`,
+				);
+			}
+
+			assembled.set(chunk, offset);
+			offset += chunk.byteLength;
+		}
+
+		this.pending = null;
+
+		return assembled.buffer as ArrayBuffer;
 	}
 }

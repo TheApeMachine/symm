@@ -1002,6 +1002,21 @@ func (envelope *Envelope) Encode() *telemetry.EnvelopeStateT {
 		return nil
 	}
 
+	state := envelope.encodeBase()
+	state.Resonance = encodeResonanceArtifact(envelope.Resonance)
+	state.Manifold = encodeManifoldState(envelope.Manifold)
+	state.Boundaries = encodeBoundaries(envelope.Boundaries)
+
+	return state
+}
+
+/*
+encodeBase builds the lean control/state projection of the Envelope: every
+ordinary field crosses over, but the heavy Manifold, Resonance, and Boundaries
+encoders are deliberately NOT invoked. Both Encode (full) and EncodeWebsocket
+(observer) share this projection so their light fields can never drift.
+*/
+func (envelope *Envelope) encodeBase() *telemetry.EnvelopeStateT {
 	return &telemetry.EnvelopeStateT{
 		Key:               envelope.Key,
 		TypeId:            byte(envelope.TypeID),
@@ -1031,12 +1046,9 @@ func (envelope *Envelope) Encode() *telemetry.EnvelopeStateT {
 		Categories:        encodeCategories(envelope.Categories),
 		Opportunities:     encodeOpportunities(envelope.Opportunities),
 		GraphUpdate:       encodeGraphUpdate(envelope.GraphUpdate),
-		Resonance:         encodeResonanceArtifact(envelope.Resonance),
-		Manifold:          encodeManifoldState(envelope.Manifold),
 		Cognition:         encodeCognition(envelope.Cognition),
 		Strategy:          encodeStrategyRound(envelope.StrategyRound),
 		Perspectives:      encodePerspectives(envelope.Perspectives),
-		Boundaries:        encodeBoundaries(envelope.Boundaries),
 		Equity:            encodeEquity(envelope.Equity),
 		Positions:         encodePositions(envelope.Positions),
 	}
@@ -1133,26 +1145,19 @@ func (envelope *Envelope) EncodeBytes() []byte {
 }
 
 /*
-EncodeWebsocket packs the envelope's websocket mirror with the three
-high-volume, WebRTC-migrated fields omitted: Manifold, Resonance, and
-Boundaries. Those ride their own WebRTC data channels, so the dashboard socket
-carries only the lean, latency-relevant state and never the multi-megabyte
-volumetric field arrays or the replaceable resonance/telemetry payloads.
-
-This returns the same EnvelopeStateT shape Encode produces (so the frontend
-websocket decoder is unchanged) but with those fields absent. It exists
-alongside EncodeBytes — which stays full for the Hindsight witness path — so
-"persisted for audit" and "broadcast to the dashboard" are two versions of the
-same envelope with deliberately different transport budgets.
+EncodeWebsocket packs the envelope's lean websocket mirror directly, never
+calling the heavy Manifold/Resonance/Boundaries encoders. Those ride their own
+WebRTC channels, so the dashboard socket carries only the latency-relevant
+state and none of the multi-megabyte volumetric fields. It shares the light-
+field projection with Encode so the two cannot drift.
 */
 func (envelope *Envelope) EncodeWebsocket() []byte {
-	state := envelope.Encode()
-	state.Manifold = nil
-	state.Resonance = nil
-	state.Boundaries = nil
+	if envelope == nil {
+		return nil
+	}
 
 	builder := flatbuffers.NewBuilder(0)
-	offset := state.Pack(builder)
+	offset := envelope.encodeBase().Pack(builder)
 	telemetry.FinishEnvelopeStateBuffer(builder, offset)
 
 	return builder.FinishedBytes()

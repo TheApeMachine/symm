@@ -388,17 +388,38 @@ export type ResidentCategory = {
 export type ResidentPerspective = {
 	symbol: string;
 	peer?: string;
+	/*
+		The advisor family identity (PerspectiveKind interned as a byte),
+		carried from the wire. It participates in resident identity so advisor
+		families at the same symbol/peer stay distinct.
+	*/
+	kind: number;
 	origin: ResidentOrigin;
 	ageNs: number;
 	hasAge: boolean;
 	carried: boolean;
-	readings: Array<{ metric: string; value: number; defined: boolean }>;
+	readings: ResidentReading[];
+};
+
+export type ResidentReading = {
+	metric: string;
+	value: number;
+	defined: boolean;
+	/* Presence flags: an undefined observation instant is absent, not zero. */
+	observedAt?: number;
+	hasAt: boolean;
+	from?: number;
+	hasFrom: boolean;
+	maturity: number;
+	snr: number;
+	snrDefined: boolean;
 };
 
 export type HindsightResident = {
 	run: string;
 	symbol: string;
 	sequence: number;
+	ordinal: number;
 	at: string;
 	signals: ResidentMeasurement[];
 	categories: ResidentCategory[];

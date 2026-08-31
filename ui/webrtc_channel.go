@@ -58,13 +58,20 @@ func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
 		label != types.DiagnosticsChannel {
 		errnie.Error(fluidError("unsupported data channel "+label, nil))
 		_ = dataChannel.Close()
+
 		return
 	}
 
-	if !dataChannel.Ordered() || dataChannel.MaxPacketLifeTime() != nil ||
-		dataChannel.MaxRetransmits() != nil {
-		errnie.Error(fluidError("data channels must be ordered and reliable", nil))
+	// These high-volume channels are replaceable live observations, not
+	// durable event streams: unordered delivery with no retransmission lets
+	// newer snapshots preempt stalled ones instead of head-of-line blocking a
+	// peer behind one giant stale record.
+	if dataChannel.Ordered() ||
+		dataChannel.MaxRetransmits() == nil ||
+		*dataChannel.MaxRetransmits() != 0 {
+		errnie.Error(fluidError("data channels must be unordered with MaxRetransmits=0", nil))
 		_ = dataChannel.Close()
+
 		return
 	}
 
@@ -98,16 +105,18 @@ func (peer *fluidPeer) close() {
 }
 
 /*
-fluidChannel serializes complete records through one reliable SCTP channel.
+fluidChannel serializes complete records through one unordered, non-
+retransmitting SCTP channel.
 
 Every channel is latest-wins: the manifold field advance, the resonance
 artifact, and the diagnostics trace are all continuously-refreshed snapshots,
-not message streams a viewer must replay in full. The publisher drops the
+not durable event streams a viewer must replay in full. The publisher drops the
 previous pending record into this single slot, the sender always drains the
 freshest one, and neither can ever block the market pipeline or fill a queue
-whose stale frames would only be shipped late. "Ordered and reliable" holds at
-the transport layer (SCTP ordered, no retransmit limit); latest-wins is the
-application policy on top of it.
+whose stale frames would only be shipped late. Each outgoing chunk is self-
+identifying (frame ID, chunk index, chunk count), so the browser can reassemble
+one complete frame, discard incomplete frames, and discard obsolete frames once
+a newer frame is available.
 */
 type fluidChannel struct {
 	ctx           context.Context
@@ -119,10 +128,11 @@ type fluidChannel struct {
 	startOnce     sync.Once
 
 	// latest holds the freshest unsent record; latestMu guards it and
-	// latestReady wakes the sender.
+	// latestReady wakes the sender. frameID names the next logical frame.
 	latestMu    sync.Mutex
 	latest      []byte
 	latestReady chan struct{}
+	frameID     uint32
 }
 
 func newFluidChannel(
@@ -236,23 +246,58 @@ func (channel *fluidChannel) send(payload []byte) error {
 		return fmt.Errorf("fluid publication exceeds uint32 transport record")
 	}
 
-	var header [fluidRecordHeaderSize]byte
-	copy(header[:4], fluidRecordMagic[:])
-	binary.LittleEndian.PutUint32(header[4:], uint32(len(payload)))
+	channel.frameID++
 
-	if err := channel.sendSegment(header[:]); err != nil {
-		return err
-	}
+	frameID := channel.frameID
+	chunkCount := uint32((len(payload) + fluidSegmentSize - 1) / fluidSegmentSize)
 
-	for offset := 0; offset < len(payload); offset += fluidSegmentSize {
+	for offset, index := 0, uint32(0); offset < len(payload); offset += fluidSegmentSize {
 		end := min(offset+fluidSegmentSize, len(payload))
 
-		if err := channel.sendSegment(payload[offset:end]); err != nil {
+		if err := channel.sendChunk(frameID, index, chunkCount, payload[offset:end]); err != nil {
 			return err
 		}
+
+		index++
 	}
 
 	return nil
+}
+
+/*
+sendChunk writes one self-identifying chunk: magic + frameID + chunkIndex +
+chunkCount followed by the chunk payload. Every chunk names its frame and its
+position, so an unordered, non-retransmitting receiver can reassemble one
+complete frame and discard any incomplete/obsolete frame the moment a newer
+frame is observed.
+*/
+func (channel *fluidChannel) sendChunk(
+	frameID uint32,
+	chunkIndex uint32,
+	chunkCount uint32,
+	payload []byte,
+) error {
+	return channel.sendSegment(encodeFluidChunk(frameID, chunkIndex, chunkCount, payload))
+}
+
+/*
+encodeFluidChunk builds one self-identifying chunk message without touching the
+transport, so the framing is testable in isolation.
+*/
+func encodeFluidChunk(
+	frameID uint32,
+	chunkIndex uint32,
+	chunkCount uint32,
+	payload []byte,
+) []byte {
+	segment := make([]byte, fluidChunkHeaderSize+len(payload))
+	copy(segment[:4], fluidRecordMagic[:])
+	binary.LittleEndian.PutUint32(segment[4:8], frameID)
+	binary.LittleEndian.PutUint32(segment[8:12], chunkIndex)
+	binary.LittleEndian.PutUint32(segment[12:16], chunkCount)
+	copy(segment[fluidChunkHeaderSize:], payload)
+
+	return segment
 }
 
 func (channel *fluidChannel) sendSegment(segment []byte) error {
