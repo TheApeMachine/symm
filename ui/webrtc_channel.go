@@ -240,24 +240,32 @@ func (channel *fluidChannel) enqueue(payload []byte) {
 
 func (channel *fluidChannel) run() {
 	for {
-		select {
-		case <-channel.ctx.Done():
-			return
-		case <-channel.latestReady:
-			payload := channel.takeLatest()
+		// Wake semantics: a token means "there may be work", never "exactly
+		// one frame". The sender drains the latest slot on every iteration
+		// and only blocks when it is nil, so a superseded frame (whose wake
+		// token was consumed inside sendSegment) can never strand the fresher
+		// payload waiting for a second wake that will not arrive.
+		payload := channel.takeLatest()
 
-			if payload == nil {
+		if payload == nil {
+			select {
+			case <-channel.ctx.Done():
+				return
+			case <-channel.latestReady:
+			}
+
+			continue
+		}
+
+		if err := channel.send(payload); err != nil {
+			if errors.Is(err, errFrameSuperseded) {
+				// A fresher record is already resident in latest: loop back
+				// and take it immediately, without waiting for another token.
 				continue
 			}
 
-			if err := channel.send(payload); err != nil {
-				if errors.Is(err, errFrameSuperseded) {
-					continue
-				}
-
-				channel.failSend(err)
-				return
-			}
+			channel.failSend(err)
+			return
 		}
 	}
 }

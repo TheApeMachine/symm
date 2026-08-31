@@ -90,6 +90,13 @@ type Live struct {
 	// private execution stream never delivers into a not-yet-wired workload.
 	executionsReady *runtime.Status
 
+	// opStreams owns the operational per-stream epoch/sequence bookkeeping this
+	// transport session maintains independent of Hindsight. The transport mints
+	// the StreamRef for every frame and bumps epochs on reconnect; Hindsight
+	// records the same fact but is never the source of it.
+	opMu       sync.Mutex
+	opStreams  map[hindsight.Stream]streamSpan
+
 	// level3Client overrides the venue client SubL3 dials when set. Fixtures
 	// inject the level3 listener's client here so a replay's level3 frames
 	// feed the session's book manager instead of dialing the real venue.
@@ -157,6 +164,74 @@ func (sequencer *level3Sequencer) Close() {
 	}
 
 	close(sequencer.done)
+}
+
+/*
+streamSpan is one operational connection span within a transport stream: its
+epoch and the frame sequence within that epoch. It is owned by the transport
+session (not Hindsight) so reconnect invalidation is an operational transport
+fact available even when capture is disabled.
+*/
+type streamSpan struct {
+	epoch    hindsight.StreamEpoch
+	sequence uint64
+}
+
+/*
+nextStreamRef mints the operational StreamRef for one inbound frame on the given
+channel. The stream name mirrors Hindsight's endpoint:kind naming so one
+transport fact has one stable identity; the epoch starts at 1 and the sequence
+within the span is monotonic.
+*/
+func (live *Live) nextStreamRef(channel string) hindsight.StreamRef {
+	if live == nil {
+		return hindsight.StreamRef{}
+	}
+
+	stream := hindsight.Stream(live.client.URL + ":" + channel)
+
+	live.opMu.Lock()
+	defer live.opMu.Unlock()
+
+	if live.opStreams == nil {
+		live.opStreams = make(map[hindsight.Stream]streamSpan)
+	}
+
+	span := live.opStreams[stream]
+
+	if span.epoch == 0 {
+		span.epoch = 1
+	}
+
+	span.sequence++
+	live.opStreams[stream] = span
+
+	return hindsight.StreamRef{
+		Stream:   stream,
+		Epoch:    span.epoch,
+		Sequence: span.sequence,
+	}
+}
+
+/*
+reconnectStreams bumps the operational epoch for every stream this transport
+session has seen and resets each stream's per-epoch sequence. Called on a second
+(or later) connection in this process lifetime, completely independent of any
+capture sink.
+*/
+func (live *Live) reconnectStreams() {
+	if live == nil {
+		return
+	}
+
+	live.opMu.Lock()
+	defer live.opMu.Unlock()
+
+	for stream, span := range live.opStreams {
+		span.epoch++
+		span.sequence = 0
+		live.opStreams[stream] = span
+	}
 }
 
 /*
@@ -309,6 +384,11 @@ func NewWithClient(
 		// every envelope parsed from this frame carries the exact same origin.
 		// A failed capture fails loudly and skips this frame's dispatch: no
 		// envelope may carry a zero/ambiguous identity while Hindsight is on.
+		// The transport mints the operational StreamRef first — independent of
+		// capture — so the same epoch/sequence fact exists with Hindsight both
+		// on and off.
+		streamRef := live.nextStreamRef(channel)
+
 		var captureID hindsight.CaptureIdentity
 
 		if live.capture != nil {
@@ -319,6 +399,7 @@ func NewWithClient(
 				live.client.URL,
 				bytes.Clone(raw),
 				time.Now().UTC(),
+				streamRef,
 			)
 
 			if captureErr != nil {
@@ -400,6 +481,10 @@ func NewWithClient(
 			envelopes, manifests := IngestEnvelopes(channel, out, captureID)
 
 			for index, envelope := range envelopes {
+				// Live trading reads the operational StreamRef; Hindsight's
+				// CaptureID records the same fact but is never the source.
+				envelope.Stream = streamRef
+
 				if channel == "level3" && live.l3forward != nil {
 					live.l3forward.Push(envelope)
 				} else {
@@ -425,9 +510,11 @@ func NewWithClient(
 
 		// A second (or later) connect in this process lifetime is a reconnect:
 		// the same subscription universe must be soft-rebooted through the one
-		// subscription authority, and the Hindsight epoch advanced, rather than
-		// a second subscription path being invented here.
+		// subscription authority and the operational stream epochs advanced,
+		// rather than a second subscription path being invented here. The epoch
+		// is a transport fact; Hindsight observes it, never supplies it.
 		if count > 1 && live.reconnect != nil {
+			live.reconnectStreams()
 			live.reconnect()
 		}
 
@@ -509,21 +596,29 @@ func (live *Live) captureFrame(kind, endpoint string, payload []byte) error {
 	// The SDK hands back a view into a buffer it reuses for the next frame,
 	// so an asynchronously flushed recorder would write neighbouring frames
 	// concatenated into it. The capture owns its own copy of the exact bytes.
-	_, err := live.capture.Capture(kind, endpoint, bytes.Clone(payload), time.Now().UTC())
+	_, err := live.capture.Capture(
+		kind,
+		endpoint,
+		bytes.Clone(payload),
+		time.Now().UTC(),
+		live.nextStreamRef(kind),
+	)
 
 	return err
 }
 
 /*
 CaptureSink receives one untouched transport payload with its origin kind,
-endpoint, and arrival time, and returns the CaptureIdentity it minted for that
-frame. kind identifies the frame's channel/method/feed (e.g. "ticker", "trade",
-"book", "level3", "pong"); endpoint names the stream it arrived on. The returned
-identity is what the caller stamps onto every envelope parsed from the frame.
-Implementations own persistence; the transport only reports.
+endpoint, arrival time, and the operational StreamRef the transport minted for
+that frame, and returns the CaptureIdentity it minted for that frame. kind
+identifies the frame's channel/method/feed (e.g. "ticker", "trade", "book",
+"level3", "pong"); endpoint names the stream it arrived on; ref is the
+transport-owned epoch/sequence fact the returned identity must record/copy. The
+returned identity is what the caller stamps onto every envelope parsed from the
+frame. Implementations own persistence; the transport only reports.
 */
 type CaptureSink interface {
-	Capture(kind, endpoint string, payload []byte, receivedAt time.Time) (hindsight.CaptureIdentity, error)
+	Capture(kind, endpoint string, payload []byte, receivedAt time.Time, ref hindsight.StreamRef) (hindsight.CaptureIdentity, error)
 }
 
 /*

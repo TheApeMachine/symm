@@ -49,13 +49,16 @@ func NewWriter(repository Repository, sequencer *hindsight.Sequencer) (*Writer, 
 Capture satisfies kraken.websocket.CaptureSink: it mints a CaptureIdentity for
 one untouched transport payload, persists the frame with that identity, and
 returns the identity so the caller can stamp it onto every envelope parsed from
-the frame. kind names the frame's channel/method/feed; endpoint names the stream.
-The payload is stored as the exact bytes off the wire.
+the frame. kind names the frame's channel/method/feed; endpoint names the stream;
+ref is the operational StreamRef the transport minted, which Hindsight records
+(copies) rather than supplies. The payload is stored as the exact bytes off the
+wire.
 */
 func (writer *Writer) Capture(
 	kind, endpoint string,
 	payload []byte,
 	receivedAt time.Time,
+	ref hindsight.StreamRef,
 ) (hindsight.CaptureIdentity, error) {
 	if writer == nil || writer.sequencer == nil {
 		return hindsight.CaptureIdentity{}, nil
@@ -65,8 +68,8 @@ func (writer *Writer) Capture(
 	// stable stream name once so minting and persistence agree.
 	stream := writer.streamFor(endpoint, kind)
 
-	// Track the stream under its endpoint so a reconnect can bump every epoch
-	// the endpoint carries, without the caller enumerating kinds.
+	// Track the stream under its endpoint so a transport reconnect can bump
+	// every epoch the endpoint carries, without the caller enumerating kinds.
 	writer.mu.Lock()
 	writer.streams[endpoint] = appendUnique(writer.streams[endpoint], stream)
 	writer.mu.Unlock()
@@ -75,6 +78,18 @@ func (writer *Writer) Capture(
 
 	if err != nil {
 		return hindsight.CaptureIdentity{}, err
+	}
+
+	// Hindsight observes causality; it does not supply it. The transport owns
+	// the epoch/sequence and the writer records the same fact it was handed
+	// rather than minting an independent count.
+	if ref.Epoch != 0 {
+		identity.StreamEpoch = ref.Epoch
+		identity.StreamSequence = ref.Sequence
+
+		if ref.Stream != "" {
+			identity.Stream = ref.Stream
+		}
 	}
 
 	if writer.repository == nil {

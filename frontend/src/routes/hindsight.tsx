@@ -18,6 +18,7 @@ import type {
 	HindsightGap,
 	HindsightLifecycleEvent,
 	HindsightMetricMap,
+	HindsightRef,
 	HindsightResident,
 	HindsightRun,
 	HindsightTimeline,
@@ -30,6 +31,10 @@ import {
 	type Mark,
 	MarkBar,
 } from "#/components/hindsight/compare";
+import {
+	compareHindsightRef,
+	orderHindsightRefs,
+} from "#/components/hindsight/hindsight-types";
 import {
 	CaptureCard,
 	decodeEnvelopeState,
@@ -92,8 +97,7 @@ const HindsightRoute = () => {
 	const [gaps, setGaps] = useState<HindsightGap[]>([]);
 	const [lifecycle, setLifecycle] = useState<HindsightLifecycleEvent[]>([]);
 
-	const [playhead, setPlayhead] = useState<number | null>(null);
-	const [playheadOrdinal, setPlayheadOrdinal] = useState(0);
+	const [playhead, setPlayhead] = useState<HindsightRef | null>(null);
 	const [episode, setEpisode] = useState<string | null>(null);
 	const [captures, setCaptures] = useState<HindsightCapture[]>([]);
 	const [envelope, setEnvelope] = useState<HindsightEnvelope | null>(null);
@@ -146,7 +150,6 @@ const HindsightRoute = () => {
 		setSymbol(null);
 		setViewport(null);
 		setPlayhead(null);
-		setPlayheadOrdinal(0);
 		setEpisode(null);
 		setEnvelope(null);
 		setState(null);
@@ -235,24 +238,26 @@ const HindsightRoute = () => {
 		if (run === null || playhead === null) return;
 
 		let cancelled = false;
-		const from = Math.max(playhead - 24, 0);
+		const from = Math.max(playhead.sequence - 24, 0);
 
 		fetchHindsightCaptures(run, from).then((loaded) => {
 			if (!cancelled) setCaptures(loaded.slice(0, 48));
 		});
 
-		fetchHindsightEnvelope(run, playhead).then((loaded) => {
+		fetchHindsightEnvelope(run, playhead.sequence).then((loaded) => {
 			if (!cancelled) setEnvelope(loaded);
 		});
 
-		fetchHindsightState(run, playhead, playheadOrdinal).then((loaded) => {
-			if (!cancelled) setState(decodeEnvelopeState(loaded?.payload));
-		});
+		fetchHindsightState(run, playhead.sequence, playhead.ordinal).then(
+			(loaded) => {
+				if (!cancelled) setState(decodeEnvelopeState(loaded?.payload));
+			},
+		);
 
 		return () => {
 			cancelled = true;
 		};
-	}, [run, playhead, playheadOrdinal]);
+	}, [run, playhead]);
 
 	const positions = useMemo<Position[]>(
 		() => buildPositions(lifecycle),
@@ -328,25 +333,39 @@ const HindsightRoute = () => {
 		parked outside the loaded neighbourhood must still name its own frame.
 	*/
 	const capture = useMemo(() => {
-		if (envelope?.capture?.identity?.sequence === playhead) {
+		if (
+			envelope !== null &&
+			envelope.capture?.identity?.sequence === playhead?.sequence
+		) {
 			return envelope.capture;
 		}
 
-		return captures.find((entry) => entry.identity.sequence === playhead) ?? null;
+		return (
+			captures.find(
+				(entry) => entry.identity.sequence === playhead?.sequence,
+			) ?? null
+		);
 	}, [envelope, captures, playhead]);
 
 	/*
 		Reference points are the navigable targets of the whole surface: [ and ]
-		step through them in capture order, which is exactly the walk an inspection
-		session wants — one interesting boundary to the next, never a scroll.
+		step through them by exact HindsightRef (sequence, then ordinal), which
+		is exactly the walk an inspection session wants — one interesting
+		boundary to the next, never a scroll, and never a sequence-only hop that
+		could leave the previous ordinal attached to a new sequence.
 	*/
-	const references = useMemo(() => {
+	const references = useMemo<HindsightRef[]>(() => {
 		const points = (detail ?? overview)?.discovery.episodes.flatMap(
 			(entry) => entry.references,
 		);
 
-		return [...new Set((points ?? []).map((point) => point.capture.sequence))].sort(
-			(left, right) => left - right,
+		if (points === undefined) return [];
+
+		return orderHindsightRefs(
+			points.map((point) => ({
+				sequence: point.capture.sequence,
+				ordinal: point.ordinal,
+			})),
 		);
 	}, [detail, overview]);
 
@@ -355,29 +374,46 @@ const HindsightRoute = () => {
 			if (references.length === 0) return;
 
 			if (playhead === null) {
-				setPlayhead(references[direction === 1 ? 0 : references.length - 1]);
+				setPlayhead(
+					direction === 1 ? references[0] : references[references.length - 1],
+				);
+
 				return;
 			}
 
 			const next =
 				direction === 1
-					? references.find((sequence) => sequence > playhead)
-					: [...references].reverse().find((sequence) => sequence < playhead);
+					? references.find(
+							(reference) => compareHindsightRef(reference, playhead) > 0,
+						)
+					: [...references]
+							.reverse()
+							.find(
+								(reference) =>
+									compareHindsightRef(reference, playhead) < 0,
+							);
 
 			if (next !== undefined) setPlayhead(next);
 		},
 		[references, playhead],
 	);
 
-	const jumpSequence = useCallback((sequence: number) => {
-		setPlayhead(sequence);
-		setPlayheadOrdinal(0);
+	/*
+		jumpRef parks the playhead on an exact causal EnvelopeRef. jumpChart
+		parks on a raw sequence — a chart coordinate only — and resolves the
+		first envelope (ordinal 0) of that capture deterministically rather than
+		silently inheriting whatever ordinal a previous inspection had left.
+	*/
+	const jumpRef = useCallback((target: HindsightRef) => {
+		setPlayhead({ sequence: target.sequence, ordinal: target.ordinal });
 	}, []);
 
-	const jumpRef = useCallback((sequence: number, ordinal: number) => {
-		setPlayhead(sequence);
-		setPlayheadOrdinal(ordinal);
-	}, []);
+	const jumpChart = useCallback(
+		(sequence: number) => {
+			setPlayhead({ sequence, ordinal: 0 });
+		},
+		[],
+	);
 
 	const mark = useCallback(() => {
 		if (playhead === null) return;
@@ -386,7 +422,9 @@ const HindsightRoute = () => {
 			if (current.length >= 3) return current;
 			if (
 				current.some(
-					(entry) => entry.sequence === playhead && entry.ordinal === playheadOrdinal,
+					(entry) =>
+						entry.sequence === playhead.sequence &&
+						entry.ordinal === playhead.ordinal,
 				)
 			) {
 				return current;
@@ -394,20 +432,26 @@ const HindsightRoute = () => {
 
 			return [
 				...current,
-				{ sequence: playhead, ordinal: playheadOrdinal, label: `#${playhead}:${playheadOrdinal}` },
+				{
+					sequence: playhead.sequence,
+					ordinal: playhead.ordinal,
+					label: `#${playhead.sequence}:${playhead.ordinal}`,
+				},
 			].sort((left, right) =>
 				left.sequence !== right.sequence
 					? left.sequence - right.sequence
 					: left.ordinal - right.ordinal,
 			);
 		});
-	}, [playhead, playheadOrdinal]);
+	}, [playhead]);
 
 	/*
 		Focusing a position parks the playhead on the nearest frame that really
-		was captured around the venue's reported fill instant. The position's own
-		identity stays its decision — the playhead is where you inspect from, not
-		a claim that this frame caused the fill.
+		was captured around the venue's reported fill instant. That frame is an
+		inspection location, not the fill's causal identity: the position's own
+		identity stays its decision, and the parked ordinal is the resolved
+		first envelope of the selected capture frame — never a previous
+		inspection's ordinal silently carried onto a new sequence.
 	*/
 	const focusPosition = useCallback(
 		(selected: Position) => {
@@ -436,7 +480,7 @@ const HindsightRoute = () => {
 				}
 			}
 
-			if (nearest !== null) setPlayhead(nearest);
+			if (nearest !== null) setPlayhead({ sequence: nearest, ordinal: 0 });
 		},
 		[detail, overview],
 	);
@@ -458,7 +502,14 @@ const HindsightRoute = () => {
 			selected.references.find((reference) => reference.role === "anchor") ??
 			selected.references[0];
 
-		if (anchor !== undefined) setPlayhead(anchor.capture.sequence);
+		// The anchor's ordinal is part of its causal identity and is preserved:
+		// focusing an episode navigates to the exact reference, not a sequence.
+		if (anchor !== undefined) {
+			setPlayhead({
+				sequence: anchor.capture.sequence,
+				ordinal: anchor.ordinal,
+			});
+		}
 	}, []);
 
 	useEffect(() => {
@@ -533,7 +584,7 @@ const HindsightRoute = () => {
 						loading={loading}
 						references={references.length}
 						marks={marks}
-						playhead={playhead}
+						playhead={playhead?.sequence ?? null}
 						onMark={mark}
 						onReset={() => {
 							setViewport(null);
@@ -547,11 +598,11 @@ const HindsightRoute = () => {
 							gaps={gaps}
 							lifecycle={lifecycle}
 							positions={positions}
-							playhead={playhead}
+							playhead={playhead?.sequence ?? null}
 							marks={marks.map((entry) => entry.sequence)}
 							selectedEpisode={episode}
 							selectedPosition={position}
-							onPlayhead={jumpSequence}
+							onPlayhead={jumpChart}
 							onEpisode={focusEpisode}
 							onPosition={focusPosition}
 							onZoom={(from, to) => setViewport({ from, to })}
@@ -585,7 +636,7 @@ const HindsightRoute = () => {
 								timeline={detail ?? overview}
 								selected={episode}
 								onSelect={focusEpisode}
-								onReference={setPlayhead}
+								onReference={jumpRef}
 							/>
 						</div>
 
@@ -599,8 +650,7 @@ const HindsightRoute = () => {
 									loading={resolving}
 									onMode={setCompareMode}
 									onPlayhead={(sequence, ordinal) => {
-										setPlayhead(sequence);
-										setPlayheadOrdinal(ordinal);
+										setPlayhead({ sequence, ordinal });
 									}}
 									onClear={() => setMarks([])}
 									onRemove={(sequence, ordinal) =>
@@ -626,13 +676,18 @@ const HindsightRoute = () => {
 									<CaptureCard capture={capture} run={runMeta} />
 									<FrameStrip
 										captures={captures}
-										playhead={playhead}
-										onSelect={jumpSequence}
+										playhead={playhead?.sequence ?? null}
+										onSelect={jumpChart}
 									/>
 									<div className="min-h-0 flex-1 overflow-auto">
 										<div className="grid grid-cols-2">
 											<div className="min-w-0 border-(--line) border-r">
-												<ProvenancePanel envelope={envelope} onSelect={jumpRef} />
+												<ProvenancePanel
+													envelope={envelope}
+													onSelect={(sequence, ordinal) =>
+														jumpRef({ sequence, ordinal })
+													}
+												/>
 											</div>
 											<div className="min-w-0">
 												<StatePanel

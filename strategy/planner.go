@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"math"
 	goruntime "runtime"
 	"strconv"
 	"strings"
@@ -91,11 +92,15 @@ type Planner struct {
 }
 
 /*
-frontierEntry is one symbol's ordered position in the resident frontier,
-alongside its deterministic key for stable in-place replacement.
+frontierEntry is one symbol's ordered position in the resident entry frontier,
+alongside the economic quantities it is ranked by. The frontier is ordered by
+incremental economic advantage over waiting (descending), then by search visits
+(descending), then by symbol for deterministic replay — never merely lexically.
 */
 type frontierEntry struct {
-	symbol string
+	symbol    string
+	advantage float64
+	visits    float64
 }
 
 /*
@@ -553,48 +558,133 @@ func (planner *Planner) evaluateResident(
 }
 
 /*
-updateFrontier inserts or replaces the symbol's slot in the symbol-ordered
-frontier without rescanning the resident map or re-sorting the frontier.
+updateFrontier inserts or replaces the symbol's slot in the economically
+ordered entry frontier without re-sorting the whole set. Only candidates whose
+evaluated decision is an entry with a defined enter advantage occupy the
+frontier at all; Wait, observational, and held-position Exit records are
+retained in resident (for audit/Hindsight) but never enter the scarce-capital
+ranking. When a candidate flips Enter → Wait/Exit its slot is removed.
 */
 func (planner *Planner) updateFrontier(symbol string) {
 	planner.frontierMu.Lock()
 	defer planner.frontierMu.Unlock()
 
-	position, found := sortSearchFrontier(planner.frontier, symbol)
+	record, found := planner.resident.Load(symbol)
 
-	if found {
-		planner.frontier[position].symbol = symbol
+	entry, admitted := frontierEntryFor(record, found)
 
+	// Remove any existing slot for this symbol; it is reinserted below at its
+	// fresh economic position. This is the only in-place mutation of the
+	// maintained ordering — nothing else scans or re-sorts the frontier.
+	kept := planner.frontier[:0]
+
+	for _, existing := range planner.frontier {
+		if existing.symbol == symbol {
+			continue
+		}
+
+		kept = append(kept, existing)
+	}
+
+	planner.frontier = kept
+
+	if !admitted {
+		return
+	}
+
+	position, present := searchFrontierEconomic(planner.frontier, entry)
+
+	if present {
+		planner.frontier[position] = entry
 		return
 	}
 
 	planner.frontier = append(planner.frontier, frontierEntry{})
 	copy(planner.frontier[position+1:], planner.frontier[position:])
-	planner.frontier[position] = frontierEntry{symbol: symbol}
+	planner.frontier[position] = entry
 }
 
 /*
-sortSearchFrontier finds the symbol's insertion position in the symbol-ordered
-frontier via binary search, reporting whether it is already present.
+frontierEntryFor derives the economic frontier slot for one resident record.
+An ActionEnter candidate carrying a defined enter advantage ranks by that
+advantage first; a Wait, observational, or held-position Exit record carries no
+enter advantage and therefore sorts after every entry candidate, symbol-ordered
+for replay determinism. It is retained in the enumeration (for audit/Hindsight
+and exit execution) but never competes for scarce entry capital.
 */
-func sortSearchFrontier(entries []frontierEntry, symbol string) (int, bool) {
+func frontierEntryFor(record any, found bool) (frontierEntry, bool) {
+	if !found || record == nil {
+		return frontierEntry{}, false
+	}
+
+	candidate, ok := record.(*residentCandidate)
+
+	if !ok || candidate == nil || candidate.decision == nil {
+		return frontierEntry{}, false
+	}
+
+	alternatives := candidate.decision.Alternatives
+
+	advantage, hasAdvantage := alternatives["economic:enter_advantage"]
+
+	if !hasAdvantage {
+		advantage = math.Inf(-1)
+	}
+
+	visits := alternatives["economic:visits"]
+
+	return frontierEntry{
+		symbol:    candidate.decision.Symbol,
+		advantage: advantage,
+		visits:    visits,
+	}, true
+}
+
+/*
+searchFrontierEconomic finds the insertion position for an entry by binary
+search over the economic ordering, reporting whether an equal entry is present.
+*/
+func searchFrontierEconomic(entries []frontierEntry, entry frontierEntry) (int, bool) {
 	low, high := 0, len(entries)
 
 	for low < high {
 		mid := (low + high) / 2
 
-		if entries[mid].symbol < symbol {
+		if frontierOrderedBefore(entries[mid], entry) {
 			low = mid + 1
 		} else {
 			high = mid
 		}
 	}
 
-	if low < len(entries) && entries[low].symbol == symbol {
+	if low < len(entries) && frontierEqual(entries[low], entry) {
 		return low, true
 	}
 
 	return low, false
+}
+
+/*
+frontierOrderedBefore reports whether left precedes right in the economic
+frontier order: advantage descending, then visits descending, then symbol
+ascending for replay determinism.
+*/
+func frontierOrderedBefore(left, right frontierEntry) bool {
+	if left.advantage != right.advantage {
+		return left.advantage > right.advantage
+	}
+
+	if left.visits != right.visits {
+		return left.visits > right.visits
+	}
+
+	return left.symbol < right.symbol
+}
+
+func frontierEqual(left, right frontierEntry) bool {
+	return left.advantage == right.advantage &&
+		left.visits == right.visits &&
+		left.symbol == right.symbol
 }
 
 /*

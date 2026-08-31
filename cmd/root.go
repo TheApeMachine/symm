@@ -133,7 +133,7 @@ func (node level3Node) Step(envelope *types.Envelope) *types.Envelope {
 
 	if err := node.desk.StepLevel3Epoch(
 		envelope.Level3Data,
-		uint64(envelope.CaptureID.StreamEpoch),
+		uint64(envelope.Stream.Epoch),
 	); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -666,13 +666,13 @@ var (
 
 			// Reconnect is a soft-reboot of the ONE subscription authority:
 			// re-running instrument.Subscribe re-issues the same paced market
-			// data batches that boot used, and rawCapture.Reconnect advances the
-			// Hindsight stream epoch so pre/post-reconnect frames stay
-			// distinguishable. There is no second subscription path anywhere.
+			// data batches that boot used. The operational stream epoch is
+			// advanced by the transport itself (Live/FuturesLive reconnect
+			// handling); Hindsight records that same fact in CaptureIdentity
+			// but never supplies it to trading. There is no second subscription
+			// path anywhere.
 			softReboot := func(endpoint string) func() {
 				return func() {
-					rawCapture.Reconnect(endpoint)
-
 					if err := instrument.Subscribe(); err != nil {
 						errnie.Error(errnie.Err(
 							errnie.IO,

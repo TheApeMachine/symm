@@ -61,7 +61,11 @@ func TestTradeLifecycleIntegrationTest(t *testing.T) {
 				{"symbol":"XBT/USD","side":"buy","price":"34000.0","qty":0.1,"ord_type":"market","trade_id":1,"timestamp":"2026-02-03T04:05:06Z"}
 			]}`)
 
-			captureID, err := writer.Capture("trade", "wss://example", raw, time.Now())
+			captureID, err := writer.Capture("trade", "wss://example", raw, time.Now(), hindsight.StreamRef{
+				Stream:   hindsight.Stream("wss://example:test"),
+				Epoch:    1,
+				Sequence: 1,
+			})
 			So(err, ShouldBeNil)
 			So(captureID.Valid(), ShouldBeTrue)
 

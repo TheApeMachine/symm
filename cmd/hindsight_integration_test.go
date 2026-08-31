@@ -51,7 +51,11 @@ func TestCaptureProvenanceIntegrationTest(t *testing.T) {
 			]}`)
 
 			// 1. Capture the raw frame: mint + persist identity.
-			captureID, err := writer.Capture("trade", "wss://example", raw, time.Now())
+			captureID, err := writer.Capture("trade", "wss://example", raw, time.Now(), hindsight.StreamRef{
+				Stream:   hindsight.Stream("wss://example:test"),
+				Epoch:    1,
+				Sequence: 1,
+			})
 			So(err, ShouldBeNil)
 			So(captureID.Valid(), ShouldBeTrue)
 

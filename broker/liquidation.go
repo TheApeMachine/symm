@@ -10,14 +10,18 @@ import (
 )
 
 /*
-executionDepth is the physical bound of one liquidationReducer side. It is the
-venue's L3 subscription depth — the maximum number of price levels Kraken will
-send for one symbol — plus one slot of headroom for the add/displace ordering
-inside a single update frame, in which the new order can be observed one slot
-before the displaced order's delete. This is a fixed, preallocated bound, never
-grown at runtime.
+maxResidentOrdersPerSide is the internal identity capacity of one side of a
+liquidationReducer. It is explicitly NOT the venue depth contract: Kraken's
+L3 `depth` counts price levels, not individual orders, and one visible price
+level may legally contain more orders than any fixed per-level headroom can
+predict. The venue therefore provides no physical bound on the number of
+resident orders the top-N price levels can contain, so this reducer admits up
+to maxResidentOrdersPerSide identities per side and — when that capacity would
+be exceeded by a genuinely new order — fails closed by marking the execution
+surface incomplete/invalid instead of silently dropping the order and still
+claiming BookComplete.
 */
-const executionDepth = 32
+const maxResidentOrdersPerSide = 4096
 
 /*
 liquidationOrder is one resident order stored by the liquidationReducer. The
@@ -38,6 +42,15 @@ advance the executable-liquidation surface — a bounded, best-first ordered bid
 chain (sellable into), a bounded ordered ask chain, and the minimal identity
 index needed for exact Level3 delete/modify semantics.
 
+The physical bound is the subscribed number of PRICE LEVELS per side, not the
+number of individual orders. levelDepth names exactly the `market.l3_depth`
+value the websocket transport subscribes with; a side keeps at most that many
+distinct price levels and evicts every order belonging to a level that falls
+outside the top-N window after each committed update. The per-side identity
+capacity (maxResidentOrdersPerSide) is a separate internal bound that fails
+closed on overflow rather than fabricating execution geometry from partial
+state.
+
 It is continuously advanced by the authoritative L3 stream from the genuine
 Kraken snapshot onward, independently of whether a Position currently exists,
 so a position opened midway through a stream immediately consumes truthful
@@ -49,19 +62,28 @@ type liquidationReducer struct {
 	epoch   uint64
 	seeded  bool
 	valid   bool
-	bids    [executionDepth]liquidationOrder
-	bidLen  int
+	depth   int
 	bidIdx  map[string]int
-	asks    [executionDepth]liquidationOrder
-	askLen  int
 	askIdx  map[string]int
+	bids    []liquidationOrder
+	bidLen  int
+	asks    []liquidationOrder
+	askLen  int
+	overflow bool
 }
 
-func newLiquidationReducer(symbol string) *liquidationReducer {
+func newLiquidationReducer(symbol string, depth int) *liquidationReducer {
+	if depth <= 0 {
+		depth = 1
+	}
+
 	return &liquidationReducer{
 		symbol: symbol,
-		bidIdx: make(map[string]int, executionDepth),
-		askIdx: make(map[string]int, executionDepth),
+		depth:  depth,
+		bidIdx: make(map[string]int, depth),
+		askIdx: make(map[string]int, depth),
+		bids:   make([]liquidationOrder, 0, depth),
+		asks:   make([]liquidationOrder, 0, depth),
 	}
 }
 
@@ -89,6 +111,7 @@ func (reducer *liquidationReducer) Apply(
 		reducer.epoch = epoch
 		reducer.seeded = false
 		reducer.valid = false
+		reducer.overflow = false
 		reducer.clear()
 	}
 
@@ -107,6 +130,8 @@ func (reducer *liquidationReducer) Apply(
 			}
 		}
 
+		reducer.truncate(kraken.SideBid)
+		reducer.truncate(kraken.SideAsk)
 		reducer.seeded = true
 		reducer.valid = reducer.coherent()
 
@@ -125,6 +150,8 @@ func (reducer *liquidationReducer) Apply(
 		reducer.applyOrder(order, kraken.SideAsk)
 	}
 
+	reducer.truncate(kraken.SideBid)
+	reducer.truncate(kraken.SideAsk)
 	reducer.valid = reducer.coherent()
 }
 
@@ -137,6 +164,9 @@ func usableLiquidationOrder(order kraken.Level3Order) bool {
 func (reducer *liquidationReducer) clear() {
 	reducer.bidLen = 0
 	reducer.askLen = 0
+	reducer.overflow = false
+	reducer.bids = reducer.bids[:0]
+	reducer.asks = reducer.asks[:0]
 	clear(reducer.bidIdx)
 	clear(reducer.askIdx)
 }
@@ -172,11 +202,11 @@ func (reducer *liquidationReducer) upsert(
 		orderQty:   cloneDecimal(order.OrderQty),
 	}
 
+	// A modify to an already-resident order must never be rejected because
+	// the side's identity capacity is full: the capacity gate applies only to
+	// genuinely new identities. The existing-order branch therefore runs
+	// before any len check.
 	if side == kraken.SideBid {
-		if reducer.bidLen >= executionDepth {
-			return
-		}
-
 		if index, found := reducer.bidIdx[order.OrderID]; found {
 			reducer.bids[index] = resident
 			reducer.reposition(index, kraken.SideBid)
@@ -184,15 +214,18 @@ func (reducer *liquidationReducer) upsert(
 			return
 		}
 
-		reducer.bids[reducer.bidLen] = resident
-		reducer.bidIdx[order.OrderID] = reducer.bidLen
+		if reducer.bidLen >= maxResidentOrdersPerSide {
+			reducer.overflow = true
+
+			return
+		}
+
+		reducer.bids = append(reducer.bids, resident)
+		index := reducer.bidLen
+		reducer.bidIdx[order.OrderID] = index
 		reducer.bidLen++
-		reducer.reposition(reducer.bidLen-1, kraken.SideBid)
+		reducer.reposition(index, kraken.SideBid)
 
-		return
-	}
-
-	if reducer.askLen >= executionDepth {
 		return
 	}
 
@@ -203,10 +236,17 @@ func (reducer *liquidationReducer) upsert(
 		return
 	}
 
-	reducer.asks[reducer.askLen] = resident
-	reducer.askIdx[order.OrderID] = reducer.askLen
+	if reducer.askLen >= maxResidentOrdersPerSide {
+		reducer.overflow = true
+
+		return
+	}
+
+	reducer.asks = append(reducer.asks, resident)
+	index := reducer.askLen
+	reducer.askIdx[order.OrderID] = index
 	reducer.askLen++
-	reducer.reposition(reducer.askLen-1, kraken.SideAsk)
+	reducer.reposition(index, kraken.SideAsk)
 }
 
 /*
@@ -231,7 +271,7 @@ func (reducer *liquidationReducer) remove(orderID string, side kraken.Side) {
 			reducer.reposition(index, kraken.SideBid)
 		}
 
-		reducer.bids[reducer.bidLen] = liquidationOrder{}
+		reducer.bids = reducer.bids[:reducer.bidLen]
 
 		return
 	}
@@ -251,7 +291,7 @@ func (reducer *liquidationReducer) remove(orderID string, side kraken.Side) {
 		reducer.reposition(index, kraken.SideAsk)
 	}
 
-	reducer.asks[reducer.askLen] = liquidationOrder{}
+	reducer.asks = reducer.asks[:reducer.askLen]
 }
 
 /*
@@ -302,6 +342,68 @@ func (reducer *liquidationReducer) reposition(index int, side kraken.Side) {
 }
 
 /*
+truncate enforces the subscribed top-N price-level window after a committed
+update. Kraken does not guarantee a delete event merely because a price level
+drops out of the subscribed top-N, so the reducer evicts every order belonging
+to a level outside the window itself. Orders are already best-first ordered;
+the walk counts distinct price levels from the best onward and evicts the tail
+once levelDepth distinct prices are seen.
+*/
+func (reducer *liquidationReducer) truncate(side kraken.Side) {
+	if side == kraken.SideBid {
+		reducer.truncateSide(&reducer.bids, &reducer.bidLen, reducer.bidIdx)
+
+		return
+	}
+
+	reducer.truncateSide(&reducer.asks, &reducer.askLen, reducer.askIdx)
+}
+
+func (reducer *liquidationReducer) truncateSide(
+	orders *[]liquidationOrder,
+	length *int,
+	index map[string]int,
+) {
+	if *length <= 0 {
+		return
+	}
+
+	distinct := 1
+	var lastPrice *decimal.Decimal
+
+	for position := 0; position < *length; position++ {
+		price := (*orders)[position].limitPrice
+
+		if price == nil {
+			continue
+		}
+
+		if lastPrice == nil || price.Cmp(lastPrice) != 0 {
+			if lastPrice != nil {
+				distinct++
+			}
+
+			lastPrice = price
+		}
+
+		if distinct <= reducer.depth {
+			continue
+		}
+
+		// Every order from this position onward sits on a price level below
+		// the subscribed top-N window: evict it and drop its identity index.
+		for evict := position; evict < *length; evict++ {
+			delete(index, (*orders)[evict].orderID)
+		}
+
+		*orders = (*orders)[:position]
+		*length = position
+
+		return
+	}
+}
+
+/*
 liquidationOrderedBefore reports whether left precedes right in best-first
 order: bids descend (highest first), asks ascend (lowest first).
 */
@@ -322,11 +424,17 @@ func liquidationOrderedBefore(
 
 /*
 coherent reports whether the resident state is usable and non-crossed. It
-requires a best bid and a best ask, ordered strictly below/above. It never
+requires a best bid and a best ask, ordered strictly below/above, and no side
+having overflowed its internal identity capacity (overflow implies the reducer
+cannot represent the visible levels truthfully, so it fails closed). It never
 infers completeness from the presence of both sides alone: the caller still
 requires a genuine snapshot seed.
 */
 func (reducer *liquidationReducer) coherent() bool {
+	if reducer.overflow {
+		return false
+	}
+
 	if reducer.bidLen == 0 || reducer.askLen == 0 {
 		return false
 	}

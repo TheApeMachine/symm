@@ -19,6 +19,12 @@ const (
 	executionFrictionKey = "execution:friction_fraction"
 	executionSpreadKey   = "execution:spread_fraction"
 	executionImpactKey   = "execution:impact_fraction"
+
+	// allocationLookahead is the bounded number of fully-priced candidates the
+	// admission walk may inspect beyond the open slots: one slot's allocation
+	// must not price the whole universe, but a temporarily infeasible strongest
+	// candidate must not block the next candidate from being considered.
+	allocationLookahead = 4
 )
 
 type Allocation struct {
@@ -122,12 +128,60 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 
 	normalSlots := allocation.desk.OpenSlots(false)
 	reserveSlots := allocation.desk.OpenSlots(true) - normalSlots
-	eligible := make([]*types.Decision, 0, len(decisions))
+
+	/*
+		Arbitrate from the front of the economically ordered entry candidates,
+		not by pricing the whole universe first. A candidate is fully priced
+		(execution geometry, EntryCost, RiskPlan, stoploss) only while it is
+		actually within reach of a free slot; candidates beyond the open slots
+		plus a bounded infeasibility lookahead are marked unallocated without
+		being priced. A temporarily infeasible strongest candidate does not
+		block the next candidate: it is marked and the walk continues.
+	*/
+	entering := make([]*types.Decision, 0, len(decisions))
+	occupied := occupiedSymbols(allocation.desk)
 
 	for _, decision := range decisions {
 		if decision == nil || decision.Action != types.ActionEnter {
 			continue
 		}
+
+		if occupied[decision.Symbol] {
+			decision.Action = types.ActionNothing
+			decision.AllocationClass = "none"
+			decision.Stoploss = nil
+			decision.Reason = "planner: symbol already occupies a slot"
+			continue
+		}
+
+		entering = append(entering, decision)
+	}
+
+	slices.SortFunc(entering, economicOrder)
+
+	totalSlots := normalSlots + reserveSlots
+	admitted := 0
+	priced := 0
+	eligible := make([]*types.Decision, 0, totalSlots)
+
+	for _, decision := range entering {
+		if admitted >= totalSlots {
+			decision.Action = types.ActionNothing
+			decision.AllocationClass = "none"
+			decision.Stoploss = nil
+			decision.Reason = "planner: no position slot available for allocation"
+			continue
+		}
+
+		if priced >= totalSlots+allocationLookahead {
+			decision.Action = types.ActionNothing
+			decision.AllocationClass = "none"
+			decision.Stoploss = nil
+			decision.Reason = "planner: allocation lookahead exhausted; candidate not priced this pass"
+			continue
+		}
+
+		priced++
 
 		decision.OpenPositions = allocation.desk.OpenPositions()
 		decision.SlotCapacity = allocation.desk.MaxPositions() + allocation.desk.MaxReserved()
@@ -294,10 +348,26 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		decision.Risk = riskPlan
 		decision.Stoploss = stoploss
 
+		// The candidate is executable now: consume the next slot in economic
+		// rank order. Normal slots fill first, then reserve.
+		if normalSlots > 0 {
+			normalSlots--
+			decision.AllocationClass = "normal"
+		} else if reserveSlots > 0 {
+			reserveSlots--
+			decision.AllocationClass = "reserve"
+		} else {
+			decision.Action = types.ActionNothing
+			decision.AllocationClass = "none"
+			decision.Stoploss = nil
+			decision.Reason = "planner: no position slot available for allocation"
+			continue
+		}
+
+		admitted++
 		eligible = append(eligible, decision)
 	}
 
-	admitBest(eligible, normalSlots, reserveSlots, occupiedSymbols(allocation.desk))
 	return nil
 }
 

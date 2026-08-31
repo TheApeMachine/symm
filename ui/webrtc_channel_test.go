@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -16,9 +18,11 @@ supersede the in-flight frame after a fixed number of sends, so mid-frame
 preemption is deterministic without a live pion transport.
 */
 type fakeFluidTransport struct {
+	mu             sync.Mutex
 	segments       [][]byte
+	sent           chan struct{}
 	sendCalls      atomic.Int64
-	buffered       uint64
+	buffered       atomic.Uint64
 	bufferedChecks atomic.Int64
 	supersedeAt    int64
 	supersede      func(*fluidChannel)
@@ -26,11 +30,20 @@ type fakeFluidTransport struct {
 
 func (fake *fakeFluidTransport) BufferedAmount() uint64 {
 	fake.bufferedChecks.Add(1)
-	return fake.buffered
+	return fake.buffered.Load()
 }
 
 func (fake *fakeFluidTransport) Send(segment []byte) error {
+	fake.mu.Lock()
 	fake.segments = append(fake.segments, segment)
+	fake.mu.Unlock()
+
+	if fake.sent != nil {
+		select {
+		case fake.sent <- struct{}{}:
+		default:
+		}
+	}
 
 	if fake.supersede != nil && fake.sendCalls.Add(1) == fake.supersedeAt {
 		fake.supersede(nil)
@@ -40,6 +53,13 @@ func (fake *fakeFluidTransport) Send(segment []byte) error {
 }
 
 func (fake *fakeFluidTransport) Close() error { return nil }
+
+func (fake *fakeFluidTransport) segmentCount() int {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+
+	return len(fake.segments)
+}
 
 func testFluidChannel(transport fluidTransport) *fluidChannel {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -74,7 +94,7 @@ func TestFluidChannelPreemption(t *testing.T) {
 
 		Convey("the stale frame is abandoned mid-flight with the superseded sentinel", func() {
 			So(errors.Is(err, errFrameSuperseded), ShouldBeTrue)
-			So(len(fake.segments), ShouldEqual, 2)
+			So(fake.segmentCount(), ShouldEqual, 2)
 		})
 
 		Convey("the pending superseding payload is offered to the sender next", func() {
@@ -84,7 +104,8 @@ func TestFluidChannelPreemption(t *testing.T) {
 	})
 
 	Convey("Given a sender waiting for buffered amount to drain", t, func() {
-		fake := &fakeFluidTransport{buffered: 64 * fluidSegmentSize}
+		fake := &fakeFluidTransport{}
+		fake.buffered.Store(64 * fluidSegmentSize)
 		channel := testFluidChannel(fake)
 
 		done := make(chan error, 1)
@@ -107,7 +128,7 @@ func TestFluidChannelPreemption(t *testing.T) {
 			err := <-done
 
 			So(errors.Is(err, errFrameSuperseded), ShouldBeTrue)
-			So(len(fake.segments), ShouldEqual, 0)
+			So(fake.segmentCount(), ShouldEqual, 0)
 		})
 	})
 }
@@ -150,6 +171,60 @@ func TestEncodeFluidChunk(t *testing.T) {
 			}
 
 			So(string(ordered), ShouldEqual, "ghiabcdef")
+		})
+	})
+}
+
+/*
+TestFluidChannelSenderDrainsLatestAfterPreemption proves the end-to-end sender
+loop shape required by §17: after an in-flight frame is superseded while parked
+on the buffered-amount wait, the sender drains the fresher payload from the
+latest slot without needing a second wake token. The wake the fresh enqueue
+produced is consumed inside sendSegment's preemption select; the run loop must
+still transmit the fresh frame completely.
+*/
+func TestFluidChannelSenderDrainsLatestAfterPreemption(t *testing.T) {
+	Convey("Given a sender loop with an old frame blocked on buffered amount", t, func() {
+		fake := &fakeFluidTransport{sent: make(chan struct{}, 16)}
+		fake.buffered.Store(64 * fluidSegmentSize)
+		channel := testFluidChannel(fake)
+		go channel.run()
+
+		channel.enqueue(make([]byte, 4*fluidSegmentSize))
+
+		// Park deterministically: wait until the sender is blocked inside the
+		// buffered-amount wait of sendSegment.
+		for fake.bufferedChecks.Load() == 0 {
+		}
+
+		// A fresh frame supersedes the old one. This is the exact moment the
+		// old sendSegment's select consumes the fresh frame's wake token.
+		channel.enqueue([]byte("fresher"))
+
+		Convey("the fresher frame is transmitted completely without another enqueue", func() {
+			// The old frame abandons without writing any segment, then the run
+			// loop must drain latest directly. Verify the old frame sent zero
+			// segments before the buffer is released.
+			So(fake.segmentCount(), ShouldEqual, 0)
+
+			// Release the transport buffer so the fresh frame can actually send.
+			fake.buffered.Store(0)
+
+			select {
+			case channel.drained <- struct{}{}:
+			default:
+			}
+
+			// The fresh single-chunk frame is sent once, complete — without any
+			// third enqueue. Wait for Send to signal, not a polling read.
+			select {
+			case <-fake.sent:
+			case <-time.After(2 * time.Second):
+				So(fake.segmentCount(), ShouldEqual, 1)
+				return
+			}
+
+			So(fake.segmentCount(), ShouldEqual, 1)
 		})
 	})
 }

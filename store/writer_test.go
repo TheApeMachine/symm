@@ -19,7 +19,11 @@ func TestWriterCapture(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("Capturing a frame mints an identity, persists it, and returns it", func() {
-			identity, err := writer.Capture("ticker", "wss://example", []byte("raw"), time.Now())
+			identity, err := writer.Capture("ticker", "wss://example", []byte("raw"), time.Now(), hindsight.StreamRef{
+				Stream:   hindsight.Stream("wss://example:test"),
+				Epoch:    1,
+				Sequence: 1,
+			})
 
 			So(err, ShouldBeNil)
 			So(identity.Valid(), ShouldBeTrue)
@@ -33,10 +37,18 @@ func TestWriterCapture(t *testing.T) {
 		})
 
 		Convey("Two frames earn distinct run-local capture sequences", func() {
-			first, err := writer.Capture("ticker", "wss://example", []byte("1"), time.Now())
+			first, err := writer.Capture("ticker", "wss://example", []byte("1"), time.Now(), hindsight.StreamRef{
+				Stream:   hindsight.Stream("wss://example:test"),
+				Epoch:    1,
+				Sequence: 1,
+			})
 			So(err, ShouldBeNil)
 
-			second, err := writer.Capture("ticker", "wss://example", []byte("2"), time.Now())
+			second, err := writer.Capture("ticker", "wss://example", []byte("2"), time.Now(), hindsight.StreamRef{
+				Stream:   hindsight.Stream("wss://example:test"),
+				Epoch:    1,
+				Sequence: 1,
+			})
 			So(err, ShouldBeNil)
 
 			So(second.Sequence, ShouldBeGreaterThan, first.Sequence)
@@ -58,7 +70,11 @@ func TestWriterCapture(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("Capture still mints an identity without persisting", func() {
-			identity, err := writer.Capture("ticker", "x", []byte("y"), time.Now())
+			identity, err := writer.Capture("ticker", "x", []byte("y"), time.Now(), hindsight.StreamRef{
+				Stream:   hindsight.Stream("wss://example:test"),
+				Epoch:    1,
+				Sequence: 1,
+			})
 			So(err, ShouldBeNil)
 			So(identity.Valid(), ShouldBeTrue)
 		})
@@ -71,13 +87,21 @@ func TestWriterReconnectTest(t *testing.T) {
 		sequencer, _ := hindsight.NewSequencer("run-1")
 		writer, _ := NewWriter(repository, sequencer)
 
-		before, err := writer.Capture("ticker", "wss://example", []byte("a"), time.Now())
+		before, err := writer.Capture("ticker", "wss://example", []byte("a"), time.Now(), hindsight.StreamRef{
+			Stream:   hindsight.Stream("wss://example:test"),
+			Epoch:    1,
+			Sequence: 1,
+		})
 		So(err, ShouldBeNil)
 
-		Convey("Reconnect advances the epoch and resets the stream sequence, keeping capture order", func() {
-			writer.Reconnect("wss://example")
-
-			after, err := writer.Capture("ticker", "wss://example", []byte("b"), time.Now())
+		Convey("Hindsight records the transport-minted epoch, never supplies it", func() {
+			// The transport advanced the epoch on reconnect and mints the next
+			// frame with Epoch 2; the writer copies that fact verbatim.
+			after, err := writer.Capture("ticker", "wss://example", []byte("b"), time.Now(), hindsight.StreamRef{
+				Stream:   hindsight.Stream("wss://example:b"),
+				Epoch:    2,
+				Sequence: 1,
+			})
 			So(err, ShouldBeNil)
 
 			So(after.StreamEpoch, ShouldEqual, before.StreamEpoch+1)
@@ -85,10 +109,12 @@ func TestWriterReconnectTest(t *testing.T) {
 			So(after.Sequence, ShouldBeGreaterThan, before.Sequence)
 		})
 
-		Convey("Reconnect on an unknown endpoint is a no-op, never a silent epoch bump", func() {
-			writer.Reconnect("wss://unseen")
-
-			after, err := writer.Capture("ticker", "wss://example", []byte("c"), time.Now())
+		Convey("an absent ref leaves the sequencer's own bookkeeping intact", func() {
+			// A zero ref means the caller did not mint operational metadata; the
+			// writer keeps its own epoch/sequence count as a fallback.
+			after, err := writer.Capture(
+				"ticker", "wss://example", []byte("c"), time.Now(), hindsight.StreamRef{},
+			)
 			So(err, ShouldBeNil)
 			So(after.StreamEpoch, ShouldEqual, before.StreamEpoch)
 		})
@@ -102,7 +128,11 @@ func TestWriterCaptureFailureTest(t *testing.T) {
 		writer, _ := NewWriter(repository, sequencer)
 
 		Convey("Capture returns a zero identity, an error, and marks the run GAPPED", func() {
-			identity, err := writer.Capture("ticker", "wss://example", []byte("x"), time.Now())
+			identity, err := writer.Capture("ticker", "wss://example", []byte("x"), time.Now(), hindsight.StreamRef{
+				Stream:   hindsight.Stream("wss://example:test"),
+				Epoch:    1,
+				Sequence: 1,
+			})
 
 			So(err, ShouldNotBeNil)
 			So(identity.Valid(), ShouldBeFalse)

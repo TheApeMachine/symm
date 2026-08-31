@@ -28,6 +28,20 @@ reconnect without relying on timestamps.
 type StreamEpoch uint64
 
 /*
+StreamRef is the operational transport identity of one parsed ingress frame:
+which stream it arrived on, which connection span (epoch), and its order within
+that span. It is minted and advanced by the websocket transport itself and is
+available whether or not Hindsight capture is enabled. Hindsight's
+CaptureIdentity records/copies the same fact; live trading reads only this
+operational metadata.
+*/
+type StreamRef struct {
+	Stream   Stream      `json:"stream"`
+	Epoch    StreamEpoch `json:"epoch"`
+	Sequence uint64      `json:"sequence"`
+}
+
+/*
 CaptureIdentity is the stable identity assigned to one external input BEFORE
 parsing. It carries no venue timestamp, no venue sequence, no SQLite row id,
 and nothing that depends on the eventual persistence backend or the parsed

@@ -11,6 +11,7 @@ import {
 } from "./episode-palette";
 import type {
 	HindsightEpisode,
+	HindsightRef,
 	HindsightSymbolSummary,
 	HindsightTimeline,
 } from "./hindsight-types";
@@ -177,7 +178,7 @@ export const EpisodeTargets = ({
 	timeline: HindsightTimeline | null;
 	selected: string | null;
 	onSelect: (episode: HindsightEpisode) => void;
-	onReference: (sequence: number) => void;
+	onReference: (reference: HindsightRef) => void;
 }) => {
 	const episodes = useMemo(
 		() =>
@@ -282,12 +283,15 @@ export const EpisodeTargets = ({
 												className="cursor-pointer rounded-[2px] border border-(--line2) px-1 py-0.5 font-mono text-[8px] text-(--f3) hover:border-(--acc) hover:text-(--f1)"
 												onClickCapture={(event) => {
 													event.stopPropagation();
-													onReference(reference.capture.sequence);
+													onReference({
+														sequence: reference.capture.sequence,
+														ordinal: reference.ordinal,
+													});
 												}}
 											>
 												{REFERENCE_GLYPHS[reference.role]} {reference.role.replace("_", " ")}{" "}
 												<span className="tabular-nums text-(--f4)">
-													#{reference.capture.sequence}
+													#{reference.capture.sequence}:{reference.ordinal}
 												</span>
 											</span>
 										))}

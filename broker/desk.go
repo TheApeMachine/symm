@@ -260,7 +260,12 @@ func (desk *Desk) stepLevel3(level3 kraken.Level3Data, epoch uint64) error {
 		return nil
 	}
 
-	reducer := desk.executionReducer(level3.Symbol)
+	reducer, err := desk.executionReducer(level3.Symbol)
+
+	if err != nil {
+		return err
+	}
+
 	reducer.Apply(level3, epoch)
 
 	found, ok := desk.positions.Load(level3.Symbol)
@@ -295,25 +300,48 @@ func (desk *Desk) stepLevel3(level3 kraken.Level3Data, epoch uint64) error {
 
 /*
 executionReducer returns the symbol's continuously-resident execution reducer,
-creating the fixed-capacity record the first time the symbol is observed. The
-reducer is shared by the desk ingress path and every Position on the symbol, so
-the L3 state lives exactly once per symbol rather than once per position.
+constructed atomically so exactly one resident reducer per symbol exists for the
+process lifetime. A Position and the L3 ingress path always bind to the same
+instance: the first LoadOrStore wins and every later caller (including a
+concurrent position construction racing the first L3 frame) receives that exact
+pointer. The reducer's price-level bound is the same configured/subscribed L3
+depth the websocket transport subscribes with; a missing/invalid depth is a
+clear construction error, never a guessed fallback depth.
 */
-func (desk *Desk) executionReducer(symbol string) *liquidationReducer {
+func (desk *Desk) executionReducer(symbol string) (*liquidationReducer, error) {
 	if desk.execution == nil {
 		desk.execution = &sync.Map{}
 	}
 
-	loaded, _ := desk.execution.Load(symbol)
+	depth := viper.GetInt("market.l3_depth")
 
-	if reducer, ok := loaded.(*liquidationReducer); ok && reducer != nil {
-		return reducer
+	if depth <= 0 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"desk: market.l3_depth missing or invalid; cannot construct execution reducer",
+			nil,
+		))
 	}
 
-	reducer := newLiquidationReducer(symbol)
-	desk.execution.Store(symbol, reducer)
+	if loaded, ok := desk.execution.Load(symbol); ok {
+		if reducer, valid := loaded.(*liquidationReducer); valid && reducer != nil {
+			return reducer, nil
+		}
+	}
 
-	return reducer
+	reducer := newLiquidationReducer(symbol, depth)
+
+	actual, _ := desk.execution.LoadOrStore(symbol, reducer)
+
+	if winner, valid := actual.(*liquidationReducer); valid && winner != nil {
+		return winner, nil
+	}
+
+	return nil, errnie.Error(errnie.Err(
+		errnie.Internal,
+		"desk: execution reducer store corrupted for "+symbol,
+		nil,
+	))
 }
 
 /*
@@ -703,7 +731,13 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		// The position consumes the symbol's continuously-resident execution
 		// reducer rather than reconstructing book state from the next update
 		// it happens to see.
-		position.liquidation = desk.executionReducer(decision.Symbol)
+		liquidation, liquidationErr := desk.executionReducer(decision.Symbol)
+
+		if liquidationErr != nil {
+			return liquidationErr
+		}
+
+		position.liquidation = liquidation
 
 		position.onClose = func() {
 			desk.positions.CompareAndDelete(decision.Symbol, position)

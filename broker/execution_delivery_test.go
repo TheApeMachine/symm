@@ -9,6 +9,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/learning"
@@ -95,6 +96,11 @@ fills through Desk.StepExecution, plus the position store the desk embeds.
 */
 func newDeliveryDesk(t testing.TB, conn *executingConn) (*Desk, *nmruntime.Workload[*types.Envelope]) {
 	t.Helper()
+
+	// The desk's execution reducer reads the same configured L3 subscription
+	// depth the websocket transport subscribes with. Tests that construct a
+	// desk without booting the whole config get the documented default here.
+	viper.SetDefault("market.l3_depth", 10)
 
 	api := websocket.NewAPI(t.Context(), conn, conn)
 	api.Normalizer().Update(&spot.AssetsManagerUpdate{

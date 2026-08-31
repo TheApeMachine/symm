@@ -33,6 +33,23 @@ export const compareHindsightRef = (left: HindsightRef, right: HindsightRef): nu
 		? left.sequence - right.sequence
 		: left.ordinal - right.ordinal;
 
+/*
+orderHindsightRefs deduplicates and sorts causal coordinates by full identity:
+sequence first, then ordinal. Two ordinals within one capture (100:0, 100:1) are
+distinct causal points and are never collapsed into one "100".
+*/
+export const orderHindsightRefs = (refs: HindsightRef[]): HindsightRef[] => {
+	const seen = new Map<string, HindsightRef>();
+
+	for (const ref of refs) {
+		const key = `${ref.sequence}:${ref.ordinal}`;
+
+		if (!seen.has(key)) seen.set(key, ref);
+	}
+
+	return [...seen.values()].sort(compareHindsightRef);
+};
+
 export type HindsightCaptureIdentity = {
 	run: string;
 	sequence: number;

@@ -1,6 +1,8 @@
 package strategy
 
 import (
+	"context"
+	"math"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -442,4 +444,202 @@ func TestMCTSExitAuthorityProvenanceTest(t *testing.T) {
 			So(stoplossTriggered.Cause, ShouldNotEqual, decision.Cause)
 		})
 	})
+}
+
+/*
+TestResidentFrontierEconomicOrder proves the resident entry frontier is ordered
+by economic enter advantage, not by symbol: a lower-symbol candidate with a
+higher advantage sorts before a higher-symbol candidate with a lower advantage.
+*/
+func TestResidentFrontierEconomicOrder(t *testing.T) {
+	Convey("Given candidates whose enter advantage differs across symbols", t, func() {
+		planner, _ := frontierPlanner(true)
+		at := time.Unix(0, 149*int64(time.Second))
+
+		advantages := map[string]float64{
+			"AAA/USD": 0.02,
+			"BBB/USD": 0.09,
+			"CCC/USD": 0.05,
+		}
+
+		planner.evaluate = func(state *CausalState, _ *system.Config, _ marketInputs) *types.Decision {
+			decision := types.NewDecision(types.ActionEnter, state.Symbol)
+			decision.At = state.At
+			decision.Alternatives = map[string]float64{
+				"economic:enter_mean":      1,
+				"economic:wait_mean":       0,
+				"economic:enter_advantage": advantages[state.Symbol],
+				"economic:visits":          1,
+			}
+			return decision
+		}
+
+		for _, symbol := range []string{"AAA/USD", "BBB/USD", "CCC/USD"} {
+			planner.pending.Store(symbol, frontierState(symbol, at))
+		}
+
+		_ = planner.residentDecisions(system.Cfg.Snapshot())
+
+		planner.frontierMu.RLock()
+		symbols := make([]string, 0, len(planner.frontier))
+
+		for _, entry := range planner.frontier {
+			symbols = append(symbols, entry.symbol)
+		}
+		planner.frontierMu.RUnlock()
+
+		Convey("the strongest advantage leads regardless of symbol", func() {
+			So(symbols, ShouldResemble, []string{"BBB/USD", "CCC/USD", "AAA/USD"})
+		})
+	})
+}
+
+/*
+TestResidentFrontierEnterWaitEnterTransitions proves the frontier is maintained
+incrementally across action transitions: Enter→Wait drops a symbol out of the
+entry ranking, Wait→Enter reinserts it at its current economic position, with
+no full-universe rescan.
+*/
+func TestResidentFrontierEnterWaitEnterTransitions(t *testing.T) {
+	Convey("Given a candidate that starts Enter and flips to Wait", t, func() {
+		planner, evaluations := frontierPlanner(true)
+		at := time.Unix(0, 149*int64(time.Second))
+
+		planner.pending.Store("A/USD", frontierState("A/USD", at))
+		_ = planner.Update(types.NewThesis(t.Context()))
+
+		planner.evaluate = func(state *CausalState, _ *system.Config, _ marketInputs) *types.Decision {
+			evaluations.Add(1)
+			decision := types.NewDecision(types.ActionNothing, state.Symbol)
+			decision.At = state.At
+
+			return decision
+		}
+
+		planner.pending.Store("A/USD", frontierState("A/USD", at.Add(time.Second)))
+		_ = planner.Update(types.NewThesis(t.Context()))
+
+		planner.frontierMu.RLock()
+		advantage, hasAdvantage := planner.frontier[0].advantage, len(planner.frontier) > 0
+		planner.frontierMu.RUnlock()
+
+		Convey("the Wait record no longer competes as an entry", func() {
+			// The frontier retains the record for the decision round, but it
+			// carries no enter advantage: it sorts after every real entry.
+			So(hasAdvantage, ShouldBeTrue)
+			So(math.IsInf(advantage, -1), ShouldBeTrue)
+		})
+
+		Convey("a later Wait→Enter transition reinserts it at its economic position", func() {
+			planner.evaluate = func(state *CausalState, _ *system.Config, _ marketInputs) *types.Decision {
+				evaluations.Add(1)
+				decision := types.NewDecision(types.ActionEnter, state.Symbol)
+				decision.At = state.At
+				decision.Alternatives = map[string]float64{
+					"economic:enter_advantage": 0.5,
+					"economic:visits":          2,
+				}
+
+				return decision
+			}
+
+			planner.pending.Store("A/USD", frontierState("A/USD", at.Add(2*time.Second)))
+			_ = planner.Update(types.NewThesis(t.Context()))
+
+			planner.frontierMu.RLock()
+			front := planner.frontier[0]
+			planner.frontierMu.RUnlock()
+
+			So(front.symbol, ShouldEqual, "A/USD")
+			So(front.advantage, ShouldEqual, 0.5)
+		})
+	})
+}
+
+/*
+TestResidentFrontierRepositionUpdatesOneSlot proves re-evaluating one candidate
+with a better advantage repositions exactly that slot without re-sorting or
+re-evaluating every other resident candidate.
+*/
+func TestResidentFrontierRepositionUpdatesOneSlot(t *testing.T) {
+	Convey("Given a multi-symbol economic frontier", t, func() {
+		planner, evaluations := frontierPlanner(true)
+		at := time.Unix(0, 149*int64(time.Second))
+
+		advantages := map[string]float64{
+			"AAA/USD": 0.02, "BBB/USD": 0.05, "CCC/USD": 0.08,
+		}
+		states := map[string]*CausalState{
+			"AAA/USD": frontierState("AAA/USD", at),
+			"BBB/USD": frontierState("BBB/USD", at),
+			"CCC/USD": frontierState("CCC/USD", at),
+		}
+
+		planner.evaluate = func(state *CausalState, _ *system.Config, _ marketInputs) *types.Decision {
+			evaluations.Add(1)
+
+			decision := types.NewDecision(types.ActionEnter, state.Symbol)
+			decision.At = state.At
+			decision.Alternatives = map[string]float64{
+				"economic:enter_advantage": advantages[state.Symbol],
+				"economic:visits":          1,
+			}
+
+			return decision
+		}
+
+		for symbol, state := range states {
+			planner.pending.Store(symbol, state)
+		}
+
+		_ = planner.Update(types.NewThesis(t.Context()))
+		before := evaluations.Load()
+
+		Convey("boosting AAA above everyone re-evaluates just AAA and moves it to the front", func() {
+			advantages["AAA/USD"] = 0.99
+			planner.pending.Store("AAA/USD", frontierState("AAA/USD", at.Add(time.Second)))
+			_ = planner.Update(types.NewThesis(t.Context()))
+
+			So(evaluations.Load(), ShouldEqual, before+1)
+
+			planner.frontierMu.RLock()
+			front := planner.frontier[0]
+			planner.frontierMu.RUnlock()
+
+			So(front.symbol, ShouldEqual, "AAA/USD")
+			So(front.advantage, ShouldEqual, 0.99)
+		})
+	})
+}
+
+func BenchmarkPlannerCandidateUpdate(b *testing.B) {
+	planner, _ := frontierPlanner(true)
+	at := time.Unix(0, 149*int64(time.Second))
+
+	planner.pending.Store("A/USD", frontierState("A/USD", at))
+	_ = planner.Update(types.NewThesis(context.Background()))
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		planner.pending.Store("A/USD", frontierState("A/USD", at))
+		_ = planner.residentDecisions(system.Cfg.Snapshot())
+	}
+}
+
+func BenchmarkPlannerOneSlotArbitration(b *testing.B) {
+	planner, _ := frontierPlanner(true)
+	at := time.Unix(0, 149*int64(time.Second))
+
+	for _, symbol := range []string{"A/USD", "B/USD", "C/USD", "D/USD", "E/USD"} {
+		planner.pending.Store(symbol, frontierState(symbol, at))
+	}
+
+	_ = planner.Update(types.NewThesis(context.Background()))
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = planner.residentDecisions(system.Cfg.Snapshot())
+	}
 }

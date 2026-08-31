@@ -45,6 +45,11 @@ type FuturesLive struct {
 	manifestSink  ManifestSink
 	reconnect     func()
 	connectCount  atomic.Int32
+
+	// opStreams owns the operational per-stream epoch/sequence bookkeeping this
+	// transport session maintains independent of Hindsight, mirroring Live.
+	opMu      sync.Mutex
+	opStreams map[hindsight.Stream]streamSpan
 }
 
 /*
@@ -210,9 +215,10 @@ func (futures *FuturesLive) dialAndServe() error {
 	futures.status.Transition(runtime.READY)
 
 	// A second (or later) dial in this process lifetime is a reconnect: fire
-	// the soft-reboot seam so the subscription universe re-issues and the
-	// Hindsight epoch advances, exactly as the spot session does.
+	// the soft-reboot seam so the subscription universe re-issues, and advance
+	// the operational stream epoch — a transport fact, independent of Hindsight.
 	if futures.connectCount.Add(1) > 1 && futures.reconnect != nil {
+		futures.reconnectStreams()
 		futures.reconnect()
 	}
 
@@ -275,6 +281,10 @@ func (futures *FuturesLive) readLoop(conn *gorillawebsocket.Conn, done chan<- er
 		// The capture identity is local to THIS frame, computed here and passed
 		// into DispatchFrame — never stored as ambient mutable state that a
 		// failed capture could leave holding a previous frame's identity.
+		// The operational StreamRef is minted first, independent of capture.
+		kind := frameKind(payload)
+		streamRef := futures.nextStreamRef(kind)
+
 		var captureID hindsight.CaptureIdentity
 
 		if futures.capture != nil {
@@ -285,16 +295,17 @@ func (futures *FuturesLive) readLoop(conn *gorillawebsocket.Conn, done chan<- er
 			// mints the Hindsight identity, persists the frame with it, and
 			// returns it so envelopes parsed from this frame carry the origin.
 			identity, captureErr := futures.capture.Capture(
-				frameKind(payload),
+				kind,
 				futures.endpoint,
 				bytes.Clone(payload),
 				time.Now().UTC(),
+				streamRef,
 			)
 
 			if captureErr != nil {
 				errnie.Error(errnie.Err(
 					errnie.IO,
-					fmt.Sprintf("futures: capture failed for %s frame: %s", frameKind(payload), captureErr.Error()),
+					fmt.Sprintf("futures: capture failed for %s frame: %s", kind, captureErr.Error()),
 					captureErr,
 				))
 
@@ -305,7 +316,7 @@ func (futures *FuturesLive) readLoop(conn *gorillawebsocket.Conn, done chan<- er
 			captureID = identity
 		}
 
-		futures.DispatchFrame(payload, captureID)
+		futures.DispatchFrame(payload, captureID, streamRef)
 	}
 }
 
@@ -327,11 +338,67 @@ func frameKind(raw []byte) string {
 }
 
 /*
-DispatchFrame decodes a raw wire payload from Kraken Futures and routes it. The
-captureID is the identity minted for THIS frame, passed in explicitly so a frame
-can never inherit another frame's identity.
+nextStreamRef mints the operational StreamRef for one inbound futures frame on
+the given feed. It mirrors Live's framing: transport-owned epoch/sequence,
+independent of Hindsight.
 */
-func (futures *FuturesLive) DispatchFrame(raw []byte, captureID hindsight.CaptureIdentity) {
+func (futures *FuturesLive) nextStreamRef(feed string) hindsight.StreamRef {
+	if futures == nil {
+		return hindsight.StreamRef{}
+	}
+
+	stream := hindsight.Stream(futures.endpoint + ":" + feed)
+
+	futures.opMu.Lock()
+	defer futures.opMu.Unlock()
+
+	if futures.opStreams == nil {
+		futures.opStreams = make(map[hindsight.Stream]streamSpan)
+	}
+
+	span := futures.opStreams[stream]
+
+	if span.epoch == 0 {
+		span.epoch = 1
+	}
+
+	span.sequence++
+	futures.opStreams[stream] = span
+
+	return hindsight.StreamRef{
+		Stream:   stream,
+		Epoch:    span.epoch,
+		Sequence: span.sequence,
+	}
+}
+
+/*
+reconnectStreams bumps the operational epoch for every stream this futures
+session has seen and resets each stream's per-epoch sequence, independent of any
+capture sink.
+*/
+func (futures *FuturesLive) reconnectStreams() {
+	if futures == nil {
+		return
+	}
+
+	futures.opMu.Lock()
+	defer futures.opMu.Unlock()
+
+	for stream, span := range futures.opStreams {
+		span.epoch++
+		span.sequence = 0
+		futures.opStreams[stream] = span
+	}
+}
+
+/*
+DispatchFrame decodes a raw wire payload from Kraken Futures and routes it. The
+captureID is the identity minted for THIS frame and ref the transport-minted
+operational StreamRef, both passed in explicitly so a frame can never inherit
+another frame's identity.
+*/
+func (futures *FuturesLive) DispatchFrame(raw []byte, captureID hindsight.CaptureIdentity, ref hindsight.StreamRef) {
 	if len(raw) == 0 {
 		return
 	}
@@ -346,15 +413,15 @@ func (futures *FuturesLive) DispatchFrame(raw []byte, captureID hindsight.Captur
 
 	switch feed {
 	case "ticker":
-		futures.dispatchTicker(raw, captureID)
+		futures.dispatchTicker(raw, captureID, ref)
 	case "trade", "trade_snapshot":
-		futures.dispatchTrades(raw, captureID)
+		futures.dispatchTrades(raw, captureID, ref)
 	case "book", "book_snapshot":
 		futures.dispatchBook(raw)
 	}
 }
 
-func (futures *FuturesLive) dispatchTicker(raw []byte, captureID hindsight.CaptureIdentity) {
+func (futures *FuturesLive) dispatchTicker(raw []byte, captureID hindsight.CaptureIdentity, ref hindsight.StreamRef) {
 	workload := futures.ingress["ticker"]
 
 	if workload == nil {
@@ -379,12 +446,13 @@ func (futures *FuturesLive) dispatchTicker(raw []byte, captureID hindsight.Captu
 	envelope.FuturesTickerData = ticker.Data
 	envelope.CaptureID = captureID
 	envelope.CaptureOrdinal = 0
+	envelope.Stream = ref
 	workload.Push(envelope)
 
 	futures.writeManifest("futures.ticker", ticker.Data.Symbol, 0, captureID)
 }
 
-func (futures *FuturesLive) dispatchTrades(raw []byte, captureID hindsight.CaptureIdentity) {
+func (futures *FuturesLive) dispatchTrades(raw []byte, captureID hindsight.CaptureIdentity, ref hindsight.StreamRef) {
 	workload := futures.ingress["trade"]
 
 	if workload == nil {
@@ -411,6 +479,7 @@ func (futures *FuturesLive) dispatchTrades(raw []byte, captureID hindsight.Captu
 		envelope.FuturesTradeData = trade
 		envelope.CaptureID = captureID
 		envelope.CaptureOrdinal = uint64(index)
+		envelope.Stream = ref
 		workload.Push(envelope)
 
 		futures.writeManifest("futures.trade", trade.Symbol, uint64(index), captureID)

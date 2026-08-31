@@ -153,6 +153,13 @@ type Envelope struct {
 	// many envelopes; the ordinal disambiguates them in parser order.
 	CaptureOrdinal uint64
 
+	// Stream is the operational transport identity of the exact raw external
+	// input this envelope was parsed from. It is minted and advanced by the
+	// websocket transport (epoch bumps on reconnect, sequence on frame) and is
+	// present whether or not Hindsight capture is enabled. Live trading reads
+	// this operational metadata; Hindsight records the same fact in CaptureID.
+	Stream hindsight.StreamRef
+
 	TickerData        kraken.TickerData
 	TradeData         kraken.TradeData
 	Level3Data        kraken.Level3Data
