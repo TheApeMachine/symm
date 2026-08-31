@@ -146,6 +146,17 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			continue
 		}
 
+		// Only candidates whose causal entry advantage is strictly positive
+		// may consume capital; a zero or negative marginal value over waiting
+		// is not an entry, and the planner never forwards it as one.
+		if decision.Alternatives["economic:enter_advantage"] <= 0 {
+			decision.Action = types.ActionNothing
+			decision.AllocationClass = "none"
+			decision.Stoploss = nil
+			decision.Reason = "planner: entry advantage is not positive"
+			continue
+		}
+
 		if occupied[decision.Symbol] {
 			decision.Action = types.ActionNothing
 			decision.AllocationClass = "none"

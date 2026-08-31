@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/symm/logic/causal"
 	"github.com/theapemachine/symm/nomagique/mcts"
 	"github.com/theapemachine/symm/nomagique/relation"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -177,11 +178,34 @@ func (model *causalMarketModel) Step(current mcts.MarketState, random *rand.Rand
 	}
 
 	outcome := model.state.OutcomeVariable.Coordinate
-	logReturn, found := next.Current[outcome]
+	nextValue, found := next.Current[outcome]
 
 	if !found {
 		return current, 0, 0, fmt.Errorf("causal market model: outcome coordinate missing")
 	}
+
+	// The outcome transition evolves its own coordinate, so a price outcome
+	// (e.g. liquidity/midpoint) yields an absolute price P_{t+1}, whereas a
+	// return outcome (e.g. cvd/midpoint_log_return) already is a log return.
+	// The rollout reward must be a log return either way; mixing the two units
+	// produced exponential blow-ups in multi-step predictions.
+	logReturn := nextValue
+
+	if priceOutcome(outcome.Unit) {
+		currentPrice, present := current.Current[outcome]
+
+		if !present || currentPrice <= 0 {
+			return current, 0, 0, fmt.Errorf(
+				"causal market model: outcome price coordinate missing or non-positive",
+			)
+		}
+
+		logReturn = math.Log(nextValue / currentPrice)
+	}
+
+	// Defensive numerical guard so a single-step MCTS transition can never
+	// produce a runaway exponential multiplier downstream.
+	logReturn = math.Max(-0.20, math.Min(0.20, logReturn))
 
 	outcomeNoise := 0.0
 
@@ -190,6 +214,20 @@ func (model *causalMarketModel) Step(current mcts.MarketState, random *rand.Rand
 	}
 
 	return next, logReturn, outcomeNoise, nil
+}
+
+/*
+priceOutcome reports whether a coordinate's unit names an absolute price or a
+rate rather than an already-dimensionless quantity. Log returns are built from
+price/rate coordinates; dimensionless coordinates are used directly.
+*/
+func priceOutcome(unit nmtypes.Unit) bool {
+	switch unit {
+	case nmtypes.UnitPrice, nmtypes.UnitRate:
+		return true
+	default:
+		return false
+	}
 }
 
 /*

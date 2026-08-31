@@ -93,9 +93,9 @@ func NewFutures(
 
 /*
 SetReconnect installs the callback invoked when this futures session's transport
-reconnects (a second or later dial within one process lifetime). It is the single
-seam through which reconnect soft-reboots the subscription universe and advances
-the Hindsight stream epochs.
+reconnects. The futures transport no longer fires it — dialAndServe reconnects
+stream-isolated via futures.resubscribe only — but the seam remains for callers
+that still wire it externally.
 */
 func (futures *FuturesLive) SetReconnect(handler func()) {
 	if futures == nil {
@@ -214,12 +214,12 @@ func (futures *FuturesLive) dialAndServe() error {
 
 	futures.status.Transition(runtime.READY)
 
-	// A second (or later) dial in this process lifetime is a reconnect: fire
-	// the soft-reboot seam so the subscription universe re-issues, and advance
-	// the operational stream epoch — a transport fact, independent of Hindsight.
-	if futures.connectCount.Add(1) > 1 && futures.reconnect != nil {
+	// A second (or later) dial in this process lifetime is a reconnect: advance
+	// the operational stream epoch — a transport fact, independent of Hindsight
+	// — and resubscribe to the active futures products only. The futures stream
+	// must never soft-reboot the global spot subscription authority.
+	if futures.connectCount.Add(1) > 1 {
 		futures.reconnectStreams()
-		futures.reconnect()
 	}
 
 	futures.resubscribe()

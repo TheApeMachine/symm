@@ -11,6 +11,7 @@ import (
 
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/nomagique/mcts"
+	"github.com/theapemachine/symm/nomagique/relation"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -214,8 +215,34 @@ func TestResidentFrontierMCTSRootMeans(t *testing.T) {
 
 		inputs := marketInputs{cash: 100000, mark: 100, feeRate: 0.001, spreadFraction: 0, available: true}
 
+		// Observation sufficiency gating now runs before the MCTS search, so
+		// the deterministic state must be backed by a reasoner whose store has
+		// at least twenty retained observations for its primary coordinates.
+		schema := DefaultCausalSchema(1, time.Second)
+		store := relation.NewObservationStore(64)
+
+		for coordinate := range state.MarketState.Current {
+			store.RegisterCoordinate(coordinate)
+
+			for index := 0; index < 20; index++ {
+				store.Append(relation.Observation{
+					Coordinate: coordinate,
+					Raw:        0,
+					At:         at,
+					Maturity:   1,
+				})
+			}
+		}
+
+		reasoner := &Reasoner{
+			epoch:          1,
+			store:          store,
+			schemaTemplate: schema,
+		}
+
 		planner := &Planner{
 			marketProvider: func(string) marketInputs { return inputs },
+			reasoner:       reasoner,
 		}
 
 		decision := planner.decisionFromCausalState(state, system.Cfg.Snapshot(), inputs)

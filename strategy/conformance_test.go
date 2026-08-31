@@ -89,6 +89,34 @@ func testConfig() *system.Config {
 }
 
 /*
+reasonerWithObservations backs a state with a reasoner whose store has at least
+twenty retained observations for each of the state's primary coordinates, so the
+planner's observation-sufficiency gate admits the state to the MCTS search.
+*/
+func reasonerWithObservations(state *CausalState) *Reasoner {
+	store := relation.NewObservationStore(64)
+
+	for coordinate := range state.MarketState.Current {
+		store.RegisterCoordinate(coordinate)
+
+		for index := 0; index < 20; index++ {
+			store.Append(relation.Observation{
+				Coordinate: coordinate,
+				Raw:        0,
+				At:         state.At,
+				Maturity:   1,
+			})
+		}
+	}
+
+	return &Reasoner{
+		epoch:          1,
+		store:          store,
+		schemaTemplate: DefaultCausalSchema(1, time.Second),
+	}
+}
+
+/*
 deterministicCausalState builds a causal state with a constant-return,
 zero-noise market path and the full schema transition set. Every transition
 has zero residual variance, so the MCTS reward equals the analytic net-wealth
@@ -501,7 +529,7 @@ func TestConformanceNoFinalGate(t *testing.T) {
 		inputs := marketInputs{cash: 100000, mark: 1, feeRate: 0.001, spreadFraction: 0, available: true}
 		planner := &Planner{marketProvider: func(symbol string) marketInputs {
 			return inputs
-		}}
+		}, reasoner: reasonerWithObservations(state)}
 		decision := planner.decisionFromCausalState(state, testConfig(), inputs)
 		So(decision.Action, ShouldEqual, types.ActionEnter)
 
@@ -529,16 +557,16 @@ it the decision must decline entry.
 */
 func TestConformanceEnterRequiresValue(t *testing.T) {
 	inputs := marketInputs{cash: 100000, mark: 1, feeRate: 0.001, spreadFraction: 0, available: true}
-	newPlanner := func() *Planner {
+	newPlanner := func(state *CausalState) *Planner {
 		return &Planner{marketProvider: func(symbol string) marketInputs {
 			return inputs
-		}}
+		}, reasoner: reasonerWithObservations(state)}
 	}
 
 	Convey("Given MCTS selects Enter on a deterministic positive path", t, func() {
 		at := time.Unix(0, 149*int64(time.Second))
 		state := deterministicCausalState(at, 0.005)
-		decision := newPlanner().decisionFromCausalState(state, testConfig(), inputs)
+		decision := newPlanner(state).decisionFromCausalState(state, testConfig(), inputs)
 
 		Convey("entering is economically better than waiting, so it enters", func() {
 			So(decision.Action, ShouldEqual, types.ActionEnter)
@@ -549,7 +577,7 @@ func TestConformanceEnterRequiresValue(t *testing.T) {
 	Convey("Given MCTS faces a non-positive market path", t, func() {
 		at := time.Unix(0, 149*int64(time.Second))
 		state := deterministicCausalState(at, 0)
-		decision := newPlanner().decisionFromCausalState(state, testConfig(), inputs)
+		decision := newPlanner(state).decisionFromCausalState(state, testConfig(), inputs)
 
 		Convey("it must not enter merely because Wait carries no edge", func() {
 			So(decision.Action, ShouldNotEqual, types.ActionEnter)
@@ -880,7 +908,7 @@ func TestConformanceMediatedPathNoDoubleCounting(t *testing.T) {
 	})
 }
 
-func TestConformanceStartupMarksUnpricedSymbolsMissingMarket(t *testing.T) {
+func TestConformanceStartupGatesUnpricedSymbolsInsufficientObservations(t *testing.T) {
 	Convey("Given a planner with a mixed priced/unpriced candidate universe", t, func() {
 		at := time.Unix(0, 149*int64(time.Second))
 		priced := deterministicCausalState(at, 0.005)
@@ -889,6 +917,27 @@ func TestConformanceStartupMarksUnpricedSymbolsMissingMarket(t *testing.T) {
 		unpriced.Symbol = "UNPRICED/USD"
 
 		inputs := marketInputs{cash: 100000, mark: 1, feeRate: 0.001, spreadFraction: 0, available: true}
+
+		// Observation-sufficiency gating runs before the market-inputs gate,
+		// so both candidates need a reasoner store with the minimum twenty
+		// retained observations to reach their distinct paths.
+		store := relation.NewObservationStore(64)
+
+		for _, state := range []*CausalState{priced, unpriced} {
+			for coordinate := range state.MarketState.Current {
+				store.RegisterCoordinate(coordinate)
+
+				for index := 0; index < 20; index++ {
+					store.Append(relation.Observation{
+						Coordinate: coordinate,
+						Raw:        0,
+						At:         at,
+						Maturity:   1,
+					})
+				}
+			}
+		}
+
 		planner := &Planner{
 			tradingGate: func() bool { return true },
 			marketProvider: func(symbol string) marketInputs {
@@ -898,12 +947,17 @@ func TestConformanceStartupMarksUnpricedSymbolsMissingMarket(t *testing.T) {
 
 				return marketInputs{}
 			},
+			reasoner: &Reasoner{
+				epoch:          1,
+				store:          store,
+				schemaTemplate: DefaultCausalSchema(1, time.Second),
+			},
 		}
 		planner.stager = audit.NewStager(nil)
 		planner.pending.Store(priced.Symbol, priced)
 		planner.pending.Store(unpriced.Symbol, unpriced)
 
-		Convey("Update reports the unpriced symbol as a missing execution market", func() {
+		Convey("Update reports the unpriced symbol as gated before evaluation", func() {
 			round := planner.Update(types.NewThesis(t.Context()))
 			So(round, ShouldNotBeNil)
 			So(len(round.Decisions), ShouldEqual, 2)
@@ -916,7 +970,7 @@ func TestConformanceStartupMarksUnpricedSymbolsMissingMarket(t *testing.T) {
 			So(bySymbol["PRICED/USD"], ShouldNotBeNil)
 			unpricedDecision := bySymbol["UNPRICED/USD"]
 			So(unpricedDecision, ShouldNotBeNil)
-			So(unpricedDecision.ValuationStatus, ShouldEqual, "missing_execution_market")
+			So(unpricedDecision.ValuationStatus, ShouldEqual, "insufficient_observations")
 			So(unpricedDecision.ValuationAttempted, ShouldBeFalse)
 			So(unpricedDecision.Action, ShouldEqual, types.ActionNothing)
 		})
@@ -989,6 +1043,7 @@ func TestConformanceQueryLocalCausalGating(t *testing.T) {
 				marketProvider: func(symbol string) marketInputs {
 					return inputs
 				},
+				reasoner: reasoner,
 			}
 
 			decision := planner.decisionFromCausalState(state, testConfig(), inputs)
@@ -1181,6 +1236,7 @@ func TestConformanceUtilityZeroVsUnavailable(t *testing.T) {
 
 		Convey("Case A: MCTS evaluated -> UtilityAvailable is true", func() {
 			state := deterministicCausalState(at, 0)
+			planner.reasoner = reasonerWithObservations(state)
 			decision := planner.decisionFromCausalState(state, testConfig(), inputs)
 
 			So(decision.ValuationAttempted, ShouldBeTrue)

@@ -761,6 +761,47 @@ func cloneDecision(source *types.Decision) *types.Decision {
 }
 
 /*
+hasSufficientObservations verifies the cheap preconditions that make a causal
+evaluation meaningful: a present market state, at least twenty retained
+observations for the symbol's primary coordinates, identified transitions, and
+available execution-market inputs. When any precondition fails the reason string
+explains exactly which one.
+*/
+func (planner *Planner) hasSufficientObservations(symbol string, state *CausalState) (bool, string) {
+	if state == nil || state.MarketState.Current == nil {
+		return false, "planner: causal market state unavailable"
+	}
+
+	if planner.reasoner == nil || planner.reasoner.Store() == nil {
+		return false, "planner: observation store unavailable"
+	}
+
+	store := planner.reasoner.Store()
+
+	primaryObservations := 0
+
+	for coordinate := range state.MarketState.Current {
+		primaryObservations = max(primaryObservations, store.Count(coordinate))
+	}
+
+	if primaryObservations < 20 {
+		return false, "planner: insufficient historical observations for symbol"
+	}
+
+	if state.Identification != causal.IdentificationIdentified || state.Transition == nil {
+		return false, "planner: causal transition not identified"
+	}
+
+	inputs := planner.marketInputsFor(symbol)
+
+	if !inputs.available || !(inputs.mark > 0) {
+		return false, "planner: broker market inputs unavailable (cash, mark, or fee)"
+	}
+
+	return true, ""
+}
+
+/*
 decisionFromCausalState runs the economic MCTS for one symbol and maps the
 result to a Decision. If the causal evaluation is unavailable the decision
 represents that explicitly: it is ActionNothing with a reason, never a
@@ -819,6 +860,19 @@ func (planner *Planner) decisionFromCausalState(
 			decision.Reason += ": " + state.BlockingReason
 		}
 
+		return decision
+	}
+
+	// Observation sufficiency gates the search before any MCTS rollout: an
+	// identified model built on fewer than twenty retained observations for
+	// its primary coordinates, or without available execution-market inputs,
+	// produces no causal evaluation.
+	if ok, reason := planner.hasSufficientObservations(state.Symbol, state); !ok {
+		decision.ValuationAttempted = false
+		decision.ValuationAvailable = false
+		decision.ValuationStatus = "insufficient_observations"
+		decision.UtilityAvailable = false
+		decision.Reason = reason
 		return decision
 	}
 
@@ -947,12 +1001,42 @@ func (planner *Planner) decisionFromCausalState(
 			decision.Trace = economicTrace(state, result)
 			return decision
 		}
+
+		// A strongly negative signed CVD fraction or heavy bid-side withdrawal
+		// toxic flow contradicts a long entry regardless of how the price
+		// transition scores it: the recorded precursor telemetry must not
+		// oppose the trade the search selected.
+		if cvd, found := alternatives["precursor:cvd_signed_fraction"]; found && cvd < -1.5 {
+			decision.Action = types.ActionNothing
+			decision.Reason = "planner: entry rejected due to opposing precursor flow"
+			decision.Trace = economicTrace(state, result)
+			return decision
+		}
+
+		if withdraw, found := alternatives["precursor:toxicity_withdrawal_bid"]; found && withdraw > 1.5 {
+			decision.Action = types.ActionNothing
+			decision.Reason = "planner: entry rejected due to opposing precursor flow"
+			decision.Trace = economicTrace(state, result)
+			return decision
+		}
 	}
 
 	switch result.SelectedAction {
 	case mcts.Enter:
+		if position > 0 {
+			// A held position never receives another entry: the exposure
+			// policy admits exactly one sized unit, so a held symbol holds.
+			decision.Action = types.ActionNothing
+			break
+		}
+
 		decision.Action = types.ActionEnter
 	case mcts.Exit:
+		if position <= 0 {
+			decision.Action = types.ActionNothing
+			break
+		}
+
 		decision.Action = types.ActionExit
 		// The lifecycle/audit provenance must make unambiguous that this
 		// exit is the Planner's MCTS decision, never a StopLoss trigger.

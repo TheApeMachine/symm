@@ -711,13 +711,15 @@ var (
 			// path anywhere.
 			softReboot := func(endpoint string) func() {
 				return func() {
-					if err := instrument.Subscribe(); err != nil {
-						errnie.Error(errnie.Err(
-							errnie.IO,
-							"symm: reconnect resubscribe",
-							err,
-						))
-					}
+					go func() {
+						if err := instrument.Subscribe(); err != nil {
+							errnie.Error(errnie.Err(
+								errnie.IO,
+								"symm: reconnect resubscribe",
+								err,
+							))
+						}
+					}()
 				}
 			}
 

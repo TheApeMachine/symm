@@ -788,11 +788,27 @@ func (live *Live) SubL3(symbols []string) {
 	if live.l3forward == nil {
 		live.l3forward = newLevel3Sequencer(
 			live.ingress["level3"],
-			int(system.Cfg.Runtime.Workspace.Buffer),
+			8192,
 		)
 	}
 
 	for groups := range slices.Chunk(symbols, 200) {
+		groupKey := strings.Join(groups, "|")
+
+		existing, loaded := live.level3.Load(groupKey)
+
+		if loaded {
+			conn, valid := existing.(*Live)
+
+			if valid && conn != nil && conn.client.IsActive() {
+				// The child socket is still alive: reuse it and simply
+				// resubscribe the symbol group on the existing connection
+				// rather than dialing a duplicate level3 socket.
+				live.subscribeLevel3Group(conn)
+				continue
+			}
+		}
+
 		conn := NewWithClient(
 			live.ctx,
 			live.ingress,
@@ -814,7 +830,6 @@ func (live *Live) SubL3(symbols []string) {
 		}
 
 		conn.l3forward = live.l3forward
-		groupKey := strings.Join(groups, "|")
 		live.level3.Store(groupKey, conn)
 		conn.symbols = append([]string{}, groups...)
 		live.subscribeLevel3Group(conn)
