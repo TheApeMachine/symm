@@ -323,10 +323,22 @@ func (state *EconomicState) ApplyAction(action Action, random *rand.Rand) (State
 /*
 GetReward returns the accumulated change in net wealth. It is the economic
 reward; nothing semantic is added after causal simulation.
+
+A rollout that reaches the horizon still holding inventory is charged the full
+exit cost (taker fee, spread, and modeled slippage on the held notional) at
+the terminal mark: inventory is never free to hold past the horizon. Without
+this the search systematically underestimates round-trip friction by the exit
+leg, so half-cost rollouts make net-negative trades look profitable and the
+planner churns entries that cannot clear their own exit fees.
 */
 func (state *EconomicState) GetReward() float64 {
 	if state == nil {
 		return 0
+	}
+
+	if state.IsTerminal() && state.Portfolio.Position > 0 {
+		exitNotional := state.Portfolio.Position * state.Portfolio.MarkPrice
+		return state.Accumulated - exitNotional*state.Costs.TotalFraction()
 	}
 
 	return state.Accumulated

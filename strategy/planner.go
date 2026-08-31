@@ -932,9 +932,18 @@ func (planner *Planner) decisionFromCausalState(
 	recordExitEconomic(decision, result, position)
 
 	if result.SelectedAction == mcts.Enter {
-		if !enterFound || !waitFound || !(enterAdvantage > 0) {
+		// The economic search already charges round-trip friction (entry and
+		// terminal exit fees and spread) inside the rollout reward, so an
+		// entry must now clear a minimum profit hurdle on top of those costs
+		// before it may execute. The hurdle scales with the sized entry
+		// notional (allocation policy), never with absolute cash, and any
+		// noise in the causal coefficients that leaves the advantage below
+		// this margin is treated as no opportunity rather than an entry.
+		minAdvantage := unitQuantity * mark * config.Planner.MinAdvantageFraction
+
+		if !enterFound || !waitFound || enterAdvantage < minAdvantage {
 			decision.Action = types.ActionNothing
-			decision.Reason = "planner: entering is not economically better than waiting"
+			decision.Reason = "planner: enter advantage does not clear minimum economic hurdle"
 			decision.Trace = economicTrace(state, result)
 			return decision
 		}

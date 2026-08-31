@@ -201,7 +201,12 @@ func TestEconomicReward(t *testing.T) {
 
 			entered, err := state.ApplyAction(Enter, nil)
 			So(err, ShouldBeNil)
-			So(entered.GetReward(), ShouldAlmostEqual, expectedEnter, 1e-9)
+
+			// Enter reaches the horizon (MaxSteps=1) still holding inventory,
+			// so the terminal reward charges both the entry leg and the exit
+			// leg: round-trip cost is -2 * notional * totalCostFraction.
+			expectedTerminalRoundTrip := -2 * (100 * 0.0015)
+			So(entered.GetReward(), ShouldAlmostEqual, expectedTerminalRoundTrip, 1e-9)
 
 			exited, err := entered.ApplyAction(Exit, nil)
 			So(err, ShouldBeNil)

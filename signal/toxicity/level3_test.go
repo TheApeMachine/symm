@@ -95,6 +95,26 @@ func TestLevel3Step(t *testing.T) {
 		})
 	})
 
+	Convey("Given a one-sided Level-3 update", t, func() {
+		entity := NewLevel3()
+
+		entity.Step(toxicityMessage("BTC/USD", time.Unix(1_700_000_000, 0), 99, 10, 101, 12))
+
+		Convey("the opposite-side touch is borrowed from the last retained touch", func() {
+			measurement := entity.Step(kraken.Level3Data{
+				Symbol:    "BTC/USD",
+				Timestamp: time.Unix(1_700_000_001, 0),
+				Bids:      []kraken.Level3Order{toxicityOrder(98, 5, time.Unix(1_700_000_001, 0))},
+			})
+
+			So(measurement, ShouldNotBeNil)
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.Metrics["best_price:bid"].Raw, ShouldEqual, 98.0)
+			So(measurement.Metrics["best_price:ask"].Raw, ShouldEqual, 101.0)
+			So(measurement.Metrics["previous_best_price:ask"].Raw, ShouldEqual, 101.0)
+		})
+	})
+
 	Convey("Given a crossed message", t, func() {
 		entity := NewLevel3()
 

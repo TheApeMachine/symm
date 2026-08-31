@@ -67,6 +67,12 @@ var defaultMarketCatalog = []MarketCoordinateSpec{
 	// Tier 4: Outcome & Response Mechanics
 	{Selector: relation.Selector{Source: "cvd", Metric: "midpoint_log_return"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
 	{Selector: relation.Selector{Source: "cvd", Metric: "flow_aligned_midpoint_return"}, Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
+
+	// Quote-surface fallback outcome: when a symbol has not printed a trade
+	// yet, cvd/midpoint_log_return has no history, so the planner falls back
+	// to the quote-driven midpoint (which ticks every observation). UnitRate
+	// matches the liquidity producer's emitted unit exactly.
+	{Selector: relation.Selector{Source: "liquidity", Metric: "midpoint"}, Unit: nmtypes.UnitRate, Timescale: nmtypes.TimescaleInstantaneous},
 }
 
 /*
@@ -286,6 +292,16 @@ func DefaultCausalSchema(epoch uint64, step time.Duration) *causal.CausalSchema 
 
 	// 4. Tier 4: Settlement Outcome
 	priceReturn := variable("cvd", "midpoint_log_return", "")
+
+	// Quote-surface fallback outcome: a symbol that has not printed a trade
+	// yet has no cvd/midpoint_log_return history, so the quote-driven
+	// midpoint is declared as a self-lagged observable the reasoner can
+	// substitute as the outcome until the executed-flow outcome exists.
+	schema.AddMarketVariable(causal.MarketVariable{
+		Variable: variable("liquidity", "midpoint", ""),
+		SelfLag:  step,
+	})
+
 	schema.AddMarketVariable(causal.MarketVariable{
 		Variable: priceReturn,
 		SelfLag:  step,

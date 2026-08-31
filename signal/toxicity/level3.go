@@ -2,6 +2,7 @@ package toxicity
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
@@ -128,11 +129,18 @@ from each Level3Data message's own visible bid/ask orders, attributes what
 happened to the previously displayed touch between two comparable
 observations, and projects one measurement. The entity owns exactly one
 Number pipeline and one projector, both built in its constructor; it retains
-no book.
+no book but does retain each symbol's last observed touch, because Kraken
+sends Level-3 as one-sided incremental updates.
 */
 type Level3 struct {
 	number    *nomagique.Number[string]
 	projector *data.Projector
+
+	touchMu    sync.Mutex
+	lastBid    map[string]float64
+	lastAsk    map[string]float64
+	lastBidQty map[string]float64
+	lastAskQty map[string]float64
 }
 
 /*
@@ -141,6 +149,10 @@ disposition computation and one projector that names the output slots.
 */
 func NewLevel3() *Level3 {
 	return &Level3{
+		lastBid:    make(map[string]float64),
+		lastAsk:    make(map[string]float64),
+		lastBidQty: make(map[string]float64),
+		lastAskQty: make(map[string]float64),
 		number: nomagique.NewNumber[string](nmtypes.Pipe(
 			// A crossed, missing, or non-positive book is rejected here.
 			logic.PositiveOrder(symbolBidPrice, symbolAskPrice),
@@ -452,19 +464,22 @@ func NewLevel3() *Level3 {
 }
 
 /*
-bestTouch derives the current touch directly from one Level3Data message's own
-visible bid/ask orders: the best price on each side and its resting quantity.
-Either side is zero when that side had no usable order.
+bestTouch derives the current touch from one Level3Data message, borrowing the
+opposite side's last retained touch when the message is one-sided (Kraken sends
+Level-3 as one-sided incremental updates). A side remains zero until it has
+been observed at least once.
 */
-func bestTouch(message kraken.Level3Data) (bidPrice, askPrice, bidQty, askQty float64) {
+func (level3 *Level3) bestTouch(message kraken.Level3Data) (bidPrice, askPrice, bidQty, askQty float64) {
+	var messageBidPrice, messageAskPrice, messageBidQty, messageAskQty float64
+
 	for _, order := range message.Bids {
 		if order.LimitPrice == nil || order.OrderQty == nil {
 			continue
 		}
 
-		if price := order.LimitPrice.Float64(); price > bidPrice {
-			bidPrice = price
-			bidQty = order.OrderQty.Float64()
+		if price := order.LimitPrice.Float64(); price > messageBidPrice {
+			messageBidPrice = price
+			messageBidQty = order.OrderQty.Float64()
 		}
 	}
 
@@ -473,11 +488,30 @@ func bestTouch(message kraken.Level3Data) (bidPrice, askPrice, bidQty, askQty fl
 			continue
 		}
 
-		if price := order.LimitPrice.Float64(); askPrice == 0 || price < askPrice {
-			askPrice = price
-			askQty = order.OrderQty.Float64()
+		if price := order.LimitPrice.Float64(); messageAskPrice == 0 || price < messageAskPrice {
+			messageAskPrice = price
+			messageAskQty = order.OrderQty.Float64()
 		}
 	}
+
+	level3.touchMu.Lock()
+
+	bidPrice, bidQty = level3.lastBid[message.Symbol], level3.lastBidQty[message.Symbol]
+	askPrice, askQty = level3.lastAsk[message.Symbol], level3.lastAskQty[message.Symbol]
+
+	if messageBidPrice > 0 {
+		bidPrice, bidQty = messageBidPrice, messageBidQty
+		level3.lastBid[message.Symbol] = messageBidPrice
+		level3.lastBidQty[message.Symbol] = messageBidQty
+	}
+
+	if messageAskPrice > 0 {
+		askPrice, askQty = messageAskPrice, messageAskQty
+		level3.lastAsk[message.Symbol] = messageAskPrice
+		level3.lastAskQty[message.Symbol] = messageAskQty
+	}
+
+	level3.touchMu.Unlock()
 
 	return bidPrice, askPrice, bidQty, askQty
 }
@@ -493,7 +527,7 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 		return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: level3 entity missing for %s", message.Symbol)}
 	}
 
-	bidPrice, askPrice, bidQty, askQty := bestTouch(message)
+	bidPrice, askPrice, bidQty, askQty := level3.bestTouch(message)
 
 	if bidPrice == 0 || askPrice == 0 {
 		return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: book touch missing for %s", message.Symbol)}

@@ -264,6 +264,23 @@ func (reasoner *Reasoner) snapshotSymbol(symbolState *reasonerSymbolState, symbo
 	outcome := schema.Outcomes[0]
 	transitions := model.TransitionModels(at)
 	outcomeTransition := transitions[outcome.Coordinate]
+
+	// A symbol that has not printed a trade yet has no cvd/midpoint_log_return
+	// history, which would otherwise brick planner evaluation for the pair.
+	// Fall back to the quote-driven liquidity midpoint outcome (tick-fed, so
+	// present for every subscribed symbol) until the executed-flow outcome
+	// exists. The fallback is the same variable identity the schema declared,
+	// so the rollout market state and transition stay consistent.
+	if outcomeTransition == nil || outcomeTransition.ObservationCount == 0 {
+		if fallback := quoteSurfaceOutcome(schema); fallback.Coordinate != outcome.Coordinate {
+			if fallbackTransition, found := transitions[fallback.Coordinate]; found &&
+				fallbackTransition != nil && fallbackTransition.ObservationCount > 0 {
+				outcome = fallback
+				outcomeTransition = fallbackTransition
+			}
+		}
+	}
+
 	market := reasoner.buildMarketState(symbol, at, model)
 	edges := reasoner.symbolInfluenceEdges(symbol)
 
@@ -300,6 +317,28 @@ func (reasoner *Reasoner) snapshotSymbol(symbolState *reasonerSymbolState, symbo
 }
 
 /*
+quoteSurfaceOutcome returns the quote-driven liquidity midpoint variable from
+the bound schema, or the zero variable when the schema does not declare it.
+It is the fallback outcome for a symbol whose executed-flow outcome has no
+history yet.
+*/
+func quoteSurfaceOutcome(schema *causal.CausalSchema) causal.VariableID {
+	if schema == nil {
+		return causal.VariableID{}
+	}
+
+	for _, marketVariable := range schema.MarketVariables {
+		coordinate := marketVariable.Variable.Coordinate
+
+		if coordinate.Source == "liquidity" && coordinate.Metric == "midpoint" {
+			return marketVariable.Variable
+		}
+	}
+
+	return causal.VariableID{}
+}
+
+/*
 activeCausalClosure finds the query-local dependency closure for the requested
 outcome: starting at the outcome, it recursively walks only active fitted parents
 (transitions with defined Relations). If any transition in this closure is
@@ -312,9 +351,12 @@ func activeCausalClosure(
 ) ([]relation.Coordinate, causal.IdentificationStatus, *relation.Coordinate, causal.IdentificationStatus, string, *causal.TransitionModel) {
 	outcomeTransition := transitions[outcome]
 
-	if outcomeTransition == nil {
+	if outcomeTransition == nil || outcomeTransition.ObservationCount == 0 {
+		// No trade (or quote) history has formed for this outcome yet: report
+		// insufficient support instead of a hard undefined gate, so the pair
+		// stays un-evaluated without being permanently bricked.
 		blockingCoordinate := outcome
-		return []relation.Coordinate{outcome}, causal.IdentificationUndefined, &blockingCoordinate, causal.IdentificationUndefined, "outcome transition missing", nil
+		return []relation.Coordinate{outcome}, causal.IdentificationInsufficientSupport, &blockingCoordinate, causal.IdentificationInsufficientSupport, "awaiting first trade/quote history", nil
 	}
 
 	if outcomeTransition.Status != causal.IdentificationIdentified {

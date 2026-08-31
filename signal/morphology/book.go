@@ -76,13 +76,21 @@ type Book struct {
 	number    *nomagique.Number[string]
 	projector *data.Projector
 
-	mu       sync.Mutex
-	previous map[string][]distribution.WeightedPoint
+	mu         sync.Mutex
+	previous   map[string][]distribution.WeightedPoint
+	lastBid    map[string]float64
+	lastAsk    map[string]float64
+	lastBidRaw map[string][]distribution.WeightedPoint
+	lastAskRaw map[string][]distribution.WeightedPoint
 }
 
 func NewBook() *Book {
 	return &Book{
-		previous: make(map[string][]distribution.WeightedPoint),
+		previous:   make(map[string][]distribution.WeightedPoint),
+		lastBid:    make(map[string]float64),
+		lastAsk:    make(map[string]float64),
+		lastBidRaw: make(map[string][]distribution.WeightedPoint),
+		lastAskRaw: make(map[string][]distribution.WeightedPoint),
 		number: nomagique.NewNumber[string](nmtypes.Pipe(
 			// The causal estimator over structural change: evaluate this step's
 			// distance against the baseline built strictly from previous steps,
@@ -118,7 +126,7 @@ func (morphology *Book) Step(message kraken.Level3Data) *data.Measurement[float6
 		return nil
 	}
 
-	bidFolded, askFolded, whole, ok := projectShape(message)
+	bidFolded, askFolded, whole, ok := morphology.projectShapeWithCache(message)
 
 	if !ok {
 		return nil
@@ -183,6 +191,130 @@ func (morphology *Book) recordChange(symbol string, current []distribution.Weigh
 }
 
 /*
+projectShapeWithCache projects one Level3Data message as projectShape does,
+but borrows each side's last observed raw orders when the message is one-sided
+(Kraken sends Level-3 as 1-sided incremental updates), re-folding the borrowed
+side against the current touch so the shape reflects the resting book assumed
+unchanged on the absent side. See projectShape.
+*/
+func (morphology *Book) projectShapeWithCache(message kraken.Level3Data) ([]distribution.WeightedPoint, []distribution.WeightedPoint, []distribution.WeightedPoint, bool) {
+	morphology.mu.Lock()
+
+	bidPrice := morphology.lastBid[message.Symbol]
+	askPrice := morphology.lastAsk[message.Symbol]
+
+	bidRaw := rawSide(message.Bids)
+
+	for _, point := range bidRaw {
+		if point.Position > bidPrice {
+			bidPrice = point.Position
+		}
+	}
+
+	askRaw := rawSide(message.Asks)
+
+	for _, point := range askRaw {
+		if askPrice == 0 || point.Position < askPrice {
+			askPrice = point.Position
+		}
+	}
+
+	if len(bidRaw) == 0 {
+		bidRaw = morphology.lastBidRaw[message.Symbol]
+	}
+
+	if len(askRaw) == 0 {
+		askRaw = morphology.lastAskRaw[message.Symbol]
+	}
+
+	if bidPrice > 0 {
+		morphology.lastBid[message.Symbol] = bidPrice
+
+		if len(bidRaw) > 0 {
+			morphology.lastBidRaw[message.Symbol] = bidRaw
+		}
+	}
+
+	if askPrice > 0 {
+		morphology.lastAsk[message.Symbol] = askPrice
+
+		if len(askRaw) > 0 {
+			morphology.lastAskRaw[message.Symbol] = askRaw
+		}
+	}
+
+	morphology.mu.Unlock()
+
+	if bidPrice == 0 || askPrice == 0 || askPrice <= bidPrice {
+		return nil, nil, nil, false
+	}
+
+	return foldRawSides(bidRaw, askRaw, bidPrice, askPrice)
+}
+
+/*
+rawSide projects a side's usable orders onto raw price/notional points, in
+order of appearance. Orders without a price, without a quantity, or with
+non-positive notional are skipped.
+*/
+func rawSide(orders []kraken.Level3Order) []distribution.WeightedPoint {
+	points := make([]distribution.WeightedPoint, 0, len(orders))
+
+	for _, order := range orders {
+		if order.LimitPrice == nil || order.OrderQty == nil {
+			continue
+		}
+
+		price := order.LimitPrice.Float64()
+		weight := price * order.OrderQty.Float64()
+
+		if weight <= 0 {
+			continue
+		}
+
+		points = append(points, distribution.WeightedPoint{Position: price, Weight: weight})
+	}
+
+	return points
+}
+
+/*
+foldRawSides folds raw price/notional points from both sides onto the bilateral
+and whole-book shape coordinates for a known uncrossed touch, reusing the same
+normalization as foldShape. ok is false when either side has no usable points.
+*/
+func foldRawSides(bidRaw []distribution.WeightedPoint, askRaw []distribution.WeightedPoint, bidPrice float64, askPrice float64) ([]distribution.WeightedPoint, []distribution.WeightedPoint, []distribution.WeightedPoint, bool) {
+	if len(bidRaw) == 0 || len(askRaw) == 0 {
+		return nil, nil, nil, false
+	}
+
+	spread := askPrice - bidPrice
+	midpoint := (bidPrice + askPrice) / 2
+
+	bidFolded := make([]distribution.WeightedPoint, 0, len(bidRaw))
+	askFolded := make([]distribution.WeightedPoint, 0, len(askRaw))
+	whole := make([]distribution.WeightedPoint, 0, len(bidRaw)+len(askRaw))
+
+	for _, point := range bidRaw {
+		signed := (point.Position - midpoint) / spread
+		bidFolded = append(bidFolded, distribution.WeightedPoint{Position: -signed, Weight: point.Weight})
+		whole = append(whole, distribution.WeightedPoint{Position: signed, Weight: point.Weight})
+	}
+
+	for _, point := range askRaw {
+		signed := (point.Position - midpoint) / spread
+		askFolded = append(askFolded, distribution.WeightedPoint{Position: signed, Weight: point.Weight})
+		whole = append(whole, distribution.WeightedPoint{Position: signed, Weight: point.Weight})
+	}
+
+	sort.Slice(bidFolded, func(left, right int) bool { return bidFolded[left].Position < bidFolded[right].Position })
+	sort.Slice(askFolded, func(left, right int) bool { return askFolded[left].Position < askFolded[right].Position })
+	sort.Slice(whole, func(left, right int) bool { return whole[left].Position < whole[right].Position })
+
+	return bidFolded, askFolded, whole, true
+}
+
+/*
 projectShape walks one Level3Data message's visible bid/ask orders into folded
 bilateral shapes and a signed whole-book shape. The bilateral shapes reflect
 both sides onto the positive distance-from-mid axis (bid r = (mid−price)/spread,
@@ -214,16 +346,20 @@ func projectShape(message kraken.Level3Data) ([]distribution.WeightedPoint, []di
 		}
 	}
 
-	if bidPrice == 0 || askPrice == 0 {
+	if bidPrice == 0 || askPrice == 0 || askPrice <= bidPrice {
 		return nil, nil, nil, false
 	}
 
+	return foldShape(message, bidPrice, askPrice)
+}
+
+/*
+foldShape projects one message's visible orders onto the folded bilateral and
+signed whole-book shape coordinates for a known uncrossed touch. It is shared
+by projectShape and projectShapeWithCache; ok is false on an empty side.
+*/
+func foldShape(message kraken.Level3Data, bidPrice float64, askPrice float64) ([]distribution.WeightedPoint, []distribution.WeightedPoint, []distribution.WeightedPoint, bool) {
 	spread := askPrice - bidPrice
-
-	if spread <= 0 {
-		return nil, nil, nil, false
-	}
-
 	midpoint := (bidPrice + askPrice) / 2
 
 	bidFolded := make([]distribution.WeightedPoint, 0, len(message.Bids))

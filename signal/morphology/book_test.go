@@ -257,6 +257,26 @@ func TestBookStep(t *testing.T) {
 		})
 	})
 
+	Convey("Given a one-sided Level-3 update", t, func() {
+		entity := NewBook()
+
+		entity.Step(morphMessage("BTC/USD", now,
+			[]kraken.Level3Order{morphOrder(98, 2, now)},
+			[]kraken.Level3Order{morphOrder(101, 2, now)},
+		))
+
+		Convey("the opposite-side touch is borrowed from the last retained touch", func() {
+			measurement := entity.Step(morphMessage("BTC/USD", later,
+				[]kraken.Level3Order{morphOrder(99, 2, later)},
+				nil,
+			))
+
+			So(measurement, ShouldNotBeNil)
+			So(measurement.Err, ShouldBeNil)
+			So(morphMetric(measurement, "book_shape_distance"), ShouldBeGreaterThanOrEqualTo, 0)
+		})
+	})
+
 	Convey("Given a crossed message", t, func() {
 		message := morphMessage("BTC/USD", now,
 			[]kraken.Level3Order{morphOrder(101, 1, now)},

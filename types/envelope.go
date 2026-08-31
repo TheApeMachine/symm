@@ -1018,10 +1018,11 @@ func (envelope *Envelope) Encode() *telemetry.EnvelopeStateT {
 }
 
 /*
-encodeBase builds the lean control/state projection of the Envelope: every
-ordinary field crosses over, but the heavy Manifold, Resonance, and Boundaries
-encoders are deliberately NOT invoked. Both Encode (full) and EncodeWebsocket
-(observer) share this projection so their light fields can never drift.
+encodeBase builds the shared control/state projection of the Envelope: every
+ordinary field crosses over, plus Resonance and Boundaries, which the dashboard
+reads from the main websocket. Only the heavy Manifold encoder is withheld.
+Both Encode (full) and EncodeWebsocket (observer) share this projection so
+their fields cannot drift.
 */
 func (envelope *Envelope) encodeBase() *telemetry.EnvelopeStateT {
 	return &telemetry.EnvelopeStateT{
@@ -1058,6 +1059,12 @@ func (envelope *Envelope) encodeBase() *telemetry.EnvelopeStateT {
 		Perspectives:      encodePerspectives(envelope.Perspectives),
 		Equity:            encodeEquity(envelope.Equity),
 		Positions:         encodePositions(envelope.Positions),
+
+		// The dashboard reads Predictive Coding (Resonance) and Diagnostics
+		// (Boundaries) from the main /ws socket, so they cross with the lean
+		// projection here rather than only via their WebRTC channels.
+		Resonance:  encodeResonanceArtifact(envelope.Resonance),
+		Boundaries: encodeBoundaries(envelope.Boundaries),
 	}
 }
 
@@ -1153,10 +1160,11 @@ func (envelope *Envelope) EncodeBytes() []byte {
 
 /*
 EncodeWebsocket packs the envelope's lean websocket mirror directly, never
-calling the heavy Manifold/Resonance/Boundaries encoders. Those ride their own
-WebRTC channels, so the dashboard socket carries only the latency-relevant
-state and none of the multi-megabyte volumetric fields. It shares the light-
-field projection with Encode so the two cannot drift.
+calling the heavy Manifold encoder. Manifold rides its own WebRTC channel, so
+the dashboard socket carries only the latency-relevant state and none of the
+multi-megabyte volumetric fields, while Resonance and Boundaries cross with the
+shared projection (the dashboard reads them from /ws). It shares that projection
+with Encode so the two cannot drift.
 */
 func (envelope *Envelope) EncodeWebsocket() []byte {
 	if envelope == nil {

@@ -36,3 +36,25 @@ func semanticCore(
 		{categorySolver},
 	}
 }
+
+/*
+semanticCoreLight returns the shared semantic state stages without the
+Influence Graph solver. It is mounted on the trade, level3, and futures
+workloads: those streams produce measurements at market-event frequency, and
+running the graph's OLS lag sweeps (~35 candidate pairs × up to 30 lags)
+directly in their consumer loop stalls the Disruptor ring. Their measurements
+still reach the shared coordinate store through the ticker workload's graph
+pass — the same shared *graph.Solver instance — on the ticker cadence, where
+relation fitting and MCTS belong. Advisors and the category solver stay mounted
+so the composed per-symbol state and evidence still advance in stream order.
+*/
+func semanticCoreLight(
+	prefix string,
+	advisors advisorNode,
+	categorySolver *category.Solver,
+) [][]nmruntime.Node[*types.Envelope] {
+	return [][]nmruntime.Node[*types.Envelope]{
+		{advisors},
+		{categorySolver},
+	}
+}

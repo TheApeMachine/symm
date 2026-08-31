@@ -792,11 +792,12 @@ func TestStoplossObserveExecutable(t *testing.T) {
 		surface.ExecutableQty = decimal.NewFromFloat64(24000)
 		surface.ExecutableVWAP = nil
 
-		Convey("insufficient complete depth triggers execution-risk invalidation", func() {
+		Convey("insufficient complete depth does not dump the position; it keeps protecting at the best bid", func() {
 			stoploss.ObserveExecutable(surface)
 
-			So(stoploss.Status, ShouldEqual, TRIGGERED)
-			So(stoploss.TriggerReason, ShouldEqual, TriggerRegimeInvalidated)
+			So(stoploss.Status, ShouldEqual, ARMED)
+			So(stoploss.TriggerReason, ShouldEqual, "")
+			So(stoploss.Mark.Cmp(decimal.NewFromFloat64(110)), ShouldEqual, 0)
 		})
 	})
 

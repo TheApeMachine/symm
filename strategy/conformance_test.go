@@ -343,8 +343,11 @@ func TestConformanceEconomicReward(t *testing.T) {
 			)
 
 			// Exact reward calculation: with no market move, Enter pays the
-			// per-side crossing cost and Wait pays nothing.
-			exactEnter := -unitQuantity * price * costs.TotalFraction()
+			// per-side crossing cost and Wait pays nothing. Enter reaches the
+			// horizon (MaxSteps=1) still holding inventory, so the terminal
+			// reward additionally charges the exit leg — the round-trip cost
+			// is two sides, never one.
+			exactEnter := -2 * unitQuantity * price * costs.TotalFraction()
 			exactWait := 0.0
 
 			entered, err := economic.ApplyAction(mcts.Enter, nil)

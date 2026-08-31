@@ -65,6 +65,15 @@ type PlannerConfig struct {
 	// same value feeds both the economic search and the execution cost
 	// assumption, so the two never drift apart.
 	SlippageFraction float64
+	// MinAdvantageFraction is the minimum economic advantage an entry must
+	// clear over waiting before it may execute, as a fraction of the sized
+	// entry notional. It is an explicit round-trip hurdle on top of the
+	// fees and spread already charged inside the economic search: an entry
+	// whose modeled edge cannot cover these costs plus this profit hurdle
+	// is noise, not an opportunity. It is expressed as a fraction of the
+	// allocatable notional so the hurdle scales with allocation, not with
+	// absolute cash.
+	MinAdvantageFraction float64
 	// RelationInterval bounds how often per-symbol Relation estimates refresh
 	// (infrastructure capacity, not a statistical horizon).
 	RelationInterval time.Duration
@@ -97,6 +106,7 @@ func NewPlannerConfig() *PlannerConfig {
 	viper.SetDefault("trading.mcts.search_horizon", 5)
 	viper.SetDefault("trading.mcts.max_position_units", 1.0)
 	viper.SetDefault("trading.mcts.slippage_fraction", 0.0)
+	viper.SetDefault("trading.mcts.min_advantage_fraction", 0.0010)
 	viper.SetDefault("trading.relation.interval_seconds", 1)
 	viper.SetDefault("trading.relation.max_lag_seconds", 30)
 	viper.SetDefault("trading.relation.measurement_step_seconds", 1)
@@ -120,6 +130,7 @@ func NewPlannerConfig() *PlannerConfig {
 		SearchHorizon:         viper.GetInt("trading.mcts.search_horizon"),
 		MaxPositionUnits:      viper.GetFloat64("trading.mcts.max_position_units"),
 		SlippageFraction:      viper.GetFloat64("trading.mcts.slippage_fraction"),
+		MinAdvantageFraction:  viper.GetFloat64("trading.mcts.min_advantage_fraction"),
 		RelationInterval:      time.Duration(viper.GetInt("trading.relation.interval_seconds")) * time.Second,
 		MeasurementStep:       time.Duration(viper.GetInt("trading.relation.measurement_step_seconds")) * time.Second,
 		RelationMaxLag:        time.Duration(viper.GetInt("trading.relation.max_lag_seconds")) * time.Second,

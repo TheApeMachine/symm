@@ -284,12 +284,13 @@ witness is historical evidence: what actually ran, not what replay would produce
 */
 type witnessNode struct {
 	writer         *store.Writer
+	asyncWriter    *store.AsyncWitnessWriter
 	categorySolver *category.Solver
 	graphSolver    *graph.Solver
 }
 
 func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
-	if envelope == nil || node.writer == nil {
+	if envelope == nil || (node.writer == nil && node.asyncWriter == nil) {
 		return envelope
 	}
 
@@ -306,7 +307,12 @@ func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
 	// exact system state at this Observe boundary — so inspection can scrub to
 	// any capture and see precisely what the running binary produced, joined back
 	// to its raw frame by the capture provenance carried in the state itself.
-	_ = node.writer.WriteWitness(hindsight.ArtifactWitness{
+	//
+	// The payload encoding stays on the producing thread (it reads the in-flight
+	// envelope, which is not safe to touch after Step returns); the persistence
+	// itself is offloaded. With an async writer the bytes are handed to a
+	// background worker and never block the Disruptor consumer on SQLite writes.
+	stateWitness := hindsight.ArtifactWitness{
 		Envelope: ref,
 		Boundary: "observe",
 		Artifact: hindsight.ArtifactID{
@@ -315,7 +321,9 @@ func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
 		},
 		ImmediateParents: nil,
 		Payload:          envelope.EncodeBytes(),
-	})
+	}
+
+	node.write(stateWitness)
 
 	for _, category := range envelope.Categories {
 		node.record(
@@ -399,7 +407,7 @@ func (node witnessNode) recordDecision(ref hindsight.EnvelopeRef, decision *type
 		semanticParents = append(semanticParents, decision.CausalIdentification)
 	}
 
-	_ = node.writer.WriteWitness(hindsight.ArtifactWitness{
+	witness := hindsight.ArtifactWitness{
 		Envelope: ref,
 		Boundary: "after-planner",
 		Artifact: hindsight.ArtifactID{
@@ -410,7 +418,9 @@ func (node witnessNode) recordDecision(ref hindsight.EnvelopeRef, decision *type
 		ComponentStateVersion: node.graphVersion(),
 		ImmediateParents:      []hindsight.EnvelopeRef{ref},
 		SemanticParents:       semanticParents,
-	})
+	}
+
+	node.write(witness)
 }
 
 func (node witnessNode) categoryVersion() uint64 {
@@ -440,7 +450,7 @@ func (node witnessNode) record(
 		return
 	}
 
-	_ = node.writer.WriteWitness(hindsight.ArtifactWitness{
+	node.write(hindsight.ArtifactWitness{
 		Envelope: ref,
 		Boundary: boundary,
 		Artifact: hindsight.ArtifactID{
@@ -452,6 +462,22 @@ func (node witnessNode) record(
 		ImmediateParents:      parents,
 		Payload:               nil,
 	})
+}
+
+/*
+write routes one artifact witness to either the asynchronous background worker
+(live hot path) or the synchronous transport writer (tests and any caller that
+did not wire an async writer). It never blocks the producing thread when the
+async path is active: backpressure is the async writer's bounded queue, whose
+overflow policy drops with observability rather than stalling the pipeline.
+*/
+func (node witnessNode) write(witness hindsight.ArtifactWitness) {
+	if node.asyncWriter != nil {
+		node.asyncWriter.Enqueue(witness)
+		return
+	}
+
+	_ = node.writer.WriteWitness(witness)
 }
 
 func (node witnessNode) StepBacklog(envelope *types.Envelope, backlog int64) *types.Envelope {
@@ -612,6 +638,18 @@ var (
 					err,
 				))
 			}
+
+			// Witness persistence runs on its own worker: the Disruptor consumer
+			// thread enqueues witnesses and never waits on SQLite writes. The
+			// bounded queue drops with observability under sustained overflow
+			// rather than stalling frame processing.
+			asyncWitness := store.NewAsyncWitnessWriter(
+				cmd.Context(),
+				storageEngine,
+				4096,
+				50*time.Millisecond,
+			)
+			defer asyncWitness.Close()
 
 			publicSession := websocket.New(
 				cmd.Context(),
@@ -849,7 +887,7 @@ var (
 							{strategyNode{planner: planner}},
 							{tickNode{thesis: thesis, desk: desk, planner: planner}},
 							{system.NewDiagnostic("ticker.trade")},
-							{witnessNode{writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
+							{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
 							{hub},
 							{system.NewDiagnostic("ticker.hub")},
 						}...,
@@ -871,9 +909,9 @@ var (
 						{system.NewTraced("trade.manifold", manifoldSolver)},
 					},
 					append(
-						semanticCore("trade", advisors, graphSolver, categorySolver),
+						semanticCoreLight("trade", advisors, categorySolver),
 						[][]nmruntime.Node[*types.Envelope]{
-							{witnessNode{writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
+							{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
 							{hub},
 							{system.NewDiagnostic("trade.hub")},
 						}...,
@@ -898,9 +936,9 @@ var (
 						},
 					},
 					append(
-						semanticCore("level3", advisors, graphSolver, categorySolver),
+						semanticCoreLight("level3", advisors, categorySolver),
 						[][]nmruntime.Node[*types.Envelope]{
-							{witnessNode{writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
+							{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
 							{hub},
 							{system.NewDiagnostic("level3.hub")},
 						}...,
@@ -917,7 +955,7 @@ var (
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("executions.ingress")},
 					{executionNode{desk: desk}},
-					{witnessNode{writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
+					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
 					{hub},
 					{system.NewDiagnostic("executions.hub")},
 				},
@@ -937,9 +975,9 @@ var (
 						{system.NewTraced("futures.ticker.derivatives", derivatives.NewSignal(cmd.Context()))},
 					},
 					append(
-						semanticCore("futures.ticker", advisors, graphSolver, categorySolver),
+						semanticCoreLight("futures.ticker", advisors, categorySolver),
 						[][]nmruntime.Node[*types.Envelope]{
-							{witnessNode{writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
+							{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
 							{hub},
 							{system.NewDiagnostic("futures.ticker.hub")},
 						}...,
@@ -955,9 +993,9 @@ var (
 						{system.NewTraced("futures.trade.derivatives", derivatives.NewSignal(cmd.Context()))},
 					},
 					append(
-						semanticCore("futures.trade", advisors, graphSolver, categorySolver),
+						semanticCoreLight("futures.trade", advisors, categorySolver),
 						[][]nmruntime.Node[*types.Envelope]{
-							{witnessNode{writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
+							{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
 							{hub},
 							{system.NewDiagnostic("futures.trade.hub")},
 						}...,

@@ -71,7 +71,7 @@ func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
 }
 
 func (signal *Signal) StepLevel3(message kraken.Level3Data) *data.Measurement[float64] {
-	bidPrice, askPrice, bidQty, askQty := bestTouch(message)
+	bidPrice, askPrice, bidQty, askQty := signal.level3.bestTouch(message)
 
 	if bidPrice > 0 && askPrice > 0 {
 		signal.touches.Store(message.Symbol, touch{bidPrice, askPrice, bidQty, askQty})

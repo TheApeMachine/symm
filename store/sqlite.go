@@ -576,9 +576,22 @@ func (store *SQLite) WriteManifest(manifest hindsight.EnvelopeManifest) error {
 /*
 WriteWitness persists one ArtifactWitness — the semantic artifact the running
 binary actually produced at a Workspace boundary, with its exact parent and
-resident-state provenance.
+resident-state provenance. The marshal and insert live here so a single-writer
+caller gets one durable witness per call.
 */
 func (store *SQLite) WriteWitness(witness hindsight.ArtifactWitness) error {
+	return store.WriteWitnesses([]hindsight.ArtifactWitness{witness})
+}
+
+/*
+WriteWitnesses persists a batch of ArtifactWitness records in one transaction.
+Batching is the throughput-preserving persistence shape: a background worker
+accumulates witnesses off the hot path and commits them together instead of
+locking the database with one INSERT per frame. It is not part of the
+Repository interface; repositories that implement it opt into batched writes,
+and the async writer falls back to WriteWitness otherwise.
+*/
+func (store *SQLite) WriteWitnesses(witnesses []hindsight.ArtifactWitness) error {
 	if store == nil || store.database == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -587,41 +600,69 @@ func (store *SQLite) WriteWitness(witness hindsight.ArtifactWitness) error {
 		))
 	}
 
-	if !witness.Envelope.Origin.Valid() {
+	if len(witnesses) == 0 {
+		return nil
+	}
+
+	transaction, err := store.database.Begin()
+
+	if err != nil {
 		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"store: artifact witness requires a valid origin",
-			nil,
+			errnie.IO,
+			"store: begin witness batch transaction failed",
+			err,
 		))
 	}
 
-	ref, err := hindsight.MarshalEnvelopeRef(witness.Envelope)
+	// Rollback is a no-op after a successful Commit; the deferred call only
+	// runs when the loop returns an error, which is the intended semantics.
+	defer func() { _ = transaction.Rollback() }()
 
-	if err != nil {
-		return err
+	for _, witness := range witnesses {
+		if !witness.Envelope.Origin.Valid() {
+			return errnie.Error(errnie.Err(
+				errnie.Validation,
+				"store: artifact witness requires a valid origin",
+				nil,
+			))
+		}
+
+		ref, marshalErr := hindsight.MarshalEnvelopeRef(witness.Envelope)
+
+		if marshalErr != nil {
+			return marshalErr
+		}
+
+		payload, marshalErr := hindsight.MarshalWitness(witness)
+
+		if marshalErr != nil {
+			return marshalErr
+		}
+
+		if _, execErr := transaction.Exec(
+			`INSERT INTO witnesses
+			 (envelope_ref, origin_run, origin_seq, artifact_kind, artifact_id, boundary, witness)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			ref,
+			string(witness.Envelope.Origin.Run),
+			uint64(witness.Envelope.Origin.Sequence),
+			witness.Artifact.Kind,
+			witness.Artifact.Identity,
+			witness.Boundary,
+			payload,
+		); execErr != nil {
+			return errnie.Error(errnie.Err(
+				errnie.IO,
+				fmt.Sprintf("store: write artifact witness failed [%s]", execErr.Error()),
+				execErr,
+			))
+		}
 	}
 
-	payload, err := hindsight.MarshalWitness(witness)
-
-	if err != nil {
-		return err
-	}
-
-	if _, err := store.database.Exec(
-		`INSERT INTO witnesses
-		 (envelope_ref, origin_run, origin_seq, artifact_kind, artifact_id, boundary, witness)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		ref,
-		string(witness.Envelope.Origin.Run),
-		uint64(witness.Envelope.Origin.Sequence),
-		witness.Artifact.Kind,
-		witness.Artifact.Identity,
-		witness.Boundary,
-		payload,
-	); err != nil {
+	if err := transaction.Commit(); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
-			fmt.Sprintf("store: write artifact witness failed [%s]", err.Error()),
+			"store: commit witness batch transaction failed",
 			err,
 		))
 	}

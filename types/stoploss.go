@@ -364,12 +364,15 @@ busy book that emits many frames must not consume the forecast horizon merely
 because more frames arrived.
 
 The mark is the full-lot liquidation-equivalent price. The surface must be
-book-complete and fully executable; otherwise the position cannot truthfully
-price its complete SellableQty and the protection path claims an
-execution-regime invalidation. A locked/protected position whose floor loses
-quantity coverage (FloorCoverageQty < SellableQty) is likewise invalidated
-immediately: the floor has already become economically unrealizable for the
-complete lot even if BestBid still prints above it.
+book-complete; otherwise the position cannot truthfully price its complete
+SellableQty and the protection path claims an execution-regime invalidation.
+A book whose visible depth temporarily cannot cover the whole lot is ordinary
+noise, not an integrity failure: the stop keeps protecting at the best bid
+rather than dumping the position, and only a crossed/unusable book invalidates
+the regime. A locked/protected position whose floor loses quantity coverage
+(FloorCoverageQty < SellableQty) is invalidated immediately: the floor has
+already become economically unrealizable for the complete lot even if BestBid
+still prints above it.
 */
 func (stoploss *Stoploss) ObserveExecutable(surface *ExecutionSurface) {
 	if stoploss == nil || surface == nil || stoploss.Status == TRIGGERED {
@@ -392,9 +395,18 @@ func (stoploss *Stoploss) ObserveExecutable(surface *ExecutionSurface) {
 
 	stoploss.BookObserved = true
 
+	// A temporary dip of the visible top-level depth below the full
+	// SellableQty is ordinary book noise, not an execution-regime failure: a
+	// healthy position must not be dumped within milliseconds of entry merely
+	// because the feed's bounded depth layers cannot currently cover the
+	// whole lot. Keep protecting at the best bid when the full-lot VWAP is
+	// not computable; only a crossed/unusable book invalidates the regime.
 	if !surface.FullyExecutable || surface.ExecutableVWAP == nil ||
 		surface.ExecutableVWAP.Sign() <= 0 {
-		stoploss.triggerRegimeInvalidated(surface)
+		if surface.BestBid != nil && surface.BestBid.Sign() > 0 {
+			stoploss.observeMark(surface.BestBid)
+		}
+
 		return
 	}
 
