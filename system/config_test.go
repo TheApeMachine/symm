@@ -28,47 +28,38 @@ func TestNewConfig(t *testing.T) {
 	})
 }
 
-func TestSnapshot(t *testing.T) {
+func TestPlannerPolicy(t *testing.T) {
 	Convey("Given a populated system configuration", t, func() {
 		config := NewConfig()
-		snapshot := config.Snapshot()
+		policy, err := config.PlannerPolicy()
 
-		Convey("It should return an independent value graph", func() {
-			So(snapshot, ShouldNotBeNil)
-			So(snapshot == config, ShouldBeFalse)
-			So(snapshot.Resonance == config.Resonance, ShouldBeFalse)
-			So(snapshot.Risk == config.Risk, ShouldBeFalse)
-			So(snapshot.Regulator == config.Regulator, ShouldBeFalse)
-			So(snapshot.Planner == config.Planner, ShouldBeFalse)
-			So(snapshot.Planner, ShouldResemble, config.Planner)
+		Convey("It should return the planner policy by value", func() {
+			So(err, ShouldBeNil)
+			So(policy, ShouldResemble, *config.Planner)
 		})
 	})
 }
 
-func TestPlannerMinimumConfidence(t *testing.T) {
-	Convey("Given a configured planner admission boundary", t, func() {
+func TestCognitionSwitchConfidence(t *testing.T) {
+	Convey("Given a configured cognition switch boundary", t, func() {
 		config := NewConfig()
-		confidence, err := config.PlannerMinimumConfidence()
+		confidence, err := config.CognitionSwitchConfidence()
 
-		Convey("It should read the scalar without materializing a snapshot", func() {
+		Convey("It should read the scalar without allocating a configuration graph", func() {
 			So(err, ShouldBeNil)
-			So(confidence, ShouldEqual, config.Planner.MinimumConfidence)
+			So(confidence, ShouldEqual, config.Planner.CognitionSwitchConfidence)
 		})
 	})
 }
 
-func TestApplyRegulation(t *testing.T) {
-	Convey("Given a regulator-owned planner update", t, func() {
+func TestOptimizationConfidence(t *testing.T) {
+	Convey("Given a configured passage confidence", t, func() {
 		config := NewConfig()
-		planner := *config.Planner
-		planner.MCTSIterations = 1
+		confidence, err := config.OptimizationConfidence()
 
-		err := config.ApplyRegulation(planner)
-		snapshot := config.Snapshot()
-
-		Convey("It should publish the settings in one configuration generation", func() {
+		Convey("It should return the regulator policy directly", func() {
 			So(err, ShouldBeNil)
-			So(snapshot.Planner.MCTSIterations, ShouldEqual, planner.MCTSIterations)
+			So(confidence, ShouldEqual, config.Regulator.OptimizationConfidence)
 		})
 	})
 }

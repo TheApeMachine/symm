@@ -1,6 +1,7 @@
 package depthflow
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -15,10 +16,35 @@ import (
 level3Order builds one kraken.Level3Order fixture with a non-nil price/qty.
 Use level3OrderNilPrice/level3OrderNilQty for the malformed variants.
 */
+var level3OrderSeq int
+
+/*
+level3Order builds one order fixture with a UNIQUE identity. The resident book
+is keyed by OrderID, so fixtures sharing one id would alias to a single order
+and silently overwrite each other.
+*/
 func level3Order(event string, price float64, qty float64, at time.Time) kraken.Level3Order {
+	level3OrderSeq++
+
 	return kraken.Level3Order{
 		Event:      event,
-		OrderID:    "order",
+		OrderID:    fmt.Sprintf("order-%d", level3OrderSeq),
+		LimitPrice: decimal.NewFromFloat64(price),
+		OrderQty:   decimal.NewFromFloat64(qty),
+		Timestamp:  at,
+	}
+}
+
+/*
+level3OrderID builds an order fixture with an explicit identity, so a delete
+can name the very order an earlier step added. The resident book removes an
+order's OWN resting notional, so a delete naming an unknown id correctly
+removes nothing.
+*/
+func level3OrderID(id string, event string, price float64, qty float64, at time.Time) kraken.Level3Order {
+	return kraken.Level3Order{
+		Event:      event,
+		OrderID:    id,
 		LimitPrice: decimal.NewFromFloat64(price),
 		OrderQty:   decimal.NewFromFloat64(qty),
 		Timestamp:  at,
@@ -26,9 +52,11 @@ func level3Order(event string, price float64, qty float64, at time.Time) kraken.
 }
 
 func level3OrderNilPrice(event string, qty float64, at time.Time) kraken.Level3Order {
+	level3OrderSeq++
+
 	return kraken.Level3Order{
 		Event:      event,
-		OrderID:    "order",
+		OrderID:    fmt.Sprintf("order-%d", level3OrderSeq),
 		LimitPrice: nil,
 		OrderQty:   decimal.NewFromFloat64(qty),
 		Timestamp:  at,
@@ -36,9 +64,11 @@ func level3OrderNilPrice(event string, qty float64, at time.Time) kraken.Level3O
 }
 
 func level3OrderNilQty(event string, price float64, at time.Time) kraken.Level3Order {
+	level3OrderSeq++
+
 	return kraken.Level3Order{
 		Event:      event,
-		OrderID:    "order",
+		OrderID:    fmt.Sprintf("order-%d", level3OrderSeq),
 		LimitPrice: decimal.NewFromFloat64(price),
 		OrderQty:   nil,
 		Timestamp:  at,
@@ -55,6 +85,31 @@ func level3Message(symbol string, at time.Time, bids, asks []kraken.Level3Order)
 		Bids:      bids,
 		Asks:      asks,
 	}
+}
+
+/*
+seededLevel3 returns an entity whose book has been established by an empty
+snapshot. Kraken opens every L3 subscription with a snapshot frame, and the
+resident book refuses to report depth before one arrives -- an increment alone
+describes a book the process never saw.
+*/
+func seededLevel3() *Level3 {
+	entity := NewLevel3()
+	entity.Step(kraken.Level3Data{
+		Symbol:    "BTC/USD",
+		Type:      "snapshot",
+		Timestamp: baseTime,
+	})
+
+	for _, symbol := range []string{"ETH/USD", "SOL/USD", "XRP/USD", "ADA/USD"} {
+		entity.Step(kraken.Level3Data{
+			Symbol:    symbol,
+			Type:      "snapshot",
+			Timestamp: baseTime,
+		})
+	}
+
+	return entity
 }
 
 func metric(measurement *data.Measurement[float64], name string) float64 {
@@ -178,8 +233,8 @@ func TestLevel3Step_Valid(t *testing.T) {
 				{
 					name: "seed both sides",
 					message: level3Message("ETH/USD", baseTime,
-						[]kraken.Level3Order{level3Order("add", 50, 10, baseTime)},
-						[]kraken.Level3Order{level3Order("add", 51, 10, baseTime)},
+						[]kraken.Level3Order{level3OrderID("eth-bid", "add", 50, 10, baseTime)},
+						[]kraken.Level3Order{level3OrderID("eth-ask", "add", 51, 10, baseTime)},
 					),
 					assert: func(measurement *data.Measurement[float64]) {
 						So(measurement.Err, ShouldBeNil)
@@ -188,7 +243,7 @@ func TestLevel3Step_Valid(t *testing.T) {
 				{
 					name: "delete the bid, no ask side in this message",
 					message: level3Message("ETH/USD", nextTime,
-						[]kraken.Level3Order{level3Order("delete", 50, 10, nextTime)},
+						[]kraken.Level3Order{level3OrderID("eth-bid", "delete", 50, 10, nextTime)},
 						nil,
 					),
 					assert: func(measurement *data.Measurement[float64]) {
@@ -210,7 +265,7 @@ func TestLevel3Step_Valid(t *testing.T) {
 					name: "two bids, one ask",
 					message: level3Message("SOL/USD", baseTime,
 						[]kraken.Level3Order{
-							level3Order("add", 20, 1, baseTime),
+							level3OrderID("sol-bid-20", "add", 20, 1, baseTime),
 							level3Order("add", 19, 1, baseTime),
 						},
 						[]kraken.Level3Order{level3Order("add", 21, 1, baseTime)},
@@ -224,7 +279,7 @@ func TestLevel3Step_Valid(t *testing.T) {
 					name: "a higher-priced delete must not win over a lower-priced add",
 					message: level3Message("SOL/USD", nextTime,
 						[]kraken.Level3Order{
-							level3Order("delete", 25, 1, nextTime),
+							level3OrderID("sol-bid-20", "delete", 20, 1, nextTime),
 							level3Order("add", 18, 1, nextTime),
 						},
 						[]kraken.Level3Order{level3Order("add", 22, 1, nextTime)},
@@ -233,10 +288,11 @@ func TestLevel3Step_Valid(t *testing.T) {
 						So(measurement, ShouldNotBeNil)
 						So(measurement.Err, ShouldBeNil)
 
-						// This message's bid delta is +18 (add) - 25 (delete) = -7,
-						// confirming the delete's notional was folded in as a
-						// removal rather than winning touch price.
-						So(metric(measurement, "net_displayed_flow:bid"), ShouldAlmostEqual, -7.0, 1e-9)
+						// +18 (new order) - 20 (the resident order this delete
+						// names) = -2. The removal is the DELETED ORDER's own
+						// resting notional, not whatever the delete message
+						// happened to quote.
+						So(metric(measurement, "net_displayed_flow:bid"), ShouldAlmostEqual, -2.0, 1e-9)
 					},
 				},
 			},
@@ -278,7 +334,7 @@ func TestLevel3Step_Valid(t *testing.T) {
 	Convey("Given well-formed Level3 messages", t, func() {
 		for _, testCase := range validCases {
 			Convey(testCase.name, func() {
-				entity := NewLevel3()
+				entity := seededLevel3()
 
 				for _, step := range testCase.steps {
 					measurement := entity.Step(step.message)
@@ -332,10 +388,30 @@ func TestLevel3Step_Adversarial(t *testing.T) {
 			},
 		},
 		{
-			name: "both sides empty yields no measurement",
+			name:    "both sides empty yields no measurement",
 			message: level3Message("BTC/USD", baseTime, nil, nil),
 			assert: func(measurement *data.Measurement[float64]) {
 				So(measurement, ShouldBeNil)
+			},
+		},
+		{
+			// A two-sided touch price does not imply a two-sided touch
+			// notional: an add/change order can quote a level at zero
+			// quantity, leaving touch_notional at exactly zero. Dividing by
+			// it set Frame.Err, and Projector.Project then discarded the
+			// whole measurement -- including the notional accumulation that
+			// had nothing to do with the touch.
+			name: "zero-quantity touch on both sides leaves touch_imbalance absent, not an error",
+			message: level3Message("BTC/USD", baseTime,
+				[]kraken.Level3Order{level3Order("add", 99, 0, baseTime)},
+				[]kraken.Level3Order{level3Order("add", 101, 0, baseTime)},
+			),
+			assert: func(measurement *data.Measurement[float64]) {
+				So(measurement, ShouldNotBeNil)
+				So(measurement.Err, ShouldBeNil)
+
+				So(hasMetric(measurement, "touch_imbalance"), ShouldBeFalse)
+				So(hasMetric(measurement, "imbalance_resolution_gap"), ShouldBeFalse)
 			},
 		},
 		{
@@ -383,7 +459,7 @@ func TestLevel3Step_Adversarial(t *testing.T) {
 			},
 		},
 		{
-			name: "a lone delete on both sides accumulates but reports no touch (nothing was added)",
+			name: "a lone delete of orders the book never held removes nothing",
 			message: level3Message("BTC/USD", baseTime,
 				[]kraken.Level3Order{level3Order("delete", 99, 2, baseTime)},
 				[]kraken.Level3Order{level3Order("delete", 101, 2, baseTime)},
@@ -392,11 +468,13 @@ func TestLevel3Step_Adversarial(t *testing.T) {
 				So(measurement, ShouldNotBeNil)
 				So(measurement.Err, ShouldBeNil)
 
-				// A delete-only message has no positive touch price on either
-				// side (nothing was added), so touch-dependent metrics are
-				// absent, but the (negative) accumulation still lands.
+				// The book removes an order's OWN resting notional, so a
+				// delete naming an order it never held removes nothing. The
+				// old signed-delta sum instead subtracted the quoted notional
+				// and drove book depth negative out of thin air.
 				So(hasMetric(measurement, "touch_imbalance"), ShouldBeFalse)
-				So(metric(measurement, "net_displayed_flow:bid"), ShouldAlmostEqual, -198.0, 1e-9)
+				So(metric(measurement, "net_displayed_flow:bid"), ShouldAlmostEqual, 0.0, 1e-9)
+				So(metric(measurement, "book_notional:bid"), ShouldAlmostEqual, 0.0, 1e-9)
 			},
 		},
 	}
@@ -410,14 +488,14 @@ func TestLevel3Step_Adversarial(t *testing.T) {
 				// real venue stream is a sequence, never one message in a
 				// vacuum), and this entity is kept separate from the one below
 				// so its extra call never perturbs the assertion.
-				panicEntity := NewLevel3()
+				panicEntity := seededLevel3()
 
 				So(func() {
 					panicEntity.Step(testCase.message)
 					panicEntity.Step(testCase.message)
 				}, ShouldNotPanic)
 
-				entity := NewLevel3()
+				entity := seededLevel3()
 				measurement := entity.Step(testCase.message)
 				testCase.assert(measurement)
 			})
@@ -425,7 +503,7 @@ func TestLevel3Step_Adversarial(t *testing.T) {
 	})
 
 	Convey("A rejected message never corrupts committed state for the messages around it", t, func() {
-		entity := NewLevel3()
+		entity := seededLevel3()
 
 		good := entity.Step(level3Message("BTC/USD", baseTime,
 			[]kraken.Level3Order{level3Order("add", 99, 2, baseTime)},
@@ -458,7 +536,7 @@ BenchmarkLevel3Step measures the steady-state cost and allocation count of one
 Step against a realistic ten-level message, once warm.
 */
 func BenchmarkLevel3Step(b *testing.B) {
-	entity := NewLevel3()
+	entity := seededLevel3()
 
 	bids := make([]kraken.Level3Order, 0, 10)
 	asks := make([]kraken.Level3Order, 0, 10)
@@ -487,7 +565,7 @@ BenchmarkLevel3Step_ManyOrders measures Step's cost scaling with message size,
 at a depth well beyond what one venue update ordinarily carries.
 */
 func BenchmarkLevel3Step_ManyOrders(b *testing.B) {
-	entity := NewLevel3()
+	entity := seededLevel3()
 
 	const depth = 500
 
@@ -508,4 +586,38 @@ func BenchmarkLevel3Step_ManyOrders(b *testing.B) {
 	for b.Loop() {
 		entity.Step(message)
 	}
+}
+
+/*
+TestLevel3Step_SameTimestampIncrements pins the production failure. Kraken
+batches L3 updates within a single clock tick, so consecutive increments
+routinely carry an identical timestamp. Every velocity chain then divided its
+delta by an elapsed interval of exactly zero and failed the whole frame -- the
+"quotient denominator must be non-zero" flood.
+
+Every other fixture in this package uses distinct timestamps, which is exactly
+why the suite stayed green while production did not.
+*/
+func TestLevel3Step_SameTimestampIncrements(t *testing.T) {
+	Convey("Given increments that all share one event timestamp", t, func() {
+		at := bookAt()
+		entity := NewLevel3()
+
+		entity.Step(snapshot("BTC/USD",
+			[]kraken.Level3Order{level3OrderID("a", "add", 99, 10, at)},
+			[]kraken.Level3Order{level3OrderID("b", "add", 101, 10, at)},
+		))
+
+		Convey("No frame fails on a zero elapsed interval", func() {
+			for _, id := range []string{"c", "d", "e", "f"} {
+				measurement := entity.Step(increment("BTC/USD",
+					[]kraken.Level3Order{level3OrderID(id, "add", 99, 1, at)},
+					nil,
+				))
+
+				So(measurement, ShouldNotBeNil)
+				So(measurement.Err, ShouldBeNil)
+			}
+		})
+	})
 }

@@ -73,7 +73,6 @@ type Live struct {
 	nonceErr       error
 	subscribers    *sync.Map
 	callbacks      *sync.Map
-	priceIncr      sync.Map
 	paper          *Paper
 	model          string
 	capture        CaptureSink
@@ -84,18 +83,13 @@ type Live struct {
 	failure        func(error)
 	observer       atomic.Pointer[func(string, time.Duration)]
 	connectedCount atomic.Int32
-	// executionsReady is flipped to READY once the caller has wired the
-	// executions ingress workload into the shared ingress map. The account
-	// subscription waits on it (an atomic status) before submitting, so the
-	// private execution stream never delivers into a not-yet-wired workload.
-	executionsReady *runtime.Status
 
 	// opStreams owns the operational per-stream epoch/sequence bookkeeping this
 	// transport session maintains independent of Hindsight. The transport mints
 	// the StreamRef for every frame and bumps epochs on reconnect; Hindsight
 	// records the same fact but is never the source of it.
-	opMu       sync.Mutex
-	opStreams  map[hindsight.Stream]streamSpan
+	opMu      sync.Mutex
+	opStreams map[hindsight.Stream]streamSpan
 
 	// level3Client overrides the venue client SubL3 dials when set. Fixtures
 	// inject the level3 listener's client here so a replay's level3 frames
@@ -309,22 +303,21 @@ func NewWithClient(
 	}
 
 	live := &Live{
-		ctx:             ctx,
-		cancel:          cancel,
-		status:          runtime.NewStatus(),
-		simulator:       simulator,
-		client:          client,
-		normalizer:      spot.NewNormalizer(),
-		auth:            auth,
-		subscribers:     &sync.Map{},
-		callbacks:       &sync.Map{},
-		public:          make(map[string][][]string),
-		paper:           NewPaper(ctx, simulator, workloads),
-		ingress:         workloads,
-		model:           viper.GetViper().GetString("trading.model"),
-		quote:           viper.GetViper().GetString("market.quote_currency"),
-		captureName:     captureName,
-		executionsReady: runtime.NewStatus(),
+		ctx:         ctx,
+		cancel:      cancel,
+		status:      runtime.NewStatus(),
+		simulator:   simulator,
+		client:      client,
+		normalizer:  spot.NewNormalizer(),
+		auth:        auth,
+		subscribers: &sync.Map{},
+		callbacks:   &sync.Map{},
+		public:      make(map[string][][]string),
+		paper:       NewPaper(ctx, simulator, workloads),
+		ingress:     workloads,
+		model:       viper.GetViper().GetString("trading.model"),
+		quote:       viper.GetViper().GetString("market.quote_currency"),
+		captureName: captureName,
 	}
 
 	if len(recorders) == 1 {
@@ -478,6 +471,15 @@ func NewWithClient(
 
 			return
 		case "ticker", "trade", "level3", "executions":
+			// This session does not feed the pipeline until the subscription
+			// authority has marked it READY, which happens once the WHOLE
+			// universe is subscribed. The frame is still captured above, so
+			// Hindsight sees the complete stream; it simply does not reach a
+			// strategy that would otherwise judge a partly-subscribed market.
+			if live.Status() != runtime.READY {
+				return
+			}
+
 			envelopes, manifests := IngestEnvelopes(channel, out, captureID)
 
 			for index, envelope := range envelopes {
@@ -524,7 +526,12 @@ func NewWithClient(
 			}
 		}
 
-		live.status.Transition(runtime.READY)
+		// Connected is not ready. This session pushes into the trading
+		// pipeline, and the universe is subscribed in paced batches after the
+		// socket comes up, so the first frames are whichever handful of
+		// symbols happen to be live already. BUSY says exactly that: the
+		// transport is up and working, awaiting the subscription authority.
+		live.status.Transition(runtime.BUSY)
 	})
 
 	live.client.OnDisconnected.Recurring(func(event *callback.Event[error]) {
@@ -561,7 +568,8 @@ func NewWithClient(
 				}
 			}
 
-			live.status.Transition(runtime.READY)
+			// Authenticated, not ready: same reason as OnConnected above.
+			live.status.Transition(runtime.BUSY)
 		})
 	}
 
@@ -705,7 +713,7 @@ authenticate returns immediately (and the balance subscription already satisfied
 the token deadline), while execution frames cannot arrive before their consumer.
 */
 func (live *Live) subscribeExecutionsWhenReady(token string) {
-	live.waitExecutionsReady()
+	live.waitReady()
 
 	if err := live.Write(kraken.NewExecutionSubscription(token)); err != nil {
 		errnie.Error(errnie.Err(
@@ -717,30 +725,45 @@ func (live *Live) subscribeExecutionsWhenReady(token string) {
 }
 
 /*
-MarkExecutionsReady is called by the bootstrap once the executions ingress
-workload has been wired into the shared ingress map. It unblocks any pending
-account subscription so the private execution stream only starts delivering
-after its consumer exists.
+MarkReady is called by the subscription authority once the WHOLE market
+universe is subscribed. Only then does this session feed the trading pipeline:
+before it, the socket is connected and parsing but the universe is still being
+subscribed in paced batches, so what arrives is a partial market.
+
+Level3 child sessions are marked with their parent, since they push into the
+same ingress through the shared sequencer.
 */
-func (live *Live) MarkExecutionsReady() {
-	if live == nil || live.executionsReady == nil {
+func (live *Live) MarkReady() {
+	if live == nil {
 		return
 	}
 
-	live.executionsReady.Transition(runtime.READY)
+	live.status.Transition(runtime.READY)
+
+	if live.level3 == nil {
+		return
+	}
+
+	live.level3.Range(func(_, value any) bool {
+		if child, valid := value.(*Live); valid && child != nil {
+			child.status.Transition(runtime.READY)
+		}
+
+		return true
+	})
 }
 
 /*
-waitExecutionsReady blocks until MarkExecutionsReady has been called, or the
-session context ends. It waits on the atomic status rather than polling the
-shared ingress map, so it never reads a map that another goroutine is writing.
+waitReady blocks until this session is READY, or the session context ends. It
+waits on the session's own status rather than polling the shared ingress map,
+so it never reads a map another goroutine is writing.
 */
-func (live *Live) waitExecutionsReady() {
+func (live *Live) waitReady() {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
-		if live.executionsReady != nil && live.executionsReady.Current() == runtime.READY {
+		if live.Status() == runtime.READY {
 			return
 		}
 

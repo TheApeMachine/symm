@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -464,6 +465,16 @@ func (futures *FuturesLive) dispatchTrades(raw []byte, captureID hindsight.Captu
 	if trades == nil || len(trades.Data) == 0 {
 		return
 	}
+
+	// A trade_snapshot is a batch of HISTORICAL trades, and Kraken orders it
+	// newest-first. Pushing it in wire order makes event time run backwards:
+	// the first trade establishes each symbol's temporal origin at the newest
+	// timestamp, and every older trade behind it then precedes its own origin.
+	// Replay the batch oldest-first so event time advances monotonically, the
+	// same order the live feed delivers.
+	sort.SliceStable(trades.Data, func(earlier, later int) bool {
+		return trades.Data[earlier].Timestamp.Before(trades.Data[later].Timestamp)
+	})
 
 	for index := range trades.Data {
 		trade := trades.Data[index]

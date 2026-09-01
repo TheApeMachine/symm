@@ -65,11 +65,15 @@ func NewWorkload[T any](
 	)
 
 	go workload.channel.Listen()
-	workload.status.Transition(READY)
+	workload.status.Transition(WAITING)
 	return workload
 }
 
 func (workload *Workload[T]) Push(payload T) {
+	if workload.status.Current() != READY {
+		return
+	}
+
 	select {
 	case <-workload.ctx.Done():
 		workload.err = errors.Join(
@@ -95,15 +99,22 @@ func (workload *Workload[T]) Push(payload T) {
 	workload.headSeq.Store(seq)
 }
 
+/* Admit opens this workload after its complete input universe is subscribed. */
+func (workload *Workload[T]) Admit() {
+	if workload == nil {
+		return
+	}
+
+	workload.status.Transition(READY)
+}
+
 func (workload *Workload[T]) Close() error {
 	workload.cancel()
 	return workload.channel.Close()
 }
 
 /*
-Status reports the workload's readiness. It is READY once the ring and its
-listener are live — i.e. the moment NewWorkload returns — so a consumer can
-gate on it before producing into the ring.
+Status reports whether the workload is waiting for universe admission or ready.
 */
 func (workload *Workload[T]) Status() *Status {
 	return workload.status

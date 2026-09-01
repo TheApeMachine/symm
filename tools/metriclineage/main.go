@@ -16,10 +16,13 @@ nomagique/data/projector.go's Project), not the internal MustIntern series-slot
 prefix used for temporal-context bookkeeping, which is a different, private
 namespace.
 
-Consumer identity, by kind — only "bound" and "catalog" mark a metric as
-REFERENCED (not dead). Neither is proof that a named semantic calculation
-reads the value: they are declared inputs, and this tool does not trace
-dataflow past the string reference.
+Consumer identity, by kind — "learned" marks an actual per-metric value read;
+"bound" and "catalog" mark declared named inputs.
+
+  - learned: directionalPredictor.observeMeasurement ranges the concrete
+    Measurement.Metrics map and passes every metric.Raw value, under its own
+    source/name identity, into a separate resident predictive feature. This is
+    a value read and applies to every produced metric.
 
   - bound: a literal (source, metric) pair passed to
     logic/advisor.NewMetricBinding / NewControlBinding — an Advisor declares
@@ -28,10 +31,12 @@ dataflow past the string reference.
     verbatim, or the live topology may never deliver the measurement to the
     ring that hosts the binding. It clears "dead" (the metric is at least
     declared) but is recorded as "bound", never as a read.
+
   - catalog: a relation.Selector{Source:, Metric:} literal in
     strategy/defaults.go's defaultMarketCatalog (the causal-influence graph's
     declared catalog). Same caveat: a declared graph coordinate is a
     reference, not a witnessed read.
+
   - kernel: a runtime.Register call whose callback parameter type names a
     specific kernel's own Measurement type (e.g. *hawkes.Measurement) rather
     than the generic *data.Measurement[float64] — the consumer receives the
@@ -39,6 +44,7 @@ dataflow past the string reference.
     about whether any single metric inside it is actually read — it is
     recorded on the producer as context only (kernelOnly: true when it is the
     metric's only lead), never as evidence of use.
+
   - generic: a runtime.Register call whose callback parameter type is the
     generic *data.Measurement[float64] with no further per-metric filtering
     inside this tool's static reach (e.g. category.Solver, or a UI wire tap in
@@ -98,7 +104,7 @@ type producer struct {
 
 type consumerEdge struct {
 	ID       metricID
-	Kind     string // "bound" | "catalog" | "kernel" | "generic"
+	Kind     string // "learned" | "bound" | "catalog" | "kernel" | "generic"
 	Consumer string // human label: package/function or subsystem name
 	Package  string
 	File     string
@@ -122,9 +128,7 @@ type producerOut struct {
 	Line      int           `json:"line"`
 	Unit      string        `json:"unit,omitempty"`
 	Consumers []consumerRef `json:"consumers"`
-	// Dead means no fine-grained AND no kernel-level consumer references this
-	// metric by name/kernel at all — nothing in the decision path ever looks
-	// at it specifically.
+	// Dead means no per-metric learned read and no named declared consumer.
 	Dead bool `json:"dead"`
 	// KernelOnly means the metric has no fine-grained (named) consumer and is
 	// only reachable because something bulk-subscribes to its whole kernel's
@@ -160,20 +164,17 @@ type unresolvedOut struct {
 }
 
 type summaryOut struct {
-	TotalProducers      int `json:"totalProducers"`
-	// DeadProducers is the honest count of UNREFERENCED producers: metrics no
-	// bound/catalog reference names at all. It is not "unused but bound" — a
-	// bound/catalog reference clears Dead even though it is only a declaration,
-	// never proof that a calculation reads the value.
+	TotalProducers int `json:"totalProducers"`
+	// DeadProducers is the count with neither a learned value-read nor a named
+	// bound/catalog declaration.
 	DeadProducers int `json:"deadProducers"`
-	// ReferencedProducers is the count of producers that have at least one
-	// bound/catalog reference. A referenced producer is a DECLARED INPUT, not a
-	// proven value-read; the frontend renders it a distinct neutral status, and
-	// nothing counts it as "used".
+	// ReferencedProducers is the count that reaches either the verified learned
+	// read or a named bound/catalog declaration.
 	ReferencedProducers int `json:"referencedProducers"`
 	KernelOnlyProducers int `json:"kernelOnlyProducers"`
 	BoundConsumers      int `json:"boundConsumerEdges"`
 	CatalogConsumers    int `json:"catalogConsumerEdges"`
+	LearnedConsumers    int `json:"learnedConsumerEdges"`
 	KernelConsumers     int `json:"kernelConsumerEdges"`
 	GenericConsumers    int `json:"genericConsumerEdges"`
 	Unresolved          int `json:"unresolved"`
@@ -246,6 +247,7 @@ func main() {
 
 			consumers = append(consumers, scanFineConsumers(pkg, file, relFile)...)
 			consumers = append(consumers, scanKernelConsumers(pkg, file, relFile)...)
+			consumers = append(consumers, scanLearnedConsumers(pkg, file, relFile)...)
 		}
 	}
 
@@ -261,12 +263,68 @@ func main() {
 	}
 
 	fmt.Printf(
-		"metriclineage: %d producers (%d dead), %d bound refs, %d catalog refs, %d kernel edges, %d generic edges, %d unresolved -> %s\n",
+		"metriclineage: %d producers (%d dead), %d learned reads, %d bound refs, %d catalog refs, %d kernel edges, %d generic edges, %d unresolved -> %s\n",
 		rep.Summary.TotalProducers, rep.Summary.DeadProducers,
+		rep.Summary.LearnedConsumers,
 		rep.Summary.BoundConsumers, rep.Summary.CatalogConsumers,
 		rep.Summary.KernelConsumers, rep.Summary.GenericConsumers,
 		rep.Summary.Unresolved, out,
 	)
+}
+
+/*
+scanLearnedConsumers verifies the concrete all-metric predictive read. It only
+emits an edge when directionalPredictor.observeMeasurement both ranges a
+Metrics selector and reads Raw from the ranged metric inside that method.
+*/
+func scanLearnedConsumers(pkg *packages.Package, file *ast.File, relFile string) []consumerEdge {
+	if !strings.HasSuffix(pkg.PkgPath, "/strategy") {
+		return nil
+	}
+
+	var out []consumerEdge
+
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+
+		if !ok || function.Name.Name != "observeMeasurement" || function.Body == nil {
+			continue
+		}
+
+		rangesMetrics := false
+		readsRaw := false
+		ast.Inspect(function.Body, func(node ast.Node) bool {
+			switch expression := node.(type) {
+			case *ast.RangeStmt:
+				selector, valid := expression.X.(*ast.SelectorExpr)
+
+				if valid && selector.Sel.Name == "Metrics" {
+					rangesMetrics = true
+				}
+			case *ast.SelectorExpr:
+				if expression.Sel.Name == "Raw" {
+					readsRaw = true
+				}
+			}
+
+			return true
+		})
+
+		if !rangesMetrics || !readsRaw {
+			continue
+		}
+
+		position := pkg.Fset.Position(function.Pos())
+		out = append(out, consumerEdge{
+			Kind:     "learned",
+			Consumer: "strategy.directionalPredictor per-metric classification",
+			Package:  pkg.PkgPath,
+			File:     relFile,
+			Line:     position.Line,
+		})
+	}
+
+	return out
 }
 
 func fatal(err error) {
@@ -706,9 +764,9 @@ func buildReport(producers []producer, consumers []consumerEdge, unresolved []un
 	}
 
 	referencedByID := map[metricID][]consumerRef{}
-	var kernelWide, genericWide []consumerRef
+	var learnedWide, kernelWide, genericWide []consumerRef
 	consumerOutMap := map[string]*consumerOut{}
-	boundEdgeCount, catalogEdgeCount := 0, 0
+	boundEdgeCount, catalogEdgeCount, learnedEdgeCount := 0, 0, 0
 
 	for _, c := range consumers {
 		key := c.Consumer + "|" + c.Kind
@@ -719,6 +777,11 @@ func buildReport(producers []producer, consumers []consumerEdge, unresolved []un
 		}
 
 		switch c.Kind {
+		case "learned":
+			ref := consumerRef{Kind: c.Kind, Consumer: c.Consumer, Package: c.Package, File: c.File, Line: c.Line}
+			learnedWide = append(learnedWide, ref)
+			co.Targets = append(co.Targets, "*")
+			learnedEdgeCount++
 		case "bound", "catalog":
 			ref := consumerRef{Kind: c.Kind, Consumer: c.Consumer, Package: c.Package, File: c.File, Line: c.Line}
 			referencedByID[c.ID] = append(referencedByID[c.ID], ref)
@@ -761,29 +824,23 @@ func buildReport(producers []producer, consumers []consumerEdge, unresolved []un
 	for _, id := range order {
 		po := seenProducer[id]
 
-		refs := append([]consumerRef{}, referencedByID[id]...)
+		refs := append([]consumerRef{}, learnedWide...)
+		refs = append(refs, referencedByID[id]...)
 		if scoped, ok := kernelScopes[id.Source]; ok {
 			refs = append(refs, scoped...)
 		}
 		refs = append(refs, genericWide...)
 
 		hasReference := len(referencedByID[id]) > 0
+		hasLearnedRead := len(learnedWide) > 0
 		hasKernel := len(kernelScopes[id.Source]) > 0
 
 		po.Consumers = refs
-		// A metric is NOT dead only if something references it BY NAME (a
-		// literal (source, metric) lookup — an advisor binding, or a schema
-		// catalog entry). That reference is a DECLARED INPUT, not proof the
-		// value is read by a named calculation; the report records the kind
-		// ("bound" vs "catalog") and never promotes either to "used by a
-		// semantic read". A bulk/type-level subscription (kernel edge) proves
-		// nothing about whether THIS metric's value is read by anything —
-		// the manifold subscribing to *hawkes.Measurement receives the whole
-		// struct regardless of which fields anyone actually looks at, so it
-		// cannot answer "is this metric used." Such edges stay attached to
-		// Consumers as context (kernelOnly), but never flip Dead to false.
-		po.Dead = !hasReference
-		po.KernelOnly = !hasReference && hasKernel
+		// A learned edge is the verified value-read over every metric.Raw value.
+		// Bound/catalog edges remain declared inputs. Bulk type subscriptions
+		// remain context only and never flip Dead to false.
+		po.Dead = !hasReference && !hasLearnedRead
+		po.KernelOnly = !hasReference && !hasLearnedRead && hasKernel
 		if po.Dead {
 			deadCount++
 		}
@@ -834,6 +891,7 @@ func buildReport(producers []producer, consumers []consumerEdge, unresolved []un
 			KernelOnlyProducers: kernelOnlyCount,
 			BoundConsumers:      boundEdgeCount,
 			CatalogConsumers:    catalogEdgeCount,
+			LearnedConsumers:    learnedEdgeCount,
 			KernelConsumers:     kernelEdgeCount,
 			GenericConsumers:    genericEdgeCount,
 			Unresolved:          len(unresolved),

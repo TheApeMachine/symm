@@ -2,8 +2,6 @@ package strategy
 
 import (
 	"context"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -19,12 +17,6 @@ const (
 	executionFrictionKey = "execution:friction_fraction"
 	executionSpreadKey   = "execution:spread_fraction"
 	executionImpactKey   = "execution:impact_fraction"
-
-	// allocationLookahead is the bounded number of fully-priced candidates the
-	// admission walk may inspect beyond the open slots: one slot's allocation
-	// must not price the whole universe, but a temporarily infeasible strongest
-	// candidate must not block the next candidate from being considered.
-	allocationLookahead = 4
 )
 
 type Allocation struct {
@@ -70,14 +62,10 @@ riskMultiples returns the stop geometry multiples for this entry.
 */
 func (allocation *Allocation) riskMultiples() types.RiskMultiples {
 	multiples := types.DefaultRiskMultiples()
-	confidence := 0.95
+	confidence, err := system.Cfg.OptimizationConfidence()
 
-	config := system.Cfg.Snapshot()
-
-	if config != nil && config.Regulator != nil &&
-		config.Regulator.OptimizationConfidence > 0 &&
-		config.Regulator.OptimizationConfidence < 1 {
-		confidence = config.Regulator.OptimizationConfidence
+	if err != nil || confidence <= 0 || confidence >= 1 {
+		return multiples
 	}
 
 	excursion, ready := allocation.desk.PassageAdverseQuantile(confidence)
@@ -86,20 +74,18 @@ func (allocation *Allocation) riskMultiples() types.RiskMultiples {
 }
 
 /*
-Calculate turns economically selected candidates into current executable
-orders. It observes only present book depth, fees, capital, and risk geometry.
-Whether a candidate deserves capital was decided by the causal MCTS economic
-outcome; allocation enforces real constraints only and never re-ranks or
-vetoes using semantic evidence.
+Calculate independently prices every admitted entry against current cash,
+visible depth, fees, venue limits, and risk geometry. It preserves stream order
+and never selects a winner or imposes a position-slot limit.
 */
 func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
-	config := system.Cfg.Snapshot()
+	config, err := system.Cfg.PlannerPolicy()
 
-	if config == nil || config.Planner == nil {
+	if err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"planner: planner configuration required",
-			nil,
+			err,
 		))
 	}
 
@@ -126,19 +112,28 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		))
 	}
 
-	normalSlots := allocation.desk.OpenSlots(false)
-	reserveSlots := allocation.desk.OpenSlots(true) - normalSlots
+	if config.MaxAllocationFraction <= 0 || config.MaxAllocationFraction > 1 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"planner: allocation fraction must be in (0, 1]",
+			nil,
+		))
+	}
 
-	/*
-		Arbitrate from the front of the economically ordered entry candidates,
-		not by pricing the whole universe first. A candidate is fully priced
-		(execution geometry, EntryCost, RiskPlan, stoploss) only while it is
-		actually within reach of a free slot; candidates beyond the open slots
-		plus a bounded infeasibility lookahead are marked unallocated without
-		being priced. A temporarily infeasible strongest candidate does not
-		block the next candidate: it is marked and the walk continues.
-	*/
-	entering := make([]*types.Decision, 0, len(decisions))
+	cash := allocation.desk.Balance().Cash()
+
+	if cash == nil || cash.Sign() <= 0 {
+		return errnie.Error(errnie.Err(
+			errnie.NotAcceptable,
+			"planner: positive quote cash required",
+			nil,
+		))
+	}
+
+	entryLimit := decimal.NewFromInt64(0).Add(cash).Mul(
+		decimal.NewFromFloat64(config.MaxAllocationFraction),
+	)
+	remainingCash := decimal.NewFromInt64(0).Add(cash)
 	occupied := occupiedSymbols(allocation.desk)
 
 	for _, decision := range decisions {
@@ -146,69 +141,28 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			continue
 		}
 
-		// Only candidates whose causal entry advantage is strictly positive
-		// may consume capital; a zero or negative marginal value over waiting
-		// is not an entry, and the planner never forwards it as one.
-		if decision.Alternatives["economic:enter_advantage"] <= 0 {
-			decision.Action = types.ActionNothing
-			decision.AllocationClass = "none"
-			decision.Stoploss = nil
-			decision.Reason = "planner: entry advantage is not positive"
-			continue
-		}
+		decision.OpenPositions = allocation.desk.OpenPositions()
+		decision.SlotCapacity = 0
+		decision.AllocationClass = "none"
 
 		if occupied[decision.Symbol] {
 			decision.Action = types.ActionNothing
-			decision.AllocationClass = "none"
-			decision.Stoploss = nil
-			decision.Reason = "planner: symbol already occupies a slot"
+			decision.Reason = "planner: symbol already has an active position"
 			continue
 		}
 
-		entering = append(entering, decision)
-	}
-
-	slices.SortFunc(entering, economicOrder)
-
-	totalSlots := normalSlots + reserveSlots
-	admitted := 0
-	priced := 0
-	eligible := make([]*types.Decision, 0, totalSlots)
-
-	for _, decision := range entering {
-		if admitted >= totalSlots {
+		if remainingCash.Sign() <= 0 {
 			decision.Action = types.ActionNothing
-			decision.AllocationClass = "none"
-			decision.Stoploss = nil
-			decision.Reason = "planner: no position slot available for allocation"
+			decision.Reason = "planner: no quote cash remains for entry"
 			continue
 		}
 
-		if priced >= totalSlots+allocationLookahead {
-			decision.Action = types.ActionNothing
-			decision.AllocationClass = "none"
-			decision.Stoploss = nil
-			decision.Reason = "planner: allocation lookahead exhausted; candidate not priced this pass"
-			continue
+		notionalBudget := decimal.NewFromInt64(0).Add(entryLimit)
+
+		if remainingCash.Cmp(notionalBudget) < 0 {
+			notionalBudget = decimal.NewFromInt64(0).Add(remainingCash)
 		}
 
-		priced++
-
-		decision.OpenPositions = allocation.desk.OpenPositions()
-		decision.SlotCapacity = allocation.desk.MaxPositions() + allocation.desk.MaxReserved()
-		decision.AllocationClass = "unallocated"
-
-		cash := allocation.desk.Balance().Cash()
-
-		if cash == nil || cash.Sign() <= 0 {
-			decision.Action = types.ActionNothing
-			decision.Reason = "planner: positive quote cash required"
-			continue
-		}
-
-		notionalBudget := decimal.NewFromInt64(0).Add(cash).Mul(
-			decimal.NewFromFloat64(config.Planner.MaxAllocationFraction),
-		)
 		price := allocation.desk.Price()
 		tick := price.Tick(decision.Symbol)
 
@@ -359,127 +313,14 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		decision.Risk = riskPlan
 		decision.Stoploss = stoploss
 
-		// The candidate is executable now: consume the next slot in economic
-		// rank order. Normal slots fill first, then reserve.
-		if normalSlots > 0 {
-			normalSlots--
-			decision.AllocationClass = "normal"
-		} else if reserveSlots > 0 {
-			reserveSlots--
-			decision.AllocationClass = "reserve"
-		} else {
-			decision.Action = types.ActionNothing
-			decision.AllocationClass = "none"
-			decision.Stoploss = nil
-			decision.Reason = "planner: no position slot available for allocation"
-			continue
-		}
-
-		admitted++
-		eligible = append(eligible, decision)
+		decision.AllocationClass = "capital"
+		occupied[decision.Symbol] = true
+		remainingCash = decimal.NewFromInt64(0).Add(remainingCash).Sub(
+			decision.ProposedNotional,
+		)
 	}
 
 	return nil
-}
-
-/*
-economicOrder ranks candidates by their incremental economic advantage over
-waiting (Enter mean less Wait mean under the causal model), then by search
-visits, then by symbol identity for replay determinism. Ranking by the selected
-branch's raw expected outcome would let a symbol whose absolute reward is
-inflated beat genuinely better alternatives; the advantage isolates the value
-the candidate actually adds. No semantic score participates.
-*/
-func economicOrder(left, right *types.Decision) int {
-	leftOutcome := alternativesOf(left)["economic:enter_advantage"]
-	rightOutcome := alternativesOf(right)["economic:enter_advantage"]
-
-	if leftOutcome != rightOutcome {
-		if leftOutcome > rightOutcome {
-			return -1
-		}
-
-		return 1
-	}
-
-	leftVisits := alternativesOf(left)["economic:visits"]
-	rightVisits := alternativesOf(right)["economic:visits"]
-
-	if leftVisits != rightVisits {
-		if leftVisits > rightVisits {
-			return -1
-		}
-
-		return 1
-	}
-
-	return strings.Compare(left.Symbol, right.Symbol)
-}
-
-/*
-admitBest keeps the highest-expected-economic-outcome candidates that still
-fit in open slots. Already-held symbols do not consume a slot another pair
-could fill. Scarce capacity is allocated by expected economic outcome, never
-by semantic score rank.
-*/
-func admitBest(
-	decisions []*types.Decision,
-	normalSlots int,
-	reserveSlots int,
-	occupied map[string]bool,
-) {
-	if occupied == nil {
-		occupied = make(map[string]bool)
-	}
-
-	eligible := make([]*types.Decision, 0, len(decisions))
-
-	for _, decision := range decisions {
-		if decision == nil || decision.Action != types.ActionEnter {
-			continue
-		}
-
-		if occupied[decision.Symbol] {
-			decision.Action = types.ActionNothing
-			decision.AllocationClass = "none"
-			decision.Stoploss = nil
-			decision.Reason = "planner: symbol already occupies a slot"
-			continue
-		}
-
-		eligible = append(eligible, decision)
-	}
-
-	slices.SortFunc(eligible, economicOrder)
-
-	for _, decision := range eligible {
-		if occupied[decision.Symbol] {
-			decision.Action = types.ActionNothing
-			decision.AllocationClass = "none"
-			decision.Stoploss = nil
-			decision.Reason = "planner: symbol already occupies a slot"
-			continue
-		}
-
-		if normalSlots > 0 {
-			normalSlots--
-			decision.AllocationClass = "normal"
-			occupied[decision.Symbol] = true
-			continue
-		}
-
-		if reserveSlots > 0 {
-			reserveSlots--
-			decision.AllocationClass = "reserve"
-			occupied[decision.Symbol] = true
-			continue
-		}
-
-		decision.Action = types.ActionNothing
-		decision.AllocationClass = "none"
-		decision.Stoploss = nil
-		decision.Reason = "planner: no position slot available for allocation"
-	}
 }
 
 /*

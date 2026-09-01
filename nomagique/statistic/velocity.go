@@ -103,10 +103,19 @@ func Velocity(prefix string) types.Primitive {
 			input.Put(slots.lastDelta, delta)
 			input.Put(slots.delta, delta)
 			input.Put(slots.elapsed, elapsed)
-			input.Put(series.ReadySymbol, 1)
 
 			if hasLastDelta {
 				input.Put(slots.acceleration, delta-lastDelta)
+			}
+
+			// Readiness means the elapsed interval can be DIVIDED BY, not
+			// merely that a previous observation exists. Two observations can
+			// share one event timestamp — venues batch updates within a single
+			// clock tick — which leaves elapsed at exactly zero. Reporting
+			// ready there hands every consumer a zero denominator: the rate
+			// over a zero interval is undefined, not infinite.
+			if elapsed > 0 {
+				input.Put(series.ReadySymbol, 1)
 			}
 		}
 	}

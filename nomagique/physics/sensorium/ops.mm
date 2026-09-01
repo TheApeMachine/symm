@@ -629,13 +629,15 @@ void manifold_particle_interactions(
     ManifoldBuffer* vel_in,
     ManifoldBuffer* heat_in,
     float dt, float radius, float young_modulus,
-    float thermal_conductivity, float specific_heat, float restitution
+    float thermal_conductivity, float specific_heat, float restitution,
+    float domain_x, float domain_y, float domain_z
 ) {
     int64_t n = pos->size_bytes / (3 * sizeof(float));
     if (n == 0) return;
     ParticleInteractionParams prm = {
         (uint32_t)n, dt, radius, young_modulus,
-        thermal_conductivity, specific_heat, restitution
+        thermal_conductivity, specific_heat, restitution,
+        domain_x, domain_y, domain_z
     };
     KernelDispatch k(ctx, "particle_interactions");
     k.set_buffer(pos, 0);

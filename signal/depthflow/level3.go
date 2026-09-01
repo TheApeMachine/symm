@@ -115,6 +115,19 @@ var (
 		nmtypes.In(symbolTouchAskPrice, calculus.PortB),
 		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
 	)
+	// touchNotionalPositive gates touch_imbalance's division. A two-sided
+	// touch price does not imply a two-sided touch notional: an add/change
+	// order can carry a zero quantity (a level quoted but fully consumed),
+	// leaving touch_notional at exactly zero. That is an undefined imbalance,
+	// not an error — without this gate the ungated quotient sets Frame.Err and
+	// Projector.Project discards the whole measurement, including the notional
+	// accumulation that had nothing to do with the touch.
+	touchNotionalPositive = nmtypes.Wire(
+		logic.GreaterThan,
+		nmtypes.In(symbolTouchNotional, calculus.PortA),
+		nmtypes.In(symbolZero, calculus.PortB),
+		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+	)
 	// bookNotionalPositive gates book_imbalance's division: a fully-deleted
 	// symbol (or a one-sided message where the untouched side has never seen
 	// an order) can leave book_notional at exactly zero, which is not a
@@ -315,6 +328,7 @@ running per-symbol book notional as its own committed state.
 type Level3 struct {
 	number    *nomagique.Number[string]
 	projector *data.Projector
+	book      *residentBook
 }
 
 /*
@@ -323,34 +337,25 @@ metric computation and one projector that names the output slots.
 */
 func NewLevel3() *Level3 {
 	return &Level3{
+		book: newResidentBook(),
 		number: nomagique.NewNumber[string](nmtypes.Pipe(
 			nmtypes.Assign(symbolZero, 0),
 
-			// Running book notional per side: this message's own signed delta
-			// (add/modify contribute +price*qty, delete contributes -price*qty;
-			// no per-order state is retained) accumulates into the pipeline's
-			// own committed state, keyed by symbol. This must run before the
-			// touch gate below: Kraken sends one-sided update messages
-			// routinely, and Pipe short-circuits on the gate's Err, so
-			// accumulation would otherwise silently stall on every one-sided
-			// message instead of just leaving that message's touch metrics
-			// absent.
-			nmtypes.Wire(
-				calculus.Accumulate,
-				nmtypes.In(symbolBidDelta, calculus.SymbolDelta),
-				nmtypes.State(symbolBookNotionalBid, calculus.SymbolTotal),
-			),
-			nmtypes.Wire(
-				calculus.Accumulate,
-				nmtypes.In(symbolAskDelta, calculus.SymbolDelta),
-				nmtypes.State(symbolBookNotionalAsk, calculus.SymbolTotal),
-			),
-
-			// Static book metrics and displayed flow metrics are both derived
-			// from the running accumulation above, with no touch dependency,
-			// so they run before the touch gate: this message's own signed
-			// notional delta per side is the net displayed flow directly, then
-			// its positive/negative decomposition into additions and removals.
+			// Book notional per side arrives as an ABSOLUTE measurement of the
+			// resident order book (see book.go), not as a running sum of
+			// per-message deltas. Kraken's L3 is an order feed: a "change"
+			// event restates an order's quantity rather than adding to it, a
+			// "delete" removes whatever that order was resting, and the
+			// opening "snapshot" is a full restatement. Accumulating signed
+			// deltas mis-handles all three, and each error is permanent, so
+			// the total drifts away from real depth — toward zero on symbols
+			// whose adds and deletes roughly cancel, which then collapses
+			// reference depth and every metric scaled by it.
+			//
+			// Static book metrics and displayed flow metrics carry no touch
+			// dependency, so they run before the touch gate: this message's
+			// own signed notional delta per side is the net displayed flow
+			// directly, then its decomposition into additions and removals.
 			nmtypes.Wire(
 				calculus.Sum,
 				nmtypes.In(symbolBookNotionalBid, calculus.PortA),
@@ -443,25 +448,31 @@ func NewLevel3() *Level3 {
 						nmtypes.In(symbolTouchNotionalAsk, calculus.PortB),
 						nmtypes.Out(calculus.PortResult, symbolTouchNotional),
 					),
-					nmtypes.Wire(
-						calculus.Quotient,
-						nmtypes.In(symbolTouchDiff, calculus.PortA),
-						nmtypes.In(symbolTouchNotional, calculus.PortB),
-						nmtypes.Out(calculus.PortResult, symbolTouchImbalance),
-					),
 					logic.If(
-						bookNotionalPositive,
+						touchNotionalPositive,
 						nmtypes.Pipe(
 							nmtypes.Wire(
-								calculus.Difference,
-								nmtypes.In(symbolTouchImbalance, calculus.PortA),
-								nmtypes.In(symbolBookImbalance, calculus.PortB),
-								nmtypes.Out(calculus.PortResult, symbolResolutionGap),
+								calculus.Quotient,
+								nmtypes.In(symbolTouchDiff, calculus.PortA),
+								nmtypes.In(symbolTouchNotional, calculus.PortB),
+								nmtypes.Out(calculus.PortResult, symbolTouchImbalance),
 							),
-							nmtypes.Wire(
-								calculus.Absolute,
-								nmtypes.In(symbolResolutionGap, calculus.PortX),
-								nmtypes.Out(calculus.PortResult, symbolResolutionDist),
+							logic.If(
+								bookNotionalPositive,
+								nmtypes.Pipe(
+									nmtypes.Wire(
+										calculus.Difference,
+										nmtypes.In(symbolTouchImbalance, calculus.PortA),
+										nmtypes.In(symbolBookImbalance, calculus.PortB),
+										nmtypes.Out(calculus.PortResult, symbolResolutionGap),
+									),
+									nmtypes.Wire(
+										calculus.Absolute,
+										nmtypes.In(symbolResolutionGap, calculus.PortX),
+										nmtypes.Out(calculus.PortResult, symbolResolutionDist),
+									),
+								),
+								nil,
 							),
 						),
 						nil,
@@ -558,10 +569,14 @@ func NewLevel3() *Level3 {
 			logic.If(
 				touchBothSidesPresent,
 				logic.If(
-					bookNotionalPositive,
-					nmtypes.Pipe(
-						additiveEstimator(resolutionGapSlots, symbolResolutionGap),
-						velocityChain("resolution_gap_velocity", symbolResolutionGap, symbolResolutionGapVelocity),
+					touchNotionalPositive,
+					logic.If(
+						bookNotionalPositive,
+						nmtypes.Pipe(
+							additiveEstimator(resolutionGapSlots, symbolResolutionGap),
+							velocityChain("resolution_gap_velocity", symbolResolutionGap, symbolResolutionGapVelocity),
+						),
+						nil,
 					),
 					nil,
 				),
@@ -766,54 +781,42 @@ positive touch price exists on the untouched side. A message with both sides
 empty yields no measurement at all.
 */
 func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64] {
-	if level3 == nil || (len(message.Bids) == 0 && len(message.Asks) == 0) {
+	if level3 == nil {
 		return nil
 	}
 
-	bidDelta := 0.0
-	askDelta := 0.0
-	touchBidPrice, touchBidNotional := 0.0, 0.0
-	touchAskPrice, touchAskNotional := 0.0, 0.0
-
-	for _, order := range message.Bids {
-		if order.LimitPrice == nil || order.OrderQty == nil {
-			continue
-		}
-
-		price, qty := order.LimitPrice.Float64(), order.OrderQty.Float64()
-		notional := price * qty
-
-		if order.Event == "delete" {
-			bidDelta -= notional
-		} else {
-			bidDelta += notional
-		}
-
-		if order.Event != "delete" && price > touchBidPrice {
-			touchBidPrice = price
-			touchBidNotional = notional
-		}
+	// A snapshot is never skipped for being empty: an empty book is a real
+	// state, and the snapshot is what establishes the book at all. Only an
+	// empty INCREMENT is nothing to apply.
+	if message.Type != "snapshot" &&
+		len(message.Bids) == 0 && len(message.Asks) == 0 {
+		return nil
 	}
 
-	for _, order := range message.Asks {
-		if order.LimitPrice == nil || order.OrderQty == nil {
-			continue
-		}
+	// Net displayed flow is genuinely a per-message quantity: what this frame
+	// added to or removed from the book. It is measured against the resident
+	// set, so a change contributes only the difference it makes and a delete
+	// contributes the order's actual resting notional.
+	before, seeded := level3.book.notionals(message.Symbol)
+	state, ok := level3.book.apply(message)
 
-		price, qty := order.LimitPrice.Float64(), order.OrderQty.Float64()
-		notional := price * qty
-
-		if order.Event == "delete" {
-			askDelta -= notional
-		} else {
-			askDelta += notional
-		}
-
-		if order.Event != "delete" && (touchAskPrice == 0 || price < touchAskPrice) {
-			touchAskPrice = price
-			touchAskNotional = notional
-		}
+	// An increment for a symbol whose snapshot this process never saw
+	// describes a book we cannot reconstruct. Reporting depth from it would
+	// be a fabrication, so the frame is dropped until the snapshot arrives.
+	if !ok {
+		return nil
 	}
+
+	bidDelta := state.bidNotional
+	askDelta := state.askNotional
+
+	if seeded {
+		bidDelta -= before.bidNotional
+		askDelta -= before.askNotional
+	}
+
+	touchBidPrice, touchBidNotional := state.touchBidPrice, state.touchBidNotional
+	touchAskPrice, touchAskNotional := state.touchAskPrice, state.touchAskNotional
 
 	symbol := message.Symbol
 	at := message.Timestamp
@@ -829,6 +832,8 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 	input := nmtypes.Frame{}
 	input.Put(symbolBidDelta, bidDelta)
 	input.Put(symbolAskDelta, askDelta)
+	input.Put(symbolBookNotionalBid, state.bidNotional)
+	input.Put(symbolBookNotionalAsk, state.askNotional)
 	input.Put(symbolTouchBidPrice, touchBidPrice)
 	input.Put(symbolTouchAskPrice, touchAskPrice)
 	input.Put(symbolTouchNotionalBid, touchBidNotional)
@@ -840,13 +845,18 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 	input.Put(temporal.SymbolPreviousSec, previousSec)
 	input.Put(temporal.SymbolPreviousNsec, previousNsec)
 
-	return level3.projector.Project(
-		symbol,
-		"depthflow",
-		at,
-		at,
-		level3.number.Step(symbol, input),
-	)
+	frame := level3.number.Step(symbol, input)
+
+	// Number rolls its own committed state back when a frame fails, and the
+	// book has to roll back with it. The orders are folded in BEFORE the
+	// pipeline validates them (the metrics are derived from the resulting
+	// depth), so a rejected frame — a crossed book, say — would otherwise
+	// leave its orders resident and corrupt every frame after it.
+	if frame.Err != nil {
+		level3.book.revert(symbol)
+	}
+
+	return level3.projector.Project(symbol, "depthflow", at, at, frame)
 }
 
 func (level3 *Level3) Close() error { return nil }

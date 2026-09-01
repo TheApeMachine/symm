@@ -16,6 +16,8 @@ type priceFeeConn struct {
 	result *kraken.TradeVolumeResult
 }
 
+func (conn *priceFeeConn) MarkReady() {}
+
 func (conn *priceFeeConn) TradeVolume(
 	symbols []string,
 ) (*kraken.TradeVolumeResult, error) {

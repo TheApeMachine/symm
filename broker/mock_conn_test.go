@@ -31,6 +31,8 @@ type mockConn struct {
 	TradesHistoryResult spot.TradesHistoryResult
 }
 
+func (conn *mockConn) MarkReady() {}
+
 func newMockConn() *mockConn {
 	return &mockConn{status: runtime.READY}
 }

@@ -114,3 +114,54 @@ func TestTickerStep(t *testing.T) {
 		})
 	})
 }
+
+/*
+TestTickerStep_ZeroOpenInterest pins the zero-open-interest case. A contract
+nobody holds reports an open interest of zero, which is a real market state and
+not bad data. log(current/previous) is undefined at either endpoint being zero,
+and an ungated LogRatio failed the whole frame -- discarding every price metric
+alongside it.
+*/
+func TestTickerStep_ZeroOpenInterest(t *testing.T) {
+	Convey("Given a contract whose open interest is zero", t, func() {
+		entity := NewTicker()
+		at := time.Unix(1_700_000_000, 0)
+
+		So(entity.Step(futuresTicker("PF_THIN", 101, 100, 100.5, 0, at)).Err, ShouldBeNil)
+
+		Convey("A second observation still publishes its price metrics", func() {
+			measurement := entity.Step(futuresTicker(
+				"PF_THIN", 102, 100, 100.5, 0, at.Add(time.Second),
+			))
+
+			So(measurement, ShouldNotBeNil)
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.Metrics["derivative_price"].Raw, ShouldEqual, 102.0)
+
+			// The arithmetic change is defined at zero; its log is not.
+			So(measurement.Metrics["open_interest_change"].Raw, ShouldEqual, 0.0)
+
+			_, hasLogChange := measurement.Metrics["open_interest_log_change"]
+			So(hasLogChange, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given open interest that rises from zero", t, func() {
+		entity := NewTicker()
+		at := time.Unix(1_700_000_000, 0)
+
+		So(entity.Step(futuresTicker("PF_OPEN", 101, 100, 100.5, 0, at)).Err, ShouldBeNil)
+
+		Convey("The log change stays absent while the previous endpoint is zero", func() {
+			measurement := entity.Step(futuresTicker(
+				"PF_OPEN", 101, 100, 100.5, 500, at.Add(time.Second),
+			))
+
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.Metrics["open_interest_change"].Raw, ShouldEqual, 500.0)
+
+			_, hasLogChange := measurement.Metrics["open_interest_log_change"]
+			So(hasLogChange, ShouldBeFalse)
+		})
+	})
+}

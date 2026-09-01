@@ -1,6 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+	type CompareMode,
+	ComparePanel,
+	type Mark,
+	MarkBar,
+} from "#/components/hindsight/compare";
+import {
 	fetchHindsightCaptures,
 	fetchHindsightEnvelope,
 	fetchHindsightGaps,
@@ -26,12 +32,6 @@ import type {
 	TimelineAxis,
 } from "#/components/hindsight/hindsight-types";
 import {
-	type CompareMode,
-	ComparePanel,
-	type Mark,
-	MarkBar,
-} from "#/components/hindsight/compare";
-import {
 	compareHindsightRef,
 	orderHindsightRefs,
 } from "#/components/hindsight/hindsight-types";
@@ -43,18 +43,18 @@ import {
 	StatePanel,
 } from "#/components/hindsight/inspector";
 import {
-	EpisodeTargets,
-	SymbolTargets,
-} from "#/components/hindsight/targets";
-import {
 	buildPositions,
 	type Position,
 } from "#/components/hindsight/positions";
+import { EpisodeTargets, SymbolTargets } from "#/components/hindsight/targets";
 import { Overview, Timeline } from "#/components/hindsight/timeline";
-import { formatClock, formatCount } from "#/components/hindsight/timeline-scale";
-import type { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
+import {
+	formatClock,
+	formatCount,
+} from "#/components/hindsight/timeline-scale";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
+import type { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
 
 /*
 Hindsight — a microscope over a captured running system.
@@ -107,7 +107,9 @@ const HindsightRoute = () => {
 	const [position, setPosition] = useState<string | null>(null);
 	const [marks, setMarks] = useState<Mark[]>([]);
 	const [markStates, setMarkStates] = useState<Array<EnvelopeState | null>>([]);
-	const [residents, setResidents] = useState<Array<HindsightResident | null>>([]);
+	const [residents, setResidents] = useState<Array<HindsightResident | null>>(
+		[],
+	);
 	const [compareMode, setCompareMode] = useState<CompareMode>("resident");
 	const [resolving, setResolving] = useState(false);
 
@@ -389,8 +391,7 @@ const HindsightRoute = () => {
 					: [...references]
 							.reverse()
 							.find(
-								(reference) =>
-									compareHindsightRef(reference, playhead) < 0,
+								(reference) => compareHindsightRef(reference, playhead) < 0,
 							);
 
 			if (next !== undefined) setPlayhead(next);
@@ -408,12 +409,9 @@ const HindsightRoute = () => {
 		setPlayhead({ sequence: target.sequence, ordinal: target.ordinal });
 	}, []);
 
-	const jumpChart = useCallback(
-		(sequence: number) => {
-			setPlayhead({ sequence, ordinal: 0 });
-		},
-		[],
-	);
+	const jumpChart = useCallback((sequence: number) => {
+		setPlayhead({ sequence, ordinal: 0 });
+	}, []);
 
 	const mark = useCallback(() => {
 		if (playhead === null) return;
@@ -657,19 +655,20 @@ const HindsightRoute = () => {
 										setMarks((current) =>
 											current.filter(
 												(entry) =>
-													entry.sequence !== sequence || entry.ordinal !== ordinal,
+													entry.sequence !== sequence ||
+													entry.ordinal !== ordinal,
 											),
 										)
 									}
 								/>
 							) : playhead === null ? (
 								<p className="px-3 py-8 font-mono text-[10px] text-(--f4) leading-relaxed">
-									Pick an episode, or click the timeline, to park the playhead on an
-									exact captured frame.
+									Pick an episode, or click the timeline, to park the playhead
+									on an exact captured frame.
 									<br />
-									Everything here is then read from that identity — the raw frame, the
-									envelopes it produced, and the state the running binary actually held.
-									Never from a nearby timestamp.
+									Everything here is then read from that identity — the raw
+									frame, the envelopes it produced, and the state the running
+									binary actually held. Never from a nearby timestamp.
 								</p>
 							) : (
 								<>
@@ -691,10 +690,10 @@ const HindsightRoute = () => {
 											</div>
 											<div className="min-w-0">
 												<StatePanel
-												state={state}
-												envelope={envelope}
-												semantics={semantics}
-											/>
+													state={state}
+													envelope={envelope}
+													semantics={semantics}
+												/>
 											</div>
 										</div>
 									</div>
@@ -830,13 +829,15 @@ const RunBar = ({
 			className="h-7 shrink-0 flex-wrap border-(--line) border-t px-3 font-mono text-[9px] text-(--f4)"
 		>
 			<span>
-				commit <span className="text-(--f2)">{digest(runMeta?.codeCommit)}</span>
+				commit{" "}
+				<span className="text-(--f2)">{digest(runMeta?.codeCommit)}</span>
 			</span>
 			<span>
 				build <span className="text-(--f2)">{digest(runMeta?.buildId)}</span>
 			</span>
 			<span>
-				config <span className="text-(--f2)">{digest(runMeta?.configDigest)}</span>
+				config{" "}
+				<span className="text-(--f2)">{digest(runMeta?.configDigest)}</span>
 			</span>
 			<span>
 				captured{" "}
@@ -868,7 +869,9 @@ const RunBar = ({
 					inspection certainty is broken across them
 				</span>
 			) : (
-				<span className="text-(--up)">no capture integrity defect recorded</span>
+				<span className="text-(--up)">
+					no capture integrity defect recorded
+				</span>
 			)}
 		</Flex.Row>
 	</Flex.Column>
@@ -917,8 +920,8 @@ const TimelineHeader = ({
 		<span className="font-mono text-[9px] text-(--f4)">
 			<span className="text-(--f2) tabular-nums">{references}</span> reference
 			points ·{" "}
-			<span className="rounded-[2px] border border-(--line2) px-1">[</span>{" "}
-			<span className="rounded-[2px] border border-(--line2) px-1">]</span> to walk
+			<span className="rounded-xs border border-(--line2) px-1">[</span>{" "}
+			<span className="rounded-xs border border-(--line2) px-1">]</span> to walk
 			them
 		</span>
 

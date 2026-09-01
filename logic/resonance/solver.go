@@ -6,6 +6,7 @@ import (
 	"math"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -38,8 +39,8 @@ type Solver struct {
 	states        *sync.Map
 	references    *sync.Map
 	returnNoise   *sync.Map
+	steps         *sync.Map
 	pace          float64
-	thesis        *types.Thesis
 
 	// ObserveModule is an optional diagnostics hook reporting per-step coder
 	// duration so the wiring diagram can profile the resonance stage like
@@ -89,13 +90,11 @@ type Event struct {
 }
 
 /*
-NewSolver returns a feature detection solver using the configured pace. thesis
-resolves a ticker symbol name to its canonical types.Symbol identity.
+NewSolver returns a feature detection solver using the configured pace.
 */
 func NewSolver(
 	ctx context.Context,
 	pace float64,
-	thesis *types.Thesis,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -109,8 +108,8 @@ func NewSolver(
 		states:        &sync.Map{},
 		references:    &sync.Map{},
 		returnNoise:   &sync.Map{},
+		steps:         &sync.Map{},
 		pace:          pace,
-		thesis:        thesis,
 	}
 }
 
@@ -179,7 +178,6 @@ func (solver *Solver) Update(
 	at time.Time,
 	features []float64,
 ) *types.ResonanceArtifact {
-	symbol := solver.thesis.Symbol(symbolName)
 	midpoint := midpointOrLast(features)
 
 	priorMidpoint := 0.0
@@ -230,6 +228,8 @@ func (solver *Solver) Update(
 	}
 
 	hasReference := priorMidpoint > 0
+	loadedStep, _ := solver.steps.LoadOrStore(symbolName, &atomic.Int64{})
+	step := loadedStep.(*atomic.Int64).Add(1)
 
 	stepStarted := time.Now()
 
@@ -237,7 +237,7 @@ func (solver *Solver) Update(
 		Features:     standardized,
 		Reference:    midpoint,
 		HasReference: hasReference,
-		Step:         symbol.Tick,
+		Step:         step,
 		Time:         float64(at.UnixNano()) / 1e9,
 	})
 
@@ -258,7 +258,7 @@ func (solver *Solver) Update(
 		solver.references.Store(symbolName, midpoint)
 	}
 
-	return solver.publishReturns(symbol, at, coder, out)
+	return solver.publishReturns(symbolName, at, coder, out)
 }
 
 /*
@@ -426,17 +426,17 @@ only once the head is calibrated, so the graph never sees a fabricated
 posterior before outcomes exist.
 */
 func (solver *Solver) publishReturns(
-	symbol *types.Symbol,
+	symbol string,
 	at time.Time,
 	coder *learning.PredictiveCoder,
 	out learning.PredictiveOutput,
 ) *types.ResonanceArtifact {
-	if symbol == nil || coder == nil || coder.Manifold() == nil {
+	if symbol == "" || coder == nil || coder.Manifold() == nil {
 		return nil
 	}
 
 	artifact := types.ResonanceArtifact{
-		Symbol:           symbol.Symbol,
+		Symbol:           symbol,
 		At:               at,
 		Manifold:         coder.Manifold(),
 		Dynamics:         out.Dynamics,

@@ -23,6 +23,7 @@ Conn is the internal websocket and REST transport.
 */
 type Conn interface {
 	Status() runtime.Stage
+	MarkReady()
 	SubInstrument(chan any)
 	SubTicker([]string)
 	SubTrades([]string)
@@ -165,6 +166,15 @@ Normalizer returns the internal [spot.Normalizer] used to normalize asset names.
 */
 func (api *API) Normalizer() *spot.Normalizer {
 	return api.normalizer
+}
+
+/*
+MarkReady tells both spot sessions the whole market universe is subscribed, so
+they may begin feeding the trading pipeline.
+*/
+func (api *API) MarkReady() {
+	api.public.MarkReady()
+	api.private.MarkReady()
 }
 
 func (api *API) SubInstrument(callback chan any)                  { api.public.SubInstrument(callback) }

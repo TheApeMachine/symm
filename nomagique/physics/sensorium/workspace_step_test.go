@@ -62,7 +62,7 @@ func TestSeedModeAnchors(t *testing.T) {
 }
 
 func TestProjectSpatialWave(t *testing.T) {
-	Convey("Given one unit-mass oscillator at a cell centre", t, func() {
+	Convey("Given one unit mode amplitude anchored to a particle at a cell centre", t, func() {
 		fluid, err := newWorkspace(8, 8, 8)
 		So(err, ShouldBeNil)
 		Reset(func() {
@@ -74,8 +74,17 @@ func TestProjectSpatialWave(t *testing.T) {
 		pos[0] = 0.5
 		pos[1] = 0.5
 		pos[2] = 0.5
-		fluid.mass.Float32Slice()[0] = 1
-		fluid.phase.Float32Slice()[0] = 0
+
+		// projectSpatialWave carries MODE coefficients onto the grid through
+		// their spatial anchors -- it does not deposit particle mass. The mode
+		// amplitude and the anchor binding it to a particle are what this
+		// function reads, and what the pipeline's earlier seedModeAnchors and
+		// waveStep stages would otherwise have written.
+		fluid.psiModeReal.Float32Slice()[0] = 1
+		fluid.psiModeImag.Float32Slice()[0] = 0
+		fluid.anchorIdx.Int32Slice()[0] = 0
+		fluid.anchorWeight.Float32Slice()[0] = 1
+
 		fluid.projectSpatialWave()
 		psiRe := fluid.psiRe.Float32Slice()
 		var total float32
@@ -91,7 +100,7 @@ func TestProjectSpatialWave(t *testing.T) {
 			}
 		}
 
-		Convey("CIC should deposit the oscillator phasor on the spatial grid", func() {
+		Convey("CIC should deposit the mode phasor on the spatial grid", func() {
 			So(float64(total), ShouldAlmostEqual, 1.0, 1e-5)
 			So(peak, ShouldEqual, float32(1))
 			So(peakCell, ShouldEqual, 4+8*(4+8*4))
@@ -100,7 +109,7 @@ func TestProjectSpatialWave(t *testing.T) {
 }
 
 func TestSplatParticleWave(t *testing.T) {
-	Convey("Given one unit-amplitude oscillator at a cell centre", t, func() {
+	Convey("Given a real-valued mode phasor anchored at a cell centre", t, func() {
 		fluid, err := newWorkspace(8, 8, 8)
 		So(err, ShouldBeNil)
 		Reset(func() {
@@ -112,8 +121,10 @@ func TestSplatParticleWave(t *testing.T) {
 		pos[0] = 0.5
 		pos[1] = 0.5
 		pos[2] = 0.5
-		fluid.mass.Float32Slice()[0] = 1
-		fluid.phase.Float32Slice()[0] = 0
+		fluid.psiModeReal.Float32Slice()[0] = 1
+		fluid.psiModeImag.Float32Slice()[0] = 0
+		fluid.anchorIdx.Int32Slice()[0] = 0
+		fluid.anchorWeight.Float32Slice()[0] = 1
 		fluid.psiRe.Zero()
 		fluid.psiIm.Zero()
 		fluid.projectSpatialWave()
@@ -131,7 +142,7 @@ func TestSplatParticleWave(t *testing.T) {
 			}
 		}
 
-		Convey("CIC should deposit the phasor on the spatial grid", func() {
+		Convey("CIC should deposit the phasor and leave the imaginary part zero", func() {
 			So(float64(total), ShouldAlmostEqual, 1.0, 1e-5)
 			So(peak, ShouldEqual, float32(1))
 			So(peakCell, ShouldEqual, 4+8*(4+8*4))

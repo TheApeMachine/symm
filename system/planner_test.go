@@ -7,13 +7,13 @@ import (
 )
 
 func TestNewPlannerConfig(t *testing.T) {
-	Convey("Given the planner cold-start admission policy", t, func() {
+	Convey("Given the live planner policy", t, func() {
 		config := NewPlannerConfig()
 
-		Convey("It should start at the no-information directional boundary", func() {
-			So(config.MinimumConfidence, ShouldEqual, UninformativeDirectionConfidence)
-			So(config.MinimumGraphScore, ShouldEqual, -1.0)
-			So(config.MinimumUtility, ShouldEqual, 0.0)
+		Convey("it should state entry, allocation, and cognition boundaries", func() {
+			So(config.MinimumEntryProbability, ShouldBeGreaterThan, UninformativeDirectionConfidence)
+			So(config.MaxAllocationFraction, ShouldBeGreaterThan, 0.0)
+			So(config.CognitionSwitchConfidence, ShouldEqual, UninformativeDirectionConfidence)
 		})
 	})
 }

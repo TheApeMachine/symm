@@ -7,8 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/symm/system"
-
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -22,36 +20,33 @@ import (
 
 /*
 Desk is the broker Actor entrypoint and persistent position owner. It drains
-market tickers and account executions from the shared thesis symbol queues and
+market tickers and account executions from their Workloads and
 routes each message to the positions it owns so closed lots leave no abandoned
 fan-out behind.
 */
 type Desk struct {
 	*PositionStore
-	ctx            context.Context
-	cancel         context.CancelFunc
-	err            error
-	status         types.Status
-	api            *websocket.API
-	instrument     *Instrument
-	price          *Price
-	balance        *Balance
-	thesis         *types.Thesis
-	equityObserver EquityObserver
-	recorder       *audit.Recorder
-	recovery       *Recovery
-	perspective    PerspectiveReader
-	positions      *sync.Map
+	ctx         context.Context
+	cancel      context.CancelFunc
+	err         error
+	status      types.Status
+	api         *websocket.API
+	instrument  *Instrument
+	price       *Price
+	balance     *Balance
+	equity      atomic.Pointer[types.EquityReading]
+	recorder    *audit.Recorder
+	recovery    *Recovery
+	perspective PerspectiveReader
+	positions   *sync.Map
 	// execution holds the continuously-advanced bounded execution state per
 	// subscribed symbol. It is advanced by the authoritative L3 stream from
 	// the genuine snapshot onward regardless of whether a Position exists, so
 	// a position opened midway through a stream consumes truthful current
 	// state instead of promoting the next update to a snapshot.
-	execution       *sync.Map
-	passage         *types.PassageModel
+	execution      *sync.Map
+	passage        *types.PassageModel
 	balanceRefresh atomic.Bool
-	maxPositions   int
-	maxReserved    int
 	// lifecycleRecorder is the optional Hindsight trading-lifecycle sink. It
 	// records entry/fill/position-open/exit/close transitions observationally;
 	// it is nil when Hindsight is not wired, and its failure never affects
@@ -70,14 +65,6 @@ type LifecycleRecorder interface {
 }
 
 /*
-EquityObserver consumes each complete broker valuation after it is committed to
-the shared thesis.
-*/
-type EquityObserver interface {
-	Update(*types.Thesis, bool) error
-}
-
-/*
 MarkObserver consumes executable position marks as predictive context. It is a
 separate optional interface so broker valuation remains the only account-level
 outcome while intra-position evidence can arrive at ticker cadence.
@@ -89,12 +76,11 @@ type MarkObserver interface {
 /*
 NewDesk constructs the serial broker owner from its explicit dependencies. The
 desk owns no transport or account objects itself: the caller supplies the API,
-instrument, price, balance, thesis, recorder, and recovery handler it will
+instrument, price, balance, recorder, and recovery handler it will
 route through, so the live wiring and tests share one construction path rather
 than a half-built struct. positions is the shared open-position map the recovery
-publisher repopulates on boot. store persists position stoploss and thesis
-checkpoint state; the desk embeds it so SaveThesis and Save resolve against a
-live database rather than a nil pointer.
+publisher repopulates on boot. store persists position stoploss state; the desk
+embeds it so Save resolves against a live database rather than a nil pointer.
 */
 func NewDesk(
 	ctx context.Context,
@@ -102,7 +88,6 @@ func NewDesk(
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
-	thesis *types.Thesis,
 	recorder *audit.Recorder,
 	recovery *Recovery,
 	store *PositionStore,
@@ -119,7 +104,6 @@ func NewDesk(
 		instrument:    instrument,
 		price:         price,
 		balance:       balance,
-		thesis:        thesis,
 		recorder:      recorder,
 		recovery:      recovery,
 		PositionStore: store,
@@ -127,8 +111,6 @@ func NewDesk(
 		positions:     positions,
 		execution:     &sync.Map{},
 		passage:       types.NewPassageModel(),
-		maxPositions:  viper.GetViper().GetInt("trading.slots.normal"),
-		maxReserved:   viper.GetViper().GetInt("trading.slots.reserved"),
 	}
 
 	if desk.positions == nil {
@@ -459,10 +441,10 @@ profit/loss only; equity is cash plus the basis committed to open positions plus
 that profit/loss.
 */
 func (desk *Desk) PublishEquity() error {
-	if desk == nil || desk.api == nil || desk.thesis == nil {
+	if desk == nil || desk.api == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
-			"desk: API and thesis required",
+			"desk: API required",
 			nil,
 		))
 	}
@@ -477,31 +459,30 @@ func (desk *Desk) PublishEquity() error {
 		))
 	}
 
-	if err := desk.thesis.AppendEquity(tradeBalance); err != nil {
+	reading := types.NewEquityReading(tradeBalance)
+
+	if reading == nil {
 		return errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
-			"desk: could not publish account equity",
-			err,
+			"desk: broker valuation did not include equity",
+			nil,
 		))
 	}
 
-	// The equity observer is an optional downstream veto hook (e.g. a
-	// whole-account regulator). Publishing equity to the thesis is the desk's
-	// own responsibility and happens regardless; when no observer is wired the
-	// valuation simply has no veto, rather than a fabricated no-op consumer.
-	if desk.equityObserver == nil {
+	desk.equity.Store(reading)
+
+	return nil
+}
+
+/*
+Equity returns the most recent complete valuation published by the broker.
+*/
+func (desk *Desk) Equity() *types.EquityReading {
+	if desk == nil {
 		return nil
 	}
 
-	if err := desk.equityObserver.Update(desk.thesis, desk.OpenPositions() > 0); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"desk: regulator rejected account equity",
-			err,
-		))
-	}
-
-	return nil
+	return desk.equity.Load()
 }
 
 func (desk *Desk) Positions() iter.Seq[*Position] {
@@ -566,16 +547,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			))
 		}
 
-		config := system.Cfg.Snapshot()
-
-		if config == nil || config.Planner == nil {
-			return errnie.Error(errnie.Err(
-				errnie.Validation,
-				"desk: planner configuration required",
-				nil,
-			))
-		}
-
 		found, loaded := desk.positions.Load(decision.Symbol)
 
 		if loaded {
@@ -586,13 +557,15 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			}
 		}
 
-		allocationClass, allocationErr := desk.entryAllocationClass(decision)
-
-		if allocationErr != nil {
-			return allocationErr
+		if decision.AllocationClass == "none" {
+			return errnie.Error(errnie.Err(
+				errnie.NotAcceptable,
+				"desk: decision was not allocated capital",
+				nil,
+			))
 		}
 
-		decision.AllocationClass = allocationClass
+		decision.AllocationClass = "capital"
 
 		pair := desk.instrument.Pair(decision.Symbol)
 
@@ -793,14 +766,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 }
 
 /*
-MaxPositions is the number of concurrent positions the desk works under normal
-conditions, before any reserve is drawn on.
-*/
-func (desk *Desk) MaxPositions() int {
-	return desk.maxPositions
-}
-
-/*
 SetLifecycleRecorder attaches the Hindsight trading-lifecycle sink. It is set
 after construction so the live wiring can hand in the store without the desk
 owning it; a nil recorder is the "Hindsight off" case and records nothing.
@@ -853,124 +818,6 @@ func executionFact(execution kraken.ExecutionData) *hindsight.ExecutionFact {
 	}
 
 	return fact
-}
-
-/*
-MaxReserved is the number of emergency slots that may only be used by a
-strategy decision independently qualified for the reserve lane.
-*/
-func (desk *Desk) MaxReserved() int {
-	if desk == nil {
-		return 0
-	}
-
-	return desk.maxReserved
-}
-
-/*
-OpenSlots reports independently occupied normal and reserve lanes while also
-respecting the absolute four-position ceiling. A reserve position therefore
-does not silently consume one of the two normal trading slots, and historical
-over-capacity never reappears as fresh capacity.
-*/
-func (desk *Desk) OpenSlots(opportunity bool) int {
-	if desk == nil {
-		return 0
-	}
-
-	normalOpen, reserveOpen := desk.slotAvailability()
-
-	if opportunity {
-		return normalOpen + reserveOpen
-	}
-
-	return normalOpen
-}
-
-func (desk *Desk) entryAllocationClass(decision types.Decision) (string, error) {
-	normalOpen, reserveOpen := desk.slotAvailability()
-
-	switch decision.AllocationClass {
-	case "none":
-		return "", errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"desk: decision was not allocated a position slot",
-			nil,
-		))
-	case "reserve":
-		// Reserve capacity is a plain second capacity lane: it is allocated
-		// upstream by expected economic outcome, never by legacy semantic
-		// opportunity qualification.
-		if reserveOpen > 0 {
-			return "reserve", nil
-		}
-
-		if normalOpen > 0 {
-			return "normal", nil
-		}
-	case "normal", "", "unallocated":
-		if normalOpen > 0 {
-			return "normal", nil
-		}
-
-		if reserveOpen > 0 {
-			return "reserve", nil
-		}
-	default:
-		return "", errnie.Error(errnie.Err(
-			errnie.Validation,
-			"desk: unknown allocation class",
-			nil,
-		))
-	}
-
-	return "", errnie.Error(errnie.Err(
-		errnie.NotAcceptable,
-		"desk: position capacity exhausted for requested allocation",
-		nil,
-	))
-}
-
-func (desk *Desk) slotAvailability() (int, int) {
-	if desk == nil {
-		return 0, 0
-	}
-
-	normal, reserve := desk.slotOccupancy()
-	totalOpen := max(0, desk.maxPositions+desk.maxReserved-normal-reserve)
-	normalOpen := min(max(0, desk.maxPositions-normal), totalOpen)
-	reserveOpen := min(
-		max(0, desk.maxReserved-reserve),
-		max(0, totalOpen-normalOpen),
-	)
-
-	return normalOpen, reserveOpen
-}
-
-func (desk *Desk) slotOccupancy() (int, int) {
-	if desk == nil || desk.positions == nil {
-		return 0, 0
-	}
-
-	normal := 0
-	reserve := 0
-	desk.positions.Range(func(_, value any) bool {
-		position, valid := value.(*Position)
-
-		if !valid || position == nil {
-			return true
-		}
-
-		if position.Decision.AllocationClass == "reserve" {
-			reserve++
-		} else {
-			normal++
-		}
-
-		return true
-	})
-
-	return normal, reserve
 }
 
 /*

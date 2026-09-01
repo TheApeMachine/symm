@@ -40,47 +40,35 @@ func NewConfig() *Config {
 	}
 }
 
-/*
-Snapshot returns an independent, internally consistent configuration reading.
-*/
-func (config *Config) Snapshot() *Config {
+/* PlannerPolicy returns the small live policy value without allocating. */
+func (config *Config) PlannerPolicy() (PlannerConfig, error) {
 	if config == nil {
-		return nil
+		return PlannerConfig{}, errors.New("system: configuration required")
 	}
 
 	config.mu.RLock()
 	defer config.mu.RUnlock()
 
-	snapshot := &Config{}
-
-	if config.Resonance != nil {
-		resonance := *config.Resonance
-		snapshot.Resonance = &resonance
+	if config.Planner == nil {
+		return PlannerConfig{}, errors.New("system: planner configuration required")
 	}
 
-	if config.Risk != nil {
-		risk := *config.Risk
-		snapshot.Risk = &risk
-	}
-
-	if config.Regulator != nil {
-		regulator := *config.Regulator
-		snapshot.Regulator = &regulator
-	}
-
-	if config.Planner != nil {
-		planner := *config.Planner
-		snapshot.Planner = &planner
-	}
-
-	return snapshot
+	return *config.Planner, nil
 }
 
-/*
-PlannerMinimumConfidence reads the current graph admission boundary without
-allocating a configuration snapshot.
-*/
-func (config *Config) PlannerMinimumConfidence() (float64, error) {
+/* CognitionSwitchConfidence returns cognition's configured state-switch policy. */
+func (config *Config) CognitionSwitchConfidence() (float64, error) {
+	policy, err := config.PlannerPolicy()
+
+	if err != nil {
+		return 0, err
+	}
+
+	return policy.CognitionSwitchConfidence, nil
+}
+
+/* OptimizationConfidence returns the Passage quantile confidence without allocating. */
+func (config *Config) OptimizationConfidence() (float64, error) {
 	if config == nil {
 		return 0, errors.New("system: configuration required")
 	}
@@ -88,25 +76,9 @@ func (config *Config) PlannerMinimumConfidence() (float64, error) {
 	config.mu.RLock()
 	defer config.mu.RUnlock()
 
-	if config.Planner == nil {
-		return 0, errors.New("system: planner configuration required")
+	if config.Regulator == nil {
+		return 0, errors.New("system: regulator configuration required")
 	}
 
-	return config.Planner.MinimumConfidence, nil
-}
-
-/*
-ApplyRegulation atomically publishes the regulator-owned dynamic settings.
-*/
-func (config *Config) ApplyRegulation(planner PlannerConfig) error {
-	if config == nil || config.Planner == nil {
-		return errors.New("system: planner configuration required for regulation")
-	}
-
-	config.mu.Lock()
-	defer config.mu.Unlock()
-
-	*config.Planner = planner
-
-	return nil
+	return config.Regulator.OptimizationConfidence, nil
 }

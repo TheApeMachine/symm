@@ -14,12 +14,10 @@ import (
 	"runtime"
 	"runtime/debug"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
@@ -27,11 +25,9 @@ import (
 	"github.com/theapemachine/symm/logic/advisor"
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/cognition"
-	"github.com/theapemachine/symm/logic/graph"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/opportunity"
 	"github.com/theapemachine/symm/logic/resonance"
-	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -63,451 +59,6 @@ which allows a developer to easily override the config file.
 */
 //go:embed cfg/config.yml
 var embedded embed.FS
-
-/*
-tickNode drives the live decision clock off the ticker stream. One market
-ticker observation commits an engine tick, advances the broker desk's live
-marks, and runs the strategy planner's portfolio pass. It is the single place
-the thesis clock advances, so the resonance, graph, and causal stages all read
-one coherent tick watermark.
-*/
-type tickNode struct {
-	thesis  *types.Thesis
-	desk    *broker.Desk
-	planner *strategy.Planner
-}
-
-func (node tickNode) Step(envelope *types.Envelope) *types.Envelope {
-	if envelope == nil || envelope.TypeID != types.EnvelopeTicker {
-		return envelope
-	}
-
-	envelope.Tick = node.thesis.AdvanceTick(envelope.TickerData.Timestamp)
-
-	if err := node.desk.StepTicker(envelope.TickerData); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"symm: desk ticker step",
-			err,
-		))
-	}
-
-	envelope.StrategyRound = node.planner.StepTick(envelope.TickerData)
-
-	// Stamp the account valuation the desk has most recently published, so the
-	// dashboard's balance rides the market stream it is already consuming. The
-	// snapshot is whatever the broker last reported: this reads it, never polls
-	// for it, so a tick costs nothing extra when the valuation has not changed.
-	if balance, _, found := node.thesis.EquitySnapshot(); found {
-		envelope.Equity = types.NewEquityReading(balance)
-	}
-
-	// Stamp the open-lot set so the positions panel recovers from the same
-	// market event as equity, rather than a broker poll the dashboard has no
-	// way to trigger.
-	envelope.Positions = node.desk.OpenPositionWire()
-
-	return envelope
-}
-
-func (node tickNode) StepBacklog(envelope *types.Envelope, backlog int64) *types.Envelope {
-	return node.Step(envelope)
-}
-
-/*
-level3Node routes one parsed Level3 frame to the broker desk so the canonical
-per-symbol execution state is advanced and the matching open position's
-guardian can evaluate the post-frame executable surface. It is the Level3
-analogue of executionNode: each frame lands on this node and is applied to the
-desk's continuously-resident execution reducer before any signal or downstream
-stage reads it.
-*/
-type level3Node struct {
-	desk *broker.Desk
-}
-
-func (node level3Node) Step(envelope *types.Envelope) *types.Envelope {
-	if envelope == nil || envelope.TypeID != types.EnvelopeLevel3 || node.desk == nil {
-		return envelope
-	}
-
-	if err := node.desk.StepLevel3Epoch(
-		envelope.Level3Data,
-		uint64(envelope.Stream.Epoch),
-	); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"symm: desk level3 step",
-			err,
-		))
-	}
-
-	return envelope
-}
-
-func (node level3Node) StepBacklog(envelope *types.Envelope, backlog int64) *types.Envelope {
-	return node.Step(envelope)
-}
-
-/*
-executionNode routes one confirmed execution record to the broker desk so the
-matching open position can advance its fill state. It is the account-execution
-analogue of tickNode: the private execution stream's frames land on this node
-and are dispatched to the desk's serial guardian ring, never shared with the
-public market-data pipeline.
-*/
-type executionNode struct {
-	desk *broker.Desk
-}
-
-func (node executionNode) Step(envelope *types.Envelope) *types.Envelope {
-	if envelope == nil || envelope.TypeID != types.EnvelopeExecution || node.desk == nil {
-		return envelope
-	}
-
-	if err := node.desk.StepExecution(envelope.ExecutionData); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			"symm: desk execution step",
-			err,
-		))
-	}
-
-	return envelope
-}
-
-/*
-strategyNode is the strategy layer's stream boundary. It receives the envelope
-the logic layer finished — reading the GraphUpdate the graph stage just stamped
-— and hands that symbol/at to the reasoner so it re-fits its causal transition
-models from the shared store the graph stage already advanced. Because it sits
-after the logic stages and before tickNode, the reasoner observes a fully-formed
-logic result once per envelope, in stream order, and never reaches sideways.
-*/
-type strategyNode struct {
-	planner *strategy.Planner
-}
-
-func (node strategyNode) Step(envelope *types.Envelope) *types.Envelope {
-	if envelope == nil || envelope.GraphUpdate == nil || node.planner == nil {
-		return envelope
-	}
-
-	node.planner.Reasoner().OnGraphUpdate(
-		envelope.GraphUpdate.Symbol,
-		envelope.GraphUpdate.At,
-	)
-
-	return envelope
-}
-
-func (node strategyNode) StepBacklog(envelope *types.Envelope, backlog int64) *types.Envelope {
-	return node.Step(envelope)
-}
-
-/*
-advisorNode is the advisory layer's stream boundary. It composes this envelope's
-signal measurements through the declared advisor families and attaches the
-resulting Perspectives — descriptive context, never decisions. Each advisor sees
-the measurements it declares once, in stream order, and produces a bounded
-resident reading; the perspectives then flow to whatever consumes them
-(decision context and position/risk management), not to the UI as a gate.
-*/
-type advisorNode struct {
-	advisors []*advisor.Advisor
-	store    *advisor.Store
-}
-
-func (node advisorNode) Step(envelope *types.Envelope) *types.Envelope {
-	if envelope == nil {
-		return envelope
-	}
-
-	var perspectives []*types.Perspective
-
-	for _, advisorInstance := range node.advisors {
-		for _, measurement := range envelope.SignalMeasurements() {
-			if measurement == nil {
-				continue
-			}
-
-			if perspective := advisorInstance.Step(measurement); perspective != nil {
-				perspectives = append(perspectives, perspective)
-
-				if node.store != nil {
-					node.store.Put(perspective)
-				}
-			}
-		}
-	}
-
-	if len(perspectives) > 0 {
-		envelope.Perspectives = perspectives
-	}
-
-	return envelope
-}
-
-func (node advisorNode) StepBacklog(envelope *types.Envelope, backlog int64) *types.Envelope {
-	return node.Step(envelope)
-}
-
-/*
-cvdQuoteProvider yields the shared top-of-book quote for the CVD signal's
-response-price metrics, read synchronously from the broker desk's live tick
-cache. It restores the contemporaneous-quote dependency that was severed during
-the workspace refactor, so midpoint_log_return (the causal outcome) is once
-again computable from real market data rather than permanently undefined.
-*/
-func cvdQuoteProvider(price *broker.Price) func(symbol string) (bid, ask *decimal.Decimal) {
-	return func(symbol string) (bid, ask *decimal.Decimal) {
-		if price == nil {
-			return nil, nil
-		}
-
-		tick := price.Tick(symbol)
-
-		if tick == nil {
-			return nil, nil
-		}
-
-		return tick.Bid, tick.Ask
-	}
-}
-
-/*
-witnessNode is the Hindsight witness boundary of the live pipeline. It observes
-the semantic artifacts the running binary actually produced on an envelope —
-Categories and signal Measurements — and records an ArtifactWitness for each,
-keyed to the exact EnvelopeRef (CaptureIdentity + ordinal) that carried it. The
-witness is historical evidence: what actually ran, not what replay would produce.
-*/
-type witnessNode struct {
-	writer         *store.Writer
-	asyncWriter    *store.AsyncWitnessWriter
-	categorySolver *category.Solver
-	graphSolver    *graph.Solver
-}
-
-func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
-	if envelope == nil || (node.writer == nil && node.asyncWriter == nil) {
-		return envelope
-	}
-
-	if !envelope.CaptureID.Valid() {
-		return envelope
-	}
-
-	ref := hindsight.EnvelopeRef{
-		Origin:  envelope.CaptureID,
-		Ordinal: envelope.CaptureOrdinal,
-	}
-
-	// One "state" witness per envelope persists the complete EnvelopeState — the
-	// exact system state at this Observe boundary — so inspection can scrub to
-	// any capture and see precisely what the running binary produced, joined back
-	// to its raw frame by the capture provenance carried in the state itself.
-	//
-	// The payload encoding stays on the producing thread (it reads the in-flight
-	// envelope, which is not safe to touch after Step returns); the persistence
-	// itself is offloaded. With an async writer the bytes are handed to a
-	// background worker and never block the Disruptor consumer on SQLite writes.
-	stateWitness := hindsight.ArtifactWitness{
-		Envelope: ref,
-		Boundary: "observe",
-		Artifact: hindsight.ArtifactID{
-			Kind:     "state",
-			Identity: string(ref.Origin.Run) + ":" + strconv.FormatUint(uint64(ref.Origin.Sequence), 10) + ":" + strconv.FormatUint(ref.Ordinal, 10),
-		},
-		ImmediateParents: nil,
-		Payload:          envelope.EncodeBytes(),
-	}
-
-	node.write(stateWitness)
-
-	for _, category := range envelope.Categories {
-		node.record(
-			ref,
-			"after-category",
-			"category",
-			string(category.Type),
-			[]hindsight.EnvelopeRef{ref},
-			"category",
-			node.categoryVersion(),
-		)
-	}
-
-	measurements := []*data.Measurement[float64]{
-		envelope.CVD,
-		envelope.Hawkes,
-		envelope.DepthFlow,
-		envelope.Morphology,
-		envelope.Liquidity,
-		envelope.PumpDump,
-		envelope.Toxicity,
-		envelope.Derivatives,
-		envelope.Correlation,
-		envelope.LeadLag,
-		envelope.Sentiment,
-	}
-
-	for _, measurement := range measurements {
-		if measurement == nil {
-			continue
-		}
-
-		node.record(
-			ref,
-			"after-signals",
-			"measurement",
-			measurement.ID,
-			[]hindsight.EnvelopeRef{ref},
-			"graph",
-			node.graphVersion(),
-		)
-	}
-
-	// The strategy decision round is a first-class historical artifact: what
-	// the planner actually decided on this envelope, keyed to the same exact
-	// EnvelopeRef so an inspector can trace a decision back to the semantic
-	// state that produced it. This is observational — recording never alters
-	// trading, and a nil/empty round is simply not recorded.
-	if envelope.StrategyRound != nil {
-		for _, decision := range envelope.StrategyRound.Decisions {
-			if decision == nil {
-				continue
-			}
-
-			node.recordDecision(ref, decision)
-		}
-	}
-
-	return envelope
-}
-
-/*
-recordDecision persists one planner decision as a first-class historical
-artifact. Its identity is the decision's own ID (stable across the trade), and
-its semantic parents are the decision's declared perspective sources plus its
-causal identification — the exact shared inputs that produced it, named so a
-consumer can traverse each source to its own witness by identity.
-*/
-func (node witnessNode) recordDecision(ref hindsight.EnvelopeRef, decision *types.Decision) {
-	if decision == nil || decision.ID == "" {
-		return
-	}
-
-	semanticParents := make([]string, 0, len(decision.PerspectiveSources)+1)
-
-	for _, source := range decision.PerspectiveSources {
-		semanticParents = append(semanticParents, source.Source)
-	}
-
-	if decision.CausalIdentification != "" {
-		semanticParents = append(semanticParents, decision.CausalIdentification)
-	}
-
-	witness := hindsight.ArtifactWitness{
-		Envelope: ref,
-		Boundary: "after-planner",
-		Artifact: hindsight.ArtifactID{
-			Kind:     "decision",
-			Identity: decision.ID,
-		},
-		Component:             "planner",
-		ComponentStateVersion: node.graphVersion(),
-		ImmediateParents:      []hindsight.EnvelopeRef{ref},
-		SemanticParents:       semanticParents,
-	}
-
-	node.write(witness)
-}
-
-func (node witnessNode) categoryVersion() uint64 {
-	if node.categorySolver == nil {
-		return 0
-	}
-
-	return node.categorySolver.Version()
-}
-
-func (node witnessNode) graphVersion() uint64 {
-	if node.graphSolver == nil || node.graphSolver.Store() == nil {
-		return 0
-	}
-
-	return node.graphSolver.Store().Version()
-}
-
-func (node witnessNode) record(
-	ref hindsight.EnvelopeRef,
-	boundary, kind, identity string,
-	parents []hindsight.EnvelopeRef,
-	component string,
-	stateVersion uint64,
-) {
-	if identity == "" {
-		return
-	}
-
-	node.write(hindsight.ArtifactWitness{
-		Envelope: ref,
-		Boundary: boundary,
-		Artifact: hindsight.ArtifactID{
-			Kind:     kind,
-			Identity: identity,
-		},
-		Component:             component,
-		ComponentStateVersion: stateVersion,
-		ImmediateParents:      parents,
-		Payload:               nil,
-	})
-}
-
-/*
-write routes one artifact witness to either the asynchronous background worker
-(live hot path) or the synchronous transport writer (tests and any caller that
-did not wire an async writer). It never blocks the producing thread when the
-async path is active: backpressure is the async writer's bounded queue, whose
-overflow policy drops with observability rather than stalling the pipeline.
-*/
-func (node witnessNode) write(witness hindsight.ArtifactWitness) {
-	if node.asyncWriter != nil {
-		node.asyncWriter.Enqueue(witness)
-		return
-	}
-
-	_ = node.writer.WriteWitness(witness)
-}
-
-func (node witnessNode) StepBacklog(envelope *types.Envelope, backlog int64) *types.Envelope {
-	return node.Step(envelope)
-}
-
-/*
-hindsightLifecycleRecorder adapts the broker's LifecycleRecorder seam to the
-Hindsight store. It turns one trading-lifecycle transition into a durable
-LifecycleEvent keyed by the decision ID, tagged with the run. Recording is
-fire-and-forget: a persistence failure is logged and never blocks the trade.
-*/
-type hindsightLifecycleRecorder struct {
-	engine *store.SQLite
-	runID  hindsight.RunID
-}
-
-func (recorder hindsightLifecycleRecorder) RecordLifecycle(event hindsight.LifecycleEvent) {
-	if recorder.engine == nil || event.DecisionID == "" || event.Kind == "" {
-		return
-	}
-
-	if err := recorder.engine.WriteLifecycleEvent(recorder.runID, event); err != nil {
-		errnie.Error(errnie.Err(
-			errnie.IO,
-			"symm: record lifecycle event",
-			err,
-		))
-	}
-}
 
 var (
 	cfgFile string
@@ -544,8 +95,6 @@ var (
 
 			hub := ui.NewHub(cmd.Context())
 			defer hub.Close()
-
-			thesis := types.NewThesis(cmd.Context())
 
 			// Phase 1 — the brokers' transport and account objects, which the
 			// logic stages and the decision path both consume. The workload
@@ -727,29 +276,13 @@ var (
 			privateSession.SetReconnect(softReboot(system.Cfg.WebSocket.Endpoints.Private))
 			futures.SetReconnect(softReboot(system.Cfg.WebSocket.Endpoints.Futures))
 
-			// The shared graph stage owns the authoritative observation store
-			// and influence graph. Both the envelope pipeline (which folds
-			// measurements into it) and the strategy reasoner (which reads it)
-			// bind this single instance — there is no second estimator.
-			epoch := uint64(1)
-			measurementStep := system.Cfg.Snapshot().Planner.MeasurementStep
-			schemaTemplate := strategy.DefaultCausalSchema(epoch, measurementStep)
-			graphSolver := graph.NewSolver(
-				cmd.Context(),
-				epoch,
-				2048,
-				strategy.RelationPlansFromSchema(schemaTemplate, epoch, system.Cfg.Snapshot().Planner.RelationMaxLag),
-				schemaTemplate.Version,
-				graph.WithInterval(system.Cfg.Snapshot().Planner.RelationInterval),
-			)
-
-			// The shared category solver owns the authoritative per-symbol
-			// evidence snapshot. It and the graph solver and the advisory layer
-			// are mounted at every producer Workload that delivers one of their
-			// declared inputs, so trade (CVD/Hawkes) and Level3
-			// (DepthFlow/Morphology) measurements reach the same semantic state
-			// instead of being stranded on their own rings.
+			// Stateful analytical stages are constructed once and mounted directly
+			// in each Workload that produces their inputs. The Workloads themselves
+			// remain the complete topology; there is no secondary observation store.
 			categorySolver := category.NewSolver(cmd.Context())
+			cognitionSolver := cognition.NewSolver(cmd.Context())
+			opportunitySolver := opportunity.NewSolver(cmd.Context())
+			resonanceSolver := resonance.NewSolver(cmd.Context(), 0)
 
 			// The shared manifold solver owns the one resident physics domain.
 			// It reads Hawkes excitation fractions on the Trade workload (as
@@ -795,7 +328,7 @@ var (
 			)
 
 			desk, err := broker.NewDesk(
-				cmd.Context(), api, instrument, price, balance, thesis, recorder,
+				cmd.Context(), api, instrument, price, balance, recorder,
 				recovery, positionStore, positions, perspectiveStore,
 			)
 
@@ -814,25 +347,18 @@ var (
 			// It is observational and never affects trading.
 			desk.SetLifecycleRecorder(hindsightLifecycleRecorder{engine: storageEngine, runID: runID})
 
-			// The strategy planner is the one authoritative live decision path:
-			// it consumes the graph's fitted influence state, runs economic
-			// MCTS per symbol, and executes through the desk.
-			planner := strategy.NewPlanner(
-				cmd.Context(), thesis, recorder, desk,
-				graphSolver.Store(), graphSolver.Graph(),
-			)
+			planner, err := strategy.NewPlanner(cmd.Context(), recorder, desk)
 
-			if planner == nil {
+			if err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.Internal,
-					"symm: construct strategy planner",
-					nil,
+					"symm: construct planner",
+					err,
 				))
 			}
 
 			defer planner.Close()
 
-			// The advisory layer composes the signals' measurements into
 			// The advisory layer composes the signals' measurements into
 			// descriptive Perspectives — context for decision and risk, never
 			// decisions. Sixteen families in deterministic order; all instances
@@ -859,93 +385,78 @@ var (
 				},
 			}
 
-			// Phase 2 — populate the workload maps now that every shared
-			// dependency exists. The ticker stage folds measurements into the
-			// shared graph, resolves categories, cognition, opportunity, and
-			// causal readings, and advances the desk/planner on the thesis tick.
+			// Phase 2 — declare the complete streaming topology as Workloads.
+			// The Desk receives priority market/execution updates first. Analytical
+			// state then enriches the same envelope before Strategy sees it once.
 			publicIngress["ticker"] = nmruntime.NewWorkload(
 				cmd.Context(),
-				append(
-					[][]nmruntime.Node[*types.Envelope]{
-						{system.NewDiagnostic("ticker.ingress")},
-						{
-							system.NewTraced("ticker.correlation", correlation.NewSignal(cmd.Context())),
-							system.NewTraced("ticker.leadlag", leadlag.NewSignal(cmd.Context())),
-							system.NewTraced("ticker.liquidity", liquidity.NewSignal(cmd.Context())),
-							system.NewTraced("ticker.sentiment", sentiment.NewSignal(cmd.Context())),
-							system.NewTraced("ticker.pumpdump", pumpdump.NewSignal(cmd.Context())),
-							system.NewTraced("ticker.resonance", resonance.NewSolver(cmd.Context(), 0, thesis)),
-						},
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewDiagnostic("ticker.ingress")},
+					{&tickNode{desk: desk}},
+					{
+						system.NewTraced("ticker.correlation", correlation.NewSignal(cmd.Context())),
+						system.NewTraced("ticker.leadlag", leadlag.NewSignal(cmd.Context())),
+						system.NewTraced("ticker.liquidity", liquidity.NewSignal(cmd.Context())),
+						system.NewTraced("ticker.sentiment", sentiment.NewSignal(cmd.Context())),
+						system.NewTraced("ticker.pumpdump", pumpdump.NewSignal(cmd.Context())),
+						system.NewTraced("ticker.resonance", resonanceSolver),
 					},
-					append(
-						semanticCore("ticker", advisors, graphSolver, categorySolver),
-						[][]nmruntime.Node[*types.Envelope]{
-							{system.NewDiagnostic("ticker.category")},
-							{
-								system.NewTraced("ticker.cognition", cognition.NewSolver(cmd.Context(), thesis)),
-								system.NewTraced("ticker.opportunity", opportunity.NewSolver(cmd.Context())),
-							},
-							{system.NewDiagnostic("ticker.logic")},
-							{strategyNode{planner: planner}},
-							{tickNode{thesis: thesis, desk: desk, planner: planner}},
-							{system.NewDiagnostic("ticker.trade")},
-							{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
-							{hub},
-							{system.NewDiagnostic("ticker.hub")},
-						}...,
-					)...,
-				),
+					{advisors},
+					{categorySolver},
+					{system.NewTraced("ticker.cognition", cognitionSolver)},
+					{system.NewTraced("ticker.opportunity", opportunitySolver)},
+					{system.NewDiagnostic("ticker.logic")},
+					{planner},
+					{system.NewDiagnostic("ticker.strategy")},
+					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver}},
+					{hub},
+					{system.NewDiagnostic("ticker.hub")},
+				},
 			)
 
 			publicIngress["trade"] = nmruntime.NewWorkload(
 				cmd.Context(),
-				append(
-					[][]nmruntime.Node[*types.Envelope]{
-						{system.NewDiagnostic("trade.ingress")},
-						{
-							system.NewTraced("trade.cvd", cvd.NewSignal(cmd.Context(), cvdQuoteProvider(price))),
-							system.NewTraced("trade.hawkes", hawkes.NewSignal(cmd.Context())),
-							system.NewTraced("trade.pumpdump", pumpdump.NewSignal(cmd.Context())),
-							system.NewTraced("trade.toxicity", toxicity.NewSignal(cmd.Context())),
-						},
-						{system.NewTraced("trade.manifold", manifoldSolver)},
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewDiagnostic("trade.ingress")},
+					{
+						system.NewTraced("trade.cvd", cvd.NewSignal(cmd.Context(), cvdQuoteProvider(price))),
+						system.NewTraced("trade.hawkes", hawkes.NewSignal(cmd.Context())),
+						system.NewTraced("trade.pumpdump", pumpdump.NewSignal(cmd.Context())),
+						system.NewTraced("trade.toxicity", toxicity.NewSignal(cmd.Context())),
 					},
-					append(
-						semanticCoreLight("trade", advisors, categorySolver),
-						[][]nmruntime.Node[*types.Envelope]{
-							{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
-							{hub},
-							{system.NewDiagnostic("trade.hub")},
-						}...,
-					)...,
-				),
+					{system.NewTraced("trade.manifold", manifoldSolver)},
+					{advisors},
+					{categorySolver},
+					{system.NewTraced("trade.cognition", cognitionSolver)},
+					{system.NewTraced("trade.opportunity", opportunitySolver)},
+					{planner},
+					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver}},
+					{hub},
+					{system.NewDiagnostic("trade.hub")},
+				},
 			)
 
 			privateIngress["level3"] = nmruntime.NewWorkload(
 				cmd.Context(),
-				append(
-					[][]nmruntime.Node[*types.Envelope]{
-						{system.NewDiagnostic("level3.ingress")},
-						{level3Node{desk: desk}},
-						{
-							system.NewTraced("level3.depthflow", depthflow.NewSignal(cmd.Context())),
-							system.NewTraced("level3.morphology", morphology.NewSignal(cmd.Context())),
-							system.NewTraced("level3.pumpdump", pumpdump.NewSignal(cmd.Context())),
-							system.NewTraced("level3.toxicity", toxicity.NewSignal(cmd.Context())),
-						},
-						{
-							system.NewTraced("level3.manifold", manifoldSolver),
-						},
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewDiagnostic("level3.ingress")},
+					{level3Node{desk: desk}},
+					{
+						system.NewTraced("level3.depthflow", depthflow.NewSignal(cmd.Context())),
+						system.NewTraced("level3.morphology", morphology.NewSignal(cmd.Context())),
+						system.NewTraced("level3.pumpdump", pumpdump.NewSignal(cmd.Context())),
+						system.NewTraced("level3.toxicity", toxicity.NewSignal(cmd.Context())),
 					},
-					append(
-						semanticCoreLight("level3", advisors, categorySolver),
-						[][]nmruntime.Node[*types.Envelope]{
-							{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
-							{hub},
-							{system.NewDiagnostic("level3.hub")},
-						}...,
-					)...,
-				),
+					{system.NewTraced("level3.manifold", manifoldSolver)},
+					{advisors},
+					{categorySolver},
+					{system.NewTraced("level3.cognition", cognitionSolver)},
+					{system.NewTraced("level3.opportunity", opportunitySolver)},
+					{planner},
+					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver}},
+					{hub},
+					{system.NewDiagnostic("level3.hub")},
+				},
 			)
 
 			// The private execution stream delivers confirmed fills to the
@@ -957,52 +468,42 @@ var (
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("executions.ingress")},
 					{executionNode{desk: desk}},
-					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
+					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver}},
 					{hub},
 					{system.NewDiagnostic("executions.hub")},
 				},
 			)
 
-			// The private session subscribed to the account execution stream
-			// during its own boot (before the desk existed), so its account
-			// subscription was gated on this workload. Now that the executions
-			// ingress is wired, release the gate so execution frames can flow.
-			privateSession.MarkExecutionsReady()
-
 			futuresIngress["ticker"] = nmruntime.NewWorkload(
 				cmd.Context(),
-				append(
-					[][]nmruntime.Node[*types.Envelope]{
-						{system.NewDiagnostic("futures.ticker.ingress")},
-						{system.NewTraced("futures.ticker.derivatives", derivatives.NewSignal(cmd.Context()))},
-					},
-					append(
-						semanticCoreLight("futures.ticker", advisors, categorySolver),
-						[][]nmruntime.Node[*types.Envelope]{
-							{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
-							{hub},
-							{system.NewDiagnostic("futures.ticker.hub")},
-						}...,
-					)...,
-				),
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewDiagnostic("futures.ticker.ingress")},
+					{system.NewTraced("futures.ticker.derivatives", derivatives.NewSignal(cmd.Context()))},
+					{advisors},
+					{categorySolver},
+					{system.NewTraced("futures.ticker.cognition", cognitionSolver)},
+					{system.NewTraced("futures.ticker.opportunity", opportunitySolver)},
+					{planner},
+					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver}},
+					{hub},
+					{system.NewDiagnostic("futures.ticker.hub")},
+				},
 			)
 
 			futuresIngress["trade"] = nmruntime.NewWorkload(
 				cmd.Context(),
-				append(
-					[][]nmruntime.Node[*types.Envelope]{
-						{system.NewDiagnostic("futures.trade.ingress")},
-						{system.NewTraced("futures.trade.derivatives", derivatives.NewSignal(cmd.Context()))},
-					},
-					append(
-						semanticCoreLight("futures.trade", advisors, categorySolver),
-						[][]nmruntime.Node[*types.Envelope]{
-							{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver, graphSolver: graphSolver}},
-							{hub},
-							{system.NewDiagnostic("futures.trade.hub")},
-						}...,
-					)...,
-				),
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewDiagnostic("futures.trade.ingress")},
+					{system.NewTraced("futures.trade.derivatives", derivatives.NewSignal(cmd.Context()))},
+					{advisors},
+					{categorySolver},
+					{system.NewTraced("futures.trade.cognition", cognitionSolver)},
+					{system.NewTraced("futures.trade.opportunity", opportunitySolver)},
+					{planner},
+					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver}},
+					{hub},
+					{system.NewDiagnostic("futures.trade.hub")},
+				},
 			)
 
 			workspace := nmruntime.NewWorkspace(
@@ -1025,6 +526,13 @@ var (
 					err,
 				))
 			}
+
+			// Subscribe returned, so the WHOLE universe is subscribed: the
+			// sessions may now feed the trading pipeline. Until this point
+			// they were connected and parsing (BUSY) but pushed nothing,
+			// because the universe is subscribed in paced batches and the
+			// early frames are only whichever symbols were live already.
+			api.MarkReady()
 
 			return errors.Join(
 				err,

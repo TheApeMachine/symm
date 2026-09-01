@@ -256,9 +256,9 @@ func BenchmarkHistoricalStep(b *testing.B) {
 	measurement := flowMeasurement("TEST/USD", time.Unix(20, 0), bindings[0].Source, bindings[0].Metric, 1)
 
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
-	for index := 0; index < b.N; index++ {
+	for b.Loop() {
 		_ = advisor.Step(measurement)
 	}
 }

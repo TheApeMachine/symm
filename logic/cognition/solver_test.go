@@ -16,9 +16,7 @@ func TestSolverStep(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		thesis := types.NewThesis(ctx)
-
-		solver := NewSolver(ctx, thesis)
+		solver := NewSolver(ctx)
 		So(solver, ShouldNotBeNil)
 
 		Convey("When processing concurrent category batches across 64 symbols", func() {
@@ -28,7 +26,6 @@ func TestSolverStep(t *testing.T) {
 
 			for symbolIndex := 0; symbolIndex < symbolCount; symbolIndex++ {
 				symbol := fmt.Sprintf("SYM%d/USD", symbolIndex)
-				_ = thesis.Symbol(symbol)
 
 				waitGroup.Add(1)
 				go func(sym string) {

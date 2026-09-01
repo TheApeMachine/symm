@@ -42,6 +42,8 @@ var (
 	symbolDivergence           = nmtypes.MustIntern("divergence")
 	symbolNoiseVariance        = nmtypes.MustIntern("noise_variance")
 	symbolZero                 = nmtypes.MustIntern("derivatives/zero")
+	symbolCurrentPositive      = nmtypes.MustIntern("derivatives/current_positive")
+	symbolPreviousPositive     = nmtypes.MustIntern("derivatives/previous_positive")
 )
 
 /*
@@ -144,13 +146,6 @@ func NewTicker() *Ticker {
 						nmtypes.In(calculus.SymbolPrevious, calculus.PortB),
 						nmtypes.Out(calculus.PortResult, symbolOIChange),
 					),
-					// open_interest_log_change: log(current / previous)
-					nmtypes.Wire(
-						calculus.LogRatio,
-						nmtypes.In(calculus.SymbolCurrent, calculus.SymbolCurrent),
-						nmtypes.In(calculus.SymbolPrevious, calculus.SymbolPrevious),
-						nmtypes.Out(calculus.PortResult, symbolOILogChange),
-					),
 					// Elapsed event time between the previous and current observation.
 					nmtypes.Wire(
 						temporal.Duration,
@@ -160,41 +155,60 @@ func NewTicker() *Ticker {
 						nmtypes.In(temporal.SymbolObservedNsec, temporal.SymbolPreviousNsec),
 						nmtypes.Out(temporal.SymbolDelta, symbolOIElapsed),
 					),
+					// open_interest_log_change and everything derived from it.
+					// Open interest is legitimately ZERO on a contract nobody
+					// holds — a real market state, not bad data — and the log
+					// ratio is undefined at either endpoint being zero. The
+					// arithmetic open_interest_change above still reports the
+					// move; its log-space counterpart, the growth rate, and
+					// that rate's estimators are absent rather than zero.
 					logic.If(
-						greaterThanCondition(symbolOIElapsed),
+						bothEndpointsPositive(),
 						nmtypes.Pipe(
-							// open_interest_growth_rate: log change over elapsed time
 							nmtypes.Wire(
-								calculus.Quotient,
-								nmtypes.In(symbolOILogChange, calculus.PortA),
-								nmtypes.In(symbolOIElapsed, calculus.PortB),
-								nmtypes.Out(calculus.PortResult, symbolOIGrowthRate),
+								calculus.LogRatio,
+								nmtypes.In(calculus.SymbolCurrent, calculus.SymbolCurrent),
+								nmtypes.In(calculus.SymbolPrevious, calculus.SymbolPrevious),
+								nmtypes.Out(calculus.PortResult, symbolOILogChange),
 							),
-							// open_interest_growth_velocity: first difference of the rate.
-							velocityOver("growth_velocity", symbolOIGrowthRate),
-							// Route the growth rate into the shared value slot and
-							// maintain its causal baseline, dispersion, and z-score.
-							route(symbolOIGrowthRate, nmtypes.SampleValue),
-							statistic.ZScore(""),
-							// Carry the departure and noise power when the z-score is
-							// estimable so Finalize derives the scalar SNR.
 							logic.If(
-								readyCondition(),
+								greaterThanCondition(symbolOIElapsed),
 								nmtypes.Pipe(
-									route(statistic.SymbolResidual, symbolDivergence),
+									// open_interest_growth_rate: log change over elapsed time
 									nmtypes.Wire(
-										calculus.Product,
-										nmtypes.In(statistic.SymbolDispersion, calculus.PortA),
-										nmtypes.In(statistic.SymbolDispersion, calculus.PortB),
-										nmtypes.Out(calculus.PortResult, symbolNoiseVariance),
+										calculus.Quotient,
+										nmtypes.In(symbolOILogChange, calculus.PortA),
+										nmtypes.In(symbolOIElapsed, calculus.PortB),
+										nmtypes.Out(calculus.PortResult, symbolOIGrowthRate),
 									),
+									// open_interest_growth_velocity: first difference of the rate.
+									velocityOver("growth_velocity", symbolOIGrowthRate),
+									// Route the growth rate into the shared value slot and
+									// maintain its causal baseline, dispersion, and z-score.
+									route(symbolOIGrowthRate, nmtypes.SampleValue),
+									statistic.ZScore(""),
+									// Carry the departure and noise power when the z-score is
+									// estimable so Finalize derives the scalar SNR.
+									logic.If(
+										readyCondition(),
+										nmtypes.Pipe(
+											route(statistic.SymbolResidual, symbolDivergence),
+											nmtypes.Wire(
+												calculus.Product,
+												nmtypes.In(statistic.SymbolDispersion, calculus.PortA),
+												nmtypes.In(statistic.SymbolDispersion, calculus.PortB),
+												nmtypes.Out(calculus.PortResult, symbolNoiseVariance),
+											),
+										),
+										nmtypes.Identity,
+									),
+									statistic.Baseline(""),
+									temporal.Window(""),
 								),
 								nmtypes.Identity,
 							),
-							statistic.Baseline(""),
-							temporal.Window(""),
 						),
-						nmtypes.Identity,
+						nil,
 					),
 				),
 				nmtypes.Identity,
@@ -337,6 +351,33 @@ func seriesReadyCondition(prefix string) nmtypes.Primitive {
 		nmtypes.Identity,
 		nmtypes.In(prefixed(prefix, "ready"), logic.SymbolCondition),
 		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+	)
+}
+
+/*
+bothEndpointsPositive is true only when the observer's current AND previous
+values are both above zero — the condition a log ratio between them requires.
+*/
+func bothEndpointsPositive() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		nmtypes.Wire(
+			logic.GreaterThan,
+			nmtypes.In(calculus.SymbolCurrent, calculus.PortA),
+			nmtypes.In(symbolZero, calculus.PortB),
+			nmtypes.Out(logic.SymbolCondition, symbolCurrentPositive),
+		),
+		nmtypes.Wire(
+			logic.GreaterThan,
+			nmtypes.In(calculus.SymbolPrevious, calculus.PortA),
+			nmtypes.In(symbolZero, calculus.PortB),
+			nmtypes.Out(logic.SymbolCondition, symbolPreviousPositive),
+		),
+		nmtypes.Wire(
+			logic.And,
+			nmtypes.In(symbolCurrentPositive, calculus.PortA),
+			nmtypes.In(symbolPreviousPositive, calculus.PortB),
+			nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+		),
 	)
 }
 

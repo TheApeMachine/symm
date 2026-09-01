@@ -87,7 +87,6 @@ type Solver struct {
 	cancel         context.CancelFunc
 	err            error
 	status         *runtime.Status
-	thesis         *types.Thesis
 	recorder       *audit.Recorder
 	treeMu         sync.RWMutex
 	tree           *dmt.Tree
@@ -147,12 +146,10 @@ func (solver *Solver) getSymbolState(symbol string) *symbolCognitionState {
 }
 
 /*
-NewSolver returns a new cognition solver bound to a radix tree. thesis
-resolves a symbol to its canonical sequence/state identity.
+NewSolver returns a new cognition solver bound to a radix tree.
 */
 func NewSolver(
 	ctx context.Context,
-	thesis *types.Thesis,
 	opts ...Option,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
@@ -163,7 +160,6 @@ func NewSolver(
 		ctx:            ctx,
 		cancel:         cancel,
 		status:         runtime.NewStatus(),
-		thesis:         thesis,
 		tree:           tree,
 		maxSeqLen:      6,   // Max 6 category transitions per sequence window
 		surprisalLimit: 3.5, // > 3.5 bits surprisal (P < 8.8%) indicates a regime break
@@ -213,8 +209,17 @@ func (solver *Solver) StepCategories(categories []types.Category) *types.Cogniti
 		}
 	}()
 
-	config := system.Cfg.Snapshot()
-	switchThreshold := config.Planner.MinimumConfidence
+	switchThreshold, err := system.Cfg.CognitionSwitchConfidence()
+
+	if err != nil {
+		solver.err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"cognition: switch confidence unavailable",
+			err,
+		))
+		return nil
+	}
+
 	rows := make(map[string]types.Cognition, 1)
 
 	if err := solver.processBatch(
@@ -244,12 +249,11 @@ func (solver *Solver) processBatch(
 	switchThreshold float64,
 	rows map[string]types.Cognition,
 ) error {
-	symbolState, found := solver.thesis.Symbols.Load(symbol)
-
-	if !found || symbolState == nil {
+	if len(categories) == 0 {
 		return nil
 	}
 
+	at := categories[0].At
 	state := solver.getSymbolState(symbol)
 
 	// Select the dominant category for this symbol on this observation.
@@ -284,7 +288,7 @@ func (solver *Solver) processBatch(
 		// Commit completed sequence to episodic buffer for REM replay
 		solver.treeMu.Lock()
 		_, _ = solver.tree.CommitToEpisodicBuffer(
-			uint64(solver.thesis.At.UnixNano()), oldSequenceBytes,
+			uint64(at.UnixNano()), oldSequenceBytes,
 		)
 
 		if activeRegime.Type != types.CategoryTypeNone {
@@ -457,7 +461,7 @@ func (solver *Solver) processBatch(
 	cognition := types.Cognition{
 		Source:           "cognition",
 		Symbol:           symbol,
-		At:               solver.thesis.At,
+		At:               at,
 		Sequence:         solver.decodeCategoryPath(activeSequenceBytes),
 		RegimePrefix:     winner,
 		Winner:           winner,

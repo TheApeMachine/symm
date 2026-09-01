@@ -22,6 +22,8 @@ type recoveryConn struct {
 	*mockConn
 }
 
+func (conn *recoveryConn) MarkReady() {}
+
 func (conn *recoveryConn) SubInstrument(callback chan any) {
 	callback <- &kraken.Instrument{Data: kraken.InstrumentData{
 		Pairs: []kraken.InstrumentPair{

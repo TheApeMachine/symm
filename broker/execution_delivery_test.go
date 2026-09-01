@@ -52,6 +52,8 @@ type executingConn struct {
 	submitted []*spot.AddOrderRequest
 }
 
+func (conn *executingConn) MarkReady() {}
+
 func newExecutingConn(workload *nmruntime.Workload[*types.Envelope]) *executingConn {
 	return &executingConn{
 		mockConn: newMockConn(),
@@ -116,8 +118,6 @@ func newDeliveryDesk(t testing.TB, conn *executingConn) (*Desk, *nmruntime.Workl
 	price := NewPrice(api, nil)
 	instrument := NewInstrument(api, price)
 	balance := NewBalance(api)
-	thesis := types.NewThesis(t.Context())
-
 	store, err := NewPositionStore(t.TempDir() + "/positions.sqlite")
 	if err != nil {
 		t.Fatalf("open position store: %v", err)
@@ -126,7 +126,7 @@ func newDeliveryDesk(t testing.TB, conn *executingConn) (*Desk, *nmruntime.Workl
 
 	positions := &sync.Map{}
 	desk, err := NewDesk(
-		t.Context(), api, instrument, price, balance, thesis, nil,
+		t.Context(), api, instrument, price, balance, nil,
 		nil, store, positions, nil,
 	)
 	if err != nil {
@@ -136,6 +136,11 @@ func newDeliveryDesk(t testing.TB, conn *executingConn) (*Desk, *nmruntime.Workl
 	workload := nmruntime.NewWorkload(t.Context(), [][]nmruntime.Node[*types.Envelope]{
 		{deliveryNode{desk: desk}},
 	})
+	workload.Admit()
+
+	// The test IS this workload's producer, so it declares the readiness a
+	// transport would: a Workload holds WAITING from construction and drops
+	// pushes until its producer admits it.
 	t.Cleanup(func() { _ = workload.Close() })
 
 	return desk, workload

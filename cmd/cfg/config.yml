@@ -115,37 +115,19 @@ ui:
 trading:
   model: paper
   admission:
-    # Temporary explicit operator policy. Every failed dimension is reported;
-    # predictive readiness and opportunity labels remain evidence, not vetoes.
-    required_direction: 1.0
-    minimum_thesis_score: 0.7
-    minimum_confidence: 0.7
-    minimum_support: 1.0
-    maximum_contradiction: 0.3
-  resonance:
-    # A one-sided probability of 0.5 carries no directional evidence. This is
-    # only the cold-start position; the global regulator moves the live gate
-    # within [0.5, 1] after observing exposed wallet-return outcomes.
-    minimum_confidence: 0.50
-  evidence:
-    # MCTS graph reward is an average of signed confidence-weighted relations,
-    # so its natural domain is [-1, 1]. Cold start admits the full domain; the
-    # global regulator tightens this boundary from wallet outcomes.
-    minimum_score: -1.0
-  utility:
-    # Zero is the exact break-even boundary for net expected return. Cold start
-    # refuses a forecasted loss while the regulator learns from realized wallet
-    # outcomes whether this boundary should move.
-    minimum: 0.0
+    # Both the calibrated probability of upward movement and the calibrated
+    # probability that the next executable bid clears known entry friction must
+    # independently meet this policy boundary.
+    minimum_probability: 0.7
   allocation:
-    # Hard per-entry quote-notional ceiling. This is not a risk target: the
-    # planner may reduce it once calibrated loss and liquidity budgets exist.
-    # Concentrated sniper allocation for a $200 account.
+    # Hard per-entry quote-notional ceiling. Every qualifying symbol is priced
+    # independently; there is no position-slot or winner arbitration policy.
     max_fraction: 0.50
-  slots:
-    normal: 1
-    # 1 emergency reserve slot for high-velocity sudden pumps.
-    reserved: 1
+
+cognition:
+  # A binary confidence of 0.5 is exactly indifferent. Cognition must exceed
+  # it before replacing its current named state.
+  minimum_switch_confidence: 0.5
 
 signals:
   depthflow:

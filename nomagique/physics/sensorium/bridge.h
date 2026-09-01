@@ -44,6 +44,14 @@ extern "C"
         float thermal_conductivity;
         float specific_heat;
         float restitution;
+        /* Periodic domain extents. The kernel uses minimum-image collision
+           distances when all three are > 0, so these MUST be present and in
+           this order: the kernel's struct declares them, and a host struct
+           that stops at restitution leaves the kernel reading 12 bytes of
+           uninitialized memory to decide whether collisions are periodic. */
+        float domain_x;
+        float domain_y;
+        float domain_z;
     } ParticleInteractionParams;
 
     typedef struct
@@ -401,7 +409,8 @@ extern "C"
         ManifoldBuffer *vel_in,
         ManifoldBuffer *heat_in,
         float dt, float radius, float young_modulus,
-        float thermal_conductivity, float specific_heat, float restitution);
+        float thermal_conductivity, float specific_heat, float restitution,
+        float domain_x, float domain_y, float domain_z);
 
     // ----------------------------------------------------------------------------
     // 6. Generic Parallel Exclusive Scan (u32)

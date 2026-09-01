@@ -29,6 +29,9 @@ var (
 	symbolNoiseVariance  = nmtypes.MustIntern("noise_variance")
 	symbolOne            = nmtypes.MustIntern("pumpdump/one")
 	symbolZero           = nmtypes.MustIntern("pumpdump/zero")
+	// symbolTouchComplete marks a Level-3 frame whose bid and ask are BOTH
+	// populated (this message's own, or retained from an earlier one).
+	symbolTouchComplete = nmtypes.MustIntern("pumpdump/touch_complete")
 )
 
 /*

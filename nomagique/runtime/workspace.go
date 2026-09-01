@@ -36,6 +36,17 @@ func NewWorkspace[T any](
 	return workspace
 }
 
+/* Admit opens every workload as one generation after subscription completes. */
+func (workspace *Workspace[T]) Admit() {
+	if workspace == nil {
+		return
+	}
+
+	for _, workload := range workspace.workloads {
+		workload.Admit()
+	}
+}
+
 func (workspace *Workspace[T]) Close() error {
 	workspace.cancel()
 	return nil
