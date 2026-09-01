@@ -222,7 +222,7 @@ func (solver *Solver) advance(message kraken.Level3Data) *State {
 		}
 	}()
 
-	batch := solver.project(message, forcing)
+	batch := solver.project(message, forcing, false)
 
 	if batch == nil || batch.N == 0 {
 		return nil
@@ -241,8 +241,233 @@ func (solver *Solver) advance(message kraken.Level3Data) *State {
 
 	solver.reading.State.N = state.N
 	solver.reading.Reading = solver.physics.Reading()
+	reading := solver.reading
 
-	return &solver.reading
+	return &reading
+}
+
+/*
+Crystallize runs one active BVP relaxation: the message's resting orders are
+clamped boundary particles, candidateLevels are injected as unclamped dark
+probe particles, and the field is stepped relaxationSteps times with clamped
+particles restored after each step. The returned []float64 is the settled
+Omega of the surviving probe particles — the crystallized frequency readout —
+together with the final manifold State.
+*/
+func (solver *Solver) Crystallize(
+	message kraken.Level3Data,
+	forcing forcingState,
+	candidateLevels []float64,
+	relaxationSteps int,
+) ([]float64, *State) {
+	if solver == nil || solver.physics == nil {
+		return nil, nil
+	}
+
+	solver.advanceMu.Lock()
+	defer solver.advanceMu.Unlock()
+
+	batch := solver.project(message, forcing, true)
+
+	if batch == nil || batch.N == 0 {
+		return nil, nil
+	}
+
+	_, priceMean, priceDispersion, _, _ := logMoments(message)
+
+	for _, price := range candidateLevels {
+		if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
+			continue
+		}
+
+		solver.injectProbeParticle(batch, price, message.Symbol, priceMean, priceDispersion)
+	}
+
+	if relaxationSteps <= 0 {
+		relaxationSteps = 1
+	}
+
+	clampedSnapshot := snapshotClamped(batch)
+
+	var (
+		state *sensorium.State
+		err   error
+	)
+
+	for step := 0; step < relaxationSteps; step++ {
+		state, err = solver.physics.Step(batch)
+
+		if err != nil {
+			solver.err = err
+
+			return nil, nil
+		}
+
+		solver.enforceBoundaryConditions(batch, clampedSnapshot)
+	}
+
+	if state != nil && state.N != 0 {
+		solver.reading.State.N = state.N
+		solver.reading.Reading = solver.physics.Reading()
+	}
+
+	reading := solver.reading
+
+	return solver.extractCrystallizedProbes(batch), &reading
+}
+
+/*
+injectProbeParticle appends one unclamped dark particle at a candidate price.
+The particle starts with unit oscillator energy and positive heat so it can
+explore the field before settling; its position is the candidate's log-price
+deviation in the same frame the message's resting orders use.
+*/
+func (solver *Solver) injectProbeParticle(
+	batch *sensorium.State,
+	price float64,
+	symbol string,
+	priceMean, priceDispersion float64,
+) {
+	if batch == nil || symbol == "" || price <= 0 {
+		return
+	}
+
+	state, _ := sensorium.StatePool.Get().(*sensorium.State)
+
+	if state == nil {
+		return
+	}
+
+	priceDeviation := standardize(math.Log(price), priceMean, priceDispersion)
+	symbolIndex := symbolToken(symbol)
+	token := packToken(symbolIndex, 0)
+
+	state.N = 1
+	state.Bytes[0] = int64(token)
+	state.Seqs[0] = int64(batch.N)
+	state.TokenIDs[0] = int64(token)
+	state.ContentIDs[0] = int64(symbolIndex)
+	state.Phase[0] = 0
+	state.Omega[0] = float32(math.Tanh(priceDeviation) * omegaHalfSpan)
+	state.Energy[0] = unitOscillatorEnergy
+	state.Mass[0] = unitCarrierMass
+	state.Heat[0] = 0.5
+	state.Amp[0] = float32(math.Sqrt(float64(state.Energy[0])))
+	state.Pos[0] = float32(priceDeviation)
+	state.Pos[1] = 0
+	state.Pos[2] = 0.5
+	state.Vel[0] = 0
+	state.Vel[1] = 0
+	state.Vel[2] = 0
+	state.Clamped[0] = false
+	state.Dark[0] = true
+
+	batch.Bytes = append(batch.Bytes, state.Bytes[0])
+	batch.Seqs = append(batch.Seqs, state.Seqs[0])
+	batch.TokenIDs = append(batch.TokenIDs, state.TokenIDs[0])
+	batch.ContentIDs = append(batch.ContentIDs, state.ContentIDs[0])
+	batch.Phase = append(batch.Phase, state.Phase[0])
+	batch.Omega = append(batch.Omega, state.Omega[0])
+	batch.Energy = append(batch.Energy, state.Energy[0])
+	batch.Mass = append(batch.Mass, state.Mass[0])
+	batch.Heat = append(batch.Heat, state.Heat[0])
+	batch.Amp = append(batch.Amp, state.Amp[0])
+	batch.Pos = append(batch.Pos, state.Pos[0], state.Pos[1], state.Pos[2])
+	batch.Vel = append(batch.Vel, state.Vel[0], state.Vel[1], state.Vel[2])
+	batch.Clamped = append(batch.Clamped, state.Clamped[0])
+	batch.Dark = append(batch.Dark, state.Dark[0])
+	batch.N++
+
+	sensorium.StatePool.Put(state)
+}
+
+/*
+snapshotClamped captures the boundary values of every clamped particle so a
+relaxation step can restore them after the physics step has moved them.
+*/
+func snapshotClamped(batch *sensorium.State) []float32 {
+	if batch == nil || batch.N == 0 {
+		return nil
+	}
+
+	snapshot := make([]float32, 0, batch.N*10)
+
+	for index := 0; index < batch.N; index++ {
+		if !batch.Clamped[index] {
+			continue
+		}
+
+		snapshot = append(snapshot,
+			batch.Pos[index*3+0],
+			batch.Pos[index*3+1],
+			batch.Pos[index*3+2],
+			batch.Vel[index*3+0],
+			batch.Vel[index*3+1],
+			batch.Vel[index*3+2],
+			batch.Phase[index],
+			batch.Omega[index],
+			batch.Energy[index],
+			batch.Amp[index],
+		)
+	}
+
+	return snapshot
+}
+
+/*
+enforceBoundaryConditions restores clamped particles to their observed boundary
+values after one relaxation step.
+*/
+func (solver *Solver) enforceBoundaryConditions(batch *sensorium.State, snapshot []float32) {
+	if batch == nil || batch.N == 0 || len(snapshot) == 0 {
+		return
+	}
+
+	cursor := 0
+
+	for index := 0; index < batch.N; index++ {
+		if !batch.Clamped[index] {
+			continue
+		}
+
+		if cursor+10 > len(snapshot) {
+			return
+		}
+
+		batch.Pos[index*3+0] = snapshot[cursor]
+		batch.Pos[index*3+1] = snapshot[cursor+1]
+		batch.Pos[index*3+2] = snapshot[cursor+2]
+		batch.Vel[index*3+0] = snapshot[cursor+3]
+		batch.Vel[index*3+1] = snapshot[cursor+4]
+		batch.Vel[index*3+2] = snapshot[cursor+5]
+		batch.Phase[index] = snapshot[cursor+6]
+		batch.Omega[index] = snapshot[cursor+7]
+		batch.Energy[index] = snapshot[cursor+8]
+		batch.Amp[index] = snapshot[cursor+9]
+		cursor += 10
+	}
+}
+
+/*
+extractCrystallizedProbes reads out the settled Omega of every surviving dark,
+unclamped probe particle.
+*/
+func (solver *Solver) extractCrystallizedProbes(batch *sensorium.State) []float64 {
+	if batch == nil || batch.N == 0 {
+		return nil
+	}
+
+	predictions := make([]float64, 0, batch.N)
+
+	for index := 0; index < batch.N; index++ {
+		if batch.Clamped[index] || !batch.Dark[index] {
+			continue
+		}
+
+		predictions = append(predictions, float64(batch.Omega[index]))
+	}
+
+	return predictions
 }
 
 /*
@@ -335,7 +560,11 @@ project folds one Level3 message's orders into a single State batch. Entries
 are packed in arrival order with no sort; the batch is sized exactly to the
 message so one message costs one forward pass and nothing is retained.
 */
-func (solver *Solver) project(message kraken.Level3Data, forcing forcingState) *sensorium.State {
+func (solver *Solver) project(
+	message kraken.Level3Data,
+	forcing forcingState,
+	clamped bool,
+) *sensorium.State {
 	count := len(message.Bids) + len(message.Asks)
 
 	if count == 0 {
@@ -361,8 +590,13 @@ func (solver *Solver) project(message kraken.Level3Data, forcing forcingState) *
 	}
 
 	index := 0
+	states := solver.dataset.Step(message, forcing)
 
-	for state := range solver.dataset.Step(message, forcing) {
+	if clamped {
+		states = solver.dataset.StepClamped(message, forcing)
+	}
+
+	for state := range states {
 		if state == nil || state.N != 1 {
 			sensorium.StatePool.Put(state)
 			continue

@@ -60,7 +60,7 @@ type Live struct {
 	err            error
 	client         *spot.WebSocket
 	quote          string
-	ingress        map[string]*runtime.Workload[*types.Envelope]
+	ingress        map[string]runtime.Ingress[*types.Envelope]
 	simulator      *Simulator
 	normalizer     *spot.Normalizer
 	level3         *sync.Map
@@ -83,12 +83,15 @@ type Live struct {
 	observer       atomic.Pointer[func(string, time.Duration)]
 	connectedCount atomic.Int32
 
-	// opStreams owns the operational per-stream epoch/sequence bookkeeping this
-	// transport session maintains independent of Hindsight. The transport mints
-	// the StreamRef for every frame and bumps epochs on reconnect; Hindsight
-	// records the same fact but is never the source of it.
-	opMu      sync.Mutex
-	opStreams map[hindsight.Stream]streamSpan
+	// streams owns this session's operational epoch/sequence bookkeeping.
+	streams *Streams
+
+	// recovery decides when this session's reconnects have stopped being worth
+	// trying and asks the process owner to reboot.
+	recovery *Recovery
+
+	// pinger owns this session's keepalive loop.
+	pinger *Pinger
 
 	// level3Client overrides the venue client SubL3 dials when set. Fixtures
 	// inject the level3 listener's client here so a replay's level3 frames
@@ -101,6 +104,10 @@ type Live struct {
 	// Push on the shared ring concurrently. The parent/private/ticker/trade
 	// sessions leave it nil and push directly.
 	l3forward *level3Sequencer
+
+	// pingReqID is echoed back on the pong reply, so a response can be tied to
+	// the request that produced it.
+	pingReqID atomic.Int64
 }
 
 /*
@@ -116,7 +123,7 @@ type level3Sequencer struct {
 	done    chan struct{}
 }
 
-func newLevel3Sequencer(workload *runtime.Workload[*types.Envelope], capacity int) *level3Sequencer {
+func newLevel3Sequencer(workload runtime.Ingress[*types.Envelope], capacity int) *level3Sequencer {
 	sequencer := &level3Sequencer{
 		ingress: make(chan *types.Envelope, capacity),
 		done:    make(chan struct{}),
@@ -160,74 +167,6 @@ func (sequencer *level3Sequencer) Close() {
 }
 
 /*
-streamSpan is one operational connection span within a transport stream: its
-epoch and the frame sequence within that epoch. It is owned by the transport
-session (not Hindsight) so reconnect invalidation is an operational transport
-fact available even when capture is disabled.
-*/
-type streamSpan struct {
-	epoch    hindsight.StreamEpoch
-	sequence uint64
-}
-
-/*
-nextStreamRef mints the operational StreamRef for one inbound frame on the given
-channel. The stream name mirrors Hindsight's endpoint:kind naming so one
-transport fact has one stable identity; the epoch starts at 1 and the sequence
-within the span is monotonic.
-*/
-func (live *Live) nextStreamRef(channel string) hindsight.StreamRef {
-	if live == nil {
-		return hindsight.StreamRef{}
-	}
-
-	stream := hindsight.Stream(live.client.URL + ":" + channel)
-
-	live.opMu.Lock()
-	defer live.opMu.Unlock()
-
-	if live.opStreams == nil {
-		live.opStreams = make(map[hindsight.Stream]streamSpan)
-	}
-
-	span := live.opStreams[stream]
-
-	if span.epoch == 0 {
-		span.epoch = 1
-	}
-
-	span.sequence++
-	live.opStreams[stream] = span
-
-	return hindsight.StreamRef{
-		Stream:   stream,
-		Epoch:    span.epoch,
-		Sequence: span.sequence,
-	}
-}
-
-/*
-reconnectStreams bumps the operational epoch for every stream this transport
-session has seen and resets each stream's per-epoch sequence. Called on a second
-(or later) connection in this process lifetime, completely independent of any
-capture sink.
-*/
-func (live *Live) reconnectStreams() {
-	if live == nil {
-		return
-	}
-
-	live.opMu.Lock()
-	defer live.opMu.Unlock()
-
-	for stream, span := range live.opStreams {
-		span.epoch++
-		span.sequence = 0
-		live.opStreams[stream] = span
-	}
-}
-
-/*
 Capture returns the underlying capture sink attached to the live connection.
 */
 func (live *Live) Capture() CaptureSink {
@@ -253,11 +192,28 @@ func (live *Live) SetReconnect(handler func()) {
 }
 
 /*
+SetUnrecoverable installs the callback invoked once when this session exhausts
+its reconnect budget — the transport keeps dialing and authenticating but the
+venue drops the session immediately, which reconnecting cannot resolve.
+
+The session only reports the fact. What recovery means at that point — draining
+subscriptions, tearing every session down, restarting the process — belongs to
+the owner that holds all of them, not to one transport.
+*/
+func (live *Live) SetUnrecoverable(handler func(reason string)) {
+	if live == nil {
+		return
+	}
+
+	live.recovery.OnUnrecoverable(handler)
+}
+
+/*
 New opens a spot websocket session and wires SDK callbacks in the constructor.
 */
 func New(
 	ctx context.Context,
-	workloads map[string]*runtime.Workload[*types.Envelope],
+	workloads map[string]runtime.Ingress[*types.Envelope],
 	simulator *Simulator,
 	auth bool,
 	endpoint string,
@@ -275,7 +231,7 @@ the connection becomes part of a running system.
 */
 func NewWithClient(
 	ctx context.Context,
-	workloads map[string]*runtime.Workload[*types.Envelope],
+	workloads map[string]runtime.Ingress[*types.Envelope],
 	simulator *Simulator,
 	auth bool,
 	endpoint string,
@@ -317,7 +273,17 @@ func NewWithClient(
 		model:       viper.GetViper().GetString("trading.model"),
 		quote:       viper.GetViper().GetString("market.quote_currency"),
 		captureName: captureName,
+		streams:     NewStreams(client.URL),
+		recovery:    NewRecovery("websocket"),
 	}
+
+	live.pinger = NewPinger("websocket", func() error {
+		if !live.client.IsActive() {
+			return nil
+		}
+
+		return live.Write(kraken.NewPing(live.pingReqID.Add(1)))
+	})
 
 	if len(recorders) == 1 {
 		live.capture = recorders[0]
@@ -360,6 +326,11 @@ func NewWithClient(
 	}
 
 	live.client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
+		// Real inbound traffic, not a successful dial, is what proves the venue
+		// accepted this session, so the dead-reconnect count clears here rather
+		// than in OnConnected.
+		live.recovery.Delivered()
+
 		raw := event.Data.Bytes()
 		channel := utils.GetString(raw, "channel")
 
@@ -379,7 +350,7 @@ func NewWithClient(
 		// The transport mints the operational StreamRef first — independent of
 		// capture — so the same epoch/sequence fact exists with Hindsight both
 		// on and off.
-		streamRef := live.nextStreamRef(channel)
+		streamRef := live.streams.Next(channel)
 
 		var captureID hindsight.CaptureIdentity
 
@@ -502,6 +473,8 @@ func NewWithClient(
 	live.client.OnConnected.Recurring(func(event *callback.Event[any]) {
 		errnie.Info(fmt.Sprintf("websocket: connected to %s", live.client.URL))
 
+		live.pinger.Start(live.ctx)
+
 		count := live.connectedCount.Add(1)
 
 		if auth {
@@ -515,7 +488,7 @@ func NewWithClient(
 		// rather than a second subscription path being invented here. The epoch
 		// is a transport fact; Hindsight observes it, never supplies it.
 		if count > 1 && live.reconnect != nil {
-			live.reconnectStreams()
+			live.streams.Reconnected()
 			live.reconnect()
 		}
 
@@ -548,6 +521,8 @@ func NewWithClient(
 		))
 
 		live.status.Transition(runtime.WAITING)
+
+		live.recovery.Dropped(endpoint)
 	})
 
 	if auth {
@@ -607,7 +582,7 @@ func (live *Live) captureFrame(kind, endpoint string, payload []byte) error {
 		endpoint,
 		payload,
 		time.Now().UTC(),
-		live.nextStreamRef(kind),
+		live.streams.Next(kind),
 	)
 
 	return err
@@ -796,6 +771,82 @@ func (live *Live) SubTicker(symbols []string) {
 
 func (live *Live) SubTrades(symbols []string) {
 	errnie.Error(live.client.SubTrades(symbols))
+}
+
+/*
+UnsubTicker and UnsubTrades withdraw the ticker/trade streams for the given
+symbols. They mirror SubTicker/SubTrades so the instrument — which owns the
+market universe — drives teardown through the same batched seam it drives
+setup, rather than the transport keeping a second copy of the universe.
+*/
+func (live *Live) UnsubTicker(symbols []string) {
+	live.unsubscribe("ticker", symbols, 100)
+}
+
+func (live *Live) UnsubTrades(symbols []string) {
+	live.unsubscribe("trade", symbols, 100)
+}
+
+/*
+UnsubL3 withdraws level3 for the given symbols. Level3 fans out across child
+sessions, each holding its own socket and its own slice of the universe, so the
+request is routed to whichever child actually holds each symbol.
+*/
+func (live *Live) UnsubL3(symbols []string) {
+	if live == nil || live.level3 == nil || len(symbols) == 0 {
+		return
+	}
+
+	wanted := make(map[string]struct{}, len(symbols))
+
+	for _, symbol := range symbols {
+		wanted[symbol] = struct{}{}
+	}
+
+	live.level3.Range(func(_, value any) bool {
+		child, valid := value.(*Live)
+
+		if !valid || child == nil {
+			return true
+		}
+
+		mine := make([]string, 0, len(child.symbols))
+
+		for _, symbol := range child.symbols {
+			if _, held := wanted[symbol]; held {
+				mine = append(mine, symbol)
+			}
+		}
+
+		child.unsubscribe("level3", mine, 40)
+
+		return true
+	})
+}
+
+/*
+unsubscribe writes the batched unsubscribe requests for one channel. A session
+whose socket is already gone has nothing to withdraw, which is not an error:
+the venue drops the subscriptions along with the connection.
+*/
+func (live *Live) unsubscribe(channel string, symbols []string, batch int) {
+	if live == nil || live.client == nil || len(symbols) == 0 {
+		return
+	}
+
+	if !live.client.IsActive() {
+		return
+	}
+
+	for group := range slices.Chunk(symbols, batch) {
+		if err := live.Write(kraken.NewChannelUnsubscription(channel, group)); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				fmt.Sprintf("websocket: unsubscribe %s failed", channel),
+				err,
+			))
+		}
+	}
 }
 
 func (live *Live) SubL3(symbols []string) {
@@ -1149,6 +1200,7 @@ func (live *Live) Post(
 }
 
 func (live *Live) Close() {
+	live.pinger.Stop()
 	live.cancel()
 
 	if live.l3forward != nil {

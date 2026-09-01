@@ -26,6 +26,7 @@ import type { PerspectiveFrame } from "#/providers/telemetry/telemetry/perspecti
 import type { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
 import type { RegulatorFrame } from "#/providers/telemetry/telemetry/regulator-frame";
 import type { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
+import type { TradeRecord } from "./types";
 
 export const DEFAULT_KERNELS = [
 	"correlation",
@@ -42,73 +43,6 @@ export const DEFAULT_KERNELS = [
 ];
 
 export const DEFAULT_FOCUS_SYMBOL = "BTC/USD";
-
-/*
-TradeRecord mirrors the JSON shape of wire.PositionT as returned by the hub's
-GET /trades endpoint (broker.PositionStore.RecentTrades, backed by the
-position_trades SQLite table) — the durable trade journal, independent of the
-live positionStore ring buffer.
-*/
-export type TradeRecord = {
-	status: string;
-	decision?: Record<string, unknown> & {
-		id?: string;
-		thesisScore?: number;
-		thesisConfidence?: number;
-		causalIdentification?: string;
-		allocationHaircut?: number;
-		allocationHaircutReason?: string;
-		adverseSelection?: string;
-		expectedReturn?: string;
-		expectedFees?: string;
-		expectedSpread?: string;
-		expectedImpact?: string;
-		entryCost?: {
-			bestAsk?: string;
-			bestBid?: string;
-			spread?: string;
-			impact?: string;
-			breakEven?: string;
-			roundTripFees?: string;
-		} | null;
-		risk?: {
-			riskDistance?: string;
-			trailDistance?: string;
-			armBuffer?: string;
-			lockBuffer?: string;
-			maxLoss?: string;
-			minEdge?: string;
-		} | null;
-		trace?: {
-			hypothesis?: string;
-			recommendedAction?: string;
-			graphSupports?: number;
-			graphContradicts?: number;
-		} | null;
-	} | null;
-	holding?: {
-		symbol?: string;
-		status?: string;
-		entryAt?: number;
-		exitAt?: number;
-		entryPrice?: string;
-		entryFee?: string;
-		exitPrice?: string;
-		exitFee?: string;
-		pnl?: string;
-		returnPct?: number;
-		stoploss?: {
-			status?: string;
-			floor?: string;
-			peak?: string;
-			profitLine?: string;
-			locked?: boolean;
-			triggerReason?: string;
-			triggerMark?: string;
-			surgeArmed?: boolean;
-		} | null;
-	} | null;
-};
 
 export interface FrameBuffer<T> {
 	version: number;
@@ -127,10 +61,14 @@ export interface FrameBuffer<T> {
 	add(...items: T[]): void;
 }
 
-export const createFrameStore = <T>(capacity = 50) => {
+/*
+createFrameBuffer wraps a ring in the FrameBuffer read surface. It is shared by
+the flat and the keyed stores so both expose exactly the same reader API.
+*/
+export const createFrameBuffer = <T>(capacity = 50): FrameBuffer<T> => {
 	const buffer = new RingBuffer<T>(capacity);
 
-	const state: FrameBuffer<T> = {
+	return {
 		version: 0,
 		getLast: () => buffer.getLast(),
 		getFirst: () => buffer.getFirst(),
@@ -155,14 +93,67 @@ export const createFrameStore = <T>(capacity = 50) => {
 		clear: () => buffer.clear(),
 		add: (...items: T[]) => buffer.add(...items),
 	};
+};
+
+export const createFrameStore = <T>(capacity = 50) => {
+	const state = createFrameBuffer<T>(capacity);
 
 	return createStore(state, ({ setState }) => ({
 		add: (frame: T) => {
-			buffer.add(frame);
+			state.add(frame);
 			setState((prev) => ({ ...prev, version: prev.version + 1 }));
 		},
 		reset: () => {
-			buffer.clear();
+			state.clear();
+			setState((prev) => ({ ...prev, version: 0 }));
+		},
+	}));
+};
+
+/*
+createKeyedFrameStore keeps one ring per key instead of a single shared ring.
+A shared ring cannot serve a per-symbol reader: with the whole universe
+interleaving into 50 slots, any one symbol's newest frame is evicted long
+before a consumer looks for it, so the reader either finds a foreign frame or
+nothing at all. Partitioning by symbol keeps each symbol's history intact and
+turns the lookup into a map hit rather than a scan.
+*/
+export interface KeyedFrames<T> {
+	version: number;
+	get(key: string): FrameBuffer<T> | undefined;
+	getLast(key: string): T | undefined;
+	keys(): string[];
+}
+
+export const createKeyedFrameStore = <T>(capacity = 50) => {
+	const buffers = new Map<string, FrameBuffer<T>>();
+
+	const bufferFor = (key: string): FrameBuffer<T> => {
+		const existing = buffers.get(key);
+
+		if (existing) {
+			return existing;
+		}
+
+		const created = createFrameBuffer<T>(capacity);
+		buffers.set(key, created);
+		return created;
+	};
+
+	const state: KeyedFrames<T> = {
+		version: 0,
+		get: (key: string) => buffers.get(key),
+		getLast: (key: string) => buffers.get(key)?.getLast(),
+		keys: () => Array.from(buffers.keys()),
+	};
+
+	return createStore(state, ({ setState }) => ({
+		add: (key: string, frame: T) => {
+			bufferFor(key).add(frame);
+			setState((prev) => ({ ...prev, version: prev.version + 1 }));
+		},
+		reset: () => {
+			buffers.clear();
 			setState((prev) => ({ ...prev, version: 0 }));
 		},
 	}));
@@ -175,6 +166,25 @@ export const focusStore = createStore<string>(DEFAULT_FOCUS_SYMBOL);
 export const onlineStore = createStore<"ONLINE" | "OFFLINE" | "CONNECTING">(
 	"OFFLINE",
 );
+
+/*
+Resonance transport status mirrors onlineStore but for the WebRTC data-channel
+path that carries the predictive-coder resonance and diagnostics frames. It lets
+the UI distinguish "the coder model is quiet" from "the telemetry transport is
+down" — the former is normal model behavior, the latter is a transport failure
+that deserves a visible indicator instead of a silently-blank panel.
+*/
+export type ResonanceTransportStatus = "OFFLINE" | "CONNECTING" | "ONLINE";
+
+export const resonanceTransportStore =
+	createStore<ResonanceTransportStatus>("OFFLINE");
+
+/*
+resonanceTransportDetail carries the current low-level connection state (e.g.
+"failed", "disconnected", "new", "connecting") plus the raw RTCConnectionState,
+so the UI can show a specific reason rather than a generic offline pill.
+*/
+export const resonanceTransportDetailStore = createStore<string>("");
 export const errorStore = createStore<
 	Event | Error | Record<string, unknown> | null
 >(null);
@@ -215,11 +225,22 @@ const measurementStores: Record<
 
 export const measurementSourcesStore = createStore<string[]>([]);
 
-export const getMeasurementStore = (source: string) => {
-	let store = measurementStores[source];
+/*
+Measurements are partitioned by source AND symbol. Source alone is not enough:
+one kernel emits for the whole universe, so a single ring per kernel holds ~640
+symbols interleaved and a reader asking for one symbol's history gets a blend of
+everyone else's instead — different magnitudes at unrelated epochs. Keying by
+both is what makes a per-symbol series (a Hawkes intensity curve, say) actually
+be that symbol's series.
+*/
+const measurementKey = (source: string, symbol: string) => `${source}\u0000${symbol}`;
+
+export const getMeasurementStore = (source: string, symbol: string) => {
+	const key = measurementKey(source, symbol);
+	let store = measurementStores[key];
 	if (!store) {
 		store = createFrameStore<EnvelopeMeasurement>(50);
-		measurementStores[source] = store;
+		measurementStores[key] = store;
 		measurementSourcesStore.setState((prev) =>
 			prev.includes(source) ? prev : [...prev, source],
 		);
@@ -259,7 +280,10 @@ export const getKernelReadingStore = (source: string) => {
 };
 
 export const addMeasurement = (source: string, row: EnvelopeMeasurement) => {
-	getMeasurementStore(source).actions.add(row);
+	// Label is the measured symbol on a Measurement (Source names the kernel
+	// that produced it), so the row itself says which symbol's ring it belongs
+	// in — no need to thread the envelope key down here.
+	getMeasurementStore(source, row.label() ?? "").actions.add(row);
 
 	// SNRDefined is the backend's own "this reading is real" flag (see
 	// data.Measurement.Finalize): an undefined SNR is absent, not zero, so a row
@@ -321,7 +345,11 @@ export const regulatorStore = createFrameStore<RegulatorFrame>(50);
 // envelope as-is and never reshapes it per consumer.
 export const resonanceArtifactStore =
 	createFrameStore<EnvelopeResonanceArtifact>(50);
-export const cognitionStore = createFrameStore<EnvelopeCognition>(50);
+/*
+Cognition is read per symbol on every surface that shows it, so it is keyed by
+symbol rather than sharing one ring across the universe.
+*/
+export const cognitionStore = createKeyedFrameStore<EnvelopeCognition>(50);
 export const categoryStore = createFrameStore<EnvelopeCategory>(50);
 export const opportunityStore =
 	createFrameStore<EnvelopeOpportunityCandidate>(50);

@@ -25,7 +25,17 @@ delta, and per-stage rate/health from the stamped counters — nothing about
 the pipeline shape is hand-maintained.
 */
 type Diagnostic struct {
-	label    string
+	label string
+
+	// group/stage are the ring this stage belongs to and its handler-group
+	// index within it, written once by runtime.Workload while it composes its
+	// stages (see Compose) — before the ring is admitted, so before any
+	// envelope can reach a Step. They are plain fields rather than atomics
+	// for exactly that reason: the write happens-before the goroutines that
+	// read them are ever started.
+	group string
+	stage int32
+
 	seqCount atomic.Int64
 	lastAtNs atomic.Int64
 	avgGapNs atomic.Int64
@@ -33,6 +43,19 @@ type Diagnostic struct {
 
 func NewDiagnostic(label string) *Diagnostic {
 	return &Diagnostic{label: label}
+}
+
+/*
+Compose implements runtime.Composed: the Workload that owns this stage tells
+it which ring it runs in and which handler group it sits in. Without this the
+topology can only be inferred from the order labels appear in a trace, which
+is wrong for a concurrent stage — its nodes run side by side against the same
+envelope and stamp in whatever order their goroutines finish, so consecutive
+labels there describe a race, not a hop.
+*/
+func (diagnostic *Diagnostic) Compose(group string, stage int) {
+	diagnostic.group = group
+	diagnostic.stage = int32(stage)
 }
 
 func (diagnostic *Diagnostic) Step(envelope *types.Envelope) *types.Envelope {
@@ -76,6 +99,11 @@ func NewTraced(label string, node tracedNode) *Traced {
 	return &Traced{node: node, diagnostic: NewDiagnostic(label)}
 }
 
+/* Compose forwards the owning ring's identity to the wrapped label. */
+func (traced *Traced) Compose(group string, stage int) {
+	traced.diagnostic.Compose(group, stage)
+}
+
 func (traced *Traced) Step(envelope *types.Envelope) *types.Envelope {
 	return traced.diagnostic.Step(traced.node.Step(envelope))
 }
@@ -110,6 +138,8 @@ func (diagnostic *Diagnostic) stamp(envelope *types.Envelope, backlog int64) *ty
 		AvgGapNs:  diagnostic.avgGapNs.Load(),
 		LastGapNs: lastGapNs,
 		Backlog:   backlog,
+		Group:     diagnostic.group,
+		Stage:     diagnostic.stage,
 	})
 
 	return envelope

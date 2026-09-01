@@ -15,7 +15,8 @@ vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => () => {},
 }));
 
-const { getKernelReadingStore, getMeasurementStore } = await import(
+const { DEFAULT_FOCUS_SYMBOL, getKernelReadingStore, getMeasurementStore } =
+	await import(
 	"#/collections/app"
 );
 const { KernelInspector } = await import("#/components/kernel/inspector");
@@ -36,6 +37,9 @@ const metricMeasurement = (
 	const builder = new flatbuffers.Builder(0);
 	const keyOffset = builder.createString(key);
 	const labelOffset = builder.createString(key);
+	// Label is the measured symbol on a Measurement, and it is what keys the
+	// per-symbol measurement ring the inspector reads.
+	const symbolOffset = builder.createString(DEFAULT_FOCUS_SYMBOL);
 
 	EnvelopeMetric.startEnvelopeMetric(builder);
 	EnvelopeMetric.addLabel(builder, labelOffset);
@@ -54,6 +58,7 @@ const metricMeasurement = (
 	const metrics = EnvelopeMeasurement.createMetricsVector(builder, [metric]);
 
 	EnvelopeMeasurement.startEnvelopeMeasurement(builder);
+	EnvelopeMeasurement.addLabel(builder, symbolOffset);
 	EnvelopeMeasurement.addSnr(builder, snr);
 	EnvelopeMeasurement.addSnrDefined(builder, true);
 	EnvelopeMeasurement.addMetrics(builder, metrics);
@@ -130,8 +135,8 @@ describe("KernelInspector", () => {
 	*/
 	it("renders a meter for every metric the kernel publishes", () => {
 		getKernelReadingStore("toxicity").state.clear();
-		getMeasurementStore("toxicity").state.clear();
-		getMeasurementStore("toxicity").actions.add(
+		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).state.clear();
+		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).actions.add(
 			metricMeasurement(3.5, "retreat_rate", 1.25, 0.5),
 		);
 		terminalStore.actions.inspectSource("toxicity");
@@ -163,13 +168,13 @@ describe("KernelInspector", () => {
 	*/
 	it("holds a metric's last value across rows that do not carry it", () => {
 		getKernelReadingStore("toxicity").state.clear();
-		getMeasurementStore("toxicity").state.clear();
+		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).state.clear();
 		// First, X is published with a value.
-		getMeasurementStore("toxicity").actions.add(
+		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).actions.add(
 			metricMeasurement(3.5, "retreat_rate", 1.25, 0.5),
 		);
 		// Then a sparse row with no metrics lands on top of it.
-		getMeasurementStore("toxicity").actions.add(sparseMeasurement(2.0));
+		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).actions.add(sparseMeasurement(2.0));
 		terminalStore.actions.inspectSource("toxicity");
 
 		const markup = renderInspector();

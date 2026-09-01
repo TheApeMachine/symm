@@ -98,6 +98,9 @@ profile-report:
 
 dump:
 	python3 scripts/dump-repo.py $(DUMP_OUTPUT)
+	split -n 2 symm.txt
+	mv xaa symm1.txt
+	mv xab symm2.txt
 
 strip-trailing-newlines:
 	git ls-files '*.go' | python3 scripts/strip-trailing-newlines.py

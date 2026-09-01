@@ -467,3 +467,72 @@ export type MeasurementEpoch = {
 	readings: Measurement[];
 	publishedAt?: string;
 };
+
+/*
+TradeRecord mirrors the JSON shape of wire.PositionT as returned by the hub's
+GET /trades endpoint (broker.PositionStore.RecentTrades, backed by the
+position_trades SQLite table) — the durable trade journal, independent of the
+live positionStore ring buffer.
+*/
+export type TradeRecord = {
+	status: string;
+	decision?:
+		| (Record<string, unknown> & {
+				id?: string;
+				thesisScore?: number;
+				thesisConfidence?: number;
+				causalIdentification?: string;
+				allocationHaircut?: number;
+				allocationHaircutReason?: string;
+				adverseSelection?: string;
+				expectedReturn?: string;
+				expectedFees?: string;
+				expectedSpread?: string;
+				expectedImpact?: string;
+				entryCost?: {
+					bestAsk?: string;
+					bestBid?: string;
+					spread?: string;
+					impact?: string;
+					breakEven?: string;
+					roundTripFees?: string;
+				} | null;
+				risk?: {
+					riskDistance?: string;
+					trailDistance?: string;
+					armBuffer?: string;
+					lockBuffer?: string;
+					maxLoss?: string;
+					minEdge?: string;
+				} | null;
+				trace?: {
+					hypothesis?: string;
+					recommendedAction?: string;
+					graphSupports?: number;
+					graphContradicts?: number;
+				} | null;
+		  })
+		| null;
+	holding?: {
+		symbol?: string;
+		status?: string;
+		entryAt?: number;
+		exitAt?: number;
+		entryPrice?: string;
+		entryFee?: string;
+		exitPrice?: string;
+		exitFee?: string;
+		pnl?: string;
+		returnPct?: number;
+		stoploss?: {
+			status?: string;
+			floor?: string;
+			peak?: string;
+			profitLine?: string;
+			locked?: boolean;
+			triggerReason?: string;
+			triggerMark?: string;
+			surgeArmed?: boolean;
+		} | null;
+	} | null;
+};

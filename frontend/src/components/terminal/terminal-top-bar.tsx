@@ -2,6 +2,8 @@ import { useSelector } from "@tanstack/react-store";
 import {
 	focusStore,
 	onlineStore,
+	resonanceTransportDetailStore,
+	resonanceTransportStore,
 	tickCountStore,
 } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
@@ -53,6 +55,32 @@ const TickCounter = () => {
 };
 
 
+/*
+ResonanceTransportBadge surfaces WebRTC data-channel health next to the websocket
+liveness badge so a dead telemetry transport is never mistaken for a quiet
+predictive coder. "offline" here means the resonance/diagnostics channels are
+down or reconnecting — the model may be fine, but no artifacts are arriving.
+*/
+const ResonanceTransportBadge = () => {
+	const status = useSelector(resonanceTransportStore, (state) => state);
+	const detail = useSelector(resonanceTransportDetailStore, (state) => state);
+
+	const live = status === "ONLINE";
+	const connecting = status === "CONNECTING";
+	const label = live ? "rtc live" : connecting ? "rtc connecting" : "rtc offline";
+	const variant = live ? "success" : connecting ? "warning" : "error";
+
+	return (
+		<Badge
+			label={detail ? `${label} · ${detail}` : label}
+			variant={variant}
+			dot
+			pulse={live}
+			title={detail}
+		/>
+	);
+};
+
 export const TerminalTopBar = () => {
 	const online = useSelector(onlineStore, (state) => state === "ONLINE");
 	const focusSymbol = useSelector(focusStore, (state) => state);
@@ -73,6 +101,7 @@ export const TerminalTopBar = () => {
 				dot
 				pulse={online}
 			/>
+			<ResonanceTransportBadge />
 			<Count />
 
 			<Toolbar.Spacer />

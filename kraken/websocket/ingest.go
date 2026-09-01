@@ -32,6 +32,10 @@ func IngestEnvelopes(
 		return fromLevel3(parsed, captureID)
 	case "executions":
 		return fromExecution(parsed, captureID)
+	case "futures.ticker":
+		return fromFuturesTicker(parsed, captureID)
+	case "futures.trade":
+		return fromFuturesTrade(parsed, captureID)
 	default:
 		return nil, nil
 	}
@@ -124,6 +128,47 @@ func fromExecution(parsed any, captureID hindsight.CaptureIdentity) ([]*types.En
 
 		envelopes = append(envelopes, envelope)
 		manifests = append(manifests, manifestFor(envelope, captureID, uint64(ordinal), "executions", data.Symbol))
+	}
+
+	return envelopes, manifests
+}
+
+func fromFuturesTicker(parsed any, captureID hindsight.CaptureIdentity) ([]*types.Envelope, []hindsight.EnvelopeManifest) {
+	ticker, valid := parsed.(*kraken.FuturesTicker)
+
+	if !valid || ticker == nil {
+		return nil, nil
+	}
+
+	// The futures ticker feed carries one record per frame, where the spot feed
+	// carries a slice, so this fan-out is always a single envelope.
+	envelope := types.NewEnvelope(types.EnvelopeFuturesTicker)
+	envelope.FuturesTickerData = ticker.Data
+	envelope.CaptureID = captureID
+
+	return []*types.Envelope{envelope}, []hindsight.EnvelopeManifest{
+		manifestFor(envelope, captureID, 0, "futures.ticker", ticker.Data.Symbol),
+	}
+}
+
+func fromFuturesTrade(parsed any, captureID hindsight.CaptureIdentity) ([]*types.Envelope, []hindsight.EnvelopeManifest) {
+	trade, valid := parsed.(*kraken.FuturesTrade)
+
+	if !valid || trade == nil {
+		return nil, nil
+	}
+
+	envelopes := make([]*types.Envelope, 0, len(trade.Data))
+	manifests := make([]hindsight.EnvelopeManifest, 0, len(trade.Data))
+
+	for ordinal, data := range trade.Data {
+		envelope := types.NewEnvelope(types.EnvelopeFuturesTrade)
+		envelope.FuturesTradeData = data
+		envelope.CaptureID = captureID
+		envelope.CaptureOrdinal = uint64(ordinal)
+
+		envelopes = append(envelopes, envelope)
+		manifests = append(manifests, manifestFor(envelope, captureID, uint64(ordinal), "futures.trade", data.Symbol))
 	}
 
 	return envelopes, manifests

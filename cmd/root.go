@@ -6,14 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -102,9 +100,9 @@ var (
 			// stores the map by reference and only indexes it when envelopes
 			// flow, so the maps are complete well before instrument.Subscribe
 			// opens the stream.
-			publicIngress := map[string]*nmruntime.Workload[*types.Envelope]{}
-			privateIngress := map[string]*nmruntime.Workload[*types.Envelope]{}
-			futuresIngress := map[string]*nmruntime.Workload[*types.Envelope]{}
+			publicIngress := map[string]nmruntime.Ingress[*types.Envelope]{}
+			privateIngress := map[string]nmruntime.Ingress[*types.Envelope]{}
+			futuresIngress := map[string]nmruntime.Ingress[*types.Envelope]{}
 
 			// dataPath resolves ~ and cwd so there is exactly one durable path,
 			// in the configured location, not a stray literal-~ directory.
@@ -227,10 +225,6 @@ var (
 			futures := websocket.NewFutures(cmd.Context(), system.Cfg.WebSocket.Endpoints.Futures, futuresIngress, rawCapture)
 			api.SetFutures(futures)
 
-			go func() {
-				errnie.Error(futures.Run())
-			}()
-
 			defer futures.Close()
 
 			recorder, err := audit.NewRecorder(filepath.Join(
@@ -258,7 +252,7 @@ var (
 			// handling); Hindsight records that same fact in CaptureIdentity
 			// but never supplies it to trading. There is no second subscription
 			// path anywhere.
-			softReboot := func(endpoint string) func() {
+			softReboot := func() func() {
 				return func() {
 					go func() {
 						if err := instrument.Subscribe(); err != nil {
@@ -272,9 +266,53 @@ var (
 				}
 			}
 
-			publicSession.SetReconnect(softReboot(system.Cfg.WebSocket.Endpoints.Public))
-			privateSession.SetReconnect(softReboot(system.Cfg.WebSocket.Endpoints.Private))
-			futures.SetReconnect(softReboot(system.Cfg.WebSocket.Endpoints.Futures))
+			publicSession.SetReconnect(softReboot())
+			privateSession.SetReconnect(softReboot())
+			futures.SetReconnect(softReboot())
+
+			// When the soft reboot above cannot converge, the failure is not the
+			// socket: a rotating client IP invalidates the venue session itself,
+			// so every reconnect dials and authenticates cleanly and is then
+			// dropped. Resubscribing a session the venue has already rejected
+			// can never recover it, so the transport escalates here instead of
+			// spinning, and the process performs a full, clean reboot.
+			//
+			// A reboot is a process restart rather than an in-process rebuild:
+			// the workspace, desk, solvers and hub are all constructed once
+			// against this command's context, so re-establishing a coherent
+			// system means starting over from a known-good boot. Positions
+			// survive it — they are persisted in the position store and adopted
+			// again by broker recovery on the way back up.
+			rebootOnce := &sync.Once{}
+
+			fullReboot := func(reason string) {
+				rebootOnce.Do(func() {
+					errnie.Warn(fmt.Sprintf(
+						"symm: transport unrecoverable (%s) — draining and rebooting", reason,
+					))
+
+					// Withdraw the universe through the one subscription
+					// authority that owns it, so the venue stops streaming
+					// before the sockets go away, then tear the transport down.
+					// Deferred cleanup does not run on an explicit exit, so the
+					// sessions are closed here by hand.
+					instrument.Unsubscribe()
+					api.Close()
+					_ = futures.Close()
+
+					// Exit non-zero so the supervisor restarts the process. A
+					// reboot is a restart rather than an in-process rebuild:
+					// the workspace, desk, solvers and hub are constructed once
+					// against this command's context, so a coherent system
+					// means booting again from scratch. Open positions survive
+					// it — they are persisted in the position store and adopted
+					// by broker recovery on the way back up.
+					os.Exit(1)
+				})
+			}
+
+			api.SetUnrecoverable(fullReboot)
+			futures.SetUnrecoverable(fullReboot)
 
 			// Stateful analytical stages are constructed once and mounted directly
 			// in each Workload that produces their inputs. The Workloads themselves
@@ -283,6 +321,7 @@ var (
 			cognitionSolver := cognition.NewSolver(cmd.Context())
 			opportunitySolver := opportunity.NewSolver(cmd.Context())
 			resonanceSolver := resonance.NewSolver(cmd.Context(), 0)
+			resonanceSolver.SetObserver(hub.PublishResonance)
 
 			// The shared manifold solver owns the one resident physics domain.
 			// It reads Hawkes excitation fractions on the Trade workload (as
@@ -390,8 +429,9 @@ var (
 			// Phase 2 — declare the complete streaming topology as Workloads.
 			// The Desk receives priority market/execution updates first. Analytical
 			// state then enriches the same envelope before Strategy sees it once.
-			publicIngress["ticker"] = nmruntime.NewWorkload(
+			publicTicker := nmruntime.NewWorkload(
 				cmd.Context(),
+				"ticker",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("ticker.ingress")},
 					{&tickNode{desk: desk}},
@@ -403,21 +443,12 @@ var (
 						system.NewTraced("ticker.pumpdump", pumpdump.NewSignal(cmd.Context())),
 						system.NewTraced("ticker.resonance", resonanceSolver),
 					},
-					{advisors},
-					{categorySolver},
-					{system.NewTraced("ticker.cognition", cognitionSolver)},
-					{system.NewTraced("ticker.opportunity", opportunitySolver)},
-					{system.NewDiagnostic("ticker.logic")},
-					{planner},
-					{system.NewDiagnostic("ticker.strategy")},
-					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture}},
-					{hub},
-					{system.NewDiagnostic("ticker.hub")},
 				},
 			)
 
-			publicIngress["trade"] = nmruntime.NewWorkload(
+			publicTrade := nmruntime.NewWorkload(
 				cmd.Context(),
+				"trade",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("trade.ingress")},
 					{
@@ -426,20 +457,12 @@ var (
 						system.NewTraced("trade.pumpdump", pumpdump.NewSignal(cmd.Context())),
 						system.NewTraced("trade.toxicity", toxicitySolver),
 					},
-					{system.NewTraced("trade.manifold", manifoldSolver)},
-					{advisors},
-					{categorySolver},
-					{system.NewTraced("trade.cognition", cognitionSolver)},
-					{system.NewTraced("trade.opportunity", opportunitySolver)},
-					{planner},
-					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture}},
-					{hub},
-					{system.NewDiagnostic("trade.hub")},
 				},
 			)
 
-			privateIngress["level3"] = nmruntime.NewWorkload(
+			privateLevel3 := nmruntime.NewWorkload(
 				cmd.Context(),
+				"level3",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("level3.ingress")},
 					{level3Node{desk: desk}},
@@ -449,15 +472,6 @@ var (
 						system.NewTraced("level3.pumpdump", pumpdump.NewSignal(cmd.Context())),
 						system.NewTraced("level3.toxicity", toxicitySolver),
 					},
-					{system.NewTraced("level3.manifold", manifoldSolver)},
-					{advisors},
-					{categorySolver},
-					{system.NewTraced("level3.cognition", cognitionSolver)},
-					{system.NewTraced("level3.opportunity", opportunitySolver)},
-					{planner},
-					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture}},
-					{hub},
-					{system.NewDiagnostic("level3.hub")},
 				},
 			)
 
@@ -465,61 +479,90 @@ var (
 			// desk. It carries no signal workload: each execution record is
 			// routed straight to the matching position's guardian ring, so the
 			// workload is a thin dispatch stage plus observability boundaries.
-			privateIngress["executions"] = nmruntime.NewWorkload(
+			privateExecutions := nmruntime.NewWorkload(
 				cmd.Context(),
+				"executions",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("executions.ingress")},
 					{executionNode{desk: desk}},
-					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture}},
-					{hub},
-					{system.NewDiagnostic("executions.hub")},
 				},
 			)
 
-			futuresIngress["ticker"] = nmruntime.NewWorkload(
+			futuresTicker := nmruntime.NewWorkload(
 				cmd.Context(),
+				"futures.ticker",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("futures.ticker.ingress")},
 					{system.NewTraced("futures.ticker.derivatives", derivatives.NewSignal(cmd.Context()))},
-					{advisors},
-					{categorySolver},
-					{system.NewTraced("futures.ticker.cognition", cognitionSolver)},
-					{system.NewTraced("futures.ticker.opportunity", opportunitySolver)},
-					{planner},
-					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture}},
-					{hub},
-					{system.NewDiagnostic("futures.ticker.hub")},
 				},
 			)
 
-			futuresIngress["trade"] = nmruntime.NewWorkload(
+			futuresTrade := nmruntime.NewWorkload(
 				cmd.Context(),
+				"futures.trade",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("futures.trade.ingress")},
 					{system.NewTraced("futures.trade.derivatives", derivatives.NewSignal(cmd.Context()))},
-					{advisors},
-					{categorySolver},
-					{system.NewTraced("futures.trade.cognition", cognitionSolver)},
-					{system.NewTraced("futures.trade.opportunity", opportunitySolver)},
-					{planner},
-					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture}},
-					{hub},
-					{system.NewDiagnostic("futures.trade.hub")},
 				},
 			)
 
+			logicWorkload := nmruntime.NewWorkload(
+				cmd.Context(),
+				"logic",
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewTraced("logic.manifold", manifoldSolver)},
+					{advisors},
+					{categorySolver},
+					{system.NewTraced("logic.cognition", cognitionSolver)},
+					{system.NewTraced("logic.opportunity", opportunitySolver)},
+					{system.NewDiagnostic("logic.complete")},
+				},
+			)
+
+			strategyWorkload := nmruntime.NewWorkload(
+				cmd.Context(),
+				"strategy",
+				[][]nmruntime.Node[*types.Envelope]{
+					{planner},
+					{system.NewDiagnostic("strategy.planned")},
+					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture}},
+					{hub},
+					{system.NewDiagnostic("strategy.published")},
+				},
+			)
 			workspace := nmruntime.NewWorkspace(
 				cmd.Context(),
-				append(
-					append(
-						slices.Collect(maps.Values(publicIngress)),
-						slices.Collect(maps.Values(privateIngress))...,
-					),
-					slices.Collect(maps.Values(futuresIngress))...,
-				),
+				"workspace",
+				[][]nmruntime.Node[*types.Envelope]{
+					{
+						publicTicker,
+						publicTrade,
+						privateLevel3,
+						privateExecutions,
+						futuresTicker,
+						futuresTrade,
+					},
+					{logicWorkload},
+					{strategyWorkload},
+				},
 			)
 
 			defer workspace.Close()
+
+			if err := workspace.Error(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: construct workspace",
+					err,
+				))
+			}
+
+			publicIngress["ticker"] = publicTicker
+			publicIngress["trade"] = publicTrade
+			privateIngress["level3"] = privateLevel3
+			privateIngress["executions"] = privateExecutions
+			futuresIngress["ticker"] = futuresTicker
+			futuresIngress["trade"] = futuresTrade
 
 			if err := instrument.Subscribe(); err != nil {
 				return errnie.Error(errnie.Err(

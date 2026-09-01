@@ -3,14 +3,12 @@ import type { Measurement } from "#/collections/types";
 import {
 	clearRetainedTelemetry,
 	getAllRetainedResonance,
-	getRetainedCognition,
 	getRetainedHawkes,
 	getRetainedResonance,
 	hawkesMetricsFromBuffer,
 	hawkesMetricsFromFrames,
 	intensitySeriesFromRingRows,
 	latentPointsFromFrames,
-	retainCognitionRow,
 	retainHawkesMetric,
 	retainResonanceRow,
 	xrayLayersFromResonance,
@@ -207,17 +205,7 @@ describe("xray-view", () => {
 		expect(all.length).toBeGreaterThanOrEqual(2);
 	});
 
-	it("retains per-symbol cognition and hawkes metrics", () => {
-		retainCognitionRow("BTC/USD", {
-			winner: "trend-up",
-			confidence: 0.95,
-		});
-
-		expect(getRetainedCognition("BTC/USD")).toMatchObject({
-			winner: "trend-up",
-			confidence: 0.95,
-		});
-
+	it("retains per-symbol hawkes metrics", () => {
 		retainHawkesMetric("BTC/USD", "conditional_intensity:buy", 0.1234);
 		retainHawkesMetric("BTC/USD", "branching_spectral_radius", 0.75);
 

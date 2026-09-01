@@ -102,6 +102,17 @@ type BoundaryStamp struct {
 	// for backpressure (see runtime.BacklogStepper), not estimated from
 	// rates. 0 means this stage is fully caught up with the producer.
 	Backlog int64
+
+	// Group is the name of the runtime.Workload ring this stage runs in, and
+	// Stage its handler-group index within that ring. The Workload stamps
+	// both onto its own nodes as it composes them, so the trace carries the
+	// ring structure the envelope actually crossed rather than only the order
+	// its labels happened to appear. That distinction matters because the
+	// nodes of one handler group run concurrently: their labels arrive in
+	// goroutine-completion order, which reads as a chain of hops between
+	// siblings that never actually feed each other.
+	Group string
+	Stage int32
 }
 
 type TypeID uint8
@@ -632,13 +643,8 @@ func encodeResonanceArtifact(resonance *ResonanceArtifact) *telemetry.EnvelopeRe
 		LastResolutionError:  resonance.LastResolutionError,
 	}
 
-	// The manifold is the coder itself: its per-layer states, latent vector, and
-	// task-head quality are what the predictive-coding surface renders. A
-	// solver that has not built one yet leaves them absent rather than zeroed,
-	// so "no model" stays distinguishable from "a model reading zero".
 	if manifold := resonance.Manifold; manifold != nil {
 		layers, surprise, energy := manifold.WireSnapshot()
-
 		encoded.Layers = make([]*telemetry.EnvelopeResonanceLayerT, 0, len(layers))
 
 		for _, layer := range layers {
@@ -653,7 +659,6 @@ func encodeResonanceArtifact(resonance *ResonanceArtifact) *telemetry.EnvelopeRe
 		encoded.Latent = manifold.LatentState()
 		encoded.Energy = energy
 		encoded.Surprise = surprise
-
 		encoded.TaskSkill, encoded.TaskSkillReady = manifold.TaskSkill()
 		encoded.TaskRelativePrecision, encoded.TaskRelativePrecisionReady = manifold.TaskPrecision()
 		encoded.TaskScale, encoded.TaskScaleReady = manifold.TaskScale()
@@ -918,6 +923,8 @@ func encodeBoundaries(boundaries []BoundaryStamp) []*telemetry.EnvelopeBoundaryS
 			AvgGapNs:  stamp.AvgGapNs,
 			LastGapNs: stamp.LastGapNs,
 			Backlog:   stamp.Backlog,
+			Group:     stamp.Group,
+			Stage:     stamp.Stage,
 		}
 	}
 

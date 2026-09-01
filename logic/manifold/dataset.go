@@ -73,13 +73,34 @@ func (dataset *Dataset) Name() string { return "book" }
 
 /*
 Step projects this one Level3 message's resting orders into States and yields
-them. A delete removes its order from the book, so it describes no resting
-particle and is skipped; bids and asks are consumed directly without a
-flattened intermediary representation.
+them unclamped: every particle is free to evolve under the resident field. A
+delete removes its order from the book, so it describes no resting particle
+and is skipped; bids and asks are consumed directly without a flattened
+intermediary representation.
 */
 func (dataset *Dataset) Step(
 	message kraken.Level3Data,
 	forcing forcingState,
+) iter.Seq[*sensorium.State] {
+	return dataset.step(message, forcing, false)
+}
+
+/*
+StepClamped is the BVP form of Step: observed L3 resting orders are projected
+as clamped boundary particles so a relaxation pass can hold them fixed while
+injected dark probe particles crystallize around them.
+*/
+func (dataset *Dataset) StepClamped(
+	message kraken.Level3Data,
+	forcing forcingState,
+) iter.Seq[*sensorium.State] {
+	return dataset.step(message, forcing, true)
+}
+
+func (dataset *Dataset) step(
+	message kraken.Level3Data,
+	forcing forcingState,
+	clamped bool,
 ) iter.Seq[*sensorium.State] {
 	return func(yield func(*sensorium.State) bool) {
 		if dataset == nil || message.Symbol == "" {
@@ -155,7 +176,7 @@ func (dataset *Dataset) Step(
 				state.Vel[0] = 0
 				state.Vel[1] = 0
 				state.Vel[2] = 0
-				state.Clamped[0] = false
+				state.Clamped[0] = clamped
 				state.Dark[0] = false
 				rank++
 

@@ -133,15 +133,20 @@ func newDeliveryDesk(t testing.TB, conn *executingConn) (*Desk, *nmruntime.Workl
 		t.Fatalf("construct desk: %v", err)
 	}
 
-	workload := nmruntime.NewWorkload(t.Context(), [][]nmruntime.Node[*types.Envelope]{
+	workload := nmruntime.NewWorkload(t.Context(), "delivery", [][]nmruntime.Node[*types.Envelope]{
 		{deliveryNode{desk: desk}},
 	})
-	workload.Admit()
+	workspace := nmruntime.NewWorkspace(
+		t.Context(),
+		"workspace",
+		[][]nmruntime.Node[*types.Envelope]{{workload}},
+	)
+	workspace.Admit()
 
 	// The test IS this workload's producer, so it declares the readiness a
 	// transport would: a Workload holds WAITING from construction and drops
 	// pushes until its producer admits it.
-	t.Cleanup(func() { _ = workload.Close() })
+	t.Cleanup(func() { _ = workspace.Close() })
 
 	return desk, workload
 }

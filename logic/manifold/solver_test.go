@@ -72,6 +72,31 @@ func TestSolverStep(t *testing.T) {
 			So(result.Manifold, ShouldNotBeNil)
 			So(result.Manifold.State.N, ShouldEqual, 1)
 		})
+
+		Convey("Each envelope owns an immutable manifold reading", func() {
+			first := types.NewEnvelope(types.EnvelopeLevel3)
+			first.Level3Data = kraken.Level3Data{
+				Symbol: "FIRST/USD",
+				Bids: []kraken.Level3Order{
+					{Event: "add", OrderID: "first", LimitPrice: decimalPtr(10), OrderQty: decimalPtr(1)},
+				},
+			}
+			solver.Step(first)
+
+			second := types.NewEnvelope(types.EnvelopeLevel3)
+			second.Level3Data = kraken.Level3Data{
+				Symbol: "SECOND/USD",
+				Bids: []kraken.Level3Order{
+					{Event: "add", OrderID: "second-1", LimitPrice: decimalPtr(20), OrderQty: decimalPtr(1)},
+					{Event: "add", OrderID: "second-2", LimitPrice: decimalPtr(19), OrderQty: decimalPtr(1)},
+				},
+			}
+			solver.Step(second)
+
+			So(first.Manifold, ShouldNotEqual, second.Manifold)
+			So(first.Manifold.State.N, ShouldEqual, 1)
+			So(second.Manifold.State.N, ShouldEqual, 2)
+		})
 	})
 }
 

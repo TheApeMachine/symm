@@ -23,6 +23,23 @@ type BacklogStepper[T any] interface {
 	StepBacklog(value T, backlog int64) T
 }
 
+/*
+Composed is a Node that wants to know where in the runtime composition it
+sits: which Workload ring owns it, and which handler group (stage) within
+that ring it belongs to. A node opts in by implementing Compose; Workload
+calls it once per node while building its stages, before the ring is started,
+so an implementation may store the values as plain fields.
+
+This exists because a stage's structure is not recoverable downstream. Nodes
+in one handler group run concurrently against the same value, so any trace
+they produce orders them by goroutine completion — a consumer reading that
+trace cannot tell a genuine hop from two siblings racing. Composed hands over
+the structure the ring already knows rather than making anyone guess at it.
+*/
+type Composed interface {
+	Compose(group string, stage int)
+}
+
 type Consumer[T any] struct {
 	node        Node[T]
 	backlogNode BacklogStepper[T]

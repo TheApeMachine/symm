@@ -11,6 +11,12 @@ const EDGE_LABEL = "#6b6358";
 const MOCKUP_LEAF_LABEL_BUDGET = 12;
 
 /*
+LABEL_HALF_HEIGHT is half a 9.5px line plus a little breathing room, so two
+labels count as colliding slightly before their glyphs actually touch.
+*/
+const LABEL_HALF_HEIGHT = 6;
+
+/*
 CortexLeafRoster keeps leaf Y positions stable across prediction churn. New
 leaves take the largest open gap; existing leaves keep their prior ordinate so
 the canvas does not reshuffle every tick.
@@ -398,6 +404,17 @@ export const drawCortexTree = (
 	drawEdges(tree.root);
 	context.globalAlpha = 1;
 
+	/*
+	Dots first, then labels. A label is only worth drawing if it can be read,
+	so each candidate is measured against the boxes already placed and dropped
+	when it would collide. Beam nodes are placed first so the path the reader
+	is actually following always wins the space over an incidental neighbour.
+	*/
+	type LabelBox = { top: number; bottom: number; left: number; right: number };
+	const placed: LabelBox[] = [];
+	const pending: { node: CortexNode; x: number; y: number; onBeam: boolean }[] =
+		[];
+
 	for (const node of tree.nodes) {
 		const x = layout.xByID.get(node.id);
 		const y = layout.yByID.get(node.id);
@@ -423,12 +440,43 @@ export const drawCortexTree = (
 			continue;
 		}
 
+		pending.push({ node, x, y, onBeam });
+	}
+
+	pending.sort((left, right) => Number(right.onBeam) - Number(left.onBeam));
+
+	for (const { node, x, y, onBeam } of pending) {
+		const label = displayToken(node.token);
+
+		context.font = `${onBeam ? "600 " : ""}9.5px JetBrains Mono, monospace`;
+
+		const left = x + 7;
+		const box: LabelBox = {
+			top: y - LABEL_HALF_HEIGHT,
+			bottom: y + LABEL_HALF_HEIGHT,
+			left,
+			right: left + context.measureText(label).width,
+		};
+
+		const collides = placed.some(
+			(other) =>
+				box.left < other.right &&
+				box.right > other.left &&
+				box.top < other.bottom &&
+				box.bottom > other.top,
+		);
+
+		if (collides) {
+			continue;
+		}
+
+		placed.push(box);
+
 		context.fillStyle = onBeam
 			? TERMINAL_COLORS.foreground
 			: TERMINAL_COLORS.muted;
-		context.font = `${onBeam ? "600 " : ""}9.5px JetBrains Mono, monospace`;
 		context.textAlign = "left";
-		context.fillText(displayToken(node.token), x + 7, y + 3.2);
+		context.fillText(label, left, y + 3.2);
 	}
 
 	const pathNodes = beamPathNodes(tree);

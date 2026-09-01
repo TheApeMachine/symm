@@ -264,13 +264,33 @@ func TestTickerStep_RegressingTimestamp(t *testing.T) {
 			So(entity.Step(futuresTicker("PF_XBTUSD", 101, 100, 100.5, 1000, at)).Err, ShouldBeNil)
 			So(entity.Step(futuresTicker("PF_XBTUSD", 102, 101, 101.5, 1100, at.Add(time.Second))).Err, ShouldBeNil)
 
-			// A snapshot stamped older than the last seen time: the event still
-			// ingests, re-stamped onto the monotonic timeline instead of being
-			// rejected as a causal regression.
+			// A snapshot carrying a REAL timestamp older than the last seen is
+			// a late event, not a broken one. Its instantaneous price geometry
+			// is true whenever the snapshot was taken, so it publishes; but it
+			// is not a valid newest observation, so nothing derived from the
+			// event clock does.
 			measurement := entity.Step(futuresTicker("PF_XBTUSD", 103, 102, 102.5, 1200, at.Add(500*time.Millisecond)))
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["derivative_price"].Raw, ShouldEqual, 103.0)
+			So(measurement.Metrics["basis"].Raw, ShouldAlmostEqual, (103.0-102.0)/102.0, 1e-12)
+
+			// Not republished from the previous frame under this event's id.
+			_, hasChange := measurement.Metrics["open_interest_change"]
+			So(hasChange, ShouldBeFalse)
+		})
+
+		Convey("a fabricated timestamp is folded forward, not read as late", func() {
+			So(entity.Step(futuresTicker("PF_SYNUSD", 101, 100, 100.5, 1000, at.Add(time.Hour))).Err, ShouldBeNil)
+
+			// No server timestamp: the wall-clock substitute reads as older,
+			// but it holds no truth, so it is pinned to the timeline head and
+			// the snapshot counts as the newest observation.
+			point := futuresTicker("PF_SYNUSD", 102, 101, 101.5, 1100, at)
+			point.SyntheticTimestamp = true
+
+			measurement := entity.Step(point)
+			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["open_interest_change"].Raw, ShouldEqual, 100.0)
 		})
 

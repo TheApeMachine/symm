@@ -29,6 +29,10 @@ type FuturesTickerData struct {
 	FundingRatePrediction *decimal.Decimal `json:"funding_rate_prediction"`
 	Volume                float64          `json:"volume"`
 	Timestamp             time.Time        `json:"timestamp"`
+	// SyntheticTimestamp records that the payload carried no server timestamp
+	// and Timestamp is the local wall clock standing in for it. See
+	// extractTimestamp.
+	SyntheticTimestamp bool `json:"synthetic_timestamp,omitempty"`
 }
 
 /*
@@ -91,7 +95,7 @@ func parseFuturesTickerData(rawMap map[string]any) FuturesTickerData {
 	tickerData.FundingRate = extractDecimalAlt(rawMap, "funding_rate", "fundingRate")
 	tickerData.FundingRatePrediction = extractDecimalAlt(rawMap, "funding_rate_prediction", "fundingRatePrediction")
 	tickerData.Volume = extractFloatAlt(rawMap, "volume", "vol24h")
-	tickerData.Timestamp = extractTimestamp(rawMap)
+	tickerData.Timestamp, tickerData.SyntheticTimestamp = extractTimestamp(rawMap)
 
 	return tickerData
 }
@@ -109,6 +113,11 @@ type FuturesTradeData struct {
 	Type      string          `json:"type"`
 	UID       string          `json:"uid"`
 	Timestamp time.Time       `json:"timestamp"`
+	// SyntheticTimestamp records that the payload carried no server timestamp
+	// and Timestamp is the local wall clock standing in for it. A synthetic
+	// timestamp holds no truth about when the event happened, so it may be
+	// folded onto a causal timeline; a real one must be respected.
+	SyntheticTimestamp bool `json:"synthetic_timestamp,omitempty"`
 }
 
 /*
@@ -188,7 +197,7 @@ func parseSingleFuturesTrade(rawMap map[string]any) FuturesTradeData {
 	}
 
 	tradeData.Qty = extractFloatAlt(rawMap, "qty", "size")
-	tradeData.Timestamp = extractTimestamp(rawMap)
+	tradeData.Timestamp, tradeData.SyntheticTimestamp = extractTimestamp(rawMap)
 
 	return tradeData
 }
@@ -202,6 +211,10 @@ type FuturesBookData struct {
 	Bids      []BookLevel `json:"bids"`
 	Asks      []BookLevel `json:"asks"`
 	Timestamp time.Time   `json:"timestamp"`
+	// SyntheticTimestamp records that the payload carried no server timestamp
+	// and Timestamp is the local wall clock standing in for it. See
+	// extractTimestamp.
+	SyntheticTimestamp bool `json:"synthetic_timestamp,omitempty"`
 }
 
 /*
@@ -243,7 +256,7 @@ func NewFuturesBook(buffer []byte) *FuturesBook {
 		bookData.ProductID = productID
 	}
 
-	bookData.Timestamp = extractTimestamp(rawMap)
+	bookData.Timestamp, bookData.SyntheticTimestamp = extractTimestamp(rawMap)
 
 	if bidsSlice, ok := rawMap["bids"].([]any); ok {
 		bookData.Bids = parseBookLevels(bidsSlice)
@@ -299,6 +312,19 @@ NewFuturesSubscription creates a new subscription payload.
 func NewFuturesSubscription(feed string, productIDs []string) FuturesSubscription {
 	return FuturesSubscription{
 		Event:      "subscribe",
+		Feed:       feed,
+		ProductIDs: productIDs,
+	}
+}
+
+/*
+NewFuturesUnsubscription creates the payload that withdraws a futures feed
+subscription, used when a session is deliberately torn down so the venue stops
+streaming before the socket closes.
+*/
+func NewFuturesUnsubscription(feed string, productIDs []string) FuturesSubscription {
+	return FuturesSubscription{
+		Event:      "unsubscribe",
 		Feed:       feed,
 		ProductIDs: productIDs,
 	}
@@ -382,18 +408,32 @@ func extractFloatAlt(rawMap map[string]any, keyOne, keyTwo string) float64 {
 	return extractFloat(rawMap, keyTwo)
 }
 
-func extractTimestamp(rawMap map[string]any) time.Time {
+/*
+extractTimestamp reads the exchange's event time, reporting whether it was
+actually present on the wire.
+
+A payload that carries no server timestamp still needs *a* time to flow
+downstream, so the local wall clock stands in. That substitute is a different
+time base from the exchange's and will periodically read as older than the
+previous exchange-stamped event. The second return value carries that fact
+forward: a synthetic timestamp holds no truth about when the event happened and
+may be re-stamped onto a causal timeline freely, whereas a real one must be
+respected even when it arrives late. Collapsing the two -- returning the wall
+clock unmarked -- is what makes a late event indistinguishable from a
+fabricated one.
+*/
+func extractTimestamp(rawMap map[string]any) (timestamp time.Time, synthetic bool) {
 	if timeVal, exists := rawMap["time"]; exists && timeVal != nil {
 		if epochMs, ok := timeVal.(float64); ok && epochMs > 0 {
-			return time.UnixMilli(int64(epochMs)).UTC()
+			return time.UnixMilli(int64(epochMs)).UTC(), false
 		}
 	}
 
 	if timestampVal, exists := rawMap["timestamp"]; exists && timestampVal != nil {
 		if epochMs, ok := timestampVal.(float64); ok && epochMs > 0 {
-			return time.UnixMilli(int64(epochMs)).UTC()
+			return time.UnixMilli(int64(epochMs)).UTC(), false
 		}
 	}
 
-	return time.Now().UTC()
+	return time.Now().UTC(), true
 }

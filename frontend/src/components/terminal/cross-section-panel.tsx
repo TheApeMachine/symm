@@ -1,7 +1,9 @@
 import { useSelector } from "@tanstack/react-store";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
+import type { FrameBuffer } from "#/collections/app";
 import { focusStore, getMeasurementStore } from "#/collections/app";
 import { Panel } from "#/components/ui/panel";
+import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
 import { EnvelopeMeasurementMetric } from "#/providers/telemetry/telemetry/envelope-measurement-metric";
 
 const metricObj = new EnvelopeMeasurementMetric();
@@ -19,7 +21,9 @@ export const CrossSectionPanel = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 
-	getMeasurementStore("liquidity").subscribe((state) => {
+	useEffect(() => {
+		const store = getMeasurementStore("liquidity", focusSymbol);
+		const apply = (state: FrameBuffer<EnvelopeMeasurement>) => {
 		if (!root.current) return;
 		const row = state.getLast();
 
@@ -71,7 +75,12 @@ export const CrossSectionPanel = () => {
 				progressbar?.setAttribute("aria-valuenow", "0");
 			}
 		}
-	});
+		};
+
+		apply(store.state);
+		const subscription = store.subscribe(apply);
+		return () => subscription.unsubscribe();
+	}, [focusSymbol]);
 
 	return (
 		<Panel ref={root} size="lg">

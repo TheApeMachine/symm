@@ -196,19 +196,20 @@ const selectDecision = (
 const selectCognition = (
 	state: ReturnType<typeof cognitionStore.get>,
 	symbol: string,
-) =>
-	scanLatest(
-		state.toArray(),
-		() => 1,
-		(frame) => (typeof frame.symbol() === "string" ? frame : null),
-		(row) => row.symbol() === symbol,
-		(row) => ({
-			winner: row.winner() ?? "",
-			contrast: num(row.contrast(), 3),
-			entropy: num(row.entropyBits(), 3),
-			paths: String(row.lookaheadPaths()),
-		}),
-	);
+) => {
+	const row = state.getLast(symbol);
+
+	if (!row) {
+		return null;
+	}
+
+	return {
+		winner: row.winner() ?? "",
+		contrast: num(row.contrast(), 3),
+		entropy: num(row.entropyBits(), 3),
+		paths: String(row.lookaheadPaths()),
+	};
+};
 
 export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
 	const position = useSelector(

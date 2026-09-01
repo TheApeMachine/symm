@@ -8,6 +8,14 @@ system.Diagnostic (Go) already carries a running summary on every stamp.
 */
 export type NodeStats = {
 	label: string;
+	// group is the runtime ring this stage runs in and stage its handler-group
+	// index within that ring, both reported by the Workload that owns it (see
+	// runtime.Composed). This is the only trustworthy grouping available: the
+	// nodes of one handler group run concurrently against the same envelope,
+	// so their stamps arrive in goroutine-completion order and the "edges"
+	// between siblings are a race, not a hop.
+	group: string;
+	stage: number;
 	seqCount: number;
 	avgGapNs: number;
 	lastGapNs: number;
@@ -89,6 +97,8 @@ export const topologyStore = createStore(
 
 					prev.nodes.set(label, {
 						label,
+						group: stamp.group() ?? "",
+						stage: stamp.stage(),
 						seqCount: Number(stamp.seqCount()),
 						avgGapNs: Number(stamp.avgGapNs()),
 						lastGapNs: Number(stamp.lastGapNs()),
@@ -126,7 +136,11 @@ export const topologyStore = createStore(
 					existing.lastAtNs = Number(stamps[i].atNs());
 				}
 
-				return { nodes: prev.nodes, edges: prev.edges, version: prev.version + 1 };
+				return {
+					nodes: prev.nodes,
+					edges: prev.edges,
+					version: prev.version + 1,
+				};
 			});
 		},
 	}),

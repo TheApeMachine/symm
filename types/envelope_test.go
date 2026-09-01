@@ -241,6 +241,43 @@ func TestEnvelopeEncodeWebsocketLean(t *testing.T) {
 }
 
 /*
+TestEnvelopeBoundaryComposition proves the ring a stage runs in survives the
+wire. The group and stage are the only part of the trace a consumer cannot
+reconstruct from the stamps themselves — concurrent siblings stamp in
+goroutine-completion order — so dropping them in encoding would silently turn
+the diagnostics topology back into a guess.
+*/
+func TestEnvelopeBoundaryComposition(t *testing.T) {
+	Convey("Given an envelope stamped by stages from two different rings", t, func() {
+		envelope := &Envelope{
+			Key: "BTC/USD",
+			Boundaries: []BoundaryStamp{
+				{Label: "ticker.ingress", Group: "ticker", Stage: 0, AtNs: 1},
+				{Label: "ticker.pumpdump", Group: "ticker", Stage: 2, AtNs: 2},
+				{Label: "logic.manifold", Group: "logic", Stage: 0, AtNs: 3},
+			},
+		}
+
+		Convey("every stamp carries its own ring and handler group across the wire", func() {
+			decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeBytes(), 0)
+
+			So(decoded.BoundariesLength(), ShouldEqual, 3)
+
+			stamp := new(telemetry.EnvelopeBoundaryStamp)
+
+			So(decoded.Boundaries(stamp, 1), ShouldBeTrue)
+			So(string(stamp.Label()), ShouldEqual, "ticker.pumpdump")
+			So(string(stamp.Group()), ShouldEqual, "ticker")
+			So(stamp.Stage(), ShouldEqual, int32(2))
+
+			So(decoded.Boundaries(stamp, 2), ShouldBeTrue)
+			So(string(stamp.Group()), ShouldEqual, "logic")
+			So(stamp.Stage(), ShouldEqual, int32(0))
+		})
+	})
+}
+
+/*
 TestEnvelopeMeasurementFocusGate proves the websocket projection drops signal
 measurements whose own Label is not the dashboard focus, while the full
 Hindsight encoding keeps every measurement. It is the fix for the dashboard's

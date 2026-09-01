@@ -460,16 +460,6 @@ func (hub *Hub) Step(envelope *types.Envelope) *types.Envelope {
 		}
 	}
 
-	if envelope.Resonance != nil && hub.fluid.HasChannel(types.ResonanceChannel) {
-		if err := hub.fluid.PublishResonance(envelope); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"hub: publish resonance frame",
-				err,
-			))
-		}
-	}
-
 	if len(envelope.Boundaries) > 0 && hub.fluid.HasChannel(types.DiagnosticsChannel) {
 		if err := hub.fluid.PublishDiagnostics(envelope); err != nil {
 			errnie.Error(errnie.Err(
@@ -481,6 +471,25 @@ func (hub *Hub) Step(envelope *types.Envelope) *types.Envelope {
 	}
 
 	return envelope
+}
+
+/*
+PublishResonance synchronously observes producer-owned resonance state before
+the resonance Workload advances its coder to the next ticker.
+*/
+func (hub *Hub) PublishResonance(envelope *types.Envelope) {
+	if envelope == nil || envelope.Resonance == nil ||
+		!hub.fluid.HasChannel(types.ResonanceChannel) {
+		return
+	}
+
+	if err := hub.fluid.PublishResonance(envelope); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"hub: publish resonance frame",
+			err,
+		))
+	}
 }
 
 /*

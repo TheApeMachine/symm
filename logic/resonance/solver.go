@@ -46,6 +46,7 @@ type Solver struct {
 	// duration so the wiring diagram can profile the resonance stage like
 	// every other pipeline node.
 	ObserveModule func(string, time.Duration)
+	observe       func(*types.Envelope)
 }
 
 /*
@@ -135,7 +136,25 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 
 	envelope.Resonance = solver.StepTicker(envelope.TickerData)
 
+	if envelope.Resonance == nil {
+		return envelope
+	}
+
+	if solver.observe != nil {
+		solver.observe(envelope)
+	}
+
+	// The observer has synchronously consumed the live manifold while this
+	// handler owns it. Downstream rings retain the scalar artifact, never the
+	// mutable coder that the next ticker step will advance.
+	envelope.Resonance.Manifold = nil
+
 	return envelope
+}
+
+/* SetObserver installs the synchronous observer for producer-owned model state. */
+func (solver *Solver) SetObserver(observer func(*types.Envelope)) {
+	solver.observe = observer
 }
 
 // StepTicker advances one symbol's predictive coder over one ticker observation and returns the resulting artifact.

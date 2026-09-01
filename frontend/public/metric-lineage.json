@@ -2071,7 +2071,7 @@
       "metric": "basis",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 313,
+      "line": 343,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -2098,7 +2098,7 @@
       "metric": "basis_baseline",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 328,
+      "line": 358,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -2118,7 +2118,7 @@
       "metric": "basis_change",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 325,
+      "line": 355,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -2138,7 +2138,7 @@
       "metric": "basis_closure_error",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 318,
+      "line": 348,
       "unit": "data.UnitNat",
       "consumers": [
         {
@@ -2158,7 +2158,7 @@
       "metric": "basis_rate",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 326,
+      "line": 356,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -2185,7 +2185,7 @@
       "metric": "basis_velocity",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 327,
+      "line": 357,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -2205,7 +2205,7 @@
       "metric": "basis_zscore",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 329,
+      "line": 359,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -2232,7 +2232,7 @@
       "metric": "derivative_index_log_basis",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 315,
+      "line": 345,
       "unit": "data.UnitNat",
       "consumers": [
         {
@@ -2252,7 +2252,7 @@
       "metric": "derivative_log_return",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 330,
+      "line": 360,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -2272,7 +2272,7 @@
       "metric": "derivative_price",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 310,
+      "line": 340,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -2292,7 +2292,7 @@
       "metric": "derivative_spot_log_basis",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 317,
+      "line": 347,
       "unit": "data.UnitNat",
       "consumers": [
         {
@@ -2312,7 +2312,7 @@
       "metric": "gross_derivative_trade_notional",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 165,
+      "line": 188,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -2332,7 +2332,7 @@
       "metric": "gross_liquidation_notional",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 161,
+      "line": 184,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -2359,7 +2359,7 @@
       "metric": "index_spot_log_basis",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 316,
+      "line": 346,
       "unit": "data.UnitNat",
       "consumers": [
         {
@@ -2380,7 +2380,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 159,
+      "line": 182,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -2401,7 +2401,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 160,
+      "line": 183,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -2421,7 +2421,7 @@
       "metric": "liquidation_notional_rate",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 164,
+      "line": 187,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -2441,7 +2441,7 @@
       "metric": "liquidation_share",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 166,
+      "line": 189,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -2468,7 +2468,7 @@
       "metric": "liquidation_share_velocity",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 167,
+      "line": 190,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -2488,7 +2488,7 @@
       "metric": "liquidation_signed_fraction",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 163,
+      "line": 186,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -2508,7 +2508,7 @@
       "metric": "log_basis",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 314,
+      "line": 344,
       "unit": "data.UnitNat",
       "consumers": [
         {
@@ -2528,7 +2528,7 @@
       "metric": "net_liquidation_notional",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 162,
+      "line": 185,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -2555,7 +2555,7 @@
       "metric": "open_interest",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 312,
+      "line": 342,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -2582,7 +2582,7 @@
       "metric": "open_interest_change",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 319,
+      "line": 349,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -2602,7 +2602,7 @@
       "metric": "open_interest_growth_baseline",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 323,
+      "line": 353,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -2622,7 +2622,7 @@
       "metric": "open_interest_growth_rate",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 321,
+      "line": 351,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -2649,7 +2649,7 @@
       "metric": "open_interest_growth_velocity",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 322,
+      "line": 352,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -2676,7 +2676,7 @@
       "metric": "open_interest_growth_zscore",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 324,
+      "line": 354,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -2703,7 +2703,7 @@
       "metric": "open_interest_log_change",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 320,
+      "line": 350,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -2723,7 +2723,7 @@
       "metric": "reference_log_return",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 331,
+      "line": 361,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -2743,7 +2743,7 @@
       "metric": "reference_price",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 311,
+      "line": 341,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -2763,7 +2763,7 @@
       "metric": "return_gap",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 332,
+      "line": 362,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -2790,7 +2790,7 @@
       "metric": "return_gap_velocity",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 333,
+      "line": 363,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -2810,7 +2810,7 @@
       "metric": "return_gap_zscore",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 334,
+      "line": 364,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {

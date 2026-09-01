@@ -2,8 +2,6 @@ package derivatives
 
 import (
 	"fmt"
-	"sync"
-	"time"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
@@ -60,12 +58,10 @@ and Close.
 type Ticker struct {
 	number    *nomagique.Number[string]
 	projector *data.Projector
-	// last retains, per symbol, the most recent event time.Time so the
-	// observer's causal "event time must not regress" invariant holds even when
-	// a futures snapshot carries no server timestamp (the shared parser would
-	// otherwise fabricate a different, non-monotonic wall-clock base) or arrives
-	// out of order. One monotonic causal timeline per symbol is kept.
-	last sync.Map
+	// clock keeps one monotonic causal timeline per symbol so the observer's
+	// "event time must not regress" invariant holds even when a futures
+	// snapshot carries no server timestamp or arrives out of order.
+	clock causalClock
 }
 
 /*
@@ -157,153 +153,187 @@ func NewTicker() *Ticker {
 				),
 				nmtypes.Identity,
 			),
-			// Open-interest previous/current pair on the event clock.
-			temporal.Observer("", symbolOpenInterest),
-			// First observation has no previous: only point metrics are published.
-			logic.If(
-				readyCondition(),
+			// Everything below reads or advances the EVENT CLOCK: observers,
+			// differences, rates, baselines, and z-scores. A snapshot that
+			// arrived late carries a real timestamp for a moment already past,
+			// so it is not a valid newest observation for any of them --
+			// admitting it would difference against the wrong predecessor and
+			// contaminate every causal baseline. Its instantaneous price
+			// geometry above is still published, because that is true of the
+			// snapshot whenever it was taken.
+			withoutStaleClockFacts(
 				nmtypes.Pipe(
-					// open_interest_change: current - previous
-					nmtypes.Wire(
-						calculus.Difference,
-						nmtypes.In(calculus.SymbolCurrent, calculus.PortA),
-						nmtypes.In(calculus.SymbolPrevious, calculus.PortB),
-						nmtypes.Out(calculus.PortResult, symbolOIChange),
-					),
-					// Elapsed event time between the previous and current observation.
-					nmtypes.Wire(
-						temporal.Duration,
-						nmtypes.In(nmtypes.EventTimeSec, temporal.SymbolCurrentSec),
-						nmtypes.In(nmtypes.EventTimeNsec, temporal.SymbolCurrentNsec),
-						nmtypes.In(temporal.SymbolObservedSec, temporal.SymbolPreviousSec),
-						nmtypes.In(temporal.SymbolObservedNsec, temporal.SymbolPreviousNsec),
-						nmtypes.Out(temporal.SymbolDelta, symbolOIElapsed),
-					),
-					// open_interest_log_change and everything derived from it.
-					// Open interest is legitimately ZERO on a contract nobody
-					// holds — a real market state, not bad data — and the log
-					// ratio is undefined at either endpoint being zero. The
-					// arithmetic open_interest_change above still reports the
-					// move; its log-space counterpart, the growth rate, and
-					// that rate's estimators are absent rather than zero.
+					// Open-interest previous/current pair on the event clock.
+					temporal.Observer("", symbolOpenInterest),
+					// First observation has no previous: only point metrics are published.
 					logic.If(
-						bothEndpointsPositive(),
+						readyCondition(),
 						nmtypes.Pipe(
+							// open_interest_change: current - previous
 							nmtypes.Wire(
-								calculus.LogRatio,
-								nmtypes.In(calculus.SymbolCurrent, calculus.SymbolCurrent),
-								nmtypes.In(calculus.SymbolPrevious, calculus.SymbolPrevious),
-								nmtypes.Out(calculus.PortResult, symbolOILogChange),
+								calculus.Difference,
+								nmtypes.In(calculus.SymbolCurrent, calculus.PortA),
+								nmtypes.In(calculus.SymbolPrevious, calculus.PortB),
+								nmtypes.Out(calculus.PortResult, symbolOIChange),
 							),
+							// Elapsed event time between the previous and current observation.
+							nmtypes.Wire(
+								temporal.Duration,
+								nmtypes.In(nmtypes.EventTimeSec, temporal.SymbolCurrentSec),
+								nmtypes.In(nmtypes.EventTimeNsec, temporal.SymbolCurrentNsec),
+								nmtypes.In(temporal.SymbolObservedSec, temporal.SymbolPreviousSec),
+								nmtypes.In(temporal.SymbolObservedNsec, temporal.SymbolPreviousNsec),
+								nmtypes.Out(temporal.SymbolDelta, symbolOIElapsed),
+							),
+							// open_interest_log_change and everything derived from it.
+							// Open interest is legitimately ZERO on a contract nobody
+							// holds — a real market state, not bad data — and the log
+							// ratio is undefined at either endpoint being zero. The
+							// arithmetic open_interest_change above still reports the
+							// move; its log-space counterpart, the growth rate, and
+							// that rate's estimators are absent rather than zero.
 							logic.If(
-								greaterThanCondition(symbolOIElapsed),
+								bothEndpointsPositive(),
 								nmtypes.Pipe(
-									// open_interest_growth_rate: log change over elapsed time
 									nmtypes.Wire(
-										calculus.Quotient,
-										nmtypes.In(symbolOILogChange, calculus.PortA),
-										nmtypes.In(symbolOIElapsed, calculus.PortB),
-										nmtypes.Out(calculus.PortResult, symbolOIGrowthRate),
+										calculus.LogRatio,
+										nmtypes.In(calculus.SymbolCurrent, calculus.SymbolCurrent),
+										nmtypes.In(calculus.SymbolPrevious, calculus.SymbolPrevious),
+										nmtypes.Out(calculus.PortResult, symbolOILogChange),
 									),
-									// open_interest_growth_velocity: first difference of the rate.
-									velocityOver("growth_velocity", symbolOIGrowthRate),
-									// Route the growth rate into the shared value slot and
-									// maintain its causal baseline, dispersion, and z-score.
-									route(symbolOIGrowthRate, nmtypes.SampleValue),
-									statistic.ZScore(""),
-									// Carry the departure and noise power when the z-score is
-									// estimable so Finalize derives the scalar SNR.
 									logic.If(
-										readyCondition(),
+										greaterThanCondition(symbolOIElapsed),
 										nmtypes.Pipe(
-											route(statistic.SymbolResidual, symbolDivergence),
+											// open_interest_growth_rate: log change over elapsed time
 											nmtypes.Wire(
-												calculus.Product,
-												nmtypes.In(statistic.SymbolDispersion, calculus.PortA),
-												nmtypes.In(statistic.SymbolDispersion, calculus.PortB),
-												nmtypes.Out(calculus.PortResult, symbolNoiseVariance),
+												calculus.Quotient,
+												nmtypes.In(symbolOILogChange, calculus.PortA),
+												nmtypes.In(symbolOIElapsed, calculus.PortB),
+												nmtypes.Out(calculus.PortResult, symbolOIGrowthRate),
 											),
+											// open_interest_growth_velocity: first difference of the rate.
+											velocityOver("growth_velocity", symbolOIGrowthRate),
+											// Route the growth rate into the shared value slot and
+											// maintain its causal baseline, dispersion, and z-score.
+											route(symbolOIGrowthRate, nmtypes.SampleValue),
+											statistic.ZScore(""),
+											// Carry the departure and noise power when the z-score is
+											// estimable so Finalize derives the scalar SNR.
+											logic.If(
+												readyCondition(),
+												nmtypes.Pipe(
+													route(statistic.SymbolResidual, symbolDivergence),
+													nmtypes.Wire(
+														calculus.Product,
+														nmtypes.In(statistic.SymbolDispersion, calculus.PortA),
+														nmtypes.In(statistic.SymbolDispersion, calculus.PortB),
+														nmtypes.Out(calculus.PortResult, symbolNoiseVariance),
+													),
+												),
+												nmtypes.Identity,
+											),
+											statistic.Baseline(""),
+											temporal.Window(""),
 										),
 										nmtypes.Identity,
 									),
-									statistic.Baseline(""),
-									temporal.Window(""),
 								),
-								nmtypes.Identity,
+								nil,
 							),
 						),
-						nil,
+						nmtypes.Identity,
 					),
-				),
-				nmtypes.Identity,
-			),
-			// Basis change: first difference of basis, then its event rate and
-			// the first difference of that rate.
-			velocityOver("basis", symbolBasis),
-			logic.If(
-				seriesReadyCondition("basis"),
-				logic.If(
-					greaterThanCondition(prefixed("basis", "velocity/elapsed_sec")),
-					nmtypes.Pipe(
-						nmtypes.Wire(
-							calculus.Quotient,
-							nmtypes.In(prefixed("basis", "velocity/delta"), calculus.PortA),
-							nmtypes.In(prefixed("basis", "velocity/elapsed_sec"), calculus.PortB),
-							nmtypes.Out(calculus.PortResult, symbolBasisRate),
+					// Basis change: first difference of basis, then its event rate and
+					// the first difference of that rate.
+					velocityOver("basis", symbolBasis),
+					logic.If(
+						seriesReadyCondition("basis"),
+						logic.If(
+							greaterThanCondition(prefixed("basis", "velocity/elapsed_sec")),
+							nmtypes.Pipe(
+								nmtypes.Wire(
+									calculus.Quotient,
+									nmtypes.In(prefixed("basis", "velocity/delta"), calculus.PortA),
+									nmtypes.In(prefixed("basis", "velocity/elapsed_sec"), calculus.PortB),
+									nmtypes.Out(calculus.PortResult, symbolBasisRate),
+								),
+								velocityOver("basis_rate", symbolBasisRate),
+							),
+							nmtypes.Identity,
 						),
-						velocityOver("basis_rate", symbolBasisRate),
+						nmtypes.Identity,
 					),
-					nmtypes.Identity,
-				),
-				nmtypes.Identity,
-			),
-			// Basis baseline and z-score over the basis series.
-			baselineZScore("basis_baseline", symbolBasis),
-			// derivative_log_return: log(current / previous) over the derivative
-			// price. Readiness alone only means a previous observation EXISTS;
-			// a price of zero at either endpoint is a real market state whose
-			// log ratio is undefined, so both endpoints must also be positive.
-			temporal.Observer("derivative_return", symbolDerivativePrice),
-			logic.If(
-				bothEndpointsPositive(),
-				nmtypes.Wire(
-					calculus.LogRatio,
-					nmtypes.In(calculus.SymbolCurrent, calculus.SymbolCurrent),
-					nmtypes.In(calculus.SymbolPrevious, calculus.SymbolPrevious),
-					nmtypes.Out(calculus.PortResult, symbolDerivativeLogReturn),
-				),
-				nmtypes.Identity,
-			),
-			// reference_log_return: log(current / previous) over the reference
-			// price, positivity-gated for the same reason as the derivative leg.
-			temporal.Observer("reference_return", symbolReferencePrice),
-			logic.If(
-				bothEndpointsPositive(),
-				nmtypes.Wire(
-					calculus.LogRatio,
-					nmtypes.In(calculus.SymbolCurrent, calculus.SymbolCurrent),
-					nmtypes.In(calculus.SymbolPrevious, calculus.SymbolPrevious),
-					nmtypes.Out(calculus.PortResult, symbolReferenceLogReturn),
-				),
-				nmtypes.Identity,
-			),
-			// return_gap = derivative_log_return - reference_log_return, then its
-			// velocity and its own causal baseline + z-score. Each leg is
-			// positivity-gated above and is therefore absent when its price
-			// touched zero, so the gap is computed only when BOTH legs exist.
-			logic.If(
-				bothLogReturnsPresent(),
-				nmtypes.Pipe(
-					nmtypes.Wire(
-						calculus.Difference,
-						nmtypes.In(symbolDerivativeLogReturn, calculus.PortA),
-						nmtypes.In(symbolReferenceLogReturn, calculus.PortB),
-						nmtypes.Out(calculus.PortResult, symbolReturnGap),
+					// Basis baseline and z-score over the basis series.
+					baselineZScore("basis_baseline", symbolBasis),
+					// derivative_log_return: log(current / previous) over the derivative
+					// price. Readiness alone only means a previous observation EXISTS;
+					// a price of zero at either endpoint is a real market state whose
+					// log ratio is undefined, so both endpoints must also be positive.
+					temporal.Observer("derivative_return", symbolDerivativePrice),
+					logic.If(
+						bothEndpointsPositive(),
+						nmtypes.Wire(
+							calculus.LogRatio,
+							nmtypes.In(calculus.SymbolCurrent, calculus.SymbolCurrent),
+							nmtypes.In(calculus.SymbolPrevious, calculus.SymbolPrevious),
+							nmtypes.Out(calculus.PortResult, symbolDerivativeLogReturn),
+						),
+						nmtypes.Identity,
 					),
-					velocityOver("return_gap", symbolReturnGap),
-					baselineZScore("return_gap_zscore", symbolReturnGap),
+					// reference_log_return: log(current / previous) over the reference
+					// price, positivity-gated for the same reason as the derivative leg.
+					temporal.Observer("reference_return", symbolReferencePrice),
+					logic.If(
+						bothEndpointsPositive(),
+						nmtypes.Wire(
+							calculus.LogRatio,
+							nmtypes.In(calculus.SymbolCurrent, calculus.SymbolCurrent),
+							nmtypes.In(calculus.SymbolPrevious, calculus.SymbolPrevious),
+							nmtypes.Out(calculus.PortResult, symbolReferenceLogReturn),
+						),
+						nmtypes.Identity,
+					),
+					// return_gap = derivative_log_return - reference_log_return, then its
+					// velocity and its own causal baseline + z-score. Each leg is
+					// positivity-gated above and is therefore absent when its price
+					// touched zero, so the gap is computed only when BOTH legs exist.
+					logic.If(
+						bothLogReturnsPresent(),
+						nmtypes.Pipe(
+							nmtypes.Wire(
+								calculus.Difference,
+								nmtypes.In(symbolDerivativeLogReturn, calculus.PortA),
+								nmtypes.In(symbolReferenceLogReturn, calculus.PortB),
+								nmtypes.Out(calculus.PortResult, symbolReturnGap),
+							),
+							velocityOver("return_gap", symbolReturnGap),
+							baselineZScore("return_gap_zscore", symbolReturnGap),
+						),
+						nmtypes.Identity,
+					),
 				),
-				nmtypes.Identity,
+				// Every slot the tail above derives from the event clock. A
+				// late snapshot publishes none of them rather than republishing
+				// the previous frame's numbers under its own identity.
+				symbolOIChange,
+				symbolOILogChange,
+				symbolOIElapsed,
+				symbolOIGrowthRate,
+				prefixed("growth_velocity", "velocity/delta"),
+				statistic.SymbolBaselineValue,
+				statistic.SymbolZScore,
+				symbolDivergence,
+				symbolNoiseVariance,
+				prefixed("basis", "velocity/delta"),
+				symbolBasisRate,
+				prefixed("basis_rate", "velocity/delta"),
+				prefixed("basis_baseline", "baseline/value"),
+				prefixed("basis_baseline", "z/value"),
+				symbolDerivativeLogReturn,
+				symbolReferenceLogReturn,
+				symbolReturnGap,
+				prefixed("return_gap", "velocity/delta"),
+				prefixed("return_gap_zscore", "z/value"),
 			),
 		)),
 		projector: data.NewProjector(
@@ -349,9 +379,13 @@ func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[flo
 		)}
 	}
 
-	point.Timestamp = ticker.monotonicClock(point.Symbol, point.Timestamp)
+	stamped, advanced := ticker.clock.stamp(
+		point.Symbol, point.Timestamp, point.SyntheticTimestamp,
+	)
+	point.Timestamp = stamped
 
 	input := nmtypes.Frame{}
+	input.Put(symbolTimelineAdvanced, oneIf(advanced))
 	input.Put(symbolDerivativePrice, point.Last.Float64())
 	input.Put(symbolReferencePrice, point.IndexPrice.Float64())
 	input.Put(symbolSpotPrice, point.MarkPrice.Float64())
@@ -366,40 +400,6 @@ func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[flo
 		point.Timestamp,
 		ticker.number.Step(point.Symbol, input),
 	)
-}
-
-/*
-monotonicClock folds one snapshot timestamp into the symbol's causal timeline.
-The Kraken Futures ticker feed can carry no server timestamp for a snapshot;
-the shared parser then falls back to the local wall clock, which is a different
-time base from the exchange's and will periodically read as *older* than the
-previous exchange-stamped event, regressing the observer's clock. It can also
-deliver a snapshot whose server timestamp is older than the previous one. In
-both cases the causal invariant "event time must not regress" is violated not
-by bad computation but by a non-monotonic timestamp source.
-
-The correction is to advance a single per-symbol monotonic timeline: a snapshot
-whose timestamp regresses (or is missing) is re-stamped with the symbol's last
-observed time. The event still ingests its price facts unchanged; only the clock
-label is made causal, so the observer never sees its invariant broken. A zero
-timestamp is never stamped: it would appear as a regression after any real
-observation, poisoning the first valid event.
-*/
-func (ticker *Ticker) monotonicClock(symbol string, timestamp time.Time) time.Time {
-	if timestamp.IsZero() {
-		return timestamp
-	}
-
-	loaded, _ := ticker.last.Load(symbol)
-	previous, _ := loaded.(time.Time)
-
-	if timestamp.Before(previous) {
-		return previous
-	}
-
-	ticker.last.Store(symbol, timestamp)
-
-	return timestamp
 }
 
 func (ticker *Ticker) Close() error { return nil }

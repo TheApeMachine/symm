@@ -1,10 +1,18 @@
+import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
 import type { FrameBuffer } from "#/collections/app";
-import { getMeasurementStore } from "#/collections/app";
+import { focusStore, getMeasurementStore } from "#/collections/app";
 import { Typography } from "#/components/ui/typography";
 import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
 import { EnvelopeMeasurementMetric } from "#/providers/telemetry/telemetry/envelope-measurement-metric";
 import { EnvelopeMetric } from "#/providers/telemetry/telemetry/envelope-metric";
+
+/*
+CEILING_RELAX is how far the held vertical ceiling moves toward a smaller
+target on each repaint — small enough that a departing spike decays out of the
+scale over many frames rather than snapping the plot to a new normalization.
+*/
+const CEILING_RELAX = 0.05;
 
 const metricObj = new EnvelopeMeasurementMetric();
 const valueObj = new EnvelopeMetric();
@@ -66,11 +74,16 @@ const rowIntensity = (row: EnvelopeMeasurement): number | null => {
 };
 
 export const XrayHawkesPanel = () => {
+	const focusSymbol = useSelector(focusStore, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 	const hawkesCanvasRef = useRef<HTMLCanvasElement>(null);
+	const ceilingRef = useRef<number | null>(null);
 
 	useEffect(() => {
-		const hawkesStore = getMeasurementStore("hawkes");
+		// A different symbol has its own intensity scale; keeping the previous
+		// symbol's ceiling would flatten or exaggerate the new one.
+		ceilingRef.current = null;
+		const hawkesStore = getMeasurementStore("hawkes", focusSymbol);
 
 		const updateFromState = (state: FrameBuffer<EnvelopeMeasurement>) => {
 			if (!root.current) return;
@@ -186,9 +199,27 @@ export const XrayHawkesPanel = () => {
 					// μ baseline and quiet symbols stay readable) — otherwise a
 					// ring window with only resting samples inflates the tallest
 					// spike of every quieter symbol far past its own scale.
+					/*
+					The ceiling has to follow the symbol's own scale, but taking
+					the window maximum directly re-scales the whole plot the
+					moment one large arrival enters the ring: every earlier
+					spike is squashed and the curve appears to lift off the
+					floor. So the ceiling rises immediately to fit a new peak
+					(never clip a real reading) and falls back only gradually
+					once that peak leaves the window, which keeps successive
+					frames on a comparable scale instead of re-nomalizing under
+					the reader every tick.
+					*/
 					const observedMax = Math.max(0, ...samples.map((s) => s.raw));
 					const muFloor = typeof mu === "number" && mu > 0 ? mu : 0;
-					const maxL = Math.max(observedMax, muFloor, 1.2, Number.EPSILON) * 1.1;
+					const target = Math.max(observedMax, muFloor, Number.EPSILON);
+					const held = ceilingRef.current;
+					const ceiling =
+						held === null || target >= held
+							? target
+							: held + (target - held) * CEILING_RELAX;
+					ceilingRef.current = ceiling;
+					const maxL = ceiling * 1.15;
 					const pad = 14 * (window.devicePixelRatio || 1);
 					const base = h - 22 * (window.devicePixelRatio || 1);
 					const topMargin = 20 * (window.devicePixelRatio || 1);
@@ -294,7 +325,7 @@ export const XrayHawkesPanel = () => {
 		return () => {
 			subscription.unsubscribe();
 		};
-	}, []);
+	}, [focusSymbol]);
 
 	return (
 		<div

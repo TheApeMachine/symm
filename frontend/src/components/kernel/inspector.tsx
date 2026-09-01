@@ -127,7 +127,7 @@ export const KernelInspector = () => {
 	// value in a slightly older row. Reading the latest row alone would flicker
 	// X to a dash and back whenever a row without it lands.
 	const measurementState = useSelector(
-		getMeasurementStore(active && !resonance ? source : ""),
+		getMeasurementStore(active && !resonance ? source : "", focusSymbol),
 		(state) => state,
 	);
 

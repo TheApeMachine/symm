@@ -320,7 +320,6 @@ export const stringMetric = stringValue;
 Retained universe maps across sparse telemetry updates.
 */
 const retainedResonance = new Map<string, Record<string, unknown>>();
-const retainedCognition = new Map<string, Record<string, unknown>>();
 const retainedHawkes = new Map<string, Record<string, number>>();
 
 export const retainResonanceRow = (symbol: string, row: Record<string, unknown>) => {
@@ -337,17 +336,6 @@ export const getRetainedResonance = (symbol?: string): Record<string, unknown> |
 export const getAllRetainedResonance = (): Array<Record<string, unknown>> =>
 	[...retainedResonance.values()];
 
-export const retainCognitionRow = (symbol: string, row: Record<string, unknown>) => {
-	if (!symbol) return;
-	const existing = retainedCognition.get(symbol) ?? {};
-	retainedCognition.set(symbol, { ...existing, ...row, symbol });
-};
-
-export const getRetainedCognition = (symbol?: string): Record<string, unknown> | null => {
-	if (!symbol) return null;
-	return retainedCognition.get(symbol) ?? null;
-};
-
 export const retainHawkesMetric = (symbol: string, metric: string, raw: number) => {
 	if (!symbol || !metric || !Number.isFinite(raw)) return;
 	const current = retainedHawkes.get(symbol) ?? {};
@@ -362,6 +350,5 @@ export const getRetainedHawkes = (symbol?: string): Record<string, number> => {
 
 export const clearRetainedTelemetry = () => {
 	retainedResonance.clear();
-	retainedCognition.clear();
 	retainedHawkes.clear();
 };

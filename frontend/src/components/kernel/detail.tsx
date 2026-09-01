@@ -30,7 +30,7 @@ export const SignalDetail = () => {
 
 	useEffect(() => {
 		if (source === "") return;
-		const sourceStore = getMeasurementStore(source);
+		const sourceStore = getMeasurementStore(source, focusSymbol);
 
 		const applyState = () => {
 			if (!root.current) return;

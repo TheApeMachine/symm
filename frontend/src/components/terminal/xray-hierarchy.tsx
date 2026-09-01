@@ -101,10 +101,21 @@ const paintHierarchyRows = (
 			}
 
 			cell.style.background = heatColor((value + 1) / 2);
+
+			/*
+			A cell shows the layer's state. The prediction alongside it only
+			means something as the gap between the two — the per-unit prediction
+			error — so it is drawn as a ring whose strength is that gap, letting
+			the units the coder actually got wrong stand out. Painting the
+			prediction as its own bar across every cell instead put a stripe on
+			all 64 of them, which read as chrome rather than as a reading.
+			*/
 			const prediction = predictions[cellIndex];
 			cell.style.boxShadow =
 				typeof prediction === "number"
-					? `inset 0 -3px ${heatColor((prediction + 1) / 2)}`
+					? `inset 0 0 0 1px rgba(224, 168, 91, ${(
+							Math.min(2, Math.abs(value - prediction)) / 2
+						).toFixed(3)})`
 					: "";
 		}
 	}

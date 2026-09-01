@@ -508,7 +508,7 @@ func (solver *Solver) processBatch(
 
 	state.reading = cognition
 	state.hasReading = true
-	rows[symbol] = cognition
+	rows[symbol] = cognition.Clone()
 	return nil
 }
 

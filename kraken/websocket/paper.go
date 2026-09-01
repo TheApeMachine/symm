@@ -33,7 +33,7 @@ type Paper struct {
 	cancel    context.CancelFunc
 	simulator *Simulator
 	commandMu sync.Mutex
-	ingress   map[string]*runtime.Workload[*types.Envelope]
+	ingress   map[string]runtime.Ingress[*types.Envelope]
 }
 
 /*
@@ -42,7 +42,7 @@ NewPaper opens the paper spot transport with explicit private subscriptions.
 func NewPaper(
 	ctx context.Context,
 	simulator *Simulator,
-	bus map[string]*runtime.Workload[*types.Envelope],
+	bus map[string]runtime.Ingress[*types.Envelope],
 ) *Paper {
 	ctx, cancel := context.WithCancel(ctx)
 

@@ -28,6 +28,9 @@ type Conn interface {
 	SubTicker([]string)
 	SubTrades([]string)
 	SubL3([]string)
+	UnsubTicker([]string)
+	UnsubTrades([]string)
+	UnsubL3([]string)
 	Balance() (map[string]*decimal.Decimal, error)
 	TradesHistory() (spot.TradesHistoryResult, error)
 	TradeBalance() (kraken.TradeBalanceResult, error)
@@ -38,6 +41,7 @@ type Conn interface {
 	Write(json.Marshaler, ...Callback[any]) error
 	Post(string, json.Marshaler) ([]byte, error)
 	Client() *spot.WebSocket
+	SetUnrecoverable(func(reason string))
 	Close()
 }
 
@@ -181,6 +185,9 @@ func (api *API) SubInstrument(callback chan any)                  { api.public.S
 func (api *API) SubTicker(symbols []string)                       { api.public.SubTicker(symbols) }
 func (api *API) SubL3(symbols []string)                           { api.private.SubL3(symbols) }
 func (api *API) SubTrades(symbols []string)                       { api.public.SubTrades(symbols) }
+func (api *API) UnsubTicker(symbols []string)                     { api.public.UnsubTicker(symbols) }
+func (api *API) UnsubTrades(symbols []string)                     { api.public.UnsubTrades(symbols) }
+func (api *API) UnsubL3(symbols []string)                         { api.private.UnsubL3(symbols) }
 func (api *API) Balance() (map[string]*decimal.Decimal, error)    { return api.private.Balance() }
 func (api *API) TradesHistory() (spot.TradesHistoryResult, error) { return api.private.TradesHistory() }
 func (api *API) TradeBalance() (kraken.TradeBalanceResult, error) { return api.private.TradeBalance() }
@@ -229,6 +236,45 @@ func (api *API) SubFuturesBook(productIDs []string) error {
 	}
 
 	return api.futures.SubFuturesBook(productIDs)
+}
+
+/*
+SetUnrecoverable installs the handler invoked once when any spot session
+exhausts its reconnect budget, meaning the venue is rejecting the session
+rather than the socket failing.
+*/
+func (api *API) SetUnrecoverable(handler func(reason string)) {
+	if api.public != nil {
+		api.public.SetUnrecoverable(handler)
+	}
+
+	if api.private != nil {
+		api.private.SetUnrecoverable(handler)
+	}
+}
+
+func (api *API) UnsubFuturesTicker(productIDs []string) error {
+	if api.futures == nil {
+		return nil
+	}
+
+	return api.futures.UnsubFuturesTicker(productIDs)
+}
+
+func (api *API) UnsubFuturesTrades(productIDs []string) error {
+	if api.futures == nil {
+		return nil
+	}
+
+	return api.futures.UnsubFuturesTrades(productIDs)
+}
+
+func (api *API) UnsubFuturesBook(productIDs []string) error {
+	if api.futures == nil {
+		return nil
+	}
+
+	return api.futures.UnsubFuturesBook(productIDs)
 }
 
 func (api *API) Close() {

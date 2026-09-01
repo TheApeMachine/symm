@@ -1,10 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useRef } from "react";
 import { cognitionStore, focusStore } from "#/collections/app";
-import {
-	getRetainedCognition,
-	retainCognitionRow,
-} from "#/components/terminal/xray-view";
 import { Typography } from "#/components/ui/typography";
 
 export const XrayFactsPanel = () => {
@@ -14,63 +10,27 @@ export const XrayFactsPanel = () => {
 	useEffect(() => {
 		const updateFromState = (state: typeof cognitionStore.state) => {
 			if (!root.current) return;
-			const last = state.getLast();
-			if (last) {
-				// EnvelopeCognition is already a flat per-symbol reading: the
-				// scalar facts (winner, confidence, contrast, entropy, ambiguity,
-				// sequence) are direct accessors on the frame, keyed by symbol().
-				const symbol = last.symbol();
-				if (typeof symbol === "string" && symbol) {
-					retainCognitionRow(symbol, {
-						winner: last.winner() ?? undefined,
-						confidence: last.confidence(),
-						contrast: last.contrast(),
-						entropyBits: last.entropyBits(),
-						ambiguous: last.ambiguous(),
-						sequence: last.sequence() ?? undefined,
-					});
-				}
-			}
 
-			const targetRow = getRetainedCognition(focusSymbol);
+			const targetRow = state.getLast(focusSymbol);
 
 			const set = (q: string, value: string) => {
 				const el = root.current?.querySelector<HTMLElement>(`[data-f=${q}]`);
 				if (el) el.textContent = value;
 			};
 
-			// Reset every field before applying retained values so a missing
-			// row cannot preserve the previously focused symbol's readout.
+			// Reset every field first so a missing row cannot preserve the
+			// previously focused symbol's readout.
 			for (const field of ["winner", "confidence", "contrast", "entropy", "ambiguous", "sequence"]) {
 				set(field, "—");
 			}
 
 			if (targetRow) {
-				const winnerVal = (targetRow.winner as string | undefined) || "none named";
-				set("winner", winnerVal);
-
-				const conf = targetRow.confidence as number | undefined;
-				if (typeof conf === "number" && Number.isFinite(conf)) {
-					set("confidence", `${(conf * 100).toFixed(1)}%`);
-				}
-
-				const contrast = targetRow.contrast as number | undefined;
-				if (typeof contrast === "number" && Number.isFinite(contrast)) {
-					set("contrast", contrast.toFixed(3));
-				}
-
-				const entropy = targetRow.entropyBits as number | undefined;
-				if (typeof entropy === "number" && Number.isFinite(entropy)) {
-					set("entropy", entropy.toFixed(3));
-				}
-
-				const amb = targetRow.ambiguous;
-				if (typeof amb === "boolean") {
-					set("ambiguous", String(amb));
-				}
-
-				const seq = (targetRow.sequence as string | undefined) || "none";
-				set("sequence", seq);
+				set("winner", targetRow.winner() || "none named");
+				set("confidence", `${(targetRow.confidence() * 100).toFixed(1)}%`);
+				set("contrast", targetRow.contrast().toFixed(3));
+				set("entropy", targetRow.entropyBits().toFixed(3));
+				set("ambiguous", String(targetRow.ambiguous()));
+				set("sequence", targetRow.sequence() || "none");
 			}
 		};
 

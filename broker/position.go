@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,7 +25,7 @@ import (
 guardianCapacity is the fixed, power-of-two slot count of one PositionGuardian's
 priority LMAX Disruptor. It is bounded, preallocated, and never grows.
 */
-const guardianCapacity uint32 = 1024
+const guardianCapacity uint32 = 8192
 
 const guardianCapacityMask = int64(guardianCapacity) - 1
 
@@ -224,7 +225,18 @@ func (position *Position) publishGuardian(value any) error {
 		)
 	}
 
-	sequence := position.disruptor.Reserve(1)
+	var sequence int64 = -1
+
+	for range 4 {
+		sequence = position.disruptor.Reserve(1)
+
+		if sequence >= 0 {
+			break
+		}
+
+		runtime.Gosched()
+	}
+
 	if sequence < 0 {
 		return errnie.Err(
 			errnie.NotAcceptable,

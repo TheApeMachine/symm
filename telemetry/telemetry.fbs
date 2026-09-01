@@ -1090,6 +1090,17 @@ table EnvelopeBoundaryStamp {
   avgGapNs:long;
   lastGapNs:long;
   backlog:long;
+
+  // group is the name of the Workload ring this stage belongs to, and stage
+  // its handler-group index within that ring. Both come from the runtime
+  // composition itself (runtime.Workload names its own stages as it builds
+  // them), so a consumer can cluster stages by the ring they actually run in
+  // and order them by the barrier they actually sit behind — the concurrent
+  // siblings of one handler group share a stage index, which no ordering of
+  // consecutive labels could ever reveal, because they stamp in whatever
+  // order their goroutines happen to finish.
+  group:string;
+  stage:int;
 }
 
 table EnvelopeState {

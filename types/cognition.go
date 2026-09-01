@@ -1,6 +1,10 @@
 package types
 
-import "time"
+import (
+	"maps"
+	"slices"
+	"time"
+)
 
 /*
 CognitionBranch is one node in the sensory prefix tree exported for Cortex.
@@ -123,4 +127,18 @@ type Cognition struct {
 	Symbols       []CognitionSymbol       `json:"symbols,omitempty"`
 	Lexical       []CognitionLexical      `json:"lexical,omitempty"`
 	Dreams        []string                `json:"dreams,omitempty"`
+}
+
+/* Clone returns an event-owned cognition reading with no shared containers. */
+func (cognition Cognition) Clone() Cognition {
+	cognition.Predictions = maps.Clone(cognition.Predictions)
+	cognition.Branches = slices.Clone(cognition.Branches)
+	cognition.Beams = slices.Clone(cognition.Beams)
+	cognition.Classes = slices.Clone(cognition.Classes)
+	cognition.Contributions = slices.Clone(cognition.Contributions)
+	cognition.Symbols = slices.Clone(cognition.Symbols)
+	cognition.Lexical = slices.Clone(cognition.Lexical)
+	cognition.Dreams = slices.Clone(cognition.Dreams)
+
+	return cognition
 }

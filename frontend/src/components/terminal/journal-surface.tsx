@@ -1,8 +1,7 @@
 import { useSelector } from "@tanstack/react-store";
 import { useEffect } from "react";
-import { cn } from "@/lib/utils";
-import type { TradeRecord } from "#/collections/app";
 import { positionStore, tradeHistoryStore } from "#/collections/app";
+import type { TradeRecord } from "#/collections/types";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 import { Section } from "#/components/ui/section";
@@ -14,6 +13,7 @@ import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { Position } from "#/providers/telemetry/telemetry/position";
 import { RiskPlan } from "#/providers/telemetry/telemetry/risk-plan";
 import { Stoploss } from "#/providers/telemetry/telemetry/stoploss";
+import { cn } from "@/lib/utils";
 
 /*
 journalBaseUrl locates the hub's REST endpoints, mirroring the websocket
@@ -21,7 +21,10 @@ origin (env override with a localhost default).
 */
 const journalBaseUrl = () => {
 	if (import.meta.env.VITE_SYMM_WS_URL) {
-		return import.meta.env.VITE_SYMM_WS_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
+		return import.meta.env.VITE_SYMM_WS_URL.replace(/^ws/, "http").replace(
+			/\/ws$/,
+			"",
+		);
 	}
 
 	const protocol = window.location.protocol === "https:" ? "https:" : "http:";
@@ -36,7 +39,9 @@ const journalBaseUrl = () => {
 const formatNumber = (value: unknown, digits: number): string =>
 	typeof value === "number"
 		? value.toFixed(digits)
-		: typeof value === "string" && value !== "" && Number.isFinite(Number(value))
+		: typeof value === "string" &&
+				value !== "" &&
+				Number.isFinite(Number(value))
 			? Number(value).toFixed(digits)
 			: String(value ?? "—");
 
@@ -47,7 +52,11 @@ const formatPct = (value: unknown, digits: number): string => {
 
 const numberOf = (value: unknown): number => {
 	if (typeof value === "number") return value;
-	if (typeof value === "string" && value !== "" && Number.isFinite(Number(value))) {
+	if (
+		typeof value === "string" &&
+		value !== "" &&
+		Number.isFinite(Number(value))
+	) {
 		return Number(value);
 	}
 	return 0;
@@ -128,12 +137,17 @@ type JournalTradeEntry = {
 };
 
 const timeOf = (nanos: bigint | number | undefined): string => {
-	const value = typeof nanos === "bigint" ? Number(nanos / 1000000n) : (nanos ?? 0) / 1_000_000;
+	const value =
+		typeof nanos === "bigint"
+			? Number(nanos / 1000000n)
+			: (nanos ?? 0) / 1_000_000;
 	return value > 0 ? new Date(value).toLocaleString() : "—";
 };
 
 const sortOf = (nanos: bigint | number | undefined): number =>
-	typeof nanos === "bigint" ? Number(nanos / 1000000n) : (nanos ?? 0) / 1_000_000;
+	typeof nanos === "bigint"
+		? Number(nanos / 1000000n)
+		: (nanos ?? 0) / 1_000_000;
 
 /*
 fromRecord builds a JournalTradeEntry from a persisted TradeRecord (GET
@@ -243,7 +257,8 @@ export const JournalSurface = () => {
 				const currentSymbol = currentHolding.symbol() ?? "";
 				if (!currentSymbol) continue;
 
-				const positionStatus = currentHolding.status() ?? currentPosition.status() ?? "—";
+				const positionStatus =
+					currentHolding.status() ?? currentPosition.status() ?? "—";
 				const currentStoploss = currentHolding.stoploss(stoplossHolder);
 				const currentDecision = currentPosition.decision(decisionHolder);
 				const currentEntryCost = currentDecision?.entryCost(entryCostHolder);
@@ -277,11 +292,22 @@ export const JournalSurface = () => {
 						exitAt: timeOf(exitNano),
 						exitAtSort: sortOf(exitNano),
 						thesisScore: formatNumber(currentDecision?.thesisScore(), 3),
-						thesisConfidence: formatPct((currentDecision?.thesisConfidence() ?? 0) * 100, 1),
-						causalIdentification: currentDecision?.causalIdentification() || "—",
-						allocationHaircut: formatPct((currentDecision?.allocationHaircut() ?? 0) * 100, 1),
-						allocationHaircutReason: currentDecision?.allocationHaircutReason() || "—",
-						adverseSelection: formatNumber(currentDecision?.adverseSelection(), 6),
+						thesisConfidence: formatPct(
+							(currentDecision?.thesisConfidence() ?? 0) * 100,
+							1,
+						),
+						causalIdentification:
+							currentDecision?.causalIdentification() || "—",
+						allocationHaircut: formatPct(
+							(currentDecision?.allocationHaircut() ?? 0) * 100,
+							1,
+						),
+						allocationHaircutReason:
+							currentDecision?.allocationHaircutReason() || "—",
+						adverseSelection: formatNumber(
+							currentDecision?.adverseSelection(),
+							6,
+						),
 						expectedReturn: formatNumber(currentDecision?.expectedReturn(), 6),
 						expectedFees: formatNumber(currentDecision?.expectedFees(), 6),
 						bestAsk: formatNumber(currentEntryCost?.bestAsk(), 6),
@@ -316,7 +342,10 @@ export const JournalSurface = () => {
 					locked: currentStoploss?.locked() ?? false,
 					surgeArmed: currentStoploss?.surgeArmed() ?? false,
 					thesisScore: formatNumber(currentDecision?.thesisScore(), 3),
-					thesisConfidence: formatPct((currentDecision?.thesisConfidence() ?? 0) * 100, 1),
+					thesisConfidence: formatPct(
+						(currentDecision?.thesisConfidence() ?? 0) * 100,
+						1,
+					),
 					riskDistance: formatNumber(currentRisk?.riskDistance(), 6),
 					trailDistance: formatNumber(currentRisk?.trailDistance(), 6),
 				});
@@ -327,7 +356,9 @@ export const JournalSurface = () => {
 		// exit timestamp so a trade that's in both sources renders once — the
 		// live copy wins since it carries the freshest decision snapshot.
 		const liveExitKeys = new Set(
-			[...closedMap.values()].map((entry) => `${entry.symbol}-${entry.exitAtSort}`),
+			[...closedMap.values()].map(
+				(entry) => `${entry.symbol}-${entry.exitAtSort}`,
+			),
 		);
 
 		for (const record of history) {
@@ -343,7 +374,9 @@ export const JournalSurface = () => {
 			activeLots: [...activeMap.values()].sort((leftLot, rightLot) =>
 				leftLot.symbol.localeCompare(rightLot.symbol),
 			),
-			closedTrades: [...closedMap.values()].sort((left, right) => right.exitAtSort - left.exitAtSort),
+			closedTrades: [...closedMap.values()].sort(
+				(left, right) => right.exitAtSort - left.exitAtSort,
+			),
 		};
 	});
 
@@ -351,10 +384,17 @@ export const JournalSurface = () => {
 		<div className="grid h-full min-h-0 min-w-260 grid-cols-[minmax(280px,320px)_minmax(420px,1fr)]">
 			<div className="min-h-0 overflow-auto border-(--line) border-r p-3.5">
 				<Section>
-					<Section.Header title="Lifecycle rail" meta={`${activeLots.length} lots`} />
+					<Section.Header
+						title="Lifecycle rail"
+						meta={`${activeLots.length} lots`}
+					/>
 					<div className="flex flex-col gap-2 p-2">
 						{activeLots.length === 0 ? (
-							<Panel variant="surface" size="bare" className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)">
+							<Panel
+								variant="surface"
+								size="bare"
+								className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
+							>
 								no lots held
 							</Panel>
 						) : (
@@ -408,7 +448,9 @@ export const JournalSurface = () => {
 										</Flex.Row>
 										<Flex.Row className="items-center justify-between gap-2 text-[9px] text-(--f4)">
 											<Typography.Span>entered {lot.entryAt}</Typography.Span>
-											<Typography.Span className={lot.surgeArmed ? "text-(--acc)" : undefined}>
+											<Typography.Span
+												className={lot.surgeArmed ? "text-(--acc)" : undefined}
+											>
 												{lot.locked ? "locked" : "unlocked"}
 												{lot.surgeArmed ? " · surge" : ""}
 											</Typography.Span>
@@ -430,17 +472,27 @@ export const JournalSurface = () => {
 			</div>
 
 			<div className="min-h-0 overflow-auto px-4 py-4.5">
-				<Section.Header size="bare" rule={false} title="Journal" meta={`${closedTrades.length} entries`} />
+				<Section.Header
+					size="bare"
+					rule={false}
+					title="Journal"
+					meta={`${closedTrades.length} entries`}
+				/>
 				<div className="mt-2 flex flex-col gap-2">
 					{closedTrades.length === 0 ? (
-						<Panel variant="surface" size="bare" className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)">
+						<Panel
+							variant="surface"
+							size="bare"
+							className="px-3 py-8 text-center font-mono text-[11px] text-(--f4)"
+						>
 							nothing traded yet
 						</Panel>
 					) : (
 						closedTrades.map((trade) => {
 							const tone = pnlTone(trade.pnlValue);
 							const stopError = trade.stopStatus === "error";
-							const hasDiagnostics = trade.hypothesis !== "—" || trade.recommendedAction !== "—";
+							const hasDiagnostics =
+								trade.hypothesis !== "—" || trade.recommendedAction !== "—";
 							return (
 								<Panel
 									key={trade.id}
@@ -500,13 +552,20 @@ export const JournalSurface = () => {
 										</Typography.Span>
 										<Typography.Span>
 											<Typography.Span
-												className={stopError ? "font-semibold uppercase text-(--down)" : "uppercase"}
+												className={
+													stopError
+														? "font-semibold uppercase text-(--down)"
+														: "uppercase"
+												}
 											>
 												{stopError ? "⚠ stop error" : trade.stopStatus}
 											</Typography.Span>
 											{trade.locked ? " · locked" : ""}
 											{trade.surgeArmed ? (
-												<Typography.Span className="text-(--acc)"> · surge</Typography.Span>
+												<Typography.Span className="text-(--acc)">
+													{" "}
+													· surge
+												</Typography.Span>
 											) : (
 												""
 											)}
@@ -517,35 +576,46 @@ export const JournalSurface = () => {
 									<div className="flex flex-col gap-1 rounded-xs bg-(--sunken) px-2 py-1.5 text-[9px] text-(--f4)">
 										<Flex.Row className="items-center justify-between">
 											<Typography.Span>
-												thesis <span className="text-(--f3)">{trade.thesisScore}</span> ({trade.thesisConfidence}) ·
-												causal {trade.causalIdentification}
+												thesis{" "}
+												<span className="text-(--f3)">{trade.thesisScore}</span>{" "}
+												({trade.thesisConfidence}) · causal{" "}
+												{trade.causalIdentification}
 											</Typography.Span>
 											<Typography.Span>
 												haircut {trade.allocationHaircut}
-												{trade.allocationHaircutReason !== "—" ? ` (${trade.allocationHaircutReason})` : ""}
+												{trade.allocationHaircutReason !== "—"
+													? ` (${trade.allocationHaircutReason})`
+													: ""}
 											</Typography.Span>
 										</Flex.Row>
 										<Flex.Row className="items-center justify-between">
 											<Typography.Span>
-												spread {trade.spread} · impact {trade.impact} · adverse {trade.adverseSelection}
+												spread {trade.spread} · impact {trade.impact} · adverse{" "}
+												{trade.adverseSelection}
 											</Typography.Span>
 											<Typography.Span>
-												expected {trade.expectedReturn} ({trade.expectedFees} fees)
+												expected {trade.expectedReturn} ({trade.expectedFees}{" "}
+												fees)
 											</Typography.Span>
 										</Flex.Row>
 										<Flex.Row className="items-center justify-between">
 											<Typography.Span>
-												risk {trade.riskDistance} · trail {trade.trailDistance} · max loss {trade.maxLoss}
+												risk {trade.riskDistance} · trail {trade.trailDistance}{" "}
+												· max loss {trade.maxLoss}
 											</Typography.Span>
 											<Typography.Span>
-												best {trade.bestBid} / {trade.bestAsk} · BE {trade.breakEven}
+												best {trade.bestBid} / {trade.bestAsk} · BE{" "}
+												{trade.breakEven}
 											</Typography.Span>
 										</Flex.Row>
 										{hasDiagnostics ? (
 											<Flex.Row className="items-center justify-between border-(--line) border-t pt-1">
-												<Typography.Span className="truncate">hypothesis: {trade.hypothesis}</Typography.Span>
+												<Typography.Span className="truncate">
+													hypothesis: {trade.hypothesis}
+												</Typography.Span>
 												<Typography.Span>
-													mcts: {trade.recommendedAction} (+{trade.graphSupports}/-{trade.graphContradicts})
+													mcts: {trade.recommendedAction} (+
+													{trade.graphSupports}/-{trade.graphContradicts})
 												</Typography.Span>
 											</Flex.Row>
 										) : null}

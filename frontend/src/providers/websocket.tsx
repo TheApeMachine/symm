@@ -112,7 +112,10 @@ function dispatchEnvelopeState(state: EnvelopeState) {
 	if (positions && positions.rowsLength() > 0) positionStore.actions.add(positions);
 
 	const cognition = state.cognition();
-	if (cognition) cognitionStore.actions.add(cognition);
+	const cognitionSymbol = cognition?.symbol();
+	if (cognition && cognitionSymbol) {
+		cognitionStore.actions.add(cognitionSymbol, cognition);
+	}
 
 	const strategy = state.strategy();
 	if (strategy) strategyStore.actions.add(strategy);

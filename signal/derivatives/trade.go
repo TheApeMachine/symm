@@ -42,6 +42,9 @@ pipeline and a projector, both declared in its constructor, plus Step and Close.
 type Trade struct {
 	number    *nomagique.Number[string]
 	projector *data.Projector
+	// clock resolves each trade against the symbol's causal timeline so a late
+	// trade is accounted without advancing the event clock. See Step.
+	clock causalClock
 }
 
 /*
@@ -65,7 +68,11 @@ func NewTrade() *Trade {
 				nmtypes.In(symbolTradeNotional, calculus.PortX),
 				nmtypes.Out(calculus.PortX, nmtypes.SampleValue),
 			),
-			temporal.Window(""),
+			// The retained interval is an event-clock structure: a late trade
+			// must not enter it, or it would reorder the window and misdate
+			// every sample after it. Its notional is still accumulated below,
+			// which is order-independent.
+			withoutStaleClockFacts(temporal.Window("")),
 			// Liquidation notional for this trade, zero unless it is a liquidation.
 			nmtypes.Wire(
 				calculus.Product,
@@ -126,18 +133,29 @@ func NewTrade() *Trade {
 				),
 				nmtypes.Identity,
 			),
-			// Interval duration from the first retained trade.
-			temporal.Since,
-			// liquidation_notional_rate is undefined without positive interval duration.
-			logic.If(
-				greaterThanCondition(calculus.SymbolDuration),
-				nmtypes.Wire(
-					calculus.Quotient,
-					nmtypes.In(symbolGrossLiq, calculus.PortA),
-					nmtypes.In(calculus.SymbolDuration, calculus.PortB),
-					nmtypes.Out(calculus.PortResult, symbolLiqRate),
+			// Interval duration from the first retained trade, and the rate
+			// that divides by it. A late trade may not advance the interval:
+			// folding its clock forward would SHORTEN the very interval it
+			// belongs inside, inflating the rate by a fabricated denominator.
+			// It contributes its notional and leaves the duration alone.
+			withoutStaleClockFacts(
+				nmtypes.Pipe(
+					temporal.Since,
+					// liquidation_notional_rate is undefined without positive
+					// interval duration.
+					logic.If(
+						greaterThanCondition(calculus.SymbolDuration),
+						nmtypes.Wire(
+							calculus.Quotient,
+							nmtypes.In(symbolGrossLiq, calculus.PortA),
+							nmtypes.In(calculus.SymbolDuration, calculus.PortB),
+							nmtypes.Out(calculus.PortResult, symbolLiqRate),
+						),
+						nmtypes.Identity,
+					),
 				),
-				nmtypes.Identity,
+				symbolLiqRate,
+				calculus.SymbolDuration,
 			),
 			// liquidation_share is undefined when gross trade notional is zero.
 			logic.If(
@@ -150,7 +168,12 @@ func NewTrade() *Trade {
 						nmtypes.Out(calculus.PortResult, symbolLiqShare),
 					),
 					// liquidation_share_velocity: first difference of the share.
-					velocityOver("liquidation_share", symbolLiqShare),
+					// A late trade carries no valid event-clock difference, so
+					// the derivative is absent rather than wrong.
+					withoutStaleClockFacts(
+						velocityOver("liquidation_share", symbolLiqShare),
+						prefixed("liquidation_share", "velocity/delta"),
+					),
 				),
 				nmtypes.Identity,
 			),
@@ -171,11 +194,26 @@ func NewTrade() *Trade {
 
 /*
 Step receives one futures trade data point, loads the liquidation facts, runs
-the Number pipeline, and projects exactly one Measurement. The interval origin
-is read from the pipeline output to preserve the retained interval's From time.
+the Number pipeline, and projects exactly one Measurement.
+
+The timestamp is first resolved against the symbol's causal timeline. A trade
+that arrives late -- a real exchange timestamp older than the last seen, which
+happens whenever a historical trade_snapshot interleaves with the live feed --
+still accounts its notional, because a sum does not care about arrival order.
+What it must NOT do is advance the event clock: shortening the interval it
+belongs inside would inflate liquidation_notional_rate by a denominator that
+never existed. So the trade contributes its facts and every clock-dependent
+stage is skipped for that frame. The interval origin is read from the pipeline
+output to preserve the retained interval's From time.
 */
 func (trade *Trade) Step(point kraken.FuturesTradeData) *data.Measurement[float64] {
+	stamped, advanced := trade.clock.stamp(
+		point.Symbol, point.Timestamp, point.SyntheticTimestamp,
+	)
+	point.Timestamp = stamped
+
 	input := nmtypes.Frame{}
+	input.Put(symbolTimelineAdvanced, oneIf(advanced))
 	input.Put(symbolTradePrice, point.Price.Float64())
 	input.Put(symbolTradeQty, point.Qty)
 	input.Put(symbolIsLiquidation, oneIf(point.Type == "liquidation"))

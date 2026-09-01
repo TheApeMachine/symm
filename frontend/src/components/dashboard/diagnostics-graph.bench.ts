@@ -4,6 +4,11 @@ import { buildDiagnosticsGraph } from "./diagnostics-graph";
 
 const node = (label: string, seqCount: number): NodeStats => ({
 	label,
+	// The ring each stage runs in, and its handler group within that ring —
+	// exactly what the live pipeline reports, so the benchmark exercises the
+	// clustered layout rather than the ungrouped fallback.
+	group: label.slice(0, label.indexOf(".")),
+	stage: label.endsWith(".ingress") ? 0 : 1,
 	seqCount,
 	avgGapNs: 8_000_000,
 	lastGapNs: 8_100_000,
@@ -44,8 +49,12 @@ const HOPS: [string, string][] = [
 	["level3.signals", "level3.hub"],
 ];
 
-const NODES = new Map(LABELS.map((label, index) => [label, node(label, 10_000 + index)]));
-const EDGES = new Map(HOPS.map(([from, to]) => [`${from}>${to}`, edge(from, to)]));
+const NODES = new Map(
+	LABELS.map((label, index) => [label, node(label, 10_000 + index)]),
+);
+const EDGES = new Map(
+	HOPS.map(([from, to]) => [`${from}>${to}`, edge(from, to)]),
+);
 
 describe("buildDiagnosticsGraph", () => {
 	bench("lays out and routes the discovered topology", () => {

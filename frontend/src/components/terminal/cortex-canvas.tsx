@@ -118,18 +118,15 @@ export const CortexCanvas = ({
 			draw();
 		};
 
-		const subscription = cognitionStore.subscribe((state) => {
-			const last = state.getLast();
-			if (!last) return;
-
-			const targetRow: EnvelopeCognition | null =
-				typeof last.symbol() === "string" && last.symbol() === symbol
-					? last
-					: null;
+		const apply = (state: typeof cognitionStore.state) => {
+			const targetRow: EnvelopeCognition | undefined = state.getLast(symbol);
 
 			if (!targetRow) return;
 			paint(cognitionToRecord(targetRow));
-		});
+		};
+
+		apply(cognitionStore.state);
+		const subscription = cognitionStore.subscribe(apply);
 
 		const observer = new ResizeObserver(draw);
 		const canvas = canvasRef.current;

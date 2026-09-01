@@ -2,83 +2,240 @@ package websocket
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
-	"net/http"
-	"sort"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
+
 	gorillawebsocket "github.com/gorilla/websocket"
+	"github.com/krakenfx/api-go/v2/pkg/callback"
+	"github.com/krakenfx/api-go/v2/pkg/derivatives"
+	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/utils"
 )
 
-const (
-	FuturesWebSocketURL = "wss://futures.kraken.com/ws/v1"
-	pingInterval        = 30 * time.Second
-)
-
 /*
-FuturesLive manages a real-time WebSocket session connected to Kraken Futures.
-It ingests tickers (OI, basis, index, funding), trades (aggressor flow,
-liquidations), and order books, routing them to the thesis symbol stream.
+futuresMap parses one raw futures frame per feed, mirroring entityMap. Kraken
+Futures names its streams "feed" where spot names them "channel", and answers
+lifecycle requests on "event", so the keys are the futures wire's own names.
 */
-type FuturesLive struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	err           error
-	status        *runtime.Status
-	endpoint      string
-	conn          *gorillawebsocket.Conn
-	connMu        sync.Mutex
-	subsMu        sync.RWMutex
-	subscriptions map[string]map[string]struct{}
-	observer      atomic.Pointer[func(string, time.Duration)]
-	ingress       map[string]*runtime.Workload[*types.Envelope]
-	capture       CaptureSink
-	manifestSink  ManifestSink
-	reconnect     func()
-	connectCount  atomic.Int32
-
-	// opStreams owns the operational per-stream epoch/sequence bookkeeping this
-	// transport session maintains independent of Hindsight, mirroring Live.
-	opMu      sync.Mutex
-	opStreams map[hindsight.Stream]streamSpan
+var futuresMap = map[string]func([]byte) any{
+	"ticker":           func(buf []byte) any { return kraken.NewFuturesTicker(buf) },
+	"ticker_lite":      func(buf []byte) any { return kraken.NewFuturesTicker(buf) },
+	"trade":            func(buf []byte) any { return kraken.NewFuturesTrade(buf) },
+	"trade_snapshot":   func(buf []byte) any { return kraken.NewFuturesTrade(buf) },
+	"book":             func(buf []byte) any { return kraken.NewFuturesBook(buf) },
+	"book_snapshot":    func(buf []byte) any { return kraken.NewFuturesBook(buf) },
+	"heartbeat":        func(buf []byte) any { return true },
+	"info":             func(buf []byte) any { return true },
+	"subscribed":       func(buf []byte) any { return true },
+	"unsubscribed":     func(buf []byte) any { return true },
+	"alert":            func(buf []byte) any { return true },
+	"challenge":        func(buf []byte) any { return true },
+	"error":            func(buf []byte) any { return true },
+	"subscribe":        func(buf []byte) any { return true },
+	"unsubscribe":      func(buf []byte) any { return true },
+	"product_snapshot": func(buf []byte) any { return true },
 }
 
 /*
-NewFutures constructs a new Kraken Futures WebSocket connection. ingress is
-keyed by feed name ("ticker"/"trade"), mirroring Live's ingress map, and is
-where DispatchFrame pushes the envelope it builds from each parsed frame.
-recorders, when present, receives every untouched transport payload exactly as
-Live's recorder does, so futures frames reach the same capture sink as spot.
+FuturesLive is one futures websocket session: SDK client, feed fan-out, and
+Sub* resubscribe after the SDK reconnects. It mirrors Live exactly — the same
+SDK transport, callback seams, keepalive, and reconnect escalation — because
+derivatives.WebSocket and spot.WebSocket embed the same kraken.WebSocket.
+*/
+type FuturesLive struct {
+	ctx            context.Context
+	cancel         context.CancelFunc
+	status         *runtime.Status
+	err            error
+	client         *derivatives.WebSocket
+	ingress        map[string]runtime.Ingress[*types.Envelope]
+	simulator      *Simulator
+	symbols        []string
+	callbacks      *sync.Map
+	capture        CaptureSink
+	manifestSink   ManifestSink
+	captureName    string
+	reconnect      func()
+	observer       atomic.Pointer[func(string, time.Duration)]
+	connectedCount atomic.Int32
+
+	// streams owns this session's operational epoch/sequence bookkeeping.
+	streams *Streams
+
+	// recovery decides when this session's reconnects have stopped being worth
+	// trying and asks the process owner to reboot.
+	recovery *Recovery
+
+	// pinger owns this session's keepalive loop.
+	pinger *Pinger
+
+	// resolve maps an inbound product identifier to the spot symbol carrying
+	// it. Futures frames identify themselves by product_id alone, and every
+	// stage downstream keys on the spot symbol, so the frame is attributed
+	// here. The instrument registry owns the mapping and installs it.
+	resolve atomic.Pointer[func(string) (string, bool)]
+}
+
+/*
+Capture returns the underlying capture sink attached to the futures connection.
+*/
+func (futures *FuturesLive) Capture() CaptureSink {
+	if futures == nil {
+		return nil
+	}
+
+	return futures.capture
+}
+
+/*
+SetReconnect installs the callback invoked when this session's transport
+reconnects (a second or later connect within one process lifetime).
+*/
+func (futures *FuturesLive) SetReconnect(handler func()) {
+	if futures == nil {
+		return
+	}
+
+	futures.reconnect = handler
+}
+
+/*
+SetUnrecoverable installs the callback invoked once when this session exhausts
+its reconnect budget — the transport keeps dialing but the venue drops the
+session immediately, which reconnecting cannot resolve.
+*/
+func (futures *FuturesLive) SetUnrecoverable(handler func(reason string)) {
+	if futures == nil {
+		return
+	}
+
+	futures.recovery.OnUnrecoverable(handler)
+}
+
+/*
+SetResolver installs the product-identifier to spot-symbol mapping this session
+stamps onto every inbound frame. The instrument registry owns the market
+universe, so it owns this mapping too; the transport only applies it.
+*/
+func (futures *FuturesLive) SetResolver(resolve func(string) (string, bool)) {
+	if futures == nil {
+		return
+	}
+
+	futures.resolve.Store(&resolve)
+}
+
+/*
+attribute stamps the spot symbol onto every record parsed from one futures
+frame. A frame for a product the venue does not list, or one arriving before the
+mapping is installed, has no symbol to attribute to and is dropped: every stage
+downstream keys on the spot symbol, so an unattributed frame is not routable.
+*/
+func (futures *FuturesLive) attribute(parsed any) bool {
+	resolve := futures.resolve.Load()
+
+	if resolve == nil {
+		return false
+	}
+
+	switch record := parsed.(type) {
+	case *kraken.FuturesTicker:
+		symbol, listed := (*resolve)(record.Data.ProductID)
+
+		if !listed {
+			return false
+		}
+
+		record.Data.Symbol = symbol
+
+		return true
+	case *kraken.FuturesTrade:
+		attributed := record.Data[:0]
+
+		for _, data := range record.Data {
+			symbol, listed := (*resolve)(data.ProductID)
+
+			if !listed {
+				continue
+			}
+
+			data.Symbol = symbol
+			attributed = append(attributed, data)
+		}
+
+		record.Data = attributed
+
+		return len(record.Data) > 0
+	default:
+		return false
+	}
+}
+
+/*
+NewFutures opens a futures websocket session and wires SDK callbacks in the
+constructor, mirroring New.
 */
 func NewFutures(
 	ctx context.Context,
 	endpoint string,
-	ingress map[string]*runtime.Workload[*types.Envelope],
+	workloads map[string]runtime.Ingress[*types.Envelope],
+	recorders ...CaptureSink,
+) *FuturesLive {
+	return NewFuturesWithClient(ctx, endpoint, workloads, nil, recorders...)
+}
+
+/*
+NewFuturesWithClient opens a futures websocket session using an injected
+derivatives.WebSocket client instance, mirroring NewWithClient.
+*/
+func NewFuturesWithClient(
+	ctx context.Context,
+	endpoint string,
+	workloads map[string]runtime.Ingress[*types.Envelope],
+	client *derivatives.WebSocket,
 	recorders ...CaptureSink,
 ) *FuturesLive {
 	if endpoint == "" {
-		endpoint = FuturesWebSocketURL
+		endpoint = system.Cfg.WebSocket.Endpoints.Futures
 	}
 
-	childCtx, cancel := context.WithCancel(ctx)
+	if client == nil {
+		client = derivatives.NewWebSocket()
+		client.URL = endpoint
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
 
 	futures := &FuturesLive{
-		ctx:           childCtx,
-		cancel:        cancel,
-		status:        runtime.NewStatus(),
-		endpoint:      endpoint,
-		subscriptions: make(map[string]map[string]struct{}),
-		ingress:       ingress,
+		ctx:         ctx,
+		cancel:      cancel,
+		status:      runtime.NewStatus(),
+		client:      client,
+		callbacks:   &sync.Map{},
+		ingress:     workloads,
+		captureName: "futures",
+		streams:     NewStreams(client.URL),
+		recovery:    NewRecovery("futures"),
 	}
+
+	futures.pinger = NewPinger("futures", func() error {
+		if !futures.client.IsActive() {
+			return nil
+		}
+
+		return futures.client.WriteMessage(gorillawebsocket.PingMessage, nil)
+	})
 
 	if len(recorders) == 1 {
 		futures.capture = recorders[0]
@@ -88,21 +245,226 @@ func NewFutures(
 		}
 	}
 
+	futures.client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
+		// Real inbound traffic, not a successful dial, is what proves the venue
+		// accepted this session, so the dead-reconnect count clears here rather
+		// than in OnConnected.
+		futures.recovery.Delivered()
+
+		raw := event.Data.Bytes()
+
+		// Kraken Futures names its data streams "feed" and its lifecycle
+		// acknowledgements "event", where spot uses "channel" and "method".
+		feed := utils.GetString(raw, "feed")
+
+		if feed == "" {
+			feed = utils.GetString(raw, "event")
+		}
+
+		if feed == "" {
+			return
+		}
+
+		// Every futures frame reaches the same capture sink as the spot stream,
+		// so the events store sees the whole system. Capture mints the
+		// Hindsight capture identity, persists the raw frame with it, and
+		// returns it so every envelope parsed from this frame carries the exact
+		// same origin. The transport mints the operational StreamRef first —
+		// independent of capture — so the same epoch/sequence fact exists with
+		// Hindsight both on and off.
+		streamRef := futures.streams.Next(feed)
+
+		var captureID hindsight.CaptureIdentity
+
+		if futures.capture != nil {
+			var captureErr error
+
+			captureID, captureErr = futures.capture.Capture(
+				feed,
+				futures.client.URL,
+				raw,
+				time.Now().UTC(),
+				streamRef,
+			)
+
+			if captureErr != nil {
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					fmt.Sprintf("futures: capture failed for %s frame: %s", feed, captureErr.Error()),
+					captureErr,
+				))
+
+				futures.status.Transition(runtime.ERROR)
+				return
+			}
+		}
+
+		// An unsubscribe acknowledgement answers a teardown; nothing to dispatch.
+		if feed == "unsubscribed" || feed == "unsubscribe" {
+			return
+		}
+
+		handler, ok := futuresMap[feed]
+
+		if !ok {
+			futures.err = errnie.Error(errnie.Err(
+				errnie.NotFound,
+				"futures: unhandled feed "+feed,
+				nil,
+			))
+
+			futures.status.Transition(runtime.ERROR)
+			return
+		}
+
+		out := handler(raw)
+
+		if feed == "subscribed" || feed == "error" || feed == "alert" {
+			errMessage := utils.GetString(raw, "message")
+
+			if errMessage != "" {
+				// A rejected subscription is a per-request acknowledgement, not
+				// a transport failure, exactly as on the spot session. It must
+				// not poison the session lifecycle status.
+				futures.err = errnie.Error(errnie.Err(
+					errnie.IO,
+					fmt.Sprintf("[futures] subscription rejected: %s", errMessage),
+					nil,
+				))
+
+				return
+			}
+		}
+
+		// Dispatch one-shot callbacks.
+		if cb, ok := futures.callbacks.LoadAndDelete(feed); ok {
+			if msgChan, ok := cb.(chan any); ok {
+				msgChan <- out
+			}
+		}
+
+		switch feed {
+		case "ticker", "ticker_lite", "trade", "trade_snapshot":
+			// This session does not feed the pipeline until the subscription
+			// authority has marked it READY, which happens once the WHOLE
+			// universe is subscribed. The frame is still captured above, so
+			// Hindsight sees the complete stream.
+			if futures.Status() != runtime.READY {
+				return
+			}
+
+			// Futures frames identify themselves by product_id, where every
+			// stage downstream keys on the spot symbol, so the frame is
+			// attributed before it becomes envelopes.
+			if !futures.attribute(out) {
+				return
+			}
+
+			envelopes, manifests := IngestEnvelopes(
+				"futures."+futuresIngressKey(feed), out, captureID,
+			)
+
+			for index, envelope := range envelopes {
+				// Live trading reads the operational StreamRef; Hindsight's
+				// CaptureID records the same fact but is never the source.
+				envelope.Stream = streamRef
+
+				workload, mounted := futures.ingress[futuresIngressKey(feed)]
+
+				if !mounted {
+					continue
+				}
+
+				workload.Push(envelope)
+
+				if futures.manifestSink != nil {
+					_ = futures.manifestSink.WriteManifest(manifests[index])
+				}
+			}
+		}
+	})
+
+	futures.client.OnConnected.Recurring(func(event *callback.Event[any]) {
+		errnie.Info(fmt.Sprintf("futures: connected to %s", futures.client.URL))
+
+		futures.pinger.Start(futures.ctx)
+
+		// Kraken Futures sends nothing at all on an idle socket — unlike spot,
+		// which generates heartbeats automatically on any subscription. Its
+		// heartbeat is an explicitly subscribable feed, so a quiet session that
+		// wants to hear from the venue must ask for it. Subscribed on every
+		// connect, since a reconnect starts a new venue session.
+		if err := futures.Write(kraken.NewFuturesSubscription("heartbeat", nil)); err != nil {
+			errnie.Error(errnie.Err(
+				errnie.IO,
+				"futures: failed to subscribe to heartbeat",
+				err,
+			))
+		}
+
+		count := futures.connectedCount.Add(1)
+
+		// A second (or later) connect in this process lifetime is a reconnect:
+		// the same subscription universe must be soft-rebooted through the one
+		// subscription authority and the operational stream epochs advanced,
+		// rather than a second subscription path being invented here.
+		if count > 1 && futures.reconnect != nil {
+			futures.streams.Reconnected()
+			futures.reconnect()
+		}
+
+		// Connected is not ready, for the same reason as the spot session: the
+		// universe is subscribed in paced batches after the socket comes up.
+		futures.status.Transition(runtime.BUSY)
+	})
+
+	futures.client.OnDisconnected.Recurring(func(event *callback.Event[error]) {
+		if gorillawebsocket.IsCloseError(
+			event.Data,
+			gorillawebsocket.CloseNormalClosure,
+		) {
+			return
+		}
+
+		errnie.Error(errnie.Err(
+			errnie.Unauthorized,
+			fmt.Sprintf("futures %s disconnected: %s - %s", endpoint, event.Data.Error(), event.Data),
+			event.Data,
+		))
+
+		futures.status.Transition(runtime.WAITING)
+
+		futures.recovery.Dropped(endpoint)
+	})
+
+	errnie.Info(fmt.Sprintf("futures: connecting to %s", futures.client.URL))
+	futures.status.Transition(runtime.WAITING)
+
+	if err := futures.client.Connect(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"futures: failed to connect",
+			err,
+		))
+	}
+
 	return futures
 }
 
 /*
-SetReconnect installs the callback invoked when this futures session's transport
-reconnects. The futures transport no longer fires it — dialAndServe reconnects
-stream-isolated via futures.resubscribe only — but the seam remains for callers
-that still wire it externally.
+futuresIngressKey maps a futures feed onto the ingress workload that carries it.
+The venue emits a snapshot feed and an incremental feed for the same stream, and
+both belong on the same workload.
 */
-func (futures *FuturesLive) SetReconnect(handler func()) {
-	if futures == nil {
-		return
+func futuresIngressKey(feed string) string {
+	switch feed {
+	case "ticker", "ticker_lite":
+		return "ticker"
+	case "trade", "trade_snapshot":
+		return "trade"
+	default:
+		return feed
 	}
-
-	futures.reconnect = handler
 }
 
 func (futures *FuturesLive) Name() string { return "kraken_futures" }
@@ -116,434 +478,130 @@ func (futures *FuturesLive) Status() runtime.Stage {
 }
 
 /*
-SubFuturesTicker registers a subscription for real-time futures tickers.
+MarkReady is called by the subscription authority once the WHOLE market universe
+is subscribed, mirroring Live.MarkReady.
 */
+func (futures *FuturesLive) MarkReady() {
+	if futures == nil {
+		return
+	}
+
+	futures.status.Transition(runtime.READY)
+}
+
+func (futures *FuturesLive) Client() *derivatives.WebSocket {
+	if futures == nil {
+		return nil
+	}
+
+	return futures.client
+}
+
+/*
+SetObserver installs the latency observer this session reports transport timings
+to, mirroring the spot session's observer seam.
+*/
+func (futures *FuturesLive) SetObserver(observer func(string, time.Duration)) {
+	if futures == nil {
+		return
+	}
+
+	futures.observer.Store(&observer)
+}
+
 func (futures *FuturesLive) SubFuturesTicker(productIDs []string) error {
-	return futures.subscribe("ticker", productIDs)
+	futures.symbols = append(futures.symbols, productIDs...)
+	return errnie.Error(futures.client.SubTicker(productIDs...))
 }
 
-/*
-SubFuturesTrades registers a subscription for real-time futures executions.
-*/
 func (futures *FuturesLive) SubFuturesTrades(productIDs []string) error {
-	return futures.subscribe("trade", productIDs)
+	return errnie.Error(futures.client.SubTrade(productIDs...))
+}
+
+func (futures *FuturesLive) SubFuturesBook(productIDs []string) error {
+	return errnie.Error(futures.client.SubBook(productIDs...))
 }
 
 /*
-SubFuturesBook registers a subscription for real-time futures order books.
+UnsubFuturesTicker, UnsubFuturesTrades and UnsubFuturesBook withdraw the futures
+feeds for the given product IDs. They mirror the Sub* seam so the instrument —
+which owns the market universe — drives teardown through the same batched path
+it drives setup, rather than the transport keeping a second copy of the universe.
 */
-func (futures *FuturesLive) SubFuturesBook(productIDs []string) error {
-	return futures.subscribe("book", productIDs)
+func (futures *FuturesLive) UnsubFuturesTicker(productIDs []string) error {
+	return futures.unsubscribe("ticker", productIDs)
 }
 
-func (futures *FuturesLive) subscribe(feed string, productIDs []string) error {
-	if len(productIDs) == 0 {
+func (futures *FuturesLive) UnsubFuturesTrades(productIDs []string) error {
+	return futures.unsubscribe("trade", productIDs)
+}
+
+func (futures *FuturesLive) UnsubFuturesBook(productIDs []string) error {
+	return futures.unsubscribe("book", productIDs)
+}
+
+/*
+unsubscribe writes the batched unsubscribe requests for one feed. A session
+whose socket is already gone has nothing to withdraw, which is not an error:
+the venue drops the subscriptions along with the connection.
+*/
+func (futures *FuturesLive) unsubscribe(feed string, productIDs []string) error {
+	if futures == nil || futures.client == nil || len(productIDs) == 0 {
 		return nil
 	}
 
-	futures.subsMu.Lock()
-
-	if _, exists := futures.subscriptions[feed]; !exists {
-		futures.subscriptions[feed] = make(map[string]struct{})
-	}
-
-	for _, pid := range productIDs {
-		futures.subscriptions[feed][pid] = struct{}{}
-	}
-
-	futures.subsMu.Unlock()
-
-	return futures.writeSubscription(feed, productIDs)
-}
-
-func (futures *FuturesLive) writeSubscription(feed string, productIDs []string) error {
-	futures.connMu.Lock()
-	conn := futures.conn
-	futures.connMu.Unlock()
-
-	if conn == nil {
+	if !futures.client.IsActive() {
 		return nil
 	}
 
-	sub := kraken.NewFuturesSubscription(feed, productIDs)
-
-	if err := conn.WriteJSON(sub); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"futures: failed to write subscription",
-			err,
-		))
+	for group := range slices.Chunk(productIDs, 100) {
+		if err := futures.Write(kraken.NewFuturesUnsubscription(feed, group)); err != nil {
+			return errnie.Error(errnie.Err(
+				errnie.IO,
+				fmt.Sprintf("futures: unsubscribe %s failed", feed),
+				err,
+			))
+		}
 	}
 
 	return nil
 }
 
-/*
-Run connects to the WebSocket and enters the read/ping event loop.
-*/
-func (futures *FuturesLive) Run() error {
-	for {
-		select {
-		case <-futures.ctx.Done():
-			return futures.ctx.Err()
-		default:
-		}
-
-		if err := futures.dialAndServe(); err != nil {
-			if errors.Is(err, context.Canceled) || futures.ctx.Err() != nil {
-				return nil
-			}
-
-			errnie.Warn(fmt.Sprintf("futures: websocket disconnected: %v, reconnecting in 2s", err))
-			time.Sleep(2 * time.Second)
-		}
+func (futures *FuturesLive) Write(params json.Marshaler, callbacks ...Callback[any]) error {
+	for _, callback := range callbacks {
+		futures.callbacks.Store(callback.Channel, callback.Message)
 	}
-}
 
-func (futures *FuturesLive) dialAndServe() error {
-	dialer := gorillawebsocket.DefaultDialer
-	conn, _, err := dialer.DialContext(futures.ctx, futures.endpoint, http.Header{})
+	raw, err := params.MarshalJSON()
 
 	if err != nil {
-		return err
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"futures: write marshal failed",
+			err,
+		))
 	}
 
-	futures.connMu.Lock()
-	futures.conn = conn
-	futures.connMu.Unlock()
+	started := time.Now()
 
-	futures.status.Transition(runtime.READY)
+	err = futures.client.WriteMessage(
+		gorillawebsocket.TextMessage, raw,
+	)
 
-	// A second (or later) dial in this process lifetime is a reconnect: advance
-	// the operational stream epoch — a transport fact, independent of Hindsight
-	// — and resubscribe to the active futures products only. The futures stream
-	// must never soft-reboot the global spot subscription authority.
-	if futures.connectCount.Add(1) > 1 {
-		futures.reconnectStreams()
+	if futures.simulator != nil {
+		futures.simulator.Record(WEBSOCKET, time.Since(started))
 	}
 
-	futures.resubscribe()
-
-	pingTicker := time.NewTicker(pingInterval)
-	defer pingTicker.Stop()
-
-	readDone := make(chan error, 1)
-
-	go futures.readLoop(conn, readDone)
-
-	for {
-		select {
-		case <-futures.ctx.Done():
-			_ = conn.Close()
-			return futures.ctx.Err()
-		case err := <-readDone:
-			_ = conn.Close()
-			return err
-		case <-pingTicker.C:
-			if err := conn.WriteJSON(map[string]string{"event": "ping"}); err != nil {
-				_ = conn.Close()
-				return err
-			}
-		}
-	}
-}
-
-func (futures *FuturesLive) resubscribe() {
-	futures.subsMu.RLock()
-	defer futures.subsMu.RUnlock()
-
-	for feed, pidsMap := range futures.subscriptions {
-		pids := make([]string, 0, len(pidsMap))
-
-		for pid := range pidsMap {
-			pids = append(pids, pid)
-		}
-
-		if len(pids) > 0 {
-			_ = futures.writeSubscription(feed, pids)
-		}
-	}
-}
-
-func (futures *FuturesLive) readLoop(conn *gorillawebsocket.Conn, done chan<- error) {
-	for {
-		messageType, payload, err := conn.ReadMessage()
-
-		if err != nil {
-			done <- err
-			return
-		}
-
-		if messageType != gorillawebsocket.TextMessage && messageType != gorillawebsocket.BinaryMessage {
-			continue
-		}
-
-		// The capture identity is local to THIS frame, computed here and passed
-		// into DispatchFrame — never stored as ambient mutable state that a
-		// failed capture could leave holding a previous frame's identity.
-		// The operational StreamRef is minted first, independent of capture.
-		kind := frameKind(payload)
-		streamRef := futures.nextStreamRef(kind)
-
-		var captureID hindsight.CaptureIdentity
-
-		if futures.capture != nil {
-			// Capture persists synchronously before ReadMessage can reuse the
-			// payload buffer. The frame's feed
-			// (falling back to its event) is recorded as the kind instead of a
-			// blanket websocket_frame tag, mirroring the spot stream. Capture
-			// mints the Hindsight identity, persists the frame with it, and
-			// returns it so envelopes parsed from this frame carry the origin.
-			identity, captureErr := futures.capture.Capture(
-				kind,
-				futures.endpoint,
-				payload,
-				time.Now().UTC(),
-				streamRef,
-			)
-
-			if captureErr != nil {
-				errnie.Error(errnie.Err(
-					errnie.IO,
-					fmt.Sprintf("futures: capture failed for %s frame: %s", kind, captureErr.Error()),
-					captureErr,
-				))
-
-				futures.status.Transition(runtime.ERROR)
-				continue
-			}
-
-			captureID = identity
-		}
-
-		futures.DispatchFrame(payload, captureID, streamRef)
-	}
-}
-
-/*
-frameKind names the origin of a raw futures frame for the capture sink: the
-feed when present ("ticker"/"trade"/"book"), falling back to the control event
-("pong"/"heartbeat"/"subscribed"/"info") for frames that carry no feed.
-*/
-func frameKind(raw []byte) string {
-	if feed := utils.GetString(raw, "feed"); feed != "" {
-		return feed
-	}
-
-	if event := utils.GetString(raw, "event"); event != "" {
-		return event
-	}
-
-	return "unknown"
-}
-
-/*
-nextStreamRef mints the operational StreamRef for one inbound futures frame on
-the given feed. It mirrors Live's framing: transport-owned epoch/sequence,
-independent of Hindsight.
-*/
-func (futures *FuturesLive) nextStreamRef(feed string) hindsight.StreamRef {
-	if futures == nil {
-		return hindsight.StreamRef{}
-	}
-
-	stream := hindsight.Stream(futures.endpoint + ":" + feed)
-
-	futures.opMu.Lock()
-	defer futures.opMu.Unlock()
-
-	if futures.opStreams == nil {
-		futures.opStreams = make(map[hindsight.Stream]streamSpan)
-	}
-
-	span := futures.opStreams[stream]
-
-	if span.epoch == 0 {
-		span.epoch = 1
-	}
-
-	span.sequence++
-	futures.opStreams[stream] = span
-
-	return hindsight.StreamRef{
-		Stream:   stream,
-		Epoch:    span.epoch,
-		Sequence: span.sequence,
-	}
-}
-
-/*
-reconnectStreams bumps the operational epoch for every stream this futures
-session has seen and resets each stream's per-epoch sequence, independent of any
-capture sink.
-*/
-func (futures *FuturesLive) reconnectStreams() {
-	if futures == nil {
-		return
-	}
-
-	futures.opMu.Lock()
-	defer futures.opMu.Unlock()
-
-	for stream, span := range futures.opStreams {
-		span.epoch++
-		span.sequence = 0
-		futures.opStreams[stream] = span
-	}
-}
-
-/*
-DispatchFrame decodes a raw wire payload from Kraken Futures and routes it. The
-captureID is the identity minted for THIS frame and ref the transport-minted
-operational StreamRef, both passed in explicitly so a frame can never inherit
-another frame's identity.
-*/
-func (futures *FuturesLive) DispatchFrame(raw []byte, captureID hindsight.CaptureIdentity, ref hindsight.StreamRef) {
-	if len(raw) == 0 {
-		return
-	}
-
-	event := utils.GetString(raw, "event")
-
-	if event == "pong" || event == "heartbeat" || event == "subscribed" {
-		return
-	}
-
-	feed := utils.GetString(raw, "feed")
-
-	switch feed {
-	case "ticker":
-		futures.dispatchTicker(raw, captureID, ref)
-	case "trade", "trade_snapshot":
-		futures.dispatchTrades(raw, captureID, ref)
-	case "book", "book_snapshot":
-		futures.dispatchBook(raw)
-	}
-}
-
-func (futures *FuturesLive) dispatchTicker(raw []byte, captureID hindsight.CaptureIdentity, ref hindsight.StreamRef) {
-	workload := futures.ingress["ticker"]
-
-	if workload == nil {
-		return
-	}
-
-	ticker := kraken.NewFuturesTicker(raw)
-
-	if ticker == nil || ticker.Data.ProductID == "" {
-		return
-	}
-
-	spotSymbol := kraken.FuturesProductIDToSpot(ticker.Data.ProductID)
-
-	if spotSymbol == "" {
-		return
-	}
-
-	ticker.Data.Symbol = spotSymbol
-
-	envelope := types.NewEnvelope(types.EnvelopeFuturesTicker)
-	envelope.FuturesTickerData = ticker.Data
-	envelope.CaptureID = captureID
-	envelope.CaptureOrdinal = 0
-	envelope.Stream = ref
-	workload.Push(envelope)
-
-	futures.writeManifest("futures.ticker", ticker.Data.Symbol, 0, captureID)
-}
-
-func (futures *FuturesLive) dispatchTrades(raw []byte, captureID hindsight.CaptureIdentity, ref hindsight.StreamRef) {
-	workload := futures.ingress["trade"]
-
-	if workload == nil {
-		return
-	}
-
-	trades := kraken.NewFuturesTrade(raw)
-
-	if trades == nil || len(trades.Data) == 0 {
-		return
-	}
-
-	// A trade_snapshot is a batch of HISTORICAL trades, and Kraken orders it
-	// newest-first. Pushing it in wire order makes event time run backwards:
-	// the first trade establishes each symbol's temporal origin at the newest
-	// timestamp, and every older trade behind it then precedes its own origin.
-	// Replay the batch oldest-first so event time advances monotonically, the
-	// same order the live feed delivers.
-	sort.SliceStable(trades.Data, func(earlier, later int) bool {
-		return trades.Data[earlier].Timestamp.Before(trades.Data[later].Timestamp)
-	})
-
-	for index := range trades.Data {
-		trade := trades.Data[index]
-		spotSymbol := kraken.FuturesProductIDToSpot(trade.ProductID)
-
-		if spotSymbol == "" {
-			continue
-		}
-
-		trade.Symbol = spotSymbol
-
-		envelope := types.NewEnvelope(types.EnvelopeFuturesTrade)
-		envelope.FuturesTradeData = trade
-		envelope.CaptureID = captureID
-		envelope.CaptureOrdinal = uint64(index)
-		envelope.Stream = ref
-		workload.Push(envelope)
-
-		futures.writeManifest("futures.trade", trade.Symbol, uint64(index), captureID)
-	}
-}
-
-/*
-writeManifest persists the EnvelopeManifest for one futures envelope, keyed by
-the same CaptureIdentity and ordinal the envelope carries.
-*/
-func (futures *FuturesLive) writeManifest(workload, symbol string, ordinal uint64, captureID hindsight.CaptureIdentity) {
-	if futures.manifestSink == nil {
-		return
-	}
-
-	_ = futures.manifestSink.WriteManifest(hindsight.EnvelopeManifest{
-		Envelope: hindsight.EnvelopeRef{
-			Origin:  captureID,
-			Ordinal: ordinal,
-		},
-		Workload:   workload,
-		DomainKind: workload,
-		Symbol:     symbol,
-	})
-}
-
-func (futures *FuturesLive) dispatchBook(raw []byte) {
-	book := kraken.NewFuturesBook(raw)
-
-	if book == nil || book.Data.ProductID == "" {
-		return
-	}
-
-	spotSymbol := kraken.FuturesProductIDToSpot(book.Data.ProductID)
-
-	if spotSymbol == "" {
-		return
-	}
-
-	book.Data.Symbol = spotSymbol
+	return errnie.Error(err)
 }
 
 func (futures *FuturesLive) Close() error {
-	if futures.cancel != nil {
-		futures.cancel()
+	futures.pinger.Stop()
+	futures.cancel()
+
+	if futures.client.IsActive() {
+		errnie.Error(futures.client.Disconnect())
 	}
 
-	futures.connMu.Lock()
-
-	if futures.conn != nil {
-		_ = futures.conn.Close()
-		futures.conn = nil
-	}
-
-	futures.connMu.Unlock()
 	return nil
 }

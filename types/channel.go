@@ -42,9 +42,9 @@ const (
 )
 
 /*
-ResonanceArtifact carries one settled predictive manifold to the causal and
-graph stages. The manifold itself does not own a symbol, so the publisher
-stamps it.
+ResonanceArtifact carries one settled predictive manifold to downstream stages.
+Solver.Step exposes the manifold only to its synchronous observer, then clears
+it before the artifact crosses the Workload boundary.
 */
 type ResonanceArtifact struct {
 	Symbol   string
