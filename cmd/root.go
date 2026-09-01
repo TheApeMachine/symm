@@ -289,6 +289,8 @@ var (
 			// forcing state, without advancing the field) and advances on the
 			// Level3 workload (applying the latest causally-available forcing).
 			manifoldSolver := manifold.NewSolver(cmd.Context())
+			hub.SetManifoldSnapshot(manifoldSolver.Snapshot)
+			toxicitySolver := toxicity.NewSignal(cmd.Context())
 
 			// The broker desk owns positions and execution. Recovery adopts the
 			// exchange's open inventory before the decision path engages. The
@@ -408,7 +410,7 @@ var (
 					{system.NewDiagnostic("ticker.logic")},
 					{planner},
 					{system.NewDiagnostic("ticker.strategy")},
-					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver}},
+					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture}},
 					{hub},
 					{system.NewDiagnostic("ticker.hub")},
 				},
@@ -422,7 +424,7 @@ var (
 						system.NewTraced("trade.cvd", cvd.NewSignal(cmd.Context(), cvdQuoteProvider(price))),
 						system.NewTraced("trade.hawkes", hawkes.NewSignal(cmd.Context())),
 						system.NewTraced("trade.pumpdump", pumpdump.NewSignal(cmd.Context())),
-						system.NewTraced("trade.toxicity", toxicity.NewSignal(cmd.Context())),
+						system.NewTraced("trade.toxicity", toxicitySolver),
 					},
 					{system.NewTraced("trade.manifold", manifoldSolver)},
 					{advisors},
@@ -430,7 +432,7 @@ var (
 					{system.NewTraced("trade.cognition", cognitionSolver)},
 					{system.NewTraced("trade.opportunity", opportunitySolver)},
 					{planner},
-					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver}},
+					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture}},
 					{hub},
 					{system.NewDiagnostic("trade.hub")},
 				},
@@ -445,7 +447,7 @@ var (
 						system.NewTraced("level3.depthflow", depthflow.NewSignal(cmd.Context())),
 						system.NewTraced("level3.morphology", morphology.NewSignal(cmd.Context())),
 						system.NewTraced("level3.pumpdump", pumpdump.NewSignal(cmd.Context())),
-						system.NewTraced("level3.toxicity", toxicity.NewSignal(cmd.Context())),
+						system.NewTraced("level3.toxicity", toxicitySolver),
 					},
 					{system.NewTraced("level3.manifold", manifoldSolver)},
 					{advisors},
@@ -453,7 +455,7 @@ var (
 					{system.NewTraced("level3.cognition", cognitionSolver)},
 					{system.NewTraced("level3.opportunity", opportunitySolver)},
 					{planner},
-					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver}},
+					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture}},
 					{hub},
 					{system.NewDiagnostic("level3.hub")},
 				},
@@ -468,7 +470,7 @@ var (
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("executions.ingress")},
 					{executionNode{desk: desk}},
-					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver}},
+					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture}},
 					{hub},
 					{system.NewDiagnostic("executions.hub")},
 				},
@@ -484,7 +486,7 @@ var (
 					{system.NewTraced("futures.ticker.cognition", cognitionSolver)},
 					{system.NewTraced("futures.ticker.opportunity", opportunitySolver)},
 					{planner},
-					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver}},
+					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture}},
 					{hub},
 					{system.NewDiagnostic("futures.ticker.hub")},
 				},
@@ -500,7 +502,7 @@ var (
 					{system.NewTraced("futures.trade.cognition", cognitionSolver)},
 					{system.NewTraced("futures.trade.opportunity", opportunitySolver)},
 					{planner},
-					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture, categorySolver: categorySolver}},
+					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture}},
 					{hub},
 					{system.NewDiagnostic("futures.trade.hub")},
 				},
@@ -526,6 +528,13 @@ var (
 					err,
 				))
 			}
+
+			// The subscription barrier is now complete. Admit the Workloads before
+			// opening the websocket sessions: Workload.Push intentionally rejects
+			// every envelope while WAITING, so reversing this order leaves the
+			// sockets live and the dashboard connected while all market data is
+			// discarded before the first stage.
+			workspace.Admit()
 
 			// Subscribe returned, so the WHOLE universe is subscribed: the
 			// sessions may now feed the trading pipeline. Until this point

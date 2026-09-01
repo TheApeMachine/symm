@@ -14,9 +14,9 @@ plus one control binding that supplies the comparison horizon:
 
   - cvd/signed_net_fraction_zscore — executed-flow structure: aggressor-side
     imbalance, standardized against its own causal history by the CVD signal.
-  - depthflow/book_imbalance_zscore — liquidity/book structure: displayed
-    bid/ask asymmetry, standardized against its own causal history by the
-    Depthflow signal.
+  - depthflow/observed_notional_imbalance_zscore — bid/ask asymmetry among
+    the orders carried by each Level-3 mutation, standardized against its own
+    causal history by the DepthFlow signal.
   - hawkes/excitation_fraction:buy — event/excitation structure: the fraction
     of current fitted buy intensity attributable to prior-event excitation
     ((λ_b − μ_b)/λ_b ∈ [0,1]). It is a dimensionless state of the arrival
@@ -34,14 +34,14 @@ when the normalization has an intrinsic mathematical interpretation), so no
 further normalization happens inside this Advisor — recomputing a second
 normalization universe here would silently redefine what "close" means
 without any caller's knowledge. The three dimensions are genuinely
-complementary structural families (flow, book, arrival-process) with no
+complementary structural families (flow, mutation, arrival-process) with no
 redundancy between them, matching signal/README.md §10's standardized
 multivariate trajectory Z_t = [z^(1)_t, ..., z^(k)_t].
 */
 func HistoricalBindings() []MetricBinding {
 	return []MetricBinding{
 		NewMetricBinding("cvd", "signed_net_fraction_zscore", "advisor/historical/flow"),
-		NewMetricBinding("depthflow", "book_imbalance_zscore", "advisor/historical/book"),
+		NewMetricBinding("depthflow", "observed_notional_imbalance_zscore", "advisor/historical/mutation"),
 		NewMetricBinding("hawkes", "excitation_fraction:buy", "advisor/historical/excitation"),
 		// The comparison horizon is the symbol's own Hawkes excitation
 		// e-folding timescale tau = 1/beta (seconds): a control fact derived

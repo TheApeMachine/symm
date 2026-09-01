@@ -1,7 +1,6 @@
 package websocket
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -289,8 +288,8 @@ func (futures *FuturesLive) readLoop(conn *gorillawebsocket.Conn, done chan<- er
 		var captureID hindsight.CaptureIdentity
 
 		if futures.capture != nil {
-			// The reader reuses the payload buffer for the next frame, so the
-			// capture owns its own copy of the exact bytes. The frame's feed
+			// Capture persists synchronously before ReadMessage can reuse the
+			// payload buffer. The frame's feed
 			// (falling back to its event) is recorded as the kind instead of a
 			// blanket websocket_frame tag, mirroring the spot stream. Capture
 			// mints the Hindsight identity, persists the frame with it, and
@@ -298,7 +297,7 @@ func (futures *FuturesLive) readLoop(conn *gorillawebsocket.Conn, done chan<- er
 			identity, captureErr := futures.capture.Capture(
 				kind,
 				futures.endpoint,
-				bytes.Clone(payload),
+				payload,
 				time.Now().UTC(),
 				streamRef,
 			)

@@ -2,7 +2,6 @@ package toxicity
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
@@ -37,6 +36,26 @@ var (
 	symbolPrevAtNsec = nmtypes.MustIntern("toxicity/prev_at_nsec")
 	symbolDeltaT     = nmtypes.MustIntern("toxicity/delta_t")
 	symbolZero       = nmtypes.MustIntern("toxicity/zero")
+
+	// symbolTouchComplete marks a frame whose bid and ask are BOTH known,
+	// either from this message or from the symbol's committed state. A
+	// one-sided message must still commit the side it carried, so
+	// completeness gates the disposition pipeline instead of failing it.
+	symbolTouchComplete = nmtypes.MustIntern("toxicity/touch_complete")
+
+	// symbolTouchUncrossed marks a frame whose completed touch is a real book:
+	// 0 < bid < ask. This feed is depth-limited and one-sided, so a fresh price
+	// can transiently sit through the OTHER side's retained price. That frame
+	// must still commit its fresh price, or the stale side is kept and every
+	// later attribution brackets against a price nobody is quoting.
+	symbolTouchUncrossed = nmtypes.MustIntern("toxicity/touch_uncrossed")
+
+	// symbolSurrenderBid/Ask mark a side whose retained touch this message
+	// withdrew without naming a replacement. The committed frame is merged
+	// UNDER the input, so a surrendered side can only be cleared from inside
+	// the pipeline, on the merged frame.
+	symbolSurrenderBid = nmtypes.MustIntern("toxicity/surrender_bid")
+	symbolSurrenderAsk = nmtypes.MustIntern("toxicity/surrender_ask")
 
 	// The attributed previous touch is captured before the trailing relay
 	// advances the retained previous state, so the projected provenance
@@ -135,12 +154,6 @@ sends Level-3 as one-sided incremental updates.
 type Level3 struct {
 	number    *nomagique.Number[string]
 	projector *data.Projector
-
-	touchMu    sync.Mutex
-	lastBid    map[string]float64
-	lastAsk    map[string]float64
-	lastBidQty map[string]float64
-	lastAskQty map[string]float64
 }
 
 /*
@@ -149,268 +162,283 @@ disposition computation and one projector that names the output slots.
 */
 func NewLevel3() *Level3 {
 	return &Level3{
-		lastBid:    make(map[string]float64),
-		lastAsk:    make(map[string]float64),
-		lastBidQty: make(map[string]float64),
-		lastAskQty: make(map[string]float64),
 		number: nomagique.NewNumber[string](nmtypes.Pipe(
-			// A crossed, missing, or non-positive book is rejected here.
-			logic.PositiveOrder(symbolBidPrice, symbolAskPrice),
-
-			// Capture the touch being attributed before the trailing relay
-			// advances the retained previous state.
-			nmtypes.Relay(symbolPrevBid, symbolAttrPrevBid),
-			nmtypes.Relay(symbolPrevAsk, symbolAttrPrevAsk),
-			nmtypes.Relay(symbolPrevBidQty, symbolAttrPrevBidQty),
-			nmtypes.Relay(symbolPrevAskQty, symbolAttrPrevAskQty),
-
-			// Bracket duration between the previous and current observation.
-			nmtypes.Wire(
-				temporal.Duration,
-				nmtypes.In(symbolAtSec, temporal.SymbolCurrentSec),
-				nmtypes.In(symbolAtNsec, temporal.SymbolCurrentNsec),
-				nmtypes.In(symbolPrevAtSec, temporal.SymbolPreviousSec),
-				nmtypes.In(symbolPrevAtNsec, temporal.SymbolPreviousNsec),
-				nmtypes.Out(temporal.SymbolDelta, symbolDeltaT),
-			),
-
-			// Touch price log change: log(P1/P0) per side.
-			nmtypes.Wire(
-				calculus.LogRatio,
-				nmtypes.In(symbolBidPrice, calculus.SymbolCurrent),
-				nmtypes.In(symbolPrevBid, calculus.SymbolPrevious),
-				nmtypes.Out(calculus.PortResult, symbolBidLog),
-			),
-			nmtypes.Wire(
-				calculus.LogRatio,
-				nmtypes.In(symbolAskPrice, calculus.SymbolCurrent),
-				nmtypes.In(symbolPrevAsk, calculus.SymbolPrevious),
-				nmtypes.Out(calculus.PortResult, symbolAskLog),
-			),
-
-			// Bid disposition: net withdrawal and replenishment at an unchanged
-			// price, and retreat when the bid moves away.
-			nmtypes.Wire(
-				calculus.Difference,
-				nmtypes.In(symbolPrevBidQty, calculus.PortA),
-				nmtypes.In(symbolBidQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolBidQtyDiff),
-			),
-			nmtypes.Wire(
-				calculus.Positive,
-				nmtypes.In(symbolBidQtyDiff, calculus.PortX),
-				nmtypes.Out(calculus.PortResult, symbolBidWithdrawalRaw),
-			),
-			nmtypes.Wire(
-				calculus.Difference,
-				nmtypes.In(symbolBidQty, calculus.PortA),
-				nmtypes.In(symbolPrevBidQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolBidReplenishDiff),
-			),
-			nmtypes.Wire(
-				calculus.Positive,
-				nmtypes.In(symbolBidReplenishDiff, calculus.PortX),
-				nmtypes.Out(calculus.PortResult, symbolBidReplenishRaw),
-			),
-			nmtypes.Wire(
-				logic.Equal,
-				nmtypes.In(symbolBidPrice, calculus.PortA),
-				nmtypes.In(symbolPrevBid, calculus.PortB),
-				nmtypes.Out(logic.SymbolResult, symbolBidUnchanged),
-			),
-			nmtypes.Wire(
-				logic.LessThan,
-				nmtypes.In(symbolBidPrice, calculus.PortA),
-				nmtypes.In(symbolPrevBid, calculus.PortB),
-				nmtypes.Out(logic.SymbolResult, symbolBidRetreat),
-			),
-			nmtypes.Wire(
-				logic.Gate,
-				nmtypes.In(symbolBidUnchanged, logic.SymbolCondition),
-				nmtypes.In(symbolBidWithdrawalRaw, logic.SymbolValue),
-				nmtypes.Out(logic.SymbolResult, symbolBidWithdrawn),
-			),
-			nmtypes.Wire(
-				logic.Gate,
-				nmtypes.In(symbolBidUnchanged, logic.SymbolCondition),
-				nmtypes.In(symbolBidReplenishRaw, logic.SymbolValue),
-				nmtypes.Out(logic.SymbolResult, symbolBidReplenished),
-			),
-			nmtypes.Wire(
-				logic.Gate,
-				nmtypes.In(symbolBidRetreat, logic.SymbolCondition),
-				nmtypes.In(symbolPrevBidQty, logic.SymbolValue),
-				nmtypes.Out(logic.SymbolResult, symbolBidRetreated),
-			),
-
-			// Ask disposition mirrors the bid; ask retreat is a rising ask.
-			nmtypes.Wire(
-				calculus.Difference,
-				nmtypes.In(symbolPrevAskQty, calculus.PortA),
-				nmtypes.In(symbolAskQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolAskQtyDiff),
-			),
-			nmtypes.Wire(
-				calculus.Positive,
-				nmtypes.In(symbolAskQtyDiff, calculus.PortX),
-				nmtypes.Out(calculus.PortResult, symbolAskWithdrawalRaw),
-			),
-			nmtypes.Wire(
-				calculus.Difference,
-				nmtypes.In(symbolAskQty, calculus.PortA),
-				nmtypes.In(symbolPrevAskQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolAskReplenishDiff),
-			),
-			nmtypes.Wire(
-				calculus.Positive,
-				nmtypes.In(symbolAskReplenishDiff, calculus.PortX),
-				nmtypes.Out(calculus.PortResult, symbolAskReplenishRaw),
-			),
-			nmtypes.Wire(
-				logic.Equal,
-				nmtypes.In(symbolAskPrice, calculus.PortA),
-				nmtypes.In(symbolPrevAsk, calculus.PortB),
-				nmtypes.Out(logic.SymbolResult, symbolAskUnchanged),
-			),
-			nmtypes.Wire(
-				logic.GreaterThan,
-				nmtypes.In(symbolAskPrice, calculus.PortA),
-				nmtypes.In(symbolPrevAsk, calculus.PortB),
-				nmtypes.Out(logic.SymbolResult, symbolAskRetreat),
-			),
-			nmtypes.Wire(
-				logic.Gate,
-				nmtypes.In(symbolAskUnchanged, logic.SymbolCondition),
-				nmtypes.In(symbolAskWithdrawalRaw, logic.SymbolValue),
-				nmtypes.Out(logic.SymbolResult, symbolAskWithdrawn),
-			),
-			nmtypes.Wire(
-				logic.Gate,
-				nmtypes.In(symbolAskUnchanged, logic.SymbolCondition),
-				nmtypes.In(symbolAskReplenishRaw, logic.SymbolValue),
-				nmtypes.Out(logic.SymbolResult, symbolAskReplenished),
-			),
-			nmtypes.Wire(
-				logic.Gate,
-				nmtypes.In(symbolAskRetreat, logic.SymbolCondition),
-				nmtypes.In(symbolPrevAskQty, logic.SymbolValue),
-				nmtypes.Out(logic.SymbolResult, symbolAskRetreated),
-			),
-
-			// Fractions over the attributed previous touch quantity.
-			nmtypes.Wire(
-				calculus.Quotient,
-				nmtypes.In(symbolBidWithdrawn, calculus.PortA),
-				nmtypes.In(symbolAttrPrevBidQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, withdrawalBidSample),
-			),
-			nmtypes.Wire(
-				calculus.Quotient,
-				nmtypes.In(symbolAskWithdrawn, calculus.PortA),
-				nmtypes.In(symbolAttrPrevAskQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, withdrawalAskSample),
-			),
-			nmtypes.Wire(
-				calculus.Quotient,
-				nmtypes.In(symbolBidReplenished, calculus.PortA),
-				nmtypes.In(symbolAttrPrevBidQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolBidReplenishFraction),
-			),
-			nmtypes.Wire(
-				calculus.Quotient,
-				nmtypes.In(symbolAskReplenished, calculus.PortA),
-				nmtypes.In(symbolAttrPrevAskQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolAskReplenishFraction),
-			),
-			nmtypes.Wire(
-				calculus.Quotient,
-				nmtypes.In(symbolBidRetreated, calculus.PortA),
-				nmtypes.In(symbolAttrPrevBidQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, retreatBidSample),
-			),
-			nmtypes.Wire(
-				calculus.Quotient,
-				nmtypes.In(symbolAskRetreated, calculus.PortA),
-				nmtypes.In(symbolAttrPrevAskQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, retreatAskSample),
-			),
-
-			// Causal estimator chains for the withdrawal fraction, per side.
-			temporal.Window(prefixWithdrawalBid),
-			statistic.ZScore(prefixWithdrawalBid),
-			statistic.Baseline(prefixWithdrawalBid),
-			statistic.Velocity(prefixWithdrawalBid),
-			temporal.Window(prefixWithdrawalAsk),
-			statistic.ZScore(prefixWithdrawalAsk),
-			statistic.Baseline(prefixWithdrawalAsk),
-			statistic.Velocity(prefixWithdrawalAsk),
-
-			// Causal estimator chains for the retreat fraction, per side.
-			temporal.Window(prefixRetreatBid),
-			statistic.ZScore(prefixRetreatBid),
-			statistic.Baseline(prefixRetreatBid),
-			temporal.Window(prefixRetreatAsk),
-			statistic.ZScore(prefixRetreatAsk),
-			statistic.Baseline(prefixRetreatAsk),
-
-			// Rates over the bracket duration, emitted only when the bracket
-			// is non-empty (a positive elapsed duration exists).
-			nmtypes.Assign(symbolZero, 0),
+			surrenderSides,
+			// A one-sided message must still COMMIT, so the side it carried is
+			// retained for the step that finally completes the touch. Number
+			// only commits a frame whose Err is nil, so the disposition
+			// pipeline is GATED on both sides being present rather than
+			// guarded by a bare PositiveOrder that would fail the whole frame
+			// and discard the very price that needs retaining.
+			//
+			// symbolTouchComplete is seeded by Step, which is the only place
+			// that knows both what this message carried and what the symbol's
+			// committed frame already holds.
 			logic.If(
 				nmtypes.Wire(
-					logic.GreaterThan,
-					nmtypes.In(symbolDeltaT, calculus.PortA),
-					nmtypes.In(symbolZero, calculus.PortB),
+					nmtypes.Identity,
+					nmtypes.In(symbolTouchUncrossed, logic.SymbolCondition),
 					nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
 				),
 				nmtypes.Pipe(
+
+					// Capture the touch being attributed before the trailing relay
+					// advances the retained previous state.
+					nmtypes.Relay(symbolPrevBid, symbolAttrPrevBid),
+					nmtypes.Relay(symbolPrevAsk, symbolAttrPrevAsk),
+					nmtypes.Relay(symbolPrevBidQty, symbolAttrPrevBidQty),
+					nmtypes.Relay(symbolPrevAskQty, symbolAttrPrevAskQty),
+
+					// Bracket duration between the previous and current observation.
 					nmtypes.Wire(
-						calculus.Rate,
-						nmtypes.In(symbolBidWithdrawn, calculus.SymbolCount),
-						nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
-						nmtypes.Out(calculus.SymbolRate, symbolBidWithdrawalRate),
+						temporal.Duration,
+						nmtypes.In(symbolAtSec, temporal.SymbolCurrentSec),
+						nmtypes.In(symbolAtNsec, temporal.SymbolCurrentNsec),
+						nmtypes.In(symbolPrevAtSec, temporal.SymbolPreviousSec),
+						nmtypes.In(symbolPrevAtNsec, temporal.SymbolPreviousNsec),
+						nmtypes.Out(temporal.SymbolDelta, symbolDeltaT),
+					),
+
+					// Touch price log change: log(P1/P0) per side.
+					nmtypes.Wire(
+						calculus.LogRatio,
+						nmtypes.In(symbolBidPrice, calculus.SymbolCurrent),
+						nmtypes.In(symbolPrevBid, calculus.SymbolPrevious),
+						nmtypes.Out(calculus.PortResult, symbolBidLog),
 					),
 					nmtypes.Wire(
-						calculus.Rate,
-						nmtypes.In(symbolAskWithdrawn, calculus.SymbolCount),
-						nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
-						nmtypes.Out(calculus.SymbolRate, symbolAskWithdrawalRate),
+						calculus.LogRatio,
+						nmtypes.In(symbolAskPrice, calculus.SymbolCurrent),
+						nmtypes.In(symbolPrevAsk, calculus.SymbolPrevious),
+						nmtypes.Out(calculus.PortResult, symbolAskLog),
+					),
+
+					// Bid disposition: net withdrawal and replenishment at an unchanged
+					// price, and retreat when the bid moves away.
+					nmtypes.Wire(
+						calculus.Difference,
+						nmtypes.In(symbolPrevBidQty, calculus.PortA),
+						nmtypes.In(symbolBidQty, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolBidQtyDiff),
 					),
 					nmtypes.Wire(
-						calculus.Rate,
-						nmtypes.In(symbolBidReplenished, calculus.SymbolCount),
-						nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
-						nmtypes.Out(calculus.SymbolRate, symbolBidReplenishRate),
+						calculus.Positive,
+						nmtypes.In(symbolBidQtyDiff, calculus.PortX),
+						nmtypes.Out(calculus.PortResult, symbolBidWithdrawalRaw),
 					),
 					nmtypes.Wire(
-						calculus.Rate,
-						nmtypes.In(symbolAskReplenished, calculus.SymbolCount),
-						nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
-						nmtypes.Out(calculus.SymbolRate, symbolAskReplenishRate),
+						calculus.Difference,
+						nmtypes.In(symbolBidQty, calculus.PortA),
+						nmtypes.In(symbolPrevBidQty, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolBidReplenishDiff),
 					),
 					nmtypes.Wire(
-						calculus.Rate,
-						nmtypes.In(symbolBidRetreated, calculus.SymbolCount),
-						nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
-						nmtypes.Out(calculus.SymbolRate, symbolBidRetreatRate),
+						calculus.Positive,
+						nmtypes.In(symbolBidReplenishDiff, calculus.PortX),
+						nmtypes.Out(calculus.PortResult, symbolBidReplenishRaw),
 					),
 					nmtypes.Wire(
-						calculus.Rate,
-						nmtypes.In(symbolAskRetreated, calculus.SymbolCount),
-						nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
-						nmtypes.Out(calculus.SymbolRate, symbolAskRetreatRate),
+						logic.Equal,
+						nmtypes.In(symbolBidPrice, calculus.PortA),
+						nmtypes.In(symbolPrevBid, calculus.PortB),
+						nmtypes.Out(logic.SymbolResult, symbolBidUnchanged),
 					),
+					nmtypes.Wire(
+						logic.LessThan,
+						nmtypes.In(symbolBidPrice, calculus.PortA),
+						nmtypes.In(symbolPrevBid, calculus.PortB),
+						nmtypes.Out(logic.SymbolResult, symbolBidRetreat),
+					),
+					nmtypes.Wire(
+						logic.Gate,
+						nmtypes.In(symbolBidUnchanged, logic.SymbolCondition),
+						nmtypes.In(symbolBidWithdrawalRaw, logic.SymbolValue),
+						nmtypes.Out(logic.SymbolResult, symbolBidWithdrawn),
+					),
+					nmtypes.Wire(
+						logic.Gate,
+						nmtypes.In(symbolBidUnchanged, logic.SymbolCondition),
+						nmtypes.In(symbolBidReplenishRaw, logic.SymbolValue),
+						nmtypes.Out(logic.SymbolResult, symbolBidReplenished),
+					),
+					nmtypes.Wire(
+						logic.Gate,
+						nmtypes.In(symbolBidRetreat, logic.SymbolCondition),
+						nmtypes.In(symbolPrevBidQty, logic.SymbolValue),
+						nmtypes.Out(logic.SymbolResult, symbolBidRetreated),
+					),
+
+					// Ask disposition mirrors the bid; ask retreat is a rising ask.
+					nmtypes.Wire(
+						calculus.Difference,
+						nmtypes.In(symbolPrevAskQty, calculus.PortA),
+						nmtypes.In(symbolAskQty, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolAskQtyDiff),
+					),
+					nmtypes.Wire(
+						calculus.Positive,
+						nmtypes.In(symbolAskQtyDiff, calculus.PortX),
+						nmtypes.Out(calculus.PortResult, symbolAskWithdrawalRaw),
+					),
+					nmtypes.Wire(
+						calculus.Difference,
+						nmtypes.In(symbolAskQty, calculus.PortA),
+						nmtypes.In(symbolPrevAskQty, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolAskReplenishDiff),
+					),
+					nmtypes.Wire(
+						calculus.Positive,
+						nmtypes.In(symbolAskReplenishDiff, calculus.PortX),
+						nmtypes.Out(calculus.PortResult, symbolAskReplenishRaw),
+					),
+					nmtypes.Wire(
+						logic.Equal,
+						nmtypes.In(symbolAskPrice, calculus.PortA),
+						nmtypes.In(symbolPrevAsk, calculus.PortB),
+						nmtypes.Out(logic.SymbolResult, symbolAskUnchanged),
+					),
+					nmtypes.Wire(
+						logic.GreaterThan,
+						nmtypes.In(symbolAskPrice, calculus.PortA),
+						nmtypes.In(symbolPrevAsk, calculus.PortB),
+						nmtypes.Out(logic.SymbolResult, symbolAskRetreat),
+					),
+					nmtypes.Wire(
+						logic.Gate,
+						nmtypes.In(symbolAskUnchanged, logic.SymbolCondition),
+						nmtypes.In(symbolAskWithdrawalRaw, logic.SymbolValue),
+						nmtypes.Out(logic.SymbolResult, symbolAskWithdrawn),
+					),
+					nmtypes.Wire(
+						logic.Gate,
+						nmtypes.In(symbolAskUnchanged, logic.SymbolCondition),
+						nmtypes.In(symbolAskReplenishRaw, logic.SymbolValue),
+						nmtypes.Out(logic.SymbolResult, symbolAskReplenished),
+					),
+					nmtypes.Wire(
+						logic.Gate,
+						nmtypes.In(symbolAskRetreat, logic.SymbolCondition),
+						nmtypes.In(symbolPrevAskQty, logic.SymbolValue),
+						nmtypes.Out(logic.SymbolResult, symbolAskRetreated),
+					),
+
+					// Fractions over the attributed previous touch quantity.
+					nmtypes.Wire(
+						calculus.Quotient,
+						nmtypes.In(symbolBidWithdrawn, calculus.PortA),
+						nmtypes.In(symbolAttrPrevBidQty, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, withdrawalBidSample),
+					),
+					nmtypes.Wire(
+						calculus.Quotient,
+						nmtypes.In(symbolAskWithdrawn, calculus.PortA),
+						nmtypes.In(symbolAttrPrevAskQty, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, withdrawalAskSample),
+					),
+					nmtypes.Wire(
+						calculus.Quotient,
+						nmtypes.In(symbolBidReplenished, calculus.PortA),
+						nmtypes.In(symbolAttrPrevBidQty, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolBidReplenishFraction),
+					),
+					nmtypes.Wire(
+						calculus.Quotient,
+						nmtypes.In(symbolAskReplenished, calculus.PortA),
+						nmtypes.In(symbolAttrPrevAskQty, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolAskReplenishFraction),
+					),
+					nmtypes.Wire(
+						calculus.Quotient,
+						nmtypes.In(symbolBidRetreated, calculus.PortA),
+						nmtypes.In(symbolAttrPrevBidQty, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, retreatBidSample),
+					),
+					nmtypes.Wire(
+						calculus.Quotient,
+						nmtypes.In(symbolAskRetreated, calculus.PortA),
+						nmtypes.In(symbolAttrPrevAskQty, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, retreatAskSample),
+					),
+
+					// Causal estimator chains for the withdrawal fraction, per side.
+					temporal.Window(prefixWithdrawalBid),
+					statistic.ZScore(prefixWithdrawalBid),
+					statistic.Baseline(prefixWithdrawalBid),
+					statistic.Velocity(prefixWithdrawalBid),
+					temporal.Window(prefixWithdrawalAsk),
+					statistic.ZScore(prefixWithdrawalAsk),
+					statistic.Baseline(prefixWithdrawalAsk),
+					statistic.Velocity(prefixWithdrawalAsk),
+
+					// Causal estimator chains for the retreat fraction, per side.
+					temporal.Window(prefixRetreatBid),
+					statistic.ZScore(prefixRetreatBid),
+					statistic.Baseline(prefixRetreatBid),
+					temporal.Window(prefixRetreatAsk),
+					statistic.ZScore(prefixRetreatAsk),
+					statistic.Baseline(prefixRetreatAsk),
+
+					// Rates over the bracket duration, emitted only when the bracket
+					// is non-empty (a positive elapsed duration exists).
+					nmtypes.Assign(symbolZero, 0),
+					logic.If(
+						nmtypes.Wire(
+							logic.GreaterThan,
+							nmtypes.In(symbolDeltaT, calculus.PortA),
+							nmtypes.In(symbolZero, calculus.PortB),
+							nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+						),
+						nmtypes.Pipe(
+							nmtypes.Wire(
+								calculus.Rate,
+								nmtypes.In(symbolBidWithdrawn, calculus.SymbolCount),
+								nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
+								nmtypes.Out(calculus.SymbolRate, symbolBidWithdrawalRate),
+							),
+							nmtypes.Wire(
+								calculus.Rate,
+								nmtypes.In(symbolAskWithdrawn, calculus.SymbolCount),
+								nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
+								nmtypes.Out(calculus.SymbolRate, symbolAskWithdrawalRate),
+							),
+							nmtypes.Wire(
+								calculus.Rate,
+								nmtypes.In(symbolBidReplenished, calculus.SymbolCount),
+								nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
+								nmtypes.Out(calculus.SymbolRate, symbolBidReplenishRate),
+							),
+							nmtypes.Wire(
+								calculus.Rate,
+								nmtypes.In(symbolAskReplenished, calculus.SymbolCount),
+								nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
+								nmtypes.Out(calculus.SymbolRate, symbolAskReplenishRate),
+							),
+							nmtypes.Wire(
+								calculus.Rate,
+								nmtypes.In(symbolBidRetreated, calculus.SymbolCount),
+								nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
+								nmtypes.Out(calculus.SymbolRate, symbolBidRetreatRate),
+							),
+							nmtypes.Wire(
+								calculus.Rate,
+								nmtypes.In(symbolAskRetreated, calculus.SymbolCount),
+								nmtypes.In(symbolDeltaT, calculus.SymbolDuration),
+								nmtypes.Out(calculus.SymbolRate, symbolAskRetreatRate),
+							),
+						),
+						nil,
+					),
+
+					// Advance the previous touch and clock to the current observation.
+					nmtypes.Relay(symbolBidPrice, symbolPrevBid),
+					nmtypes.Relay(symbolAskPrice, symbolPrevAsk),
+					nmtypes.Relay(symbolBidQty, symbolPrevBidQty),
+					nmtypes.Relay(symbolAskQty, symbolPrevAskQty),
+					nmtypes.Relay(symbolAtSec, symbolPrevAtSec),
+					nmtypes.Relay(symbolAtNsec, symbolPrevAtNsec),
 				),
 				nil,
 			),
-
-			// Advance the previous touch and clock to the current observation.
-			nmtypes.Relay(symbolBidPrice, symbolPrevBid),
-			nmtypes.Relay(symbolAskPrice, symbolPrevAsk),
-			nmtypes.Relay(symbolBidQty, symbolPrevBidQty),
-			nmtypes.Relay(symbolAskQty, symbolPrevAskQty),
-			nmtypes.Relay(symbolAtSec, symbolPrevAtSec),
-			nmtypes.Relay(symbolAtNsec, symbolPrevAtNsec),
 		)),
 		projector: data.NewProjector(
 			data.Binding{From: symbolBidPrice, Name: "best_price:bid", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
@@ -464,63 +492,57 @@ func NewLevel3() *Level3 {
 }
 
 /*
-bestTouch derives the current touch from one Level3Data message, borrowing the
-opposite side's last retained touch when the message is one-sided (Kraken sends
-Level-3 as one-sided incremental updates). A side remains zero until it has
-been observed at least once.
-*/
-func (level3 *Level3) bestTouch(message kraken.Level3Data) (bidPrice, askPrice, bidQty, askQty float64) {
-	var messageBidPrice, messageAskPrice, messageBidQty, messageAskQty float64
+bestTouch derives this message's own best bid and ask. It is a pure function of
+the message: a side with no usable resting order returns zero, meaning "this
+message said nothing about that side", NOT "that side is empty". Retention of
+the untouched side is the Number pipeline's committed frame, not this
+function's — a parallel Go-side copy of state the pipeline already holds per
+symbol would be a second, unsynchronised source of truth.
 
+A delete event reports the order being REMOVED from the book, so its price and
+quantity describe vanished liquidity. Counting it as the touch would read
+withdrawn size as resting size, so deletes are excluded here; the remaining
+touch is whatever the message still shows resting.
+*/
+func (level3 *Level3) bestTouch(
+	message kraken.Level3Data,
+) (bidPrice, askPrice, bidQty, askQty float64) {
 	for _, order := range message.Bids {
-		if order.LimitPrice == nil || order.OrderQty == nil {
+		if !order.Resting() {
 			continue
 		}
 
-		if price := order.LimitPrice.Float64(); price > messageBidPrice {
-			messageBidPrice = price
-			messageBidQty = order.OrderQty.Float64()
+		if price := order.LimitPrice.Float64(); price > bidPrice {
+			bidPrice = price
+			bidQty = order.OrderQty.Float64()
 		}
 	}
 
 	for _, order := range message.Asks {
-		if order.LimitPrice == nil || order.OrderQty == nil {
+		if !order.Resting() {
 			continue
 		}
 
-		if price := order.LimitPrice.Float64(); messageAskPrice == 0 || price < messageAskPrice {
-			messageAskPrice = price
-			messageAskQty = order.OrderQty.Float64()
+		if price := order.LimitPrice.Float64(); askPrice == 0 || price < askPrice {
+			askPrice = price
+			askQty = order.OrderQty.Float64()
 		}
 	}
-
-	level3.touchMu.Lock()
-
-	bidPrice, bidQty = level3.lastBid[message.Symbol], level3.lastBidQty[message.Symbol]
-	askPrice, askQty = level3.lastAsk[message.Symbol], level3.lastAskQty[message.Symbol]
-
-	if messageBidPrice > 0 {
-		bidPrice, bidQty = messageBidPrice, messageBidQty
-		level3.lastBid[message.Symbol] = messageBidPrice
-		level3.lastBidQty[message.Symbol] = messageBidQty
-	}
-
-	if messageAskPrice > 0 {
-		askPrice, askQty = messageAskPrice, messageAskQty
-		level3.lastAsk[message.Symbol] = messageAskPrice
-		level3.lastAskQty[message.Symbol] = messageAskQty
-	}
-
-	level3.touchMu.Unlock()
 
 	return bidPrice, askPrice, bidQty, askQty
 }
 
 /*
-Step derives the current touch directly from this Level3Data message's own
-visible bid/ask orders, loads the touch facts, runs the Number pipeline, and
-projects exactly one measurement. A message with no usable touch on either
-side is rejected via the Measurement's Err field rather than by panicking.
+Step derives this message's own touch, loads the touch facts, runs the Number
+pipeline, and projects a measurement once the touch is complete.
+
+Kraken sends Level-3 as one-sided incremental updates, so the side a message
+did not carry must come from the symbol's committed frame. Only a side this
+message actually showed is put into the input: Number merges the input OVER
+the committed frame, so an omitted side keeps the value an earlier step
+committed. A message that completes no touch yet still STEPS — committing the
+side it carried — and simply reports nothing, because an incomplete touch is
+the normal opening state of an incremental feed, not a failure.
 */
 func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64] {
 	if level3 == nil {
@@ -528,46 +550,142 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 	}
 
 	bidPrice, askPrice, bidQty, askQty := level3.bestTouch(message)
-
-	if bidPrice == 0 || askPrice == 0 {
-		return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: book touch missing for %s", message.Symbol)}
-	}
-
 	symbol := message.Symbol
 	at := message.Timestamp
 	sec := float64(at.Unix())
 	nsec := float64(at.Nanosecond())
 
+	retainedBid, hasRetainedBid := 0.0, false
+	retainedAsk, hasRetainedAsk := 0.0, false
+
+	if prior, found := level3.number.Project(symbol); found {
+		retainedBid, hasRetainedBid = prior.Get(symbolBidPrice)
+		retainedAsk, hasRetainedAsk = prior.Get(symbolAskPrice)
+	}
+
 	input := nmtypes.Frame{}
-	input.Put(symbolBidPrice, bidPrice)
-	input.Put(symbolAskPrice, askPrice)
-	input.Put(symbolBidQty, bidQty)
-	input.Put(symbolAskQty, askQty)
 	input.Put(symbolAtSec, sec)
 	input.Put(symbolAtNsec, nsec)
 
+	// A message announces orders; it does not restate the side. Kraken sends
+	// Level-3 as one-sided incremental updates covering a depth window, so a
+	// message adding a WORSE price than the one already resting says nothing
+	// about the touch — the better order is still on the book. Taking this
+	// message's price unconditionally would walk the retained touch away from
+	// the best price and attribute against a level that is not the touch.
+	//
+	// An order AT the retained touch is accepted: a size change at the touch
+	// price is the withdrawal/replenishment this signal exists to measure.
+	//
+	// A delete cannot be resolved this way: the next-best level lives in a
+	// book this entity deliberately does not retain, so a message that
+	// withdraws the retained touch surrenders the side rather than guessing.
+	withdrewBid := withdrawsPrice(message.Bids, retainedBid, hasRetainedBid)
+	withdrewAsk := withdrawsPrice(message.Asks, retainedAsk, hasRetainedAsk)
+
+	if bidPrice == 0 && askPrice == 0 && !withdrewBid && !withdrewAsk {
+		return nil
+	}
+
+	if bidPrice > 0 && (!hasRetainedBid || bidPrice >= retainedBid || withdrewBid) {
+		input.Put(symbolBidPrice, bidPrice)
+		input.Put(symbolBidQty, bidQty)
+	}
+
+	if askPrice > 0 && (!hasRetainedAsk || askPrice <= retainedAsk || withdrewAsk) {
+		input.Put(symbolAskPrice, askPrice)
+		input.Put(symbolAskQty, askQty)
+	}
+
 	loadSeriesClock(&input, sec, nsec)
 
+	// Completeness is decided here because this is the only place that knows
+	// both what the message carried and what the symbol's frame already holds.
+	// A logic predicate cannot ask "is this slot present?" — it errors on an
+	// absent input rather than reporting absence.
+	hasBid, hasAsk := bidPrice > 0, askPrice > 0
+	effectiveBid, effectiveAsk := bidPrice, askPrice
+	effectiveBidQty, effectiveAskQty := bidQty, askQty
 	committed, found := level3.number.Project(symbol)
 
-	if !found || !committed.Has(symbolPrevBid) {
-		// The first comparable observation anchors the previous touch with
-		// itself: a bracket of one observation has no movement to attribute.
-		input.Put(symbolPrevBid, bidPrice)
-		input.Put(symbolPrevAsk, askPrice)
-		input.Put(symbolPrevBidQty, bidQty)
-		input.Put(symbolPrevAskQty, askQty)
+	if found {
+		if !hasBid {
+			effectiveBid, hasBid = committed.Get(symbolBidPrice)
+			effectiveBidQty, _ = committed.Get(symbolBidQty)
+		}
+
+		if !hasAsk {
+			effectiveAsk, hasAsk = committed.Get(symbolAskPrice)
+			effectiveAskQty, _ = committed.Get(symbolAskQty)
+		}
+	}
+
+	// A withdrawn touch that this message did not replace leaves the side
+	// genuinely unknown: the entity keeps no book, so it cannot name the next
+	// level. Reporting the withdrawn price would publish liquidity that is
+	// gone; the side is surrendered until the feed names a new touch.
+	surrenderBid := withdrewBid && bidPrice == 0
+	surrenderAsk := withdrewAsk && askPrice == 0
+
+	if surrenderBid {
+		hasBid = false
+		effectiveBid, effectiveBidQty = 0, 0
+	}
+
+	if surrenderAsk {
+		hasAsk = false
+		effectiveAsk, effectiveAskQty = 0, 0
+	}
+
+	input.Put(symbolSurrenderBid, oneWhen(surrenderBid))
+	input.Put(symbolSurrenderAsk, oneWhen(surrenderAsk))
+
+	complete := 0.0
+
+	if hasBid && hasAsk {
+		complete = 1
+	}
+
+	input.Put(symbolTouchComplete, complete)
+
+	// The touch is attributable only when it is a real book. The prices
+	// compared here are the ones the pipeline will see: this message's own
+	// price on a side it carried, the committed price on a side it did not.
+	uncrossed := 0.0
+
+	if complete == 1 && effectiveBid > 0 && effectiveBid < effectiveAsk {
+		uncrossed = 1
+	}
+
+	input.Put(symbolTouchUncrossed, uncrossed)
+
+	// The first UNCROSSED observation anchors the previous touch with itself: a
+	// bracket of one observation has no movement to attribute. The anchor is
+	// gated on the touch being a real book, not on the mere presence of a
+	// previous bid: a one-sided opening commits its own side, so anchoring
+	// then would leave the still-unseen side pinned at zero, and anchoring a
+	// crossed touch would pin an inverted bracket that every later
+	// attribution measures against.
+	if uncrossed == 1 && (!found || !committed.Has(symbolPrevBid)) {
+		input.Put(symbolPrevBid, effectiveBid)
+		input.Put(symbolPrevAsk, effectiveAsk)
+		input.Put(symbolPrevBidQty, effectiveBidQty)
+		input.Put(symbolPrevAskQty, effectiveAskQty)
 		input.Put(symbolPrevAtSec, sec)
 		input.Put(symbolPrevAtNsec, nsec)
 	}
 
-	return level3.projector.Project(
-		symbol,
-		"toxicity",
-		at,
-		at,
-		level3.number.Step(symbol, input),
-	)
+	frame := level3.number.Step(symbol, input)
+
+	// The step still ran, so this message's side is now committed and will
+	// complete a later touch. It just has nothing to report yet: projecting
+	// here would publish a measurement carrying one side alone, which reads
+	// downstream as a real observation rather than a half-formed one.
+	if uncrossed == 0 {
+		return nil
+	}
+
+	return level3.projector.Project(symbol, "toxicity", at, at, frame)
 }
 
 /*
@@ -586,3 +704,53 @@ func loadSeriesClock(input *nmtypes.Frame, sec float64, nsec float64) {
 }
 
 func (level3 *Level3) Close() error { return nil }
+
+/*
+withdrawsPrice reports whether this message deletes the order resting at the
+retained touch price. The next-best level is only knowable from a full book,
+which this entity deliberately does not keep, so a withdrawn touch surrenders
+the side and waits for the feed to name a new one.
+*/
+func withdrawsPrice(orders []kraken.Level3Order, retained float64, hasRetained bool) bool {
+	if !hasRetained || retained <= 0 {
+		return false
+	}
+
+	for _, order := range orders {
+		if order.Event != "delete" || order.LimitPrice == nil {
+			continue
+		}
+
+		if order.LimitPrice.Float64() == retained {
+			return true
+		}
+	}
+
+	return false
+}
+
+func oneWhen(condition bool) float64 {
+	if condition {
+		return 1
+	}
+
+	return 0
+}
+
+/*
+surrenderSides clears a side whose retained touch was withdrawn without a
+replacement. It runs first, on the frame Number has already merged, so every
+later stage sees a side that is genuinely absent rather than one holding a
+price that is no longer on the book.
+*/
+func surrenderSides(input *nmtypes.Frame) {
+	if surrender, found := input.Get(symbolSurrenderBid); found && surrender != 0 {
+		input.Delete(symbolBidPrice)
+		input.Delete(symbolBidQty)
+	}
+
+	if surrender, found := input.Get(symbolSurrenderAsk); found && surrender != 0 {
+		input.Delete(symbolAskPrice)
+		input.Delete(symbolAskQty)
+	}
+}

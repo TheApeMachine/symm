@@ -45,6 +45,24 @@ func TestHubStepNonBlocking(t *testing.T) {
 	})
 }
 
+func TestHubStep(t *testing.T) {
+	Convey("Given a hub with no dashboard clients", t, func() {
+		hub := &Hub{
+			clients: &sync.Map{},
+			fluid:   NewFluidRTC(t.Context(), "hub-test"),
+		}
+		envelope := &types.Envelope{Key: "TEST/USD"}
+
+		Convey("Step does not allocate a discarded FlatBuffer snapshot", func() {
+			allocations := testing.AllocsPerRun(100, func() {
+				hub.Step(envelope)
+			})
+
+			So(allocations, ShouldEqual, 0)
+		})
+	})
+}
+
 /*
 TestClientEnqueueLatestWins proves stale pending snapshots are replaced rather
 than queued, so a slow viewer receives the freshest frame when it catches up.

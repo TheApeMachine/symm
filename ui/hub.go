@@ -38,16 +38,17 @@ arrive over the same socket and are handled directly by the connection's
 handler goroutine, so there are no per-client writer or reader goroutines.
 */
 type Hub struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	err        error
-	app        *fiber.App
-	listenAddr string
-	clients    *sync.Map
-	store      *store.SQLite
-	tradeStore TradeJournalSource
-	timelines  *timelineCache
-	fluid      *FluidRTC
+	ctx              context.Context
+	cancel           context.CancelFunc
+	err              error
+	app              *fiber.App
+	listenAddr       string
+	clients          *sync.Map
+	store            *store.SQLite
+	tradeStore       TradeJournalSource
+	timelines        *timelineCache
+	fluid            *FluidRTC
+	manifoldSnapshot func() *types.ManifoldState
 }
 
 type Client struct {
@@ -416,19 +417,25 @@ Observe HandlerGroup, so a disconnected or slow UI cannot change what the
 system believes.
 */
 func (hub *Hub) Step(envelope *types.Envelope) *types.Envelope {
-	payload := envelope.EncodeWebsocket()
+	if envelope == nil {
+		return envelope
+	}
 
-	hub.clients.Range(func(key, value any) bool {
-		client, valid := value.(*Client)
+	if hub.clientReady() {
+		payload := envelope.EncodeWebsocket()
 
-		if !valid || client == nil {
+		hub.clients.Range(func(key, value any) bool {
+			client, valid := value.(*Client)
+
+			if !valid || client == nil {
+				return true
+			}
+
+			client.enqueue(payload)
+
 			return true
-		}
-
-		client.enqueue(payload)
-
-		return true
-	})
+		})
+	}
 
 	// The three high-volume, loss-tolerant payloads leave the websocket and
 	// ride their own WebRTC channels instead. Each is encoded only when a
@@ -438,7 +445,13 @@ func (hub *Hub) Step(envelope *types.Envelope) *types.Envelope {
 	// historical truth lives in Hindsight/raw capture; external viewers can
 	// never backpressure trading computation.
 	if envelope.Manifold != nil && hub.fluid.HasChannel(types.ManifoldChannel) {
-		if err := hub.fluid.Publish(envelope.Manifold); err != nil {
+		state := envelope.Manifold
+
+		if hub.manifoldSnapshot != nil {
+			state = hub.manifoldSnapshot()
+		}
+
+		if err := hub.fluid.Publish(state); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.IO,
 				"hub: publish manifold frame",
@@ -470,6 +483,36 @@ func (hub *Hub) Step(envelope *types.Envelope) *types.Envelope {
 	return envelope
 }
 
+/*
+clientReady reports whether at least one dashboard has consumed its prior
+replaceable frame. FlatBuffer construction is skipped while no viewer exists or
+every viewer already has a pending frame, so market ingress never allocates
+snapshots merely to discard them.
+*/
+func (hub *Hub) clientReady() bool {
+	if hub == nil || hub.clients == nil {
+		return false
+	}
+
+	ready := false
+	hub.clients.Range(func(key, value any) bool {
+		client, valid := value.(*Client)
+
+		if !valid || client == nil || client.queue == nil {
+			return true
+		}
+
+		if len(client.queue) == 0 {
+			ready = true
+			return false
+		}
+
+		return true
+	})
+
+	return ready
+}
+
 func (hub *Hub) Name() string { return "hub" }
 func (hub *Hub) Error() error { return hub.err }
 
@@ -497,6 +540,18 @@ func (hub *Hub) SetTradeStore(source TradeJournalSource) {
 	}
 
 	hub.tradeStore = source
+}
+
+/*
+SetManifoldSnapshot supplies the demand-only materializer used when a manifold
+viewer is connected. Ordinary market envelopes carry only the scalar reading.
+*/
+func (hub *Hub) SetManifoldSnapshot(snapshot func() *types.ManifoldState) {
+	if hub == nil {
+		return
+	}
+
+	hub.manifoldSnapshot = snapshot
 }
 
 /*

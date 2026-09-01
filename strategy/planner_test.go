@@ -23,8 +23,9 @@ func TestPlannerDecide(t *testing.T) {
 		Convey("both probabilities must clear admission independently", func() {
 			decision := planner.decide(forecast)
 			So(decision.Action, ShouldEqual, types.ActionEnter)
-			So(decision.ExpectedReturn, ShouldBeNil)
 			So(decision.Confidence, ShouldEqual, 0.8)
+			_, predictsAmount := decision.Alternatives["expected_return"]
+			So(predictsAmount, ShouldBeFalse)
 		})
 
 		Convey("a selected symbol below policy remains out", func() {

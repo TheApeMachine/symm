@@ -107,6 +107,10 @@ struct KernelDispatch {
         [ctx->current_encoder dispatchThreadgroups:MTLSizeMake(num_groups, 1, 1)
                             threadsPerThreadgroup:MTLSizeMake(tg_threads, 1, 1)];
     }
+
+    inline void buffer_barrier() {
+        [ctx->current_encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+    }
 };
 
 extern "C" {
@@ -854,6 +858,8 @@ void manifold_coherence_gpe_step(
     ManifoldBuffer* carrier_imag,
     ManifoldBuffer* carrier_omega,
     ManifoldBuffer* carrier_gate_width,
+    ManifoldBuffer* kinetic_real,
+    ManifoldBuffer* kinetic_imag,
     ManifoldBuffer* carrier_anchor_idx,
     ManifoldBuffer* carrier_anchor_weight,
     ManifoldBuffer* accums,
@@ -864,25 +870,71 @@ void manifold_coherence_gpe_step(
     ManifoldBuffer* extra_potential
 ) {
     if (prm.max_carriers == 0) return;
-    KernelDispatch k(ctx, "coherence_gpe_step");
-    k.set_buffer(osc_phase, 0);
-    k.set_buffer(osc_omega, 1);
-    k.set_buffer(osc_amp, 2);
-    k.set_buffer(carrier_real, 3);
-    k.set_buffer(carrier_imag, 4);
-    k.set_buffer(carrier_omega, 5);
-    k.set_buffer(carrier_gate_width, 6);
-    k.set_buffer(carrier_anchor_idx, 7);
-    k.set_buffer(carrier_anchor_weight, 8);
-    k.set_buffer(accums, 9);
-    k.set_buffer(num_carriers_snapshot, 10);
-    k.set_buffer(particle_pos, 11);
-    k.set_bytes(prm, 12);
-    k.set_bytes(gp, 13);
-    if (extra_potential && extra_potential->mtl_buffer) {
-        k.set_buffer(extra_potential, 14);
+
+    {
+        KernelDispatch local(ctx, "coherence_gpe_step");
+        local.set_buffer(osc_phase, 0);
+        local.set_buffer(osc_omega, 1);
+        local.set_buffer(osc_amp, 2);
+        local.set_buffer(carrier_real, 3);
+        local.set_buffer(carrier_imag, 4);
+        local.set_buffer(carrier_omega, 5);
+        local.set_buffer(carrier_gate_width, 6);
+        local.set_buffer(carrier_anchor_idx, 7);
+        local.set_buffer(carrier_anchor_weight, 8);
+        local.set_buffer(accums, 9);
+        local.set_buffer(num_carriers_snapshot, 10);
+        local.set_buffer(particle_pos, 11);
+        local.set_bytes(prm, 12);
+        local.set_bytes(gp, 13);
+
+        if (extra_potential && extra_potential->mtl_buffer) {
+            local.set_buffer(extra_potential, 14);
+        }
+
+        local.dispatch_1d(prm.max_carriers);
+        local.buffer_barrier();
     }
-    k.dispatch_1d(prm.max_carriers);
+
+    if (gp.mass_eff > 0.0f && gp.inv_domega2 > 0.0f) {
+        const uint32_t max_modes = prm.max_carriers;
+
+        {
+            KernelDispatch transform(ctx, "coherence_gpe_kinetic_dft");
+            transform.set_buffer(carrier_real, 0);
+            transform.set_buffer(carrier_imag, 1);
+            transform.set_buffer(kinetic_real, 2);
+            transform.set_buffer(kinetic_imag, 3);
+            transform.set_buffer(num_carriers_snapshot, 4);
+            transform.set_bytes(max_modes, 5);
+            transform.set_bytes(gp, 6);
+            transform.dispatch_1d(prm.max_carriers);
+            transform.buffer_barrier();
+        }
+
+        {
+            KernelDispatch inverse(ctx, "coherence_gpe_kinetic_idft");
+            inverse.set_buffer(kinetic_real, 0);
+            inverse.set_buffer(kinetic_imag, 1);
+            inverse.set_buffer(carrier_real, 2);
+            inverse.set_buffer(carrier_imag, 3);
+            inverse.set_buffer(num_carriers_snapshot, 4);
+            inverse.set_bytes(max_modes, 5);
+            inverse.dispatch_1d(prm.max_carriers);
+            inverse.buffer_barrier();
+        }
+    }
+
+    {
+        KernelDispatch finish(ctx, "coherence_gpe_finish");
+        finish.set_buffer(carrier_real, 0);
+        finish.set_buffer(carrier_imag, 1);
+        finish.set_buffer(accums, 2);
+        finish.set_buffer(num_carriers_snapshot, 3);
+        finish.set_bytes(prm, 4);
+        finish.set_bytes(gp, 5);
+        finish.dispatch_1d(prm.max_carriers);
+    }
 }
 
 void manifold_coherence_update_oscillator_phases(

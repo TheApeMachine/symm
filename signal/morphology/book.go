@@ -261,7 +261,7 @@ func rawSide(orders []kraken.Level3Order) []distribution.WeightedPoint {
 	points := make([]distribution.WeightedPoint, 0, len(orders))
 
 	for _, order := range orders {
-		if order.LimitPrice == nil || order.OrderQty == nil {
+		if !order.Resting() {
 			continue
 		}
 
@@ -327,7 +327,7 @@ func projectShape(message kraken.Level3Data) ([]distribution.WeightedPoint, []di
 	bidPrice, askPrice := 0.0, 0.0
 
 	for _, order := range message.Bids {
-		if order.LimitPrice == nil {
+		if !order.Resting() {
 			continue
 		}
 
@@ -337,7 +337,7 @@ func projectShape(message kraken.Level3Data) ([]distribution.WeightedPoint, []di
 	}
 
 	for _, order := range message.Asks {
-		if order.LimitPrice == nil {
+		if !order.Resting() {
 			continue
 		}
 
@@ -367,7 +367,7 @@ func foldShape(message kraken.Level3Data, bidPrice float64, askPrice float64) ([
 	whole := make([]distribution.WeightedPoint, 0, len(message.Bids)+len(message.Asks))
 
 	for _, order := range message.Bids {
-		if order.LimitPrice == nil || order.OrderQty == nil {
+		if !order.Resting() {
 			continue
 		}
 
@@ -385,7 +385,7 @@ func foldShape(message kraken.Level3Data, bidPrice float64, askPrice float64) ([
 	}
 
 	for _, order := range message.Asks {
-		if order.LimitPrice == nil || order.OrderQty == nil {
+		if !order.Resting() {
 			continue
 		}
 

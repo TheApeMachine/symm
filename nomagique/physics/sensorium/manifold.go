@@ -267,6 +267,7 @@ func (e *Engine) GasRK2Stage2(
 func (e *Engine) CoherenceGPEStep(
 	oscPhase, oscOmega, oscAmp *Buffer,
 	carrierReal, carrierImag, carrierOmega, carrierGateWidth *Buffer,
+	kineticReal, kineticImag *Buffer,
 	carrierAnchorIdx, carrierAnchorWeight, accums, numCarriersSnapshot, particlePos *Buffer,
 	extraPotential *Buffer,
 	numOsc, maxCarriers int,
@@ -316,6 +317,7 @@ func (e *Engine) CoherenceGPEStep(
 		e.ctx,
 		oscPhase.cBuf, oscOmega.cBuf, oscAmp.cBuf,
 		carrierReal.cBuf, carrierImag.cBuf, carrierOmega.cBuf, carrierGateWidth.cBuf,
+		kineticReal.cBuf, kineticImag.cBuf,
 		carrierAnchorIdx.cBuf, carrierAnchorWeight.cBuf,
 		accums.cBuf, numCarriersSnapshot.cBuf, particlePos.cBuf,
 		prm, gp, extra,

@@ -505,6 +505,8 @@ extern "C"
         ManifoldBuffer *carrier_imag,
         ManifoldBuffer *carrier_omega,
         ManifoldBuffer *carrier_gate_width,
+        ManifoldBuffer *kinetic_real,
+        ManifoldBuffer *kinetic_imag,
         ManifoldBuffer *carrier_anchor_idx,
         ManifoldBuffer *carrier_anchor_weight,
         ManifoldBuffer *accums,

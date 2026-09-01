@@ -3113,42 +3113,21 @@ kernel void coherence_gpe_step(
     // --- load Ψ_k ---
     Complex psi = {mode_real[gid], mode_imag[gid]};
 
-    // --- local potential + drive from observations ---
+    // --- local potential from observations ---
     device CarrierAccumulators& acc = accums[gid];
     float w_sum = atomic_load_explicit(&acc.w_sum, memory_order_relaxed);
     float V_ext = -w_sum;
 
-    // Coherent drive term from oscillators:
-    // - acc.force_r/i is the weighted sum of oscillator phasors in this ω-bin
-    // - acc.w_amp_sum is the corresponding weighted amplitude mass (normalizer)
-    //
-    // Without an explicit source term, Ψ initialized at 0 stays 0 forever under
-    // pure unitary rotation + kinetic terms. This drive is the mechanism by which
-    // oscillator superposition writes into the coherence field.
-    float fr = atomic_load_explicit(&acc.force_r, memory_order_relaxed);
-    float fi = atomic_load_explicit(&acc.force_i, memory_order_relaxed);
-    float was = atomic_load_explicit(&acc.w_amp_sum, memory_order_relaxed);
-    float denom_drive = (was > p.offender_weight_floor) ? was : 0.0f;
-    Complex drive = {0.0f, 0.0f};
-    if (denom_drive > 0.0f && isfinite(fr) && isfinite(fi)) {
-        drive = c_scale((Complex){fr, fi}, 1.0f / denom_drive);
-    }
-
-    // --- Strang-style split-step (local potential/nonlinear ↔ kinetic) ---
-    //
-    // We treat this as an open system (observations + optional dissipation), but we
-    // still want phase evolution to be stable enough for interference to persist.
-    // The symmetric split reduces phase drift versus a single forward-Euler blend.
-    //
-    // 1) half-step potential/nonlinear rotation at k
-    // 2) full-step kinetic/tunneling using half-rotated neighbors
-    // 3) half-step potential/nonlinear rotation at k (recompute density after kinetic)
+    // First half of the local potential/nonlinear evolution. The kinetic
+    // propagator runs in separate Fourier kernels between this half and the
+    // matching finish kernel.
     float hbar = gp.hbar_eff;
     if (!(hbar > 0.0f)) {
         mode_real[gid] = qnan_f();
         mode_imag[gid] = qnan_f();
         return;
     }
+
     float half_dt = 0.5f * gp.dt;
 
     // half-step at k
@@ -3159,45 +3138,127 @@ kernel void coherence_gpe_step(
         psi = c_mul(psi, c_exp_i(theta));
     }
 
-    // Kinetic/tunneling (1D Laplacian on ω lattice index space).
-    //
-    // NUMERICAL NOTE:
-    // This is an explicit local discretization of i*(ħ/2m)∇²Ψ. It is NOT an exact
-    // unitary propagator by itself; a truly unitary kinetic step would require an
-    // additional global/implicit operation (e.g. FFT spectral phase multiplication,
-    // Crank-Nicolson solve, or multiple checkerboard pair-rotation passes).
-    // Keep gp.dt small enough for the chosen ω spacing, and do not relabel a local
-    // sine/cosine neighbor blend as "unitary" unless its full-lattice norm is proven.
-    if (gp.mass_eff > 0.0f && gp.inv_domega2 > 0.0f) {
-        uint left = (gid > 0u) ? (gid - 1u) : 0u;
-        uint right = (gid + 1u < current) ? (gid + 1u) : (current - 1u);
+    mode_real[gid] = psi.r;
+    mode_imag[gid] = psi.i;
+}
 
-        // Load neighbors and apply the same half-step potential rotation locally
-        // so the Laplacian is consistent with the split-step ordering.
-        Complex psi_l = {mode_real[left], mode_imag[left]};
-        Complex psi_r = {mode_real[right], mode_imag[right]};
-
-        device CarrierAccumulators& acc_l = accums[left];
-        float w_sum_l = atomic_load_explicit(&acc_l.w_sum, memory_order_relaxed);
-        float V_ext_l = -w_sum_l;
-        float dens_l = c_mag2(psi_l);
-        float H_l = V_ext_l + (gp.g_interaction * dens_l) - gp.chemical_potential;
-        float theta_l = -(H_l * half_dt) / hbar;
-        psi_l = c_mul(psi_l, c_exp_i(theta_l));
-
-        device CarrierAccumulators& acc_r = accums[right];
-        float w_sum_r = atomic_load_explicit(&acc_r.w_sum, memory_order_relaxed);
-        float V_ext_r = -w_sum_r;
-        float dens_r = c_mag2(psi_r);
-        float H_r = V_ext_r + (gp.g_interaction * dens_r) - gp.chemical_potential;
-        float theta_r = -(H_r * half_dt) / hbar;
-        psi_r = c_mul(psi_r, c_exp_i(theta_r));
-
-        Complex lap = c_add(c_sub(psi_l, c_scale(psi, 2.0f)), psi_r); // ψ_{k-1} - 2ψ_k + ψ_{k+1}
-        // i * (ħ / 2m) ∇²ψ
-        float kin = (hbar * gp.dt) / (2.0f * gp.mass_eff);
-        psi = c_add(psi, c_scale(c_i_mul(lap), kin * gp.inv_domega2));
+// The paper's split-step update applies the periodic discrete Laplacian
+// exactly in Fourier space. The spectral lattice is small, so a direct DFT
+// keeps that contract without introducing a second FFT dependency. Each
+// output thread owns one Fourier coefficient and therefore needs no atomics.
+kernel void coherence_gpe_kinetic_dft(
+    device const float* mode_real           [[buffer(0)]],
+    device const float* mode_imag           [[buffer(1)]],
+    device float* transformed_real          [[buffer(2)]],
+    device float* transformed_imag          [[buffer(3)]],
+    device const uint* num_modes_in         [[buffer(4)]],
+    constant uint& max_modes                [[buffer(5)]],
+    constant GPEParams& gp                  [[buffer(6)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint current = (num_modes_in != nullptr) ? num_modes_in[0] : 0u;
+    if (current > max_modes) {
+        if (gid == 0u && max_modes > 0u) {
+            transformed_real[0] = qnan_f();
+            transformed_imag[0] = qnan_f();
+        }
+        return;
     }
+
+    if (gid >= current || !(gp.hbar_eff > 0.0f) ||
+        !(gp.mass_eff > 0.0f) || !(gp.inv_domega2 > 0.0f)) {
+        return;
+    }
+
+    Complex coefficient = {0.0f, 0.0f};
+    float count = float(current);
+
+    for (uint mode = 0u; mode < current; mode++) {
+        uint phase_index = (gid * mode) % current;
+        float angle = -2.0f * M_PI_F * float(phase_index) / count;
+        Complex sample = {mode_real[mode], mode_imag[mode]};
+        coefficient = c_add(coefficient, c_mul(sample, c_exp_i(angle)));
+    }
+
+    float lattice_angle = M_PI_F * float(gid) / count;
+    float eigenvalue = -4.0f * sin(lattice_angle) * sin(lattice_angle) *
+        gp.inv_domega2;
+    float phase = (gp.hbar_eff / (2.0f * gp.mass_eff)) * eigenvalue * gp.dt;
+    coefficient = c_mul(coefficient, c_exp_i(phase));
+    transformed_real[gid] = coefficient.r;
+    transformed_imag[gid] = coefficient.i;
+}
+
+kernel void coherence_gpe_kinetic_idft(
+    device const float* transformed_real    [[buffer(0)]],
+    device const float* transformed_imag    [[buffer(1)]],
+    device float* mode_real                 [[buffer(2)]],
+    device float* mode_imag                 [[buffer(3)]],
+    device const uint* num_modes_in         [[buffer(4)]],
+    constant uint& max_modes                [[buffer(5)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint current = (num_modes_in != nullptr) ? num_modes_in[0] : 0u;
+    if (current > max_modes) {
+        if (gid == 0u && max_modes > 0u) {
+            mode_real[0] = qnan_f();
+            mode_imag[0] = qnan_f();
+        }
+        return;
+    }
+
+    if (gid >= current) return;
+
+    Complex sample = {0.0f, 0.0f};
+    float count = float(current);
+
+    for (uint frequency = 0u; frequency < current; frequency++) {
+        uint phase_index = (frequency * gid) % current;
+        float angle = 2.0f * M_PI_F * float(phase_index) / count;
+        Complex coefficient = {
+            transformed_real[frequency],
+            transformed_imag[frequency],
+        };
+        sample = c_add(sample, c_mul(coefficient, c_exp_i(angle)));
+    }
+
+    sample = c_scale(sample, 1.0f / count);
+    mode_real[gid] = sample.r;
+    mode_imag[gid] = sample.i;
+}
+
+kernel void coherence_gpe_finish(
+    device float* mode_real                 [[buffer(0)]],
+    device float* mode_imag                 [[buffer(1)]],
+    device CarrierAccumulators* accums      [[buffer(2)]],
+    device const uint* num_modes_in         [[buffer(3)]],
+    constant CoherenceModeParams& p         [[buffer(4)]],
+    constant GPEParams& gp                  [[buffer(5)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint current = (num_modes_in != nullptr) ? num_modes_in[0] : 0u;
+    if (current > p.max_carriers) {
+        if (gid == 0u && p.max_carriers > 0u) {
+            mode_real[0] = qnan_f();
+            mode_imag[0] = qnan_f();
+        }
+        return;
+    }
+
+    if (gid >= current) return;
+
+    float hbar = gp.hbar_eff;
+    if (!(hbar > 0.0f)) {
+        mode_real[gid] = qnan_f();
+        mode_imag[gid] = qnan_f();
+        return;
+    }
+
+    Complex psi = {mode_real[gid], mode_imag[gid]};
+    device CarrierAccumulators& acc = accums[gid];
+    float w_sum = atomic_load_explicit(&acc.w_sum, memory_order_relaxed);
+    float V_ext = -w_sum;
+    float half_dt = 0.5f * gp.dt;
 
     // second half-step at k (recompute density after kinetic)
     {
@@ -3205,6 +3266,19 @@ kernel void coherence_gpe_step(
         float H_local = V_ext + (gp.g_interaction * density) - gp.chemical_potential;
         float theta = -(H_local * half_dt) / hbar;
         psi = c_mul(psi, c_exp_i(theta));
+    }
+
+    // The coherent drive is the normalized oscillator phasor mass in this
+    // ω-bin. It is applied after the conservative split, alongside the open
+    // system's measured exponential damping.
+    float fr = atomic_load_explicit(&acc.force_r, memory_order_relaxed);
+    float fi = atomic_load_explicit(&acc.force_i, memory_order_relaxed);
+    float was = atomic_load_explicit(&acc.w_amp_sum, memory_order_relaxed);
+    float denom_drive = (was > p.offender_weight_floor) ? was : 0.0f;
+    Complex drive = {0.0f, 0.0f};
+
+    if (denom_drive > 0.0f && isfinite(fr) && isfinite(fi)) {
+        drive = c_scale((Complex){fr, fi}, 1.0f / denom_drive);
     }
 
     // Open-system terms (explicit, no hidden clamps):

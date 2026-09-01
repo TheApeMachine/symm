@@ -1,6 +1,8 @@
 package opportunity
 
 import (
+	"runtime"
+	"sync"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -90,7 +92,7 @@ func TestSolverStep(t *testing.T) {
 		})
 
 		Convey("a formed candidate advances its sequence on update", func() {
-			stepBatch(solver, activeBatch("HMAID", types.CoiledCompression))
+			formed := stepBatch(solver, activeBatch("HMAID", types.CoiledCompression))
 
 			candidates := stepBatch(solver, activeBatch(
 				"HMAID",
@@ -101,6 +103,43 @@ func TestSolverStep(t *testing.T) {
 			So(candidates, ShouldHaveLength, 1)
 			So(candidates[0].Phase, ShouldEqual, types.PhaseArmed)
 			So(candidates[0].Sequence, ShouldEqual, 2)
+			So(formed[0].Phase, ShouldEqual, types.PhaseForming)
+			So(formed[0].Sequence, ShouldEqual, 1)
+		})
+
+		Convey("concurrent workloads advance one atomic candidate sequence", func() {
+			workerCount := runtime.GOMAXPROCS(0)
+			sequences := make(chan uint64, workerCount)
+			var waitGroup sync.WaitGroup
+
+			for range workerCount {
+				waitGroup.Add(1)
+
+				go func() {
+					defer waitGroup.Done()
+
+					candidates := stepBatch(solver, activeBatch(
+						"HMAID",
+						types.CoiledCompression,
+					))
+					sequences <- candidates[0].Sequence
+				}()
+			}
+
+			waitGroup.Wait()
+			close(sequences)
+
+			observed := make(map[uint64]bool, workerCount)
+
+			for sequence := range sequences {
+				observed[sequence] = true
+			}
+
+			So(observed, ShouldHaveLength, workerCount)
+
+			for sequence := uint64(1); sequence <= uint64(workerCount); sequence++ {
+				So(observed[sequence], ShouldBeTrue)
+			}
 		})
 
 		Convey("a dissolved precursor state invalidates exactly once", func() {
@@ -208,4 +247,19 @@ func TestFamilyMaturity(t *testing.T) {
 			So(familyMaturity(declared, map[types.CategoryType]float64{}), ShouldEqual, 0.0)
 		})
 	})
+}
+
+func BenchmarkSolverStep(b *testing.B) {
+	solver := NewSolver(b.Context())
+	categories := activeBatch(
+		"HMAID",
+		types.CoiledCompression,
+		types.HiddenAbsorption,
+	)
+
+	b.ResetTimer()
+
+	for range b.N {
+		stepBatch(solver, categories)
+	}
 }

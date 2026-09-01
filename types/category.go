@@ -277,12 +277,11 @@ var CategorySchemas = []CategorySchema{
 	{Source: SourceHawkes, Metric: "excitation_intensity:sell", Category: Frenzy},
 	{Source: SourceHawkes, Metric: "arrival_rate", Category: Inertial},
 
-	// Depthflow: displayed-book mutation and shape.
-	{Source: SourceDepthFlow, Metric: "book_imbalance_zscore", Category: LoadedImbalance},
-	{Source: SourceDepthFlow, Metric: "resolution_gap_zscore", Category: BookThinning},
-	{Source: SourceDepthFlow, Metric: "turnover_zscore", Category: DenseNeutrality},
-	{Source: SourceDepthFlow, Metric: "book_imbalance_divergence", Category: LoadedImbalance},
-	{Source: SourceDepthFlow, Metric: "net_book_change_rate", Category: BookThinning},
+	// DepthFlow: facts present in each Level-3 mutation.
+	{Source: SourceDepthFlow, Metric: "observed_notional_imbalance_zscore", Category: LoadedImbalance},
+	{Source: SourceDepthFlow, Metric: "observed_notional_imbalance_divergence", Category: LoadedImbalance},
+	{Source: SourceDepthFlow, Metric: "observed_notional_rate_zscore", Category: DenseNeutrality},
+	{Source: SourceDepthFlow, Metric: "mutation_activity_imbalance", Category: BookThinning},
 
 	// PumpDump: volume-clock ignition, spread compression, and midpoint return.
 	{Source: SourcePumpDump, Metric: "volume_bar_quantity", Category: VerticalIgnition},
@@ -325,11 +324,10 @@ var CategorySchemas = []CategorySchema{
 	{Source: SourceToxicity, Metric: "fill_fraction_zscore:ask", Category: LiquidityVacuum},
 
 	// VerticalIgnition corroborated complex: PumpDump volume breakout anchors
-	// it; Hawkes near-critical cascade clustering, DepthFlow hollow ask book,
+	// it; Hawkes near-critical cascade clustering, DepthFlow ask-side mutation,
 	// and CVD aggressive drive corroborate.
 	{Source: SourcePumpDump, Metric: "volume_bar_quantity", Category: VerticalIgnition},
 	{Source: SourceCVD, Metric: "signed_net_fraction_zscore", Category: VerticalIgnition},
 	{Source: SourceHawkes, Metric: "branching_spectral_radius", Category: VerticalIgnition},
-	{Source: SourceDepthFlow, Metric: "resolution_gap_zscore", Category: VerticalIgnition},
-	{Source: SourceDepthFlow, Metric: "book_imbalance_zscore", Category: VerticalIgnition},
+	{Source: SourceDepthFlow, Metric: "observed_notional_imbalance_zscore", Category: VerticalIgnition},
 }

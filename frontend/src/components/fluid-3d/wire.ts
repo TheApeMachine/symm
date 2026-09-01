@@ -106,6 +106,8 @@ export type FluidWaveMode = {
 export type FluidOscillator = {
 	phase: number;
 	omega: number;
+	amplitude: number;
+	side: "bid" | "ask";
 };
 
 export type FluidPhase = {
@@ -191,11 +193,16 @@ export const decodeManifold = (bytes: Uint8Array): FluidManifoldFrame => {
 	const oscillators: FluidOscillator[] = [];
 	const phaseArray = frame.phaseArray();
 	const omegaArray = frame.omegaArray();
+	const amplitudeArray = frame.ampArray();
 
 	for (let index = 0; index < count; index += 1) {
+		const tokenID = frame.tokenIds(index) ?? 0n;
+
 		oscillators.push({
 			phase: phaseArray?.[index] ?? 0,
 			omega: omegaArray?.[index] ?? 0,
+			amplitude: amplitudeArray?.[index] ?? 0,
+			side: (tokenID & 1n) === 0n ? "bid" : "ask",
 		});
 	}
 

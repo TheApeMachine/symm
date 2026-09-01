@@ -50,7 +50,6 @@ rate), so this never mixes a conditional_intensity from one row with an
 arrival_rate from another; each returned sample is one row's own reading.
 */
 const rowIntensity = (row: EnvelopeMeasurement): number | null => {
-	console.log("envelope", row);
 	let conditionalIntensity: number | null = null;
 	let arrivalRate: number | null = null;
 
@@ -181,17 +180,36 @@ export const XrayHawkesPanel = () => {
 					// Real intensity ranges from a few hundredths (quiet symbols)
 					// to several tens (a fresh burst), so the vertical scale must
 					// follow the series actually observed rather than a fixed
-					// floor: a constant tuned for one regime silently flattens
-					// every symbol whose scale sits far from it.
+					// ceiling: a constant tuned for one regime silently flattens
+					// every symbol whose scale sits far from it. The bottom is
+					// still floored (as the reference keeps a resting floor so the
+					// μ baseline and quiet symbols stay readable) — otherwise a
+					// ring window with only resting samples inflates the tallest
+					// spike of every quieter symbol far past its own scale.
 					const observedMax = Math.max(0, ...samples.map((s) => s.raw));
 					const muFloor = typeof mu === "number" && mu > 0 ? mu : 0;
-					const maxL = Math.max(observedMax, muFloor, Number.EPSILON) * 1.1;
+					const maxL = Math.max(observedMax, muFloor, 1.2, Number.EPSILON) * 1.1;
 					const pad = 14 * (window.devicePixelRatio || 1);
 					const base = h - 22 * (window.devicePixelRatio || 1);
 					const topMargin = 20 * (window.devicePixelRatio || 1);
 
-					const toX = (i: number, len: number) =>
-						pad + (i / Math.max(1, len - 1)) * (w - pad * 2);
+					// The x-axis spans the real epochs of the visible samples so
+					// each spike sits at the moment it was observed and decay over a
+					// long gap stretches over that same gap on screen. Mapping x to
+					// a resampled step index (rather than true elapsed time) lets
+					// spikes get compressed/stretched as the ring window slides and
+					// real inter-arrival gaps vary — the source of the constantly
+					// shifting spike shapes.
+					const tMin = samples.length ? samples[0].at : 0n;
+					const tLast = samples.length ? samples[samples.length - 1].at : 0n;
+					const tMax = tLast > tMin ? tLast : tMin + 1n;
+					const toX = (at: bigint) => {
+						const fraction =
+							at > tMin
+								? Number(at - tMin) / Number(tMax - tMin)
+								: 0;
+						return pad + Math.max(0, Math.min(1, fraction)) * (w - pad * 2);
+					};
 					const toY = (val: number) => base - (val / maxL) * (base - topMargin);
 
 					if (typeof mu === "number" && mu > 0) {
@@ -207,50 +225,49 @@ export const XrayHawkesPanel = () => {
 
 					// A Hawkes intensity jumps instantly at an arrival and decays
 					// exponentially toward μ afterward — it never ramps up smoothly
-					// into an arrival. So each real inter-sample gap is resampled by
-					// decaying prev.raw toward μ via μ + (λ_prev − μ)·e^(−β·Δt) for
-					// the whole gap, then landing on next.raw only at the final step
-					// as a vertical jump. Ramping the two endpoints together (as a
-					// straight interpolation would) draws a rising ramp into every
-					// spike that the real process never has.
+					// into an arrival. Each inter-sample gap therefore renders as a
+					// vertical jump at the arrival's own epoch followed by the
+					// exponential decay μ + (λ_prev − μ)·e^(−β·Δt) across the real
+					// gap. That keeps every point clocked to true time instead of
+					// evenly spacing a resampled array. The next arrival only lands
+					// (as its own vertical jump) at its own epoch. Empty gaps (bad
+					// epoch ordering) are skipped.
 					if (samples.length > 1) {
 						const decayRate = typeof beta === "number" && beta > 0 ? beta : 1;
 						const restingRate = muFloor;
 						const STEPS_PER_GAP = 24;
-						const curve: number[] = [samples[0]?.raw ?? 0];
+
+						const plot: Array<[number, number]> = [[toX(samples[0].at), toY(samples[0].raw)]];
 
 						for (let i = 1; i < samples.length; i++) {
 							const prev = samples[i - 1];
 							const next = samples[i];
 							if (!prev || !next) continue;
 
+							if (next.at <= prev.at) continue;
+
 							const gapSeconds = Number(next.at - prev.at) / 1e9;
 
+							// Decay inward from the arrival's intensity, keeping each
+							// point on its own real time coordinate.
 							for (let step = 1; step <= STEPS_PER_GAP; step++) {
-								if (step === STEPS_PER_GAP) {
-									curve.push(next.raw);
-									continue;
-								}
-
 								const seconds = gapSeconds * (step / STEPS_PER_GAP);
-								curve.push(
-									restingRate +
-										(prev.raw - restingRate) * Math.exp(-decayRate * seconds),
-								);
+								const epoch = prev.at + BigInt(Math.round(seconds * 1e9));
+								const value =
+									step === STEPS_PER_GAP
+										? next.raw
+										: restingRate +
+											(prev.raw - restingRate) * Math.exp(-decayRate * seconds);
+								plot.push([toX(epoch), toY(value)]);
 							}
 						}
 
-						// Draw as a step-decay: a vertical rise straight to each
-						// arrival's observed intensity, then the decay curve back
-						// down, rather than one continuous line that would still
-						// interpolate the vertical jump as a slope.
-
 						ctx.beginPath();
-						ctx.moveTo(toX(0, curve.length), base);
-						for (let i = 0; i < curve.length; i++) {
-							ctx.lineTo(toX(i, curve.length), toY(curve[i] ?? 0));
+						ctx.moveTo(pad, base);
+						for (const [x, y] of plot) {
+							ctx.lineTo(x, y);
 						}
-						ctx.lineTo(toX(curve.length - 1, curve.length), base);
+						ctx.lineTo(plot.length ? plot[plot.length - 1][0] : pad, base);
 						ctx.closePath();
 						ctx.fillStyle = "rgba(235, 140, 50, 0.15)";
 						ctx.fill();
@@ -258,9 +275,8 @@ export const XrayHawkesPanel = () => {
 						ctx.strokeStyle = "rgba(235, 140, 50, 0.85)";
 						ctx.lineWidth = 1.6;
 						ctx.beginPath();
-						for (let i = 0; i < curve.length; i++) {
-							const x = toX(i, curve.length);
-							const y = toY(curve[i] ?? 0);
+						for (let i = 0; i < plot.length; i++) {
+							const [x, y] = plot[i];
 							if (i === 0) ctx.moveTo(x, y);
 							else ctx.lineTo(x, y);
 						}

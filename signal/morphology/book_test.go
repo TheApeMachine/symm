@@ -316,3 +316,60 @@ func BenchmarkStep(benchmark *testing.B) {
 		_ = entity.Step(message)
 	}
 }
+
+/*
+TestProjectShape_DeleteIsNotShape pins that a delete contributes no shape. A
+delete reports liquidity being REMOVED, so weighting its notional would let
+withdrawn size stand as displayed depth in the concentration, entropy, and
+structural-change statistics -- and a delete priced past the touch would also
+move the very touch the shape is normalized against.
+*/
+func TestProjectShape_DeleteIsNotShape(t *testing.T) {
+	Convey("Given a two-level book on each side", t, func() {
+		at := time.Unix(1_700_000_000, 0)
+
+		resting := morphMessage("BTC/USD", at,
+			[]kraken.Level3Order{morphOrder(99, 10, at), morphOrder(98, 5, at)},
+			[]kraken.Level3Order{morphOrder(101, 10, at), morphOrder(102, 5, at)},
+		)
+
+		_, _, whole, ok := projectShape(resting)
+
+		So(ok, ShouldBeTrue)
+		So(len(whole), ShouldEqual, 4)
+
+		Convey("A deleted level is absent from the shape", func() {
+			removed := morphOrder(98, 5, at)
+			removed.Event = "delete"
+
+			_, _, wholeAfter, okAfter := projectShape(morphMessage("BTC/USD", at,
+				[]kraken.Level3Order{morphOrder(99, 10, at), removed},
+				[]kraken.Level3Order{morphOrder(101, 10, at), morphOrder(102, 5, at)},
+			))
+
+			So(okAfter, ShouldBeTrue)
+			So(len(wholeAfter), ShouldEqual, 3)
+		})
+
+		Convey("A delete priced through the touch does not move the touch", func() {
+			// A delete at 103 sits inside the spread. As resting liquidity it
+			// would become the best ask; as a removal it says nothing.
+			removed := morphOrder(100, 1, at)
+			removed.Event = "delete"
+
+			bidFolded, _, _, okAfter := projectShape(morphMessage("BTC/USD", at,
+				[]kraken.Level3Order{morphOrder(99, 10, at), morphOrder(98, 5, at)},
+				[]kraken.Level3Order{morphOrder(101, 10, at), morphOrder(102, 5, at), removed},
+			))
+
+			So(okAfter, ShouldBeTrue)
+
+			// The touch is unchanged, so the folded bid coordinates match the
+			// all-resting projection exactly.
+			bidBaseline, _, _, _ := projectShape(resting)
+
+			So(len(bidFolded), ShouldEqual, len(bidBaseline))
+			So(bidFolded[0].Position, ShouldEqual, bidBaseline[0].Position)
+		})
+	})
+}

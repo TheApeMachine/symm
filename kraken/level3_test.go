@@ -3,6 +3,7 @@ package kraken
 import (
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
@@ -39,4 +40,39 @@ func BenchmarkNewLevel3(b *testing.B) {
 	for b.Loop() {
 		NewLevel3(level3FrameFixture)
 	}
+}
+
+/*
+TestLevel3OrderResting pins the resting-liquidity predicate. Every Level-3
+consumer that reads a price or a quantity off an order depends on it: a delete
+reports liquidity being REMOVED, so counting it as displayed size reads
+withdrawn size as resting size, and because a delete can be priced anywhere it
+can also manufacture a crossed book out of a healthy one.
+*/
+func TestLevel3OrderResting(t *testing.T) {
+	Convey("Given Level-3 orders", t, func() {
+		price := decimal.NewFromFloat64(100)
+		quantity := decimal.NewFromFloat64(5)
+
+		Convey("An add is resting liquidity", func() {
+			So(Level3Order{Event: "add", LimitPrice: price, OrderQty: quantity}.Resting(), ShouldBeTrue)
+		})
+
+		Convey("A modify still rests at its reported remaining quantity", func() {
+			So(Level3Order{Event: "modify", LimitPrice: price, OrderQty: quantity}.Resting(), ShouldBeTrue)
+		})
+
+		Convey("An absent event is a snapshot order and rests", func() {
+			So(Level3Order{LimitPrice: price, OrderQty: quantity}.Resting(), ShouldBeTrue)
+		})
+
+		Convey("A delete is not resting, whatever it is priced at", func() {
+			So(Level3Order{Event: "delete", LimitPrice: price, OrderQty: quantity}.Resting(), ShouldBeFalse)
+		})
+
+		Convey("An order missing a price or quantity is not usable", func() {
+			So(Level3Order{Event: "add", OrderQty: quantity}.Resting(), ShouldBeFalse)
+			So(Level3Order{Event: "add", LimitPrice: price}.Resting(), ShouldBeFalse)
+		})
+	})
 }

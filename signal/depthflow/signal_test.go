@@ -17,15 +17,14 @@ func TestNewSignal(t *testing.T) {
 	Convey("Given a signal fed one Level3 envelope", t, func() {
 		signal := NewSignal(context.Background())
 
-		// A real subscription opens with a snapshot: the resident book
-		// refuses to report depth from an increment alone, since that
-		// describes a book the process never saw.
 		envelope := types.NewEnvelope(types.EnvelopeLevel3)
-		envelope.Level3Data = level3Message("BTC/USD", now,
-			[]kraken.Level3Order{level3Order("add", 99, 2, now)},
-			[]kraken.Level3Order{level3Order("add", 101, 2, now)},
-		)
-		envelope.Level3Data.Type = "snapshot"
+		envelope.Level3Data = kraken.Level3Data{
+			Symbol:    "BTC/USD",
+			Type:      "snapshot",
+			Timestamp: now,
+			Bids:      []kraken.Level3Order{depthflowOrder("", 99, 2)},
+			Asks:      []kraken.Level3Order{depthflowOrder("", 101, 2)},
+		}
 
 		Convey("Name reports the signal identity", func() {
 			So(signal.Name(), ShouldEqual, "depthflow")

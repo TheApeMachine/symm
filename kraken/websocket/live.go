@@ -1,7 +1,6 @@
 package websocket
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -390,7 +389,7 @@ func NewWithClient(
 			captureID, captureErr = live.capture.Capture(
 				channel,
 				live.client.URL,
-				bytes.Clone(raw),
+				raw,
 				time.Now().UTC(),
 				streamRef,
 			)
@@ -601,13 +600,12 @@ func (live *Live) captureFrame(kind, endpoint string, payload []byte) error {
 		return fmt.Errorf("websocket: capture endpoint and payload required")
 	}
 
-	// The SDK hands back a view into a buffer it reuses for the next frame,
-	// so an asynchronously flushed recorder would write neighbouring frames
-	// concatenated into it. The capture owns its own copy of the exact bytes.
+	// Capture persists synchronously before this callback returns, so the SDK's
+	// frame view remains valid for the complete write and needs no clone.
 	_, err := live.capture.Capture(
 		kind,
 		endpoint,
-		bytes.Clone(payload),
+		payload,
 		time.Now().UTC(),
 		live.nextStreamRef(kind),
 	)

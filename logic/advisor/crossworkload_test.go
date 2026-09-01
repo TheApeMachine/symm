@@ -38,7 +38,7 @@ func TestCrossStreamTemporalProvenance(t *testing.T) {
 
 		Convey("the two input readings keep their own observation times, distinct from the Perspective At", func() {
 			bindings := ExecutionBindings()
-			flowBinding := bindings[0] // cvd/aggressive_notional:buy
+			flowBinding := bindings[0]     // cvd/aggressive_notional:buy
 			capacityBinding := bindings[2] // liquidity/touch_notional:ask
 
 			flowReading, flowFound := executionReading(perspective, flowBinding.Series.ValueSymbol)
@@ -117,7 +117,7 @@ func TestSharedAdvisorComposesAcrossWorkloadStreams(t *testing.T) {
 			"signed_net_fraction": 0.4,
 		}))
 		advisor.Step(testMeasurement("TEST/USD", "depthflow", time.Unix(200, 0), map[string]float64{
-			"book_imbalance": 0.5,
+			"observed_notional_imbalance": 0.5,
 		}))
 
 		Convey("the resident state holds both stream's facts on one authority", func() {

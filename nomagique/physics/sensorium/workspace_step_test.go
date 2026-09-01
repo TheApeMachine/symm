@@ -1,6 +1,7 @@
 package sensorium
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -149,4 +150,87 @@ func TestSplatParticleWave(t *testing.T) {
 			So(fluid.psiIm.Float32Slice()[peakCell], ShouldEqual, float32(0))
 		})
 	})
+}
+
+func TestWaveStep(t *testing.T) {
+	Convey("Given one localized mode with no oscillator drive", t, func() {
+		fluid, err := newWorkspace(64, 64, 64)
+		So(err, ShouldBeNil)
+		Reset(func() {
+			fluid.Close()
+		})
+		fluid.allocateParticles(1)
+		fluid.particles = 1
+		fluid.psiRealHeads[0].Float32Slice()[fluid.domain.MaxModes/2] = 1
+		steps := int(math.Ceil(
+			1 / (fluid.rates.energyDecay * fluid.rates.deltaT),
+		))
+
+		for range steps {
+			fluid.waveStep()
+		}
+
+		norm := 0.0
+
+		for head := 0; head < spectralHeads; head++ {
+			real := fluid.psiRealHeads[head].Float32Slice()
+			imaginary := fluid.psiImagHeads[head].Float32Slice()
+
+			for mode, value := range real {
+				norm += float64(value)*float64(value) +
+					float64(imaginary[mode])*float64(imaginary[mode])
+			}
+		}
+
+		expected := math.Exp(
+			-2 * fluid.rates.energyDecay * fluid.rates.deltaT * float64(steps),
+		)
+
+		Convey("The unitary kinetic evolution preserves the norm lost only to configured damping", func() {
+			So(math.IsNaN(norm), ShouldBeFalse)
+			So(math.IsInf(norm, 0), ShouldBeFalse)
+			So(norm, ShouldAlmostEqual, expected, 1e-4)
+		})
+	})
+}
+
+func TestKuramotoFromPhase(t *testing.T) {
+	Convey("Given two active antipodal phases in a larger capacity buffer", t, func() {
+		fluid, err := newWorkspace(8, 8, 8)
+		So(err, ShouldBeNil)
+		Reset(func() {
+			fluid.Close()
+		})
+		fluid.allocateParticles(2)
+		phase := fluid.phase.Float32Slice()
+		phase[0] = 0
+		phase[1] = math.Pi
+
+		Convey("Only active oscillators contribute to the order parameter", func() {
+			So(kuramotoFromPhase(fluid.phase, 2), ShouldAlmostEqual, 0, 1e-6)
+		})
+	})
+}
+
+func BenchmarkWaveStep(b *testing.B) {
+	fluid, err := newWorkspace(64, 64, 64)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer fluid.Close()
+	fluid.allocateParticles(1)
+	fluid.particles = 1
+	fluid.mass.Float32Slice()[0] = 1
+	fluid.heat.Float32Slice()[0] = 1
+	fluid.oscEnergy.Float32Slice()[0] = 1
+	fluid.amp.Float32Slice()[0] = 1
+	fluid.seedModeAnchors()
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		fluid.waveStep()
+	}
 }

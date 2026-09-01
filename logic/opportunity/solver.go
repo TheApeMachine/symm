@@ -63,14 +63,16 @@ It is not a signal stage: it never re-derives measurements. It consumes the same
 ranked category batch the cognition stage reads and tracks, per symbol and
 archetype, whether a precursor state is forming, arming, or igniting.
 
-Delivery is serialized per subscriber (ObservationalFIFO), so resident slots are
-touched one symbol at a time and need no per-symbol lock.
+Each workload serializes its own delivery, but ticker, trade, and level-3
+workloads share this solver. The lifecycle transition is therefore serialized
+here so a candidate's phase and sequence remain one atomic state change.
 */
 type Solver struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	err    error
 	status *runtime.Status
+	mutex  sync.Mutex
 
 	states        sync.Map // symbol -> map[OpportunityArchetype]*resident
 	ObserveModule func(string, time.Duration)
@@ -116,6 +118,10 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 
 	symbol := categories[0].Symbol
 	active := activeCategories(categories)
+
+	solver.mutex.Lock()
+	defer solver.mutex.Unlock()
+
 	slots := solver.slotsFor(symbol)
 	now := time.Now().UTC()
 
@@ -177,7 +183,9 @@ func (solver *Solver) advance(
 		slot.candidate.Sequence++
 		delete(slots, declared.Archetype)
 
-		return &slot.candidate
+		candidate := slot.candidate
+
+		return &candidate
 	}
 
 	maturity := familyMaturity(declared, active)
@@ -206,7 +214,9 @@ func (solver *Solver) advance(
 	slot.candidate.Provenance |= types.ProvenanceCategory
 	slot.candidate.Maturity = maturity
 
-	return &slot.candidate
+	candidate := slot.candidate
+
+	return &candidate
 }
 
 /*

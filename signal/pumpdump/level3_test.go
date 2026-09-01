@@ -98,16 +98,34 @@ func TestLevel3Step(t *testing.T) {
 			So(measurement.Metrics["midpoint"].Raw, ShouldEqual, 100.0)
 		})
 
-		Convey("A newer touch on one side supersedes the retained one", func() {
-			measurement := entity.Step(pumpdumpMessage("BTC/USD", at.Add(time.Second),
-				[]kraken.Level3Order{pumpdumpOrder(98, 1, at.Add(time.Second))},
-				[]kraken.Level3Order{pumpdumpOrder(102, 1, at.Add(time.Second))},
+		Convey("A better touch on one side supersedes the retained one", func() {
+			second := at.Add(time.Second)
+
+			measurement := entity.Step(pumpdumpMessage("BTC/USD", second,
+				[]kraken.Level3Order{pumpdumpOrder(99.5, 1, second)},
+				[]kraken.Level3Order{pumpdumpOrder(100.5, 1, second)},
 			))
 
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
-			So(measurement.Metrics["best_bid"].Raw, ShouldEqual, 98.0)
-			So(measurement.Metrics["best_ask"].Raw, ShouldEqual, 102.0)
+			So(measurement.Metrics["best_bid"].Raw, ShouldEqual, 99.5)
+			So(measurement.Metrics["best_ask"].Raw, ShouldEqual, 100.5)
+		})
+
+		Convey("An order behind the touch does not move it", func() {
+			// A message announces orders; it does not restate the side. 98 is
+			// worse than the resting 99, so the best bid is unchanged.
+			second := at.Add(time.Second)
+
+			measurement := entity.Step(pumpdumpMessage("BTC/USD", second,
+				[]kraken.Level3Order{pumpdumpOrder(98, 1, second)},
+				[]kraken.Level3Order{pumpdumpOrder(102, 1, second)},
+			))
+
+			So(measurement, ShouldNotBeNil)
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.Metrics["best_bid"].Raw, ShouldEqual, 99.0)
+			So(measurement.Metrics["best_ask"].Raw, ShouldEqual, 101.0)
 		})
 
 		Convey("Retained touches are keyed per symbol", func() {
@@ -119,26 +137,87 @@ func TestLevel3Step(t *testing.T) {
 	})
 }
 
-func TestLevel3Step_CrossedBookStillFailsClosed(t *testing.T) {
+/*
+TestLevel3Step_CrossedTouchRetainsFreshPrice pins the crossed-touch contract.
+A crossed touch must never publish a spread — an inverted book has no spread to
+report. But this feed is depth-limited (market.l3_depth) and arrives one side at
+a time, so a fresh price crossing the OTHER side's RETAINED price is a normal
+transient, not a crossed book: the two prices never coexisted on the wire.
+
+Failing that frame discarded the fresh price and kept the stale one, so every
+later spread was measured against a price nobody was quoting. The frame
+therefore commits and reports nothing, and the next message on the lagging side
+resolves the touch.
+*/
+func TestLevel3Step_CrossedTouchRetainsFreshPrice(t *testing.T) {
 	Convey("Given a symbol whose retained touch would be crossed", t, func() {
 		entity := NewLevel3()
 		at := time.Unix(1_700_000_000, 0)
+		second := at.Add(time.Second)
+		third := second.Add(time.Second)
 
-		// Moving PositiveOrder inside the touch-complete gate must not weaken
-		// it: a crossed book still has to fail closed once both sides exist.
 		So(entity.Step(pumpdumpMessage("BTC/USD", at,
 			[]kraken.Level3Order{pumpdumpOrder(101, 1, at)},
 			nil,
 		)), ShouldBeNil)
 
-		Convey("Completing the touch with a lower ask is rejected", func() {
-			measurement := entity.Step(pumpdumpMessage("BTC/USD", at.Add(time.Second),
+		Convey("Completing the touch with a lower ask publishes no spread", func() {
+			measurement := entity.Step(pumpdumpMessage("BTC/USD", second,
 				nil,
-				[]kraken.Level3Order{pumpdumpOrder(99, 1, at.Add(time.Second))},
+				[]kraken.Level3Order{pumpdumpOrder(99, 1, second)},
 			))
 
-			So(measurement, ShouldNotBeNil)
-			So(measurement.Err, ShouldNotBeNil)
+			So(measurement, ShouldBeNil)
+
+			Convey("but the fresh ask is retained, not discarded", func() {
+				// The bid catches up to 98: the true book is now 98 x 99.
+				resolved := entity.Step(pumpdumpMessage("BTC/USD", third,
+					[]kraken.Level3Order{pumpdumpOrder(98, 1, third)},
+					nil,
+				))
+
+				So(resolved, ShouldNotBeNil)
+				So(resolved.Err, ShouldBeNil)
+				So(resolved.Metrics["best_bid"].Raw, ShouldEqual, 98.0)
+				So(resolved.Metrics["best_ask"].Raw, ShouldEqual, 99.0)
+				So(resolved.Metrics["spread"].Raw, ShouldEqual, 1.0)
+			})
+		})
+	})
+}
+
+/*
+TestLevel3Step_DeleteIsNotRestingLiquidity pins that a delete event describes
+liquidity being REMOVED. Its price is not a quote, and because a delete can be
+priced anywhere — including through the opposite side's retained touch —
+treating it as the touch also manufactures a crossed book out of a healthy one.
+*/
+func TestLevel3Step_DeleteIsNotRestingLiquidity(t *testing.T) {
+	Convey("Given a completed touch", t, func() {
+		entity := NewLevel3()
+		at := time.Unix(1_700_000_000, 0)
+		second := at.Add(time.Second)
+
+		first := entity.Step(pumpdumpMessage("BTC/USD", at,
+			[]kraken.Level3Order{pumpdumpOrder(99, 1, at)},
+			[]kraken.Level3Order{pumpdumpOrder(101, 1, at)},
+		))
+
+		So(first, ShouldNotBeNil)
+		So(first.Err, ShouldBeNil)
+
+		Convey("A delete does not become the touch", func() {
+			removed := pumpdumpOrder(101, 1, second)
+			removed.Event = "delete"
+
+			measurement := entity.Step(pumpdumpMessage("BTC/USD", second,
+				nil,
+				[]kraken.Level3Order{removed},
+			))
+
+			// The message carried no resting order at all, so it says nothing
+			// about either side and the retained touch is unchanged.
+			So(measurement, ShouldBeNil)
 		})
 	})
 }

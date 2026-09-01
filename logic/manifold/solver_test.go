@@ -38,6 +38,14 @@ func TestSolverStep(t *testing.T) {
 			So(result, ShouldNotBeNil)
 			So(result.Manifold, ShouldNotBeNil)
 			So(result.Manifold.State.N, ShouldEqual, 3)
+			So(result.Manifold.Pos, ShouldBeNil)
+			So(result.Manifold.MomRho, ShouldBeNil)
+
+			snapshot := solver.Snapshot()
+			So(snapshot, ShouldNotBeNil)
+			So(snapshot.State.N, ShouldEqual, 3)
+			So(snapshot.Pos, ShouldNotBeEmpty)
+			So(snapshot.MomRho, ShouldNotBeEmpty)
 		})
 
 		Convey("Stepping a non-Level3 envelope is a no-op", func() {
@@ -61,9 +69,8 @@ func TestSolverStep(t *testing.T) {
 			result := solver.Step(envelope)
 
 			So(result, ShouldNotBeNil)
-			// A one-sided book has no defined center; the solver projects no
-			// particles because mid <= 0, so Manifold stays unset.
-			So(result.Manifold, ShouldBeNil)
+			So(result.Manifold, ShouldNotBeNil)
+			So(result.Manifold.State.N, ShouldEqual, 1)
 		})
 	})
 }

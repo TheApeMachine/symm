@@ -28,9 +28,6 @@ const guardianCapacity uint32 = 1024
 
 const guardianCapacityMask = int64(guardianCapacity) - 1
 
-// positionWireBranchCount matches the six ranked branch rows in the journal.
-const positionWireBranchCount = 6
-
 /*
 Position is one lot shell owned and event-routed by Desk. Order correlation uses
 each decision's client order ID, then the exchange order ID returned by REST.
@@ -304,12 +301,7 @@ func (position *Position) MarshalJSON() ([]byte, error) {
 
 func (position *Position) Wire() *wire.PositionT {
 	return &wire.PositionT{
-		Status: string(position.status()),
-		Decision: types.DecisionWire(
-			position.Decision,
-			positionWireBranchCount,
-			true,
-		),
+		Status:  string(position.status()),
 		Holding: types.HoldingWire(position.Holding),
 	}
 }

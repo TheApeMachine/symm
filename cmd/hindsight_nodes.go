@@ -5,7 +5,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/types"
 )
@@ -15,9 +14,8 @@ witnessNode records what the live pipeline observed and produced. It never
 feeds a value back into trading.
 */
 type witnessNode struct {
-	writer         *store.Writer
-	asyncWriter    *store.AsyncWitnessWriter
-	categorySolver *category.Solver
+	writer      *store.Writer
+	asyncWriter *store.AsyncWitnessWriter
 }
 
 func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
@@ -33,9 +31,13 @@ func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
 		Origin:  envelope.CaptureID,
 		Ordinal: envelope.CaptureOrdinal,
 	}
+	if !hasActionableDecision(envelope.StrategyRound) {
+		return envelope
+	}
+
 	node.write(hindsight.ArtifactWitness{
 		Envelope: ref,
-		Boundary: "observe",
+		Boundary: "after-strategy",
 		Artifact: hindsight.ArtifactID{
 			Kind: "state",
 			Identity: string(ref.Origin.Run) + ":" +
@@ -45,22 +47,6 @@ func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
 		Payload: envelope.EncodeBytes(),
 	})
 
-	for _, categoryReading := range envelope.Categories {
-		node.record(ref, "after-category", "category", string(categoryReading.Type), "category", node.categoryVersion())
-	}
-
-	for _, measurement := range envelope.SignalMeasurements() {
-		if measurement == nil {
-			continue
-		}
-
-		node.record(ref, "after-signals", "measurement", measurement.ID, "measurements", 0)
-	}
-
-	if envelope.StrategyRound == nil {
-		return envelope
-	}
-
 	for _, decision := range envelope.StrategyRound.Decisions {
 		node.recordDecision(ref, decision)
 	}
@@ -68,19 +54,23 @@ func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
 	return envelope
 }
 
+func hasActionableDecision(round *types.StrategyRound) bool {
+	if round == nil {
+		return false
+	}
+
+	for _, decision := range round.Decisions {
+		if decision != nil && decision.Action != types.ActionNothing {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (node witnessNode) recordDecision(ref hindsight.EnvelopeRef, decision *types.Decision) {
 	if decision == nil || decision.ID == "" {
 		return
-	}
-
-	semanticParents := make([]string, 0, len(decision.PerspectiveSources)+1)
-
-	for _, source := range decision.PerspectiveSources {
-		semanticParents = append(semanticParents, source.Source)
-	}
-
-	if decision.CausalIdentification != "" {
-		semanticParents = append(semanticParents, decision.CausalIdentification)
 	}
 
 	node.write(hindsight.ArtifactWitness{
@@ -90,38 +80,7 @@ func (node witnessNode) recordDecision(ref hindsight.EnvelopeRef, decision *type
 		Component:             "strategy",
 		ComponentStateVersion: decision.CalibrationCount,
 		ImmediateParents:      []hindsight.EnvelopeRef{ref},
-		SemanticParents:       semanticParents,
 	})
-}
-
-func (node witnessNode) record(
-	ref hindsight.EnvelopeRef,
-	boundary string,
-	kind string,
-	identity string,
-	component string,
-	version uint64,
-) {
-	if identity == "" {
-		return
-	}
-
-	node.write(hindsight.ArtifactWitness{
-		Envelope:              ref,
-		Boundary:              boundary,
-		Artifact:              hindsight.ArtifactID{Kind: kind, Identity: identity},
-		Component:             component,
-		ComponentStateVersion: version,
-		ImmediateParents:      []hindsight.EnvelopeRef{ref},
-	})
-}
-
-func (node witnessNode) categoryVersion() uint64 {
-	if node.categorySolver == nil {
-		return 0
-	}
-
-	return node.categorySolver.Version()
 }
 
 func (node witnessNode) write(witness hindsight.ArtifactWitness) {

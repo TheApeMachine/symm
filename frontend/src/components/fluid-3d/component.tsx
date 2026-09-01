@@ -62,7 +62,7 @@ const Slider = ({
 	onChange: (value: number) => void;
 }) => (
 	<Flex.Row align="center" gap={2} className="min-w-28">
-		<Typography.Label size="xxs" tone="f4" className="w-3">
+		<Typography.Label size="xxs" tone="f4" className="w-5">
 			{label}
 		</Typography.Label>
 		<Input
@@ -170,16 +170,11 @@ export const FluidInspector = () => {
 			onPhase: (phase) => {
 				const { reading, oscillators, modes } = phase;
 
-				// The kernel can report a transient non-finite reading while the
-				// gas is degenerate; keep the panel sane instead of painting NaN.
-				const finite = (value: number): number =>
-					Number.isFinite(value) ? value : 0;
-
 				// Hydrodynamic panel: the live scalar reading from the kernel.
 				setHydro({
-					viscosityProxy: finite(reading.viscosityProxy),
-					guidanceSpeed: finite(reading.guidanceSpeed),
-					coherenceMag2: finite(reading.coherenceMag2),
+					viscosityProxy: reading.viscosityProxy,
+					guidanceSpeed: reading.guidanceSpeed,
+					coherenceMag2: reading.coherenceMag2,
 				});
 
 				// Kuramoto ring: the resident oscillator phases, synchronized
@@ -206,22 +201,23 @@ export const FluidInspector = () => {
 								? Math.min(1, Math.abs(oscillator.omega) / maxOmega)
 								: 0,
 					})),
-					kuramotoR: finite(reading.kuramotoR),
+					kuramotoR: reading.kuramotoR,
 					kuramotoPsi,
 				});
 
-				// Phase dial: the resident spectral mode lattice.
+				// Phase dial: order oscillators grouped by their actual book side,
+				// with the resident spectral lattice as context.
 				paintPhaseDial({
+					oscillators,
 					wave: modes.map((mode) => ({
 						omega: mode.omega,
 						real: mode.real,
 						imaginary: mode.imaginary,
 						linewidth: mode.linewidth,
 					})),
-					scan: [],
 					status: {
-						ready: modes.length > 0,
-						reason: "live mode spectrum",
+						ready: oscillators.length > 0,
+						reason: "waiting for order oscillators",
 					},
 				});
 
@@ -322,7 +318,7 @@ export const FluidInspector = () => {
 						slices
 					</Toggle>
 					<Slider
-						label="α"
+						label="EV"
 						value={Math.min(options.exposure / maximumVisualExposure, 1)}
 						onChange={(value) =>
 							setOptions((current) => ({
@@ -381,23 +377,23 @@ export const FluidInspector = () => {
 
 			<Canvas
 				title="Phase dial"
-				meta="system α sweep · ranked corpus geodesic · realized direction"
+				meta="order phase · amplitude radius · bid/ask resultants"
 				topRight={
 					<div className="flex flex-col gap-0.5">
 						<span className="inline-flex items-center justify-end gap-1.5">
 							<span className="inline-block size-1.5 bg-(--acc)" />
-							alignment ray
+							resultant rays
 						</span>
 						<span className="inline-flex items-center justify-end gap-1.5">
 							<span className="inline-block size-1.5 bg-info" />
 							wave modes
 						</span>
 						<span className="inline-flex items-center justify-end gap-1.5">
-							<span className="inline-block h-px w-3 bg-(--line2)" />ρ = 0 ring
+							<span className="inline-block h-px w-3 bg-(--line2)" />50% amplitude
 						</span>
 						<span className="inline-flex items-center justify-end gap-1.5">
 							<span className="inline-block h-1.5 w-3 bg-(--acc)" />
-							corpus × α
+							order phasors
 						</span>
 					</div>
 				}

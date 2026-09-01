@@ -1,6 +1,35 @@
 package types
 
-import wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+import (
+	"time"
+
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+)
+
+func decimalString(value *decimal.Decimal) string {
+	if value == nil {
+		return ""
+	}
+
+	return value.String()
+}
+
+func floatPointer(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+
+	return *value
+}
+
+func timePointerNano(at *time.Time) int64 {
+	if at == nil {
+		return 0
+	}
+
+	return timeNs(*at)
+}
 
 func HoldingWire(holding *Holding) *wire.HoldingT {
 	if holding == nil {

@@ -152,6 +152,7 @@ type workspace struct {
 	psiRealHeads             []*Buffer
 	psiImagHeads             []*Buffer
 	psiModeReal, psiModeImag *Buffer
+	kineticReal, kineticImag *Buffer
 	headPhase, headHeat      *Buffer
 	couplingAmp              *Buffer
 
@@ -261,6 +262,8 @@ func (fluid *workspace) allocateGrid() {
 
 	fluid.psiModeReal = fluid.gpu(modes * 4)
 	fluid.psiModeImag = fluid.gpu(modes * 4)
+	fluid.kineticReal = fluid.gpu(modes * 4)
+	fluid.kineticImag = fluid.gpu(modes * 4)
 
 	for _, buffer := range fluid.allBuffers() {
 		if buffer != nil {
@@ -486,6 +489,7 @@ func (fluid *workspace) allBuffers() []*Buffer {
 		fluid.accums, fluid.numCarriers,
 		fluid.anchorIdx, fluid.anchorWeight,
 		fluid.psiModeReal, fluid.psiModeImag,
+		fluid.kineticReal, fluid.kineticImag,
 		fluid.binStarts, fluid.binnedIdx, fluid.binParams,
 		fluid.headPhase, fluid.headHeat, fluid.couplingAmp,
 		fluid.pos, fluid.vel, fluid.mass, fluid.heat, fluid.oscEnergy,

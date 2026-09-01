@@ -48,6 +48,8 @@ type Solver struct {
 	// snapshot under the read lock.
 	forcingMu sync.RWMutex
 	forcing   map[string]forcingState
+	batch     sensorium.State
+	reading   State
 
 	// fieldMomRho/fieldEnergy/fieldWaveReal/fieldWaveImag are Step's private
 	// working buffers for PackFields, reused across advances so gathering the
@@ -85,15 +87,6 @@ func NewSolver(ctx context.Context) *Solver {
 			system.Cfg.Manifold.Grid.Y,
 			system.Cfg.Manifold.Grid.Z,
 		),
-	}
-
-	if solver.physics != nil {
-		gridX, gridY, gridZ, _ := solver.physics.Grid()
-		cells := gridX * gridY * gridZ
-		solver.fieldMomRho = make([]float32, cells*4)
-		solver.fieldEnergy = make([]float32, cells)
-		solver.fieldWaveReal = make([]float32, cells)
-		solver.fieldWaveImag = make([]float32, cells)
 	}
 
 	return solver
@@ -235,10 +228,34 @@ func (solver *Solver) advance(message kraken.Level3Data) *State {
 		return nil
 	}
 
-	if _, err := solver.physics.Step(batch); err != nil {
+	state, err := solver.physics.Step(batch)
+
+	if err != nil {
 		solver.err = err
 		return nil
 	}
+
+	if state == nil || state.N == 0 {
+		return nil
+	}
+
+	solver.reading.State.N = state.N
+	solver.reading.Reading = solver.physics.Reading()
+
+	return &solver.reading
+}
+
+/*
+Snapshot materializes the resident particles and fields only for a connected
+manifold viewer. The streaming path retains and publishes only Reading.
+*/
+func (solver *Solver) Snapshot() *State {
+	if solver == nil || solver.physics == nil {
+		return nil
+	}
+
+	solver.advanceMu.Lock()
+	defer solver.advanceMu.Unlock()
 
 	state := solver.physics.State()
 
@@ -247,13 +264,21 @@ func (solver *Solver) advance(message kraken.Level3Data) *State {
 	}
 
 	gridX, gridY, gridZ, gridSpacing := solver.physics.Grid()
+	cells := gridX * gridY * gridZ
+
+	if len(solver.fieldMomRho) != cells*4 {
+		solver.fieldMomRho = make([]float32, cells*4)
+		solver.fieldEnergy = make([]float32, cells)
+		solver.fieldWaveReal = make([]float32, cells)
+		solver.fieldWaveImag = make([]float32, cells)
+	}
+
 	densityScale, momentumScale, energyScale, waveScale := solver.physics.PackFields(
 		solver.fieldMomRho,
 		solver.fieldEnergy,
 		solver.fieldWaveReal,
 		solver.fieldWaveImag,
 	)
-
 	modeOmega, modeReal, modeImag, modeLinewidth := solver.physics.SpectralModes()
 	modes := make([]WaveMode, len(modeOmega))
 
@@ -267,22 +292,41 @@ func (solver *Solver) advance(message kraken.Level3Data) *State {
 	}
 
 	return &State{
-		State:   *state,
-		Reading: solver.physics.Reading(),
-
-		GridX: gridX, GridY: gridY, GridZ: gridZ, GridSpacing: gridSpacing,
-
-		MomRho:      append([]float32(nil), solver.fieldMomRho...),
-		FieldEnergy: append([]float32(nil), solver.fieldEnergy...),
-		WaveReal:    append([]float32(nil), solver.fieldWaveReal...),
-		WaveImag:    append([]float32(nil), solver.fieldWaveImag...),
-
+		State:         cloneState(state),
+		Reading:       solver.physics.Reading(),
+		GridX:         gridX,
+		GridY:         gridY,
+		GridZ:         gridZ,
+		GridSpacing:   gridSpacing,
+		MomRho:        append([]float32(nil), solver.fieldMomRho...),
+		FieldEnergy:   append([]float32(nil), solver.fieldEnergy...),
+		WaveReal:      append([]float32(nil), solver.fieldWaveReal...),
+		WaveImag:      append([]float32(nil), solver.fieldWaveImag...),
 		DensityScale:  densityScale,
 		MomentumScale: momentumScale,
 		EnergyScale:   energyScale,
 		WaveScale:     waveScale,
+		Modes:         modes,
+	}
+}
 
-		Modes: modes,
+func cloneState(state *sensorium.State) sensorium.State {
+	return sensorium.State{
+		N:          state.N,
+		Bytes:      append([]int64(nil), state.Bytes...),
+		Seqs:       append([]int64(nil), state.Seqs...),
+		TokenIDs:   append([]int64(nil), state.TokenIDs...),
+		ContentIDs: append([]int64(nil), state.ContentIDs...),
+		Phase:      append([]float32(nil), state.Phase...),
+		Omega:      append([]float32(nil), state.Omega...),
+		Energy:     append([]float32(nil), state.Energy...),
+		Mass:       append([]float32(nil), state.Mass...),
+		Heat:       append([]float32(nil), state.Heat...),
+		Amp:        append([]float32(nil), state.Amp...),
+		Pos:        append([]float32(nil), state.Pos...),
+		Vel:        append([]float32(nil), state.Vel...),
+		Clamped:    append([]bool(nil), state.Clamped...),
+		Dark:       append([]bool(nil), state.Dark...),
 	}
 }
 

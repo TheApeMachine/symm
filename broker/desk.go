@@ -679,15 +679,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		)
 		decision.Risk = plan
 		decision.Stoploss = stoploss
-		decision.ExpectedReturn = nil
-		decision.ExpectedFees = nil
-		decision.ExpectedSpread = nil
-		decision.ExpectedImpact = nil
-		decision.PerspectiveReturn = 0
-		decision.PerspectiveSources = nil
-		decision.Utility = 0
-		decision.OpportunityMargin = 0
-
 		position := NewPosition(
 			desk.ctx,
 			desk.api,

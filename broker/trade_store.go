@@ -32,8 +32,6 @@ CREATE TABLE IF NOT EXISTS position_trades (
     peak TEXT,
     profit_line TEXT,
     locked INTEGER,
-    thesis_score REAL,
-    graph_score REAL,
     cause TEXT,
     raw_position BLOB NOT NULL,
     created_at TEXT NOT NULL,
@@ -169,9 +167,9 @@ func (store *PositionStore) SaveTrade(position *Position) error {
 INSERT INTO position_trades (
 	symbol, status, decision_id, entry_at, entry_price, entry_fee, qty,
 	exit_at, exit_price, exit_fee, pnl, return_pct, trigger_reason, trigger_mark,
-	floor, peak, profit_line, locked, thesis_score, graph_score, cause,
+	floor, peak, profit_line, locked, cause,
 	raw_position, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(decision_id) DO UPDATE SET
 	status = excluded.status,
 	entry_at = coalesce(excluded.entry_at, position_trades.entry_at),
@@ -189,8 +187,6 @@ ON CONFLICT(decision_id) DO UPDATE SET
 	peak = coalesce(excluded.peak, position_trades.peak),
 	profit_line = coalesce(excluded.profit_line, position_trades.profit_line),
 	locked = excluded.locked,
-	thesis_score = excluded.thesis_score,
-	graph_score = excluded.graph_score,
 	cause = excluded.cause,
 	raw_position = excluded.raw_position,
 	updated_at = excluded.updated_at`
@@ -215,8 +211,6 @@ ON CONFLICT(decision_id) DO UPDATE SET
 		peak,
 		profitLine,
 		locked,
-		position.Decision.ThesisScore,
-		position.Decision.GraphScore,
 		position.Decision.Cause,
 		rawPosition,
 		now,
@@ -248,8 +242,6 @@ ON CONFLICT(decision_id) DO UPDATE SET
 			peak,
 			profitLine,
 			locked,
-			position.Decision.ThesisScore,
-			position.Decision.GraphScore,
 			position.Decision.Cause,
 			rawPosition,
 			now,

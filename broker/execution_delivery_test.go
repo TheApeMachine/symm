@@ -353,7 +353,8 @@ func TestOpenPositionWire(t *testing.T) {
 			wire := desk.OpenPositionWire()
 
 			So(len(wire), ShouldEqual, 1)
-			So(wire[0].Decision.Id, ShouldEqual, "open-1")
+			So(wire[0].Holding.Symbol, ShouldEqual, "TEST/USD")
+			So(wire[0].Decision, ShouldBeNil)
 		})
 	})
 }

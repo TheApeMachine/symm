@@ -165,3 +165,92 @@ func TestTickerStep_ZeroOpenInterest(t *testing.T) {
 		})
 	})
 }
+
+/*
+TestTickerStep_ZeroPrice pins the zero-price case. A contract that has not
+traded reports a price of zero, which is a real market state and not bad data.
+Both log and log ratio are undefined there, and an ungated log-space block
+failed the whole frame -- discarding every arithmetic price metric alongside
+it, for every observation of that symbol.
+*/
+func TestTickerStep_ZeroPrice(t *testing.T) {
+	Convey("Given a contract whose last price is zero", t, func() {
+		entity := NewTicker()
+		at := time.Unix(1_700_000_000, 0)
+
+		Convey("The first observation still publishes its arithmetic metrics", func() {
+			measurement := entity.Step(futuresTicker("PF_UNTRADED", 0, 100, 100.5, 1000, at))
+
+			So(measurement, ShouldNotBeNil)
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.Metrics["reference_price"].Raw, ShouldEqual, 100.0)
+			So(measurement.Metrics["open_interest"].Raw, ShouldEqual, 1000.0)
+
+			// The arithmetic basis is defined at zero; its log is not.
+			_, hasLogBasis := measurement.Metrics["log_basis"]
+			So(hasLogBasis, ShouldBeFalse)
+
+			_, hasClosure := measurement.Metrics["basis_closure_error"]
+			So(hasClosure, ShouldBeFalse)
+		})
+
+		Convey("A second zero-priced observation still reports without error", func() {
+			So(entity.Step(futuresTicker("PF_UNTRADED", 0, 100, 100.5, 1000, at)).Err, ShouldBeNil)
+
+			measurement := entity.Step(futuresTicker(
+				"PF_UNTRADED", 0, 101, 100.5, 1000, at.Add(time.Second),
+			))
+
+			So(measurement.Err, ShouldBeNil)
+
+			_, hasDerivativeReturn := measurement.Metrics["derivative_log_return"]
+			So(hasDerivativeReturn, ShouldBeFalse)
+
+			// The reference leg is positive throughout, so it still measures.
+			So(measurement.Metrics["reference_log_return"].Raw, ShouldNotEqual, 0.0)
+
+			// One absent leg leaves the gap between them undefined.
+			_, hasGap := measurement.Metrics["return_gap"]
+			So(hasGap, ShouldBeFalse)
+		})
+
+		Convey("A price recovering from zero reports without error", func() {
+			So(entity.Step(futuresTicker("PF_UNTRADED", 0, 100, 100.5, 1000, at)).Err, ShouldBeNil)
+
+			measurement := entity.Step(futuresTicker(
+				"PF_UNTRADED", 102, 101, 100.5, 1000, at.Add(time.Second),
+			))
+
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.Metrics["derivative_price"].Raw, ShouldEqual, 102.0)
+
+			// The log basis is defined again once both prices are positive.
+			So(measurement.Metrics["log_basis"].Raw, ShouldNotEqual, 0.0)
+
+			// The return's previous endpoint was zero, so the ratio stays absent.
+			_, hasDerivativeReturn := measurement.Metrics["derivative_log_return"]
+			So(hasDerivativeReturn, ShouldBeFalse)
+		})
+	})
+
+	Convey("Given positive prices throughout", t, func() {
+		entity := NewTicker()
+		at := time.Unix(1_700_000_000, 0)
+
+		So(entity.Step(futuresTicker("PF_XBTUSD", 100, 99, 99.5, 1000, at)).Err, ShouldBeNil)
+
+		Convey("The full log-space geometry is still published", func() {
+			measurement := entity.Step(futuresTicker(
+				"PF_XBTUSD", 102, 100, 100.5, 1100, at.Add(time.Second),
+			))
+
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.Metrics["log_basis"].Raw, ShouldAlmostEqual, math.Log(102.0/100.0), 1e-12)
+			So(measurement.Metrics["derivative_log_return"].Raw, ShouldAlmostEqual, math.Log(102.0/100.0), 1e-12)
+			So(measurement.Metrics["reference_log_return"].Raw, ShouldAlmostEqual, math.Log(100.0/99.0), 1e-12)
+
+			// The three-price geometry closes: d-s == (d-i) + (i-s).
+			So(measurement.Metrics["basis_closure_error"].Raw, ShouldAlmostEqual, 0.0, 1e-12)
+		})
+	})
+}

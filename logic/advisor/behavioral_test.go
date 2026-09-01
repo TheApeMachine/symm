@@ -10,11 +10,12 @@ import (
 )
 
 /*
-TestFlowBookAlignmentSign is the cross-metric behavioral test: flow_book_alignment
-= signed_net_fraction * book_imbalance keeps the exact joint sign, and changing
+TestFlowMutationAlignmentSign is the cross-metric behavioral test:
+flow_mutation_alignment = signed_net_fraction * observed_notional_imbalance
+keeps the exact joint sign, and changing
 an unrelated metric does not move it.
 */
-func TestFlowBookAlignmentSign(t *testing.T) {
+func TestFlowMutationAlignmentSign(t *testing.T) {
 	Convey("Given a Flow advisor", t, func() {
 		advisor := NewFlowAdvisor("advisor.flow.behavioral:" + t.Name())
 		at := time.Unix(100, 0)
@@ -26,10 +27,10 @@ func TestFlowBookAlignmentSign(t *testing.T) {
 			So(perspective, ShouldNotBeNil)
 
 			perspective = advisor.Step(testMeasurement("TEST/USD", "depthflow", at, map[string]float64{
-				"book_imbalance": 0.4,
+				"observed_notional_imbalance": 0.4,
 			}))
 
-			alignment, found := readingFor(perspective, symbolFlowBookAlignment)
+			alignment, found := readingFor(perspective, symbolFlowMutationAlignment)
 			So(found, ShouldBeTrue)
 			So(alignment.Defined, ShouldBeTrue)
 			So(alignment.Value, ShouldAlmostEqual, 0.2, 1e-9)
@@ -41,31 +42,31 @@ func TestFlowBookAlignmentSign(t *testing.T) {
 			}))
 
 			perspective := advisor.Step(testMeasurement("TEST/USD", "depthflow", at, map[string]float64{
-				"book_imbalance": -0.4,
+				"observed_notional_imbalance": -0.4,
 			}))
 
-			alignment, found := readingFor(perspective, symbolFlowBookAlignment)
+			alignment, found := readingFor(perspective, symbolFlowMutationAlignment)
 			So(found, ShouldBeTrue)
 			So(alignment.Value, ShouldAlmostEqual, -0.2, 1e-9)
 		})
 
-		Convey("changing an unrelated metric does not alter flow_book_alignment", func() {
+		Convey("changing an unrelated metric does not alter flow_mutation_alignment", func() {
 			advisor.Step(testMeasurement("TEST/USD", "cvd", at, map[string]float64{
 				"signed_net_fraction": 0.5,
 			}))
 			advisor.Step(testMeasurement("TEST/USD", "depthflow", at, map[string]float64{
-				"book_imbalance": 0.4,
+				"observed_notional_imbalance": 0.4,
 			}))
 
-			before, foundBefore := readingFor(advisor.Step(testMeasurement("TEST/USD", "cvd", at, map[string]float64{"signed_net_fraction": 0.5})), symbolFlowBookAlignment)
+			before, foundBefore := readingFor(advisor.Step(testMeasurement("TEST/USD", "cvd", at, map[string]float64{"signed_net_fraction": 0.5})), symbolFlowMutationAlignment)
 			So(foundBefore, ShouldBeTrue)
 
 			// A bound-but-irrelevant CVD fact (net notional rate) must not move
-			// flow_book_alignment, which depends only on signed_net_fraction and
-			// book_imbalance.
+			// flow_mutation_alignment, which depends only on signed_net_fraction
+			// and observed_notional_imbalance.
 			afterPerspective := advisor.Step(testMeasurement("TEST/USD", "cvd", at, map[string]float64{"net_notional_rate": 123.0}))
 			So(afterPerspective, ShouldNotBeNil)
-			after, foundAfter := readingFor(afterPerspective, symbolFlowBookAlignment)
+			after, foundAfter := readingFor(afterPerspective, symbolFlowMutationAlignment)
 			So(foundAfter, ShouldBeTrue)
 
 			So(after.Value, ShouldAlmostEqual, before.Value, 1e-9)

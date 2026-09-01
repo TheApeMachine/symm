@@ -43,6 +43,10 @@ var (
 	symbolNoiseVariance        = nmtypes.MustIntern("noise_variance")
 	symbolZero                 = nmtypes.MustIntern("derivatives/zero")
 	symbolCurrentPositive      = nmtypes.MustIntern("derivatives/current_positive")
+	symbolDerivativePositive   = nmtypes.MustIntern("derivatives/derivative_positive")
+	symbolReferencePositive    = nmtypes.MustIntern("derivatives/reference_positive")
+	symbolSpotPositive         = nmtypes.MustIntern("derivatives/spot_positive")
+	symbolPricesPositive       = nmtypes.MustIntern("derivatives/prices_positive")
 	symbolPreviousPositive     = nmtypes.MustIntern("derivatives/previous_positive")
 )
 
@@ -78,60 +82,72 @@ func NewTicker() *Ticker {
 				nmtypes.In(symbolReferencePrice, calculus.PortB),
 				nmtypes.Out(calculus.PortResult, symbolBasis),
 			),
-			// Log basis: log(derivative / reference). Both prices must be positive.
-			nmtypes.Wire(
-				calculus.LogRatio,
-				nmtypes.In(symbolDerivativePrice, calculus.SymbolCurrent),
-				nmtypes.In(symbolReferencePrice, calculus.SymbolPrevious),
-				nmtypes.Out(calculus.PortResult, symbolLogBasis),
-			),
-			// Three-price log basis geometry (derivative, index, spot). Each leg
-			// is a log ratio composed from per-leg natural logs.
-			nmtypes.Wire(
-				calculus.Log,
-				nmtypes.In(symbolDerivativePrice, calculus.PortX),
-				nmtypes.Out(calculus.PortResult, symbolLogDerivative),
-			),
-			nmtypes.Wire(
-				calculus.Log,
-				nmtypes.In(symbolReferencePrice, calculus.PortX),
-				nmtypes.Out(calculus.PortResult, symbolLogIndex),
-			),
-			nmtypes.Wire(
-				calculus.Log,
-				nmtypes.In(symbolSpotPrice, calculus.PortX),
-				nmtypes.Out(calculus.PortResult, symbolLogSpot),
-			),
-			nmtypes.Wire(
-				calculus.Difference,
-				nmtypes.In(symbolLogDerivative, calculus.PortA),
-				nmtypes.In(symbolLogIndex, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolDerivativeIndexBasis),
-			),
-			nmtypes.Wire(
-				calculus.Difference,
-				nmtypes.In(symbolLogIndex, calculus.PortA),
-				nmtypes.In(symbolLogSpot, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolIndexSpotBasis),
-			),
-			nmtypes.Wire(
-				calculus.Difference,
-				nmtypes.In(symbolLogDerivative, calculus.PortA),
-				nmtypes.In(symbolLogSpot, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolDerivativeSpotBasis),
-			),
-			// basis_closure_error = derivative_spot - derivative_index - index_spot
-			nmtypes.Wire(
-				calculus.Difference,
-				nmtypes.In(symbolDerivativeSpotBasis, calculus.PortA),
-				nmtypes.In(symbolDerivativeIndexBasis, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolBasisClosureError),
-			),
-			nmtypes.Wire(
-				calculus.Difference,
-				nmtypes.In(symbolBasisClosureError, calculus.PortA),
-				nmtypes.In(symbolIndexSpotBasis, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolBasisClosureError),
+			// Log basis and the three-price log geometry (derivative, index,
+			// spot). A contract that has not traded reports a price of ZERO --
+			// a real market state, not bad data -- and both log and log-ratio
+			// are undefined there. The arithmetic basis above still reports
+			// the relationship; its log-space counterparts are absent rather
+			// than zero, and an ungated log would fail the whole frame,
+			// discarding every price metric alongside them.
+			logic.If(
+				allPricesPositive(),
+				nmtypes.Pipe(
+					// Log basis: log(derivative / reference).
+					nmtypes.Wire(
+						calculus.LogRatio,
+						nmtypes.In(symbolDerivativePrice, calculus.SymbolCurrent),
+						nmtypes.In(symbolReferencePrice, calculus.SymbolPrevious),
+						nmtypes.Out(calculus.PortResult, symbolLogBasis),
+					),
+					// Each leg is a log ratio composed from per-leg natural logs.
+					nmtypes.Wire(
+						calculus.Log,
+						nmtypes.In(symbolDerivativePrice, calculus.PortX),
+						nmtypes.Out(calculus.PortResult, symbolLogDerivative),
+					),
+					nmtypes.Wire(
+						calculus.Log,
+						nmtypes.In(symbolReferencePrice, calculus.PortX),
+						nmtypes.Out(calculus.PortResult, symbolLogIndex),
+					),
+					nmtypes.Wire(
+						calculus.Log,
+						nmtypes.In(symbolSpotPrice, calculus.PortX),
+						nmtypes.Out(calculus.PortResult, symbolLogSpot),
+					),
+					nmtypes.Wire(
+						calculus.Difference,
+						nmtypes.In(symbolLogDerivative, calculus.PortA),
+						nmtypes.In(symbolLogIndex, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolDerivativeIndexBasis),
+					),
+					nmtypes.Wire(
+						calculus.Difference,
+						nmtypes.In(symbolLogIndex, calculus.PortA),
+						nmtypes.In(symbolLogSpot, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolIndexSpotBasis),
+					),
+					nmtypes.Wire(
+						calculus.Difference,
+						nmtypes.In(symbolLogDerivative, calculus.PortA),
+						nmtypes.In(symbolLogSpot, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolDerivativeSpotBasis),
+					),
+					// basis_closure_error = derivative_spot - derivative_index - index_spot
+					nmtypes.Wire(
+						calculus.Difference,
+						nmtypes.In(symbolDerivativeSpotBasis, calculus.PortA),
+						nmtypes.In(symbolDerivativeIndexBasis, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolBasisClosureError),
+					),
+					nmtypes.Wire(
+						calculus.Difference,
+						nmtypes.In(symbolBasisClosureError, calculus.PortA),
+						nmtypes.In(symbolIndexSpotBasis, calculus.PortB),
+						nmtypes.Out(calculus.PortResult, symbolBasisClosureError),
+					),
+				),
+				nmtypes.Identity,
 			),
 			// Open-interest previous/current pair on the event clock.
 			temporal.Observer("", symbolOpenInterest),
@@ -235,10 +251,13 @@ func NewTicker() *Ticker {
 			),
 			// Basis baseline and z-score over the basis series.
 			baselineZScore("basis_baseline", symbolBasis),
-			// derivative_log_return: log(current / previous) over the derivative price.
+			// derivative_log_return: log(current / previous) over the derivative
+			// price. Readiness alone only means a previous observation EXISTS;
+			// a price of zero at either endpoint is a real market state whose
+			// log ratio is undefined, so both endpoints must also be positive.
 			temporal.Observer("derivative_return", symbolDerivativePrice),
 			logic.If(
-				readyCondition(),
+				bothEndpointsPositive(),
 				nmtypes.Wire(
 					calculus.LogRatio,
 					nmtypes.In(calculus.SymbolCurrent, calculus.SymbolCurrent),
@@ -247,10 +266,11 @@ func NewTicker() *Ticker {
 				),
 				nmtypes.Identity,
 			),
-			// reference_log_return: log(current / previous) over the reference price.
+			// reference_log_return: log(current / previous) over the reference
+			// price, positivity-gated for the same reason as the derivative leg.
 			temporal.Observer("reference_return", symbolReferencePrice),
 			logic.If(
-				readyCondition(),
+				bothEndpointsPositive(),
 				nmtypes.Wire(
 					calculus.LogRatio,
 					nmtypes.In(calculus.SymbolCurrent, calculus.SymbolCurrent),
@@ -260,9 +280,11 @@ func NewTicker() *Ticker {
 				nmtypes.Identity,
 			),
 			// return_gap = derivative_log_return - reference_log_return, then its
-			// velocity and its own causal baseline + z-score.
+			// velocity and its own causal baseline + z-score. Each leg is
+			// positivity-gated above and is therefore absent when its price
+			// touched zero, so the gap is computed only when BOTH legs exist.
 			logic.If(
-				readyCondition(),
+				bothLogReturnsPresent(),
 				nmtypes.Pipe(
 					nmtypes.Wire(
 						calculus.Difference,
@@ -355,30 +377,101 @@ func seriesReadyCondition(prefix string) nmtypes.Primitive {
 }
 
 /*
-bothEndpointsPositive is true only when the observer's current AND previous
-values are both above zero — the condition a log ratio between them requires.
+allPricesPositive is true only when the derivative, reference, and spot prices
+are all above zero — the condition the log-space basis geometry requires. A
+contract that has not traded reports a price of zero, which is a real market
+state and not bad data.
 */
-func bothEndpointsPositive() nmtypes.Primitive {
+func allPricesPositive() nmtypes.Primitive {
 	return nmtypes.Pipe(
 		nmtypes.Wire(
 			logic.GreaterThan,
-			nmtypes.In(calculus.SymbolCurrent, calculus.PortA),
+			nmtypes.In(symbolDerivativePrice, calculus.PortA),
 			nmtypes.In(symbolZero, calculus.PortB),
-			nmtypes.Out(logic.SymbolCondition, symbolCurrentPositive),
+			nmtypes.Out(logic.SymbolCondition, symbolDerivativePositive),
 		),
 		nmtypes.Wire(
 			logic.GreaterThan,
-			nmtypes.In(calculus.SymbolPrevious, calculus.PortA),
+			nmtypes.In(symbolReferencePrice, calculus.PortA),
 			nmtypes.In(symbolZero, calculus.PortB),
-			nmtypes.Out(logic.SymbolCondition, symbolPreviousPositive),
+			nmtypes.Out(logic.SymbolCondition, symbolReferencePositive),
+		),
+		nmtypes.Wire(
+			logic.GreaterThan,
+			nmtypes.In(symbolSpotPrice, calculus.PortA),
+			nmtypes.In(symbolZero, calculus.PortB),
+			nmtypes.Out(logic.SymbolCondition, symbolSpotPositive),
 		),
 		nmtypes.Wire(
 			logic.And,
-			nmtypes.In(symbolCurrentPositive, calculus.PortA),
-			nmtypes.In(symbolPreviousPositive, calculus.PortB),
+			nmtypes.In(symbolDerivativePositive, calculus.PortA),
+			nmtypes.In(symbolReferencePositive, calculus.PortB),
+			nmtypes.Out(logic.SymbolCondition, symbolPricesPositive),
+		),
+		nmtypes.Wire(
+			logic.And,
+			nmtypes.In(symbolPricesPositive, calculus.PortA),
+			nmtypes.In(symbolSpotPositive, calculus.PortB),
 			nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
 		),
 	)
+}
+
+/*
+bothEndpointsPositive is true only when the observer holds a previous value AND
+both endpoints are above zero — the condition a log ratio between them
+requires. Readiness is part of the condition because an observer's first
+observation has no previous fact at all: reading it would fail the frame rather
+than report the absence the gate exists to handle.
+*/
+func bothEndpointsPositive() nmtypes.Primitive {
+	return nmtypes.Pipe(
+		logic.If(
+			readyCondition(),
+			nmtypes.Pipe(
+				nmtypes.Wire(
+					logic.GreaterThan,
+					nmtypes.In(calculus.SymbolCurrent, calculus.PortA),
+					nmtypes.In(symbolZero, calculus.PortB),
+					nmtypes.Out(logic.SymbolCondition, symbolCurrentPositive),
+				),
+				nmtypes.Wire(
+					logic.GreaterThan,
+					nmtypes.In(calculus.SymbolPrevious, calculus.PortA),
+					nmtypes.In(symbolZero, calculus.PortB),
+					nmtypes.Out(logic.SymbolCondition, symbolPreviousPositive),
+				),
+				nmtypes.Wire(
+					logic.And,
+					nmtypes.In(symbolCurrentPositive, calculus.PortA),
+					nmtypes.In(symbolPreviousPositive, calculus.PortB),
+					nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
+				),
+			),
+			// Not ready: no previous endpoint exists, so the ratio is absent.
+			nmtypes.Assign(logic.SymbolCondition, 0),
+		),
+	)
+}
+
+/*
+bothLogReturnsPresent is true only when both the derivative and reference log
+returns were actually produced this step. Each is positivity-gated, so either
+can legitimately be absent on a contract whose price touched zero.
+*/
+func bothLogReturnsPresent() nmtypes.Primitive {
+	return func(input *nmtypes.Frame) {
+		_, hasDerivative := input.Get(symbolDerivativeLogReturn)
+		_, hasReference := input.Get(symbolReferenceLogReturn)
+
+		condition := 0.0
+
+		if hasDerivative && hasReference {
+			condition = 1
+		}
+
+		input.Put(logic.SymbolCondition, condition)
+	}
 }
 
 func greaterThanCondition(fact nmtypes.Symbol) nmtypes.Primitive {

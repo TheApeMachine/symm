@@ -58,4 +58,16 @@ func TestTransition(t *testing.T) {
 			So(status.Current(), ShouldEqual, READY)
 		})
 	})
+
+	Convey("Given a connected transport awaiting subscription completion", t, func() {
+		status := NewStatus()
+		status.Transition(BUSY)
+
+		Convey("subscription admission transitions it directly to ready", func() {
+			status.Transition(READY)
+
+			So(status.Current(), ShouldEqual, READY)
+			So(status.err, ShouldBeNil)
+		})
+	})
 }

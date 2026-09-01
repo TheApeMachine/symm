@@ -2,22 +2,12 @@ package toxicity
 
 import (
 	"context"
-	"sync"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
-
-/*
-touch is one symbol's last observed best bid/ask price and resting quantity,
-retained so a later Trade envelope for the same symbol can be matched against
-it. Zero means nothing has been observed yet.
-*/
-type touch struct {
-	bidPrice, askPrice, bidQty, askQty float64
-}
 
 /*
 Signal is the book-touch liquidity-disposition instrument. It composes its
@@ -33,8 +23,6 @@ type Signal struct {
 	cancel context.CancelFunc
 	err    error
 	status *runtime.Status
-
-	touches sync.Map // symbol -> touch
 
 	level3 *Level3
 	trade  *Trade
@@ -71,12 +59,6 @@ func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
 }
 
 func (signal *Signal) StepLevel3(message kraken.Level3Data) *data.Measurement[float64] {
-	bidPrice, askPrice, bidQty, askQty := signal.level3.bestTouch(message)
-
-	if bidPrice > 0 && askPrice > 0 {
-		signal.touches.Store(message.Symbol, touch{bidPrice, askPrice, bidQty, askQty})
-	}
-
 	measurement := signal.level3.Step(message)
 
 	if measurement != nil {
@@ -95,15 +77,22 @@ func (signal *Signal) StepLevel3(message kraken.Level3Data) *data.Measurement[fl
 }
 
 func (signal *Signal) StepTrade(tick kraken.TradeData) *data.Measurement[float64] {
-	last, found := signal.touches.Load(tick.Symbol)
+	committed, found := signal.level3.number.Project(tick.Symbol)
 
 	if !found {
 		return nil
 	}
 
-	current := last.(touch)
+	bidPrice, bidFound := committed.Get(symbolPrevBid)
+	askPrice, askFound := committed.Get(symbolPrevAsk)
+	bidQty, bidQtyFound := committed.Get(symbolPrevBidQty)
+	askQty, askQtyFound := committed.Get(symbolPrevAskQty)
 
-	return signal.trade.Step(tick, current.bidPrice, current.askPrice, current.bidQty, current.askQty)
+	if !bidFound || !askFound || !bidQtyFound || !askQtyFound {
+		return nil
+	}
+
+	return signal.trade.Step(tick, bidPrice, askPrice, bidQty, askQty)
 }
 
 func (signal *Signal) Close() error {

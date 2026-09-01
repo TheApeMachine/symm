@@ -37,6 +37,7 @@ touch, and one projector that names the output slots.
 func NewLevel3() *Level3 {
 	return &Level3{
 		number: nomagique.NewNumber[string](nmtypes.Pipe(
+			surrenderSides,
 			// A one-sided message must still COMMIT, so its price is retained
 			// in this symbol's frame for the step that finally completes the
 			// touch. Number only commits a frame whose Err is nil, so the
@@ -47,16 +48,21 @@ func NewLevel3() *Level3 {
 			// touchComplete is seeded by Step, which is where presence is
 			// actually known: a logic predicate cannot read a slot that may
 			// legitimately be absent without erroring on it.
+			//
+			// The same reasoning applies to a CROSSED touch. This feed is
+			// depth-limited and one-sided, so a fresh price can transiently
+			// sit through the opposite side's retained price. Failing the
+			// frame there would discard the fresh price and keep the stale
+			// one — measuring every later spread against a price nobody is
+			// quoting — so the touch metrics are gated on being uncrossed
+			// rather than guarded by a bare PositiveOrder.
 			logic.If(
 				nmtypes.Wire(
 					nmtypes.Identity,
-					nmtypes.In(symbolTouchComplete, logic.SymbolCondition),
+					nmtypes.In(symbolTouchUncrossed, logic.SymbolCondition),
 					nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
 				),
 				nmtypes.Pipe(
-					// 0 < bid < ask: a crossed or non-positive book still
-					// fails closed, but only once both sides are real.
-					logic.PositiveOrder(symbolBidPrice, symbolAskPrice),
 					nmtypes.Wire(
 						calculus.Average,
 						nmtypes.In(symbolBidPrice, calculus.PortA),
@@ -91,15 +97,22 @@ func NewLevel3() *Level3 {
 
 /*
 bestTouch derives this message's own best bid and ask. It is a pure function of
-the message: a side with no usable order returns zero, meaning "this message
-said nothing about that side", NOT "that side is empty". Retention of the
-untouched side is the Number pipeline's committed frame, not this function's.
+the message: a side with no usable resting order returns zero, meaning "this
+message said nothing about that side", NOT "that side is empty". Retention of
+the untouched side is the Number pipeline's committed frame, not this
+function's.
+
+A delete event reports the order being REMOVED from the book, so its price
+describes liquidity that is gone. Treating it as the touch reports a price
+nobody is quoting — and because a delete can be priced anywhere, including
+through the opposite side's retained touch, it also manufactures a crossed
+book out of a healthy one.
 */
 func (level3 *Level3) bestTouch(
 	message kraken.Level3Data,
 ) (bidPrice, askPrice float64) {
 	for _, order := range message.Bids {
-		if order.LimitPrice == nil {
+		if !order.Resting() {
 			continue
 		}
 
@@ -109,7 +122,7 @@ func (level3 *Level3) bestTouch(
 	}
 
 	for _, order := range message.Asks {
-		if order.LimitPrice == nil {
+		if !order.Resting() {
 			continue
 		}
 
@@ -132,34 +145,63 @@ state of an incremental feed, not a failure.
 func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64] {
 	bidPrice, askPrice := level3.bestTouch(message)
 
-	if bidPrice == 0 && askPrice == 0 {
-		return nil
-	}
-
 	input := nmtypes.Frame{}
 
-	if bidPrice > 0 {
+	retainedBid, hasRetainedBid := 0.0, false
+	retainedAsk, hasRetainedAsk := 0.0, false
+
+	if prior, found := level3.number.Project(message.Symbol); found {
+		retainedBid, hasRetainedBid = prior.Get(symbolBidPrice)
+		retainedAsk, hasRetainedAsk = prior.Get(symbolAskPrice)
+	}
+
+	withdrewBid := withdrawsPrice(message.Bids, retainedBid, hasRetainedBid)
+	withdrewAsk := withdrawsPrice(message.Asks, retainedAsk, hasRetainedAsk)
+
+	// A message announces orders; it does not restate the side. An order
+	// BEHIND the retained touch says nothing about the touch — the better
+	// order is still resting — so taking this message's price unconditionally
+	// would walk the touch away from the best price and report a spread wider
+	// than the one being quoted. An order AT the touch is accepted, since a
+	// size change there is a real touch observation.
+	//
+	// A delete of the retained touch cannot be resolved here: the next-best
+	// level lives in a book this entity deliberately does not keep, so the
+	// side is surrendered until the feed names a new touch.
+	if bidPrice > 0 && (!hasRetainedBid || bidPrice >= retainedBid || withdrewBid) {
 		input.Put(symbolBidPrice, bidPrice)
 	}
 
-	if askPrice > 0 {
+	if askPrice > 0 && (!hasRetainedAsk || askPrice <= retainedAsk || withdrewAsk) {
 		input.Put(symbolAskPrice, askPrice)
 	}
+
+	input.Put(symbolSurrenderBid, oneWhen(withdrewBid && bidPrice == 0))
+	input.Put(symbolSurrenderAsk, oneWhen(withdrewAsk && askPrice == 0))
 
 	// Completeness is decided here because this is the only place that knows
 	// both what the message carried and what the symbol's frame already holds.
 	// A logic predicate cannot ask "is this slot present?" — it errors on an
 	// absent input rather than reporting absence.
 	hasBid, hasAsk := bidPrice > 0, askPrice > 0
+	effectiveBid, effectiveAsk := bidPrice, askPrice
 
 	if committed, found := level3.number.Project(message.Symbol); found {
 		if !hasBid {
-			_, hasBid = committed.Get(symbolBidPrice)
+			effectiveBid, hasBid = committed.Get(symbolBidPrice)
 		}
 
 		if !hasAsk {
-			_, hasAsk = committed.Get(symbolAskPrice)
+			effectiveAsk, hasAsk = committed.Get(symbolAskPrice)
 		}
+	}
+
+	if withdrewBid && bidPrice == 0 {
+		hasBid, effectiveBid = false, 0
+	}
+
+	if withdrewAsk && askPrice == 0 {
+		hasAsk, effectiveAsk = false, 0
 	}
 
 	complete := 0.0
@@ -170,13 +212,27 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 
 	input.Put(symbolTouchComplete, complete)
 
+	// The touch is measurable only when it is a real book. The prices compared
+	// here are the ones the pipeline will see: this message's own price on a
+	// side it carried, and the committed price on a side it did not.
+	uncrossed := 0.0
+
+	if complete == 1 && effectiveBid > 0 && effectiveBid < effectiveAsk {
+		uncrossed = 1
+	}
+
+	input.Put(symbolTouchUncrossed, uncrossed)
+
 	frame := level3.number.Step(message.Symbol, input)
 
 	// The step still ran, so this message's price is now committed and will
 	// complete a later touch. It just has nothing to report yet: projecting
 	// here would publish a measurement carrying best_bid alone, which reads
-	// downstream as a real observation rather than a half-formed one.
-	if complete == 0 {
+	// downstream as a real observation rather than a half-formed one. A
+	// crossed touch is the same situation — the fresh price is retained, and
+	// the next message on the lagging side resolves it — so it reports
+	// nothing rather than a spread taken across an inverted book.
+	if uncrossed == 0 {
 		return nil
 	}
 
@@ -190,3 +246,51 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 }
 
 func (level3 *Level3) Close() error { return nil }
+
+func oneWhen(condition bool) float64 {
+	if condition {
+		return 1
+	}
+
+	return 0
+}
+
+/*
+withdrawsPrice reports whether this message deletes the order resting at the
+retained touch price. The next-best level is only knowable from a full book,
+which this entity deliberately does not keep, so a withdrawn touch surrenders
+the side and waits for the feed to name a new one.
+*/
+func withdrawsPrice(orders []kraken.Level3Order, retained float64, hasRetained bool) bool {
+	if !hasRetained || retained <= 0 {
+		return false
+	}
+
+	for _, order := range orders {
+		if order.Event != "delete" || order.LimitPrice == nil {
+			continue
+		}
+
+		if order.LimitPrice.Float64() == retained {
+			return true
+		}
+	}
+
+	return false
+}
+
+/*
+surrenderSides clears a side whose retained touch was withdrawn without a
+replacement. It runs first, on the frame Number has already merged, so every
+later stage sees a side that is genuinely absent rather than one holding a
+price that is no longer on the book.
+*/
+func surrenderSides(input *nmtypes.Frame) {
+	if surrender, found := input.Get(symbolSurrenderBid); found && surrender != 0 {
+		input.Delete(symbolBidPrice)
+	}
+
+	if surrender, found := input.Get(symbolSurrenderAsk); found && surrender != 0 {
+		input.Delete(symbolAskPrice)
+	}
+}

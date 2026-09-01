@@ -406,6 +406,7 @@ func (fluid *workspace) waveStep() {
 			fluid.headPhase, fluid.omega, fluid.couplingAmp,
 			fluid.psiRealHeads[head], fluid.psiImagHeads[head],
 			fluid.omegaLattice, fluid.gateWidth,
+			fluid.kineticReal, fluid.kineticImag,
 			fluid.anchorIdx, fluid.anchorWeight, fluid.accums,
 			fluid.numCarriers, fluid.pos,
 			nil,
@@ -424,6 +425,7 @@ func (fluid *workspace) waveStep() {
 		)
 
 		fluid.engine.Synchronize()
+
 		fluid.rngSeed++
 	}
 
@@ -638,7 +640,7 @@ func (fluid *workspace) observe() Reading {
 		PressureGradNorm: math.Sqrt(press2 / count),
 		ViscosityProxy:   fluid.domain.Mu * math.Sqrt(strain2/count),
 		CoherenceMag2:    coherence / modes,
-		KuramotoR:        kuramotoFromPhase(fluid.phase),
+		KuramotoR:        kuramotoFromPhase(fluid.phase, fluid.particles),
 	}
 }
 
@@ -658,16 +660,12 @@ func cellPressure(energy []float32, x, y, z, gx, gy int, gamma float64) float64 
 	return (gamma - 1) * float64(energy[cell])
 }
 
-func kuramotoFromPhase(phase *Buffer) float64 {
-	if phase == nil {
+func kuramotoFromPhase(phase *Buffer, particles int) float64 {
+	if phase == nil || particles == 0 {
 		return 0
 	}
 
-	values := phase.Float32Slice()
-
-	if len(values) == 0 {
-		return 0
-	}
+	values := phase.Float32Slice()[:particles]
 
 	var sumCos, sumSin float64
 

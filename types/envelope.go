@@ -1,6 +1,7 @@
 package types
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -1009,7 +1010,7 @@ func (envelope *Envelope) Encode() *telemetry.EnvelopeStateT {
 		return nil
 	}
 
-	state := envelope.encodeBase()
+	state := envelope.encodeBase(envelopeMeasurementIdentity)
 	state.Resonance = encodeResonanceArtifact(envelope.Resonance)
 	state.Manifold = encodeManifoldState(envelope.Manifold)
 	state.Boundaries = encodeBoundaries(envelope.Boundaries)
@@ -1018,13 +1019,43 @@ func (envelope *Envelope) Encode() *telemetry.EnvelopeStateT {
 }
 
 /*
+measurementForFocus gates one signal measurement for the dashboard publish
+path: only the focused symbol's measurement crosses the websocket. A
+non-focused symbol is dropped (nil) here — and only here, at the signal
+measurement fields — so the ticker/trade data, equity, positions, resonance,
+categories and the trading thesis path are never touched. The symbol identity
+is the measurement's own Label, which the projector set from the observation
+symbol, so this never depends on the envelope Key.
+*/
+func measurementForFocus(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	if measurement == nil || measurement.Label == Focus() {
+		return measurement
+	}
+
+	return nil
+}
+
+/*
+envelopeMeasurementIdentity is the persistence-path gate: Hindsight capture and
+historical reads keep every signal measurement regardless of the dashboard's
+live focus, so the audit record never loses a non-focused symbol's readings.
+*/
+func envelopeMeasurementIdentity(measurement *data.Measurement[float64]) *data.Measurement[float64] {
+	return measurement
+}
+
+/*
 encodeBase builds the shared control/state projection of the Envelope: every
 ordinary field crosses over, plus Resonance and Boundaries, which the dashboard
 reads from the main websocket. Only the heavy Manifold encoder is withheld.
 Both Encode (full) and EncodeWebsocket (observer) share this projection so
-their fields cannot drift.
+their fields cannot drift. measurementGate lets a caller decide which signal
+measurements cross (the websocket drops non-focus symbols); the persistence
+path passes the identity gate so Hindsight capture keeps every measurement.
 */
-func (envelope *Envelope) encodeBase() *telemetry.EnvelopeStateT {
+func (envelope *Envelope) encodeBase(
+	measurementGate func(*data.Measurement[float64]) *data.Measurement[float64],
+) *telemetry.EnvelopeStateT {
 	return &telemetry.EnvelopeStateT{
 		Key:               envelope.Key,
 		TypeId:            byte(envelope.TypeID),
@@ -1040,17 +1071,17 @@ func (envelope *Envelope) encodeBase() *telemetry.EnvelopeStateT {
 		Level3Data:        encodeLevel3Data(envelope.Level3Data),
 		FuturesTickerData: encodeFuturesTickerData(envelope.FuturesTickerData),
 		FuturesTradeData:  encodeFuturesTradeData(envelope.FuturesTradeData),
-		Correlation:       encodeMeasurement(envelope.Correlation),
-		LeadLag:           encodeMeasurement(envelope.LeadLag),
-		Liquidity:         encodeMeasurement(envelope.Liquidity),
-		Sentiment:         encodeMeasurement(envelope.Sentiment),
-		Cvd:               encodeMeasurement(envelope.CVD),
-		DepthFlow:         encodeMeasurement(envelope.DepthFlow),
-		Morphology:        encodeMeasurement(envelope.Morphology),
-		Hawkes:            encodeMeasurement(envelope.Hawkes),
-		PumpDump:          encodeMeasurement(envelope.PumpDump),
-		Toxicity:          encodeMeasurement(envelope.Toxicity),
-		Derivatives:       encodeMeasurement(envelope.Derivatives),
+		Correlation:       encodeMeasurement(measurementGate(envelope.Correlation)),
+		LeadLag:           encodeMeasurement(measurementGate(envelope.LeadLag)),
+		Liquidity:         encodeMeasurement(measurementGate(envelope.Liquidity)),
+		Sentiment:         encodeMeasurement(measurementGate(envelope.Sentiment)),
+		Cvd:               encodeMeasurement(measurementGate(envelope.CVD)),
+		DepthFlow:         encodeMeasurement(measurementGate(envelope.DepthFlow)),
+		Morphology:        encodeMeasurement(measurementGate(envelope.Morphology)),
+		Hawkes:            encodeMeasurement(measurementGate(envelope.Hawkes)),
+		PumpDump:          encodeMeasurement(measurementGate(envelope.PumpDump)),
+		Toxicity:          encodeMeasurement(measurementGate(envelope.Toxicity)),
+		Derivatives:       encodeMeasurement(measurementGate(envelope.Derivatives)),
 		Categories:        encodeCategories(envelope.Categories),
 		Opportunities:     encodeOpportunities(envelope.Opportunities),
 		GraphUpdate:       encodeGraphUpdate(envelope.GraphUpdate),
@@ -1135,13 +1166,78 @@ func encodeStrategyRound(round *StrategyRound) *telemetry.StrategyFrameT {
 			continue
 		}
 
-		decisions = append(decisions, DecisionWire(*decision, 2, false))
+		decisions = append(decisions, encodeDecision(decision))
 	}
 
 	return &telemetry.StrategyFrameT{
 		Evaluated: round.Evaluated,
 		Outcome:   round.Outcome,
 		Decisions: decisions,
+	}
+}
+
+func encodeDecision(decision *Decision) *telemetry.DecisionT {
+	if decision == nil {
+		return nil
+	}
+
+	names := make([]string, 0, len(decision.Alternatives))
+
+	for name := range decision.Alternatives {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+	alternatives := make([]*telemetry.NamedNumberT, 0, len(names))
+
+	for _, name := range names {
+		alternatives = append(alternatives, &telemetry.NamedNumberT{
+			Name:  name,
+			Value: decision.Alternatives[name],
+		})
+	}
+
+	return &telemetry.DecisionT{
+		Id:               decision.ID,
+		Action:           string(decision.Action),
+		Symbol:           decision.Symbol,
+		At:               timeNs(decision.At),
+		Direction:        decision.Direction,
+		Alternatives:     alternatives,
+		AllocationClass:  decision.AllocationClass,
+		Opportunity:      decision.Opportunity,
+		OpportunityType:  string(decision.OpportunityType),
+		OpportunityPhase: string(decision.OpportunityPhase),
+		PredictiveReady:  decision.PredictiveReady,
+		PredictiveStatus: decision.PredictiveStatus,
+		TaskSkill:        decision.TaskSkill,
+		TaskSkillReady:   decision.TaskSkillReady,
+		ProposedNotional: decimalString(decision.ProposedNotional),
+		ProposedQuantity: decimalString(decision.ProposedQuantity),
+		ReferencePrice:   decimalString(decision.ReferencePrice),
+		ForecastSource:   decision.ForecastSource,
+		ForecastModel:    decision.ForecastModel,
+		ForecastHorizon:  int64(decision.ForecastHorizon),
+		CalibrationCount: decision.CalibrationCount,
+		Confidence:       decision.Confidence,
+		AvailableCapital: decimalString(decision.AvailableCapital),
+		OpenPositions:    int64(decision.OpenPositions),
+		Cause:            decision.Cause,
+		Reason:           decision.Reason,
+		ReservationId:    decision.ReservationID,
+		SellableQty:      decimalString(decision.SellableQty),
+		EntryAt:          timePointerNano(decision.EntryAt),
+		ExitAt:           timePointerNano(decision.ExitAt),
+		EntryPrice:       decimalString(decision.EntryPrice),
+		EntryFee:         decimalString(decision.EntryFee),
+		ExitPrice:        decimalString(decision.ExitPrice),
+		ExitFee:          decimalString(decision.ExitFee),
+		Pnl:              decimalString(decision.PnL),
+		ReturnPct:        floatPointer(decision.ReturnPct),
+		Mark:             decimalString(decision.Mark),
+		EntryCost:        entryCostWire(decision.EntryCost),
+		Stoploss:         StoplossWire(decision.Stoploss),
+		Risk:             riskWire(&decision.Risk),
 	}
 }
 
@@ -1172,7 +1268,7 @@ func (envelope *Envelope) EncodeWebsocket() []byte {
 	}
 
 	builder := flatbuffers.NewBuilder(0)
-	offset := envelope.encodeBase().Pack(builder)
+	offset := envelope.encodeBase(measurementForFocus).Pack(builder)
 	telemetry.FinishEnvelopeStateBuffer(builder, offset)
 
 	return builder.FinishedBytes()

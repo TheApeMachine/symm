@@ -11,6 +11,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -80,41 +81,67 @@ sides at the unit baseline.
 func TestForcingSideCorrectness(t *testing.T) {
 	Convey("Given the dataset order-state projection", t, func() {
 		dataset := NewDataset()
+		message := kraken.Level3Data{
+			Symbol: "SYM/USD",
+			Bids: []kraken.Level3Order{
+				{
+					Event:      "add",
+					OrderID:    "bid",
+					LimitPrice: decimal.NewFromFloat64(10),
+					OrderQty:   decimal.NewFromFloat64(1),
+				},
+			},
+			Asks: []kraken.Level3Order{
+				{
+					Event:      "add",
+					OrderID:    "ask",
+					LimitPrice: decimal.NewFromFloat64(10.1),
+					OrderQty:   decimal.NewFromFloat64(1),
+				},
+			},
+		}
+		project := func(forcing forcingState) (
+			askEnergy, askAmplitude, bidEnergy float32,
+		) {
+			for state := range dataset.Step(message, forcing) {
+				if state.TokenIDs[0]&1 == 1 {
+					askEnergy = state.Energy[0]
+					askAmplitude = state.Amp[0]
+				}
 
-		price, quantity, mid, scale := 10.0, 1.0, 10.0, 0.05
-		grid := manifoldGrid()
-		symbolIndex := uint32(1)
-		ask := orderEntry{ask: true}
-		bid := orderEntry{ask: false}
+				if state.TokenIDs[0]&1 == 0 {
+					bidEnergy = state.Energy[0]
+				}
+
+				sensorium.StatePool.Put(state)
+			}
+
+			return
+		}
 
 		Convey("no forcing leaves both sides at unit energy", func() {
-			askState := dataset.orderState(ask, 0, 2, price, quantity, mid, scale, symbolIndex, grid, forcingState{})
-			So(askState.Energy[0], ShouldAlmostEqual, 1.0)
-			So(askState.Amp[0], ShouldAlmostEqual, 1.0)
+			askEnergy, askAmplitude, bidEnergy := project(forcingState{})
 
-			bidState := dataset.orderState(bid, 0, 2, price, quantity, mid, scale, symbolIndex, grid, forcingState{})
-			So(bidState.Energy[0], ShouldAlmostEqual, 1.0)
+			So(askEnergy, ShouldAlmostEqual, 1.0)
+			So(askAmplitude, ShouldAlmostEqual, 1.0)
+			So(bidEnergy, ShouldAlmostEqual, 1.0)
 		})
 
 		Convey("buy excitation lifts ask energy but not bid energy", func() {
 			forcing := forcingState{buyExcitation: 0.5, sellExcitation: 0.0}
+			askEnergy, askAmplitude, bidEnergy := project(forcing)
 
-			askState := dataset.orderState(ask, 0, 2, price, quantity, mid, scale, symbolIndex, grid, forcing)
-			So(askState.Energy[0], ShouldAlmostEqual, 1.5)
-			So(askState.Amp[0], ShouldAlmostEqual, float32(math.Sqrt(1.5)))
-
-			bidState := dataset.orderState(bid, 0, 2, price, quantity, mid, scale, symbolIndex, grid, forcing)
-			So(bidState.Energy[0], ShouldAlmostEqual, 1.0)
+			So(askEnergy, ShouldAlmostEqual, 1.5)
+			So(askAmplitude, ShouldAlmostEqual, float32(math.Sqrt(1.5)))
+			So(bidEnergy, ShouldAlmostEqual, 1.0)
 		})
 
 		Convey("sell excitation lifts bid energy but not ask energy", func() {
 			forcing := forcingState{buyExcitation: 0.0, sellExcitation: 0.4}
+			askEnergy, _, bidEnergy := project(forcing)
 
-			bidState := dataset.orderState(bid, 0, 2, price, quantity, mid, scale, symbolIndex, grid, forcing)
-			So(bidState.Energy[0], ShouldAlmostEqual, 1.4, 1e-6)
-
-			askState := dataset.orderState(ask, 0, 2, price, quantity, mid, scale, symbolIndex, grid, forcing)
-			So(askState.Energy[0], ShouldAlmostEqual, 1.0)
+			So(bidEnergy, ShouldAlmostEqual, 1.4, 1e-6)
+			So(askEnergy, ShouldAlmostEqual, 1.0)
 		})
 	})
 }
@@ -132,8 +159,7 @@ func TestForcingAdvanceConcurrent(t *testing.T) {
 		solver := testSolver()
 		defer solver.Close()
 
-		level3 := types.NewEnvelope(types.EnvelopeLevel3)
-		level3.Level3Data = kraken.Level3Data{
+		level3Data := kraken.Level3Data{
 			Symbol:    "SYM/USD",
 			Timestamp: time.Now(),
 			Bids: []kraken.Level3Order{
@@ -159,6 +185,8 @@ func TestForcingAdvanceConcurrent(t *testing.T) {
 					return
 				}
 
+				level3 := types.NewEnvelope(types.EnvelopeLevel3)
+				level3.Level3Data = level3Data
 				solver.Step(level3)
 			}(index)
 		}

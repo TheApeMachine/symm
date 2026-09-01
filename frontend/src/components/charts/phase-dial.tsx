@@ -5,59 +5,84 @@ import {
 	resizeCanvas,
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
-import {
-	phaseColumnsFromScan,
-	phaseLeadersFromScan,
-	type TerminalPhaseResponse,
-	type TerminalPhaseStatus,
-	type TerminalWaveMode,
+import type {
+	TerminalPhaseStatus,
+	TerminalWaveMode,
 } from "#/components/terminal/charts-frame";
+import type { FluidOscillator } from "#/components/fluid-3d/wire";
 
 /*
-The phase dial is the system's own rotation of the universe fingerprint. Angle
-is α from the corpus sweep. Radius is signed response mapped so -1 sits at the
-center, 0 on the half-radius zero ring, and +1 on the rim. The geodesic under
-the dial is the ranked corpus at every α — what the rotation actually saw.
+The order-book phase dial is the live oscillator state, not an HCAM corpus
+scan. Each order is plotted at its evolved phase with radius proportional to
+its oscillator amplitude. Bid and ask resultant vectors show the amplitude-
+weighted phase alignment within each side. The resident omega modes remain a
+faint field context; they are not rotated or presented as retrieval results.
 */
 
 const phaseDialCanvasRef = createRef<HTMLCanvasElement>();
 
 type PhaseDialState = {
+	oscillators: FluidOscillator[];
 	wave: TerminalWaveMode[];
-	scan: TerminalPhaseResponse[];
 	status: TerminalPhaseStatus;
 };
 
+export type PhaseChannelResultant = {
+	side: "bid" | "ask";
+	count: number;
+	totalAmplitude: number;
+	coherence: number;
+	phase: number;
+};
+
 const phaseDialStore = createStore<PhaseDialState>({
+	oscillators: [],
 	wave: [],
-	scan: [],
 	status: { ready: false, reason: "" },
 });
 
-/*
-Sectors are coloured by what price actually did over the outcome horizon, not by
-any classifier's opinion of it.
-*/
-const phaseOutcomeColor = (direction: string): string => {
-	if (direction === "up") {
-		return TERMINAL_COLORS.green;
-	}
-
-	if (direction === "down") {
-		return TERMINAL_COLORS.red;
-	}
-
-	if (direction === "flat") {
-		return TERMINAL_COLORS.cyan;
-	}
-
-	return TERMINAL_COLORS.muted;
-};
+const phaseSides = ["bid", "ask"] as const;
 
 /*
-drawPhaseAxes draws the reference rim, the zero ring, and the cardinal spokes
-labelled in degrees so a rotation can be read off the dial directly.
+phaseChannelResultants computes each book side's weighted Kuramoto vector.
+Vector length is normalized by that side's observed amplitude mass, while its
+angle is the phase of the complex sum.
 */
+export const phaseChannelResultants = (
+	oscillators: FluidOscillator[],
+): PhaseChannelResultant[] =>
+	phaseSides.map((side) => {
+		let real = 0;
+		let imaginary = 0;
+		let totalAmplitude = 0;
+		let count = 0;
+
+		for (const oscillator of oscillators) {
+			if (oscillator.side !== side) {
+				continue;
+			}
+
+			real += oscillator.amplitude * Math.cos(oscillator.phase);
+			imaginary += oscillator.amplitude * Math.sin(oscillator.phase);
+			totalAmplitude += oscillator.amplitude;
+			count += 1;
+		}
+
+		return {
+			side,
+			count,
+			totalAmplitude,
+			coherence:
+				totalAmplitude > 0
+					? Math.hypot(real, imaginary) / totalAmplitude
+					: 0,
+			phase: count > 0 ? Math.atan2(imaginary, real) : 0,
+		};
+	});
+
+const sideColor = (side: "bid" | "ask"): string =>
+	side === "bid" ? TERMINAL_COLORS.green : TERMINAL_COLORS.red;
+
 const drawPhaseAxes = (
 	context: CanvasRenderingContext2D,
 	centerX: number,
@@ -87,10 +112,10 @@ const drawPhaseAxes = (
 
 	for (let degrees = 0; degrees < 360; degrees += 15) {
 		const angle = (degrees * Math.PI) / 180;
-		const inner = degrees % 45 === 0 ? radius - 7 : radius - 4;
+		const innerRadius = degrees % 45 === 0 ? radius - 7 : radius - 4;
 		context.moveTo(
-			centerX + Math.cos(angle) * inner,
-			centerY - Math.sin(angle) * inner,
+			centerX + Math.cos(angle) * innerRadius,
+			centerY - Math.sin(angle) * innerRadius,
 		);
 		context.lineTo(
 			centerX + Math.cos(angle) * radius,
@@ -99,7 +124,6 @@ const drawPhaseAxes = (
 	}
 
 	context.stroke();
-
 	context.fillStyle = TERMINAL_COLORS.muted;
 	context.font = "9px JetBrains Mono, monospace";
 	context.textAlign = "center";
@@ -113,202 +137,126 @@ const drawPhaseAxes = (
 			centerY - Math.sin(angle) * (radius + 12),
 		);
 	}
-
-	context.textAlign = "left";
-	context.textBaseline = "alphabetic";
 };
 
-/*
-drawPhaseResponse draws each class-owned sector and its signed response without
-joining different winners into one unexplained amber envelope.
-*/
-const drawPhaseResponse = (
-	context: CanvasRenderingContext2D,
-	centerX: number,
-	centerY: number,
-	radius: number,
-	scan: TerminalPhaseResponse[],
-) => {
-	for (const [index, response] of scan.entries()) {
-		const next = scan[(index + 1) % scan.length];
-		const nextAngle =
-			index === scan.length - 1 ? next.angle + Math.PI * 2 : next.angle;
-		const similarity = Math.min(1, Math.max(-1, response.similarity));
-		const nextSimilarity = Math.min(1, Math.max(-1, next.similarity));
-		const responseRadius = (radius * (similarity + 1)) / 2;
-		const nextRadius = (radius * (nextSimilarity + 1)) / 2;
-		context.strokeStyle = phaseOutcomeColor(response.outcome.direction);
-		context.lineWidth = 1.5;
-		context.beginPath();
-		context.moveTo(
-			centerX + Math.cos(response.angle) * responseRadius,
-			centerY - Math.sin(response.angle) * responseRadius,
-		);
-		context.lineTo(
-			centerX + Math.cos(nextAngle) * nextRadius,
-			centerY - Math.sin(nextAngle) * nextRadius,
-		);
-		context.stroke();
-		context.lineWidth = 3;
-		context.beginPath();
-		context.arc(centerX, centerY, radius, -response.angle, -nextAngle, true);
-		context.stroke();
-	}
-};
-
-/*
-drawPhaseModes plots the resident omega fingerprint after the system's
-alignment rotation, the same e^{iα} the sweep applied to the query.
-*/
-const drawPhaseModes = (
+const drawWaveModes = (
 	context: CanvasRenderingContext2D,
 	centerX: number,
 	centerY: number,
 	radius: number,
 	wave: TerminalWaveMode[],
-	amplitude: number,
-	rotation: number,
 ) => {
-	context.fillStyle = TERMINAL_COLORS.cyan;
+	const maximumMagnitude = Math.max(
+		0,
+		...wave.map((mode) => Math.hypot(mode.real, mode.imaginary)),
+	);
 
-	for (const mode of wave) {
-		const magnitude = Math.hypot(mode.real, mode.imaginary) / amplitude;
-		const phase = Math.atan2(mode.imaginary, mode.real) + rotation;
-		const pointRadius = radius * magnitude;
-		context.fillRect(
-			centerX + Math.cos(phase) * pointRadius - 1.5,
-			centerY - Math.sin(phase) * pointRadius - 1.5,
-			3,
-			3,
-		);
-	}
-};
-
-/*
-drawPhaseGeodesic paints the ranked corpus against the system's α path. Columns
-are rotations, rows are rank, fill is signed response tinted by what that
-history then did.
-*/
-const drawPhaseGeodesic = (
-	context: CanvasRenderingContext2D,
-	left: number,
-	top: number,
-	width: number,
-	height: number,
-	columns: TerminalPhaseResponse[][],
-	alignment: TerminalPhaseResponse | null,
-) => {
-	if (columns.length === 0 || height < 4) {
+	if (maximumMagnitude === 0) {
 		return;
 	}
 
-	const ranks = Math.max(...columns.map((column) => column.length));
-	const cellWidth = width / columns.length;
-	const cellHeight = height / ranks;
+	context.fillStyle = TERMINAL_COLORS.cyan;
+	context.globalAlpha = 0.28;
 
-	context.fillStyle = "rgba(43, 37, 30, 0.65)";
-	context.fillRect(left, top, width, height);
-
-	for (const [columnIndex, column] of columns.entries()) {
-		for (const [rank, response] of column.entries()) {
-			const similarity = Math.min(1, Math.max(-1, response.similarity));
-			context.fillStyle = phaseOutcomeColor(response.outcome.direction);
-			context.globalAlpha = 0.18 + 0.82 * Math.abs(similarity);
-			context.fillRect(
-				left + columnIndex * cellWidth,
-				top + rank * cellHeight,
-				Math.max(1, cellWidth),
-				Math.max(1, cellHeight),
-			);
-
-			if (similarity < 0) {
-				context.fillStyle = "rgba(14, 12, 10, 0.45)";
-				context.fillRect(
-					left + columnIndex * cellWidth,
-					top + rank * cellHeight,
-					Math.max(1, cellWidth),
-					Math.max(1, cellHeight),
-				);
-			}
-		}
+	for (const mode of wave) {
+		const magnitude = Math.hypot(mode.real, mode.imaginary);
+		const phase = Math.atan2(mode.imaginary, mode.real);
+		const pointRadius = radius * (magnitude / maximumMagnitude);
+		context.fillRect(
+			centerX + Math.cos(phase) * pointRadius - 1,
+			centerY - Math.sin(phase) * pointRadius - 1,
+			2,
+			2,
+		);
 	}
 
 	context.globalAlpha = 1;
-
-	if (alignment === null) {
-		return;
-	}
-
-	const alignmentIndex = columns.findIndex(
-		(column) => column[0]?.angle === alignment.angle,
-	);
-
-	if (alignmentIndex < 0) {
-		return;
-	}
-
-	context.strokeStyle = TERMINAL_COLORS.amber;
-	context.lineWidth = 1;
-	const mark = left + (alignmentIndex + 0.5) * cellWidth;
-	context.beginPath();
-	context.moveTo(mark, top);
-	context.lineTo(mark, top + height);
-	context.stroke();
 };
 
-const strongestResponse = (
-	scan: TerminalPhaseResponse[],
-): TerminalPhaseResponse | null =>
-	scan.reduce<TerminalPhaseResponse | null>(
-		(best, response) =>
-			best === null || response.similarity > best.similarity ? response : best,
-		null,
+const drawOscillators = (
+	context: CanvasRenderingContext2D,
+	centerX: number,
+	centerY: number,
+	radius: number,
+	oscillators: FluidOscillator[],
+) => {
+	const maximumAmplitude = Math.max(
+		0,
+		...oscillators.map((oscillator) => oscillator.amplitude),
 	);
 
-/*
-drawPhaseReadout writes what the system sees at its alignment: the leading
-history, then the next corpus hits at that same α.
-*/
-const drawPhaseReadout = (
+	if (maximumAmplitude === 0) {
+		return;
+	}
+
+	for (const oscillator of oscillators) {
+		const pointRadius = radius * (oscillator.amplitude / maximumAmplitude);
+		const pointX = centerX + Math.cos(oscillator.phase) * pointRadius;
+		const pointY = centerY - Math.sin(oscillator.phase) * pointRadius;
+		context.fillStyle = sideColor(oscillator.side);
+		context.beginPath();
+		context.arc(pointX, pointY, 2.5, 0, Math.PI * 2);
+		context.fill();
+	}
+};
+
+const drawResultants = (
+	context: CanvasRenderingContext2D,
+	centerX: number,
+	centerY: number,
+	radius: number,
+	resultants: PhaseChannelResultant[],
+) => {
+	for (const resultant of resultants) {
+		if (resultant.count === 0) {
+			continue;
+		}
+
+		const endX =
+			centerX + Math.cos(resultant.phase) * radius * resultant.coherence;
+		const endY =
+			centerY - Math.sin(resultant.phase) * radius * resultant.coherence;
+		context.strokeStyle = sideColor(resultant.side);
+		context.lineWidth = 2;
+		context.beginPath();
+		context.moveTo(centerX, centerY);
+		context.lineTo(endX, endY);
+		context.stroke();
+		context.fillStyle = sideColor(resultant.side);
+		context.beginPath();
+		context.arc(endX, endY, 3.5, 0, Math.PI * 2);
+		context.fill();
+		context.font = "9px JetBrains Mono, monospace";
+		context.textAlign = "center";
+		context.fillText(resultant.side.toUpperCase(), endX, endY - 9);
+	}
+};
+
+const drawReadout = (
 	context: CanvasRenderingContext2D,
 	centerX: number,
 	baseline: number,
-	alignment: TerminalPhaseResponse | null,
-	column: TerminalPhaseResponse[],
+	resultants: PhaseChannelResultant[],
 	status: TerminalPhaseStatus,
 ) => {
 	context.textAlign = "center";
-	context.font = "10px JetBrains Mono, monospace";
+	context.font = "9px JetBrains Mono, monospace";
 
-	if (!status.ready || alignment === null) {
+	if (!status.ready) {
 		context.fillStyle = TERMINAL_COLORS.muted;
-		context.fillText(
-			status.reason || "waiting for phase scan",
-			centerX,
-			baseline,
-		);
-		context.textAlign = "left";
+		context.fillText(status.reason, centerX, baseline);
 		return;
 	}
 
-	const degrees = (alignment.angle * 180) / Math.PI;
-	context.fillStyle = phaseOutcomeColor(alignment.outcome.direction);
-	context.fillText(
-		`${alignment.outcome.direction} · α ${degrees.toFixed(0)}° · ρ ${alignment.similarity.toFixed(2)}`,
-		centerX,
-		baseline,
-	);
-	context.fillStyle = TERMINAL_COLORS.muted;
-	context.font = "9px JetBrains Mono, monospace";
-	const seen = column
-		.slice(0, 3)
-		.map(
-			(response) =>
-				`${response.outcome.direction} ${response.similarity.toFixed(2)}`,
-		)
-		.join(" · ");
-	context.fillText(seen, centerX, baseline + 12);
-	context.textAlign = "left";
+	for (const [index, resultant] of resultants.entries()) {
+		const degrees = (resultant.phase * 180) / Math.PI;
+		context.fillStyle = sideColor(resultant.side);
+		context.fillText(
+			`${resultant.side} n=${resultant.count} · ΣA ${resultant.totalAmplitude.toPrecision(3)} · R ${resultant.coherence.toFixed(3)} · θ ${degrees.toFixed(0)}°`,
+			centerX,
+			baseline + index * 13,
+		);
+	}
 };
 
 const drawPhaseDial = (
@@ -318,88 +266,23 @@ const drawPhaseDial = (
 	state: PhaseDialState,
 ) => {
 	clearCanvas(context, width, height);
-
-	const columns = phaseColumnsFromScan(state.scan);
-	const leaders = phaseLeadersFromScan(state.scan);
-	const alignment = strongestResponse(leaders);
-	const alignedColumn =
-		columns.find((column) => column[0]?.angle === alignment?.angle) ?? [];
 	const centerX = width / 2;
-	// Chrome owns the title rows; the geodesic and readout sit under the dial
-	// so the rotation the system already computed stays in the same plate.
 	const top = 46;
-	const readout = 32;
-	const geodesic = Math.max(28, Math.min(64, Math.floor(height * 0.22)));
-	const bottom = height - readout - geodesic - 8;
+	const readoutHeight = 42;
+	const bottom = height - readoutHeight;
 	const centerY = (top + bottom) / 2;
 	const radius = Math.max(
 		18,
 		Math.min((bottom - top) / 2 - 14, width / 2 - 34),
 	);
+	const resultants = phaseChannelResultants(state.oscillators);
 
 	context.save();
 	drawPhaseAxes(context, centerX, centerY, radius);
-
-	if (leaders.length > 1) {
-		drawPhaseResponse(context, centerX, centerY, radius, leaders);
-	}
-
-	const amplitude = Math.max(
-		0,
-		...state.wave.map((mode) => Math.hypot(mode.real, mode.imaginary)),
-	);
-
-	if (alignment !== null && leaders.length > 1) {
-		context.strokeStyle = TERMINAL_COLORS.amber;
-		context.lineWidth = 1.5;
-		context.beginPath();
-		context.moveTo(centerX, centerY);
-		context.lineTo(
-			centerX + Math.cos(alignment.angle) * radius,
-			centerY - Math.sin(alignment.angle) * radius,
-		);
-		context.stroke();
-		context.fillStyle = phaseOutcomeColor(alignment.outcome.direction);
-		context.beginPath();
-		context.arc(
-			centerX + Math.cos(alignment.angle) * radius,
-			centerY - Math.sin(alignment.angle) * radius,
-			3.5,
-			0,
-			Math.PI * 2,
-		);
-		context.fill();
-	}
-
-	if (amplitude > 0) {
-		drawPhaseModes(
-			context,
-			centerX,
-			centerY,
-			radius,
-			state.wave,
-			amplitude,
-			alignment?.angle ?? 0,
-		);
-	}
-
-	drawPhaseGeodesic(
-		context,
-		18,
-		bottom + 6,
-		width - 36,
-		geodesic,
-		columns,
-		alignment,
-	);
-	drawPhaseReadout(
-		context,
-		centerX,
-		height - 18,
-		alignment,
-		alignedColumn,
-		state.status,
-	);
+	drawWaveModes(context, centerX, centerY, radius, state.wave);
+	drawOscillators(context, centerX, centerY, radius, state.oscillators);
+	drawResultants(context, centerX, centerY, radius, resultants);
+	drawReadout(context, centerX, height - 31, resultants, state.status);
 	context.restore();
 };
 
@@ -425,8 +308,8 @@ const repaint = () => {
 };
 
 /*
-paintPhaseDial retains the latest scan so a resize or a remount repaints the same
-cut instead of blanking until the next manifold batch.
+paintPhaseDial retains the latest resident cut so resize and remount events
+repaint the same oscillator geometry instead of blanking the chart.
 */
 export const paintPhaseDial = (state: PhaseDialState) => {
 	phaseDialStore.setState(() => state);

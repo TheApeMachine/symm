@@ -93,8 +93,12 @@ describe("decodeManifold", () => {
 			kuramotoR: 0.75,
 		});
 		expect(decoded.phase.oscillators).toHaveLength(1);
-		expect(decoded.phase.oscillators[0]?.phase).toBeCloseTo(0.1, 5);
-		expect(decoded.phase.oscillators[0]?.omega).toBe(1);
+		expect(decoded.phase.oscillators[0]).toEqual({
+			phase: expect.closeTo(0.1, 5),
+			omega: 1,
+			amplitude: 9,
+			side: "bid",
+		});
 		expect(decoded.phase.modes).toHaveLength(2);
 		expect(decoded.phase.modes[0]).toEqual({
 			omega: -2,

@@ -169,6 +169,20 @@ func (order *Level3Order) UnmarshalJSON(data []byte) error {
 }
 
 /*
+Resting reports whether this order describes liquidity that is still displayed
+on the book after the message carrying it.
+
+A "delete" event reports the order being REMOVED, so its limit_price and
+order_qty describe liquidity that is gone: counting it as displayed size reads
+withdrawn size as resting size, and because a delete can be priced anywhere —
+including through the opposite side's last known touch — it can also
+manufacture a crossed book out of a healthy one.
+*/
+func (order Level3Order) Resting() bool {
+	return order.Event != "delete" && order.LimitPrice != nil && order.OrderQty != nil
+}
+
+/*
 ChecksumLimitPrice returns the exact fixed-point limit_price received from
 Kraken. It is intentionally separate from the numerical calculation field.
 */

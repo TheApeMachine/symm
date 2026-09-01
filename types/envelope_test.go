@@ -7,6 +7,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
@@ -234,6 +235,67 @@ func TestEnvelopeEncodeWebsocketLean(t *testing.T) {
 			So(decoded.Resonance(nil), ShouldNotBeNil)
 			So(decoded.BoundariesLength(), ShouldEqual, 1)
 			So(decoded.Equity(nil), ShouldNotBeNil)
+		})
+	})
+}
+
+/*
+TestEnvelopeMeasurementFocusGate proves the websocket projection drops signal
+measurements whose own Label is not the dashboard focus, while the full
+Hindsight encoding keeps every measurement. It is the fix for the dashboard's
+measurement rings interleaving multiple symbols: Hub.Step broadcasts the
+EncodeWebsocket mirror, and the frontend feeds every decoded measurement into a
+single per-source ring keyed only by source. Gating by the measurement's own
+Label (the observation symbol) at the wire boundary means only the focused
+symbol's measurements ever reach the browser.
+*/
+func TestEnvelopeMeasurementFocusGate(t *testing.T) {
+	Convey("Given a dashboard focused on BTC/USD", t, func() {
+		SetFocus("BTC/USD")
+
+		Reset(func() {
+			SetFocus("BTC/USD")
+		})
+
+		envelope := &Envelope{
+			Key:    "BTC/USD",
+			Equity: &EquityReading{Cash: "1000", Unrealized: "0", Equity: "1000"},
+			Hawkes: data.NewMeasurement[float64](
+				"hawkes:BTC/USD:1", "BTC/USD", "hawkes", time.Now(), time.Time{},
+			),
+			Toxicity: data.NewMeasurement[float64](
+				"toxicity:ETH/USD:2", "ETH/USD", "toxicity", time.Now(), time.Time{},
+			),
+		}
+
+		Convey("the websocket mirror keeps the focused measurement and equity", func() {
+			decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeWebsocket(), 0)
+
+			So(decoded, ShouldNotBeNil)
+
+			hawkes := decoded.Hawkes(nil)
+			So(hawkes, ShouldNotBeNil)
+			So(string(hawkes.Label()), ShouldEqual, "BTC/USD")
+
+			// Non-measurement field survives the measurement-only gate.
+			So(decoded.Equity(nil), ShouldNotBeNil)
+		})
+
+		Convey("the websocket mirror drops the non-focused measurement", func() {
+			decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeWebsocket(), 0)
+
+			So(decoded, ShouldNotBeNil)
+
+			toxicity := decoded.Toxicity(nil)
+			So(toxicity, ShouldBeNil)
+		})
+
+		Convey("the full Hindsight encoding keeps every measurement", func() {
+			decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeBytes(), 0)
+
+			So(decoded, ShouldNotBeNil)
+			So(decoded.Hawkes(nil), ShouldNotBeNil)
+			So(decoded.Toxicity(nil), ShouldNotBeNil)
 		})
 	})
 }

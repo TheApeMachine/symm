@@ -32,6 +32,21 @@ var (
 	// symbolTouchComplete marks a Level-3 frame whose bid and ask are BOTH
 	// populated (this message's own, or retained from an earlier one).
 	symbolTouchComplete = nmtypes.MustIntern("pumpdump/touch_complete")
+
+	// symbolTouchUncrossed marks a Level-3 frame whose completed touch is a
+	// real book: 0 < bid < ask. Kraken's Level-3 feed is depth-limited and
+	// arrives one side at a time, so a fresh price on one side can transiently
+	// sit through the OTHER side's retained price. That frame must still
+	// commit its fresh price, or the stale side is kept and every later spread
+	// is measured against a price nobody is quoting.
+	symbolTouchUncrossed = nmtypes.MustIntern("pumpdump/touch_uncrossed")
+
+	// symbolSurrenderBid/Ask mark a side whose retained touch this message
+	// withdrew without naming a replacement. The committed frame is merged
+	// UNDER the input, so a surrendered side can only be cleared from inside
+	// the pipeline, on the merged frame.
+	symbolSurrenderBid = nmtypes.MustIntern("pumpdump/surrender_bid")
+	symbolSurrenderAsk = nmtypes.MustIntern("pumpdump/surrender_ask")
 )
 
 /*

@@ -142,7 +142,6 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		}
 
 		decision.OpenPositions = allocation.desk.OpenPositions()
-		decision.SlotCapacity = 0
 		decision.AllocationClass = "none"
 
 		if occupied[decision.Symbol] {

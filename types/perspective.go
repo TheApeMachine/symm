@@ -183,10 +183,9 @@ per-event slices or maps.
 */
 type Perspective struct {
 	Symbol string
-	/*
-		Peer is the counterpart symbol for a relationship-kind perspective and
-		is empty for symbol-local and global perspectives.
-	*/
+
+	// Peer is the counterpart symbol for a relationship-kind perspective and
+	//is empty for symbol-local and global perspectives.
 	Peer string
 
 	Kind     PerspectiveKind
@@ -196,13 +195,11 @@ type Perspective struct {
 	Readings [PerspectiveMetricCapacity]MetricReading
 	Count    int
 
-	/*
-		Err carries a pipeline transition failure for this Step. Number only
-		commits successful output, so on a genuine failure this Perspective
-		describes nothing new: a consumer must check Err before trusting Readings,
-		which in that case still reflect the last successfully committed state,
-		not this event's contribution.
-	*/
+	// Err carries a pipeline transition failure for this Step. Number only
+	// commits successful output, so on a genuine failure this Perspective
+	// describes nothing new: a consumer must check Err before trusting Readings,
+	// which in that case still reflect the last successfully committed state,
+	// not this event's contribution.
 	Err error
 }
 
