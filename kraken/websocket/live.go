@@ -285,6 +285,17 @@ func NewWithClient(
 		return live.Write(kraken.NewPing(live.pingReqID.Add(1)))
 	})
 
+	// A failed keepalive means this socket's write side is gone while its read
+	// side is still blocked on a peer that will never answer. The SDK reports a
+	// disconnect from its read loop, so on a half-open socket it never reports
+	// one at all: IsActive stays true and the session writes into a dead socket
+	// for the rest of the process lifetime. Closing it is what surfaces the
+	// error to that read loop, which is what raises OnDisconnected and lets the
+	// ordinary reconnect path take over.
+	live.pinger.OnFailed(func(error) {
+		live.reopen()
+	})
+
 	if len(recorders) == 1 {
 		live.capture = recorders[0]
 
@@ -1197,6 +1208,32 @@ func (live *Live) Post(
 		Method: "POST",
 		Body:   params,
 	})
+}
+
+/*
+reopen tears down a socket the session can no longer write to and dials again.
+
+Disconnect is what makes the SDK's blocked read loop return, which raises
+OnDisconnected and clears IsActive; Connect then re-arms the SDK's own reconnect
+handling for the new socket. Both are needed: Disconnect alone leaves the
+session down permanently, because it also disables the SDK's auto-reconnect.
+*/
+func (live *Live) reopen() {
+	select {
+	case <-live.ctx.Done():
+		return
+	default:
+	}
+
+	errnie.Error(live.client.Disconnect())
+
+	if err := live.client.Connect(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"websocket: failed to reopen after keepalive failure",
+			err,
+		))
+	}
 }
 
 func (live *Live) Close() {

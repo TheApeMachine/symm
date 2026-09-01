@@ -3,43 +3,44 @@ package strategy
 import (
 	"fmt"
 	"math"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/signal"
+	"github.com/theapemachine/symm/types"
+	"gonum.org/v1/gonum/stat/distuv"
 )
 
-/*
-directionalConfig states the statistical policies of the streaming predictor.
-*/
+/* directionalConfig states the statistical policies of the streaming predictor. */
 type directionalConfig struct {
-	initialVariance       float64
-	forgettingFactor      float64
-	calibrationConfidence float64
+	initialVariance  float64
+	forgettingFactor float64
 }
 
 /*
-directionalForecast is a pair of calibrated classifications. probabilityUp is
-P(the next ticker observation is higher). probabilityProfitable is P(the next
-executable bid clears the entry break-even known when this forecast was issued).
-Neither field estimates a profit amount.
+directionalForecast is a posterior distribution of executable-bid log return
+over the activity clock observed for this symbol. probabilityUp and
+probabilityProfitable are two queries against that one distribution.
 */
 type directionalForecast struct {
-	symbol                   string
-	at                       time.Time
-	probabilityUp            float64
-	probabilityProfitable    float64
-	directionReady           bool
-	profitabilityReady       bool
-	directionSkillLowerBound float64
-	profitSkillLowerBound    float64
-	directionCalibration     uint64
-	profitCalibration        uint64
-	directionFeatures        int
-	profitFeatures           int
-	directionOutput          learning.RLSOutput
-	profitOutput             learning.RLSOutput
+	symbol                string
+	at                    time.Time
+	probabilityUp         float64
+	probabilityProfitable float64
+	expectedLogReturn     float64
+	breakEvenLogReturn    float64
+	ready                 bool
+	status                string
+	horizon               time.Duration
+	horizonSteps          int
+	calibration           uint64
+	directionalFeatures   int
+	estimabilityFeatures  int
+	executionFeatures     int
+	reviewFeatures        int
+	output                learning.RLSOutput
+	opportunity           types.OpportunityCandidate
 }
 
 type featureKey struct {
@@ -48,36 +49,73 @@ type featureKey struct {
 	metric string
 }
 
+type forecastContext struct {
+	archetype types.OpportunityArchetype
+	phase     types.OpportunityPhase
+}
+
+type featureUse uint8
+
+const (
+	featureContext featureUse = iota + 1
+	featureEstimability
+	featureExecution
+	featureReview
+)
+
 type predictorFeature struct {
-	value          float64
-	quality        float64
-	observed       bool
-	pendingValue   float64
-	pendingQuality float64
-	pendingUp      bool
-	pendingProfit  bool
-	up             weightedAssociation
-	profit         weightedAssociation
+	value         float64
+	quality       float64
+	observedAt    time.Time
+	observed      bool
+	group         int
+	associations  map[forecastContext]*weightedAssociation
+	pendingValue  float64
+	pendingWeight float64
+	pending       bool
+	use           featureUse
+}
+
+type evidenceGroup struct {
+	numerator   float64
+	denominator float64
+	features    int
+}
+
+type pendingReturn struct {
+	issuedAt  time.Time
+	reference float64
+	horizon   time.Duration
+	score     float64
+	context   forecastContext
+	present   bool
+}
+
+type intervalMean struct {
+	last  time.Time
+	count uint64
+	mean  time.Duration
 }
 
 type directionalState struct {
-	mu             sync.Mutex
-	features       map[featureKey]*predictorFeature
-	direction      *binaryHead
-	profitability  *binaryHead
-	priorReference float64
-	priorBreakEven float64
-	profitPending  bool
+	features     map[featureKey]*predictorFeature
+	groupsByName map[string]int
+	groups       []evidenceGroup
+	returns      *returnHead
+	pending      pendingReturn
+	horizon      time.Duration
+	intervals    intervalMean
+	opportunity  types.OpportunityCandidate
 }
 
 /*
-directionalPredictor learns one per-metric relationship to each binary outcome,
-then calibrates the bounded aggregate prequentially. Measurements are consumed
-once; only sufficient statistics and the one unresolved feature value remain.
+directionalPredictor learns feature relationships within an opportunity
+archetype and phase. It retains sufficient statistics and one unresolved
+adaptive-horizon forecast per symbol; no event history is accumulated.
 */
 type directionalPredictor struct {
 	config directionalConfig
-	states sync.Map
+	states map[string]*directionalState
 }
 
 func newDirectionalPredictor(config directionalConfig) (*directionalPredictor, error) {
@@ -89,45 +127,37 @@ func newDirectionalPredictor(config directionalConfig) (*directionalPredictor, e
 		return nil, fmt.Errorf("strategy: directional forgetting factor must be in (0, 1]")
 	}
 
-	if config.calibrationConfidence <= 0.5 || config.calibrationConfidence >= 1 {
-		return nil, fmt.Errorf("strategy: directional calibration confidence must be in (0.5, 1)")
-	}
-
-	return &directionalPredictor{config: config}, nil
+	return &directionalPredictor{
+		config: config,
+		states: make(map[string]*directionalState),
+	}, nil
 }
 
 func (predictor *directionalPredictor) state(symbol string) (*directionalState, error) {
-	if loaded, found := predictor.states.Load(symbol); found {
-		return loaded.(*directionalState), nil
+	if state := predictor.states[symbol]; state != nil {
+		return state, nil
 	}
 
-	direction, err := newBinaryHead(predictor.config)
+	returns, err := newReturnHead(predictor.config)
 
 	if err != nil {
 		return nil, err
 	}
 
-	profitability, err := newBinaryHead(predictor.config)
-
-	if err != nil {
-		return nil, err
+	state := &directionalState{
+		features:     make(map[featureKey]*predictorFeature),
+		groupsByName: make(map[string]int),
+		returns:      returns,
 	}
+	predictor.states[symbol] = state
 
-	candidate := &directionalState{
-		features:      make(map[featureKey]*predictorFeature),
-		direction:     direction,
-		profitability: profitability,
-	}
-	actual, _ := predictor.states.LoadOrStore(symbol, candidate)
-
-	return actual.(*directionalState), nil
+	return state, nil
 }
 
-/*
-observeMeasurement gives every projected metric one update of its own resident
-predictive sufficient statistics.
-*/
-func (predictor *directionalPredictor) observeMeasurement(measurement *data.Measurement[float64]) error {
+/* observeMeasurement routes one metric according to its declared semantic role. */
+func (predictor *directionalPredictor) observeMeasurement(
+	measurement *data.Measurement[float64],
+) error {
 	if measurement == nil {
 		return nil
 	}
@@ -148,94 +178,52 @@ func (predictor *directionalPredictor) observeMeasurement(measurement *data.Meas
 		quality *= measurement.SNR / (1 + measurement.SNR)
 	}
 
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
 	for metricName, metric := range measurement.Metrics {
-		if err := state.observe(featureKey{family: "measurement", source: measurement.Source, metric: metricName}, metric.Raw, quality); err != nil {
-			return err
+		if measurement.Source == "pumpdump" && metricName == "volume_bar_duration" {
+			state.observeHorizon(metric.Raw)
 		}
-	}
 
-	return nil
-}
-
-/*
-observe stores one metric fact for the symbol. A non-finite value is not a
-valid observation: it would otherwise poison every aggregate score and make
-the recursive least squares classifier misfire on a NaN feature (see rls
-predictive, which strictly requires finite features). Reject it here so the
-erroneous producer surfaces in Planner.Step's log with the identity of the
-metric that fed it, instead of collapsing the whole symbol's forecast.
-*/
-func (state *directionalState) observe(key featureKey, value, quality float64) error {
-	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return fmt.Errorf(
-			"strategy: feature %s/%s/%s must be finite, got %v",
-			key.family,
-			key.source,
-			key.metric,
-			value,
+		state.observe(
+			featureKey{family: "measurement", source: measurement.Source, metric: metricName},
+			metric.Raw,
+			quality,
+			measurement.At,
+			semanticFeatureUse(measurement.Source, metricName),
 		)
 	}
 
-	feature := state.features[key]
-
-	if feature == nil {
-		feature = &predictorFeature{}
-		state.features[key] = feature
-	}
-
-	feature.value = value
-	feature.quality = quality
-	feature.observed = true
-
 	return nil
 }
 
-func (state *directionalState) aggregate(profitability bool) (float64, int) {
-	numerator := 0.0
-	denominator := 0.0
-	count := 0
+func semanticFeatureUse(source, metric string) featureUse {
+	semantics, found := signal.Lookup(source, metric)
 
-	for _, feature := range state.features {
-		if !feature.observed || feature.quality <= 0 {
-			continue
-		}
-
-		association := feature.up
-
-		if profitability {
-			association = feature.profit
-		}
-
-		evidence, maturity, ready := association.evidence(feature.value)
-
-		if !ready {
-			continue
-		}
-
-		weight := maturity * feature.quality
-		numerator += weight * evidence
-		denominator += weight
-		count++
+	if !found {
+		return featureReview
 	}
 
-	if denominator <= 0 {
-		return 0, 0
+	if semantics.Status == "MIGRATE_AND_REMOVE" || semantics.Role == "DEPRECATE_REDUNDANT" {
+		return featureReview
 	}
 
-	return numerator / denominator, count
+	switch semantics.Role {
+	case "ESTIMABILITY":
+		return featureEstimability
+	case "EXECUTION_CONTEXT":
+		return featureExecution
+	default:
+		return featureContext
+	}
 }
 
 /*
-advance resolves the prior ticker classifications, then issues the current
-classification from all observations resident for the symbol.
+advance resolves a prior forecast only after its own activity-clock horizon,
+then queries the current executable-return posterior and issues one new bounded
+pending observation when necessary.
 */
 func (predictor *directionalPredictor) advance(
 	symbol string,
 	at time.Time,
-	reference float64,
 	executableBid float64,
 	breakEven *float64,
 ) (*directionalForecast, error) {
@@ -245,95 +233,64 @@ func (predictor *directionalPredictor) advance(
 		return nil, err
 	}
 
-	state.mu.Lock()
-	defer state.mu.Unlock()
+	state.intervals.observe(at)
 
-	if state.priorReference > 0 {
-		up := reference > state.priorReference
-		profit := state.profitPending && executableBid > state.priorBreakEven
-
-		for _, feature := range state.features {
-			if feature.pendingUp {
-				feature.up.observe(feature.pendingValue, signedOutcome(up), feature.pendingQuality)
-			}
-
-			if feature.pendingProfit && state.profitPending {
-				feature.profit.observe(feature.pendingValue, signedOutcome(profit), feature.pendingQuality)
-			}
-		}
-
-		if err := state.direction.resolve(up); err != nil {
-			return nil, err
-		}
-
-		if state.profitPending {
-			if err := state.profitability.resolve(profit); err != nil {
-				return nil, err
-			}
-		}
+	if err := state.resolve(at, executableBid); err != nil {
+		return nil, err
 	}
 
-	directionScore, directionFeatures := state.aggregate(false)
-	directionOutput, probabilityUp, directionReady, directionSkill, err := state.direction.issue(directionScore)
+	forecast := &directionalForecast{
+		symbol:      symbol,
+		at:          at,
+		status:      "missing-active-opportunity",
+		horizon:     state.horizon,
+		calibration: state.returns.outcomes,
+		opportunity: state.opportunity,
+	}
+	forecast.estimabilityFeatures = state.currentFeatureCount(featureEstimability, at)
+	forecast.executionFeatures = state.currentFeatureCount(featureExecution, at)
+	forecast.reviewFeatures = state.currentFeatureCount(featureReview, at)
+
+	context, active := state.context()
+
+	if !active {
+		return forecast, nil
+	}
+
+	if state.horizon <= 0 {
+		forecast.status = "missing-adaptive-horizon"
+		return forecast, nil
+	}
+
+	forecast.horizonSteps = state.intervals.steps(state.horizon)
+	score, features := state.aggregate(context, at, state.horizon)
+	forecast.directionalFeatures = features
+
+	output, err := state.returns.predict(score)
 
 	if err != nil {
 		return nil, err
 	}
 
-	profitScore, profitFeatures := state.aggregate(true)
-	profitOutput := learning.RLSOutput{}
-	probabilityProfit := 0.5
-	profitReady := false
-	profitSkill := 0.0
+	forecast.output = output
+	forecast.expectedLogReturn = output.Value
+	forecast.status = "awaiting-return-distribution"
 
-	if breakEven != nil {
-		profitOutput, probabilityProfit, profitReady, profitSkill, err = state.profitability.issue(profitScore)
+	if breakEven != nil && executableBid > 0 && *breakEven > 0 {
+		forecast.breakEvenLogReturn = math.Log(*breakEven / executableBid)
+	}
 
-		if err != nil {
-			return nil, err
+	if output.Ready && breakEven != nil {
+		distribution := distuv.StudentsT{
+			Mu: output.Value, Sigma: output.Scale, Nu: output.DegreesOfFreedom,
 		}
+		forecast.probabilityUp = 1 - distribution.CDF(0)
+		forecast.probabilityProfitable = 1 - distribution.CDF(forecast.breakEvenLogReturn)
+		forecast.ready = true
+		forecast.status = "adaptive-return-distribution-ready"
 	}
 
-	for _, feature := range state.features {
-		if !feature.observed {
-			continue
-		}
+	state.issue(at, executableBid, context, score)
 
-		feature.pendingValue = feature.value
-		feature.pendingQuality = feature.quality
-		feature.pendingUp = true
-		feature.pendingProfit = breakEven != nil
-	}
-
-	state.priorReference = reference
-	state.profitPending = breakEven != nil
-
-	if breakEven != nil {
-		state.priorBreakEven = *breakEven
-	}
-
-	return &directionalForecast{
-		symbol:                   symbol,
-		at:                       at,
-		probabilityUp:            probabilityUp,
-		probabilityProfitable:    probabilityProfit,
-		directionReady:           directionReady && directionFeatures > 0,
-		profitabilityReady:       profitReady && profitFeatures > 0,
-		directionSkillLowerBound: directionSkill,
-		profitSkillLowerBound:    profitSkill,
-		directionCalibration:     state.direction.skill.count,
-		profitCalibration:        state.profitability.skill.count,
-		directionFeatures:        directionFeatures,
-		profitFeatures:           profitFeatures,
-		directionOutput:          directionOutput,
-		profitOutput:             profitOutput,
-	}, nil
-}
-
-func signedOutcome(positive bool) float64 {
-	if positive {
-		return 1
-	}
-
-	return -1
+	return forecast, nil
 }

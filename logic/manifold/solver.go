@@ -273,14 +273,12 @@ func (solver *Solver) Crystallize(
 		return nil, nil
 	}
 
-	_, priceMean, priceDispersion, _, _ := logMoments(message)
-
 	for _, price := range candidateLevels {
 		if price <= 0 || math.IsNaN(price) || math.IsInf(price, 0) {
 			continue
 		}
 
-		solver.injectProbeParticle(batch, price, message.Symbol, priceMean, priceDispersion)
+		solver.injectProbeParticle(batch, price, message.Symbol)
 	}
 
 	if relaxationSteps <= 0 {
@@ -326,7 +324,6 @@ func (solver *Solver) injectProbeParticle(
 	batch *sensorium.State,
 	price float64,
 	symbol string,
-	priceMean, priceDispersion float64,
 ) {
 	if batch == nil || symbol == "" || price <= 0 {
 		return
@@ -338,7 +335,13 @@ func (solver *Solver) injectProbeParticle(
 		return
 	}
 
-	priceDeviation := standardize(math.Log(price), priceMean, priceDispersion)
+	// A probe must be placed by the same resident frame the observed orders
+	// were, or it crystallizes in a different coordinate system than the book
+	// it is probing.
+	positionX, priceDeviation := solver.dataset.frames.placePrice(
+		symbol,
+		math.Log(price),
+	)
 	symbolIndex := symbolToken(symbol)
 	token := packToken(symbolIndex, 0)
 
@@ -349,12 +352,15 @@ func (solver *Solver) injectProbeParticle(
 	state.ContentIDs[0] = int64(symbolIndex)
 	state.Phase[0] = 0
 	state.Omega[0] = float32(math.Tanh(priceDeviation) * omegaHalfSpan)
-	state.Energy[0] = unitOscillatorEnergy
-	state.Mass[0] = unitCarrierMass
+	// A probe is a price the book has not stated an order for, so it has no
+	// size of its own and carries the unit energy that makes it a light,
+	// neutral test particle. Mass tracks energy as it does for every particle.
+	state.Energy[0] = unitProbeEnergy
+	state.Mass[0] = unitProbeEnergy
 	state.Heat[0] = 0.5
 	state.Amp[0] = float32(math.Sqrt(float64(state.Energy[0])))
-	state.Pos[0] = float32(priceDeviation)
-	state.Pos[1] = 0
+	state.Pos[0] = float32(positionX)
+	state.Pos[1] = 0.5
 	state.Pos[2] = 0.5
 	state.Vel[0] = 0
 	state.Vel[1] = 0

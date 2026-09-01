@@ -11,12 +11,14 @@ import (
 )
 
 /*
-captureMarketIndex accelerates the per-run market read. The capture tape is
-scanned by (run, kind) in capture order, which is the exact traversal Episode
-discovery needs and the one ordering replay is allowed to use (§52).
+captureMarketIndex accelerates the per-run market read. It contains only ticker
+and trade rows because those are the raw coordinates Episode discovery decodes;
+book/L3/protocol rows remain exactly captured without inflating this index.
 */
 const captureMarketIndex = `
-CREATE INDEX IF NOT EXISTS idx_events_run_kind ON events(run_id, kind, capture_seq);
+CREATE INDEX IF NOT EXISTS idx_events_market_run_capture
+ON events(run_id, capture_seq)
+WHERE kind IN ('ticker', 'trade');
 `
 
 /*
@@ -51,7 +53,7 @@ func (store *SQLite) ListMarketObservations(runID string) ([]hindsight.Observati
 	}
 
 	rows, err := store.database.Query(
-		`SELECT capture_seq, stream, stream_epoch, stream_seq, kind, endpoint, at, data
+		`SELECT capture_seq, stream, stream_epoch, stream_seq, kind, endpoint, at, data, encoding
 		 FROM events
 		 WHERE run_id = ? AND kind IN ('ticker', 'trade')
 		 ORDER BY capture_seq ASC`,
@@ -77,6 +79,7 @@ func (store *SQLite) ListMarketObservations(runID string) ([]hindsight.Observati
 			endpoint   string
 			receivedAt string
 			payload    []byte
+			encoding   string
 		)
 
 		identity.Run = hindsight.RunID(runID)
@@ -90,6 +93,7 @@ func (store *SQLite) ListMarketObservations(runID string) ([]hindsight.Observati
 			&endpoint,
 			&receivedAt,
 			&payload,
+			&encoding,
 		); err != nil {
 			return nil, errnie.Error(errnie.Err(
 				errnie.IO,
@@ -99,6 +103,15 @@ func (store *SQLite) ListMarketObservations(runID string) ([]hindsight.Observati
 		}
 
 		received, _ := time.Parse(time.RFC3339Nano, receivedAt)
+		payload, err = store.decodePayload(payload, encoding)
+
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO,
+				"store: decode market observation payload",
+				err,
+			))
+		}
 
 		observations = append(
 			observations,

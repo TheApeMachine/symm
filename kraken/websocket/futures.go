@@ -237,6 +237,14 @@ func NewFuturesWithClient(
 		return futures.client.WriteMessage(gorillawebsocket.PingMessage, nil)
 	})
 
+	// A failed keepalive is the only evidence of a half-open socket: the SDK
+	// reports a disconnect from its read loop, which stays blocked on a peer
+	// that will never answer, so the session would otherwise keep writing into
+	// a dead socket for the rest of the process lifetime.
+	futures.pinger.OnFailed(func(error) {
+		futures.reopen()
+	})
+
 	if len(recorders) == 1 {
 		futures.capture = recorders[0]
 
@@ -593,6 +601,32 @@ func (futures *FuturesLive) Write(params json.Marshaler, callbacks ...Callback[a
 	}
 
 	return errnie.Error(err)
+}
+
+/*
+reopen tears down a socket the session can no longer write to and dials again.
+
+Disconnect is what makes the SDK's blocked read loop return, which raises
+OnDisconnected and clears IsActive; Connect then re-arms the SDK's own reconnect
+handling for the new socket. Both are needed: Disconnect alone leaves the
+session down permanently, because it also disables the SDK's auto-reconnect.
+*/
+func (futures *FuturesLive) reopen() {
+	select {
+	case <-futures.ctx.Done():
+		return
+	default:
+	}
+
+	errnie.Error(futures.client.Disconnect())
+
+	if err := futures.client.Connect(); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"futures: failed to reopen after keepalive failure",
+			err,
+		))
+	}
 }
 
 func (futures *FuturesLive) Close() error {

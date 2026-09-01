@@ -7,6 +7,11 @@ import (
 )
 
 func (fluid *workspace) step() Reading {
+	// The kernels log why they rejected a cell or particle before writing the
+	// qNaN that a fail-fast contract demands. Draining at the end of the step
+	// is what lets that reason reach a human instead of only the NaN.
+	defer fluid.drainDebug()
+
 	fluid.scatterParticles()
 	fluid.gasRK2()
 
@@ -219,7 +224,7 @@ func (fluid *workspace) gasRK2() {
 		fluid.rho, fluid.mom, fluid.energy,
 		fluid.rho1, fluid.mom1, fluid.energy1,
 		fluid.k1Rho, fluid.k1Mom, fluid.k1Energy,
-		fluid.dbgHead, fluid.dbgWords, 0,
+		fluid.dbgHead, fluid.dbgWords, dbgCapacity,
 		dt, gamma, cv, rhoMin, pMin, mu, kThermal,
 	)
 	engine.GasRK2Stage2(
@@ -227,7 +232,7 @@ func (fluid *workspace) gasRK2() {
 		fluid.rho1, fluid.mom1, fluid.energy1,
 		fluid.k1Rho, fluid.k1Mom, fluid.k1Energy,
 		fluid.rho2, fluid.mom2, fluid.energy2,
-		fluid.dbgHead, fluid.dbgWords, 0,
+		fluid.dbgHead, fluid.dbgWords, dbgCapacity,
 		dt, gamma, cv, rhoMin, pMin, mu, kThermal,
 	)
 	engine.Synchronize()
@@ -241,7 +246,7 @@ func (fluid *workspace) gatherParticles() {
 	fluid.engine.PICGatherUpdate(
 		fluid.pos, fluid.mass, fluid.posOut, fluid.velOut, fluid.heatOut,
 		fluid.rho, fluid.mom, fluid.energy, fluid.gravity,
-		fluid.dbgHead, fluid.dbgWords, 0,
+		fluid.dbgHead, fluid.dbgWords, dbgCapacity,
 		dt,
 		float32(fluid.domain.Gamma),
 		float32(fluid.domain.RSpecific),

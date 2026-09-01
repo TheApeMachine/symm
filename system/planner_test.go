@@ -10,8 +10,7 @@ func TestNewPlannerConfig(t *testing.T) {
 	Convey("Given the live planner policy", t, func() {
 		config := NewPlannerConfig()
 
-		Convey("it should state entry, allocation, and cognition boundaries", func() {
-			So(config.MinimumEntryProbability, ShouldBeGreaterThan, UninformativeDirectionConfidence)
+		Convey("it should state allocation and cognition boundaries", func() {
 			So(config.MaxAllocationFraction, ShouldBeGreaterThan, 0.0)
 			So(config.CognitionSwitchConfidence, ShouldEqual, UninformativeDirectionConfidence)
 		})

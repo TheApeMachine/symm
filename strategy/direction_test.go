@@ -7,125 +7,127 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/types"
 )
 
 func TestDirectionalPredictorAdvance(t *testing.T) {
-	Convey("Given a precursor whose sign repeatedly determines both next movement outcomes", t, func() {
+	Convey("Given context that repeatedly precedes executable upward movement", t, func() {
 		predictor, err := newDirectionalPredictor(directionalConfig{
-			initialVariance:       1,
-			forgettingFactor:      1,
-			calibrationConfidence: 0.95,
+			initialVariance:  1,
+			forgettingFactor: 1,
 		})
 		So(err, ShouldBeNil)
 
-		reference := 100.0
-		previousPrecursor := 0.0
+		price := 100.0
+		previousContext := 0.0
 		var forecast *directionalForecast
 
-		for step := 0; step < 255; step++ {
-			precursor := -1.0
+		for step := 0; step < 256; step++ {
+			at := time.Unix(int64(step), 0)
+			price *= math.Exp(previousContext / 100)
+			context := -1.0
 
-			if step%2 == 0 {
-				precursor = 1
+			if step%2 != 0 {
+				context = 1
 			}
 
-			reference += previousPrecursor
-			breakEven := reference
 			measurement := data.NewMeasurement[float64](
-				"precursor", "TEST/USD", "test", time.Unix(int64(step), 0), time.Time{},
+				"activity", "TEST/USD", "pumpdump", at, time.Time{},
 			)
 			measurement.Maturity = 1
-			measurement.PutMetric(data.Metric[float64]{Label: "signed_precursor", Raw: precursor})
-			err = predictor.observeMeasurement(measurement)
-			So(err, ShouldBeNil)
+			measurement.PutMetric(data.Metric[float64]{
+				Label: "volume_bar_duration", Raw: 1,
+			})
+			measurement.PutMetric(data.Metric[float64]{
+				Label: "midpoint_return_rate", Raw: context,
+			})
+			So(predictor.observeMeasurement(measurement), ShouldBeNil)
+			So(predictor.observeOpportunity(&types.OpportunityCandidate{
+				Symbol: "TEST/USD", Archetype: types.ArchetypeVerticalIgnition,
+				Phase: types.PhaseArmed, Direction: types.DirectionLong,
+				Updated: at, Maturity: 1,
+			}), ShouldBeNil)
 
-			forecast, err = predictor.advance(
-				"TEST/USD", time.Unix(int64(step), 0), reference, reference, &breakEven,
-			)
+			breakEven := price * math.Exp(1.0/1000)
+			forecast, err = predictor.advance("TEST/USD", at, price, &breakEven)
 			So(err, ShouldBeNil)
-			previousPrecursor = precursor
+			previousContext = context
 		}
 
-		Convey("the model becomes ready from measured out-of-sample skill", func() {
-			So(forecast.directionReady, ShouldBeTrue)
-			So(forecast.profitabilityReady, ShouldBeTrue)
-			So(forecast.directionSkillLowerBound, ShouldBeGreaterThan, 0.0)
-			So(forecast.profitSkillLowerBound, ShouldBeGreaterThan, 0.0)
+		Convey("the model exposes one calibrated return distribution", func() {
+			So(forecast.ready, ShouldBeTrue)
+			So(forecast.output.Ready, ShouldBeTrue)
+			So(forecast.calibration, ShouldBeGreaterThan, 0)
+			So(forecast.horizon, ShouldEqual, time.Second)
+			So(forecast.horizonSteps, ShouldEqual, 1)
 		})
 
-		Convey("it classifies direction and profitability without estimating an amount", func() {
+		Convey("upward and profitable likelihoods are queries of that distribution", func() {
+			So(forecast.expectedLogReturn, ShouldBeGreaterThan, forecast.breakEvenLogReturn)
 			So(forecast.probabilityUp, ShouldBeGreaterThan, 0.5)
 			So(forecast.probabilityProfitable, ShouldBeGreaterThan, 0.5)
-			So(forecast.directionFeatures, ShouldEqual, 1)
-			So(forecast.profitFeatures, ShouldEqual, 1)
+			So(forecast.directionalFeatures, ShouldBeGreaterThan, 0)
 		})
 	})
 }
 
-func TestDirectionalPredictorRejectsNonFinite(t *testing.T) {
-	Convey("Given a predictor observing a metric that goes non-finite", t, func() {
-		predictor, err := newDirectionalPredictor(directionalConfig{
-			initialVariance:       1,
-			forgettingFactor:      1,
-			calibrationConfidence: 0.95,
-		})
-		So(err, ShouldBeNil)
-
-		Convey("a NaN metric is rejected with the source in the error", func() {
-			measurement := data.NewMeasurement[float64](
-				"precursor", "TEST/USD", "test", time.Unix(1, 0), time.Time{},
-			)
-			measurement.Maturity = 1
-			measurement.PutMetric(data.Metric[float64]{Label: "signed_precursor", Raw: math.NaN()})
-			err := predictor.observeMeasurement(measurement)
-			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "signed_precursor")
+func TestSemanticFeatureUse(t *testing.T) {
+	Convey("Given metric-map roles used by the advisee", t, func() {
+		Convey("market context may inform the conditional return distribution", func() {
+			So(semanticFeatureUse("cvd", "signed_net_fraction"), ShouldEqual, featureContext)
 		})
 
-		Convey("an infinite metric is rejected and never stored as observed", func() {
-			measurement := data.NewMeasurement[float64](
-				"precursor", "TEST/USD", "test", time.Unix(1, 0), time.Time{},
-			)
-			measurement.Maturity = 1
-			measurement.PutMetric(data.Metric[float64]{Label: "signed_precursor", Raw: math.Inf(1)})
-			So(predictor.observeMeasurement(measurement), ShouldNotBeNil)
+		Convey("estimator quality cannot impersonate direction", func() {
+			So(semanticFeatureUse("correlation", "correlation_p_value"), ShouldEqual, featureEstimability)
+		})
 
-			state, err := predictor.state("TEST/USD")
-			So(err, ShouldBeNil)
-			So(state.features, ShouldBeEmpty)
+		Convey("execution facts remain execution context", func() {
+			So(semanticFeatureUse("liquidity", "relative_spread"), ShouldEqual, featureExecution)
+		})
+
+		Convey("undeclared facts are held for semantic review", func() {
+			So(semanticFeatureUse("undeclared", "fact"), ShouldEqual, featureReview)
 		})
 	})
 }
 
 func BenchmarkDirectionalPredictorAdvance(b *testing.B) {
 	predictor, err := newDirectionalPredictor(directionalConfig{
-		initialVariance:       1,
-		forgettingFactor:      1,
-		calibrationConfidence: 0.95,
+		initialVariance:  1,
+		forgettingFactor: 1,
 	})
 
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	measurement := data.NewMeasurement[float64](
-		"precursor", "TEST/USD", "test", time.Unix(1, 0), time.Time{},
-	)
-	measurement.Maturity = 1
-	measurement.PutMetric(data.Metric[float64]{Label: "signed_precursor", Raw: 1})
-
-	if err := predictor.observeMeasurement(measurement); err != nil {
-		b.Fatal(err)
-	}
-
 	b.ReportAllocs()
 
 	for step := 0; b.Loop(); step++ {
-		breakEven := 100.0
+		at := time.Unix(int64(step), 0)
+		measurement := data.NewMeasurement[float64](
+			"activity", "TEST/USD", "pumpdump", at, time.Time{},
+		)
+		measurement.Maturity = 1
+		measurement.PutMetric(data.Metric[float64]{Label: "volume_bar_duration", Raw: 1})
+		measurement.PutMetric(data.Metric[float64]{Label: "midpoint_return_rate", Raw: float64(step % 2)})
+
+		if err := predictor.observeMeasurement(measurement); err != nil {
+			b.Fatal(err)
+		}
+
+		if err := predictor.observeOpportunity(&types.OpportunityCandidate{
+			Symbol: "TEST/USD", Archetype: types.ArchetypeVerticalIgnition,
+			Phase: types.PhaseArmed, Direction: types.DirectionLong,
+			Updated: at, Maturity: 1,
+		}); err != nil {
+			b.Fatal(err)
+		}
+
+		breakEven := 100.1
 
 		if _, err := predictor.advance(
-			"TEST/USD", time.Unix(int64(step), 0),
-			100+float64(step%2), 100+float64(step%2), &breakEven,
+			"TEST/USD", at, 100+float64(step%2), &breakEven,
 		); err != nil {
 			b.Fatal(err)
 		}

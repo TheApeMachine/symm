@@ -17,6 +17,17 @@ const (
 	floorDensity  = 1e-3
 	floorPressure = 1e-3
 	dtMax         = 0.015
+
+	// dbgWordsPerEvent mirrors DBG_WORDS_PER_EVENT in manifold.metal: each
+	// event is {tag, gid, a, b, c, d}. The two must agree or the host decodes
+	// garbage.
+	dbgWordsPerEvent = 6
+
+	// dbgCapacity is how many kernel events one step may record. A step that
+	// goes bad tends to go bad in many cells at once, so the buffer holds a
+	// batch rather than a single event; the kernel drops the overflow and the
+	// host reports how many were lost.
+	dbgCapacity = 256
 )
 
 type workspaceGrid struct {
@@ -242,7 +253,7 @@ func (fluid *workspace) allocateGrid() {
 	fluid.psiRe = fluid.gpu(cells * 4)
 	fluid.psiIm = fluid.gpu(cells * 4)
 	fluid.dbgHead = fluid.gpu(4)
-	fluid.dbgWords = fluid.gpu(6 * 4)
+	fluid.dbgWords = fluid.gpu(dbgCapacity * dbgWordsPerEvent * 4)
 	fluid.omegaLattice = fluid.gpu(modes * 4)
 	fluid.gateWidth = fluid.gpu(modes * 4)
 	fluid.accums = fluid.gpu(modes * 8 * 4)

@@ -857,6 +857,7 @@ table EnvelopeResonanceArtifact {
   resolvedSteps:long;
   readout:[double];
   confidence:double;
+  lastResolutionPrediction:double;
   lastResolutionTarget:double;
   lastResolutionError:double;
 

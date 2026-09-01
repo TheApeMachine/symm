@@ -2,9 +2,10 @@ package strategy
 
 import (
 	"math"
+	"time"
 
 	"github.com/theapemachine/symm/nomagique/learning"
-	"gonum.org/v1/gonum/stat/distuv"
+	"github.com/theapemachine/symm/types"
 )
 
 /* weightedAssociation retains the sufficient statistics for one feature/outcome relationship. */
@@ -55,47 +56,17 @@ func (association weightedAssociation) evidence(value float64) (float64, float64
 	return math.Tanh(correlation * standardized), maturity, true
 }
 
-type skillEstimate struct {
-	count uint64
-	mean  float64
-	m2    float64
+/*
+returnHead calibrates one bounded contextual score against an executable-bid
+log return. The RLS posterior is itself the forecast distribution; no binary
+classifier or admission score is layered on top of it.
+*/
+type returnHead struct {
+	learner  *learning.RLS
+	outcomes uint64
 }
 
-func (estimate *skillEstimate) observe(value float64) {
-	estimate.count++
-	delta := value - estimate.mean
-	estimate.mean += delta / float64(estimate.count)
-	estimate.m2 += delta * (value - estimate.mean)
-}
-
-func (estimate skillEstimate) lowerBound(confidence float64) (float64, bool) {
-	if estimate.count < 2 || estimate.m2 <= 0 {
-		return 0, false
-	}
-
-	degrees := float64(estimate.count - 1)
-	variance := estimate.m2 / degrees
-	standardError := math.Sqrt(variance / float64(estimate.count))
-	distribution := distuv.StudentsT{Mu: estimate.mean, Sigma: standardError, Nu: degrees}
-
-	return distribution.Quantile(1 - confidence), true
-}
-
-/* binaryHead calibrates one bounded evidence score against a binary outcome. */
-type binaryHead struct {
-	learner               *learning.RLS
-	skill                 skillEstimate
-	outcomes              uint64
-	positive              uint64
-	pendingScore          float64
-	pendingProbability    float64
-	pendingBaseline       float64
-	pendingReady          bool
-	hasPending            bool
-	calibrationConfidence float64
-}
-
-func newBinaryHead(config directionalConfig) (*binaryHead, error) {
+func newReturnHead(config directionalConfig) (*returnHead, error) {
 	learner, err := learning.NewRLS(learning.RLSConfig{
 		Dimension:        1,
 		InitialVariance:  config.initialVariance,
@@ -106,76 +77,245 @@ func newBinaryHead(config directionalConfig) (*binaryHead, error) {
 		return nil, err
 	}
 
-	return &binaryHead{
-		learner:               learner,
-		calibrationConfidence: config.calibrationConfidence,
-	}, nil
+	return &returnHead{learner: learner}, nil
 }
 
-func (head *binaryHead) resolve(positive bool) error {
-	if !head.hasPending {
-		return nil
-	}
-
-	target := -1.0
-	actual := 0.0
-
-	if positive {
-		target = 1
-		actual = 1
-		head.positive++
-	}
-
+func (head *returnHead) observe(score, logReturn float64) error {
 	if _, err := head.learner.Observe(learning.RLSSample{
-		Features: []float64{head.pendingScore},
-		Target:   target,
+		Features: []float64{score},
+		Target:   logReturn,
 	}); err != nil {
 		return err
 	}
 
-	if head.pendingReady {
-		modelError := actual - head.pendingProbability
-		baselineError := actual - head.pendingBaseline
-		head.skill.observe(baselineError*baselineError - modelError*modelError)
-	}
-
 	head.outcomes++
-	head.hasPending = false
 
 	return nil
 }
 
-func (head *binaryHead) issue(score float64) (learning.RLSOutput, float64, bool, float64, error) {
-	output, err := head.learner.Predict([]float64{score})
+func (head *returnHead) predict(score float64) (learning.RLSOutput, error) {
+	return head.learner.Predict([]float64{score})
+}
 
-	if err != nil {
-		return learning.RLSOutput{}, 0, false, 0, err
+func (intervals *intervalMean) observe(at time.Time) {
+	if intervals.last.IsZero() {
+		intervals.last = at
+		return
 	}
 
-	probability := 0.5
+	delta := at.Sub(intervals.last)
+	intervals.last = at
 
-	if output.Ready {
-		distribution := distuv.StudentsT{
-			Mu:    output.Value,
-			Sigma: output.Scale,
-			Nu:    output.DegreesOfFreedom,
+	if delta <= 0 {
+		return
+	}
+
+	intervals.count++
+	intervals.mean += time.Duration((int64(delta) - int64(intervals.mean)) / int64(intervals.count))
+}
+
+func (intervals intervalMean) steps(horizon time.Duration) int {
+	if intervals.mean <= 0 || horizon <= 0 {
+		return 0
+	}
+
+	return int(math.Ceil(float64(horizon) / float64(intervals.mean)))
+}
+
+func (state *directionalState) observeHorizon(seconds float64) {
+	if seconds <= 0 {
+		return
+	}
+
+	state.horizon = time.Duration(seconds * float64(time.Second))
+}
+
+func (state *directionalState) observe(
+	key featureKey,
+	value, quality float64,
+	observedAt time.Time,
+	use featureUse,
+) {
+	feature := state.features[key]
+
+	if feature == nil {
+		groupName := key.family + "\x00" + key.source
+		group, found := state.groupsByName[groupName]
+
+		if !found {
+			group = len(state.groups)
+			state.groupsByName[groupName] = group
+			state.groups = append(state.groups, evidenceGroup{})
 		}
-		probability = 1 - distribution.CDF(0)
+
+		feature = &predictorFeature{
+			group:        group,
+			associations: make(map[forecastContext]*weightedAssociation),
+			use:          use,
+		}
+		state.features[key] = feature
 	}
 
-	baseline := 0.5
+	feature.value = value
+	feature.quality = quality
+	feature.observedAt = observedAt
+	feature.observed = true
+}
 
-	if head.outcomes > 0 {
-		baseline = float64(head.positive) / float64(head.outcomes)
+func (state *directionalState) aggregate(
+	context forecastContext,
+	at time.Time,
+	horizon time.Duration,
+) (float64, int) {
+	for index := range state.groups {
+		state.groups[index] = evidenceGroup{}
 	}
 
-	head.pendingScore = score
-	head.pendingProbability = probability
-	head.pendingBaseline = baseline
-	head.pendingReady = output.Ready
-	head.hasPending = true
+	for _, feature := range state.features {
+		if feature.use != featureContext || !feature.current(at, horizon) {
+			continue
+		}
 
-	lowerBound, calibrated := head.skill.lowerBound(head.calibrationConfidence)
+		association := feature.associations[context]
 
-	return output, probability, output.Ready && calibrated && lowerBound > 0, lowerBound, nil
+		if association == nil {
+			continue
+		}
+
+		evidence, maturity, ready := association.evidence(feature.value)
+
+		if !ready {
+			continue
+		}
+
+		weight := maturity * feature.quality
+		group := &state.groups[feature.group]
+		group.numerator += weight * evidence
+		group.denominator += weight
+		group.features++
+	}
+
+	numerator := 0.0
+	denominator := 0.0
+	features := 0
+
+	for _, group := range state.groups {
+		if group.denominator <= 0 {
+			continue
+		}
+
+		groupEvidence := group.numerator / group.denominator
+		groupMaturity := group.denominator / float64(group.features)
+		numerator += groupMaturity * groupEvidence
+		denominator += groupMaturity
+		features += group.features
+	}
+
+	if denominator == 0 {
+		return 0, 0
+	}
+
+	return numerator / denominator, features
+}
+
+func (feature *predictorFeature) current(at time.Time, horizon time.Duration) bool {
+	if !feature.observed || feature.quality <= 0 || feature.observedAt.IsZero() {
+		return false
+	}
+
+	age := at.Sub(feature.observedAt)
+
+	return age >= 0 && age <= horizon
+}
+
+func (state *directionalState) resolve(at time.Time, executableBid float64) error {
+	if !state.pending.present || at.Sub(state.pending.issuedAt) < state.pending.horizon {
+		return nil
+	}
+
+	logReturn := math.Log(executableBid / state.pending.reference)
+
+	for _, feature := range state.features {
+		if !feature.pending {
+			continue
+		}
+
+		association := feature.associations[state.pending.context]
+
+		if association == nil {
+			association = &weightedAssociation{}
+			feature.associations[state.pending.context] = association
+		}
+
+		association.observe(feature.pendingValue, logReturn, feature.pendingWeight)
+		feature.pending = false
+	}
+
+	if err := state.returns.observe(state.pending.score, logReturn); err != nil {
+		return err
+	}
+
+	state.pending.present = false
+
+	return nil
+}
+
+func (state *directionalState) issue(
+	at time.Time,
+	reference float64,
+	context forecastContext,
+	score float64,
+) {
+	if state.pending.present || reference <= 0 {
+		return
+	}
+
+	state.pending = pendingReturn{
+		issuedAt:  at,
+		reference: reference,
+		horizon:   state.horizon,
+		score:     score,
+		context:   context,
+		present:   true,
+	}
+
+	for _, feature := range state.features {
+		if feature.use != featureContext || !feature.current(at, state.horizon) {
+			continue
+		}
+
+		feature.pendingValue = feature.value
+		feature.pendingWeight = feature.quality
+		feature.pending = true
+	}
+}
+
+func (state *directionalState) context() (forecastContext, bool) {
+	context := forecastContext{
+		archetype: state.opportunity.Archetype,
+		phase:     state.opportunity.Phase,
+	}
+
+	switch state.opportunity.Phase {
+	case types.PhaseForming, types.PhaseArmed, types.PhaseIgnition:
+		return context, state.opportunity.Direction == types.DirectionLong
+	default:
+		return context, false
+	}
+}
+
+func (state *directionalState) currentFeatureCount(use featureUse, at time.Time) int {
+	if state.horizon <= 0 {
+		return 0
+	}
+
+	count := 0
+
+	for _, feature := range state.features {
+		if feature.use == use && feature.current(at, state.horizon) {
+			count++
+		}
+	}
+
+	return count
 }

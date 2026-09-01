@@ -18,6 +18,9 @@ func TestAsyncWitnessWriter(t *testing.T) {
 
 		runID, err := hindsight.NewRunID(time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC))
 		So(err, ShouldBeNil)
+		So(engine.WriteRun(hindsight.Run{
+			ID: runID, StartedAt: time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC),
+		}), ShouldBeNil)
 
 		sequencer, err := hindsight.NewSequencer(runID)
 		So(err, ShouldBeNil)
@@ -102,6 +105,12 @@ func TestAsyncWitnessWriter(t *testing.T) {
 			}
 
 			So(tiny.Dropped(), ShouldBeGreaterThan, 0)
+			So(tiny.Close(), ShouldBeNil)
+
+			gaps, err := engine.ListGaps(string(runID))
+			So(err, ShouldBeNil)
+			So(gaps, ShouldNotBeEmpty)
+			So(gaps[0].Encoding, ShouldEqual, "witness_queue_overflow")
 		})
 	})
 }

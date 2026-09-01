@@ -180,10 +180,19 @@ func NewPosition(
 			Stoploss:      decision.Stoploss,
 		},
 	}
+	continuationHorizon := time.Duration(
+		decision.Alternatives["horizon:seconds"] * float64(time.Second),
+	)
 
 	if position.Holding.Stoploss != nil {
 		position.Holding.Stoploss.ProtectContinuation = func(observationTime time.Time) bool {
-			return continuationSupportive(position.perspective, position.entryContext, pair.Symbol, observationTime)
+			return continuationSupportive(
+				position.perspective,
+				position.entryContext,
+				pair.Symbol,
+				observationTime,
+				continuationHorizon,
+			)
 		}
 	}
 

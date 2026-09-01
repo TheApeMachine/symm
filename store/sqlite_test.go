@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"testing"
 	"time"
@@ -54,6 +55,25 @@ func TestNewSQLite(t *testing.T) {
 				So(kind, ShouldEqual, "ticker")
 				So(endpoint, ShouldEqual, "wss://example/ws")
 				So(string(data), ShouldEqual, "hello")
+			})
+
+			Convey("Only the capture-order index is retained for event reads", func() {
+				var obsolete int
+				So(engine.database.QueryRow(
+					`SELECT count(*) FROM sqlite_master
+					 WHERE type = 'index'
+					 AND name IN (
+						'idx_events_kind', 'idx_events_at', 'idx_events_endpoint', 'idx_events_run_kind'
+					 )`,
+				).Scan(&obsolete), ShouldBeNil)
+				So(obsolete, ShouldEqual, 0)
+
+				var marketIndex int
+				So(engine.database.QueryRow(
+					`SELECT count(*) FROM sqlite_master
+					 WHERE type = 'index' AND name = 'idx_events_market_run_capture'`,
+				).Scan(&marketIndex), ShouldBeNil)
+				So(marketIndex, ShouldEqual, 1)
 			})
 		})
 	})
@@ -200,6 +220,27 @@ func TestSQLiteWriteRunAndCapture(t *testing.T) {
 			err := engine.WriteCapture(hindsight.CaptureIdentity{}, "wss://example", "ticker", []byte("x"), time.Now())
 			So(err, ShouldNotBeNil)
 		})
+
+		Convey("Compressible capture remains byte-exact on identity read", func() {
+			identity := hindsight.CaptureIdentity{
+				Run: "run-compressed", Sequence: 1, Stream: "public:ticker", StreamEpoch: 1,
+			}
+			payload := bytes.Repeat([]byte(`{"channel":"ticker","data":[]}`), 256)
+			So(engine.WriteCapture(
+				identity, "wss://example", "ticker", payload, time.Now(),
+			), ShouldBeNil)
+
+			var encoding string
+			So(engine.database.QueryRow(
+				"SELECT encoding FROM events WHERE run_id = ? AND capture_seq = ?",
+				string(identity.Run), uint64(identity.Sequence),
+			).Scan(&encoding), ShouldBeNil)
+			So(encoding, ShouldEqual, "zstd")
+
+			decoded, err := engine.ReadCapture(identity)
+			So(err, ShouldBeNil)
+			So(decoded, ShouldResemble, payload)
+		})
 	})
 }
 
@@ -277,4 +318,37 @@ func TestSQLiteLifecycleEventTest(t *testing.T) {
 			So(engine.WriteLifecycleEvent("run-1", hindsight.LifecycleEvent{Symbol: "XBT/USD"}), ShouldNotBeNil)
 		})
 	})
+}
+
+func BenchmarkSQLiteWriteCapture(b *testing.B) {
+	engine, err := NewSQLite(b.TempDir() + "/events.sqlite")
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.Cleanup(func() {
+		_ = engine.Close()
+	})
+
+	payload := bytes.Repeat(
+		[]byte(`{"channel":"ticker","type":"update","data":[{"symbol":"BTC/USD","bid":100,"ask":101}]}`),
+		8,
+	)
+	b.SetBytes(int64(len(payload)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		sequence := hindsight.CaptureSequence(b.N)
+		identity := hindsight.CaptureIdentity{
+			Run: "benchmark", Sequence: sequence, Stream: "public:ticker", StreamEpoch: 1,
+		}
+
+		if err := engine.WriteCapture(
+			identity, "wss://example", "ticker", payload, time.Unix(0, int64(sequence)),
+		); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

@@ -13,9 +13,8 @@ import (
 func TestDirectionalPredictorObserve(t *testing.T) {
 	Convey("Given an envelope populated by every analytical observation family", t, func() {
 		predictor, err := newDirectionalPredictor(directionalConfig{
-			initialVariance:       1,
-			forgettingFactor:      1,
-			calibrationConfidence: 0.95,
+			initialVariance:  1,
+			forgettingFactor: 1,
 		})
 		So(err, ShouldBeNil)
 
@@ -45,44 +44,48 @@ func TestDirectionalPredictorObserve(t *testing.T) {
 }
 
 func fullObservationEnvelope() *types.Envelope {
+	at := time.Unix(1, 0)
 	metricSymbol := nmtypes.MustIntern("advisor.metric")
 	resonanceSymbol := nmtypes.MustIntern("resonance.metric")
 	measurement := data.NewMeasurement[float64](
-		"measurement", "TEST/USD", "test", time.Unix(1, 0), time.Time{},
+		"measurement", "TEST/USD", "test", at, time.Time{},
 	)
 	measurement.Maturity = 1
 	measurement.PutMetric(data.Metric[float64]{Label: "raw", Raw: 1})
 
 	envelope := types.NewEnvelope(types.EnvelopeTicker)
 	envelope.TickerData.Symbol = "TEST/USD"
+	envelope.TickerData.Timestamp = at
 	envelope.Correlation = measurement
 	envelope.Perspectives = []*types.Perspective{{
 		Symbol: "TEST/USD",
 		Kind:   types.KindCoordination,
+		At:     at,
 		Count:  1,
 		Readings: [types.PerspectiveMetricCapacity]types.MetricReading{{
-			Metric: metricSymbol, Value: 1, Defined: true, Maturity: 1,
+			Metric: metricSymbol, Value: 1, Defined: true, Maturity: 1, ObservedAt: at,
 		}},
 	}}
 	envelope.Categories = []types.Category{{
-		Symbol: "TEST/USD", Type: types.VerticalIgnition,
+		Symbol: "TEST/USD", Type: types.VerticalIgnition, At: at,
 		Confidence: 0.9, Surprisal: 2, Strength: 1, Maturity: 1, Freshness: 1,
 	}}
 	envelope.Opportunities = []*types.OpportunityCandidate{{
 		Symbol: "TEST/USD", Archetype: types.ArchetypeVerticalIgnition,
-		Direction: types.DirectionLong, Provenance: types.ProvenanceCategory, Maturity: 1,
+		Phase: types.PhaseArmed, Direction: types.DirectionLong,
+		Provenance: types.ProvenanceCategory, Maturity: 1, Updated: at,
 		Economics: &types.OpportunityEconomics{
 			Calibrated: true, TransitionProbability: 0.8, ProfitFirst: 0.7, Uncertainty: 0.1,
 		},
 	}}
 	envelope.Cognition = &types.Cognition{
-		Symbol: "TEST/USD", Confidence: 0.8, ClassConfidence: 0.7,
+		Symbol: "TEST/USD", At: at, Confidence: 0.8, ClassConfidence: 0.7,
 		Contrast: 1, ContrastEvidence: 2, LookaheadScore: 3, InterpolatedSurprisal: 4,
 		Classes:       []types.CognitionClass{{Name: "ignition", Probability: 0.8}},
 		Contributions: []types.CognitionContribution{{Token: "coil", Bits: 2}},
 	}
 	envelope.Manifold = &types.ManifoldState{}
-	envelope.Resonance = &types.ResonanceArtifact{Symbol: "TEST/USD", Confidence: 0.8}
+	envelope.Resonance = &types.ResonanceArtifact{Symbol: "TEST/USD", At: at, Confidence: 0.8}
 	envelope.Resonance.Dynamics.Put(resonanceSymbol, 1)
 	envelope.Resonance.Forecast = &types.ResonanceReturnForecast{Call: 1}
 

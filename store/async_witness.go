@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -17,9 +18,9 @@ drains the queue and persists them to the repository in batches, so a slow
 SQLite write never blocks the consumer thread that is processing market frames.
 
 Enqueue never fails and never allocates on the steady path: a full queue drops
-the witness and records the drop count so an operator can see persistence is
-falling behind, mirroring the overflow policy the audit recorder owns rather
-than silently blocking the pipeline.
+the witness, records the drop count, and makes the worker mark the originating
+Run GAPPED. Trading is not blocked, and inspection cannot mistake an incomplete
+witness tape for a complete one.
 */
 type AsyncWitnessWriter struct {
 	repository Repository
@@ -30,8 +31,11 @@ type AsyncWitnessWriter struct {
 	done   chan struct{}
 	once   sync.Once
 
-	droppedMu sync.Mutex
-	dropped   uint64
+	droppedMu       sync.Mutex
+	dropped         uint64
+	pendingDrops    uint64
+	droppedRun      hindsight.RunID
+	droppedSequence hindsight.CaptureSequence
 }
 
 /*
@@ -47,11 +51,11 @@ func NewAsyncWitnessWriter(
 	flushInterval time.Duration,
 ) *AsyncWitnessWriter {
 	if queueDepth < 1 {
-		queueDepth = 1024
+		panic("store: positive async witness queue depth required")
 	}
 
 	if flushInterval <= 0 {
-		flushInterval = 50 * time.Millisecond
+		panic("store: positive async witness flush interval required")
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -83,6 +87,13 @@ func (writer *AsyncWitnessWriter) Enqueue(witness hindsight.ArtifactWitness) {
 	default:
 		writer.droppedMu.Lock()
 		writer.dropped++
+		writer.pendingDrops++
+
+		if writer.droppedRun == "" && witness.Envelope.Origin.Valid() {
+			writer.droppedRun = witness.Envelope.Origin.Run
+			writer.droppedSequence = witness.Envelope.Origin.Sequence
+		}
+
 		writer.droppedMu.Unlock()
 	}
 }
@@ -129,7 +140,7 @@ func (writer *AsyncWitnessWriter) run(flushInterval time.Duration) {
 
 	flush := func() error {
 		if len(pending) == 0 {
-			return nil
+			return writer.markDropped()
 		}
 
 		batch := pending
@@ -151,7 +162,7 @@ func (writer *AsyncWitnessWriter) run(flushInterval time.Duration) {
 				return err
 			}
 
-			return nil
+			return writer.markDropped()
 		}
 
 		for _, witness := range batch {
@@ -166,7 +177,7 @@ func (writer *AsyncWitnessWriter) run(flushInterval time.Duration) {
 			}
 		}
 
-		return nil
+		return writer.markDropped()
 	}
 
 	for {
@@ -207,4 +218,39 @@ func (writer *AsyncWitnessWriter) run(flushInterval time.Duration) {
 			}
 		}
 	}
+}
+
+func (writer *AsyncWitnessWriter) markDropped() error {
+	writer.droppedMu.Lock()
+	pendingDrops := writer.pendingDrops
+	runID := writer.droppedRun
+	sequence := writer.droppedSequence
+	writer.droppedMu.Unlock()
+
+	if pendingDrops == 0 || runID == "" {
+		return nil
+	}
+
+	err := writer.repository.MarkGapped(
+		runID,
+		sequence,
+		"witness_queue_overflow",
+		fmt.Sprintf("%d artifact witnesses were not persisted", pendingDrops),
+	)
+
+	if err != nil {
+		return err
+	}
+
+	writer.droppedMu.Lock()
+	writer.pendingDrops -= pendingDrops
+
+	if writer.pendingDrops == 0 {
+		writer.droppedRun = ""
+		writer.droppedSequence = 0
+	}
+
+	writer.droppedMu.Unlock()
+
+	return nil
 }

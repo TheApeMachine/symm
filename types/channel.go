@@ -63,8 +63,13 @@ type ResonanceArtifact struct {
 	ResolvedSteps        int
 	Readout              []float64
 	Confidence           float64
-	LastResolutionTarget float64
-	LastResolutionError  float64
+	// LastResolutionPrediction is the direction the head actually issued at t,
+	// as distinct from the target it was scored against. Without it a consumer
+	// can only show the realized move twice over and never the call that was
+	// made.
+	LastResolutionPrediction float64
+	LastResolutionTarget     float64
+	LastResolutionError      float64
 }
 
 /*

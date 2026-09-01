@@ -20,12 +20,12 @@ Consumer identity, by kind — "learned" marks an actual per-metric value read;
 "bound" and "catalog" mark declared named inputs.
 
   - learned: directionalPredictor.observeMeasurement ranges the concrete
-    Measurement.Metrics map and passes every metric.Raw value, under its own
-    source/name identity, into a separate resident predictive feature. It is a
-    wide read over whatever Metrics selector the caller passes, so as a static
-    scan it never resolves to the specific producers it touches. Like a bulk
-    kernel/generic subscription, it is recorded as context (learned: true) but
-    is not proof that this named metric is used, and never clears "dead".
+    Measurement.Metrics map and routes every metric.Raw value, under its own
+    source/name identity and metric-map semantic role, into resident context,
+    estimability, execution, or review state. It is a wide read over whatever
+    Metrics selector the caller passes, so static analysis cannot claim that a
+    specific producer is semantically declared. It is recorded as context
+    (learned: true) but never clears "dead".
 
   - bound: a literal (source, metric) pair passed to
     logic/advisor.NewMetricBinding / NewControlBinding — an Advisor declares
@@ -112,6 +112,17 @@ type consumerEdge struct {
 	Package  string
 	File     string
 	Line     int
+}
+
+func splitMetricIdentity(source, metric string) metricID {
+	identity := metricID{Source: source, Metric: metric}
+
+	if index := strings.IndexByte(metric, ':'); index >= 0 {
+		identity.Metric = metric[:index]
+		identity.Side = metric[index+1:]
+	}
+
+	return identity
 }
 
 type report struct {
@@ -251,6 +262,7 @@ func main() {
 			unresolved = append(unresolved, u...)
 
 			consumers = append(consumers, scanFineConsumers(pkg, file, relFile)...)
+			consumers = append(consumers, scanCategoryConsumers(pkg, file, relFile)...)
 			consumers = append(consumers, scanKernelConsumers(pkg, file, relFile)...)
 			consumers = append(consumers, scanLearnedConsumers(pkg, file, relFile)...)
 		}
@@ -322,7 +334,7 @@ func scanLearnedConsumers(pkg *packages.Package, file *ast.File, relFile string)
 		position := pkg.Fset.Position(function.Pos())
 		out = append(out, consumerEdge{
 			Kind:     "learned",
-			Consumer: "strategy.directionalPredictor per-metric classification",
+			Consumer: "strategy.directionalPredictor semantic metric routing",
 			Package:  pkg.PkgPath,
 			File:     relFile,
 			Line:     position.Line,
@@ -501,7 +513,7 @@ func scanFineConsumers(pkg *packages.Package, file *ast.File, relFile string) []
 			}
 			pos := pkg.Fset.Position(n.Pos())
 			out = append(out, consumerEdge{
-				ID:       metricID{Source: source, Metric: metric},
+				ID:       splitMetricIdentity(source, metric),
 				Kind:     "bound",
 				Consumer: describeAdvisorConsumer(pkg, relFile),
 				Package:  pkg.PkgPath,
@@ -550,6 +562,142 @@ func scanFineConsumers(pkg *packages.Package, file *ast.File, relFile string) []
 	})
 
 	return out
+}
+
+/*
+scanCategoryConsumers finds the explicit types.CategorySchema table. Category
+schemas are named semantic consumers just like Advisor bindings: each row names
+one exact producer identity and the market-state interpretation it contributes
+to. Source is a typed string constant rather than a literal, so go/types is
+used to resolve its value instead of guessing from the identifier spelling.
+*/
+func scanCategoryConsumers(
+	pkg *packages.Package,
+	file *ast.File,
+	relFile string,
+) []consumerEdge {
+	if !strings.HasSuffix(pkg.PkgPath, "/types") {
+		return nil
+	}
+
+	var out []consumerEdge
+
+	ast.Inspect(file, func(node ast.Node) bool {
+		declaration, ok := node.(*ast.ValueSpec)
+
+		if !ok || !namesIdentifier(declaration.Names, "CategorySchemas") {
+			return true
+		}
+
+		for _, value := range declaration.Values {
+			table, ok := value.(*ast.CompositeLit)
+
+			if !ok {
+				continue
+			}
+
+			for _, element := range table.Elts {
+				literal, ok := element.(*ast.CompositeLit)
+
+				if !ok {
+					continue
+				}
+
+				if edge, found := categoryConsumer(pkg, literal, relFile); found {
+					out = append(out, edge)
+				}
+			}
+		}
+
+		return false
+	})
+
+	return out
+}
+
+func categoryConsumer(
+	pkg *packages.Package,
+	literal *ast.CompositeLit,
+	relFile string,
+) (consumerEdge, bool) {
+	var source, metric, category string
+
+	for _, element := range literal.Elts {
+		field, ok := element.(*ast.KeyValueExpr)
+
+		if !ok {
+			continue
+		}
+
+		name, ok := field.Key.(*ast.Ident)
+
+		if !ok {
+			continue
+		}
+
+		switch name.Name {
+		case "Source":
+			source = typedString(pkg, field.Value)
+		case "Metric":
+			metric = stringLiteral(field.Value)
+		case "Category":
+			category = expressionName(field.Value)
+		}
+	}
+
+	if source == "" || metric == "" || category == "" {
+		return consumerEdge{}, false
+	}
+
+	position := pkg.Fset.Position(literal.Pos())
+
+	return consumerEdge{
+		ID:       splitMetricIdentity(source, metric),
+		Kind:     "bound",
+		Consumer: "category:" + category + " (" + pkg.PkgPath + ")",
+		Package:  pkg.PkgPath,
+		File:     relFile,
+		Line:     position.Line,
+	}, true
+}
+
+func namesIdentifier(names []*ast.Ident, target string) bool {
+	for _, name := range names {
+		if name.Name == target {
+			return true
+		}
+	}
+
+	return false
+}
+
+func typedString(pkg *packages.Package, expression ast.Expr) string {
+	if literal := stringLiteral(expression); literal != "" {
+		return literal
+	}
+
+	if pkg == nil || pkg.TypesInfo == nil {
+		return ""
+	}
+
+	value := pkg.TypesInfo.Types[expression].Value
+
+	if value == nil || value.Kind() != constant.String {
+		return ""
+	}
+
+	return constant.StringVal(value)
+}
+
+func expressionName(expression ast.Expr) string {
+	switch value := expression.(type) {
+	case *ast.Ident:
+		return value.Name
+	case *ast.SelectorExpr:
+		return value.Sel.Name
+	default:
+		return ""
+	}
 }
 
 /*

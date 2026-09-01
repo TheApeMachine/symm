@@ -11,54 +11,63 @@ import (
 /*
 Dataset projects one Level3 message's resting orders into Sensorium States.
 
-It holds no book and no retained price. Kraken sends Level-3 as one-sided
-incremental updates, so any projection that needs BOTH sides of a touch before
-it can place a particle simply never places one: the two sides are never
-present in the same message. The previous implementation derived a two-sided
-midpoint for exactly that purpose and, as a result, emitted nothing at all.
+It holds no book — the resident domain is the book — but it does hold a
+coordinate frame per symbol. Kraken sends Level-3 as one-sided incremental
+updates, so any projection that needs BOTH sides of a touch before it can place
+a particle simply never places one: the two sides are never present in the same
+message. Nor can a message supply its own frame: an update carrying a single
+order has no dispersion, so standardizing that order against its own message
+places it at the frame's origin, and thousands of distinct orders end up
+stacked on one coordinate.
 
-Nothing here needs an absolute price anchor. The physics domain is a periodic
-torus — position_to_cell wraps a particle into [0, grid) — so what determines a
-particle's cell is its position RELATIVE to the other particles, not its
-distance from some global reference. The message's own orders therefore supply
-their own frame:
+The frame is therefore resident per symbol (see frame.go). Each observation
+folds into a running log-price and log-quantity moment, and an order is placed
+against everything that symbol has shown so far:
 
-  - Position X: log price spread about this message's own log-price mean, so
-    the axis is the price dispersion the message actually carries.
-  - Position Y: log quantity, likewise centered, so liquidity spanning orders
-    of magnitude occupies the axis rather than collapsing into one cell.
-  - Position Z: queue rank, oldest order at the front.
+  - Position X: log price against the symbol's resident price frame, squashed
+    into the unit cube the domain spans.
+  - Position Y: log quantity likewise, so liquidity spanning orders of
+    magnitude occupies the axis rather than collapsing into one cell.
+  - Position Z: queue rank, oldest order at the front; an update that states no
+    queue spreads its order by identity rather than pinning it to the front.
   - Mass:       one carrier unit per resting order; size lives in Y, not mass.
   - Energy:     one unit per order, lifted by the Hawkes excitation on the side
     aggressive flow is actually hitting.
   - Amp:        sqrt(Energy), the wave amplitude the observers render.
   - Phase:      bids in [0, π), asks in [π, 2π) — the spread as a quantum
     boundary — swept by queue priority within each side.
-  - Omega:      the order's own signed log-price deviation, scaled by the
-    message's dispersion, so an order's frequency reflects how far out of line
-    it sits rather than an arbitrary constant.
+  - Omega:      the order's signed price deviation in its resident frame, so an
+    order's frequency reflects how far out of line it sits.
   - Heat:       a deterministic per-order thermal store, the coupling fuel the
     coherence broadcast spends.
-
-A message carrying a single usable order has no dispersion to speak of; it
-still projects, at the center of the price and quantity axes, because one
-resting order is a real observation even though it spans nothing.
 */
 type Dataset struct {
+	frames *frames
 }
 
 const (
-	unitCarrierMass      = float32(1)
-	unitOscillatorEnergy = float32(1)
+	// unitProbeEnergy is the energy of a crystallization probe: a candidate
+	// price the book never stated an order for, so it has no size to scale by
+	// and enters as a light neutral test particle.
+	unitProbeEnergy = float32(1)
 	symbolIndexMask      = uint32(0x7fff)
 	omegaHalfSpan        = 4.0
 
-	// dispersionFloor keeps a degenerate message — every order at one price,
-	// or a single order — from dividing by zero when it is standardized. It is
-	// a floor on an observed standard deviation in log space, not a magic
-	// width: below it the axis is genuinely flat and every particle belongs in
-	// the same place.
-	dispersionFloor = 1e-9
+	// energyFloor is the energy of the smallest order the frame has seen. It is
+	// not a magic minimum: it is what keeps a dust order a real, if light,
+	// participant rather than a massless one the density field cannot see and
+	// the pilot wave cannot steer.
+	energyFloor = 0.25
+
+	// energySizeSpan is how much energy the frame's own size dispersion is
+	// worth, so the largest orders a symbol shows carry energyFloor+energySizeSpan
+	// and the smallest carry energyFloor.
+	energySizeSpan = 1.75
+
+	// frameAxisSpan is how many standard deviations of the resident frame span
+	// the domain axis before tanh saturates. Beyond it orders still order
+	// correctly, they simply crowd toward the wall they are heading for.
+	frameAxisSpan = 3.0
 )
 
 /*
@@ -66,7 +75,7 @@ NewDataset constructs a streaming projector. It retains nothing: every message
 is projected forward exactly once from its own contents.
 */
 func NewDataset() *Dataset {
-	return &Dataset{}
+	return &Dataset{frames: newFrames()}
 }
 
 func (dataset *Dataset) Name() string { return "book" }
@@ -107,13 +116,6 @@ func (dataset *Dataset) step(
 			return
 		}
 
-		orderCount, priceMean, priceDispersion,
-			quantityMean, quantityDispersion := logMoments(message)
-
-		if orderCount == 0 {
-			return
-		}
-
 		symbolIndex := symbolToken(message.Symbol)
 
 		for sidePositive, orders := range [][]kraken.Level3Order{
@@ -135,29 +137,29 @@ func (dataset *Dataset) step(
 				}
 
 				token := packToken(symbolIndex, sidePositive)
-				priceDeviation := standardize(
-					math.Log(order.LimitPrice.Float64()),
-					priceMean,
-					priceDispersion,
-				)
-				quantityDeviation := standardize(
-					math.Log(order.OrderQty.Float64()),
-					quantityMean,
-					quantityDispersion,
-				)
+				positionX, positionY, priceDeviation, quantityDeviation :=
+					dataset.frames.place(
+						message.Symbol,
+						math.Log(order.LimitPrice.Float64()),
+						math.Log(order.OrderQty.Float64()),
+					)
 				contentID := orderHash(order)
 
 				state, _ := sensorium.StatePool.Get().(*sensorium.State)
 
-				// The Hawkes excitation fraction is the forcing amplitude above the unit
-				// baseline: aggressive buy arrivals interact with resting asks, aggressive
-				// sell arrivals with resting bids. No forcing observed yet leaves the
-				// unit baseline.
-				energy := unitOscillatorEnergy + forcing.sellExcitation
+				// The order's own size is what it brings to the field, lifted by
+				// the Hawkes excitation on the side aggressive flow is actually
+				// hitting: a large order in an excited regime is the strongest
+				// driver. Size enters in log space because book quantities span
+				// orders of magnitude, and the resident frame's own dispersion
+				// is what makes "large" mean large for this symbol.
+				excitation := forcing.sellExcitation
 
 				if sidePositive > 0 {
-					energy = unitOscillatorEnergy + forcing.buyExcitation
+					excitation = forcing.buyExcitation
 				}
+
+				energy := orderEnergy(quantityDeviation, excitation)
 
 				state.N = 1
 				state.Bytes[0] = int64(token)
@@ -167,12 +169,22 @@ func (dataset *Dataset) step(
 				state.Phase[0] = orderPhase(rank, total, sidePositive)
 				state.Omega[0] = float32(math.Tanh(priceDeviation) * omegaHalfSpan)
 				state.Energy[0] = energy
-				state.Mass[0] = unitCarrierMass
-				state.Heat[0] = 0.3 + 0.7*float32(contentID&0xFF)/255
+				// Mass tracks energy, as the domain's own initializer defines a
+				// well-formed particle. Mass is what the particle deposits as
+				// density, what scales the heat it gathers back from the gas,
+				// and what divides its pilot-wave guidance — so a unit constant
+				// made the field a map of order COUNT and steered every order
+				// identically regardless of size.
+				state.Mass[0] = energy
+				// Heat is the metabolic budget that pays for coupling to the
+				// coherence field. It is earned from the gas in planckExchange,
+				// never invented here: seeding it from the order's identity
+				// handed each order an arbitrary work allowance.
+				state.Heat[0] = 0
 				state.Amp[0] = float32(math.Sqrt(float64(energy)))
-				state.Pos[0] = float32(priceDeviation)
-				state.Pos[1] = float32(quantityDeviation)
-				state.Pos[2] = queueDepth(rank, total)
+				state.Pos[0] = float32(positionX)
+				state.Pos[1] = float32(positionY)
+				state.Pos[2] = queueDepth(rank, total, contentID)
 				state.Vel[0] = 0
 				state.Vel[1] = 0
 				state.Vel[2] = 0
@@ -189,6 +201,27 @@ func (dataset *Dataset) step(
 }
 
 /*
+orderEnergy is what one resting order brings to the field.
+
+The order's size in its symbol's resident frame sets the scale and the Hawkes
+excitation on its side lifts it, so a large order in an excited regime is the
+strongest driver. The deviation is squashed through the logistic so a size the
+frame has never seen cannot hand one order unbounded mass: the domain treats
+mass as density, as the divisor of pilot-wave guidance, and as the scale of the
+heat a particle gathers, and an unbounded value there is a vacuum or a
+singularity in three different kernels.
+
+The result is strictly positive. A zero-mass particle deposits no density and
+divides its own guidance by the pilot wave's mass floor, and planckExchange
+refuses a non-positive energy outright.
+*/
+func orderEnergy(quantityDeviation float64, excitation float32) float32 {
+	size := 1 / (1 + math.Exp(-quantityDeviation/frameAxisSpan))
+
+	return float32(size*energySizeSpan+energyFloor) * (1 + excitation)
+}
+
+/*
 usableOrder reports whether an order describes a resting particle: it must
 still be on the book after this message, and it must carry a positive price
 and size for the log-space projection to be defined.
@@ -200,80 +233,20 @@ func usableOrder(order kraken.Level3Order) bool {
 }
 
 /*
-logMoments reduces one message's orders to the mean and standard deviation of
-price and quantity in log space. This is the frame the message supplies for
-itself: no retained state, no imposed constant, and no reference price the feed
-never sends in one piece.
+queueDepth maps queue rank onto the third axis, oldest order at the front.
 */
-func logMoments(
-	message kraken.Level3Data,
-) (
-	orderCount int,
-	priceMean, priceDispersion float64,
-	quantityMean, quantityDispersion float64,
-) {
-	for _, orders := range [][]kraken.Level3Order{message.Bids, message.Asks} {
-		for _, order := range orders {
-			if !usableOrder(order) {
-				continue
-			}
-
-			orderCount++
-			priceMean += math.Log(order.LimitPrice.Float64())
-			quantityMean += math.Log(order.OrderQty.Float64())
-		}
+func queueDepth(rank, total int, contentID uint32) float32 {
+	if total > 1 {
+		return float32(rank) / float32(total-1)
 	}
 
-	if orderCount == 0 {
-		return
-	}
-
-	priceMean /= float64(orderCount)
-	quantityMean /= float64(orderCount)
-
-	for _, orders := range [][]kraken.Level3Order{message.Bids, message.Asks} {
-		for _, order := range orders {
-			if !usableOrder(order) {
-				continue
-			}
-
-			priceDeviation := math.Log(order.LimitPrice.Float64()) - priceMean
-			quantityDeviation := math.Log(order.OrderQty.Float64()) - quantityMean
-			priceDispersion += priceDeviation * priceDeviation
-			quantityDispersion += quantityDeviation * quantityDeviation
-		}
-	}
-
-	priceDispersion = math.Sqrt(priceDispersion / float64(orderCount))
-	quantityDispersion = math.Sqrt(quantityDispersion / float64(orderCount))
-
-	return
-}
-
-/*
-standardize expresses one log observation as a signed distance from its
-message's own log mean, in units of that message's own dispersion. A message
-with no dispersion places every particle at the center of the axis, which is
-where a set of identical observations genuinely belongs.
-*/
-func standardize(value, mean, dispersion float64) float64 {
-	if dispersion < dispersionFloor {
-		return 0
-	}
-
-	return (value - mean) / dispersion
-}
-
-/*
-queueDepth maps queue rank onto the third axis, oldest order at the front. A
-single-order message has no queue to express and sits at the front.
-*/
-func queueDepth(rank, total int) float32 {
-	if total <= 1 {
-		return 0
-	}
-
-	return float32(rank) / float32(total-1)
+	// An incremental update carries one order and so expresses no queue. Its
+	// depth is unknown, not zero: collapsing every such order onto the front
+	// plane stacks thousands of distinct orders on one coordinate. The order's
+	// own stable identity spreads them across the axis instead, which keeps
+	// them distinct without inventing a queue position the message never
+	// stated.
+	return float32(contentID&0xFFFF) / 65535
 }
 
 /*

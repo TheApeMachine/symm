@@ -9,53 +9,56 @@ import (
 )
 
 func TestPlannerPreDecision(t *testing.T) {
-	Convey("Given an uncalibrated directional forecast", t, func() {
-		planner := &Planner{minimumProbability: 0.7}
+	Convey("Given an unresolved adaptive return distribution", t, func() {
+		planner := &Planner{}
 		forecast := &directionalForecast{
 			symbol: "TEST/USD", at: time.Unix(1, 0),
-			probabilityUp: 0.9, probabilityProfitable: 0.8,
-			directionReady: false, profitabilityReady: false,
-			directionSkillLowerBound: 0.1, profitSkillLowerBound: 0.2,
-			directionCalibration: 0, profitCalibration: 0,
-			directionFeatures: 0, profitFeatures: 0,
+			status: "awaiting-return-distribution", horizon: time.Second,
+			opportunity: types.OpportunityCandidate{
+				Archetype: types.ArchetypeVerticalIgnition,
+				Phase:     types.PhaseArmed,
+			},
 		}
 
-		Convey("it still emits a well-formed hold round with a truthful status", func() {
+		Convey("it emits a truthful non-action decision with its opportunity context", func() {
 			decision, round := planner.preDecision(forecast)
 			So(decision, ShouldNotBeNil)
 			So(round, ShouldNotBeNil)
 			So(decision.Action, ShouldEqual, types.ActionNothing)
 			So(decision.PredictiveReady, ShouldBeFalse)
-			So(decision.PredictiveStatus, ShouldEqual, "uncalibrated-direction-and-profitability")
+			So(decision.PredictiveStatus, ShouldEqual, "awaiting-return-distribution")
+			So(decision.OpportunityType, ShouldEqual, string(types.ArchetypeVerticalIgnition))
+			So(decision.OpportunityPhase, ShouldEqual, string(types.PhaseArmed))
 			So(round.Evaluated, ShouldBeTrue)
-			So(round.Outcome, ShouldEqual, "admission")
 			So(round.Decisions, ShouldHaveLength, 1)
 		})
 	})
 }
 
 func TestPlannerDecide(t *testing.T) {
-	Convey("Given calibrated upward and profitability classifications", t, func() {
-		planner := &Planner{minimumProbability: 0.7}
+	Convey("Given an opportunity-conditioned executable return distribution", t, func() {
+		planner := &Planner{}
 		forecast := &directionalForecast{
-			symbol: "TEST/USD", at: time.Unix(1, 0),
-			probabilityUp: 0.9, probabilityProfitable: 0.8,
-			directionReady: true, profitabilityReady: true,
-			directionSkillLowerBound: 0.1, profitSkillLowerBound: 0.2,
-			directionCalibration: 100, profitCalibration: 90,
-			directionFeatures: 320, profitFeatures: 320,
+			symbol: "TEST/USD", at: time.Unix(1, 0), ready: true,
+			status:        "adaptive-return-distribution-ready",
+			probabilityUp: 0.8, probabilityProfitable: 0.7,
+			expectedLogReturn: 0.02, breakEvenLogReturn: 0.01,
+			opportunity: types.OpportunityCandidate{
+				Archetype: types.ArchetypeVerticalIgnition,
+				Phase:     types.PhaseArmed,
+			},
 		}
 
-		Convey("both probabilities must clear admission independently", func() {
+		Convey("entry wins only when its distribution center clears executable break-even", func() {
 			decision := planner.decide(forecast)
 			So(decision.Action, ShouldEqual, types.ActionEnter)
-			So(decision.Confidence, ShouldEqual, 0.8)
-			_, predictsAmount := decision.Alternatives["expected_return"]
-			So(predictsAmount, ShouldBeFalse)
+			So(decision.Confidence, ShouldEqual, 0.7)
+			So(decision.Alternatives["return:expected_log"], ShouldEqual, 0.02)
+			So(decision.Alternatives["return:break_even_log"], ShouldEqual, 0.01)
 		})
 
-		Convey("a selected symbol below policy remains out", func() {
-			forecast.probabilityProfitable = 0.69
+		Convey("cash wins when the forecast does not cover current execution economics", func() {
+			forecast.expectedLogReturn = forecast.breakEvenLogReturn
 			decision := planner.decide(forecast)
 			So(decision.Action, ShouldEqual, types.ActionNothing)
 		})

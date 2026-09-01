@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
@@ -24,10 +25,9 @@ CREATE TABLE IF NOT EXISTS events (
     capture_seq   INTEGER NOT NULL DEFAULT 0,
     stream        TEXT    NOT NULL DEFAULT '',
     stream_epoch  INTEGER NOT NULL DEFAULT 0,
-    stream_seq    INTEGER NOT NULL DEFAULT 0
+    stream_seq    INTEGER NOT NULL DEFAULT 0,
+    encoding      TEXT    NOT NULL DEFAULT 'identity'
 ) STRICT;
-CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind);
-CREATE INDEX IF NOT EXISTS idx_events_at   ON events(at);
 `
 
 const runSchema = `
@@ -101,12 +101,19 @@ const lifecycleExecutionMigration = `
 ALTER TABLE lifecycle ADD COLUMN execution TEXT NOT NULL DEFAULT '';
 `
 
-const endpointIndex = `
-CREATE INDEX IF NOT EXISTS idx_events_endpoint ON events(endpoint);
-`
-
 const endpointMigration = `
 ALTER TABLE events ADD COLUMN endpoint TEXT NOT NULL DEFAULT '';
+`
+
+const eventEncodingMigration = `
+ALTER TABLE events ADD COLUMN encoding TEXT NOT NULL DEFAULT 'identity';
+`
+
+const obsoleteEventIndexes = `
+DROP INDEX IF EXISTS idx_events_kind;
+DROP INDEX IF EXISTS idx_events_at;
+DROP INDEX IF EXISTS idx_events_endpoint;
+DROP INDEX IF EXISTS idx_events_run_kind;
 `
 
 const identityMigration = `
@@ -121,14 +128,14 @@ ALTER TABLE events ADD COLUMN stream_seq INTEGER NOT NULL DEFAULT 0;
 SQLite is the default Repository engine. It persists every WriteEvent as one
 row in a single kind-tagged event table, so replay is a single ordered scan per
 kind rather than a per-domain table sprawl. The endpoint column names the origin
-stream (the websocket URL for raw frames, the layer name for stage snapshots)
-without being welded onto the payload, so the data column stays verbatim and
-each frame is addressable by its source. The connection is opened once and
-serialized (one writer) with WAL and a busy timeout so the writer never blocks
-readers and never loses a record to a transient lock.
+stream. Payload bytes use zstd only when it is smaller than identity storage;
+every repository read reverses that encoding and returns the exact input bytes.
+The connection is opened once and serialized with WAL and a busy timeout.
 */
 type SQLite struct {
 	database *sql.DB
+	encoder  *zstd.Encoder
+	decoder  *zstd.Decoder
 }
 
 /*
@@ -164,10 +171,28 @@ func NewSQLite(path string) (*SQLite, error) {
 
 	database.SetMaxOpenConns(1)
 
-	store := &SQLite{database: database}
+	encoder, err := zstd.NewWriter(nil,
+		zstd.WithEncoderLevel(zstd.SpeedFastest),
+		zstd.WithEncoderConcurrency(1),
+	)
+
+	if err != nil {
+		_ = database.Close()
+		return nil, fmt.Errorf("store: construct zstd encoder: %w", err)
+	}
+
+	decoder, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1))
+
+	if err != nil {
+		encoder.Close()
+		_ = database.Close()
+		return nil, fmt.Errorf("store: construct zstd decoder: %w", err)
+	}
+
+	store := &SQLite{database: database, encoder: encoder, decoder: decoder}
 
 	if err := store.EnsureSchema(); err != nil {
-		_ = database.Close()
+		_ = store.Close()
 		return nil, err
 	}
 
@@ -248,12 +273,18 @@ func (store *SQLite) EnsureSchema() error {
 		return err
 	}
 
-	// The endpoint index depends on the column that the migration above may
-	// just have added, so it is created only after the column is guaranteed.
-	if _, err := store.database.Exec(endpointIndex); err != nil {
+	if err := store.migrateEventEncoding(); err != nil {
+		return err
+	}
+
+	// These historical indexes are not used by any repository read. Maintaining
+	// one index per timestamp, kind, and endpoint multiplied the write volume of
+	// the raw tape without making an actual query cheaper. The run/kind/capture
+	// index below is the one Episode discovery uses.
+	if _, err := store.database.Exec(obsoleteEventIndexes); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
-			"store: ensure endpoint index failed",
+			"store: remove unused event indexes failed",
 			err,
 		))
 	}
@@ -265,6 +296,22 @@ func (store *SQLite) EnsureSchema() error {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"store: ensure capture market index failed",
+			err,
+		))
+	}
+
+	return nil
+}
+
+func (store *SQLite) migrateEventEncoding() error {
+	if store.hasColumn("events", "encoding") {
+		return nil
+	}
+
+	if _, err := store.database.Exec(eventEncodingMigration); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: add event encoding column",
 			err,
 		))
 	}
@@ -459,19 +506,22 @@ func (store *SQLite) WriteCapture(
 		))
 	}
 
+	storedPayload, encoding := store.encodePayload(payload)
+
 	if _, err := store.database.Exec(
 		`INSERT INTO events
-		 (kind, endpoint, at, data, run_id, capture_seq, stream, stream_epoch, stream_seq)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (kind, endpoint, at, data, run_id, capture_seq, stream, stream_epoch, stream_seq, encoding)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		kind,
 		endpoint,
 		at.UTC().Format(time.RFC3339Nano),
-		payload,
+		storedPayload,
 		string(identity.Run),
 		uint64(identity.Sequence),
 		string(identity.Stream),
 		uint64(identity.StreamEpoch),
 		identity.StreamSequence,
+		encoding,
 	); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
@@ -485,9 +535,9 @@ func (store *SQLite) WriteCapture(
 
 /*
 WriteFrame persists one raw transport frame without a Hindsight identity. The
-payload is stored verbatim and tagged with its endpoint and kind; the identity
-columns stay empty, marking the frame as untraceable rather than silently
-claiming provenance.
+payload remains byte-exact through the row's reversible encoding and is tagged
+with its endpoint and kind; the identity columns stay empty, marking the frame
+as untraceable rather than silently claiming provenance.
 */
 func (store *SQLite) WriteFrame(endpoint, kind string, payload []byte, at time.Time) error {
 	if store == nil || store.database == nil {
@@ -498,12 +548,15 @@ func (store *SQLite) WriteFrame(endpoint, kind string, payload []byte, at time.T
 		))
 	}
 
+	storedPayload, encoding := store.encodePayload(payload)
+
 	if _, err := store.database.Exec(
-		"INSERT INTO events (kind, endpoint, at, data) VALUES (?, ?, ?, ?)",
+		"INSERT INTO events (kind, endpoint, at, data, encoding) VALUES (?, ?, ?, ?, ?)",
 		kind,
 		endpoint,
 		at.UTC().Format(time.RFC3339Nano),
-		payload,
+		storedPayload,
+		encoding,
 	); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
@@ -513,6 +566,33 @@ func (store *SQLite) WriteFrame(endpoint, kind string, payload []byte, at time.T
 	}
 
 	return nil
+}
+
+func (store *SQLite) encodePayload(payload []byte) ([]byte, string) {
+	compressed := store.encoder.EncodeAll(payload, nil)
+
+	if len(compressed) >= len(payload) {
+		return payload, "identity"
+	}
+
+	return compressed, "zstd"
+}
+
+func (store *SQLite) decodePayload(payload []byte, encoding string) ([]byte, error) {
+	switch encoding {
+	case "identity", "":
+		return payload, nil
+	case "zstd":
+		decoded, err := store.decoder.DecodeAll(payload, nil)
+
+		if err != nil {
+			return nil, fmt.Errorf("store: decode zstd capture: %w", err)
+		}
+
+		return decoded, nil
+	default:
+		return nil, fmt.Errorf("store: unsupported capture encoding %q", encoding)
+	}
 }
 
 /*
@@ -855,13 +935,16 @@ func (store *SQLite) ReadCapture(identity hindsight.CaptureIdentity) ([]byte, er
 		))
 	}
 
-	var payload []byte
+	var (
+		payload  []byte
+		encoding string
+	)
 
 	err := store.database.QueryRow(
-		"SELECT data FROM events WHERE run_id = ? AND capture_seq = ?",
+		"SELECT data, encoding FROM events WHERE run_id = ? AND capture_seq = ?",
 		string(identity.Run),
 		uint64(identity.Sequence),
-	).Scan(&payload)
+	).Scan(&payload, &encoding)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
@@ -871,7 +954,13 @@ func (store *SQLite) ReadCapture(identity hindsight.CaptureIdentity) ([]byte, er
 		))
 	}
 
-	return payload, nil
+	decoded, err := store.decodePayload(payload, encoding)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(errnie.IO, "store: decode capture failed", err))
+	}
+
+	return decoded, nil
 }
 
 /*
@@ -923,6 +1012,14 @@ Close releases the database handle.
 func (store *SQLite) Close() error {
 	if store == nil || store.database == nil {
 		return nil
+	}
+
+	if store.encoder != nil {
+		store.encoder.Close()
+	}
+
+	if store.decoder != nil {
+		store.decoder.Close()
 	}
 
 	return store.database.Close()

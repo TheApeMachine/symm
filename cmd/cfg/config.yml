@@ -51,6 +51,13 @@ system:
       # and burst limits; telemetry-driven or adaptive sizing is the upgrade path.
       buffer: 4096
 
+hindsight:
+  witness:
+    # Phase transitions and actions are the bounded decision moments retained
+    # for counterfactual evaluation. Overflow marks the run GAPPED.
+    queue_depth: 4096
+    flush_interval: 50ms
+
 resonance:
   learning_rate: 0.01
   layers: 3
@@ -99,9 +106,6 @@ market:
     rls:
       initial_variance: 1.0
       forgetting_factor: 1.0
-      # One-sided Student-t confidence used for the lower bound of incremental
-      # squared-error skill over a zero-return baseline.
-      calibration_confidence: 0.95
   manifold:
     # Maximum chronological lifetime observations retained per admitted symbol.
     lifetime_capacity: 4096
@@ -124,11 +128,6 @@ ui:
 
 trading:
   model: paper
-  admission:
-    # Both the calibrated probability of upward movement and the calibrated
-    # probability that the next executable bid clears known entry friction must
-    # independently meet this policy boundary.
-    minimum_probability: 0.7
   allocation:
     # Hard per-entry quote-notional ceiling. Every qualifying symbol is priced
     # independently; there is no position-slot or winner arbitration policy.

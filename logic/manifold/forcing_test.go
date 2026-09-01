@@ -119,29 +119,41 @@ func TestForcingSideCorrectness(t *testing.T) {
 			return
 		}
 
-		Convey("no forcing leaves both sides at unit energy", func() {
+		// Energy is the order's own size in its resident frame, lifted by the
+		// excitation on its side. With no forcing observed, both sides carry
+		// exactly what their size is worth and neither is favoured.
+		Convey("no forcing leaves both sides at their size energy", func() {
 			askEnergy, askAmplitude, bidEnergy := project(forcingState{})
 
-			So(askEnergy, ShouldAlmostEqual, 1.0)
-			So(askAmplitude, ShouldAlmostEqual, 1.0)
-			So(bidEnergy, ShouldAlmostEqual, 1.0)
+			So(askEnergy, ShouldBeGreaterThan, 0)
+			So(askEnergy, ShouldAlmostEqual, bidEnergy)
+			So(float64(askAmplitude), ShouldAlmostEqual,
+				math.Sqrt(float64(askEnergy)), 1e-6)
 		})
 
+		// Excitation is a fraction above the order's own size energy, so what
+		// matters is that it lifts the side aggressive flow is hitting and
+		// leaves the other side where its size put it.
 		Convey("buy excitation lifts ask energy but not bid energy", func() {
+			restingAsk, _, restingBid := project(forcingState{})
 			forcing := forcingState{buyExcitation: 0.5, sellExcitation: 0.0}
 			askEnergy, askAmplitude, bidEnergy := project(forcing)
 
-			So(askEnergy, ShouldAlmostEqual, 1.5)
-			So(askAmplitude, ShouldAlmostEqual, float32(math.Sqrt(1.5)))
-			So(bidEnergy, ShouldAlmostEqual, 1.0)
+			So(float64(askEnergy), ShouldAlmostEqual,
+				float64(restingAsk)*1.5, 1e-5)
+			So(float64(askAmplitude), ShouldAlmostEqual,
+				math.Sqrt(float64(askEnergy)), 1e-6)
+			So(bidEnergy, ShouldAlmostEqual, restingBid)
 		})
 
 		Convey("sell excitation lifts bid energy but not ask energy", func() {
+			restingAsk, _, restingBid := project(forcingState{})
 			forcing := forcingState{buyExcitation: 0.0, sellExcitation: 0.4}
 			askEnergy, _, bidEnergy := project(forcing)
 
-			So(bidEnergy, ShouldAlmostEqual, 1.4, 1e-6)
-			So(askEnergy, ShouldAlmostEqual, 1.0)
+			So(float64(bidEnergy), ShouldAlmostEqual,
+				float64(restingBid)*1.4, 1e-5)
+			So(askEnergy, ShouldAlmostEqual, restingAsk)
 		})
 	})
 }

@@ -77,12 +77,13 @@ func (store *SQLite) ReadCaptureFrame(
 		entry      CaptureEntry
 		receivedAt string
 		payload    []byte
+		encoding   string
 	)
 
 	entry.Identity.Run = hindsight.RunID(runID)
 
 	err := store.database.QueryRow(
-		`SELECT capture_seq, stream, stream_epoch, stream_seq, kind, endpoint, at, data
+		`SELECT capture_seq, stream, stream_epoch, stream_seq, kind, endpoint, at, data, encoding
 		 FROM events
 		 WHERE run_id = ? AND capture_seq = ?`,
 		runID,
@@ -96,6 +97,7 @@ func (store *SQLite) ReadCaptureFrame(
 		&entry.Endpoint,
 		&receivedAt,
 		&payload,
+		&encoding,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
@@ -111,6 +113,15 @@ func (store *SQLite) ReadCaptureFrame(
 	}
 
 	entry.ReceivedAt, _ = time.Parse(time.RFC3339Nano, receivedAt)
+	payload, err = store.decodePayload(payload, encoding)
+
+	if err != nil {
+		return CaptureEntry{}, nil, false, errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: decode capture frame failed",
+			err,
+		))
+	}
 
 	return entry, payload, true, nil
 }

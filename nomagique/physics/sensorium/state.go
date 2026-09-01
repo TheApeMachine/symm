@@ -59,3 +59,52 @@ var StatePool = sync.Pool{
 func (state *State) empty() bool {
 	return state == nil || state.N == 0
 }
+
+/*
+append copies one row of incoming onto the end of state, growing it by a single
+particle. It is how an order the resident domain has not seen before enters the
+population without disturbing the particles already evolving in it.
+*/
+func (state *State) append(incoming *State, index int) {
+	state.Bytes = append(state.Bytes, incoming.Bytes[index])
+	state.Seqs = append(state.Seqs, incoming.Seqs[index])
+	state.TokenIDs = append(state.TokenIDs, incoming.TokenIDs[index])
+	state.ContentIDs = append(state.ContentIDs, incoming.ContentIDs[index])
+	state.Phase = append(state.Phase, incoming.Phase[index])
+	state.Omega = append(state.Omega, incoming.Omega[index])
+	state.Energy = append(state.Energy, incoming.Energy[index])
+	state.Mass = append(state.Mass, incoming.Mass[index])
+	state.Heat = append(state.Heat, incoming.Heat[index])
+	state.Amp = append(state.Amp, incoming.Amp[index])
+	state.Pos = append(state.Pos,
+		incoming.Pos[index*3+0], incoming.Pos[index*3+1], incoming.Pos[index*3+2],
+	)
+	state.Vel = append(state.Vel,
+		incoming.Vel[index*3+0], incoming.Vel[index*3+1], incoming.Vel[index*3+2],
+	)
+	state.Clamped = append(state.Clamped, incoming.Clamped[index])
+	state.Dark = append(state.Dark, incoming.Dark[index])
+	state.N++
+}
+
+/*
+refresh updates a resident particle from a fresh observation of the same order.
+
+Only what the venue just re-stated is taken: the order's rank-derived phase, its
+price-derived frequency, and the energy/mass/heat the projection assigns it.
+Position and velocity are deliberately left alone — those are the domain's own
+integrated state, and overwriting them with the projection's seed coordinates
+would restart the particle's trajectory on every book update.
+*/
+func (state *State) refresh(resident int, incoming *State, index int) {
+	state.Bytes[resident] = incoming.Bytes[index]
+	state.Seqs[resident] = incoming.Seqs[index]
+	state.TokenIDs[resident] = incoming.TokenIDs[index]
+	state.Phase[resident] = incoming.Phase[index]
+	state.Omega[resident] = incoming.Omega[index]
+	state.Energy[resident] = incoming.Energy[index]
+	state.Mass[resident] = incoming.Mass[index]
+	state.Heat[resident] = incoming.Heat[index]
+	state.Clamped[resident] = incoming.Clamped[index]
+	state.Dark[resident] = incoming.Dark[index]
+}

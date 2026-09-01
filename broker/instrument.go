@@ -133,7 +133,10 @@ func (instrument *Instrument) Pair(symbol string) kraken.InstrumentPair {
 }
 
 /*
-Subscribe issues paced market-data batches for the online quote universe.
+Subscribe issues paced market-data batches for the online quote universe. It
+subscribes only streams that enter a declared Workspace workload; capturing a
+feed with no consumer would create an exact raw tape that can never influence
+the system.
 */
 func (instrument *Instrument) Subscribe() error {
 	errnie.Info("subscribing to instruments")
@@ -160,7 +163,6 @@ func (instrument *Instrument) Subscribe() error {
 		instrument.futuresLegs("subscribe", batch, []func([]string) error{
 			instrument.api.SubFuturesTicker,
 			instrument.api.SubFuturesTrades,
-			instrument.api.SubFuturesBook,
 		})
 
 		time.Sleep(viper.GetViper().GetDuration("market.subscribe.pace"))
@@ -195,7 +197,6 @@ func (instrument *Instrument) Unsubscribe() {
 		instrument.futuresLegs("unsubscribe", batch, []func([]string) error{
 			instrument.api.UnsubFuturesTicker,
 			instrument.api.UnsubFuturesTrades,
-			instrument.api.UnsubFuturesBook,
 		})
 	}
 

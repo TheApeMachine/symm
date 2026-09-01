@@ -14,10 +14,9 @@ import (
 )
 
 /*
-Planner is the sole live entry authority. It observes every enriched market
-envelope, remains dormant until its binary classifications demonstrate
-positive prequential skill, and only submits entries. Desk-owned Stoploss
-instances retain exclusive exit authority.
+Planner is the sole live entry authority. It asks the adaptive executable-return
+distribution whether entering dominates keeping cash for the current
+opportunity. Desk-owned Stoploss instances retain exclusive exit authority.
 */
 type Planner struct {
 	cancel                context.CancelFunc
@@ -25,7 +24,6 @@ type Planner struct {
 	predictor             *directionalPredictor
 	allocation            *Allocation
 	recorder              *audit.Recorder
-	minimumProbability    float64
 	maxAllocationFraction float64
 }
 
@@ -45,18 +43,12 @@ func NewPlanner(
 	}
 
 	predictor, err := newDirectionalPredictor(directionalConfig{
-		initialVariance:       viper.GetFloat64("market.forecast.rls.initial_variance"),
-		forgettingFactor:      viper.GetFloat64("market.forecast.rls.forgetting_factor"),
-		calibrationConfidence: viper.GetFloat64("market.forecast.rls.calibration_confidence"),
+		initialVariance:  viper.GetFloat64("market.forecast.rls.initial_variance"),
+		forgettingFactor: viper.GetFloat64("market.forecast.rls.forgetting_factor"),
 	})
 
 	if err != nil {
 		return nil, err
-	}
-
-	if config.MinimumEntryProbability <= system.UninformativeDirectionConfidence ||
-		config.MinimumEntryProbability >= 1 {
-		return nil, fmt.Errorf("planner: admission probability must be in (0.5, 1)")
 	}
 
 	if config.MaxAllocationFraction <= 0 || config.MaxAllocationFraction > 1 {
@@ -71,7 +63,6 @@ func NewPlanner(
 		predictor:             predictor,
 		allocation:            NewAllocation(ctx, desk),
 		recorder:              recorder,
-		minimumProbability:    config.MinimumEntryProbability,
 		maxAllocationFraction: config.MaxAllocationFraction,
 	}, nil
 }
@@ -102,15 +93,9 @@ func (planner *Planner) Step(envelope *types.Envelope) *types.Envelope {
 		return envelope
 	}
 
-	// The planner is live on the very first ticker frame: it emits a round and
-	// a decision even before the RLS heads calibrate, so downstream modules see
-	// an output immediately and weigh its maturity themselves. The decision is
-	// structurally complete and truthful (PredictiveReady=false while heads are
-	// uncalibrated); it simply never carries an enter action until both heads
-	// clear their own admission thresholds.
 	decision, round := planner.preDecision(forecast)
 
-	if forecast.directionReady && forecast.profitabilityReady {
+	if forecast.ready {
 		decision = planner.decide(forecast)
 		round.Decisions = []*types.Decision{decision}
 
@@ -143,45 +128,35 @@ engine surface's phase slot receives the concise admission word, never the
 verbose reason, which stays on the decision for the detail surface.
 */
 func (planner *Planner) preDecision(forecast *directionalForecast) (*types.Decision, *types.StrategyRound) {
-	reason := "planner: calibrated probabilities do not clear admission"
-
 	decision := types.NewDecision(types.ActionNothing, forecast.symbol)
 	decision.At = forecast.at
 	decision.Direction = 1
 	decision.PredictiveReady = false
-
-	switch {
-	case !forecast.directionReady && !forecast.profitabilityReady:
-		decision.PredictiveStatus = "uncalibrated-direction-and-profitability"
-	case !forecast.directionReady:
-		decision.PredictiveStatus = "uncalibrated-direction"
-	default:
-		decision.PredictiveStatus = "uncalibrated-profitability"
-	}
-
-	decision.TaskSkill = min(
-		forecast.directionSkillLowerBound,
-		forecast.profitSkillLowerBound,
-	)
+	decision.PredictiveStatus = forecast.status
 	decision.TaskSkillReady = false
-	decision.ForecastSource = "full-observation-direction"
-	decision.ForecastModel = "streaming-feature-association-rls-v1"
-	decision.Forecast = &forecast.directionOutput
-	decision.ForecastHorizon = 1
-	decision.CalibrationCount = min(
-		forecast.directionCalibration,
-		forecast.profitCalibration,
-	)
+	decision.ForecastSource = "opportunity-conditioned-observations-and-perspectives"
+	decision.ForecastModel = "adaptive-executable-return-student-t-v1"
+	decision.Forecast = &forecast.output
+	decision.ForecastHorizon = forecast.horizonSteps
+	decision.CalibrationCount = forecast.calibration
 	decision.AllocationClass = "none"
-	decision.Reason = reason
-	decision.Cause = "precursor observations"
+	decision.Reason = "planner: " + forecast.status
+	decision.Cause = "opportunity-conditioned market context"
+	decision.Opportunity = forecast.opportunity.Archetype != ""
+	decision.OpportunityType = string(forecast.opportunity.Archetype)
+	decision.OpportunityPhase = string(forecast.opportunity.Phase)
 	decision.Alternatives = map[string]float64{
-		"probability:up":                  forecast.probabilityUp,
-		"probability:profitable":          forecast.probabilityProfitable,
-		"skill:direction_lower_bound":     forecast.directionSkillLowerBound,
-		"skill:profitability_lower_bound": forecast.profitSkillLowerBound,
-		"features:direction":              float64(forecast.directionFeatures),
-		"features:profitability":          float64(forecast.profitFeatures),
+		"probability:up":             forecast.probabilityUp,
+		"probability:profitable":     forecast.probabilityProfitable,
+		"return:expected_log":        forecast.expectedLogReturn,
+		"return:break_even_log":      forecast.breakEvenLogReturn,
+		"return:scale":               forecast.output.Scale,
+		"return:degrees_of_freedom":  forecast.output.DegreesOfFreedom,
+		"horizon:seconds":            forecast.horizon.Seconds(),
+		"features:directional":       float64(forecast.directionalFeatures),
+		"features:estimability":      float64(forecast.estimabilityFeatures),
+		"features:execution_context": float64(forecast.executionFeatures),
+		"features:semantic_review":   float64(forecast.reviewFeatures),
 	}
 
 	return decision, &types.StrategyRound{
@@ -204,24 +179,25 @@ func (planner *Planner) forecast(envelope *types.Envelope) (*directionalForecast
 		return nil, fmt.Errorf("planner: ticker event time required")
 	}
 
-	reference := decimal.NewFromInt64(0).Add(ticker.Bid).Add(ticker.Ask).Div(
-		decimal.NewFromInt64(2),
-	).Float64()
+	breakEven, err := planner.breakEven(ticker.Symbol)
+
+	if err != nil {
+		return nil, err
+	}
 
 	return planner.predictor.advance(
 		ticker.Symbol,
 		ticker.Timestamp,
-		reference,
 		ticker.Bid.Float64(),
-		planner.breakEven(ticker.Symbol),
+		breakEven,
 	)
 }
 
-func (planner *Planner) breakEven(symbol string) *float64 {
+func (planner *Planner) breakEven(symbol string) (*float64, error) {
 	cash := planner.desk.Balance().Cash()
 
 	if cash == nil || cash.Sign() <= 0 {
-		return nil
+		return nil, fmt.Errorf("planner: positive quote cash required to price entry")
 	}
 
 	budget := decimal.NewFromInt64(0).Add(cash).Mul(
@@ -230,59 +206,72 @@ func (planner *Planner) breakEven(symbol string) *float64 {
 	quantity := planner.desk.Price().Quantity(symbol, budget)
 
 	if quantity == nil || quantity.Sign() <= 0 {
-		return nil
+		return nil, fmt.Errorf("planner: positive proposed quantity required to price entry")
 	}
 
 	executable, err := planner.desk.Price().ExecutableQuantity(symbol, quantity)
 
-	if err != nil || executable == nil || executable.Sign() <= 0 {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("planner: executable proposed quantity required: %w", err)
+	}
+
+	if executable == nil || executable.Sign() <= 0 {
+		return nil, fmt.Errorf("planner: executable proposed quantity required")
 	}
 
 	cost, err := planner.desk.Price().EntryCost(symbol, executable)
 
-	if err != nil || cost == nil || cost.BreakEven == nil {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("planner: fee-inclusive entry boundary required: %w", err)
+	}
+
+	if cost == nil || cost.BreakEven == nil {
+		return nil, fmt.Errorf("planner: fee-inclusive entry boundary required")
 	}
 
 	value := cost.BreakEven.Float64()
 
-	return &value
+	return &value, nil
 }
 
 func (planner *Planner) decide(forecast *directionalForecast) *types.Decision {
 	action := types.ActionNothing
-	reason := "planner: calibrated probabilities do not clear admission"
+	reason := "planner: keeping cash dominates the forecast entry distribution"
 
-	if forecast.probabilityUp >= planner.minimumProbability &&
-		forecast.probabilityProfitable >= planner.minimumProbability {
+	if forecast.expectedLogReturn > forecast.breakEvenLogReturn {
 		action = types.ActionEnter
-		reason = "planner: upward and executable-profit probabilities clear admission"
+		reason = "planner: forecast executable return dominates fee-inclusive break-even"
 	}
 
 	decision := types.NewDecision(action, forecast.symbol)
 	decision.At = forecast.at
 	decision.Direction = 1
-	decision.Confidence = min(forecast.probabilityUp, forecast.probabilityProfitable)
+	decision.Confidence = forecast.probabilityProfitable
 	decision.PredictiveReady = true
-	decision.PredictiveStatus = "calibrated-positive-skill"
-	decision.TaskSkill = min(forecast.directionSkillLowerBound, forecast.profitSkillLowerBound)
-	decision.TaskSkillReady = true
-	decision.ForecastSource = "full-observation-direction"
-	decision.ForecastModel = "streaming-feature-association-rls-v1"
-	decision.Forecast = &forecast.directionOutput
-	decision.ForecastHorizon = 1
-	decision.CalibrationCount = min(forecast.directionCalibration, forecast.profitCalibration)
+	decision.PredictiveStatus = forecast.status
+	decision.ForecastSource = "opportunity-conditioned-observations-and-perspectives"
+	decision.ForecastModel = "adaptive-executable-return-student-t-v1"
+	decision.Forecast = &forecast.output
+	decision.ForecastHorizon = forecast.horizonSteps
+	decision.CalibrationCount = forecast.calibration
 	decision.AllocationClass = "none"
 	decision.Reason = reason
-	decision.Cause = "precursor observations"
+	decision.Cause = "opportunity-conditioned market context"
+	decision.Opportunity = true
+	decision.OpportunityType = string(forecast.opportunity.Archetype)
+	decision.OpportunityPhase = string(forecast.opportunity.Phase)
 	decision.Alternatives = map[string]float64{
-		"probability:up":                  forecast.probabilityUp,
-		"probability:profitable":          forecast.probabilityProfitable,
-		"skill:direction_lower_bound":     forecast.directionSkillLowerBound,
-		"skill:profitability_lower_bound": forecast.profitSkillLowerBound,
-		"features:direction":              float64(forecast.directionFeatures),
-		"features:profitability":          float64(forecast.profitFeatures),
+		"probability:up":             forecast.probabilityUp,
+		"probability:profitable":     forecast.probabilityProfitable,
+		"return:expected_log":        forecast.expectedLogReturn,
+		"return:break_even_log":      forecast.breakEvenLogReturn,
+		"return:scale":               forecast.output.Scale,
+		"return:degrees_of_freedom":  forecast.output.DegreesOfFreedom,
+		"horizon:seconds":            forecast.horizon.Seconds(),
+		"features:directional":       float64(forecast.directionalFeatures),
+		"features:estimability":      float64(forecast.estimabilityFeatures),
+		"features:execution_context": float64(forecast.executionFeatures),
+		"features:semantic_review":   float64(forecast.reviewFeatures),
 	}
 
 	return decision

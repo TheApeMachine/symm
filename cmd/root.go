@@ -193,10 +193,11 @@ var (
 			asyncWitness := store.NewAsyncWitnessWriter(
 				cmd.Context(),
 				storageEngine,
-				4096,
-				50*time.Millisecond,
+				viper.GetInt("hindsight.witness.queue_depth"),
+				viper.GetDuration("hindsight.witness.flush_interval"),
 			)
 			defer asyncWitness.Close()
+			witness := newWitnessNode(rawCapture, asyncWitness)
 
 			publicSession := websocket.New(
 				cmd.Context(),
@@ -525,7 +526,7 @@ var (
 				[][]nmruntime.Node[*types.Envelope]{
 					{planner},
 					{system.NewDiagnostic("strategy.planned")},
-					{witnessNode{asyncWriter: asyncWitness, writer: rawCapture}},
+					{witness},
 					{hub},
 					{system.NewDiagnostic("strategy.published")},
 				},

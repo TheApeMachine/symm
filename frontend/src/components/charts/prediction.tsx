@@ -20,7 +20,9 @@ const vectorBarStyle = (value: number): VectorBarStyle => ({
 });
 
 const fmt = (value: number | undefined | null, digits: number): string =>
-	value === undefined || value === null || !Number.isFinite(value) ? "—" : value.toFixed(digits);
+	value === undefined || value === null || !Number.isFinite(value)
+		? "—"
+		: value.toFixed(digits);
 
 const dir = (value: number | undefined | null): string => {
 	if (value === undefined || value === null) return "—";
@@ -82,59 +84,113 @@ const ScalarDiagnostics = () => {
 	return (
 		<div className="grid grid-cols-5 gap-px overflow-hidden border border-(--line) bg-(--line)">
 			<div className="bg-[#0a0907] px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">relative precision</div>
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+					relative precision
+				</div>
 				<div data-p="prec" className="mt-0.5 font-mono text-[11px] text-(--up)">
 					{res ? fmt(res.taskRelativePrecision(), 3) : "—"}
 				</div>
 			</div>
 			<div className="bg-[#0a0907] px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">task skill</div>
-				<div data-p="skill" className="mt-0.5 font-mono text-[11px] text-(--f2)">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+					task skill
+				</div>
+				<div
+					data-p="skill"
+					className="mt-0.5 font-mono text-[11px] text-(--f2)"
+				>
 					{res ? fmt(res.taskSkill(), 3) : "—"}
 				</div>
 			</div>
 			<div className="bg-[#0a0907] px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">issued t</div>
-				<div data-p="issued" className="mt-0.5 font-mono text-[11px] text-(--f2)">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+					issued t
+				</div>
+				<div
+					data-p="issued"
+					className="mt-0.5 font-mono text-[11px] text-(--f2)"
+				>
+					{res ? dir(res.lastResolutionPrediction()) : "—"}
+				</div>
+			</div>
+			<div className="bg-[#0a0907] px-2 py-1.5">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+					realized t+1
+				</div>
+				<div
+					data-p="realized"
+					className="mt-0.5 font-mono text-[11px] text-(--f2)"
+				>
 					{res ? dir(res.lastResolutionTarget()) : "—"}
 				</div>
 			</div>
 			<div className="bg-[#0a0907] px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">realized t+1</div>
-				<div data-p="realized" className="mt-0.5 font-mono text-[11px] text-(--f2)">
-					{res ? dir(res.lastResolutionTarget()) : "—"}
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+					forecast error
 				</div>
-			</div>
-			<div className="bg-[#0a0907] px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">forecast error</div>
-				<div data-p="error" className="mt-0.5 font-mono text-[11px] text-(--f2)">
+				<div
+					data-p="error"
+					className="mt-0.5 font-mono text-[11px] text-(--f2)"
+				>
 					{res ? fmt(res.lastResolutionError(), 0) : "—"}
 				</div>
 			</div>
 			<div className="bg-[#0a0907] px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">horizon / reach</div>
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+					horizon / reach
+				</div>
 				<div className="mt-0.5 flex gap-1 font-mono text-[11px] text-(--f2)">
-					<span data-p="horizon">{res ? fmt(Number(res.supportedHorizon()), 0) : "—"}</span>
+					<span data-p="horizon">
+						{res ? fmt(Number(res.supportedHorizon()), 0) : "—"}
+					</span>
 					<span>/</span>
-					<span data-p="reach">{res ? fmt(res.forwardCurveLength(), 0) : "—"}</span>
+					<span data-p="reach">
+						{res ? fmt(res.forwardCurveLength(), 0) : "—"}
+					</span>
 				</div>
 			</div>
 			<div className="bg-[#0a0907] px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">resolved samples</div>
-				<div data-p="samples" className="mt-0.5 font-mono text-[11px] text-(--acc)">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+					resolved samples
+				</div>
+				<div
+					data-p="samples"
+					className="mt-0.5 font-mono text-[11px] text-(--acc)"
+				>
 					{res ? String(res.resolvedSteps()) : "—"}
 				</div>
 			</div>
 			<div className="bg-[#0a0907] px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">surprise</div>
-				<div data-p="surprise" className="mt-0.5 truncate font-mono text-[11px] text-(--warning)">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+					surprise
+				</div>
+				<div
+					data-p="surprise"
+					className="mt-0.5 truncate font-mono text-[11px] text-(--warning)"
+				>
 					{res ? fmt(res.surprise(), 2) : "—"}
 				</div>
 			</div>
 			<div className="bg-[#0a0907] px-2 py-1.5">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">energy</div>
-				<div data-p="energy" className="mt-0.5 truncate font-mono text-[11px] text-(--info)">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+					energy
+				</div>
+				<div
+					data-p="energy"
+					className="mt-0.5 truncate font-mono text-[11px] text-(--info)"
+				>
 					{res ? fmt(res.energy(), 2) : "—"}
+				</div>
+			</div>
+			<div className="bg-[#0a0907] px-2 py-1.5">
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+					confidence
+				</div>
+				<div
+					data-p="confidence"
+					className="mt-0.5 truncate font-mono text-[11px] text-(--f2)"
+				>
+					{res ? fmt(res.confidence(), 3) : "—"}
 				</div>
 			</div>
 		</div>
@@ -147,28 +203,45 @@ const VerdictRow = () => {
 	return (
 		<div className="grid grid-cols-3 gap-px border border-(--line) bg-(--line)">
 			<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">residual model</div>
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+					residual model
+				</div>
 				<div className="flex items-baseline gap-2">
 					<span className="size-1.5 shrink-0 self-center rounded-full bg-(--acc)" />
-					<span data-p="calibration" className="truncate font-mono text-[13px] uppercase tracking-wide text-(--f2)">
+					<span
+						data-p="calibration"
+						className="truncate font-mono text-[13px] uppercase tracking-wide text-(--f2)"
+					>
 						{res ? taskCalibration(res) : "—"}
 					</span>
 				</div>
 			</div>
 			<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">direction skill</div>
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+					direction skill
+				</div>
 				<div className="flex items-baseline gap-2">
 					<span className="size-1.5 shrink-0 self-center rounded-full bg-(--acc)" />
-					<span data-p="skillStatus" className="truncate font-mono text-[13px] uppercase tracking-wide text-(--f2)">
+					<span
+						data-p="skillStatus"
+						className="truncate font-mono text-[13px] uppercase tracking-wide text-(--f2)"
+					>
 						{res ? taskSkillStatus(res) : "—"}
 					</span>
 				</div>
 			</div>
 			<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
-				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">forecast</div>
+				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
+					forecast
+				</div>
 				<div className="flex items-center gap-2">
-					<span className="inline-block shrink-0 text-[15px] leading-none text-(--acc)">▶</span>
-					<span data-p="forecast" className="truncate font-mono text-[13px] text-(--acc)">
+					<span className="inline-block shrink-0 text-[15px] leading-none text-(--acc)">
+						▶
+					</span>
+					<span
+						data-p="forecast"
+						className="truncate font-mono text-[13px] text-(--acc)"
+					>
 						{res ? dir(horizonCall(res)) : "—"}
 					</span>
 				</div>
@@ -209,7 +282,8 @@ const VectorLane = ({
 	color: string;
 }) => {
 	const stateExtent = maxAbsExtent(values);
-	const ghostExtent = ghost === undefined ? Number.EPSILON : maxAbsExtent(ghost);
+	const ghostExtent =
+		ghost === undefined ? Number.EPSILON : maxAbsExtent(ghost);
 
 	return (
 		<div className="flex min-h-0 flex-1 items-stretch gap-3">
@@ -269,7 +343,8 @@ const HierarchyLanes = () => {
 
 		return {
 			label: `L${index} · ${semanticLayerName(index, layerCount)}`,
-			meta: index < layerCount - 1 ? "adjacent generative link" : "context state",
+			meta:
+				index < layerCount - 1 ? "adjacent generative link" : "context state",
 			color: "bg-(--f3)",
 			values: toVector(layer?.stateArray()),
 			ghost: toVector(layer?.predictionArray()),

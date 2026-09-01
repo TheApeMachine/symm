@@ -47,16 +47,16 @@ func reading(perspective *types.Perspective, metric string) (float64, time.Time,
 
 /*
 fresh reports whether an observed reading is causally current for the given
-observation instant: its observation time must be present, not future-dated,
-and not after the market state being evaluated. It does NOT apply a wall-clock
-expiration constant — it uses the reading's own temporal provenance.
+observation instant and the position's activity-clock forecast horizon. Advice
+older than the market horizon that justified the position is no longer advice
+about the same moment and cannot defer an exit.
 */
-func fresh(observedAt, observationTime time.Time) bool {
-	if observedAt.IsZero() {
+func fresh(observedAt, observationTime time.Time, horizon time.Duration) bool {
+	if observedAt.IsZero() || horizon <= 0 || observedAt.After(observationTime) {
 		return false
 	}
 
-	return !observedAt.After(observationTime)
+	return observationTime.Sub(observedAt) <= horizon
 }
 
 /*
@@ -68,15 +68,15 @@ comparison contradicts. It never fires on missing context: missing state simply
 fails to contribute support, never suppresses an exit.
 
 The exact conditions:
-  1. Flow.flow_aligned_midpoint_return defined and > 0.
-  2. Flow.flow_book_alignment defined and > 0.
-  3. If entry and current Liquidity.depth_ratio:bid are both defined:
-     current >= entry (else contradiction).
-  4. If entry and current Liquidity.spread_ratio are both defined:
-     current <= entry (else contradiction).
-  5. If current OrderDisposition bid withdrawal and replenishment are both
-     defined: net_withdrawal_fraction:bid <= net_replenishment_fraction:bid
-     (else contradiction).
+ 1. Flow.flow_aligned_midpoint_return defined and > 0.
+ 2. Flow.flow_book_alignment defined and > 0.
+ 3. If entry and current Liquidity.depth_ratio:bid are both defined:
+    current >= entry (else contradiction).
+ 4. If entry and current Liquidity.spread_ratio are both defined:
+    current <= entry (else contradiction).
+ 5. If current OrderDisposition bid withdrawal and replenishment are both
+    defined: net_withdrawal_fraction:bid <= net_replenishment_fraction:bid
+    (else contradiction).
 
 Mandatory alignments gate everything; at least one liquidity/disposition
 comparison must be available and supportive; any available contradiction
@@ -87,6 +87,7 @@ func continuationSupportive(
 	entry positionEntryContext,
 	symbol string,
 	observationTime time.Time,
+	horizon time.Duration,
 ) bool {
 	if reader == nil {
 		return false
@@ -101,14 +102,14 @@ func continuationSupportive(
 	// 1. Flow/price alignment (mandatory): defined value, causally current.
 	flowAligned, flowAlignedAt, aligned := reading(&flow, "flow_aligned_midpoint_return")
 
-	if !aligned || flowAligned <= 0 || !fresh(flowAlignedAt, observationTime) {
+	if !aligned || flowAligned <= 0 || !fresh(flowAlignedAt, observationTime, horizon) {
 		return false
 	}
 
 	// 2. Flow/book alignment (mandatory).
 	flowBook, flowBookAt, bookAligned := reading(&flow, "flow_book_alignment")
 
-	if !bookAligned || flowBook <= 0 || !fresh(flowBookAt, observationTime) {
+	if !bookAligned || flowBook <= 0 || !fresh(flowBookAt, observationTime, horizon) {
 		return false
 	}
 
@@ -124,7 +125,7 @@ func continuationSupportive(
 		currentBid, currentBidAt, currentBidFound := reading(&liquidity, "depth_ratio:bid")
 		entryBid, _, entryBidFound := reading(&entry.liquidity, "depth_ratio:bid")
 
-		if currentBidFound && entryBidFound && fresh(currentBidAt, observationTime) {
+		if currentBidFound && entryBidFound && fresh(currentBidAt, observationTime, horizon) {
 			supportive = true
 
 			if currentBid < entryBid {
@@ -135,7 +136,7 @@ func continuationSupportive(
 		currentSpread, currentSpreadAt, currentSpreadFound := reading(&liquidity, "spread_ratio")
 		entrySpread, _, entrySpreadFound := reading(&entry.liquidity, "spread_ratio")
 
-		if currentSpreadFound && entrySpreadFound && fresh(currentSpreadAt, observationTime) {
+		if currentSpreadFound && entrySpreadFound && fresh(currentSpreadAt, observationTime, horizon) {
 			supportive = true
 
 			if currentSpread > entrySpread {
@@ -151,7 +152,8 @@ func continuationSupportive(
 		replenishment, replenishmentAt, replenishmentFound := reading(&disposition, "net_replenishment_fraction:bid")
 
 		if withdrawalFound && replenishmentFound &&
-			fresh(withdrawalAt, observationTime) && fresh(replenishmentAt, observationTime) {
+			fresh(withdrawalAt, observationTime, horizon) &&
+			fresh(replenishmentAt, observationTime, horizon) {
 			supportive = true
 
 			if withdrawal > replenishment {

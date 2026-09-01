@@ -56,12 +56,12 @@ func TestContinuationFreshness(t *testing.T) {
 		}}
 
 		Convey("fresh rejects a future-dated observation", func() {
-			So(fresh(future, now), ShouldBeFalse)
+			So(fresh(future, now, time.Second), ShouldBeFalse)
 		})
 
 		Convey("continuation does not defer when the flow reading is future-dated", func() {
 			entry := positionEntryContext{}
-			So(continuationSupportive(reader, entry, "SYM/USD", now), ShouldBeFalse)
+			So(continuationSupportive(reader, entry, "SYM/USD", now, time.Second), ShouldBeFalse)
 		})
 	})
 
@@ -69,12 +69,16 @@ func TestContinuationFreshness(t *testing.T) {
 		now := time.Unix(1000, 0)
 		past := time.Unix(900, 0)
 
-		Convey("fresh accepts a causally prior (non-future) observation", func() {
-			So(fresh(past, now), ShouldBeTrue)
+		Convey("fresh accepts a causal observation inside the market horizon", func() {
+			So(fresh(past, now, now.Sub(past)), ShouldBeTrue)
 		})
 
 		Convey("fresh rejects a zero observation instant", func() {
-			So(fresh(time.Time{}, now), ShouldBeFalse)
+			So(fresh(time.Time{}, now, now.Sub(past)), ShouldBeFalse)
+		})
+
+		Convey("fresh rejects advice older than the market horizon", func() {
+			So(fresh(past, now, now.Sub(past)-time.Nanosecond), ShouldBeFalse)
 		})
 	})
 }

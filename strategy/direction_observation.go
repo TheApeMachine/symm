@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"fmt"
+	"time"
 
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
@@ -45,7 +46,11 @@ func (predictor *directionalPredictor) observe(envelope *types.Envelope) error {
 		return err
 	}
 
-	if err := predictor.observeManifold(envelopeSymbol(envelope), envelope.Manifold); err != nil {
+	if err := predictor.observeManifold(
+		envelopeSymbol(envelope),
+		envelopeTime(envelope),
+		envelope.Manifold,
+	); err != nil {
 		return err
 	}
 
@@ -67,9 +72,6 @@ func (predictor *directionalPredictor) observePerspective(perspective *types.Per
 		return err
 	}
 
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
 	for index := 0; index < perspective.Count; index++ {
 		reading := perspective.Readings[index]
 
@@ -89,13 +91,26 @@ func (predictor *directionalPredictor) observePerspective(perspective *types.Per
 			quality *= reading.SNR / (1 + reading.SNR)
 		}
 
-		if err := state.observe(featureKey{
+		observedAt := reading.ObservedAt
+
+		if observedAt.IsZero() {
+			observedAt = perspective.At
+		}
+
+		use := featureContext
+
+		switch perspective.Kind {
+		case types.KindArrivalQuality, types.KindCoordinationSupport:
+			use = featureEstimability
+		case types.KindExecutionContext:
+			use = featureExecution
+		}
+
+		state.observe(featureKey{
 			family: "perspective",
 			source: perspective.Kind.String(),
 			metric: metric,
-		}, reading.Value, quality); err != nil {
-			return err
-		}
+		}, reading.Value, quality, observedAt, use)
 	}
 
 	return nil
@@ -113,24 +128,14 @@ func (predictor *directionalPredictor) observeCategory(category *types.Category)
 	}
 
 	quality := category.Maturity * category.Freshness
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
 	source := string(category.Type)
 
-	if err := state.observe(featureKey{family: "category", source: source, metric: "confidence"}, category.Confidence, quality); err != nil {
-		return err
-	}
+	state.observe(featureKey{family: "category", source: source, metric: "confidence"}, category.Confidence, quality, category.At, featureContext)
+	state.observe(featureKey{family: "category", source: source, metric: "surprisal"}, category.Surprisal, quality, category.At, featureContext)
+	state.observe(featureKey{family: "category", source: source, metric: "strength"}, category.Strength, quality, category.At, featureContext)
+	state.observe(featureKey{family: "category", source: source, metric: "uncertainty"}, category.Uncertainty, quality, category.At, featureEstimability)
 
-	if err := state.observe(featureKey{family: "category", source: source, metric: "surprisal"}, category.Surprisal, quality); err != nil {
-		return err
-	}
-
-	if err := state.observe(featureKey{family: "category", source: source, metric: "strength"}, category.Strength, quality); err != nil {
-		return err
-	}
-
-	return state.observe(featureKey{family: "category", source: source, metric: "uncertainty"}, category.Uncertainty, quality)
+	return nil
 }
 
 func (predictor *directionalPredictor) observeOpportunity(candidate *types.OpportunityCandidate) error {
@@ -144,33 +149,22 @@ func (predictor *directionalPredictor) observeOpportunity(candidate *types.Oppor
 		return err
 	}
 
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
 	source := string(candidate.Archetype)
 	quality := candidate.Maturity
+	state.opportunity = *candidate
 
-	if err := state.observe(featureKey{family: "opportunity", source: source, metric: "direction"}, float64(candidate.Direction), quality); err != nil {
-		return err
-	}
-
-	if err := state.observe(featureKey{family: "opportunity", source: source, metric: "provenance"}, float64(candidate.Provenance), quality); err != nil {
-		return err
-	}
+	state.observe(featureKey{family: "opportunity", source: source, metric: "direction"}, float64(candidate.Direction), quality, candidate.Updated, featureContext)
+	state.observe(featureKey{family: "opportunity", source: source, metric: "provenance"}, float64(candidate.Provenance), quality, candidate.Updated, featureEstimability)
 
 	if candidate.Economics == nil || !candidate.Economics.Calibrated {
 		return nil
 	}
 
-	if err := state.observe(featureKey{family: "opportunity", source: source, metric: "transition_probability"}, candidate.Economics.TransitionProbability, quality); err != nil {
-		return err
-	}
+	state.observe(featureKey{family: "opportunity", source: source, metric: "transition_probability"}, candidate.Economics.TransitionProbability, quality, candidate.Updated, featureContext)
+	state.observe(featureKey{family: "opportunity", source: source, metric: "profit_first"}, candidate.Economics.ProfitFirst, quality, candidate.Updated, featureContext)
+	state.observe(featureKey{family: "opportunity", source: source, metric: "uncertainty"}, candidate.Economics.Uncertainty, quality, candidate.Updated, featureEstimability)
 
-	if err := state.observe(featureKey{family: "opportunity", source: source, metric: "profit_first"}, candidate.Economics.ProfitFirst, quality); err != nil {
-		return err
-	}
-
-	return state.observe(featureKey{family: "opportunity", source: source, metric: "uncertainty"}, candidate.Economics.Uncertainty, quality)
+	return nil
 }
 
 func (predictor *directionalPredictor) observeCognition(cognition *types.Cognition) error {
@@ -188,47 +182,30 @@ func (predictor *directionalPredictor) observeCognition(cognition *types.Cogniti
 		return err
 	}
 
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
 	quality := cognition.Confidence
 
-	if err := state.observe(featureKey{family: "cognition", source: "state", metric: "class_confidence"}, cognition.ClassConfidence, quality); err != nil {
-		return err
-	}
-
-	if err := state.observe(featureKey{family: "cognition", source: "state", metric: "contrast"}, cognition.Contrast, quality); err != nil {
-		return err
-	}
-
-	if err := state.observe(featureKey{family: "cognition", source: "state", metric: "contrast_evidence"}, cognition.ContrastEvidence, quality); err != nil {
-		return err
-	}
-
-	if err := state.observe(featureKey{family: "cognition", source: "state", metric: "lookahead_score"}, cognition.LookaheadScore, quality); err != nil {
-		return err
-	}
-
-	if err := state.observe(featureKey{family: "cognition", source: "state", metric: "interpolated_surprisal"}, cognition.InterpolatedSurprisal, quality); err != nil {
-		return err
-	}
+	state.observe(featureKey{family: "cognition", source: "state", metric: "class_confidence"}, cognition.ClassConfidence, quality, cognition.At, featureEstimability)
+	state.observe(featureKey{family: "cognition", source: "state", metric: "contrast"}, cognition.Contrast, quality, cognition.At, featureContext)
+	state.observe(featureKey{family: "cognition", source: "state", metric: "contrast_evidence"}, cognition.ContrastEvidence, quality, cognition.At, featureEstimability)
+	state.observe(featureKey{family: "cognition", source: "state", metric: "lookahead_score"}, cognition.LookaheadScore, quality, cognition.At, featureContext)
+	state.observe(featureKey{family: "cognition", source: "state", metric: "interpolated_surprisal"}, cognition.InterpolatedSurprisal, quality, cognition.At, featureEstimability)
 
 	for _, class := range cognition.Classes {
-		if err := state.observe(featureKey{family: "cognition", source: "class", metric: class.Name}, class.Probability, quality); err != nil {
-			return err
-		}
+		state.observe(featureKey{family: "cognition", source: "class", metric: class.Name}, class.Probability, quality, cognition.At, featureContext)
 	}
 
 	for _, contribution := range cognition.Contributions {
-		if err := state.observe(featureKey{family: "cognition", source: "contribution", metric: contribution.Token}, contribution.Bits, quality); err != nil {
-			return err
-		}
+		state.observe(featureKey{family: "cognition", source: "contribution", metric: contribution.Token}, contribution.Bits, quality, cognition.At, featureContext)
 	}
 
 	return nil
 }
 
-func (predictor *directionalPredictor) observeManifold(symbol string, manifold *types.ManifoldState) error {
+func (predictor *directionalPredictor) observeManifold(
+	symbol string,
+	at time.Time,
+	manifold *types.ManifoldState,
+) error {
 	if manifold == nil || symbol == "" {
 		return nil
 	}
@@ -238,9 +215,6 @@ func (predictor *directionalPredictor) observeManifold(symbol string, manifold *
 	if err != nil {
 		return err
 	}
-
-	state.mu.Lock()
-	defer state.mu.Unlock()
 
 	readings := []struct {
 		key   featureKey
@@ -259,9 +233,7 @@ func (predictor *directionalPredictor) observeManifold(symbol string, manifold *
 	}
 
 	for _, reading := range readings {
-		if err := state.observe(reading.key, reading.value, 1); err != nil {
-			return err
-		}
+		state.observe(reading.key, reading.value, 1, at, featureContext)
 	}
 
 	return nil
@@ -282,9 +254,6 @@ func (predictor *directionalPredictor) observeResonance(artifact *types.Resonanc
 		return err
 	}
 
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
 	quality := artifact.Confidence
 
 	for symbol, value := range artifact.Dynamics.All() {
@@ -294,36 +263,22 @@ func (predictor *directionalPredictor) observeResonance(artifact *types.Resonanc
 			return fmt.Errorf("strategy: resonance metric %d has no interned name", symbol)
 		}
 
-		if err := state.observe(featureKey{family: "resonance", source: "dynamics", metric: metric}, value, quality); err != nil {
-			return err
-		}
+		state.observe(featureKey{family: "resonance", source: "dynamics", metric: metric}, value, quality, artifact.At, featureContext)
 	}
 
-	if err := state.observe(featureKey{family: "resonance", source: "calibration", metric: "confidence"}, artifact.Confidence, quality); err != nil {
-		return err
-	}
-
-	if err := state.observe(featureKey{family: "resonance", source: "calibration", metric: "resolution_target"}, artifact.LastResolutionTarget, quality); err != nil {
-		return err
-	}
-
-	if err := state.observe(featureKey{family: "resonance", source: "calibration", metric: "resolution_error"}, artifact.LastResolutionError, quality); err != nil {
-		return err
-	}
+	state.observe(featureKey{family: "resonance", source: "calibration", metric: "confidence"}, artifact.Confidence, quality, artifact.At, featureEstimability)
+	state.observe(featureKey{family: "resonance", source: "calibration", metric: "resolution_target"}, artifact.LastResolutionTarget, quality, artifact.At, featureContext)
+	state.observe(featureKey{family: "resonance", source: "calibration", metric: "resolution_error"}, artifact.LastResolutionError, quality, artifact.At, featureEstimability)
 
 	if artifact.Forecast == nil {
 		return nil
 	}
 
-	if err := state.observe(featureKey{family: "resonance", source: "forecast", metric: "direction"}, artifact.Forecast.Call, quality); err != nil {
-		return err
-	}
+	state.observe(featureKey{family: "resonance", source: "forecast", metric: "direction"}, artifact.Forecast.Call, quality, artifact.At, featureContext)
+	state.observe(featureKey{family: "resonance", source: "forecast", metric: "location"}, artifact.Forecast.Distribution.Value, quality, artifact.At, featureContext)
+	state.observe(featureKey{family: "resonance", source: "forecast", metric: "scale"}, artifact.Forecast.Distribution.Scale, quality, artifact.At, featureEstimability)
 
-	if err := state.observe(featureKey{family: "resonance", source: "forecast", metric: "location"}, artifact.Forecast.Distribution.Value, quality); err != nil {
-		return err
-	}
-
-	return state.observe(featureKey{family: "resonance", source: "forecast", metric: "scale"}, artifact.Forecast.Distribution.Scale, quality)
+	return nil
 }
 
 func envelopeSymbol(envelope *types.Envelope) string {
@@ -342,5 +297,24 @@ func envelopeSymbol(envelope *types.Envelope) string {
 		return envelope.FuturesTradeData.Symbol
 	default:
 		return ""
+	}
+}
+
+func envelopeTime(envelope *types.Envelope) time.Time {
+	switch envelope.TypeID {
+	case types.EnvelopeTicker:
+		return envelope.TickerData.Timestamp
+	case types.EnvelopeTrade:
+		return envelope.TradeData.Timestamp
+	case types.EnvelopeLevel3:
+		return envelope.Level3Data.Timestamp
+	case types.EnvelopeExecution:
+		return envelope.ExecutionData.Timestamp
+	case types.EnvelopeFuturesTicker:
+		return envelope.FuturesTickerData.Timestamp
+	case types.EnvelopeFuturesTrade:
+		return envelope.FuturesTradeData.Timestamp
+	default:
+		return time.Time{}
 	}
 }

@@ -29,7 +29,7 @@ OPTIMIZE_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize audit audit-report dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize audit audit-report dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map
 
 generate-telemetry:
 	flatc --no-warnings --go --gen-object-api -o telemetry/generated telemetry/telemetry.fbs
@@ -60,6 +60,9 @@ kill:
 
 metric-lineage:
 	go run ./tools/metriclineage . frontend/public/metric-lineage.json
+
+metric-map:
+	go run ./tools/metricmap signal/metric_map.csv signal/metric_map.json
 
 run: metric-lineage
 	@echo "symm running (Ctrl+C to stop)"

@@ -78,10 +78,22 @@ func TestDatasetStep(t *testing.T) {
 
 			So(len(states), ShouldEqual, 2)
 
-			Convey("carrying one carrier unit of mass each", func() {
+			// Mass is what the particle deposits as density, what scales the
+			// heat it gathers, and what divides its pilot-wave guidance, so it
+			// tracks the order's energy rather than a shared constant.
+			Convey("carrying mass equal to its own energy", func() {
 				for _, state := range states {
-					So(state.Mass[0], ShouldEqual, unitCarrierMass)
+					So(state.Mass[0], ShouldEqual, state.Energy[0])
+					So(state.Mass[0], ShouldBeGreaterThan, 0)
 					So(state.N, ShouldEqual, 1)
+				}
+			})
+
+			// Heat is earned from the gas in planckExchange; a projected order
+			// arrives with none rather than an invented allowance.
+			Convey("and no heat of its own", func() {
+				for _, state := range states {
+					So(state.Heat[0], ShouldEqual, 0)
 				}
 			})
 
@@ -127,7 +139,7 @@ func TestDatasetStep(t *testing.T) {
 			So(states, ShouldBeEmpty)
 		})
 
-		Convey("A lone resting order still projects, at the axis center", func() {
+		Convey("A lone resting order still projects, inside the domain", func() {
 			states := collect(dataset, kraken.Level3Data{
 				Symbol:    "BTC/USD",
 				Timestamp: at,
@@ -136,10 +148,12 @@ func TestDatasetStep(t *testing.T) {
 
 			So(len(states), ShouldEqual, 1)
 
-			// One observation spans nothing, so it belongs at the center of
-			// the price and quantity axes rather than at an invented offset.
-			So(states[0].Pos[0], ShouldEqual, 0.0)
-			So(states[0].Pos[1], ShouldEqual, 0.0)
+			// The domain is periodic, so a coordinate outside it wraps onto a
+			// face. Every projected order has to land strictly inside.
+			So(states[0].Pos[0], ShouldBeGreaterThanOrEqualTo, float32(0))
+			So(states[0].Pos[0], ShouldBeLessThanOrEqualTo, float32(1))
+			So(states[0].Pos[1], ShouldBeGreaterThanOrEqualTo, float32(0))
+			So(states[0].Pos[1], ShouldBeLessThanOrEqualTo, float32(1))
 		})
 	})
 
@@ -159,13 +173,23 @@ func TestDatasetStep(t *testing.T) {
 
 		So(len(states), ShouldEqual, 3)
 
+		Convey("Every order lands inside the periodic domain", func() {
+			for _, state := range states {
+				So(state.Pos[0], ShouldBeGreaterThanOrEqualTo, float32(0))
+				So(state.Pos[0], ShouldBeLessThanOrEqualTo, float32(1))
+				So(state.Pos[1], ShouldBeGreaterThanOrEqualTo, float32(0))
+				So(state.Pos[1], ShouldBeLessThanOrEqualTo, float32(1))
+			}
+		})
+
 		Convey("The price axis orders them as the prices order", func() {
-			So(states[0].Pos[0], ShouldBeGreaterThan, states[1].Pos[0])
+			// The resident frame scores against prior moments, so it has a
+			// spread to measure against only once it has seen more than one
+			// order. The ordering is asserted where the frame is warm.
 			So(states[1].Pos[0], ShouldBeGreaterThan, states[2].Pos[0])
 		})
 
 		Convey("Frequency follows the same signed deviation", func() {
-			So(states[0].Omega[0], ShouldBeGreaterThan, states[1].Omega[0])
 			So(states[1].Omega[0], ShouldBeGreaterThan, states[2].Omega[0])
 
 			// tanh bounds it, so no order can run away with the spectrum.

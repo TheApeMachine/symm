@@ -16,9 +16,25 @@ feeds a value back into trading.
 type witnessNode struct {
 	writer      *store.Writer
 	asyncWriter *store.AsyncWitnessWriter
+	phases      map[opportunityWitnessKey]types.OpportunityPhase
 }
 
-func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
+type opportunityWitnessKey struct {
+	symbol    string
+	archetype types.OpportunityArchetype
+}
+
+func newWitnessNode(
+	writer *store.Writer,
+	asyncWriter *store.AsyncWitnessWriter,
+) *witnessNode {
+	return &witnessNode{
+		writer: writer, asyncWriter: asyncWriter,
+		phases: make(map[opportunityWitnessKey]types.OpportunityPhase),
+	}
+}
+
+func (node *witnessNode) Step(envelope *types.Envelope) *types.Envelope {
 	if envelope == nil || (node.writer == nil && node.asyncWriter == nil) {
 		return envelope
 	}
@@ -31,7 +47,7 @@ func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
 		Origin:  envelope.CaptureID,
 		Ordinal: envelope.CaptureOrdinal,
 	}
-	if !hasActionableDecision(envelope.StrategyRound) {
+	if !node.shouldWitness(envelope) {
 		return envelope
 	}
 
@@ -47,11 +63,38 @@ func (node witnessNode) Step(envelope *types.Envelope) *types.Envelope {
 		Payload: envelope.EncodeBytes(),
 	})
 
-	for _, decision := range envelope.StrategyRound.Decisions {
-		node.recordDecision(ref, decision)
+	if envelope.StrategyRound != nil {
+		for _, decision := range envelope.StrategyRound.Decisions {
+			node.recordDecision(ref, decision)
+		}
 	}
 
 	return envelope
+}
+
+func (node *witnessNode) shouldWitness(envelope *types.Envelope) bool {
+	if hasActionableDecision(envelope.StrategyRound) {
+		return true
+	}
+
+	changed := false
+
+	for _, candidate := range envelope.Opportunities {
+		if candidate == nil || candidate.Symbol == "" || candidate.Archetype == "" {
+			continue
+		}
+
+		key := opportunityWitnessKey{
+			symbol: candidate.Symbol, archetype: candidate.Archetype,
+		}
+
+		if node.phases[key] != candidate.Phase {
+			node.phases[key] = candidate.Phase
+			changed = true
+		}
+	}
+
+	return changed
 }
 
 func hasActionableDecision(round *types.StrategyRound) bool {
@@ -68,7 +111,7 @@ func hasActionableDecision(round *types.StrategyRound) bool {
 	return false
 }
 
-func (node witnessNode) recordDecision(ref hindsight.EnvelopeRef, decision *types.Decision) {
+func (node *witnessNode) recordDecision(ref hindsight.EnvelopeRef, decision *types.Decision) {
 	if decision == nil || decision.ID == "" {
 		return
 	}
@@ -83,7 +126,7 @@ func (node witnessNode) recordDecision(ref hindsight.EnvelopeRef, decision *type
 	})
 }
 
-func (node witnessNode) write(witness hindsight.ArtifactWitness) {
+func (node *witnessNode) write(witness hindsight.ArtifactWitness) {
 	if node.asyncWriter != nil {
 		node.asyncWriter.Enqueue(witness)
 		return

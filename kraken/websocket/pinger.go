@@ -21,6 +21,10 @@ type Pinger struct {
 	// send writes one keepalive. It is the only part that differs per venue.
 	send func() error
 
+	// failed is invoked when a keepalive write fails, which is the only signal
+	// a half-open socket produces. The session decides what to do about it.
+	failed func(err error)
+
 	// name prefixes this pinger's log lines with the session it serves.
 	name string
 
@@ -32,6 +36,23 @@ type Pinger struct {
 
 func NewPinger(name string, send func() error) *Pinger {
 	return &Pinger{name: name, send: send}
+}
+
+/*
+OnFailed installs the handler invoked when a keepalive write fails.
+
+A failed ping is the only evidence a half-open socket produces. The venue's read
+loop is still blocked on a socket whose write side is already gone, so it never
+errors, never reports the disconnect, and never triggers the reconnect that
+would restore the session. Without this the loop writes into a dead socket for
+the rest of the process lifetime.
+*/
+func (pinger *Pinger) OnFailed(handler func(err error)) {
+	if pinger == nil {
+		return
+	}
+
+	pinger.failed = handler
 }
 
 /*
@@ -61,13 +82,28 @@ func (pinger *Pinger) Start(ctx context.Context) {
 		for {
 			select {
 			case <-ticker.C:
-				if err := pinger.send(); err != nil {
-					errnie.Error(errnie.Err(
-						errnie.IO,
-						fmt.Sprintf("%s: ping failed", pinger.name),
-						err,
-					))
+				err := pinger.send()
+
+				if err == nil {
+					continue
 				}
+
+				errnie.Error(errnie.Err(
+					errnie.IO,
+					fmt.Sprintf("%s: ping failed", pinger.name),
+					err,
+				))
+
+				// The socket this loop was keeping alive is gone. Reporting it
+				// once and standing down is what lets the session tear the
+				// connection down and reconnect; continuing to tick would keep
+				// writing into a dead socket and report the same failure
+				// forever.
+				if pinger.failed != nil {
+					pinger.failed(err)
+				}
+
+				return
 			case <-stop:
 				return
 			case <-ctx.Done():

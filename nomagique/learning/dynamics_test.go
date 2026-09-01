@@ -65,7 +65,7 @@ func BenchmarkPredictiveDynamics(b *testing.B) {
 	input.Put(SymbolDynamicsExternalPower, 0.25)
 	b.ReportAllocs()
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for iteration := 0; b.Loop(); iteration++ {
 		input.Put(SymbolDynamicsTime, float64(iteration+2))
 		input.Put(SymbolDynamicsPosition, float64(iteration%100)/100)
 

@@ -15,6 +15,10 @@ type Manifold struct {
 	work      *workspace
 	Tokenizer *Tokenizer
 	state     *State
+	// resident maps a particle's ContentID to its row in state, so an
+	// incremental batch can find the row an already-resident order is
+	// evolving in instead of rebuilding the population.
+	resident  map[int64]int
 	reading   Reading
 	stepCount int
 }
@@ -210,30 +214,58 @@ func (manifold *Manifold) PackFields(
 	return scale.density, scale.momentum, scale.energy, scale.wave
 }
 
+/*
+merge folds an incoming batch into the resident domain by ContentID, which is
+the stable per-order identity the projection stamps on every particle.
+
+The domain is resident: a batch is what this message observed, never the whole
+population. An order already resident keeps the row it has been evolving — only
+the freshly observed quantities are refreshed, so its integrated position and
+velocity survive the update — while an order seen for the first time is
+appended. Replacing the population with the batch instead made the field
+collapse to whatever the last message happened to carry, which for an
+incremental Level3 update is a single order.
+
+Departure is the book's business, not the batch's: a message that simply does
+not mention an order says nothing about whether it is still resting, so nothing
+is evicted here.
+*/
 func (manifold *Manifold) merge(incoming *State) {
 	if incoming == nil || incoming.empty() {
 		return
 	}
 
-	if manifold.state.empty() || manifold.state.N != incoming.N {
+	if manifold.state.empty() {
 		manifold.state = incoming
+		manifold.resident = make(map[int64]int, incoming.N)
+
+		for index := 0; index < incoming.N; index++ {
+			manifold.resident[incoming.ContentIDs[index]] = index
+		}
+
 		return
 	}
 
-	copy(manifold.state.Bytes, incoming.Bytes)
-	copy(manifold.state.Seqs, incoming.Seqs)
-	copy(manifold.state.TokenIDs, incoming.TokenIDs)
-	copy(manifold.state.ContentIDs, incoming.ContentIDs)
-	copy(manifold.state.Phase, incoming.Phase)
-	copy(manifold.state.Omega, incoming.Omega)
-	copy(manifold.state.Energy, incoming.Energy)
-	copy(manifold.state.Mass, incoming.Mass)
-	copy(manifold.state.Heat, incoming.Heat)
-	copy(manifold.state.Amp, incoming.Amp)
-	copy(manifold.state.Pos, incoming.Pos)
-	copy(manifold.state.Vel, incoming.Vel)
-	copy(manifold.state.Clamped, incoming.Clamped)
-	copy(manifold.state.Dark, incoming.Dark)
+	if manifold.resident == nil {
+		manifold.resident = make(map[int64]int, manifold.state.N)
+
+		for index := 0; index < manifold.state.N; index++ {
+			manifold.resident[manifold.state.ContentIDs[index]] = index
+		}
+	}
+
+	for index := 0; index < incoming.N; index++ {
+		contentID := incoming.ContentIDs[index]
+		resident, seen := manifold.resident[contentID]
+
+		if !seen {
+			manifold.state.append(incoming, index)
+			manifold.resident[contentID] = manifold.state.N - 1
+			continue
+		}
+
+		manifold.state.refresh(resident, incoming, index)
+	}
 }
 
 /*

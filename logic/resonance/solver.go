@@ -216,7 +216,7 @@ func (solver *Solver) Update(
 	if !found {
 		detector = learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
 			CustomArch: []int{len(features), len(features) * 4, len(features) * 2, len(features)}, // Overcomplete dictionary with latent space
-			MaxHorizon: 8,                                                                         // Multi-step forward rollouts up to t+8
+			MaxHorizon: 300,                                                                       // Multi-step forward rollouts up to t+8
 			Target:     solver.directionalTarget(symbolName),                                      // Noise-scaled directional call
 			Pace:       solver.pace,                                                               // Adaptive learning pace
 			Learn:      true,
@@ -469,6 +469,7 @@ func (solver *Solver) publishReturns(
 	}
 
 	if out.LastResolution != nil {
+		artifact.LastResolutionPrediction = out.LastResolution.Prediction
 		artifact.LastResolutionTarget = out.LastResolution.Target
 		artifact.LastResolutionError = out.LastResolution.Error
 	}

@@ -73,7 +73,7 @@ func TestSolverStep(t *testing.T) {
 			So(result.Manifold.State.N, ShouldEqual, 1)
 		})
 
-		Convey("Each envelope owns an immutable manifold reading", func() {
+		Convey("The resident domain accumulates across envelopes", func() {
 			first := types.NewEnvelope(types.EnvelopeLevel3)
 			first.Level3Data = kraken.Level3Data{
 				Symbol: "FIRST/USD",
@@ -93,9 +93,13 @@ func TestSolverStep(t *testing.T) {
 			}
 			solver.Step(second)
 
+			// The domain is resident: the second message's two orders join the
+			// first message's order rather than replacing it, and each envelope
+			// still owns its own immutable reading of the population at its own
+			// moment.
 			So(first.Manifold, ShouldNotEqual, second.Manifold)
 			So(first.Manifold.State.N, ShouldEqual, 1)
-			So(second.Manifold.State.N, ShouldEqual, 2)
+			So(second.Manifold.State.N, ShouldEqual, 3)
 		})
 	})
 }

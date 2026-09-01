@@ -629,18 +629,19 @@ func encodeResonanceArtifact(resonance *ResonanceArtifact) *telemetry.EnvelopeRe
 	}
 
 	encoded := &telemetry.EnvelopeResonanceArtifactT{
-		Symbol:               resonance.Symbol,
-		AtNs:                 timeNs(resonance.At),
-		Dynamics:             encodeFrame(resonance.Dynamics),
-		ForwardCurve:         resonance.ForwardCurve,
-		ForwardRetention:     resonance.ForwardRetention,
-		SupportedHorizon:     int64(resonance.SupportedHorizon),
-		Calibrated:           resonance.Calibrated,
-		ResolvedSteps:        int64(resonance.ResolvedSteps),
-		Readout:              resonance.Readout,
-		Confidence:           resonance.Confidence,
-		LastResolutionTarget: resonance.LastResolutionTarget,
-		LastResolutionError:  resonance.LastResolutionError,
+		Symbol:                   resonance.Symbol,
+		AtNs:                     timeNs(resonance.At),
+		Dynamics:                 encodeFrame(resonance.Dynamics),
+		ForwardCurve:             resonance.ForwardCurve,
+		ForwardRetention:         resonance.ForwardRetention,
+		SupportedHorizon:         int64(resonance.SupportedHorizon),
+		Calibrated:               resonance.Calibrated,
+		ResolvedSteps:            int64(resonance.ResolvedSteps),
+		Readout:                  resonance.Readout,
+		Confidence:               resonance.Confidence,
+		LastResolutionPrediction: resonance.LastResolutionPrediction,
+		LastResolutionTarget:     resonance.LastResolutionTarget,
+		LastResolutionError:      resonance.LastResolutionError,
 	}
 
 	if manifold := resonance.Manifold; manifold != nil {

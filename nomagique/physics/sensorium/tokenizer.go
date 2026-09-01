@@ -91,7 +91,7 @@ index, tiny mass, heat=1. Darks bypass the compressor.
 func (tokenizer *Tokenizer) MakeDarkBatch(seqIdx int64, mass float32) *State {
 	state := newState(256)
 
-	for byteValue := int64(0); byteValue < 256; byteValue++ {
+	for byteValue := range int64(256) {
 		tokenizer.writeParticle(state, int(byteValue), byteValue, seqIdx, mass, mass, 1)
 		state.Dark[byteValue] = true
 	}
