@@ -89,11 +89,13 @@ func (predictor *directionalPredictor) observePerspective(perspective *types.Per
 			quality *= reading.SNR / (1 + reading.SNR)
 		}
 
-		state.observe(featureKey{
+		if err := state.observe(featureKey{
 			family: "perspective",
 			source: perspective.Kind.String(),
 			metric: metric,
-		}, reading.Value, quality)
+		}, reading.Value, quality); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -115,12 +117,20 @@ func (predictor *directionalPredictor) observeCategory(category *types.Category)
 	defer state.mu.Unlock()
 
 	source := string(category.Type)
-	state.observe(featureKey{family: "category", source: source, metric: "confidence"}, category.Confidence, quality)
-	state.observe(featureKey{family: "category", source: source, metric: "surprisal"}, category.Surprisal, quality)
-	state.observe(featureKey{family: "category", source: source, metric: "strength"}, category.Strength, quality)
-	state.observe(featureKey{family: "category", source: source, metric: "uncertainty"}, category.Uncertainty, quality)
 
-	return nil
+	if err := state.observe(featureKey{family: "category", source: source, metric: "confidence"}, category.Confidence, quality); err != nil {
+		return err
+	}
+
+	if err := state.observe(featureKey{family: "category", source: source, metric: "surprisal"}, category.Surprisal, quality); err != nil {
+		return err
+	}
+
+	if err := state.observe(featureKey{family: "category", source: source, metric: "strength"}, category.Strength, quality); err != nil {
+		return err
+	}
+
+	return state.observe(featureKey{family: "category", source: source, metric: "uncertainty"}, category.Uncertainty, quality)
 }
 
 func (predictor *directionalPredictor) observeOpportunity(candidate *types.OpportunityCandidate) error {
@@ -139,18 +149,28 @@ func (predictor *directionalPredictor) observeOpportunity(candidate *types.Oppor
 
 	source := string(candidate.Archetype)
 	quality := candidate.Maturity
-	state.observe(featureKey{family: "opportunity", source: source, metric: "direction"}, float64(candidate.Direction), quality)
-	state.observe(featureKey{family: "opportunity", source: source, metric: "provenance"}, float64(candidate.Provenance), quality)
+
+	if err := state.observe(featureKey{family: "opportunity", source: source, metric: "direction"}, float64(candidate.Direction), quality); err != nil {
+		return err
+	}
+
+	if err := state.observe(featureKey{family: "opportunity", source: source, metric: "provenance"}, float64(candidate.Provenance), quality); err != nil {
+		return err
+	}
 
 	if candidate.Economics == nil || !candidate.Economics.Calibrated {
 		return nil
 	}
 
-	state.observe(featureKey{family: "opportunity", source: source, metric: "transition_probability"}, candidate.Economics.TransitionProbability, quality)
-	state.observe(featureKey{family: "opportunity", source: source, metric: "profit_first"}, candidate.Economics.ProfitFirst, quality)
-	state.observe(featureKey{family: "opportunity", source: source, metric: "uncertainty"}, candidate.Economics.Uncertainty, quality)
+	if err := state.observe(featureKey{family: "opportunity", source: source, metric: "transition_probability"}, candidate.Economics.TransitionProbability, quality); err != nil {
+		return err
+	}
 
-	return nil
+	if err := state.observe(featureKey{family: "opportunity", source: source, metric: "profit_first"}, candidate.Economics.ProfitFirst, quality); err != nil {
+		return err
+	}
+
+	return state.observe(featureKey{family: "opportunity", source: source, metric: "uncertainty"}, candidate.Economics.Uncertainty, quality)
 }
 
 func (predictor *directionalPredictor) observeCognition(cognition *types.Cognition) error {
@@ -172,18 +192,37 @@ func (predictor *directionalPredictor) observeCognition(cognition *types.Cogniti
 	defer state.mu.Unlock()
 
 	quality := cognition.Confidence
-	state.observe(featureKey{family: "cognition", source: "state", metric: "class_confidence"}, cognition.ClassConfidence, quality)
-	state.observe(featureKey{family: "cognition", source: "state", metric: "contrast"}, cognition.Contrast, quality)
-	state.observe(featureKey{family: "cognition", source: "state", metric: "contrast_evidence"}, cognition.ContrastEvidence, quality)
-	state.observe(featureKey{family: "cognition", source: "state", metric: "lookahead_score"}, cognition.LookaheadScore, quality)
-	state.observe(featureKey{family: "cognition", source: "state", metric: "interpolated_surprisal"}, cognition.InterpolatedSurprisal, quality)
+
+	if err := state.observe(featureKey{family: "cognition", source: "state", metric: "class_confidence"}, cognition.ClassConfidence, quality); err != nil {
+		return err
+	}
+
+	if err := state.observe(featureKey{family: "cognition", source: "state", metric: "contrast"}, cognition.Contrast, quality); err != nil {
+		return err
+	}
+
+	if err := state.observe(featureKey{family: "cognition", source: "state", metric: "contrast_evidence"}, cognition.ContrastEvidence, quality); err != nil {
+		return err
+	}
+
+	if err := state.observe(featureKey{family: "cognition", source: "state", metric: "lookahead_score"}, cognition.LookaheadScore, quality); err != nil {
+		return err
+	}
+
+	if err := state.observe(featureKey{family: "cognition", source: "state", metric: "interpolated_surprisal"}, cognition.InterpolatedSurprisal, quality); err != nil {
+		return err
+	}
 
 	for _, class := range cognition.Classes {
-		state.observe(featureKey{family: "cognition", source: "class", metric: class.Name}, class.Probability, quality)
+		if err := state.observe(featureKey{family: "cognition", source: "class", metric: class.Name}, class.Probability, quality); err != nil {
+			return err
+		}
 	}
 
 	for _, contribution := range cognition.Contributions {
-		state.observe(featureKey{family: "cognition", source: "contribution", metric: contribution.Token}, contribution.Bits, quality)
+		if err := state.observe(featureKey{family: "cognition", source: "contribution", metric: contribution.Token}, contribution.Bits, quality); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -203,16 +242,27 @@ func (predictor *directionalPredictor) observeManifold(symbol string, manifold *
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	state.observe(featureKey{family: "manifold", source: "reading", metric: "divergence"}, manifold.Divergence, 1)
-	state.observe(featureKey{family: "manifold", source: "reading", metric: "guidance_speed"}, manifold.GuidanceSpeed, 1)
-	state.observe(featureKey{family: "manifold", source: "reading", metric: "coherence_magnitude_squared"}, manifold.CoherenceMag2, 1)
-	state.observe(featureKey{family: "manifold", source: "reading", metric: "pressure_gradient_norm"}, manifold.PressureGradNorm, 1)
-	state.observe(featureKey{family: "manifold", source: "reading", metric: "viscosity_proxy"}, manifold.ViscosityProxy, 1)
-	state.observe(featureKey{family: "manifold", source: "reading", metric: "kuramoto_order"}, manifold.KuramotoR, 1)
-	state.observe(featureKey{family: "manifold", source: "scale", metric: "density"}, float64(manifold.DensityScale), 1)
-	state.observe(featureKey{family: "manifold", source: "scale", metric: "momentum"}, float64(manifold.MomentumScale), 1)
-	state.observe(featureKey{family: "manifold", source: "scale", metric: "energy"}, float64(manifold.EnergyScale), 1)
-	state.observe(featureKey{family: "manifold", source: "scale", metric: "wave"}, float64(manifold.WaveScale), 1)
+	readings := []struct {
+		key   featureKey
+		value float64
+	}{
+		{featureKey{family: "manifold", source: "reading", metric: "divergence"}, manifold.Divergence},
+		{featureKey{family: "manifold", source: "reading", metric: "guidance_speed"}, manifold.GuidanceSpeed},
+		{featureKey{family: "manifold", source: "reading", metric: "coherence_magnitude_squared"}, manifold.CoherenceMag2},
+		{featureKey{family: "manifold", source: "reading", metric: "pressure_gradient_norm"}, manifold.PressureGradNorm},
+		{featureKey{family: "manifold", source: "reading", metric: "viscosity_proxy"}, manifold.ViscosityProxy},
+		{featureKey{family: "manifold", source: "reading", metric: "kuramoto_order"}, manifold.KuramotoR},
+		{featureKey{family: "manifold", source: "scale", metric: "density"}, float64(manifold.DensityScale)},
+		{featureKey{family: "manifold", source: "scale", metric: "momentum"}, float64(manifold.MomentumScale)},
+		{featureKey{family: "manifold", source: "scale", metric: "energy"}, float64(manifold.EnergyScale)},
+		{featureKey{family: "manifold", source: "scale", metric: "wave"}, float64(manifold.WaveScale)},
+	}
+
+	for _, reading := range readings {
+		if err := state.observe(reading.key, reading.value, 1); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -244,22 +294,36 @@ func (predictor *directionalPredictor) observeResonance(artifact *types.Resonanc
 			return fmt.Errorf("strategy: resonance metric %d has no interned name", symbol)
 		}
 
-		state.observe(featureKey{family: "resonance", source: "dynamics", metric: metric}, value, quality)
+		if err := state.observe(featureKey{family: "resonance", source: "dynamics", metric: metric}, value, quality); err != nil {
+			return err
+		}
 	}
 
-	state.observe(featureKey{family: "resonance", source: "calibration", metric: "confidence"}, artifact.Confidence, quality)
-	state.observe(featureKey{family: "resonance", source: "calibration", metric: "resolution_target"}, artifact.LastResolutionTarget, quality)
-	state.observe(featureKey{family: "resonance", source: "calibration", metric: "resolution_error"}, artifact.LastResolutionError, quality)
+	if err := state.observe(featureKey{family: "resonance", source: "calibration", metric: "confidence"}, artifact.Confidence, quality); err != nil {
+		return err
+	}
+
+	if err := state.observe(featureKey{family: "resonance", source: "calibration", metric: "resolution_target"}, artifact.LastResolutionTarget, quality); err != nil {
+		return err
+	}
+
+	if err := state.observe(featureKey{family: "resonance", source: "calibration", metric: "resolution_error"}, artifact.LastResolutionError, quality); err != nil {
+		return err
+	}
 
 	if artifact.Forecast == nil {
 		return nil
 	}
 
-	state.observe(featureKey{family: "resonance", source: "forecast", metric: "direction"}, artifact.Forecast.Call, quality)
-	state.observe(featureKey{family: "resonance", source: "forecast", metric: "location"}, artifact.Forecast.Distribution.Value, quality)
-	state.observe(featureKey{family: "resonance", source: "forecast", metric: "scale"}, artifact.Forecast.Distribution.Scale, quality)
+	if err := state.observe(featureKey{family: "resonance", source: "forecast", metric: "direction"}, artifact.Forecast.Call, quality); err != nil {
+		return err
+	}
 
-	return nil
+	if err := state.observe(featureKey{family: "resonance", source: "forecast", metric: "location"}, artifact.Forecast.Distribution.Value, quality); err != nil {
+		return err
+	}
+
+	return state.observe(featureKey{family: "resonance", source: "forecast", metric: "scale"}, artifact.Forecast.Distribution.Scale, quality)
 }
 
 func envelopeSymbol(envelope *types.Envelope) string {

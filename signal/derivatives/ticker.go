@@ -2,6 +2,8 @@ package derivatives
 
 import (
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
@@ -58,6 +60,12 @@ and Close.
 type Ticker struct {
 	number    *nomagique.Number[string]
 	projector *data.Projector
+	// last retains, per symbol, the most recent event time.Time so the
+	// observer's causal "event time must not regress" invariant holds even when
+	// a futures snapshot carries no server timestamp (the shared parser would
+	// otherwise fabricate a different, non-monotonic wall-clock base) or arrives
+	// out of order. One monotonic causal timeline per symbol is kept.
+	last sync.Map
 }
 
 /*
@@ -341,6 +349,8 @@ func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[flo
 		)}
 	}
 
+	point.Timestamp = ticker.monotonicClock(point.Symbol, point.Timestamp)
+
 	input := nmtypes.Frame{}
 	input.Put(symbolDerivativePrice, point.Last.Float64())
 	input.Put(symbolReferencePrice, point.IndexPrice.Float64())
@@ -356,6 +366,40 @@ func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[flo
 		point.Timestamp,
 		ticker.number.Step(point.Symbol, input),
 	)
+}
+
+/*
+monotonicClock folds one snapshot timestamp into the symbol's causal timeline.
+The Kraken Futures ticker feed can carry no server timestamp for a snapshot;
+the shared parser then falls back to the local wall clock, which is a different
+time base from the exchange's and will periodically read as *older* than the
+previous exchange-stamped event, regressing the observer's clock. It can also
+deliver a snapshot whose server timestamp is older than the previous one. In
+both cases the causal invariant "event time must not regress" is violated not
+by bad computation but by a non-monotonic timestamp source.
+
+The correction is to advance a single per-symbol monotonic timeline: a snapshot
+whose timestamp regresses (or is missing) is re-stamped with the symbol's last
+observed time. The event still ingests its price facts unchanged; only the clock
+label is made causal, so the observer never sees its invariant broken. A zero
+timestamp is never stamped: it would appear as a regression after any real
+observation, poisoning the first valid event.
+*/
+func (ticker *Ticker) monotonicClock(symbol string, timestamp time.Time) time.Time {
+	if timestamp.IsZero() {
+		return timestamp
+	}
+
+	loaded, _ := ticker.last.Load(symbol)
+	previous, _ := loaded.(time.Time)
+
+	if timestamp.Before(previous) {
+		return previous
+	}
+
+	ticker.last.Store(symbol, timestamp)
+
+	return timestamp
 }
 
 func (ticker *Ticker) Close() error { return nil }

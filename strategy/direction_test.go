@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -57,6 +58,41 @@ func TestDirectionalPredictorAdvance(t *testing.T) {
 			So(forecast.probabilityProfitable, ShouldBeGreaterThan, 0.5)
 			So(forecast.directionFeatures, ShouldEqual, 1)
 			So(forecast.profitFeatures, ShouldEqual, 1)
+		})
+	})
+}
+
+func TestDirectionalPredictorRejectsNonFinite(t *testing.T) {
+	Convey("Given a predictor observing a metric that goes non-finite", t, func() {
+		predictor, err := newDirectionalPredictor(directionalConfig{
+			initialVariance:       1,
+			forgettingFactor:      1,
+			calibrationConfidence: 0.95,
+		})
+		So(err, ShouldBeNil)
+
+		Convey("a NaN metric is rejected with the source in the error", func() {
+			measurement := data.NewMeasurement[float64](
+				"precursor", "TEST/USD", "test", time.Unix(1, 0), time.Time{},
+			)
+			measurement.Maturity = 1
+			measurement.PutMetric(data.Metric[float64]{Label: "signed_precursor", Raw: math.NaN()})
+			err := predictor.observeMeasurement(measurement)
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "signed_precursor")
+		})
+
+		Convey("an infinite metric is rejected and never stored as observed", func() {
+			measurement := data.NewMeasurement[float64](
+				"precursor", "TEST/USD", "test", time.Unix(1, 0), time.Time{},
+			)
+			measurement.Maturity = 1
+			measurement.PutMetric(data.Metric[float64]{Label: "signed_precursor", Raw: math.Inf(1)})
+			So(predictor.observeMeasurement(measurement), ShouldNotBeNil)
+
+			state, err := predictor.state("TEST/USD")
+			So(err, ShouldBeNil)
+			So(state.features, ShouldBeEmpty)
 		})
 	})
 }

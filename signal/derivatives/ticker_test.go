@@ -254,3 +254,32 @@ func TestTickerStep_ZeroPrice(t *testing.T) {
 		})
 	})
 }
+
+func TestTickerStep_RegressingTimestamp(t *testing.T) {
+	Convey("Given a snapshot whose timestamp regresses relative to the prior one", t, func() {
+		entity := NewTicker()
+		at := time.Unix(1_700_000_000, 0)
+
+		Convey("the observer's causal clock must not regress across the out-of-order event", func() {
+			So(entity.Step(futuresTicker("PF_XBTUSD", 101, 100, 100.5, 1000, at)).Err, ShouldBeNil)
+			So(entity.Step(futuresTicker("PF_XBTUSD", 102, 101, 101.5, 1100, at.Add(time.Second))).Err, ShouldBeNil)
+
+			// A snapshot stamped older than the last seen time: the event still
+			// ingests, re-stamped onto the monotonic timeline instead of being
+			// rejected as a causal regression.
+			measurement := entity.Step(futuresTicker("PF_XBTUSD", 103, 102, 102.5, 1200, at.Add(500*time.Millisecond)))
+			So(measurement, ShouldNotBeNil)
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.Metrics["derivative_price"].Raw, ShouldEqual, 103.0)
+			So(measurement.Metrics["open_interest_change"].Raw, ShouldEqual, 100.0)
+		})
+
+		Convey("identical timestamps are accepted and hold the timeline at the same instant", func() {
+			So(entity.Step(futuresTicker("PF_RAREUSD", 101, 100, 100.5, 1000, at)).Err, ShouldBeNil)
+
+			measurement := entity.Step(futuresTicker("PF_RAREUSD", 102, 101, 101.5, 1100, at))
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.Metrics["open_interest_change"].Raw, ShouldEqual, 100.0)
+		})
+	})
+}

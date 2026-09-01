@@ -158,63 +158,68 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 	withdrewBid := withdrawsPrice(message.Bids, retainedBid, hasRetainedBid)
 	withdrewAsk := withdrawsPrice(message.Asks, retainedAsk, hasRetainedAsk)
 
-	// A message announces orders; it does not restate the side. An order
-	// BEHIND the retained touch says nothing about the touch — the better
-	// order is still resting — so taking this message's price unconditionally
-	// would walk the touch away from the best price and report a spread wider
-	// than the one being quoted. An order AT the touch is accepted, since a
-	// size change there is a real touch observation.
+	// The coexisting price on each side is what the pipeline will actually
+	// measure a spread against: this message's own price on a side it carried,
+	// otherwise the committed (retained) price on a side it did not.
+	effectiveBid, hasEffectiveBid := bidPrice, bidPrice > 0
+	effectiveAsk, hasEffectiveAsk := askPrice, askPrice > 0
+
+	if !hasEffectiveBid && hasRetainedBid {
+		effectiveBid, hasEffectiveBid = retainedBid, true
+	}
+
+	if !hasEffectiveAsk && hasRetainedAsk {
+		effectiveAsk, hasEffectiveAsk = retainedAsk, true
+	}
+
+	// A message announces orders; it does not restate the side. An order BEHIND
+	// the retained touch on an uncrossed book says nothing about the touch —
+	// the better order is still resting — so taking this message's price
+	// unconditionally would walk the touch away from the best price and report
+	// a spread wider than the one being quoted. An order AT the touch is a real
+	// touch observation and is accepted.
 	//
-	// A delete of the retained touch cannot be resolved here: the next-best
-	// level lives in a book this entity deliberately does not keep, so the
-	// side is surrendered until the feed names a new touch.
-	if bidPrice > 0 && (!hasRetainedBid || bidPrice >= retainedBid || withdrewBid) {
+	// On a CROSSED retained book none of the two prices ever coexisted on the
+	// wire (this feed is depth-limited and one-sided), so the retained price is
+	// stale rather than the resting best. A fresh order that UNCROSSES the book
+	// is the real, fresher touch and must displace the stale retained one;
+	// refusing it would keep measuring every later spread against a price
+	// nobody is quoting.
+	bidRearmsTouch := hasRetainedBid && bidPrice > 0 && bidPrice >= retainedBid
+	bidUncrosses := !hasEffectiveAsk || (retainedBid >= effectiveAsk && bidPrice < effectiveAsk)
+
+	if bidPrice > 0 && (!hasRetainedBid || withdrewBid || bidRearmsTouch || bidUncrosses) {
 		input.Put(symbolBidPrice, bidPrice)
 	}
 
-	if askPrice > 0 && (!hasRetainedAsk || askPrice <= retainedAsk || withdrewAsk) {
+	askRearmsTouch := hasRetainedAsk && askPrice > 0 && askPrice <= retainedAsk
+	askUncrosses := !hasEffectiveBid || (retainedAsk <= effectiveBid && askPrice > effectiveBid)
+
+	if askPrice > 0 && (!hasRetainedAsk || withdrewAsk || askRearmsTouch || askUncrosses) {
 		input.Put(symbolAskPrice, askPrice)
 	}
 
 	input.Put(symbolSurrenderBid, oneWhen(withdrewBid && bidPrice == 0))
 	input.Put(symbolSurrenderAsk, oneWhen(withdrewAsk && askPrice == 0))
 
-	// Completeness is decided here because this is the only place that knows
-	// both what the message carried and what the symbol's frame already holds.
-	// A logic predicate cannot ask "is this slot present?" — it errors on an
-	// absent input rather than reporting absence.
-	hasBid, hasAsk := bidPrice > 0, askPrice > 0
-	effectiveBid, effectiveAsk := bidPrice, askPrice
-
-	if committed, found := level3.number.Project(message.Symbol); found {
-		if !hasBid {
-			effectiveBid, hasBid = committed.Get(symbolBidPrice)
-		}
-
-		if !hasAsk {
-			effectiveAsk, hasAsk = committed.Get(symbolAskPrice)
-		}
-	}
-
 	if withdrewBid && bidPrice == 0 {
-		hasBid, effectiveBid = false, 0
+		hasEffectiveBid = false
 	}
 
 	if withdrewAsk && askPrice == 0 {
-		hasAsk, effectiveAsk = false, 0
+		hasEffectiveAsk = false
 	}
 
 	complete := 0.0
 
-	if hasBid && hasAsk {
+	if hasEffectiveBid && hasEffectiveAsk {
 		complete = 1
 	}
 
 	input.Put(symbolTouchComplete, complete)
 
-	// The touch is measurable only when it is a real book. The prices compared
-	// here are the ones the pipeline will see: this message's own price on a
-	// side it carried, and the committed price on a side it did not.
+	// The touch is measurable only when it is a real book, i.e. when the two
+	// prices the pipeline will coexist on the frame are not inverted.
 	uncrossed := 0.0
 
 	if complete == 1 && effectiveBid > 0 && effectiveBid < effectiveAsk {

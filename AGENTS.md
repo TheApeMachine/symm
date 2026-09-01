@@ -46,6 +46,30 @@ A best-effort, highly principled market system. Detect real opportunity types—
 * **No Silent Failures:** Return descriptive errors. Substituting default fallbacks or ignoring errors is prohibited. Let unexpected panics surface rather than hiding them.
 * **No checks for NaN or Inf** Prefer to let the system crash, because this will give us the clearest signal possible that somewhere there is something wrong. By handling these cases and letting the system continue, we have silent death in the system. If for example we return 0 as the fallback and then use that in a multiplication, we instantly zero out the operations. Just let the system crash, then we can solve the cause and not the effect.
 
+**A NOTE ON PERFORMANCE**
+
+This hot path is quite extreme, we're dealing with over 640 symbol pairs in the universe, each one pushing the full Level3 stream into the system. Because of this, the system has been designed to be a **streaming iterator**. This means:
+
+1. Ideally we do not: allocate, accumulate, copy, clone, snapshot, etc.
+2. Every Step method gets one chance to observe the incoming value, perform its processing step, and return its output value.
+3. When it comes to processing steps that genuinely need history, consider the following:
+
+```go
+// If you would normally do something like this.
+accumulator := 0.0
+
+for _, bid := range book.Bids {
+	accumulator += bid.Price
+}
+```
+
+It is basically just a matter of removing the `for` and seeing the `Step` method itself as one iteration of the `for` loop.
+
+The above is just an example of course. Also, given that most computation should be using `nomagique.Number` pipelines, there are already stateful features built into `nomagique` which you should be using versus keeping state on the type itself.
+
+> !NOTE
+> One of the more important takeaways here is that you should protect the throughput at all times. If you notice any issues, even if not related to your current tasks, you should at the very least mention it, so we can decide directly what to do about them.
+
 ### Formatting & Naming
 
 * **No Single-Character Variable Names:** Variable receivers and variables must be descriptive (e.g., `signalCalculator`, not `s`). Exception: `t *testing.T` and `b *testing.B`.

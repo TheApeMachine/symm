@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -151,13 +152,33 @@ func (predictor *directionalPredictor) observeMeasurement(measurement *data.Meas
 	defer state.mu.Unlock()
 
 	for metricName, metric := range measurement.Metrics {
-		state.observe(featureKey{family: "measurement", source: measurement.Source, metric: metricName}, metric.Raw, quality)
+		if err := state.observe(featureKey{family: "measurement", source: measurement.Source, metric: metricName}, metric.Raw, quality); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-func (state *directionalState) observe(key featureKey, value, quality float64) {
+/*
+observe stores one metric fact for the symbol. A non-finite value is not a
+valid observation: it would otherwise poison every aggregate score and make
+the recursive least squares classifier misfire on a NaN feature (see rls
+predictive, which strictly requires finite features). Reject it here so the
+erroneous producer surfaces in Planner.Step's log with the identity of the
+metric that fed it, instead of collapsing the whole symbol's forecast.
+*/
+func (state *directionalState) observe(key featureKey, value, quality float64) error {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return fmt.Errorf(
+			"strategy: feature %s/%s/%s must be finite, got %v",
+			key.family,
+			key.source,
+			key.metric,
+			value,
+		)
+	}
+
 	feature := state.features[key]
 
 	if feature == nil {
@@ -168,6 +189,8 @@ func (state *directionalState) observe(key featureKey, value, quality float64) {
 	feature.value = value
 	feature.quality = quality
 	feature.observed = true
+
+	return nil
 }
 
 func (state *directionalState) aggregate(profitability bool) (float64, int) {

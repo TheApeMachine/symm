@@ -21,8 +21,11 @@ Consumer identity, by kind — "learned" marks an actual per-metric value read;
 
   - learned: directionalPredictor.observeMeasurement ranges the concrete
     Measurement.Metrics map and passes every metric.Raw value, under its own
-    source/name identity, into a separate resident predictive feature. This is
-    a value read and applies to every produced metric.
+    source/name identity, into a separate resident predictive feature. It is a
+    wide read over whatever Metrics selector the caller passes, so as a static
+    scan it never resolves to the specific producers it touches. Like a bulk
+    kernel/generic subscription, it is recorded as context (learned: true) but
+    is not proof that this named metric is used, and never clears "dead".
 
   - bound: a literal (source, metric) pair passed to
     logic/advisor.NewMetricBinding / NewControlBinding — an Advisor declares
@@ -128,7 +131,9 @@ type producerOut struct {
 	Line      int           `json:"line"`
 	Unit      string        `json:"unit,omitempty"`
 	Consumers []consumerRef `json:"consumers"`
-	// Dead means no per-metric learned read and no named declared consumer.
+	// Dead means no named (bound/catalog) declared consumer. Wide learned,
+	// kernel and generic reads do not clear dead: none of them resolve to this
+	// specific metric, so none prove it is actually used.
 	Dead bool `json:"dead"`
 	// KernelOnly means the metric has no fine-grained (named) consumer and is
 	// only reachable because something bulk-subscribes to its whole kernel's
@@ -165,11 +170,11 @@ type unresolvedOut struct {
 
 type summaryOut struct {
 	TotalProducers int `json:"totalProducers"`
-	// DeadProducers is the count with neither a learned value-read nor a named
-	// bound/catalog declaration.
+	// DeadProducers is the count with no named bound/catalog declaration. Wide
+	// learned, kernel and generic reads do not count as references.
 	DeadProducers int `json:"deadProducers"`
-	// ReferencedProducers is the count that reaches either the verified learned
-	// read or a named bound/catalog declaration.
+	// ReferencedProducers is the count with at least one named bound/catalog
+	// declaration.
 	ReferencedProducers int `json:"referencedProducers"`
 	KernelOnlyProducers int `json:"kernelOnlyProducers"`
 	BoundConsumers      int `json:"boundConsumerEdges"`
@@ -832,15 +837,22 @@ func buildReport(producers []producer, consumers []consumerEdge, unresolved []un
 		refs = append(refs, genericWide...)
 
 		hasReference := len(referencedByID[id]) > 0
-		hasLearnedRead := len(learnedWide) > 0
 		hasKernel := len(kernelScopes[id.Source]) > 0
 
 		po.Consumers = refs
-		// A learned edge is the verified value-read over every metric.Raw value.
-		// Bound/catalog edges remain declared inputs. Bulk type subscriptions
-		// remain context only and never flip Dead to false.
-		po.Dead = !hasReference && !hasLearnedRead
-		po.KernelOnly = !hasReference && !hasLearnedRead && hasKernel
+		/*
+			A bound/catalog reference is a named declared consumer — the honest
+			signal that this metric is actually wired somewhere. The learned edge
+			is a single scan-level wildcard (observeMeasurement ranges whatever
+			Metrics selector its caller passes, then reads .Raw) that never
+			resolves to specific producers, so it cannot prove this individual
+			metric is used — treating a global boolean as a per-producer read was
+			laundering every metric into "referenced". It therefore stays in the
+			consumers list as context only, exactly like kernel/generic bulk
+			subscriptions, and never flips Dead to false.
+		*/
+		po.Dead = !hasReference
+		po.KernelOnly = !hasReference && hasKernel
 		if po.Dead {
 			deadCount++
 		}

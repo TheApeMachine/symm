@@ -14,10 +14,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -34,10 +34,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -54,10 +54,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -74,10 +74,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -94,10 +94,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -114,10 +114,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -134,10 +134,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -154,7 +154,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -181,7 +181,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -208,7 +208,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -235,10 +235,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -255,7 +255,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -282,10 +282,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -302,7 +302,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -329,10 +329,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -349,10 +349,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -369,10 +369,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -389,10 +389,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -409,7 +409,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -436,10 +436,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -456,10 +456,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -476,7 +476,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -503,10 +503,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -523,10 +523,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -543,10 +543,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -563,10 +563,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -584,10 +584,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -605,10 +605,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -626,10 +626,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -647,10 +647,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -667,10 +667,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -687,7 +687,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -715,10 +715,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -736,10 +736,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -757,10 +757,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -778,10 +778,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -798,10 +798,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -818,10 +818,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -838,10 +838,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -858,10 +858,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -879,10 +879,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -900,10 +900,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -920,7 +920,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -947,10 +947,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -967,10 +967,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -987,10 +987,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1007,10 +1007,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1027,10 +1027,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1047,10 +1047,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1067,10 +1067,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1087,7 +1087,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -1114,7 +1114,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -1141,10 +1141,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1161,7 +1161,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -1188,10 +1188,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1208,10 +1208,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1228,10 +1228,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1248,10 +1248,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1268,10 +1268,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1288,10 +1288,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1308,7 +1308,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -1335,10 +1335,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1356,10 +1356,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1377,10 +1377,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1397,10 +1397,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1417,10 +1417,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1437,7 +1437,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -1464,10 +1464,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1484,10 +1484,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1504,7 +1504,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -1545,10 +1545,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1566,10 +1566,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1587,10 +1587,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1607,7 +1607,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -1635,10 +1635,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1656,10 +1656,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1677,10 +1677,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1698,10 +1698,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1719,10 +1719,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1740,10 +1740,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1760,7 +1760,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -1788,10 +1788,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1809,10 +1809,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1829,10 +1829,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1850,10 +1850,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1871,10 +1871,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1891,7 +1891,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -1918,10 +1918,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1938,10 +1938,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -1958,7 +1958,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -1992,7 +1992,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -2019,10 +2019,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2039,10 +2039,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2059,10 +2059,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2079,7 +2079,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -2106,10 +2106,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2126,10 +2126,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2146,10 +2146,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2166,7 +2166,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -2193,10 +2193,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2213,7 +2213,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -2240,10 +2240,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2260,10 +2260,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2280,10 +2280,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2300,10 +2300,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2320,10 +2320,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2340,7 +2340,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -2367,10 +2367,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2388,10 +2388,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2409,10 +2409,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2429,10 +2429,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2449,7 +2449,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -2476,10 +2476,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2496,10 +2496,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2516,10 +2516,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2536,7 +2536,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -2563,7 +2563,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -2590,10 +2590,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2610,10 +2610,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2630,7 +2630,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -2657,7 +2657,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -2684,7 +2684,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -2711,10 +2711,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2731,10 +2731,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2751,10 +2751,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2771,7 +2771,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -2798,10 +2798,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2818,7 +2818,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -2845,7 +2845,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -2873,10 +2873,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2894,10 +2894,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2914,7 +2914,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -2942,10 +2942,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2963,10 +2963,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -2983,7 +2983,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -3011,10 +3011,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3032,10 +3032,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3052,7 +3052,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -3080,10 +3080,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3101,10 +3101,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3122,10 +3122,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3143,10 +3143,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3163,10 +3163,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3184,10 +3184,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3205,10 +3205,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3226,10 +3226,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3247,10 +3247,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3268,10 +3268,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3289,10 +3289,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3310,10 +3310,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3331,10 +3331,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3352,10 +3352,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3373,10 +3373,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3394,10 +3394,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3415,10 +3415,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3436,10 +3436,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3457,10 +3457,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3478,10 +3478,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3499,10 +3499,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3520,10 +3520,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3541,10 +3541,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3562,10 +3562,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3583,10 +3583,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3603,7 +3603,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -3630,7 +3630,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -3658,10 +3658,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3679,10 +3679,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3700,10 +3700,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3720,7 +3720,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -3747,7 +3747,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -3774,7 +3774,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -3801,7 +3801,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -3829,10 +3829,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3850,10 +3850,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3871,10 +3871,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3892,10 +3892,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3913,10 +3913,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3933,10 +3933,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3954,10 +3954,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3975,10 +3975,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -3995,7 +3995,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4022,7 +4022,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4049,10 +4049,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4069,7 +4069,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4096,10 +4096,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4116,7 +4116,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4143,7 +4143,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4170,10 +4170,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4190,10 +4190,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4210,7 +4210,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4237,7 +4237,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4264,7 +4264,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4291,10 +4291,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4311,10 +4311,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4331,10 +4331,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4351,10 +4351,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4371,7 +4371,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4398,7 +4398,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4425,7 +4425,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4452,7 +4452,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4479,7 +4479,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4506,7 +4506,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4533,10 +4533,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4553,10 +4553,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4573,10 +4573,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4593,10 +4593,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4613,10 +4613,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4633,7 +4633,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4660,7 +4660,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -4687,10 +4687,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4707,10 +4707,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4728,10 +4728,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4749,10 +4749,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4770,10 +4770,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4791,10 +4791,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4812,10 +4812,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4833,10 +4833,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4854,10 +4854,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4875,10 +4875,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4896,10 +4896,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4917,10 +4917,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4938,10 +4938,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4959,10 +4959,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4979,10 +4979,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -4999,7 +4999,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5033,7 +5033,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5060,10 +5060,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5080,7 +5080,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5107,7 +5107,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5134,10 +5134,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5154,10 +5154,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5174,7 +5174,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5201,7 +5201,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5229,10 +5229,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5250,10 +5250,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5271,10 +5271,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5292,10 +5292,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5312,7 +5312,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5340,10 +5340,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5361,10 +5361,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5381,7 +5381,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5408,7 +5408,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5435,7 +5435,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5463,10 +5463,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5484,10 +5484,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5505,10 +5505,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5526,10 +5526,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5546,7 +5546,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5573,10 +5573,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5593,10 +5593,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5613,10 +5613,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5633,10 +5633,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5653,10 +5653,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5674,10 +5674,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5695,10 +5695,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5715,7 +5715,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5742,10 +5742,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5762,10 +5762,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5782,7 +5782,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5809,10 +5809,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5829,7 +5829,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5856,10 +5856,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5876,7 +5876,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5903,10 +5903,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5923,10 +5923,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5943,10 +5943,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5963,7 +5963,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -5990,7 +5990,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -6017,10 +6017,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6037,10 +6037,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6057,10 +6057,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6077,10 +6077,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6097,10 +6097,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6117,10 +6117,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6137,10 +6137,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6157,10 +6157,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6177,10 +6177,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6197,10 +6197,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6217,10 +6217,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6237,10 +6237,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6257,7 +6257,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -6284,7 +6284,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -6311,7 +6311,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -6338,7 +6338,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -6365,10 +6365,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6385,7 +6385,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -6412,7 +6412,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -6439,10 +6439,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6459,10 +6459,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6479,7 +6479,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -6506,10 +6506,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6526,7 +6526,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -6553,10 +6553,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6573,10 +6573,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6593,10 +6593,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6613,7 +6613,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -6640,10 +6640,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6660,10 +6660,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6680,10 +6680,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6700,7 +6700,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -6727,7 +6727,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -6754,7 +6754,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -6781,7 +6781,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -6808,10 +6808,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6828,10 +6828,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6848,10 +6848,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6868,10 +6868,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6888,10 +6888,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6908,10 +6908,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6928,10 +6928,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6948,10 +6948,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6968,10 +6968,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -6988,10 +6988,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7008,10 +7008,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7028,10 +7028,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7048,10 +7048,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7068,10 +7068,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7088,10 +7088,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7108,10 +7108,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7128,7 +7128,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -7155,10 +7155,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7175,10 +7175,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7195,10 +7195,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7215,7 +7215,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -7242,10 +7242,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7262,10 +7262,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7282,7 +7282,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -7309,10 +7309,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7329,10 +7329,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7349,10 +7349,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7369,10 +7369,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7389,10 +7389,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7409,10 +7409,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7429,10 +7429,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7449,10 +7449,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7469,7 +7469,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -7496,10 +7496,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7516,10 +7516,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7536,10 +7536,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7556,10 +7556,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7576,7 +7576,7 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         },
         {
           "kind": "bound",
@@ -7603,10 +7603,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7623,10 +7623,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7643,10 +7643,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7663,10 +7663,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7683,10 +7683,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7703,10 +7703,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7723,10 +7723,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7743,10 +7743,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7763,10 +7763,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7784,10 +7784,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7805,10 +7805,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7825,10 +7825,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7846,10 +7846,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7867,10 +7867,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7888,10 +7888,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7909,10 +7909,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7930,10 +7930,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7951,10 +7951,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7972,10 +7972,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -7993,10 +7993,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8014,10 +8014,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8035,10 +8035,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8056,10 +8056,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8077,10 +8077,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8098,10 +8098,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8119,10 +8119,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8140,10 +8140,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8161,10 +8161,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8182,10 +8182,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8203,10 +8203,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8224,10 +8224,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8245,10 +8245,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8266,10 +8266,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8287,10 +8287,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8308,10 +8308,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8329,10 +8329,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8350,10 +8350,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8371,10 +8371,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8392,10 +8392,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8413,10 +8413,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8434,10 +8434,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8455,10 +8455,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8476,10 +8476,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8497,10 +8497,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8518,10 +8518,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8539,10 +8539,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8560,10 +8560,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8581,10 +8581,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8602,10 +8602,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8623,10 +8623,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8644,10 +8644,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8665,10 +8665,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8686,10 +8686,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8707,10 +8707,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8728,10 +8728,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8749,10 +8749,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8770,10 +8770,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8791,10 +8791,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8812,10 +8812,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8833,10 +8833,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8854,10 +8854,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8875,10 +8875,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8896,10 +8896,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8917,10 +8917,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8938,10 +8938,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8959,10 +8959,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -8980,10 +8980,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -9001,10 +9001,10 @@
           "consumer": "strategy.directionalPredictor per-metric classification",
           "package": "github.com/theapemachine/symm/strategy",
           "file": "strategy/direction.go",
-          "line": 129
+          "line": 130
         }
       ],
-      "dead": false,
+      "dead": true,
       "kernelOnly": false
     }
   ],
@@ -9303,7 +9303,7 @@
       "kind": "learned",
       "package": "github.com/theapemachine/symm/strategy",
       "file": "strategy/direction.go",
-      "line": 129,
+      "line": 130,
       "targets": [
         "*"
       ]
@@ -9312,8 +9312,8 @@
   "unresolved": null,
   "summary": {
     "totalProducers": 409,
-    "deadProducers": 0,
-    "referencedProducers": 409,
+    "deadProducers": 316,
+    "referencedProducers": 93,
     "kernelOnlyProducers": 0,
     "boundConsumerEdges": 145,
     "catalogConsumerEdges": 0,

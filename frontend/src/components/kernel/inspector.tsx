@@ -3,6 +3,7 @@ import { useSelector } from "@tanstack/react-store";
 import {
 	focusStore,
 	getKernelReadingStore,
+	getMeasurementStore,
 	getResonanceReadingStore,
 } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
@@ -13,6 +14,8 @@ import {
 	kernelStatusVariant,
 	type SignalHealthStatus,
 	sourceHeadline,
+	sourceMetrics,
+	metricLabel,
 } from "#/components/terminal/kernel-meta";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
@@ -20,6 +23,9 @@ import { Flex } from "#/components/ui/flex";
 import { Meter } from "#/components/ui/meter";
 import { Modal } from "#/components/ui/modal";
 import { Typography } from "#/components/ui/typography";
+import { EnvelopeMeasurementMetric } from "#/providers/telemetry/telemetry/envelope-measurement-metric";
+
+const metricObj = new EnvelopeMeasurementMetric();
 
 const isResonance = (source: string) => source === "resonance";
 
@@ -58,6 +64,43 @@ const relativeToOwnRange = (values: number[]): number[] => {
 	return values.map((value) => (range > 0 ? (value - min) / range : 1));
 };
 
+/*
+metricValues reads every value a measurement row publishes for the given metric
+names, keyed by name. A sparse row simply omits a metric it does not carry that
+update, and a carried metric with no value reads the same way — an absent value
+stays null (the readout shows a dash) rather than being fabricated as zero.
+*/
+const metricValues = (
+	row: { metricsLength: () => number; metrics: (index: number, obj: EnvelopeMeasurementMetric) => EnvelopeMeasurementMetric | null },
+	names: string[],
+): Record<string, { raw: number; normalized: number } | null> => {
+	// Every requested name is present in the result; a metric the row does not
+	// carry stays null (the readout shows a dash) rather than being fabricated
+	// as zero. Omitting the key entirely would make a lookup return undefined,
+	// which callers could mistake for a present-but-unset value.
+	const out: Record<string, { raw: number; normalized: number } | null> = {};
+	for (const name of names) out[name] = null;
+
+	for (let j = 0; j < row.metricsLength(); j++) {
+		const m = row.metrics(j, metricObj);
+
+		if (!m) continue;
+
+		const name = m.key();
+		if (!name || !names.includes(name)) continue;
+
+		const body = m.value();
+		if (!body) continue;
+
+		out[name] = {
+			raw: body.raw(),
+			normalized: body.normalized(),
+		};
+	}
+
+	return out;
+};
+
 export const KernelInspector = () => {
 	const navigate = useNavigate();
 	const source = useSelector(terminalStore, (state) => state.inspectorSource);
@@ -78,6 +121,15 @@ export const KernelInspector = () => {
 		getResonanceReadingStore(focusSymbol),
 		(state) => state,
 	);
+	// The metric grid holds each metric's most recent value across the whole
+	// buffer, not just the latest row: backend rows are sparse, so metric X may
+	// be absent from the newest update while still carrying a real, current
+	// value in a slightly older row. Reading the latest row alone would flicker
+	// X to a dash and back whenever a row without it lands.
+	const measurementState = useSelector(
+		getMeasurementStore(active && !resonance ? source : ""),
+		(state) => state,
+	);
 
 	if (!active) {
 		return null;
@@ -95,6 +147,31 @@ export const KernelInspector = () => {
 	const paths = kernelSparkPaths(relativePoints, status);
 	const level =
 		relativePoints.length > 0 ? relativePoints[relativePoints.length - 1] : 0;
+
+	// Resonance is a presentation surface with no measurement vocabulary, so it
+	// has no metric grid. Every measurement source names the metrics it
+	// publishes. Each metric's readout is its most recent value found scanning
+	// the buffer newest-first, so a metric absent from the newest sparse row
+	// keeps its last value instead of flickering to a dash.
+	const metrics = resonance
+		? []
+		: sourceMetrics(source);
+	const metricReadouts = metrics.map((name) => {
+		let raw: number | null = null;
+		let normalized = 0;
+
+		const row = measurementState.findLast((candidate) => {
+			return metricValues(candidate, [name])[name] !== null;
+		});
+		const value = row ? metricValues(row, [name])[name] : null;
+
+		if (value) {
+			raw = value.raw;
+			normalized = Math.min(1, Math.max(0, value.normalized));
+		}
+
+		return { name, raw, normalized };
+	});
 
 	// The headline names the metric this kernel leads with. Resonance is not a
 	// measurement source and has none, so it names its own quantity instead of
@@ -187,6 +264,33 @@ export const KernelInspector = () => {
 						animated
 					/>
 				</Flex.Column>
+
+				{metrics.length === 0 ? null : (
+					<Flex.Column gap={2}>
+						<Flex.Row align="baseline" justify="between" className="gap-2">
+							<Typography.Label size="xxs" tone="f4">
+								Signal metrics
+							</Typography.Label>
+							<Typography.Mono size="xxs" tone="f4">
+								{metricReadouts.filter((m) => m.raw !== null).length} /{" "}
+								{metrics.length} read
+							</Typography.Mono>
+						</Flex.Row>
+						<div className="grid grid-cols-2 gap-x-3 gap-y-2">
+							{metricReadouts.map((metric) => (
+								<Meter
+									key={metric.name}
+									percent={metric.raw === null ? 0 : metric.normalized * 100}
+									label={metricLabel(metric.name)}
+									value={metric.raw === null ? "—" : metric.raw.toFixed(4)}
+									variant={metric.raw === null ? "disabled" : "info"}
+									size="xs"
+									animated
+								/>
+							))}
+						</div>
+					</Flex.Column>
+				)}
 			</Modal.Body>
 
 			<Modal.Footer>

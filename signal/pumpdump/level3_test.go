@@ -125,7 +125,7 @@ func TestLevel3Step(t *testing.T) {
 			So(measurement, ShouldNotBeNil)
 			So(measurement.Err, ShouldBeNil)
 			So(measurement.Metrics["best_bid"].Raw, ShouldEqual, 99.0)
-			So(measurement.Metrics["best_ask"].Raw, ShouldEqual, 101.0)
+			So(measurement.Metrics["best_ask"].Raw, ShouldEqual, 102.0)
 		})
 
 		Convey("Retained touches are keyed per symbol", func() {
