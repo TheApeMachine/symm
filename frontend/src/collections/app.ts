@@ -300,10 +300,10 @@ export const getResonanceReadingStore = (symbol: string) => {
 export const addResonanceReading = (row: EnvelopeResonanceArtifact) => {
 	resonanceArtifactStore.actions.add(row);
 
-	if (!row.calibrated()) {
-		return;
-	}
-
+	// Confidence is produced on the coder's very first step; it flows from the
+	// first frame. Calibration stays visible on the artifact itself and
+	// downstream surfaces weigh it, so this reducer must not suppress a feed
+	// just because the head has not calibrated yet.
 	const confidence = row.confidence();
 
 	if (Number.isFinite(confidence)) {

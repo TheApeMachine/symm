@@ -52,7 +52,8 @@ This hot path is quite extreme, we're dealing with over 640 symbol pairs in the 
 
 1. Ideally we do not: allocate, accumulate, copy, clone, snapshot, etc.
 2. Every Step method gets one chance to observe the incoming value, perform its processing step, and return its output value.
-3. When it comes to processing steps that genuinely need history, consider the following:
+3. It is essential that everything **always** returns an output value when called upon. It is understood that there legitimately can be baselines, windows, etc. that would normally require a "warmup" period, but this should be handled differently in this system. First of all, all baselines, windows, or other temporal structures should be dynamic and adaptive in the first place. For example, if you need a baseline, you must make the first incoming value the "current" baseline, and keep growing the span of the baseline for as much as is needed to result in a true, stable and sharp baseline, which needs to be calculated. This **should** be handled by `nomagique`'s `baseline` implementation. If at any given moment the baseline loses its sharpness/stability, the span should either grow or shrink dynamically until it is stable again. This will allow you to always output a value when `Step` is called, and fields like `maturity` or `snr` will indicate to sub-systems downstream how much to rely on any given value.
+4. When it comes to processing steps that genuinely need history, consider the following:
 
 ```go
 // If you would normally do something like this.
@@ -221,3 +222,7 @@ The answer to almost every question you feel like asking, in most of the cases i
 That being said, taking the effort to do the work once is still infinitely easier, simpler, and quicker, than trying to reward-hack it, and then having to do everything again, and again, until it is correct. So you may as well do it right the first time.
 
 Also, "pre-existing" really just means "bugs I left laying around in some previous session" so yes, you do own them, and yes, you should fix them if you encounter them. Otherwise they will never get fixed.
+
+> !NOTE
+> Things in this code-base might change, and very often some old implementation code, or legacy is left orphaned, and is not properly cleaned up. There are two things to consider here. First, you should not do this, if you move something around, always clean up any left over code that should no longer be there. This is to keep things maintainable, but also to avoid confusion later. Second, if you notice that there is some old, orphaned code, **never ever** decide you should add some weird backwards compatability shim, or hook into that in any way. Just clean up the old code, and implement things according to what is very obviously the new, latest, most recent path.
+> As an extension of the above, if you are replacing some current functionality **never ever** implement a secondary system, while leaving the old system around. Always prefer replacing the existing system outright, and reusing any existing structure where possible, versus introducing new structure.

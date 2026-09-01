@@ -454,36 +454,34 @@ func (solver *Solver) publishReturns(
 		artifact.LastResolutionError = out.LastResolution.Error
 	}
 
-	if out.Calibrated {
-		horizon := out.SupportedHorizon
+	// The coder produces a prior-based forecast on its very first step, so the
+	// artifact always carries the current call. Calibration stays truthful on
+	// the artifact and downstream modules weigh it themselves; the solver never
+	// withholds an output just because the head has not calibrated yet.
+	horizon := max(out.SupportedHorizon, 1)
 
-		if horizon < 1 {
-			horizon = 1
+	forecasts, err := coder.Manifold().RolloutTaskForecast(horizon)
+
+	if err == nil && len(forecasts) > 0 {
+		// The last curve element is the supported horizon's cumulative
+		// directional prediction, which is the call the artifact carries.
+		forecast := forecasts[len(forecasts)-1]
+		call := 0.0
+
+		if forecast.Ready {
+			if forecast.Value > 0 {
+				call = 1
+			} else if forecast.Value < 0 {
+				call = -1
+			}
 		}
 
-		forecasts, err := coder.Manifold().RolloutTaskForecast(horizon)
-
-		if err == nil && len(forecasts) > 0 {
-			// The last curve element is the supported horizon's cumulative
-			// directional prediction, which is the call the artifact carries.
-			forecast := forecasts[len(forecasts)-1]
-			call := 0.0
-
-			if forecast.Ready {
-				if forecast.Value > 0 {
-					call = 1
-				} else if forecast.Value < 0 {
-					call = -1
-				}
-			}
-
-			artifact.Forecast = &types.ResonanceReturnForecast{
-				Distribution:  forecast,
-				Horizon:       horizon,
-				CandidateCall: call,
-				Call:          call,
-				StableCall:    call,
-			}
+		artifact.Forecast = &types.ResonanceReturnForecast{
+			Distribution:  forecast,
+			Horizon:       horizon,
+			CandidateCall: call,
+			Call:          call,
+			StableCall:    call,
 		}
 	}
 

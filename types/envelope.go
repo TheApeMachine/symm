@@ -1046,10 +1046,14 @@ func envelopeMeasurementIdentity(measurement *data.Measurement[float64]) *data.M
 
 /*
 encodeBase builds the shared control/state projection of the Envelope: every
-ordinary field crosses over, plus Resonance and Boundaries, which the dashboard
-reads from the main websocket. Only the heavy Manifold encoder is withheld.
-Both Encode (full) and EncodeWebsocket (observer) share this projection so
-their fields cannot drift. measurementGate lets a caller decide which signal
+ordinary field crosses over. Resonance, Manifold, and Boundaries are withheld
+here because all three ride their own WebRTC channels (the dashboard's
+predictive-coding, manifold, and topology surfaces consume them there); the
+websocket carries only lean, latency-relevant state. Only the heavy Manifold
+encoder is withheld from the base projection; Resonance and Boundaries are
+re-added by the full Encode() path for durable Hindsight persistence. Both
+Encode (full) and EncodeWebsocket (observer) share this projection so their
+fields cannot drift. measurementGate lets a caller decide which signal
 measurements cross (the websocket drops non-focus symbols); the persistence
 path passes the identity gate so Hindsight capture keeps every measurement.
 */
@@ -1090,12 +1094,6 @@ func (envelope *Envelope) encodeBase(
 		Perspectives:      encodePerspectives(envelope.Perspectives),
 		Equity:            encodeEquity(envelope.Equity),
 		Positions:         encodePositions(envelope.Positions),
-
-		// The dashboard reads Predictive Coding (Resonance) and Diagnostics
-		// (Boundaries) from the main /ws socket, so they cross with the lean
-		// projection here rather than only via their WebRTC channels.
-		Resonance:  encodeResonanceArtifact(envelope.Resonance),
-		Boundaries: encodeBoundaries(envelope.Boundaries),
 	}
 }
 
@@ -1244,7 +1242,7 @@ func encodeDecision(decision *Decision) *telemetry.DecisionT {
 /*
 EncodeBytes packs Encode's result into a standalone FlatBuffers buffer rooted
 at EnvelopeState — no Frame/Envelope transport wrapper — for callers that send
-or store the mirror directly, such as the UI websocket.
+or store the full mirror directly, such as the Hindsight persistence writer.
 */
 func (envelope *Envelope) EncodeBytes() []byte {
 	builder := flatbuffers.NewBuilder(0)
@@ -1256,11 +1254,10 @@ func (envelope *Envelope) EncodeBytes() []byte {
 
 /*
 EncodeWebsocket packs the envelope's lean websocket mirror directly, never
-calling the heavy Manifold encoder. Manifold rides its own WebRTC channel, so
-the dashboard socket carries only the latency-relevant state and none of the
-multi-megabyte volumetric fields, while Resonance and Boundaries cross with the
-shared projection (the dashboard reads them from /ws). It shares that projection
-with Encode so the two cannot drift.
+calling the heavy Manifold encoder. Manifold, Resonance, and Boundaries all
+ride their own WebRTC channels, so the dashboard socket carries only the
+latency-relevant state and none of the volumetric fields. It shares the base
+projection with Encode so their ordinary fields cannot drift.
 */
 func (envelope *Envelope) EncodeWebsocket() []byte {
 	if envelope == nil {

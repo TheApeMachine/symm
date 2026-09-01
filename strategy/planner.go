@@ -76,7 +76,7 @@ func NewPlanner(
 	}, nil
 }
 
-/* Step consumes one envelope once and emits a decision only when calibrated. */
+/* Step consumes one envelope once and always emits a decision when calibrated. */
 func (planner *Planner) Step(envelope *types.Envelope) *types.Envelope {
 	if envelope == nil {
 		return envelope
@@ -98,21 +98,29 @@ func (planner *Planner) Step(envelope *types.Envelope) *types.Envelope {
 		return envelope
 	}
 
-	if !forecast.directionReady || !forecast.profitabilityReady {
-		return envelope
-	}
-
 	if planner.desk.Holding(forecast.symbol) > 0 {
 		return envelope
 	}
 
-	decision := planner.decide(forecast)
-	round := &types.StrategyRound{
-		Symbol:    forecast.symbol,
-		Evaluated: true,
-		Outcome:   decision.Reason,
-		Decisions: []*types.Decision{decision},
+	// The planner is live on the very first ticker frame: it emits a round and
+	// a decision even before the RLS heads calibrate, so downstream modules see
+	// an output immediately and weigh its maturity themselves. The decision is
+	// structurally complete and truthful (PredictiveReady=false while heads are
+	// uncalibrated); it simply never carries an enter action until both heads
+	// clear their own admission thresholds.
+	decision, round := planner.preDecision(forecast)
+
+	if forecast.directionReady && forecast.profitabilityReady {
+		decision = planner.decide(forecast)
+		round.Decisions = []*types.Decision{decision}
+
+		if decision.Action == types.ActionEnter {
+			round.Outcome = "entry"
+		} else {
+			round.Outcome = "admission"
+		}
 	}
+
 	envelope.StrategyRound = round
 
 	if decision.Action == types.ActionEnter {
@@ -124,6 +132,64 @@ func (planner *Planner) Step(envelope *types.Envelope) *types.Envelope {
 	}
 
 	return envelope
+}
+
+/*
+preDecision builds the calibrated-but-not-yet-admitted decision for one ticker
+frame. It mirrors decide's full shape so the strategy surface always receives a
+well-formed round, but it keeps Action=hold and reports the exact reason the
+heads are not ready, so downstream maturity logic can discount it correctly. The
+engine surface's phase slot receives the concise admission word, never the
+verbose reason, which stays on the decision for the detail surface.
+*/
+func (planner *Planner) preDecision(forecast *directionalForecast) (*types.Decision, *types.StrategyRound) {
+	reason := "planner: calibrated probabilities do not clear admission"
+
+	decision := types.NewDecision(types.ActionNothing, forecast.symbol)
+	decision.At = forecast.at
+	decision.Direction = 1
+	decision.PredictiveReady = false
+
+	switch {
+	case !forecast.directionReady && !forecast.profitabilityReady:
+		decision.PredictiveStatus = "uncalibrated-direction-and-profitability"
+	case !forecast.directionReady:
+		decision.PredictiveStatus = "uncalibrated-direction"
+	default:
+		decision.PredictiveStatus = "uncalibrated-profitability"
+	}
+
+	decision.TaskSkill = min(
+		forecast.directionSkillLowerBound,
+		forecast.profitSkillLowerBound,
+	)
+	decision.TaskSkillReady = false
+	decision.ForecastSource = "full-observation-direction"
+	decision.ForecastModel = "streaming-feature-association-rls-v1"
+	decision.Forecast = &forecast.directionOutput
+	decision.ForecastHorizon = 1
+	decision.CalibrationCount = min(
+		forecast.directionCalibration,
+		forecast.profitCalibration,
+	)
+	decision.AllocationClass = "none"
+	decision.Reason = reason
+	decision.Cause = "precursor observations"
+	decision.Alternatives = map[string]float64{
+		"probability:up":                  forecast.probabilityUp,
+		"probability:profitable":          forecast.probabilityProfitable,
+		"skill:direction_lower_bound":     forecast.directionSkillLowerBound,
+		"skill:profitability_lower_bound": forecast.profitSkillLowerBound,
+		"features:direction":              float64(forecast.directionFeatures),
+		"features:profitability":          float64(forecast.profitFeatures),
+	}
+
+	return decision, &types.StrategyRound{
+		Symbol:    forecast.symbol,
+		Evaluated: true,
+		Outcome:   "admission",
+		Decisions: []*types.Decision{decision},
+	}
 }
 
 func (planner *Planner) forecast(envelope *types.Envelope) (*directionalForecast, error) {
@@ -226,23 +292,23 @@ func (planner *Planner) execute(decision *types.Decision, round *types.StrategyR
 	if err := planner.allocation.Calculate([]*types.Decision{decision}); err != nil {
 		decision.Action = types.ActionNothing
 		decision.Reason = "planner: allocation failed: " + err.Error()
-		round.Outcome = decision.Reason
+		round.Outcome = "allocation-failed"
 		return
 	}
 
 	if decision.Action != types.ActionEnter {
-		round.Outcome = decision.Reason
+		round.Outcome = "admission"
 		return
 	}
 
 	if err := planner.desk.Execute(*decision); err != nil {
 		decision.Action = types.ActionNothing
 		decision.Reason = "planner: execution failed: " + err.Error()
-		round.Outcome = decision.Reason
+		round.Outcome = "execution-failed"
 		return
 	}
 
-	round.Outcome = "entry submitted"
+	round.Outcome = "entry"
 }
 
 func (planner *Planner) Close() error {

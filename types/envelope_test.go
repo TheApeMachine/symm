@@ -203,9 +203,10 @@ func TestEnvelopeEncode(t *testing.T) {
 
 /*
 TestEnvelopeEncodeWebsocketLean proves the observer projection never serializes
-the heavy Manifold field, while Resonance and Boundaries cross so the dashboard
-can read Predictive Coding and Diagnostics from the main /ws socket. Full
-Hindsight EncodeBytes still carries every populated field.
+the volumetric Manifold field, and that Resonance and Boundaries no longer ride
+the websocket either — all three are delivered over their own WebRTC channels.
+The websocket carries only lean, latency-relevant state. Full Hindsight
+EncodeBytes still carries every populated field.
 */
 func TestEnvelopeEncodeWebsocketLean(t *testing.T) {
 	Convey("Given an envelope with heavy fields populated", t, func() {
@@ -218,13 +219,13 @@ func TestEnvelopeEncodeWebsocketLean(t *testing.T) {
 			},
 		}
 
-		Convey("the websocket encoding carries resonance and boundaries but no manifold", func() {
+		Convey("the websocket encoding carries only lean state", func() {
 			decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeWebsocket(), 0)
 
 			So(decoded, ShouldNotBeNil)
-			So(decoded.Resonance(nil), ShouldNotBeNil)
+			So(decoded.Resonance(nil), ShouldBeNil)
 			So(decoded.Manifold(nil), ShouldBeNil)
-			So(decoded.BoundariesLength(), ShouldEqual, 1)
+			So(decoded.BoundariesLength(), ShouldEqual, 0)
 			So(decoded.Equity(nil), ShouldNotBeNil)
 		})
 
