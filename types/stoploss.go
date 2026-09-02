@@ -28,9 +28,10 @@ const (
 Stoploss regulates one open lot across discovery, protected profit, trailing, and
 fast-surge regimes.
 
-The first executable mark at or below Floor triggers immediately. Protection starts
-as soon as a new peak can place its trailing floor above ProfitLine, then every new
-peak ratchets that floor upward without ever lowering it.
+The first executable mark at or below the hard-loss or locked-profit line triggers
+immediately. A higher learned trailing line may be deferred only while a named,
+volume-clock-bounded liquidity-sweep claim has affirmative evidence and remains
+alive; the locked-profit line remains non-negotiable throughout that round.
 
 Every giveback tolerance is stated in the run's own learned units. The lot keeps a
 running distribution of the positive steps its peaks advanced by, and the trail,
@@ -100,19 +101,6 @@ type Stoploss struct {
 	SurgeMove     *decimal.Decimal `json:"surge_move,omitempty"`
 	MomentumFloor *decimal.Decimal `json:"momentum_floor,omitempty"`
 	Plan          *RiskPlan        `json:"plan,omitempty"`
-
-	// ProtectContinuation is an optional continuation-context callback that,
-	// when it returns true for the given market observation instant, defers
-	// ONLY the soft profit-stagnation trigger for this observation. It never
-	// affects hard floor, protected floor, trailing floor, execution-regime
-	// invalidation, quantity coverage, or manual exit. When nil, profit
-	// stagnation fires exactly as before.
-	ProtectContinuation func(observationTime time.Time) bool `json:"-"`
-
-	// lastObservationAt is the observation instant of the current executable
-	// mark, set by the guardian before Update runs. It is the causal "now"
-	// the continuation context's freshness check is measured against.
-	lastObservationAt time.Time `json:"-"`
 }
 
 /*
@@ -342,20 +330,6 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 }
 
 /*
-SetObservationTime records the observation instant of the current executable
-mark. The guardian sets it before Update/observeMark so the continuation
-context's causal-freshness check measures readings against the correct "now"
-rather than a wall-clock stale/non-future heuristic.
-*/
-func (stoploss *Stoploss) SetObservationTime(at time.Time) {
-	if stoploss == nil {
-		return
-	}
-
-	stoploss.lastObservationAt = at
-}
-
-/*
 ObserveExecutable applies the authoritative executable-liquidation state from
 one committed L3 book frame. It is the economic-state path: it updates the
 executable mark, realizable peak, and trailing floor, and owns every
@@ -463,8 +437,9 @@ func (stoploss *Stoploss) observeMark(mark *decimal.Decimal) {
 		stoploss.Floor = stoploss.LockFloor
 	}
 
-	// The floor is a boundary, not a debounce hint. The first executable mark
-	// at or through it owns the exit immediately.
+	// Hard loss and locked profit remain immediate boundaries. A higher learned
+	// trailing floor may wait only for an already-active, volume-clock-bounded
+	// liquidity-sweep claim to resolve.
 	if stoploss.Floor != nil && mark.Cmp(stoploss.Floor) <= 0 {
 		stoploss.triggerFloor(mark)
 		return
@@ -547,13 +522,6 @@ func (stoploss *Stoploss) observeMark(mark *decimal.Decimal) {
 
 		if stoploss.DistinctNonPeakMarks >= confirmMarks &&
 			giveback.Cmp(stoploss.stagnationTolerance()) >= 0 {
-			// Continuation context is the ONLY semantic deferral allowed this
-			// pass, and only for the soft profit-stagnation trigger. It never
-			// suppresses hard/protected floors or invalidation.
-			if stoploss.ProtectContinuation != nil && stoploss.ProtectContinuation(stoploss.lastObservationAt) {
-				return
-			}
-
 			stoploss.Status = TRIGGERED
 			stoploss.TriggerReason = TriggerProfitStagnation
 			stoploss.TriggerMark = mark
@@ -563,6 +531,16 @@ func (stoploss *Stoploss) observeMark(mark *decimal.Decimal) {
 }
 
 func (stoploss *Stoploss) triggerFloor(mark *decimal.Decimal) {
+	if stoploss.Locked && stoploss.LockFloor != nil &&
+		stoploss.Floor != nil && stoploss.Floor.Cmp(stoploss.LockFloor) > 0 &&
+		mark.Cmp(stoploss.LockFloor) > 0 {
+		stoploss.Status = TRIGGERED
+		stoploss.TriggerReason = TriggerTrailingFloor
+		stoploss.TriggerMark = mark
+
+		return
+	}
+
 	stoploss.Status = TRIGGERED
 	stoploss.TriggerMark = mark
 

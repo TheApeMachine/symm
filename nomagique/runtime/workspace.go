@@ -6,9 +6,10 @@ import (
 	"slices"
 )
 
-/* Ingress accepts values from a streaming producer. */
+/* Ingress accepts values from a streaming producer under an explicit lifecycle. */
 type Ingress[T any] interface {
 	Push(T)
+	Status() *Status
 }
 
 /*

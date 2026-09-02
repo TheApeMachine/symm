@@ -496,11 +496,11 @@ For example:
        |
     CVD Measurement
        |
-    Execution Perspective
+    Question-specific Perspective (when configured)
        |
     Valuation
 
-The Perspective does not need to duplicate the entire history of the CVD
+A future Perspective does not need to duplicate the entire history of the CVD
 estimator.
 
 It needs to identify the CVD Measurement it consumed.
@@ -524,7 +524,7 @@ Stateful processors consume more than the current Envelope.
 Examples include:
 
 - estimators;
-- Advisors;
+- future named-question Advisors;
 - Category;
 - Graph;
 - Opportunity;
@@ -538,7 +538,7 @@ stateful facts being used.
 
 Example:
 
-    Execution Perspective @ ticker Envelope 9188:0
+    Continuation Perspective (when configured) @ ticker Envelope 9188:0
 
     used:
         Liquidity Measurement <- 9188:0
@@ -569,11 +569,11 @@ Conceptually:
 
 Example:
 
-    advisor.execution / BTC
+    future.advisor.continuation / BTC
         version 881
         triggered by Trade Envelope 17823:0
 
-    advisor.execution / BTC
+    future.advisor.continuation / BTC
         version 882
         triggered by Ticker Envelope 17827:0
 
@@ -618,7 +618,6 @@ Useful witness boundaries may include:
 
     ingress
     after-signals
-    after-advisors
     after-graph
     after-category
     after-cognition
@@ -657,9 +656,6 @@ For example:
     after-signals:
         CVD Measurement
         Hawkes Measurement
-
-    after-advisors:
-        Perspectives
 
     after-category:
         Categories
@@ -796,8 +792,8 @@ selection criteria.
 Do not select an Episode because:
 
 - Opportunity was high;
-- Advisor was bullish;
-- MCTS almost entered;
+- a future Perspective survived;
+- Planner almost entered;
 - strategy entered;
 - strategy failed to enter;
 - a threshold nearly passed.
@@ -962,7 +958,7 @@ It should expose, where applicable:
 
     Graph
     Categories
-    Perspectives
+    future Perspectives (when configured)
     Cognition
     Resonance
     Manifold
@@ -972,7 +968,6 @@ It should expose, where applicable:
 
     valuation
     alternatives
-    MCTS
     planner state
     selected action
     available capital
@@ -1125,7 +1120,7 @@ Hindsight validators must never emit advice such as:
     loosen gate Z
     increase confidence
     decrease admission requirement
-    change MCTS exploration parameter
+    change Planner admission rule
 
 A finding says what contract failed.
 
@@ -1872,8 +1867,8 @@ No timestamp search is allowed.
 
 ### 65.7 Stateful Parent Provenance
 
-Have an Advisor combine current ticker state with retained earlier CVD and
-DepthFlow.
+Have a future named-question Advisor combine current ticker state with retained
+earlier CVD and DepthFlow.
 
 Assert all three exact origins remain visible.
 

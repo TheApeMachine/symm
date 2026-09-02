@@ -1,79 +1,20 @@
-import { useEffect, useRef, useState } from "react";
 import { useSelector } from "@tanstack/react-store";
-import { graphStore, strategyStore, tickCountStore } from "#/collections/app";
 import { terminalStore } from "#/collections/terminal";
-import { ModelScope } from "#/components/graph/component";
-import {
-	paintGraphSurface,
-	readGraphSurface,
-	subscribeGraphSurface,
-} from "#/components/terminal/graph-surface-store";
-import { MCTSTreeVisualizer } from "#/components/terminal/mcts-tree-visualizer";
+import { EntryDecisionSnapshot } from "#/components/terminal/entry-decision-snapshot";
 import { ThesisDetailRail } from "#/components/terminal/thesis-detail-rail";
 import { Typography } from "#/components/ui/typography";
 import { cn } from "#/lib/utils";
-import { Decision } from "#/providers/telemetry/telemetry/decision";
-
-export type ModalViewMode = "mcts" | "graph3d";
-
-const decObj = new Decision();
 
 /*
-ThesisModal is the carrier for one symbol's thesis and its full decision breakdown.
+ThesisModal separates two different truths about one open lot:
 
-It provides a comprehensive inspection window featuring:
-- Full visual breakdown of the MCTS/Pearl causal branching process
-- The 3D WebGL WebGPU Causal Graph renderer
-- Live arbitration & entry decision snapshot rail
+  the immutable decision and market economics recorded at entry;
+  the position's live mark, return, and protection state now.
+
+The entry side always comes from Position.Decision. It never consults the
+current strategy round, so opening the modal later cannot rewrite why the trade
+was taken.
 */
-const ThesisActionBadge = ({ symbol }: { symbol: string }) => {
-	const root = useRef<HTMLSpanElement>(null);
-
-	strategyStore.subscribe((state) => {
-		if (!root.current) return;
-		const last = state.getLast();
-		if (!last) return;
-
-		let targetDecision: Decision | null = null;
-		for (let i = 0; i < last.decisionsLength(); i++) {
-			const dec = last.decisions(i, decObj);
-			if (dec && dec.symbol() === symbol) {
-				targetDecision = dec;
-				break;
-			}
-		}
-
-		const el = root.current.querySelector<HTMLElement>("[data-action]");
-		if (el) {
-			el.textContent = targetDecision?.action() ?? "";
-		}
-	});
-
-	return (
-		<span ref={root} className="contents">
-			<span data-action className="rounded-full border border-(--line2) px-2.5 py-0.5 font-mono text-[9.5px] uppercase font-semibold" />
-		</span>
-	);
-};
-
-const ThesisTickCounter = () => {
-	const root = useRef<HTMLDivElement>(null);
-
-	tickCountStore.subscribe((tick) => {
-		if (!root.current) return;
-		const el = root.current.querySelector<HTMLElement>("[data-tick]");
-		if (el) {
-			el.textContent = String(tick);
-		}
-	});
-
-	return (
-		<div ref={root} className="font-mono text-[10px] text-(--f4)">
-			tick <span data-tick />
-		</div>
-	);
-};
-
 export const openThesisShell = (symbol: string) => {
 	terminalStore.actions.openThesis(symbol);
 };
@@ -84,33 +25,6 @@ export const closeThesisShell = () => {
 
 export const ThesisModal = () => {
 	const symbol = useSelector(terminalStore, (state) => state.thesisSymbol);
-	const [viewMode, setViewMode] = useState<ModalViewMode>("mcts");
-	const [graphState, setGraphState] = useState(readGraphSurface);
-	const [selectedNodeName, setSelectedNodeName] = useState<string | null>(null);
-
-	useEffect(() => {
-		const last = graphStore.state.getLast();
-		if (last) {
-			paintGraphSurface(last);
-		}
-
-		const unregisterStore = graphStore.subscribe((state) => {
-			const l = state.getLast();
-			if (l) {
-				paintGraphSurface(l);
-			}
-		});
-
-		const unregisterSurface = subscribeGraphSurface(() => {
-			setGraphState(readGraphSurface());
-		});
-
-		return () => {
-			unregisterStore.unsubscribe();
-			unregisterSurface();
-		};
-
-	}, []);
 
 	if (symbol === null || symbol === "") {
 		return null;
@@ -120,103 +34,47 @@ export const ThesisModal = () => {
 		<div className="absolute inset-0 z-20 flex animate-[symFade_0.18s_ease] items-center justify-center bg-[color-mix(in_srgb,var(--sunken)_52%,transparent)] p-6 backdrop-blur-sm">
 			<button
 				type="button"
-				aria-label="Close thesis modal"
+				aria-label="Close position snapshot"
 				className="absolute inset-0 cursor-default"
 				onClick={closeThesisShell}
 			/>
 			<div
 				className={cn(
-					"pointer-events-auto relative z-10 flex h-[min(90vh,960px)] w-[min(1240px,96vw)] flex-col overflow-hidden",
+					"pointer-events-auto relative z-10 flex h-[min(90vh,960px)] w-[min(1320px,96vw)] flex-col overflow-hidden",
 					"rounded-lg border border-(--line2) bg-(--surface) shadow-[0_28px_72px_-18px_rgba(0,0,0,0.78)]",
 				)}
 			>
-				{/* Modal Top Header */}
 				<div className="flex shrink-0 items-center justify-between gap-3 border-(--line) border-b px-5 py-3.5">
-					<div className="flex flex-wrap items-center gap-3">
-						<Typography.Display size="lg">{symbol}</Typography.Display>
-						<ThesisActionBadge symbol={symbol} />
-
-						{/* View Switcher Tabs */}
-						<div className="ml-4 flex items-center rounded border border-(--line) bg-(--sunken) p-0.5 font-mono text-[10px]">
-							<button
-								type="button"
-								onClick={() => setViewMode("mcts")}
-								className={`cursor-pointer rounded px-2.5 py-1 uppercase transition-all ${
-									viewMode === "mcts"
-										? "bg-(--raised) text-(--acc) font-semibold shadow-xs"
-										: "text-(--f4) hover:text-(--f2)"
-								}`}
-							>
-								MCTS / Pearl Process
-							</button>
-							<button
-								type="button"
-								onClick={() => setViewMode("graph3d")}
-								className={`cursor-pointer rounded px-2.5 py-1 uppercase transition-all ${
-									viewMode === "graph3d"
-										? "bg-(--raised) text-(--acc) font-semibold shadow-xs"
-										: "text-(--f4) hover:text-(--f2)"
-								}`}
-							>
-								3D Causal Graph
-							</button>
-						</div>
-					</div>
-
 					<div className="flex items-center gap-3">
-						<ThesisTickCounter />
-						<button
-							type="button"
-							onClick={closeThesisShell}
-							className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border border-(--line) bg-(--raised) p-0 text-(--f3) hover:border-(--line2) hover:text-(--f1)"
-						>
-							<svg
-								width="13"
-								height="13"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								strokeWidth="2"
-								aria-hidden="true"
-							>
-								<title>Close</title>
-								<path d="M6 6l12 12M18 6L6 18" />
-							</svg>
-						</button>
+						<Typography.Display size="lg">{symbol}</Typography.Display>
+						<span className="rounded border border-(--line2) bg-(--sunken) px-2 py-1 font-mono text-[9px] text-(--acc) uppercase tracking-wide">
+							Entry decision snapshot
+						</span>
 					</div>
+
+					<button
+						type="button"
+						onClick={closeThesisShell}
+						className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border border-(--line) bg-(--raised) p-0 text-(--f3) hover:border-(--line2) hover:text-(--f1)"
+					>
+						<svg
+							width="13"
+							height="13"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							aria-hidden="true"
+						>
+							<title>Close</title>
+							<path d="M6 6l12 12M18 6L6 18" />
+						</svg>
+					</button>
 				</div>
 
-				{/* Main Body Split */}
-				<div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.65fr)_minmax(280px,360px)]">
-					<div className="relative min-h-0 overflow-hidden border-(--line) border-r">
-						{viewMode === "mcts" && (
-							<MCTSTreeVisualizer symbol={symbol} />
-						)}
-
-						{viewMode === "graph3d" && (
-							<div className="relative h-full w-full bg-(--sunken)">
-								{graphState.graph ? (
-									<ModelScope
-										className="h-full"
-										graph={graphState.graph}
-										onNodeSelect={(_index: number, name: string) => setSelectedNodeName(name)}
-										selectedNodeName={selectedNodeName}
-									/>
-								) : (
-									<div className="flex h-full items-center justify-center font-mono text-[11px] text-(--f4)">
-										Waiting for market graph frame...
-									</div>
-								)}
-								<div className="pointer-events-none absolute top-3 left-4 rounded bg-[color-mix(in_srgb,var(--surface)_80%,transparent)] px-2 py-1 backdrop-blur-xs">
-									<div className="font-semibold text-[9.5px] text-(--f2) uppercase tracking-[0.13em]">
-										3D Causal Graph Renderer
-									</div>
-									<div className="font-mono text-[9px] text-(--f4)">
-										WebGL · force simulation · interactive camera
-									</div>
-								</div>
-							</div>
-						)}
+				<div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(300px,360px)]">
+					<div className="min-h-0 overflow-y-auto border-(--line) border-r">
+						<EntryDecisionSnapshot symbol={symbol} />
 					</div>
 
 					<div className="min-h-0 overflow-y-auto p-3.5">

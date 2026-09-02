@@ -3,6 +3,7 @@ package morphology
 import (
 	"context"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
@@ -37,6 +38,11 @@ func (signal *Signal) Name() string { return "morphology" }
 func (signal *Signal) Error() error { return signal.err }
 
 func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
+	if signal.err != nil {
+		errnie.Error(signal.Close())
+		return nil
+	}
+
 	envelope.Morphology = signal.book.Step(envelope.Level3Data)
 
 	return envelope

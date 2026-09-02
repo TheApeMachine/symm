@@ -87,10 +87,10 @@ type ResidentCategory struct {
 }
 
 /*
-ResidentPerspective is one advisor Perspective resident at the coordinate.
-Kind is the advisor family identity carried on the wire (a PerspectiveKind
-interned as a byte); it participates in identity so two advisor families for
-the same symbol/peer never collapse into one resident row.
+ResidentPerspective preserves one retired metric-bucket Perspective from a
+historical capture. It is decode-only compatibility evidence and is not the
+current falsifiable Perspective contract. Kind is the legacy advisor-family
+byte carried on that wire.
 */
 type ResidentPerspective struct {
 	Symbol   string            `json:"symbol"`
@@ -104,10 +104,10 @@ type ResidentPerspective struct {
 }
 
 /*
-ResidentReading is one constituent reading of a resident Perspective, with the
-temporal/evidence attributes the live PerspectiveReading carried preserved
-verbatim. ObservedAt/From are declared instants in nanoseconds; presence is not
-synthesised when the live artifact left them undefined.
+ResidentReading is one constituent reading of a retired wire Perspective, with
+its historical temporal/evidence attributes preserved verbatim. ObservedAt/From
+are declared instants in nanoseconds; presence is not synthesised when the
+recorded artifact left them undefined.
 */
 type ResidentReading struct {
 	Metric     string  `json:"metric"`

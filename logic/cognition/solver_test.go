@@ -2,6 +2,7 @@ package cognition
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"sync"
 	"testing"
@@ -61,6 +62,43 @@ func TestSolverStep(t *testing.T) {
 				So(state, ShouldNotBeNil)
 				So(state.hasReading, ShouldBeTrue)
 			})
+		})
+	})
+}
+
+func TestSolverProcessBatch(t *testing.T) {
+	Convey("Given category transitions committed out of event-time order", t, func() {
+		solver := NewSolver(t.Context(), WithMaxSequenceLength(1))
+		newer := []types.Category{{
+			At: time.Unix(2, 0), Symbol: "TEST/USD",
+			Type: types.OrganicTrend, Confidence: 1, Strength: 1,
+		}}
+		older := []types.Category{{
+			At: time.Unix(1, 0), Symbol: "TEST/USD",
+			Type: types.Turbulent, Confidence: 1, Strength: 1,
+		}}
+
+		So(solver.processBatch(
+			"TEST/USD", newer, 0.5, map[string]types.Cognition{},
+		), ShouldBeNil)
+		So(solver.processBatch(
+			"TEST/USD", older, 0.5, map[string]types.Cognition{},
+		), ShouldBeNil)
+
+		var episodeOrdinals []uint64
+		solver.tree.WalkPrefix([]byte("e/"), func(key, _ []byte) bool {
+			episodeOrdinals = append(
+				episodeOrdinals,
+				binary.BigEndian.Uint64(key[len("e/"):len("e/")+8]),
+			)
+
+			return true
+		})
+
+		Convey("DMT recency follows transition order rather than timestamps", func() {
+			So(solver.tickCounter.Load(), ShouldEqual, uint64(2))
+			So(episodeOrdinals, ShouldResemble, []uint64{2})
+			So(solver.Error(), ShouldBeNil)
 		})
 	})
 }

@@ -1,6 +1,7 @@
 package pumpdump
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -82,4 +83,100 @@ func TestTradeStep(t *testing.T) {
 			So(hasMidpoint, ShouldBeFalse)
 		})
 	})
+
+	Convey("Given completed volume bars backed by executable quotes", t, func() {
+		entity := NewTrade()
+		midpoint := 100.0
+		at := time.Unix(1_700_000_000, 0)
+
+		entity.SetQuote(func(symbol string) (bid, ask *decimal.Decimal) {
+			bidValue := decimal.NewFromFloat64(midpoint - 1)
+			askValue := decimal.NewFromFloat64(midpoint + 1)
+
+			return bidValue, askValue
+		})
+
+		Convey("the ordinal advances only when a bar closes and the midpoint records downside then recovery", func() {
+			opening := entity.Step(spotTrade("BTC/USD", 100, 2, at))
+			So(opening.Err, ShouldBeNil)
+			So(opening.Metrics["completed_volume_bar_ordinal"].Raw, ShouldEqual, 0.0)
+
+			midpoint = 90
+			downside := entity.Step(spotTrade(
+				"BTC/USD", 90, 1, at.Add(5*time.Second),
+			))
+			downsideReturn := math.Log(90.0 / 100.0)
+
+			So(downside.Err, ShouldBeNil)
+			So(downside.Metrics["completed_volume_bar_ordinal"].Raw, ShouldEqual, 1.0)
+			So(downside.Metrics["midpoint:from"].Raw, ShouldEqual, 100.0)
+			So(downside.Metrics["midpoint:at"].Raw, ShouldEqual, 90.0)
+			So(downside.Metrics["midpoint_log_return"].Raw, ShouldAlmostEqual, downsideReturn, 1e-12)
+			So(downside.Metrics["negative_midpoint_return"].Raw, ShouldAlmostEqual, -downsideReturn, 1e-12)
+			So(downside.Metrics["positive_midpoint_return"].Raw, ShouldEqual, 0.0)
+
+			barOpening := entity.Step(spotTrade(
+				"BTC/USD", 90, 0.25, at.Add(6*time.Second),
+			))
+			So(barOpening.Err, ShouldBeNil)
+			So(barOpening.Metrics["completed_volume_bar_ordinal"].Raw, ShouldEqual, 1.0)
+
+			midpoint = 95
+			insideBar := entity.Step(spotTrade(
+				"BTC/USD", 95, 0.25, at.Add(7*time.Second),
+			))
+			So(insideBar.Err, ShouldBeNil)
+			So(insideBar.Metrics["completed_volume_bar_ordinal"].Raw, ShouldEqual, 1.0)
+			_, hasIntraBarReturn := insideBar.Metrics["midpoint_log_return"]
+			So(hasIntraBarReturn, ShouldBeFalse)
+
+			midpoint = 105
+			recovery := entity.Step(spotTrade(
+				"BTC/USD", 105, 1, at.Add(10*time.Second),
+			))
+			recoveryReturn := math.Log(105.0 / 90.0)
+
+			So(recovery.Err, ShouldBeNil)
+			So(recovery.Metrics["completed_volume_bar_ordinal"].Raw, ShouldEqual, 2.0)
+			So(recovery.Metrics["midpoint:from"].Raw, ShouldEqual, 90.0)
+			So(recovery.Metrics["midpoint:at"].Raw, ShouldEqual, 105.0)
+			So(recovery.Metrics["midpoint_log_return"].Raw, ShouldAlmostEqual, recoveryReturn, 1e-12)
+			So(recovery.Metrics["positive_midpoint_return"].Raw, ShouldAlmostEqual, recoveryReturn, 1e-12)
+			So(recovery.Metrics["negative_midpoint_return"].Raw, ShouldEqual, 0.0)
+			So(recovery.Metrics["midpoint_return_velocity"].Raw, ShouldAlmostEqual, recoveryReturn-downsideReturn, 1e-12)
+		})
+	})
+}
+
+func BenchmarkTradeStep(b *testing.B) {
+	entity := NewTrade()
+	quotes := [2]struct {
+		bid *decimal.Decimal
+		ask *decimal.Decimal
+	}{
+		{bid: decimal.NewFromFloat64(99), ask: decimal.NewFromFloat64(101)},
+		{bid: decimal.NewFromFloat64(100), ask: decimal.NewFromFloat64(102)},
+	}
+	quoteIndex := 0
+
+	entity.SetQuote(func(symbol string) (bid, ask *decimal.Decimal) {
+		return quotes[quoteIndex].bid, quotes[quoteIndex].ask
+	})
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for iteration := 0; iteration < b.N; iteration++ {
+		quoteIndex = iteration % len(quotes)
+		measurement := entity.Step(spotTrade(
+			"BTC/USD",
+			100+float64(quoteIndex),
+			1,
+			time.Unix(1_700_000_000+int64(iteration), 0),
+		))
+
+		if measurement.Err != nil {
+			b.Fatal(measurement.Err)
+		}
+	}
 }

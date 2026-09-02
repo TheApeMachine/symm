@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
+	"github.com/theapemachine/symm/nomagique/relation"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -34,9 +35,11 @@ type Solver struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	advanceMu     sync.Mutex
+	errMu         sync.RWMutex
 	err           error
 	status        *runtime.Status
 	dataset       *Dataset
+	lifecycle     *orderLifecycle
 	physics       *sensorium.Manifold
 	ObserveModule func(string, time.Duration)
 
@@ -71,17 +74,44 @@ type forcingState struct {
 	sellExcitation float32
 }
 
+/*
+forcingInputs is the declared coordinate contract for Manifold forcing. The
+lookup keys below are built from these selectors once during package setup, so
+runtime reads and generated metric lineage cannot drift into separate names.
+*/
+var forcingInputs = struct {
+	Buy  relation.Selector
+	Sell relation.Selector
+}{
+	Buy: relation.Selector{
+		Source: "hawkes",
+		Metric: "excitation_fraction",
+		Side:   "buy",
+	},
+	Sell: relation.Selector{
+		Source: "hawkes",
+		Metric: "excitation_fraction",
+		Side:   "sell",
+	},
+}
+
+var (
+	buyExcitationMetric  = forcingInputs.Buy.Metric + ":" + forcingInputs.Buy.Side
+	sellExcitationMetric = forcingInputs.Sell.Metric + ":" + forcingInputs.Sell.Side
+)
+
 func NewSolver(ctx context.Context) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 
 	dataset := NewDataset()
 
 	solver := &Solver{
-		ctx:     ctx,
-		cancel:  cancel,
-		status:  runtime.NewStatus(),
-		dataset: dataset,
-		forcing: make(map[string]forcingState),
+		ctx:       ctx,
+		cancel:    cancel,
+		status:    runtime.NewStatus(),
+		dataset:   dataset,
+		lifecycle: newOrderLifecycle(),
+		forcing:   make(map[string]forcingState),
 		physics: sensorium.NewManifold(
 			system.Cfg.Manifold.Grid.X,
 			system.Cfg.Manifold.Grid.Y,
@@ -94,7 +124,27 @@ func NewSolver(ctx context.Context) *Solver {
 
 func (solver *Solver) Name() string { return "manifold" }
 
-func (solver *Solver) Error() error { return solver.err }
+func (solver *Solver) Error() error {
+	solver.errMu.RLock()
+	defer solver.errMu.RUnlock()
+
+	return solver.err
+}
+
+func (solver *Solver) halt(err error) {
+	if err == nil {
+		return
+	}
+
+	solver.errMu.Lock()
+
+	if solver.err == nil {
+		solver.err = err
+		solver.cancel()
+	}
+
+	solver.errMu.Unlock()
+}
 
 /*
 Step dispatches on the envelope kind:
@@ -109,6 +159,12 @@ Step dispatches on the envelope kind:
   - Any other kind is a no-op.
 */
 func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
+	if solver.Error() != nil {
+		solver.cancel()
+
+		return nil
+	}
+
 	if envelope == nil {
 		return envelope
 	}
@@ -132,6 +188,10 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 	case types.EnvelopeLevel3:
 		envelope.Manifold = solver.advance(envelope.Level3Data)
 
+		if solver.Error() != nil {
+			return nil
+		}
+
 		return envelope
 	}
 
@@ -149,8 +209,8 @@ func (solver *Solver) recordForcing(symbol string, hawkes *data.Measurement[floa
 		return
 	}
 
-	buyMetric, buyFound := hawkes.Metrics["excitation_fraction:buy"]
-	sellMetric, sellFound := hawkes.Metrics["excitation_fraction:sell"]
+	buyMetric, buyFound := hawkes.Metrics[buyExcitationMetric]
+	sellMetric, sellFound := hawkes.Metrics[sellExcitationMetric]
 
 	if !buyFound && !sellFound {
 		return
@@ -222,16 +282,32 @@ func (solver *Solver) advance(message kraken.Level3Data) *State {
 		}
 	}()
 
+	departures, err := solver.lifecycle.Apply(message)
+
+	if err != nil {
+		solver.halt(err)
+
+		return nil
+	}
+
+	remaining, err := solver.physics.Remove(departures)
+
+	if err != nil {
+		solver.halt(err)
+
+		return nil
+	}
+
 	batch := solver.project(message, forcing, false)
 
-	if batch == nil || batch.N == 0 {
+	if (batch == nil || batch.N == 0) && remaining == 0 {
 		return nil
 	}
 
 	state, err := solver.physics.Step(batch)
 
 	if err != nil {
-		solver.err = err
+		solver.halt(err)
 		return nil
 	}
 
@@ -296,7 +372,7 @@ func (solver *Solver) Crystallize(
 		state, err = solver.physics.Step(batch)
 
 		if err != nil {
-			solver.err = err
+			solver.halt(err)
 
 			return nil, nil
 		}

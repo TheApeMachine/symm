@@ -26,19 +26,18 @@ fan-out behind.
 */
 type Desk struct {
 	*PositionStore
-	ctx         context.Context
-	cancel      context.CancelFunc
-	err         error
-	status      types.Status
-	api         *websocket.API
-	instrument  *Instrument
-	price       *Price
-	balance     *Balance
-	equity      atomic.Pointer[types.EquityReading]
-	recorder    *audit.Recorder
-	recovery    *Recovery
-	perspective PerspectiveReader
-	positions   *sync.Map
+	ctx        context.Context
+	cancel     context.CancelFunc
+	err        error
+	status     types.Status
+	api        *websocket.API
+	instrument *Instrument
+	price      *Price
+	balance    *Balance
+	equity     atomic.Pointer[types.EquityReading]
+	recorder   *audit.Recorder
+	recovery   *Recovery
+	positions  *sync.Map
 	// execution holds the continuously-advanced bounded execution state per
 	// subscribed symbol. It is advanced by the authoritative L3 stream from
 	// the genuine snapshot onward regardless of whether a Position exists, so
@@ -92,7 +91,6 @@ func NewDesk(
 	recovery *Recovery,
 	store *PositionStore,
 	positions *sync.Map,
-	perspective PerspectiveReader,
 ) (*Desk, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -107,7 +105,6 @@ func NewDesk(
 		recorder:      recorder,
 		recovery:      recovery,
 		PositionStore: store,
-		perspective:   perspective,
 		positions:     positions,
 		execution:     &sync.Map{},
 		passage:       types.NewPassageModel(),
@@ -689,7 +686,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			desk.PositionStore,
 			pair,
 			decision,
-			desk.perspective,
 		)
 
 		// The position consumes the symbol's continuously-resident execution

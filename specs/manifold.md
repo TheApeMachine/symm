@@ -92,7 +92,7 @@ flowchart LR
 
 ## Phase 0: Establish the mathematical contract
 
-Create a canonical specification in `DECISION.md` or a dedicated `MANIFOLD.md`. It should define:
+Maintain the mathematical contract in this dedicated manifold specification. It should define:
 
 - Every coordinate and its units.
 - Carrier mass.
@@ -737,7 +737,7 @@ The legacy implementation should not remain live behind a feature toggle. Histor
 
 Files:
 
-- `DECISION.md` or new `MANIFOLD.md`
+- `specs/manifold.md`
 - [kraken/level3.go](/Users/theapemachine/go/src/github.com/theapemachine/symm/kraken/level3.go)
 - [trader/level3.go](/Users/theapemachine/go/src/github.com/theapemachine/symm/trader/level3.go)
 - New population-ledger types under `logic`

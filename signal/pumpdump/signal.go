@@ -3,6 +3,8 @@ package pumpdump
 import (
 	"context"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -29,17 +31,23 @@ type Signal struct {
 
 /*
 NewSignal composes the Ticker (executable spread), Trade (volume clock), and
-Level3 (authoritative book touch) entities.
+Level3 (authoritative book touch) entities. quote supplies Trade with the
+contemporaneous executable touch used for completed-bar midpoint response.
 */
-func NewSignal(ctx context.Context) *Signal {
+func NewSignal(
+	ctx context.Context,
+	quote func(symbol string) (bid, ask *decimal.Decimal),
+) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
+	trade := NewTrade()
+	trade.SetQuote(quote)
 
 	return &Signal{
 		ctx:    ctx,
 		cancel: cancel,
 		status: runtime.NewStatus(),
 		ticker: NewTicker(),
-		trade:  NewTrade(),
+		trade:  trade,
 		level3: NewLevel3(),
 	}
 }
@@ -49,6 +57,11 @@ func (signal *Signal) Name() string { return "pumpdump" }
 func (signal *Signal) Error() error { return signal.err }
 
 func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
+	if signal.err != nil {
+		errnie.Error(signal.Close())
+		return nil
+	}
+
 	switch envelope.TypeID {
 	case types.EnvelopeTicker:
 		envelope.PumpDump = signal.StepTicker(envelope.TickerData)

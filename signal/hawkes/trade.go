@@ -122,12 +122,17 @@ func (trade *Trade) Step(observation kraken.TradeData) *data.Measurement[float64
 
 	output := trade.number.Step(observation.Symbol, input)
 
-	from := observation.Timestamp
+	var from time.Time
 
-	if fromSec, found := output.Get(nmhawkes.SymbolFromSec); found {
-		wholeSeconds := int64(fromSec)
-		nanoseconds := int64((fromSec - float64(wholeSeconds)) * 1e9)
-		from = time.Unix(wholeSeconds, nanoseconds)
+	if output.Err == nil {
+		fromSec, hasFromSec := output.Get(nmhawkes.SymbolFromUnixSec)
+		fromNsec, hasFromNsec := output.Get(nmhawkes.SymbolFromUnixNsec)
+
+		if !hasFromSec || !hasFromNsec {
+			output.Err = fmt.Errorf("hawkes: exact observation interval is unavailable")
+		} else {
+			from = time.Unix(int64(fromSec), int64(fromNsec)).UTC()
+		}
 	}
 
 	// Maturity (README section 5.4) measures effective FITTED MODEL support,

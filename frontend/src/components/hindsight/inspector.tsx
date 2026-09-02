@@ -9,6 +9,7 @@ import type {
 	HindsightCapture,
 	HindsightEnvelope,
 	HindsightMetricMap,
+	HindsightResident,
 	HindsightRun,
 	MetricSemantics,
 } from "./hindsight-types";
@@ -34,7 +35,9 @@ export const decodeEnvelopeState = (payload: unknown): EnvelopeState | null => {
 	try {
 		const bytes = Uint8Array.from(atob(payload), (char) => char.charCodeAt(0));
 
-		return EnvelopeState.getRootAsEnvelopeState(new flatbuffers.ByteBuffer(bytes));
+		return EnvelopeState.getRootAsEnvelopeState(
+			new flatbuffers.ByteBuffer(bytes),
+		);
 	} catch {
 		return null;
 	}
@@ -73,14 +76,17 @@ export const CaptureCard = ({
 		<div className="grid grid-cols-4 gap-x-4 gap-y-2 border-(--line) border-b px-3 py-2.5">
 			<Field
 				label="capture"
-				value={<span className="tabular-nums">#{capture.identity.sequence}</span>}
+				value={
+					<span className="tabular-nums">#{capture.identity.sequence}</span>
+				}
 			/>
 			<Field label="kind" value={capture.kind || "—"} />
 			<Field
 				label="stream epoch"
 				value={
 					<span className="tabular-nums">
-						{capture.identity.streamEpoch} · seq {capture.identity.streamSequence}
+						{capture.identity.streamEpoch} · seq{" "}
+						{capture.identity.streamSequence}
 					</span>
 				}
 			/>
@@ -107,7 +113,11 @@ export const CaptureCard = ({
 			<Field label="received at" value={formatClock(capture.receivedAt)} />
 			<Field
 				label="run"
-				value={<span className="text-[9px]">{capture.identity.run.slice(0, 18)}</span>}
+				value={
+					<span className="text-[9px]">
+						{capture.identity.run.slice(0, 18)}
+					</span>
+				}
 			/>
 		</div>
 	);
@@ -212,9 +222,9 @@ export const ProvenancePanel = ({
 				<Section.Body>
 					{envelope.manifests.length === 0 ? (
 						<p className="px-2.5 py-2 font-mono text-[9px] text-(--f4)">
-							This frame produced no semantic envelope. The raw frame still exists —
-							a heartbeat or a protocol acknowledgement is a captured input with zero
-							envelopes, not a missing record.
+							This frame produced no semantic envelope. The raw frame still
+							exists — a heartbeat or a protocol acknowledgement is a captured
+							input with zero envelopes, not a missing record.
 						</p>
 					) : null}
 					<ul className="flex flex-col divide-y divide-(--line)">
@@ -256,7 +266,10 @@ export const ProvenancePanel = ({
 						</p>
 					) : null}
 					{boundaries.map(([boundary, witnesses]) => (
-						<div key={boundary} className="border-(--line) border-b last:border-b-0">
+						<div
+							key={boundary}
+							className="border-(--line) border-b last:border-b-0"
+						>
 							<div className="bg-(--surface) px-2.5 py-1 font-mono text-[8px] text-(--acc) uppercase tracking-widest">
 								{boundary}
 							</div>
@@ -272,7 +285,9 @@ export const ProvenancePanel = ({
 											<Flex.Row align="center" justify="between" gap={2}>
 												<span className="truncate">
 													{witness.artifact.kind}
-													<span className="text-(--f3)">:{witness.artifact.identity}</span>
+													<span className="text-(--f3)">
+														:{witness.artifact.identity}
+													</span>
 												</span>
 												{witness.component ? (
 													<span className="shrink-0 text-(--f4)">
@@ -285,13 +300,17 @@ export const ProvenancePanel = ({
 											</Flex.Row>
 											{parents.length > 0 ? (
 												<Flex.Row gap={1} className="mt-0.5 flex-wrap">
-													<span className="text-[8px] text-(--f4)">parents</span>
+													<span className="text-[8px] text-(--f4)">
+														parents
+													</span>
 													{parents.map((parent) => (
 														<Button
 															key={`${parent.origin.sequence}-${parent.ordinal}`}
 															variant="bare"
 															className="rounded-[2px] border border-(--line2) px-1 font-mono text-[8px] text-(--f3) tabular-nums hover:border-(--acc) hover:text-(--f1)"
-															onClick={() => onSelect(parent.origin.sequence, parent.ordinal)}
+															onClick={() =>
+																onSelect(parent.origin.sequence, parent.ordinal)
+															}
 														>
 															{parent.origin.sequence}:{parent.ordinal}
 														</Button>
@@ -320,7 +339,6 @@ export const ProvenancePanel = ({
 		</Flex.Column>
 	);
 };
-
 
 /*
 A decoded signal Measurement, read once out of the flatbuffer so the panel can
@@ -399,7 +417,11 @@ const readMeasurement = (
 
 	const provenance: MeasurementReading["provenance"] = [];
 
-	for (let position = 0; position < measurement.provenanceLength(); position++) {
+	for (
+		let position = 0;
+		position < measurement.provenanceLength();
+		position++
+	) {
 		const entry = measurement.provenance(position);
 
 		if (entry === null) continue;
@@ -462,13 +484,15 @@ not estimable. It must never look like a value.
 */
 const Quantity = ({ value }: { value: number | null }) =>
 	value === null ? (
-		<span className="text-(--warn)" title="Not estimable here. Undefined, not zero.">
+		<span
+			className="text-(--warn)"
+			title="Not estimable here. Undefined, not zero."
+		>
 			undef
 		</span>
 	) : (
 		<span className="text-(--f1) tabular-nums">{formatValue(value)}</span>
 	);
-
 
 /*
 MetricDetail states what one number physically means, quoting METRIC_MAP.md
@@ -619,7 +643,9 @@ const MeasurementPanel = ({
 							setOpen(
 								allOpen
 									? new Set()
-									: new Set(measurements.map((measurement) => measurement.signal)),
+									: new Set(
+											measurements.map((measurement) => measurement.signal),
+										),
 							)
 						}
 					>
@@ -663,7 +689,8 @@ const MeasurementPanel = ({
 										</span>
 									) : null}
 									<span title="Estimator support, as the component reported it.">
-										mat <span className="text-(--f2) tabular-nums">
+										mat{" "}
+										<span className="text-(--f2) tabular-nums">
 											{measurement.maturity.toFixed(3)}
 										</span>
 									</span>
@@ -680,19 +707,30 @@ const MeasurementPanel = ({
 								<div className="bg-(--bg) px-2.5 py-1.5">
 									<div className="flex flex-wrap gap-x-4 gap-y-0.5 pb-1.5 font-mono text-[8px] text-(--f4)">
 										<span>
-											source <span className="text-(--f2)">{measurement.source || "—"}</span>
+											source{" "}
+											<span className="text-(--f2)">
+												{measurement.source || "—"}
+											</span>
 										</span>
 										<span>
-											at <span className="text-(--f2)">{formatNanos(measurement.at)}</span>
+											at{" "}
+											<span className="text-(--f2)">
+												{formatNanos(measurement.at)}
+											</span>
 										</span>
 										<span title="The start of the window this measurement covers, where the estimator declared one.">
 											from{" "}
 											<span className="text-(--f2)">
-												{measurement.from === null ? "—" : formatNanos(measurement.from)}
+												{measurement.from === null
+													? "—"
+													: formatNanos(measurement.from)}
 											</span>
 										</span>
 										<span>
-											seq <span className="text-(--f2) tabular-nums">{measurement.seqIdx}</span>
+											seq{" "}
+											<span className="text-(--f2) tabular-nums">
+												{measurement.seqIdx}
+											</span>
 										</span>
 										{measurement.id ? (
 											<span>
@@ -710,10 +748,18 @@ const MeasurementPanel = ({
 											<thead>
 												<tr className="text-(--f4) text-left">
 													<th className="py-0.5 pr-2 font-normal">metric</th>
-													<th className="py-0.5 pr-2 text-right font-normal">raw</th>
-													<th className="py-0.5 pr-2 text-right font-normal">norm</th>
-													<th className="py-0.5 pr-2 text-right font-normal">std</th>
-													<th className="py-0.5 font-normal">unit · timescale</th>
+													<th className="py-0.5 pr-2 text-right font-normal">
+														raw
+													</th>
+													<th className="py-0.5 pr-2 text-right font-normal">
+														norm
+													</th>
+													<th className="py-0.5 pr-2 text-right font-normal">
+														std
+													</th>
+													<th className="py-0.5 font-normal">
+														unit · timescale
+													</th>
 												</tr>
 											</thead>
 											<tbody>
@@ -721,7 +767,9 @@ const MeasurementPanel = ({
 													const identity = `${measurement.signal}/${entry.key}`;
 													const declared = semantics?.metrics[identity] ?? null;
 													const referenced =
-														evidence.get(`${measurement.signal}:${entry.key}`) ?? [];
+														evidence.get(
+															`${measurement.signal}:${entry.key}`,
+														) ?? [];
 													const selected = metric === identity;
 
 													return (
@@ -742,7 +790,10 @@ const MeasurementPanel = ({
 																	</span>
 																	{entry.key}
 																	{entry.label && entry.label !== entry.key ? (
-																		<span className="text-(--f4)"> · {entry.label}</span>
+																		<span className="text-(--f4)">
+																			{" "}
+																			· {entry.label}
+																		</span>
 																	) : null}
 																	{referenced.length > 0 ? (
 																		<span
@@ -765,7 +816,9 @@ const MeasurementPanel = ({
 																</td>
 																<td className="py-0.5 text-(--f4)">
 																	{entry.unit || "—"}
-																	{entry.timescale ? ` · ${entry.timescale}` : ""}
+																	{entry.timescale
+																		? ` · ${entry.timescale}`
+																		: ""}
 																</td>
 															</tr>
 															{selected ? (
@@ -776,7 +829,9 @@ const MeasurementPanel = ({
 																			declared={declared}
 																			referenced={referenced}
 																			observedAt={formatNanos(measurement.at)}
-																			version={versions.get(measurement.id) ?? null}
+																			version={
+																				versions.get(measurement.id) ?? null
+																			}
 																		/>
 																	</td>
 																</tr>
@@ -790,7 +845,9 @@ const MeasurementPanel = ({
 
 									{measurement.metadata.length > 0 ? (
 										<div className="flex flex-wrap gap-x-3 gap-y-0.5 pt-1.5 font-mono text-[8px] text-(--f4)">
-											<span className="uppercase tracking-widest">metadata</span>
+											<span className="uppercase tracking-widest">
+												metadata
+											</span>
 											{measurement.metadata.map((entry) => (
 												<span key={entry.id}>
 													{entry.name}{" "}
@@ -812,7 +869,8 @@ const MeasurementPanel = ({
 											</span>
 											{measurement.provenance.map((entry) => (
 												<span key={entry.id}>
-													{entry.name} <span className="text-(--f2)">{entry.value}</span>
+													{entry.name}{" "}
+													<span className="text-(--f2)">{entry.value}</span>
 												</span>
 											))}
 										</div>
@@ -834,13 +892,81 @@ not what today's build would now compute.
 */
 export const StatePanel = ({
 	state,
+	resident,
 	envelope,
 	semantics,
 }: {
 	state: EnvelopeState | null;
+	resident: HindsightResident | null;
 	envelope: HindsightEnvelope | null;
 	semantics: HindsightMetricMap | null;
 }) => {
+	const residentMeasurements = useMemo<MeasurementReading[]>(
+		() =>
+			(resident?.signals ?? []).map((measurement) => ({
+				signal: measurement.source,
+				id: measurement.identity ?? measurement.source,
+				label: "",
+				source: measurement.source,
+				seqIdx: String(measurement.origin.origin.sequence),
+				at: measurement.atNs,
+				from: null,
+				maturity: measurement.maturity,
+				snr: measurement.snrDefined ? measurement.snr : null,
+				metrics: measurement.metrics.map((metric, position) => ({
+					id: `${position}:${metric.key}`,
+					key: metric.key,
+					label: metric.label ?? "",
+					raw: metric.raw,
+					normalized: metric.hasNormalized ? metric.normalized : null,
+					standardized: metric.hasStandardized ? metric.standardized : null,
+					unit: metric.unit ?? "",
+					timescale: metric.timescale ?? "",
+				})),
+				metadata: [],
+				provenance: [
+					{
+						id: "origin",
+						name: "origin",
+						value: `${measurement.origin.origin.sequence}:${measurement.origin.ordinal}`,
+					},
+					{
+						id: "residency",
+						name: "residency",
+						value: measurement.carried
+							? measurement.hasAge
+								? `carried ${(measurement.ageNs / 1e6).toFixed(2)}ms`
+								: "carried"
+							: "fresh",
+					},
+				],
+			})),
+		[resident],
+	);
+
+	const residentEvidence = useMemo(() => {
+		const byMetric = new Map<
+			string,
+			Array<{ category: string; stance: string }>
+		>();
+
+		for (const category of resident?.categories ?? []) {
+			for (const identity of category.supporting ?? []) {
+				const references = byMetric.get(identity) ?? [];
+				references.push({ category: category.type, stance: "supports" });
+				byMetric.set(identity, references);
+			}
+
+			for (const identity of category.opposing ?? []) {
+				const references = byMetric.get(identity) ?? [];
+				references.push({ category: category.type, stance: "contradicts" });
+				byMetric.set(identity, references);
+			}
+		}
+
+		return byMetric;
+	}, [resident]);
+
 	const rows = useMemo(() => {
 		if (state === null) {
 			return { categories: [], perspectives: [], boundaries: [] };
@@ -926,7 +1052,10 @@ export const StatePanel = ({
 		never by position or by timestamp.
 	*/
 	const versions = useMemo(() => {
-		const byIdentity = new Map<string, { component: string; version: number }>();
+		const byIdentity = new Map<
+			string,
+			{ component: string; version: number }
+		>();
 
 		for (const witness of envelope?.witnesses ?? []) {
 			if (witness.artifact.kind !== "measurement") continue;
@@ -946,7 +1075,10 @@ export const StatePanel = ({
 		categories that referenced it is an exact identity join, not a guess.
 	*/
 	const evidence = useMemo(() => {
-		const byMetric = new Map<string, Array<{ category: string; stance: string }>>();
+		const byMetric = new Map<
+			string,
+			Array<{ category: string; stance: string }>
+		>();
 
 		if (state === null) return byMetric;
 
@@ -981,10 +1113,59 @@ export const StatePanel = ({
 	}, [state]);
 
 	if (state === null) {
+		if (resident !== null && residentMeasurements.length > 0) {
+			return (
+				<Flex.Column gap={3} className="p-3">
+					<div className="font-mono text-[9px] text-(--f4) leading-relaxed">
+						<span className="text-(--acc)">
+							Resident state as-of this envelope
+						</span>
+						{" · "}latest causally available values, with their exact origins
+						and ages. Examined {resident.examined} envelopes and reached back{" "}
+						{resident.reachedBack} captures.
+					</div>
+
+					<MeasurementPanel
+						measurements={residentMeasurements}
+						semantics={semantics}
+						versions={new Map()}
+						evidence={residentEvidence}
+					/>
+
+					{resident.categories.length > 0 ? (
+						<Section fit="content" surface="sunken">
+							<Section.Header title="Resident categories" size="s" rule />
+							<Section.Body>
+								{resident.categories.map((category) => (
+									<div
+										key={`${category.type}:${category.origin.origin.sequence}:${category.origin.ordinal}`}
+										className="flex items-center justify-between px-2.5 py-1 font-mono text-[9px]"
+									>
+										<span className="text-(--f1)">{category.type}</span>
+										<span className="text-(--f4) tabular-nums">
+											conf {category.confidence.toFixed(3)} · origin{" "}
+											{category.origin.origin.sequence}:
+											{category.origin.ordinal}
+										</span>
+									</div>
+								))}
+							</Section.Body>
+						</Section>
+					) : null}
+
+					{(resident.unresolved?.length ?? 0) > 0 ? (
+						<p className="font-mono text-[9px] text-(--warn)">
+							Unresolved within this causal walk:{" "}
+							{resident.unresolved?.join(", ")}.
+						</p>
+					) : null}
+				</Flex.Column>
+			);
+		}
+
 		return (
 			<p className="px-3 py-3 font-mono text-[10px] text-(--f4)">
-				No historical state was witnessed at this exact envelope. Unavailable — not
-				empty.
+				No exact or resident historical state was found at this envelope.
 			</p>
 		);
 	}
@@ -995,7 +1176,10 @@ export const StatePanel = ({
 		<Flex.Column gap={3} className="p-3">
 			<Flex.Row gap={4} className="flex-wrap font-mono text-[9px] text-(--f4)">
 				<span>
-					seq <span className="text-(--f1) tabular-nums">{state.captureSeq().toString()}</span>
+					seq{" "}
+					<span className="text-(--f1) tabular-nums">
+						{state.captureSeq().toString()}
+					</span>
 				</span>
 				<span>
 					ordinal{" "}
@@ -1007,7 +1191,10 @@ export const StatePanel = ({
 					type <span className="text-(--f1)">{state.typeId()}</span>
 				</span>
 				<span>
-					tick <span className="text-(--f1) tabular-nums">{state.tick().toString()}</span>
+					tick{" "}
+					<span className="text-(--f1) tabular-nums">
+						{state.tick().toString()}
+					</span>
 				</span>
 				<span>
 					key <span className="text-(--f1)">{state.key() ?? "—"}</span>
@@ -1044,7 +1231,7 @@ export const StatePanel = ({
 
 			{rows.perspectives.length > 0 ? (
 				<Section fit="content" surface="sunken">
-					<Section.Header title="Perspectives" size="s" rule />
+					<Section.Header title="Legacy advisor readings" size="s" rule />
 					<Section.Body>
 						{rows.perspectives.map((perspective) => (
 							<div
@@ -1066,7 +1253,8 @@ export const StatePanel = ({
 					<Section.Header title="Strategy" size="s" rule />
 					<Section.Body>
 						<div className="px-2.5 py-1 font-mono text-[9px] text-(--f1)">
-							{strategy.outcome() ?? "—"} · {strategy.decisionsLength()} decisions
+							{strategy.outcome() ?? "—"} · {strategy.decisionsLength()}{" "}
+							decisions
 						</div>
 					</Section.Body>
 				</Section>
@@ -1082,7 +1270,9 @@ export const StatePanel = ({
 								className="flex items-center justify-between px-2.5 py-1 font-mono text-[9px]"
 							>
 								<span className="text-(--f1)">{stamp.label}</span>
-								<span className="tabular-nums text-(--f4)">{stamp.seqCount} seq</span>
+								<span className="tabular-nums text-(--f4)">
+									{stamp.seqCount} seq
+								</span>
 							</div>
 						))}
 					</Section.Body>

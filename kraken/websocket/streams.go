@@ -8,9 +8,7 @@ import (
 
 /*
 streamSpan is one operational connection span within a transport stream: its
-epoch and the frame sequence within that epoch. It is owned by the transport
-session (not Hindsight) so reconnect invalidation is an operational transport
-fact available even when capture is disabled.
+epoch and frame sequence. It is owned by the transport session, not Hindsight.
 */
 type streamSpan struct {
 	epoch    hindsight.StreamEpoch
@@ -19,8 +17,8 @@ type streamSpan struct {
 
 /*
 Streams owns one session's per-stream epoch/sequence bookkeeping, independent of
-Hindsight. The transport mints the StreamRef for every frame and bumps epochs on
-reconnect; Hindsight records the same fact but is never the source of it.
+Hindsight. The transport mints the StreamRef for every frame; Hindsight records
+the same fact but is never the source of it.
 
 endpoint names the socket these streams arrive on, so one transport fact has one
 stable identity across both the spot and futures sessions.
@@ -75,11 +73,11 @@ func (streams *Streams) Next(kind string) hindsight.StreamRef {
 }
 
 /*
-Reconnected bumps the operational epoch for every stream this session has seen
-and resets each stream's per-epoch sequence. Called on a second (or later)
-connection in this process lifetime, completely independent of any capture sink.
+Advance starts a new connection epoch for every stream already observed on the
+transport. Sequence numbering restarts because frames after a reconnect belong
+to a distinct venue session.
 */
-func (streams *Streams) Reconnected() {
+func (streams *Streams) Advance() {
 	if streams == nil {
 		return
 	}

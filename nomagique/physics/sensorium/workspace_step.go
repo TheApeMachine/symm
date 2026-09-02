@@ -6,22 +6,23 @@ import (
 	"sort"
 )
 
-func (fluid *workspace) step() Reading {
-	// The kernels log why they rejected a cell or particle before writing the
-	// qNaN that a fail-fast contract demands. Draining at the end of the step
-	// is what lets that reason reach a human instead of only the NaN.
-	defer fluid.drainDebug()
-
+func (fluid *workspace) step() (Reading, error) {
 	fluid.scatterParticles()
-	fluid.gasRK2()
+
+	if err := fluid.gasRK2(); err != nil {
+		return Reading{}, err
+	}
 
 	if fluid.particles == 0 {
 		fluid.psiRe.Zero()
 		fluid.psiIm.Zero()
-		return fluid.observe()
+		return fluid.observe(), nil
 	}
 
-	fluid.gatherParticles()
+	if err := fluid.gatherParticles(); err != nil {
+		return Reading{}, err
+	}
+
 	fluid.planckExchange()
 
 	// 1. Seed particle anchors into the ω-frequency lattice
@@ -34,7 +35,7 @@ func (fluid *workspace) step() Reading {
 	// 3. Project the coherent mode amplitudes Ψ_k into the 3D spatial field Ψ(x)
 	fluid.projectSpatialWave()
 
-	return fluid.observe()
+	return fluid.observe(), nil
 }
 
 /*
@@ -208,40 +209,76 @@ func (fluid *workspace) scatterParticles() {
 		fluid.particles,
 	)
 	engine.Synchronize()
-	fluid.admitConserved()
 }
 
-func (fluid *workspace) gasRK2() {
-	dt := float32(fluid.rates.deltaT)
-	gamma := float32(fluid.domain.Gamma)
-	cv := float32(fluid.domain.CV)
-	rhoMin := float32(fluid.domain.RhoMin)
-	pMin := float32(fluid.domain.PMin)
-	mu := float32(fluid.domain.Mu)
-	kThermal := float32(fluid.domain.KThermal)
-	engine := fluid.engine
-	engine.GasRK2Stage1(
-		fluid.rho, fluid.mom, fluid.energy,
+func (fluid *workspace) gasRK2() error {
+	delta := float32(fluid.rates.deltaT)
+
+	if err := fluid.gasStageOne(delta); err != nil {
+		return err
+	}
+
+	if err := fluid.gasStageTwo(delta); err != nil {
+		return err
+	}
+
+	fluid.acceptGasStep()
+
+	return nil
+}
+
+func (fluid *workspace) gasStageOne(delta float32) error {
+	fluid.engine.GasRK2Stage1(
+		fluid.rho,
+		fluid.mom,
+		fluid.energy,
 		fluid.rho1, fluid.mom1, fluid.energy1,
 		fluid.k1Rho, fluid.k1Mom, fluid.k1Energy,
 		fluid.dbgHead, fluid.dbgWords, dbgCapacity,
-		dt, gamma, cv, rhoMin, pMin, mu, kThermal,
+		delta,
+		float32(fluid.domain.Gamma),
+		float32(fluid.domain.CV),
+		float32(fluid.domain.RhoMin),
+		float32(fluid.domain.PMin),
+		float32(fluid.domain.Mu),
+		float32(fluid.domain.KThermal),
 	)
-	engine.GasRK2Stage2(
+	fluid.engine.Synchronize()
+
+	return fluid.drainDebug()
+}
+
+func (fluid *workspace) gasStageTwo(delta float32) error {
+	fluid.engine.GasRK2Stage2(
 		fluid.rho, fluid.mom, fluid.energy,
 		fluid.rho1, fluid.mom1, fluid.energy1,
 		fluid.k1Rho, fluid.k1Mom, fluid.k1Energy,
 		fluid.rho2, fluid.mom2, fluid.energy2,
 		fluid.dbgHead, fluid.dbgWords, dbgCapacity,
-		dt, gamma, cv, rhoMin, pMin, mu, kThermal,
+		delta,
+		float32(fluid.domain.Gamma),
+		float32(fluid.domain.CV),
+		float32(fluid.domain.RhoMin),
+		float32(fluid.domain.PMin),
+		float32(fluid.domain.Mu),
+		float32(fluid.domain.KThermal),
 	)
-	engine.Synchronize()
+	fluid.engine.Synchronize()
+
+	if err := fluid.drainDebug(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (fluid *workspace) acceptGasStep() {
 	copy(fluid.rho.Float32Slice(), fluid.rho2.Float32Slice())
 	copy(fluid.mom.Float32Slice(), fluid.mom2.Float32Slice())
 	copy(fluid.energy.Float32Slice(), fluid.energy2.Float32Slice())
 }
 
-func (fluid *workspace) gatherParticles() {
+func (fluid *workspace) gatherParticles() error {
 	dt := float32(fluid.rates.deltaT)
 	fluid.engine.PICGatherUpdate(
 		fluid.pos, fluid.mass, fluid.posOut, fluid.velOut, fluid.heatOut,
@@ -256,33 +293,16 @@ func (fluid *workspace) gatherParticles() {
 		0,
 	)
 	fluid.engine.Synchronize()
+
+	if err := fluid.drainDebug(); err != nil {
+		return err
+	}
+
 	copy(fluid.pos.Float32Slice(), fluid.posOut.Float32Slice())
 	copy(fluid.vel.Float32Slice(), fluid.velOut.Float32Slice())
 	copy(fluid.heat.Float32Slice(), fluid.heatOut.Float32Slice())
-}
 
-func (fluid *workspace) admitConserved() {
-	rho := fluid.rho.Float32Slice()
-	mom := fluid.mom.Float32Slice()
-	energy := fluid.energy.Float32Slice()
-	rhoMin := float32(fluid.domain.RhoMin)
-
-	for cell, density := range rho {
-		// Zero out vacuum and numerical underflow cells cleanly
-		if density <= rhoMin || math.IsNaN(float64(density)) || math.IsInf(float64(density), 0) {
-			rho[cell] = 0
-			mom[cell*3+0] = 0
-			mom[cell*3+1] = 0
-			mom[cell*3+2] = 0
-			energy[cell] = 0
-
-			continue
-		}
-
-		if energy[cell] < 0 || math.IsNaN(float64(energy[cell])) || math.IsInf(float64(energy[cell]), 0) {
-			energy[cell] = 0
-		}
-	}
+	return nil
 }
 
 func (fluid *workspace) planckExchange() {
@@ -365,6 +385,10 @@ func planckEnergy(omega, temperature float64) float64 {
 	}
 
 	return omega / (math.Exp(ratio) - 1)
+}
+
+func isPositiveFinite(value float64) bool {
+	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func (fluid *workspace) waveStep() {
@@ -525,9 +549,17 @@ func (fluid *workspace) spatialSigma() float64 {
 
 	tempMean := tempSum / float64(counted)
 	massMean := massSum / float64(counted)
+
+	// A determined (non-zero, finite) mean temperature is what makes sigma a
+	// length. Zero mean temperature means the field has no thermal length scale
+	// yet, so it saturates the coupling range instead of dividing by zero.
+	if !isPositiveFinite(tempMean) {
+		return sigmaMax
+	}
+
 	denom := massMean * tempMean
 
-	if !(denom > 0) {
+	if !isPositiveFinite(denom) {
 		return sigmaMax
 	}
 

@@ -80,6 +80,21 @@ func TestTradeStep(t *testing.T) {
 			So(measurement.Metrics["event_fraction:sell"].Raw, ShouldEqual, 0.0)
 		})
 
+		Convey("the first event preserves its exact nanosecond observation interval", func() {
+			at := time.Date(2026, time.September, 1, 22, 53, 2, 957_587_000, time.UTC)
+			measurement := entity.Step(hawkesTrade("SOL/USD", "buy", at))
+
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.At.Equal(at), ShouldBeTrue)
+			So(measurement.From.Equal(at), ShouldBeTrue)
+			So(measurement.From.After(measurement.At), ShouldBeFalse)
+
+			later := entity.Step(hawkesTrade("SOL/USD", "sell", at.Add(625*time.Nanosecond)))
+
+			So(later.Err, ShouldBeNil)
+			So(later.From.Equal(at), ShouldBeTrue)
+		})
+
 		Convey("a second sell event advances empirical counts causally", func() {
 			entity.Step(hawkesTrade("BTC/USD", "buy", time.Unix(1000, 0)))
 			measurement := entity.Step(hawkesTrade("BTC/USD", "sell", time.Unix(1001, 0)))
@@ -651,4 +666,24 @@ func TestLikelihoodDoesNotAccumulateAcrossRefits(t *testing.T) {
 			So(perEvent.Raw, ShouldAlmostEqual, total.Raw/count.Raw, 1e-6)
 		})
 	})
+}
+
+func BenchmarkTradeStep(b *testing.B) {
+	entity := NewTrade()
+	observation := hawkesTrade(
+		"SOL/USD",
+		"buy",
+		time.Date(2026, time.September, 1, 22, 53, 2, 957_587_000, time.UTC),
+	)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for iteration := 0; iteration < b.N; iteration++ {
+		measurement := entity.Step(observation)
+
+		if measurement.Err != nil {
+			b.Fatal(measurement.Err)
+		}
+	}
 }

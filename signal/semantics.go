@@ -2,8 +2,8 @@
 Package signal serves the declared semantic identity of every production
 (source, metric) pair.
 
-METRIC_MAP.md is the normative document; metric_map.json is its
-machine-readable sibling, and this is the only place either is read. The map
+METRIC_MAP.md defines the semantic architecture. metric_map.csv is the current
+catalog authority, and metric_map.json is its generated runtime form. The map
 answers, for one metric: why the fact exists, what it may legitimately affect,
 and — the part that matters most to an inspection surface — what must never be
 inferred from it.
@@ -72,11 +72,7 @@ var (
 	metricMapLoaded MetricMap
 )
 
-/*
-Semantics returns the declared semantic map, decoded once. A malformed embed
-yields an empty map rather than a panic: the absence of a semantic statement is
-a thing inspection can report, and it must never take the surface down.
-*/
+/* Semantics returns the declared semantic map, decoded once. */
 func Semantics() MetricMap {
 	metricMapOnce.Do(func() {
 		var file metricMapFile
@@ -84,7 +80,7 @@ func Semantics() MetricMap {
 		metricMapLoaded = MetricMap{Metrics: make(map[string]MetricSemantics)}
 
 		if err := sonic.Unmarshal(metricMapSource, &file); err != nil {
-			return
+			panic("signal: decode embedded metric map: " + err.Error())
 		}
 
 		metricMapLoaded.BaselineCommit = file.BaselineCommit

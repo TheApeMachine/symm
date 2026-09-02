@@ -57,7 +57,11 @@ type Position struct {
 		lets the terminal answer that question at all, and it survives a client
 		reconnect because the desk republishes its positions on connect.
 	*/
-	Decision         types.Decision        `json:"decision"`
+	Decision types.Decision `json:"decision"`
+	// decisionWire is constructed once because Decision is immutable. Position
+	// telemetry is emitted on every public ticker, so rebuilding and sorting the
+	// same decision evidence on that hot path would allocate needlessly.
+	decisionWire     *wire.DecisionT
 	EntryOrder       *spot.AddOrderRequest `json:"entry_order"`
 	ExitOrder        *spot.AddOrderRequest `json:"exit_order"`
 	EntryOrderResult *spot.AddOrderResult  `json:"entry_order_result"`
@@ -70,14 +74,6 @@ type Position struct {
 	// when this position opened, so the position never bootstraps book state
 	// from an arbitrary mid-stream update. The position only reads from it.
 	liquidation *liquidationReducer
-
-	// perspective is the shared latest-by-key Perspective store. perspective is
-	// the entry snapshot captured when the lot's fill lands, used for the
-	// entry-vs-current continuation comparison; both feed the profit-stagnation
-	// continuation context. Missing/mistale state never suppresses an exit.
-	perspective   PerspectiveReader
-	entryContext  positionEntryContext
-	entryCaptured bool
 
 	/*
 		Priority transport: one dedicated LMAX Disruptor plus its contiguous
@@ -144,7 +140,6 @@ func NewPosition(
 	store *PositionStore,
 	pair kraken.InstrumentPair,
 	decision types.Decision,
-	perspective PerspectiveReader,
 ) *Position {
 	errnie.Info("creating position for: " + pair.Symbol)
 	ctx, cancel := context.WithCancel(ctx)
@@ -160,8 +155,8 @@ func NewPosition(
 		store:          store,
 		pair:           pair,
 		seenExecutions: make(map[string]struct{}),
-		perspective:    perspective,
 		Decision:       decision,
+		decisionWire:   types.DecisionWire(&decision),
 		EntryOrder: &spot.AddOrderRequest{
 			ClOrdId:   decision.ID,
 			Type:      "buy",
@@ -180,22 +175,6 @@ func NewPosition(
 			Stoploss:      decision.Stoploss,
 		},
 	}
-	continuationHorizon := time.Duration(
-		decision.Alternatives["horizon:seconds"] * float64(time.Second),
-	)
-
-	if position.Holding.Stoploss != nil {
-		position.Holding.Stoploss.ProtectContinuation = func(observationTime time.Time) bool {
-			return continuationSupportive(
-				position.perspective,
-				position.entryContext,
-				pair.Symbol,
-				observationTime,
-				continuationHorizon,
-			)
-		}
-	}
-
 	guardian := &guardianHandler{position: position}
 	disruptorInstance, err := disruptor.New(
 		disruptor.Options.BufferCapacity(guardianCapacity),
@@ -322,8 +301,9 @@ func (position *Position) MarshalJSON() ([]byte, error) {
 
 func (position *Position) Wire() *wire.PositionT {
 	return &wire.PositionT{
-		Status:  string(position.status()),
-		Holding: types.HoldingWire(position.Holding),
+		Status:   string(position.status()),
+		Decision: position.decisionWire,
+		Holding:  types.HoldingWire(position.Holding),
 	}
 }
 
@@ -410,7 +390,6 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 	previousRevision := position.Holding.Stoploss.RegulatorRevision()
 
 	stoploss := position.Holding.Stoploss
-	stoploss.SetObservationTime(ticker.Timestamp)
 	stoploss.Update(mark)
 	position.Holding.Mark = mark
 	position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
@@ -718,14 +697,6 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 		position.Holding.EntryVWAP = executionVWAP(execution)
 		position.Holding.EntryQty = decimal.NewFromInt64(0).Add(execution.CumQty)
 		position.Holding.EntryFees = decimal.NewFromInt64(0).Add(execution.FeeUsdEquiv)
-
-		// Capture the entry snapshot of the latest Perspectives once, when the
-		// lot opens, so the continuation context can compare current vs entry
-		// depth/spread without any per-tick snapshot machinery.
-		if !position.entryCaptured {
-			position.entryContext = captureEntryContext(position.perspective, position.pair.Symbol)
-			position.entryCaptured = true
-		}
 
 		if err := position.Holding.Stoploss.RebindFill(
 			position.Holding.EntryPrice,

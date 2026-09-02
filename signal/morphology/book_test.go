@@ -310,9 +310,9 @@ func BenchmarkStep(benchmark *testing.B) {
 	entity := NewBook()
 
 	benchmark.ReportAllocs()
-	benchmark.ResetTimer()
+	
 
-	for index := 0; index < benchmark.N; index++ {
+	for benchmark.Loop() {
 		_ = entity.Step(message)
 	}
 }

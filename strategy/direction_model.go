@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"fmt"
 	"math"
 	"time"
 
@@ -97,37 +98,28 @@ func (head *returnHead) predict(score float64) (learning.RLSOutput, error) {
 	return head.learner.Predict([]float64{score})
 }
 
-func (intervals *intervalMean) observe(at time.Time) {
-	if intervals.last.IsZero() {
-		intervals.last = at
-		return
+/* returnHead returns the executable-return learner for one exact ticker horizon. */
+func (predictor *directionalPredictor) returnHead(
+	state *directionalState,
+	horizonSteps int,
+) (*returnHead, error) {
+	if horizonSteps <= 0 {
+		return nil, fmt.Errorf("strategy: positive return-head horizon required")
 	}
 
-	delta := at.Sub(intervals.last)
-	intervals.last = at
-
-	if delta <= 0 {
-		return
+	if head := state.returns[horizonSteps]; head != nil {
+		return head, nil
 	}
 
-	intervals.count++
-	intervals.mean += time.Duration((int64(delta) - int64(intervals.mean)) / int64(intervals.count))
-}
+	head, err := newReturnHead(predictor.config)
 
-func (intervals intervalMean) steps(horizon time.Duration) int {
-	if intervals.mean <= 0 || horizon <= 0 {
-		return 0
+	if err != nil {
+		return nil, err
 	}
 
-	return int(math.Ceil(float64(horizon) / float64(intervals.mean)))
-}
+	state.returns[horizonSteps] = head
 
-func (state *directionalState) observeHorizon(seconds float64) {
-	if seconds <= 0 {
-		return
-	}
-
-	state.horizon = time.Duration(seconds * float64(time.Second))
+	return head, nil
 }
 
 func (state *directionalState) observe(
@@ -135,7 +127,14 @@ func (state *directionalState) observe(
 	value, quality float64,
 	observedAt time.Time,
 	use featureUse,
-) {
+) error {
+	if observedAt.IsZero() {
+		return fmt.Errorf(
+			"strategy: %s/%s/%s requires event time",
+			key.family, key.source, key.metric,
+		)
+	}
+
 	feature := state.features[key]
 
 	if feature == nil {
@@ -156,23 +155,27 @@ func (state *directionalState) observe(
 		state.features[key] = feature
 	}
 
+	state.observationOrdinal++
 	feature.value = value
 	feature.quality = quality
 	feature.observedAt = observedAt
+	feature.observedOrder = state.observationOrdinal
 	feature.observed = true
+
+	return nil
 }
 
 func (state *directionalState) aggregate(
 	context forecastContext,
-	at time.Time,
-	horizon time.Duration,
+	afterObservation uint64,
 ) (float64, int) {
 	for index := range state.groups {
 		state.groups[index] = evidenceGroup{}
 	}
 
 	for _, feature := range state.features {
-		if feature.use != featureContext || !feature.current(at, horizon) {
+		if feature.use != featureContext ||
+			!feature.available(afterObservation) {
 			continue
 		}
 
@@ -218,18 +221,24 @@ func (state *directionalState) aggregate(
 	return numerator / denominator, features
 }
 
-func (feature *predictorFeature) current(at time.Time, horizon time.Duration) bool {
+func (feature *predictorFeature) available(
+	afterObservation uint64,
+) bool {
 	if !feature.observed || feature.quality <= 0 || feature.observedAt.IsZero() {
 		return false
 	}
 
-	age := at.Sub(feature.observedAt)
-
-	return age >= 0 && age <= horizon
+	return feature.observedOrder > afterObservation
 }
 
-func (state *directionalState) resolve(at time.Time, executableBid float64) error {
-	if !state.pending.present || at.Sub(state.pending.issuedAt) < state.pending.horizon {
+func (state *directionalState) resolve(executableBid float64) error {
+	if !state.pending.present {
+		return nil
+	}
+
+	elapsedSteps := state.tickerOrdinal - state.pending.issuedOrdinal
+
+	if elapsedSteps < uint64(state.pending.horizonSteps) {
 		return nil
 	}
 
@@ -251,7 +260,16 @@ func (state *directionalState) resolve(at time.Time, executableBid float64) erro
 		feature.pending = false
 	}
 
-	if err := state.returns.observe(state.pending.score, logReturn); err != nil {
+	returns := state.returns[state.pending.horizonSteps]
+
+	if returns == nil {
+		return fmt.Errorf(
+			"strategy: return head missing for %d-ticker pending horizon",
+			state.pending.horizonSteps,
+		)
+	}
+
+	if err := returns.observe(state.pending.score, logReturn); err != nil {
 		return err
 	}
 
@@ -261,7 +279,7 @@ func (state *directionalState) resolve(at time.Time, executableBid float64) erro
 }
 
 func (state *directionalState) issue(
-	at time.Time,
+	afterObservation uint64,
 	reference float64,
 	context forecastContext,
 	score float64,
@@ -271,16 +289,17 @@ func (state *directionalState) issue(
 	}
 
 	state.pending = pendingReturn{
-		issuedAt:  at,
-		reference: reference,
-		horizon:   state.horizon,
-		score:     score,
-		context:   context,
-		present:   true,
+		issuedOrdinal: state.tickerOrdinal,
+		reference:     reference,
+		horizonSteps:  state.horizonSteps,
+		score:         score,
+		context:       context,
+		present:       true,
 	}
 
 	for _, feature := range state.features {
-		if feature.use != featureContext || !feature.current(at, state.horizon) {
+		if feature.use != featureContext ||
+			!feature.available(afterObservation) {
 			continue
 		}
 
@@ -292,8 +311,9 @@ func (state *directionalState) issue(
 
 func (state *directionalState) context() (forecastContext, bool) {
 	context := forecastContext{
-		archetype: state.opportunity.Archetype,
-		phase:     state.opportunity.Phase,
+		archetype:    state.opportunity.Archetype,
+		phase:        state.opportunity.Phase,
+		horizonSteps: state.horizonSteps,
 	}
 
 	switch state.opportunity.Phase {
@@ -304,15 +324,14 @@ func (state *directionalState) context() (forecastContext, bool) {
 	}
 }
 
-func (state *directionalState) currentFeatureCount(use featureUse, at time.Time) int {
-	if state.horizon <= 0 {
-		return 0
-	}
-
+func (state *directionalState) currentFeatureCount(
+	use featureUse,
+	afterObservation uint64,
+) int {
 	count := 0
 
 	for _, feature := range state.features {
-		if feature.use == use && feature.current(at, state.horizon) {
+		if feature.use == use && feature.available(afterObservation) {
 			count++
 		}
 	}

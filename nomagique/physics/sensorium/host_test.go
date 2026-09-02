@@ -71,3 +71,58 @@ func TestMerge(t *testing.T) {
 		})
 	})
 }
+
+func TestRemove(t *testing.T) {
+	Convey("Given a resident domain with three identified particles", t, func() {
+		manifold := &Manifold{}
+		manifold.merge(batchOf(1, 10, 11, 12))
+
+		Convey("An explicit departure evicts only the named particle", func() {
+			remaining, err := manifold.Remove([]int64{11})
+
+			So(err, ShouldBeNil)
+			So(remaining, ShouldEqual, 2)
+			So(manifold.state.ContentIDs, ShouldResemble, []int64{10, 12})
+			So(manifold.resident[10], ShouldEqual, 0)
+			So(manifold.resident[12], ShouldEqual, 1)
+		})
+
+		Convey("An unknown departure fails without mutating the population", func() {
+			remaining, err := manifold.Remove([]int64{99})
+
+			So(err, ShouldNotBeNil)
+			So(remaining, ShouldEqual, 3)
+			So(manifold.state.ContentIDs, ShouldResemble, []int64{10, 11, 12})
+		})
+
+		Convey("A duplicate departure fails without partially mutating the population", func() {
+			remaining, err := manifold.Remove([]int64{11, 11})
+
+			So(err, ShouldNotBeNil)
+			So(remaining, ShouldEqual, 3)
+			So(manifold.state.ContentIDs, ShouldResemble, []int64{10, 11, 12})
+		})
+	})
+}
+
+func BenchmarkRemove(b *testing.B) {
+	contentIDs := make([]int64, 1024)
+
+	for index := range contentIDs {
+		contentIDs[index] = int64(index + 1)
+	}
+
+	manifold := &Manifold{}
+	manifold.merge(batchOf(1, contentIDs...))
+	returning := batchOf(2, contentIDs[0])
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		if _, err := manifold.Remove(returning.ContentIDs); err != nil {
+			b.Fatal(err)
+		}
+
+		manifold.merge(returning)
+	}
+}

@@ -1,10 +1,10 @@
 package cmd
 
 import (
+	"context"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net/http"
 	_ "net/http/pprof"
@@ -23,7 +23,7 @@ import (
 	"github.com/theapemachine/symm/logic/advisor"
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/cognition"
-	"github.com/theapemachine/symm/logic/manifold"
+	// "github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/opportunity"
 	"github.com/theapemachine/symm/logic/resonance"
 	"github.com/theapemachine/symm/signal/correlation"
@@ -88,10 +88,12 @@ var (
 			errnie.Info(fmt.Sprintf(
 				"symm started with %d CPUs", runtime.NumCPU(),
 			))
+			runtimeCtx, runtimeCancel := context.WithCancel(cmd.Context())
+			defer runtimeCancel()
 
 			// startPprof()
 
-			hub := ui.NewHub(cmd.Context())
+			hub := ui.NewHub(runtimeCtx)
 			defer hub.Close()
 
 			// Phase 1 — the brokers' transport and account objects, which the
@@ -191,7 +193,7 @@ var (
 			// bounded queue drops with observability under sustained overflow
 			// rather than stalling frame processing.
 			asyncWitness := store.NewAsyncWitnessWriter(
-				cmd.Context(),
+				runtimeCtx,
 				storageEngine,
 				viper.GetInt("hindsight.witness.queue_depth"),
 				viper.GetDuration("hindsight.witness.flush_interval"),
@@ -200,33 +202,65 @@ var (
 			witness := newWitnessNode(rawCapture, asyncWitness)
 
 			publicSession := websocket.New(
-				cmd.Context(),
+				runtimeCtx,
 				publicIngress,
 				websocket.NewSimulator(),
 				false,
 				system.Cfg.WebSocket.Endpoints.Public,
 				rawCapture,
 			)
+			defer publicSession.Close()
+
+			if err := publicSession.Error(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"symm: public transport failed during construction",
+					err,
+				))
+			}
 
 			privateSession := websocket.New(
-				cmd.Context(),
+				runtimeCtx,
 				privateIngress,
 				websocket.NewSimulator(),
 				true,
 				system.Cfg.WebSocket.Endpoints.Private,
 				rawCapture,
 			)
+			defer privateSession.Close()
+
+			if err := privateSession.Error(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"symm: private transport failed during construction",
+					err,
+				))
+			}
 
 			api := websocket.NewAPI(
-				cmd.Context(),
+				runtimeCtx,
 				publicSession,
 				privateSession,
 			)
+			defer api.Close()
 
-			futures := websocket.NewFutures(cmd.Context(), system.Cfg.WebSocket.Endpoints.Futures, futuresIngress, rawCapture)
+			futures := websocket.NewFutures(runtimeCtx, system.Cfg.WebSocket.Endpoints.Futures, futuresIngress, rawCapture)
 			api.SetFutures(futures)
 
-			defer futures.Close()
+			transportErrors := make(chan error, 1)
+
+			go func() {
+				transportErrors <- api.Run()
+				runtimeCancel()
+			}()
+
+			if err := api.Error(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"symm: transport failed during construction",
+					err,
+				))
+			}
 
 			recorder, err := audit.NewRecorder(filepath.Join(
 				dataPath,
@@ -245,92 +279,45 @@ var (
 
 			price := broker.NewPrice(api, recorder)
 			instrument := broker.NewInstrument(api, price)
+			defer instrument.Close()
 
-			// Reconnect is a soft-reboot of the ONE subscription authority:
-			// re-running instrument.Subscribe re-issues the same paced market
-			// data batches that boot used. The operational stream epoch is
-			// advanced by the transport itself (Live/FuturesLive reconnect
-			// handling); Hindsight records that same fact in CaptureIdentity
-			// but never supplies it to trading. There is no second subscription
-			// path anywhere.
-			softReboot := func() func() {
-				return func() {
-					go func() {
-						if err := instrument.Subscribe(); err != nil {
-							errnie.Error(errnie.Err(
-								errnie.IO,
-								"symm: reconnect resubscribe",
-								err,
-							))
-						}
-					}()
-				}
+			if err := instrument.Error(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"symm: instrument registry failed during construction",
+					err,
+				))
 			}
-
-			publicSession.SetReconnect(softReboot())
-			privateSession.SetReconnect(softReboot())
-			futures.SetReconnect(softReboot())
-
-			// When the soft reboot above cannot converge, the failure is not the
-			// socket: a rotating client IP invalidates the venue session itself,
-			// so every reconnect dials and authenticates cleanly and is then
-			// dropped. Resubscribing a session the venue has already rejected
-			// can never recover it, so the transport escalates here instead of
-			// spinning, and the process performs a full, clean reboot.
-			//
-			// A reboot is a process restart rather than an in-process rebuild:
-			// the workspace, desk, solvers and hub are all constructed once
-			// against this command's context, so re-establishing a coherent
-			// system means starting over from a known-good boot. Positions
-			// survive it — they are persisted in the position store and adopted
-			// again by broker recovery on the way back up.
-			rebootOnce := &sync.Once{}
-
-			fullReboot := func(reason string) {
-				rebootOnce.Do(func() {
-					errnie.Warn(fmt.Sprintf(
-						"symm: transport unrecoverable (%s) — draining and rebooting", reason,
-					))
-
-					// Withdraw the universe through the one subscription
-					// authority that owns it, so the venue stops streaming
-					// before the sockets go away, then tear the transport down.
-					// Deferred cleanup does not run on an explicit exit, so the
-					// sessions are closed here by hand.
-					instrument.Unsubscribe()
-					api.Close()
-					_ = futures.Close()
-
-					// Exit non-zero so the supervisor restarts the process. A
-					// reboot is a restart rather than an in-process rebuild:
-					// the workspace, desk, solvers and hub are constructed once
-					// against this command's context, so a coherent system
-					// means booting again from scratch. Open positions survive
-					// it — they are persisted in the position store and adopted
-					// by broker recovery on the way back up.
-					os.Exit(1)
-				})
-			}
-
-			api.SetUnrecoverable(fullReboot)
-			futures.SetUnrecoverable(fullReboot)
 
 			// Stateful analytical stages are constructed once and mounted directly
 			// in each Workload that produces their inputs. The Workloads themselves
 			// remain the complete topology; there is no secondary observation store.
-			categorySolver := category.NewSolver(cmd.Context())
-			cognitionSolver := cognition.NewSolver(cmd.Context())
-			opportunitySolver := opportunity.NewSolver(cmd.Context())
-			resonanceSolver := resonance.NewSolver(cmd.Context(), 0)
+			categorySolver := category.NewSolver(runtimeCtx)
+			cognitionSolver := cognition.NewSolver(runtimeCtx)
+			opportunitySolver := opportunity.NewSolver(runtimeCtx)
+			resonanceSolver := resonance.NewSolver(runtimeCtx, 0)
 			resonanceSolver.SetObserver(hub.PublishResonance)
 
-			// The shared manifold solver owns the one resident physics domain.
-			// It reads Hawkes excitation fractions on the Trade workload (as
-			// forcing state, without advancing the field) and advances on the
-			// Level3 workload (applying the latest causally-available forcing).
-			manifoldSolver := manifold.NewSolver(cmd.Context())
-			hub.SetManifoldSnapshot(manifoldSolver.Snapshot)
-			toxicitySolver := toxicity.NewSignal(cmd.Context())
+			momentum := advisor.NewMomentum()
+			momentumSolver := advisor.NewSolver(runtimeCtx, momentum.Features)
+
+			if err := momentumSolver.Error(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"symm: construct momentum Advisor",
+					err,
+				))
+			}
+
+			defer momentumSolver.Close()
+
+			// Manifold is intentionally disabled while its runtime issue is
+			// investigated independently. No physics implementation is changed.
+			// manifoldSolver := manifold.NewSolver(runtimeCtx)
+			// hub.SetManifoldSnapshot(manifoldSolver.Snapshot)
+			pumpdumpSolver := pumpdump.NewSignal(runtimeCtx, cvdQuoteProvider(price))
+			toxicitySolver := toxicity.NewSignal(runtimeCtx)
+			derivativesSolver := derivatives.NewSignal(runtimeCtx)
 
 			// The broker desk owns positions and execution. Recovery adopts the
 			// exchange's open inventory before the decision path engages. The
@@ -358,20 +345,14 @@ var (
 			balance := broker.NewBalance(api)
 			positions := &sync.Map{}
 
-			// The shared Perspective store feeds PositionRisk's non-blocking
-			// latest-by-key reads. It is constructed before the desk so the
-			// guardian path can capture entry snapshots from the same store the
-			// advisory layer writes to.
-			perspectiveStore := advisor.NewStore()
-
 			recovery := broker.NewRecovery(
-				cmd.Context(), api, instrument, price, balance, recorder,
-				positionStore, positions, perspectiveStore,
+				runtimeCtx, api, instrument, price, balance, recorder,
+				positionStore, positions,
 			)
 
 			desk, err := broker.NewDesk(
-				cmd.Context(), api, instrument, price, balance, recorder,
-				recovery, positionStore, positions, perspectiveStore,
+				runtimeCtx, api, instrument, price, balance, recorder,
+				recovery, positionStore, positions,
 			)
 
 			if err != nil {
@@ -389,7 +370,7 @@ var (
 			// It is observational and never affects trading.
 			desk.SetLifecycleRecorder(hindsightLifecycleRecorder{engine: storageEngine, runID: runID})
 
-			planner, err := strategy.NewPlanner(cmd.Context(), recorder, desk)
+			planner, err := strategy.NewPlanner(runtimeCtx, recorder, desk)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
@@ -401,77 +382,46 @@ var (
 
 			defer planner.Close()
 
-			// The advisory layer composes the signals' measurements into
-			// descriptive Perspectives — context for decision and risk, never
-			// decisions. Sixteen families in deterministic order; all instances
-			// stay shared across the ticker/trade/Level3/futures workloads.
-			advisors := advisorNode{
-				store: perspectiveStore,
-				advisors: []*advisor.Advisor{
-					advisor.NewLiquidityAdvisor("advisor.liquidity"),
-					advisor.NewLiquidityDynamicsAdvisor("advisor.liquidity_dynamics"),
-					advisor.NewFlowAdvisor("advisor.flow"),
-					advisor.NewOrderDispositionAdvisor("advisor.order_disposition"),
-					advisor.NewArrivalAdvisor("advisor.arrival"),
-					advisor.NewArrivalQualityAdvisor("advisor.arrival_quality"),
-					advisor.NewMorphologyAdvisor("advisor.morphology"),
-					advisor.NewMorphologyDynamicsAdvisor("advisor.morphology_dynamics"),
-					advisor.NewCoordinationAdvisor("advisor.coordination"),
-					advisor.NewCoordinationSupportAdvisor("advisor.coordination_support"),
-					advisor.NewRelativeStateAdvisor("advisor.relative_state"),
-					advisor.NewActivityAdvisor("advisor.activity"),
-					advisor.NewDerivativesAdvisor("advisor.derivatives"),
-					advisor.NewHistoricalAdvisor("advisor.historical"),
-					advisor.NewExecutionAdvisor("advisor.execution"),
-					advisor.NewDecompositionAdvisor("advisor.decomposition"),
-				},
-			}
-
 			// Phase 2 — declare the complete streaming topology as Workloads.
 			// The Desk receives priority market/execution updates first. Analytical
 			// state then enriches the same envelope before Strategy sees it once.
 			publicTicker := nmruntime.NewWorkload(
-				cmd.Context(),
+				runtimeCtx,
 				"ticker",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("ticker.ingress")},
 					{&tickNode{desk: desk}},
 					{
-						system.NewTraced("ticker.correlation", correlation.NewSignal(cmd.Context())),
-						system.NewTraced("ticker.leadlag", leadlag.NewSignal(cmd.Context())),
-						system.NewTraced("ticker.liquidity", liquidity.NewSignal(cmd.Context())),
-						system.NewTraced("ticker.sentiment", sentiment.NewSignal(cmd.Context())),
-						system.NewTraced("ticker.pumpdump", pumpdump.NewSignal(cmd.Context())),
+						system.NewTraced("ticker.correlation", correlation.NewSignal(runtimeCtx)),
+						system.NewTraced("ticker.leadlag", leadlag.NewSignal(runtimeCtx)),
+						system.NewTraced("ticker.liquidity", liquidity.NewSignal(runtimeCtx)),
+						system.NewTraced("ticker.sentiment", sentiment.NewSignal(runtimeCtx)),
 						system.NewTraced("ticker.resonance", resonanceSolver),
 					},
 				},
 			)
 
 			publicTrade := nmruntime.NewWorkload(
-				cmd.Context(),
+				runtimeCtx,
 				"trade",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("trade.ingress")},
 					{
-						system.NewTraced("trade.cvd", cvd.NewSignal(cmd.Context(), cvdQuoteProvider(price))),
-						system.NewTraced("trade.hawkes", hawkes.NewSignal(cmd.Context())),
-						system.NewTraced("trade.pumpdump", pumpdump.NewSignal(cmd.Context())),
-						system.NewTraced("trade.toxicity", toxicitySolver),
+						system.NewTraced("trade.cvd", cvd.NewSignal(runtimeCtx, cvdQuoteProvider(price))),
+						system.NewTraced("trade.hawkes", hawkes.NewSignal(runtimeCtx)),
 					},
 				},
 			)
 
 			privateLevel3 := nmruntime.NewWorkload(
-				cmd.Context(),
+				runtimeCtx,
 				"level3",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("level3.ingress")},
 					{level3Node{desk: desk}},
 					{
-						system.NewTraced("level3.depthflow", depthflow.NewSignal(cmd.Context())),
-						system.NewTraced("level3.morphology", morphology.NewSignal(cmd.Context())),
-						system.NewTraced("level3.pumpdump", pumpdump.NewSignal(cmd.Context())),
-						system.NewTraced("level3.toxicity", toxicitySolver),
+						system.NewTraced("level3.depthflow", depthflow.NewSignal(runtimeCtx)),
+						system.NewTraced("level3.morphology", morphology.NewSignal(runtimeCtx)),
 					},
 				},
 			)
@@ -481,7 +431,7 @@ var (
 			// routed straight to the matching position's guardian ring, so the
 			// workload is a thin dispatch stage plus observability boundaries.
 			privateExecutions := nmruntime.NewWorkload(
-				cmd.Context(),
+				runtimeCtx,
 				"executions",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("executions.ingress")},
@@ -490,38 +440,78 @@ var (
 			)
 
 			futuresTicker := nmruntime.NewWorkload(
-				cmd.Context(),
+				runtimeCtx,
 				"futures.ticker",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("futures.ticker.ingress")},
-					{system.NewTraced("futures.ticker.derivatives", derivatives.NewSignal(cmd.Context()))},
 				},
 			)
 
 			futuresTrade := nmruntime.NewWorkload(
-				cmd.Context(),
+				runtimeCtx,
 				"futures.trade",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("futures.trade.ingress")},
-					{system.NewTraced("futures.trade.derivatives", derivatives.NewSignal(cmd.Context()))},
+				},
+			)
+
+			pumpdumpWorkload := nmruntime.NewWorkload(
+				runtimeCtx,
+				"pumpdump",
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewTraced("pumpdump.signal", pumpdumpSolver)},
+				},
+			)
+
+			toxicityWorkload := nmruntime.NewWorkload(
+				runtimeCtx,
+				"toxicity",
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewTraced("toxicity.signal", toxicitySolver)},
+				},
+			)
+
+			derivativesWorkload := nmruntime.NewWorkload(
+				runtimeCtx,
+				"derivatives",
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewTraced("derivatives.signal", derivativesSolver)},
+				},
+			)
+
+			// manifoldWorkload := nmruntime.NewWorkload(
+			// 	runtimeCtx,
+			// 	"manifold",
+			// 	[][]nmruntime.Node[*types.Envelope]{
+			// 		{system.NewTraced("manifold.advance", manifoldSolver)},
+			// 	},
+			// )
+
+			advisorWorkload := nmruntime.NewWorkload(
+				runtimeCtx,
+				"advisor",
+				[][]nmruntime.Node[*types.Envelope]{
+					{system.NewTraced("advisor.momentum", momentumSolver)},
 				},
 			)
 
 			logicWorkload := nmruntime.NewWorkload(
-				cmd.Context(),
+				runtimeCtx,
 				"logic",
 				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewTraced("logic.manifold", manifoldSolver)},
-					{advisors},
-					{categorySolver},
-					{system.NewTraced("logic.cognition", cognitionSolver)},
-					{system.NewTraced("logic.opportunity", opportunitySolver)},
+					{
+						system.NewTraced("logic.category", categorySolver),
+					},
+					{
+						system.NewTraced("logic.cognition", cognitionSolver),
+						system.NewTraced("logic.opportunity", opportunitySolver),
+					},
 					{system.NewDiagnostic("logic.complete")},
 				},
 			)
 
 			strategyWorkload := nmruntime.NewWorkload(
-				cmd.Context(),
+				runtimeCtx,
 				"strategy",
 				[][]nmruntime.Node[*types.Envelope]{
 					{planner},
@@ -532,7 +522,7 @@ var (
 				},
 			)
 			workspace := nmruntime.NewWorkspace(
-				cmd.Context(),
+				runtimeCtx,
 				"workspace",
 				[][]nmruntime.Node[*types.Envelope]{
 					{
@@ -543,7 +533,8 @@ var (
 						futuresTicker,
 						futuresTrade,
 					},
-					{logicWorkload},
+					{pumpdumpWorkload, toxicityWorkload, derivativesWorkload},
+					{advisorWorkload, logicWorkload},
 					{strategyWorkload},
 				},
 			)
@@ -565,6 +556,42 @@ var (
 			futuresIngress["ticker"] = futuresTicker
 			futuresIngress["trade"] = futuresTrade
 
+			// Every consumer must be able to accept an envelope before any market
+			// subscription is written. The connected transports remain BUSY and
+			// deliberately discard market frames until both runtime layers have
+			// crossed their READY boundary.
+			workspace.Admit()
+
+			if workspace.Status() == nil ||
+				workspace.Status().Current() != nmruntime.READY {
+				return errnie.Error(errnie.Err(
+					errnie.NotAcceptable,
+					"symm: workspace did not reach ready",
+					nil,
+				))
+			}
+
+			api.MarkReady()
+
+			if err := api.Error(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"symm: transport readiness barrier failed",
+					err,
+				))
+			}
+
+			if api.Status() != nmruntime.READY {
+				return errnie.Error(errnie.Err(
+					errnie.NotAcceptable,
+					"symm: required transports did not reach ready",
+					nil,
+				))
+			}
+
+			// Subscription snapshots are authoritative initial state, especially
+			// for Level3 order lifecycles. Subscribe only after READY so the first
+			// snapshot and every following delta traverse the same live pipeline.
 			if err := instrument.Subscribe(); err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.Internal,
@@ -573,24 +600,40 @@ var (
 				))
 			}
 
-			// The subscription barrier is now complete. Admit the Workloads before
-			// opening the websocket sessions: Workload.Push intentionally rejects
-			// every envelope while WAITING, so reversing this order leaves the
-			// sockets live and the dashboard connected while all market data is
-			// discarded before the first stage.
-			workspace.Admit()
+			hubErrors := make(chan error, 1)
 
-			// Subscribe returned, so the WHOLE universe is subscribed: the
-			// sessions may now feed the trading pipeline. Until this point
-			// they were connected and parsing (BUSY) but pushed nothing,
-			// because the universe is subscribed in paced batches and the
-			// early frames are only whichever symbols were live already.
-			api.MarkReady()
+			go func() {
+				hubErrors <- hub.Run()
+			}()
 
-			return errors.Join(
-				err,
-				hub.Run(),
-			)
+			select {
+			case err := <-transportErrors:
+				if api.Error() == nil && cmd.Context().Err() != nil {
+					return cmd.Context().Err()
+				}
+
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"symm: required transport failed",
+					err,
+				))
+			case err := <-hubErrors:
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"symm: dashboard server failed",
+					err,
+				))
+			case <-runtimeCtx.Done():
+				if err := api.Error(); err != nil {
+					return err
+				}
+
+				if err := cmd.Context().Err(); err != nil {
+					return err
+				}
+
+				return runtimeCtx.Err()
+			}
 		},
 	}
 )

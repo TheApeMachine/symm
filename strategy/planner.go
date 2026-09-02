@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -19,7 +20,10 @@ distribution whether entering dominates keeping cash for the current
 opportunity. Desk-owned Stoploss instances retain exclusive exit authority.
 */
 type Planner struct {
+	ctx                   context.Context
 	cancel                context.CancelFunc
+	err                   error
+	status                *runtime.Status
 	desk                  *broker.Desk
 	predictor             *directionalPredictor
 	allocation            *Allocation
@@ -58,7 +62,9 @@ func NewPlanner(
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Planner{
+		ctx:                   ctx,
 		cancel:                cancel,
+		status:                runtime.NewStatus().Transition(runtime.READY),
 		desk:                  desk,
 		predictor:             predictor,
 		allocation:            NewAllocation(ctx, desk),
@@ -67,15 +73,44 @@ func NewPlanner(
 	}, nil
 }
 
-/* Step consumes one envelope once and always emits a decision when calibrated. */
+/*
+Step consumes one envelope once and always emits a decision when calibrated.
+*/
 func (planner *Planner) Step(envelope *types.Envelope) *types.Envelope {
+	if planner.err != nil {
+		if planner.cancel != nil {
+			planner.cancel()
+		}
+
+		return nil
+	}
+
 	if envelope == nil {
-		return envelope
+		planner.halt(errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"planner: envelope was nil",
+			nil,
+		)))
+
+		return nil
+	}
+
+	if envelope.TypeID == types.EnvelopeTicker {
+		if err := planner.validateTicker(envelope); err != nil {
+			planner.halt(errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, "planner: validate ticker", err,
+			)))
+
+			return nil
+		}
 	}
 
 	if err := planner.predictor.observe(envelope); err != nil {
-		errnie.Error(errnie.Err(errnie.UnprocessableContent, "planner: observe envelope", err))
-		return envelope
+		planner.halt(errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, "planner: observe envelope", err,
+		)))
+
+		return nil
 	}
 
 	if envelope.TypeID != types.EnvelopeTicker {
@@ -85,8 +120,11 @@ func (planner *Planner) Step(envelope *types.Envelope) *types.Envelope {
 	forecast, err := planner.forecast(envelope)
 
 	if err != nil {
-		errnie.Error(errnie.Err(errnie.UnprocessableContent, "planner: forecast ticker", err))
-		return envelope
+		planner.halt(errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, "planner: forecast ticker", err,
+		)))
+
+		return nil
 	}
 
 	if planner.desk.Holding(forecast.symbol) > 0 {
@@ -108,12 +146,26 @@ func (planner *Planner) Step(envelope *types.Envelope) *types.Envelope {
 
 	envelope.StrategyRound = round
 
+	var executionErr error
+
 	if decision.Action == types.ActionEnter {
-		planner.execute(decision, round)
+		executionErr = planner.execute(decision, round)
 	}
 
-	if err := audit.RecordAs(planner.recorder, audit.DecisionBatchEvent, round); err != nil {
-		errnie.Error(errnie.Err(errnie.IO, "planner: record decision", err))
+	auditErr := audit.RecordAs(
+		planner.recorder, audit.DecisionBatchEvent, round,
+	)
+
+	if executionErr != nil {
+		planner.halt(errnie.Error(errnie.Err(
+			errnie.UnprocessableContent, "planner: execute decision", executionErr,
+		)))
+	}
+
+	if auditErr != nil {
+		planner.halt(errnie.Error(errnie.Err(
+			errnie.IO, "planner: record decision", auditErr,
+		)))
 	}
 
 	return envelope
@@ -134,7 +186,7 @@ func (planner *Planner) preDecision(forecast *directionalForecast) (*types.Decis
 	decision.PredictiveReady = false
 	decision.PredictiveStatus = forecast.status
 	decision.TaskSkillReady = false
-	decision.ForecastSource = "opportunity-conditioned-observations-and-perspectives"
+	decision.ForecastSource = "opportunity-conditioned-observations"
 	decision.ForecastModel = "adaptive-executable-return-student-t-v1"
 	decision.Forecast = &forecast.output
 	decision.ForecastHorizon = forecast.horizonSteps
@@ -152,7 +204,7 @@ func (planner *Planner) preDecision(forecast *directionalForecast) (*types.Decis
 		"return:break_even_log":      forecast.breakEvenLogReturn,
 		"return:scale":               forecast.output.Scale,
 		"return:degrees_of_freedom":  forecast.output.DegreesOfFreedom,
-		"horizon:seconds":            forecast.horizon.Seconds(),
+		"horizon:ticker_steps":       float64(forecast.horizonSteps),
 		"features:directional":       float64(forecast.directionalFeatures),
 		"features:estimability":      float64(forecast.estimabilityFeatures),
 		"features:execution_context": float64(forecast.executionFeatures),
@@ -170,34 +222,68 @@ func (planner *Planner) preDecision(forecast *directionalForecast) (*types.Decis
 func (planner *Planner) forecast(envelope *types.Envelope) (*directionalForecast, error) {
 	ticker := envelope.TickerData
 
-	if ticker.Symbol == "" || ticker.Bid == nil || ticker.Ask == nil ||
-		ticker.Bid.Sign() <= 0 || ticker.Ask.Sign() <= 0 {
-		return nil, fmt.Errorf("planner: ticker symbol and positive bid/ask required")
-	}
+	forecast, err := planner.predictor.advance(
+		ticker.Symbol,
+		ticker.Timestamp,
+		ticker.Bid.Float64(),
+	)
 
-	if ticker.Timestamp.IsZero() {
-		return nil, fmt.Errorf("planner: ticker event time required")
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"planner: error advancing ticker forecast",
+			err,
+		))
 	}
 
 	breakEven, err := planner.breakEven(ticker.Symbol)
 
 	if err != nil {
-		return nil, err
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"planner: error getting break-even",
+			err,
+		))
 	}
 
-	return planner.predictor.advance(
-		ticker.Symbol,
-		ticker.Timestamp,
-		ticker.Bid.Float64(),
-		breakEven,
-	)
+	if err := forecast.observeExecutionBoundary(
+		ticker.Bid.Float64(), *breakEven,
+	); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"planner: error applying execution boundary",
+			err,
+		))
+	}
+
+	return forecast, nil
+}
+
+func (planner *Planner) validateTicker(envelope *types.Envelope) error {
+	ticker := envelope.TickerData
+
+	if ticker.Symbol == "" || ticker.Bid == nil || ticker.Ask == nil ||
+		ticker.Bid.Sign() <= 0 || ticker.Ask.Sign() <= 0 {
+
+		return fmt.Errorf("ticker symbol and positive bid/ask required")
+	}
+
+	if ticker.Timestamp.IsZero() {
+		return fmt.Errorf("ticker event time required")
+	}
+
+	return nil
 }
 
 func (planner *Planner) breakEven(symbol string) (*float64, error) {
 	cash := planner.desk.Balance().Cash()
 
 	if cash == nil || cash.Sign() <= 0 {
-		return nil, fmt.Errorf("planner: positive quote cash required to price entry")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"planner: positive quote cash required to price entry",
+			nil,
+		))
 	}
 
 	budget := decimal.NewFromInt64(0).Add(cash).Mul(
@@ -206,31 +292,50 @@ func (planner *Planner) breakEven(symbol string) (*float64, error) {
 	quantity := planner.desk.Price().Quantity(symbol, budget)
 
 	if quantity == nil || quantity.Sign() <= 0 {
-		return nil, fmt.Errorf("planner: positive proposed quantity required to price entry")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"planner: positive proposed quantity required to price entry",
+			nil,
+		))
 	}
 
 	executable, err := planner.desk.Price().ExecutableQuantity(symbol, quantity)
 
 	if err != nil {
-		return nil, fmt.Errorf("planner: executable proposed quantity required: %w", err)
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"planner: executable proposed quantity required",
+			err,
+		))
 	}
 
 	if executable == nil || executable.Sign() <= 0 {
-		return nil, fmt.Errorf("planner: executable proposed quantity required")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"planner: executable proposed quantity required",
+			nil,
+		))
 	}
 
 	cost, err := planner.desk.Price().EntryCost(symbol, executable)
 
 	if err != nil {
-		return nil, fmt.Errorf("planner: fee-inclusive entry boundary required: %w", err)
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"planner: fee-inclusive entry boundary required",
+			err,
+		))
 	}
 
 	if cost == nil || cost.BreakEven == nil {
-		return nil, fmt.Errorf("planner: fee-inclusive entry boundary required")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"planner: fee-inclusive entry boundary required",
+			nil,
+		))
 	}
 
 	value := cost.BreakEven.Float64()
-
 	return &value, nil
 }
 
@@ -249,7 +354,7 @@ func (planner *Planner) decide(forecast *directionalForecast) *types.Decision {
 	decision.Confidence = forecast.probabilityProfitable
 	decision.PredictiveReady = true
 	decision.PredictiveStatus = forecast.status
-	decision.ForecastSource = "opportunity-conditioned-observations-and-perspectives"
+	decision.ForecastSource = "opportunity-conditioned-observations"
 	decision.ForecastModel = "adaptive-executable-return-student-t-v1"
 	decision.Forecast = &forecast.output
 	decision.ForecastHorizon = forecast.horizonSteps
@@ -267,7 +372,7 @@ func (planner *Planner) decide(forecast *directionalForecast) *types.Decision {
 		"return:break_even_log":      forecast.breakEvenLogReturn,
 		"return:scale":               forecast.output.Scale,
 		"return:degrees_of_freedom":  forecast.output.DegreesOfFreedom,
-		"horizon:seconds":            forecast.horizon.Seconds(),
+		"horizon:ticker_steps":       float64(forecast.horizonSteps),
 		"features:directional":       float64(forecast.directionalFeatures),
 		"features:estimability":      float64(forecast.estimabilityFeatures),
 		"features:execution_context": float64(forecast.executionFeatures),
@@ -277,35 +382,56 @@ func (planner *Planner) decide(forecast *directionalForecast) *types.Decision {
 	return decision
 }
 
-func (planner *Planner) execute(decision *types.Decision, round *types.StrategyRound) {
+func (planner *Planner) execute(
+	decision *types.Decision,
+	round *types.StrategyRound,
+) error {
 	if err := planner.allocation.Calculate([]*types.Decision{decision}); err != nil {
 		decision.Action = types.ActionNothing
 		decision.Reason = "planner: allocation failed: " + err.Error()
 		round.Outcome = "allocation-failed"
-		return
+
+		return err
 	}
 
 	if decision.Action != types.ActionEnter {
 		round.Outcome = "admission"
-		return
+
+		return nil
 	}
 
 	if err := planner.desk.Execute(*decision); err != nil {
 		decision.Action = types.ActionNothing
 		decision.Reason = "planner: execution failed: " + err.Error()
 		round.Outcome = "execution-failed"
-		return
+
+		return err
 	}
 
 	round.Outcome = "entry"
+
+	return nil
+}
+
+func (planner *Planner) Error() error { return planner.err }
+
+func (planner *Planner) halt(err error) {
+	if err == nil || planner.err != nil {
+		return
+	}
+
+	planner.err = err
+
+	if planner.status != nil {
+		planner.status.Transition(runtime.FATAL)
+	}
+
+	if planner.cancel != nil {
+		planner.cancel()
+	}
 }
 
 func (planner *Planner) Close() error {
-	if planner == nil || planner.cancel == nil {
-		return nil
-	}
-
 	planner.cancel()
-
 	return nil
 }

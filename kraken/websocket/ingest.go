@@ -1,6 +1,8 @@
 package websocket
 
 import (
+	"time"
+
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
@@ -161,7 +163,17 @@ func fromFuturesTrade(parsed any, captureID hindsight.CaptureIdentity) ([]*types
 	envelopes := make([]*types.Envelope, 0, len(trade.Data))
 	manifests := make([]hindsight.EnvelopeManifest, 0, len(trade.Data))
 
-	for ordinal, data := range trade.Data {
+	for ordinal := range trade.Data {
+		dataIndex := ordinal
+
+		// A futures trade snapshot is a bounded reverse-causal history: newest
+		// first. Expand it oldest first so the streaming workload observes the
+		// venue sequence causally; live single-trade frames retain wire order.
+		if trade.Feed == "trade_snapshot" {
+			dataIndex = len(trade.Data) - ordinal - 1
+		}
+
+		data := trade.Data[dataIndex]
 		envelope := types.NewEnvelope(types.EnvelopeFuturesTrade)
 		envelope.FuturesTradeData = data
 		envelope.CaptureID = captureID
@@ -185,6 +197,29 @@ func manifestFor(
 	ordinal uint64,
 	workload, symbol string,
 ) hindsight.EnvelopeManifest {
+	// Derived envelopes and parser-synthetic futures clocks do not carry a
+	// protocol-supplied venue time, so their manifest field remains zero.
+	venueAt := time.Time{}
+
+	switch envelope.TypeID {
+	case types.EnvelopeTicker:
+		venueAt = envelope.TickerData.Timestamp
+	case types.EnvelopeTrade:
+		venueAt = envelope.TradeData.Timestamp
+	case types.EnvelopeLevel3:
+		venueAt = envelope.Level3Data.Timestamp
+	case types.EnvelopeExecution:
+		venueAt = envelope.ExecutionData.Timestamp
+	case types.EnvelopeFuturesTicker:
+		if !envelope.FuturesTickerData.SyntheticTimestamp {
+			venueAt = envelope.FuturesTickerData.Timestamp
+		}
+	case types.EnvelopeFuturesTrade:
+		if !envelope.FuturesTradeData.SyntheticTimestamp {
+			venueAt = envelope.FuturesTradeData.Timestamp
+		}
+	}
+
 	return hindsight.EnvelopeManifest{
 		Envelope: hindsight.EnvelopeRef{
 			Origin:  captureID,
@@ -193,5 +228,6 @@ func manifestFor(
 		Workload:   workload,
 		DomainKind: workload,
 		Symbol:     symbol,
+		VenueAt:    venueAt,
 	}
 }

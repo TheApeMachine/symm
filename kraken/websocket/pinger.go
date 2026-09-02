@@ -15,7 +15,7 @@ Pinger owns one session's keepalive loop. Spot and futures send different
 payloads — spot a {"method":"ping"} message, futures a protocol ping control
 frame, since Kraken Futures rejects an application-level ping — so the session
 supplies the send and the Pinger owns everything around it: the interval, the
-goroutine, and the restart-on-reconnect lifecycle.
+goroutine, and the session lifecycle.
 */
 type Pinger struct {
 	// send writes one keepalive. It is the only part that differs per venue.
@@ -28,8 +28,7 @@ type Pinger struct {
 	// name prefixes this pinger's log lines with the session it serves.
 	name string
 
-	// mu guards stop so a reconnect can halt the previous loop before starting
-	// its replacement.
+	// mu guards the loop's stop channel.
 	mu   sync.Mutex
 	stop chan struct{}
 }
@@ -42,10 +41,8 @@ func NewPinger(name string, send func() error) *Pinger {
 OnFailed installs the handler invoked when a keepalive write fails.
 
 A failed ping is the only evidence a half-open socket produces. The venue's read
-loop is still blocked on a socket whose write side is already gone, so it never
-errors, never reports the disconnect, and never triggers the reconnect that
-would restore the session. Without this the loop writes into a dead socket for
-the rest of the process lifetime.
+loop is still blocked on a socket whose write side is already gone, so it may
+never report the disconnect. The session treats this callback as terminal.
 */
 func (pinger *Pinger) OnFailed(handler func(err error)) {
 	if pinger == nil {
@@ -56,9 +53,8 @@ func (pinger *Pinger) OnFailed(handler func(err error)) {
 }
 
 /*
-Start starts (or replaces) the keepalive loop. It is called on every connect,
-since a reconnect is a new session and the previous loop belongs to a socket
-that is already gone. The loop ends when Stop is called or ctx is done.
+Start starts (or replaces) the keepalive loop. The loop ends when Stop is called
+or ctx is done.
 */
 func (pinger *Pinger) Start(ctx context.Context) {
 	if pinger == nil || pinger.send == nil {
@@ -73,10 +69,11 @@ func (pinger *Pinger) Start(ctx context.Context) {
 
 	stop := make(chan struct{})
 	pinger.stop = stop
+	interval := system.Cfg.WebSocket.PingInterval
 	pinger.mu.Unlock()
 
 	go func() {
-		ticker := time.NewTicker(system.Cfg.WebSocket.PingInterval)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
 		for {
@@ -94,11 +91,8 @@ func (pinger *Pinger) Start(ctx context.Context) {
 					err,
 				))
 
-				// The socket this loop was keeping alive is gone. Reporting it
-				// once and standing down is what lets the session tear the
-				// connection down and reconnect; continuing to tick would keep
-				// writing into a dead socket and report the same failure
-				// forever.
+				// Report once and stand down. Continuing to tick would keep
+				// writing into a dead socket and repeat the same terminal fact.
 				if pinger.failed != nil {
 					pinger.failed(err)
 				}

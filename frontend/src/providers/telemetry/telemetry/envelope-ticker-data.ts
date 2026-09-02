@@ -122,8 +122,18 @@ timestampNs():bigint {
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
+hasTrades():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 42);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+trades():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 44);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
 static startEnvelopeTickerData(builder:flatbuffers.Builder) {
-  builder.startObject(19);
+  builder.startObject(21);
 }
 
 static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
@@ -202,13 +212,21 @@ static addTimestampNs(builder:flatbuffers.Builder, timestampNs:bigint) {
   builder.addFieldInt64(18, timestampNs, BigInt('0'));
 }
 
+static addHasTrades(builder:flatbuffers.Builder, hasTrades:boolean) {
+  builder.addFieldInt8(19, +hasTrades, +false);
+}
+
+static addTrades(builder:flatbuffers.Builder, trades:bigint) {
+  builder.addFieldInt64(20, trades, BigInt('0'));
+}
+
 static endEnvelopeTickerData(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 4) // symbol
   return offset;
 }
 
-static createEnvelopeTickerData(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset, hasBid:boolean, bid:number, bidQty:number, hasAsk:boolean, ask:number, askQty:number, hasLast:boolean, last:number, volume:number, vwap:number, hasLow:boolean, low:number, hasHigh:boolean, high:number, hasChange:boolean, change:number, changePct:number, timestampNs:bigint):flatbuffers.Offset {
+static createEnvelopeTickerData(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset, hasBid:boolean, bid:number, bidQty:number, hasAsk:boolean, ask:number, askQty:number, hasLast:boolean, last:number, volume:number, vwap:number, hasLow:boolean, low:number, hasHigh:boolean, high:number, hasChange:boolean, change:number, changePct:number, timestampNs:bigint, hasTrades:boolean, trades:bigint):flatbuffers.Offset {
   EnvelopeTickerData.startEnvelopeTickerData(builder);
   EnvelopeTickerData.addSymbol(builder, symbolOffset);
   EnvelopeTickerData.addHasBid(builder, hasBid);
@@ -229,6 +247,8 @@ static createEnvelopeTickerData(builder:flatbuffers.Builder, symbolOffset:flatbu
   EnvelopeTickerData.addChange(builder, change);
   EnvelopeTickerData.addChangePct(builder, changePct);
   EnvelopeTickerData.addTimestampNs(builder, timestampNs);
+  EnvelopeTickerData.addHasTrades(builder, hasTrades);
+  EnvelopeTickerData.addTrades(builder, trades);
   return EnvelopeTickerData.endEnvelopeTickerData(builder);
 }
 
@@ -252,7 +272,9 @@ unpack(): EnvelopeTickerDataT {
     this.hasChange(),
     this.change(),
     this.changePct(),
-    this.timestampNs()
+    this.timestampNs(),
+    this.hasTrades(),
+    this.trades()
   );
 }
 
@@ -277,6 +299,8 @@ unpackTo(_o: EnvelopeTickerDataT): void {
   _o.change = this.change();
   _o.changePct = this.changePct();
   _o.timestampNs = this.timestampNs();
+  _o.hasTrades = this.hasTrades();
+  _o.trades = this.trades();
 }
 }
 
@@ -300,7 +324,9 @@ constructor(
   public hasChange: boolean = false,
   public change: number = 0.0,
   public changePct: number = 0.0,
-  public timestampNs: bigint = BigInt('0')
+  public timestampNs: bigint = BigInt('0'),
+  public hasTrades: boolean = false,
+  public trades: bigint = BigInt('0')
 ){}
 
 
@@ -326,7 +352,9 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     this.hasChange,
     this.change,
     this.changePct,
-    this.timestampNs
+    this.timestampNs,
+    this.hasTrades,
+    this.trades
   );
 }
 }

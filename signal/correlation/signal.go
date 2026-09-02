@@ -3,6 +3,7 @@ package correlation
 import (
 	"context"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
@@ -41,8 +42,12 @@ func (signal *Signal) Name() string { return "correlation" }
 func (signal *Signal) Error() error { return signal.err }
 
 func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
-	envelope.Correlation = signal.ticker.Step(envelope.TickerData)
+	if signal.err != nil {
+		errnie.Error(signal.Close())
+		return nil
+	}
 
+	envelope.Correlation = signal.ticker.Step(envelope.TickerData)
 	return envelope
 }
 

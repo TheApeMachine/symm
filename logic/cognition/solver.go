@@ -274,9 +274,7 @@ func (solver *Solver) processBatch(
 		return nil
 	}
 
-	if len(rows) == 0 {
-		solver.tickCounter.Add(1)
-	}
+	transitionOrdinal := solver.tickCounter.Add(1)
 
 	// 2. Evaluate if appending this category causes a Sequence Break
 	broken, _ := solver.evalSequenceBreak(activeTokens, categoryToken)
@@ -287,9 +285,23 @@ func (solver *Solver) processBatch(
 
 		// Commit completed sequence to episodic buffer for REM replay
 		solver.treeMu.Lock()
-		_, _ = solver.tree.CommitToEpisodicBuffer(
-			uint64(at.UnixNano()), oldSequenceBytes,
+		_, inserted := solver.tree.CommitToEpisodicBuffer(
+			transitionOrdinal, oldSequenceBytes,
 		)
+
+		if !inserted {
+			solver.treeMu.Unlock()
+
+			return errnie.Error(errnie.Err(
+				errnie.Internal,
+				fmt.Sprintf(
+					"cognition: failed to retain transition %d for %s",
+					transitionOrdinal,
+					symbol,
+				),
+				nil,
+			))
+		}
 
 		if activeRegime.Type != types.CategoryTypeNone {
 			err := solver.tree.TeachSequence(

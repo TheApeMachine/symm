@@ -68,7 +68,8 @@ type Reading = {
 /*
 readResident flattens one as-of answer into the same named facts the exact-
 capture mode produces, so the two modes line up row for row and switching
-between them compares like with like.
+between them compares like with like. Historical Perspective rows are labeled
+as legacy advisor evidence; they are not the current Perspective contract.
 */
 const readResident = (
 	resident: HindsightResident | null,
@@ -126,8 +127,8 @@ const readResident = (
 		for (const reading of view.readings) {
 			const name = `${view.symbol}/${family}${reading.metric}`;
 
-			facts.set(`perspective/${name}`, {
-				group: "perspective",
+			facts.set(`legacy-advisor/${name}`, {
+				group: "legacy-advisor",
 				name,
 				unit: "",
 				value: reading.defined ? reading.value : null,
@@ -139,12 +140,12 @@ const readResident = (
 	return facts;
 };
 
-const FACT_GROUPS = ["measurement", "category", "perspective"] as const;
+const FACT_GROUPS = ["measurement", "category", "legacy-advisor"] as const;
 
 /*
 readFacts flattens one decoded state into the named facts a comparison can line
 up: every signal metric by "source/metric", every category by its confidence,
-and every perspective reading by "symbol/metric".
+and every retired advisor reading by "symbol/metric".
 */
 const readFacts = (state: EnvelopeState | null): Map<string, Reading> => {
 	const facts = new Map<string, Reading>();
@@ -217,8 +218,8 @@ const readFacts = (state: EnvelopeState | null): Map<string, Reading> => {
 			const metric = entry.metric() ?? "";
 			const name = `${symbol}/${metric}`;
 
-			facts.set(`perspective/${name}`, {
-				group: "perspective",
+			facts.set(`legacy-advisor/${name}`, {
+				group: "legacy-advisor",
 				name,
 				unit: "",
 				value: entry.defined() ? entry.value() : null,

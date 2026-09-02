@@ -23,16 +23,15 @@ import (
 Recovery reconstructs active positions and working orders from exchange state on boot.
 */
 type Recovery struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	api         *websocket.API
-	instrument  *Instrument
-	price       *Price
-	balance     *Balance
-	recorder    *audit.Recorder
-	store       *PositionStore
-	positions   *sync.Map
-	perspective PerspectiveReader
+	ctx        context.Context
+	cancel     context.CancelFunc
+	api        *websocket.API
+	instrument *Instrument
+	price      *Price
+	balance    *Balance
+	recorder   *audit.Recorder
+	store      *PositionStore
+	positions  *sync.Map
 }
 
 /*
@@ -47,21 +46,19 @@ func NewRecovery(
 	recorder *audit.Recorder,
 	store *PositionStore,
 	positions *sync.Map,
-	perspective PerspectiveReader,
 ) *Recovery {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return &Recovery{
-		ctx:         ctx,
-		cancel:      cancel,
-		api:         api,
-		instrument:  instrument,
-		price:       price,
-		balance:     balance,
-		recorder:    recorder,
-		store:       store,
-		positions:   positions,
-		perspective: perspective,
+		ctx:        ctx,
+		cancel:     cancel,
+		api:        api,
+		instrument: instrument,
+		price:      price,
+		balance:    balance,
+		recorder:   recorder,
+		store:      store,
+		positions:  positions,
 	}
 }
 
@@ -306,9 +303,16 @@ func (recovery *Recovery) recoverAsset(
 			" — no stored stoploss at this entry; rebuilt protection from current market (entry-only synthesis, NOT the lost historical StopLoss)")
 	}
 
+	entryDecision, err := recovery.store.LoadOpenDecision(symbol)
+
+	if err != nil {
+		return err
+	}
+
 	position := recovery.recoveredPosition(
 		pair, asset, quantity, entryPrice, entryFee, entryAt, stoploss,
 	)
+	position.decisionWire = entryDecision
 	position.DegradedRecovery = degraded
 
 	if order != nil {
@@ -535,7 +539,6 @@ func (recovery *Recovery) recoveredPosition(
 			Mark:             stoploss.Mark,
 			Stoploss:         stoploss,
 		},
-		recovery.perspective,
 	)
 
 	position.setStatus(types.OPEN)

@@ -3,6 +3,7 @@ package sentiment
 import (
 	"context"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
@@ -40,6 +41,11 @@ func (signal *Signal) Name() string { return "sentiment" }
 func (signal *Signal) Error() error { return signal.err }
 
 func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
+	if signal.err != nil {
+		errnie.Error(signal.Close())
+		return nil
+	}
+
 	measurement := signal.ticker.Step(envelope.TickerData)
 
 	if measurement != nil {

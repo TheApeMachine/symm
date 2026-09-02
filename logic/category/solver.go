@@ -2,13 +2,16 @@ package category
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	nomagique_probability "github.com/theapemachine/symm/nomagique/probability"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
@@ -28,13 +31,11 @@ type Solver struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	err        error
+	status     *runtime.Status
 	categories []types.CategoryType
 	states     sync.Map
-	// version is the monotonic committed-transition version of the shared
-	// per-symbol category evidence state. Every StepMeasurement that updates a
-	// symbol's snapshot advances it, so Hindsight can record the exact order
-	// concurrent workloads committed category transitions — independent of
-	// external CaptureSequence.
+	// version is the monotonic committed-classification revision. It is local
+	// Category state, distinct from transport identity and venue event time.
 	version       atomic.Uint64
 	ObserveModule func(string, time.Duration)
 }
@@ -51,11 +52,16 @@ type coordinate struct {
 
 /*
 evidenceItem is the current eligible state of one coordinate: its category
-affinity, maturity, and the provenance identity.
+affinity, estimator maturity, and provenance identity. Freshness is one for a
+resident latest observation: Category does not invent a universal wall-clock
+expiry for heterogeneous metrics. Source-specific volume clocks and validity
+facts remain measurements for semantic consumers.
 */
 type evidenceItem struct {
 	Affinity   float64
 	Maturity   float64
+	At         time.Time
+	Freshness  float64
 	Supporting string
 }
 
@@ -87,6 +93,7 @@ func NewSolver(ctx context.Context) *Solver {
 	solver := &Solver{
 		ctx:        ctx,
 		cancel:     cancel,
+		status:     runtime.NewStatus().Transition(runtime.READY),
 		categories: categories,
 	}
 
@@ -98,21 +105,37 @@ func (solver *Solver) Name() string { return "category" }
 func (solver *Solver) Error() error { return solver.err }
 
 /*
-Step folds every signal measurement populated on this envelope into their
-symbol's evidence snapshot and writes the resulting ranked category batch back
-onto the envelope. A ticker-workload envelope may carry several signal
-outputs at once (correlation, leadlag, liquidity, ...); each is its own
-observation of current state, applied in field order.
+Step folds every signal measurement populated on this envelope into its
+symbol's evidence snapshot. The envelope is one committed observation: all of
+its measurements are applied before Category publishes one distribution.
 */
 func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
+	if solver.err != nil {
+		solver.cancel()
+
+		return nil
+	}
+
+	if envelope == nil {
+		return nil
+	}
+
+	var measurements [11]*nmtypes.Measurement
+	measurementCount := 0
+
 	for _, measurement := range envelope.SignalMeasurements() {
 		if measurement == nil {
 			continue
 		}
 
-		if categories := solver.StepMeasurement(measurement.ToTypesMeasurement()); categories != nil {
-			envelope.Categories = categories
-		}
+		measurements[measurementCount] = measurement.ToTypesMeasurement()
+		measurementCount++
+	}
+
+	envelope.Categories = solver.stepMeasurements(measurements[:measurementCount])
+
+	if solver.err != nil {
+		return nil
 	}
 
 	return envelope
@@ -127,7 +150,26 @@ updates the value of any coordinate it carries; it never appends another
 independent vote.
 */
 func (solver *Solver) StepMeasurement(measurement *nmtypes.Measurement) []types.Category {
-	if measurement == nil || measurement.Symbol == "" {
+	measurements := [1]*nmtypes.Measurement{measurement}
+
+	return solver.stepMeasurements(measurements[:])
+}
+
+/*
+stepMeasurements commits one runtime observation. Commit order is the causal
+clock at this fan-in; measurement timestamps remain provenance and are only
+compared inside the observation that produced them.
+*/
+func (solver *Solver) stepMeasurements(
+	measurements []*nmtypes.Measurement,
+) []types.Category {
+	if solver.err != nil {
+		solver.cancel()
+
+		return nil
+	}
+
+	if len(measurements) == 0 {
 		return nil
 	}
 
@@ -138,17 +180,71 @@ func (solver *Solver) StepMeasurement(measurement *nmtypes.Measurement) []types.
 		}
 	}()
 
-	state := solver.symbolState(measurement.Symbol)
-	solver.accumulate(state, measurement)
+	var symbol string
+	var at time.Time
+	var state *categoryState
 
-	categories, measured, err := solver.classify(measurement.Symbol, state)
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
 
-	if err != nil {
-		solver.err = err
+		if measurement.Err != nil {
+			solver.fail("category: signal measurement failed", measurement.Err)
+
+			return nil
+		}
+
+		if measurement.Symbol == "" || measurement.At.IsZero() {
+			solver.fail("category: measurement symbol and event time required", nil)
+
+			return nil
+		}
+
+		if symbol == "" {
+			symbol = measurement.Symbol
+			at = measurement.At
+			state = solver.symbolState(symbol)
+		}
+
+		if measurement.Symbol != symbol || !measurement.At.Equal(at) {
+			solver.fail("category: envelope requires one symbol and event time", nil)
+
+			return nil
+		}
+	}
+
+	if state == nil {
 		return nil
 	}
 
+	state.mu.Lock()
+
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		if err := solver.accumulateLocked(state, measurement); err != nil {
+			state.mu.Unlock()
+			solver.fail("category: invalid measurement", err)
+
+			return nil
+		}
+	}
+
+	byCategory, measured := solver.aggregateLocked(state)
+	state.mu.Unlock()
+
 	if !measured {
+		return nil
+	}
+
+	categories, err := solver.classify(symbol, at, byCategory)
+
+	if err != nil {
+		solver.fail("category: classification failed", err)
+
 		return nil
 	}
 
@@ -158,9 +254,8 @@ func (solver *Solver) StepMeasurement(measurement *nmtypes.Measurement) []types.
 }
 
 /*
-Version returns the monotonic committed-transition version of the shared
-category evidence state. Hindsight records it as the ComponentStateVersion of
-every category witness so replay can reconstruct transition order.
+Version returns the monotonic committed-classification revision of Category's
+shared evidence state. It is not an external observation identity.
 */
 func (solver *Solver) Version() uint64 {
 	if solver == nil {
@@ -184,9 +279,34 @@ carries. Latest-state replacement means a repeated publication of the same
 coordinate overwrites rather than accumulates, so arrival cadence is not
 evidence.
 */
-func (solver *Solver) accumulate(state *categoryState, measurement *nmtypes.Measurement) {
+func (solver *Solver) accumulate(
+	state *categoryState,
+	measurement *nmtypes.Measurement,
+) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
+
+	return solver.accumulateLocked(state, measurement)
+}
+
+func (solver *Solver) accumulateLocked(
+	state *categoryState,
+	measurement *nmtypes.Measurement,
+) error {
+	if measurement == nil {
+		return fmt.Errorf("measurement is required")
+	}
+
+	if !measurement.ObservedFrom.IsZero() && measurement.ObservedFrom.After(measurement.At) {
+		return fmt.Errorf(
+			"%s %s/%s interval begins at %s after event time %s",
+			measurement.ID,
+			measurement.Source,
+			measurement.Symbol,
+			measurement.ObservedFrom.Format(time.RFC3339Nano),
+			measurement.At.Format(time.RFC3339Nano),
+		)
+	}
 
 	for _, schema := range types.CategorySchemas {
 		if string(schema.Source) != measurement.Source {
@@ -199,6 +319,15 @@ func (solver *Solver) accumulate(state *categoryState, measurement *nmtypes.Meas
 			continue
 		}
 
+		if sample == nil {
+			return fmt.Errorf(
+				"coordinate %s:%s has no metric value",
+				measurement.Source,
+				schema.Metric,
+			)
+		}
+
+		key := coordinate{Source: measurement.Source, Metric: schema.Metric}
 		affinity := sample.Raw
 
 		if sample.Normalized != nil {
@@ -209,23 +338,21 @@ func (solver *Solver) accumulate(state *categoryState, measurement *nmtypes.Meas
 			// A non-positive affinity provides no positive support. It is
 			// still a current reading of the coordinate, so it must not be
 			// left as a stale positive vote; drop the coordinate.
-			delete(state.coordinates, coordinate{
-				Source: measurement.Source,
-				Metric: schema.Metric,
-			})
+			delete(state.coordinates, key)
 
 			continue
 		}
 
-		state.coordinates[coordinate{
-			Source: measurement.Source,
-			Metric: schema.Metric,
-		}] = evidenceItem{
+		state.coordinates[key] = evidenceItem{
 			Affinity:   affinity,
 			Maturity:   measurement.Maturity,
+			At:         measurement.At,
+			Freshness:  1,
 			Supporting: string(schema.Source) + ":" + schema.Metric,
 		}
 	}
+
+	return nil
 }
 
 /*
@@ -236,14 +363,9 @@ whole vocabulary; surprisal is -log2(confidence).
 */
 func (solver *Solver) classify(
 	symbol string,
-	state *categoryState,
-) ([]types.Category, bool, error) {
-	byCategory, measured := solver.aggregate(state)
-
-	if !measured {
-		return nil, false, nil
-	}
-
+	at time.Time,
+	byCategory map[types.CategoryType][]evidenceItem,
+) ([]types.Category, error) {
 	strengths := make([]float64, len(solver.categories))
 
 	for index, category := range solver.categories {
@@ -254,12 +376,16 @@ func (solver *Solver) classify(
 			continue
 		}
 
-		strengths[index] = categoryStrength(items)
+		strength, err := categoryStrength(items)
+
+		if err != nil {
+			return nil, err
+		}
+
+		strengths[index] = strength
 	}
 
-	categories := solver.buildBatch(symbol, strengths, byCategory)
-
-	return categories, true, nil
+	return solver.buildBatch(symbol, at, strengths, byCategory)
 }
 
 /*
@@ -268,7 +394,7 @@ affinities, expressed through the shared probability.Geomean primitive. The
 solver lifts the affinities into a Frame of sample slots, steps the atomic
 primitive, and projects the result back out.
 */
-func categoryStrength(items []evidenceItem) float64 {
+func categoryStrength(items []evidenceItem) (float64, error) {
 	frame := nmtypes.Frame{}
 
 	for index, item := range items {
@@ -278,10 +404,10 @@ func categoryStrength(items []evidenceItem) float64 {
 	nmtypes.Step(nomagique_probability.Geomean, &frame)
 
 	if frame.Err != nil {
-		return 0
+		return 0, frame.Err
 	}
 
-	return frame.MustGet(nomagique_probability.SymbolResult)
+	return frame.MustGet(nomagique_probability.SymbolResult), nil
 }
 
 /*
@@ -307,6 +433,13 @@ func (solver *Solver) aggregate(
 ) (map[types.CategoryType][]evidenceItem, bool) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
+
+	return solver.aggregateLocked(state)
+}
+
+func (solver *Solver) aggregateLocked(
+	state *categoryState,
+) (map[types.CategoryType][]evidenceItem, bool) {
 
 	byCategory := make(map[types.CategoryType][]evidenceItem)
 
@@ -338,9 +471,10 @@ uncertainty shared by the whole batch.
 */
 func (solver *Solver) buildBatch(
 	symbol string,
+	at time.Time,
 	strengths []float64,
 	byCategory map[types.CategoryType][]evidenceItem,
-) []types.Category {
+) ([]types.Category, error) {
 	count := len(solver.categories)
 
 	evidence := lift(strengths)
@@ -348,11 +482,12 @@ func (solver *Solver) buildBatch(
 
 	ambiguityFrame := evidence
 	nmtypes.Step(nomagique_probability.ShannonAmbiguity(), &ambiguityFrame)
-	uncertainty := 0.0
 
-	if ambiguityFrame.Err == nil {
-		uncertainty = ambiguityFrame.MustGet(nomagique_probability.SymbolAmbiguity)
+	if ambiguityFrame.Err != nil {
+		return nil, ambiguityFrame.Err
 	}
+
+	uncertainty := ambiguityFrame.MustGet(nomagique_probability.SymbolAmbiguity)
 
 	for index := range solver.categories {
 		// Preselect the winner so EvidenceShare resolves this category's share.
@@ -361,13 +496,11 @@ func (solver *Solver) buildBatch(
 
 		nmtypes.Step(nomagique_probability.EvidenceShare(), &selected)
 
-		confidence := 1.0 / float64(count)
-
-		if selected.Err == nil {
-			confidence = selected.MustGet(nomagique_probability.SymbolConfidence)
+		if selected.Err != nil {
+			return nil, selected.Err
 		}
 
-		confidences[index] = confidence
+		confidences[index] = selected.MustGet(nomagique_probability.SymbolConfidence)
 	}
 
 	categories := make([]types.Category, 0, count)
@@ -377,12 +510,14 @@ func (solver *Solver) buildBatch(
 		maturity := maturityOf(byCategory[category])
 
 		categories = append(categories, types.Category{
+			At:          at,
 			Symbol:      symbol,
 			Type:        category,
 			Confidence:  confidence,
 			Surprisal:   -math.Log2(confidence),
 			Strength:    strengths[index],
 			Maturity:    maturity,
+			Freshness:   freshnessOf(byCategory[category]),
 			Uncertainty: uncertainty,
 			Supporting:  supportingIdentities(byCategory[category]),
 		})
@@ -396,7 +531,13 @@ func (solver *Solver) buildBatch(
 		return types.CategoryOrderLess(categories[left].Type, categories[right].Type)
 	})
 
-	return categories
+	return categories, nil
+}
+
+func (solver *Solver) fail(message string, err error) {
+	solver.err = errnie.Error(errnie.Err(errnie.Validation, message, err))
+	solver.status.Transition(runtime.FATAL)
+	solver.cancel()
 }
 
 /*
@@ -493,6 +634,22 @@ func maturityOf(items []evidenceItem) float64 {
 	}
 
 	return maturity
+}
+
+func freshnessOf(items []evidenceItem) float64 {
+	if len(items) == 0 {
+		return 0
+	}
+
+	freshness := 1.0
+
+	for _, item := range items {
+		if item.Freshness < freshness {
+			freshness = item.Freshness
+		}
+	}
+
+	return freshness
 }
 
 /*

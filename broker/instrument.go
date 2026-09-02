@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -12,7 +13,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /*
@@ -20,7 +21,10 @@ Instrument owns validated immutable pair snapshots and the subscription universe
 Remember and On deep-copy decimals so callers cannot mutate cached precision.
 */
 type Instrument struct {
-	status  types.Status
+	ctx     context.Context
+	cancel  context.CancelFunc
+	err     error
+	status  *runtime.Status
 	api     *websocket.API
 	price   *Price
 	cache   *sync.Map
@@ -48,8 +52,12 @@ func NewInstrument(api *websocket.API, price *Price) *Instrument {
 		panic("broker: price required")
 	}
 
+	ctx, cancel := context.WithCancel(api.Context())
+
 	instrument := &Instrument{
-		status:           types.INITIALIZING,
+		ctx:              ctx,
+		cancel:           cancel,
+		status:           runtime.NewStatus(),
 		api:              api,
 		price:            price,
 		cache:            &sync.Map{},
@@ -58,13 +66,48 @@ func NewInstrument(api *websocket.API, price *Price) *Instrument {
 		products:         make(map[string]string),
 		symbolsByProduct: make(map[string]string),
 	}
+	instrument.status.Transition(runtime.BUSY)
 
 	callback := make(chan any, 1)
 	api.SubInstrument(callback)
 
-	returned := <-callback
+	if err := api.Error(); err != nil {
+		instrument.fail(errnie.Err(
+			errnie.IO,
+			"instrument: snapshot subscription failed",
+			err,
+		))
 
-	for _, pair := range returned.(*kraken.Instrument).Data.Pairs {
+		return instrument
+	}
+
+	var returned any
+
+	select {
+	case returned = <-callback:
+	case <-instrument.ctx.Done():
+		instrument.fail(errnie.Err(
+			errnie.IO,
+			"instrument: snapshot unavailable",
+			instrument.operationalError(),
+		))
+
+		return instrument
+	}
+
+	snapshot, valid := returned.(*kraken.Instrument)
+
+	if !valid || snapshot == nil {
+		instrument.fail(errnie.Err(
+			errnie.Validation,
+			"instrument: invalid snapshot response",
+			nil,
+		))
+
+		return instrument
+	}
+
+	for _, pair := range snapshot.Data.Pairs {
 		if pair.Quote != instrument.quote || pair.Status != "online" || isExcludedBase(pair.Base) {
 			continue
 		}
@@ -73,7 +116,11 @@ func NewInstrument(api *websocket.API, price *Price) *Instrument {
 		instrument.cache.Store(pair.Symbol, pair)
 	}
 
-	instrument.loadFuturesProducts()
+	if err := instrument.loadFuturesProducts(); err != nil {
+		instrument.fail(err)
+
+		return instrument
+	}
 
 	// The transport attributes inbound frames with the same mapping the
 	// subscription path uses, so both directions agree by construction.
@@ -81,7 +128,7 @@ func NewInstrument(api *websocket.API, price *Price) *Instrument {
 		api.Futures().SetResolver(instrument.FuturesSymbol)
 	}
 
-	instrument.status = types.PENDING
+	instrument.status.Transition(runtime.WAITING)
 
 	return instrument
 }
@@ -89,8 +136,42 @@ func NewInstrument(api *websocket.API, price *Price) *Instrument {
 /*
 Status reports instrument readiness.
 */
-func (instrument *Instrument) Status() types.Status {
-	return instrument.status
+func (instrument *Instrument) Status() runtime.Stage {
+	return instrument.status.Current()
+}
+
+/*
+Error returns the first terminal instrument failure.
+*/
+func (instrument *Instrument) Error() error {
+	return instrument.err
+}
+
+func (instrument *Instrument) fail(err error) {
+	if instrument == nil || err == nil || instrument.err != nil {
+		return
+	}
+
+	instrument.err = errnie.Error(err)
+	instrument.status.Transition(runtime.ERROR)
+	instrument.cancel()
+}
+
+func (instrument *Instrument) operationalError() error {
+	if instrument.err != nil {
+		return instrument.err
+	}
+
+	if err := instrument.api.Error(); err != nil {
+		return err
+	}
+
+	select {
+	case <-instrument.ctx.Done():
+		return instrument.ctx.Err()
+	default:
+		return nil
+	}
 }
 
 /*
@@ -139,6 +220,12 @@ feed with no consumer would create an exact raw tape that can never influence
 the system.
 */
 func (instrument *Instrument) Subscribe() error {
+	if err := instrument.operationalError(); err != nil {
+		instrument.fail(err)
+
+		return instrument.err
+	}
+
 	errnie.Info("subscribing to instruments")
 
 	subscribers := []func([]string){
@@ -153,22 +240,67 @@ func (instrument *Instrument) Subscribe() error {
 		errnie.Info(fmt.Sprintf("subscribing to %d symbols", len(batch)))
 
 		if err := instrument.price.GetFees(batch); err != nil {
-			errnie.Warn(fmt.Sprintf("instrument: failed to load fee tier batch: %v", err))
+			instrument.fail(errnie.Err(
+				errnie.IO,
+				"instrument: failed to load fee tier batch",
+				err,
+			))
+
+			return instrument.err
 		}
 
 		for _, subscribe := range subscribers {
 			subscribe(batch)
+
+			if err := instrument.api.Error(); err != nil {
+				instrument.fail(errnie.Err(
+					errnie.IO,
+					"instrument: required spot subscription failed",
+					err,
+				))
+
+				return instrument.err
+			}
 		}
 
-		instrument.futuresLegs("subscribe", batch, []func([]string) error{
+		if err := instrument.futuresLegs("subscribe", batch, []func([]string) error{
 			instrument.api.SubFuturesTicker,
 			instrument.api.SubFuturesTrades,
-		})
+		}); err != nil {
+			instrument.fail(err)
 
-		time.Sleep(viper.GetViper().GetDuration("market.subscribe.pace"))
+			return instrument.err
+		}
+
+		pace := time.NewTimer(viper.GetViper().GetDuration("market.subscribe.pace"))
+
+		select {
+		case <-pace.C:
+		case <-instrument.ctx.Done():
+			if !pace.Stop() {
+				select {
+				case <-pace.C:
+				default:
+				}
+			}
+
+			instrument.fail(errnie.Err(
+				errnie.IO,
+				"instrument: subscription interrupted",
+				instrument.operationalError(),
+			))
+
+			return instrument.err
+		}
 	}
 
-	instrument.status = types.READY
+	if err := instrument.operationalError(); err != nil {
+		instrument.fail(err)
+
+		return instrument.err
+	}
+
+	instrument.status.Transition(runtime.READY)
 	return nil
 }
 
@@ -178,7 +310,13 @@ is the mirror of Subscribe and walks the same universe through the same batched
 seam, so a deliberate teardown leaves the venue with no streams pointed at
 sockets that are about to close.
 */
-func (instrument *Instrument) Unsubscribe() {
+func (instrument *Instrument) Unsubscribe() error {
+	if err := instrument.operationalError(); err != nil {
+		instrument.fail(err)
+
+		return instrument.err
+	}
+
 	errnie.Info("unsubscribing from instruments")
 
 	unsubscribers := []func([]string){
@@ -192,15 +330,31 @@ func (instrument *Instrument) Unsubscribe() {
 	) {
 		for _, unsubscribe := range unsubscribers {
 			unsubscribe(batch)
+
+			if err := instrument.api.Error(); err != nil {
+				instrument.fail(errnie.Err(
+					errnie.IO,
+					"instrument: required spot unsubscription failed",
+					err,
+				))
+
+				return instrument.err
+			}
 		}
 
-		instrument.futuresLegs("unsubscribe", batch, []func([]string) error{
+		if err := instrument.futuresLegs("unsubscribe", batch, []func([]string) error{
 			instrument.api.UnsubFuturesTicker,
 			instrument.api.UnsubFuturesTrades,
-		})
+		}); err != nil {
+			instrument.fail(err)
+
+			return instrument.err
+		}
 	}
 
-	instrument.status = types.PENDING
+	instrument.status.Transition(runtime.WAITING)
+
+	return nil
 }
 
 /*
@@ -213,26 +367,28 @@ func (instrument *Instrument) futuresLegs(
 	action string,
 	batch []string,
 	feeds []func([]string) error,
-) {
+) error {
 	if instrument.api.Futures() == nil {
-		return
+		return nil
 	}
 
 	products := instrument.productIDs(batch)
 
 	if len(products) == 0 {
-		return
+		return nil
 	}
 
 	for _, feed := range feeds {
 		if err := feed(products); err != nil {
-			errnie.Error(errnie.Err(
+			return errnie.Err(
 				errnie.IO,
 				fmt.Sprintf("instrument: failed to %s futures feed", action),
 				err,
-			))
+			)
 		}
 	}
+
+	return nil
 }
 
 /*
@@ -241,17 +397,15 @@ both directions of the spot/futures mapping. The endpoint is public, so it needs
 no credentials, and it is read once here alongside the spot instrument snapshot
 so one construction settles the whole universe.
 */
-func (instrument *Instrument) loadFuturesProducts() {
+func (instrument *Instrument) loadFuturesProducts() error {
 	response, err := derivatives.NewREST().Instruments()
 
 	if err != nil {
-		errnie.Error(errnie.Err(
+		return errnie.Err(
 			errnie.IO,
 			"instrument: failed to load futures instrument specifications",
 			err,
-		))
-
-		return
+		)
 	}
 
 	for _, listed := range response.Result.Instruments {
@@ -275,6 +429,8 @@ func (instrument *Instrument) loadFuturesProducts() {
 			instrument.products[symbol] = product
 		}
 	}
+
+	return nil
 }
 
 /*
@@ -314,6 +470,21 @@ Symbols returns a copy of the subscribed market universe.
 */
 func (instrument *Instrument) Symbols() []string {
 	return instrument.symbols
+}
+
+/*
+Close cancels the instrument registry lifecycle.
+*/
+func (instrument *Instrument) Close() {
+	if instrument == nil {
+		return
+	}
+
+	instrument.cancel()
+
+	if instrument.err == nil {
+		instrument.status.Transition(runtime.DONE)
+	}
 }
 
 func isExcludedBase(base string) bool {

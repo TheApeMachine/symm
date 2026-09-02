@@ -8,12 +8,32 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+func TestPlannerStep(t *testing.T) {
+	Convey("Given a malformed ticker carrying otherwise valid observations", t, func() {
+		predictor, err := newDirectionalPredictor(directionalConfig{
+			initialVariance: 1, forgettingFactor: 1,
+		})
+		So(err, ShouldBeNil)
+		planner := &Planner{predictor: predictor}
+		envelope := fullObservationEnvelope()
+
+		out := planner.Step(envelope)
+
+		Convey("ticker integrity is established before predictor state mutates", func() {
+			So(out, ShouldBeNil)
+			So(planner.Error(), ShouldNotBeNil)
+			So(predictor.states, ShouldBeEmpty)
+			So(planner.Step(fullObservationEnvelope()), ShouldBeNil)
+		})
+	})
+}
+
 func TestPlannerPreDecision(t *testing.T) {
 	Convey("Given an unresolved adaptive return distribution", t, func() {
 		planner := &Planner{}
 		forecast := &directionalForecast{
 			symbol: "TEST/USD", at: time.Unix(1, 0),
-			status: "awaiting-return-distribution", horizon: time.Second,
+			status: "awaiting-return-distribution", horizonSteps: 3,
 			opportunity: types.OpportunityCandidate{
 				Archetype: types.ArchetypeVerticalIgnition,
 				Phase:     types.PhaseArmed,

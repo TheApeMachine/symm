@@ -2,9 +2,11 @@ package opportunity
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
@@ -87,7 +89,7 @@ func NewSolver(ctx context.Context) *Solver {
 	return &Solver{
 		ctx:    ctx,
 		cancel: cancel,
-		status: runtime.NewStatus(),
+		status: runtime.NewStatus().Transition(runtime.READY),
 	}
 }
 
@@ -110,27 +112,45 @@ categories, or no active precursors/confirmation, leaves Opportunities unset:
 computation follows opportunity density, so dormant symbols cost nothing.
 */
 func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
+	if solver.err != nil {
+		solver.cancel()
+
+		return nil
+	}
+
 	categories := envelope.Categories
 
 	if len(categories) == 0 {
 		return envelope
 	}
 
-	symbol := categories[0].Symbol
-	active := activeCategories(categories)
-
 	solver.mutex.Lock()
 	defer solver.mutex.Unlock()
 
+	symbol, eventTime, err := validateBatch(categories)
+
+	if err != nil {
+		solver.err = errnie.Error(errnie.Err(
+			errnie.Validation,
+			"opportunity: invalid category batch",
+			err,
+		))
+		solver.status.Transition(runtime.FATAL)
+		solver.cancel()
+
+		return envelope
+	}
+
+	active := activeCategories(categories)
+
 	slots := solver.slotsFor(symbol)
-	now := time.Now().UTC()
 
 	candidates := make([]*types.OpportunityCandidate, 0, len(families))
 
 	for _, declared := range families {
 		phase, found := phaseFor(declared, active)
 
-		if candidate := solver.advance(slots, declared, symbol, phase, found, active, now); candidate != nil {
+		if candidate := solver.advance(slots, declared, symbol, phase, found, active, eventTime); candidate != nil {
 			candidates = append(candidates, candidate)
 		}
 	}
@@ -140,6 +160,31 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 	}
 
 	return envelope
+}
+
+func validateBatch(categories []types.Category) (string, time.Time, error) {
+	if len(categories) == 0 {
+		return "", time.Time{}, nil
+	}
+
+	symbol := categories[0].Symbol
+	eventTime := categories[0].At
+
+	if symbol == "" || eventTime.IsZero() {
+		return "", time.Time{}, fmt.Errorf(
+			"category symbol and event time required",
+		)
+	}
+
+	for index := 1; index < len(categories); index++ {
+		if categories[index].Symbol != symbol || !categories[index].At.Equal(eventTime) {
+			return "", time.Time{}, fmt.Errorf(
+				"category batch requires one symbol and event time",
+			)
+		}
+	}
+
+	return symbol, eventTime, nil
 }
 
 /*
@@ -164,7 +209,7 @@ func (solver *Solver) advance(
 	phase types.OpportunityPhase,
 	found bool,
 	active map[types.CategoryType]float64,
-	now time.Time,
+	eventTime time.Time,
 ) *types.OpportunityCandidate {
 	slot, exists := slots[declared.Archetype]
 
@@ -179,7 +224,7 @@ func (solver *Solver) advance(
 
 		slot.invalidated = true
 		slot.candidate.Phase = types.PhaseInvalidated
-		slot.candidate.Updated = now
+		slot.candidate.Updated = eventTime
 		slot.candidate.Sequence++
 		delete(slots, declared.Archetype)
 
@@ -196,8 +241,8 @@ func (solver *Solver) advance(
 			Archetype:  declared.Archetype,
 			Phase:      phase,
 			Direction:  declared.Direction,
-			FirstSeen:  now,
-			Updated:    now,
+			FirstSeen:  eventTime,
+			Updated:    eventTime,
 			Sequence:   1,
 			Provenance: types.ProvenanceCategory,
 			Maturity:   maturity,
@@ -209,7 +254,7 @@ func (solver *Solver) advance(
 	}
 
 	slot.candidate.Phase = phase
-	slot.candidate.Updated = now
+	slot.candidate.Updated = eventTime
 	slot.candidate.Sequence++
 	slot.candidate.Provenance |= types.ProvenanceCategory
 	slot.candidate.Maturity = maturity

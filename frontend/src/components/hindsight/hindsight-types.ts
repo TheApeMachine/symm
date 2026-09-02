@@ -424,9 +424,8 @@ export type ResidentPerspective = {
 	symbol: string;
 	peer?: string;
 	/*
-		The advisor family identity (PerspectiveKind interned as a byte),
-		carried from the wire. It participates in resident identity so advisor
-		families at the same symbol/peer stay distinct.
+		Retired metric-bucket advisor family byte carried by historical wire data.
+		This is decode-only evidence, not the current falsifiable Perspective.
 	*/
 	kind: number;
 	origin: ResidentOrigin;

@@ -66,7 +66,6 @@ const paintHierarchyRows = (
 		const error = row.querySelector<HTMLSpanElement>("[data-error]");
 		const fill = row.querySelector<HTMLDivElement>("[data-fill]");
 		const values = layerCellsFromState(layer.state);
-		const predictions = layerCellsFromState(layer.prediction);
 
 		if (label !== null) {
 			label.textContent = layer.label;
@@ -101,22 +100,7 @@ const paintHierarchyRows = (
 			}
 
 			cell.style.background = heatColor((value + 1) / 2);
-
-			/*
-			A cell shows the layer's state. The prediction alongside it only
-			means something as the gap between the two — the per-unit prediction
-			error — so it is drawn as a ring whose strength is that gap, letting
-			the units the coder actually got wrong stand out. Painting the
-			prediction as its own bar across every cell instead put a stripe on
-			all 64 of them, which read as chrome rather than as a reading.
-			*/
-			const prediction = predictions[cellIndex];
-			cell.style.boxShadow =
-				typeof prediction === "number"
-					? `inset 0 0 0 1px rgba(224, 168, 91, ${(
-							Math.min(2, Math.abs(value - prediction)) / 2
-						).toFixed(3)})`
-					: "";
+			cell.style.boxShadow = "";
 		}
 	}
 };
@@ -166,7 +150,8 @@ export const XrayHierarchyPanel = () => (
 			/>
 		</div>
 		<div className="mt-1 font-mono text-[10px] text-(--f4)">
-			resonance layers only · prediction error ε · not manifold / ρ
+			latent state · prediction error ε per layer · macro = abstract regime,
+			sensory = raw tape
 		</div>
 		<div className="mt-4">
 			<div ref={waitingRef} className="font-mono text-[10px] text-(--f4)">

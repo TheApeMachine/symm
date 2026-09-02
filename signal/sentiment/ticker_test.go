@@ -30,6 +30,38 @@ func TestTickerStep(t *testing.T) {
 			So(measurement.Metrics, ShouldBeEmpty)
 		})
 
+		Convey("a quoted market with no recent trade remains outside the price cohort", func() {
+			untraded := ticker("CORN/USD", 0, time.Unix(1_700_000_000, 0))
+			untraded.Bid = decimal.NewFromFloat64(0.02015)
+			untraded.Ask = decimal.NewFromFloat64(0.04414)
+
+			measurement := entity.Step(untraded)
+
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.Metrics, ShouldBeEmpty)
+			So(measurement.Metadata["support"], ShouldEqual, 0.0)
+			So(measurement.Maturity, ShouldEqual, 0.0)
+			So(measurement.Provenance["last_trade_price_state"], ShouldEqual, "unobserved")
+
+			firstTrade := entity.Step(ticker("CORN/USD", 0.03, time.Unix(1_700_000_001, 0)))
+			untraded.Timestamp = time.Unix(1_700_000_002, 0)
+			unobservedAgain := entity.Step(untraded)
+			secondTrade := entity.Step(ticker("CORN/USD", 0.033, time.Unix(1_700_000_003, 0)))
+
+			So(firstTrade.Err, ShouldBeNil)
+			So(firstTrade.Metrics, ShouldBeEmpty)
+			So(unobservedAgain.Err, ShouldBeNil)
+			So(unobservedAgain.Metrics, ShouldBeEmpty)
+			So(secondTrade.Err, ShouldBeNil)
+			So(secondTrade.Metrics["return"].Raw, ShouldAlmostEqual, math.Log(0.033/0.03), 1e-12)
+		})
+
+		Convey("a negative last price remains invalid", func() {
+			measurement := entity.Step(ticker("AAA/USD", -1, time.Unix(1_700_000_000, 0)))
+
+			So(measurement.Err, ShouldNotBeNil)
+		})
+
 		Convey("the second observation emits the member return and cohort facts", func() {
 			entity.Step(ticker("AAA/USD", 100, time.Unix(1_700_000_000, 0)))
 
@@ -121,4 +153,21 @@ func TestTickerStep(t *testing.T) {
 			So(measurement.SNR, ShouldBeGreaterThanOrEqualTo, 0)
 		})
 	})
+}
+
+func BenchmarkTickerStep(b *testing.B) {
+	entity := NewTicker()
+	step := int64(0)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		step++
+		entity.Step(ticker(
+			"BTC/USD",
+			100+float64(step%10),
+			time.Unix(1_700_000_000+step, 0),
+		))
+	}
 }

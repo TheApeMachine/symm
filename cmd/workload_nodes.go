@@ -6,7 +6,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/logic/advisor"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -74,43 +73,6 @@ func (node executionNode) Step(envelope *types.Envelope) *types.Envelope {
 
 	if err := node.desk.StepExecution(envelope.ExecutionData); err != nil {
 		errnie.Error(errnie.Err(errnie.Internal, "symm: desk execution step", err))
-	}
-
-	return envelope
-}
-
-/*
-advisorNode applies every declared advisor to every Measurement on an envelope
-and publishes the resulting Perspectives into the shared latest-value store.
-*/
-type advisorNode struct {
-	advisors []*advisor.Advisor
-	store    *advisor.Store
-}
-
-func (node advisorNode) Step(envelope *types.Envelope) *types.Envelope {
-	if envelope == nil {
-		return envelope
-	}
-
-	for _, advisorInstance := range node.advisors {
-		for _, measurement := range envelope.SignalMeasurements() {
-			if measurement == nil {
-				continue
-			}
-
-			perspective := advisorInstance.Step(measurement)
-
-			if perspective == nil {
-				continue
-			}
-
-			envelope.Perspectives = append(envelope.Perspectives, perspective)
-
-			if node.store != nil {
-				node.store.Put(perspective)
-			}
-		}
 	}
 
 	return envelope

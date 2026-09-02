@@ -30,7 +30,6 @@ const (
 	ChannelRelations      = "relations"
 	ChannelCausalState    = "causal_state"
 	ChannelOpportunities  = "opportunities"
-	ChannelPerspectives   = "perspectives"
 	ChannelDecisions      = "decisions"
 	ChannelExecutions     = "executions"
 	ChannelRegulator      = "regulator"
@@ -56,13 +55,13 @@ type ResonanceArtifact struct {
 	// Predictive-head projection data. The workspace observer projects these
 	// into the dashboard ResonanceFrame, so the domain payload carries the wire
 	// coordinates instead of the solver holding a ChannelUI handle.
-	ForwardCurve         []float64
-	ForwardRetention     []float64
-	SupportedHorizon     int
-	Calibrated           bool
-	ResolvedSteps        int
-	Readout              []float64
-	Confidence           float64
+	ForwardCurve     []float64
+	ForwardRetention []float64
+	SupportedHorizon int
+	Calibrated       bool
+	ResolvedSteps    int
+	Readout          []float64
+	Confidence       float64
 	// LastResolutionPrediction is the direction the head actually issued at t,
 	// as distinct from the target it was scored against. Without it a consumer
 	// can only show the realized move twice over and never the call that was

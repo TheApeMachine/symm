@@ -4,6 +4,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/types"
@@ -13,11 +14,16 @@ import (
 activeBatch builds a ranked category batch whose listed categories all carry
 positive support, so the opportunity tracker reads them as active.
 */
-func activeBatch(symbol string, categories ...types.CategoryType) []types.Category {
+func activeBatch(
+	eventTime time.Time,
+	symbol string,
+	categories ...types.CategoryType,
+) []types.Category {
 	batch := make([]types.Category, 0, len(categories))
 
 	for _, category := range categories {
 		batch = append(batch, types.Category{
+			At:       eventTime,
 			Symbol:   symbol,
 			Type:     category,
 			Strength: 1,
@@ -42,19 +48,29 @@ func stepBatch(solver *Solver, categories []types.Category) []*types.Opportunity
 func TestSolverStep(t *testing.T) {
 	Convey("Given an opportunity synthesizer", t, func() {
 		solver := NewSolver(t.Context())
+		firstEventTime := time.Unix(1, 2)
+		secondEventTime := time.Unix(3, 4)
 
 		Convey("a batch with no categories yields nothing", func() {
 			So(stepBatch(solver, nil), ShouldBeNil)
 		})
 
 		Convey("a dormant symbol with no precursor yields nothing", func() {
-			candidates := stepBatch(solver, activeBatch("DORMANT", types.StochasticNoise))
+			candidates := stepBatch(solver, activeBatch(
+				firstEventTime,
+				"DORMANT",
+				types.StochasticNoise,
+			))
 
 			So(candidates, ShouldBeNil)
 		})
 
 		Convey("one active precursor forms a candidate", func() {
-			candidates := stepBatch(solver, activeBatch("HMAID", types.CoiledCompression))
+			candidates := stepBatch(solver, activeBatch(
+				firstEventTime,
+				"HMAID",
+				types.CoiledCompression,
+			))
 
 			So(candidates, ShouldHaveLength, 1)
 
@@ -67,10 +83,13 @@ func TestSolverStep(t *testing.T) {
 			So(candidate.Sequence, ShouldEqual, 1)
 			So(candidate.Provenance, ShouldEqual, types.ProvenanceCategory)
 			So(candidate.Economics, ShouldBeNil)
+			So(candidate.FirstSeen, ShouldResemble, firstEventTime)
+			So(candidate.Updated, ShouldResemble, firstEventTime)
 		})
 
 		Convey("two agreeing precursors arm the candidate", func() {
 			candidates := stepBatch(solver, activeBatch(
+				firstEventTime,
 				"HMAID",
 				types.CoiledCompression,
 				types.HiddenAbsorption,
@@ -82,6 +101,7 @@ func TestSolverStep(t *testing.T) {
 
 		Convey("the confirmation category ignites the candidate", func() {
 			candidates := stepBatch(solver, activeBatch(
+				firstEventTime,
 				"HMAID",
 				types.CoiledCompression,
 				types.VerticalIgnition,
@@ -92,9 +112,14 @@ func TestSolverStep(t *testing.T) {
 		})
 
 		Convey("a formed candidate advances its sequence on update", func() {
-			formed := stepBatch(solver, activeBatch("HMAID", types.CoiledCompression))
+			formed := stepBatch(solver, activeBatch(
+				firstEventTime,
+				"HMAID",
+				types.CoiledCompression,
+			))
 
 			candidates := stepBatch(solver, activeBatch(
+				secondEventTime,
 				"HMAID",
 				types.CoiledCompression,
 				types.HiddenAbsorption,
@@ -105,6 +130,8 @@ func TestSolverStep(t *testing.T) {
 			So(candidates[0].Sequence, ShouldEqual, 2)
 			So(formed[0].Phase, ShouldEqual, types.PhaseForming)
 			So(formed[0].Sequence, ShouldEqual, 1)
+			So(candidates[0].FirstSeen, ShouldResemble, firstEventTime)
+			So(candidates[0].Updated, ShouldResemble, secondEventTime)
 		})
 
 		Convey("concurrent workloads advance one atomic candidate sequence", func() {
@@ -119,6 +146,7 @@ func TestSolverStep(t *testing.T) {
 					defer waitGroup.Done()
 
 					candidates := stepBatch(solver, activeBatch(
+						firstEventTime,
 						"HMAID",
 						types.CoiledCompression,
 					))
@@ -143,27 +171,131 @@ func TestSolverStep(t *testing.T) {
 		})
 
 		Convey("a dissolved precursor state invalidates exactly once", func() {
-			stepBatch(solver, activeBatch("HMAID", types.CoiledCompression))
+			stepBatch(solver, activeBatch(
+				firstEventTime,
+				"HMAID",
+				types.CoiledCompression,
+			))
 
-			invalidated := stepBatch(solver, activeBatch("HMAID", types.StochasticNoise))
+			invalidated := stepBatch(solver, activeBatch(
+				secondEventTime,
+				"HMAID",
+				types.StochasticNoise,
+			))
 
 			So(invalidated, ShouldHaveLength, 1)
 			So(invalidated[0].Phase, ShouldEqual, types.PhaseInvalidated)
+			So(invalidated[0].FirstSeen, ShouldResemble, firstEventTime)
+			So(invalidated[0].Updated, ShouldResemble, secondEventTime)
 
-			again := stepBatch(solver, activeBatch("HMAID", types.StochasticNoise))
+			again := stepBatch(solver, activeBatch(
+				secondEventTime,
+				"HMAID",
+				types.StochasticNoise,
+			))
 
 			So(again, ShouldBeNil)
 		})
 
 		Convey("re-forming after invalidation starts a fresh candidate", func() {
-			stepBatch(solver, activeBatch("HMAID", types.CoiledCompression))
-			stepBatch(solver, activeBatch("HMAID", types.StochasticNoise))
+			stepBatch(solver, activeBatch(
+				firstEventTime,
+				"HMAID",
+				types.CoiledCompression,
+			))
+			stepBatch(solver, activeBatch(
+				secondEventTime,
+				"HMAID",
+				types.StochasticNoise,
+			))
 
-			candidates := stepBatch(solver, activeBatch("HMAID", types.BookThinning))
+			candidates := stepBatch(solver, activeBatch(
+				secondEventTime.Add(time.Nanosecond),
+				"HMAID",
+				types.BookThinning,
+			))
 
 			So(candidates, ShouldHaveLength, 1)
 			So(candidates[0].Phase, ShouldEqual, types.PhaseForming)
 			So(candidates[0].Sequence, ShouldEqual, 1)
+		})
+
+		Convey("a category batch without event time fails visibly", func() {
+			candidates := stepBatch(solver, activeBatch(
+				time.Time{},
+				"HMAID",
+				types.CoiledCompression,
+			))
+
+			So(candidates, ShouldBeNil)
+			So(solver.Error(), ShouldNotBeNil)
+			So(solver.Error().Error(), ShouldContainSubstring, "symbol and event time required")
+
+			next := types.NewEnvelope(types.EnvelopeTicker)
+			next.Categories = activeBatch(
+				firstEventTime,
+				"HMAID",
+				types.CoiledCompression,
+			)
+			So(solver.Step(next), ShouldBeNil)
+		})
+
+		Convey("a mixed-symbol category batch fails visibly", func() {
+			categories := activeBatch(
+				firstEventTime,
+				"HMAID",
+				types.CoiledCompression,
+			)
+			categories = append(categories, types.Category{
+				At: firstEventTime, Symbol: "OTHER", Type: types.HiddenAbsorption,
+				Strength: 1, Maturity: 1,
+			})
+
+			candidates := stepBatch(solver, categories)
+
+			So(candidates, ShouldBeNil)
+			So(solver.Error(), ShouldNotBeNil)
+			So(solver.Error().Error(), ShouldContainSubstring, "one symbol and event time")
+		})
+
+		Convey("a mixed-time category batch fails visibly", func() {
+			categories := activeBatch(
+				firstEventTime,
+				"HMAID",
+				types.CoiledCompression,
+			)
+			categories = append(categories, types.Category{
+				At: secondEventTime, Symbol: "HMAID", Type: types.HiddenAbsorption,
+				Strength: 1, Maturity: 1,
+			})
+
+			candidates := stepBatch(solver, categories)
+
+			So(candidates, ShouldBeNil)
+			So(solver.Error(), ShouldNotBeNil)
+			So(solver.Error().Error(), ShouldContainSubstring, "one symbol and event time")
+		})
+
+		Convey("commit order governs lifecycle when event provenance regresses", func() {
+			formed := stepBatch(solver, activeBatch(
+				secondEventTime,
+				"HMAID",
+				types.CoiledCompression,
+			))
+
+			candidates := stepBatch(solver, activeBatch(
+				firstEventTime,
+				"HMAID",
+				types.CoiledCompression,
+				types.HiddenAbsorption,
+			))
+
+			So(formed, ShouldHaveLength, 1)
+			So(candidates, ShouldHaveLength, 1)
+			So(candidates[0].Phase, ShouldEqual, types.PhaseArmed)
+			So(candidates[0].Sequence, ShouldEqual, uint64(2))
+			So(candidates[0].Updated, ShouldResemble, firstEventTime)
+			So(solver.Error(), ShouldBeNil)
 		})
 	})
 }
@@ -171,9 +303,9 @@ func TestSolverStep(t *testing.T) {
 func TestActiveCategories(t *testing.T) {
 	Convey("Given a ranked category batch", t, func() {
 		batch := []types.Category{
-			{Symbol: "A", Type: types.CoiledCompression, Strength: 1, Maturity: 0.5},
-			{Symbol: "A", Type: types.StochasticNoise, Strength: 0, Maturity: 0.5},
-			{Symbol: "A", Type: types.HiddenAbsorption, Strength: 2, Maturity: 0.9},
+			{At: time.Unix(1, 0), Symbol: "A", Type: types.CoiledCompression, Strength: 1, Maturity: 0.5},
+			{At: time.Unix(1, 0), Symbol: "A", Type: types.StochasticNoise, Strength: 0, Maturity: 0.5},
+			{At: time.Unix(1, 0), Symbol: "A", Type: types.HiddenAbsorption, Strength: 2, Maturity: 0.9},
 		}
 
 		Convey("activeCategories keeps only positive-strength categories", func() {
@@ -200,6 +332,7 @@ func TestPhaseFor(t *testing.T) {
 
 		Convey("one precursor is forming", func() {
 			phase, found := phaseFor(declared, activeCategories(activeBatch(
+				time.Unix(1, 0),
 				"A",
 				types.BookThinning,
 			)))
@@ -210,6 +343,7 @@ func TestPhaseFor(t *testing.T) {
 
 		Convey("two precursors are armed", func() {
 			phase, _ := phaseFor(declared, activeCategories(activeBatch(
+				time.Unix(1, 0),
 				"A",
 				types.BookThinning,
 				types.Frenzy,
@@ -220,6 +354,7 @@ func TestPhaseFor(t *testing.T) {
 
 		Convey("confirmation dominates precursors", func() {
 			phase, _ := phaseFor(declared, activeCategories(activeBatch(
+				time.Unix(1, 0),
 				"A",
 				types.BookThinning,
 				types.VerticalIgnition,
@@ -252,14 +387,15 @@ func TestFamilyMaturity(t *testing.T) {
 func BenchmarkSolverStep(b *testing.B) {
 	solver := NewSolver(b.Context())
 	categories := activeBatch(
+		time.Unix(1, 0),
 		"HMAID",
 		types.CoiledCompression,
 		types.HiddenAbsorption,
 	)
 
-	b.ResetTimer()
+	
 
-	for range b.N {
+	for b.Loop() {
 		stepBatch(solver, categories)
 	}
 }

@@ -9,7 +9,6 @@ import { Nav } from "@/components/ui/nav";
 
 type TerminalRoutePath =
 	| "/"
-	| "/graph"
 	| "/influence"
 	| "/lineage"
 	| "/fluid"
@@ -19,11 +18,10 @@ type TerminalRoutePath =
 	| "/xray"
 	| "/cortex"
 	| "/allocation"
-	| "/regulator"
 	| "/diagnostics"
 	| "/hindsight";
 
-const SURFACE_ITEMS: Array<{
+export const SURFACE_ITEMS: Array<{
 	key: TerminalSurface;
 	label: string;
 	icon: IconName;
@@ -31,18 +29,11 @@ const SURFACE_ITEMS: Array<{
 }> = [
 	{ key: "dashboard", label: "Dashboard", icon: "dashboard", to: "/" },
 	{
-		key: "regulator",
-		label: "Global regulator",
-		icon: "cortex",
-		to: "/regulator",
-	},
-	{
 		key: "diagnostics",
 		label: "System diagnostics",
 		icon: "lanes",
 		to: "/diagnostics",
 	},
-	{ key: "graph", label: "Market graph", icon: "graph", to: "/graph" },
 	{
 		key: "influence",
 		label: "Influence field",

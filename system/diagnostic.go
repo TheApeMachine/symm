@@ -79,6 +79,7 @@ cycle).
 */
 type tracedNode interface {
 	Step(*types.Envelope) *types.Envelope
+	Error() error
 }
 
 /*
@@ -91,12 +92,12 @@ stamped — same call, no extra stage, so it costs nothing beyond what a
 trailing Diagnostic already cost.
 */
 type Traced struct {
-	node       tracedNode
+	tracedNode
 	diagnostic *Diagnostic
 }
 
 func NewTraced(label string, node tracedNode) *Traced {
-	return &Traced{node: node, diagnostic: NewDiagnostic(label)}
+	return &Traced{tracedNode: node, diagnostic: NewDiagnostic(label)}
 }
 
 /* Compose forwards the owning ring's identity to the wrapped label. */
@@ -105,11 +106,23 @@ func (traced *Traced) Compose(group string, stage int) {
 }
 
 func (traced *Traced) Step(envelope *types.Envelope) *types.Envelope {
-	return traced.diagnostic.Step(traced.node.Step(envelope))
+	envelope = traced.tracedNode.Step(envelope)
+
+	if traced.Error() != nil || envelope == nil {
+		return envelope
+	}
+
+	return traced.diagnostic.Step(envelope)
 }
 
 func (traced *Traced) StepBacklog(envelope *types.Envelope, backlog int64) *types.Envelope {
-	return traced.diagnostic.StepBacklog(traced.node.Step(envelope), backlog)
+	envelope = traced.tracedNode.Step(envelope)
+
+	if traced.Error() != nil || envelope == nil {
+		return envelope
+	}
+
+	return traced.diagnostic.StepBacklog(envelope, backlog)
 }
 
 func (diagnostic *Diagnostic) stamp(envelope *types.Envelope, backlog int64) *types.Envelope {

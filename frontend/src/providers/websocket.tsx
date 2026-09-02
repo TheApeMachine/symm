@@ -11,7 +11,6 @@ import {
 	focusStore,
 	onlineStore,
 	opportunityStore,
-	perspectiveStore,
 	positionStore,
 	strategyStore,
 	tickCountStore,
@@ -119,11 +118,6 @@ function dispatchEnvelopeState(state: EnvelopeState) {
 
 	const strategy = state.strategy();
 	if (strategy) strategyStore.actions.add(strategy);
-
-	for (let i = 0; i < state.perspectivesLength(); i++) {
-		const perspective = state.perspectives(i);
-		if (perspective) perspectiveStore.actions.add(perspective);
-	}
 
 	for (let i = 0; i < state.categoriesLength(); i++) {
 		const category = state.categories(i);

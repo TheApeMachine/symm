@@ -52,6 +52,39 @@ func TestTickerStep(t *testing.T) {
 			So(measurement.SNR, ShouldEqual, 0.0)
 		})
 
+		Convey("a quoted market with no recent trade does not enter the price path", func() {
+			untraded := ticker("CORN/USD", 0, timestamp(1))
+			untraded.Bid = decimal.NewFromFloat64(0.02015)
+			untraded.Ask = decimal.NewFromFloat64(0.04414)
+
+			measurement := entity.Step(untraded)
+
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.Metrics, ShouldNotContainKey, "last_price")
+			So(measurement.Metrics, ShouldNotContainKey, "observation_count")
+			So(measurement.Maturity, ShouldEqual, 0.0)
+			So(measurement.Provenance["last_trade_price_state"], ShouldEqual, "unobserved")
+
+			observed := entity.Step(ticker("CORN/USD", 0.03, timestamp(2)))
+			untraded.Timestamp = timestamp(3)
+			unobservedAgain := entity.Step(untraded)
+			observedAgain := entity.Step(ticker("CORN/USD", 0.033, timestamp(4)))
+
+			So(observed.Err, ShouldBeNil)
+			So(observed.Metrics["observation_count"].Raw, ShouldEqual, 1.0)
+			So(observed.Metrics["last_price"].Raw, ShouldEqual, 0.03)
+			So(unobservedAgain.Err, ShouldBeNil)
+			So(unobservedAgain.Metrics, ShouldNotContainKey, "observation_count")
+			So(observedAgain.Err, ShouldBeNil)
+			So(observedAgain.Metrics["observation_count"].Raw, ShouldEqual, 2.0)
+		})
+
+		Convey("a negative last price remains invalid", func() {
+			measurement := entity.Step(ticker("BTC/USD", -1, timestamp(1)))
+
+			So(measurement.Err, ShouldNotBeNil)
+		})
+
 		Convey("best-lag and pair-history facts appear once CrossLag is ready", func() {
 			drive(entity, "BTC/USD", []float64{100, 101, 102, 103, 104, 105})
 			measurements := drive(entity, "ETH/USD", []float64{200, 202, 204, 206, 208, 210})

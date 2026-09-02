@@ -2,12 +2,14 @@ package manifold
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/tests/market"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -100,6 +102,58 @@ func TestSolverStep(t *testing.T) {
 			So(first.Manifold, ShouldNotEqual, second.Manifold)
 			So(first.Manifold.State.N, ShouldEqual, 1)
 			So(second.Manifold.State.N, ShouldEqual, 3)
+		})
+
+		Convey("A Level3 delete evicts its order before the field advances", func() {
+			opening := types.NewEnvelope(types.EnvelopeLevel3)
+			opening.Level3Data = kraken.Level3Data{
+				Symbol: "BOOK/USD",
+				Bids: []kraken.Level3Order{
+					{Event: "add", OrderID: "bid-1", LimitPrice: decimalPtr(10), OrderQty: decimalPtr(1)},
+					{Event: "add", OrderID: "bid-2", LimitPrice: decimalPtr(9), OrderQty: decimalPtr(1)},
+				},
+			}
+			So(solver.Step(opening), ShouldNotBeNil)
+
+			departure := types.NewEnvelope(types.EnvelopeLevel3)
+			departure.Level3Data = kraken.Level3Data{
+				Symbol: "BOOK/USD",
+				Bids: []kraken.Level3Order{{
+					Event:   "delete",
+					OrderID: "bid-1",
+				}},
+			}
+			result := solver.Step(departure)
+
+			So(result, ShouldNotBeNil)
+			So(result.Manifold, ShouldNotBeNil)
+			So(result.Manifold.State.N, ShouldEqual, 1)
+			So(solver.Error(), ShouldBeNil)
+		})
+
+		Convey("A multi-leg add/delete churn remains admissible and resident-exact", func() {
+			tape := market.NewLevel3ChurnTape(
+				"CHURN/USD",
+				time.Unix(1_700_000_000, 0),
+				16,
+			)
+
+			for _, message := range tape.Messages {
+				envelope := types.NewEnvelope(types.EnvelopeLevel3)
+				envelope.Level3Data = message
+				So(solver.Step(envelope), ShouldNotBeNil)
+				So(solver.Error(), ShouldBeNil)
+			}
+
+			state := solver.physics.State()
+			So(state.N, ShouldEqual, len(solver.lifecycle.byContent))
+
+			for index := 0; index < state.N; index++ {
+				So(math.IsNaN(float64(state.Energy[index])), ShouldBeFalse)
+				So(math.IsInf(float64(state.Energy[index]), 0), ShouldBeFalse)
+				So(math.IsNaN(float64(state.Mass[index])), ShouldBeFalse)
+				So(math.IsInf(float64(state.Mass[index]), 0), ShouldBeFalse)
+			}
 		})
 	})
 }

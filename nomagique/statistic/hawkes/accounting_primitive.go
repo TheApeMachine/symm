@@ -21,8 +21,8 @@ var (
 	SymbolArrivalRateBuy  = types.MustIntern("hawkes/obs/arrival_rate_buy")
 	SymbolArrivalRateSell = types.MustIntern("hawkes/obs/arrival_rate_sell")
 	SymbolArrivalRate     = types.MustIntern("hawkes/obs/arrival_rate")
-	SymbolFromSec         = types.MustIntern("hawkes/obs/from_sec")
-	SymbolAtSec           = types.MustIntern("hawkes/obs/at_sec")
+	SymbolFromUnixSec     = types.MustIntern("hawkes/obs/from_unix_sec")
+	SymbolFromUnixNsec    = types.MustIntern("hawkes/obs/from_unix_nsec")
 	SymbolMaturity        = types.MustIntern("hawkes/obs/maturity")
 )
 
@@ -58,12 +58,21 @@ func Accounting(input *types.Frame) {
 
 	count := countBuy + countSell
 
-	fromSec := eventHorizonSec(input)
+	fromNanos := eventNanos(input)
+	retainedCount := ArrivalsSeries.CountPtr(input)
 
-	if len(buy)+len(sell) > 0 {
-		fromSec = earliestArrival(buy, sell)
+	if retainedCount > 0 {
+		var found bool
+		fromNanos, _, found = ArrivalsSeries.Sample(input, 0)
+
+		if !found {
+			input.Err = fmt.Errorf("hawkes: retained observation origin is unavailable")
+
+			return
+		}
 	}
 
+	fromSec := float64(fromNanos) * 1e-9
 	atSec := eventHorizonSec(input)
 	span := atSec - fromSec
 
@@ -72,8 +81,8 @@ func Accounting(input *types.Frame) {
 	input.Put(SymbolEventCountSell, countSell)
 	input.Put(SymbolEventFracBuy, countBuy/count)
 	input.Put(SymbolEventFracSell, countSell/count)
-	input.Put(SymbolFromSec, fromSec)
-	input.Put(SymbolAtSec, atSec)
+	input.Put(SymbolFromUnixSec, float64(fromNanos/1_000_000_000))
+	input.Put(SymbolFromUnixNsec, float64(fromNanos%1_000_000_000))
 
 	nEffective := count
 	maturity := 0.0
@@ -94,17 +103,4 @@ func Accounting(input *types.Frame) {
 	input.Put(SymbolArrivalRateBuy, rateBuy)
 	input.Put(SymbolArrivalRateSell, rateSell)
 	input.Put(SymbolArrivalRate, rateBuy+rateSell)
-}
-
-func earliestArrival(buy, sell []float64) float64 {
-	switch {
-	case len(buy) == 0:
-		return sell[0]
-	case len(sell) == 0:
-		return buy[0]
-	case sell[0] < buy[0]:
-		return sell[0]
-	default:
-		return buy[0]
-	}
 }

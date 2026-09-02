@@ -10,6 +10,11 @@ type Node[T any] interface {
 	Step(T) T
 }
 
+/* ErrorNode exposes a terminal node failure to the runtime boundary. */
+type ErrorNode interface {
+	Error() error
+}
+
 /*
 BacklogStepper is a Node that also wants to know how many slots behind the
 Workload's producer this call is running — real ring pressure, read from the
@@ -43,6 +48,7 @@ type Composed interface {
 type Consumer[T any] struct {
 	node        Node[T]
 	backlogNode BacklogStepper[T]
+	errorNode   ErrorNode
 	buffer      []T
 	headSeq     *atomic.Int64
 }
@@ -50,6 +56,7 @@ type Consumer[T any] struct {
 func NewConsumer[T any](node Node[T], buffer []T, headSeq *atomic.Int64) *Consumer[T] {
 	consumer := &Consumer[T]{node: node, buffer: buffer, headSeq: headSeq}
 	consumer.backlogNode, _ = node.(BacklogStepper[T])
+	consumer.errorNode, _ = node.(ErrorNode)
 
 	return consumer
 }
@@ -67,6 +74,7 @@ func (consumer *Consumer[T]) Handle(lower, upper int64) {
 		for seq := lower; seq <= upper; seq++ {
 			backlog := consumer.headSeq.Load() - seq
 			consumer.backlogNode.StepBacklog(consumer.buffer[seq&system.Cfg.Runtime.Workspace.Mask], backlog)
+			consumer.haltOnError()
 		}
 
 		return
@@ -74,5 +82,16 @@ func (consumer *Consumer[T]) Handle(lower, upper int64) {
 
 	for seq := lower; seq <= upper; seq++ {
 		consumer.node.Step(consumer.buffer[seq&system.Cfg.Runtime.Workspace.Mask])
+		consumer.haltOnError()
+	}
+}
+
+func (consumer *Consumer[T]) haltOnError() {
+	if consumer.errorNode == nil {
+		return
+	}
+
+	if err := consumer.errorNode.Error(); err != nil {
+		panic(err)
 	}
 }

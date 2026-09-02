@@ -117,7 +117,7 @@ func NewTicker() *Ticker {
 	section := data.NewCrossSection()
 
 	return &Ticker{
-		section:   section,
+		section: section,
 		number: nomagique.NewNumber[string](nmtypes.Pipe(
 			temporal.Path(""),
 			correlation.Return,
@@ -206,15 +206,41 @@ func NewTicker() *Ticker {
 Step receives one ticker data point, loads the price into the per-symbol path,
 runs the Number pipeline, folds the price into the shared cross-section, and
 folds the resulting Snapshot into the same single measurement before
-projecting.
+projecting. An explicit zero last means no recent trade price was observed: it
+produces an undefined, zero-support measurement without advancing the path or
+the cross-section.
 */
 func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 	if tick.Last == nil {
 		return &data.Measurement[float64]{Err: fmt.Errorf("sentiment: ticker requires a last price")}
 	}
 
+	last := tick.Last.Float64()
+
+	if last < 0 {
+		return &data.Measurement[float64]{Err: fmt.Errorf("sentiment: ticker last price must be non-negative")}
+	}
+
+	if last == 0 {
+		frame := nmtypes.Frame{}
+		frame.Put(nmtypes.SampleCount, 0)
+
+		measurement := ticker.projector.Project(
+			tick.Symbol,
+			"sentiment",
+			tick.Timestamp,
+			tick.Timestamp,
+			frame,
+		)
+		measurement.Provenance = map[string]string{
+			"last_trade_price_state": "unobserved",
+		}
+
+		return measurement
+	}
+
 	input := nmtypes.Frame{}
-	input.Put(nmtypes.SampleValue, tick.Last.Float64())
+	input.Put(nmtypes.SampleValue, last)
 	input.Put(nmtypes.EventTimeSec, float64(tick.Timestamp.Unix()))
 	input.Put(nmtypes.EventTimeNsec, float64(tick.Timestamp.Nanosecond()))
 
@@ -222,7 +248,7 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 
 	snapshot, hasSnapshot := ticker.section.Process(
 		tick.Symbol,
-		tick.Last.Float64(),
+		last,
 		tick.Timestamp,
 		tick.Symbol,
 	)

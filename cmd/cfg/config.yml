@@ -39,11 +39,6 @@ system:
     # is invisible to a socket that only reads. The periodic write is what
     # exposes it: the unacknowledged retransmits eventually fail the socket.
     ping_interval: 20s
-    # Consecutive reconnects that may connect and then deliver no data before
-    # the transport is declared unrecoverable and the process reboots. A
-    # transient drop recovers on the first attempt; a rotated client IP
-    # reproduces the same rejected session every time.
-    dead_reconnect_limit: 5
     channel:
       # Public book/trade/ticker ingress queues and UI fan-out. Undersizing
       # stalls the Kraken reader behind book decode and starves trades.

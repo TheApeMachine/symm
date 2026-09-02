@@ -139,7 +139,9 @@ Step receives one market data point, appends the price into the symbol's
 retained path, evaluates the cross-sectional lag search over every other
 committed path, advances the focal-level pair-history estimators, and projects
 exactly one Measurement. The per-symbol path facts are always projected;
-lead-lag and pair-history facts appear only once their estimators are ready.
+lead-lag and pair-history facts appear only once their estimators are ready. An
+explicit zero last means no recent trade price was observed: it produces an
+undefined, zero-support measurement without advancing the retained path.
 */
 func (ticker *Ticker) Step(tickerData kraken.TickerData) *data.Measurement[float64] {
 	if tickerData.Last == nil {
@@ -148,8 +150,27 @@ func (ticker *Ticker) Step(tickerData kraken.TickerData) *data.Measurement[float
 
 	last := tickerData.Last.Float64()
 
-	if math.IsNaN(last) || math.IsInf(last, 0) || last <= 0 {
-		return &data.Measurement[float64]{Err: fmt.Errorf("leadlag: ticker last price must be finite and positive")}
+	if math.IsNaN(last) || math.IsInf(last, 0) || last < 0 {
+		return &data.Measurement[float64]{Err: fmt.Errorf("leadlag: ticker last price must be finite and non-negative")}
+	}
+
+	if last == 0 {
+		projection := nmtypes.Frame{}
+
+		measurement := ticker.projector.Project(
+			ticker.label(tickerData.Symbol),
+			"leadlag",
+			tickerData.Timestamp,
+			tickerData.Timestamp,
+			projection,
+		)
+		measurement.Metadata[data.MetadataSupport] = 0
+		measurement.Finalize()
+		measurement.Provenance = map[string]string{
+			"last_trade_price_state": "unobserved",
+		}
+
+		return measurement
 	}
 
 	input := nmtypes.Frame{}

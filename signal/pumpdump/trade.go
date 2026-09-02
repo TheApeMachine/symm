@@ -3,6 +3,7 @@ package pumpdump
 import (
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
@@ -30,6 +31,7 @@ var (
 	symbolTradeRate          = nmtypes.MustIntern("pumpdump/trade_rate")
 	symbolTradeInterval      = nmtypes.MustIntern("pumpdump/trade_interval_seconds")
 	symbolHasMidpoint        = nmtypes.MustIntern("pumpdump/has_midpoint")
+	symbolHasBarOpenMidpoint = nmtypes.MustIntern("pumpdump/has_bar_open_midpoint")
 	symbolBarOpenMidpoint    = nmtypes.MustIntern("pumpdump/bar_open_midpoint")
 	symbolMidpointLogReturn  = nmtypes.MustIntern("pumpdump/midpoint_log_return")
 	symbolMidpointReturnRate = nmtypes.MustIntern("pumpdump/midpoint_return_rate")
@@ -42,18 +44,17 @@ var (
 )
 
 /*
-Trade is the volume-clock activity market entity. It owns exactly a Number
-pipeline and a projector, both declared in its constructor, plus Step and Close.
+Trade owns the volume-clock activity Number pipeline and its projector.
 */
 type Trade struct {
 	number    *nomagique.Number[string]
 	projector *data.Projector
+	quote     func(symbol string) (bid, ask *decimal.Decimal)
 }
 
 /*
-NewTrade constructs the Trade entity: one Number pipeline for the quantity
-clock, completed-bar rates, notional-rate context, and midpoint response, and
-one projector that names the output slots.
+NewTrade constructs the quantity clock, completed-bar rates, notional-rate
+context, midpoint response, and named projections.
 */
 func NewTrade() *Trade {
 	return &Trade{
@@ -67,6 +68,22 @@ func NewTrade() *Trade {
 			nmtypes.Pipe(
 				nmtypes.Assign(symbolZero, 0),
 				nmtypes.Assign(symbolOne, 1),
+				calculus.Clear(
+					symbolMidpoint,
+					symbolMidpointLogReturn,
+					symbolMidpointReturnRate,
+					symbolNegMidpointReturn,
+					symbolPositiveReturn,
+					symbolNegativeReturn,
+				),
+				logic.If(
+					openingCondition(),
+					nmtypes.Pipe(
+						calculus.Clear(symbolBarOpenMidpoint),
+						nmtypes.Assign(symbolHasBarOpenMidpoint, 0),
+					),
+					nmtypes.Identity,
+				),
 				// trade_interval_seconds: elapsed event time between trades.
 				temporal.Observer("trade_interval", nmtypes.Quantity),
 				logic.If(
@@ -95,7 +112,10 @@ func NewTrade() *Trade {
 						),
 						logic.If(
 							openingCondition(),
-							route(symbolMidpoint, symbolBarOpenMidpoint),
+							nmtypes.Pipe(
+								route(symbolMidpoint, symbolBarOpenMidpoint),
+								nmtypes.Assign(symbolHasBarOpenMidpoint, 1),
+							),
 							nmtypes.Identity,
 						),
 					),
@@ -206,37 +226,41 @@ func NewTrade() *Trade {
 						logic.If(
 							hasMidpointCondition(),
 							logic.If(
-								greaterThanCondition(symbolBarOpenMidpoint),
-								nmtypes.Pipe(
-									nmtypes.Wire(
-										calculus.LogRatio,
-										nmtypes.In(symbolMidpoint, calculus.SymbolCurrent),
-										nmtypes.In(symbolBarOpenMidpoint, calculus.SymbolPrevious),
-										nmtypes.Out(calculus.PortResult, symbolMidpointLogReturn),
+								greaterThanCondition(symbolHasBarOpenMidpoint),
+								logic.If(
+									greaterThanCondition(symbolBarOpenMidpoint),
+									nmtypes.Pipe(
+										nmtypes.Wire(
+											calculus.LogRatio,
+											nmtypes.In(symbolMidpoint, calculus.SymbolCurrent),
+											nmtypes.In(symbolBarOpenMidpoint, calculus.SymbolPrevious),
+											nmtypes.Out(calculus.PortResult, symbolMidpointLogReturn),
+										),
+										nmtypes.Wire(
+											calculus.Quotient,
+											nmtypes.In(symbolMidpointLogReturn, calculus.PortA),
+											nmtypes.In(calculus.SymbolDuration, calculus.PortB),
+											nmtypes.Out(calculus.PortResult, symbolMidpointReturnRate),
+										),
+										nmtypes.Wire(
+											calculus.Positive,
+											nmtypes.In(symbolMidpointLogReturn, calculus.PortX),
+											nmtypes.Out(calculus.PortResult, symbolPositiveReturn),
+										),
+										nmtypes.Wire(
+											calculus.Negative,
+											nmtypes.In(symbolMidpointLogReturn, calculus.PortX),
+											nmtypes.Out(calculus.PortResult, symbolNegMidpointReturn),
+										),
+										nmtypes.Wire(
+											calculus.Positive,
+											nmtypes.In(symbolNegMidpointReturn, calculus.PortX),
+											nmtypes.Out(calculus.PortResult, symbolNegativeReturn),
+										),
+										velocityOver("midpoint_return_velocity", symbolMidpointLogReturn),
+										baselineZScore("midpoint_return", symbolMidpointLogReturn),
 									),
-									nmtypes.Wire(
-										calculus.Quotient,
-										nmtypes.In(symbolMidpointLogReturn, calculus.PortA),
-										nmtypes.In(calculus.SymbolDuration, calculus.PortB),
-										nmtypes.Out(calculus.PortResult, symbolMidpointReturnRate),
-									),
-									nmtypes.Wire(
-										calculus.Positive,
-										nmtypes.In(symbolMidpointLogReturn, calculus.PortX),
-										nmtypes.Out(calculus.PortResult, symbolPositiveReturn),
-									),
-									nmtypes.Wire(
-										calculus.Negative,
-										nmtypes.In(symbolMidpointLogReturn, calculus.PortX),
-										nmtypes.Out(calculus.PortResult, symbolNegMidpointReturn),
-									),
-									nmtypes.Wire(
-										calculus.Positive,
-										nmtypes.In(symbolNegMidpointReturn, calculus.PortX),
-										nmtypes.Out(calculus.PortResult, symbolNegativeReturn),
-									),
-									velocityOver("midpoint_return_velocity", symbolMidpointLogReturn),
-									baselineZScore("midpoint_return", symbolMidpointLogReturn),
+									nmtypes.Identity,
 								),
 								nmtypes.Identity,
 							),
@@ -257,6 +281,7 @@ func NewTrade() *Trade {
 			data.Binding{From: nmtypes.Quantity, Name: "trade_quantity", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolTradeNotional, Name: "trade_notional", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolTradeInterval, Name: "trade_interval_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
+			data.Binding{From: temporal.SymbolCompletedSpans, Name: "completed_volume_bar_ordinal", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: equation.SymbolTarget, Name: "volume_bar_target_quantity", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolBarQuantity, Name: "volume_bar_quantity", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolBarNotional, Name: "volume_bar_notional", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
@@ -285,6 +310,11 @@ func NewTrade() *Trade {
 	}
 }
 
+/* SetQuote installs the completed-volume-bar top-of-book quote source. */
+func (trade *Trade) SetQuote(quote func(symbol string) (bid, ask *decimal.Decimal)) {
+	trade.quote = quote
+}
+
 /*
 Step receives one trade data point, loads the tape facts and the shared book
 midpoint, runs the Number pipeline, and projects exactly one Measurement. The
@@ -298,11 +328,7 @@ func (trade *Trade) Step(point kraken.TradeData) *data.Measurement[float64] {
 	input.Put(nmtypes.EventTimeSec, float64(point.Timestamp.Unix()))
 	input.Put(nmtypes.EventTimeNsec, float64(point.Timestamp.Nanosecond()))
 
-	// The midpoint response family requires the executable touch from a book,
-	// which this signal has no access to; those metrics are permanently
-	// undefined. The volume-clock accounting this Step actually measures is
-	// unaffected.
-	input.Put(symbolHasMidpoint, 0)
+	trade.loadQuote(point.Symbol, &input)
 
 	output := trade.number.Step(point.Symbol, input)
 	from := point.Timestamp
@@ -314,6 +340,34 @@ func (trade *Trade) Step(point kraken.TradeData) *data.Measurement[float64] {
 	}
 
 	return trade.projector.Project(point.Symbol, "pumpdump", point.Timestamp, from, output)
+}
+
+/*
+loadQuote puts a valid contemporaneous executable touch into the midpoint slots.
+*/
+func (trade *Trade) loadQuote(symbol string, input *nmtypes.Frame) {
+	input.Put(symbolHasMidpoint, 0)
+
+	if trade == nil || trade.quote == nil {
+		return
+	}
+
+	bid, ask := trade.quote(symbol)
+
+	if bid == nil || ask == nil {
+		return
+	}
+
+	bidValue := bid.Float64()
+	askValue := ask.Float64()
+
+	if bidValue <= 0 || askValue <= bidValue {
+		return
+	}
+
+	input.Put(symbolBidPrice, bidValue)
+	input.Put(symbolAskPrice, askValue)
+	input.Put(symbolHasMidpoint, 1)
 }
 
 func (trade *Trade) Close() error { return nil }

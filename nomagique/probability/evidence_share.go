@@ -107,25 +107,6 @@ func EvidenceShare() types.Primitive {
 			return
 		}
 
-		selectedStrength := strengths[selected]
-
-		if selectedStrength <= 0 {
-			for index := 0; index < count; index++ {
-				if strengths[index] > 0 {
-					input.Err = fmt.Errorf(
-						"probability: evidence share requires positive selected evidence",
-					)
-
-					return
-				}
-			}
-
-			input.Put(SymbolWinner, float64(selected))
-			input.Put(SymbolConfidence, 1.0/float64(count))
-
-			return
-		}
-
 		exponent := evidenceExponent(strengths[:count])
 		evidenceSum := 0.0
 
@@ -136,7 +117,7 @@ func EvidenceShare() types.Primitive {
 		}
 
 		pseudocount := math.Ldexp(1, -exponent)
-		numerator := math.Ldexp(selectedStrength, -exponent) + pseudocount
+		numerator := math.Ldexp(strengths[selected], -exponent) + pseudocount
 		denominator := evidenceSum + float64(count)*pseudocount
 
 		input.Put(SymbolWinner, float64(selected))

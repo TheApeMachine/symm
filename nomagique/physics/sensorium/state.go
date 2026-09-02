@@ -108,3 +108,47 @@ func (state *State) refresh(resident int, incoming *State, index int) {
 	state.Clamped[resident] = incoming.Clamped[index]
 	state.Dark[resident] = incoming.Dark[index]
 }
+
+/*
+remove swaps one resident row with the final row and contracts every tensor.
+The caller owns the ContentID-to-row index and must update the moved row there.
+*/
+func (state *State) remove(index int) {
+	last := state.N - 1
+
+	if index != last {
+		state.Bytes[index] = state.Bytes[last]
+		state.Seqs[index] = state.Seqs[last]
+		state.TokenIDs[index] = state.TokenIDs[last]
+		state.ContentIDs[index] = state.ContentIDs[last]
+		state.Phase[index] = state.Phase[last]
+		state.Omega[index] = state.Omega[last]
+		state.Energy[index] = state.Energy[last]
+		state.Mass[index] = state.Mass[last]
+		state.Heat[index] = state.Heat[last]
+		state.Amp[index] = state.Amp[last]
+		state.Clamped[index] = state.Clamped[last]
+		state.Dark[index] = state.Dark[last]
+
+		for axis := 0; axis < 3; axis++ {
+			state.Pos[index*3+axis] = state.Pos[last*3+axis]
+			state.Vel[index*3+axis] = state.Vel[last*3+axis]
+		}
+	}
+
+	state.Bytes = state.Bytes[:last]
+	state.Seqs = state.Seqs[:last]
+	state.TokenIDs = state.TokenIDs[:last]
+	state.ContentIDs = state.ContentIDs[:last]
+	state.Phase = state.Phase[:last]
+	state.Omega = state.Omega[:last]
+	state.Energy = state.Energy[:last]
+	state.Mass = state.Mass[:last]
+	state.Heat = state.Heat[:last]
+	state.Amp = state.Amp[:last]
+	state.Pos = state.Pos[:last*3]
+	state.Vel = state.Vel[:last*3]
+	state.Clamped = state.Clamped[:last]
+	state.Dark = state.Dark[:last]
+	state.N = last
+}

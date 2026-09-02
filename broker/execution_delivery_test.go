@@ -127,7 +127,7 @@ func newDeliveryDesk(t testing.TB, conn *executingConn) (*Desk, *nmruntime.Workl
 	positions := &sync.Map{}
 	desk, err := NewDesk(
 		t.Context(), api, instrument, price, balance, nil,
-		nil, store, positions, nil,
+		nil, store, positions,
 	)
 	if err != nil {
 		t.Fatalf("construct desk: %v", err)
@@ -238,7 +238,7 @@ func TestExecutionDeliveryEndToEnd(t *testing.T) {
 		pair := kraken.InstrumentPair{Symbol: "TEST/USD", TickSize: *decimal.NewFromFloat64(0.01)}
 		position := NewPosition(
 			t.Context(), desk.api, desk.instrument, desk.price, desk.balance,
-			nil, desk.PositionStore, pair, decision, nil,
+			nil, desk.PositionStore, pair, decision,
 		)
 		desk.positions.Store(decision.Symbol, position)
 
@@ -333,7 +333,7 @@ func TestOpenPositionWire(t *testing.T) {
 		openPosition := NewPosition(
 			t.Context(), desk.api, desk.instrument, desk.price, desk.balance,
 			nil, desk.PositionStore, kraken.InstrumentPair{Symbol: "TEST/USD", TickSize: *decimal.NewFromFloat64(0.01)},
-			openDecision, nil,
+			openDecision,
 		)
 		desk.positions.Store("TEST/USD", openPosition)
 
@@ -349,17 +349,19 @@ func TestOpenPositionWire(t *testing.T) {
 		closedPosition := NewPosition(
 			t.Context(), desk.api, desk.instrument, desk.price, desk.balance,
 			nil, desk.PositionStore, kraken.InstrumentPair{Symbol: "TEST/USD", TickSize: *decimal.NewFromFloat64(0.01)},
-			closedDecision, nil,
+			closedDecision,
 		)
 		closedPosition.setStatus(types.CLOSED)
 		desk.positions.Store("TEST/USD-closed", closedPosition)
 
-		Convey("OpenPositionWire returns only the open lot", func() {
+		Convey("OpenPositionWire returns the open lot and its frozen entry decision", func() {
 			wire := desk.OpenPositionWire()
 
 			So(len(wire), ShouldEqual, 1)
 			So(wire[0].Holding.Symbol, ShouldEqual, "TEST/USD")
-			So(wire[0].Decision, ShouldBeNil)
+			So(wire[0].Decision, ShouldNotBeNil)
+			So(wire[0].Decision.Id, ShouldEqual, "open-1")
+			So(wire[0].Decision.Action, ShouldEqual, "enter")
 		})
 	})
 }

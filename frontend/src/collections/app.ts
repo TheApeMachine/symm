@@ -22,7 +22,6 @@ import type { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
 import type { ErrorFrame } from "#/providers/telemetry/telemetry/error-frame";
 import type { FluidPhaseFrame } from "#/providers/telemetry/telemetry/fluid-phase-frame";
 import type { GraphFrame } from "#/providers/telemetry/telemetry/graph-frame";
-import type { PerspectiveFrame } from "#/providers/telemetry/telemetry/perspective-frame";
 import type { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
 import type { RegulatorFrame } from "#/providers/telemetry/telemetry/regulator-frame";
 import type { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
@@ -355,7 +354,6 @@ export const opportunityStore =
 	createFrameStore<EnvelopeOpportunityCandidate>(50);
 export const graphStore = createFrameStore<GraphFrame>(50);
 export const strategyStore = createFrameStore<StrategyFrame>(50);
-export const perspectiveStore = createFrameStore<PerspectiveFrame>(50);
 export const positionStore = createFrameStore<PositionsFrame>(50);
 export const balanceStore = createFrameStore<BalancesFrame>(50);
 export const equityStore = createFrameStore<EquityFrame>(50);

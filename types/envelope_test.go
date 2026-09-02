@@ -199,6 +199,26 @@ func TestEnvelopeEncode(t *testing.T) {
 			So(encoded.Equity, ShouldBeNil)
 		})
 	})
+
+	Convey("Given a ticker with an explicitly observed zero trade count", t, func() {
+		trades := int64(0)
+		envelope := &Envelope{
+			Key: "CORN/USD",
+			TickerData: kraken.TickerData{
+				Symbol: "CORN/USD",
+				Trades: &trades,
+			},
+		}
+
+		Convey("It should preserve presence and value on the durable wire", func() {
+			decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeBytes(), 0)
+			ticker := decoded.TickerData(nil)
+
+			So(ticker, ShouldNotBeNil)
+			So(ticker.HasTrades(), ShouldBeTrue)
+			So(ticker.Trades(), ShouldEqual, int64(0))
+		})
+	})
 }
 
 /*
@@ -336,4 +356,17 @@ func TestEnvelopeMeasurementFocusGate(t *testing.T) {
 			So(decoded.Toxicity(nil), ShouldNotBeNil)
 		})
 	})
+}
+
+func BenchmarkEnvelopeEncodeBytes(b *testing.B) {
+	envelope := &Envelope{
+		Key:    "TEST/USD",
+		Equity: &EquityReading{Cash: "200", Equity: "200"},
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = envelope.EncodeBytes()
+	}
 }

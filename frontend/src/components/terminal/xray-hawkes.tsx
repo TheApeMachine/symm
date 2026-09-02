@@ -6,13 +6,11 @@ import { Typography } from "#/components/ui/typography";
 import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
 import { EnvelopeMeasurementMetric } from "#/providers/telemetry/telemetry/envelope-measurement-metric";
 import { EnvelopeMetric } from "#/providers/telemetry/telemetry/envelope-metric";
-
-/*
-CEILING_RELAX is how far the held vertical ceiling moves toward a smaller
-target on each repaint — small enough that a departing spike decays out of the
-scale over many frames rather than snapping the plot to a new normalization.
-*/
-const CEILING_RELAX = 0.05;
+import {
+	type HawkesTracePoint,
+	type HawkesTraceSample,
+	hawkesTrace,
+} from "./xray-hawkes-trace";
 
 const metricObj = new EnvelopeMeasurementMetric();
 const valueObj = new EnvelopeMetric();
@@ -49,40 +47,101 @@ const latestMetrics = (
 	return values;
 };
 
+type HawkesObservation = {
+	at: bigint;
+	intensity: number;
+	baseline: number;
+	decay: number;
+	buyCount: number;
+	sellCount: number;
+	buyJump: number;
+	sellJump: number;
+};
+
 /*
-rowIntensity reads this row's own conditional_intensity — the fitted total
-λ(t) — falling back to arrival_rate only when conditional_intensity was not
-reported on this exact row (the model is still cold). The two are distinct,
-non-interchangeable statistics (fitted intensity vs. a cumulative empirical
-rate), so this never mixes a conditional_intensity from one row with an
-arrival_rate from another; each returned sample is one row's own reading.
+rowObservation reads one fitted Hawkes observation and the exact model
+parameters needed to render the event that follows its pre-arrival intensity.
+An empirical arrival rate is not a substitute for a fitted λ(t).
 */
-const rowIntensity = (row: EnvelopeMeasurement): number | null => {
-	let conditionalIntensity: number | null = null;
-	let arrivalRate: number | null = null;
+const rowObservation = (row: EnvelopeMeasurement): HawkesObservation | null => {
+	const metrics: Record<string, number> = {};
 
 	for (let j = 0; j < row.metricsLength(); j++) {
 		const m = row.metrics(j, metricObj);
 		const value = m?.value(valueObj);
 		if (!m || !value) continue;
 
-		if (m.key() === "conditional_intensity") conditionalIntensity = value.raw();
-		if (m.key() === "arrival_rate") arrivalRate = value.raw();
+		metrics[m.key() ?? ""] = value.raw();
 	}
 
-	return conditionalIntensity ?? arrivalRate;
+	const required = [
+		"conditional_intensity",
+		"background_rate",
+		"excitation_decay:buy_from_buy",
+		"event_count:buy",
+		"event_count:sell",
+		"excitation_amplitude:buy_from_buy",
+		"excitation_amplitude:sell_from_buy",
+		"excitation_amplitude:buy_from_sell",
+		"excitation_amplitude:sell_from_sell",
+	];
+
+	if (required.some((key) => metrics[key] === undefined)) {
+		return null;
+	}
+
+	return {
+		at: row.atNs(),
+		intensity: metrics.conditional_intensity as number,
+		baseline: metrics.background_rate as number,
+		decay: metrics["excitation_decay:buy_from_buy"] as number,
+		buyCount: metrics["event_count:buy"] as number,
+		sellCount: metrics["event_count:sell"] as number,
+		buyJump:
+			(metrics["excitation_amplitude:buy_from_buy"] as number) +
+			(metrics["excitation_amplitude:sell_from_buy"] as number),
+		sellJump:
+			(metrics["excitation_amplitude:buy_from_sell"] as number) +
+			(metrics["excitation_amplitude:sell_from_sell"] as number),
+	};
 };
+
+const traceSamples = (observations: HawkesObservation[]): HawkesTraceSample[] =>
+	observations.map((observation, index) => {
+		const previous = observations[index - 1];
+		let jump = 0;
+
+		if (
+			previous &&
+			observation.buyCount > previous.buyCount &&
+			observation.sellCount === previous.sellCount
+		) {
+			jump = observation.buyJump;
+		}
+
+		if (
+			previous &&
+			observation.sellCount > previous.sellCount &&
+			observation.buyCount === previous.buyCount
+		) {
+			jump = observation.sellJump;
+		}
+
+		return {
+			at: observation.at,
+			intensity: observation.intensity,
+			postArrival: observation.intensity + jump,
+			baseline: observation.baseline,
+			decay: observation.decay,
+		};
+	});
 
 export const XrayHawkesPanel = () => {
 	const focusSymbol = useSelector(focusStore, (state) => state);
 	const root = useRef<HTMLDivElement>(null);
 	const hawkesCanvasRef = useRef<HTMLCanvasElement>(null);
-	const ceilingRef = useRef<number | null>(null);
 
 	useEffect(() => {
-		// A different symbol has its own intensity scale; keeping the previous
-		// symbol's ceiling would flatten or exaggerate the new one.
-		ceilingRef.current = null;
 		const hawkesStore = getMeasurementStore("hawkes", focusSymbol);
 
 		const updateFromState = (state: FrameBuffer<EnvelopeMeasurement>) => {
@@ -119,12 +178,9 @@ export const XrayHawkesPanel = () => {
 			}
 
 			// conditional_intensity is the fitted total λ(t) — buy-side plus
-			// sell-side excitation together — and arrival_rate is a distinct,
-			// unrelated empirical statistic (a cumulative average rate, not
-			// the fitted intensity). They must not stand in for each other:
-			// only fall back to arrival_rate when conditional_intensity has
-			// genuinely never been reported yet (the model is still cold).
-			const lambda = retained.conditional_intensity ?? retained.arrival_rate;
+			// sell-side excitation together. The empirical arrival rate is a
+			// distinct statistic and must not stand in for the fitted intensity.
+			const lambda = retained.conditional_intensity;
 			if (typeof lambda === "number") {
 				set("lambda", `${lambda.toFixed(4)} /s`);
 			}
@@ -133,8 +189,6 @@ export const XrayHawkesPanel = () => {
 			if (typeof mu === "number") {
 				set("mu", `${mu.toFixed(4)} /s`);
 			}
-
-			const beta = retained["excitation_decay:buy_from_buy"];
 
 			const sells = retained["event_count:sell"];
 			if (typeof sells === "number") {
@@ -166,63 +220,40 @@ export const XrayHawkesPanel = () => {
 					ctx.clearRect(0, 0, w, h);
 
 					const count = state.getBufferLength();
-					const intensityRows: Array<{ at: bigint; raw: number }> = [];
+					const observations: HawkesObservation[] = [];
 					for (let i = 0; i < count; i++) {
 						const r = state.get(i);
 						if (!r) continue;
 
-						const intensity = rowIntensity(r);
-						if (intensity !== null) {
-							intensityRows.push({ at: r.atNs(), raw: intensity });
+						const observation = rowObservation(r);
+						if (observation !== null) {
+							observations.push(observation);
 						}
 					}
-					// intensitySeriesFromRingRows collapses to a plain number[] (its
-					// tested contract), but the decay curve below needs each
-					// sample's own epoch too, so the same by-epoch dedup is redone
-					// here to pair each value back up with its timestamp.
-					const byEpoch = new Map<bigint, number>();
-					for (const row of intensityRows) {
-						byEpoch.set(row.at, row.raw);
-					}
-					const samples = [...byEpoch.entries()]
-						.sort((left, right) =>
-							left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0,
-						)
-						.map(([at, raw]) => ({ at, raw }));
 
-					// Real intensity ranges from a few hundredths (quiet symbols)
-					// to several tens (a fresh burst), so the vertical scale must
-					// follow the series actually observed rather than a fixed
-					// ceiling: a constant tuned for one regime silently flattens
-					// every symbol whose scale sits far from it. The bottom is
-					// still floored (as the reference keeps a resting floor so the
-					// μ baseline and quiet symbols stay readable) — otherwise a
-					// ring window with only resting samples inflates the tallest
-					// spike of every quieter symbol far past its own scale.
-					/*
-					The ceiling has to follow the symbol's own scale, but taking
-					the window maximum directly re-scales the whole plot the
-					moment one large arrival enters the ring: every earlier
-					spike is squashed and the curve appears to lift off the
-					floor. So the ceiling rises immediately to fit a new peak
-					(never clip a real reading) and falls back only gradually
-					once that peak leaves the window, which keeps successive
-					frames on a comparable scale instead of re-nomalizing under
-					the reader every tick.
-					*/
-					const observedMax = Math.max(0, ...samples.map((s) => s.raw));
+					const byEpoch = new Map<bigint, HawkesObservation>();
+					for (const observation of observations) {
+						byEpoch.set(observation.at, observation);
+					}
+					const samples = traceSamples(
+						[...byEpoch.values()].sort((left, right) =>
+							left.at < right.at ? -1 : left.at > right.at ? 1 : 0,
+						),
+					);
+					const plot = hawkesTrace(samples, canvas.clientWidth);
+
+					// Scale the actual visible intensity readings. Holding an old
+					// ceiling after its spike left the ring flattened the next
+					// regime into the floor and made the chart look empty.
+					const observedMax = Math.max(
+						0,
+						...plot.map((point) => point.intensity),
+					);
 					const muFloor = typeof mu === "number" && mu > 0 ? mu : 0;
-					const target = Math.max(observedMax, muFloor, Number.EPSILON);
-					const held = ceilingRef.current;
-					const ceiling =
-						held === null || target >= held
-							? target
-							: held + (target - held) * CEILING_RELAX;
-					ceilingRef.current = ceiling;
-					const maxL = ceiling * 1.15;
+					const maxL = Math.max(observedMax, muFloor, Number.EPSILON) * 1.1;
 					const pad = 14 * (window.devicePixelRatio || 1);
 					const base = h - 22 * (window.devicePixelRatio || 1);
-					const topMargin = 20 * (window.devicePixelRatio || 1);
+					const topMargin = 30 * (window.devicePixelRatio || 1);
 
 					// The x-axis spans the real epochs of the visible samples so
 					// each spike sits at the moment it was observed and decay over a
@@ -236,9 +267,7 @@ export const XrayHawkesPanel = () => {
 					const tMax = tLast > tMin ? tLast : tMin + 1n;
 					const toX = (at: bigint) => {
 						const fraction =
-							at > tMin
-								? Number(at - tMin) / Number(tMax - tMin)
-								: 0;
+							at > tMin ? Number(at - tMin) / Number(tMax - tMin) : 0;
 						return pad + Math.max(0, Math.min(1, fraction)) * (w - pad * 2);
 					};
 					const toY = (val: number) => base - (val / maxL) * (base - topMargin);
@@ -254,51 +283,17 @@ export const XrayHawkesPanel = () => {
 						ctx.setLineDash([]);
 					}
 
-					// A Hawkes intensity jumps instantly at an arrival and decays
-					// exponentially toward μ afterward — it never ramps up smoothly
-					// into an arrival. Each inter-sample gap therefore renders as a
-					// vertical jump at the arrival's own epoch followed by the
-					// exponential decay μ + (λ_prev − μ)·e^(−β·Δt) across the real
-					// gap. That keeps every point clocked to true time instead of
-					// evenly spacing a resampled array. The next arrival only lands
-					// (as its own vertical jump) at its own epoch. Empty gaps (bad
-					// epoch ordering) are skipped.
+					// Each interval uses the model published with its own event.
+					// Applying the newest μ and β to the entire history mixed fits
+					// and produced the isolated full-height needles in the broken
+					// chart.
 					if (samples.length > 1) {
-						const decayRate = typeof beta === "number" && beta > 0 ? beta : 1;
-						const restingRate = muFloor;
-						const STEPS_PER_GAP = 24;
-
-						const plot: Array<[number, number]> = [[toX(samples[0].at), toY(samples[0].raw)]];
-
-						for (let i = 1; i < samples.length; i++) {
-							const prev = samples[i - 1];
-							const next = samples[i];
-							if (!prev || !next) continue;
-
-							if (next.at <= prev.at) continue;
-
-							const gapSeconds = Number(next.at - prev.at) / 1e9;
-
-							// Decay inward from the arrival's intensity, keeping each
-							// point on its own real time coordinate.
-							for (let step = 1; step <= STEPS_PER_GAP; step++) {
-								const seconds = gapSeconds * (step / STEPS_PER_GAP);
-								const epoch = prev.at + BigInt(Math.round(seconds * 1e9));
-								const value =
-									step === STEPS_PER_GAP
-										? next.raw
-										: restingRate +
-											(prev.raw - restingRate) * Math.exp(-decayRate * seconds);
-								plot.push([toX(epoch), toY(value)]);
-							}
-						}
-
 						ctx.beginPath();
 						ctx.moveTo(pad, base);
-						for (const [x, y] of plot) {
-							ctx.lineTo(x, y);
+						for (const point of plot) {
+							ctx.lineTo(toX(point.at), toY(point.intensity));
 						}
-						ctx.lineTo(plot.length ? plot[plot.length - 1][0] : pad, base);
+						ctx.lineTo(toX(tLast), base);
 						ctx.closePath();
 						ctx.fillStyle = "rgba(235, 140, 50, 0.15)";
 						ctx.fill();
@@ -307,11 +302,24 @@ export const XrayHawkesPanel = () => {
 						ctx.lineWidth = 1.6;
 						ctx.beginPath();
 						for (let i = 0; i < plot.length; i++) {
-							const [x, y] = plot[i];
+							const point = plot[i] as HawkesTracePoint;
+							const x = toX(point.at);
+							const y = toY(point.intensity);
 							if (i === 0) ctx.moveTo(x, y);
 							else ctx.lineTo(x, y);
 						}
 						ctx.stroke();
+
+						ctx.strokeStyle = "rgba(127, 186, 203, 0.75)";
+						ctx.lineWidth = window.devicePixelRatio || 1;
+
+						for (const sample of samples) {
+							const x = toX(sample.at);
+							ctx.beginPath();
+							ctx.moveTo(x, base);
+							ctx.lineTo(x, base + 8 * (window.devicePixelRatio || 1));
+							ctx.stroke();
+						}
 					}
 				}
 			}
@@ -332,7 +340,7 @@ export const XrayHawkesPanel = () => {
 			ref={root}
 			className="relative flex min-h-52.5 flex-1 flex-col border-(--line) border-t"
 		>
-			<div className="absolute inset-x-0 top-16 bottom-0">
+			<div className="absolute inset-0">
 				<canvas
 					ref={hawkesCanvasRef}
 					className="absolute inset-0 block size-full"

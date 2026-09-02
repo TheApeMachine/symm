@@ -1,6 +1,7 @@
 package system
 
 import (
+	"errors"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -32,13 +33,18 @@ func TestDiagnosticStampsItsComposition(t *testing.T) {
 	})
 }
 
-type countingNode struct{ calls int }
+type countingNode struct {
+	calls int
+	err   error
+}
 
 func (node *countingNode) Step(envelope *types.Envelope) *types.Envelope {
 	node.calls++
 
 	return envelope
 }
+
+func (node *countingNode) Error() error { return node.err }
 
 func TestTracedForwardsItsComposition(t *testing.T) {
 	Convey("Given a Traced signal inside a ring", t, func() {
@@ -56,6 +62,22 @@ func TestTracedForwardsItsComposition(t *testing.T) {
 			So(envelope.Boundaries[0].Group, ShouldEqual, "trade")
 			So(envelope.Boundaries[0].Stage, ShouldEqual, int32(1))
 			So(envelope.Boundaries[0].Backlog, ShouldEqual, int64(7))
+		})
+	})
+}
+
+func TestTracedError(t *testing.T) {
+	Convey("Given a wrapped node that fails its transition", t, func() {
+		err := errors.New("terminal node failure")
+		inner := &countingNode{err: err}
+		traced := NewTraced("trade.failed", inner)
+
+		result := traced.Step(nil)
+
+		Convey("The wrapper preserves the failure without stamping the invalid result", func() {
+			So(result, ShouldBeNil)
+			So(traced.Error(), ShouldEqual, err)
+			So(traced.diagnostic.seqCount.Load(), ShouldEqual, 0)
 		})
 	})
 }

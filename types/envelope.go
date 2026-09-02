@@ -140,8 +140,8 @@ const (
 	EnvelopeCausal
 	EnvelopeCategory
 	EnvelopeCognition
-	EnvelopeAdvisor
-	EnvelopeMCTS
+	EnvelopeLegacyAdvisor // Reserved persisted TypeID; no live Advisor envelope exists.
+	EnvelopeLegacyMCTS    // Reserved persisted TypeID; no live MCTS envelope exists.
 )
 
 type Envelope struct {
@@ -217,6 +217,11 @@ type Envelope struct {
 	// Categories.
 	Cognition *Cognition
 
+	// LiquiditySweepWithRecovery is the named Advisor's sparse lifecycle
+	// update. It is not a generic Perspective bucket: this field has one writer
+	// and one semantic question, preserving the envelope's lock-free ownership.
+	Perspectives []*Perspective
+
 	// StrategyRound is the strategy stage's last decision round, produced by
 	// the planner once per engine tick and stamped by tickNode so the same
 	// envelope that carried the logic inputs carries the decisions it produced.
@@ -235,12 +240,6 @@ type Envelope struct {
 	// positions panel recovers on the next market event after a connect rather
 	// than waiting for a poll.
 	Positions []*telemetry.PositionT
-
-	// Perspectives is the advisory layer's descriptive context: one
-	// Perspective per advisor family, composed from this envelope's signal
-	// measurements. Perspectives describe the current state; they are never
-	// decisions, gates, or scores, and are consumed by decision and risk.
-	Perspectives []*Perspective
 
 	// Boundaries is the ordered trace of every diagnostics node the envelope
 	// passed through, appended to via AppendBoundary as it crosses each one
@@ -789,6 +788,11 @@ func encodeTickerData(ticker kraken.TickerData) *telemetry.EnvelopeTickerDataT {
 		encoded.Change = ticker.Change.Float64()
 	}
 
+	if ticker.Trades != nil {
+		encoded.HasTrades = true
+		encoded.Trades = *ticker.Trades
+	}
+
 	return encoded
 }
 
@@ -1006,6 +1010,71 @@ func encodePositions(positions []*telemetry.PositionT) *telemetry.PositionsFrame
 	return &telemetry.PositionsFrameT{Rows: positions}
 }
 
+/* encodePerspective preserves one semantic Advisor round without slot IDs. */
+func encodePerspective(perspective *Perspective) *telemetry.EnvelopePerspectiveT {
+	if perspective == nil {
+		return nil
+	}
+
+	classes := make([]*telemetry.EnvelopePerspectiveClassT, 0, len(perspective.Classes))
+
+	for _, class := range perspective.Classes {
+		classes = append(classes, &telemetry.EnvelopePerspectiveClassT{
+			State:       string(class.State),
+			Probability: class.Probability,
+		})
+	}
+
+	predictions := make([]*telemetry.EnvelopePerspectivePredictionT, 0, len(perspective.Predictions))
+
+	for _, prediction := range perspective.Predictions {
+		predictions = append(predictions, &telemetry.EnvelopePerspectivePredictionT{
+			Event:  string(prediction.Event),
+			Effect: prediction.Effect.String(),
+		})
+	}
+
+	encoded := &telemetry.EnvelopePerspectiveT{
+		Symbol:             perspective.Symbol,
+		Peer:               perspective.Peer,
+		PositionId:         perspective.PositionID,
+		Advisor:            perspectiveSymbolName(perspective.Advisor, "advisor"),
+		Question:           string(perspective.Question),
+		IssuedAt:           timeNs(perspective.IssuedAt),
+		ResolvedAt:         timeNs(perspective.ResolvedAt),
+		ResolvedCoordinate: perspective.ResolvedCoordinate,
+		Sequence:           perspective.Sequence,
+		Round:              perspective.Round,
+		Support:            perspective.Support,
+		Classes:            classes,
+		Predictions:        predictions,
+		Lease: &telemetry.EnvelopePerspectiveLeaseT{
+			Clock: perspectiveSymbolName(perspective.Lease.Clock, "market clock"),
+			From:  perspective.Lease.From,
+			Until: perspective.Lease.Until,
+		},
+		Lifecycle:  perspective.Lifecycle.String(),
+		ResolvedBy: string(perspective.ResolvedBy),
+	}
+
+	if perspective.Err != nil {
+		encoded.Error = perspective.Err.Error()
+	}
+
+	return encoded
+}
+
+/* perspectiveSymbolName refuses to persist an opaque process-local slot. */
+func perspectiveSymbolName(symbol nmtypes.Symbol, role string) string {
+	name, found := nmtypes.SymbolName(symbol)
+
+	if !found {
+		panic("types: cannot encode Perspective with unregistered " + role)
+	}
+
+	return name
+}
+
 /*
 Encode converts the Envelope's exported state into its FlatBuffers mirror,
 verbatim: every populated field crosses as itself, with only the type
@@ -1099,59 +1168,9 @@ func (envelope *Envelope) encodeBase(
 		GraphUpdate:       encodeGraphUpdate(envelope.GraphUpdate),
 		Cognition:         encodeCognition(envelope.Cognition),
 		Strategy:          encodeStrategyRound(envelope.StrategyRound),
-		Perspectives:      encodePerspectives(envelope.Perspectives),
 		Equity:            encodeEquity(envelope.Equity),
 		Positions:         encodePositions(envelope.Positions),
 	}
-}
-
-/*
-encodePerspectives projects the advisory layer's descriptive context into the
-wire. Each Perspective becomes one PerspectiveFrame; each reading's interned
-Metric symbol resolves to its name for serialization (diagnostics/UI only, never
-a hot-path comparison).
-*/
-func encodePerspectives(perspectives []*Perspective) []*telemetry.PerspectiveFrameT {
-	if len(perspectives) == 0 {
-		return nil
-	}
-
-	frames := make([]*telemetry.PerspectiveFrameT, 0, len(perspectives))
-
-	for _, perspective := range perspectives {
-		if perspective == nil {
-			continue
-		}
-
-		readings := make([]*telemetry.PerspectiveReadingT, 0, perspective.Count)
-
-		for index := 0; index < perspective.Count; index++ {
-			reading := perspective.Readings[index]
-			name, _ := nmtypes.SymbolName(reading.Metric)
-
-			readings = append(readings, &telemetry.PerspectiveReadingT{
-				Metric:     name,
-				Value:      reading.Value,
-				Defined:    reading.Defined,
-				ObservedAt: timeNs(reading.ObservedAt),
-				From:       timeNs(reading.From),
-				Maturity:   reading.Maturity,
-				Snr:        reading.SNR,
-				SnrDefined: reading.SNRDefined,
-			})
-		}
-
-		frames = append(frames, &telemetry.PerspectiveFrameT{
-			Symbol:   perspective.Symbol,
-			Peer:     perspective.Peer,
-			Kind:     uint8(perspective.Kind),
-			At:       timeNs(perspective.At),
-			Sequence: int64(perspective.Sequence),
-			Readings: readings,
-		})
-	}
-
-	return frames
 }
 
 /*
@@ -1172,7 +1191,7 @@ func encodeStrategyRound(round *StrategyRound) *telemetry.StrategyFrameT {
 			continue
 		}
 
-		decisions = append(decisions, encodeDecision(decision))
+		decisions = append(decisions, DecisionWire(decision))
 	}
 
 	return &telemetry.StrategyFrameT{
@@ -1182,7 +1201,12 @@ func encodeStrategyRound(round *StrategyRound) *telemetry.StrategyFrameT {
 	}
 }
 
-func encodeDecision(decision *Decision) *telemetry.DecisionT {
+/*
+DecisionWire projects one immutable strategy decision onto its transport shape.
+It is shared by live strategy rounds and broker positions so an open lot keeps
+the exact entry arbitration that created it instead of consulting a later round.
+*/
+func DecisionWire(decision *Decision) *telemetry.DecisionT {
 	if decision == nil {
 		return nil
 	}

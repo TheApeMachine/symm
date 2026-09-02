@@ -26,6 +26,8 @@ type EnvelopeTickerDataT struct {
 	Change float64 `json:"change"`
 	ChangePct float64 `json:"changePct"`
 	TimestampNs int64 `json:"timestampNs"`
+	HasTrades bool `json:"hasTrades"`
+	Trades int64 `json:"trades"`
 }
 
 func (t *EnvelopeTickerDataT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -53,6 +55,8 @@ func (t *EnvelopeTickerDataT) Pack(builder *flatbuffers.Builder) flatbuffers.UOf
 	EnvelopeTickerDataAddChange(builder, t.Change)
 	EnvelopeTickerDataAddChangePct(builder, t.ChangePct)
 	EnvelopeTickerDataAddTimestampNs(builder, t.TimestampNs)
+	EnvelopeTickerDataAddHasTrades(builder, t.HasTrades)
+	EnvelopeTickerDataAddTrades(builder, t.Trades)
 	return EnvelopeTickerDataEnd(builder)
 }
 
@@ -76,6 +80,8 @@ func (rcv *EnvelopeTickerData) UnPackTo(t *EnvelopeTickerDataT) {
 	t.Change = rcv.Change()
 	t.ChangePct = rcv.ChangePct()
 	t.TimestampNs = rcv.TimestampNs()
+	t.HasTrades = rcv.HasTrades()
+	t.Trades = rcv.Trades()
 }
 
 func (rcv *EnvelopeTickerData) UnPack() *EnvelopeTickerDataT {
@@ -346,8 +352,32 @@ func (rcv *EnvelopeTickerData) MutateTimestampNs(n int64) bool {
 	return rcv._tab.MutateInt64Slot(40, n)
 }
 
+func (rcv *EnvelopeTickerData) HasTrades() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *EnvelopeTickerData) MutateHasTrades(n bool) bool {
+	return rcv._tab.MutateBoolSlot(42, n)
+}
+
+func (rcv *EnvelopeTickerData) Trades() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EnvelopeTickerData) MutateTrades(n int64) bool {
+	return rcv._tab.MutateInt64Slot(44, n)
+}
+
 func EnvelopeTickerDataStart(builder *flatbuffers.Builder) {
-	builder.StartObject(19)
+	builder.StartObject(21)
 }
 func EnvelopeTickerDataAddSymbol(builder *flatbuffers.Builder, symbol flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(symbol), 0)
@@ -405,6 +435,12 @@ func EnvelopeTickerDataAddChangePct(builder *flatbuffers.Builder, changePct floa
 }
 func EnvelopeTickerDataAddTimestampNs(builder *flatbuffers.Builder, timestampNs int64) {
 	builder.PrependInt64Slot(18, timestampNs, 0)
+}
+func EnvelopeTickerDataAddHasTrades(builder *flatbuffers.Builder, hasTrades bool) {
+	builder.PrependBoolSlot(19, hasTrades, false)
+}
+func EnvelopeTickerDataAddTrades(builder *flatbuffers.Builder, trades int64) {
+	builder.PrependInt64Slot(20, trades, 0)
 }
 func EnvelopeTickerDataEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

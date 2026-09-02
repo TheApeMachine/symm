@@ -57,6 +57,26 @@ func closeFillPosition(sellable string, entryPrice string, entryFee string) *Pos
 	return position
 }
 
+func TestPositionWire(t *testing.T) {
+	Convey("Given an open position retaining its entry decision", t, func() {
+		position := closeFillPosition("100000", "0.000490", "0.04")
+		position.Decision.Action = types.ActionEnter
+		position.Decision.Reason = "forecast clears fee-inclusive break-even"
+		position.Decision.Confidence = 0.73
+		position.decisionWire = types.DecisionWire(&position.Decision)
+
+		Convey("the wire snapshot includes that exact frozen decision", func() {
+			encoded := position.Wire()
+
+			So(encoded.Decision, ShouldNotBeNil)
+			So(encoded.Decision.Id, ShouldEqual, "shape-decision")
+			So(encoded.Decision.Action, ShouldEqual, "enter")
+			So(encoded.Decision.Reason, ShouldEqual, "forecast clears fee-inclusive break-even")
+			So(encoded.Decision.Confidence, ShouldEqual, 0.73)
+		})
+	})
+}
+
 /*
 executionFixture builds a Kraken ExecutionData with a last individual fill whose
 LastPrice is materially different from the whole-order AvgPrice, so a
@@ -192,7 +212,7 @@ func TestPartialFillExitAccumulatesWholeOrder(t *testing.T) {
 			finished := position.onExecution(kraken.Execution{
 				Channel: "executions",
 				Type:    "update",
-				Data:    []kraken.ExecutionData{
+				Data: []kraken.ExecutionData{
 					partialOne, partialTwo, terminal, dupe,
 				},
 			})
@@ -306,3 +326,22 @@ func TestExecuteManualExitReportsFailure(t *testing.T) {
 	})
 }
 
+func BenchmarkPositionWire(b *testing.B) {
+	position := closeFillPosition("100000", "0.000490", "0.04")
+	position.Decision.Action = types.ActionEnter
+	position.Decision.Reason = "forecast clears fee-inclusive break-even"
+	position.Decision.Confidence = 0.73
+	position.Decision.Alternatives = map[string]float64{
+		"probability:profitable": 0.73,
+		"probability:up":         0.81,
+		"return:break_even_log":  0.005,
+		"return:expected_log":    0.018,
+	}
+	position.decisionWire = types.DecisionWire(&position.Decision)
+
+	b.ResetTimer()
+
+	for range b.N {
+		_ = position.Wire()
+	}
+}

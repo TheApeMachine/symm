@@ -3,6 +3,7 @@ package derivatives
 import (
 	"context"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -49,6 +50,11 @@ func (signal *Signal) Name() string { return "derivatives" }
 func (signal *Signal) Error() error { return signal.err }
 
 func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
+	if signal.err != nil {
+		errnie.Error(signal.Close())
+		return nil
+	}
+
 	switch envelope.TypeID {
 	case types.EnvelopeFuturesTicker:
 		envelope.Derivatives = signal.StepTicker(envelope.FuturesTickerData)

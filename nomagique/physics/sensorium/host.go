@@ -1,6 +1,7 @@
 package sensorium
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/theapemachine/errnie"
@@ -155,6 +156,85 @@ func (manifold *Manifold) AddBatch(incoming *State) {
 }
 
 /*
+Remove evicts explicitly departed particles from the resident domain.
+Absence from an incremental batch is not a departure; callers must provide the
+ContentIDs named by the authoritative source lifecycle.
+*/
+func (manifold *Manifold) Remove(contentIDs []int64) (int, error) {
+	if manifold == nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"manifold: physics domain is not initialized",
+			nil,
+		))
+	}
+
+	manifold.mu.Lock()
+	defer manifold.mu.Unlock()
+	remaining := 0
+
+	if manifold.state != nil {
+		remaining = manifold.state.N
+	}
+
+	if len(contentIDs) == 0 {
+		return remaining, nil
+	}
+
+	if manifold.state == nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"manifold: cannot remove a particle from an empty domain",
+			nil,
+		))
+	}
+
+	if manifold.resident == nil {
+		manifold.resident = make(map[int64]int, manifold.state.N)
+
+		for index := 0; index < manifold.state.N; index++ {
+			manifold.resident[manifold.state.ContentIDs[index]] = index
+		}
+	}
+
+	departures := make(map[int64]struct{}, len(contentIDs))
+
+	for _, contentID := range contentIDs {
+		if _, duplicate := departures[contentID]; duplicate {
+			return manifold.state.N, errnie.Error(errnie.Err(
+				errnie.Conflict,
+				fmt.Sprintf("manifold: duplicate departure content_id=%d", contentID),
+				nil,
+			))
+		}
+
+		if _, resident := manifold.resident[contentID]; !resident {
+			return manifold.state.N, errnie.Error(errnie.Err(
+				errnie.NotFound,
+				fmt.Sprintf("manifold: departed content_id=%d is not resident", contentID),
+				nil,
+			))
+		}
+
+		departures[contentID] = struct{}{}
+	}
+
+	for _, contentID := range contentIDs {
+		index := manifold.resident[contentID]
+		last := manifold.state.N - 1
+		movedContentID := manifold.state.ContentIDs[last]
+		manifold.state.remove(index)
+		delete(manifold.resident, contentID)
+
+		if index != last {
+			manifold.resident[movedContentID] = index
+		}
+	}
+
+	return manifold.state.N, nil
+}
+
+/*
 Step merges an optional incoming batch then advances thermo + wave once.
 */
 func (manifold *Manifold) Step(incoming *State) (*State, error) {
@@ -194,7 +274,13 @@ func (manifold *Manifold) stepLocked(incoming *State) (*State, error) {
 	}
 
 	manifold.work.loadState(manifold.state)
-	manifold.reading = manifold.work.step()
+	reading, err := manifold.work.step()
+
+	if err != nil {
+		return nil, err
+	}
+
+	manifold.reading = reading
 	manifold.work.storeState(manifold.state)
 	manifold.stepCount++
 	return manifold.state, nil

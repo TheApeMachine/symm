@@ -33,7 +33,6 @@ func TestDirectionalPredictorObserve(t *testing.T) {
 
 		Convey("every family contributes separately identified facts", func() {
 			So(families["measurement"], ShouldEqual, 1)
-			So(families["perspective"], ShouldEqual, 1)
 			So(families["category"], ShouldEqual, 4)
 			So(families["opportunity"], ShouldEqual, 5)
 			So(families["cognition"], ShouldEqual, 7)
@@ -41,11 +40,103 @@ func TestDirectionalPredictorObserve(t *testing.T) {
 			So(families["resonance"], ShouldEqual, 7)
 		})
 	})
+
+	Convey("Given a ticker whose Resonance stage produced no artifact", t, func() {
+		predictor, err := newDirectionalPredictor(directionalConfig{
+			initialVariance: 1, forgettingFactor: 1,
+		})
+		So(err, ShouldBeNil)
+		envelope := types.NewEnvelope(types.EnvelopeTicker)
+		envelope.TickerData.Symbol = "TEST/USD"
+		envelope.TickerData.Timestamp = time.Unix(1, 0)
+
+		err = predictor.observe(envelope)
+
+		Convey("the old horizon cannot survive the missing stage", func() {
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "requires its resonance artifact")
+		})
+	})
+
+	Convey("Given a ticker carrying a different Resonance observation", t, func() {
+		predictor, err := newDirectionalPredictor(directionalConfig{
+			initialVariance: 1, forgettingFactor: 1,
+		})
+		So(err, ShouldBeNil)
+		envelope := fullObservationEnvelope()
+		envelope.Resonance.Symbol = "OTHER/USD"
+
+		err = predictor.observe(envelope)
+
+		Convey("the ticker cannot reuse one symbol's horizon for another", func() {
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "matching resonance identity")
+			So(predictor.states, ShouldBeEmpty)
+		})
+	})
+
+	Convey("Given a ticker carrying Resonance from a different event time", t, func() {
+		predictor, err := newDirectionalPredictor(directionalConfig{
+			initialVariance: 1, forgettingFactor: 1,
+		})
+		So(err, ShouldBeNil)
+		envelope := fullObservationEnvelope()
+		envelope.Resonance.At = envelope.TickerData.Timestamp.Add(-time.Nanosecond)
+
+		err = predictor.observe(envelope)
+
+		Convey("the old horizon cannot cross the ticker boundary", func() {
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "matching resonance identity")
+			So(predictor.states, ShouldBeEmpty)
+		})
+	})
+}
+
+func TestDirectionalPredictorObserveResonance(t *testing.T) {
+	Convey("Given Resonance horizon evidence", t, func() {
+		predictor, err := newDirectionalPredictor(directionalConfig{
+			initialVariance:  1,
+			forgettingFactor: 1,
+		})
+		So(err, ShouldBeNil)
+
+		Convey("uncalibrated output cannot establish a strategy label horizon", func() {
+			err = predictor.observeResonance(&types.ResonanceArtifact{
+				Symbol: "TEST/USD", SupportedHorizon: 9,
+				At: time.Unix(1, 0),
+			})
+			So(err, ShouldBeNil)
+
+			state, stateErr := predictor.state("TEST/USD")
+			So(stateErr, ShouldBeNil)
+			So(state.horizonSteps, ShouldEqual, 0)
+		})
+
+		Convey("calibrated output supplies its exact ticker-step reach", func() {
+			err = predictor.observeResonance(&types.ResonanceArtifact{
+				Symbol: "TEST/USD", Calibrated: true, SupportedHorizon: 5,
+				At: time.Unix(1, 0),
+			})
+			So(err, ShouldBeNil)
+
+			state, stateErr := predictor.state("TEST/USD")
+			So(stateErr, ShouldBeNil)
+			So(state.horizonSteps, ShouldEqual, 5)
+		})
+
+		Convey("a calibrated artifact without a positive reach fails loudly", func() {
+			err = predictor.observeResonance(&types.ResonanceArtifact{
+				Symbol: "TEST/USD", Calibrated: true, At: time.Unix(1, 0),
+			})
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "positive supported horizon")
+		})
+	})
 }
 
 func fullObservationEnvelope() *types.Envelope {
 	at := time.Unix(1, 0)
-	metricSymbol := nmtypes.MustIntern("advisor.metric")
 	resonanceSymbol := nmtypes.MustIntern("resonance.metric")
 	measurement := data.NewMeasurement[float64](
 		"measurement", "TEST/USD", "test", at, time.Time{},
@@ -57,15 +148,6 @@ func fullObservationEnvelope() *types.Envelope {
 	envelope.TickerData.Symbol = "TEST/USD"
 	envelope.TickerData.Timestamp = at
 	envelope.Correlation = measurement
-	envelope.Perspectives = []*types.Perspective{{
-		Symbol: "TEST/USD",
-		Kind:   types.KindCoordination,
-		At:     at,
-		Count:  1,
-		Readings: [types.PerspectiveMetricCapacity]types.MetricReading{{
-			Metric: metricSymbol, Value: 1, Defined: true, Maturity: 1, ObservedAt: at,
-		}},
-	}}
 	envelope.Categories = []types.Category{{
 		Symbol: "TEST/USD", Type: types.VerticalIgnition, At: at,
 		Confidence: 0.9, Surprisal: 2, Strength: 1, Maturity: 1, Freshness: 1,
@@ -85,7 +167,10 @@ func fullObservationEnvelope() *types.Envelope {
 		Contributions: []types.CognitionContribution{{Token: "coil", Bits: 2}},
 	}
 	envelope.Manifold = &types.ManifoldState{}
-	envelope.Resonance = &types.ResonanceArtifact{Symbol: "TEST/USD", At: at, Confidence: 0.8}
+	envelope.Resonance = &types.ResonanceArtifact{
+		Symbol: "TEST/USD", At: at, Confidence: 0.8,
+		Calibrated: true, SupportedHorizon: 3,
+	}
 	envelope.Resonance.Dynamics.Put(resonanceSymbol, 1)
 	envelope.Resonance.Forecast = &types.ResonanceReturnForecast{Call: 1}
 

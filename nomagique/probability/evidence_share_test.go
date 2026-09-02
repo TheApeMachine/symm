@@ -54,6 +54,15 @@ func TestEvidenceShare(t *testing.T) {
 			So(output.MustGet(SymbolConfidence), ShouldAlmostEqual, 0.5)
 		})
 
+		Convey("an unsupported selected category gets only its pseudocount", func() {
+			output := frameWith(t, 1, 0, 0)
+			output.Put(SymbolWinner, 1)
+			types.Step(EvidenceShare(), &output)
+			So(output.Err, ShouldBeNil)
+			// (0 + 1) / (1 + 3) = 0.25
+			So(output.MustGet(SymbolConfidence), ShouldAlmostEqual, 0.25)
+		})
+
 		Convey("equal strengths yield 1/K", func() {
 			output := frameWith(t, 1, 1, 1)
 			types.Step(EvidenceShare(), &output)
@@ -119,4 +128,22 @@ func TestShannonAmbiguity(t *testing.T) {
 			So(output.Err, ShouldNotBeNil)
 		})
 	})
+}
+
+func BenchmarkEvidenceShare(b *testing.B) {
+	template := types.Frame{}
+	template.Put(types.MustSampleSymbol(0), 1)
+	template.Put(types.MustSampleSymbol(1), 0)
+	template.Put(types.MustSampleSymbol(2), 0)
+	template.Put(SymbolWinner, 1)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		output := template
+		types.Step(EvidenceShare(), &output)
+
+		if output.Err != nil {
+			b.Fatal(output.Err)
+		}
+	}
 }

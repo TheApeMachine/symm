@@ -16,16 +16,7 @@ hex that says nothing about which admissibility contract failed.
 
 The tags are defined at their dbg_log call sites in manifold.metal.
 */
-const (
-	// dbgTagBaseline is the first-particle sample the gather kernel emits on
-	// every step, and dbgTagVacuum marks a cell that simply holds nothing.
-	// Both are routine observations rather than rejected states.
-	dbgTagBaseline = 0x01
-	dbgTagVacuum   = 0x02
-)
-
 var dbgTagNames = map[uint32]string{
-	0x02: "exact vacuum gather",
 	0x03: "invalid heat capacity",
 	0x04: "negative internal energy gathered",
 	0x05: "non-finite temperature, heat or velocity",
@@ -48,22 +39,23 @@ rejected planner feature, say — with nothing left to say which contract broke.
 Draining the buffer each step is what turns that into the cell index and the
 conserved quantities the kernel actually refused.
 */
-func (fluid *workspace) drainDebug() {
+func (fluid *workspace) drainDebug() error {
 	if fluid.dbgHead == nil || fluid.dbgWords == nil {
-		return
+		return nil
 	}
 
 	head := fluid.dbgHead.UInt32Slice()
 
 	if len(head) == 0 || head[0] == 0 {
-		return
+		return nil
 	}
 
 	recorded := head[0]
 	head[0] = 0
 	words := fluid.dbgWords.UInt32Slice()
 	stored := min(recorded, uint32(dbgCapacity))
-	reported := 0
+	rejected := 0
+	firstRejection := ""
 
 	for event := uint32(0); event < stored; event++ {
 		base := event * dbgWordsPerEvent
@@ -74,15 +66,7 @@ func (fluid *workspace) drainDebug() {
 
 		tag := words[base]
 
-		// A cell holding no particles is an ordinary state of a sparse domain,
-		// and the baseline sample is instrumentation the kernel emits every
-		// step. Neither is a rejection, so neither is reported as one; only the
-		// contracts the kernel actually refused reach the log.
-		if tag == dbgTagBaseline || tag == dbgTagVacuum {
-			continue
-		}
-
-		reported++
+		rejected++
 
 		name, known := dbgTagNames[tag]
 
@@ -90,36 +74,64 @@ func (fluid *workspace) drainDebug() {
 			name = "unknown kernel tag"
 		}
 
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf(
-				"sensorium: %s (tag 0x%02x) at cell/particle %d | rho=%s e_int=%s mom_x=%s mom_y=%s",
+		if firstRejection == "" {
+			firstRejection = debugRejection(
 				name,
 				tag,
 				words[base+1],
-				dbgFloat(words[base+2]),
-				dbgFloat(words[base+3]),
-				dbgFloat(words[base+4]),
-				dbgFloat(words[base+5]),
-			),
-			nil,
-		))
+				words[base+2:base+dbgWordsPerEvent],
+			)
+		}
 	}
 
-	// Only say events were lost when something worth reporting was actually
-	// reported: a sparse domain fills the buffer with routine vacuum samples
-	// every step, and announcing that overflow each time would bury the
-	// rejections this exists to surface.
-	if recorded > stored && reported > 0 {
-		errnie.Error(errnie.Err(
-			errnie.Internal,
-			fmt.Sprintf(
-				"sensorium: %d further kernel events exceeded the %d-event debug buffer",
-				recorded-stored, dbgCapacity,
-			),
-			nil,
-		))
+	if rejected == 0 {
+		return nil
 	}
+
+	return errnie.Error(errnie.Err(
+		errnie.Internal,
+		fmt.Sprintf(
+			"%s; rejected_events=%d, recorded_events=%d, stored_events=%d",
+			firstRejection,
+			rejected,
+			recorded,
+			stored,
+		),
+		nil,
+	))
+}
+
+func debugRejection(
+	name string,
+	tag uint32,
+	index uint32,
+	values []uint32,
+) string {
+	fields := fmt.Sprintf(
+		"rho=%s, e_int=%s, mom_x=%s, mom_y=%s",
+		dbgFloat(values[0]),
+		dbgFloat(values[1]),
+		dbgFloat(values[2]),
+		dbgFloat(values[3]),
+	)
+
+	if tag == 0x12 || tag == 0x13 {
+		fields = fmt.Sprintf(
+			"input_rho=%s, input_e_int=%s, candidate_rho=%s, candidate_e_int=%s",
+			dbgFloat(values[0]),
+			dbgFloat(values[1]),
+			dbgFloat(values[2]),
+			dbgFloat(values[3]),
+		)
+	}
+
+	return fmt.Sprintf(
+		"sensorium: %s (tag 0x%02x) at cell/particle %d: %s",
+		name,
+		tag,
+		index,
+		fields,
+	)
 }
 
 /*

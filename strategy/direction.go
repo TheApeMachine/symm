@@ -20,7 +20,7 @@ type directionalConfig struct {
 
 /*
 directionalForecast is a posterior distribution of executable-bid log return
-over the activity clock observed for this symbol. probabilityUp and
+over the calibrated ticker-step reach observed for this symbol. probabilityUp and
 probabilityProfitable are two queries against that one distribution.
 */
 type directionalForecast struct {
@@ -32,7 +32,6 @@ type directionalForecast struct {
 	breakEvenLogReturn    float64
 	ready                 bool
 	status                string
-	horizon               time.Duration
 	horizonSteps          int
 	calibration           uint64
 	directionalFeatures   int
@@ -50,8 +49,9 @@ type featureKey struct {
 }
 
 type forecastContext struct {
-	archetype types.OpportunityArchetype
-	phase     types.OpportunityPhase
+	archetype    types.OpportunityArchetype
+	phase        types.OpportunityPhase
+	horizonSteps int
 }
 
 type featureUse uint8
@@ -67,6 +67,7 @@ type predictorFeature struct {
 	value         float64
 	quality       float64
 	observedAt    time.Time
+	observedOrder uint64
 	observed      bool
 	group         int
 	associations  map[forecastContext]*weightedAssociation
@@ -83,29 +84,25 @@ type evidenceGroup struct {
 }
 
 type pendingReturn struct {
-	issuedAt  time.Time
-	reference float64
-	horizon   time.Duration
-	score     float64
-	context   forecastContext
-	present   bool
-}
-
-type intervalMean struct {
-	last  time.Time
-	count uint64
-	mean  time.Duration
+	issuedOrdinal uint64
+	reference     float64
+	horizonSteps  int
+	score         float64
+	context       forecastContext
+	present       bool
 }
 
 type directionalState struct {
-	features     map[featureKey]*predictorFeature
-	groupsByName map[string]int
-	groups       []evidenceGroup
-	returns      *returnHead
-	pending      pendingReturn
-	horizon      time.Duration
-	intervals    intervalMean
-	opportunity  types.OpportunityCandidate
+	features               map[featureKey]*predictorFeature
+	groupsByName           map[string]int
+	groups                 []evidenceGroup
+	returns                map[int]*returnHead
+	pending                pendingReturn
+	observationOrdinal     uint64
+	lastAdvanceObservation uint64
+	tickerOrdinal          uint64
+	horizonSteps           int
+	opportunity            types.OpportunityCandidate
 }
 
 /*
@@ -138,16 +135,10 @@ func (predictor *directionalPredictor) state(symbol string) (*directionalState, 
 		return state, nil
 	}
 
-	returns, err := newReturnHead(predictor.config)
-
-	if err != nil {
-		return nil, err
-	}
-
 	state := &directionalState{
 		features:     make(map[featureKey]*predictorFeature),
 		groupsByName: make(map[string]int),
-		returns:      returns,
+		returns:      make(map[int]*returnHead),
 	}
 	predictor.states[symbol] = state
 
@@ -179,17 +170,15 @@ func (predictor *directionalPredictor) observeMeasurement(
 	}
 
 	for metricName, metric := range measurement.Metrics {
-		if measurement.Source == "pumpdump" && metricName == "volume_bar_duration" {
-			state.observeHorizon(metric.Raw)
-		}
-
-		state.observe(
+		if err := state.observe(
 			featureKey{family: "measurement", source: measurement.Source, metric: metricName},
 			metric.Raw,
 			quality,
 			measurement.At,
 			semanticFeatureUse(measurement.Source, metricName),
-		)
+		); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -217,7 +206,7 @@ func semanticFeatureUse(source, metric string) featureUse {
 }
 
 /*
-advance resolves a prior forecast only after its own activity-clock horizon,
+advance resolves a prior forecast only after its frozen ticker-step horizon,
 then queries the current executable-return posterior and issues one new bounded
 pending observation when necessary.
 */
@@ -225,31 +214,44 @@ func (predictor *directionalPredictor) advance(
 	symbol string,
 	at time.Time,
 	executableBid float64,
-	breakEven *float64,
 ) (*directionalForecast, error) {
+	if symbol == "" || at.IsZero() || executableBid <= 0 {
+		return nil, fmt.Errorf(
+			"strategy: forecast requires symbol, event time, and positive executable bid",
+		)
+	}
+
 	state, err := predictor.state(symbol)
 
 	if err != nil {
 		return nil, err
 	}
 
-	state.intervals.observe(at)
+	priorObservation := state.lastAdvanceObservation
 
-	if err := state.resolve(at, executableBid); err != nil {
+	state.lastAdvanceObservation = state.observationOrdinal
+	state.tickerOrdinal++
+
+	if err := state.resolve(executableBid); err != nil {
 		return nil, err
 	}
 
 	forecast := &directionalForecast{
-		symbol:      symbol,
-		at:          at,
-		status:      "missing-active-opportunity",
-		horizon:     state.horizon,
-		calibration: state.returns.outcomes,
-		opportunity: state.opportunity,
+		symbol:       symbol,
+		at:           at,
+		status:       "missing-active-opportunity",
+		horizonSteps: state.horizonSteps,
+		opportunity:  state.opportunity,
 	}
-	forecast.estimabilityFeatures = state.currentFeatureCount(featureEstimability, at)
-	forecast.executionFeatures = state.currentFeatureCount(featureExecution, at)
-	forecast.reviewFeatures = state.currentFeatureCount(featureReview, at)
+	forecast.estimabilityFeatures = state.currentFeatureCount(
+		featureEstimability, priorObservation,
+	)
+	forecast.executionFeatures = state.currentFeatureCount(
+		featureExecution, priorObservation,
+	)
+	forecast.reviewFeatures = state.currentFeatureCount(
+		featureReview, priorObservation,
+	)
 
 	context, active := state.context()
 
@@ -257,40 +259,76 @@ func (predictor *directionalPredictor) advance(
 		return forecast, nil
 	}
 
-	if state.horizon <= 0 {
+	if state.horizonSteps <= 0 {
 		forecast.status = "missing-adaptive-horizon"
 		return forecast, nil
 	}
 
-	forecast.horizonSteps = state.intervals.steps(state.horizon)
-	score, features := state.aggregate(context, at, state.horizon)
+	score, features := state.aggregate(context, priorObservation)
 	forecast.directionalFeatures = features
 
-	output, err := state.returns.predict(score)
+	returns, err := predictor.returnHead(state, state.horizonSteps)
+
+	if err != nil {
+		return nil, err
+	}
+
+	forecast.calibration = returns.outcomes
+	output, err := returns.predict(score)
 
 	if err != nil {
 		return nil, err
 	}
 
 	forecast.output = output
-	forecast.expectedLogReturn = output.Value
 	forecast.status = "awaiting-return-distribution"
 
-	if breakEven != nil && executableBid > 0 && *breakEven > 0 {
-		forecast.breakEvenLogReturn = math.Log(*breakEven / executableBid)
+	if output.Ready && output.DegreesOfFreedom <= 1 {
+		forecast.status = "return-distribution-mean-undefined"
 	}
 
-	if output.Ready && breakEven != nil {
+	if output.Ready && output.DegreesOfFreedom > 1 {
 		distribution := distuv.StudentsT{
 			Mu: output.Value, Sigma: output.Scale, Nu: output.DegreesOfFreedom,
 		}
+		forecast.expectedLogReturn = output.Value
 		forecast.probabilityUp = 1 - distribution.CDF(0)
-		forecast.probabilityProfitable = 1 - distribution.CDF(forecast.breakEvenLogReturn)
-		forecast.ready = true
-		forecast.status = "adaptive-return-distribution-ready"
+		forecast.status = "missing-execution-boundary"
 	}
 
-	state.issue(at, executableBid, context, score)
+	state.issue(
+		priorObservation, executableBid, context, score,
+	)
 
 	return forecast, nil
+}
+
+/*
+observeExecutionBoundary applies current fee, spread, and impact economics to a
+forecast after its ticker-step state transition has already completed.
+*/
+func (forecast *directionalForecast) observeExecutionBoundary(
+	executableBid float64,
+	breakEven float64,
+) error {
+	if executableBid <= 0 || breakEven <= 0 {
+		return fmt.Errorf("strategy: positive executable bid and break-even required")
+	}
+
+	forecast.breakEvenLogReturn = math.Log(breakEven / executableBid)
+
+	if !forecast.output.Ready || forecast.output.DegreesOfFreedom <= 1 {
+		return nil
+	}
+
+	distribution := distuv.StudentsT{
+		Mu:    forecast.output.Value,
+		Sigma: forecast.output.Scale,
+		Nu:    forecast.output.DegreesOfFreedom,
+	}
+	forecast.probabilityProfitable = 1 - distribution.CDF(forecast.breakEvenLogReturn)
+	forecast.ready = true
+	forecast.status = "adaptive-return-distribution-ready"
+
+	return nil
 }

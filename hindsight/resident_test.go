@@ -85,8 +85,8 @@ func stateWith(sequence uint64, atNs int64, sources []string, category string, c
 
 /*
 stateWithPerspectives encodes one historical EnvelopeState carrying the given
-Perspective frames. Each frame declares its own Kind, so advisor families can
-be separated by identity.
+retired Perspective frames. Each frame declares its own Kind, so legacy
+advisor-family rows can be separated by identity.
 */
 func stateWithPerspectives(frames []*wire.PerspectiveFrameT) []byte {
 	state := &wire.EnvelopeStateT{Perspectives: frames}
@@ -99,9 +99,9 @@ func stateWithPerspectives(frames []*wire.PerspectiveFrameT) []byte {
 
 func reading(metric string, value float64, defined bool) *wire.PerspectiveReadingT {
 	return &wire.PerspectiveReadingT{
-		Metric:    metric,
-		Value:     value,
-		Defined:   defined,
+		Metric:     metric,
+		Value:      value,
+		Defined:    defined,
 		ObservedAt: 1000,
 		From:       500,
 		Maturity:   0.7,
@@ -322,7 +322,7 @@ func TestResolveResidentMultiOrdinalTest(t *testing.T) {
 		mark := base.Add(time.Second)
 
 		reader := &tapeReader{states: map[uint64][]byte{
-			tapeKey(99, 0): stateWith(99, base.UnixNano(), []string{"hawkes"}, "", 0),
+			tapeKey(99, 0):  stateWith(99, base.UnixNano(), []string{"hawkes"}, "", 0),
 			tapeKey(100, 0): stateWith(100, base.Add(100*time.Millisecond).UnixNano(), []string{"cvd"}, "", 0),
 			tapeKey(100, 1): stateWith(100, base.Add(200*time.Millisecond).UnixNano(), []string{"liquidity"}, "", 0),
 			tapeKey(100, 2): stateWith(100, base.Add(300*time.Millisecond).UnixNano(), []string{"pumpDump"}, "", 0),
@@ -429,12 +429,12 @@ func TestResolveResidentMultiOrdinalTest(t *testing.T) {
 }
 
 /*
-TestResolveResidentKindIdentityTest proves multiple Advisor families for the
-same symbol+peer all survive resident reconstruction: Kind is part of resident
-identity, so they never collapse on the old symbol|peer key.
+TestResolveResidentKindIdentityTest proves multiple retired advisor families
+for the same symbol+peer all survive historical reconstruction: Kind is part of
+the legacy identity, so they never collapse on the old symbol|peer key.
 */
 func TestResolveResidentKindIdentityTest(t *testing.T) {
-	Convey("Given one capture carrying several kinds for the same symbol and peer", t, func() {
+	Convey("Given one historical capture carrying several legacy kinds", t, func() {
 		mark := time.Date(2026, 8, 30, 22, 0, 0, 0, time.UTC)
 
 		frames := []*wire.PerspectiveFrameT{

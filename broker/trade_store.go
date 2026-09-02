@@ -318,3 +318,52 @@ func (store *PositionStore) RecentTrades(limit int) ([]*wire.PositionT, error) {
 
 	return trades, rows.Err()
 }
+
+/*
+LoadOpenDecision returns the immutable entry decision saved with the currently
+open lot for a symbol. Desk ownership permits only one open lot per symbol, so
+the newest journal row without an exit is the exact recovery candidate.
+*/
+func (store *PositionStore) LoadOpenDecision(symbol string) (*wire.DecisionT, error) {
+	if store == nil || store.database == nil || symbol == "" {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"position store: database and symbol required to load open decision",
+			nil,
+		))
+	}
+
+	var raw []byte
+	err := store.database.QueryRow(
+		`SELECT raw_position
+		 FROM position_trades
+		 WHERE symbol = ? AND exit_at IS NULL
+		 ORDER BY id DESC
+		 LIMIT 1`,
+		symbol,
+	).Scan(&raw)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			fmt.Sprintf("position store: load open decision failed for %s [%s]", symbol, err.Error()),
+			err,
+		))
+	}
+
+	var positionWire wire.PositionT
+
+	if err := json.Unmarshal(raw, &positionWire); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			fmt.Sprintf("position store: decode open decision failed for %s [%s]", symbol, err.Error()),
+			err,
+		))
+	}
+
+	return positionWire.Decision, nil
+}

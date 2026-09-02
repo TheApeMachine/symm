@@ -1,6 +1,7 @@
 package correlation
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
@@ -148,11 +149,42 @@ Step receives one market data point, appends the price into the symbol's
 retained path, evaluates the cross-sectional cohort over every other committed
 path, advances the focal-level pair-history estimators, and projects exactly one
 Measurement. The per-symbol path facts are always projected; cohort and
-pair-history facts appear only once their estimators are ready.
+pair-history facts appear only once their estimators are ready. An explicit zero
+last means no recent trade price was observed: it produces an undefined,
+zero-support measurement without advancing the retained path.
 */
 func (ticker *Ticker) Step(tickerData kraken.TickerData) *data.Measurement[float64] {
+	if tickerData.Last == nil {
+		return &data.Measurement[float64]{Err: fmt.Errorf("correlation: ticker requires a last price")}
+	}
+
+	last := tickerData.Last.Float64()
+
+	if last < 0 {
+		return &data.Measurement[float64]{Err: fmt.Errorf("correlation: ticker last price must be non-negative")}
+	}
+
+	if last == 0 {
+		projection := nmtypes.Frame{}
+
+		measurement := ticker.projector.Project(
+			ticker.label(tickerData.Symbol),
+			"correlation",
+			tickerData.Timestamp,
+			tickerData.Timestamp,
+			projection,
+		)
+		measurement.Metadata[data.MetadataSupport] = 0
+		measurement.Finalize()
+		measurement.Provenance = map[string]string{
+			"last_trade_price_state": "unobserved",
+		}
+
+		return measurement
+	}
+
 	input := nmtypes.Frame{}
-	input.Put(temporal.DefaultSeries.ValueSymbol, tickerData.Last.Float64())
+	input.Put(temporal.DefaultSeries.ValueSymbol, last)
 	input.Put(temporal.DefaultSeries.SecSymbol, float64(tickerData.Timestamp.Unix()))
 	input.Put(temporal.DefaultSeries.NsecSymbol, float64(tickerData.Timestamp.Nanosecond()))
 

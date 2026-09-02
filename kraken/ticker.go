@@ -27,6 +27,7 @@ type TickerData struct {
 	High      *decimal.Decimal `json:"high"`
 	Change    *decimal.Decimal `json:"change"`
 	ChangePct float64          `json:"change_pct"`
+	Trades    *int64           `json:"trades"`
 	Timestamp time.Time        `json:"timestamp"`
 }
 

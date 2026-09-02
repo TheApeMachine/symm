@@ -147,11 +147,11 @@ func TestStateVersionMonotonicTest(t *testing.T) {
 
 			So(fromTicker, ShouldBeGreaterThan, fromTrade)
 			So(StateVersion{
-				Component: "advisor.execution",
+				Component: "strategy.planner",
 				Key:       "BTC",
 				Version:   fromTrade,
 			}, ShouldNotResemble, StateVersion{
-				Component: "advisor.execution",
+				Component: "strategy.planner",
 				Key:       "BTC",
 				Version:   fromTicker,
 			})

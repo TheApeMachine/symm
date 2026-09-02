@@ -12,6 +12,7 @@ import { EnvelopeFuturesTickerData, EnvelopeFuturesTickerDataT } from '../teleme
 import { EnvelopeFuturesTradeData, EnvelopeFuturesTradeDataT } from '../telemetry/envelope-futures-trade-data.js';
 import { EnvelopeGraphUpdate, EnvelopeGraphUpdateT } from '../telemetry/envelope-graph-update.js';
 import { EnvelopeLevel3Data, EnvelopeLevel3DataT } from '../telemetry/envelope-level3-data.js';
+import { EnvelopeLiquiditySweepWithRecoveryUpdate, EnvelopeLiquiditySweepWithRecoveryUpdateT } from '../telemetry/envelope-liquidity-sweep-with-recovery-update.js';
 import { EnvelopeManifoldState, EnvelopeManifoldStateT } from '../telemetry/envelope-manifold-state.js';
 import { EnvelopeMeasurement, EnvelopeMeasurementT } from '../telemetry/envelope-measurement.js';
 import { EnvelopeOpportunityCandidate, EnvelopeOpportunityCandidateT } from '../telemetry/envelope-opportunity-candidate.js';
@@ -248,8 +249,13 @@ positions(obj?:PositionsFrame):PositionsFrame|null {
   return offset ? (obj || new PositionsFrame()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
+liquiditySweepWithRecovery(obj?:EnvelopeLiquiditySweepWithRecoveryUpdate):EnvelopeLiquiditySweepWithRecoveryUpdate|null {
+  const offset = this.bb!.__offset(this.bb_pos, 76);
+  return offset ? (obj || new EnvelopeLiquiditySweepWithRecoveryUpdate()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
 static startEnvelopeState(builder:flatbuffers.Builder) {
-  builder.startObject(36);
+  builder.startObject(37);
 }
 
 static addKey(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset) {
@@ -444,6 +450,10 @@ static addPositions(builder:flatbuffers.Builder, positionsOffset:flatbuffers.Off
   builder.addFieldOffset(35, positionsOffset, 0);
 }
 
+static addLiquiditySweepWithRecovery(builder:flatbuffers.Builder, liquiditySweepWithRecoveryOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(36, liquiditySweepWithRecoveryOffset, 0);
+}
+
 static endEnvelopeState(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
@@ -487,7 +497,8 @@ unpack(): EnvelopeStateT {
     this.bb!.createObjList<PerspectiveFrame, PerspectiveFrameT>(this.perspectives.bind(this), this.perspectivesLength()),
     this.tick(),
     (this.equity() !== null ? this.equity()!.unpack() : null),
-    (this.positions() !== null ? this.positions()!.unpack() : null)
+    (this.positions() !== null ? this.positions()!.unpack() : null),
+    (this.liquiditySweepWithRecovery() !== null ? this.liquiditySweepWithRecovery()!.unpack() : null)
   );
 }
 
@@ -529,6 +540,7 @@ unpackTo(_o: EnvelopeStateT): void {
   _o.tick = this.tick();
   _o.equity = (this.equity() !== null ? this.equity()!.unpack() : null);
   _o.positions = (this.positions() !== null ? this.positions()!.unpack() : null);
+  _o.liquiditySweepWithRecovery = (this.liquiditySweepWithRecovery() !== null ? this.liquiditySweepWithRecovery()!.unpack() : null);
 }
 }
 
@@ -569,7 +581,8 @@ constructor(
   public perspectives: (PerspectiveFrameT)[] = [],
   public tick: bigint = BigInt('0'),
   public equity: EquityFrameT|null = null,
-  public positions: PositionsFrameT|null = null
+  public positions: PositionsFrameT|null = null,
+  public liquiditySweepWithRecovery: EnvelopeLiquiditySweepWithRecoveryUpdateT|null = null
 ){}
 
 
@@ -604,6 +617,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const perspectives = EnvelopeState.createPerspectivesVector(builder, builder.createObjectOffsetList(this.perspectives));
   const equity = (this.equity !== null ? this.equity!.pack(builder) : 0);
   const positions = (this.positions !== null ? this.positions!.pack(builder) : 0);
+  const liquiditySweepWithRecovery = (this.liquiditySweepWithRecovery !== null ? this.liquiditySweepWithRecovery!.pack(builder) : 0);
 
   EnvelopeState.startEnvelopeState(builder);
   EnvelopeState.addKey(builder, key);
@@ -642,6 +656,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   EnvelopeState.addTick(builder, this.tick);
   EnvelopeState.addEquity(builder, equity);
   EnvelopeState.addPositions(builder, positions);
+  EnvelopeState.addLiquiditySweepWithRecovery(builder, liquiditySweepWithRecovery);
 
   return EnvelopeState.endEnvelopeState(builder);
 }

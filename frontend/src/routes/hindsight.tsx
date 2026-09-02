@@ -102,6 +102,7 @@ const HindsightRoute = () => {
 	const [captures, setCaptures] = useState<HindsightCapture[]>([]);
 	const [envelope, setEnvelope] = useState<HindsightEnvelope | null>(null);
 	const [state, setState] = useState<EnvelopeState | null>(null);
+	const [resident, setResident] = useState<HindsightResident | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [semantics, setSemantics] = useState<HindsightMetricMap | null>(null);
 	const [position, setPosition] = useState<string | null>(null);
@@ -155,6 +156,7 @@ const HindsightRoute = () => {
 		setEpisode(null);
 		setEnvelope(null);
 		setState(null);
+		setResident(null);
 		setCaptures([]);
 		setMarks([]);
 		setMarkStates([]);
@@ -241,6 +243,8 @@ const HindsightRoute = () => {
 
 		let cancelled = false;
 		const from = Math.max(playhead.sequence - 24, 0);
+		setState(null);
+		setResident(null);
 
 		fetchHindsightCaptures(run, from).then((loaded) => {
 			if (!cancelled) setCaptures(loaded.slice(0, 48));
@@ -256,10 +260,21 @@ const HindsightRoute = () => {
 			},
 		);
 
+		if (symbol !== null) {
+			fetchHindsightResident(
+				run,
+				symbol,
+				playhead.sequence,
+				playhead.ordinal,
+			).then((loaded) => {
+				if (!cancelled) setResident(loaded);
+			});
+		}
+
 		return () => {
 			cancelled = true;
 		};
-	}, [run, playhead]);
+	}, [run, symbol, playhead]);
 
 	const positions = useMemo<Position[]>(
 		() => buildPositions(lifecycle),
@@ -691,6 +706,7 @@ const HindsightRoute = () => {
 											<div className="min-w-0">
 												<StatePanel
 													state={state}
+													resident={resident}
 													envelope={envelope}
 													semantics={semantics}
 												/>

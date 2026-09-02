@@ -1,227 +1,208 @@
 package types
 
 import (
+	"slices"
 	"time"
 
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
-/*
-PerspectiveKind names the family of descriptive context a Perspective carries.
-It is an interned numeric identity, not a rendered string: the hot path compares
-and keys on the integer, never on a string built for display. Each concrete
-Advisor family owns a distinct kind so their perspectives do not collide on the
-same identity.
-*/
-type PerspectiveKind uint8
+/* PerspectiveQuestion is the stable semantic question an Advisor answers. */
+type PerspectiveQuestion string
+
+/* PerspectiveState is one recognizable market state in a distribution. */
+type PerspectiveState string
+
+/* PerspectiveClass assigns probability mass to one named market state. */
+type PerspectiveClass struct {
+	State       PerspectiveState
+	Probability float64
+}
+
+/* PerspectiveEvent names one causally observable, possibly compound, event. */
+type PerspectiveEvent string
+
+/* PerspectivePredictionEffect says how an observed event resolves a round. */
+type PerspectivePredictionEffect uint8
 
 const (
-	// KindState is the generic composed-metric temporal-context family: the
-	// current value, adaptive baseline, z-score, and velocity of each composed
-	// measurement metric, relative to its own history.
-	KindState PerspectiveKind = iota + 1
-	// KindLiquidity names the execution-terrain composition (spread, touch
-	// capacity, book imbalance) the liquidity advisor maintains.
-	KindLiquidity
-	// KindHistoricalAnalogue names the multivariate trajectory-recurrence
-	// composition (nearest historical path distance, its percentile, match
-	// count, and match location) the historical analogue advisor maintains.
-	KindHistoricalAnalogue
-	// KindExecutionContext names the joint-facts execution-terrain composition:
-	// executed flow presented alongside displayed touch-capacity asymmetry and
-	// crossing cost, so "what this flow means" is read against the book it
-	// executed into rather than reduced to a single score.
-	KindExecutionContext
-	// KindDecomposition names the joint-facts event-decomposition composition:
-	// arrival frequency alongside economic throughput, so "many-small vs
-	// few-large" activity is read from two facts rather than one conflated
-	// throughput scalar.
-	KindDecomposition
-	// KindLiquidityDynamics names the Liquidity signal's own causal historical
-	// state: depth/spread baselines, divergences, z-scores and velocities.
-	KindLiquidityDynamics
-	// KindFlow names the executed-flow / price-response / displayed-structure
-	// composition: CVD flow facts beside DepthFlow book structure.
-	KindFlow
-	// KindOrderDisposition names the Toxicity disposition composition: fill,
-	// withdrawal, replenishment, and retreat as distinguishable mechanisms.
-	KindOrderDisposition
-	// KindArrival names the Hawkes arrival-process state: empirical rates,
-	// conditional intensities, background rates and excitation fractions.
-	KindArrival
-	// KindArrivalQuality names the Hawkes model-behaviour / epistemic context:
-	// branching radius, likelihood gains, innovations, expected descendants.
-	KindArrivalQuality
-	// KindMorphology names the static dimensionless book-shape composition.
-	KindMorphology
-	// KindMorphologyDynamics names Morphology's causal historical context:
-	// baseline, departure z-score and velocity of its shape-change facts.
-	KindMorphologyDynamics
-	// KindCoordination names the cohort price-path coupling composition:
-	// correlation and lead-lag geometry.
-	KindCoordination
-	// KindCoordinationSupport names the inference/support facts behind a
-	// coordination reading: sample counts, p-values, search provenance.
-	KindCoordinationSupport
-	// KindRelativeState names the cross-sectional price-state composition
-	// (breadth, dispersion, directional consensus).
-	KindRelativeState
-	// KindActivity names the volume-clock activity composition.
-	KindActivity
-	// KindDerivatives names the leverage/basis/OI/liquidation composition.
-	KindDerivatives
+	PredictionSupports PerspectivePredictionEffect = iota + 1
+	PredictionFalsifies
 )
 
-/*
-String returns the display name of a kind. It is for telemetry and UI rendering
-only and must never participate in a hot-path comparison or key.
-*/
-func (kind PerspectiveKind) String() string {
-	switch kind {
-	case KindState:
-		return "state"
-	case KindLiquidity:
-		return "liquidity"
-	case KindHistoricalAnalogue:
-		return "historical_analogue"
-	case KindExecutionContext:
-		return "execution_context"
-	case KindDecomposition:
-		return "decomposition"
-	case KindLiquidityDynamics:
-		return "liquidity_dynamics"
-	case KindFlow:
-		return "flow"
-	case KindOrderDisposition:
-		return "order_disposition"
-	case KindArrival:
-		return "arrival"
-	case KindArrivalQuality:
-		return "arrival_quality"
-	case KindMorphology:
-		return "morphology"
-	case KindMorphologyDynamics:
-		return "morphology_dynamics"
-	case KindCoordination:
-		return "coordination"
-	case KindCoordinationSupport:
-		return "coordination_support"
-	case KindRelativeState:
-		return "relative_state"
-	case KindActivity:
-		return "activity"
-	case KindDerivatives:
-		return "derivatives"
+/* String returns the prediction effect's display name. */
+func (effect PerspectivePredictionEffect) String() string {
+	switch effect {
+	case PredictionSupports:
+		return "supports"
+	case PredictionFalsifies:
+		return "falsifies"
 	default:
 		return "unknown"
 	}
 }
 
 /*
-PerspectiveMetricCapacity bounds how many readings one Perspective can carry.
-It is a declared structural bound so the payload stays a fixed-size value and
-the hot path never allocates a slice per emission. Each Advisor pipeline
-declares its own output symbols (see advisor.NewAdvisor), and the Liquidity
-pipeline is exactly the widest known composition today: 3 bound metrics, each
-contributing 4 named readings (its current value plus its adaptive baseline,
-departure z-score, and first difference) — 12 readings, with no spare
-capacity. advisor.NewAdvisor panics if a pipeline declares more outputs than
-this bound, so a wider future pipeline fails loudly at construction rather
-than silently losing readings — raise this constant when that happens.
+PerspectivePrediction names one terminal market event and whether observing it
+supports or falsifies the issued Perspective. Predictions carry no arbitrary
+weight: the first terminal event observed by Arena resolves the round.
 */
-const PerspectiveMetricCapacity = 12
-
-/*
-MetricReading is one named fact a pipeline emitted for one composed metric:
-the interned identity of the value (Metric — e.g. a bound metric's raw value,
-or one of its derived statistics such as a baseline or z-score) and the value
-itself. A consumer determines what a reading means from Metric, never from its
-position in the Readings array, so an Advisor's pipeline can emit any number
-of named facts per composed metric without Perspective assuming a fixed shape
-such as "value plus baseline plus z-score plus velocity" — that shape belongs
-to whichever pipeline happens to produce it, not to the generic wire type.
-
-Defined is false when the pipeline has not yet produced this fact (its
-required estimator state does not exist yet), so an undefined reading's zero
-Value is never mistaken for a real, observed zero.
-
-Maturity, SNR, and SNRDefined carry forward the source Measurement's own
-quality facts for the composed metric this reading belongs to — an Advisor
-composes already-produced Measurements and must not discard or re-derive the
-provenance they already established.
-
-ObservedAt and From are the reading's own temporal provenance: the event-time
-instant this fact was last observed and the interval it represents. They are
-NOT the Perspective's At — a Perspective composing facts from multiple producer
-Workloads (trade CVD, ticker liquidity, Level3 depthflow) carries readings
-observed at different instants, and stamping every underlying fact with the
-outermost Perspective.At would erase that distinction. A consumer distinguishes
-readings by their own ObservedAt/From; an undefined reading has a zero
-ObservedAt, never a fabricated copy of the Perspective's clock. From is zero
-when the source measurement declared no interval (instantaneous facts).
-*/
-type MetricReading struct {
-	Metric     nmtypes.Symbol
-	Value      float64
-	Defined    bool
-	ObservedAt time.Time
-	From       time.Time
-	Maturity   float64
-	SNR        float64
-	SNRDefined bool
+type PerspectivePrediction struct {
+	Event  PerspectiveEvent
+	Effect PerspectivePredictionEffect
 }
 
 /*
-Perspective is the current descriptive output of one Advisor. It is context,
-never an instruction: a Perspective describes the present state of composed
-measurements relative to their own history and does not choose an action, impose
-a gate, or assert an opportunity score.
+PerspectiveLease bounds one prediction round in a monotone market coordinate.
+Clock names the coordinate (for example event-time nanoseconds, ticker ordinal,
+or completed-volume-bar ordinal); From and Until are positions on that clock.
+No wall-clock duration or universal fixed window is implied.
+*/
+type PerspectiveLease struct {
+	Clock nmtypes.Symbol
+	From  uint64
+	Until uint64
+}
 
-The envelope is fixed-size apart from the two identity strings; the payload is a
-fixed-size array of metric readings, so emitting a Perspective allocates no
-per-event slices or maps.
+/* PerspectiveLifecycle is the state of one falsifiable prediction round. */
+type PerspectiveLifecycle uint8
+
+const (
+	PerspectiveIssued PerspectiveLifecycle = iota + 1
+	PerspectiveSurvived
+	PerspectiveFalsified
+	PerspectiveExpired
+	PerspectiveCensored
+)
+
+/* String returns the lifecycle state's display name. */
+func (lifecycle PerspectiveLifecycle) String() string {
+	switch lifecycle {
+	case PerspectiveIssued:
+		return "issued"
+	case PerspectiveSurvived:
+		return "survived"
+	case PerspectiveFalsified:
+		return "falsified"
+	case PerspectiveExpired:
+		return "expired"
+	case PerspectiveCensored:
+		return "censored"
+	default:
+		return "unknown"
+	}
+}
+
+/*
+Perspective is one Advisor's falsifiable distribution over named market states.
+It describes a market claim and its observable survival conditions; it never
+chooses a trading action or names a receiver.
+
+Question makes the market question explicit. PositionID is empty for
+symbol-level context and set when the question is about one open position. Peer
+is empty unless the question concerns a symbol relationship. Round identifies
+the Advisor's generation for this question. Sequence orders issued and terminal
+updates within and across rounds. IssuedAt never changes during that round;
+ResolvedAt and ResolvedCoordinate preserve the terminal evidence Arena saw.
+
+Perspective issuance is sparse control-plane work, not one allocation per raw
+market event. Arena owns its configured active-round bound and deep-copies the
+slices on admission. ResolvedBy is empty while issued and names the observed
+terminal event or Arena condition for a resolved round.
 */
 type Perspective struct {
-	Symbol string
+	Symbol     string
+	Peer       string
+	PositionID string
 
-	// Peer is the counterpart symbol for a relationship-kind perspective and
-	//is empty for symbol-local and global perspectives.
-	Peer string
+	Advisor            nmtypes.Symbol
+	Question           PerspectiveQuestion
+	IssuedAt           time.Time
+	ResolvedAt         time.Time
+	ResolvedCoordinate uint64
+	Sequence           uint64
+	Round              uint64
+	Support            uint64
 
-	Kind     PerspectiveKind
-	At       time.Time
-	Sequence uint64
+	Classes     []PerspectiveClass
+	Predictions []PerspectivePrediction
+	Lease       PerspectiveLease
+	Lifecycle   PerspectiveLifecycle
+	ResolvedBy  PerspectiveEvent
 
-	Readings [PerspectiveMetricCapacity]MetricReading
-	Count    int
-
-	// Err carries a pipeline transition failure for this Step. Number only
-	// commits successful output, so on a genuine failure this Perspective
-	// describes nothing new: a consumer must check Err before trusting Readings,
-	// which in that case still reflect the last successfully committed state,
-	// not this event's contribution.
+	// Err carries an Advisor or Arena transition failure for this update. A
+	// Perspective with Err set is invalid and must halt its consumer.
 	Err error
 }
 
 /*
-PerspectiveKey is the structural identity of one perspective: the symbol (and
-optional peer) plus the kind. It is a comparable value type usable directly as a
-map key without allocating or building strings. A PositionID- or global-scoped
-perspective is a later extension of this key.
+PerspectiveKey is the structural identity of one Perspective stream. Round is
+not part of the key: a new generation replaces the previous generation for the
+same Advisor question rather than growing the latest-value store without bound.
 */
 type PerspectiveKey struct {
-	Symbol string
-	Peer   string
-	Kind   PerspectiveKind
+	Symbol     string
+	Peer       string
+	PositionID string
+	Advisor    nmtypes.Symbol
+	Question   PerspectiveQuestion
+}
+
+/* Key returns the Perspective stream's complete structural identity. */
+func (perspective *Perspective) Key() PerspectiveKey {
+	return PerspectiveKey{
+		Symbol:     perspective.Symbol,
+		Peer:       perspective.Peer,
+		PositionID: perspective.PositionID,
+		Advisor:    perspective.Advisor,
+		Question:   perspective.Question,
+	}
+}
+
+/* Clone returns an independently owned Perspective for Arena admission. */
+func (perspective Perspective) Clone() Perspective {
+	perspective.Classes = slices.Clone(perspective.Classes)
+	perspective.Predictions = slices.Clone(perspective.Predictions)
+
+	return perspective
 }
 
 /*
-Key returns the structural identity of the perspective.
+Probability returns the mass assigned to a named state. The boolean separates a
+real zero probability from a state absent from the distribution.
 */
-func (perspective Perspective) Key() PerspectiveKey {
-	return PerspectiveKey{
-		Symbol: perspective.Symbol,
-		Peer:   perspective.Peer,
-		Kind:   perspective.Kind,
+func (perspective *Perspective) Probability(state PerspectiveState) (float64, bool) {
+	for _, class := range perspective.Classes {
+
+		if class.State == state {
+			return class.Probability, true
+		}
 	}
+
+	return 0, false
+}
+
+/*
+Maturity reports the distribution's empirical support maturity using the same
+effective-support mapping as Measurement. A first resolved round establishes
+an observation but not yet a stable empirical distribution.
+*/
+func (perspective *Perspective) Maturity() float64 {
+	if perspective == nil || perspective.Support <= 1 {
+		return 0
+	}
+
+	return 1 - 1/float64(perspective.Support)
+}
+
+/* Prediction returns the declared terminal event with the given name. */
+func (perspective *Perspective) Prediction(event PerspectiveEvent) (PerspectivePrediction, bool) {
+	for _, prediction := range perspective.Predictions {
+
+		if prediction.Event == event {
+			return prediction, true
+		}
+	}
+
+	return PerspectivePrediction{}, false
 }

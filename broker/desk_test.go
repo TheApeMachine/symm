@@ -128,7 +128,7 @@ func newLevel3GuardianDesk(t testing.TB) (*Desk, *Position) {
 	pair := kraken.InstrumentPair{Symbol: "TEST/USD", TickSize: *decimal.NewFromFloat64(0.01)}
 	position := NewPosition(
 		t.Context(), desk.api, desk.instrument, desk.price, desk.balance,
-		nil, desk.PositionStore, pair, decision, nil,
+		nil, desk.PositionStore, pair, decision,
 	)
 	position.Holding.Qty = mustDecimal("100000")
 	position.Holding.SellableQty = mustDecimal("100000")
@@ -212,7 +212,7 @@ func TestDeskPositionOpenedAfterSnapshotConsumesContinuousState(t *testing.T) {
 		pair := kraken.InstrumentPair{Symbol: "TEST/USD", TickSize: *decimal.NewFromFloat64(0.01)}
 		position := NewPosition(
 			t.Context(), desk.api, desk.instrument, desk.price, desk.balance,
-			nil, desk.PositionStore, pair, decision, nil,
+			nil, desk.PositionStore, pair, decision,
 		)
 		position.Holding.Qty = mustDecimal("100000")
 		position.Holding.SellableQty = mustDecimal("100000")

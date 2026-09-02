@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/theapemachine/symm/system"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -63,7 +63,7 @@ func TestPingerStart(t *testing.T) {
 
 			time.Sleep(30 * time.Millisecond)
 
-			Convey("The failure is reported so the session can reconnect", func() {
+			Convey("The terminal failure is reported once", func() {
 				So(failures.Load(), ShouldEqual, 1)
 			})
 

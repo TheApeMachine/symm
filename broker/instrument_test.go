@@ -3,11 +3,13 @@ package broker
 import (
 	"testing"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
 /* instrumentConn records market subscriptions after serving the instrument snapshot. */
@@ -45,6 +47,16 @@ func (conn *instrumentConn) SubL3([]string) {
 	conn.marketSubscriptions++
 }
 
+func (conn *instrumentConn) TradeVolume(
+	[]string,
+) (*kraken.TradeVolumeResult, error) {
+	return &kraken.TradeVolumeResult{
+		Fees: map[string]kraken.TradeVolumeFee{
+			"BTCUSD": {Fee: decimal.NewFromFloat64(0.26)},
+		},
+	}, nil
+}
+
 func TestInstrumentNewInstrument(t *testing.T) {
 	Convey("Given an instrument snapshot", t, func() {
 		viper.Set("market.quote_currency", "USD")
@@ -55,7 +67,8 @@ func TestInstrumentNewInstrument(t *testing.T) {
 		instrument := newTestInstrument(t, api)
 
 		Convey("It should remain pending without starting market flow", func() {
-			So(instrument.Status(), ShouldEqual, types.PENDING)
+			So(instrument.Error(), ShouldBeNil)
+			So(instrument.Status(), ShouldEqual, runtime.WAITING)
 			So(instrument.Symbols(), ShouldResemble, []string{"BTC/USD"})
 			So(conn.marketSubscriptions, ShouldEqual, 0)
 		})
@@ -81,7 +94,7 @@ func TestInstrumentSubscribe(t *testing.T) {
 				// Trades, Ticker, L3 — no SubBook: no full order book is
 				// maintained anymore, so Subscribe never issues one.
 				So(conn.marketSubscriptions, ShouldEqual, 3)
-				So(instrument.Status(), ShouldEqual, types.READY)
+				So(instrument.Status(), ShouldEqual, runtime.READY)
 			})
 		})
 	})
@@ -93,6 +106,26 @@ matching how boot wires the two dependencies.
 */
 func newTestInstrument(t testing.TB, api *websocket.API) *Instrument {
 	t.Helper()
+	api.Normalizer().Update(&spot.AssetsManagerUpdate{
+		NewAssets: map[string]spot.AssetInfo{
+			"BTC": {AltName: "BTC"},
+			"USD": {AltName: "USD"},
+		},
+		NewPairs: map[string]spot.AssetPair{
+			"BTC/USD": {
+				AltName: "BTCUSD",
+				WSName:  "BTC/USD",
+				Base:    "BTC",
+				Quote:   "USD",
+			},
+		},
+	})
 
-	return NewInstrument(api, newTestPrice(t, api))
+	instrument := NewInstrument(api, newTestPrice(t, api))
+
+	if err := instrument.Error(); err != nil {
+		t.Fatalf("construct instrument: %v", err)
+	}
+
+	return instrument
 }

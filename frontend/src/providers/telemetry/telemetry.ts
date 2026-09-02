@@ -47,6 +47,7 @@ export { EnvelopeFuturesTradeData, EnvelopeFuturesTradeDataT } from './telemetry
 export { EnvelopeGraphUpdate, EnvelopeGraphUpdateT } from './telemetry/envelope-graph-update.js';
 export { EnvelopeLevel3Data, EnvelopeLevel3DataT } from './telemetry/envelope-level3-data.js';
 export { EnvelopeLevel3Order, EnvelopeLevel3OrderT } from './telemetry/envelope-level3-order.js';
+export { EnvelopeLiquiditySweepWithRecoveryUpdate, EnvelopeLiquiditySweepWithRecoveryUpdateT } from './telemetry/envelope-liquidity-sweep-with-recovery-update.js';
 export { EnvelopeManifoldState, EnvelopeManifoldStateT } from './telemetry/envelope-manifold-state.js';
 export { EnvelopeMeasurement, EnvelopeMeasurementT } from './telemetry/envelope-measurement.js';
 export { EnvelopeMeasurementMetric, EnvelopeMeasurementMetricT } from './telemetry/envelope-measurement-metric.js';
@@ -56,6 +57,10 @@ export { EnvelopeNamedInt, EnvelopeNamedIntT } from './telemetry/envelope-named-
 export { EnvelopeNamedTimeNs, EnvelopeNamedTimeNsT } from './telemetry/envelope-named-time-ns.js';
 export { EnvelopeOpportunityCandidate, EnvelopeOpportunityCandidateT } from './telemetry/envelope-opportunity-candidate.js';
 export { EnvelopeOpportunityEconomics, EnvelopeOpportunityEconomicsT } from './telemetry/envelope-opportunity-economics.js';
+export { EnvelopePerspective, EnvelopePerspectiveT } from './telemetry/envelope-perspective.js';
+export { EnvelopePerspectiveClass, EnvelopePerspectiveClassT } from './telemetry/envelope-perspective-class.js';
+export { EnvelopePerspectiveLease, EnvelopePerspectiveLeaseT } from './telemetry/envelope-perspective-lease.js';
+export { EnvelopePerspectivePrediction, EnvelopePerspectivePredictionT } from './telemetry/envelope-perspective-prediction.js';
 export { EnvelopeResonanceArtifact, EnvelopeResonanceArtifactT } from './telemetry/envelope-resonance-artifact.js';
 export { EnvelopeResonanceDynamics, EnvelopeResonanceDynamicsT } from './telemetry/envelope-resonance-dynamics.js';
 export { EnvelopeResonanceLayer, EnvelopeResonanceLayerT } from './telemetry/envelope-resonance-layer.js';

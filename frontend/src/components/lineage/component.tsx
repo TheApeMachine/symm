@@ -496,7 +496,7 @@ export const MetricLineage = () => {
 						className="absolute right-3 bottom-3 max-w-[320px] p-3 font-mono text-[10px] text-(--f4)"
 					>
 						Click a metric dot for its full producer/consumer trace. Green =
-						named by an advisor or the causal schema catalog. Amber =
+						named by a concrete fine-grained consumer. Amber =
 						kernel-only (a bulk subscription reads the whole kernel, but
 						nothing names this metric specifically). Red = no reference
 						anywhere.

@@ -491,6 +491,50 @@ table PerspectiveFrame {
   readings:[PerspectiveReading];
 }
 
+// EnvelopePerspective* is the append-only durable mirror of the new semantic
+// Advisor contract. PerspectiveFrame above remains unchanged because persisted
+// Hindsight history still contains that legacy metric-bucket representation.
+table EnvelopePerspectiveClass {
+  state:string (required);
+  probability:double;
+}
+
+table EnvelopePerspectivePrediction {
+  event:string (required);
+  effect:string (required);
+}
+
+table EnvelopePerspectiveLease {
+  clock:string (required);
+  from:ulong;
+  until:ulong;
+}
+
+table EnvelopePerspective {
+  symbol:string (required);
+  peer:string;
+  positionId:string;
+  advisor:string (required);
+  question:string (required);
+  issuedAt:long;
+  resolvedAt:long;
+  resolvedCoordinate:ulong;
+  sequence:ulong;
+  round:ulong;
+  support:ulong;
+  classes:[EnvelopePerspectiveClass];
+  predictions:[EnvelopePerspectivePrediction];
+  lease:EnvelopePerspectiveLease (required);
+  lifecycle:string (required);
+  resolvedBy:string;
+  error:string;
+}
+
+table EnvelopeLiquiditySweepWithRecoveryUpdate {
+  resolved:EnvelopePerspective;
+  issued:EnvelopePerspective;
+}
+
 table Holding {
   status:string;
   symbol:string;
@@ -1010,6 +1054,8 @@ table EnvelopeTickerData {
   change:double;
   changePct:double;
   timestampNs:long;
+  hasTrades:bool;
+  trades:long;
 }
 
 table EnvelopeTradeData {
@@ -1159,6 +1205,10 @@ table EnvelopeState {
   // poll it cannot trigger. positions is the desk's open-lot set (one Position
   // per row, closed lots excluded).
   positions:PositionsFrame;
+
+  // Append-only named Advisor lifecycle update. Do not reuse perspectives:
+  // that field is the legacy metric-bucket format retained for old captures.
+  liquiditySweepWithRecovery:EnvelopeLiquiditySweepWithRecoveryUpdate;
 }
 
 table EnvelopeStateFrame { state:EnvelopeState (required); }

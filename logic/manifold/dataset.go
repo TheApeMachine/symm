@@ -50,8 +50,8 @@ const (
 	// price the book never stated an order for, so it has no size to scale by
 	// and enters as a light neutral test particle.
 	unitProbeEnergy = float32(1)
-	symbolIndexMask      = uint32(0x7fff)
-	omegaHalfSpan        = 4.0
+	symbolIndexMask = uint32(0x7fff)
+	omegaHalfSpan   = 4.0
 
 	// energyFloor is the energy of the smallest order the frame has seen. It is
 	// not a magic minimum: it is what keeps a dust order a real, if light,
@@ -143,7 +143,10 @@ func (dataset *Dataset) step(
 						math.Log(order.LimitPrice.Float64()),
 						math.Log(order.OrderQty.Float64()),
 					)
-				contentID := orderHash(order)
+				contentID := orderContentID(orderIdentity{
+					symbol:  message.Symbol,
+					orderID: order.OrderID,
+				})
 
 				state, _ := sensorium.StatePool.Get().(*sensorium.State)
 
@@ -165,7 +168,7 @@ func (dataset *Dataset) step(
 				state.Bytes[0] = int64(token)
 				state.Seqs[0] = int64(rank)
 				state.TokenIDs[0] = int64(token)
-				state.ContentIDs[0] = int64(contentID)
+				state.ContentIDs[0] = contentID
 				state.Phase[0] = orderPhase(rank, total, sidePositive)
 				state.Omega[0] = float32(math.Tanh(priceDeviation) * omegaHalfSpan)
 				state.Energy[0] = energy
@@ -184,13 +187,25 @@ func (dataset *Dataset) step(
 				state.Amp[0] = float32(math.Sqrt(float64(energy)))
 				state.Pos[0] = float32(positionX)
 				state.Pos[1] = float32(positionY)
-				state.Pos[2] = queueDepth(rank, total, contentID)
+				state.Pos[2] = queueDepth(rank, total, uint32(contentID))
 				state.Vel[0] = 0
 				state.Vel[1] = 0
 				state.Vel[2] = 0
 				state.Clamped[0] = clamped
 				state.Dark[0] = false
 				rank++
+
+				// An order only becomes a particle when every field it carries
+				// is determined: energy, mass and amplitude must be positive
+				// and finite, and phase, omega and every coordinate must be
+				// finite. A zero or non-finite seed poisons the gas, planck
+				// exchange and coherence kernels the same way missing data
+				// would, so the projector drops the order instead of emitting
+				// an invalid particle.
+				if !validParticle(state) {
+					sensorium.StatePool.Put(state)
+					continue
+				}
 
 				if !yield(state) {
 					return
@@ -223,13 +238,56 @@ func orderEnergy(quantityDeviation float64, excitation float32) float32 {
 
 /*
 usableOrder reports whether an order describes a resting particle: it must
-still be on the book after this message, and it must carry a positive price
-and size for the log-space projection to be defined.
+still be on the book after this message, and it must carry a finite positive
+price and size for the log-space projection to be defined.
 */
 func usableOrder(order kraken.Level3Order) bool {
-	return order.Resting() &&
-		order.LimitPrice.Float64() > 0 &&
-		order.OrderQty.Float64() > 0
+	return order.Resting() && validPositive(order.LimitPrice.Float64()) &&
+		validPositive(order.OrderQty.Float64())
+}
+
+/*
+validPositive reports whether a value is strictly positive and finite.
+*/
+func validPositive(value float64) bool {
+	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+/*
+validParticle reports whether a projected particle carries only determined
+values: energy, mass and amplitude are strictly positive and finite (the
+kernels divide by them and refuse a non-positive energy), and every coordinate
+and oscillator field is finite. It is the data-arrival gate — an order whose
+projection is missing any of these values never becomes a particle.
+*/
+func validParticle(state *sensorium.State) bool {
+	if state == nil || state.N != 1 {
+		return false
+	}
+
+	if !validPositive(float64(state.Energy[0])) ||
+		!validPositive(float64(state.Mass[0])) ||
+		!validPositive(float64(state.Amp[0])) {
+		return false
+	}
+
+	if !isFiniteFloat32(state.Phase[0]) ||
+		!isFiniteFloat32(state.Omega[0]) ||
+		!isFiniteFloat32(state.Pos[0]) ||
+		!isFiniteFloat32(state.Pos[1]) ||
+		!isFiniteFloat32(state.Pos[2]) ||
+		!isFiniteFloat32(state.Vel[0]) ||
+		!isFiniteFloat32(state.Vel[1]) ||
+		!isFiniteFloat32(state.Vel[2]) ||
+		!isFiniteFloat32(state.Heat[0]) {
+		return false
+	}
+
+	return true
+}
+
+func isFiniteFloat32(value float32) bool {
+	return !math.IsNaN(float64(value)) && !math.IsInf(float64(value), 0)
 }
 
 /*
@@ -293,24 +351,4 @@ func symbolToken(symbol string) uint32 {
 	}
 
 	return hash & symbolIndexMask
-}
-
-/*
-orderHash mixes the order identity into a stable content fingerprint so the
-content ID does not depend on map iteration order.
-*/
-func orderHash(order kraken.Level3Order) uint32 {
-	const (
-		offset = uint32(2166136261)
-		prime  = uint32(16777619)
-	)
-
-	hash := offset
-
-	for index := 0; index < len(order.OrderID); index++ {
-		hash ^= uint32(order.OrderID[index])
-		hash *= prime
-	}
-
-	return hash
 }

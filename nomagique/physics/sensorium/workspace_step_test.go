@@ -7,33 +7,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestAdmitConserved(t *testing.T) {
-	Convey("Given a vacuum-adjacent cell with leftover momentum", t, func() {
-		fluid, err := newWorkspace(8, 8, 8)
-		So(err, ShouldBeNil)
-		Reset(func() {
-			fluid.Close()
-		})
-		rho := fluid.rho.Float32Slice()
-		mom := fluid.mom.Float32Slice()
-		energy := fluid.energy.Float32Slice()
-		rho[0] = float32(fluid.domain.RhoMin) / 2
-		mom[0] = 1
-		energy[0] = 1
-		rho[1] = float32(fluid.domain.RhoMin) * 2
-		mom[3] = 1
-		energy[1] = 1
-		fluid.admitConserved()
-
-		Convey("It should restore the kernel's vacuum triple and leave resolved cells alone", func() {
-			So(mom[0], ShouldEqual, float32(0))
-			So(energy[0], ShouldEqual, float32(0))
-			So(mom[3], ShouldEqual, float32(1))
-			So(energy[1], ShouldEqual, float32(1))
-		})
-	})
-}
-
 func TestSeedModeAnchors(t *testing.T) {
 	Convey("Given two particles in the lowest ω bin", t, func() {
 		fluid, err := newWorkspace(8, 8, 8)
@@ -212,6 +185,48 @@ func TestKuramotoFromPhase(t *testing.T) {
 	})
 }
 
+func TestSpatialSigma(t *testing.T) {
+	Convey("Given particles whose seeding leaves zero mean temperature", t, func() {
+		fluid, err := newWorkspace(8, 8, 8)
+		So(err, ShouldBeNil)
+		Reset(func() {
+			fluid.Close()
+		})
+		fluid.allocateParticles(1)
+		fluid.particles = 1
+		fluid.mass.Float32Slice()[0] = 1
+		fluid.heat.Float32Slice()[0] = 0
+
+		Convey("The coupling length saturates instead of dividing by zero", func() {
+			sigma := fluid.spatialSigma()
+
+			So(math.IsNaN(sigma), ShouldBeFalse)
+			So(math.IsInf(sigma, 0), ShouldBeFalse)
+			So(sigma, ShouldBeGreaterThan, 0)
+		})
+	})
+
+	Convey("Given a fully determined thermal mass", t, func() {
+		fluid, err := newWorkspace(8, 8, 8)
+		So(err, ShouldBeNil)
+		Reset(func() {
+			fluid.Close()
+		})
+		fluid.allocateParticles(1)
+		fluid.particles = 1
+		fluid.mass.Float32Slice()[0] = 1
+		fluid.heat.Float32Slice()[0] = 1
+
+		Convey("The coupling length is a finite interior point", func() {
+			sigma := fluid.spatialSigma()
+
+			So(math.IsNaN(sigma), ShouldBeFalse)
+			So(math.IsInf(sigma, 0), ShouldBeFalse)
+			So(sigma, ShouldBeGreaterThan, fluid.domain.GridSpacing())
+		})
+	})
+}
+
 func BenchmarkWaveStep(b *testing.B) {
 	fluid, err := newWorkspace(64, 64, 64)
 
@@ -232,5 +247,28 @@ func BenchmarkWaveStep(b *testing.B) {
 
 	for b.Loop() {
 		fluid.waveStep()
+	}
+}
+
+func BenchmarkGasRK2(b *testing.B) {
+	fluid, err := newWorkspace(64, 1, 1)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer fluid.Close()
+	rho := fluid.rho.Float32Slice()
+	energy := fluid.energy.Float32Slice()
+	pulse := len(rho) / 2
+	rho[pulse] = float32(5 * fluid.domain.RhoMin)
+	energy[pulse] = rho[pulse] * 1e-5
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		if err := fluid.gasRK2(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

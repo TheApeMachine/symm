@@ -26,9 +26,7 @@ underlying JSON is regenerated (`go run ./tools/metriclineage . frontend/public/
 wired into `make run`).
 
 Node = one metric (a ProducerRow). Edge = one metric's "bound"/"catalog"
-(named) consumer link to another metric that shares that same consumer — e.g.
-two metrics both bound by the same advisor are drawn connected, mirroring how
-the original regression graph connected metrics that predicted one another.
+(named) consumer link to another metric that shares that same consumer.
 Weight (the field's "influence," fed into every ring/arrow/hub radius below)
 is no longer a regression coefficient rank; it's a signed rank of maturity
 for used metrics and a fixed negative rank for dead ones — used pulls the

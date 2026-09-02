@@ -57,8 +57,6 @@ func (conn *mockConn) UnsubTrades(symbols []string) {}
 
 func (conn *mockConn) UnsubL3(symbols []string) {}
 
-func (conn *mockConn) SetUnrecoverable(handler func(reason string)) {}
-
 func (conn *mockConn) Balance() (map[string]*decimal.Decimal, error) {
 	if conn.BalanceResult != nil {
 		return conn.BalanceResult, nil

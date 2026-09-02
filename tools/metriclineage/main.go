@@ -16,51 +16,33 @@ nomagique/data/projector.go's Project), not the internal MustIntern series-slot
 prefix used for temporal-context bookkeeping, which is a different, private
 namespace.
 
-Consumer identity, by kind — "learned" marks an actual per-metric value read;
-"bound" and "catalog" mark declared named inputs.
+Consumer identity, by kind — "bound" and "catalog" mark declared named
+inputs; "learned", "kernel", and "generic" record wider reads as context.
 
-  - learned: directionalPredictor.observeMeasurement ranges the concrete
-    Measurement.Metrics map and routes every metric.Raw value, under its own
-    source/name identity and metric-map semantic role, into resident context,
-    estimability, execution, or review state. It is a wide read over whatever
-    Metrics selector the caller passes, so static analysis cannot claim that a
-    specific producer is semantically declared. It is recorded as context
-    (learned: true) but never clears "dead".
+  - bound: one exact source/metric row in types.CategorySchemas.
 
-  - bound: a literal (source, metric) pair passed to
-    logic/advisor.NewMetricBinding / NewControlBinding — an Advisor declares
-    this metric as an input. A binding alone is a REFERENCE, not proof the
-    value is read by a named calculation: an advisor may relay the value
-    verbatim, or the live topology may never deliver the measurement to the
-    ring that hosts the binding. It clears "dead" (the metric is at least
-    declared) but is recorded as "bound", never as a read.
+  - catalog: a relation.Selector{Source:, Metric:, Side:} literal. The
+    enclosing declaration names the consumer, and production code derives its
+    lookup identity from that same selector. It is an explicit coordinate
+    contract rather than a variable-name inference.
 
-  - catalog: a relation.Selector{Source:, Metric:} literal in
-    strategy/defaults.go's defaultMarketCatalog (the causal-influence graph's
-    declared catalog). Same caveat: a declared graph coordinate is a
-    reference, not a witnessed read.
+  - learned: directionalPredictor.observeMeasurement ranges a concrete Metrics
+    map and reads every metric's Raw value. It does not statically identify one
+    producer, so it never clears "dead".
 
-  - kernel: a runtime.Register call whose callback parameter type names a
-    specific kernel's own Measurement type (e.g. *hawkes.Measurement) rather
-    than the generic *data.Measurement[float64] — the consumer receives the
-    WHOLE struct that kernel produces, undifferentiated. This proves nothing
-    about whether any single metric inside it is actually read — it is
-    recorded on the producer as context only (kernelOnly: true when it is the
-    metric's only lead), never as evidence of use.
+  - kernel: a runtime.Register callback receives a specific signal kernel's
+    whole Measurement. It is scoped to that kernel but not one named metric.
 
-  - generic: a runtime.Register call whose callback parameter type is the
-    generic *data.Measurement[float64] with no further per-metric filtering
-    inside this tool's static reach (e.g. category.Solver, or a UI wire tap in
-    cmd/boot.go) — every metric flows through here, so it is even weaker
-    evidence than a kernel edge and likewise never marks a metric as used.
+  - generic: a runtime.Register callback receives a generic Measurement and
+    therefore identifies neither a kernel nor a named metric.
 
 A metric with zero bound/catalog references is reported dead, regardless of
 how many kernel/generic edges it has — those are recorded for context (so the
 report never claims a metric touches nothing when its raw bytes do flow
 somewhere), but "the struct passed through a bulk subscription" is not the
-same claim as "this metric's value is read by anything." A bound/catalog
-reference is only ever that: a declared input. The report never treats a
-binding as evidence that a calculation performed a semantic role on the value.
+same claim as "this metric's value is read by anything." A declaration is only
+ever a named input; the report does not claim its downstream calculation is
+correct.
 */
 package main
 
@@ -236,7 +218,7 @@ func main() {
 		}
 	})
 	if hadErrors {
-		fmt.Fprintln(os.Stderr, "metriclineage: continuing despite package load errors")
+		fatal(fmt.Errorf("package loading failed; lineage report was not written"))
 	}
 
 	var (
@@ -486,87 +468,118 @@ func extractBindings(pkg *packages.Package, call *ast.CallExpr, relFile string) 
 }
 
 /*
-scanFineConsumers finds the two literal-string consumption shapes confirmed by
-direct reading: logic/advisor.NewMetricBinding/NewControlBinding(source,
-metric, prefix) calls, and relation.Selector{Source:, Metric:, Side:} literals
-inside strategy/defaults.go's defaultMarketCatalog (the causal-influence
-graph's declared candidate variable set — schema.AddMarketVariable only wires
-what's listed there, via the variable(source, metric, side) closure).
+scanFineConsumers finds explicit relation.Selector declarations and attributes
+each coordinate to its enclosing package variable or function.
 */
 func scanFineConsumers(pkg *packages.Package, file *ast.File, relFile string) []consumerEdge {
 	var out []consumerEdge
 
-	ast.Inspect(file, func(node ast.Node) bool {
-		switch n := node.(type) {
-		case *ast.CallExpr:
-			name := calleeName(n.Fun)
-			if name != "NewMetricBinding" && name != "NewControlBinding" {
-				return true
-			}
-			if len(n.Args) < 2 {
-				return true
-			}
-			source := stringLiteral(n.Args[0])
-			metric := stringLiteral(n.Args[1])
-			if source == "" || metric == "" {
-				return true
-			}
-			pos := pkg.Fset.Position(n.Pos())
-			out = append(out, consumerEdge{
-				ID:       splitMetricIdentity(source, metric),
-				Kind:     "bound",
-				Consumer: describeAdvisorConsumer(pkg, relFile),
-				Package:  pkg.PkgPath,
-				File:     relFile,
-				Line:     pos.Line,
-			})
-
-		case *ast.CompositeLit:
-			sel, ok := n.Type.(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != "Selector" {
-				return true
-			}
-			var source, metric, side string
-			for _, elt := range n.Elts {
-				kv, ok := elt.(*ast.KeyValueExpr)
-				if !ok {
-					continue
-				}
-				key, ok := kv.Key.(*ast.Ident)
-				if !ok {
-					continue
-				}
-				switch key.Name {
-				case "Source":
-					source = stringLiteral(kv.Value)
-				case "Metric":
-					metric = stringLiteral(kv.Value)
-				case "Side":
-					side = stringLiteral(kv.Value)
-				}
-			}
-			if source == "" || metric == "" {
-				return true
-			}
-			pos := pkg.Fset.Position(n.Pos())
-			out = append(out, consumerEdge{
-				ID:       metricID{Source: source, Metric: metric, Side: side},
-				Kind:     "catalog",
-				Consumer: "graph.Solver (causal-influence catalog)",
-				Package:  pkg.PkgPath,
-				File:     relFile,
-				Line:     pos.Line,
-			})
+	for _, declaration := range file.Decls {
+		if function, ok := declaration.(*ast.FuncDecl); ok {
+			consumer := pkg.Name + "." + function.Name.Name
+			out = append(out, scanDeclaredSelectors(pkg, function, relFile, consumer)...)
+			continue
 		}
+
+		general, ok := declaration.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+
+		for _, specification := range general.Specs {
+			values, ok := specification.(*ast.ValueSpec)
+			if !ok || len(values.Names) == 0 {
+				continue
+			}
+
+			consumer := pkg.Name + "." + values.Names[0].Name
+			out = append(out, scanDeclaredSelectors(pkg, values, relFile, consumer)...)
+		}
+	}
+
+	return out
+}
+
+func scanDeclaredSelectors(
+	pkg *packages.Package,
+	declaration ast.Node,
+	relFile string,
+	consumer string,
+) []consumerEdge {
+	var out []consumerEdge
+
+	ast.Inspect(declaration, func(node ast.Node) bool {
+		literal, ok := node.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+
+		if edge, found := declaredSelector(pkg, literal, relFile, consumer); found {
+			out = append(out, edge)
+		}
+
 		return true
 	})
 
 	return out
 }
 
+func declaredSelector(
+	pkg *packages.Package,
+	literal *ast.CompositeLit,
+	relFile string,
+	consumer string,
+) (consumerEdge, bool) {
+	selectorType, ok := pkg.TypesInfo.TypeOf(literal.Type).(*types.Named)
+
+	if !ok || selectorType.Obj().Pkg() == nil ||
+		selectorType.Obj().Pkg().Path() != "github.com/theapemachine/symm/nomagique/relation" ||
+		selectorType.Obj().Name() != "Selector" {
+		return consumerEdge{}, false
+	}
+
+	var source, metric, side string
+
+	for _, element := range literal.Elts {
+		field, ok := element.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+
+		name, ok := field.Key.(*ast.Ident)
+		if !ok {
+			continue
+		}
+
+		switch name.Name {
+		case "Source":
+			source = typedString(pkg, field.Value)
+		case "Metric":
+			metric = typedString(pkg, field.Value)
+		case "Side":
+			side = typedString(pkg, field.Value)
+		}
+	}
+
+	if source == "" || metric == "" {
+		return consumerEdge{}, false
+	}
+
+	position := pkg.Fset.Position(literal.Pos())
+
+	return consumerEdge{
+		ID:       metricID{Source: source, Metric: metric, Side: side},
+		Kind:     "catalog",
+		Consumer: consumer + " (" + pkg.PkgPath + ")",
+		Package:  pkg.PkgPath,
+		File:     relFile,
+		Line:     position.Line,
+	}, true
+}
+
 /*
 scanCategoryConsumers finds the explicit types.CategorySchema table. Category
-schemas are named semantic consumers just like Advisor bindings: each row names
+schemas are named semantic consumers: each row names
 one exact producer identity and the market-state interpretation it contributes
 to. Source is a typed string constant rather than a literal, so go/types is
 used to resolve its value instead of guessing from the identifier spelling.
@@ -701,18 +714,6 @@ func expressionName(expression ast.Expr) string {
 }
 
 /*
-describeAdvisorConsumer labels which advisor a NewMetricBinding call belongs
-to, from the file's own name (liquidity.go/historical.go) rather than a deep
-type walk — sufficient since advisor bindings are always declared in the
-advisor's own dedicated file per logic/advisor's existing convention.
-*/
-func describeAdvisorConsumer(pkg *packages.Package, relFile string) string {
-	base := filepath.Base(relFile)
-	base = strings.TrimSuffix(base, ".go")
-	return fmt.Sprintf("advisor:%s (%s)", base, pkg.PkgPath)
-}
-
-/*
 scanKernelConsumers finds runtime.Register(bus, keyFn, callback) call sites
 and classifies the callback by its first parameter's type: a specific
 kernel's own Measurement type (e.g. *hawkes.Measurement) is a "kernel"-kind
@@ -756,8 +757,8 @@ func scanKernelConsumers(pkg *packages.Package, file *ast.File, relFile string) 
 			}
 			paramType = exprString(fn.Type.Params.List[0].Type)
 		case *ast.SelectorExpr:
-			// A method value like liquidityAdvisor.Step / historicalAdvisor.Step:
-			// resolve its signature via type info rather than syntax.
+			// Resolve a registered method value's signature via type information
+			// rather than relying on its syntax.
 			if sig, ok := pkg.TypesInfo.TypeOf(fn).(*types.Signature); ok && sig.Params().Len() > 0 {
 				paramType = sig.Params().At(0).Type().String()
 			}

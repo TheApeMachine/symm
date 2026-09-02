@@ -222,9 +222,6 @@ func (e *Engine) PilotWaveGather(
 	)
 }
 
-// ----------------------------------------------------------------------------
-// 4. Gas Dynamics (Eulerian RK2)
-// ----------------------------------------------------------------------------
 func (e *Engine) GasRK2Stage1(
 	rho0, mom0, e0, rho1, mom1, e1, k1Rho, k1Mom, k1E *Buffer,
 	dbgHead, dbgWords *Buffer, dbgCapacity int,
