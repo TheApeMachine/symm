@@ -6,6 +6,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/types"
@@ -215,6 +216,32 @@ func arenaEnvelope(
 	envelope.PumpDump = measurement
 
 	return envelope
+}
+
+func TestArenaDirectionalCredibilityScoring(t *testing.T) {
+	Convey("Given an Arena wired to a WarRoom court", t, func() {
+		node := &arenaNode{}
+		room := NewWarRoom()
+		arena, err := NewArena("momentum", predictiveMidpointFeatures(), node, 4)
+		So(err, ShouldBeNil)
+		arena.Court(room)
+
+		issued := arenaEnvelope("BTC/USD", 1, 1, 1)
+		issued.TradeData.Price = *decimal.NewFromFloat64(100.0)
+		perspective := arenaPerspective("BTC/USD", "recovery", 1, 3)
+		issued.Perspectives = []*types.Perspective{perspective}
+		So(arena.Step(issued), ShouldNotBeNil)
+
+		Convey("when the claim resolves with positive price return", func() {
+			support := arenaEnvelope("BTC/USD", 1.5, 1, 2)
+			support.TradeData.Price = *decimal.NewFromFloat64(103.0)
+			So(arena.Step(support), ShouldNotBeNil)
+
+			Convey("the advisor credibility reflects the directional market outcome", func() {
+				So(room.Credibility("momentum"), ShouldBeGreaterThanOrEqualTo, 1.0)
+			})
+		})
+	})
 }
 
 func BenchmarkArenaStep(b *testing.B) {

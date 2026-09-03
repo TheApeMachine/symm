@@ -48,6 +48,29 @@ func plannerSearch(seed int64) *mcts.Search {
 	return search
 }
 
+func sampleObservationalHistory(count int) [][]float64 {
+	rows := make([][]float64, count)
+
+	for index := 0; index < count; index++ {
+		exposure := 0.0
+		wealthChange := 0.0
+
+		if index%2 == 1 {
+			exposure = 20.0
+			wealthChange = 0.5 + float64(index)*0.05
+		}
+
+		rows[index] = []float64{
+			100.0 + float64(index)*0.1,
+			float64(index % searchHorizon),
+			exposure,
+			wealthChange,
+		}
+	}
+
+	return rows
+}
+
 func TestCoiledSetupSelectsEntryEndToEnd(t *testing.T) {
 	Convey("Given a coiled council and no calibrated resonance", t, func() {
 		consensus := coiledCouncil()
@@ -67,7 +90,7 @@ func TestCoiledSetupSelectsEntryEndToEnd(t *testing.T) {
 			model,
 			mcts.CostModel{FeeRate: 0.0026, SpreadFraction: 0.0005},
 			20, 20, searchHorizon,
-		)
+		).WithHistory(sampleObservationalHistory(16))
 
 		result := plannerSearch(7).Run(state, &opportunityEstimator{
 			consensus:       consensus,
@@ -234,7 +257,7 @@ func TestDecisionCarriesItsReasoningTrace(t *testing.T) {
 			model,
 			mcts.CostModel{FeeRate: 0.0026, SpreadFraction: 0.0005},
 			20, 20, searchHorizon,
-		)
+		).WithHistory(sampleObservationalHistory(16))
 
 		result := plannerSearch(7).Run(state, &opportunityEstimator{
 			consensus: consensus, entryAdmissible: true,
@@ -310,7 +333,7 @@ func TestTraceEncodesToTelemetry(t *testing.T) {
 			model,
 			mcts.CostModel{FeeRate: 0.0026},
 			20, 20, searchHorizon,
-		)
+		).WithHistory(sampleObservationalHistory(16))
 
 		result := plannerSearch(7).Run(state, &opportunityEstimator{
 			consensus: consensus, entryAdmissible: true,

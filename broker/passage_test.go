@@ -112,6 +112,20 @@ func TestDeskFoldPassage(t *testing.T) {
 			desk.foldPassage(position)
 			So(desk.passage.Total(), ShouldEqual, 0)
 		})
+
+		Convey("PassageAdverseQuantileForRegime delegates to the model's regime quantile", func() {
+			for index := 0; index < 12; index++ {
+				desk.passage.Fold(types.PassageEpisode{
+					Regime:     "pump",
+					Outcome:    types.OutcomeProfitFirst,
+					MaxAdverse: 0.2 + float64(index)*0.01,
+				})
+			}
+
+			quantile, ready := desk.PassageAdverseQuantileForRegime("pump", 0.5)
+			So(ready, ShouldBeTrue)
+			So(quantile, ShouldAlmostEqual, 0.255, 1e-6)
+		})
 	})
 }
 

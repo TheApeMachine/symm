@@ -155,7 +155,12 @@ func (arena *Arena) resolve(envelope *types.Envelope) error {
 		}
 
 		if advanced && coordinate > round.perspective.Lease.Until {
+			if arena.court != nil {
+				arena.court.Evict(symbol, round.perspective.Advisor)
+			}
+
 			arena.evict(symbol, key)
+
 			continue
 		}
 
@@ -169,6 +174,11 @@ func (arena *Arena) resolve(envelope *types.Envelope) error {
 			// The prediction was falsified: the advisor said this would happen
 			// and it did not. The court records the miss.
 			arena.report(round, false)
+
+			if arena.court != nil {
+				arena.court.Evict(symbol, round.perspective.Advisor)
+			}
+
 			arena.evict(symbol, key)
 
 			continue
@@ -197,6 +207,10 @@ func (arena *Arena) resolve(envelope *types.Envelope) error {
 		}
 
 		if advanced && coordinate == round.perspective.Lease.Until {
+			if arena.court != nil {
+				arena.court.Evict(symbol, round.perspective.Advisor)
+			}
+
 			arena.evict(symbol, key)
 		}
 	}
@@ -207,15 +221,14 @@ func (arena *Arena) resolve(envelope *types.Envelope) error {
 /*
 report submits one resolved prediction to the Court of Causal Accountability.
 
-An advisor is judged on the move it actually argued for. A prediction that was
-borne out is credited; one the market falsified is debited — and a reading that
-imposed a veto is held to the higher standard, because blocking a move that
-then happened is the expensive error (MCTS.md §6.1).
+An advisor is judged on the move it actually argued for against the realized market
+move. A prediction that was borne out directionally is credited; one the market
+falsified or moved counter to is debited — and a reading that imposed a veto is held
+to the higher standard, because blocking a move that then happened is the expensive
+error (MCTS.md §6.1).
 
-The verdict is expressed as the realized move: a supported prediction realizes
-what the advisor claimed, a falsified one realizes its opposite. That is the
-honest reading of a falsifiable contract — the advisor named a specific
-observable, and the market either produced it or did not.
+The verdict is expressed as the realized move observed from market price return over
+the round's lifespan.
 */
 func (arena *Arena) report(round *arenaRound, supported bool) {
 	if arena.court == nil || round == nil {
@@ -225,7 +238,14 @@ func (arena *Arena) report(round *arenaRound, supported bool) {
 	claimed := MoveForState(string(round.perspective.TopClass()))
 	realized := claimed
 
-	if !supported {
+	if round.baselinePrice > 0 && round.latestPrice > 0 {
+		returnFrac := (round.latestPrice - round.baselinePrice) / round.baselinePrice
+		realized = MoveForReturn(returnFrac)
+
+		if !supported && realized == claimed {
+			realized = -claimed
+		}
+	} else if !supported {
 		realized = -claimed
 	}
 

@@ -58,9 +58,10 @@ func applyAdverseExcursion(
 }
 
 /*
-riskMultiples returns the stop geometry multiples for this entry.
+riskMultiples returns the stop geometry multiples for this entry, calibrated
+to the decision's specific macro regime or opportunity type.
 */
-func (allocation *Allocation) riskMultiples() types.RiskMultiples {
+func (allocation *Allocation) riskMultiples(regime string) types.RiskMultiples {
 	multiples := types.DefaultRiskMultiples()
 	confidence, err := system.Cfg.OptimizationConfidence()
 
@@ -68,7 +69,7 @@ func (allocation *Allocation) riskMultiples() types.RiskMultiples {
 		return multiples
 	}
 
-	excursion, ready := allocation.desk.PassageAdverseQuantile(confidence)
+	excursion, ready := allocation.desk.PassageAdverseQuantileForRegime(regime, confidence)
 
 	return applyAdverseExcursion(multiples, excursion, ready)
 }
@@ -88,8 +89,6 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			err,
 		))
 	}
-
-	multiples := allocation.riskMultiples()
 
 	hasEntry := false
 
@@ -226,6 +225,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		}
 
 		recordExecutionFriction(decision, cost)
+		multiples := allocation.riskMultiples(decision.OpportunityType)
 		riskPlan := types.NewRiskPlan(types.RiskInputs{
 			ReferencePrice: cost.EntryPrice,
 			Spread:         cost.Spread,

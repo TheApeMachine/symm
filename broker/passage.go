@@ -27,12 +27,18 @@ func newPassageTracker(
 	horizon int,
 ) *passageTracker {
 	regime := ""
+	atr := 0.0
 
 	if position != nil {
 		regime = position.Decision.OpportunityType
 
 		if regime == "" {
 			regime = position.Decision.Cause
+		}
+
+		plan := lotPlan(position)
+		if plan != nil && plan.NoiseBand != nil {
+			atr = plan.NoiseBand.Float64()
 		}
 	}
 
@@ -41,13 +47,15 @@ func newPassageTracker(
 		episode: types.PassageEpisode{
 			PositionID:   position.Decision.ID,
 			Symbol:       position.Decision.Symbol,
+			Regime:       regime,
+			ATR:          atr,
 			OpenedTick:   time.Now().UTC().UnixNano(),
 			Horizon:      float64(horizon),
 			Entry:        entryPrice.Float64(),
 			HardFloor:    hardFloorOf(position, entryPrice),
 			ProfitLine:   profitLineOf(position),
 			ArmLine:      armLineOf(position),
-			Observations: []types.PassageFeatures{{Regime: regime}},
+			Observations: []types.PassageFeatures{{Regime: regime, ATR: atr}},
 		},
 	}
 
@@ -115,6 +123,7 @@ func (tracker *passageTracker) observe(
 			Age:       age,
 			Liquidity: liquidity,
 			Regime:    tracker.regime,
+			ATR:       tracker.episode.ATR,
 		},
 	)
 }
@@ -254,4 +263,19 @@ func (desk *Desk) PassageAdverseQuantile(confidence float64) (float64, bool) {
 	}
 
 	return desk.passage.AdverseQuantile(confidence)
+}
+
+/*
+PassageAdverseQuantileForRegime exposes the winners' calibrated adverse-excursion
+quantile for stop geometry within a specific macro regime or behavioral cluster.
+*/
+func (desk *Desk) PassageAdverseQuantileForRegime(
+	regime string,
+	confidence float64,
+) (float64, bool) {
+	if desk == nil || desk.passage == nil {
+		return 0, false
+	}
+
+	return desk.passage.AdverseQuantileForRegime(regime, confidence)
 }

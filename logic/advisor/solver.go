@@ -2,6 +2,7 @@ package advisor
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -89,9 +90,16 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 	input, liftErr := data.Lift(measurements[:])
 
 	if liftErr != nil {
-		solver.fail(errnie.UnprocessableContent, "advisor measurement lift failed", liftErr)
+		if len(input) == 0 {
+			solver.fail(errnie.UnprocessableContent, "advisor measurement lift failed", liftErr)
 
-		return nil
+			return nil
+		}
+
+		errnie.Warn(fmt.Sprintf(
+			"[advisor] %s: skipped failed signal measurement: %v",
+			solver.name, liftErr,
+		))
 	}
 
 	clock, clockFound := input[solver.clock]

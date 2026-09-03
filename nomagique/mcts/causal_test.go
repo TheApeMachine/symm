@@ -63,6 +63,21 @@ func (engine *recordingEngine) AbductiveCounterfactual(
 	return engine.counterfactual, 0, engine.precision, nil
 }
 
+func sampleObservationalHistory(count int) [][]float64 {
+	rows := make([][]float64, count)
+
+	for index := 0; index < count; index++ {
+		rows[index] = []float64{
+			100.0 + float64(index)*0.1,
+			float64(index),
+			1.0,
+			0.5 + float64(index)*0.05,
+		}
+	}
+
+	return rows
+}
+
 /*
 causalSearchState builds a state with enough horizon for the tree to branch.
 */
@@ -75,7 +90,7 @@ func causalSearchState() *EconomicState {
 		1,
 		4,
 		4,
-	)
+	).WithHistory(sampleObservationalHistory(8))
 }
 
 func TestCounterfactualUpdatesUntakenSiblings(t *testing.T) {
@@ -277,7 +292,7 @@ func TestInterventionLevelIsNotTheActionOrdinal(t *testing.T) {
 	})
 }
 
-func TestRolloutTrajectoryFeedsObservationalEvidence(t *testing.T) {
+func TestRolloutTrajectoryDoesNotContaminateObservationalEvidence(t *testing.T) {
 	Convey("Given a search that rolls out", t, func() {
 		engine := &recordingEngine{expectation: 0.5, precision: 1}
 
@@ -287,12 +302,12 @@ func TestRolloutTrajectoryFeedsObservationalEvidence(t *testing.T) {
 
 		search.Run(causalSearchState(), alwaysEstimable{})
 
-		Convey("the evidence table grows as rollouts accumulate", func() {
+		Convey("the evidence table does not accumulate simulated rollouts", func() {
 			So(len(engine.historyWidths), ShouldBeGreaterThan, 1)
 
 			first := engine.historyWidths[0]
 			last := engine.historyWidths[len(engine.historyWidths)-1]
-			So(last, ShouldBeGreaterThan, first)
+			So(last, ShouldEqual, first)
 		})
 
 		Convey("abduction receives full-width economic rows", func() {

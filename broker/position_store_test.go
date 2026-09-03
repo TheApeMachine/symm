@@ -192,6 +192,41 @@ CREATE TABLE position_stoplosses (
 			So(loaded.Symbol, ShouldEqual, "CCC/USD")
 		})
 	})
+
+	Convey("Given a PositionStore with minimal queue depth", t, func() {
+		storePath := t.TempDir() + "/shedding.sqlite"
+
+		store, err := NewPositionStore(storePath, 1, 1)
+		So(err, ShouldBeNil)
+		defer store.Close()
+
+		entryAt := time.Unix(1700000000, 0).UTC()
+		stoploss := &types.Stoploss{
+			Symbol:        "BURST/USD",
+			Status:        types.ARMED,
+			TickSize:      mustDecimal("0.01"),
+			TrailDistance: mustDecimal("0.1"),
+			Floor:         mustDecimal("1.5"),
+			Mark:          mustDecimal("2.0"),
+			Peak:          mustDecimal("2.2"),
+			ProfitLine:    mustDecimal("1.8"),
+			ArmAt:         mustDecimal("1.7"),
+			LockFloor:     mustDecimal("1.6"),
+			EntryAt:       &entryAt,
+		}
+
+		Convey("A massive burst of rapid save operations does not block the caller", func() {
+			for iteration := 0; iteration < 200; iteration++ {
+				err := store.Save(stoploss)
+				So(err, ShouldBeNil)
+			}
+
+			Convey("Persistence can be synchronized without deadlock", func() {
+				err := store.Sync()
+				So(err, ShouldBeNil)
+			})
+		})
+	})
 }
 
 func BenchmarkPositionStoreSave(b *testing.B) {

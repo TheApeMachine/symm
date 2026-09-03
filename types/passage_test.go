@@ -291,6 +291,54 @@ func TestPassageModelFoldAdverseQuantile(t *testing.T) {
 	})
 }
 
+func TestPassageModelAdverseQuantileForRegime(t *testing.T) {
+	Convey("Given a model folding winners from distinct macro regimes", t, func() {
+		model := types.NewPassageModel()
+
+		// Fold 12 winners for stable regime (low adverse excursion).
+		for index := range 12 {
+			model.Fold(types.PassageEpisode{
+				Regime:     "stable",
+				Outcome:    types.OutcomeProfitFirst,
+				MaxAdverse: 0.1 + float64(index)*0.02,
+			})
+		}
+
+		// Fold 12 winners for crash regime (high adverse excursion).
+		for index := range 12 {
+			model.Fold(types.PassageEpisode{
+				Regime:     "crash",
+				Outcome:    types.OutcomeProfitFirst,
+				MaxAdverse: 1.5 + float64(index)*0.1,
+			})
+		}
+
+		Convey("Stable regime adverse quantile is isolated from crash regime excursions", func() {
+			stableExcursion, ready := model.AdverseQuantileForRegime("stable", 0.5)
+			So(ready, ShouldBeTrue)
+			So(stableExcursion, ShouldBeLessThan, 0.3)
+
+			crashExcursion, ready := model.AdverseQuantileForRegime("crash", 0.5)
+			So(ready, ShouldBeTrue)
+			So(crashExcursion, ShouldBeGreaterThan, 1.8)
+
+			// The global adverse quantile is a blend of both regimes.
+			globalExcursion, ready := model.AdverseQuantile(0.5)
+			So(ready, ShouldBeTrue)
+			So(globalExcursion, ShouldBeGreaterThan, stableExcursion)
+			So(globalExcursion, ShouldBeLessThan, crashExcursion)
+		})
+
+		Convey("Sparse or unseen regimes fall back to global quantile", func() {
+			fallbackExcursion, ready := model.AdverseQuantileForRegime("unseen", 0.5)
+			So(ready, ShouldBeTrue)
+
+			globalExcursion, _ := model.AdverseQuantile(0.5)
+			So(fallbackExcursion, ShouldEqual, globalExcursion)
+		})
+	})
+}
+
 func BenchmarkPassageModelObserveEpisode(b *testing.B) {
 	model := types.NewPassageModel()
 	observations := make([]types.PassageFeatures, 128)

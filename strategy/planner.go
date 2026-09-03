@@ -74,6 +74,7 @@ type Planner struct {
 	warRoom               *advisor.WarRoom
 	search                *mcts.Search
 	maxAllocationFraction float64
+	observations          map[string][][]float64
 }
 
 func NewPlanner(
@@ -116,6 +117,7 @@ func NewPlanner(
 		warRoom:               advisor.NewWarRoom(),
 		search:                search,
 		maxAllocationFraction: config.MaxAllocationFraction,
+		observations:          make(map[string][][]float64),
 	}, nil
 }
 
@@ -152,6 +154,10 @@ func (planner *Planner) Step(envelope *types.Envelope) *types.Envelope {
 		return nil
 	}
 
+	if len(envelope.Perspectives) > 0 {
+		planner.warRoom.Admit(envelope.Perspectives, envelopeSymbol(envelope))
+	}
+
 	if envelope.TypeID != types.EnvelopeTicker {
 		return envelope
 	}
@@ -163,6 +169,8 @@ func (planner *Planner) Step(envelope *types.Envelope) *types.Envelope {
 
 		return nil
 	}
+
+	planner.recordObservation(envelope)
 
 	if planner.desk.Holding(envelope.TickerData.Symbol) > 0 {
 		return envelope
@@ -204,7 +212,14 @@ func (planner *Planner) plan(envelope *types.Envelope) *types.StrategyRound {
 	decision.Direction = 1
 	decision.ForecastSource = "war-room-deliberation"
 	decision.ForecastModel = "causal-mcts-pearl-v1"
-	decision.ForecastHorizon = searchHorizon
+	decision.ForecastHorizon = 0
+
+	if envelope.Resonance != nil && envelope.Resonance.SupportedHorizon > 0 {
+		decision.ForecastHorizon = int(envelope.Resonance.SupportedHorizon)
+	} else if envelope.Resonance != nil && envelope.Resonance.Forecast != nil && envelope.Resonance.Forecast.Horizon > 0 {
+		decision.ForecastHorizon = envelope.Resonance.Forecast.Horizon
+	}
+
 	decision.AllocationClass = "none"
 	decision.Cause = "opportunity-conditioned market context"
 	decision.Opportunity = opportunity.Archetype != ""
@@ -350,7 +365,11 @@ func (planner *Planner) rootState(
 		costs.SpreadFraction = spread / mark / 2
 	}
 
-	return mcts.NewEconomicState(
+	if planner.desk != nil && planner.desk.Price() != nil {
+		costs = planner.entryCosts(ticker.Symbol, unit, costs)
+	}
+
+	state := mcts.NewEconomicState(
 		mcts.PortfolioState{
 			Cash: cash.Float64(),
 			// Flat by construction: Step returns early when this symbol is
@@ -367,7 +386,92 @@ func (planner *Planner) rootState(
 		unit,
 		unit,
 		searchHorizon,
-	), true
+	)
+
+	if history := planner.observations[ticker.Symbol]; len(history) > 0 {
+		state.WithHistory(history)
+	}
+
+	return state, true
+}
+
+func (planner *Planner) recordObservation(envelope *types.Envelope) {
+	if envelope == nil || envelope.TickerData.Symbol == "" || envelope.TickerData.Bid == nil {
+		return
+	}
+
+	if planner.observations == nil {
+		planner.observations = make(map[string][][]float64)
+	}
+
+	currentExposure := 0.0
+
+	if planner.desk != nil {
+		currentExposure = float64(planner.desk.Holding(envelope.TickerData.Symbol))
+	}
+
+	row := []float64{
+		envelope.TickerData.Bid.Float64(),
+		0,
+		currentExposure,
+		0,
+	}
+
+	history := planner.observations[envelope.TickerData.Symbol]
+
+	if len(history) >= 64 {
+		history = history[1:]
+	}
+
+	planner.observations[envelope.TickerData.Symbol] = append(history, row)
+}
+
+/*
+entryCosts calculates visible order book depth impact (market impact) and spread
+fraction for the requested position size, incorporating execution friction into
+search economics.
+*/
+func (planner *Planner) entryCosts(
+	symbol string,
+	unit float64,
+	baseCosts mcts.CostModel,
+) mcts.CostModel {
+	if planner.desk == nil || planner.desk.Price() == nil {
+		return baseCosts
+	}
+
+	unitDecimal := decimal.NewFromFloat64(unit)
+	executable, err := planner.desk.Price().ExecutableQuantity(symbol, unitDecimal)
+
+	if err != nil || executable == nil || executable.Sign() <= 0 {
+		return baseCosts
+	}
+
+	cost, err := planner.desk.Price().EntryCost(symbol, executable)
+
+	if err != nil || cost == nil || cost.EntryPrice == nil || cost.EntryPrice.Sign() <= 0 {
+		return baseCosts
+	}
+
+	entryPriceFloat := cost.EntryPrice.Float64()
+
+	if cost.Impact != nil && entryPriceFloat > 0 {
+		impactFrac := cost.Impact.Float64() / entryPriceFloat
+
+		if impactFrac > 0 {
+			baseCosts.SlippageFraction = impactFrac
+		}
+	}
+
+	if cost.Spread != nil && entryPriceFloat > 0 {
+		spreadFrac := cost.Spread.Float64() / entryPriceFloat
+
+		if spreadFrac > 0 {
+			baseCosts.SpreadFraction = spreadFrac
+		}
+	}
+
+	return baseCosts
 }
 
 /*
@@ -621,4 +725,25 @@ func (planner *Planner) halt(err error) {
 func (planner *Planner) Close() error {
 	planner.cancel()
 	return nil
+}
+
+func envelopeSymbol(envelope *types.Envelope) string {
+	if envelope == nil {
+		return ""
+	}
+
+	switch envelope.TypeID {
+	case types.EnvelopeTicker:
+		return envelope.TickerData.Symbol
+	case types.EnvelopeTrade:
+		return envelope.TradeData.Symbol
+	case types.EnvelopeLevel3:
+		return envelope.Level3Data.Symbol
+	case types.EnvelopeFuturesTicker:
+		return envelope.FuturesTickerData.Symbol
+	case types.EnvelopeFuturesTrade:
+		return envelope.FuturesTradeData.Symbol
+	default:
+		return ""
+	}
 }

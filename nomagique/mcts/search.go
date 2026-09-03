@@ -235,11 +235,10 @@ func (search *Search) Run(rootState State, estimator ActionEstimator) *SearchRes
 		UntakenActions: slices.Clone(estimable),
 	}
 
-	// history is the observational evidence the structural model fits on. It
-	// starts from whatever the root state can supply and grows with each
-	// rollout trajectory, so later iterations reason over strictly more
-	// evidence than earlier ones. Simulated rows are search evidence only;
-	// they never re-enter the caller's observational record.
+	// history is the empirical observational evidence the structural model fits
+	// on, seeded from whatever the root state can supply. In accordance with
+	// §8 (Simulation Is Not Observation), simulated rollout trajectories remain
+	// hypothetical and are never appended to history or causal tables.
 	history := rootHistory(rootState)
 
 	for iteration := 0; iteration < search.Iterations; iteration++ {
@@ -256,8 +255,6 @@ func (search *Search) Run(rootState State, estimator ActionEstimator) *SearchRes
 		if err != nil {
 			continue
 		}
-
-		history = append(history, trajectory...)
 
 		backpropagate(expanded, reward)
 		search.counterfactualBackpropagate(expanded, trajectory, history)

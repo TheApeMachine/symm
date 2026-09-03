@@ -109,6 +109,12 @@ type PassageFeatures struct {
 		it comes from the category vocabulary and has no ordering.
 	*/
 	Regime string
+	/*
+		ATR is the baseline volatility / Average True Range captured at entry.
+		It represents the market temperature when the lot opened, allowing
+		models to distinguish quiet consolidation from high-volatility crashes.
+	*/
+	ATR float64
 }
 
 /*
@@ -145,6 +151,8 @@ type PassageEpisode struct {
 	*/
 	MaxAdverse   float64           `json:"max_adverse"`
 	MaxFavorable float64           `json:"max_favorable"`
+	Regime       string            `json:"regime,omitempty"`
+	ATR          float64           `json:"atr,omitempty"`
 	Observations []PassageFeatures `json:"observations"`
 }
 
@@ -222,17 +230,21 @@ losses.
 The zero value is usable and answers with the prior.
 */
 type PassageModel struct {
-	mutex   sync.RWMutex
-	buckets map[string]*passageCounts
-	total   float64
-	winners []float64
+	mutex         sync.RWMutex
+	buckets       map[string]*passageCounts
+	total         float64
+	winners       []float64
+	regimeWinners map[string][]float64
 }
 
 /*
 NewPassageModel constructs an empty model.
 */
 func NewPassageModel() *PassageModel {
-	return &PassageModel{buckets: map[string]*passageCounts{}}
+	return &PassageModel{
+		buckets:       map[string]*passageCounts{},
+		regimeWinners: map[string][]float64{},
+	}
 }
 
 /*
@@ -387,6 +399,37 @@ func (model *PassageModel) Fold(episode PassageEpisode) {
 	}
 
 	model.winners = append(model.winners, episode.MaxAdverse)
+
+	regime := episode.Regime
+	if regime == "" && len(episode.Observations) > 0 {
+		regime = episode.Observations[0].Regime
+	}
+
+	if regime != "" {
+		if model.regimeWinners == nil {
+			model.regimeWinners = make(map[string][]float64)
+		}
+
+		model.regimeWinners[regime] = append(model.regimeWinners[regime], episode.MaxAdverse)
+	}
+}
+
+func computeQuantile(samples []float64, confidence float64) (float64, bool) {
+	slices.Sort(samples)
+
+	position := confidence * float64(len(samples)-1)
+
+	lower := math.Floor(position)
+	upper := math.Ceil(position)
+	weight := position - lower
+
+	value := samples[int(lower)]*(1-weight) + samples[int(upper)]*weight
+
+	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+		return 0, false
+	}
+
+	return value, true
 }
 
 /*
@@ -419,21 +462,42 @@ func (model *PassageModel) AdverseQuantile(confidence float64) (float64, bool) {
 
 	model.mutex.RUnlock()
 
-	slices.Sort(samples)
+	return computeQuantile(samples, confidence)
+}
 
-	position := confidence * float64(len(samples)-1)
+/*
+AdverseQuantileForRegime states the excursion, in risk distances, that the
+supplied share of winners in a specific macro regime or behavioral cluster stayed
+within.
 
-	lower := math.Floor(position)
-	upper := math.Ceil(position)
-	weight := position - lower
-
-	value := samples[int(lower)]*(1-weight) + samples[int(upper)]*weight
-
-	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+If the specific regime has fewer than passageLocalSupport finished winning
+episodes, it falls back gracefully to the global adverse quantile so sparse
+regimes can still trade during their warm-up period.
+*/
+func (model *PassageModel) AdverseQuantileForRegime(
+	regime string,
+	confidence float64,
+) (float64, bool) {
+	if model == nil || confidence <= 0 || confidence >= 1 {
 		return 0, false
 	}
 
-	return value, true
+	if regime == "" {
+		return model.AdverseQuantile(confidence)
+	}
+
+	model.mutex.RLock()
+
+	if model.regimeWinners != nil && len(model.regimeWinners[regime]) >= int(passageLocalSupport) {
+		samples := append([]float64(nil), model.regimeWinners[regime]...)
+		model.mutex.RUnlock()
+
+		return computeQuantile(samples, confidence)
+	}
+
+	model.mutex.RUnlock()
+
+	return model.AdverseQuantile(confidence)
 }
 
 /*

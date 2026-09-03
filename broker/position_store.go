@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -40,6 +41,19 @@ type PositionStore struct {
 	errorMu   sync.RWMutex
 	err       error
 	batchSize int
+	shedCount uint64
+}
+
+/*
+ShedCount reports how many position write operations were dropped because the
+queue was saturated.
+*/
+func (store *PositionStore) ShedCount() uint64 {
+	if store == nil {
+		return 0
+	}
+
+	return atomic.LoadUint64(&store.shedCount)
 }
 
 /*
@@ -401,6 +415,7 @@ func (store *PositionStore) Save(stoploss *types.Stoploss) error {
 	entryAt := stoploss.EntryAt.UTC().Format(time.RFC3339Nano)
 
 	return store.enqueue(positionStoreOperation{
+		key: stoploss.Symbol,
 		query: `
 INSERT INTO position_stoplosses (symbol, entry_at, state) VALUES (?, ?, ?)
 ON CONFLICT(symbol, entry_at) DO UPDATE SET state = excluded.state`,
@@ -484,6 +499,7 @@ func (store *PositionStore) Delete(symbol string) error {
 	}
 
 	return store.enqueue(positionStoreOperation{
+		key:         symbol,
 		query:       "DELETE FROM position_stoplosses WHERE symbol = ?",
 		args:        []any{symbol},
 		description: "delete stoploss for " + symbol,

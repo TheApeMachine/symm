@@ -123,6 +123,7 @@ type WarRoom struct {
 	// what the council last said, every deliberation would find zero
 	// participants and the system would never trade.
 	resident map[string]map[string]*types.Perspective
+	clocks   map[string]map[string]uint64
 }
 
 /*
@@ -146,6 +147,7 @@ func NewWarRoom() *WarRoom {
 		rules:       defaultSemanticRules(),
 		credibility: make(map[string]float64),
 		resident:    make(map[string]map[string]*types.Perspective),
+		clocks:      make(map[string]map[string]uint64),
 	}
 
 	for _, name := range []string{
@@ -246,7 +248,17 @@ func (room *WarRoom) Deliberate(
 	symbol string,
 	at time.Time,
 ) *DeliberationOutcome {
-	active := room.admit(perspectives, symbol)
+	active := room.Admit(perspectives, symbol)
+
+	if len(active) == 0 {
+		return &DeliberationOutcome{
+			Participants:  0,
+			At:            at,
+			Probabilities: priorMass(),
+			DominantMove:  MoveStagnant,
+			Confidence:    0,
+		}
+	}
 
 	room.mu.RLock()
 	defer room.mu.RUnlock()
@@ -269,7 +281,27 @@ func (room *WarRoom) Deliberate(
 }
 
 /*
-admit folds any freshly issued perspectives into the resident council and
+Evict removes an advisor's resident perspective for a symbol.
+*/
+func (room *WarRoom) Evict(symbol, advisor string) {
+	room.mu.Lock()
+	defer room.mu.Unlock()
+
+	seats, found := room.resident[symbol]
+
+	if !found {
+		return
+	}
+
+	delete(seats, advisor)
+
+	if len(seats) == 0 {
+		delete(room.resident, symbol)
+	}
+}
+
+/*
+Admit folds any freshly issued perspectives into the resident council and
 returns the council as it now stands for one symbol.
 
 Perspectives arrive on trade envelopes and decisions are made on ticker
@@ -278,7 +310,7 @@ one seat per symbol: a new perspective replaces that advisor's previous one
 rather than accumulating, so the council reflects the latest reading and cannot
 grow without bound.
 */
-func (room *WarRoom) admit(
+func (room *WarRoom) Admit(
 	perspectives []*types.Perspective,
 	symbol string,
 ) map[string]*types.Perspective {
@@ -302,9 +334,35 @@ func (room *WarRoom) admit(
 
 		seats := room.resident[perspective.Symbol]
 
+		if perspective.Lifecycle == types.PerspectiveExpired ||
+			perspective.Lifecycle == types.PerspectiveFalsified {
+			if seats != nil {
+				delete(seats, name)
+
+				if len(seats) == 0 {
+					delete(room.resident, perspective.Symbol)
+				}
+			}
+
+			continue
+		}
+
 		if seats == nil {
 			seats = make(map[string]*types.Perspective)
 			room.resident[perspective.Symbol] = seats
+		}
+
+		if perspective.Lease.Clock != "" {
+			symbolClocks := room.clocks[perspective.Symbol]
+
+			if symbolClocks == nil {
+				symbolClocks = make(map[string]uint64)
+				room.clocks[perspective.Symbol] = symbolClocks
+			}
+
+			if perspective.Lease.From > symbolClocks[perspective.Lease.Clock] {
+				symbolClocks[perspective.Lease.Clock] = perspective.Lease.From
+			}
 		}
 
 		// Clone on admission: the envelope's slice is recycled downstream,
@@ -318,10 +376,29 @@ func (room *WarRoom) admit(
 	}
 
 	seats := room.resident[symbol]
+
+	if seats == nil {
+		return nil
+	}
+
+	symbolClocks := room.clocks[symbol]
 	active := make(map[string]*types.Perspective, len(seats))
 
 	for name, perspective := range seats {
+		if perspective.Lease.Clock != "" && perspective.Lease.Until > 0 && symbolClocks != nil {
+			currentCoord := symbolClocks[perspective.Lease.Clock]
+
+			if currentCoord > perspective.Lease.Until {
+				delete(seats, name)
+				continue
+			}
+		}
+
 		active[name] = perspective
+	}
+
+	if len(seats) == 0 {
+		delete(room.resident, symbol)
 	}
 
 	return active
@@ -412,6 +489,37 @@ func MoveForState(state string) MarketMove {
 	case "SellersBreakingThrough", "StructuralBreakdown", "VacuumForming",
 		"LiquidationsCascading":
 		return MoveFlashDump
+	}
+
+	return MoveStagnant
+}
+
+/*
+MoveForReturn maps an observed fractional price return to a qualitative MarketMove.
+*/
+func MoveForReturn(returnFrac float64) MarketMove {
+	if returnFrac >= 0.02 {
+		return MoveExplosivePump
+	}
+
+	if returnFrac >= 0.005 {
+		return MoveSteadyTrend
+	}
+
+	if returnFrac >= 0.001 {
+		return MoveWeakDrift
+	}
+
+	if returnFrac <= -0.02 {
+		return MoveFlashDump
+	}
+
+	if returnFrac <= -0.005 {
+		return MoveStructuralPullback
+	}
+
+	if returnFrac <= -0.001 {
+		return MoveWeakBleed
 	}
 
 	return MoveStagnant

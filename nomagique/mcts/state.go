@@ -143,6 +143,31 @@ type EconomicState struct {
 	Step        int
 	MaxSteps    int
 	Accumulated float64
+
+	observationalHistory [][]float64
+}
+
+/*
+WithHistory attaches prior observational rows to the economic state.
+*/
+func (state *EconomicState) WithHistory(rows [][]float64) *EconomicState {
+	if state == nil {
+		return nil
+	}
+
+	state.observationalHistory = rows
+	return state
+}
+
+/*
+History returns prior observational rows adhering to HistoryProvider.
+*/
+func (state *EconomicState) History() [][]float64 {
+	if state == nil {
+		return nil
+	}
+
+	return state.observationalHistory
 }
 
 /*

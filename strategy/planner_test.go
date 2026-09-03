@@ -8,6 +8,8 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/advisor"
+	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/mcts"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -183,3 +185,92 @@ func TestPlannerIgnoresNonTickerEnvelopes(t *testing.T) {
 		})
 	})
 }
+
+func TestPlannerRetainsTradePerspectivesAcrossTickerStep(t *testing.T) {
+	Convey("Given a trade envelope carrying fresh advisor perspectives", t, func() {
+		planner := plannerForTest()
+		tradeEnv := &types.Envelope{
+			TypeID: types.EnvelopeTrade,
+			TradeData: kraken.TradeData{
+				Symbol: "TEST/USD",
+			},
+			Perspectives: []*types.Perspective{
+				advisorPerspective("momentum", "Building", 0.8),
+				advisorPerspective("auction", "BuyersBreakingThrough", 0.85),
+			},
+		}
+
+		outTrade := planner.Step(tradeEnv)
+		So(outTrade, ShouldNotBeNil)
+		So(outTrade.StrategyRound, ShouldBeNil)
+
+		Convey("when a later ticker envelope arrives with empty perspectives", func() {
+			tickEnv := tickerEnvelope("TEST/USD", 100, 101)
+			So(tickEnv.Perspectives, ShouldBeNil)
+
+			outTick := planner.Step(tickEnv)
+			So(outTick, ShouldNotBeNil)
+			So(outTick.StrategyRound, ShouldNotBeNil)
+
+			decision := outTick.StrategyRound.Decisions[0]
+			Convey("the resident council deliberates with the retained perspectives", func() {
+				So(decision.PredictiveStatus, ShouldNotEqual, "awaiting-advisor-consensus")
+				So(decision.Alternatives["consensus:participants"], ShouldEqual, 2)
+			})
+		})
+	})
+}
+
+func TestPlannerForecastHorizonDecoupled(t *testing.T) {
+	Convey("Given a planner and a ticker without calibrated resonance", t, func() {
+		planner := plannerForTest()
+		envelope := tickerEnvelope("TEST/USD", 100, 101)
+
+		out := planner.Step(envelope)
+
+		Convey("the decision forecast horizon defaults to 0 rather than searchHorizon", func() {
+			So(out, ShouldNotBeNil)
+			So(out.StrategyRound, ShouldNotBeNil)
+			So(out.StrategyRound.Decisions[0].ForecastHorizon, ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given a planner and a ticker with calibrated resonance", t, func() {
+		planner := plannerForTest()
+		envelope := tickerEnvelope("TEST/USD", 100, 101)
+		envelope.Resonance = &types.ResonanceArtifact{
+			Calibrated:       true,
+			SupportedHorizon: 45,
+			Confidence:       0.9,
+			Forecast: &types.ResonanceReturnForecast{
+				Call:    1,
+				Horizon: 45,
+				Distribution: learning.RLSOutput{
+					Ready: true,
+					Scale: 0.05,
+				},
+			},
+		}
+
+		out := planner.Step(envelope)
+
+		Convey("the decision forecast horizon reflects the resonance supported horizon", func() {
+			So(out, ShouldNotBeNil)
+			So(out.StrategyRound, ShouldNotBeNil)
+			So(out.StrategyRound.Decisions[0].ForecastHorizon, ShouldEqual, 45)
+		})
+	})
+}
+
+func TestPlannerEntryCosts(t *testing.T) {
+	Convey("Given a planner with no desk price provider", t, func() {
+		planner := plannerForTest()
+		costs := planner.entryCosts("TEST/USD", 10, mcts.CostModel{FeeRate: 0.002})
+
+		Convey("it returns base costs untouched", func() {
+			So(costs.FeeRate, ShouldEqual, 0.002)
+			So(costs.SlippageFraction, ShouldEqual, 0)
+		})
+	})
+}
+

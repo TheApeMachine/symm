@@ -261,3 +261,53 @@ func TestUnprovenAdvisorIsDiscountedNotMuted(t *testing.T) {
 		})
 	})
 }
+
+func TestResidentCouncilEvictionAndStaleness(t *testing.T) {
+	Convey("Given an admitted perspective with a declared lease", t, func() {
+		room := NewWarRoom()
+
+		perspective := perspectiveFor("momentum", "Building", 0.9, 100)
+		perspective.Lease = types.PerspectiveLease{
+			Clock: "pumpdump/completed_volume_bar_ordinal",
+			From:  10,
+			Until: 11,
+		}
+
+		outcome := room.Deliberate([]*types.Perspective{perspective}, "TEST/USD", time.Unix(1, 0))
+		So(outcome.Participants, ShouldEqual, 1)
+
+		Convey("explicit eviction removes the resident seat", func() {
+			room.Evict("TEST/USD", "momentum")
+			emptyOutcome := room.Deliberate(nil, "TEST/USD", time.Unix(2, 0))
+			So(emptyOutcome.Participants, ShouldEqual, 0)
+			So(emptyOutcome.DominantMove, ShouldEqual, MoveStagnant)
+		})
+
+		Convey("clock coordinate advance past Until expires the lease", func() {
+			freshPerspective := perspectiveFor("auction", "LiquiditySweep", 0.8, 50)
+			freshPerspective.Lease = types.PerspectiveLease{
+				Clock: "pumpdump/completed_volume_bar_ordinal",
+				From:  12,
+				Until: 13,
+			}
+
+			nextOutcome := room.Deliberate([]*types.Perspective{freshPerspective}, "TEST/USD", time.Unix(3, 0))
+			So(nextOutcome.Participants, ShouldEqual, 1)
+			So(room.Admit(nil, "TEST/USD")["momentum"], ShouldBeNil)
+			So(room.Admit(nil, "TEST/USD")["auction"], ShouldNotBeNil)
+		})
+	})
+}
+
+func TestMoveForReturn(t *testing.T) {
+	Convey("Given fractional returns across market regimes", t, func() {
+		So(MoveForReturn(0.025), ShouldEqual, MoveExplosivePump)
+		So(MoveForReturn(0.010), ShouldEqual, MoveSteadyTrend)
+		So(MoveForReturn(0.003), ShouldEqual, MoveWeakDrift)
+		So(MoveForReturn(0.000), ShouldEqual, MoveStagnant)
+		So(MoveForReturn(-0.0005), ShouldEqual, MoveStagnant)
+		So(MoveForReturn(-0.003), ShouldEqual, MoveWeakBleed)
+		So(MoveForReturn(-0.010), ShouldEqual, MoveStructuralPullback)
+		So(MoveForReturn(-0.035), ShouldEqual, MoveFlashDump)
+	})
+}

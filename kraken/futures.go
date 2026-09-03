@@ -78,6 +78,8 @@ func parseFuturesTickerData(rawMap map[string]any) FuturesTickerData {
 
 	if symbol, ok := rawMap["symbol"].(string); ok {
 		tickerData.Symbol = symbol
+	} else if tickerData.ProductID != "" {
+		tickerData.Symbol = tickerData.ProductID
 	}
 
 	tickerData.Bid = extractDecimal(rawMap, "bid")
@@ -174,6 +176,8 @@ func parseSingleFuturesTrade(rawMap map[string]any) FuturesTradeData {
 
 	if symbol, ok := rawMap["symbol"].(string); ok {
 		tradeData.Symbol = symbol
+	} else if tradeData.ProductID != "" {
+		tradeData.Symbol = tradeData.ProductID
 	}
 
 	if side, ok := rawMap["side"].(string); ok {

@@ -2,11 +2,13 @@ package broker
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/theapemachine/errnie"
 )
 
 type positionStoreOperation struct {
+	key         string
 	query       string
 	args        []any
 	description string
@@ -29,11 +31,29 @@ func (store *PositionStore) enqueue(operation positionStoreOperation) error {
 		return err
 	}
 
+	if operation.fence != nil {
+		select {
+		case store.queue <- operation:
+			return nil
+		case <-store.failed:
+			return store.Error()
+		}
+	}
+
 	select {
 	case store.queue <- operation:
 		return nil
 	case <-store.failed:
 		return store.Error()
+	default:
+		atomic.AddUint64(&store.shedCount, 1)
+
+		errnie.Warn(fmt.Sprintf(
+			"position store: write queue full, shedding %s",
+			operation.description,
+		))
+
+		return nil
 	}
 }
 

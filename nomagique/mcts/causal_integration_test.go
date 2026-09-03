@@ -25,7 +25,7 @@ func TestDefaultCausalEngineDrivesSearch(t *testing.T) {
 			1,
 			4,
 			5,
-		)
+		).WithHistory(sampleObservationalHistory(16))
 
 		result := search.Run(state, alwaysEstimable{})
 
@@ -75,7 +75,7 @@ func TestCausalSearchIsDeterministic(t *testing.T) {
 				1,
 				4,
 				5,
-			), alwaysEstimable{})
+			).WithHistory(sampleObservationalHistory(16)), alwaysEstimable{})
 		}
 
 		first := run()

@@ -87,7 +87,15 @@ func newResonanceMarketModel(
 		return nil, false
 	}
 
-	volatility := math.Max(scale, minStepVolatility)
+	horizon := float64(max(artifact.SupportedHorizon, 1))
+
+	if forecast.Horizon > 0 {
+		horizon = float64(forecast.Horizon)
+	}
+
+	// Scale multi-step horizon variance to per-step volatility: sigma_step = sigma_H / sqrt(H).
+	stepScale := scale / math.Sqrt(horizon)
+	volatility := math.Max(stepScale, minStepVolatility)
 
 	// The direction call carries the sign; confidence scales the magnitude
 	// within an explicit cap.

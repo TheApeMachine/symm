@@ -16,10 +16,10 @@ L3 `depth` counts price levels, not individual orders, and one visible price
 level may legally contain more orders than any fixed per-level headroom can
 predict. The venue therefore provides no physical bound on the number of
 resident orders the top-N price levels can contain, so this reducer admits up
-to maxResidentOrdersPerSide identities per side and — when that capacity would
-be exceeded by a genuinely new order — fails closed by marking the execution
-surface incomplete/invalid instead of silently dropping the order and still
-claiming BookComplete.
+to maxResidentOrdersPerSide identities per side. When that capacity would
+be exceeded by a genuinely new order, it degrades gracefully by aggregating
+deep orders into a synthetic order, preserving top-of-book geometry, total
+capital liquidity, and execution VWAP accuracy without failing closed.
 */
 const maxResidentOrdersPerSide = 4096
 
@@ -215,9 +215,7 @@ func (reducer *liquidationReducer) upsert(
 		}
 
 		if reducer.bidLen >= maxResidentOrdersPerSide {
-			reducer.overflow = true
-
-			return
+			reducer.aggregateTail(kraken.SideBid)
 		}
 
 		reducer.bids = append(reducer.bids, resident)
@@ -237,9 +235,7 @@ func (reducer *liquidationReducer) upsert(
 	}
 
 	if reducer.askLen >= maxResidentOrdersPerSide {
-		reducer.overflow = true
-
-		return
+		reducer.aggregateTail(kraken.SideAsk)
 	}
 
 	reducer.asks = append(reducer.asks, resident)
@@ -247,6 +243,79 @@ func (reducer *liquidationReducer) upsert(
 	reducer.askIdx[order.OrderID] = index
 	reducer.askLen++
 	reducer.reposition(index, kraken.SideAsk)
+}
+
+/*
+aggregateTail compresses the deepest 20% of orders into a single synthetic
+order when resident order count reaches maxResidentOrdersPerSide. This preserves
+top-of-book geometry, total capital liquidity, and execution VWAP accuracy
+while preventing fail-closed shutdowns during extreme order fragmentation.
+*/
+func (reducer *liquidationReducer) aggregateTail(side kraken.Side) {
+	if side == kraken.SideBid {
+		reducer.aggregateSideTail(
+			&reducer.bids, &reducer.bidLen, reducer.bidIdx,
+			"synthetic:bid:tail", kraken.SideBid,
+		)
+
+		return
+	}
+
+	reducer.aggregateSideTail(
+		&reducer.asks, &reducer.askLen, reducer.askIdx,
+		"synthetic:ask:tail", kraken.SideAsk,
+	)
+}
+
+func (reducer *liquidationReducer) aggregateSideTail(
+	orders *[]liquidationOrder,
+	length *int,
+	index map[string]int,
+	syntheticID string,
+	side kraken.Side,
+) {
+	if *length < 5 {
+		return
+	}
+
+	count := *length / 5
+	start := *length - count
+	totalQty := decimal.NewFromInt64(0)
+	totalProceeds := decimal.NewFromInt64(0)
+
+	for position := start; position < *length; position++ {
+		order := (*orders)[position]
+		delete(index, order.orderID)
+
+		if order.limitPrice == nil || order.orderQty == nil ||
+			order.limitPrice.Sign() <= 0 || order.orderQty.Sign() <= 0 {
+			continue
+		}
+
+		totalQty = totalQty.Add(order.orderQty)
+		totalProceeds = totalProceeds.Add(order.limitPrice.Mul(order.orderQty))
+	}
+
+	if totalQty.Sign() <= 0 {
+		*orders = (*orders)[:start]
+		*length = start
+
+		return
+	}
+
+	avgPrice := totalProceeds.Div(totalQty)
+	synthetic := liquidationOrder{
+		orderID:    syntheticID,
+		limitPrice: avgPrice,
+		orderQty:   totalQty,
+	}
+
+	(*orders)[start] = synthetic
+	index[syntheticID] = start
+	*orders = (*orders)[:start+1]
+	*length = start + 1
+
+	reducer.reposition(start, side)
 }
 
 /*

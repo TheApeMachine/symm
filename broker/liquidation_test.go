@@ -540,7 +540,8 @@ func TestLiquidationEvictionRemovesStaleLiquidity(t *testing.T) {
 /*
 TestLiquidationModifyAtCapacity proves a modify to an already-resident order is
 applied even when the side's identity storage is otherwise full, while a
-genuinely new order overflows and fails closed.
+genuinely new order at capacity triggers virtual aggregation to preserve execution
+validity and top-of-book geometry.
 */
 func TestLiquidationModifyAtCapacity(t *testing.T) {
 	Convey("Given a reducer with depth large enough to hold two levels", t, func() {
@@ -585,7 +586,7 @@ func TestLiquidationModifyAtCapacity(t *testing.T) {
 			So(overflow, ShouldBeFalse)
 		})
 
-		Convey("a genuinely new order overflows and fails closed", func() {
+		Convey("a genuinely new order at capacity triggers virtual aggregation and preserves execution validity", func() {
 			reducer.Apply(updateL3(
 				[]kraken.Level3Order{mustDecimalOrder("brand-new", "50", "1")},
 				nil,
@@ -594,15 +595,20 @@ func TestLiquidationModifyAtCapacity(t *testing.T) {
 			reducer.mu.RLock()
 			overflow := reducer.overflow
 			valid := reducer.valid
+			bidLen := reducer.bidLen
+			bestBid := reducer.bids[0].limitPrice
 			reducer.mu.RUnlock()
 
-			So(overflow, ShouldBeTrue)
-			So(valid, ShouldBeFalse)
+			So(overflow, ShouldBeFalse)
+			So(valid, ShouldBeTrue)
+			So(bidLen, ShouldBeLessThan, maxResidentOrdersPerSide)
+			So(bestBid.Cmp(mustDecimal("100")), ShouldEqual, 0)
 
 			surface := reducer.Surface(
 				decimal.NewFromFloat64(1), nil, liquidationFee(), time.Now(),
 			)
-			So(surface.BookComplete, ShouldBeFalse)
+			So(surface.BookComplete, ShouldBeTrue)
+			So(surface.FullyExecutable, ShouldBeTrue)
 		})
 	})
 }
