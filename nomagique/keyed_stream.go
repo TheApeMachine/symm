@@ -12,7 +12,7 @@ use Number directly so the top-level composition boundary has one name.
 Deprecated: use Number.
 */
 type KeyedStreams[Key comparable] struct {
-	number *Number[Key]
+	number *KeyedNumber[Key]
 }
 
 // NewKeyedStreams creates one isolated stream per key.
@@ -21,7 +21,7 @@ func NewKeyedStreams[Key comparable](
 	initial func(Key) types.Frame,
 ) *KeyedStreams[Key] {
 	return &KeyedStreams[Key]{
-		number: NewNumberWithInitial(initial, primitive),
+		number: NewKeyedNumberWithInitial(initial, primitive),
 	}
 }
 

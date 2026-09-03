@@ -54,7 +54,7 @@ Ticker is the executable-touch market entity. It owns exactly a Number pipeline
 and a projector, both declared in its constructor, plus Step and Close.
 */
 type Ticker struct {
-	number    *nomagique.Number[string]
+	number    *nomagique.KeyedNumber[string]
 	projector *data.Projector
 }
 

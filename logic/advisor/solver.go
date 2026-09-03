@@ -21,7 +21,7 @@ type Solver struct {
 	cancel        context.CancelFunc
 	err           error
 	status        *runtime.Status
-	number        *nomagique.Number[string]
+	number        *nomagique.KeyedNumber[string]
 	clocks        map[string]float64
 	frames        map[string]nmtypes.Frame
 	ObserveModule func(string, time.Duration)

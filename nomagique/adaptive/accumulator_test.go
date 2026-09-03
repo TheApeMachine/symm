@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -18,7 +17,7 @@ func TestAccumulator(t *testing.T) {
 		accumulator := Accumulator("test")
 
 		Convey("It integrates signed samples with compensated summation", func() {
-			number := nomagique.NewNumber[string](accumulator)
+			number := types.NewKeyedNumber[string](accumulator)
 
 			_ = number.Step("sym", withValue(accValueSlot, 0.1))
 			_ = number.Step("sym", withValue(accValueSlot, 0.2))

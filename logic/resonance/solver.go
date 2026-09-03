@@ -368,7 +368,7 @@ func (solver *Solver) standardize(
 		key,
 		nomagique.NewNumber[string](standardizerPipeline(width)),
 	)
-	number, valid := loaded.(*nomagique.Number[string])
+	number, valid := loaded.(*nomagique.KeyedNumber[string])
 
 	if !valid || number == nil {
 		number = nomagique.NewNumber[string](standardizerPipeline(width))

@@ -120,6 +120,17 @@ func NewPlanner(
 }
 
 /*
+Court is the credibility ledger this Planner deliberates against.
+
+The Arenas report resolved predictions into it, so the advisor whose calls keep
+failing grows quieter at the table rather than being silenced outright
+(MCTS.md §6.2). It is the same ledger the deliberation reads, deliberately: an
+accountability record kept apart from the council it is supposed to weight
+would judge advisors without ever changing what they are worth.
+*/
+func (planner *Planner) Court() *advisor.WarRoom { return planner.warRoom }
+
+/*
 Step consumes one envelope once and emits one decision round per ticker.
 */
 func (planner *Planner) Step(envelope *types.Envelope) *types.Envelope {
@@ -214,12 +225,14 @@ func (planner *Planner) plan(envelope *types.Envelope) *types.StrategyRound {
 	decision.Alternatives = consensusAlternatives(consensus)
 
 	if consensus.Participants == 0 {
-		// Advisors reach the council only once one of their falsifiable
-		// predictions survives a full round on the volume-bar clock, so an
-		// empty council on a thin symbol is expected early rather than
-		// broken. Naming that explicitly keeps it from reading as a fault.
+		// An advisor speaks as soon as its feature group is complete on the
+		// volume-bar clock; it does not have to first survive a round (that
+		// inversion is what kept this council permanently empty). So an empty
+		// council now means the specialists have genuinely not classified this
+		// symbol yet — a thin instrument, or one still accumulating its first
+		// bars — rather than a reading being withheld.
 		decision.PredictiveStatus = "awaiting-advisor-consensus"
-		decision.Reason = "planner: no advisor prediction has survived a round for this symbol yet"
+		decision.Reason = "planner: no advisor has classified this symbol yet"
 
 		return round
 	}

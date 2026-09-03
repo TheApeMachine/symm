@@ -3,32 +3,11 @@ Package morphology measures the shape of an order book as a geometric object:
 where displayed notional sits along the price axis, how symmetric the two
 sides' shapes are, how concentrated each side is, and how much the whole shape
 moved since the last observation.
-
-It is deliberately a measuring instrument, never a judge. Every emitted fact
-is a dimensionless, unitless description of book geometry: a distance in spread
-units, a cumulative-disagreement statistic, a concentration, an entropy, and a
-structural change. There is no manipulation score, no "synthetic"/"suspicious"
-label, no fixed symmetry threshold, and no arbitrary depth bucket — the shape
-is the book's own levels, normalized by its own current spread and each level
-weighted by its own side notional.
-
-Bilateral shape (book_shape_distance, book_shape_ks) reflects each side around
-the midpoint onto a single positive distance axis, so a perfectly mirrored book
-has distance zero; the sides' physical separation above/below mid is not what
-bilateral morphology measures. Whole-book structural change (morphology_change)
-keeps signed distance-from-mid so physical bid/ask placement remains part of
-the change.
-
-The generic distribution mathematics (Wasserstein, Kolmogorov-Smirnov,
-entropy, Herfindahl) lives in nomagique/distribution, including the merged-walk
-Wasserstein1Pairs / KolmogorovSmirnovPairs that compare two sorted streams with
-no union, map, or combined snapshot. This package only projects a live book into
-shape coordinates and calls it — and it reads the authoritative shared book only
-inside its protected read callback, never letting the pointer escape.
 */
 package morphology
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 
@@ -36,35 +15,16 @@ import (
 	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/distribution"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/temporal"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/equation"
 )
 
-/*
-Output slots the projector names into Measurement metrics.
-*/
-var (
-	symbolShapeDistance    = nmtypes.MustIntern("morphology/book_shape_distance")
-	symbolShapeKS          = nmtypes.MustIntern("morphology/book_shape_ks")
-	symbolConcentrationBid = nmtypes.MustIntern("morphology/concentration_bid")
-	symbolConcentrationAsk = nmtypes.MustIntern("morphology/concentration_ask")
-	symbolEntropyBid       = nmtypes.MustIntern("morphology/entropy_bid")
-	symbolEntropyAsk       = nmtypes.MustIntern("morphology/entropy_ask")
-	symbolMorphologyChange = nmtypes.MustIntern("morphology/morphology_change")
-)
-
-/*
-The structural-change estimator. morphology_change is this signal's headline
-metric, and it is the only emitted fact with a history to speak of: the other
-facts describe the shape standing right now, while the change is a step-to-step
-distance. Its causal baseline and dispersion are what let a measurement report
-how far the current move stands from this symbol's own recent structural churn,
-which is the quality verdict data.Measurement.Finalize turns into the SNR.
-*/
-const prefixChange = "morphology/change"
-
-var changeSeries = temporal.NewSeries(prefixChange)
+type symbolState struct {
+	previousSec  float64
+	previousNsec float64
+	standardizer equation.Standardizer
+	count        int
+	hasTime      bool
+}
 
 /*
 Book is the book-shape market entity. It reads the shared book per step and
@@ -73,15 +33,13 @@ shape per symbol — a single overwritten shape each, the same bounded-resident-
 state contract as the shared book — so structural change is measured causally.
 */
 type Book struct {
-	number    *nomagique.Number[string]
-	projector *data.Projector
-
 	mu         sync.Mutex
 	previous   map[string][]distribution.WeightedPoint
 	lastBid    map[string]float64
 	lastAsk    map[string]float64
 	lastBidRaw map[string][]distribution.WeightedPoint
 	lastAskRaw map[string][]distribution.WeightedPoint
+	states     map[string]*symbolState
 }
 
 func NewBook() *Book {
@@ -91,26 +49,7 @@ func NewBook() *Book {
 		lastAsk:    make(map[string]float64),
 		lastBidRaw: make(map[string][]distribution.WeightedPoint),
 		lastAskRaw: make(map[string][]distribution.WeightedPoint),
-		number: nomagique.NewNumber[string](nmtypes.Pipe(
-			// The causal estimator over structural change: evaluate this step's
-			// distance against the baseline built strictly from previous steps,
-			// then let the baseline adapt and the window retain the observation.
-			temporal.Window(prefixChange),
-			statistic.ZScore(prefixChange),
-			statistic.Baseline(prefixChange),
-			statistic.QualityFrom(prefixChange),
-		)),
-		projector: data.NewProjector(
-			data.Binding{From: symbolShapeDistance, Name: "book_shape_distance", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolShapeKS, Name: "book_shape_ks", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolConcentrationBid, Name: "concentration:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolConcentrationAsk, Name: "concentration:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolEntropyBid, Name: "entropy:bid", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolEntropyAsk, Name: "entropy:ask", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolMorphologyChange, Name: "morphology_change", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmtypes.MustIntern(temporal.JoinPrefix(prefixChange, "baseline/value")), Name: "morphology_change_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmtypes.MustIntern(temporal.JoinPrefix(prefixChange, "z/value")), Name: "morphology_change_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-		),
+		states:     make(map[string]*symbolState),
 	}
 }
 
@@ -141,44 +80,82 @@ func (morphology *Book) Step(message kraken.Level3Data) *data.Measurement[float6
 
 	morphologyChange, changed := morphology.recordChange(message.Symbol, whole)
 
-	input := nmtypes.Frame{}
-	input.Put(symbolShapeDistance, shapeDistance)
-	input.Put(symbolShapeKS, shapeKS)
-	input.Put(symbolConcentrationBid, concentrationBid)
-	input.Put(symbolConcentrationAsk, concentrationAsk)
-	input.Put(symbolEntropyBid, entropyBid)
-	input.Put(symbolEntropyAsk, entropyAsk)
+	id := fmt.Sprintf("morphology:%s:%d", message.Symbol, message.Timestamp.UnixNano())
+	measurement := data.NewMeasurement[float64](id, message.Symbol, "morphology", message.Timestamp, message.Timestamp)
+	measurement.Metadata = make(map[string]float64)
+
+	putMetric(measurement, "book_shape_distance", shapeDistance, data.UnitDimensionless)
+	putMetric(measurement, "book_shape_ks", shapeKS, data.UnitDimensionless)
+	putMetric(measurement, "concentration:bid", concentrationBid, data.UnitDimensionless)
+	putMetric(measurement, "concentration:ask", concentrationAsk, data.UnitDimensionless)
+	putMetric(measurement, "entropy:bid", entropyBid, data.UnitNat)
+	putMetric(measurement, "entropy:ask", entropyAsk, data.UnitNat)
 
 	// Only a step that actually had a prior shape carries a structural change,
 	// and only then is there anything for the estimator to measure. Without it
 	// the shape facts still project; the measurement simply reports no SNR.
 	if !changed {
-		return morphology.projector.Project(message.Symbol, "morphology", message.Timestamp, message.Timestamp, input)
+		measurement.Finalize()
+
+		return measurement
 	}
 
-	if committed, found := morphology.number.Project(message.Symbol); found {
-		previousSec, _ := committed.Get(changeSeries.SecSymbol)
-		previousNsec, _ := committed.Get(changeSeries.NsecSymbol)
+	morphology.mu.Lock()
+	state, found := morphology.states[message.Symbol]
 
-		if float64(message.Timestamp.Unix()) < previousSec ||
-			(float64(message.Timestamp.Unix()) == previousSec && float64(message.Timestamp.Nanosecond()) < previousNsec) {
+	if !found {
+		state = &symbolState{}
+		morphology.states[message.Symbol] = state
+	}
+
+	msgSec := float64(message.Timestamp.Unix())
+	msgNsec := float64(message.Timestamp.Nanosecond())
+
+	if state.hasTime {
+		if msgSec < state.previousSec || (msgSec == state.previousSec && msgNsec < state.previousNsec) {
+			morphology.mu.Unlock()
+
 			return nil
 		}
 	}
 
-	input.Put(symbolMorphologyChange, morphologyChange)
-	input.Put(changeSeries.ValueSymbol, morphologyChange)
-	input.Put(changeSeries.SecSymbol, float64(message.Timestamp.Unix()))
-	input.Put(changeSeries.NsecSymbol, float64(message.Timestamp.Nanosecond()))
+	state.previousSec = msgSec
+	state.previousNsec = msgNsec
+	state.hasTime = true
+	state.count++
 
+	putMetric(measurement, "morphology_change", morphologyChange, data.UnitDimensionless)
 
-	return morphology.projector.Project(
-		message.Symbol,
-		"morphology",
-		message.Timestamp,
-		message.Timestamp,
-		morphology.number.Step(message.Symbol, input),
-	)
+	// Causal pre-observation baseline & z-score:
+	if state.count > 1 {
+		baseline := state.standardizer.Mean()
+		dispersion := state.standardizer.Dispersion()
+		variance := state.standardizer.Variance()
+
+		putMetric(measurement, "morphology_change_baseline", baseline, data.UnitDimensionless)
+
+		if dispersion > 0 {
+			zScore := (morphologyChange - baseline) / dispersion
+			putMetric(measurement, "morphology_change_zscore", zScore, data.UnitDimensionless)
+			measurement.Metadata[data.MetadataDivergence] = morphologyChange - baseline
+			measurement.Metadata[data.MetadataNoiseVariance] = variance
+		}
+	}
+
+	// Update standardizer with current observation
+	state.standardizer.Step(nomagique.Number(morphologyChange))
+	morphology.mu.Unlock()
+
+	measurement.Metadata[data.MetadataSupport] = float64(state.count)
+	measurement.Finalize()
+
+	return measurement
+}
+
+func putMetric(measurement *data.Measurement[float64], name string, value float64, unit data.Unit) {
+	measurement.PutMetric(data.NewMetric(
+		name, value, nil, nil, unit, data.TimescaleInstantaneous,
+	))
 }
 
 /*

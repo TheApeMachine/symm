@@ -19,7 +19,7 @@ func TestGovernor(t *testing.T) {
 
 		merged := state
 		merged.Merge(&input)
-		Governor(&merged)
+		GovernorPrimitive(&merged)
 
 		So(merged.Err, ShouldBeNil)
 		So(merged.MustGet(nmtypes.Span), ShouldEqual, 8.0)
@@ -35,7 +35,7 @@ func TestGovernor(t *testing.T) {
 
 		merged := state
 		merged.Merge(&input)
-		Governor(&merged)
+		GovernorPrimitive(&merged)
 
 		So(merged.Err, ShouldBeNil)
 		So(merged.MustGet(nmtypes.Span), ShouldEqual, 4.0)
@@ -54,6 +54,6 @@ func BenchmarkGovernor(benchmark *testing.B) {
 	for benchmark.Loop() {
 		merged := state
 		merged.Merge(&input)
-		Governor(&merged)
+		GovernorPrimitive(&merged)
 	}
 }

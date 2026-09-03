@@ -1,14 +1,14 @@
-import { type MouseEvent, useRef } from "react";
-import { strategyStore } from "#/collections/app";
+import { useSelector } from "@tanstack/react-store";
+import { type MouseEvent, useEffect, useRef } from "react";
+import { decisionStore } from "#/collections/app";
 import {
-	EvidenceStage,
+	PrecursorStage,
 	ExecutionStage,
-	StructuralStage,
+	ReadinessStage,
 } from "#/components/terminal/decision-chain-stages";
-import { DecisionMCTSStage } from "#/components/terminal/decision-mcts-stage";
+import { WarRoom } from "#/components/terminal/war-room";
 import { setDecisionsScopeSymbol } from "#/components/terminal/decision-side";
 import { Typography } from "#/components/ui/typography";
-import { Decision } from "#/providers/telemetry/telemetry/decision";
 
 const selectRow = (row: HTMLElement, symbol: string): void => {
 	setDecisionsScopeSymbol(symbol);
@@ -22,118 +22,78 @@ const selectRow = (row: HTMLElement, symbol: string): void => {
 	}
 };
 
-const decObj = new Decision();
-
 /*
-FRAME_SCAN must match the surface's retention window so a row's pinned frame
-index resolves to the same frame the surface indexed it from.
+text coerces a flatbuffer string field. The generated DecisionT types a string
+as string | Uint8Array because the reader can return raw bytes; every field
+read here is a real string, and this states that once rather than at each use.
 */
-const FRAME_SCAN = 50;
+const text = (value: string | Uint8Array | null | undefined): string =>
+	typeof value === "string" ? value : "";
 
-const decisionToThesis = (d: Decision) => ({
-	id: d.id() ?? "",
-	action: d.action() ?? "",
-	symbol: d.symbol() ?? "",
-	direction: Number(d.direction()),
-	thesisScore: d.thesisScore(),
-	thesisConfidence: d.thesisConfidence(),
-	thesisSupport: d.thesisSupport(),
-	thesisContradiction: d.thesisContradiction(),
-	thesisConditions: d.thesisConditions(),
-	predictiveStatus: "",
-	taskSkill: d.taskSkill(),
-	forecastHorizon: Number(d.forecastHorizon()),
-	graphScore: d.graphScore(),
-	confidence: d.confidence(),
-	reason: d.reason() ?? "",
-	cause: d.reason() ?? "",
-});
-
-export const DecisionChain = ({
-	frame,
-	index,
-}: {
-	frame: number;
-	index: number;
-}) => {
+export const DecisionChain = ({ symbol }: { symbol: string }) => {
 	const rowRef = useRef<HTMLButtonElement>(null);
 
-	strategyStore.subscribe((state) => {
-		// The row is pinned to the frame its symbol was last decided in, so a
-		// later frame about a different symbol cannot repaint it.
-		const frames = state.getLastN(FRAME_SCAN);
-		const source = frames[frame];
-		if (!source || index >= source.decisionsLength()) return;
+	/*
+		The row is addressed by symbol, so it repaints from its own symbol's
+		latest decision and from nothing else.
 
-		const current = source.decisions(index, decObj);
-		if (!current) return;
+		It used to be pinned to a position in a 50-frame ring. A ring rotates:
+		once full, every new frame shifted all positions by one, so the pinned
+		index silently came to name a different frame on every tick. Rows drifted
+		onto foreign data and the board reshuffled under an open row. Keying by
+		symbol removes that failure rather than guarding against it — there is no
+		position left to go stale.
+	*/
+	const decision = useSelector(
+		decisionStore,
+		(state) => state.bySymbol[symbol],
+	);
 
+	useEffect(() => {
 		const row = rowRef.current;
-		if (!row) return;
 
-		// Only repaint from a frame that actually carries this row's symbol.
-		// Decision indices are per-frame positions, not stable identities, so
-		// a frame that omits this symbol would otherwise paint a different
-		// symbol's numbers into this row.
-		const painted =
-			row.querySelector<HTMLElement>('[data-df="symbol"]')?.textContent ?? "";
-		const incoming = current.symbol() ?? "";
+		if (!row || !decision) return;
 
-		if (painted !== "" && incoming !== painted) {
-			return;
-		}
+		const set = (field: string, value: string) => {
+			const element = row.querySelector<HTMLElement>(`[data-df="${field}"]`);
 
-		const set = (q: string, value: string) => {
-			const el = row.querySelector<HTMLElement>(`[data-df="${q}"]`);
-			if (el) el.textContent = value;
+			if (element) element.textContent = value;
 		};
 
-		set("symbol", incoming);
-		set("reason", current.reason() ?? "");
-		set("thesisScore", current.thesisScore().toFixed(4));
-		set("thesisConfidence", `${(current.confidence() * 100).toFixed(1)}%`);
-		set("graphScore", current.graphScore().toFixed(5));
-		set("action", current.action() ?? "—");
-		set("cause", current.reason() ?? "pending");
-	});
-
-	// Resolve against the frame this row is pinned to, not the newest one.
-	// Reading getLast here made every row render the most recent frame's
-	// decision, so a board of symbols all showed the same one.
-	const source = strategyStore.state.getLastN(FRAME_SCAN)[frame];
-	const decision =
-		source && index < source.decisionsLength()
-			? source.decisions(index, new Decision())
-			: null;
+		set("symbol", text(decision.symbol));
+		set("reason", text(decision.reason));
+		set("thesisScore", decision.thesisScore.toFixed(4));
+		set("thesisConfidence", `${(decision.confidence * 100).toFixed(1)}%`);
+		set("graphScore", decision.graphScore.toFixed(5));
+		set("action", text(decision.action) || "—");
+		set("cause", text(decision.reason) || "pending");
+	}, [decision]);
 
 	if (!decision) {
 		return null;
 	}
 
 	const selectDecision = (event: MouseEvent<HTMLButtonElement>): void => {
-		selectRow(event.currentTarget, decision.symbol() ?? "");
+		selectRow(event.currentTarget, text(decision.symbol));
 	};
-
-	const thesisDec = decisionToThesis(decision);
 
 	// Seed the paint targets from the frame already in hand. The subscription
 	// above repaints them on every later frame, but until one arrives the row
 	// would otherwise render as an empty outline.
 	const seed = {
-		symbol: decision.symbol() ?? "",
-		reason: decision.reason() ?? "",
-		thesisScore: decision.thesisScore().toFixed(4),
-		thesisConfidence: `${(decision.confidence() * 100).toFixed(1)}%`,
-		graphScore: decision.graphScore().toFixed(5),
-		action: decision.action() ?? "—",
+		symbol: text(decision.symbol),
+		reason: text(decision.reason),
+		thesisScore: decision.thesisScore.toFixed(4),
+		thesisConfidence: `${(decision.confidence * 100).toFixed(1)}%`,
+		graphScore: decision.graphScore.toFixed(5),
+		action: text(decision.action) || "—",
 	};
 
 	return (
 		<button
 			ref={rowRef}
 			type="button"
-			data-index={index}
-			data-decision-chain="row"
+						data-decision-chain="row"
 			data-selected="false"
 			aria-expanded="false"
 			onClick={selectDecision}
@@ -190,11 +150,19 @@ export const DecisionChain = ({
 				<span data-df="reason" />
 			</div>
 
-			<div className="hidden grid-cols-5 gap-1.5 p-2 font-mono text-[8.5px] group-data-[selected=true]:grid">
-				<StructuralStage decision={thesisDec as any} />
-				<EvidenceStage decision={thesisDec as any} />
-				<DecisionMCTSStage decision={decision} />
-				<ExecutionStage decision={thesisDec as any} />
+			{/*
+				The measured stages stay a compact row; the War Room gets the full
+				width beneath them. A search tree squeezed into a fifth of the row
+				is unreadable, and the reasoning is the reason the row was opened.
+			*/}
+			<div className="hidden grid-cols-3 gap-1.5 p-2 font-mono text-[8.5px] group-data-[selected=true]:grid">
+				<PrecursorStage decision={decision} />
+				<ReadinessStage decision={decision} />
+				<ExecutionStage decision={decision} />
+			</div>
+
+			<div className="hidden border-(--line) border-t group-data-[selected=true]:block">
+				<WarRoom symbol={text(decision.symbol)} className="h-112" />
 			</div>
 
 			<div className="hidden items-center gap-4 border-(--line) border-t px-3 py-1.5 font-mono text-[8.5px] text-(--f4) group-data-[selected=true]:flex">

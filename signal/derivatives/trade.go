@@ -40,7 +40,7 @@ Trade is the liquidation-accounting market entity. It owns exactly a Number
 pipeline and a projector, both declared in its constructor, plus Step and Close.
 */
 type Trade struct {
-	number    *nomagique.Number[string]
+	number    *nomagique.KeyedNumber[string]
 	projector *data.Projector
 	// clock resolves each trade against the symbol's causal timeline so a late
 	// trade is accounted without advancing the event clock. See Step.

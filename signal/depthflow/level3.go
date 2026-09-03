@@ -107,7 +107,7 @@ It never stores order identities, price levels, snapshots, or a generalized
 book representation.
 */
 type Level3 struct {
-	number    *nomagique.Number[string]
+	number    *nomagique.KeyedNumber[string]
 	projector *data.Projector
 }
 

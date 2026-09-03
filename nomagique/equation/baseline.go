@@ -1,36 +1,35 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/temporal"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/adaptive"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
-// AdaptiveBaseline composes retention, center, clustering, and capacity control.
-func AdaptiveBaseline() types.Primitive {
-	return types.Pipe(
-		temporal.Window(""),
-		statistic.Mean,
-		statistic.Stability(""),
-		temporal.Governor,
-	)
+/*
+CausalBaseline is a structural composition (Tier 4 Equation).
+It embeds the adaptive.Baseline primitive by value, executing with zero
+custom arithmetic, zero allocations, and zero magic constants.
+*/
+type CausalBaseline struct {
+	baseline adaptive.Baseline
 }
 
-/*
-CausalBaseline exposes the center of committed samples before retaining the
-current observation, then explicitly publishes that center as the baseline fact.
-*/
-func CausalBaseline() types.Primitive {
-	return types.Pipe(
-		statistic.Mean,
-		temporal.Window(""),
-		statistic.Stability(""),
-		temporal.Governor,
-		types.Wire(
-			types.Identity,
-			types.In(statistic.SymbolMean, calculus.PortX),
-			types.Out(calculus.PortX, statistic.SymbolBaseline),
-		),
-	)
+func (equation *CausalBaseline) Step(number nmtypes.Number) nmtypes.Number {
+	return equation.baseline.Step(number)
+}
+
+func (equation *CausalBaseline) Baseline() float64 {
+	return equation.baseline.Engine.Mean()
+}
+
+func (equation *CausalBaseline) Mean() float64 {
+	return equation.baseline.Engine.Mean()
+}
+
+func (equation *CausalBaseline) Dispersion() float64 {
+	return equation.baseline.Engine.Dispersion()
+}
+
+func (equation *CausalBaseline) Count() float64 {
+	return equation.baseline.Engine.Count()
 }

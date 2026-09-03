@@ -410,7 +410,6 @@ var (
 
 			defer basisSolver.Close()
 
-
 			// Manifold is intentionally disabled while its runtime issue is
 			// investigated independently. No physics implementation is changed.
 			// manifoldSolver := manifold.NewSolver(runtimeCtx)
@@ -510,7 +509,6 @@ var (
 				len(instrument.Symbols()),
 			)
 
-
 			if err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.Internal,
@@ -592,6 +590,21 @@ var (
 					"symm: construct momentum Arena",
 					err,
 				))
+			}
+
+			// Every Arena reports its resolved predictions into the Planner's
+			// credibility ledger. This is the Court of Causal Accountability
+			// (MCTS.md §6): the Arena is the only stage that observes whether a
+			// falsifiable claim was borne out, so without this link the ledger
+			// was written once at construction and never again — every advisor
+			// held credibility 1.0 forever and being wrong cost nothing.
+			court := planner.Court()
+
+			for _, arena := range []*advisor.Arena{
+				momentumArena, auctionArena, participationArena, profitRunArena,
+				pullbackArena, liquidityArena, basisArena,
+			} {
+				arena.Court(court)
 			}
 
 			// Phase 2 — declare the complete streaming topology as Workloads.
@@ -714,7 +727,6 @@ var (
 					},
 				},
 			)
-
 
 			logicWorkload := nmruntime.NewWorkload(
 				runtimeCtx,

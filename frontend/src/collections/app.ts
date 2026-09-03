@@ -24,6 +24,7 @@ import type { FluidPhaseFrame } from "#/providers/telemetry/telemetry/fluid-phas
 import type { GraphFrame } from "#/providers/telemetry/telemetry/graph-frame";
 import type { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
 import type { RegulatorFrame } from "#/providers/telemetry/telemetry/regulator-frame";
+import type { DecisionT } from "#/providers/telemetry/telemetry/decision";
 import type { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
 import type { TradeRecord } from "./types";
 
@@ -354,6 +355,43 @@ export const opportunityStore =
 	createFrameStore<EnvelopeOpportunityCandidate>(50);
 export const graphStore = createFrameStore<GraphFrame>(50);
 export const strategyStore = createFrameStore<StrategyFrame>(50);
+
+/*
+decisionStore holds the latest decision per symbol, keyed by the symbol itself.
+
+The decision surface is a board of live candidates: exactly one current
+decision per symbol, replaced whenever that symbol is re-evaluated. A ring of
+the last N *frames* could only reconstruct that by scanning and de-duplicating,
+and — because a ring rotates — the frame position a row was pinned to silently
+came to mean a different frame on every later tick. Rows then repainted from
+foreign data and the list reshuffled under an open row.
+
+Keying by symbol removes the problem rather than compensating for it: a row
+looks its symbol up by name, so ring rotation cannot exist and a row's identity
+is stable for as long as the symbol is being evaluated.
+
+The stored value is the unpacked DecisionT, never the flatbuffer accessor. A
+flatbuffer Decision is a mutable cursor into a shared buffer, so retaining one
+would leave every stored symbol aliasing whichever decision was read last.
+*/
+export const decisionStore = createStore(
+	{ version: 0, bySymbol: {} as Record<string, DecisionT> },
+	({ setState }) => ({
+		add: (decision: DecisionT) => {
+			const symbol = decision.symbol;
+
+			if (typeof symbol !== "string" || symbol === "") {
+				return;
+			}
+
+			setState((prev) => ({
+				version: prev.version + 1,
+				bySymbol: { ...prev.bySymbol, [symbol]: decision },
+			}));
+		},
+		reset: () => setState(() => ({ version: 0, bySymbol: {} })),
+	}),
+);
 export const positionStore = createFrameStore<PositionsFrame>(50);
 export const balanceStore = createFrameStore<BalancesFrame>(50);
 export const equityStore = createFrameStore<EquityFrame>(50);

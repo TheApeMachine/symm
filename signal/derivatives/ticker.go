@@ -56,7 +56,7 @@ Number pipeline and a projector, both declared in its constructor, plus Step
 and Close.
 */
 type Ticker struct {
-	number    *nomagique.Number[string]
+	number    *nomagique.KeyedNumber[string]
 	projector *data.Projector
 	// clock keeps one monotonic causal timeline per symbol so the observer's
 	// "event time must not regress" invariant holds even when a futures

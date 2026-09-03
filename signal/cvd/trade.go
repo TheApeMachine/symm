@@ -7,7 +7,6 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/logic"
@@ -579,8 +578,10 @@ estimator, and nomagique exposes no such types.Primitive. The README marks those
 metrics MAY-optional ("emitted only when the regression is estimable").
 */
 type Trade struct {
-	number    *nomagique.Number[string]
-	projector *data.Projector
+	pipe       nmtypes.Primitive
+	frames     map[string]*nmtypes.Frame
+	projector  *data.Projector
+	mu         sync.RWMutex
 
 	// quote supplies the contemporaneous top-of-book bid/ask for a symbol so
 	// the response-price metrics (midpoint and midpoint_log_return) can be
@@ -601,12 +602,13 @@ type quotePair struct {
 }
 
 /*
-NewTrade constructs the Trade entity: one Number pipeline for executed-flow
+NewTrade constructs the Trade entity: one pipeline for executed-flow
 accounting and one projector that names the output slots.
 */
 func NewTrade() *Trade {
 	return &Trade{
-		number: nomagique.NewNumber[string](cvdPipeline()),
+		pipe:   cvdPipeline(),
+		frames: make(map[string]*nmtypes.Frame),
 		projector: data.NewProjector(
 			data.Binding{From: nmtypes.SampleCount, Name: "trade_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: symbolBuyCountTotal, Name: "trade_count:buy", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
@@ -673,27 +675,35 @@ book or an empty/crossed touch is an undefined quote, not an error: the flow
 accounting still stands and the response-price metrics are simply absent.
 */
 func (trade *Trade) Step(observation kraken.TradeData) *data.Measurement[float64] {
-	if committed, found := trade.number.Project(observation.Symbol); found {
-		previousSec, _ := committed.Get(nmtypes.EventTimeSec)
-		previousNsec, _ := committed.Get(nmtypes.EventTimeNsec)
+	trade.mu.Lock()
+	frame, found := trade.frames[observation.Symbol]
 
-		if float64(observation.Timestamp.Unix()) < previousSec ||
-			(float64(observation.Timestamp.Unix()) == previousSec && float64(observation.Timestamp.Nanosecond()) < previousNsec) {
-			return nil
-		}
+	if !found {
+		frame = &nmtypes.Frame{}
+		trade.frames[observation.Symbol] = frame
 	}
 
-	input := nmtypes.Frame{}
-	input.Put(symbolPrice, observation.Price.Float64())
-	input.Put(symbolQty, observation.Qty)
-	input.Put(symbolSign, signForSide(observation.Side))
-	input.Put(nmtypes.EventTimeSec, float64(observation.Timestamp.Unix()))
+	previousSec, _ := frame.Get(nmtypes.EventTimeSec)
+	previousNsec, _ := frame.Get(nmtypes.EventTimeNsec)
 
-	input.Put(nmtypes.EventTimeNsec, float64(observation.Timestamp.Nanosecond()))
+	if float64(observation.Timestamp.Unix()) < previousSec ||
+		(float64(observation.Timestamp.Unix()) == previousSec && float64(observation.Timestamp.Nanosecond()) < previousNsec) {
+		trade.mu.Unlock()
 
-	trade.loadQuote(observation.Symbol, &input)
+		return nil
+	}
 
-	output := trade.number.Step(observation.Symbol, input)
+	frame.Put(symbolPrice, observation.Price.Float64())
+	frame.Put(symbolQty, observation.Qty)
+	frame.Put(symbolSign, signForSide(observation.Side))
+	frame.Put(nmtypes.EventTimeSec, float64(observation.Timestamp.Unix()))
+	frame.Put(nmtypes.EventTimeNsec, float64(observation.Timestamp.Nanosecond()))
+
+	trade.loadQuote(observation.Symbol, frame)
+
+	trade.pipe(frame)
+	output := *frame
+	trade.mu.Unlock()
 
 	from := observation.Timestamp
 

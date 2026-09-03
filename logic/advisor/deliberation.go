@@ -391,6 +391,34 @@ func (room *WarRoom) project(
 }
 
 /*
+MoveForState is the market move one advisor class asserts.
+
+It is the same reading of the class vocabulary that project uses to build the
+consensus mass, stated once so accountability and deliberation cannot drift
+apart: an advisor must be judged against the move it actually argued for.
+*/
+func MoveForState(state string) MarketMove {
+	switch state {
+	case "Building", "BuyersBreakingThrough",
+		"LiquiditySweep", "WallBuilding", "LeverageSqueeze", "DiscountExpanding":
+		return MoveExplosivePump
+	case "Sustaining", "BroadLift", "Extending", "Replenishing":
+		return MoveSteadyTrend
+	case "OrderlyPullback", "FollowerMove":
+		return MoveStructuralPullback
+	case "SellersAbsorbing", "BuyersAbsorbing":
+		return MoveWeakBleed
+	case "Reversing", "Exhausting", "GivingBack", "Depleting", "PremiumExpanding":
+		return MoveStructuralPullback
+	case "SellersBreakingThrough", "StructuralBreakdown", "VacuumForming",
+		"LiquidationsCascading":
+		return MoveFlashDump
+	}
+
+	return MoveStagnant
+}
+
+/*
 crossExamine applies the semantic rules to the accumulated mass. A veto is a
 suppression of the moves it invalidates, not a subtraction from a score; a
 synergy is an amplification of the move the combination physically predicts.

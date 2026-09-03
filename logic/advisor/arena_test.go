@@ -53,10 +53,14 @@ func TestArenaStep(t *testing.T) {
 		issued := arenaEnvelope("BTC/USD", 1, 1, 1)
 		issued.Perspectives = []*types.Perspective{arenaPerspective("BTC/USD", "recovery", 1, 3)}
 
-		Convey("Arena retains it instead of exposing an untested claim", func() {
+		Convey("Arena publishes it immediately and tracks it for accountability", func() {
+			// The advisor speaks now and is judged later (MCTS.md §3, §6).
+			// Withholding the reading until it had survived a round left the
+			// War Room permanently empty on a live symbol.
 			So(arena.Step(issued), ShouldEqual, issued)
 			So(arena.Active(), ShouldEqual, 1)
-			So(node.perspectives, ShouldBeEmpty)
+			So(node.perspectives, ShouldHaveLength, 1)
+			So(node.perspectives[0].Lifecycle, ShouldEqual, types.PerspectiveIssued)
 		})
 
 		Convey("support releases the Perspective to the wrapped Node", func() {

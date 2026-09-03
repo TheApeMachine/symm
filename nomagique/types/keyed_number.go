@@ -1,20 +1,19 @@
-package nomagique
+package types
 
 import (
 	"sync"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/utils"
 )
 
 /*
-Number is the keyed top-level composer. Every key owns one committed Frame, and
+KeyedNumber is the keyed top-level composer. Every key owns one committed Frame, and
 Step merges that frame with the incoming frame before running the pipeline, then
 stores the result as the new committed state. The registry is safe for
 concurrent keys; a small per-key lock serializes same-key writers.
 */
-type Number[Key comparable] struct {
+type KeyedNumber[Key comparable] struct {
 	primitive Primitive
 	initial   func(Key) Frame
 	streams   sync.Map
@@ -32,17 +31,17 @@ type numberStream struct {
 	scratch Frame
 }
 
-// NewNumber composes primitives into one isolated numeric unit per key.
-func NewNumber[Key comparable](primitives ...Primitive) *Number[Key] {
-	return NewNumberWithInitial[Key](nil, primitives...)
+// NewKeyedNumber composes primitives into one isolated numeric unit per key.
+func NewKeyedNumber[Key comparable](primitives ...Primitive) *KeyedNumber[Key] {
+	return NewKeyedNumberWithInitial[Key](nil, primitives...)
 }
 
-// NewNumberWithInitial provides the initial committed state for newly seen keys.
-func NewNumberWithInitial[Key comparable](
+// NewKeyedNumberWithInitial provides the initial committed state for newly seen keys.
+func NewKeyedNumberWithInitial[Key comparable](
 	initial func(Key) Frame,
 	primitives ...Primitive,
-) *Number[Key] {
-	return &Number[Key]{
+) *KeyedNumber[Key] {
+	return &KeyedNumber[Key]{
 		primitive: Pipe(primitives...),
 		initial:   initial,
 	}
@@ -54,7 +53,7 @@ pipeline, and stores the result as the new committed state. The returned frame
 is both the committed state and the step output; Err carries any validation
 failure.
 */
-func (number *Number[Key]) Step(key Key, input Frame) Frame {
+func (number *KeyedNumber[Key]) Step(key Key, input Frame) Frame {
 	stream, err := number.stream(key)
 
 	if err != nil {
@@ -78,11 +77,11 @@ func (number *Number[Key]) Step(key Key, input Frame) Frame {
 }
 
 // Project returns the committed state for one key.
-func (number *Number[Key]) Project(key Key) (Frame, bool) {
+func (number *KeyedNumber[Key]) Project(key Key) (Frame, bool) {
 	stream, found := number.load(key)
 
 	if !found {
-		return types.Frame{}, false
+		return Frame{}, false
 	}
 
 	stream.mutex.RLock()
@@ -93,12 +92,12 @@ func (number *Number[Key]) Project(key Key) (Frame, bool) {
 }
 
 // Output returns the last successful output for one key (the committed state).
-func (number *Number[Key]) Output(key Key) (Frame, bool) {
+func (number *KeyedNumber[Key]) Output(key Key) (Frame, bool) {
 	return number.Project(key)
 }
 
 // Error returns the last transition error for one key.
-func (number *Number[Key]) Error(key Key) (error, bool) {
+func (number *KeyedNumber[Key]) Error(key Key) (error, bool) {
 	stream, found := number.load(key)
 
 	if !found {
@@ -113,7 +112,7 @@ func (number *Number[Key]) Error(key Key) (error, bool) {
 }
 
 // Delete removes one keyed numeric unit.
-func (number *Number[Key]) Delete(key Key) {
+func (number *KeyedNumber[Key]) Delete(key Key) {
 	if number == nil {
 		return
 	}
@@ -122,7 +121,7 @@ func (number *Number[Key]) Delete(key Key) {
 }
 
 // Reset replaces one key's committed state.
-func (number *Number[Key]) Reset(key Key, initial Frame) error {
+func (number *KeyedNumber[Key]) Reset(key Key, initial Frame) error {
 	stream, err := number.stream(key)
 
 	if err != nil {
@@ -137,7 +136,7 @@ func (number *Number[Key]) Reset(key Key, initial Frame) error {
 }
 
 // Range visits immutable copies of each committed keyed state.
-func (number *Number[Key]) Range(yield func(Key, Frame) bool) {
+func (number *KeyedNumber[Key]) Range(yield func(Key, Frame) bool) {
 	if number == nil || yield == nil {
 		return
 	}
@@ -168,7 +167,7 @@ read lock and each peer read in place under its own brief read lock, so at most
 one peer lock and a single focal lock are held at any instant, never a lock held
 across the whole fold — concurrent CrossSections cannot deadlock.
 */
-func (number *Number[Key]) CrossSection(
+func (number *KeyedNumber[Key]) CrossSection(
 	key Key,
 	pair func(focal *Frame, peer *Frame) Frame,
 	reduce Primitive,
@@ -177,7 +176,7 @@ func (number *Number[Key]) CrossSection(
 	focalStream, found := number.load(key)
 
 	if !found {
-		return types.Frame{}, false, nil
+		return Frame{}, false, nil
 	}
 
 	// Snapshot the focal under a brief read lock. Per-symbol serialization (at
@@ -189,7 +188,7 @@ func (number *Number[Key]) CrossSection(
 	focal := focalStream.frame
 	focalStream.mutex.RUnlock()
 
-	accumulator := types.Frame{}
+	accumulator := Frame{}
 	reduced := false
 	var crossSectionErr error
 
@@ -250,7 +249,7 @@ func (number *Number[Key]) CrossSection(
 ArgMax evaluates one score over every committed state and returns a unique
 finite maximum only when it exceeds the exact cross-sectional median.
 */
-func (number *Number[Key]) ArgMax(
+func (number *KeyedNumber[Key]) ArgMax(
 	score Primitive,
 	valueSymbol Symbol,
 	readySymbol Symbol,
@@ -379,7 +378,7 @@ func selectValue(values []float64, target int) float64 {
 	return values[target]
 }
 
-func (number *Number[Key]) stream(key Key) (*numberStream, error) {
+func (number *KeyedNumber[Key]) stream(key Key) (*numberStream, error) {
 	if number == nil || number.primitive == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -392,7 +391,7 @@ func (number *Number[Key]) stream(key Key) (*numberStream, error) {
 		return stream, nil
 	}
 
-	initial := types.Frame{}
+	initial := Frame{}
 
 	if number.initial != nil {
 		initial = number.initial(key)
@@ -403,13 +402,13 @@ func (number *Number[Key]) stream(key Key) (*numberStream, error) {
 	stream, valid := stored.(*numberStream)
 
 	if !valid {
-		return nil, types.PrimitiveError("number registry contains an invalid stream")
+		return nil, PrimitiveError("number registry contains an invalid stream")
 	}
 
 	return stream, nil
 }
 
-func (number *Number[Key]) load(key Key) (*numberStream, bool) {
+func (number *KeyedNumber[Key]) load(key Key) (*numberStream, bool) {
 	if number == nil {
 		return nil, false
 	}
@@ -437,8 +436,8 @@ func NewSingle(primitives ...Primitive) Single {
 	// so &scratch passed to the opaque pipeline never triggers a fresh 66KB
 	// allocation. A by-value state captured in the closure would instead escape
 	// on every call through Step(pipeline, &merged).
-	state := new(types.Frame)
-	scratch := new(types.Frame)
+	state := new(Frame)
+	scratch := new(Frame)
 
 	return func(input Frame) Frame {
 		*scratch = *state

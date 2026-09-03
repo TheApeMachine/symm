@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -27,7 +26,7 @@ func TestStandardizer(t *testing.T) {
 		standardizer := Standardizer("test")
 
 		Convey("It reports not ready before dispersion exists", func() {
-			number := nomagique.NewNumber[string](standardizer)
+			number := types.NewKeyedNumber[string](standardizer)
 
 			output := number.Step("sym", withValue(testValue, 10))
 
@@ -38,7 +37,7 @@ func TestStandardizer(t *testing.T) {
 		})
 
 		Convey("It scores against prior moments once dispersion is positive", func() {
-			number := nomagique.NewNumber[string](standardizer)
+			number := types.NewKeyedNumber[string](standardizer)
 
 			_ = number.Step("sym", withValue(testValue, 1))
 			_ = number.Step("sym", withValue(testValue, 2))

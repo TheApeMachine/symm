@@ -3,212 +3,46 @@ package sentiment
 import (
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/temporal"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
-/*
-Output slots for the cross-sectional metrics folded from the shared
-*data.CrossSection. Each slot maps to one README metric name in the projector.
-*/
-var (
-	sAdvanceCount               = metricSlot("advance_count")
-	sDeclineCount               = metricSlot("decline_count")
-	sUnchangedCount             = metricSlot("unchanged_count")
-	sValidMemberCount           = metricSlot("valid_member_count")
-	sCohortMemberCount          = metricSlot("cohort_member_count")
-	sExcludedMemberCount        = metricSlot("excluded_member_count")
-	sSameDirectionPeerCount     = metricSlot("same_direction_peer_count")
-	sOppositeDirectionPeerCount = metricSlot("opposite_direction_peer_count")
-	sZeroDirectionPeerCount     = metricSlot("zero_return_peer_count")
-
-	sAdvanceFraction               = metricSlot("advance_fraction")
-	sDeclineFraction               = metricSlot("decline_fraction")
-	sUnchangedFraction             = metricSlot("unchanged_fraction")
-	sDirectionalParticipation      = metricSlot("directional_participation")
-	sDirectionalAgreement          = metricSlot("directional_agreement")
-	sDirectionalConsensus          = metricSlot("directional_consensus")
-	sSameDirectionPeerFraction     = metricSlot("same_direction_peer_fraction")
-	sOppositeDirectionPeerFraction = metricSlot("opposite_direction_peer_fraction")
-	sZeroDirectionPeerFraction     = metricSlot("zero_return_peer_fraction")
-
-	sBreadth           = metricSlot("breadth")
-	sBreadthBaseline   = metricSlot("breadth_baseline")
-	sBreadthDivergence = metricSlot("breadth_divergence")
-	sBreadthVelocity   = metricSlot("breadth_velocity")
-	sBreadthZScore     = metricSlot("breadth_zscore")
-
-	sMedianReturn           = metricSlot("median_return")
-	sMedianReturnBaseline   = metricSlot("median_return_baseline")
-	sMedianReturnDivergence = metricSlot("median_return_divergence")
-	sMedianReturnVelocity   = metricSlot("median_return_velocity")
-	sMedianReturnZScore     = metricSlot("median_return_zscore")
-
-	sMedianAbsReturn         = metricSlot("median_absolute_return")
-	sMedianAbsReturnBaseline = metricSlot("median_absolute_return_baseline")
-	sMedianAbsReturnRatio    = metricSlot("median_absolute_return_ratio")
-	sMedianAbsReturnVelocity = metricSlot("median_absolute_return_velocity")
-	sMedianAbsReturnZScore   = metricSlot("median_absolute_return_zscore")
-
-	sMeanAbsReturn = metricSlot("mean_absolute_return")
-	sRmsReturn     = metricSlot("rms_return")
-	sIqrReturn     = metricSlot("return_interquartile_range")
-
-	sReturnDispersionBaseline = metricSlot("return_dispersion_baseline")
-	sReturnDispersionRatio    = metricSlot("return_dispersion_ratio")
-	sReturnDispersionVelocity = metricSlot("return_dispersion_velocity")
-	sReturnDispersionZScore   = metricSlot("return_dispersion_zscore")
-
-	sReturnMad    = metricSlot("return_mad")
-	sMagnitudeMad = metricSlot("magnitude_mad")
-
-	sLargestAbsReturn         = metricSlot("largest_absolute_return")
-	sLargestTieCount          = metricSlot("largest_move_tie_count")
-	sLargestMoveExcess        = metricSlot("largest_move_excess")
-	sLargestMadExcess         = metricSlot("largest_move_mad_excess")
-	sLargestSignedReturn      = metricSlot("largest_signed_return")
-	sLargestMoveRatio         = metricSlot("largest_move_ratio")
-	sLargestMoveRatioBaseline = metricSlot("largest_move_ratio_baseline")
-	sLargestMoveRatioZScore   = metricSlot("largest_move_ratio_zscore")
-	sLargestMoveShare         = metricSlot("largest_move_share")
-	sLargestMoveShareBaseline = metricSlot("largest_move_share_baseline")
-	sLargestMoveShareZScore   = metricSlot("largest_move_share_zscore")
-
-	sPeerMedianAbsReturn = metricSlot("peer_median_absolute_return")
-	sPeerMad             = metricSlot("peer_magnitude_mad")
-
-	sMedianAsofAge = metricSlot("median_asof_age_seconds")
-	sMaxAsofAge    = metricSlot("max_asof_age_seconds")
-	sMedianFromAge = metricSlot("median_from_age_seconds")
-	sCohortHorizon = metricSlot("cohort_horizon_seconds")
-	sAsofAge       = metricSlot("asof_age_seconds")
-	sFromAge       = metricSlot("from_age_seconds")
-)
-
-func metricSlot(name string) nmtypes.Symbol {
-	return nmtypes.MustIntern("sentiment/" + name)
+type symbolState struct {
+	previousPrice float64
+	previousSec   float64
+	previousNsec  float64
+	count         int
+	hasPrice      bool
 }
 
 /*
-Ticker is the per-symbol price-state market entity. It owns a Number pipeline
-that retains each symbol's price path and derives its log return, plus a
-projector. The cross-sectional stage is the shared *data.CrossSection held in
-the workspace pool: each Step folds the member's price into it and folds the
-resulting Snapshot into the same single measurement.
+Ticker is the per-symbol price-state market entity. It tracks each symbol's
+price path to derive log returns and folds them into the shared cross-section.
+Outputs are directly projected into data.Measurement without intermediate
+Frame allocations or string intern table lookups.
 */
 type Ticker struct {
-	section   *data.CrossSection
-	number    *nomagique.Number[string]
-	projector *data.Projector
+	section *data.CrossSection
+	symbols map[string]*symbolState
+	mu      sync.RWMutex
 }
 
 /*
-NewTicker constructs the Ticker entity and its cross-section. There is exactly
-one Ticker per process (the sentiment stage is a single Node), so the
-cross-section needs no cross-instance coordination.
+NewTicker constructs the Ticker entity and its cross-section.
 */
 func NewTicker() *Ticker {
-	section := data.NewCrossSection()
-
 	return &Ticker{
-		section: section,
-		number: nomagique.NewNumber[string](nmtypes.Pipe(
-			temporal.Path(""),
-			correlation.Return,
-		)),
-		projector: data.NewProjector(
-			data.Binding{From: correlation.SymbolReturn, Name: "return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: correlation.SymbolMagnitude, Name: "absolute_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-
-			data.Binding{From: sAdvanceCount, Name: "advance_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sDeclineCount, Name: "decline_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sUnchangedCount, Name: "unchanged_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sValidMemberCount, Name: "valid_member_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sCohortMemberCount, Name: "cohort_member_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sExcludedMemberCount, Name: "excluded_member_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-
-			data.Binding{From: sSameDirectionPeerCount, Name: "same_direction_peer_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sOppositeDirectionPeerCount, Name: "opposite_direction_peer_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sZeroDirectionPeerCount, Name: "zero_return_peer_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-
-			data.Binding{From: sAdvanceFraction, Name: "advance_fraction", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sDeclineFraction, Name: "decline_fraction", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sUnchangedFraction, Name: "unchanged_fraction", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sDirectionalParticipation, Name: "directional_participation", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sDirectionalAgreement, Name: "directional_agreement", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sDirectionalConsensus, Name: "directional_consensus", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sSameDirectionPeerFraction, Name: "same_direction_peer_fraction", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sOppositeDirectionPeerFraction, Name: "opposite_direction_peer_fraction", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sZeroDirectionPeerFraction, Name: "zero_return_peer_fraction", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-
-			data.Binding{From: sBreadth, Name: "breadth", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sBreadthBaseline, Name: "breadth_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sBreadthDivergence, Name: "breadth_divergence", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sBreadthVelocity, Name: "breadth_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sBreadthZScore, Name: "breadth_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-
-			data.Binding{From: sMedianReturn, Name: "median_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sMedianReturnBaseline, Name: "median_return_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sMedianReturnDivergence, Name: "median_return_divergence", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sMedianReturnVelocity, Name: "median_return_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sMedianReturnZScore, Name: "median_return_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-
-			data.Binding{From: sMedianAbsReturn, Name: "median_absolute_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sMedianAbsReturnBaseline, Name: "median_absolute_return_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sMedianAbsReturnRatio, Name: "median_absolute_return_ratio", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sMedianAbsReturnVelocity, Name: "median_absolute_return_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sMedianAbsReturnZScore, Name: "median_absolute_return_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-
-			data.Binding{From: sMeanAbsReturn, Name: "mean_absolute_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sRmsReturn, Name: "rms_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sIqrReturn, Name: "return_interquartile_range", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-
-			data.Binding{From: sReturnDispersionBaseline, Name: "return_dispersion_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sReturnDispersionRatio, Name: "return_dispersion_ratio", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sReturnDispersionVelocity, Name: "return_dispersion_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sReturnDispersionZScore, Name: "return_dispersion_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-
-			data.Binding{From: sReturnMad, Name: "return_mad", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sMagnitudeMad, Name: "magnitude_mad", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-
-			data.Binding{From: sLargestAbsReturn, Name: "largest_absolute_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sLargestTieCount, Name: "largest_move_tie_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sLargestMoveExcess, Name: "largest_move_excess", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sLargestMadExcess, Name: "largest_move_mad_excess", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sLargestSignedReturn, Name: "largest_signed_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sLargestMoveRatio, Name: "largest_move_ratio", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sLargestMoveRatioBaseline, Name: "largest_move_ratio_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sLargestMoveRatioZScore, Name: "largest_move_ratio_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sLargestMoveShare, Name: "largest_move_share", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sLargestMoveShareBaseline, Name: "largest_move_share_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sLargestMoveShareZScore, Name: "largest_move_share_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-
-			data.Binding{From: sPeerMedianAbsReturn, Name: "peer_median_absolute_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sPeerMad, Name: "peer_magnitude_mad", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-
-			data.Binding{From: sMedianAsofAge, Name: "median_asof_age_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sMaxAsofAge, Name: "max_asof_age_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sMedianFromAge, Name: "median_from_age_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sCohortHorizon, Name: "cohort_horizon_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sAsofAge, Name: "asof_age_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: sFromAge, Name: "from_age_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-		),
+		section: data.NewCrossSection(),
+		symbols: make(map[string]*symbolState),
 	}
 }
 
 /*
-Step receives one ticker data point, loads the price into the per-symbol path,
-runs the Number pipeline, folds the price into the shared cross-section, and
-folds the resulting Snapshot into the same single measurement before
-projecting. An explicit zero last means no recent trade price was observed: it
-produces an undefined, zero-support measurement without advancing the path or
-the cross-section.
+Step receives one ticker data point, updates the per-symbol path,
+folds the price into the shared cross-section, and directly emits the
+resulting Measurement.
 */
 func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 	if tick.Last == nil {
@@ -221,17 +55,13 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 		return &data.Measurement[float64]{Err: fmt.Errorf("sentiment: ticker last price must be non-negative")}
 	}
 
-	if last == 0 {
-		frame := nmtypes.Frame{}
-		frame.Put(nmtypes.SampleCount, 0)
+	id := fmt.Sprintf("sentiment:%s:%d", tick.Symbol, tick.Timestamp.UnixNano())
 
-		measurement := ticker.projector.Project(
-			tick.Symbol,
-			"sentiment",
-			tick.Timestamp,
-			tick.Timestamp,
-			frame,
-		)
+	if last == 0 {
+		measurement := data.NewMeasurement[float64](id, tick.Symbol, "sentiment", tick.Timestamp, tick.Timestamp)
+		measurement.Metadata = make(map[string]float64)
+		measurement.Metadata[data.MetadataSupport] = 0.0
+		measurement.Maturity = 0.0
 		measurement.Provenance = map[string]string{
 			"last_trade_price_state": "unobserved",
 		}
@@ -239,23 +69,43 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 		return measurement
 	}
 
-	if committed, found := ticker.number.Project(tick.Symbol); found {
-		previousSec, _ := committed.Get(nmtypes.EventTimeSec)
-		previousNsec, _ := committed.Get(nmtypes.EventTimeNsec)
+	ticker.mu.Lock()
+	state, found := ticker.symbols[tick.Symbol]
 
-		if float64(tick.Timestamp.Unix()) < previousSec ||
-			(float64(tick.Timestamp.Unix()) == previousSec && float64(tick.Timestamp.Nanosecond()) < previousNsec) {
+	if !found {
+		state = &symbolState{}
+		ticker.symbols[tick.Symbol] = state
+	}
+
+	tickSec := float64(tick.Timestamp.Unix())
+	tickNsec := float64(tick.Timestamp.Nanosecond())
+
+	if state.hasPrice {
+		if tickSec < state.previousSec || (tickSec == state.previousSec && tickNsec < state.previousNsec) {
+			ticker.mu.Unlock()
+
 			return nil
 		}
 	}
 
-	input := nmtypes.Frame{}
-	input.Put(nmtypes.SampleValue, last)
-	input.Put(nmtypes.EventTimeSec, float64(tick.Timestamp.Unix()))
-	input.Put(nmtypes.EventTimeNsec, float64(tick.Timestamp.Nanosecond()))
+	state.count++
+	previousPrice := state.previousPrice
+	hasPrevious := state.hasPrice
 
+	state.previousPrice = last
+	state.previousSec = tickSec
+	state.previousNsec = tickNsec
+	state.hasPrice = true
+	ticker.mu.Unlock()
 
-	frame := ticker.number.Step(tick.Symbol, input)
+	measurement := data.NewMeasurement[float64](id, tick.Symbol, "sentiment", tick.Timestamp, tick.Timestamp)
+	measurement.Metadata = make(map[string]float64)
+
+	if hasPrevious && previousPrice > 0 && last > 0 {
+		logReturn := math.Log(last / previousPrice)
+		putMetric(measurement, "return", logReturn, data.UnitDimensionless)
+		putMetric(measurement, "absolute_return", math.Abs(logReturn), data.UnitDimensionless)
+	}
 
 	snapshot, hasSnapshot := ticker.section.Process(
 		tick.Symbol,
@@ -265,205 +115,175 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 	)
 
 	if hasSnapshot {
-		foldSnapshot(&frame, snapshot)
-	}
+		foldSnapshot(measurement, snapshot)
 
-	measurement := ticker.projector.Project(
-		tick.Symbol,
-		"sentiment",
-		tick.Timestamp,
-		tick.Timestamp,
-		frame,
-	)
-
-	if hasSnapshot {
 		if measurement.Provenance == nil {
-			measurement.Provenance = map[string]string{}
+			measurement.Provenance = make(map[string]string)
 		}
 
 		measurement.Provenance["largest_move_symbol"] = snapshot.ExtremeKey
 	}
+
+	measurement.Metadata[data.MetadataSupport] = float64(state.count)
+	measurement.Finalize()
 
 	return measurement
 }
 
 func (ticker *Ticker) Close() error { return nil }
 
-/*
-foldSnapshot is the data-container fold that maps one cross-sectional Snapshot
-onto the measurement's output slots. Ratios with a zero denominator are left
-undefined (their slot stays absent) rather than fabricated as zero.
-
-previous_level_disposition is intentionally not emitted: it is qualitative
-per-side provenance (touch-only vs full-book attribution, unchanged vs
-retreat vs improve) that does not map to a single numeric metric.
-*/
-func foldSnapshot(frame *nmtypes.Frame, snapshot data.Snapshot) {
+func foldSnapshot(measurement *data.Measurement[float64], snapshot data.Snapshot) {
 	valid := float64(snapshot.Count)
 	positive := float64(snapshot.PositiveCount)
 	negative := float64(snapshot.NegativeCount)
 	zero := float64(snapshot.ZeroCount)
 
-	frame.Put(sAdvanceCount, positive)
-	frame.Put(sDeclineCount, negative)
-	frame.Put(sUnchangedCount, zero)
-	frame.Put(sValidMemberCount, valid)
-	frame.Put(sCohortMemberCount, float64(snapshot.TotalMembers))
-	frame.Put(sExcludedMemberCount, float64(snapshot.TotalMembers-snapshot.Count))
+	putMetric(measurement, "advance_count", positive, data.UnitCount)
+	putMetric(measurement, "decline_count", negative, data.UnitCount)
+	putMetric(measurement, "unchanged_count", zero, data.UnitCount)
+	putMetric(measurement, "valid_member_count", valid, data.UnitCount)
+	putMetric(measurement, "cohort_member_count", float64(snapshot.TotalMembers), data.UnitCount)
+	putMetric(measurement, "excluded_member_count", float64(snapshot.TotalMembers-snapshot.Count), data.UnitCount)
 
-	putRatio(frame, sAdvanceFraction, positive, valid)
-	putRatio(frame, sDeclineFraction, negative, valid)
-	putRatio(frame, sUnchangedFraction, zero, valid)
-	putRatio(frame, sDirectionalParticipation, positive+negative, valid)
-	putRatio(frame, sDirectionalAgreement, math.Max(positive, negative), positive+negative)
-	putRatio(frame, sDirectionalConsensus, math.Abs(positive-negative), positive+negative)
+	putRatio(measurement, "advance_fraction", positive, valid, data.UnitDimensionless)
+	putRatio(measurement, "decline_fraction", negative, valid, data.UnitDimensionless)
+	putRatio(measurement, "unchanged_fraction", zero, valid, data.UnitDimensionless)
+	putRatio(measurement, "directional_participation", positive+negative, valid, data.UnitDimensionless)
+	putRatio(measurement, "directional_agreement", math.Max(positive, negative), positive+negative, data.UnitDimensionless)
+	putRatio(measurement, "directional_consensus", math.Abs(positive-negative), positive+negative, data.UnitDimensionless)
 
 	peerCount := float64(snapshot.Count - 1)
-	frame.Put(sSameDirectionPeerCount, float64(snapshot.SameDirectionCount))
-	frame.Put(sOppositeDirectionPeerCount, float64(snapshot.OppositeDirectionCount))
-	frame.Put(sZeroDirectionPeerCount, float64(snapshot.ZeroDirectionCount))
-	putRatio(frame, sSameDirectionPeerFraction, float64(snapshot.SameDirectionCount), peerCount)
-	putRatio(frame, sOppositeDirectionPeerFraction, float64(snapshot.OppositeDirectionCount), peerCount)
-	putRatio(frame, sZeroDirectionPeerFraction, float64(snapshot.ZeroDirectionCount), peerCount)
+	putMetric(measurement, "same_direction_peer_count", float64(snapshot.SameDirectionCount), data.UnitCount)
+	putMetric(measurement, "opposite_direction_peer_count", float64(snapshot.OppositeDirectionCount), data.UnitCount)
+	putMetric(measurement, "zero_return_peer_count", float64(snapshot.ZeroDirectionCount), data.UnitCount)
 
-	emitAggregate(
-		frame,
-		snapshot.Aggregates["signed_fraction"],
-		sBreadth, sBreadthBaseline, sBreadthDivergence, sBreadthZScore, sBreadthVelocity,
-	)
+	putRatio(measurement, "same_direction_peer_fraction", float64(snapshot.SameDirectionCount), peerCount, data.UnitDimensionless)
+	putRatio(measurement, "opposite_direction_peer_fraction", float64(snapshot.OppositeDirectionCount), peerCount, data.UnitDimensionless)
+	putRatio(measurement, "zero_return_peer_fraction", float64(snapshot.ZeroDirectionCount), peerCount, data.UnitDimensionless)
 
-	// breadth is this signal's headline metric, so its cross-sectional estimator
-	// is the one whose departure and noise power become the measurement's SNR.
-	emitQuality(frame, snapshot.Aggregates["signed_fraction"])
-	emitAggregate(
-		frame,
-		snapshot.Aggregates["signed_median"],
-		sMedianReturn, sMedianReturnBaseline, sMedianReturnDivergence, sMedianReturnZScore, sMedianReturnVelocity,
-	)
-	emitAggregate(
-		frame,
-		snapshot.Aggregates["median_absolute"],
-		sMedianAbsReturn, sMedianAbsReturnBaseline, 0, sMedianAbsReturnZScore, sMedianAbsReturnVelocity,
-	)
-	emitRatio(frame, sMedianAbsReturnRatio, snapshot.Aggregates["median_absolute"])
-	emitAggregate(frame, snapshot.Aggregates["mean_absolute"], sMeanAbsReturn, 0, 0, 0, 0)
-	emitAggregate(frame, snapshot.Aggregates["rms"], sRmsReturn, 0, 0, 0, 0)
-	emitAggregate(
-		frame,
-		snapshot.Aggregates["iqr"],
-		sIqrReturn, sReturnDispersionBaseline, 0, sReturnDispersionZScore, sReturnDispersionVelocity,
-	)
-	emitRatio(frame, sReturnDispersionRatio, snapshot.Aggregates["iqr"])
+	emitAggregate(measurement, snapshot.Aggregates["signed_fraction"], "breadth", true, true, true, true)
+	emitQuality(measurement, snapshot.Aggregates["signed_fraction"])
 
-	frame.Put(sReturnMad, snapshot.Mad)
-	frame.Put(sMagnitudeMad, snapshot.MagnitudeMad)
+	emitAggregate(measurement, snapshot.Aggregates["signed_median"], "median_return", true, true, true, true)
 
-	frame.Put(sLargestAbsReturn, snapshot.ExtremeMagnitude)
-	frame.Put(sLargestTieCount, float64(snapshot.ExtremeTieCount))
+	medianAbsView := snapshot.Aggregates["median_absolute"]
+	emitAggregate(measurement, medianAbsView, "median_absolute_return", true, false, true, true)
+	emitRatio(measurement, "median_absolute_return_ratio", medianAbsView)
 
-	// largest_signed_return is defined only for a unique largest mover.
-	if snapshot.ExtremeTieCount == 0 {
-		frame.Put(sLargestSignedReturn, snapshot.ExtremeSigned)
+	emitAggregate(measurement, snapshot.Aggregates["mean_absolute"], "mean_absolute_return", false, false, false, false)
+	emitAggregate(measurement, snapshot.Aggregates["rms"], "rms_return", false, false, false, false)
+
+	iqrView := snapshot.Aggregates["iqr"]
+	putMetric(measurement, "return_interquartile_range", iqrView.Value, data.UnitDimensionless)
+
+	if iqrView.Ready {
+		putMetric(measurement, "return_dispersion_baseline", iqrView.Baseline, data.UnitDimensionless)
+		putMetric(measurement, "return_dispersion_zscore", iqrView.ZScore, data.UnitDimensionless)
+		putMetric(measurement, "return_dispersion_velocity", iqrView.Velocity, data.UnitPerSecond)
+
+		if iqrView.Baseline != 0 {
+			putMetric(measurement, "return_dispersion_ratio", iqrView.Value/iqrView.Baseline, data.UnitDimensionless)
+		}
 	}
 
-	frame.Put(sLargestMoveExcess, snapshot.ExtremeMagnitude-snapshot.PeerMedianAbsolute)
-	putRatio(frame, sLargestMadExcess, snapshot.ExtremeMagnitude-snapshot.PeerMedianAbsolute, snapshot.PeerMad)
+	putMetric(measurement, "return_mad", snapshot.Mad, data.UnitDimensionless)
+	putMetric(measurement, "magnitude_mad", snapshot.MagnitudeMad, data.UnitDimensionless)
 
-	emitAggregate(
-		frame,
-		snapshot.Aggregates["extreme_ratio"],
-		sLargestMoveRatio, sLargestMoveRatioBaseline, 0, sLargestMoveRatioZScore, 0,
-	)
-	emitAggregate(
-		frame,
-		snapshot.Aggregates["extreme_share"],
-		sLargestMoveShare, sLargestMoveShareBaseline, 0, sLargestMoveShareZScore, 0,
-	)
+	putMetric(measurement, "largest_absolute_return", snapshot.ExtremeMagnitude, data.UnitDimensionless)
+	putMetric(measurement, "largest_move_tie_count", float64(snapshot.ExtremeTieCount), data.UnitCount)
 
-	frame.Put(sPeerMedianAbsReturn, snapshot.PeerMedianAbsolute)
-	frame.Put(sPeerMad, snapshot.PeerMad)
+	if snapshot.ExtremeTieCount == 0 {
+		putMetric(measurement, "largest_signed_return", snapshot.ExtremeSigned, data.UnitDimensionless)
+	}
 
-	frame.Put(sMedianAsofAge, snapshot.MedianAge)
-	frame.Put(sMaxAsofAge, snapshot.MaxAge)
-	frame.Put(sMedianFromAge, snapshot.MedianFromAge)
-	frame.Put(sCohortHorizon, snapshot.MaxAge)
-	frame.Put(sAsofAge, snapshot.FocalAge)
-	frame.Put(sFromAge, snapshot.FocalFromAge)
+	putMetric(measurement, "largest_move_excess", snapshot.ExtremeMagnitude-snapshot.PeerMedianAbsolute, data.UnitDimensionless)
+	putRatio(measurement, "largest_move_mad_excess", snapshot.ExtremeMagnitude-snapshot.PeerMedianAbsolute, snapshot.PeerMad, data.UnitDimensionless)
+
+	extremeRatioView := snapshot.Aggregates["extreme_ratio"]
+	putMetric(measurement, "largest_move_ratio", extremeRatioView.Value, data.UnitDimensionless)
+
+	if extremeRatioView.Ready {
+		putMetric(measurement, "largest_move_ratio_baseline", extremeRatioView.Baseline, data.UnitDimensionless)
+		putMetric(measurement, "largest_move_ratio_zscore", extremeRatioView.ZScore, data.UnitDimensionless)
+	}
+
+	extremeShareView := snapshot.Aggregates["extreme_share"]
+	putMetric(measurement, "largest_move_share", extremeShareView.Value, data.UnitDimensionless)
+
+	if extremeShareView.Ready {
+		putMetric(measurement, "largest_move_share_baseline", extremeShareView.Baseline, data.UnitDimensionless)
+		putMetric(measurement, "largest_move_share_zscore", extremeShareView.ZScore, data.UnitDimensionless)
+	}
+
+	putMetric(measurement, "peer_median_absolute_return", snapshot.PeerMedianAbsolute, data.UnitDimensionless)
+	putMetric(measurement, "peer_magnitude_mad", snapshot.PeerMad, data.UnitDimensionless)
+
+	putMetric(measurement, "median_asof_age_seconds", snapshot.MedianAge, data.UnitSecond)
+	putMetric(measurement, "max_asof_age_seconds", snapshot.MaxAge, data.UnitSecond)
+	putMetric(measurement, "median_from_age_seconds", snapshot.MedianFromAge, data.UnitSecond)
+	putMetric(measurement, "cohort_horizon_seconds", snapshot.MaxAge, data.UnitSecond)
+	putMetric(measurement, "asof_age_seconds", snapshot.FocalAge, data.UnitSecond)
+	putMetric(measurement, "from_age_seconds", snapshot.FocalFromAge, data.UnitSecond)
 }
 
-/*
-emitAggregate projects one aggregate's Value and, when its causal estimator is
-ready, its Baseline, Divergence, ZScore, and Velocity. The ratio slot, when
-non-zero, carries Value/Baseline for aggregates that define a ratio metric.
-*/
+func putMetric(measurement *data.Measurement[float64], name string, value float64, unit data.Unit) {
+	measurement.PutMetric(data.NewMetric(
+		name, value, nil, nil, unit, data.TimescaleInstantaneous,
+	))
+}
+
+func putRatio(measurement *data.Measurement[float64], name string, num, den float64, unit data.Unit) {
+	if den == 0 {
+		return
+	}
+
+	putMetric(measurement, name, num/den, unit)
+}
+
 func emitAggregate(
-	frame *nmtypes.Frame,
+	measurement *data.Measurement[float64],
 	view data.AggregateView,
-	value nmtypes.Symbol,
-	baseline nmtypes.Symbol,
-	divergence nmtypes.Symbol,
-	zscore nmtypes.Symbol,
-	velocity nmtypes.Symbol,
+	name string,
+	hasBaseline, hasDivergence, hasZScore, hasVelocity bool,
 ) {
-	if value != 0 {
-		frame.Put(value, view.Value)
+	if name != "" {
+		putMetric(measurement, name, view.Value, data.UnitDimensionless)
 	}
 
 	if !view.Ready {
 		return
 	}
 
-	if baseline != 0 {
-		frame.Put(baseline, view.Baseline)
+	if hasBaseline {
+		putMetric(measurement, name+"_baseline", view.Baseline, data.UnitDimensionless)
 	}
 
-	if divergence != 0 {
-		frame.Put(divergence, view.Divergence)
+	if hasDivergence {
+		putMetric(measurement, name+"_divergence", view.Divergence, data.UnitDimensionless)
 	}
 
-	if zscore != 0 {
-		frame.Put(zscore, view.ZScore)
+	if hasZScore {
+		putMetric(measurement, name+"_zscore", view.ZScore, data.UnitDimensionless)
 	}
 
-	if velocity != 0 {
-		frame.Put(velocity, view.Velocity)
+	if hasVelocity {
+		putMetric(measurement, name+"_velocity", view.Velocity, data.UnitPerSecond)
 	}
 }
 
-/*
-emitQuality projects one aggregate's departure and noise power onto the shared
-quality slots data.Measurement.Finalize derives the scalar SNR from.
-
-An estimator that is not ready, or that has not yet accumulated any residual
-energy, leaves both slots absent rather than writing a zero — an absent noise
-model stays distinguishable from a genuine zero departure, which is the
-distinction SNRDefined exists to preserve.
-*/
-func emitQuality(frame *nmtypes.Frame, view data.AggregateView) {
-	if !view.Ready || view.NoiseVariance <= 0 {
-		return
-	}
-
-	frame.Put(statistic.SymbolDivergence, view.Divergence)
-	frame.Put(statistic.SymbolNoiseVariance, view.NoiseVariance)
-}
-
-func putRatio(frame *nmtypes.Frame, slot nmtypes.Symbol, numerator float64, denominator float64) {
-	if denominator == 0 {
-		return
-	}
-
-	frame.Put(slot, numerator/denominator)
-}
-
-/*
-emitRatio projects an aggregate's Value/Baseline ratio when the estimator is
-ready and the baseline is non-zero.
-*/
-func emitRatio(frame *nmtypes.Frame, slot nmtypes.Symbol, view data.AggregateView) {
+func emitRatio(measurement *data.Measurement[float64], name string, view data.AggregateView) {
 	if !view.Ready || view.Baseline == 0 {
 		return
 	}
 
-	frame.Put(slot, view.Value/view.Baseline)
+	putMetric(measurement, name, view.Value/view.Baseline, data.UnitDimensionless)
+}
+
+func emitQuality(measurement *data.Measurement[float64], view data.AggregateView) {
+	if !view.Ready || view.NoiseVariance <= 0 {
+		return
+	}
+
+	measurement.Metadata[data.MetadataDivergence] = view.Divergence
+	measurement.Metadata[data.MetadataNoiseVariance] = view.NoiseVariance
 }

@@ -1,260 +1,56 @@
 package toxicity
 
 import (
+	"fmt"
+	"math"
+	"sync"
+
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/equation"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
-/*
-Trade-side fill attribution slots. The Trade entity matches each observed trade
-against the current shared-book touch and accumulates fill statistics.
-*/
-var (
-	symbolTradeQty        = nmtypes.MustIntern("toxicity/trade/qty")
-	symbolTradePrice      = nmtypes.MustIntern("toxicity/trade/price")
-	symbolSellFlag        = nmtypes.MustIntern("toxicity/trade/sell")
-	symbolBuyFlag         = nmtypes.MustIntern("toxicity/trade/buy")
-	symbolTradeBidPrice   = nmtypes.MustIntern("toxicity/trade/bid_price")
-	symbolTradeAskPrice   = nmtypes.MustIntern("toxicity/trade/ask_price")
-	symbolTradeBidQty     = nmtypes.MustIntern("toxicity/trade/bid_qty")
-	symbolTradeAskQty     = nmtypes.MustIntern("toxicity/trade/ask_qty")
-	symbolTradeAtSec      = nmtypes.MustIntern("toxicity/trade/at_sec")
-	symbolTradeAtNsec     = nmtypes.MustIntern("toxicity/trade/at_nsec")
-	symbolTradePrevAtSec  = nmtypes.MustIntern("toxicity/trade/prev_at_sec")
-	symbolTradePrevAtNsec = nmtypes.MustIntern("toxicity/trade/prev_at_nsec")
-	symbolTradeDeltaT     = nmtypes.MustIntern("toxicity/trade/delta_t")
-	symbolTradeZero       = nmtypes.MustIntern("toxicity/trade/zero")
-
-	symbolBracketQty = nmtypes.MustIntern("toxicity/trade/bracket_qty")
-
-	symbolBidMatchFlag  = nmtypes.MustIntern("toxicity/trade/bid_match")
-	symbolAskMatchFlag  = nmtypes.MustIntern("toxicity/trade/ask_match")
-	symbolBidMatchedQty = nmtypes.MustIntern("toxicity/trade/bid_matched_qty")
-	symbolAskMatchedQty = nmtypes.MustIntern("toxicity/trade/ask_matched_qty")
-	symbolBidMatchedCum = nmtypes.MustIntern("toxicity/trade/bid_matched_cum")
-	symbolAskMatchedCum = nmtypes.MustIntern("toxicity/trade/ask_matched_cum")
-	symbolBidFillQty    = nmtypes.MustIntern("toxicity/trade/bid_fill_qty")
-	symbolAskFillQty    = nmtypes.MustIntern("toxicity/trade/ask_fill_qty")
-	symbolBidFillRate   = nmtypes.MustIntern("toxicity/trade/bid_fill_rate")
-	symbolAskFillRate   = nmtypes.MustIntern("toxicity/trade/ask_fill_rate")
-)
-
-const (
-	prefixFillBid = "fill:bid"
-	prefixFillAsk = "fill:ask"
-)
-
-var (
-	fillBidSample     = seriesFact(prefixFillBid, "sample")
-	fillBidSec        = seriesFact(prefixFillBid, "unix_sec")
-	fillBidNsec       = seriesFact(prefixFillBid, "unix_nsec")
-	fillBidBaseline   = seriesFact(prefixFillBid, "baseline/value")
-	fillBidDivergence = seriesFact(prefixFillBid, "z/residual")
-	fillBidZScore     = seriesFact(prefixFillBid, "z/value")
-	fillBidVelocity   = seriesFact(prefixFillBid, "velocity/delta")
-
-	fillAskSample     = seriesFact(prefixFillAsk, "sample")
-	fillAskSec        = seriesFact(prefixFillAsk, "unix_sec")
-	fillAskNsec       = seriesFact(prefixFillAsk, "unix_nsec")
-	fillAskBaseline   = seriesFact(prefixFillAsk, "baseline/value")
-	fillAskDivergence = seriesFact(prefixFillAsk, "z/residual")
-	fillAskZScore     = seriesFact(prefixFillAsk, "z/value")
-	fillAskVelocity   = seriesFact(prefixFillAsk, "velocity/delta")
-)
-
-/*
-Trade is the executed-flow market entity. It would match each trade against
-the current book touch to attribute how much of the displayed touch the trade
-tape accounts for, but has no access to book state; the fill-attribution
-metrics are permanently undefined. It owns exactly one Number pipeline and one
-projector.
-*/
-type Trade struct {
-	number    *nomagique.Number[string]
-	projector *data.Projector
+type tradeState struct {
+	bracketQty         float64
+	matchedBidQty      float64
+	matchedAskQty      float64
+	lastSec            float64
+	lastNsec           float64
+	prevSec            float64
+	prevNsec           float64
+	hasTime            bool
+	hasPrevTime        bool
+	bidFractionStd     equation.Standardizer
+	askFractionStd     equation.Standardizer
+	bidFractionSamples int
+	askFractionSamples int
 }
 
 /*
-NewTrade constructs the Trade entity: one Number pipeline for fill attribution
-and one projector that names the output slots.
+Trade matches incoming trades against the symbol's retained book touch.
+Outputs are directly projected into data.Measurement without intermediate
+Frame allocations or string intern table lookups.
+*/
+type Trade struct {
+	states map[string]*tradeState
+	mu     sync.RWMutex
+}
+
+/*
+NewTrade constructs the Trade entity.
 */
 func NewTrade() *Trade {
 	return &Trade{
-		number: nomagique.NewNumber[string](nmtypes.Pipe(
-			// Bracket trade quantity: cumulative executed quantity.
-			nmtypes.Wire(
-				calculus.Accumulate,
-				nmtypes.In(symbolTradeQty, calculus.SymbolDelta),
-				nmtypes.State(symbolBracketQty, calculus.SymbolTotal),
-				nmtypes.Out(calculus.PortResult, symbolBracketQty),
-			),
-
-			// Bracket duration between consecutive trades.
-			nmtypes.Wire(
-				temporal.Duration,
-				nmtypes.In(symbolTradeAtSec, temporal.SymbolCurrentSec),
-				nmtypes.In(symbolTradeAtNsec, temporal.SymbolCurrentNsec),
-				nmtypes.In(symbolTradePrevAtSec, temporal.SymbolPreviousSec),
-				nmtypes.In(symbolTradePrevAtNsec, temporal.SymbolPreviousNsec),
-				nmtypes.Out(temporal.SymbolDelta, symbolTradeDeltaT),
-			),
-
-			// Bid match: a sell executed at the bid touch.
-			nmtypes.Wire(
-				logic.Equal,
-				nmtypes.In(symbolTradePrice, calculus.PortA),
-				nmtypes.In(symbolTradeBidPrice, calculus.PortB),
-				nmtypes.Out(logic.SymbolResult, symbolBidMatchFlag),
-			),
-			nmtypes.Wire(
-				calculus.Product,
-				nmtypes.In(symbolSellFlag, calculus.PortA),
-				nmtypes.In(symbolBidMatchFlag, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolBidMatchFlag),
-			),
-			nmtypes.Wire(
-				logic.Gate,
-				nmtypes.In(symbolBidMatchFlag, logic.SymbolCondition),
-				nmtypes.In(symbolTradeQty, logic.SymbolValue),
-				nmtypes.Out(logic.SymbolResult, symbolBidMatchedQty),
-			),
-			nmtypes.Wire(
-				calculus.Accumulate,
-				nmtypes.In(symbolBidMatchedQty, calculus.SymbolDelta),
-				nmtypes.State(symbolBidMatchedCum, calculus.SymbolTotal),
-				nmtypes.Out(calculus.PortResult, symbolBidMatchedCum),
-			),
-			nmtypes.Wire(
-				calculus.Minimum,
-				nmtypes.In(symbolBidMatchedCum, calculus.PortA),
-				nmtypes.In(symbolTradeBidQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolBidFillQty),
-			),
-
-			// Ask match: a buy executed at the ask touch.
-			nmtypes.Wire(
-				logic.Equal,
-				nmtypes.In(symbolTradePrice, calculus.PortA),
-				nmtypes.In(symbolTradeAskPrice, calculus.PortB),
-				nmtypes.Out(logic.SymbolResult, symbolAskMatchFlag),
-			),
-			nmtypes.Wire(
-				calculus.Product,
-				nmtypes.In(symbolBuyFlag, calculus.PortA),
-				nmtypes.In(symbolAskMatchFlag, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolAskMatchFlag),
-			),
-			nmtypes.Wire(
-				logic.Gate,
-				nmtypes.In(symbolAskMatchFlag, logic.SymbolCondition),
-				nmtypes.In(symbolTradeQty, logic.SymbolValue),
-				nmtypes.Out(logic.SymbolResult, symbolAskMatchedQty),
-			),
-			nmtypes.Wire(
-				calculus.Accumulate,
-				nmtypes.In(symbolAskMatchedQty, calculus.SymbolDelta),
-				nmtypes.State(symbolAskMatchedCum, calculus.SymbolTotal),
-				nmtypes.Out(calculus.PortResult, symbolAskMatchedCum),
-			),
-			nmtypes.Wire(
-				calculus.Minimum,
-				nmtypes.In(symbolAskMatchedCum, calculus.PortA),
-				nmtypes.In(symbolTradeAskQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, symbolAskFillQty),
-			),
-
-			// Fill fractions over the displayed touch quantity.
-			nmtypes.Wire(
-				calculus.Quotient,
-				nmtypes.In(symbolBidFillQty, calculus.PortA),
-				nmtypes.In(symbolTradeBidQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, fillBidSample),
-			),
-			nmtypes.Wire(
-				calculus.Quotient,
-				nmtypes.In(symbolAskFillQty, calculus.PortA),
-				nmtypes.In(symbolTradeAskQty, calculus.PortB),
-				nmtypes.Out(calculus.PortResult, fillAskSample),
-			),
-
-			// Causal estimator chains for the fill fraction, per side.
-			temporal.Window(prefixFillBid),
-			statistic.ZScore(prefixFillBid),
-			statistic.Baseline(prefixFillBid),
-			statistic.Velocity(prefixFillBid),
-			// The bid-side fill fraction is this signal's headline metric, so its
-			// estimator is the one whose departure and noise power become the
-			// measurement's SNR.
-			statistic.QualityFrom(prefixFillBid),
-			temporal.Window(prefixFillAsk),
-			statistic.ZScore(prefixFillAsk),
-			statistic.Baseline(prefixFillAsk),
-			statistic.Velocity(prefixFillAsk),
-
-			// Fill rates over the trade spacing, only when spacing is positive.
-			nmtypes.Assign(symbolTradeZero, 0),
-			logic.If(
-				nmtypes.Wire(
-					logic.GreaterThan,
-					nmtypes.In(symbolTradeDeltaT, calculus.PortA),
-					nmtypes.In(symbolTradeZero, calculus.PortB),
-					nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
-				),
-				nmtypes.Pipe(
-					nmtypes.Wire(
-						calculus.Rate,
-						nmtypes.In(symbolBidFillQty, calculus.SymbolCount),
-						nmtypes.In(symbolTradeDeltaT, calculus.SymbolDuration),
-						nmtypes.Out(calculus.SymbolRate, symbolBidFillRate),
-					),
-					nmtypes.Wire(
-						calculus.Rate,
-						nmtypes.In(symbolAskFillQty, calculus.SymbolCount),
-						nmtypes.In(symbolTradeDeltaT, calculus.SymbolDuration),
-						nmtypes.Out(calculus.SymbolRate, symbolAskFillRate),
-					),
-				),
-				nil,
-			),
-
-			// Advance the trade clock.
-			nmtypes.Relay(symbolTradeAtSec, symbolTradePrevAtSec),
-			nmtypes.Relay(symbolTradeAtNsec, symbolTradePrevAtNsec),
-		)),
-		projector: data.NewProjector(
-			data.Binding{From: symbolBracketQty, Name: "bracket_trade_quantity", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolBidMatchedCum, Name: "matched_touch_trade_quantity:bid", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolAskMatchedCum, Name: "matched_touch_trade_quantity:ask", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolBidFillQty, Name: "touch_fill_quantity:bid", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolAskFillQty, Name: "touch_fill_quantity:ask", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: fillBidSample, Name: "touch_fill_fraction:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: fillAskSample, Name: "touch_fill_fraction:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolBidFillRate, Name: "touch_fill_rate:bid", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolAskFillRate, Name: "touch_fill_rate:ask", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-
-			data.Binding{From: fillBidBaseline, Name: "fill_fraction_baseline:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: fillAskBaseline, Name: "fill_fraction_baseline:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: fillBidDivergence, Name: "fill_fraction_divergence:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: fillAskDivergence, Name: "fill_fraction_divergence:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: fillBidZScore, Name: "fill_fraction_zscore:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: fillAskZScore, Name: "fill_fraction_zscore:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: fillBidVelocity, Name: "fill_fraction_velocity:bid", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: fillAskVelocity, Name: "fill_fraction_velocity:ask", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-		),
+		states: make(map[string]*tradeState),
 	}
 }
 
+func (trade *Trade) Close() error { return nil }
+
 /*
-Step matches one trade against the given touch (the Level3 side of this
-signal's own last observation for the symbol — see Signal.Step) and projects
-the fill attribution. A zero touch (nothing observed yet for this symbol)
-yields no measurement.
+Step matches one trade against the given touch and projects the fill attribution.
+A zero touch (nothing observed yet for this symbol) yields no measurement.
 */
 func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQty float64) *data.Measurement[float64] {
 	if bidPrice == 0 || askPrice == 0 {
@@ -264,62 +60,129 @@ func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQ
 	sec := float64(tick.Timestamp.Unix())
 	nsec := float64(tick.Timestamp.Nanosecond())
 
-	sellFlag := 0.0
-	buyFlag := 0.0
+	trade.mu.Lock()
+	state, found := trade.states[tick.Symbol]
 
-	if tick.Side == "sell" {
-		sellFlag = 1.0
+	if !found {
+		state = &tradeState{}
+		trade.states[tick.Symbol] = state
 	}
 
-	if tick.Side == "buy" {
-		buyFlag = 1.0
-	}
+	if state.hasTime {
+		if sec < state.lastSec || (sec == state.lastSec && nsec < state.lastNsec) {
+			trade.mu.Unlock()
 
-	input := nmtypes.Frame{}
-	input.Put(symbolTradeQty, tick.Qty)
-	input.Put(symbolTradePrice, tick.Price.Float64())
-	input.Put(symbolSellFlag, sellFlag)
-	input.Put(symbolBuyFlag, buyFlag)
-	input.Put(symbolTradeBidPrice, bidPrice)
-	input.Put(symbolTradeAskPrice, askPrice)
-	input.Put(symbolTradeBidQty, bidQty)
-	input.Put(symbolTradeAskQty, askQty)
-	input.Put(symbolTradeAtSec, sec)
-	input.Put(symbolTradeAtNsec, nsec)
-
-	loadFillSeriesClock(&input, sec, nsec)
-
-	committed, found := trade.number.Project(tick.Symbol)
-
-	if found {
-		prevSec, hasPrevSec := committed.Get(symbolTradeAtSec)
-		prevNsec, hasPrevNsec := committed.Get(symbolTradeAtNsec)
-
-		if hasPrevSec && hasPrevNsec &&
-			(sec < prevSec || (sec == prevSec && nsec < prevNsec)) {
 			return nil
 		}
 	}
 
-	if !found || !committed.Has(symbolTradePrevAtSec) {
-		input.Put(symbolTradePrevAtSec, sec)
-		input.Put(symbolTradePrevAtNsec, nsec)
+	// Update trade clock
+	if state.hasTime {
+		state.prevSec = state.lastSec
+		state.prevNsec = state.lastNsec
+		state.hasPrevTime = true
+	} else {
+		state.prevSec = sec
+		state.prevNsec = nsec
+		state.hasPrevTime = false
 	}
 
-	return trade.projector.Project(
-		tick.Symbol,
-		"toxicity",
-		tick.Timestamp,
-		tick.Timestamp,
-		trade.number.Step(tick.Symbol, input),
-	)
+	state.lastSec = sec
+	state.lastNsec = nsec
+	state.hasTime = true
+
+	tradePrice := tick.Price.Float64()
+	tradeQty := tick.Qty
+
+	state.bracketQty += tradeQty
+
+	if tick.Side == "sell" && tradePrice == bidPrice {
+		state.matchedBidQty += tradeQty
+	}
+
+	if tick.Side == "buy" && tradePrice == askPrice {
+		state.matchedAskQty += tradeQty
+	}
+
+	bidFillQty := state.matchedBidQty
+	askFillQty := state.matchedAskQty
+
+	bidFillFraction := 0.0
+
+	if bidQty > 0 {
+		bidFillFraction = bidFillQty / bidQty
+	}
+
+	askFillFraction := 0.0
+
+	if askQty > 0 {
+		askFillFraction = askFillQty / askQty
+	}
+
+	id := fmt.Sprintf("toxicity:trade:%s:%d", tick.Symbol, tick.Timestamp.UnixNano())
+	measurement := data.NewMeasurement[float64](id, tick.Symbol, "toxicity", tick.Timestamp, tick.Timestamp)
+	measurement.Metadata = make(map[string]float64)
+
+	putTradeMetric(measurement, "bracket_trade_quantity", state.bracketQty, data.UnitCount)
+	putTradeMetric(measurement, "matched_touch_trade_quantity:bid", state.matchedBidQty, data.UnitCount)
+	putTradeMetric(measurement, "matched_touch_trade_quantity:ask", state.matchedAskQty, data.UnitCount)
+	putTradeMetric(measurement, "touch_fill_quantity:bid", bidFillQty, data.UnitCount)
+	putTradeMetric(measurement, "touch_fill_quantity:ask", askFillQty, data.UnitCount)
+	putTradeMetric(measurement, "touch_fill_fraction:bid", bidFillFraction, data.UnitDimensionless)
+	putTradeMetric(measurement, "touch_fill_fraction:ask", askFillFraction, data.UnitDimensionless)
+
+	// Fill rates
+	if state.hasPrevTime {
+		deltaT := (sec - state.prevSec) + (nsec-state.prevNsec)*1e-9
+
+		if deltaT > 0 {
+			putTradeMetric(measurement, "touch_fill_rate:bid", bidFillQty/deltaT, data.UnitPerSecond)
+			putTradeMetric(measurement, "touch_fill_rate:ask", askFillQty/deltaT, data.UnitPerSecond)
+		}
+	}
+
+	// Bid standardizer / baseline
+	if bidFillFraction > 0 {
+		state.bidFractionSamples++
+		bidZ := state.bidFractionStd.Step(nmtypes.Number(bidFillFraction))
+		bidMean := state.bidFractionStd.Mean()
+		bidDiv := bidFillFraction - bidMean
+
+		putTradeMetric(measurement, "fill_fraction_baseline:bid", bidMean, data.UnitDimensionless)
+		putTradeMetric(measurement, "fill_fraction_divergence:bid", bidDiv, data.UnitDimensionless)
+		putTradeMetric(measurement, "fill_fraction_zscore:bid", float64(bidZ), data.UnitDimensionless)
+
+		if state.bidFractionSamples >= 3 {
+			measurement.SNRDefined = true
+			measurement.SNR = math.Abs(float64(bidZ))
+		}
+	}
+
+	// Ask standardizer / baseline
+	if askFillFraction > 0 {
+		state.askFractionSamples++
+		askZ := state.askFractionStd.Step(nmtypes.Number(askFillFraction))
+		askMean := state.askFractionStd.Mean()
+		askDiv := askFillFraction - askMean
+
+		putTradeMetric(measurement, "fill_fraction_baseline:ask", askMean, data.UnitDimensionless)
+		putTradeMetric(measurement, "fill_fraction_divergence:ask", askDiv, data.UnitDimensionless)
+		putTradeMetric(measurement, "fill_fraction_zscore:ask", float64(askZ), data.UnitDimensionless)
+
+		if state.askFractionSamples >= 3 {
+			measurement.SNRDefined = true
+			measurement.SNR = math.Abs(float64(askZ))
+		}
+	}
+
+	trade.mu.Unlock()
+	measurement.Finalize()
+
+	return measurement
 }
 
-func loadFillSeriesClock(input *nmtypes.Frame, sec float64, nsec float64) {
-	input.Put(fillBidSec, sec)
-	input.Put(fillBidNsec, nsec)
-	input.Put(fillAskSec, sec)
-	input.Put(fillAskNsec, nsec)
+func putTradeMetric(measurement *data.Measurement[float64], name string, value float64, unit data.Unit) {
+	measurement.PutMetric(data.NewMetric(
+		name, value, nil, nil, unit, data.TimescaleInstantaneous,
+	))
 }
-
-func (trade *Trade) Close() error { return nil }

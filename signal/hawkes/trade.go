@@ -2,10 +2,10 @@ package hawkes
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
@@ -22,18 +22,21 @@ observation facts (mark, event time) and reads back whatever the composed
 algo.Hawkes() pipeline populated.
 */
 type Trade struct {
-	number    *nomagique.Number[string]
+	pipe      nmtypes.Primitive
+	frames    map[string]*nmtypes.Frame
 	projector *data.Projector
+	mu        sync.RWMutex
 }
 
 /*
-NewTrade constructs the Trade entity: one Number pipeline running the fully
+NewTrade constructs the Trade entity: one pipeline running the fully
 composed Hawkes model (nomagique/algo.Hawkes) and one projector that names
 its output slots per signal/hawkes/README.md.
 */
 func NewTrade() *Trade {
 	return &Trade{
-		number: nomagique.NewNumber[string](algo.Hawkes()),
+		pipe:   algo.Hawkes(),
+		frames: make(map[string]*nmtypes.Frame),
 		projector: data.NewProjector(
 			data.Binding{From: nmhawkes.SymbolEventCount, Name: "event_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
 			data.Binding{From: nmhawkes.SymbolEventCountBuy, Name: "event_count:buy", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
@@ -115,12 +118,21 @@ func (trade *Trade) Step(observation kraken.TradeData) *data.Measurement[float64
 		)}
 	}
 
-	input := nmtypes.Frame{}
-	input.Put(nmhawkes.SymbolMark, markForSide(observation.Side))
-	input.Put(nmtypes.EventTimeSec, float64(observation.Timestamp.Unix()))
-	input.Put(nmtypes.EventTimeNsec, float64(observation.Timestamp.Nanosecond()))
+	trade.mu.Lock()
+	frame, found := trade.frames[observation.Symbol]
 
-	output := trade.number.Step(observation.Symbol, input)
+	if !found {
+		frame = &nmtypes.Frame{}
+		trade.frames[observation.Symbol] = frame
+	}
+
+	frame.Put(nmhawkes.SymbolMark, markForSide(observation.Side))
+	frame.Put(nmtypes.EventTimeSec, float64(observation.Timestamp.Unix()))
+	frame.Put(nmtypes.EventTimeNsec, float64(observation.Timestamp.Nanosecond()))
+
+	trade.pipe(frame)
+	output := *frame
+	trade.mu.Unlock()
 
 	var from time.Time
 

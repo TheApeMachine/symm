@@ -43,6 +43,19 @@ func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
 		return nil
 	}
 
+	/*
+		A signal observes exactly the envelope kind it consumes. Stepping on any
+		other kind hands the estimator a zero-valued observation, which it
+		correctly rejects — and that rejection becomes a Measurement carrying an
+		Err. data.Lift discards the WHOLE frame on the first failed measurement,
+		so one signal stepped out of turn erased every other signal's metrics
+		from the same envelope, and no advisor could ever assemble a complete
+		feature group.
+	*/
+	if envelope.TypeID != types.EnvelopeLevel3 {
+		return envelope
+	}
+
 	envelope.Morphology = signal.book.Step(envelope.Level3Data)
 
 	return envelope

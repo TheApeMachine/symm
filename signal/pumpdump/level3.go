@@ -26,7 +26,7 @@ side forward. A parallel Go-side map of last-seen touches would be a second,
 unsynchronised copy of state the pipeline already holds per symbol.
 */
 type Level3 struct {
-	number    *nomagique.Number[string]
+	number    *nomagique.KeyedNumber[string]
 	projector *data.Projector
 }
 

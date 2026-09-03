@@ -2,6 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import { terminalStore } from "#/collections/terminal";
 import { EntryDecisionSnapshot } from "#/components/terminal/entry-decision-snapshot";
 import { ThesisDetailRail } from "#/components/terminal/thesis-detail-rail";
+import { WarRoom } from "#/components/terminal/war-room";
 import { Typography } from "#/components/ui/typography";
 import { cn } from "#/lib/utils";
 
@@ -73,8 +74,25 @@ export const ThesisModal = () => {
 				</div>
 
 				<div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(300px,360px)]">
-					<div className="min-h-0 overflow-y-auto border-(--line) border-r">
-						<EntryDecisionSnapshot symbol={symbol} />
+					<div className="flex min-h-0 flex-col border-(--line) border-r">
+						<div className="min-h-0 flex-1 overflow-y-auto">
+							<EntryDecisionSnapshot symbol={symbol} />
+						</div>
+
+						{/*
+							The entry snapshot is why the lot was opened, frozen at
+							entry. The War Room below is what the search is concluding
+							about this symbol now — the same reasoning the decision
+							board shows, asked about a symbol already held.
+						*/}
+						<div className="flex h-104 shrink-0 flex-col border-(--line) border-t">
+							<div className="shrink-0 border-(--line) border-b px-3 py-1.5">
+								<span className="font-mono text-[9px] text-(--acc) uppercase tracking-wide">
+									Live reasoning · current round
+								</span>
+							</div>
+							<WarRoom symbol={symbol} className="min-h-0 flex-1" />
+						</div>
 					</div>
 
 					<div className="min-h-0 overflow-y-auto p-3.5">

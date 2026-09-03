@@ -83,18 +83,9 @@ func (signal *Signal) StepLevel3(message kraken.Level3Data) *data.Measurement[fl
 }
 
 func (signal *Signal) StepTrade(tick kraken.TradeData) *data.Measurement[float64] {
-	committed, found := signal.level3.number.Project(tick.Symbol)
+	bidPrice, askPrice, bidQty, askQty, found := signal.level3.Touch(tick.Symbol)
 
 	if !found {
-		return nil
-	}
-
-	bidPrice, bidFound := committed.Get(symbolPrevBid)
-	askPrice, askFound := committed.Get(symbolPrevAsk)
-	bidQty, bidQtyFound := committed.Get(symbolPrevBidQty)
-	askQty, askQtyFound := committed.Get(symbolPrevAskQty)
-
-	if !bidFound || !askFound || !bidQtyFound || !askQtyFound {
 		return nil
 	}
 

@@ -1,14 +1,9 @@
-import * as flatbuffers from "flatbuffers";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { strategyStore } from "#/collections/app";
+import { decisionStore } from "#/collections/app";
 import { DecisionT } from "#/providers/telemetry/telemetry/decision";
 import { DecisionTraceT } from "#/providers/telemetry/telemetry/decision-trace";
 import { MCTSNodeT } from "#/providers/telemetry/telemetry/mctsnode";
-import {
-	StrategyFrame,
-	StrategyFrameT,
-} from "#/providers/telemetry/telemetry/strategy-frame";
 import { DecisionChain } from "./decision-chain";
 
 /*
@@ -44,48 +39,40 @@ const mockTrace = (): DecisionTraceT => {
 	return trace;
 };
 
-const createMockStrategyFrame = (): StrategyFrame => {
-	const builder = new flatbuffers.Builder(1024);
+const mockDecision = (): DecisionT => {
 	const decision = new DecisionT("d1", "enter", "BTC/USD");
 	decision.trace = mockTrace();
-	const frameT = new StrategyFrameT(true, "decisions", [decision]);
-	const offset = frameT.pack(builder);
-	builder.finish(offset);
-	return StrategyFrame.getRootAsStrategyFrame(
-		new flatbuffers.ByteBuffer(builder.asUint8Array()),
-	);
+
+	return decision;
 };
 
 describe("DecisionChain", () => {
 	beforeEach(() => {
-		strategyStore.actions.reset();
-		strategyStore.actions.add(createMockStrategyFrame());
+		decisionStore.actions.reset();
+		decisionStore.actions.add(mockDecision());
 	});
 
 	afterAll(() => {
-		strategyStore.actions.reset();
+		decisionStore.actions.reset();
 	});
 
 	it("starts compact while retaining the full structural decision trace", () => {
-		const markup = renderToStaticMarkup(<DecisionChain frame={0} index={0} />);
+		const markup = renderToStaticMarkup(<DecisionChain symbol="BTC/USD" />);
 
 		expect(markup).toContain('aria-expanded="false"');
 		expect(markup).toContain("group-data-[selected=true]:grid");
-		expect(markup).toContain("1 · structural thesis");
-		expect(markup).toContain("2 · evidence graph");
-		expect(markup).toContain("3 · war room");
-		expect(markup).toContain("4 · causal search");
-		expect(markup).toContain("5 · execution + risk");
+		expect(markup).toContain("1 · precursor");
+		expect(markup).toContain("2 · readiness");
+		expect(markup).toContain("war room");
+		expect(markup).toContain("causal search");
+		expect(markup).toContain("3 · execution + risk");
 		expect(markup).toContain('data-df="symbol"');
-		expect(markup).toContain('data-df="thesisScore"');
-		expect(markup).toContain('data-df="thesisConfidence"');
-		expect(markup).toContain('data-df="graphScore"');
-		expect(markup).toContain('data-df="action"');
+								expect(markup).toContain('data-df="action"');
 		expect(markup).not.toContain("edge=");
 	});
 
 	it("renders the live search tree through the chain", () => {
-		const markup = renderToStaticMarkup(<DecisionChain frame={0} index={0} />);
+		const markup = renderToStaticMarkup(<DecisionChain symbol="BTC/USD" />);
 
 		// The stage must receive the real telemetry decision, not a stripped
 		// projection: passing the thesis object silently drops the trace and
@@ -95,8 +82,22 @@ describe("DecisionChain", () => {
 		expect(markup).not.toContain("no search this round");
 	});
 
-	it("paints the row from the frame already in hand", () => {
-		const markup = renderToStaticMarkup(<DecisionChain frame={0} index={0} />);
+	it("keeps a row addressed by symbol rather than by ring position", () => {
+		// A row must resolve its own symbol. Adding another symbol's decision
+		// must not change what this row renders — the failure the ring-indexed
+		// version had, where a later frame repainted a row with foreign data.
+		const other = new DecisionT("d2", "nothing", "ETH/USD");
+		other.trace = mockTrace();
+		decisionStore.actions.add(other);
+
+		const markup = renderToStaticMarkup(<DecisionChain symbol="BTC/USD" />);
+
+		expect(markup).toContain("BTC/USD");
+		expect(markup).not.toContain("ETH/USD");
+	});
+
+	it("paints the row from the decision already in hand", () => {
+		const markup = renderToStaticMarkup(<DecisionChain symbol="BTC/USD" />);
 
 		// The row's fields are painted imperatively by the store subscription;
 		// without seeding they render as an empty outline until the next frame.

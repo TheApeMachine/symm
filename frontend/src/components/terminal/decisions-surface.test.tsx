@@ -1,37 +1,19 @@
-import * as flatbuffers from "flatbuffers";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { strategyStore } from "#/collections/app";
+import { decisionStore } from "#/collections/app";
 import { DecisionsSurface } from "#/components/terminal/decisions-surface";
 import { DecisionT } from "#/providers/telemetry/telemetry/decision";
-import {
-	StrategyFrame,
-	StrategyFrameT,
-} from "#/providers/telemetry/telemetry/strategy-frame";
 
-/*
-frameFor builds a strategy frame carrying one symbol's decision, which is what
-the backend actually emits: a frame is per-tick and usually names one symbol.
-*/
-const frameFor = (symbol: string): StrategyFrame => {
-	const builder = new flatbuffers.Builder(1024);
-	const frameT = new StrategyFrameT(true, "admission", [
-		new DecisionT(`d-${symbol}`, "nothing", symbol),
-	]);
-	builder.finish(frameT.pack(builder));
-
-	return StrategyFrame.getRootAsStrategyFrame(
-		new flatbuffers.ByteBuffer(builder.asUint8Array()),
-	);
-};
+const decisionFor = (symbol: string): DecisionT =>
+	new DecisionT(`d-${symbol}`, "nothing", symbol);
 
 describe("DecisionsSurface", () => {
 	beforeEach(() => {
-		strategyStore.actions.reset();
+		decisionStore.actions.reset();
 	});
 
 	afterAll(() => {
-		strategyStore.actions.reset();
+		decisionStore.actions.reset();
 	});
 
 	it("waits explicitly when no frames have arrived", () => {
@@ -44,8 +26,8 @@ describe("DecisionsSurface", () => {
 		// Consecutive frames naming different symbols previously replaced the
 		// single visible row each tick, so a decision appeared and was
 		// immediately overwritten.
-		strategyStore.actions.add(frameFor("SKR/USD"));
-		strategyStore.actions.add(frameFor("BTC/USD"));
+		decisionStore.actions.add(decisionFor("SKR/USD"));
+		decisionStore.actions.add(decisionFor("BTC/USD"));
 
 		const markup = renderToStaticMarkup(<DecisionsSurface />);
 
@@ -54,9 +36,9 @@ describe("DecisionsSurface", () => {
 	});
 
 	it("keeps one row per symbol when a symbol is decided repeatedly", () => {
-		strategyStore.actions.add(frameFor("SKR/USD"));
-		strategyStore.actions.add(frameFor("SKR/USD"));
-		strategyStore.actions.add(frameFor("SKR/USD"));
+		decisionStore.actions.add(decisionFor("SKR/USD"));
+		decisionStore.actions.add(decisionFor("SKR/USD"));
+		decisionStore.actions.add(decisionFor("SKR/USD"));
 
 		const markup = renderToStaticMarkup(<DecisionsSurface />);
 		const occurrences = markup.split("SKR/USD").length - 1;

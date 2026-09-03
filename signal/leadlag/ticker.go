@@ -70,8 +70,8 @@ the pair-history Number for focal-level causal estimators, one projector naming
 the output slots, and the once-built cross-sectional stages.
 */
 type Ticker struct {
-	number      *nomagique.Number[string]
-	pairHistory *nomagique.Number[string]
+	number      *nomagique.KeyedNumber[string]
+	pairHistory *nomagique.KeyedNumber[string]
 	projector   *data.Projector
 	pair        func(focal *nmtypes.Frame, peer *nmtypes.Frame) nmtypes.Frame
 	reduce      nmtypes.Primitive

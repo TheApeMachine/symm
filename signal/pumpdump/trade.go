@@ -47,7 +47,7 @@ var (
 Trade owns the volume-clock activity Number pipeline and its projector.
 */
 type Trade struct {
-	number    *nomagique.Number[string]
+	number    *nomagique.KeyedNumber[string]
 	projector *data.Projector
 	quote     func(symbol string) (bid, ask *decimal.Decimal)
 }

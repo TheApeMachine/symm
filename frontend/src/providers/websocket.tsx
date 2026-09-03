@@ -6,6 +6,7 @@ import {
 	appStore,
 	categoryStore,
 	cognitionStore,
+	decisionStore,
 	equityStore,
 	errorStore,
 	focusStore,
@@ -17,6 +18,7 @@ import {
 	tickStore,
 } from "#/collections/app";
 
+import { Decision } from "#/providers/telemetry/telemetry/decision";
 import { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
 import { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
 import { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
@@ -117,7 +119,19 @@ function dispatchEnvelopeState(state: EnvelopeState) {
 	}
 
 	const strategy = state.strategy();
-	if (strategy) strategyStore.actions.add(strategy);
+	if (strategy) {
+		strategyStore.actions.add(strategy);
+
+		// Each decision is unpacked here, at the boundary. The flatbuffer
+		// Decision is a cursor into this message's buffer: retaining one would
+		// leave the store aliasing whichever decision was read last, and would
+		// dangle once the buffer is replaced.
+		for (let index = 0; index < strategy.decisionsLength(); index++) {
+			const decision = strategy.decisions(index, new Decision());
+
+			if (decision) decisionStore.actions.add(decision.unpack());
+		}
+	}
 
 	for (let i = 0; i < state.categoriesLength(); i++) {
 		const category = state.categories(i);
