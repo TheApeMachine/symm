@@ -197,13 +197,39 @@ func NewResonanceManifoldWithHorizon(
 	maxHorizon int,
 	alpha float64,
 ) *ResonanceManifold {
+	return NewResonanceManifoldWithReadout(
+		arch, targetDim, maxHorizon, alpha, ReadoutAll,
+	)
+}
+
+/*
+NewResonanceManifoldWithReadout builds a per-horizon manifold whose task head
+harvests the named readout.
+
+The readout width sets the size of every horizon's covariance matrix, and that
+matrix is quadratic in the width. ReadoutAll concatenates latents and
+innovations, so it is twice as wide as either alone and therefore four times
+the memory per horizon — a real cost when the head holds hundreds of horizons.
+*/
+func NewResonanceManifoldWithReadout(
+	arch []int,
+	targetDim int,
+	maxHorizon int,
+	alpha float64,
+	readout ReadoutMode,
+) *ResonanceManifold {
 	rows := maxHorizon
 
 	if rows < 1 {
 		rows = 1
 	}
 
-	manifold := newResonanceManifold(arch, targetDim, rows, alpha)
+	manifold := newResonanceManifoldReadout(arch, targetDim, rows, alpha, readout)
+
+	if manifold == nil {
+		return nil
+	}
+
 	manifold.perHorizon = true
 
 	return manifold
@@ -214,6 +240,16 @@ func newResonanceManifold(
 	targetDim int,
 	taskRows int,
 	alpha float64,
+) *ResonanceManifold {
+	return newResonanceManifoldReadout(arch, targetDim, taskRows, alpha, ReadoutAll)
+}
+
+func newResonanceManifoldReadout(
+	arch []int,
+	targetDim int,
+	taskRows int,
+	alpha float64,
+	readout ReadoutMode,
 ) *ResonanceManifold {
 	if len(arch) < 2 {
 		errnie.Error(errnie.Err(
@@ -234,6 +270,7 @@ func newResonanceManifold(
 	}
 
 	cfg := AdaptiveResonanceConfig(alpha, arch)
+	cfg.ReadoutMode = readout
 	rng := rand.New(rand.NewSource(42))
 	numLinks := len(arch) - 1
 	numLatents := len(arch) - 1
@@ -377,7 +414,7 @@ func newResonanceManifold(
 		taskBaselineLoss:      taskBaselineLoss,
 		taskSkillReady:        taskSkillReady,
 		taskSkill:             taskSkill,
-		workspace:             newResonanceWorkspace(arch, taskRows),
+		workspace:             newResonanceWorkspace(arch, taskRows, cfg.ReadoutMode),
 		streamLearn:           true,
 		streamAdvanceTemporal: true,
 	}

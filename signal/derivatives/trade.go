@@ -115,29 +115,24 @@ func (trade *Trade) Step(point kraken.FuturesTradeData) *data.Measurement[float6
 		putDerivMetric(measurement, "liquidation_share", currentShare, data.UnitDimensionless)
 	}
 
+	// A rate divides by an interval this event may not have advanced. A late
+	// trade accumulates its notional but cannot state a rate: re-stamping it
+	// forward would shorten the interval and inflate the rate, and publishing
+	// the established interval would republish the previous frame's number
+	// under this event's identity. The slot is absent instead.
 	if state.hasStartTime && advanced {
 		duration := state.lastAdvancedTime.Sub(state.startTime).Seconds()
 
 		if duration > 0 {
-			liqRate := grossLiq / duration
-			putDerivMetric(measurement, "liquidation_notional_rate", liqRate, data.UnitPerSecond)
+			putDerivMetric(measurement, "liquidation_notional_rate", grossLiq/duration, data.UnitPerSecond)
 		}
 
 		if state.hasPrevLiqShare {
-			shareVelocity := currentShare - state.prevLiqShare
-			putDerivMetric(measurement, "liquidation_share_velocity", shareVelocity, data.UnitPerSecond)
+			putDerivMetric(measurement, "liquidation_share_velocity", currentShare-state.prevLiqShare, data.UnitPerSecond)
 		}
 
 		state.prevLiqShare = currentShare
 		state.hasPrevLiqShare = true
-	} else if state.hasStartTime && !advanced {
-		// Late trade: duration stays relative to the established timeline
-		duration := state.lastAdvancedTime.Sub(state.startTime).Seconds()
-
-		if duration > 0 {
-			liqRate := grossLiq / duration
-			putDerivMetric(measurement, "liquidation_notional_rate", liqRate, data.UnitPerSecond)
-		}
 	}
 
 	measurement.Metadata[data.MetadataSupport] = state.tradeCount

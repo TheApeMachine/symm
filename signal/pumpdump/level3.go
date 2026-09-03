@@ -115,7 +115,9 @@ func (l3 *Level3) Step(msg kraken.Level3Data) *data.Measurement[float64] {
 	putPumpDumpMetric(measurement, "midpoint", midpoint, data.UnitRate)
 	putPumpDumpMetric(measurement, "spread", spread, data.UnitRate)
 	putPumpDumpMetric(measurement, "relative_spread", relativeSpread, data.UnitDimensionless)
-	measurement.Maturity = 1.0
+	// A retained touch is a direct reading with no estimator behind it, so it
+	// declares no support and Finalize calls it whole.
+	measurement.Finalize()
 
 	return measurement
 }

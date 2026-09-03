@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -16,12 +17,14 @@ import (
 	"sync"
 	"time"
 
+	pyroscope "github.com/grafana/pyroscope-go"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic/advisor"
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/cognition"
+
 	// "github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/opportunity"
 	"github.com/theapemachine/symm/logic/resonance"
@@ -70,15 +73,15 @@ var (
 		Short: "S.Y.M.M. is not financial advice.",
 		Long:  rootLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// _, err := pyroscope.Start(pyroscope.Config{
-			// 	ApplicationName: "symm.theapemachine.app",
-			// 	ServerAddress:   "http://localhost:4040",
-			// 	Logger:          pyroscope.StandardLogger,
-			// })
+			_, err := pyroscope.Start(pyroscope.Config{
+				ApplicationName: "symm.theapemachine.app",
+				ServerAddress:   "http://localhost:4040",
+				Logger:          pyroscope.StandardLogger,
+			})
 
-			// if err != nil {
-			// 	log.Fatalf("error starting pyroscope profiler: %v", err)
-			// }
+			if err != nil {
+				log.Fatalf("error starting pyroscope profiler: %v", err)
+			}
 
 			errnie.Apply(&errnie.Config{
 				Level: viper.GetString("system.log.level"),

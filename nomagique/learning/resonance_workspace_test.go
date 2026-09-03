@@ -9,7 +9,7 @@ import (
 func TestNewResonanceWorkspace(testingTB *testing.T) {
 	Convey("Given an architecture and supervised target dimension", testingTB, func() {
 		architecture := []int{3, 5, 2}
-		workspace := newResonanceWorkspace(architecture, 2)
+		workspace := newResonanceWorkspace(architecture, 2, ReadoutAll)
 
 		Convey("It should allocate vectors at their layer dimensions", func() {
 			So(workspace.xCol.Len(), ShouldEqual, architecture[0])

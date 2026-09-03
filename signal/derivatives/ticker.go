@@ -177,13 +177,29 @@ func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[flo
 		state.hasPrev = true
 	}
 
-	if !basisDyn.HasPrior() {
-		measurement.Maturity = 1.0
-	} else {
-		measurement.Maturity = float64(basisDyn.Maturity())
+	// Quality is derived by Finalize from the measurement's own facts, never
+	// assigned here. The basis z-score is scored against the moments held
+	// BEFORE this observation, so the evidence backing it is the prior count —
+	// one prior sample carries no dispersion of its own and is immature.
+	// A measurement with no estimator behind it is a whole direct reading and
+	// declares no support at all.
+	if basisDyn.HasPrior() {
+		measurement.Metadata[data.MetadataSupport] = basisDyn.PriorCount()
+
+		// basis_zscore is this entity's headline reading, so its estimator
+		// supplies the departure and the noise power Finalize turns into SNR.
+		// Without them the measurement projected its metrics but reported no
+		// SNR at all, which reads downstream as a kernel that never measured.
+		dispersion := float64(basisDyn.PriorDispersion())
+
+		if dispersion > 0 {
+			measurement.Metadata[data.MetadataDivergence] =
+				float64(basisDyn.Divergence())
+			measurement.Metadata[data.MetadataNoiseVariance] = dispersion * dispersion
+		}
 	}
 
-	measurement.SNR = 0.0
+	measurement.Finalize()
 
 	return measurement
 }

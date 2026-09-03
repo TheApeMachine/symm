@@ -183,10 +183,10 @@ func BenchmarkChainStep(b *testing.B) {
 	}
 
 	input := Scalar(42.0)
-	b.ResetTimer()
+
 	b.ReportAllocs()
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for b.Loop() {
 		_ = pipeline.Step(input)
 	}
 }
@@ -198,10 +198,10 @@ func BenchmarkSplitStep(b *testing.B) {
 	}
 
 	input := Scalar(42.0)
-	b.ResetTimer()
+
 	b.ReportAllocs()
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for b.Loop() {
 		_ = pipeline.Step(input)
 	}
 }

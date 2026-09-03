@@ -51,7 +51,18 @@ type resonanceWorkspace struct {
 	taskSignal *mat.VecDense
 }
 
-func newResonanceWorkspace(arch []int, taskRows int) *resonanceWorkspace {
+/*
+newResonanceWorkspace sizes every scratch buffer the settle loop reuses.
+
+readout must be the same mode the manifold harvests with: the readout buffer
+and the task weights are multiplied together, so a workspace sized for a
+different mode is a dimension mismatch at the first prediction.
+*/
+func newResonanceWorkspace(
+	arch []int,
+	taskRows int,
+	readout ReadoutMode,
+) *resonanceWorkspace {
 	numLinks := len(arch) - 1
 	numLatents := len(arch) - 1
 	topDim := arch[len(arch)-1]
@@ -64,7 +75,16 @@ func newResonanceWorkspace(arch []int, taskRows int) *resonanceWorkspace {
 	for _, dim := range arch[:len(arch)-1] {
 		totalErrorDim += dim
 	}
-	readoutDim := totalLatentDim + totalErrorDim
+	readoutDim := 0
+
+	switch readout {
+	case ReadoutAll:
+		readoutDim = totalLatentDim + totalErrorDim
+	case ReadoutLatents:
+		readoutDim = totalLatentDim
+	case ReadoutInnovations:
+		readoutDim = totalErrorDim
+	}
 
 	workspace := &resonanceWorkspace{
 		xCol:                 mat.NewVecDense(arch[0], nil),

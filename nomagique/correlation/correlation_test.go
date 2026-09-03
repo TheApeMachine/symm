@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/types"
@@ -214,10 +215,10 @@ func TestPathIsAlgebraicSink(t *testing.T) {
 		t.Fatalf("sink Path = %v, want 0", got)
 	}
 
-	split := &types.Split{
+	split := nomagique.Number(&nomagique.Split{
 		A: calculus.Constant{Value: 42},
 		B: path,
-	}
+	})
 
 	if got := split.Step(100); got != 42 {
 		t.Fatalf("Split with a sink = %v, want 42 uncorrupted", got)
@@ -540,10 +541,10 @@ func TestCorrelationComposesAsPipeline(t *testing.T) {
 
 	hayashi := &Hayashi{Left: left, Right: right}
 
-	pipeline := &types.Chain{
+	pipeline := nomagique.Number(&nomagique.Chain{
 		A: hayashi,
 		B: &Fisher{Support: hayashi.SupportSlot()},
-	}
+	})
 
 	pValue := pipeline.Step(0)
 

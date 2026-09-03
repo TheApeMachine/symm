@@ -81,12 +81,28 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 	putPumpDumpMetric(measurement, "relative_spread_baseline", float64(dyn.Baseline()), data.UnitDimensionless)
 	putPumpDumpMetric(measurement, "spread_ratio", float64(dyn.Ratio()), data.UnitDimensionless)
 
+	// Quality is derived by Finalize from the measurement's own facts, never
+	// assigned here. spread_zscore is this entity's headline reading, so its
+	// estimator supplies the support, the departure, and the noise power the
+	// SNR is derived from.
+	// This entity always has an estimator behind it, so it always declares its
+	// support — an absent support slot would tell Finalize this is a stateless
+	// direct reading and mark it whole, when in truth it is simply immature.
+	measurement.Metadata[data.MetadataSupport] = dyn.PriorCount()
+
 	if dyn.HasPrior() {
 		putPumpDumpMetric(measurement, "spread_divergence", float64(dyn.Divergence()), data.UnitDimensionless)
 		putPumpDumpMetric(measurement, "spread_zscore", float64(dyn.ZScore()), data.UnitDimensionless)
+
+		dispersion := float64(dyn.PriorDispersion())
+
+		if dispersion > 0 {
+			measurement.Metadata[data.MetadataDivergence] = float64(dyn.Divergence())
+			measurement.Metadata[data.MetadataNoiseVariance] = dispersion * dispersion
+		}
 	}
 
-	measurement.Maturity = float64(dyn.Maturity())
+	measurement.Finalize()
 
 	return measurement
 }

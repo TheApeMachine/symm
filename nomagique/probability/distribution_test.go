@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -161,10 +162,10 @@ drops into a Chain and its output flows on to the next stage.
 func TestDistributionComposesAsChain(t *testing.T) {
 	dist := &Distribution{Logits: vector{0, 4}}
 
-	pipeline := &types.Chain{
+	pipeline := nomagique.Number(&nomagique.Chain{
 		A: dist,
-		B: types.Identity{},
-	}
+		B: nomagique.Identity{},
+	})
 
 	if got := pipeline.Step(0); got != dist.Confidence() {
 		t.Fatalf("chained output = %v, want the confidence %v",

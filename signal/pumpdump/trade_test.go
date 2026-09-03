@@ -164,7 +164,6 @@ func BenchmarkTradeStep(b *testing.B) {
 	})
 
 	b.ReportAllocs()
-	
 
 	for iteration := 0; b.Loop(); iteration++ {
 		quoteIndex = iteration % len(quotes)

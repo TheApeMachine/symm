@@ -87,3 +87,28 @@ func (eq *AdaptiveZScore) Baseline() types.Scalar   { return eq.lastBaseline }
 func (eq *AdaptiveZScore) Ratio() types.Scalar      { return eq.lastRatio }
 func (eq *AdaptiveZScore) Divergence() types.Scalar { return eq.lastDivergence }
 func (eq *AdaptiveZScore) Maturity() types.Scalar   { return eq.lastMaturity }
+
+/*
+PriorDispersion returns the scale the last score was measured against: the
+dispersion of the moments held BEFORE that observation. A consumer declaring
+a measurement's noise power declares this, since it is the same scale the
+z-score normalized by.
+*/
+func (eq *AdaptiveZScore) PriorDispersion() types.Scalar {
+	if !eq.hasPrior || eq.lastZ == 0 {
+		return 0
+	}
+
+	return eq.lastDivergence / eq.lastZ
+}
+
+/*
+PriorCount returns how many observations the estimator held BEFORE the one it
+last scored. The z-score is measured against those moments, so this is the
+evidence actually standing behind the reading — a consumer declaring support
+for a published z-score declares this, not the retained count that includes
+the sample being scored.
+*/
+func (eq *AdaptiveZScore) PriorCount() float64 {
+	return eq.welford.Count() - 1
+}

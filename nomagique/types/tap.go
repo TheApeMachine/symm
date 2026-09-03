@@ -38,3 +38,30 @@ func (tap *Tap) Step(Scalar) Scalar {
 }
 
 var _ Node = (*Tap)(nil)
+
+/*
+Probe captures the carrier inline as it flows and passes it through unchanged.
+
+Where Tap pulls a reading out of a node that has already computed it, Probe
+observes the value moving between two stages of a Chain — the intermediate
+result no accessor exposes because no node owns it. It is the functional
+identity with a memory, so dropping one into a Chain cannot change what that
+Chain computes.
+
+Probe holds only the most recent value. To retain a window of them, place a
+Store in a Split instead: a Store with no Reduce slot returns 0 and records
+without disturbing the parallel sum.
+*/
+type Probe struct {
+	Value Scalar
+	Seen  bool
+}
+
+func (probe *Probe) Step(x Scalar) Scalar {
+	probe.Value = x
+	probe.Seen = true
+
+	return x
+}
+
+var _ Node = (*Probe)(nil)

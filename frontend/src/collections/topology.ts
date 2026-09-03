@@ -80,9 +80,19 @@ export const topologyStore = createStore(
 		/*
 		ingest folds one envelope's ordered boundary trace into the running
 		topology: each stamp refreshes its own node, and each consecutive pair
-		refreshes (or creates) the edge between them. O(stamps) per envelope,
-		no allocation beyond the occasional new Map entry for a label/hop seen
-		for the first time.
+		of DISTINCT handler groups refreshes (or creates) the edge between them.
+
+		Stages inside one handler group run concurrently against the same
+		envelope, so their stamps arrive in goroutine-completion order. Pairing
+		them would mint an edge in whichever direction won that race, and over
+		many envelopes every ordering gets observed at least once — the group
+		converges to a fully-connected mesh that never existed. So a run of
+		same-group stamps is collapsed: every stage of the previous group is
+		wired to every stage of the next, which is the real fan-out, and no
+		edge is ever drawn between siblings.
+
+		O(stamps) per envelope plus the group fan-out, no allocation beyond the
+		occasional new Map entry for a label/hop seen for the first time.
 		*/
 		ingest: (stamps: EnvelopeBoundaryStamp[]) => {
 			if (stamps.length === 0) return;
@@ -108,32 +118,72 @@ export const topologyStore = createStore(
 					});
 				}
 
-				for (let i = 1; i < stamps.length; i++) {
-					const fromLabel = stamps[i - 1].label() ?? "";
-					const toLabel = stamps[i].label() ?? "";
-					if (!fromLabel || !toLabel) continue;
+				// Collapse the trace into runs of concurrent siblings, so the
+				// wiring below joins groups rather than racing goroutines.
+				const runs: {
+					labels: string[];
+					atNs: bigint;
+					group: string;
+					stage: number;
+				}[] = [];
 
-					const latencyNs = Number(stamps[i].atNs() - stamps[i - 1].atNs());
-					const key = edgeKey(fromLabel, toLabel);
-					const existing = prev.edges.get(key);
+				for (const stamp of stamps) {
+					const label = stamp.label() ?? "";
+					if (!label) continue;
 
-					if (!existing) {
-						prev.edges.set(key, {
-							from: fromLabel,
-							to: toLabel,
-							hopCount: 1,
-							avgLatencyNs: latencyNs,
-							lastLatencyNs: latencyNs,
-							lastAtNs: Number(stamps[i].atNs()),
-						});
+					const group = stamp.group() ?? "";
+					const previous = runs[runs.length - 1];
+					const sibling =
+						previous !== undefined &&
+						group !== "" &&
+						group === previous.group &&
+						stamp.stage() === previous.stage;
+
+					if (sibling) {
+						previous.labels.push(label);
+						// The group is only complete once its slowest sibling
+						// lands, so the run carries that stamp's time.
+						previous.atNs = stamp.atNs();
 						continue;
 					}
 
-					existing.hopCount += 1;
-					existing.avgLatencyNs +=
-						(latencyNs - existing.avgLatencyNs) * EDGE_LATENCY_EMA_WEIGHT;
-					existing.lastLatencyNs = latencyNs;
-					existing.lastAtNs = Number(stamps[i].atNs());
+					runs.push({
+						labels: [label],
+						atNs: stamp.atNs(),
+						group,
+						stage: stamp.stage(),
+					});
+				}
+
+				for (let i = 1; i < runs.length; i++) {
+					const from = runs[i - 1];
+					const to = runs[i];
+					const latencyNs = Number(to.atNs - from.atNs);
+
+					for (const fromLabel of from.labels) {
+						for (const toLabel of to.labels) {
+							const key = edgeKey(fromLabel, toLabel);
+							const existing = prev.edges.get(key);
+
+							if (!existing) {
+								prev.edges.set(key, {
+									from: fromLabel,
+									to: toLabel,
+									hopCount: 1,
+									avgLatencyNs: latencyNs,
+									lastLatencyNs: latencyNs,
+									lastAtNs: Number(to.atNs),
+								});
+								continue;
+							}
+
+							existing.hopCount += 1;
+							existing.avgLatencyNs +=
+								(latencyNs - existing.avgLatencyNs) * EDGE_LATENCY_EMA_WEIGHT;
+							existing.lastLatencyNs = latencyNs;
+							existing.lastAtNs = Number(to.atNs);
+						}
+					}
 				}
 
 				return {

@@ -19,6 +19,13 @@ type PredictiveCoderConfig struct {
 	Target     TargetTransform
 	Pace       *PaceController
 	Learn      bool
+
+	// Readout selects what the task head harvests as its features. Every
+	// horizon holds a covariance matrix quadratic in this width, so at high
+	// MaxHorizon the choice dominates the coder's memory: ReadoutAll is twice
+	// as wide as ReadoutLatents and therefore four times the footprint per
+	// horizon. The zero value is ReadoutAll, preserving the widest readout.
+	Readout ReadoutMode
 }
 
 /*
@@ -83,15 +90,29 @@ type ResonanceDynamics struct {
 }
 
 /*
-pendingPrediction is one issued forecast awaiting the outcome that will score
-it. The reference at issue time is retained because the target is a transform
-over the change between then and now.
+pendingPrediction is one observation's full forecast vector awaiting the
+outcomes that will score it.
+
+The head holds an independent model per horizon, so one observation issues a
+whole curve at once: predictions[h-1] is what the horizon-h model said would
+happen h steps after this observation. Each entry is scored separately, as and
+when that many steps have actually elapsed, so a single observation keeps
+resolving for as long as its furthest horizon.
+
+The reference and the readout at issue time are retained because the target is
+a transform over the change from then to now, and the model must be trained on
+the features it actually saw when it committed.
 */
 type pendingPrediction struct {
-	prediction float64
-	reference  float64
-	features   []float64
-	step       int64
+	predictions []float64
+	reference   float64
+	features    []float64
+	step        int64
+
+	// resolved marks which horizons have already been scored, so an
+	// observation that stays pending across many steps never trains the same
+	// horizon twice.
+	resolved []bool
 }
 
 /*
@@ -115,6 +136,7 @@ type PredictiveCoder struct {
 
 	horizon  int
 	pending  []pendingPrediction
+	free     []pendingPrediction
 	resolved int
 	last     *Resolution
 }
@@ -124,8 +146,13 @@ NewPredictiveCoder composes a coder over a manifold sized by the declared
 architecture.
 
 The supervised head forecasts a single scalar per horizon, so the target
-dimension is one. A configuration with no architecture cannot build a
-manifold and yields a coder that reports nothing rather than panicking.
+dimension is one, and MaxHorizon becomes the number of independent horizon
+models the head holds.
+
+The learning rate is never invented here: it comes from the PaceController,
+which derives it from how badly the manifold is reconstructing its own input.
+A config supplying none gets a default controller rather than a fabricated
+constant.
 */
 func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 	coder := &PredictiveCoder{
@@ -139,21 +166,20 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 		coder.horizon = 1
 	}
 
+	if coder.pace == nil {
+		coder.pace = NewPaceController()
+	}
+
 	if len(config.CustomArch) == 0 {
 		return coder
 	}
 
-	alpha := 0.0
-
-	if coder.pace != nil {
-		alpha = coder.pace.Alpha()
-	}
-
-	coder.manifold = NewResonanceManifoldWithHorizon(
+	coder.manifold = NewResonanceManifoldWithReadout(
 		config.CustomArch,
 		1,
 		coder.horizon,
-		alpha,
+		coder.pace.Alpha(),
+		config.Readout,
 	)
 
 	return coder
@@ -167,9 +193,11 @@ Step settles the manifold over one observation, resolves whatever predictions
 the new outcome has made scorable, and issues a fresh forecast.
 */
 func (coder *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, error) {
+	// The manifold refuses an architecture it cannot build, so a nil here is a
+	// rejected configuration surfacing at its first use rather than a panic.
 	if coder.manifold == nil {
 		return PredictiveOutput{}, errors.New(
-			"learning: predictive coder requires an architecture",
+			"learning: predictive coder has no manifold: the architecture was rejected",
 		)
 	}
 
@@ -204,9 +232,19 @@ func (coder *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, err
 }
 
 /*
-resolve scores every pending prediction whose outcome has now arrived and
-trains the head against it. A target the transform declares undefined is not
-a lesson, so the prediction is dropped rather than taught wrongly.
+resolve scores each pending observation at every horizon whose outcome has
+now arrived.
+
+The head holds an independent model per horizon, so horizon h is trained only
+with the forecast row h issued, judged against what actually happened h steps
+later. A row therefore only ever learns from outcomes at its own distance:
+row 300 learns from 300-step-ahead moves, never from a next-tick move
+relabelled as a long one.
+
+An observation is retained until its furthest horizon has elapsed, so one
+observation keeps teaching the curve for as long as it has unresolved rows.
+A target the transform declares undefined is not a lesson; that horizon is
+marked resolved and skipped rather than taught wrongly.
 */
 func (coder *PredictiveCoder) resolve(input PredictiveInput) {
 	if coder.target == nil || len(coder.pending) == 0 {
@@ -216,50 +254,78 @@ func (coder *PredictiveCoder) resolve(input PredictiveInput) {
 	retained := coder.pending[:0]
 
 	for _, pending := range coder.pending {
-		horizon := int(input.Step - pending.step)
+		elapsed := int(input.Step - pending.step)
 
-		if horizon < 1 {
+		// The outcome for horizon `elapsed` is exactly this observation, so
+		// that is the only new row this step can settle for this pending.
+		if elapsed >= 1 && elapsed <= len(pending.resolved) &&
+			!pending.resolved[elapsed-1] {
+			coder.score(input, pending, elapsed)
+			pending.resolved[elapsed-1] = true
+		}
+
+		// Retain only while some horizon can still be reached.
+		if elapsed < len(pending.resolved) {
 			retained = append(retained, pending)
 
 			continue
 		}
 
-		if horizon > coder.horizon {
-			continue
-		}
-
-		target, defined := coder.target(input.Reference, pending.reference)
-
-		if !defined {
-			continue
-		}
-
-		if coder.learn {
-			// The head is trained on the features it actually saw when it
-			// issued the prediction, not on the current ones.
-			_ = coder.manifold.ObserveTask(
-				horizon,
-				pending.features,
-				pending.prediction,
-				target,
-			)
-		}
-
-		coder.resolved++
-		coder.last = &Resolution{
-			Prediction: pending.prediction,
-			Target:     target,
-			Error:      target - pending.prediction,
-			Horizon:    horizon,
-			Step:       pending.step,
-		}
+		coder.recycle(pending)
 	}
 
 	coder.pending = retained
 }
 
 /*
-issue records the head's current forecast so a later outcome can score it.
+score trains one horizon row against the outcome that just arrived and records
+the resolution.
+*/
+func (coder *PredictiveCoder) score(
+	input PredictiveInput,
+	pending pendingPrediction,
+	horizon int,
+) {
+	target, defined := coder.target(input.Reference, pending.reference)
+
+	if !defined {
+		return
+	}
+
+	prediction := pending.predictions[horizon-1]
+
+	if coder.learn {
+		// The row is trained on the readout it actually saw when it committed,
+		// never on the current one.
+		_ = coder.manifold.ObserveTask(
+			horizon,
+			pending.features,
+			prediction,
+			target,
+		)
+	}
+
+	coder.resolved++
+
+	// LastResolution reports the decision just settled. Several observations
+	// can settle in one step, at different horizons; the nearest horizon is the
+	// most recently committed decision, so it is the one a consumer scoring
+	// "what did the head just get right" needs to see.
+	if coder.last == nil || horizon <= coder.last.Horizon {
+		coder.last = &Resolution{
+			Prediction: prediction,
+			Target:     target,
+			Error:      target - prediction,
+			Horizon:    horizon,
+			Step:       pending.step,
+		}
+	}
+}
+
+/*
+issue records this observation's whole forecast curve so every horizon can be
+scored as its outcome arrives.
+
 An observation with no usable reference cannot anchor a target, so nothing is
 issued against it.
 */
@@ -275,15 +341,46 @@ func (coder *PredictiveCoder) issue(input PredictiveInput) {
 	}
 
 	readout := coder.manifold.ReadoutVector()
-	features := make([]float64, len(readout))
-	copy(features, readout)
+	pending := coder.take(len(predictions), len(readout))
 
-	coder.pending = append(coder.pending, pendingPrediction{
-		prediction: predictions[0],
-		reference:  input.Reference,
-		features:   features,
-		step:       input.Step,
-	})
+	copy(pending.predictions, predictions)
+	copy(pending.features, readout)
+
+	pending.reference = input.Reference
+	pending.step = input.Step
+
+	coder.pending = append(coder.pending, pending)
+}
+
+/*
+take returns a pending slot sized for this observation, reusing a recycled one
+when possible. A coder tracking hundreds of horizons across hundreds of symbols
+issues a curve every tick, so these buffers must not be reallocated per step.
+*/
+func (coder *PredictiveCoder) take(horizons int, readout int) pendingPrediction {
+	if count := len(coder.free); count > 0 {
+		pending := coder.free[count-1]
+		coder.free = coder.free[:count-1]
+
+		if len(pending.predictions) == horizons && len(pending.features) == readout {
+			for index := range pending.resolved {
+				pending.resolved[index] = false
+			}
+
+			return pending
+		}
+	}
+
+	return pendingPrediction{
+		predictions: make([]float64, horizons),
+		features:    make([]float64, readout),
+		resolved:    make([]bool, horizons),
+	}
+}
+
+// recycle returns a fully resolved slot to the free list for reuse.
+func (coder *PredictiveCoder) recycle(pending pendingPrediction) {
+	coder.free = append(coder.free, pending)
 }
 
 /*
@@ -297,29 +394,46 @@ func (coder *PredictiveCoder) read() PredictiveOutput {
 		LastResolution: coder.last,
 	}
 
-	forecasts, err := coder.manifold.RolloutTaskForecast(coder.horizon)
+	// The supported horizon is the CONTIGUOUS run of rows whose skill is
+	// established, counted from the nearest. A gap ends it: a distant row that
+	// happens to have seen data is not reachable evidence if the rows before it
+	// have not, and reporting it would let a consumer trust a curve across a
+	// stretch the head has never actually learned.
+	for horizon := 1; horizon <= coder.horizon; horizon++ {
+		skill, defined := coder.manifold.TaskSkillAt(horizon)
 
-	if err == nil {
-		output.ForwardCurve = make([]float64, 0, len(forecasts))
+		if !defined {
+			break
+		}
 
-		for horizon, forecast := range forecasts {
-			output.ForwardCurve = append(output.ForwardCurve, forecast.Value)
+		output.SupportedHorizon = horizon
 
-			// The supported horizon runs only as far as the head's skill is
-			// still established; beyond it the curve is extrapolation.
-			if forecast.Ready {
-				output.SupportedHorizon = horizon + 1
-			}
+		// Confidence is the skill at the nearest horizon: how much of the
+		// target's variation the head explains, not a declared constant.
+		if horizon == 1 {
+			output.Confidence = skill
 		}
 	}
 
-	output.ForwardRetention = coder.manifold.RolloutRetention(coder.horizon)
+	output.Calibrated = output.SupportedHorizon > 0
 
-	// Confidence is the head's own skill at the first horizon: how much of the
-	// target's variation it actually explains, not a declared constant.
-	if skill, defined := coder.manifold.TaskSkillAt(1); defined {
-		output.Confidence = skill
-		output.Calibrated = output.SupportedHorizon > 0
+	// The curve runs exactly as far as the head has learned. Rolling out the
+	// full declared depth would append untrained rows, which emit near-zero and
+	// read downstream as a genuine flat forecast rather than as absent evidence.
+	if output.SupportedHorizon > 0 {
+		forecasts, err := coder.manifold.RolloutTaskForecast(output.SupportedHorizon)
+
+		if err == nil {
+			// A fresh slice each step: a consumer retaining the artifact must
+			// not see its curve change underneath it on the next step.
+			output.ForwardCurve = make([]float64, len(forecasts))
+
+			for index, forecast := range forecasts {
+				output.ForwardCurve[index] = forecast.Value
+			}
+		}
+
+		output.ForwardRetention = coder.manifold.RolloutRetention(output.SupportedHorizon)
 	}
 
 	temporalError, hasTemporal := coder.manifold.TemporalError()

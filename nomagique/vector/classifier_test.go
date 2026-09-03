@@ -3,7 +3,7 @@ package vector
 import (
 	"testing"
 
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique"
 )
 
 func testClassifier(t *testing.T) *Classifier {
@@ -209,10 +209,10 @@ func TestClassifierComposesAsNode(t *testing.T) {
 		"flow/drawdown": 1,
 	})
 
-	pipeline := &types.Chain{
+	pipeline := nomagique.Number(&nomagique.Chain{
 		A: classifier,
-		B: types.Identity{},
-	}
+		B: nomagique.Identity{},
+	})
 
 	if got := pipeline.Step(0); got != classifier.Distribution().Confidence() {
 		t.Fatalf("chained output = %v, want the confidence %v",

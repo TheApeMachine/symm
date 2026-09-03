@@ -14,6 +14,7 @@ type (
 	Reduction = types.Reduction
 	Router    = types.Router
 	Tap       = types.Tap
+	Probe     = types.Probe
 )
 
 // Pipeline wraps a composed Node graph, exposing steppable evaluation methods.
