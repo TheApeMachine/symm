@@ -164,7 +164,6 @@ func TestValueAt(t *testing.T) {
 	})
 }
 
-
 func TestEconomicReward(t *testing.T) {
 	Convey("Given a deterministic market path and known fees", t, func() {
 		marketModel := priceModel(0, 0)

@@ -191,39 +191,9 @@ ON CONFLICT(decision_id) DO UPDATE SET
 	raw_position = excluded.raw_position,
 	updated_at = excluded.updated_at`
 
-	_, err = store.database.Exec(
-		query,
-		position.pair.Symbol,
-		string(position.status()),
-		decisionID,
-		entryAt,
-		entryPrice,
-		entryFee,
-		qty,
-		exitAt,
-		exitPrice,
-		exitFee,
-		pnl,
-		returnPct,
-		triggerReason,
-		triggerMark,
-		floor,
-		peak,
-		profitLine,
-		locked,
-		position.Decision.Cause,
-		rawPosition,
-		now,
-		now,
-	)
-
-	if isNoSuchTable(err) {
-		if schemaErr := store.EnsureSchema(); schemaErr != nil {
-			return schemaErr
-		}
-
-		_, err = store.database.Exec(
-			query,
+	return store.enqueue(positionStoreOperation{
+		query: query,
+		args: []any{
 			position.pair.Symbol,
 			string(position.status()),
 			decisionID,
@@ -246,18 +216,9 @@ ON CONFLICT(decision_id) DO UPDATE SET
 			rawPosition,
 			now,
 			now,
-		)
-	}
-
-	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			fmt.Sprintf("position store: save trade failed for %s [%s]", position.pair.Symbol, err.Error()),
-			err,
-		))
-	}
-
-	return nil
+		},
+		description: "save trade for " + position.pair.Symbol,
+	})
 }
 
 /*
@@ -266,6 +227,10 @@ RecentTrades retrieves the most recent trade journal records.
 func (store *PositionStore) RecentTrades(limit int) ([]*wire.PositionT, error) {
 	if store == nil || store.database == nil {
 		return nil, nil
+	}
+
+	if err := store.Sync(); err != nil {
+		return nil, err
 	}
 
 	if limit <= 0 {
@@ -331,6 +296,10 @@ func (store *PositionStore) LoadOpenDecision(symbol string) (*wire.DecisionT, er
 			"position store: database and symbol required to load open decision",
 			nil,
 		))
+	}
+
+	if err := store.Sync(); err != nil {
+		return nil, err
 	}
 
 	var raw []byte

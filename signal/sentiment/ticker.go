@@ -239,10 +239,21 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 		return measurement
 	}
 
+	if committed, found := ticker.number.Project(tick.Symbol); found {
+		previousSec, _ := committed.Get(nmtypes.EventTimeSec)
+		previousNsec, _ := committed.Get(nmtypes.EventTimeNsec)
+
+		if float64(tick.Timestamp.Unix()) < previousSec ||
+			(float64(tick.Timestamp.Unix()) == previousSec && float64(tick.Timestamp.Nanosecond()) < previousNsec) {
+			return nil
+		}
+	}
+
 	input := nmtypes.Frame{}
 	input.Put(nmtypes.SampleValue, last)
 	input.Put(nmtypes.EventTimeSec, float64(tick.Timestamp.Unix()))
 	input.Put(nmtypes.EventTimeNsec, float64(tick.Timestamp.Nanosecond()))
+
 
 	frame := ticker.number.Step(tick.Symbol, input)
 

@@ -8,7 +8,7 @@ import (
 
 type EnvelopeLiquiditySweepWithRecoveryUpdateT struct {
 	Resolved *EnvelopePerspectiveT `json:"resolved"`
-	Issued   *EnvelopePerspectiveT `json:"issued"`
+	Issued *EnvelopePerspectiveT `json:"issued"`
 }
 
 func (t *EnvelopeLiquiditySweepWithRecoveryUpdateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

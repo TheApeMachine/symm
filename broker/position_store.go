@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -29,16 +30,34 @@ PositionStore persists the stoploss attached to each open position.
 */
 type PositionStore struct {
 	database *sql.DB
+	queue    chan positionStoreOperation
+	done     chan struct{}
+	failed   chan struct{}
+
+	stateMu   sync.RWMutex
+	closed    bool
+	closeOnce sync.Once
+	errorMu   sync.RWMutex
+	err       error
+	batchSize int
 }
 
 /*
 NewPositionStore opens the SQLite database used by position recovery.
 */
-func NewPositionStore(path string) (*PositionStore, error) {
+func NewPositionStore(path string, queueDepth, batchSize int) (*PositionStore, error) {
 	if path == "" {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"position store: path required",
+			nil,
+		))
+	}
+
+	if queueDepth < 1 || batchSize < 1 || batchSize > queueDepth {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"position store: queue depth and batch size must be positive, with batch within queue",
 			nil,
 		))
 	}
@@ -63,12 +82,20 @@ func NewPositionStore(path string) (*PositionStore, error) {
 
 	database.SetMaxOpenConns(1)
 
-	store := &PositionStore{database: database}
+	store := &PositionStore{
+		database:  database,
+		queue:     make(chan positionStoreOperation, queueDepth),
+		done:      make(chan struct{}),
+		failed:    make(chan struct{}),
+		batchSize: batchSize,
+	}
 
 	if err := store.EnsureSchema(); err != nil {
 		_ = database.Close()
 		return nil, err
 	}
+
+	go store.runWriter()
 
 	return store, nil
 }
@@ -373,43 +400,13 @@ func (store *PositionStore) Save(stoploss *types.Stoploss) error {
 
 	entryAt := stoploss.EntryAt.UTC().Format(time.RFC3339Nano)
 
-	if err := store.saveStoploss(stoploss.Symbol, entryAt, state); err != nil {
-		if isNoSuchTable(err) {
-			if schemaErr := store.EnsureSchema(); schemaErr != nil {
-				return schemaErr
-			}
-
-			if retryErr := store.saveStoploss(stoploss.Symbol, entryAt, state); retryErr != nil {
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					fmt.Sprintf("position store: save stoploss failed [%s]", retryErr.Error()),
-					retryErr,
-				))
-			}
-
-			return nil
-		}
-
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			fmt.Sprintf("position store: save stoploss failed [%s]", err.Error()),
-			err,
-		))
-	}
-
-	return nil
-}
-
-func (store *PositionStore) saveStoploss(symbol string, entryAt string, state []byte) error {
-	_, err := store.database.Exec(`
+	return store.enqueue(positionStoreOperation{
+		query: `
 INSERT INTO position_stoplosses (symbol, entry_at, state) VALUES (?, ?, ?)
 ON CONFLICT(symbol, entry_at) DO UPDATE SET state = excluded.state`,
-		symbol,
-		entryAt,
-		state,
-	)
-
-	return err
+		args:        []any{stoploss.Symbol, entryAt, state},
+		description: "save stoploss for " + stoploss.Symbol,
+	})
 }
 
 /*
@@ -429,6 +426,10 @@ func (store *PositionStore) Load(
 			"position store: database, symbol, and entry time required",
 			nil,
 		))
+	}
+
+	if err := store.Sync(); err != nil {
+		return nil, err
 	}
 
 	var state []byte
@@ -482,36 +483,35 @@ func (store *PositionStore) Delete(symbol string) error {
 		))
 	}
 
-	if _, err := store.database.Exec(
-		"DELETE FROM position_stoplosses WHERE symbol = ?", symbol,
-	); err != nil {
-		if isNoSuchTable(err) {
-			if schemaErr := store.EnsureSchema(); schemaErr != nil {
-				return schemaErr
-			}
-
-			return nil
-		}
-
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			fmt.Sprintf("position store: delete stoploss failed for %s [%s]", symbol, err.Error()),
-			err,
-		))
-	}
-
-	return nil
+	return store.enqueue(positionStoreOperation{
+		query:       "DELETE FROM position_stoplosses WHERE symbol = ?",
+		args:        []any{symbol},
+		description: "delete stoploss for " + symbol,
+	})
 }
 
 /*
 Close releases the SQLite database.
 */
 func (store *PositionStore) Close() error {
-	if store == nil || store.database == nil {
+	if store == nil {
 		return nil
 	}
 
-	return store.database.Close()
+	store.closeOnce.Do(func() {
+		store.stateMu.Lock()
+		store.closed = true
+		close(store.queue)
+		store.stateMu.Unlock()
+
+		<-store.done
+
+		if err := store.database.Close(); err != nil && store.Error() == nil {
+			store.setError(err)
+		}
+	})
+
+	return store.Error()
 }
 
 func isNoSuchTable(err error) bool {

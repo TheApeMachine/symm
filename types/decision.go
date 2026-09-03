@@ -33,46 +33,46 @@ Decision records the action strategy selected and the alternatives it compared.
 The immutable decision identifier links admission, execution, and Hindsight.
 */
 type Decision struct {
-	ID                    string                      `json:"id" validate:"required"`
-	Action                Action                      `json:"action" validate:"required,oneof=enter|exit|scale|reduce|hold|nothing"`
-	Symbol                string                      `json:"symbol" validate:"required"`
-	At                    time.Time                   `json:"at" validate:"required"`
-	Direction             float64                     `json:"direction" validate:"finite,min=-1,max=1"`
-	Alternatives          map[string]float64          `json:"alternatives"`
-	AllocationClass       string                      `json:"allocationClass"`
-	Opportunity           bool                        `json:"opportunity"`
-	OpportunityType       string                      `json:"opportunityType,omitempty"`
-	OpportunityPhase      string                      `json:"opportunityPhase,omitempty"`
-	PredictiveReady       bool                        `json:"predictiveReady"`
-	PredictiveStatus      string                      `json:"predictiveStatus"`
-	TaskSkill             float64                     `json:"taskSkill" validate:"finite,nonnegative"`
-	TaskSkillReady        bool                        `json:"taskSkillReady"`
-	ProposedNotional      *decimal.Decimal            `json:"proposedNotional" validate:"required"`
-	ProposedQuantity      *decimal.Decimal            `json:"proposedQuantity" validate:"required"`
-	ReferencePrice        *decimal.Decimal            `json:"referencePrice" validate:"required"`
-	ForecastSource        string                      `json:"forecastSource"`
-	ForecastModel         string                      `json:"forecastModel"`
-	Forecast              *learning.RLSOutput         `json:"forecast,omitempty"`
-	ForecastHorizon       int                         `json:"forecastHorizon" validate:"min=0"`
-	CalibrationCount      uint64                      `json:"calibrationCount"`
-	Confidence            float64                     `json:"confidence" validate:"finite,min=0,max=1"`
-	AvailableCapital      *decimal.Decimal            `json:"availableCapital" validate:"required"`
-	OpenPositions         int                         `json:"openPositions" validate:"min=0"`
-	Cause                 string                      `json:"cause"`
-	Reason                string                      `json:"reason"`
-	ReservationID         string                      `json:"reservationId,omitempty"`
-	SellableQty           *decimal.Decimal            `json:"sellableQty,omitempty"`
-	EntryAt               *time.Time                  `json:"entryAt,omitempty"`
-	ExitAt                *time.Time                  `json:"exitAt,omitempty"`
-	EntryPrice            *decimal.Decimal            `json:"entryPrice,omitempty"`
-	EntryFee              *decimal.Decimal            `json:"entryFee,omitempty"`
-	ExitPrice             *decimal.Decimal            `json:"exitPrice,omitempty"`
-	ExitFee               *decimal.Decimal            `json:"exitFee,omitempty"`
-	PnL                   *decimal.Decimal            `json:"pnl,omitempty"`
-	ReturnPct             *float64                    `json:"returnPct,omitempty"`
-	Mark                  *decimal.Decimal            `json:"mark,omitempty"`
-	EntryCost             *EntryCost                  `json:"entryCost,omitempty"`
-	Stoploss              *Stoploss                   `json:"stoploss,omitempty"`
+	ID               string              `json:"id" validate:"required"`
+	Action           Action              `json:"action" validate:"required,oneof=enter|exit|scale|reduce|hold|nothing"`
+	Symbol           string              `json:"symbol" validate:"required"`
+	At               time.Time           `json:"at" validate:"required"`
+	Direction        float64             `json:"direction" validate:"finite,min=-1,max=1"`
+	Alternatives     map[string]float64  `json:"alternatives"`
+	AllocationClass  string              `json:"allocationClass"`
+	Opportunity      bool                `json:"opportunity"`
+	OpportunityType  string              `json:"opportunityType,omitempty"`
+	OpportunityPhase string              `json:"opportunityPhase,omitempty"`
+	PredictiveReady  bool                `json:"predictiveReady"`
+	PredictiveStatus string              `json:"predictiveStatus"`
+	TaskSkill        float64             `json:"taskSkill" validate:"finite,nonnegative"`
+	TaskSkillReady   bool                `json:"taskSkillReady"`
+	ProposedNotional *decimal.Decimal    `json:"proposedNotional" validate:"required"`
+	ProposedQuantity *decimal.Decimal    `json:"proposedQuantity" validate:"required"`
+	ReferencePrice   *decimal.Decimal    `json:"referencePrice" validate:"required"`
+	ForecastSource   string              `json:"forecastSource"`
+	ForecastModel    string              `json:"forecastModel"`
+	Forecast         *learning.RLSOutput `json:"forecast,omitempty"`
+	ForecastHorizon  int                 `json:"forecastHorizon" validate:"min=0"`
+	CalibrationCount uint64              `json:"calibrationCount"`
+	Confidence       float64             `json:"confidence" validate:"finite,min=0,max=1"`
+	AvailableCapital *decimal.Decimal    `json:"availableCapital" validate:"required"`
+	OpenPositions    int                 `json:"openPositions" validate:"min=0"`
+	Cause            string              `json:"cause"`
+	Reason           string              `json:"reason"`
+	ReservationID    string              `json:"reservationId,omitempty"`
+	SellableQty      *decimal.Decimal    `json:"sellableQty,omitempty"`
+	EntryAt          *time.Time          `json:"entryAt,omitempty"`
+	ExitAt           *time.Time          `json:"exitAt,omitempty"`
+	EntryPrice       *decimal.Decimal    `json:"entryPrice,omitempty"`
+	EntryFee         *decimal.Decimal    `json:"entryFee,omitempty"`
+	ExitPrice        *decimal.Decimal    `json:"exitPrice,omitempty"`
+	ExitFee          *decimal.Decimal    `json:"exitFee,omitempty"`
+	PnL              *decimal.Decimal    `json:"pnl,omitempty"`
+	ReturnPct        *float64            `json:"returnPct,omitempty"`
+	Mark             *decimal.Decimal    `json:"mark,omitempty"`
+	EntryCost        *EntryCost          `json:"entryCost,omitempty"`
+	Stoploss         *Stoploss           `json:"stoploss,omitempty"`
 	/*
 		Risk is the stop geometry this entry was sized under. It travels with
 		the decision because the quantity above was derived from it: the
@@ -81,6 +81,11 @@ type Decision struct {
 		distance would silently undo that.
 	*/
 	Risk RiskPlan `json:"risk"`
+
+	// Trace is the reasoning record behind this decision: the War Room's
+	// deliberation and the causal search it fed. It is present only for
+	// rounds that actually ran a search.
+	Trace *DecisionTrace
 }
 
 /*

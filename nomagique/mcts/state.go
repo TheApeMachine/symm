@@ -356,9 +356,153 @@ type State interface {
 }
 
 /*
+Vectorizer exports a state as one observational row for the structural model.
+The column layout is the state's own contract with the CausalPolicy that names
+the target, treatment, control, and feature indices; the search never
+interprets the columns itself.
+
+It is optional: a state that cannot vectorize simply contributes no
+observational evidence, and the search stays on its observational rung.
+*/
+type Vectorizer interface {
+	ToVector() []float64
+}
+
+/*
+HistoryProvider supplies the prior observational rows a search starts from,
+in the same column layout as Vectorizer. It is optional; without it the
+structural model builds its evidence from rollout trajectories alone.
+*/
+type HistoryProvider interface {
+	History() [][]float64
+}
+
+/*
 ActionEstimator supplies the causal economic estimate for one action. It is
 the boundary where identification status and model support enter the search.
 */
 type ActionEstimator interface {
 	EstimateAction(state State, action Action) ActionEstimate
+}
+
+/*
+Economic state column layout for the structural model. The treatment is the
+signed exposure the action produced, and the target is the wealth change that
+followed it, so the interventional query asks the economically meaningful
+question: what does holding this much exposure do to net wealth?
+
+The controls are the state variables that confound that relationship — the
+price level and how far into the horizon the step occurred — and the features
+are what the counterfactual fit regresses on during abduction.
+*/
+const (
+	// EconomicColumnPrice is the mark price the step executed at.
+	EconomicColumnPrice = iota
+	// EconomicColumnStep is the horizon position of the step.
+	EconomicColumnStep
+	// EconomicColumnExposure is the post-action position, the treatment.
+	EconomicColumnExposure
+	// EconomicColumnWealthChange is the accumulated wealth change, the target.
+	EconomicColumnWealthChange
+	// EconomicColumnWidth is the row width.
+	EconomicColumnWidth
+)
+
+/*
+EconomicCausalPolicy is the CausalPolicy matching EconomicState's row layout.
+The support floor and weights remain the caller's declared strategy policy.
+*/
+func EconomicCausalPolicy(
+	minimumRows int,
+	expectationWeight float64,
+	maxCounterfactualMass float64,
+	linearFit bool,
+) CausalPolicy {
+	// Rejection stays disarmed here: a floor is a risk decision in reward
+	// units, so the caller arms it explicitly with WithRejectionFloor rather
+	// than inheriting a default that happens to be zero.
+	return CausalPolicy{
+		TargetColumn:    EconomicColumnWealthChange,
+		TreatmentColumn: EconomicColumnExposure,
+		ControlColumns:  []int{EconomicColumnPrice, EconomicColumnStep},
+		FeatureColumns: []int{
+			EconomicColumnPrice,
+			EconomicColumnStep,
+			EconomicColumnExposure,
+		},
+		MinimumRows:           minimumRows,
+		LinearFit:             linearFit,
+		ExpectationWeight:     expectationWeight,
+		MaxCounterfactualMass: maxCounterfactualMass,
+	}
+}
+
+/*
+ToVector exports the state as one observational row in the layout the
+EconomicCausalPolicy columns name.
+*/
+func (state *EconomicState) ToVector() []float64 {
+	if state == nil {
+		return nil
+	}
+
+	row := make([]float64, EconomicColumnWidth)
+	row[EconomicColumnPrice] = state.Portfolio.MarkPrice
+	row[EconomicColumnStep] = float64(state.Step)
+	row[EconomicColumnExposure] = state.Portfolio.Position
+	row[EconomicColumnWealthChange] = state.Accumulated
+
+	return row
+}
+
+/*
+GetInterventionLevel names the treatment level each action represents: the
+exposure the portfolio would carry after taking it. An action that is not
+feasible from this state has no level, because intervening at an exposure the
+position could never reach would ask the model an unanswerable question.
+*/
+func (state *EconomicState) GetInterventionLevel(action Action) (float64, bool) {
+	if state == nil {
+		return 0, false
+	}
+
+	position := state.Portfolio.Position
+
+	switch action {
+	case Wait:
+		return position, true
+	case Enter:
+		if position != 0 {
+			return 0, false
+		}
+
+		return state.UnitQuantity, true
+	case Exit:
+		if position == 0 {
+			return 0, false
+		}
+
+		return 0, true
+	case Scale:
+		if position == 0 {
+			return 0, false
+		}
+
+		return position + state.UnitQuantity, true
+	default:
+		return 0, false
+	}
+}
+
+/*
+WithRejectionFloor arms causal rejection at an explicit floor, in the same
+units as the economic reward. It is a separate call because zero is itself a
+meaningful floor (reject any action whose causal effect on wealth is negative)
+and must not be indistinguishable from an unconfigured policy.
+*/
+func (policy CausalPolicy) WithRejectionFloor(floor float64) CausalPolicy {
+	policy.RejectionFloor = floor
+	policy.RejectionEnabled = true
+
+	return policy
 }

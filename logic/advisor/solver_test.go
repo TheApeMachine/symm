@@ -14,7 +14,7 @@ import (
 
 func TestNewSolver(t *testing.T) {
 	Convey("Given two class-bearing Features", t, func() {
-		solver := NewSolver(t.Context(), midpointFeatures())
+		solver := NewSolver(t.Context(), "midpoint", midpointFeatures())
 
 		Convey("the Solver becomes ready", func() {
 			So(solver.Error(), ShouldBeNil)
@@ -22,10 +22,31 @@ func TestNewSolver(t *testing.T) {
 		})
 	})
 
+	Convey("Given an unnamed Advisor", t, func() {
+		solver := NewSolver(t.Context(), "", midpointFeatures())
+
+		Convey("construction fails instead of issuing anonymous Perspectives", func() {
+			So(solver.Error(), ShouldNotBeNil)
+			So(solver.Status().Current(), ShouldEqual, runtime.FATAL)
+		})
+	})
+
+	Convey("Given only one predictive Class", t, func() {
+		features := predictiveMidpointFeatures()
+		features[1].Class.Predictions = nil
+		features[1].Class.Within = 0
+		solver := NewSolver(t.Context(), "midpoint", features)
+
+		Convey("construction rejects the incomplete counterfactual tree", func() {
+			So(solver.Error(), ShouldNotBeNil)
+			So(solver.Status().Current(), ShouldEqual, runtime.FATAL)
+		})
+	})
+
 	Convey("Given a Feature without its one Class", t, func() {
 		features := midpointFeatures()
 		features[0].Class = nil
-		solver := NewSolver(t.Context(), features)
+		solver := NewSolver(t.Context(), "midpoint", features)
 
 		Convey("construction fails instead of inferring a Class", func() {
 			So(solver.Error(), ShouldNotBeNil)
@@ -36,7 +57,7 @@ func TestNewSolver(t *testing.T) {
 	Convey("Given an ambiguous metric key", t, func() {
 		features := midpointFeatures()
 		features[0].Keys[0] = "midpoint_return_zscore"
-		solver := NewSolver(t.Context(), features)
+		solver := NewSolver(t.Context(), "midpoint", features)
 
 		Convey("construction fails instead of binding an arbitrary producer", func() {
 			So(solver.Error(), ShouldNotBeNil)
@@ -47,7 +68,7 @@ func TestNewSolver(t *testing.T) {
 	Convey("Given Features declared on different market clocks", t, func() {
 		features := midpointFeatures()
 		features[1].Clock = "trades/event_ordinal"
-		solver := NewSolver(t.Context(), features)
+		solver := NewSolver(t.Context(), "midpoint", features)
 
 		Convey("construction fails instead of mixing incompatible observations", func() {
 			So(solver.Error(), ShouldNotBeNil)
@@ -58,7 +79,7 @@ func TestNewSolver(t *testing.T) {
 
 func TestSolverStep(t *testing.T) {
 	Convey("Given existing PumpDump midpoint-return observations", t, func() {
-		solver := NewSolver(t.Context(), midpointFeatures())
+		solver := NewSolver(t.Context(), "midpoint", midpointFeatures())
 
 		Convey("positive response favors the recovery Feature after conditioning", func() {
 			conditionMidpointSolver(solver)
@@ -140,7 +161,7 @@ func TestSolverStep(t *testing.T) {
 
 func TestSolverDistribution(t *testing.T) {
 	Convey("Given an unconditioned equal class distribution", t, func() {
-		solver := NewSolver(t.Context(), midpointFeatures())
+		solver := NewSolver(t.Context(), "midpoint", midpointFeatures())
 		So(solver.Step(advisorMeasurementEnvelope(0, 1, true, nil)), ShouldNotBeNil)
 
 		Convey("Distribution preserves both classes with zero sharpness", func() {
@@ -169,6 +190,46 @@ func midpointFeatures() []*Feature {
 			&Class{Label: "breakdown"},
 		),
 	}
+}
+
+func predictiveMidpointFeatures() []*Feature {
+	features := midpointFeatures()
+	features[0].Class.Within = 2
+	features[0].Class.Predictions = []*Prediction{{
+		Support: &Falsifiable{
+			Label: "pumpdump/positive_midpoint_return",
+			Type:  METRIC,
+			Move:  INCREASE,
+			Value: 10,
+			Unit:  PERCENT,
+		},
+		Contradict: &Falsifiable{
+			Label: "pumpdump/negative_midpoint_return",
+			Type:  METRIC,
+			Move:  INCREASE,
+			Value: 50,
+			Unit:  PERCENT,
+		},
+	}}
+	features[1].Class.Within = 2
+	features[1].Class.Predictions = []*Prediction{{
+		Support: &Falsifiable{
+			Label: "pumpdump/negative_midpoint_return",
+			Type:  METRIC,
+			Move:  INCREASE,
+			Value: 10,
+			Unit:  PERCENT,
+		},
+		Contradict: &Falsifiable{
+			Label: "pumpdump/positive_midpoint_return",
+			Type:  METRIC,
+			Move:  INCREASE,
+			Value: 50,
+			Unit:  PERCENT,
+		},
+	}}
+
+	return features
 }
 
 func conditionMidpointSolver(solver *Solver) {
@@ -240,7 +301,7 @@ func advisorMeasurementEnvelope(
 }
 
 func BenchmarkSolverStep(b *testing.B) {
-	solver := NewSolver(b.Context(), midpointFeatures())
+	solver := NewSolver(b.Context(), "midpoint", midpointFeatures())
 	conditionMidpointSolver(solver)
 	envelope := advisorMeasurementEnvelope(2, 3, true, nil)
 	clock := envelope.PumpDump.Metrics["completed_volume_bar_ordinal"]

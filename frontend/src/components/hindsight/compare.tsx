@@ -203,8 +203,8 @@ const readFacts = (state: EnvelopeState | null): Map<string, Reading> => {
 		});
 	}
 
-	for (let index = 0; index < state.perspectivesLength(); index++) {
-		const perspective = state.perspectives(index);
+	for (let index = 0; index < state.perspectiveFramesLength(); index++) {
+		const perspective = state.perspectiveFrames(index);
 
 		if (perspective === null) continue;
 

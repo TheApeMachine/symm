@@ -42,8 +42,53 @@ meanReward():number {
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
+blendedValue():number {
+  const offset = this.bb!.__offset(this.bb_pos, 10);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+rewardStd():number {
+  const offset = this.bb!.__offset(this.bb_pos, 12);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+counterfactualReward():number {
+  const offset = this.bb!.__offset(this.bb_pos, 14);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+counterfactualMass():number {
+  const offset = this.bb!.__offset(this.bb_pos, 16);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+counterfactualMean():number {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+effectiveVisits():number {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+causalExpectation():number {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+causalExpectationDefined():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 24);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+pruned():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 26);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
 static startMCTSBranch(builder:flatbuffers.Builder) {
-  builder.startObject(3);
+  builder.startObject(12);
 }
 
 static addAction(builder:flatbuffers.Builder, actionOffset:flatbuffers.Offset) {
@@ -58,16 +103,61 @@ static addMeanReward(builder:flatbuffers.Builder, meanReward:number) {
   builder.addFieldFloat64(2, meanReward, 0.0);
 }
 
+static addBlendedValue(builder:flatbuffers.Builder, blendedValue:number) {
+  builder.addFieldFloat64(3, blendedValue, 0.0);
+}
+
+static addRewardStd(builder:flatbuffers.Builder, rewardStd:number) {
+  builder.addFieldFloat64(4, rewardStd, 0.0);
+}
+
+static addCounterfactualReward(builder:flatbuffers.Builder, counterfactualReward:number) {
+  builder.addFieldFloat64(5, counterfactualReward, 0.0);
+}
+
+static addCounterfactualMass(builder:flatbuffers.Builder, counterfactualMass:number) {
+  builder.addFieldFloat64(6, counterfactualMass, 0.0);
+}
+
+static addCounterfactualMean(builder:flatbuffers.Builder, counterfactualMean:number) {
+  builder.addFieldFloat64(7, counterfactualMean, 0.0);
+}
+
+static addEffectiveVisits(builder:flatbuffers.Builder, effectiveVisits:number) {
+  builder.addFieldFloat64(8, effectiveVisits, 0.0);
+}
+
+static addCausalExpectation(builder:flatbuffers.Builder, causalExpectation:number) {
+  builder.addFieldFloat64(9, causalExpectation, 0.0);
+}
+
+static addCausalExpectationDefined(builder:flatbuffers.Builder, causalExpectationDefined:boolean) {
+  builder.addFieldInt8(10, +causalExpectationDefined, +false);
+}
+
+static addPruned(builder:flatbuffers.Builder, pruned:boolean) {
+  builder.addFieldInt8(11, +pruned, +false);
+}
+
 static endMCTSBranch(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createMCTSBranch(builder:flatbuffers.Builder, actionOffset:flatbuffers.Offset, visits:bigint, meanReward:number):flatbuffers.Offset {
+static createMCTSBranch(builder:flatbuffers.Builder, actionOffset:flatbuffers.Offset, visits:bigint, meanReward:number, blendedValue:number, rewardStd:number, counterfactualReward:number, counterfactualMass:number, counterfactualMean:number, effectiveVisits:number, causalExpectation:number, causalExpectationDefined:boolean, pruned:boolean):flatbuffers.Offset {
   MCTSBranch.startMCTSBranch(builder);
   MCTSBranch.addAction(builder, actionOffset);
   MCTSBranch.addVisits(builder, visits);
   MCTSBranch.addMeanReward(builder, meanReward);
+  MCTSBranch.addBlendedValue(builder, blendedValue);
+  MCTSBranch.addRewardStd(builder, rewardStd);
+  MCTSBranch.addCounterfactualReward(builder, counterfactualReward);
+  MCTSBranch.addCounterfactualMass(builder, counterfactualMass);
+  MCTSBranch.addCounterfactualMean(builder, counterfactualMean);
+  MCTSBranch.addEffectiveVisits(builder, effectiveVisits);
+  MCTSBranch.addCausalExpectation(builder, causalExpectation);
+  MCTSBranch.addCausalExpectationDefined(builder, causalExpectationDefined);
+  MCTSBranch.addPruned(builder, pruned);
   return MCTSBranch.endMCTSBranch(builder);
 }
 
@@ -75,7 +165,16 @@ unpack(): MCTSBranchT {
   return new MCTSBranchT(
     this.action(),
     this.visits(),
-    this.meanReward()
+    this.meanReward(),
+    this.blendedValue(),
+    this.rewardStd(),
+    this.counterfactualReward(),
+    this.counterfactualMass(),
+    this.counterfactualMean(),
+    this.effectiveVisits(),
+    this.causalExpectation(),
+    this.causalExpectationDefined(),
+    this.pruned()
   );
 }
 
@@ -84,6 +183,15 @@ unpackTo(_o: MCTSBranchT): void {
   _o.action = this.action();
   _o.visits = this.visits();
   _o.meanReward = this.meanReward();
+  _o.blendedValue = this.blendedValue();
+  _o.rewardStd = this.rewardStd();
+  _o.counterfactualReward = this.counterfactualReward();
+  _o.counterfactualMass = this.counterfactualMass();
+  _o.counterfactualMean = this.counterfactualMean();
+  _o.effectiveVisits = this.effectiveVisits();
+  _o.causalExpectation = this.causalExpectation();
+  _o.causalExpectationDefined = this.causalExpectationDefined();
+  _o.pruned = this.pruned();
 }
 }
 
@@ -91,7 +199,16 @@ export class MCTSBranchT implements flatbuffers.IGeneratedObject {
 constructor(
   public action: string|Uint8Array|null = null,
   public visits: bigint = BigInt('0'),
-  public meanReward: number = 0.0
+  public meanReward: number = 0.0,
+  public blendedValue: number = 0.0,
+  public rewardStd: number = 0.0,
+  public counterfactualReward: number = 0.0,
+  public counterfactualMass: number = 0.0,
+  public counterfactualMean: number = 0.0,
+  public effectiveVisits: number = 0.0,
+  public causalExpectation: number = 0.0,
+  public causalExpectationDefined: boolean = false,
+  public pruned: boolean = false
 ){}
 
 
@@ -101,7 +218,16 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   return MCTSBranch.createMCTSBranch(builder,
     action,
     this.visits,
-    this.meanReward
+    this.meanReward,
+    this.blendedValue,
+    this.rewardStd,
+    this.counterfactualReward,
+    this.counterfactualMass,
+    this.counterfactualMean,
+    this.effectiveVisits,
+    this.causalExpectation,
+    this.causalExpectationDefined,
+    this.pruned
   );
 }
 }

@@ -89,7 +89,7 @@ retired Perspective frames. Each frame declares its own Kind, so legacy
 advisor-family rows can be separated by identity.
 */
 func stateWithPerspectives(frames []*wire.PerspectiveFrameT) []byte {
-	state := &wire.EnvelopeStateT{Perspectives: frames}
+	state := &wire.EnvelopeStateT{PerspectiveFrames: frames}
 
 	builder := flatbuffers.NewBuilder(1024)
 	builder.Finish(state.Pack(builder))

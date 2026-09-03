@@ -10,11 +10,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	disruptor "github.com/smarty/go-disruptor"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
@@ -30,8 +30,9 @@ const guardianCapacity uint32 = 8192
 const guardianCapacityMask = int64(guardianCapacity) - 1
 
 /*
-Position is one lot shell owned and event-routed by Desk. Order correlation uses
-each decision's client order ID, then the exchange order ID returned by REST.
+Position is one lot shell owned and event-routed by Desk. Entry correlation uses
+the decision UUID; each exit derives its own stable Kraken-valid UUID so both
+open orders remain independently identifiable through retries and recovery.
 */
 type Position struct {
 	ctx            context.Context
@@ -40,7 +41,6 @@ type Position struct {
 	instrument     *Instrument
 	price          *Price
 	balance        *Balance
-	recorder       *audit.Recorder
 	store          *PositionStore
 	onClose        func()
 	recordFill     func(kind string, execution kraken.ExecutionData)
@@ -136,7 +136,6 @@ func NewPosition(
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
-	recorder *audit.Recorder,
 	store *PositionStore,
 	pair kraken.InstrumentPair,
 	decision types.Decision,
@@ -151,7 +150,6 @@ func NewPosition(
 		instrument:     instrument,
 		price:          price,
 		balance:        balance,
-		recorder:       recorder,
 		store:          store,
 		pair:           pair,
 		seenExecutions: make(map[string]struct{}),
@@ -261,6 +259,10 @@ func (position *Position) handleGuardian(value any) {
 		})
 	case kraken.Level3Data:
 		position.onLevel3(payload)
+	case types.CausativeContext:
+		position.onCausative(payload)
+	case *types.Perspective:
+		position.onPerspective(payload)
 	case string: // e.g. "manual_exit"
 		if payload == "manual_exit" {
 			if err := position.executeManualExit(); err != nil {
@@ -273,6 +275,23 @@ func (position *Position) handleGuardian(value any) {
 		}
 	}
 }
+
+func (position *Position) onCausative(causative types.CausativeContext) {
+	if position == nil || position.Holding == nil || position.Holding.Stoploss == nil {
+		return
+	}
+
+	position.Holding.Stoploss.ObserveCausative(causative)
+}
+
+func (position *Position) onPerspective(perspective *types.Perspective) {
+	if position == nil || position.Holding == nil || position.Holding.Stoploss == nil || perspective == nil {
+		return
+	}
+
+	position.Holding.Stoploss.ObservePerspective(perspective)
+}
+
 
 func (position *Position) status() types.Status {
 	status := position.Status.Load()
@@ -402,7 +421,7 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 	triggered := stoploss.Status == types.TRIGGERED
 
 	/*
-		Exit initiation happens first and independently of persistence, audit,
+		Exit initiation happens first and independently of persistence,
 		checkpoint, UI, diagnostics, model feedback, and logging. Only the
 		goroutine that atomically claims the exit may submit the initial order.
 	*/
@@ -661,13 +680,30 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 			return false
 		}
 
-		if status == types.CANCELED || status == types.REJECTED ||
-			status == types.EXPIRED {
+		terminal := status == types.CANCELED || status == types.REJECTED ||
+			status == types.EXPIRED
+		filled := execution.CumQty != nil && execution.CumQty.Sign() > 0 &&
+			execution.CumCost != nil && execution.CumCost.Sign() > 0 &&
+			execution.FeeUsdEquiv != nil && execution.FeeUsdEquiv.Sign() >= 0
+		hasInventory := position.Holding.Qty != nil && position.Holding.Qty.Sign() > 0
+
+		if terminal && !filled && hasInventory {
+			position.setStatus(types.OPEN)
+			position.Holding.Status = types.OPEN
+
+			if position.store != nil {
+				errnie.Error(position.store.SaveTrade(position))
+			}
+
+			continue
+		}
+
+		if terminal && !filled {
 			position.setStatus(status)
 			position.Holding.Status = status
 
 			if position.store != nil {
-				_ = position.store.SaveTrade(position)
+				errnie.Error(position.store.SaveTrade(position))
 			}
 
 			if position.cancel != nil {
@@ -677,10 +713,12 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 			return true
 		}
 
-		if execution.CumQty == nil || execution.CumQty.Sign() <= 0 ||
-			execution.CumCost == nil || execution.CumCost.Sign() <= 0 ||
-			execution.FeeUsdEquiv == nil || execution.FeeUsdEquiv.Sign() < 0 {
+		if !filled {
 			continue
+		}
+
+		if terminal {
+			status = types.OPEN
 		}
 
 		position.setStatus(status)
@@ -691,7 +729,7 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 		position.Holding.Qty = execution.CumQty
 		position.Holding.SellableQty = execution.CumQty
 
-		// Authoritative entry economics for the audit journal: whole-order
+		// Authoritative entry economics for the persisted trade record: whole-order
 		// realized VWAP (AvgPrice preferred), total filled quantity, and the
 		// exchange's reported fee.
 		position.Holding.EntryVWAP = executionVWAP(execution)
@@ -825,7 +863,7 @@ func (position *Position) closeFill(execution kraken.ExecutionData) error {
 		position.Holding.PnL,
 	).Div(entryValue).Mul(decimal.NewFromInt64(100)).Float64()
 
-	// Separated realized economics for the audit journal.
+	// Separated realized economics for the persisted trade record.
 	position.Holding.ExitVWAP = exitVWAP
 	position.Holding.ExitQty = decimal.NewFromInt64(0).Add(execution.CumQty)
 	position.Holding.ExitFees = decimal.NewFromInt64(0).Add(execution.FeeUsdEquiv)
@@ -976,7 +1014,10 @@ func (position *Position) Exit() (*Position, error) {
 	}
 
 	exitOrder := &spot.AddOrderRequest{
-		ClOrdId:   position.EntryOrder.ClOrdId + "-exit",
+		ClOrdId: uuid.NewSHA1(
+			uuid.NameSpaceOID,
+			[]byte("symm:exit:"+position.EntryOrder.ClOrdId),
+		).String(),
 		Type:      "sell",
 		OrderType: "market",
 		Volume:    volume.String(),
@@ -986,9 +1027,9 @@ func (position *Position) Exit() (*Position, error) {
 	result, err := position.api.AddOrder(exitOrder)
 
 	if err != nil {
-		// No order reached the exchange, so the claim must release or a
-		// transient AddOrder failure would permanently strand a triggered
-		// stop with no exit ever in flight and no path to retry it.
+		// Release the local claim so a transient failure can retry. The retry
+		// derives the same client order UUID, so losing a successful venue
+		// response cannot create a distinct second sell order.
 		position.exitClaim.Store(false)
 
 		return position, errnie.Error(errnie.Err(

@@ -1,6 +1,11 @@
 package advisor
 
-const momentumClock = "pumpdump/completed_volume_bar_ordinal"
+const (
+	MomentumName  = "momentum"
+	momentumClock = "pumpdump/completed_volume_bar_ordinal"
+	// The first contract forecasts exactly the next completed causal volume bar.
+	momentumPredictionHorizon = uint64(1)
+)
 
 /* Momentum declares the observation vectors for the momentum-state Advisor. */
 type Momentum struct {
@@ -35,7 +40,15 @@ func NewMomentum() *Momentum {
 					"hawkes/expected_descendants_from_sell",
 					"hawkes/log_likelihood_gain_per_event_vs_poisson",
 				},
-				&Class{Label: "Building"},
+				&Class{
+					Label:  "Building",
+					Within: momentumPredictionHorizon,
+					Predictions: []*Prediction{NewMetricPrediction(
+						"pumpdump/notional_rate_velocity",
+						INCREASE,
+						DECREASE,
+					)},
+				},
 			),
 			NewFeature(
 				momentumClock,
@@ -60,7 +73,15 @@ func NewMomentum() *Momentum {
 					"hawkes/expected_descendants_from_sell",
 					"hawkes/log_likelihood_gain_per_event_vs_poisson",
 				},
-				&Class{Label: "Sustaining"},
+				&Class{
+					Label:  "Sustaining",
+					Within: momentumPredictionHorizon,
+					Predictions: []*Prediction{NewMetricPrediction(
+						"cvd/flow_aligned_midpoint_return",
+						EXPAND,
+						DISSOLVE,
+					)},
+				},
 			),
 			NewFeature(
 				momentumClock,
@@ -83,7 +104,15 @@ func NewMomentum() *Momentum {
 					"hawkes/excitation_fraction:sell",
 					"hawkes/log_likelihood_gain_per_event_vs_poisson",
 				},
-				&Class{Label: "Stalling"},
+				&Class{
+					Label:  "Stalling",
+					Within: momentumPredictionHorizon,
+					Predictions: []*Prediction{NewMetricPrediction(
+						"cvd/flow_aligned_midpoint_return",
+						DISSOLVE,
+						EXPAND,
+					)},
+				},
 			),
 			NewFeature(
 				momentumClock,
@@ -110,7 +139,15 @@ func NewMomentum() *Momentum {
 					"hawkes/expected_descendants_from_sell",
 					"hawkes/log_likelihood_gain_per_event_vs_poisson",
 				},
-				&Class{Label: "Reversing"},
+				&Class{
+					Label:  "Reversing",
+					Within: momentumPredictionHorizon,
+					Predictions: []*Prediction{NewMetricPrediction(
+						"pumpdump/midpoint_return_divergence",
+						EXPAND,
+						DISSOLVE,
+					)},
+				},
 			),
 		},
 	}

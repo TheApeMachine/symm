@@ -312,7 +312,12 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		decision.Risk = riskPlan
 		decision.Stoploss = stoploss
 
+		if decision.OpportunityType == string(types.ArchetypeVolumeSurgePrecursor) {
+			stoploss.Causative.PrecursorPumpEntry = true
+		}
+
 		decision.AllocationClass = "capital"
+
 		occupied[decision.Symbol] = true
 		remainingCash = decimal.NewFromInt64(0).Add(remainingCash).Sub(
 			decision.ProposedNotional,

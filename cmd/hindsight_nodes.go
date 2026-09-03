@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
@@ -14,9 +15,10 @@ witnessNode records what the live pipeline observed and produced. It never
 feeds a value back into trading.
 */
 type witnessNode struct {
-	writer      *store.Writer
-	asyncWriter *store.AsyncWitnessWriter
-	phases      map[opportunityWitnessKey]types.OpportunityPhase
+	writer        *store.Writer
+	asyncWriter   *store.AsyncWitnessWriter
+	phases        map[opportunityWitnessKey]types.OpportunityPhase
+	lastWitnessed map[string]time.Time
 }
 
 type opportunityWitnessKey struct {
@@ -29,8 +31,10 @@ func newWitnessNode(
 	asyncWriter *store.AsyncWitnessWriter,
 ) *witnessNode {
 	return &witnessNode{
-		writer: writer, asyncWriter: asyncWriter,
-		phases: make(map[opportunityWitnessKey]types.OpportunityPhase),
+		writer:        writer,
+		asyncWriter:   asyncWriter,
+		phases:        make(map[opportunityWitnessKey]types.OpportunityPhase),
+		lastWitnessed: make(map[string]time.Time),
 	}
 }
 
@@ -47,6 +51,7 @@ func (node *witnessNode) Step(envelope *types.Envelope) *types.Envelope {
 		Origin:  envelope.CaptureID,
 		Ordinal: envelope.CaptureOrdinal,
 	}
+
 	if !node.shouldWitness(envelope) {
 		return envelope
 	}
@@ -73,7 +78,13 @@ func (node *witnessNode) Step(envelope *types.Envelope) *types.Envelope {
 }
 
 func (node *witnessNode) shouldWitness(envelope *types.Envelope) bool {
+	symbol := envelopeSymbol(envelope)
+
 	if hasActionableDecision(envelope.StrategyRound) {
+		if symbol != "" {
+			node.lastWitnessed[symbol] = time.Now()
+		}
+
 		return true
 	}
 
@@ -85,7 +96,8 @@ func (node *witnessNode) shouldWitness(envelope *types.Envelope) bool {
 		}
 
 		key := opportunityWitnessKey{
-			symbol: candidate.Symbol, archetype: candidate.Archetype,
+			symbol:    candidate.Symbol,
+			archetype: candidate.Archetype,
 		}
 
 		if node.phases[key] != candidate.Phase {
@@ -94,7 +106,73 @@ func (node *witnessNode) shouldWitness(envelope *types.Envelope) bool {
 		}
 	}
 
-	return changed
+	if changed {
+		if symbol != "" {
+			node.lastWitnessed[symbol] = time.Now()
+		}
+
+		return true
+	}
+
+	if symbol == "" {
+		return false
+	}
+
+	hasState := envelope.StrategyRound != nil ||
+		len(envelope.Perspectives) > 0 ||
+		len(envelope.Categories) > 0 ||
+		len(envelope.Opportunities) > 0 ||
+		envelope.PumpDump != nil ||
+		envelope.CVD != nil
+
+	if !hasState {
+		return false
+	}
+
+	last, exists := node.lastWitnessed[symbol]
+
+	if !exists || time.Since(last) >= time.Second {
+		node.lastWitnessed[symbol] = time.Now()
+		return true
+	}
+
+	return false
+}
+
+func envelopeSymbol(envelope *types.Envelope) string {
+	if envelope == nil {
+		return ""
+	}
+
+	if envelope.Key != "" {
+		return envelope.Key
+	}
+
+	if envelope.TickerData.Symbol != "" {
+		return envelope.TickerData.Symbol
+	}
+
+	if envelope.TradeData.Symbol != "" {
+		return envelope.TradeData.Symbol
+	}
+
+	if envelope.Level3Data.Symbol != "" {
+		return envelope.Level3Data.Symbol
+	}
+
+	if envelope.StrategyRound != nil && envelope.StrategyRound.Symbol != "" {
+		return envelope.StrategyRound.Symbol
+	}
+
+	if len(envelope.Opportunities) > 0 && envelope.Opportunities[0] != nil && envelope.Opportunities[0].Symbol != "" {
+		return envelope.Opportunities[0].Symbol
+	}
+
+	if len(envelope.Perspectives) > 0 {
+		return envelope.Perspectives[0].Symbol
+	}
+
+	return ""
 }
 
 func hasActionableDecision(round *types.StrategyRound) bool {
@@ -140,16 +218,16 @@ hindsightLifecycleRecorder persists Desk lifecycle facts without influencing
 the lifecycle transition itself.
 */
 type hindsightLifecycleRecorder struct {
-	engine *store.SQLite
+	writer *store.Writer
 	runID  hindsight.RunID
 }
 
 func (recorder hindsightLifecycleRecorder) RecordLifecycle(event hindsight.LifecycleEvent) {
-	if recorder.engine == nil || event.DecisionID == "" || event.Kind == "" {
+	if recorder.writer == nil || event.DecisionID == "" || event.Kind == "" {
 		return
 	}
 
-	if err := recorder.engine.WriteLifecycleEvent(recorder.runID, event); err != nil {
+	if err := recorder.writer.WriteLifecycle(recorder.runID, event); err != nil {
 		errnie.Error(errnie.Err(errnie.IO, "symm: record lifecycle event", err))
 	}
 }

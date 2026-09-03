@@ -16,6 +16,11 @@ const (
 	// yet become visible: the coiled/hidden/thinning precursor state that
 	// historically precedes the VerticalIgnition category.
 	ArchetypeVerticalIgnition OpportunityArchetype = "vertical_ignition"
+
+	// ArchetypeVolumeSurgePrecursor positions for explosive vertical moves
+	// detected by sharp precursor volume acceleration (e.g. 3100x volume surge)
+	// before visible price ignition.
+	ArchetypeVolumeSurgePrecursor OpportunityArchetype = "volume_surge_precursor"
 )
 
 /*

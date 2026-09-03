@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -156,6 +157,41 @@ func TestEncodeResonanceArtifact(t *testing.T) {
 }
 
 func TestEnvelopeEncode(t *testing.T) {
+	Convey("Given an envelope carrying a class-tagged Advisor Perspective", t, func() {
+		envelope := &Envelope{Perspectives: []*Perspective{{
+			Symbol:   "BTC/USD",
+			Advisor:  nmtypes.MustIntern("momentum"),
+			Question: "momentum",
+			Classes: []PerspectiveClass{
+				{State: "building", Probability: 0.7},
+				{State: "reversing", Probability: 0.3},
+			},
+			Predictions: []PerspectivePrediction{{
+				Class:  "reversing",
+				Event:  "price rejection",
+				Effect: PredictionSupports,
+			}},
+			Lease: PerspectiveLease{
+				Clock: nmtypes.MustIntern("pumpdump/completed_volume_bar_ordinal"),
+				From:  2,
+				Until: 4,
+			},
+			Lifecycle: PerspectiveIssued,
+		}}}
+
+		Convey("it preserves the counterfactual Class across the wire", func() {
+			decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeBytes(), 0)
+			So(decoded.PerspectivesLength(), ShouldEqual, 1)
+			perspective := &telemetry.EnvelopePerspective{}
+			So(decoded.Perspectives(perspective, 0), ShouldBeTrue)
+			So(perspective.PredictionsLength(), ShouldEqual, 1)
+			prediction := &telemetry.EnvelopePerspectivePrediction{}
+			So(perspective.Predictions(prediction, 0), ShouldBeTrue)
+			So(string(prediction.Class()), ShouldEqual, "reversing")
+			So(string(prediction.Event()), ShouldEqual, "price rejection")
+		})
+	})
+
 	Convey("Given an envelope carrying an account valuation", t, func() {
 		envelope := &Envelope{
 			Key: "BTC/USD",

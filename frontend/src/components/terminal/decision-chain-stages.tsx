@@ -66,7 +66,7 @@ export const EvidenceStage = ({ decision }: { decision: Decision }) => (
 );
 
 export const ExecutionStage = ({ decision }: { decision: Decision }) => (
-	<DecisionStage title="4 · execution + risk" meta="facts observable now">
+	<DecisionStage title="5 · execution + risk" meta="facts observable now">
 		<TraceValue label="entry VWAP" value={decision.entryCost?.entryPrice ?? ""} className="text-(--acc)" />
 		<TraceValue label="break-even" value={decision.entryCost?.breakEven ?? ""} />
 		<TraceValue label="round-trip fees" value={decision.entryCost?.roundTripFees ?? ""} />

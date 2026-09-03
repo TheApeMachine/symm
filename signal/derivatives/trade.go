@@ -212,6 +212,7 @@ func (trade *Trade) Step(point kraken.FuturesTradeData) *data.Measurement[float6
 	)
 	point.Timestamp = stamped
 
+
 	input := nmtypes.Frame{}
 	input.Put(symbolTimelineAdvanced, oneIf(advanced))
 	input.Put(symbolTradePrice, point.Price.Float64())

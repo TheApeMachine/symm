@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -111,7 +110,7 @@ var (
 			dataPath := utils.ResolveDataPath()
 
 			// The storage writer is the single CaptureSink for every raw
-			// websocket stream (public/private/futures). Each frame is written
+			// websocket stream (public/private/futures). Each frame is accepted
 			// exactly once, byte-for-byte as it left the wire, tagged with its
 			// origin kind (channel/feed) and endpoint. Nothing else is recorded
 			// here — raw capture is the irreducible stream, not a re-serialized
@@ -164,10 +163,10 @@ var (
 			}
 
 			// The capture Sequencer mints a stable CaptureIdentity for every
-			// raw frame, and the storage writer persists each frame together
-			// with that identity — minting and persistence are one step, so raw
-			// capture and semantic ingress are joinable by identity, never by
-			// timestamp.
+			// raw frame, and the storage writer accepts each frame together with
+			// that identity before parsing. Raw capture and semantic ingress are
+			// joinable by identity, never by timestamp; the writer persists the
+			// ordered queue away from the transport callback.
 			captureSequencer, err := hindsight.NewSequencer(runID)
 
 			if err != nil {
@@ -178,7 +177,12 @@ var (
 				))
 			}
 
-			rawCapture, err := store.NewWriter(storageEngine, captureSequencer)
+			rawCapture, err := store.NewWriter(
+				storageEngine,
+				captureSequencer,
+				viper.GetInt("hindsight.capture.queue_depth"),
+				viper.GetInt("hindsight.capture.batch_size"),
+			)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
@@ -187,6 +191,10 @@ var (
 					err,
 				))
 			}
+
+			defer func() {
+				errnie.Error(rawCapture.Close())
+			}()
 
 			// Witness persistence runs on its own worker: the Disruptor consumer
 			// thread enqueues witnesses and never waits on SQLite writes. The
@@ -262,22 +270,7 @@ var (
 				))
 			}
 
-			recorder, err := audit.NewRecorder(filepath.Join(
-				dataPath,
-				"audit.jsonl",
-			))
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: open audit recorder",
-					err,
-				))
-			}
-
-			defer recorder.Close()
-
-			price := broker.NewPrice(api, recorder)
+			price := broker.NewPrice(api)
 			instrument := broker.NewInstrument(api, price)
 			defer instrument.Close()
 
@@ -299,7 +292,11 @@ var (
 			resonanceSolver.SetObserver(hub.PublishResonance)
 
 			momentum := advisor.NewMomentum()
-			momentumSolver := advisor.NewSolver(runtimeCtx, momentum.Features)
+			momentumSolver := advisor.NewSolver(
+				runtimeCtx,
+				advisor.MomentumName,
+				momentum.Features,
+			)
 
 			if err := momentumSolver.Error(); err != nil {
 				return errnie.Error(errnie.Err(
@@ -310,6 +307,109 @@ var (
 			}
 
 			defer momentumSolver.Close()
+
+			auction := advisor.NewAuction()
+			auctionSolver := advisor.NewSolver(
+				runtimeCtx,
+				advisor.AuctionName,
+				auction.Features,
+			)
+
+			if err := auctionSolver.Error(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"symm: construct auction Advisor",
+					err,
+				))
+			}
+
+			defer auctionSolver.Close()
+
+			participation := advisor.NewParticipation()
+			participationSolver := advisor.NewSolver(
+				runtimeCtx,
+				advisor.ParticipationName,
+				participation.Features,
+			)
+
+			if err := participationSolver.Error(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"symm: construct participation Advisor",
+					err,
+				))
+			}
+
+			defer participationSolver.Close()
+
+			pullback := advisor.NewPullback()
+			pullbackSolver := advisor.NewSolver(
+				runtimeCtx,
+				advisor.PullbackName,
+				pullback.Features,
+			)
+
+			if err := pullbackSolver.Error(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"symm: construct pullback Advisor",
+					err,
+				))
+			}
+
+			defer pullbackSolver.Close()
+
+			profitRun := advisor.NewProfitRun()
+			profitRunSolver := advisor.NewSolver(
+				runtimeCtx,
+				advisor.ProfitRunName,
+				profitRun.Features,
+			)
+
+			if err := profitRunSolver.Error(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"symm: construct profit run Advisor",
+					err,
+				))
+			}
+
+			defer profitRunSolver.Close()
+
+			liquidityAdvisor := advisor.NewLiquidity()
+			liquiditySolver := advisor.NewSolver(
+				runtimeCtx,
+				advisor.LiquidityName,
+				liquidityAdvisor.Features,
+			)
+
+			if err := liquiditySolver.Error(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"symm: construct liquidity Advisor",
+					err,
+				))
+			}
+
+			defer liquiditySolver.Close()
+
+			basisAdvisor := advisor.NewBasis()
+			basisSolver := advisor.NewSolver(
+				runtimeCtx,
+				advisor.BasisName,
+				basisAdvisor.Features,
+			)
+
+			if err := basisSolver.Error(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Validation,
+					"symm: construct basis Advisor",
+					err,
+				))
+			}
+
+			defer basisSolver.Close()
+
 
 			// Manifold is intentionally disabled while its runtime issue is
 			// investigated independently. No physics implementation is changed.
@@ -325,7 +425,10 @@ var (
 			positionStore, err := broker.NewPositionStore(filepath.Join(
 				dataPath,
 				"positions.sqlite",
-			))
+			),
+				viper.GetInt("trading.persistence.queue_depth"),
+				viper.GetInt("trading.persistence.batch_size"),
+			)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
@@ -335,7 +438,9 @@ var (
 				))
 			}
 
-			defer positionStore.Close()
+			defer func() {
+				errnie.Error(positionStore.Close())
+			}()
 
 			// The hub serves the trade journal from the position store's
 			// persisted position_trades table, so closed trades survive restarts
@@ -346,12 +451,12 @@ var (
 			positions := &sync.Map{}
 
 			recovery := broker.NewRecovery(
-				runtimeCtx, api, instrument, price, balance, recorder,
+				runtimeCtx, api, instrument, price, balance,
 				positionStore, positions,
 			)
 
 			desk, err := broker.NewDesk(
-				runtimeCtx, api, instrument, price, balance, recorder,
+				runtimeCtx, api, instrument, price, balance,
 				recovery, positionStore, positions,
 			)
 
@@ -367,10 +472,11 @@ var (
 
 			// Wire the Hindsight trading-lifecycle recorder so real entry/exit
 			// transitions persist as first-class, decision-correlated artifacts.
-			// It is observational and never affects trading.
-			desk.SetLifecycleRecorder(hindsightLifecycleRecorder{engine: storageEngine, runID: runID})
+			// It observes transitions after they occur and persists away from the
+			// guardian through the shared storage writer.
+			desk.SetLifecycleRecorder(hindsightLifecycleRecorder{writer: rawCapture, runID: runID})
 
-			planner, err := strategy.NewPlanner(runtimeCtx, recorder, desk)
+			planner, err := strategy.NewPlanner(runtimeCtx, desk)
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
@@ -381,6 +487,112 @@ var (
 			}
 
 			defer planner.Close()
+
+			basisArena, err := advisor.NewArena(
+				advisor.BasisName,
+				basisAdvisor.Features,
+				planner,
+				len(instrument.Symbols()),
+			)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: construct basis Arena",
+					err,
+				))
+			}
+
+			liquidityArena, err := advisor.NewArena(
+				advisor.LiquidityName,
+				liquidityAdvisor.Features,
+				basisArena,
+				len(instrument.Symbols()),
+			)
+
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: construct liquidity Arena",
+					err,
+				))
+			}
+
+			pullbackArena, err := advisor.NewArena(
+				advisor.PullbackName,
+				pullback.Features,
+				liquidityArena,
+				len(instrument.Symbols()),
+			)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: construct pullback Arena",
+					err,
+				))
+			}
+
+			profitRunArena, err := advisor.NewArena(
+				advisor.ProfitRunName,
+				profitRun.Features,
+				pullbackArena,
+				len(instrument.Symbols()),
+			)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: construct profit run Arena",
+					err,
+				))
+			}
+
+			participationArena, err := advisor.NewArena(
+				advisor.ParticipationName,
+				participation.Features,
+				profitRunArena,
+				len(instrument.Symbols()),
+			)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: construct participation Arena",
+					err,
+				))
+			}
+
+			auctionArena, err := advisor.NewArena(
+				advisor.AuctionName,
+				auction.Features,
+				participationArena,
+				len(instrument.Symbols()),
+			)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: construct auction Arena",
+					err,
+				))
+			}
+
+			momentumArena, err := advisor.NewArena(
+				advisor.MomentumName,
+				momentum.Features,
+				auctionArena,
+				len(instrument.Symbols()),
+			)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: construct momentum Arena",
+					err,
+				))
+			}
 
 			// Phase 2 — declare the complete streaming topology as Workloads.
 			// The Desk receives priority market/execution updates first. Analytical
@@ -491,9 +703,18 @@ var (
 				runtimeCtx,
 				"advisor",
 				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewTraced("advisor.momentum", momentumSolver)},
+					{
+						system.NewTraced("advisor.momentum", momentumSolver),
+						system.NewTraced("advisor.auction", auctionSolver),
+						system.NewTraced("advisor.participation", participationSolver),
+						system.NewTraced("advisor.pullback", pullbackSolver),
+						system.NewTraced("advisor.profit_run", profitRunSolver),
+						system.NewTraced("advisor.liquidity", liquiditySolver),
+						system.NewTraced("advisor.basis", basisSolver),
+					},
 				},
 			)
+
 
 			logicWorkload := nmruntime.NewWorkload(
 				runtimeCtx,
@@ -514,7 +735,8 @@ var (
 				runtimeCtx,
 				"strategy",
 				[][]nmruntime.Node[*types.Envelope]{
-					{planner},
+					{momentumArena},
+					{&deskContextNode{desk: desk}},
 					{system.NewDiagnostic("strategy.planned")},
 					{witness},
 					{hub},
@@ -607,6 +829,18 @@ var (
 			}()
 
 			select {
+			case <-rawCapture.Failed():
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"symm: capture storage failed",
+					rawCapture.Error(),
+				))
+			case <-positionStore.Failed():
+				return errnie.Error(errnie.Err(
+					errnie.IO,
+					"symm: position storage failed",
+					positionStore.Error(),
+				))
 			case err := <-transportErrors:
 				if api.Error() == nil && cmd.Context().Err() != nil {
 					return cmd.Context().Err()

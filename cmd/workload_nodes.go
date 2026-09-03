@@ -96,3 +96,83 @@ func cvdQuoteProvider(price *broker.Price) func(string) (*decimal.Decimal, *deci
 		return tick.Bid, tick.Ask
 	}
 }
+
+/*
+deskContextNode forwards survived perspectives and cross-signal causative facts
+from the enriched envelope into the broker desk's position guardian.
+*/
+type deskContextNode struct {
+	desk *broker.Desk
+}
+
+func (node *deskContextNode) Step(envelope *types.Envelope) *types.Envelope {
+	if node == nil || node.desk == nil || envelope == nil {
+		return envelope
+	}
+
+	symbol := envelope.Key
+
+	if symbol == "" {
+		symbol = envelope.TickerData.Symbol
+	}
+
+	if symbol == "" && len(envelope.Perspectives) > 0 {
+		symbol = envelope.Perspectives[0].Symbol
+	}
+
+	if symbol == "" {
+		return envelope
+	}
+
+
+	for _, perspective := range envelope.Perspectives {
+		_ = node.desk.StepPerspective(perspective)
+	}
+
+	causative := types.CausativeContext{
+		ActivePerspectives: make(map[string]string),
+	}
+
+	for _, perspective := range envelope.Perspectives {
+		causative.ActivePerspectives[perspective.Advisor.String()] = string(perspective.TopClass())
+	}
+
+	if envelope.Hawkes != nil {
+		if metric, ok := envelope.Hawkes.Metrics["branching_spectral_radius"]; ok {
+			causative.HawkesBranchingRatio = metric.Raw
+		}
+
+		if metric, ok := envelope.Hawkes.Metrics["excitation_fraction:buy"]; ok {
+			causative.HawkesExcitationBuy = metric.Raw
+		}
+
+		if metric, ok := envelope.Hawkes.Metrics["excitation_fraction:sell"]; ok {
+			causative.HawkesExcitationSell = metric.Raw
+		}
+	}
+
+	if envelope.Derivatives != nil {
+		if metric, ok := envelope.Derivatives.Metrics["open_interest_growth_velocity"]; ok {
+			causative.OIGrowthVelocity = metric.Raw
+		}
+
+		if metric, ok := envelope.Derivatives.Metrics["open_interest_growth_zscore"]; ok {
+			causative.OIGrowthZScore = metric.Raw
+		}
+	}
+
+	if envelope.Toxicity != nil {
+		if metric, ok := envelope.Toxicity.Metrics["net_replenishment_fraction:bid"]; ok {
+			causative.NetReplenishmentBid = metric.Raw
+		}
+
+		if metric, ok := envelope.Toxicity.Metrics["net_withdrawal_fraction:bid"]; ok {
+			causative.NetWithdrawalBid = metric.Raw
+		}
+	}
+
+	_ = node.desk.StepCausative(symbol, causative)
+
+	return envelope
+}
+

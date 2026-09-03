@@ -10,7 +10,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -35,7 +34,6 @@ type Desk struct {
 	price      *Price
 	balance    *Balance
 	equity     atomic.Pointer[types.EquityReading]
-	recorder   *audit.Recorder
 	recovery   *Recovery
 	positions  *sync.Map
 	// execution holds the continuously-advanced bounded execution state per
@@ -56,8 +54,8 @@ type Desk struct {
 
 /*
 LifecycleRecorder receives one real trading-lifecycle transition keyed by the
-decision ID that caused it. Implementors own persistence; the desk only reports
-and never blocks or fails the trade on it.
+decision ID that caused it. Implementors own persistence; the desk reports only
+after the corresponding transition and never branches trading state on it.
 */
 type LifecycleRecorder interface {
 	RecordLifecycle(event hindsight.LifecycleEvent)
@@ -75,7 +73,7 @@ type MarkObserver interface {
 /*
 NewDesk constructs the serial broker owner from its explicit dependencies. The
 desk owns no transport or account objects itself: the caller supplies the API,
-instrument, price, balance, recorder, and recovery handler it will
+instrument, price, balance, and recovery handler it will
 route through, so the live wiring and tests share one construction path rather
 than a half-built struct. positions is the shared open-position map the recovery
 publisher repopulates on boot. store persists position stoploss state; the desk
@@ -87,7 +85,6 @@ func NewDesk(
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
-	recorder *audit.Recorder,
 	recovery *Recovery,
 	store *PositionStore,
 	positions *sync.Map,
@@ -102,7 +99,6 @@ func NewDesk(
 		instrument:    instrument,
 		price:         price,
 		balance:       balance,
-		recorder:      recorder,
 		recovery:      recovery,
 		PositionStore: store,
 		positions:     positions,
@@ -276,6 +272,53 @@ func (desk *Desk) stepLevel3(level3 kraken.Level3Data, epoch uint64) error {
 
 	return nil
 }
+
+/*
+StepCausative routes cross-stream causative context to an open position.
+*/
+func (desk *Desk) StepCausative(symbol string, causative types.CausativeContext) error {
+	if desk == nil || desk.positions == nil || symbol == "" {
+		return nil
+	}
+
+	found, ok := desk.positions.Load(symbol)
+
+	if !ok || found == nil {
+		return nil
+	}
+
+	position, ok := found.(*Position)
+
+	if !ok || position == nil {
+		return nil
+	}
+
+	return position.publishGuardian(causative)
+}
+
+/*
+StepPerspective routes an Advisor perspective update to an open position.
+*/
+func (desk *Desk) StepPerspective(perspective *types.Perspective) error {
+	if desk == nil || desk.positions == nil || perspective == nil || perspective.Symbol == "" {
+		return nil
+	}
+
+	found, ok := desk.positions.Load(perspective.Symbol)
+
+	if !ok || found == nil {
+		return nil
+	}
+
+	position, ok := found.(*Position)
+
+	if !ok || position == nil {
+		return nil
+	}
+
+	return position.publishGuardian(perspective)
+}
+
 
 /*
 executionReducer returns the symbol's continuously-resident execution reducer,
@@ -682,7 +725,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			desk.instrument,
 			desk.price,
 			desk.balance,
-			desk.recorder,
 			desk.PositionStore,
 			pair,
 			decision,
@@ -713,8 +755,8 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		}
 
 		// recordFill persists the authoritative venue fill (entry or exit) as a
-		// decision-correlated Hindsight lifecycle event. It is observational and
-		// never affects the position's transition itself.
+		// decision-correlated Hindsight lifecycle event. It is emitted only after
+		// the position transition itself.
 		position.recordFill = func(kind string, execution kraken.ExecutionData) {
 			if desk.lifecycleRecorder == nil {
 				return

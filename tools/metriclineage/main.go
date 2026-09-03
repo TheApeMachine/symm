@@ -247,8 +247,10 @@ func main() {
 			consumers = append(consumers, scanCategoryConsumers(pkg, file, relFile)...)
 			consumers = append(consumers, scanKernelConsumers(pkg, file, relFile)...)
 			consumers = append(consumers, scanLearnedConsumers(pkg, file, relFile)...)
+			consumers = append(consumers, scanAdvisorConsumers(pkg, file, relFile)...)
 		}
 	}
+
 
 	rep := buildReport(producers, consumers, unresolved)
 
@@ -832,6 +834,46 @@ func classifyParam(paramType string) (kind string, kernel string) {
 
 	return "kernel", pkgName
 }
+
+/*
+scanAdvisorConsumers scans advisor package for feature keys and prediction metric references.
+*/
+func scanAdvisorConsumers(
+	pkg *packages.Package,
+	file *ast.File,
+	relFile string,
+) []consumerEdge {
+	if !strings.HasSuffix(pkg.PkgPath, "/logic/advisor") {
+		return nil
+	}
+
+	var out []consumerEdge
+
+	ast.Inspect(file, func(node ast.Node) bool {
+		lit, ok := node.(*ast.BasicLit)
+		if ok && lit.Kind == token.STRING {
+			metricStr := stringLiteral(lit)
+			if metricStr != "" && strings.Contains(metricStr, "/") && !strings.Contains(metricStr, "://") {
+				source, metric, _ := strings.Cut(metricStr, "/")
+				pos := pkg.Fset.Position(lit.Pos())
+				out = append(out, consumerEdge{
+					ID:       splitMetricIdentity(source, metric),
+					Kind:     "bound",
+					Consumer: "advisor (" + relFile + ")",
+					Package:  pkg.PkgPath,
+					File:     relFile,
+					Line:     pos.Line,
+				})
+			}
+		}
+
+		return true
+	})
+
+
+	return out
+}
+
 
 func calleeName(fn ast.Expr) string {
 	switch f := fn.(type) {

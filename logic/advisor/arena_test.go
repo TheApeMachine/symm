@@ -1,0 +1,241 @@
+package advisor
+
+import (
+	"testing"
+	"time"
+
+	. "github.com/smartystreets/goconvey/convey"
+
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/data"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/types"
+)
+
+type arenaNode struct {
+	calls        int
+	perspectives []*types.Perspective
+}
+
+func (node *arenaNode) Step(envelope *types.Envelope) *types.Envelope {
+	node.calls++
+	node.perspectives = envelope.Perspectives
+
+	return envelope
+}
+
+func TestNewArena(t *testing.T) {
+	Convey("Given a named Advisor, its Features, and a wrapped Node", t, func() {
+		arena, err := NewArena("midpoint", predictiveMidpointFeatures(), &arenaNode{}, 2)
+
+		Convey("Arena constructs with an empty bounded round set", func() {
+			So(err, ShouldBeNil)
+			So(arena.Active(), ShouldEqual, 0)
+		})
+	})
+
+	Convey("Given an invalid capacity", t, func() {
+		arena, err := NewArena("midpoint", predictiveMidpointFeatures(), &arenaNode{}, 0)
+
+		Convey("Arena refuses an unbounded configuration", func() {
+			So(err, ShouldNotBeNil)
+			So(errnie.IsValidation(err), ShouldBeTrue)
+			So(arena, ShouldBeNil)
+		})
+	})
+}
+
+func TestArenaStep(t *testing.T) {
+	Convey("Given an issued recovery Perspective", t, func() {
+		node := &arenaNode{}
+		arena, err := NewArena("midpoint", predictiveMidpointFeatures(), node, 2)
+		So(err, ShouldBeNil)
+		issued := arenaEnvelope("BTC/USD", 1, 1, 1)
+		issued.Perspectives = []*types.Perspective{arenaPerspective("BTC/USD", "recovery", 1, 3)}
+
+		Convey("Arena retains it instead of exposing an untested claim", func() {
+			So(arena.Step(issued), ShouldEqual, issued)
+			So(arena.Active(), ShouldEqual, 1)
+			So(node.perspectives, ShouldBeEmpty)
+		})
+
+		Convey("support releases the Perspective to the wrapped Node", func() {
+			So(arena.Step(issued), ShouldNotBeNil)
+			support := arenaEnvelope("BTC/USD", 1.2, 1, 2)
+
+			So(arena.Step(support), ShouldEqual, support)
+			So(arena.Active(), ShouldEqual, 0)
+			So(node.perspectives, ShouldHaveLength, 1)
+			So(node.perspectives[0].Lifecycle, ShouldEqual, types.PerspectiveSurvived)
+			So(node.perspectives[0].ResolvedBy, ShouldEqual,
+				types.PerspectiveEvent("pumpdump/positive_midpoint_return"))
+			So(node.perspectives[0].ResolvedCoordinate, ShouldEqual, uint64(2))
+			So(node.perspectives[0].Support, ShouldEqual, uint64(1))
+			So(node.perspectives[0].Maturity(), ShouldEqual, 0.0)
+
+			next := arenaEnvelope("BTC/USD", 1, 1, 3)
+			next.Perspectives = []*types.Perspective{
+				arenaPerspective("BTC/USD", "recovery", 3, 5),
+			}
+			So(arena.Step(next), ShouldNotBeNil)
+			secondSupport := arenaEnvelope("BTC/USD", 1.2, 1, 4)
+
+			So(arena.Step(secondSupport), ShouldNotBeNil)
+			So(node.perspectives, ShouldHaveLength, 1)
+			So(node.perspectives[0].Support, ShouldEqual, uint64(2))
+			So(node.perspectives[0].Maturity(), ShouldEqual, 0.5)
+		})
+
+		Convey("contradiction evicts it without exposing it to the wrapped Node", func() {
+			So(arena.Step(issued), ShouldNotBeNil)
+			contradiction := arenaEnvelope("BTC/USD", 1, 1.6, 2)
+
+			So(arena.Step(contradiction), ShouldEqual, contradiction)
+			So(arena.Active(), ShouldEqual, 0)
+			So(node.perspectives, ShouldBeEmpty)
+		})
+
+		Convey("expiry evicts it on its declared adaptive clock", func() {
+			So(arena.Step(issued), ShouldNotBeNil)
+			So(arena.Step(arenaEnvelope("BTC/USD", 1, 1, 2)), ShouldNotBeNil)
+			expired := arenaEnvelope("BTC/USD", 1, 1, 3)
+
+			So(arena.Step(expired), ShouldEqual, expired)
+			So(arena.Active(), ShouldEqual, 0)
+			So(node.perspectives, ShouldBeEmpty)
+		})
+
+		Convey("a non-winning support event remains counterfactual evidence", func() {
+			So(arena.Step(issued), ShouldNotBeNil)
+			counterfactual := arenaEnvelope("BTC/USD", 1, 1.2, 2)
+
+			So(arena.Step(counterfactual), ShouldEqual, counterfactual)
+			So(arena.Active(), ShouldEqual, 1)
+			So(node.perspectives, ShouldBeEmpty)
+		})
+	})
+
+	Convey("Given a full Arena", t, func() {
+		arena, err := NewArena("midpoint", predictiveMidpointFeatures(), &arenaNode{}, 1)
+		So(err, ShouldBeNil)
+		first := arenaEnvelope("BTC/USD", 1, 1, 1)
+		first.Perspectives = []*types.Perspective{arenaPerspective("BTC/USD", "recovery", 1, 3)}
+		So(arena.Step(first), ShouldNotBeNil)
+		second := arenaEnvelope("ETH/USD", 1, 1, 1)
+		second.Perspectives = []*types.Perspective{arenaPerspective("ETH/USD", "recovery", 1, 3)}
+
+		Convey("a new structural key fails visibly instead of evicting another round", func() {
+			So(arena.Step(second), ShouldBeNil)
+			So(errnie.IsTooManyRequests(arena.Error()), ShouldBeTrue)
+		})
+	})
+}
+
+func arenaPerspective(
+	symbol string,
+	winner types.PerspectiveState,
+	from uint64,
+	until uint64,
+) *types.Perspective {
+	classes := []types.PerspectiveClass{
+		{State: "recovery", Probability: 0.8},
+		{State: "breakdown", Probability: 0.2},
+	}
+
+	if winner == "breakdown" {
+		classes[0].Probability = 0.2
+		classes[1].Probability = 0.8
+	}
+
+	return &types.Perspective{
+		Symbol:   symbol,
+		Advisor:  nmtypes.MustIntern("midpoint"),
+		Question: "midpoint",
+		Classes:  classes,
+		Predictions: []types.PerspectivePrediction{
+			{Class: "recovery", Event: "pumpdump/positive_midpoint_return", Effect: types.PredictionSupports},
+			{Class: "recovery", Event: "pumpdump/negative_midpoint_return", Effect: types.PredictionFalsifies},
+			{Class: "breakdown", Event: "pumpdump/negative_midpoint_return", Effect: types.PredictionSupports},
+			{Class: "breakdown", Event: "pumpdump/positive_midpoint_return", Effect: types.PredictionFalsifies},
+		},
+		Lease: types.PerspectiveLease{
+			Clock: nmtypes.MustIntern("pumpdump/completed_volume_bar_ordinal"),
+			From:  from,
+			Until: until,
+		},
+		Lifecycle: types.PerspectiveIssued,
+	}
+}
+
+func arenaEnvelope(
+	symbol string,
+	positive float64,
+	negative float64,
+	ordinal uint64,
+) *types.Envelope {
+	at := time.Unix(1_700_000_000+int64(ordinal), 0)
+	measurement := data.NewMeasurement[float64](
+		"pumpdump:"+symbol,
+		symbol,
+		"pumpdump",
+		at,
+		at,
+	)
+	measurement.PutMetric(data.NewMetric(
+		"completed_volume_bar_ordinal",
+		float64(ordinal),
+		nil,
+		nil,
+		data.UnitCount,
+		data.TimescaleInstantaneous,
+	))
+	measurement.PutMetric(data.NewMetric(
+		"positive_midpoint_return",
+		positive,
+		nil,
+		nil,
+		data.UnitDimensionless,
+		data.TimescaleInstantaneous,
+	))
+	measurement.PutMetric(data.NewMetric(
+		"negative_midpoint_return",
+		negative,
+		nil,
+		nil,
+		data.UnitDimensionless,
+		data.TimescaleInstantaneous,
+	))
+
+	envelope := types.NewEnvelope(types.EnvelopeTrade)
+	envelope.TradeData.Symbol = symbol
+	envelope.TradeData.Timestamp = at
+	envelope.PumpDump = measurement
+
+	return envelope
+}
+
+func BenchmarkArenaStep(b *testing.B) {
+	node := &arenaNode{}
+	arena, err := NewArena("midpoint", predictiveMidpointFeatures(), node, 1)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	issued := arenaEnvelope("BTC/USD", 1, 1, 1)
+	issued.Perspectives = []*types.Perspective{arenaPerspective("BTC/USD", "recovery", 1, ^uint64(0))}
+
+	if arena.Step(issued) == nil {
+		b.Fatal(arena.Error())
+	}
+
+	envelope := arenaEnvelope("BTC/USD", 1, 1, 1)
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		if arena.Step(envelope) == nil {
+			b.Fatal(arena.Error())
+		}
+	}
+}

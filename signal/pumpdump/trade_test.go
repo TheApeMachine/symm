@@ -164,9 +164,9 @@ func BenchmarkTradeStep(b *testing.B) {
 	})
 
 	b.ReportAllocs()
-	b.ResetTimer()
+	
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for iteration := 0; b.Loop(); iteration++ {
 		quoteIndex = iteration % len(quotes)
 		measurement := entity.Step(spotTrade(
 			"BTC/USD",

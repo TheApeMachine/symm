@@ -156,10 +156,21 @@ func (morphology *Book) Step(message kraken.Level3Data) *data.Measurement[float6
 		return morphology.projector.Project(message.Symbol, "morphology", message.Timestamp, message.Timestamp, input)
 	}
 
+	if committed, found := morphology.number.Project(message.Symbol); found {
+		previousSec, _ := committed.Get(changeSeries.SecSymbol)
+		previousNsec, _ := committed.Get(changeSeries.NsecSymbol)
+
+		if float64(message.Timestamp.Unix()) < previousSec ||
+			(float64(message.Timestamp.Unix()) == previousSec && float64(message.Timestamp.Nanosecond()) < previousNsec) {
+			return nil
+		}
+	}
+
 	input.Put(symbolMorphologyChange, morphologyChange)
 	input.Put(changeSeries.ValueSymbol, morphologyChange)
 	input.Put(changeSeries.SecSymbol, float64(message.Timestamp.Unix()))
 	input.Put(changeSeries.NsecSymbol, float64(message.Timestamp.Nanosecond()))
+
 
 	return morphology.projector.Project(
 		message.Symbol,

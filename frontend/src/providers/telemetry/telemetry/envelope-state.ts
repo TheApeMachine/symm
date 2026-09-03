@@ -16,6 +16,7 @@ import { EnvelopeLiquiditySweepWithRecoveryUpdate, EnvelopeLiquiditySweepWithRec
 import { EnvelopeManifoldState, EnvelopeManifoldStateT } from '../telemetry/envelope-manifold-state.js';
 import { EnvelopeMeasurement, EnvelopeMeasurementT } from '../telemetry/envelope-measurement.js';
 import { EnvelopeOpportunityCandidate, EnvelopeOpportunityCandidateT } from '../telemetry/envelope-opportunity-candidate.js';
+import { EnvelopePerspective, EnvelopePerspectiveT } from '../telemetry/envelope-perspective.js';
 import { EnvelopeResonanceArtifact, EnvelopeResonanceArtifactT } from '../telemetry/envelope-resonance-artifact.js';
 import { EnvelopeTickerData, EnvelopeTickerDataT } from '../telemetry/envelope-ticker-data.js';
 import { EnvelopeTradeData, EnvelopeTradeDataT } from '../telemetry/envelope-trade-data.js';
@@ -224,12 +225,12 @@ strategy(obj?:StrategyFrame):StrategyFrame|null {
   return offset ? (obj || new StrategyFrame()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-perspectives(index: number, obj?:PerspectiveFrame):PerspectiveFrame|null {
+perspectiveFrames(index: number, obj?:PerspectiveFrame):PerspectiveFrame|null {
   const offset = this.bb!.__offset(this.bb_pos, 68);
   return offset ? (obj || new PerspectiveFrame()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
-perspectivesLength():number {
+perspectiveFramesLength():number {
   const offset = this.bb!.__offset(this.bb_pos, 68);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
@@ -254,8 +255,18 @@ liquiditySweepWithRecovery(obj?:EnvelopeLiquiditySweepWithRecoveryUpdate):Envelo
   return offset ? (obj || new EnvelopeLiquiditySweepWithRecoveryUpdate()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
+perspectives(index: number, obj?:EnvelopePerspective):EnvelopePerspective|null {
+  const offset = this.bb!.__offset(this.bb_pos, 78);
+  return offset ? (obj || new EnvelopePerspective()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+perspectivesLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 78);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
 static startEnvelopeState(builder:flatbuffers.Builder) {
-  builder.startObject(37);
+  builder.startObject(38);
 }
 
 static addKey(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset) {
@@ -422,11 +433,11 @@ static addStrategy(builder:flatbuffers.Builder, strategyOffset:flatbuffers.Offse
   builder.addFieldOffset(31, strategyOffset, 0);
 }
 
-static addPerspectives(builder:flatbuffers.Builder, perspectivesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(32, perspectivesOffset, 0);
+static addPerspectiveFrames(builder:flatbuffers.Builder, perspectiveFramesOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(32, perspectiveFramesOffset, 0);
 }
 
-static createPerspectivesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+static createPerspectiveFramesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
   builder.startVector(4, data.length, 4);
   for (let i = data.length - 1; i >= 0; i--) {
     builder.addOffset(data[i]!);
@@ -434,7 +445,7 @@ static createPerspectivesVector(builder:flatbuffers.Builder, data:flatbuffers.Of
   return builder.endVector();
 }
 
-static startPerspectivesVector(builder:flatbuffers.Builder, numElems:number) {
+static startPerspectiveFramesVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
@@ -452,6 +463,22 @@ static addPositions(builder:flatbuffers.Builder, positionsOffset:flatbuffers.Off
 
 static addLiquiditySweepWithRecovery(builder:flatbuffers.Builder, liquiditySweepWithRecoveryOffset:flatbuffers.Offset) {
   builder.addFieldOffset(36, liquiditySweepWithRecoveryOffset, 0);
+}
+
+static addPerspectives(builder:flatbuffers.Builder, perspectivesOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(37, perspectivesOffset, 0);
+}
+
+static createPerspectivesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startPerspectivesVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
 }
 
 static endEnvelopeState(builder:flatbuffers.Builder):flatbuffers.Offset {
@@ -494,11 +521,12 @@ unpack(): EnvelopeStateT {
     (this.cognition() !== null ? this.cognition()!.unpack() : null),
     this.bb!.createObjList<EnvelopeBoundaryStamp, EnvelopeBoundaryStampT>(this.boundaries.bind(this), this.boundariesLength()),
     (this.strategy() !== null ? this.strategy()!.unpack() : null),
-    this.bb!.createObjList<PerspectiveFrame, PerspectiveFrameT>(this.perspectives.bind(this), this.perspectivesLength()),
+    this.bb!.createObjList<PerspectiveFrame, PerspectiveFrameT>(this.perspectiveFrames.bind(this), this.perspectiveFramesLength()),
     this.tick(),
     (this.equity() !== null ? this.equity()!.unpack() : null),
     (this.positions() !== null ? this.positions()!.unpack() : null),
-    (this.liquiditySweepWithRecovery() !== null ? this.liquiditySweepWithRecovery()!.unpack() : null)
+    (this.liquiditySweepWithRecovery() !== null ? this.liquiditySweepWithRecovery()!.unpack() : null),
+    this.bb!.createObjList<EnvelopePerspective, EnvelopePerspectiveT>(this.perspectives.bind(this), this.perspectivesLength())
   );
 }
 
@@ -536,11 +564,12 @@ unpackTo(_o: EnvelopeStateT): void {
   _o.cognition = (this.cognition() !== null ? this.cognition()!.unpack() : null);
   _o.boundaries = this.bb!.createObjList<EnvelopeBoundaryStamp, EnvelopeBoundaryStampT>(this.boundaries.bind(this), this.boundariesLength());
   _o.strategy = (this.strategy() !== null ? this.strategy()!.unpack() : null);
-  _o.perspectives = this.bb!.createObjList<PerspectiveFrame, PerspectiveFrameT>(this.perspectives.bind(this), this.perspectivesLength());
+  _o.perspectiveFrames = this.bb!.createObjList<PerspectiveFrame, PerspectiveFrameT>(this.perspectiveFrames.bind(this), this.perspectiveFramesLength());
   _o.tick = this.tick();
   _o.equity = (this.equity() !== null ? this.equity()!.unpack() : null);
   _o.positions = (this.positions() !== null ? this.positions()!.unpack() : null);
   _o.liquiditySweepWithRecovery = (this.liquiditySweepWithRecovery() !== null ? this.liquiditySweepWithRecovery()!.unpack() : null);
+  _o.perspectives = this.bb!.createObjList<EnvelopePerspective, EnvelopePerspectiveT>(this.perspectives.bind(this), this.perspectivesLength());
 }
 }
 
@@ -578,11 +607,12 @@ constructor(
   public cognition: EnvelopeCognitionT|null = null,
   public boundaries: (EnvelopeBoundaryStampT)[] = [],
   public strategy: StrategyFrameT|null = null,
-  public perspectives: (PerspectiveFrameT)[] = [],
+  public perspectiveFrames: (PerspectiveFrameT)[] = [],
   public tick: bigint = BigInt('0'),
   public equity: EquityFrameT|null = null,
   public positions: PositionsFrameT|null = null,
-  public liquiditySweepWithRecovery: EnvelopeLiquiditySweepWithRecoveryUpdateT|null = null
+  public liquiditySweepWithRecovery: EnvelopeLiquiditySweepWithRecoveryUpdateT|null = null,
+  public perspectives: (EnvelopePerspectiveT)[] = []
 ){}
 
 
@@ -614,10 +644,11 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const cognition = (this.cognition !== null ? this.cognition!.pack(builder) : 0);
   const boundaries = EnvelopeState.createBoundariesVector(builder, builder.createObjectOffsetList(this.boundaries));
   const strategy = (this.strategy !== null ? this.strategy!.pack(builder) : 0);
-  const perspectives = EnvelopeState.createPerspectivesVector(builder, builder.createObjectOffsetList(this.perspectives));
+  const perspectiveFrames = EnvelopeState.createPerspectiveFramesVector(builder, builder.createObjectOffsetList(this.perspectiveFrames));
   const equity = (this.equity !== null ? this.equity!.pack(builder) : 0);
   const positions = (this.positions !== null ? this.positions!.pack(builder) : 0);
   const liquiditySweepWithRecovery = (this.liquiditySweepWithRecovery !== null ? this.liquiditySweepWithRecovery!.pack(builder) : 0);
+  const perspectives = EnvelopeState.createPerspectivesVector(builder, builder.createObjectOffsetList(this.perspectives));
 
   EnvelopeState.startEnvelopeState(builder);
   EnvelopeState.addKey(builder, key);
@@ -652,11 +683,12 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   EnvelopeState.addCognition(builder, cognition);
   EnvelopeState.addBoundaries(builder, boundaries);
   EnvelopeState.addStrategy(builder, strategy);
-  EnvelopeState.addPerspectives(builder, perspectives);
+  EnvelopeState.addPerspectiveFrames(builder, perspectiveFrames);
   EnvelopeState.addTick(builder, this.tick);
   EnvelopeState.addEquity(builder, equity);
   EnvelopeState.addPositions(builder, positions);
   EnvelopeState.addLiquiditySweepWithRecovery(builder, liquiditySweepWithRecovery);
+  EnvelopeState.addPerspectives(builder, perspectives);
 
   return EnvelopeState.endEnvelopeState(builder);
 }

@@ -14,7 +14,6 @@ import (
 
 	"github.com/theapemachine/datura/dmt"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -87,7 +86,6 @@ type Solver struct {
 	cancel         context.CancelFunc
 	err            error
 	status         *runtime.Status
-	recorder       *audit.Recorder
 	treeMu         sync.RWMutex
 	tree           *dmt.Tree
 	states         sync.Map // string (symbol) -> *symbolCognitionState

@@ -314,7 +314,7 @@ func NewFuturesWithClient(
 	})
 
 	futures.pinger.OnFailed(func(err error) {
-		futures.fail(errnie.Err(
+		go futures.reconnect(errnie.Err(
 			errnie.IO,
 			"futures: keepalive failed",
 			err,

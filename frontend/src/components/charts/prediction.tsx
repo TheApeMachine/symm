@@ -1,5 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
-import type { CSSProperties } from "react";
+import { type CSSProperties, useRef } from "react";
 import { focusStore, resonanceArtifactStore } from "#/collections/app";
 import { semanticLayerName } from "#/components/terminal/xray-layers";
 import type { EnvelopeResonanceArtifact } from "#/providers/telemetry/telemetry/envelope-resonance-artifact";
@@ -42,9 +42,33 @@ same way the other resonance surfaces do it.
 const useArtifact = (): EnvelopeResonanceArtifact | undefined => {
 	const symbol = useSelector(focusStore, (state) => state);
 
-	return useSelector(resonanceArtifactStore, (state) =>
-		state.findLast((row) => row.symbol() === symbol),
+	const row = useSelector(resonanceArtifactStore, (state) =>
+		state.findLast((candidate) => candidate.symbol() === symbol),
 	);
+
+	/*
+	The artifact ring is shared across the whole cross-section, so the focused
+	symbol's row is evicted whenever the other symbols out-produce it for a few
+	frames. That is sparsity, not an absence of state: the coder still holds the
+	values it last published. Latching the last row for the focused symbol keeps
+	the panel showing that state instead of blanking out until the symbol is
+	quoted again. The latch is cleared on a focus change so a new symbol never
+	inherits the previous one's numbers.
+	*/
+	const held = useRef<{
+		symbol: string | undefined;
+		row: EnvelopeResonanceArtifact | undefined;
+	}>({ symbol, row: undefined });
+
+	if (held.current.symbol !== symbol) {
+		held.current = { symbol, row: undefined };
+	}
+
+	if (row !== undefined) {
+		held.current.row = row;
+	}
+
+	return held.current.row;
 };
 
 /*

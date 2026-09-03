@@ -20,7 +20,6 @@ SYMM_BIN := bin/symm
 CONFIG ?=
 CONFIG_FLAG = $(if $(CONFIG),--config $(CONFIG),)
 LOG_DIR ?= runs
-OPTIMIZE_AUDIT ?= runs/audit.jsonl
 OPTIMIZE_REPLAY ?= runs/replay.jsonl
 OPTIMIZE_TREE ?= logic/rules/tree.yml
 OPTIMIZE_LOOKBACK ?= 6h
@@ -29,7 +28,7 @@ OPTIMIZE_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize audit audit-report dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map
 
 generate-telemetry:
 	flatc --no-warnings --go --gen-object-api -o telemetry/generated telemetry/telemetry.fbs

@@ -1029,6 +1029,7 @@ func encodePerspective(perspective *Perspective) *telemetry.EnvelopePerspectiveT
 
 	for _, prediction := range perspective.Predictions {
 		predictions = append(predictions, &telemetry.EnvelopePerspectivePredictionT{
+			Class:  string(prediction.Class),
 			Event:  string(prediction.Event),
 			Effect: prediction.Effect.String(),
 		})
@@ -1059,6 +1060,18 @@ func encodePerspective(perspective *Perspective) *telemetry.EnvelopePerspectiveT
 
 	if perspective.Err != nil {
 		encoded.Error = perspective.Err.Error()
+	}
+
+	return encoded
+}
+
+func encodePerspectives(perspectives []*Perspective) []*telemetry.EnvelopePerspectiveT {
+	encoded := make([]*telemetry.EnvelopePerspectiveT, 0, len(perspectives))
+
+	for _, perspective := range perspectives {
+		if perspective != nil {
+			encoded = append(encoded, encodePerspective(perspective))
+		}
 	}
 
 	return encoded
@@ -1167,6 +1180,7 @@ func (envelope *Envelope) encodeBase(
 		Opportunities:     encodeOpportunities(envelope.Opportunities),
 		GraphUpdate:       encodeGraphUpdate(envelope.GraphUpdate),
 		Cognition:         encodeCognition(envelope.Cognition),
+		Perspectives:      encodePerspectives(envelope.Perspectives),
 		Strategy:          encodeStrategyRound(envelope.StrategyRound),
 		Equity:            encodeEquity(envelope.Equity),
 		Positions:         encodePositions(envelope.Positions),
@@ -1268,6 +1282,7 @@ func DecisionWire(decision *Decision) *telemetry.DecisionT {
 		EntryCost:        entryCostWire(decision.EntryCost),
 		Stoploss:         StoplossWire(decision.Stoploss),
 		Risk:             riskWire(&decision.Risk),
+		Trace:            decisionTraceWire(decision.Trace),
 	}
 }
 

@@ -14,14 +14,17 @@ func TestWitnessNodeStep(t *testing.T) {
 	Convey("Given a non-action opportunity phase transition", t, func() {
 		engine, err := store.NewSQLite(t.TempDir() + "/hindsight.sqlite")
 		So(err, ShouldBeNil)
-		Reset(func() { _ = engine.Close() })
 
 		runID, err := hindsight.NewRunID(time.Unix(1, 0))
 		So(err, ShouldBeNil)
 		sequencer, err := hindsight.NewSequencer(runID)
 		So(err, ShouldBeNil)
-		writer, err := store.NewWriter(engine, sequencer)
+		writer, err := store.NewWriter(engine, sequencer, 16, 8)
 		So(err, ShouldBeNil)
+		Reset(func() {
+			_ = writer.Close()
+			_ = engine.Close()
+		})
 		capture, err := writer.Capture(
 			"ticker", "public", []byte(`{"channel":"ticker"}`), time.Unix(2, 0),
 			hindsight.StreamRef{Stream: "public:ticker", Epoch: 1, Sequence: 1},
@@ -59,6 +62,14 @@ func TestWitnessNodeStep(t *testing.T) {
 		Convey("the same phase does not create repeated full-state witnesses", func() {
 			So(node.shouldWitness(envelope), ShouldBeTrue)
 			So(node.shouldWitness(envelope), ShouldBeFalse)
+		})
+
+		Convey("periodic heartbeat witnesses state after elapsed interval", func() {
+			So(node.shouldWitness(envelope), ShouldBeTrue)
+			So(node.shouldWitness(envelope), ShouldBeFalse)
+
+			node.lastWitnessed["TEST/USD"] = time.Now().Add(-2 * time.Second)
+			So(node.shouldWitness(envelope), ShouldBeTrue)
 		})
 	})
 }

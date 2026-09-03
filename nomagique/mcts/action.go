@@ -40,12 +40,12 @@ whose outcome cannot be validly estimated is Undefined: Defined=false. It is
 never assigned zero, correlation, an old estimate, or an arbitrary penalty.
 */
 type ActionEstimate struct {
-	Action              Action
-	ExpectedOutcome     float64
-	Uncertainty         float64
+	Action               Action
+	ExpectedOutcome      float64
+	Uncertainty          float64
 	IdentificationStatus IdentificationStatus
-	Support             float64
-	Defined             bool
+	Support              float64
+	Defined              bool
 }
 
 /*

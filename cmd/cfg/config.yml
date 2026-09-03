@@ -8,9 +8,6 @@ runtime:
 
 system:
   data_path: ~/.symm/data
-  audit:
-    # Rename runtime-audit.jsonl aside on boot so diagnostics start clean.
-    rotate_on_boot: true
   pprof:
     enabled: false
     addr: 127.0.0.1:6060
@@ -47,6 +44,12 @@ system:
       buffer: 4096
 
 hindsight:
+  capture:
+    # Raw frames and their manifests share one ordered, non-dropping queue.
+    # Producers only block if storage consumes this full bounded allowance.
+    queue_depth: 8192
+    # SQLite commits at most this many ordered records per transaction.
+    batch_size: 256
   witness:
     # Phase transitions and actions are the bounded decision moments retained
     # for counterfactual evaluation. Overflow marks the run GAPPED.
@@ -123,6 +126,11 @@ ui:
 
 trading:
   model: paper
+  persistence:
+    # Stoploss checkpoints and trade-journal updates leave guardian threads
+    # through this ordered, non-dropping queue.
+    queue_depth: 1024
+    batch_size: 128
   allocation:
     # Hard per-entry quote-notional ceiling. Every qualifying symbol is priced
     # independently; there is no position-slot or winner arbitration policy.

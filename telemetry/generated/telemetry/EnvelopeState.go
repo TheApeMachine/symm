@@ -7,43 +7,44 @@ import (
 )
 
 type EnvelopeStateT struct {
-	Key                        string                                     `json:"key"`
-	TypeId                     byte                                       `json:"typeId"`
-	CaptureRun                 string                                     `json:"captureRun"`
-	CaptureSeq                 uint64                                     `json:"captureSeq"`
-	CaptureStream              string                                     `json:"captureStream"`
-	CaptureEpoch               uint64                                     `json:"captureEpoch"`
-	CaptureStreamSeq           uint64                                     `json:"captureStreamSeq"`
-	CaptureOrdinal             uint64                                     `json:"captureOrdinal"`
-	TickerData                 *EnvelopeTickerDataT                       `json:"tickerData"`
-	TradeData                  *EnvelopeTradeDataT                        `json:"tradeData"`
-	Level3Data                 *EnvelopeLevel3DataT                       `json:"level3Data"`
-	FuturesTickerData          *EnvelopeFuturesTickerDataT                `json:"futuresTickerData"`
-	FuturesTradeData           *EnvelopeFuturesTradeDataT                 `json:"futuresTradeData"`
-	Correlation                *EnvelopeMeasurementT                      `json:"correlation"`
-	LeadLag                    *EnvelopeMeasurementT                      `json:"leadLag"`
-	Liquidity                  *EnvelopeMeasurementT                      `json:"liquidity"`
-	Sentiment                  *EnvelopeMeasurementT                      `json:"sentiment"`
-	Cvd                        *EnvelopeMeasurementT                      `json:"cvd"`
-	DepthFlow                  *EnvelopeMeasurementT                      `json:"depthFlow"`
-	Morphology                 *EnvelopeMeasurementT                      `json:"morphology"`
-	Hawkes                     *EnvelopeMeasurementT                      `json:"hawkes"`
-	PumpDump                   *EnvelopeMeasurementT                      `json:"pumpDump"`
-	Toxicity                   *EnvelopeMeasurementT                      `json:"toxicity"`
-	Derivatives                *EnvelopeMeasurementT                      `json:"derivatives"`
-	Categories                 []*EnvelopeCategoryT                       `json:"categories"`
-	Opportunities              []*EnvelopeOpportunityCandidateT           `json:"opportunities"`
-	GraphUpdate                *EnvelopeGraphUpdateT                      `json:"graphUpdate"`
-	Resonance                  *EnvelopeResonanceArtifactT                `json:"resonance"`
-	Manifold                   *EnvelopeManifoldStateT                    `json:"manifold"`
-	Cognition                  *EnvelopeCognitionT                        `json:"cognition"`
-	Boundaries                 []*EnvelopeBoundaryStampT                  `json:"boundaries"`
-	Strategy                   *StrategyFrameT                            `json:"strategy"`
-	Perspectives               []*PerspectiveFrameT                       `json:"perspectives"`
-	Tick                       int64                                      `json:"tick"`
-	Equity                     *EquityFrameT                              `json:"equity"`
-	Positions                  *PositionsFrameT                           `json:"positions"`
+	Key string `json:"key"`
+	TypeId byte `json:"typeId"`
+	CaptureRun string `json:"captureRun"`
+	CaptureSeq uint64 `json:"captureSeq"`
+	CaptureStream string `json:"captureStream"`
+	CaptureEpoch uint64 `json:"captureEpoch"`
+	CaptureStreamSeq uint64 `json:"captureStreamSeq"`
+	CaptureOrdinal uint64 `json:"captureOrdinal"`
+	TickerData *EnvelopeTickerDataT `json:"tickerData"`
+	TradeData *EnvelopeTradeDataT `json:"tradeData"`
+	Level3Data *EnvelopeLevel3DataT `json:"level3Data"`
+	FuturesTickerData *EnvelopeFuturesTickerDataT `json:"futuresTickerData"`
+	FuturesTradeData *EnvelopeFuturesTradeDataT `json:"futuresTradeData"`
+	Correlation *EnvelopeMeasurementT `json:"correlation"`
+	LeadLag *EnvelopeMeasurementT `json:"leadLag"`
+	Liquidity *EnvelopeMeasurementT `json:"liquidity"`
+	Sentiment *EnvelopeMeasurementT `json:"sentiment"`
+	Cvd *EnvelopeMeasurementT `json:"cvd"`
+	DepthFlow *EnvelopeMeasurementT `json:"depthFlow"`
+	Morphology *EnvelopeMeasurementT `json:"morphology"`
+	Hawkes *EnvelopeMeasurementT `json:"hawkes"`
+	PumpDump *EnvelopeMeasurementT `json:"pumpDump"`
+	Toxicity *EnvelopeMeasurementT `json:"toxicity"`
+	Derivatives *EnvelopeMeasurementT `json:"derivatives"`
+	Categories []*EnvelopeCategoryT `json:"categories"`
+	Opportunities []*EnvelopeOpportunityCandidateT `json:"opportunities"`
+	GraphUpdate *EnvelopeGraphUpdateT `json:"graphUpdate"`
+	Resonance *EnvelopeResonanceArtifactT `json:"resonance"`
+	Manifold *EnvelopeManifoldStateT `json:"manifold"`
+	Cognition *EnvelopeCognitionT `json:"cognition"`
+	Boundaries []*EnvelopeBoundaryStampT `json:"boundaries"`
+	Strategy *StrategyFrameT `json:"strategy"`
+	PerspectiveFrames []*PerspectiveFrameT `json:"perspectiveFrames"`
+	Tick int64 `json:"tick"`
+	Equity *EquityFrameT `json:"equity"`
+	Positions *PositionsFrameT `json:"positions"`
 	LiquiditySweepWithRecovery *EnvelopeLiquiditySweepWithRecoveryUpdateT `json:"liquiditySweepWithRecovery"`
+	Perspectives []*EnvelopePerspectiveT `json:"perspectives"`
 }
 
 func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -122,6 +123,22 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 		boundariesOffset = builder.EndVector(boundariesLength)
 	}
 	strategyOffset := t.Strategy.Pack(builder)
+	perspectiveFramesOffset := flatbuffers.UOffsetT(0)
+	if t.PerspectiveFrames != nil {
+		perspectiveFramesLength := len(t.PerspectiveFrames)
+		perspectiveFramesOffsets := make([]flatbuffers.UOffsetT, perspectiveFramesLength)
+		for j := 0; j < perspectiveFramesLength; j++ {
+			perspectiveFramesOffsets[j] = t.PerspectiveFrames[j].Pack(builder)
+		}
+		EnvelopeStateStartPerspectiveFramesVector(builder, perspectiveFramesLength)
+		for j := perspectiveFramesLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(perspectiveFramesOffsets[j])
+		}
+		perspectiveFramesOffset = builder.EndVector(perspectiveFramesLength)
+	}
+	equityOffset := t.Equity.Pack(builder)
+	positionsOffset := t.Positions.Pack(builder)
+	liquiditySweepWithRecoveryOffset := t.LiquiditySweepWithRecovery.Pack(builder)
 	perspectivesOffset := flatbuffers.UOffsetT(0)
 	if t.Perspectives != nil {
 		perspectivesLength := len(t.Perspectives)
@@ -135,9 +152,6 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 		}
 		perspectivesOffset = builder.EndVector(perspectivesLength)
 	}
-	equityOffset := t.Equity.Pack(builder)
-	positionsOffset := t.Positions.Pack(builder)
-	liquiditySweepWithRecoveryOffset := t.LiquiditySweepWithRecovery.Pack(builder)
 	EnvelopeStateStart(builder)
 	EnvelopeStateAddKey(builder, keyOffset)
 	EnvelopeStateAddTypeId(builder, t.TypeId)
@@ -171,11 +185,12 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	EnvelopeStateAddCognition(builder, cognitionOffset)
 	EnvelopeStateAddBoundaries(builder, boundariesOffset)
 	EnvelopeStateAddStrategy(builder, strategyOffset)
-	EnvelopeStateAddPerspectives(builder, perspectivesOffset)
+	EnvelopeStateAddPerspectiveFrames(builder, perspectiveFramesOffset)
 	EnvelopeStateAddTick(builder, t.Tick)
 	EnvelopeStateAddEquity(builder, equityOffset)
 	EnvelopeStateAddPositions(builder, positionsOffset)
 	EnvelopeStateAddLiquiditySweepWithRecovery(builder, liquiditySweepWithRecoveryOffset)
+	EnvelopeStateAddPerspectives(builder, perspectivesOffset)
 	return EnvelopeStateEnd(builder)
 }
 
@@ -230,17 +245,24 @@ func (rcv *EnvelopeState) UnPackTo(t *EnvelopeStateT) {
 		t.Boundaries[j] = x.UnPack()
 	}
 	t.Strategy = rcv.Strategy(nil).UnPack()
-	perspectivesLength := rcv.PerspectivesLength()
-	t.Perspectives = make([]*PerspectiveFrameT, perspectivesLength)
-	for j := 0; j < perspectivesLength; j++ {
+	perspectiveFramesLength := rcv.PerspectiveFramesLength()
+	t.PerspectiveFrames = make([]*PerspectiveFrameT, perspectiveFramesLength)
+	for j := 0; j < perspectiveFramesLength; j++ {
 		x := PerspectiveFrame{}
-		rcv.Perspectives(&x, j)
-		t.Perspectives[j] = x.UnPack()
+		rcv.PerspectiveFrames(&x, j)
+		t.PerspectiveFrames[j] = x.UnPack()
 	}
 	t.Tick = rcv.Tick()
 	t.Equity = rcv.Equity(nil).UnPack()
 	t.Positions = rcv.Positions(nil).UnPack()
 	t.LiquiditySweepWithRecovery = rcv.LiquiditySweepWithRecovery(nil).UnPack()
+	perspectivesLength := rcv.PerspectivesLength()
+	t.Perspectives = make([]*EnvelopePerspectiveT, perspectivesLength)
+	for j := 0; j < perspectivesLength; j++ {
+		x := EnvelopePerspective{}
+		rcv.Perspectives(&x, j)
+		t.Perspectives[j] = x.UnPack()
+	}
 }
 
 func (rcv *EnvelopeState) UnPack() *EnvelopeStateT {
@@ -704,7 +726,7 @@ func (rcv *EnvelopeState) Strategy(obj *StrategyFrame) *StrategyFrame {
 	return nil
 }
 
-func (rcv *EnvelopeState) Perspectives(obj *PerspectiveFrame, j int) bool {
+func (rcv *EnvelopeState) PerspectiveFrames(obj *PerspectiveFrame, j int) bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
@@ -716,7 +738,7 @@ func (rcv *EnvelopeState) Perspectives(obj *PerspectiveFrame, j int) bool {
 	return false
 }
 
-func (rcv *EnvelopeState) PerspectivesLength() int {
+func (rcv *EnvelopeState) PerspectiveFramesLength() int {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
@@ -775,8 +797,28 @@ func (rcv *EnvelopeState) LiquiditySweepWithRecovery(obj *EnvelopeLiquiditySweep
 	return nil
 }
 
+func (rcv *EnvelopeState) Perspectives(obj *EnvelopePerspective, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *EnvelopeState) PerspectivesLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
 func EnvelopeStateStart(builder *flatbuffers.Builder) {
-	builder.StartObject(37)
+	builder.StartObject(38)
 }
 func EnvelopeStateAddKey(builder *flatbuffers.Builder, key flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(key), 0)
@@ -883,10 +925,10 @@ func EnvelopeStateStartBoundariesVector(builder *flatbuffers.Builder, numElems i
 func EnvelopeStateAddStrategy(builder *flatbuffers.Builder, strategy flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(31, flatbuffers.UOffsetT(strategy), 0)
 }
-func EnvelopeStateAddPerspectives(builder *flatbuffers.Builder, perspectives flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(32, flatbuffers.UOffsetT(perspectives), 0)
+func EnvelopeStateAddPerspectiveFrames(builder *flatbuffers.Builder, perspectiveFrames flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(32, flatbuffers.UOffsetT(perspectiveFrames), 0)
 }
-func EnvelopeStateStartPerspectivesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+func EnvelopeStateStartPerspectiveFramesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func EnvelopeStateAddTick(builder *flatbuffers.Builder, tick int64) {
@@ -900,6 +942,12 @@ func EnvelopeStateAddPositions(builder *flatbuffers.Builder, positions flatbuffe
 }
 func EnvelopeStateAddLiquiditySweepWithRecovery(builder *flatbuffers.Builder, liquiditySweepWithRecovery flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(36, flatbuffers.UOffsetT(liquiditySweepWithRecovery), 0)
+}
+func EnvelopeStateAddPerspectives(builder *flatbuffers.Builder, perspectives flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(37, flatbuffers.UOffsetT(perspectives), 0)
+}
+func EnvelopeStateStartPerspectivesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
 func EnvelopeStateEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

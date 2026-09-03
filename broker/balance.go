@@ -6,6 +6,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken/websocket"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
@@ -97,7 +98,26 @@ func (balance *Balance) Update() {
 		return
 	}
 
-	balance.replace(result)
+	canonical := make(map[string]*decimal.Decimal, len(result))
+
+	for asset, amount := range result {
+		asset = balance.api.Normalizer().Name(asset)
+
+		if _, exists := canonical[asset]; exists {
+			balance.status = types.ERROR
+			errnie.Error(errnie.Err(
+				errnie.Conflict,
+				"balance: multiple venue assets normalize to "+asset,
+				nil,
+			))
+
+			return
+		}
+
+		canonical[asset] = amount
+	}
+
+	balance.replace(canonical)
 	balance.status = types.READY
 }
 

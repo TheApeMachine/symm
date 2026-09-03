@@ -314,10 +314,10 @@ func ResolveResident(
 			})
 		}
 
-		for index := 0; index < state.PerspectivesLength(); index++ {
+		for index := 0; index < state.PerspectiveFramesLength(); index++ {
 			var frame wire.PerspectiveFrame
 
-			if !state.Perspectives(&frame, index) {
+			if !state.PerspectiveFrames(&frame, index) {
 				continue
 			}
 

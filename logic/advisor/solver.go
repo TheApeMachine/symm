@@ -2,7 +2,6 @@ package advisor
 
 import (
 	"context"
-	"slices"
 	"strings"
 	"time"
 
@@ -17,37 +16,43 @@ import (
 
 /* Solver classifies one declared set of competing Advisor Features. */
 type Solver struct {
+	*Issuer
 	ctx           context.Context
 	cancel        context.CancelFunc
 	err           error
 	status        *runtime.Status
 	number        *nomagique.Number[string]
-	groups        []vector.Group
-	clock         nmtypes.Symbol
 	clocks        map[string]float64
+	frames        map[string]nmtypes.Frame
 	ObserveModule func(string, time.Duration)
 }
 
 /* NewSolver compiles one class-bearing Feature into each classifier group. */
-func NewSolver(ctx context.Context, features []*Feature) *Solver {
+func NewSolver(ctx context.Context, name string, features []*Feature) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 	solver := &Solver{
 		ctx:    ctx,
 		cancel: cancel,
 		status: runtime.NewStatus(),
 		clocks: make(map[string]float64),
+		frames: make(map[string]nmtypes.Frame),
+	}
+
+	if name == "" {
+		solver.fail(errnie.Validation, "advisor requires a name", nil)
+
+		return solver
 	}
 
 	groups, clock, err := featureGroups(features)
 
 	if err != nil {
-		solver.fail("Advisor feature contract failed", err)
+		solver.fail(errnie.Validation, "advisor feature contract failed", err)
 
 		return solver
 	}
 
-	solver.groups = groups
-	solver.clock = clock
+	solver.Issuer = newIssuer(name, features, groups, clock)
 	solver.number = nomagique.NewNumber[string](
 		vector.AdaptiveClassifier(groups...),
 	)
@@ -56,7 +61,6 @@ func NewSolver(ctx context.Context, features []*Feature) *Solver {
 	return solver
 }
 
-func (solver *Solver) Name() string            { return "advisor" }
 func (solver *Solver) Error() error            { return solver.err }
 func (solver *Solver) Status() *runtime.Status { return solver.status }
 
@@ -68,7 +72,7 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 	}
 
 	if envelope == nil {
-		solver.fail("Advisor received nil envelope", nil)
+		solver.fail(errnie.BadRequest, "advisor received nil envelope", nil)
 
 		return nil
 	}
@@ -86,33 +90,44 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 	input := data.Lift(envelope.SignalMeasurements())
 
 	if input.Err != nil {
-		solver.fail("Advisor measurement lift failed", input.Err)
+		solver.fail(errnie.UnprocessableContent, "advisor measurement lift failed", input.Err)
 
 		return nil
 	}
 
 	clock, clockFound := input.Get(solver.clock)
 
-	if !clockFound && !hasFeatureObservation(input, solver.groups) {
+	if !clockFound {
+		if symbol != "" {
+			frame := solver.frames[symbol]
+			frame.Merge(input)
+			solver.frames[symbol] = frame
+		}
+
+		if envelope.TypeID == types.EnvelopeTrade &&
+			hasClockSourceObservation(input, solver.clock, solver.groups) {
+			solver.fail(errnie.PreconditionFailed, "advisor market clock observation is missing", nil)
+
+			return nil
+		}
+
 		return envelope
 	}
 
-	if !clockFound {
-		solver.fail("Advisor market clock observation is missing", nil)
-
-		return nil
-	}
-
 	if symbol == "" {
-		solver.fail("Advisor requires a market symbol", nil)
+		solver.fail(errnie.UnprocessableContent, "advisor requires a market symbol", nil)
 
 		return nil
 	}
+
+	frame := solver.frames[symbol]
+	frame.Merge(input)
+	solver.frames[symbol] = frame
 
 	advanced, err := solver.clockAdvanced(symbol, clock)
 
 	if err != nil {
-		solver.fail("Advisor market clock failed", err)
+		solver.fail(errnie.Conflict, "advisor market clock failed", err)
 
 		return nil
 	}
@@ -123,16 +138,16 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 
 	solver.status.Transition(runtime.WAITING)
 
-	if !vector.GroupsComplete(&input, solver.groups) {
+	if !vector.GroupsComplete(&frame, solver.groups) {
 		return envelope
 	}
 
 	solver.status.Transition(runtime.READY)
 
-	output := solver.number.Step(symbol, input)
+	output := solver.number.Step(symbol, frame)
 
 	if output.Err != nil {
-		solver.fail("Advisor classification failed", output.Err)
+		solver.fail(errnie.Internal, "advisor classification failed", output.Err)
 
 		return nil
 	}
@@ -140,7 +155,13 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 	ready, found := output.Get(nmtypes.SampleReady)
 
 	if !found || ready != 1 {
-		solver.fail("Advisor classification produced no distribution", nil)
+		solver.fail(errnie.ExpectationFailed, "advisor classification produced no distribution", nil)
+
+		return nil
+	}
+
+	if err := solver.Issue(envelope, output, uint64(clock)); err != nil {
+		solver.halt(err)
 
 		return nil
 	}
@@ -165,11 +186,11 @@ func (solver *Solver) Distribution(
 	distribution := vector.Unpack(frame, solver.groups)
 
 	if !distribution.Ready {
-		return nil, 0, false, errnie.Err(
-			errnie.Validation,
-			"Advisor stored classification is incomplete",
+		return nil, 0, false, errnie.Error(errnie.Err(
+			errnie.ExpectationFailed,
+			"[advisor] stored classification is incomplete",
 			nil,
-		)
+		))
 	}
 
 	classes := make([]types.PerspectiveClass, len(solver.groups))
@@ -196,6 +217,8 @@ func featureGroups(features []*Feature) ([]vector.Group, nmtypes.Symbol, error) 
 	labels := make(map[string]bool, len(features))
 	groups := make([]vector.Group, len(features))
 	clock := ""
+	predictive := false
+	within := uint64(0)
 
 	for index, feature := range features {
 		if feature == nil || feature.Class == nil || feature.Class.Label == "" {
@@ -215,7 +238,29 @@ func featureGroups(features []*Feature) ([]vector.Group, nmtypes.Symbol, error) 
 		}
 
 		if err := validateFeatureKeys(feature); err != nil {
+			return nil, 0, errnie.Err(
+				errnie.Validation,
+				"[advisor] failed to validate feature keys for: "+feature.Class.Label,
+				err,
+			)
+		}
+
+		if err := feature.validatePredictions(); err != nil {
 			return nil, 0, err
+		}
+
+		if index == 0 {
+			predictive = len(feature.Class.Predictions) > 0
+			within = feature.Class.Within
+		}
+
+		if index > 0 && ((len(feature.Class.Predictions) > 0) != predictive ||
+			feature.Class.Within != within) {
+			return nil, 0, errnie.Err(
+				errnie.Validation,
+				"Advisor Classes require one shared prediction horizon and complete declarations",
+				nil,
+			)
 		}
 
 		if clock == "" {
@@ -273,10 +318,36 @@ func validateFeatureKeys(feature *Feature) error {
 	return nil
 }
 
-func hasFeatureObservation(input nmtypes.Frame, groups []vector.Group) bool {
+func hasClockSourceObservation(
+	input nmtypes.Frame,
+	clock nmtypes.Symbol,
+	groups []vector.Group,
+) bool {
+	clockName, found := nmtypes.SymbolName(clock)
+
+	if !found {
+		return false
+	}
+
+	clockSource, _, hasSlash := strings.Cut(clockName, "/")
+
+	if !hasSlash {
+		return false
+	}
+
 	for _, group := range groups {
-		if slices.ContainsFunc(group.Symbols, input.Has) {
-			return true
+		for _, symbol := range group.Symbols {
+			name, nameFound := nmtypes.SymbolName(symbol)
+
+			if !nameFound {
+				continue
+			}
+
+			source, _, _ := strings.Cut(name, "/")
+
+			if source == clockSource && input.Has(symbol) {
+				return true
+			}
 		}
 	}
 
@@ -311,8 +382,12 @@ func (solver *Solver) clockAdvanced(symbol string, clock float64) (bool, error) 
 	return clock > previous, nil
 }
 
-func (solver *Solver) fail(message string, err error) {
-	solver.err = errnie.Error(errnie.Err(errnie.Validation, message, err))
+func (solver *Solver) fail(kind errnie.Kind, message string, err error) {
+	solver.halt(errnie.Error(errnie.Err(kind, "[advisor] "+message, err)))
+}
+
+func (solver *Solver) halt(err error) {
+	solver.err = err
 	solver.status.Transition(runtime.FATAL)
 	solver.cancel()
 }

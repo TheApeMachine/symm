@@ -43,11 +43,13 @@ func (effect PerspectivePredictionEffect) String() string {
 }
 
 /*
-PerspectivePrediction names one terminal market event and whether observing it
-supports or falsifies the issued Perspective. Predictions carry no arbitrary
-weight: the first terminal event observed by Arena resolves the round.
+PerspectivePrediction names one terminal market event, the counterfactual
+Class that predicted it, and whether observing it supports or falsifies that
+Class. Predictions carry no arbitrary weight. Arena resolves the issued winner
+without discarding the predictions declared by competing Classes.
 */
 type PerspectivePrediction struct {
+	Class  PerspectiveState
 	Event  PerspectiveEvent
 	Effect PerspectivePredictionEffect
 }
@@ -195,14 +197,36 @@ func (perspective *Perspective) Maturity() float64 {
 	return 1 - 1/float64(perspective.Support)
 }
 
-/* Prediction returns the declared terminal event with the given name. */
-func (perspective *Perspective) Prediction(event PerspectiveEvent) (PerspectivePrediction, bool) {
+/* Prediction returns one Class's declared terminal event with the given name. */
+func (perspective *Perspective) Prediction(
+	class PerspectiveState,
+	event PerspectiveEvent,
+) (PerspectivePrediction, bool) {
 	for _, prediction := range perspective.Predictions {
 
-		if prediction.Event == event {
+		if prediction.Class == class && prediction.Event == event {
 			return prediction, true
 		}
 	}
 
 	return PerspectivePrediction{}, false
+}
+
+/* TopClass returns the PerspectiveState with highest probability mass. */
+func (perspective *Perspective) TopClass() PerspectiveState {
+	if perspective == nil || len(perspective.Classes) == 0 {
+		return ""
+	}
+
+	bestState := perspective.Classes[0].State
+	bestProb := perspective.Classes[0].Probability
+
+	for _, class := range perspective.Classes[1:] {
+		if class.Probability > bestProb {
+			bestProb = class.Probability
+			bestState = class.State
+		}
+	}
+
+	return bestState
 }

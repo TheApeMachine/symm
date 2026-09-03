@@ -156,11 +156,22 @@ func (ticker *Ticker) Step(point kraken.TickerData) *data.Measurement[float64] {
 		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: ticker requires bid and ask")}
 	}
 
+	if committed, found := ticker.number.Project(point.Symbol); found {
+		previousSec, _ := committed.Get(nmtypes.EventTimeSec)
+		previousNsec, _ := committed.Get(nmtypes.EventTimeNsec)
+
+		if float64(point.Timestamp.Unix()) < previousSec ||
+			(float64(point.Timestamp.Unix()) == previousSec && float64(point.Timestamp.Nanosecond()) < previousNsec) {
+			return nil
+		}
+	}
+
 	input := nmtypes.Frame{}
 	input.Put(symbolBidPrice, point.Bid.Float64())
 	input.Put(symbolAskPrice, point.Ask.Float64())
 	input.Put(nmtypes.EventTimeSec, float64(point.Timestamp.Unix()))
 	input.Put(nmtypes.EventTimeNsec, float64(point.Timestamp.Nanosecond()))
+
 
 	return ticker.projector.Project(
 		point.Symbol,

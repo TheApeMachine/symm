@@ -281,6 +281,16 @@ func (ticker *Ticker) Step(trade kraken.TickerData) *data.Measurement[float64] {
 		return &data.Measurement[float64]{Err: fmt.Errorf("liquidity: ticker requires bid and ask")}
 	}
 
+	if committed, found := ticker.number.Project(trade.Symbol); found {
+		previousSec, _ := committed.Get(nmtypes.EventTimeSec)
+		previousNsec, _ := committed.Get(nmtypes.EventTimeNsec)
+
+		if float64(trade.Timestamp.Unix()) < previousSec ||
+			(float64(trade.Timestamp.Unix()) == previousSec && float64(trade.Timestamp.Nanosecond()) < previousNsec) {
+			return nil
+		}
+	}
+
 	input := nmtypes.Frame{}
 	input.Put(symbolBidPrice, trade.Bid.Float64())
 	input.Put(symbolAskPrice, trade.Ask.Float64())
@@ -288,6 +298,7 @@ func (ticker *Ticker) Step(trade kraken.TickerData) *data.Measurement[float64] {
 	input.Put(symbolAskQty, trade.AskQty)
 	input.Put(nmtypes.EventTimeSec, float64(trade.Timestamp.Unix()))
 	input.Put(nmtypes.EventTimeNsec, float64(trade.Timestamp.Nanosecond()))
+
 
 	return ticker.projector.Project(
 		trade.Symbol,

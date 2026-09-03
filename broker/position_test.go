@@ -5,11 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -294,7 +296,124 @@ func TestExitRetriesAfterFailedSubmission(t *testing.T) {
 
 			So(err, ShouldBeNil)
 			So(position.ExitOrder, ShouldNotBeNil)
+			So(position.ExitOrder.ClOrdId, ShouldNotEqual, position.EntryOrder.ClOrdId)
+			So(position.ExitOrder.ClOrdId, ShouldEqual, uuid.NewSHA1(
+				uuid.NameSpaceOID,
+				[]byte("symm:exit:"+position.EntryOrder.ClOrdId),
+			).String())
+			_, uuidErr := uuid.Parse(position.ExitOrder.ClOrdId)
+			So(uuidErr, ShouldBeNil)
 			So(position.Holding.Status, ShouldEqual, types.PENDING)
+		})
+	})
+}
+
+func TestPositionOnExecutionTerminalPartialEntry(t *testing.T) {
+	Convey("Given a live entry that partially fills before Kraken cancels its remainder", t, func() {
+		conn := newExecutingConn(nil)
+		desk, workload := newDeliveryDesk(t, conn)
+		conn.workload = workload
+		desk.price.fees.Store("TEST/USD", kraken.TradeVolumeFee{Fee: mustDecimal("0.25")})
+		decision := types.Decision{
+			ID:               uuid.NewString(),
+			Action:           types.ActionEnter,
+			Symbol:           "TEST/USD",
+			At:               time.Now(),
+			ProposedQuantity: mustDecimal("100"),
+			ProposedNotional: mustDecimal("200.00"),
+			ForecastHorizon:  1,
+			Mark:             mustDecimal("2.00"),
+		}
+		stoploss, err := types.NewStoploss(
+			t.Context(),
+			"TEST/USD",
+			mustDecimal("2.00"),
+			mustDecimal("2.00"),
+			&learning.RLSOutput{Ready: true},
+			nil,
+			mustDecimal("0.01"),
+			mustDecimal("0.008"),
+			mustDecimal("0.008"),
+			time.Now(),
+		)
+		So(err, ShouldBeNil)
+		decision.Stoploss = stoploss
+		position := NewPosition(
+			t.Context(), desk.api, desk.instrument, desk.price, desk.balance,
+			desk.PositionStore,
+			kraken.InstrumentPair{
+				Symbol:   "TEST/USD",
+				Base:     "TEST",
+				Quote:    "USD",
+				TickSize: *mustDecimal("0.01"),
+			},
+			decision,
+		)
+		position.setStatus(types.PENDING)
+		execution := kraken.ExecutionData{
+			OrderID:       "venue-entry",
+			ClientOrderID: decision.ID,
+			ExecID:        "entry-terminal-partial",
+			ExecType:      "canceled",
+			Symbol:        "TEST/USD",
+			Side:          "buy",
+			LastQty:       mustDecimal("40"),
+			LastPrice:     mustDecimal("2.00"),
+			CumQty:        mustDecimal("40"),
+			CumCost:       mustDecimal("80.00"),
+			AvgPrice:      mustDecimal("2.00"),
+			FeeUsdEquiv:   mustDecimal("0.20"),
+			Timestamp:     time.Now(),
+			OrderStatus:   "canceled",
+		}
+
+		Convey("the filled inventory remains open and protected", func() {
+			finished := position.onExecution(kraken.Execution{
+				Channel: "executions",
+				Type:    "update",
+				Data:    []kraken.ExecutionData{execution},
+			})
+
+			So(finished, ShouldBeFalse)
+			So(position.status(), ShouldEqual, types.OPEN)
+			So(position.Holding.Status, ShouldEqual, types.OPEN)
+			So(position.Holding.Qty.Cmp(mustDecimal("40")), ShouldEqual, 0)
+			So(position.Holding.SellableQty.Cmp(mustDecimal("40")), ShouldEqual, 0)
+			So(position.Holding.EntryPrice.Cmp(mustDecimal("2.00")), ShouldEqual, 0)
+			So(position.Holding.EntryFee.Cmp(mustDecimal("0.20")), ShouldEqual, 0)
+			So(position.Holding.Stoploss.Status, ShouldEqual, types.ARMED)
+		})
+
+		Convey("a later terminal status without trade fields retains the prior partial fill", func() {
+			execution.OrderStatus = "partially_filled"
+			execution.ExecID = "entry-partial"
+			So(position.onExecution(kraken.Execution{
+				Channel: "executions",
+				Type:    "update",
+				Data:    []kraken.ExecutionData{execution},
+			}), ShouldBeFalse)
+
+			terminal := kraken.ExecutionData{
+				OrderID:       execution.OrderID,
+				ClientOrderID: decision.ID,
+				ExecID:        "entry-canceled",
+				ExecType:      "canceled",
+				Symbol:        "TEST/USD",
+				Side:          "buy",
+				Timestamp:     time.Now(),
+				OrderStatus:   "canceled",
+			}
+
+			So(position.onExecution(kraken.Execution{
+				Channel: "executions",
+				Type:    "update",
+				Data:    []kraken.ExecutionData{terminal},
+			}), ShouldBeFalse)
+			So(position.status(), ShouldEqual, types.OPEN)
+			So(position.Holding.Status, ShouldEqual, types.OPEN)
+			So(position.Holding.Qty.Cmp(mustDecimal("40")), ShouldEqual, 0)
+			So(position.Holding.SellableQty.Cmp(mustDecimal("40")), ShouldEqual, 0)
+			So(position.Holding.Stoploss.Status, ShouldEqual, types.ARMED)
 		})
 	})
 }

@@ -59,7 +59,7 @@ trader.Crypto ── append market observations ──► types.Thesis
                                                     │
                    ┌────────────────────────────────┴──────────────────────┐
                    ▼                                                       ▼
-           paper or Kraken orders                               audit + dashboard
+           paper or Kraken orders                              SQLite + dashboard
 ```
 
 The central coordination object is [`types.Thesis`](types/thesis.go). It owns the current market observations, measurements, per-symbol analysis products, decisions, account equity, lifecycle state, and a non-blocking semaphore fanout between runtime stages.
@@ -72,8 +72,8 @@ Each symbol has an explicit [`types.Readiness`](types/readiness.go) record. A st
 
 [`cmd.Boot`](cmd/boot.go) assembles the system in dependency order:
 
-1. Rotate and open `runtime-audit.jsonl` when configured.
-2. Open the SQLite position and backtest store at `<system.data_path>/symm.sqlite`.
+1. Open the raw-event and position SQLite stores under `<system.data_path>`.
+2. Start the ordered asynchronous capture writer.
 3. Open or accept injected public and private Kraken connections.
 4. Construct the transport API, price cache, instrument universe, balance, and desk.
 5. Recover exchange inventory, working orders, and stored stop state.
@@ -332,7 +332,7 @@ The Cobra entrypoint loads configuration in this order:
 The checked-in configuration defaults to:
 
 - data under `~/.symm/data`;
-- audit rotation on boot;
+- ordered, bounded raw-capture and broker-state persistence;
 - paper execution;
 - USD quote-market discovery;
 - authenticated L3 depth alongside ticker, trade, and L2 subscriptions;
@@ -345,11 +345,11 @@ See [`cmd/cfg/config.yml`](cmd/cfg/config.yml) for the complete checked-in confi
 
 Runtime files under `system.data_path` include:
 
-| File                      | Purpose                                                         |
-|---------------------------|-----------------------------------------------------------------|
-| `runtime-audit.jsonl`     | Orchestration, evidence, decision, and execution audit records. |
-| `symm.sqlite`             | Persisted per-symbol stoploss state and backtest capture store. |
-| authenticated nonce state | Monotonic Kraken nonce continuity across restarts.              |
+| File                      | Purpose                                                           |
+|---------------------------|-------------------------------------------------------------------|
+| `events.sqlite`           | Raw captures, manifests, witnesses, and lifecycle records.        |
+| `positions.sqlite`        | Persisted position, stoploss, and completed-trade state.           |
+| authenticated nonce state | Monotonic Kraken nonce continuity across restarts.                |
 
 ## Build and run
 
@@ -441,7 +441,6 @@ pnpm bench            # Vitest benchmarks
 | `backtest/`         | Capture store, replay driver, and hindsight analysis.                                             |
 | `telemetry/`        | FlatBuffers schema and generated Go bindings for binary dashboard frames.                         |
 | `nomagique/`        | Embedded numeric computation library (Frames, Primitives, estimators).                            |
-| `audit/`            | JSONL recording and boot rotation.                                                                |
 | `ui/`               | Dashboard WebSocket, WebRTC manifold transport, and error bridge.                                 |
 | `frontend/`         | React/TanStack terminal and WebSocket-backed stores.                                              |
 | `tests/`            | Deterministic venue, market scenarios, fixtures, execution model, and stack harness.              |

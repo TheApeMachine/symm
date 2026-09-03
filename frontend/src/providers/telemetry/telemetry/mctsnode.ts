@@ -125,28 +125,48 @@ principal():boolean {
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
-state(index: number, obj?:NamedNumber):NamedNumber|null {
+blendedValue():number {
   const offset = this.bb!.__offset(this.bb_pos, 42);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+rewardStd():number {
+  const offset = this.bb!.__offset(this.bb_pos, 44);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+causalExpectationDefined():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 46);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+pruned():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 48);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
+
+state(index: number, obj?:NamedNumber):NamedNumber|null {
+  const offset = this.bb!.__offset(this.bb_pos, 50);
   return offset ? (obj || new NamedNumber()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 stateLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 42);
+  const offset = this.bb!.__offset(this.bb_pos, 50);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 children(index: number, obj?:MCTSNode):MCTSNode|null {
-  const offset = this.bb!.__offset(this.bb_pos, 44);
+  const offset = this.bb!.__offset(this.bb_pos, 52);
   return offset ? (obj || new MCTSNode()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 childrenLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 44);
+  const offset = this.bb!.__offset(this.bb_pos, 52);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 static startMCTSNode(builder:flatbuffers.Builder) {
-  builder.startObject(21);
+  builder.startObject(25);
 }
 
 static addAction(builder:flatbuffers.Builder, action:bigint) {
@@ -225,8 +245,24 @@ static addPrincipal(builder:flatbuffers.Builder, principal:boolean) {
   builder.addFieldInt8(18, +principal, +false);
 }
 
+static addBlendedValue(builder:flatbuffers.Builder, blendedValue:number) {
+  builder.addFieldFloat64(19, blendedValue, 0.0);
+}
+
+static addRewardStd(builder:flatbuffers.Builder, rewardStd:number) {
+  builder.addFieldFloat64(20, rewardStd, 0.0);
+}
+
+static addCausalExpectationDefined(builder:flatbuffers.Builder, causalExpectationDefined:boolean) {
+  builder.addFieldInt8(21, +causalExpectationDefined, +false);
+}
+
+static addPruned(builder:flatbuffers.Builder, pruned:boolean) {
+  builder.addFieldInt8(22, +pruned, +false);
+}
+
 static addState(builder:flatbuffers.Builder, stateOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(19, stateOffset, 0);
+  builder.addFieldOffset(23, stateOffset, 0);
 }
 
 static createStateVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -242,7 +278,7 @@ static startStateVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addChildren(builder:flatbuffers.Builder, childrenOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(20, childrenOffset, 0);
+  builder.addFieldOffset(24, childrenOffset, 0);
 }
 
 static createChildrenVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -262,7 +298,7 @@ static endMCTSNode(builder:flatbuffers.Builder):flatbuffers.Offset {
   return offset;
 }
 
-static createMCTSNode(builder:flatbuffers.Builder, action:bigint, actionNameOffset:flatbuffers.Offset, depth:bigint, visits:bigint, effectiveVisits:number, observedReward:number, counterfactualReward:number, counterfactualMass:number, counterfactualPrecision:number, totalReward:number, meanReward:number, exploitation:number, exploration:number, causalExpectation:number, selectionScore:number, scmReady:boolean, scmReasonOffset:flatbuffers.Offset, selected:boolean, principal:boolean, stateOffset:flatbuffers.Offset, childrenOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createMCTSNode(builder:flatbuffers.Builder, action:bigint, actionNameOffset:flatbuffers.Offset, depth:bigint, visits:bigint, effectiveVisits:number, observedReward:number, counterfactualReward:number, counterfactualMass:number, counterfactualPrecision:number, totalReward:number, meanReward:number, exploitation:number, exploration:number, causalExpectation:number, selectionScore:number, scmReady:boolean, scmReasonOffset:flatbuffers.Offset, selected:boolean, principal:boolean, blendedValue:number, rewardStd:number, causalExpectationDefined:boolean, pruned:boolean, stateOffset:flatbuffers.Offset, childrenOffset:flatbuffers.Offset):flatbuffers.Offset {
   MCTSNode.startMCTSNode(builder);
   MCTSNode.addAction(builder, action);
   MCTSNode.addActionName(builder, actionNameOffset);
@@ -283,6 +319,10 @@ static createMCTSNode(builder:flatbuffers.Builder, action:bigint, actionNameOffs
   MCTSNode.addScmReason(builder, scmReasonOffset);
   MCTSNode.addSelected(builder, selected);
   MCTSNode.addPrincipal(builder, principal);
+  MCTSNode.addBlendedValue(builder, blendedValue);
+  MCTSNode.addRewardStd(builder, rewardStd);
+  MCTSNode.addCausalExpectationDefined(builder, causalExpectationDefined);
+  MCTSNode.addPruned(builder, pruned);
   MCTSNode.addState(builder, stateOffset);
   MCTSNode.addChildren(builder, childrenOffset);
   return MCTSNode.endMCTSNode(builder);
@@ -309,6 +349,10 @@ unpack(): MCTSNodeT {
     this.scmReason(),
     this.selected(),
     this.principal(),
+    this.blendedValue(),
+    this.rewardStd(),
+    this.causalExpectationDefined(),
+    this.pruned(),
     this.bb!.createObjList<NamedNumber, NamedNumberT>(this.state.bind(this), this.stateLength()),
     this.bb!.createObjList<MCTSNode, MCTSNodeT>(this.children.bind(this), this.childrenLength())
   );
@@ -335,6 +379,10 @@ unpackTo(_o: MCTSNodeT): void {
   _o.scmReason = this.scmReason();
   _o.selected = this.selected();
   _o.principal = this.principal();
+  _o.blendedValue = this.blendedValue();
+  _o.rewardStd = this.rewardStd();
+  _o.causalExpectationDefined = this.causalExpectationDefined();
+  _o.pruned = this.pruned();
   _o.state = this.bb!.createObjList<NamedNumber, NamedNumberT>(this.state.bind(this), this.stateLength());
   _o.children = this.bb!.createObjList<MCTSNode, MCTSNodeT>(this.children.bind(this), this.childrenLength());
 }
@@ -361,6 +409,10 @@ constructor(
   public scmReason: string|Uint8Array|null = null,
   public selected: boolean = false,
   public principal: boolean = false,
+  public blendedValue: number = 0.0,
+  public rewardStd: number = 0.0,
+  public causalExpectationDefined: boolean = false,
+  public pruned: boolean = false,
   public state: (NamedNumberT)[] = [],
   public children: (MCTSNodeT)[] = []
 ){}
@@ -392,6 +444,10 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     scmReason,
     this.selected,
     this.principal,
+    this.blendedValue,
+    this.rewardStd,
+    this.causalExpectationDefined,
+    this.pruned,
     state,
     children
   );

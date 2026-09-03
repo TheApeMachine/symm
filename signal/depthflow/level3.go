@@ -266,7 +266,13 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 	if committed, found := level3.number.Project(message.Symbol); found {
 		previousSec, _ = committed.Get(nmtypes.EventTimeSec)
 		previousNsec, _ = committed.Get(nmtypes.EventTimeNsec)
+
+		if float64(at.Unix()) < previousSec ||
+			(float64(at.Unix()) == previousSec && float64(at.Nanosecond()) < previousNsec) {
+			return nil
+		}
 	}
+
 
 	input.Put(nmtypes.EventTimeSec, float64(at.Unix()))
 	input.Put(nmtypes.EventTimeNsec, float64(at.Nanosecond()))

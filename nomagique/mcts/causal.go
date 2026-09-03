@@ -1,0 +1,125 @@
+package mcts
+
+import (
+	"github.com/theapemachine/symm/nomagique/causal"
+)
+
+/*
+InterventionMapper maps a discrete Action onto the level the structural model's
+treatment variable is held at to represent it.
+
+Actions are an enum and a treatment is a measured quantity, so the two share a
+scale only by accident. A State that implements this names the level each action
+corresponds to; a State that does not is not intervened on at all, because
+silently treating the enum ordinal as a treatment level would fabricate a
+quantity the causal model never observed.
+*/
+type InterventionMapper interface {
+	GetInterventionLevel(action Action) (level float64, defined bool)
+}
+
+/*
+interventionLevel resolves the treatment level representing one action. It
+reports not-defined when the state declares no mapping, so the caller skips the
+causal query instead of intervening at a meaningless level.
+*/
+func interventionLevel(state State, action Action) (float64, bool) {
+	mapper, supported := state.(InterventionMapper)
+
+	if !supported {
+		return 0, false
+	}
+
+	return mapper.GetInterventionLevel(action)
+}
+
+/*
+CausalEngine is the search's boundary onto Pearl's second and third rungs. It is
+an interface so the search stays a leaf package: the engine can be the real
+structural model, a stub, or nil.
+
+DoExpectation answers the interventional question E[target | do(treatment=level)]
+by backdoor standardization over the observed control distribution.
+
+AbductiveCounterfactual answers the counterfactual question: given the factual
+row actually observed, what would the target have been had the treatment been
+set to level instead? It returns the reconstructed outcome, the abducted noise
+term, and a bounded precision derived from the reconstruction error.
+*/
+type CausalEngine interface {
+	DoExpectation(
+		rows [][]float64,
+		target int,
+		minimumRows int,
+		treatment int,
+		level float64,
+		controls []int,
+	) (float64, error)
+
+	AbductiveCounterfactual(
+		rows [][]float64,
+		target int,
+		minimumRows int,
+		features []int,
+		linear bool,
+		actual []float64,
+		treatment int,
+		level float64,
+	) (counterfactual float64, noise float64, precision float64, err error)
+}
+
+/*
+DefaultCausalEngine evaluates search history with the nomagique causal Table.
+It is stateless: every query fits its model from the rows it is handed, so the
+search can grow its evidence with rollout trajectories between queries.
+*/
+type DefaultCausalEngine struct {
+	// Linear selects the linear structural fit over regression stumps for the
+	// interventional query. The counterfactual query takes its own flag from
+	// the search policy, so both fits are explicit rather than implied.
+	Linear bool
+}
+
+/*
+DoExpectation standardizes the interventional expectation over observed controls.
+*/
+func (engine DefaultCausalEngine) DoExpectation(
+	rows [][]float64,
+	target int,
+	minimumRows int,
+	treatment int,
+	level float64,
+	controls []int,
+) (float64, error) {
+	table, err := causal.NewTable(rows, target, minimumRows, engine.Linear)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return table.DoExpectation(treatment, level, controls...)
+}
+
+/*
+AbductiveCounterfactual performs abduction, intervention, then prediction,
+preserving the precision the Table derives from its reconstruction error rather
+than recomputing a second, differently-scaled one here.
+*/
+func (engine DefaultCausalEngine) AbductiveCounterfactual(
+	rows [][]float64,
+	target int,
+	minimumRows int,
+	features []int,
+	linear bool,
+	actual []float64,
+	treatment int,
+	level float64,
+) (float64, float64, float64, error) {
+	table, err := causal.NewTable(rows, target, minimumRows, linear)
+
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
+	return table.AbductiveCounterfactual(features, actual, treatment, level)
+}

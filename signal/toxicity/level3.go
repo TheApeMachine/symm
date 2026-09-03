@@ -561,6 +561,14 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 	if prior, found := level3.number.Project(symbol); found {
 		retainedBid, hasRetainedBid = prior.Get(symbolBidPrice)
 		retainedAsk, hasRetainedAsk = prior.Get(symbolAskPrice)
+
+		prevSec, hasPrevSec := prior.Get(symbolAtSec)
+		prevNsec, hasPrevNsec := prior.Get(symbolAtNsec)
+
+		if hasPrevSec && hasPrevNsec &&
+			(sec < prevSec || (sec == prevSec && nsec < prevNsec)) {
+			return nil
+		}
 	}
 
 	input := nmtypes.Frame{}

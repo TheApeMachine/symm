@@ -11,10 +11,11 @@ import (
 /*
 Writer is the store's transport-facing recorder and the single capture authority
 for the whole system. It owns the Hindsight Sequencer, so one raw websocket frame
-is minted a stable CaptureIdentity, persisted with that identity, and the identity
-is returned — in one place — before any pipeline mutation. Every stream shares
-the writer's sequencer, so capture identities form one run-local order while the
-per-stream epoch/sequence stays distinct.
+is minted a stable CaptureIdentity and accepted into one ordered persistence queue
+before the identity is returned for pipeline mutation. A single worker drains raw
+frames and manifests in batches. Every stream shares the writer's sequencer, so
+capture identities form one run-local order while the per-stream epoch/sequence
+stays distinct.
 */
 type Writer struct {
 	repository Repository
@@ -22,6 +23,16 @@ type Writer struct {
 
 	mu      sync.Mutex
 	streams map[string][]hindsight.Stream
+	queue   chan writerOperation
+	done    chan struct{}
+	failed  chan struct{}
+
+	stateMu   sync.RWMutex
+	closed    bool
+	closeOnce sync.Once
+	errorMu   sync.RWMutex
+	err       error
+	batchSize int
 }
 
 /*
@@ -29,7 +40,11 @@ NewWriter builds a Writer over an already-open repository and a sequencer.
 Constructing with a nil sequencer is a programmer error and is rejected: capture
 without identity would silently produce untraceable records.
 */
-func NewWriter(repository Repository, sequencer *hindsight.Sequencer) (*Writer, error) {
+func NewWriter(
+	repository Repository,
+	sequencer *hindsight.Sequencer,
+	queueDepth, batchSize int,
+) (*Writer, error) {
 	if sequencer == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -38,16 +53,40 @@ func NewWriter(repository Repository, sequencer *hindsight.Sequencer) (*Writer, 
 		))
 	}
 
-	return &Writer{
+	if queueDepth < 1 {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: writer requires a positive queue depth",
+			nil,
+		))
+	}
+
+	if batchSize < 1 || batchSize > queueDepth {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"store: writer batch size must be within queue depth",
+			nil,
+		))
+	}
+
+	writer := &Writer{
 		repository: repository,
 		sequencer:  sequencer,
 		streams:    make(map[string][]hindsight.Stream),
-	}, nil
+		queue:      make(chan writerOperation, queueDepth),
+		done:       make(chan struct{}),
+		failed:     make(chan struct{}),
+		batchSize:  batchSize,
+	}
+
+	go writer.run()
+
+	return writer, nil
 }
 
 /*
 Capture satisfies kraken.websocket.CaptureSink: it mints a CaptureIdentity for
-one untouched transport payload, persists the frame with that identity, and
+one untouched transport payload, accepts the frame into the ordered writer, and
 returns the identity so the caller can stamp it onto every envelope parsed from
 the frame. kind names the frame's channel/method/feed; endpoint names the stream;
 ref is the operational StreamRef the transport minted, which Hindsight records
@@ -92,27 +131,14 @@ func (writer *Writer) Capture(
 		}
 	}
 
-	if writer.repository == nil {
-		return identity, nil
-	}
-
-	if err := writer.repository.WriteCapture(
-		identity,
-		endpoint,
-		kind,
-		payload,
-		receivedAt,
-	); err != nil {
-		// Raw persistence failed: the run is no longer complete, and the exact
-		// failure is recorded so inspection can say why. Never let this frame
-		// silently appear as captured under an unpersisted identity.
-		_ = writer.repository.MarkGapped(
-			identity.Run,
-			identity.Sequence,
-			"capture_persistence_failure",
-			err.Error(),
-		)
-
+	if err := writer.enqueue(writerOperation{
+		kind:        writerCapture,
+		identity:    identity,
+		endpoint:    endpoint,
+		captureKind: kind,
+		payload:     payload,
+		at:          receivedAt,
+	}); err != nil {
 		return hindsight.CaptureIdentity{}, err
 	}
 
@@ -165,17 +191,38 @@ func appendUnique(streams []hindsight.Stream, stream hindsight.Stream) []hindsig
 }
 
 /*
-WriteManifest persists one EnvelopeManifest, delegating to the underlying
-repository. It satisfies kraken.websocket.ManifestSink so the ingress layer can
-record the raw-frame → envelope fan-out as it parses, without the writer knowing
-anything about the parser.
+WriteManifest accepts one EnvelopeManifest into the same ordered queue as raw
+captures. It satisfies kraken.websocket.ManifestSink so the ingress layer can
+record raw-frame to envelope fan-out without performing storage IO.
 */
 func (writer *Writer) WriteManifest(manifest hindsight.EnvelopeManifest) error {
-	if writer == nil || writer.repository == nil {
+	if writer == nil {
 		return nil
 	}
 
-	return writer.repository.WriteManifest(manifest)
+	return writer.enqueue(writerOperation{
+		kind:     writerManifest,
+		manifest: manifest,
+	})
+}
+
+/*
+WriteLifecycle accepts one broker transition into the shared ordered storage
+queue so entry, fill, and close recording never performs IO on a guardian.
+*/
+func (writer *Writer) WriteLifecycle(
+	runID hindsight.RunID,
+	event hindsight.LifecycleEvent,
+) error {
+	if writer == nil {
+		return nil
+	}
+
+	return writer.enqueue(writerOperation{
+		kind:      writerLifecycle,
+		runID:     runID,
+		lifecycle: event,
+	})
 }
 
 /*

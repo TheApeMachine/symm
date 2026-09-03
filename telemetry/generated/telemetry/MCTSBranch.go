@@ -10,6 +10,15 @@ type MCTSBranchT struct {
 	Action string `json:"action"`
 	Visits int64 `json:"visits"`
 	MeanReward float64 `json:"meanReward"`
+	BlendedValue float64 `json:"blendedValue"`
+	RewardStd float64 `json:"rewardStd"`
+	CounterfactualReward float64 `json:"counterfactualReward"`
+	CounterfactualMass float64 `json:"counterfactualMass"`
+	CounterfactualMean float64 `json:"counterfactualMean"`
+	EffectiveVisits float64 `json:"effectiveVisits"`
+	CausalExpectation float64 `json:"causalExpectation"`
+	CausalExpectationDefined bool `json:"causalExpectationDefined"`
+	Pruned bool `json:"pruned"`
 }
 
 func (t *MCTSBranchT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -24,6 +33,15 @@ func (t *MCTSBranchT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	MCTSBranchAddAction(builder, actionOffset)
 	MCTSBranchAddVisits(builder, t.Visits)
 	MCTSBranchAddMeanReward(builder, t.MeanReward)
+	MCTSBranchAddBlendedValue(builder, t.BlendedValue)
+	MCTSBranchAddRewardStd(builder, t.RewardStd)
+	MCTSBranchAddCounterfactualReward(builder, t.CounterfactualReward)
+	MCTSBranchAddCounterfactualMass(builder, t.CounterfactualMass)
+	MCTSBranchAddCounterfactualMean(builder, t.CounterfactualMean)
+	MCTSBranchAddEffectiveVisits(builder, t.EffectiveVisits)
+	MCTSBranchAddCausalExpectation(builder, t.CausalExpectation)
+	MCTSBranchAddCausalExpectationDefined(builder, t.CausalExpectationDefined)
+	MCTSBranchAddPruned(builder, t.Pruned)
 	return MCTSBranchEnd(builder)
 }
 
@@ -31,6 +49,15 @@ func (rcv *MCTSBranch) UnPackTo(t *MCTSBranchT) {
 	t.Action = string(rcv.Action())
 	t.Visits = rcv.Visits()
 	t.MeanReward = rcv.MeanReward()
+	t.BlendedValue = rcv.BlendedValue()
+	t.RewardStd = rcv.RewardStd()
+	t.CounterfactualReward = rcv.CounterfactualReward()
+	t.CounterfactualMass = rcv.CounterfactualMass()
+	t.CounterfactualMean = rcv.CounterfactualMean()
+	t.EffectiveVisits = rcv.EffectiveVisits()
+	t.CausalExpectation = rcv.CausalExpectation()
+	t.CausalExpectationDefined = rcv.CausalExpectationDefined()
+	t.Pruned = rcv.Pruned()
 }
 
 func (rcv *MCTSBranch) UnPack() *MCTSBranchT {
@@ -109,8 +136,116 @@ func (rcv *MCTSBranch) MutateMeanReward(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(8, n)
 }
 
+func (rcv *MCTSBranch) BlendedValue() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *MCTSBranch) MutateBlendedValue(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(10, n)
+}
+
+func (rcv *MCTSBranch) RewardStd() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *MCTSBranch) MutateRewardStd(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(12, n)
+}
+
+func (rcv *MCTSBranch) CounterfactualReward() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *MCTSBranch) MutateCounterfactualReward(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(14, n)
+}
+
+func (rcv *MCTSBranch) CounterfactualMass() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *MCTSBranch) MutateCounterfactualMass(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(16, n)
+}
+
+func (rcv *MCTSBranch) CounterfactualMean() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *MCTSBranch) MutateCounterfactualMean(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(18, n)
+}
+
+func (rcv *MCTSBranch) EffectiveVisits() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *MCTSBranch) MutateEffectiveVisits(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(20, n)
+}
+
+func (rcv *MCTSBranch) CausalExpectation() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *MCTSBranch) MutateCausalExpectation(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(22, n)
+}
+
+func (rcv *MCTSBranch) CausalExpectationDefined() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *MCTSBranch) MutateCausalExpectationDefined(n bool) bool {
+	return rcv._tab.MutateBoolSlot(24, n)
+}
+
+func (rcv *MCTSBranch) Pruned() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *MCTSBranch) MutatePruned(n bool) bool {
+	return rcv._tab.MutateBoolSlot(26, n)
+}
+
 func MCTSBranchStart(builder *flatbuffers.Builder) {
-	builder.StartObject(3)
+	builder.StartObject(12)
 }
 func MCTSBranchAddAction(builder *flatbuffers.Builder, action flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(action), 0)
@@ -120,6 +255,33 @@ func MCTSBranchAddVisits(builder *flatbuffers.Builder, visits int64) {
 }
 func MCTSBranchAddMeanReward(builder *flatbuffers.Builder, meanReward float64) {
 	builder.PrependFloat64Slot(2, meanReward, 0.0)
+}
+func MCTSBranchAddBlendedValue(builder *flatbuffers.Builder, blendedValue float64) {
+	builder.PrependFloat64Slot(3, blendedValue, 0.0)
+}
+func MCTSBranchAddRewardStd(builder *flatbuffers.Builder, rewardStd float64) {
+	builder.PrependFloat64Slot(4, rewardStd, 0.0)
+}
+func MCTSBranchAddCounterfactualReward(builder *flatbuffers.Builder, counterfactualReward float64) {
+	builder.PrependFloat64Slot(5, counterfactualReward, 0.0)
+}
+func MCTSBranchAddCounterfactualMass(builder *flatbuffers.Builder, counterfactualMass float64) {
+	builder.PrependFloat64Slot(6, counterfactualMass, 0.0)
+}
+func MCTSBranchAddCounterfactualMean(builder *flatbuffers.Builder, counterfactualMean float64) {
+	builder.PrependFloat64Slot(7, counterfactualMean, 0.0)
+}
+func MCTSBranchAddEffectiveVisits(builder *flatbuffers.Builder, effectiveVisits float64) {
+	builder.PrependFloat64Slot(8, effectiveVisits, 0.0)
+}
+func MCTSBranchAddCausalExpectation(builder *flatbuffers.Builder, causalExpectation float64) {
+	builder.PrependFloat64Slot(9, causalExpectation, 0.0)
+}
+func MCTSBranchAddCausalExpectationDefined(builder *flatbuffers.Builder, causalExpectationDefined bool) {
+	builder.PrependBoolSlot(10, causalExpectationDefined, false)
+}
+func MCTSBranchAddPruned(builder *flatbuffers.Builder, pruned bool) {
+	builder.PrependBoolSlot(11, pruned, false)
 }
 func MCTSBranchEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

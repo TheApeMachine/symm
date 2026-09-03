@@ -7,23 +7,23 @@ import (
 )
 
 type EnvelopePerspectiveT struct {
-	Symbol             string                            `json:"symbol"`
-	Peer               string                            `json:"peer"`
-	PositionId         string                            `json:"positionId"`
-	Advisor            string                            `json:"advisor"`
-	Question           string                            `json:"question"`
-	IssuedAt           int64                             `json:"issuedAt"`
-	ResolvedAt         int64                             `json:"resolvedAt"`
-	ResolvedCoordinate uint64                            `json:"resolvedCoordinate"`
-	Sequence           uint64                            `json:"sequence"`
-	Round              uint64                            `json:"round"`
-	Support            uint64                            `json:"support"`
-	Classes            []*EnvelopePerspectiveClassT      `json:"classes"`
-	Predictions        []*EnvelopePerspectivePredictionT `json:"predictions"`
-	Lease              *EnvelopePerspectiveLeaseT        `json:"lease"`
-	Lifecycle          string                            `json:"lifecycle"`
-	ResolvedBy         string                            `json:"resolvedBy"`
-	Error              string                            `json:"error"`
+	Symbol string `json:"symbol"`
+	Peer string `json:"peer"`
+	PositionId string `json:"positionId"`
+	Advisor string `json:"advisor"`
+	Question string `json:"question"`
+	IssuedAt int64 `json:"issuedAt"`
+	ResolvedAt int64 `json:"resolvedAt"`
+	ResolvedCoordinate uint64 `json:"resolvedCoordinate"`
+	Sequence uint64 `json:"sequence"`
+	Round uint64 `json:"round"`
+	Support uint64 `json:"support"`
+	Classes []*EnvelopePerspectiveClassT `json:"classes"`
+	Predictions []*EnvelopePerspectivePredictionT `json:"predictions"`
+	Lease *EnvelopePerspectiveLeaseT `json:"lease"`
+	Lifecycle string `json:"lifecycle"`
+	ResolvedBy string `json:"resolvedBy"`
+	Error string `json:"error"`
 }
 
 func (t *EnvelopePerspectiveT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

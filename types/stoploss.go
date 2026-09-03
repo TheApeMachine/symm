@@ -18,6 +18,7 @@ const (
 	TriggerProtectedFloor    = "protected_floor"
 	TriggerProfitStagnation  = "profit_stagnation"
 	TriggerPumpMomentumLost  = "pump_momentum_exhausted"
+	TriggerClimaxExhaustion  = "climax_exhaustion"
 	TriggerTrailingFloor     = "trailing_floor"
 	TriggerHorizonExpired    = "horizon_expired"
 	TriggerRegimeInvalidated = "execution_regime_invalidated"
@@ -101,6 +102,23 @@ type Stoploss struct {
 	SurgeMove     *decimal.Decimal `json:"surge_move,omitempty"`
 	MomentumFloor *decimal.Decimal `json:"momentum_floor,omitempty"`
 	Plan          *RiskPlan        `json:"plan,omitempty"`
+	Causative     CausativeContext `json:"causative,omitempty"`
+}
+
+/*
+CausativeContext carries cross-stream semantic facts that contextualize
+local order book and price noise for the Stoploss Decision Tree.
+*/
+type CausativeContext struct {
+	HawkesBranchingRatio float64           `json:"hawkes_branching_ratio,omitempty"`
+	HawkesExcitationBuy  float64           `json:"hawkes_excitation_buy,omitempty"`
+	HawkesExcitationSell float64           `json:"hawkes_excitation_sell,omitempty"`
+	OIGrowthVelocity     float64           `json:"oi_growth_velocity,omitempty"`
+	OIGrowthZScore       float64           `json:"oi_growth_zscore,omitempty"`
+	NetReplenishmentBid  float64           `json:"net_replenishment_bid,omitempty"`
+	NetWithdrawalBid     float64           `json:"net_withdrawal_bid,omitempty"`
+	ActivePerspectives   map[string]string `json:"active_perspectives,omitempty"`
+	PrecursorPumpEntry   bool              `json:"precursor_pump_entry,omitempty"`
 }
 
 /*
@@ -353,17 +371,11 @@ func (stoploss *Stoploss) ObserveExecutable(surface *ExecutionSurface) {
 		return
 	}
 
-	if !surface.BookComplete {
-		// A valid book has never been observed: clean initial bootstrap — the
-		// position stays armed and waits for the first coherent frame rather
-		// than fabricating a mark or falling back to ticker.
-		if !stoploss.BookObserved {
-			return
-		}
+	if stoplossBranches.Resolve(stoploss, surface, nil) {
+		return
+	}
 
-		// A valid book was previously observed and has now become unusable:
-		// feed-integrity failure surfaces immediate execution risk.
-		stoploss.triggerRegimeInvalidated(surface)
+	if !surface.BookComplete {
 		return
 	}
 
@@ -384,33 +396,7 @@ func (stoploss *Stoploss) ObserveExecutable(surface *ExecutionSurface) {
 		return
 	}
 
-	if stoploss.Locked && surface.FloorCoverageQty != nil &&
-		surface.SellableQty != nil &&
-		surface.FloorCoverageQty.Cmp(surface.SellableQty) < 0 {
-		stoploss.triggerRegimeInvalidated(surface)
-		return
-	}
-
 	stoploss.observeMark(surface.ExecutableVWAP)
-}
-
-/*
-triggerRegimeInvalidated claims the protective exit via the execution-regime
-boundary. The executable mark, when available, is retained as the trigger mark;
-when the surface cannot price the position at all, the last known executable
-mark is retained so the audit record still shows what the lot was worth before
-the book became unusable.
-*/
-func (stoploss *Stoploss) triggerRegimeInvalidated(surface *ExecutionSurface) {
-	stoploss.Status = TRIGGERED
-	stoploss.TriggerReason = TriggerRegimeInvalidated
-
-	if surface.ExecutableVWAP != nil && surface.ExecutableVWAP.Sign() > 0 {
-		stoploss.TriggerMark = decimal.NewFromInt64(0).Add(surface.ExecutableVWAP)
-		return
-	}
-
-	stoploss.TriggerMark = scaled(stoploss.Mark)
 }
 
 /*
@@ -437,14 +423,6 @@ func (stoploss *Stoploss) observeMark(mark *decimal.Decimal) {
 		stoploss.Floor = stoploss.LockFloor
 	}
 
-	// Hard loss and locked profit remain immediate boundaries. A higher learned
-	// trailing floor may wait only for an already-active, volume-clock-bounded
-	// liquidity-sweep claim to resolve.
-	if stoploss.Floor != nil && mark.Cmp(stoploss.Floor) <= 0 {
-		stoploss.triggerFloor(mark)
-		return
-	}
-
 	move := stoploss.markMove(previousMark, mark)
 	stoploss.LastMove = move
 
@@ -454,10 +432,6 @@ func (stoploss *Stoploss) observeMark(mark *decimal.Decimal) {
 		stoploss.Peak = mark
 		stoploss.DistinctNonPeakMarks = 0
 		stoploss.LastStagnationMark = nil
-	}
-
-	if stoploss.SurgeArmed && stoploss.triggerMomentumExit(mark) {
-		return
 	}
 
 	// The step is folded before the trailing candidate is placed, so the peak
@@ -511,45 +485,13 @@ func (stoploss *Stoploss) observeMark(mark *decimal.Decimal) {
 			stoploss.DistinctNonPeakMarks++
 			stoploss.LastStagnationMark = mark
 		}
-
-		confirmMarks := stoploss.ConfirmMarks
-
-		if confirmMarks < 1 {
-			confirmMarks = 3
-		}
-
-		giveback := scaled(stoploss.Peak).Sub(scaled(mark))
-
-		if stoploss.DistinctNonPeakMarks >= confirmMarks &&
-			giveback.Cmp(stoploss.stagnationTolerance()) >= 0 {
-			stoploss.Status = TRIGGERED
-			stoploss.TriggerReason = TriggerProfitStagnation
-			stoploss.TriggerMark = mark
-			return
-		}
-	}
-}
-
-func (stoploss *Stoploss) triggerFloor(mark *decimal.Decimal) {
-	if stoploss.Locked && stoploss.LockFloor != nil &&
-		stoploss.Floor != nil && stoploss.Floor.Cmp(stoploss.LockFloor) > 0 &&
-		mark.Cmp(stoploss.LockFloor) > 0 {
-		stoploss.Status = TRIGGERED
-		stoploss.TriggerReason = TriggerTrailingFloor
-		stoploss.TriggerMark = mark
-
-		return
 	}
 
-	stoploss.Status = TRIGGERED
-	stoploss.TriggerMark = mark
-
-	if stoploss.Locked {
-		stoploss.TriggerReason = TriggerProtectedFloor
-		return
+	if stoploss.SurgeArmed {
+		stoploss.MomentumFloor = stoploss.armedTrailDistance()
 	}
 
-	stoploss.TriggerReason = TriggerHardFloor
+	stoplossBranches.Resolve(stoploss, nil, mark)
 }
 
 func (stoploss *Stoploss) markMove(
@@ -618,6 +560,16 @@ func (stoploss *Stoploss) trailingCandidate(
 		}
 	}
 
+	if stoploss.isReflexiveCascade() {
+		cascadeScale := 1.5
+
+		if stoploss.Causative.HawkesBranchingRatio >= 0.9 {
+			cascadeScale = 2.0
+		}
+
+		distance = distance.Mul(decimal.NewFromFloat64(cascadeScale))
+	}
+
 	return floorToTick(
 		scaled(mark).Sub(distance),
 		stoploss.TickSize,
@@ -625,33 +577,91 @@ func (stoploss *Stoploss) trailingCandidate(
 }
 
 /*
-triggerMomentumExit reports whether a surge-armed lot has unwound beyond the
-central band of its learned step distribution, and records the exhaustion
-trigger when it has. The line is recomputed from live statistics on every mark,
-so a burst that keeps extending also keeps raising its own protection.
+ObserveCausative updates this stoploss with incoming cross-signal causative facts.
 */
-func (stoploss *Stoploss) triggerMomentumExit(mark *decimal.Decimal) bool {
-	stoploss.MomentumFloor = stoploss.armedTrailDistance()
+func (stoploss *Stoploss) ObserveCausative(causative CausativeContext) {
+	if stoploss == nil {
+		return
+	}
 
-	if stoploss.MomentumFloor == nil || stoploss.MomentumFloor.Sign() <= 0 ||
-		stoploss.Peak == nil {
+	stoploss.Causative = causative
+}
+
+/*
+ObservePerspective records a newly survived Perspective into active perspective context.
+*/
+func (stoploss *Stoploss) ObservePerspective(perspective *Perspective) {
+	if stoploss == nil || perspective == nil {
+		return
+	}
+
+	if stoploss.Causative.ActivePerspectives == nil {
+		stoploss.Causative.ActivePerspectives = make(map[string]string)
+	}
+
+	stoploss.Causative.ActivePerspectives[perspective.Advisor.String()] = string(perspective.TopClass())
+}
+
+/*
+isReflexiveCascade returns true when endogenous market excitement or leveraged
+momentum indicates market makers are retreating to reprice higher.
+*/
+func (stoploss *Stoploss) isReflexiveCascade() bool {
+	if stoploss == nil {
 		return false
 	}
 
-	momentumLine := floorToTick(
-		scaled(stoploss.Peak).Sub(stoploss.MomentumFloor),
-		stoploss.TickSize,
-	)
+	if stoploss.Causative.HawkesBranchingRatio >= 0.8 ||
+		stoploss.Causative.HawkesExcitationBuy >= 0.7 {
+		return true
+	}
 
-	if momentumLine == nil || mark.Cmp(momentumLine) > 0 {
+	if stoploss.Causative.OIGrowthVelocity > 0 || stoploss.Causative.OIGrowthZScore >= 2.0 {
+		return true
+	}
+
+	if momentum, ok := stoploss.Causative.ActivePerspectives["momentum"]; ok {
+		if momentum == "Building" || momentum == "Sustaining" {
+			return true
+		}
+	}
+
+	if basis, ok := stoploss.Causative.ActivePerspectives["basis"]; ok {
+		if basis == "LeverageSqueeze" || basis == "PremiumExpanding" {
+			return true
+		}
+	}
+
+	return false
+}
+
+/*
+isSweepProtected returns true if mark has dipped to the floor, but PullbackAdvisor
+or LiquidityAdvisor confirms a LiquiditySweep, WallBuilding, or Replenishing with
+active bid replenishment and no structural damage.
+*/
+func (stoploss *Stoploss) isSweepProtected(mark *decimal.Decimal) bool {
+	if stoploss == nil || mark == nil || stoploss.Floor == nil {
 		return false
 	}
 
-	stoploss.Status = TRIGGERED
-	stoploss.TriggerReason = TriggerPumpMomentumLost
-	stoploss.TriggerMark = mark
+	if mark.Cmp(stoploss.Floor) > 0 {
+		return false
+	}
 
-	return true
+	if pullback, ok := stoploss.Causative.ActivePerspectives["pullback"]; ok && pullback == "LiquiditySweep" {
+		if stoploss.Causative.NetReplenishmentBid > 0.4 {
+			return true
+		}
+	}
+
+	if liq, ok := stoploss.Causative.ActivePerspectives["liquidity"]; ok {
+		if liq == "WallBuilding" || liq == "Replenishing" {
+			return true
+		}
+	}
+
+	return false
 }
 
 /*
@@ -1189,3 +1199,70 @@ func (stoploss *Stoploss) Close() (err error) {
 
 	return errnie.Error(err)
 }
+
+/*
+isClimaxExhausted reports whether the lot is running into a buying climax that
+should be sold into rather than trailed behind.
+
+A trailing floor exits only after price has already fallen through it. During a
+rug pull that is precisely when the bids are gone, so the exit fills far below
+the floor it was supposed to protect. The climax exit inverts the timing: it
+sells while the candle is still green and retail is still buying market orders,
+so the fill lands against a deep, eager book.
+
+Firing requires three things at once, because any one alone is ordinary:
+the lot is in a surge (SurgeArmed) and profitable past its profit line, the
+advisors agree the run is exhausting, and the book is thinning underneath.
+That conjunction is the pumper distributing into the crowd — not a healthy
+trend, which keeps its book intact.
+
+A parabolic run is deliberately exempt: those are the lots this system exists
+to hold, and an exhaustion reading mid-parabola is far more often noise than
+a top.
+*/
+func (stoploss *Stoploss) isClimaxExhausted(mark *decimal.Decimal) bool {
+	if stoploss == nil || mark == nil || !stoploss.SurgeArmed {
+		return false
+	}
+
+	if stoploss.ProfitLine == nil || mark.Cmp(stoploss.ProfitLine) <= 0 {
+		return false
+	}
+
+	exhausting := false
+
+	if profitRun, found := stoploss.Causative.ActivePerspectives["profit_run"]; found {
+		exhausting = profitRun == "Exhausting" || profitRun == "GivingBack"
+	}
+
+	if !exhausting {
+		return false
+	}
+
+	// Size is deliberately not a condition here. An earlier form of this exit
+	// exempted parabolic runs, which are defined as a gain at or above 15%.
+	// That inverted the exit's purpose: the pumps this is built to escape are
+	// the ones that run 30%, 80%, 200%, so the exemption disabled the exit on
+	// exactly the trades that need it and forced them to ride the rug down
+	// through a trailing floor into vanished bids.
+	//
+	// What separates a healthy runner from a distribution top is the book, not
+	// the percentage. A run whose depth is intact keeps running; a run whose
+	// bids are being withdrawn while the crowd buys is the pumper handing out
+	// exit liquidity.
+	if liquidity, found := stoploss.Causative.ActivePerspectives["liquidity"]; found {
+		if liquidity == "Depleting" || liquidity == "VacuumForming" {
+			return true
+		}
+	}
+
+	// Market makers pulling their bids is the same signal read directly off
+	// the book, and it stands on its own when no liquidity advisor has spoken.
+	return stoploss.Causative.NetWithdrawalBid > bidWithdrawalClimax
+}
+
+/*
+bidWithdrawalClimax is the share of bid depth withdrawn that marks the book
+giving way beneath a climax. It is explicit risk policy, not a fitted constant.
+*/
+const bidWithdrawalClimax = 0.35

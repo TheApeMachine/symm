@@ -113,10 +113,6 @@ func (price *Price) GetFees(symbols []string) error {
 		price.fees.Store(r.symbolKey, r.fee)
 	}
 
-	if err := price.captureFeeProfiles(symbols, tradeVolumeResult); err != nil {
-		return err
-	}
-
 	price.status = types.READY
 	return nil
 }

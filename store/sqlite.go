@@ -490,7 +490,7 @@ func (store *SQLite) WriteCapture(
 	payload []byte,
 	at time.Time,
 ) error {
-	if store == nil || store.database == nil {
+	if store == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -498,39 +498,14 @@ func (store *SQLite) WriteCapture(
 		))
 	}
 
-	if !identity.Valid() {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"store: capture identity required",
-			nil,
-		))
-	}
-
-	storedPayload, encoding := store.encodePayload(payload)
-
-	if _, err := store.database.Exec(
-		`INSERT INTO events
-		 (kind, endpoint, at, data, run_id, capture_seq, stream, stream_epoch, stream_seq, encoding)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		kind,
-		endpoint,
-		at.UTC().Format(time.RFC3339Nano),
-		storedPayload,
-		string(identity.Run),
-		uint64(identity.Sequence),
-		string(identity.Stream),
-		uint64(identity.StreamEpoch),
-		identity.StreamSequence,
-		encoding,
-	); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			fmt.Sprintf("store: write %s capture failed [%s]", kind, err.Error()),
-			err,
-		))
-	}
-
-	return nil
+	return store.writeOperation(store.database, writerOperation{
+		kind:        writerCapture,
+		identity:    identity,
+		endpoint:    endpoint,
+		captureKind: kind,
+		payload:     payload,
+		at:          at,
+	})
 }
 
 /*
@@ -602,7 +577,7 @@ as columns so the raw-frame → envelope fan-out is joinable by identity, never
 by timestamp.
 */
 func (store *SQLite) WriteManifest(manifest hindsight.EnvelopeManifest) error {
-	if store == nil || store.database == nil {
+	if store == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -610,47 +585,10 @@ func (store *SQLite) WriteManifest(manifest hindsight.EnvelopeManifest) error {
 		))
 	}
 
-	if !manifest.Envelope.Origin.Valid() {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"store: envelope manifest requires a valid origin",
-			nil,
-		))
-	}
-
-	ref, err := hindsight.MarshalEnvelopeRef(manifest.Envelope)
-
-	if err != nil {
-		return err
-	}
-
-	payload, err := hindsight.MarshalManifest(manifest)
-
-	if err != nil {
-		return err
-	}
-
-	if _, err := store.database.Exec(
-		`INSERT INTO envelopes
-		 (envelope_ref, origin_run, origin_seq, ordinal, workload, domain_kind, symbol, manifest)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		ref,
-		string(manifest.Envelope.Origin.Run),
-		uint64(manifest.Envelope.Origin.Sequence),
-		manifest.Envelope.Ordinal,
-		manifest.Workload,
-		manifest.DomainKind,
-		manifest.Symbol,
-		payload,
-	); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			fmt.Sprintf("store: write envelope manifest failed [%s]", err.Error()),
-			err,
-		))
-	}
-
-	return nil
+	return store.writeOperation(store.database, writerOperation{
+		kind:     writerManifest,
+		manifest: manifest,
+	})
 }
 
 /*
@@ -860,7 +798,7 @@ func (store *SQLite) WriteLifecycleEvent(
 	runID hindsight.RunID,
 	event hindsight.LifecycleEvent,
 ) error {
-	if store == nil || store.database == nil {
+	if store == nil {
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -868,49 +806,7 @@ func (store *SQLite) WriteLifecycleEvent(
 		))
 	}
 
-	if event.DecisionID == "" || event.Kind == "" {
-		return errnie.Error(errnie.Err(
-			errnie.Validation,
-			"store: lifecycle decision id and kind required",
-			nil,
-		))
-	}
-
-	executionJSON := ""
-
-	if event.Execution != nil {
-		encoded, err := json.Marshal(event.Execution)
-
-		if err != nil {
-			return errnie.Error(errnie.Err(
-				errnie.IO,
-				"store: marshal lifecycle execution failed",
-				err,
-			))
-		}
-
-		executionJSON = string(encoded)
-	}
-
-	if _, err := store.database.Exec(
-		`INSERT INTO lifecycle (run_id, decision_id, symbol, kind, action, at, execution)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		string(runID),
-		event.DecisionID,
-		event.Symbol,
-		event.Kind,
-		event.Action,
-		event.At.UTC().Format(time.RFC3339Nano),
-		executionJSON,
-	); err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.IO,
-			"store: write lifecycle event failed",
-			err,
-		))
-	}
-
-	return nil
+	return store.writeLifecycleOperation(store.database, runID, event)
 }
 
 /*

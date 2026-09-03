@@ -105,7 +105,9 @@ func newTestRecoveryWithOptions(
 	}
 
 	storePath := t.TempDir() + "/recovery.sqlite"
-	store, err := NewPositionStore(storePath)
+	store, err := NewPositionStore(
+		storePath, testPositionStoreQueueDepth, testPositionStoreBatchSize,
+	)
 	if err != nil {
 		t.Fatalf("failed to open position store: %v", err)
 	}
@@ -113,7 +115,7 @@ func newTestRecoveryWithOptions(
 
 	positions := &sync.Map{}
 	recovery := NewRecovery(
-		t.Context(), api, instrument, price, nil, nil, store, positions,
+		t.Context(), api, instrument, price, nil, store, positions,
 	)
 
 	return recovery, positions

@@ -129,8 +129,17 @@ func SymbolName(symbol Symbol) (string, bool) {
 }
 
 /*
+String returns the human-readable string representation of this Symbol.
+*/
+func (symbol Symbol) String() string {
+	name, _ := SymbolName(symbol)
+	return name
+}
+
+/*
 RegisteredSymbols returns the number of interned symbols.
 */
 func RegisteredSymbols() int {
 	return symbols.registered()
 }
+

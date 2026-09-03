@@ -26,6 +26,10 @@ type MCTSNodeT struct {
 	ScmReason string `json:"scmReason"`
 	Selected bool `json:"selected"`
 	Principal bool `json:"principal"`
+	BlendedValue float64 `json:"blendedValue"`
+	RewardStd float64 `json:"rewardStd"`
+	CausalExpectationDefined bool `json:"causalExpectationDefined"`
+	Pruned bool `json:"pruned"`
 	State []*NamedNumberT `json:"state"`
 	Children []*MCTSNodeT `json:"children"`
 }
@@ -88,6 +92,10 @@ func (t *MCTSNodeT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	MCTSNodeAddScmReason(builder, scmReasonOffset)
 	MCTSNodeAddSelected(builder, t.Selected)
 	MCTSNodeAddPrincipal(builder, t.Principal)
+	MCTSNodeAddBlendedValue(builder, t.BlendedValue)
+	MCTSNodeAddRewardStd(builder, t.RewardStd)
+	MCTSNodeAddCausalExpectationDefined(builder, t.CausalExpectationDefined)
+	MCTSNodeAddPruned(builder, t.Pruned)
 	MCTSNodeAddState(builder, stateOffset)
 	MCTSNodeAddChildren(builder, childrenOffset)
 	return MCTSNodeEnd(builder)
@@ -113,6 +121,10 @@ func (rcv *MCTSNode) UnPackTo(t *MCTSNodeT) {
 	t.ScmReason = string(rcv.ScmReason())
 	t.Selected = rcv.Selected()
 	t.Principal = rcv.Principal()
+	t.BlendedValue = rcv.BlendedValue()
+	t.RewardStd = rcv.RewardStd()
+	t.CausalExpectationDefined = rcv.CausalExpectationDefined()
+	t.Pruned = rcv.Pruned()
 	stateLength := rcv.StateLength()
 	t.State = make([]*NamedNumberT, stateLength)
 	for j := 0; j < stateLength; j++ {
@@ -393,8 +405,56 @@ func (rcv *MCTSNode) MutatePrincipal(n bool) bool {
 	return rcv._tab.MutateBoolSlot(40, n)
 }
 
-func (rcv *MCTSNode) State(obj *NamedNumber, j int) bool {
+func (rcv *MCTSNode) BlendedValue() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *MCTSNode) MutateBlendedValue(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(42, n)
+}
+
+func (rcv *MCTSNode) RewardStd() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *MCTSNode) MutateRewardStd(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(44, n)
+}
+
+func (rcv *MCTSNode) CausalExpectationDefined() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *MCTSNode) MutateCausalExpectationDefined(n bool) bool {
+	return rcv._tab.MutateBoolSlot(46, n)
+}
+
+func (rcv *MCTSNode) Pruned() bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	if o != 0 {
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
+	}
+	return false
+}
+
+func (rcv *MCTSNode) MutatePruned(n bool) bool {
+	return rcv._tab.MutateBoolSlot(48, n)
+}
+
+func (rcv *MCTSNode) State(obj *NamedNumber, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -406,7 +466,7 @@ func (rcv *MCTSNode) State(obj *NamedNumber, j int) bool {
 }
 
 func (rcv *MCTSNode) StateLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -414,7 +474,7 @@ func (rcv *MCTSNode) StateLength() int {
 }
 
 func (rcv *MCTSNode) Children(obj *MCTSNode, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -426,7 +486,7 @@ func (rcv *MCTSNode) Children(obj *MCTSNode, j int) bool {
 }
 
 func (rcv *MCTSNode) ChildrenLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -434,7 +494,7 @@ func (rcv *MCTSNode) ChildrenLength() int {
 }
 
 func MCTSNodeStart(builder *flatbuffers.Builder) {
-	builder.StartObject(21)
+	builder.StartObject(25)
 }
 func MCTSNodeAddAction(builder *flatbuffers.Builder, action int64) {
 	builder.PrependInt64Slot(0, action, 0)
@@ -493,14 +553,26 @@ func MCTSNodeAddSelected(builder *flatbuffers.Builder, selected bool) {
 func MCTSNodeAddPrincipal(builder *flatbuffers.Builder, principal bool) {
 	builder.PrependBoolSlot(18, principal, false)
 }
+func MCTSNodeAddBlendedValue(builder *flatbuffers.Builder, blendedValue float64) {
+	builder.PrependFloat64Slot(19, blendedValue, 0.0)
+}
+func MCTSNodeAddRewardStd(builder *flatbuffers.Builder, rewardStd float64) {
+	builder.PrependFloat64Slot(20, rewardStd, 0.0)
+}
+func MCTSNodeAddCausalExpectationDefined(builder *flatbuffers.Builder, causalExpectationDefined bool) {
+	builder.PrependBoolSlot(21, causalExpectationDefined, false)
+}
+func MCTSNodeAddPruned(builder *flatbuffers.Builder, pruned bool) {
+	builder.PrependBoolSlot(22, pruned, false)
+}
 func MCTSNodeAddState(builder *flatbuffers.Builder, state flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(19, flatbuffers.UOffsetT(state), 0)
+	builder.PrependUOffsetTSlot(23, flatbuffers.UOffsetT(state), 0)
 }
 func MCTSNodeStartStateVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func MCTSNodeAddChildren(builder *flatbuffers.Builder, children flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(20, flatbuffers.UOffsetT(children), 0)
+	builder.PrependUOffsetTSlot(24, flatbuffers.UOffsetT(children), 0)
 }
 func MCTSNodeStartChildrenVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)

@@ -12,8 +12,8 @@ writes through. It exposes a narrow, uniform write surface: one run record and
 one raw frame record (tagged with its Hindsight CaptureIdentity, origin kind,
 and endpoint) per captured external input — so the storage engine behind it
 (SQLite today, an S3-compatible object store later) can be swapped without any
-pipeline wiring changing. Implementations own their own durability, batching,
-and backpressure policy; the writer only reports.
+pipeline wiring changing. Writer owns ordered batching and bounded backpressure;
+implementations own durable storage mechanics.
 */
 type Repository interface {
 	// WriteRun persists one Run record — the process capture session's

@@ -11,7 +11,11 @@ import (
 
 func TestLoadOpenDecision(t *testing.T) {
 	Convey("Given an open trade whose entry arbitration was journaled", t, func() {
-		store, err := NewPositionStore(filepath.Join(t.TempDir(), "positions.db"))
+		store, err := NewPositionStore(
+			filepath.Join(t.TempDir(), "positions.db"),
+			testPositionStoreQueueDepth,
+			testPositionStoreBatchSize,
+		)
 		So(err, ShouldBeNil)
 		defer store.Close()
 

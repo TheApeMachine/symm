@@ -31,18 +31,18 @@ func TestCaptureProvenanceIntegrationTest(t *testing.T) {
 		engine, err := store.NewSQLite(path)
 		So(err, ShouldBeNil)
 
-		Reset(func() {
-			_ = engine.Close()
-		})
-
 		runID, err := hindsight.NewRunID(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
 		So(err, ShouldBeNil)
 
 		sequencer, err := hindsight.NewSequencer(runID)
 		So(err, ShouldBeNil)
 
-		writer, err := store.NewWriter(engine, sequencer)
+		writer, err := store.NewWriter(engine, sequencer, 16, 8)
 		So(err, ShouldBeNil)
+		Reset(func() {
+			_ = writer.Close()
+			_ = engine.Close()
+		})
 
 		Convey("One raw frame yielding two trades is captured, ingested, witnessed, and traversable by identity", func() {
 			raw := []byte(`{"channel":"trade","type":"update","data":[
@@ -74,6 +74,8 @@ func TestCaptureProvenanceIntegrationTest(t *testing.T) {
 			for _, manifest := range manifests {
 				So(writer.WriteManifest(manifest), ShouldBeNil)
 			}
+
+			So(writer.Sync(), ShouldBeNil)
 
 			// 4. Advance one envelope through the real category solver to produce
 			// a semantic artifact (a Measurement is the category solver's input).

@@ -384,6 +384,7 @@ func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[flo
 	)
 	point.Timestamp = stamped
 
+
 	input := nmtypes.Frame{}
 	input.Put(symbolTimelineAdvanced, oneIf(advanced))
 	input.Put(symbolDerivativePrice, point.Last.Float64())

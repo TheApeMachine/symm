@@ -8,6 +8,19 @@ import (
 
 type DecisionTraceT struct {
 	Hypothesis string `json:"hypothesis"`
+	IdentificationStatus string `json:"identificationStatus"`
+	DecisionUnavailable bool `json:"decisionUnavailable"`
+	ExpectedOutcome float64 `json:"expectedOutcome"`
+	OutcomeUncertainty float64 `json:"outcomeUncertainty"`
+	Horizon int64 `json:"horizon"`
+	ExplorationConstant float64 `json:"explorationConstant"`
+	UncertaintyWeight float64 `json:"uncertaintyWeight"`
+	TransitionSource string `json:"transitionSource"`
+	ConsensusDominantMove string `json:"consensusDominantMove"`
+	ConsensusConfidence float64 `json:"consensusConfidence"`
+	ConsensusParticipants int64 `json:"consensusParticipants"`
+	Vetoes []string `json:"vetoes"`
+	Synergies []string `json:"synergies"`
 	GraphSupports float64 `json:"graphSupports"`
 	GraphContradicts float64 `json:"graphContradicts"`
 	GraphConditions float64 `json:"graphConditions"`
@@ -26,6 +39,44 @@ func (t *DecisionTraceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	hypothesisOffset := flatbuffers.UOffsetT(0)
 	if t.Hypothesis != "" {
 		hypothesisOffset = builder.CreateString(t.Hypothesis)
+	}
+	identificationStatusOffset := flatbuffers.UOffsetT(0)
+	if t.IdentificationStatus != "" {
+		identificationStatusOffset = builder.CreateString(t.IdentificationStatus)
+	}
+	transitionSourceOffset := flatbuffers.UOffsetT(0)
+	if t.TransitionSource != "" {
+		transitionSourceOffset = builder.CreateString(t.TransitionSource)
+	}
+	consensusDominantMoveOffset := flatbuffers.UOffsetT(0)
+	if t.ConsensusDominantMove != "" {
+		consensusDominantMoveOffset = builder.CreateString(t.ConsensusDominantMove)
+	}
+	vetoesOffset := flatbuffers.UOffsetT(0)
+	if t.Vetoes != nil {
+		vetoesLength := len(t.Vetoes)
+		vetoesOffsets := make([]flatbuffers.UOffsetT, vetoesLength)
+		for j := 0; j < vetoesLength; j++ {
+			vetoesOffsets[j] = builder.CreateString(t.Vetoes[j])
+		}
+		DecisionTraceStartVetoesVector(builder, vetoesLength)
+		for j := vetoesLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(vetoesOffsets[j])
+		}
+		vetoesOffset = builder.EndVector(vetoesLength)
+	}
+	synergiesOffset := flatbuffers.UOffsetT(0)
+	if t.Synergies != nil {
+		synergiesLength := len(t.Synergies)
+		synergiesOffsets := make([]flatbuffers.UOffsetT, synergiesLength)
+		for j := 0; j < synergiesLength; j++ {
+			synergiesOffsets[j] = builder.CreateString(t.Synergies[j])
+		}
+		DecisionTraceStartSynergiesVector(builder, synergiesLength)
+		for j := synergiesLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(synergiesOffsets[j])
+		}
+		synergiesOffset = builder.EndVector(synergiesLength)
 	}
 	branchesOffset := flatbuffers.UOffsetT(0)
 	if t.Branches != nil {
@@ -47,6 +98,19 @@ func (t *DecisionTraceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	treeOffset := t.Tree.Pack(builder)
 	DecisionTraceStart(builder)
 	DecisionTraceAddHypothesis(builder, hypothesisOffset)
+	DecisionTraceAddIdentificationStatus(builder, identificationStatusOffset)
+	DecisionTraceAddDecisionUnavailable(builder, t.DecisionUnavailable)
+	DecisionTraceAddExpectedOutcome(builder, t.ExpectedOutcome)
+	DecisionTraceAddOutcomeUncertainty(builder, t.OutcomeUncertainty)
+	DecisionTraceAddHorizon(builder, t.Horizon)
+	DecisionTraceAddExplorationConstant(builder, t.ExplorationConstant)
+	DecisionTraceAddUncertaintyWeight(builder, t.UncertaintyWeight)
+	DecisionTraceAddTransitionSource(builder, transitionSourceOffset)
+	DecisionTraceAddConsensusDominantMove(builder, consensusDominantMoveOffset)
+	DecisionTraceAddConsensusConfidence(builder, t.ConsensusConfidence)
+	DecisionTraceAddConsensusParticipants(builder, t.ConsensusParticipants)
+	DecisionTraceAddVetoes(builder, vetoesOffset)
+	DecisionTraceAddSynergies(builder, synergiesOffset)
 	DecisionTraceAddGraphSupports(builder, t.GraphSupports)
 	DecisionTraceAddGraphContradicts(builder, t.GraphContradicts)
 	DecisionTraceAddGraphConditions(builder, t.GraphConditions)
@@ -61,6 +125,27 @@ func (t *DecisionTraceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 
 func (rcv *DecisionTrace) UnPackTo(t *DecisionTraceT) {
 	t.Hypothesis = string(rcv.Hypothesis())
+	t.IdentificationStatus = string(rcv.IdentificationStatus())
+	t.DecisionUnavailable = rcv.DecisionUnavailable()
+	t.ExpectedOutcome = rcv.ExpectedOutcome()
+	t.OutcomeUncertainty = rcv.OutcomeUncertainty()
+	t.Horizon = rcv.Horizon()
+	t.ExplorationConstant = rcv.ExplorationConstant()
+	t.UncertaintyWeight = rcv.UncertaintyWeight()
+	t.TransitionSource = string(rcv.TransitionSource())
+	t.ConsensusDominantMove = string(rcv.ConsensusDominantMove())
+	t.ConsensusConfidence = rcv.ConsensusConfidence()
+	t.ConsensusParticipants = rcv.ConsensusParticipants()
+	vetoesLength := rcv.VetoesLength()
+	t.Vetoes = make([]string, vetoesLength)
+	for j := 0; j < vetoesLength; j++ {
+		t.Vetoes[j] = string(rcv.Vetoes(j))
+	}
+	synergiesLength := rcv.SynergiesLength()
+	t.Synergies = make([]string, synergiesLength)
+	for j := 0; j < synergiesLength; j++ {
+		t.Synergies[j] = string(rcv.Synergies(j))
+	}
 	t.GraphSupports = rcv.GraphSupports()
 	t.GraphContradicts = rcv.GraphContradicts()
 	t.GraphConditions = rcv.GraphConditions()
@@ -130,31 +215,27 @@ func (rcv *DecisionTrace) Hypothesis() []byte {
 	return nil
 }
 
-func (rcv *DecisionTrace) GraphSupports() float64 {
+func (rcv *DecisionTrace) IdentificationStatus() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(6))
 	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
-	return 0.0
+	return nil
 }
 
-func (rcv *DecisionTrace) MutateGraphSupports(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(6, n)
-}
-
-func (rcv *DecisionTrace) GraphContradicts() float64 {
+func (rcv *DecisionTrace) DecisionUnavailable() bool {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
 	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
-	return 0.0
+	return false
 }
 
-func (rcv *DecisionTrace) MutateGraphContradicts(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(8, n)
+func (rcv *DecisionTrace) MutateDecisionUnavailable(n bool) bool {
+	return rcv._tab.MutateBoolSlot(8, n)
 }
 
-func (rcv *DecisionTrace) GraphConditions() float64 {
+func (rcv *DecisionTrace) ExpectedOutcome() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
@@ -162,11 +243,11 @@ func (rcv *DecisionTrace) GraphConditions() float64 {
 	return 0.0
 }
 
-func (rcv *DecisionTrace) MutateGraphConditions(n float64) bool {
+func (rcv *DecisionTrace) MutateExpectedOutcome(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(10, n)
 }
 
-func (rcv *DecisionTrace) ThesisBalance() float64 {
+func (rcv *DecisionTrace) OutcomeUncertainty() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
@@ -174,12 +255,170 @@ func (rcv *DecisionTrace) ThesisBalance() float64 {
 	return 0.0
 }
 
-func (rcv *DecisionTrace) MutateThesisBalance(n float64) bool {
+func (rcv *DecisionTrace) MutateOutcomeUncertainty(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
 
-func (rcv *DecisionTrace) ThesisConfidence() float64 {
+func (rcv *DecisionTrace) Horizon() int64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *DecisionTrace) MutateHorizon(n int64) bool {
+	return rcv._tab.MutateInt64Slot(14, n)
+}
+
+func (rcv *DecisionTrace) ExplorationConstant() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *DecisionTrace) MutateExplorationConstant(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(16, n)
+}
+
+func (rcv *DecisionTrace) UncertaintyWeight() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *DecisionTrace) MutateUncertaintyWeight(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(18, n)
+}
+
+func (rcv *DecisionTrace) TransitionSource() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *DecisionTrace) ConsensusDominantMove() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *DecisionTrace) ConsensusConfidence() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *DecisionTrace) MutateConsensusConfidence(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(24, n)
+}
+
+func (rcv *DecisionTrace) ConsensusParticipants() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *DecisionTrace) MutateConsensusParticipants(n int64) bool {
+	return rcv._tab.MutateInt64Slot(26, n)
+}
+
+func (rcv *DecisionTrace) Vetoes(j int) []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.ByteVector(a + flatbuffers.UOffsetT(j*4))
+	}
+	return nil
+}
+
+func (rcv *DecisionTrace) VetoesLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *DecisionTrace) Synergies(j int) []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.ByteVector(a + flatbuffers.UOffsetT(j*4))
+	}
+	return nil
+}
+
+func (rcv *DecisionTrace) SynergiesLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *DecisionTrace) GraphSupports() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *DecisionTrace) MutateGraphSupports(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(32, n)
+}
+
+func (rcv *DecisionTrace) GraphContradicts() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *DecisionTrace) MutateGraphContradicts(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(34, n)
+}
+
+func (rcv *DecisionTrace) GraphConditions() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *DecisionTrace) MutateGraphConditions(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(36, n)
+}
+
+func (rcv *DecisionTrace) ThesisBalance() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *DecisionTrace) MutateThesisBalance(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(38, n)
+}
+
+func (rcv *DecisionTrace) ThesisConfidence() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -187,11 +426,11 @@ func (rcv *DecisionTrace) ThesisConfidence() float64 {
 }
 
 func (rcv *DecisionTrace) MutateThesisConfidence(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(14, n)
+	return rcv._tab.MutateFloat64Slot(40, n)
 }
 
 func (rcv *DecisionTrace) Iterations() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
@@ -199,11 +438,11 @@ func (rcv *DecisionTrace) Iterations() int64 {
 }
 
 func (rcv *DecisionTrace) MutateIterations(n int64) bool {
-	return rcv._tab.MutateInt64Slot(16, n)
+	return rcv._tab.MutateInt64Slot(42, n)
 }
 
 func (rcv *DecisionTrace) Branches(obj *MCTSBranch, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -215,7 +454,7 @@ func (rcv *DecisionTrace) Branches(obj *MCTSBranch, j int) bool {
 }
 
 func (rcv *DecisionTrace) BranchesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -223,7 +462,7 @@ func (rcv *DecisionTrace) BranchesLength() int {
 }
 
 func (rcv *DecisionTrace) RecommendedAction() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -231,7 +470,7 @@ func (rcv *DecisionTrace) RecommendedAction() []byte {
 }
 
 func (rcv *DecisionTrace) Tree(obj *MCTSNode) *MCTSNode {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -244,40 +483,85 @@ func (rcv *DecisionTrace) Tree(obj *MCTSNode) *MCTSNode {
 }
 
 func DecisionTraceStart(builder *flatbuffers.Builder) {
-	builder.StartObject(10)
+	builder.StartObject(23)
 }
 func DecisionTraceAddHypothesis(builder *flatbuffers.Builder, hypothesis flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(hypothesis), 0)
 }
+func DecisionTraceAddIdentificationStatus(builder *flatbuffers.Builder, identificationStatus flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(identificationStatus), 0)
+}
+func DecisionTraceAddDecisionUnavailable(builder *flatbuffers.Builder, decisionUnavailable bool) {
+	builder.PrependBoolSlot(2, decisionUnavailable, false)
+}
+func DecisionTraceAddExpectedOutcome(builder *flatbuffers.Builder, expectedOutcome float64) {
+	builder.PrependFloat64Slot(3, expectedOutcome, 0.0)
+}
+func DecisionTraceAddOutcomeUncertainty(builder *flatbuffers.Builder, outcomeUncertainty float64) {
+	builder.PrependFloat64Slot(4, outcomeUncertainty, 0.0)
+}
+func DecisionTraceAddHorizon(builder *flatbuffers.Builder, horizon int64) {
+	builder.PrependInt64Slot(5, horizon, 0)
+}
+func DecisionTraceAddExplorationConstant(builder *flatbuffers.Builder, explorationConstant float64) {
+	builder.PrependFloat64Slot(6, explorationConstant, 0.0)
+}
+func DecisionTraceAddUncertaintyWeight(builder *flatbuffers.Builder, uncertaintyWeight float64) {
+	builder.PrependFloat64Slot(7, uncertaintyWeight, 0.0)
+}
+func DecisionTraceAddTransitionSource(builder *flatbuffers.Builder, transitionSource flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(transitionSource), 0)
+}
+func DecisionTraceAddConsensusDominantMove(builder *flatbuffers.Builder, consensusDominantMove flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(consensusDominantMove), 0)
+}
+func DecisionTraceAddConsensusConfidence(builder *flatbuffers.Builder, consensusConfidence float64) {
+	builder.PrependFloat64Slot(10, consensusConfidence, 0.0)
+}
+func DecisionTraceAddConsensusParticipants(builder *flatbuffers.Builder, consensusParticipants int64) {
+	builder.PrependInt64Slot(11, consensusParticipants, 0)
+}
+func DecisionTraceAddVetoes(builder *flatbuffers.Builder, vetoes flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(12, flatbuffers.UOffsetT(vetoes), 0)
+}
+func DecisionTraceStartVetoesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func DecisionTraceAddSynergies(builder *flatbuffers.Builder, synergies flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(13, flatbuffers.UOffsetT(synergies), 0)
+}
+func DecisionTraceStartSynergiesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
 func DecisionTraceAddGraphSupports(builder *flatbuffers.Builder, graphSupports float64) {
-	builder.PrependFloat64Slot(1, graphSupports, 0.0)
+	builder.PrependFloat64Slot(14, graphSupports, 0.0)
 }
 func DecisionTraceAddGraphContradicts(builder *flatbuffers.Builder, graphContradicts float64) {
-	builder.PrependFloat64Slot(2, graphContradicts, 0.0)
+	builder.PrependFloat64Slot(15, graphContradicts, 0.0)
 }
 func DecisionTraceAddGraphConditions(builder *flatbuffers.Builder, graphConditions float64) {
-	builder.PrependFloat64Slot(3, graphConditions, 0.0)
+	builder.PrependFloat64Slot(16, graphConditions, 0.0)
 }
 func DecisionTraceAddThesisBalance(builder *flatbuffers.Builder, thesisBalance float64) {
-	builder.PrependFloat64Slot(4, thesisBalance, 0.0)
+	builder.PrependFloat64Slot(17, thesisBalance, 0.0)
 }
 func DecisionTraceAddThesisConfidence(builder *flatbuffers.Builder, thesisConfidence float64) {
-	builder.PrependFloat64Slot(5, thesisConfidence, 0.0)
+	builder.PrependFloat64Slot(18, thesisConfidence, 0.0)
 }
 func DecisionTraceAddIterations(builder *flatbuffers.Builder, iterations int64) {
-	builder.PrependInt64Slot(6, iterations, 0)
+	builder.PrependInt64Slot(19, iterations, 0)
 }
 func DecisionTraceAddBranches(builder *flatbuffers.Builder, branches flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(branches), 0)
+	builder.PrependUOffsetTSlot(20, flatbuffers.UOffsetT(branches), 0)
 }
 func DecisionTraceStartBranchesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func DecisionTraceAddRecommendedAction(builder *flatbuffers.Builder, recommendedAction flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(recommendedAction), 0)
+	builder.PrependUOffsetTSlot(21, flatbuffers.UOffsetT(recommendedAction), 0)
 }
 func DecisionTraceAddTree(builder *flatbuffers.Builder, tree flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(tree), 0)
+	builder.PrependUOffsetTSlot(22, flatbuffers.UOffsetT(tree), 0)
 }
 func DecisionTraceEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-
 )
 
 func TestUndefinedActionEstimate(t *testing.T) {
@@ -118,9 +117,9 @@ func TestStochasticChanceSemantics(t *testing.T) {
 			child, err := search.expandNode(root)
 			So(err, ShouldBeNil)
 
-			first, firstErr := search.simulate(child, alwaysEstimable{})
+			first, _, firstErr := search.simulate(child, alwaysEstimable{})
 			So(firstErr, ShouldBeNil)
-			second, secondErr := search.simulate(child, alwaysEstimable{})
+			second, _, secondErr := search.simulate(child, alwaysEstimable{})
 			So(secondErr, ShouldBeNil)
 
 			// The post-Enter state is re-derived with a fresh innovation

@@ -7,8 +7,9 @@ import (
 )
 
 type EnvelopePerspectivePredictionT struct {
-	Event  string `json:"event"`
+	Event string `json:"event"`
 	Effect string `json:"effect"`
+	Class string `json:"class"`
 }
 
 func (t *EnvelopePerspectivePredictionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -17,15 +18,18 @@ func (t *EnvelopePerspectivePredictionT) Pack(builder *flatbuffers.Builder) flat
 	}
 	eventOffset := builder.CreateString(t.Event)
 	effectOffset := builder.CreateString(t.Effect)
+	classOffset := builder.CreateString(t.Class)
 	EnvelopePerspectivePredictionStart(builder)
 	EnvelopePerspectivePredictionAddEvent(builder, eventOffset)
 	EnvelopePerspectivePredictionAddEffect(builder, effectOffset)
+	EnvelopePerspectivePredictionAddClass(builder, classOffset)
 	return EnvelopePerspectivePredictionEnd(builder)
 }
 
 func (rcv *EnvelopePerspectivePrediction) UnPackTo(t *EnvelopePerspectivePredictionT) {
 	t.Event = string(rcv.Event())
 	t.Effect = string(rcv.Effect())
+	t.Class = string(rcv.Class())
 }
 
 func (rcv *EnvelopePerspectivePrediction) UnPack() *EnvelopePerspectivePredictionT {
@@ -88,14 +92,25 @@ func (rcv *EnvelopePerspectivePrediction) Effect() []byte {
 	return nil
 }
 
+func (rcv *EnvelopePerspectivePrediction) Class() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
 func EnvelopePerspectivePredictionStart(builder *flatbuffers.Builder) {
-	builder.StartObject(2)
+	builder.StartObject(3)
 }
 func EnvelopePerspectivePredictionAddEvent(builder *flatbuffers.Builder, event flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(event), 0)
 }
 func EnvelopePerspectivePredictionAddEffect(builder *flatbuffers.Builder, effect flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(1, flatbuffers.UOffsetT(effect), 0)
+}
+func EnvelopePerspectivePredictionAddClass(builder *flatbuffers.Builder, class flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(class), 0)
 }
 func EnvelopePerspectivePredictionEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -322,11 +322,22 @@ interval origin is read from the pipeline output to preserve the completed bar's
 From time.
 */
 func (trade *Trade) Step(point kraken.TradeData) *data.Measurement[float64] {
+	if committed, found := trade.number.Project(point.Symbol); found {
+		previousSec, _ := committed.Get(nmtypes.EventTimeSec)
+		previousNsec, _ := committed.Get(nmtypes.EventTimeNsec)
+
+		if float64(point.Timestamp.Unix()) < previousSec ||
+			(float64(point.Timestamp.Unix()) == previousSec && float64(point.Timestamp.Nanosecond()) < previousNsec) {
+			return nil
+		}
+	}
+
 	input := nmtypes.Frame{}
 	input.Put(nmtypes.Quantity, point.Qty)
 	input.Put(nmtypes.AlphaPrice, point.Price.Float64())
 	input.Put(nmtypes.EventTimeSec, float64(point.Timestamp.Unix()))
 	input.Put(nmtypes.EventTimeNsec, float64(point.Timestamp.Nanosecond()))
+
 
 	trade.loadQuote(point.Symbol, &input)
 

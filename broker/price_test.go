@@ -26,13 +26,12 @@ func newPriceSurface(t testing.TB, symbol string) (*Price, *websocket.API) {
 }
 
 /*
-newTestPrice builds a Price directly from an api. recorder is optional and
-left nil for tests that don't need audit capture.
+newTestPrice builds a Price directly from an api.
 */
 func newTestPrice(t testing.TB, api *websocket.API) *Price {
 	t.Helper()
 
-	return NewPrice(api, nil)
+	return NewPrice(api)
 }
 
 /*

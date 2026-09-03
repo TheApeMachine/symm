@@ -673,11 +673,22 @@ book or an empty/crossed touch is an undefined quote, not an error: the flow
 accounting still stands and the response-price metrics are simply absent.
 */
 func (trade *Trade) Step(observation kraken.TradeData) *data.Measurement[float64] {
+	if committed, found := trade.number.Project(observation.Symbol); found {
+		previousSec, _ := committed.Get(nmtypes.EventTimeSec)
+		previousNsec, _ := committed.Get(nmtypes.EventTimeNsec)
+
+		if float64(observation.Timestamp.Unix()) < previousSec ||
+			(float64(observation.Timestamp.Unix()) == previousSec && float64(observation.Timestamp.Nanosecond()) < previousNsec) {
+			return nil
+		}
+	}
+
 	input := nmtypes.Frame{}
 	input.Put(symbolPrice, observation.Price.Float64())
 	input.Put(symbolQty, observation.Qty)
 	input.Put(symbolSign, signForSide(observation.Side))
 	input.Put(nmtypes.EventTimeSec, float64(observation.Timestamp.Unix()))
+
 	input.Put(nmtypes.EventTimeNsec, float64(observation.Timestamp.Nanosecond()))
 
 	trade.loadQuote(observation.Symbol, &input)

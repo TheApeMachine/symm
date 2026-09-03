@@ -39,8 +39,15 @@ effect(optionalEncoding?:any):string|Uint8Array|null {
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
+class_():string|null
+class_(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+class_(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 8);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
 static startEnvelopePerspectivePrediction(builder:flatbuffers.Builder) {
-  builder.startObject(2);
+  builder.startObject(3);
 }
 
 static addEvent(builder:flatbuffers.Builder, eventOffset:flatbuffers.Offset) {
@@ -51,24 +58,31 @@ static addEffect(builder:flatbuffers.Builder, effectOffset:flatbuffers.Offset) {
   builder.addFieldOffset(1, effectOffset, 0);
 }
 
+static addClass(builder:flatbuffers.Builder, class_Offset:flatbuffers.Offset) {
+  builder.addFieldOffset(2, class_Offset, 0);
+}
+
 static endEnvelopePerspectivePrediction(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 4) // event
   builder.requiredField(offset, 6) // effect
+  builder.requiredField(offset, 8) // class
   return offset;
 }
 
-static createEnvelopePerspectivePrediction(builder:flatbuffers.Builder, eventOffset:flatbuffers.Offset, effectOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createEnvelopePerspectivePrediction(builder:flatbuffers.Builder, eventOffset:flatbuffers.Offset, effectOffset:flatbuffers.Offset, class_Offset:flatbuffers.Offset):flatbuffers.Offset {
   EnvelopePerspectivePrediction.startEnvelopePerspectivePrediction(builder);
   EnvelopePerspectivePrediction.addEvent(builder, eventOffset);
   EnvelopePerspectivePrediction.addEffect(builder, effectOffset);
+  EnvelopePerspectivePrediction.addClass(builder, class_Offset);
   return EnvelopePerspectivePrediction.endEnvelopePerspectivePrediction(builder);
 }
 
 unpack(): EnvelopePerspectivePredictionT {
   return new EnvelopePerspectivePredictionT(
     this.event(),
-    this.effect()
+    this.effect(),
+    this.class_()
   );
 }
 
@@ -76,23 +90,27 @@ unpack(): EnvelopePerspectivePredictionT {
 unpackTo(_o: EnvelopePerspectivePredictionT): void {
   _o.event = this.event();
   _o.effect = this.effect();
+  _o.class_ = this.class_();
 }
 }
 
 export class EnvelopePerspectivePredictionT implements flatbuffers.IGeneratedObject {
 constructor(
   public event: string|Uint8Array|null = null,
-  public effect: string|Uint8Array|null = null
+  public effect: string|Uint8Array|null = null,
+  public class_: string|Uint8Array|null = null
 ){}
 
 
 pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const event = (this.event !== null ? builder.createString(this.event!) : 0);
   const effect = (this.effect !== null ? builder.createString(this.effect!) : 0);
+  const class_ = (this.class_ !== null ? builder.createString(this.class_!) : 0);
 
   return EnvelopePerspectivePrediction.createEnvelopePerspectivePrediction(builder,
     event,
-    effect
+    effect,
+    class_
   );
 }
 }

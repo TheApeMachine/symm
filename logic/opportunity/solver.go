@@ -155,12 +155,92 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 		}
 	}
 
+	if precursor := solver.checkVolumeSurgePrecursor(envelope, slots, symbol, eventTime); precursor != nil {
+		candidates = append(candidates, precursor)
+	}
+
 	if len(candidates) > 0 {
 		envelope.Opportunities = candidates
 	}
 
 	return envelope
 }
+
+func (solver *Solver) checkVolumeSurgePrecursor(
+	envelope *types.Envelope,
+	slots map[types.OpportunityArchetype]*resident,
+	symbol string,
+	eventTime time.Time,
+) *types.OpportunityCandidate {
+	if envelope == nil || envelope.PumpDump == nil {
+		return nil
+	}
+
+	ratioMetric, hasRatio := envelope.PumpDump.Metrics["notional_rate_ratio"]
+	zscoreMetric, hasZScore := envelope.PumpDump.Metrics["notional_rate_zscore"]
+	velMetric, hasVel := envelope.PumpDump.Metrics["notional_rate_velocity"]
+
+	ratio := 0.0
+	if hasRatio {
+		ratio = ratioMetric.Raw
+	}
+
+	zscore := 0.0
+	if hasZScore {
+		zscore = zscoreMetric.Raw
+	}
+
+	velocity := 0.0
+	if hasVel {
+		velocity = velMetric.Raw
+	}
+
+	isSurge := ratio >= 100.0 || (zscore >= 3.0 && velocity > 0)
+
+	archetype := types.ArchetypeVolumeSurgePrecursor
+	slot, exists := slots[archetype]
+
+
+	if !isSurge {
+		if !exists || slot.invalidated {
+			return nil
+		}
+
+		slot.invalidated = true
+		slot.candidate.Phase = types.PhaseInvalidated
+		slot.candidate.Updated = eventTime
+		slot.candidate.Sequence++
+		delete(slots, archetype)
+
+		candidate := slot.candidate
+		return &candidate
+	}
+
+	if !exists {
+		candidate := types.OpportunityCandidate{
+			Symbol:     symbol,
+			Archetype:  archetype,
+			Phase:      types.PhaseArmed,
+			Direction:  types.DirectionLong,
+			FirstSeen:  eventTime,
+			Updated:    eventTime,
+			Sequence:   1,
+			Provenance: types.ProvenanceCategory | types.ProvenanceResonance,
+			Maturity:   1.0,
+		}
+		slots[archetype] = &resident{candidate: candidate}
+		return &candidate
+	}
+
+	slot.candidate.Phase = types.PhaseArmed
+	slot.candidate.Updated = eventTime
+	slot.candidate.Sequence++
+	slot.candidate.Maturity = 1.0
+
+	candidate := slot.candidate
+	return &candidate
+}
+
 
 func validateBatch(categories []types.Category) (string, time.Time, error) {
 	if len(categories) == 0 {

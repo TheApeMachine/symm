@@ -6,7 +6,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -31,13 +30,12 @@ type Price struct {
 	fees       *sync.Map
 	tickers    *sync.Map
 	normalizer *spot.Normalizer
-	capture    *audit.Recorder
 }
 
 /*
-NewPrice wires the price surface to the Kraken API. recorder is optional.
+NewPrice wires the price surface to the Kraken API.
 */
-func NewPrice(api *websocket.API, recorder *audit.Recorder) *Price {
+func NewPrice(api *websocket.API) *Price {
 	if api == nil {
 		panic("broker: api required")
 	}
@@ -48,7 +46,6 @@ func NewPrice(api *websocket.API, recorder *audit.Recorder) *Price {
 		fees:       &sync.Map{},
 		tickers:    &sync.Map{},
 		normalizer: api.Normalizer(),
-		capture:    recorder,
 	}
 }
 

@@ -151,7 +151,7 @@ export const FrameStrip = ({
 					key={capture.identity.sequence}
 					variant="bare"
 					title={`capture ${capture.identity.sequence} · ${capture.kind} · ${capture.identity.stream} epoch ${capture.identity.streamEpoch}`}
-					className={`shrink-0 rounded-[2px] border px-1 py-0.5 font-mono text-[8px] tabular-nums ${
+					className={`shrink-0 rounded-xs border px-1 py-0.5 font-mono text-[8px] tabular-nums ${
 						active
 							? "border-(--f1) bg-(--raised) text-(--f1)"
 							: "border-(--line) text-(--f4) hover:border-(--line2) hover:text-(--f2)"
@@ -307,7 +307,7 @@ export const ProvenancePanel = ({
 														<Button
 															key={`${parent.origin.sequence}-${parent.ordinal}`}
 															variant="bare"
-															className="rounded-[2px] border border-(--line2) px-1 font-mono text-[8px] text-(--f3) tabular-nums hover:border-(--acc) hover:text-(--f1)"
+															className="rounded-xs border border-(--line2) px-1 font-mono text-[8px] text-(--f3) tabular-nums hover:border-(--acc) hover:text-(--f1)"
 															onClick={() =>
 																onSelect(parent.origin.sequence, parent.ordinal)
 															}
@@ -581,7 +581,7 @@ const MetricDetail = ({
 				{referenced.map((entry) => (
 					<span
 						key={`${entry.category}-${entry.stance}`}
-						className="rounded-[2px] border border-(--line2) px-1"
+						className="rounded-xs border border-(--line2) px-1"
 						style={{
 							color:
 								entry.stance === "supports"
@@ -988,9 +988,9 @@ export const StatePanel = ({
 		).filter((row) => row !== null);
 
 		const perspectives = Array.from(
-			{ length: state.perspectivesLength() },
+			{ length: state.perspectiveFramesLength() },
 			(_, position) => {
-				const perspective = state.perspectives(position);
+				const perspective = state.perspectiveFrames(position);
 
 				return perspective === null
 					? null

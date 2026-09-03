@@ -8,7 +8,7 @@ import (
 
 type EnvelopePerspectiveLeaseT struct {
 	Clock string `json:"clock"`
-	From  uint64 `json:"from"`
+	From uint64 `json:"from"`
 	Until uint64 `json:"until"`
 }
 

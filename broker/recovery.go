@@ -13,7 +13,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/audit"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -29,7 +28,6 @@ type Recovery struct {
 	instrument *Instrument
 	price      *Price
 	balance    *Balance
-	recorder   *audit.Recorder
 	store      *PositionStore
 	positions  *sync.Map
 }
@@ -43,7 +41,6 @@ func NewRecovery(
 	instrument *Instrument,
 	price *Price,
 	balance *Balance,
-	recorder *audit.Recorder,
 	store *PositionStore,
 	positions *sync.Map,
 ) *Recovery {
@@ -56,7 +53,6 @@ func NewRecovery(
 		instrument: instrument,
 		price:      price,
 		balance:    balance,
-		recorder:   recorder,
 		store:      store,
 		positions:  positions,
 	}
@@ -531,7 +527,7 @@ func (recovery *Recovery) recoveredPosition(
 ) *Position {
 	position := NewPosition(
 		recovery.ctx, recovery.api, recovery.instrument, recovery.price,
-		recovery.balance, recovery.recorder, recovery.store, pair, types.Decision{
+		recovery.balance, recovery.store, pair, types.Decision{
 			ID:               "recovered:" + pair.Symbol,
 			ProposedQuantity: quantity,
 			EntryPrice:       entryPrice,

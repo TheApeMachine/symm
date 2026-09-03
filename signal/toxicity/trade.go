@@ -291,6 +291,16 @@ func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQ
 
 	committed, found := trade.number.Project(tick.Symbol)
 
+	if found {
+		prevSec, hasPrevSec := committed.Get(symbolTradeAtSec)
+		prevNsec, hasPrevNsec := committed.Get(symbolTradeAtNsec)
+
+		if hasPrevSec && hasPrevNsec &&
+			(sec < prevSec || (sec == prevSec && nsec < prevNsec)) {
+			return nil
+		}
+	}
+
 	if !found || !committed.Has(symbolTradePrevAtSec) {
 		input.Put(symbolTradePrevAtSec, sec)
 		input.Put(symbolTradePrevAtNsec, nsec)

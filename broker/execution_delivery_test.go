@@ -115,10 +115,14 @@ func newDeliveryDesk(t testing.TB, conn *executingConn) (*Desk, *nmruntime.Workl
 		},
 	})
 
-	price := NewPrice(api, nil)
+	price := NewPrice(api)
 	instrument := NewInstrument(api, price)
 	balance := NewBalance(api)
-	store, err := NewPositionStore(t.TempDir() + "/positions.sqlite")
+	store, err := NewPositionStore(
+		t.TempDir()+"/positions.sqlite",
+		testPositionStoreQueueDepth,
+		testPositionStoreBatchSize,
+	)
 	if err != nil {
 		t.Fatalf("open position store: %v", err)
 	}
@@ -126,7 +130,7 @@ func newDeliveryDesk(t testing.TB, conn *executingConn) (*Desk, *nmruntime.Workl
 
 	positions := &sync.Map{}
 	desk, err := NewDesk(
-		t.Context(), api, instrument, price, balance, nil,
+		t.Context(), api, instrument, price, balance,
 		nil, store, positions,
 	)
 	if err != nil {
@@ -238,7 +242,7 @@ func TestExecutionDeliveryEndToEnd(t *testing.T) {
 		pair := kraken.InstrumentPair{Symbol: "TEST/USD", TickSize: *decimal.NewFromFloat64(0.01)}
 		position := NewPosition(
 			t.Context(), desk.api, desk.instrument, desk.price, desk.balance,
-			nil, desk.PositionStore, pair, decision,
+			desk.PositionStore, pair, decision,
 		)
 		desk.positions.Store(decision.Symbol, position)
 
@@ -332,7 +336,7 @@ func TestOpenPositionWire(t *testing.T) {
 
 		openPosition := NewPosition(
 			t.Context(), desk.api, desk.instrument, desk.price, desk.balance,
-			nil, desk.PositionStore, kraken.InstrumentPair{Symbol: "TEST/USD", TickSize: *decimal.NewFromFloat64(0.01)},
+			desk.PositionStore, kraken.InstrumentPair{Symbol: "TEST/USD", TickSize: *decimal.NewFromFloat64(0.01)},
 			openDecision,
 		)
 		desk.positions.Store("TEST/USD", openPosition)
@@ -348,7 +352,7 @@ func TestOpenPositionWire(t *testing.T) {
 		}
 		closedPosition := NewPosition(
 			t.Context(), desk.api, desk.instrument, desk.price, desk.balance,
-			nil, desk.PositionStore, kraken.InstrumentPair{Symbol: "TEST/USD", TickSize: *decimal.NewFromFloat64(0.01)},
+			desk.PositionStore, kraken.InstrumentPair{Symbol: "TEST/USD", TickSize: *decimal.NewFromFloat64(0.01)},
 			closedDecision,
 		)
 		closedPosition.setStatus(types.CLOSED)

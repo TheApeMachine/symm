@@ -306,7 +306,20 @@ table GraphFrame {
   reasoning:Reasoning;
 }
 
-table MCTSBranch { action:string; visits:long; meanReward:double; }
+table MCTSBranch {
+  action:string;
+  visits:long;
+  meanReward:double;
+  blendedValue:double;
+  rewardStd:double;
+  counterfactualReward:double;
+  counterfactualMass:double;
+  counterfactualMean:double;
+  effectiveVisits:double;
+  causalExpectation:double;
+  causalExpectationDefined:bool;
+  pruned:bool;
+}
 table MCTSNode {
   action:long;
   actionName:string;
@@ -327,11 +340,28 @@ table MCTSNode {
   scmReason:string;
   selected:bool;
   principal:bool;
+  blendedValue:double;
+  rewardStd:double;
+  causalExpectationDefined:bool;
+  pruned:bool;
   state:[NamedNumber];
   children:[MCTSNode];
 }
 table DecisionTrace {
   hypothesis:string;
+  identificationStatus:string;
+  decisionUnavailable:bool;
+  expectedOutcome:double;
+  outcomeUncertainty:double;
+  horizon:long;
+  explorationConstant:double;
+  uncertaintyWeight:double;
+  transitionSource:string;
+  consensusDominantMove:string;
+  consensusConfidence:double;
+  consensusParticipants:long;
+  vetoes:[string];
+  synergies:[string];
   graphSupports:double;
   graphContradicts:double;
   graphConditions:double;
@@ -502,6 +532,7 @@ table EnvelopePerspectiveClass {
 table EnvelopePerspectivePrediction {
   event:string (required);
   effect:string (required);
+  class:string (required);
 }
 
 table EnvelopePerspectiveLease {
@@ -1191,7 +1222,7 @@ table EnvelopeState {
   boundaries:[EnvelopeBoundaryStamp];
 
   strategy:StrategyFrame;
-  perspectives:[PerspectiveFrame];
+  perspectiveFrames:[PerspectiveFrame];
   tick:long;
 
   // The account valuation as of this envelope. It rides the envelope rather
@@ -1206,9 +1237,12 @@ table EnvelopeState {
   // per row, closed lots excluded).
   positions:PositionsFrame;
 
-  // Append-only named Advisor lifecycle update. Do not reuse perspectives:
-  // that field is the legacy metric-bucket format retained for old captures.
+  // Append-only named Advisor lifecycle update.
   liquiditySweepWithRecovery:EnvelopeLiquiditySweepWithRecoveryUpdate;
+
+  // Current falsifiable Advisor rounds. perspectiveFrames above is the
+  // persisted metric-bucket representation used by Hindsight analyzers.
+  perspectives:[EnvelopePerspective];
 }
 
 table EnvelopeStateFrame { state:EnvelopeState (required); }
