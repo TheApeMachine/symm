@@ -10,7 +10,7 @@ import (
 
 func TestNumberV2Carrier(t *testing.T) {
 	Convey("Carrier participates natively in Go arithmetic without unboxing", t, func() {
-		var number Number = 100.0
+		var number Scalar = 100.0
 		number += 1.0
 		So(number, ShouldEqual, 101.0)
 
@@ -24,11 +24,17 @@ func TestNumberV2Carrier(t *testing.T) {
 		stepped := number.Through(identity)
 		So(stepped, ShouldEqual, 101.0)
 	})
+
+	Convey("Identity node passes carrier unchanged", t, func() {
+		identity := Identity{}
+		input := Scalar(42.0)
+		So(identity.Step(input), ShouldEqual, 42.0)
+	})
 }
 
 func TestDegenerateZeroValues(t *testing.T) {
 	Convey("Degenerate Zero-Value Matrix (Table 5.1 Equivalences)", t, func() {
-		input := Number(42.0)
+		input := Scalar(42.0)
 
 		Convey("Chain with omitted slots is transparent identity I(x) = x", func() {
 			emptyChain := &Chain{}
@@ -150,7 +156,7 @@ func TestZeroSteadyStateAllocations(t *testing.T) {
 
 		// Warmup
 		for iteration := 0; iteration < 100; iteration++ {
-			_ = pipeline.Step(Number(iteration))
+			_ = pipeline.Step(Scalar(iteration))
 		}
 
 		allocations := testing.AllocsPerRun(1000, func() {
@@ -162,10 +168,10 @@ func TestZeroSteadyStateAllocations(t *testing.T) {
 }
 
 type fixedRate struct {
-	rate Number
+	rate Scalar
 }
 
-func (fixed *fixedRate) Step(number Number) Number {
+func (fixed *fixedRate) Step(number Scalar) Scalar {
 	return fixed.rate
 }
 
@@ -176,7 +182,7 @@ func BenchmarkChainStep(b *testing.B) {
 		C: Identity{},
 	}
 
-	input := Number(42.0)
+	input := Scalar(42.0)
 	b.ResetTimer()
 	b.ReportAllocs()
 
@@ -191,7 +197,7 @@ func BenchmarkSplitStep(b *testing.B) {
 		B: &fixedRate{rate: 2.0},
 	}
 
-	input := Number(42.0)
+	input := Scalar(42.0)
 	b.ResetTimer()
 	b.ReportAllocs()
 

@@ -2,142 +2,101 @@ package equation
 
 import (
 	"math"
-
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
-type regressionPoint struct {
-	timestamp int64
-	value     float64
-}
-
 /*
-LocalRegression fits a causal ordinary least squares linear regression over an
-adaptive event-time horizon. It evaluates regression slope, variance, and
-SNR without static time windows or magic lookback spans.
+LocalRegression is a streaming OLS slope estimator that operates on
+divergence time-series. It tracks sufficient statistics for a windowed
+linear regression of value vs. elapsed time (in seconds), computing the
+slope and a signal-to-noise ratio from the residual variance.
+
+This is a pure v2 equation: zero Frame, zero Symbol, zero MustIntern.
 */
 type LocalRegression struct {
-	samples []regressionPoint
-
-	slope            float64
-	intercept        float64
-	slopeVariance    float64
-	slopeSNR         float64
-	residualVariance float64
-	hasFit           bool
-	hasSNR           bool
+	// Online sufficient statistics for OLS: slope = S_xy / S_xx
+	sumX   float64 // sum of elapsed-seconds
+	sumY   float64 // sum of values
+	sumXX  float64 // sum of (elapsed)^2
+	sumXY  float64 // sum of (elapsed * value)
+	sumYY  float64 // sum of value^2
+	count  float64
+	origin int64 // first timestamp in nanoseconds
+	hasOrigin bool
 }
 
-/*
-Step fits the regression on all prior samples within the horizon,
-evaluates slope and SNR, and retains the new sample for subsequent steps.
-Returns the fitted slope as Number.
-*/
-func (regression *LocalRegression) Step(value float64, currentNano int64, horizonSeconds float64) nmtypes.Number {
-	cutoffNano := int64(0)
-
-	if horizonSeconds > 0 {
-		cutoffNano = currentNano - int64(horizonSeconds*1e9)
+func (regression *LocalRegression) Step(value float64, timestampNano int64, horizon int64) {
+	if !regression.hasOrigin {
+		regression.origin = timestampNano
+		regression.hasOrigin = true
 	}
 
-	var inWindow []regressionPoint
+	elapsed := float64(timestampNano-regression.origin) / 1e9
 
-	for _, sample := range regression.samples {
-		if cutoffNano <= 0 || sample.timestamp >= cutoffNano {
-			inWindow = append(inWindow, sample)
-		}
-	}
-
-	regression.fit(inWindow, currentNano)
-
-	// Append current observation after fitting
-	regression.samples = append(regression.samples, regressionPoint{
-		timestamp: currentNano,
-		value:     value,
-	})
-
-	return nmtypes.Number(regression.slope)
-}
-
-func (regression *LocalRegression) fit(samples []regressionPoint, currentNano int64) {
-	sampleCount := float64(len(samples))
-
-	if sampleCount < 2 {
-		regression.hasFit = false
-		regression.hasSNR = false
-		regression.slope = 0
-		regression.slopeSNR = 0
-
-		return
-	}
-
-	sumTau := 0.0
-	sumX := 0.0
-
-	for _, sample := range samples {
-		tau := float64(sample.timestamp-currentNano) / 1e9
-		sumTau += tau
-		sumX += sample.value
-	}
-
-	meanTau := sumTau / sampleCount
-	meanX := sumX / sampleCount
-
-	sumTauTau := 0.0
-	sumTauX := 0.0
-	sumXX := 0.0
-
-	for _, sample := range samples {
-		tau := float64(sample.timestamp-currentNano) / 1e9
-		deltaTau := tau - meanTau
-		deltaX := sample.value - meanX
-
-		sumTauTau += deltaTau * deltaTau
-		sumTauX += deltaTau * deltaX
-		sumXX += deltaX * deltaX
-	}
-
-	if sumTauTau <= 0 || math.IsNaN(sumTauTau) {
-		regression.hasFit = false
-		regression.hasSNR = false
-
-		return
-	}
-
-	regression.slope = sumTauX / sumTauTau
-	regression.intercept = meanX - regression.slope*meanTau
-
-	sumSquaredErrors := sumXX - regression.slope*sumTauX
-
-	if sumSquaredErrors < 0 {
-		sumSquaredErrors = 0
-	}
-
-	degreesOfFreedom := sampleCount - 2
-	regression.hasFit = true
-	regression.hasSNR = false
-	regression.slopeVariance = 0
-	regression.slopeSNR = 0
-
-	if degreesOfFreedom > 0 {
-		regression.residualVariance = sumSquaredErrors / degreesOfFreedom
-		regression.slopeVariance = regression.residualVariance / sumTauTau
-
-		if regression.slopeVariance > 0 {
-			regression.slopeSNR = (regression.slope * regression.slope) / regression.slopeVariance
-			regression.hasSNR = true
-		}
-	}
+	regression.sumX += elapsed
+	regression.sumY += value
+	regression.sumXX += elapsed * elapsed
+	regression.sumXY += elapsed * value
+	regression.sumYY += value * value
+	regression.count++
 }
 
 func (regression *LocalRegression) Slope() (float64, bool) {
-	return regression.slope, regression.hasFit
+	if regression.count < 3 {
+		return 0, false
+	}
+
+	meanX := regression.sumX / regression.count
+	meanY := regression.sumY / regression.count
+	sxx := regression.sumXX - regression.count*meanX*meanX
+	sxy := regression.sumXY - regression.count*meanX*meanY
+
+	if sxx <= 0 {
+		return 0, false
+	}
+
+	slope := sxy / sxx
+
+	if math.IsNaN(slope) || math.IsInf(slope, 0) {
+		return 0, false
+	}
+
+	return slope, true
 }
 
 func (regression *LocalRegression) SNR() (float64, bool) {
-	return regression.slopeSNR, regression.hasSNR
-}
+	if regression.count < 4 {
+		return 0, false
+	}
 
-func (regression *LocalRegression) Variance() float64 {
-	return regression.slopeVariance
+	meanX := regression.sumX / regression.count
+	meanY := regression.sumY / regression.count
+	sxx := regression.sumXX - regression.count*meanX*meanX
+	sxy := regression.sumXY - regression.count*meanX*meanY
+	syy := regression.sumYY - regression.count*meanY*meanY
+
+	if sxx <= 0 || syy <= 0 {
+		return 0, false
+	}
+
+	slope := sxy / sxx
+	ssResidual := syy - slope*sxy
+
+	if ssResidual <= 0 {
+		return 0, false
+	}
+
+	residualVariance := ssResidual / (regression.count - 2)
+
+	if residualVariance <= 0 {
+		return 0, false
+	}
+
+	slopeVariance := residualVariance / sxx
+	snr := (slope * slope) / slopeVariance
+
+	if math.IsNaN(snr) || math.IsInf(snr, 0) {
+		return 0, false
+	}
+
+	return snr, true
 }

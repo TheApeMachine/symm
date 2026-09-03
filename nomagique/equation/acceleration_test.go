@@ -5,60 +5,28 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/temporal"
 	"github.com/theapemachine/symm/nomagique/types"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 func TestAcceleration(t *testing.T) {
 	Convey("Given a quantity-clocked positive series", t, func() {
-		stream := types.NewStream(Acceleration(), types.Frame{})
-		first := stream.Step(accelerationInput(2, 100, 0))
-		So(first.Err, ShouldBeNil)
-		So(first.MustGet(SymbolClosed), ShouldEqual, 0.0)
-		So(first.MustGet(SymbolTarget), ShouldEqual, 2.0)
+		rr := NewRenewalRate()
 
-		second := stream.Step(accelerationInput(2, 100, 1))
-		So(second.Err, ShouldBeNil)
-		So(second.MustGet(SymbolClosed), ShouldEqual, 1.0)
-		So(second.MustGet(calculus.SymbolRate), ShouldEqual, 4.0)
-		So(second.Has(SymbolChange), ShouldBeFalse)
-		So(second.MustGet(temporal.SymbolObservedSec), ShouldEqual, 0.0)
-		So(second.MustGet(statistic.SymbolMaturity), ShouldEqual, 0.5)
+		// First step at t=0
+		rr.Step(types.Scalar(2), types.Scalar(100), 0)
+		So(rr.Closed(), ShouldBeFalse)
 
-		third := stream.Step(accelerationInput(2, 110, 2))
-		So(third.Err, ShouldBeNil)
+		// Second step at t=1: accumulated = 4 >= 2, dt = 1
+		rr.Step(types.Scalar(2), types.Scalar(100), 1)
+		So(rr.Closed(), ShouldBeTrue)
+		So(float64(rr.Rate()), ShouldEqual, 4.0)
+		So(float64(rr.Maturity()), ShouldEqual, 0.5)
 
-		Convey("It closes the next empirical span with an exact log change", func() {
-			So(third.MustGet(SymbolClosed), ShouldEqual, 1.0)
-			So(third.MustGet(calculus.SymbolRate), ShouldEqual, 2.0)
-			So(third.MustGet(SymbolChange), ShouldEqual, math.Log(1.1))
-			So(third.MustGet(temporal.SymbolObservedSec), ShouldEqual, 1.0)
-			So(third.MustGet(statistic.SymbolMaturity), ShouldEqual, 2.0/3.0)
-		})
+		// Third step at t=2: accumulated = 2 >= 2, dt = 1
+		rr.Step(types.Scalar(2), types.Scalar(110), 2)
+		So(rr.Closed(), ShouldBeTrue)
+		So(float64(rr.Rate()), ShouldEqual, 2.0)
+		So(float64(rr.Change()), ShouldAlmostEqual, math.Log(1.1), 1e-12)
+		So(float64(rr.Maturity()), ShouldAlmostEqual, 2.0/3.0, 1e-12)
 	})
-}
-
-func BenchmarkAcceleration(benchmark *testing.B) {
-	stream := types.NewStream(Acceleration(), types.Frame{})
-	input := accelerationInput(2, 100, 1)
-	_ = stream.Step(accelerationInput(2, 100, 0))
-	benchmark.ReportAllocs()
-
-	for benchmark.Loop() {
-		_ = stream.Step(input)
-	}
-}
-
-func accelerationInput(quantity float64, priceValue float64, seconds float64) types.Frame {
-	input := types.Frame{}
-	input.Put(nmtypes.Quantity, quantity)
-	input.Put(nmtypes.AlphaPrice, priceValue)
-	input.Put(temporal.SymbolUnixSec, seconds)
-	input.Put(temporal.SymbolUnixNsec, 0)
-
-	return input
 }

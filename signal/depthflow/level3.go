@@ -2,103 +2,21 @@ package depthflow
 
 import (
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/temporal"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/equation"
+	types "github.com/theapemachine/symm/nomagique/types"
 )
 
-var (
-	symbolObservedBid       = nmtypes.MustIntern("depthflow/observed_notional_bid")
-	symbolObservedAsk       = nmtypes.MustIntern("depthflow/observed_notional_ask")
-	symbolObservedTotal     = nmtypes.MustIntern("depthflow/observed_notional")
-	symbolObservedDiff      = nmtypes.MustIntern("depthflow/observed_notional_diff")
-	symbolObservedImbalance = nmtypes.MustIntern("depthflow/observed_notional_imbalance")
-	symbolAddBid            = nmtypes.MustIntern("depthflow/add_notional_bid")
-	symbolAddAsk            = nmtypes.MustIntern("depthflow/add_notional_ask")
-	symbolModifyBid         = nmtypes.MustIntern("depthflow/modify_remaining_notional_bid")
-	symbolModifyAsk         = nmtypes.MustIntern("depthflow/modify_remaining_notional_ask")
-	symbolDeleteBid         = nmtypes.MustIntern("depthflow/delete_count_bid")
-	symbolDeleteAsk         = nmtypes.MustIntern("depthflow/delete_count_ask")
-	symbolMutationBid       = nmtypes.MustIntern("depthflow/mutation_count_bid")
-	symbolMutationAsk       = nmtypes.MustIntern("depthflow/mutation_count_ask")
-	symbolMutationTotal     = nmtypes.MustIntern("depthflow/mutation_count")
-	symbolMutationDiff      = nmtypes.MustIntern("depthflow/mutation_count_diff")
-	symbolActivityImbalance = nmtypes.MustIntern("depthflow/mutation_activity_imbalance")
-	symbolObservedRate      = nmtypes.MustIntern("depthflow/observed_notional_rate")
-	symbolDivergence        = nmtypes.MustIntern("divergence")
-	symbolNoiseVariance     = nmtypes.MustIntern("noise_variance")
-)
-
-/*
-estimatorSlots names one causal estimator's retained functional state.
-*/
-type estimatorSlots struct {
-	prefix     string
-	series     temporal.Series
-	baseline   nmtypes.Symbol
-	residual   nmtypes.Symbol
-	dispersion nmtypes.Symbol
-	zscore     nmtypes.Symbol
-	ready      nmtypes.Symbol
+type symbolState struct {
+	imbalanceEstimator equation.CausalResidual
+	rateEstimator      equation.CausalResidual
+	lastTimestamp      time.Time
+	hasTime            bool
 }
-
-func newEstimatorSlots(prefix string) estimatorSlots {
-	return estimatorSlots{
-		prefix:     prefix,
-		series:     temporal.NewSeries(prefix),
-		baseline:   nmtypes.MustIntern(temporal.JoinPrefix(prefix, "baseline/value")),
-		residual:   nmtypes.MustIntern(temporal.JoinPrefix(prefix, "z/residual")),
-		dispersion: nmtypes.MustIntern(temporal.JoinPrefix(prefix, "z/dispersion")),
-		zscore:     nmtypes.MustIntern(temporal.JoinPrefix(prefix, "z/value")),
-		ready:      nmtypes.MustIntern(temporal.JoinPrefix(prefix, "z/ready")),
-	}
-}
-
-func estimator(slots estimatorSlots, source nmtypes.Symbol) nmtypes.Primitive {
-	zscore := statistic.ZScore(slots.prefix)
-	baseline := statistic.Baseline(slots.prefix)
-	window := temporal.Window(slots.prefix)
-
-	return func(input *nmtypes.Frame) {
-		value, found := input.Get(source)
-
-		if !found {
-			input.Err = fmt.Errorf("depthflow: estimator source is absent")
-
-			return
-		}
-
-		sec, _ := input.Get(nmtypes.EventTimeSec)
-		nsec, _ := input.Get(nmtypes.EventTimeNsec)
-		input.Put(slots.series.ValueSymbol, value)
-		input.Put(slots.series.SecSymbol, sec)
-		input.Put(slots.series.NsecSymbol, nsec)
-		zscore(input)
-
-		if input.Err != nil {
-			return
-		}
-
-		ready, _ := input.Get(slots.series.ReadySymbol)
-		input.Put(slots.ready, ready)
-		baseline(input)
-
-		if input.Err != nil {
-			return
-		}
-
-		window(input)
-	}
-}
-
-var (
-	imbalanceSlots = newEstimatorSlots("observed_notional_imbalance")
-	rateSlots      = newEstimatorSlots("observed_notional_rate")
-)
 
 /*
 Level3 derives event-local depth-flow observations and retains only the causal
@@ -107,116 +25,13 @@ It never stores order identities, price levels, snapshots, or a generalized
 book representation.
 */
 type Level3 struct {
-	number    *nomagique.KeyedNumber[string]
-	projector *data.Projector
+	mu     sync.Mutex
+	states map[string]*symbolState
 }
 
-func depthFlowPipeline(
-	imbalanceEstimator nmtypes.Primitive,
-	rateEstimator nmtypes.Primitive,
-) nmtypes.Primitive {
-	return func(input *nmtypes.Frame) {
-		input.Delete(symbolObservedImbalance)
-		input.Delete(symbolObservedRate)
-		input.Delete(imbalanceSlots.residual)
-		input.Delete(imbalanceSlots.zscore)
-		input.Delete(rateSlots.residual)
-		input.Delete(rateSlots.zscore)
-		input.Delete(symbolDivergence)
-		input.Delete(symbolNoiseVariance)
-
-		observedBid, _ := input.Get(symbolObservedBid)
-		observedAsk, _ := input.Get(symbolObservedAsk)
-		observedTotal := observedBid + observedAsk
-		input.Put(symbolObservedTotal, observedTotal)
-		input.Put(symbolObservedDiff, observedBid-observedAsk)
-
-		if observedTotal > 0 {
-			input.Put(symbolObservedImbalance, (observedBid-observedAsk)/observedTotal)
-			imbalanceEstimator(input)
-
-			if input.Err != nil {
-				return
-			}
-
-			support, _ := input.Get(imbalanceSlots.series.CountSymbol)
-			input.Put(nmtypes.SampleCount, support)
-			ready, _ := input.Get(imbalanceSlots.ready)
-
-			if ready != 0 {
-				residual, _ := input.Get(imbalanceSlots.residual)
-				dispersion, _ := input.Get(imbalanceSlots.dispersion)
-				input.Put(symbolDivergence, residual)
-				input.Put(symbolNoiseVariance, dispersion*dispersion)
-			}
-		}
-
-		mutationBid, _ := input.Get(symbolMutationBid)
-		mutationAsk, _ := input.Get(symbolMutationAsk)
-		mutationTotal := mutationBid + mutationAsk
-		input.Put(symbolMutationTotal, mutationTotal)
-		input.Put(symbolMutationDiff, mutationBid-mutationAsk)
-
-		if mutationTotal > 0 {
-			input.Put(symbolActivityImbalance, (mutationBid-mutationAsk)/mutationTotal)
-		}
-
-		currentSec, _ := input.Get(temporal.SymbolCurrentSec)
-		currentNsec, _ := input.Get(temporal.SymbolCurrentNsec)
-		previousSec, _ := input.Get(temporal.SymbolPreviousSec)
-		previousNsec, _ := input.Get(temporal.SymbolPreviousNsec)
-		elapsed := currentSec - previousSec + (currentNsec-previousNsec)/1e9
-
-		if elapsed < 0 {
-			input.Err = fmt.Errorf("depthflow: event time must not regress")
-
-			return
-		}
-
-		input.Put(temporal.SymbolDelta, elapsed)
-
-		if elapsed == 0 {
-			return
-		}
-
-		input.Put(symbolObservedRate, observedTotal/elapsed)
-		rateEstimator(input)
-	}
-}
-
-/*
-NewLevel3 constructs the streaming Level-3 depth-flow measurement.
-*/
 func NewLevel3() *Level3 {
-	imbalanceEstimator := estimator(imbalanceSlots, symbolObservedImbalance)
-	rateEstimator := estimator(rateSlots, symbolObservedRate)
-
 	return &Level3{
-		number: nomagique.NewNumber[string](depthFlowPipeline(
-			imbalanceEstimator, rateEstimator,
-		)),
-		projector: data.NewProjector(
-			data.Binding{From: symbolObservedBid, Name: "observed_notional:bid", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolObservedAsk, Name: "observed_notional:ask", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolObservedTotal, Name: "observed_notional", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolObservedImbalance, Name: "observed_notional_imbalance", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolAddBid, Name: "add_notional:bid", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolAddAsk, Name: "add_notional:ask", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolModifyBid, Name: "modify_remaining_notional:bid", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolModifyAsk, Name: "modify_remaining_notional:ask", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolDeleteBid, Name: "delete_count:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolDeleteAsk, Name: "delete_count:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolMutationBid, Name: "mutation_count:bid", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolMutationAsk, Name: "mutation_count:ask", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolActivityImbalance, Name: "mutation_activity_imbalance", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolObservedRate, Name: "observed_notional_rate", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
-			data.Binding{From: imbalanceSlots.baseline, Name: "observed_notional_imbalance_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: imbalanceSlots.residual, Name: "observed_notional_imbalance_divergence", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: imbalanceSlots.zscore, Name: "observed_notional_imbalance_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: rateSlots.baseline, Name: "observed_notional_rate_baseline", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: rateSlots.residual, Name: "observed_notional_rate_divergence", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: rateSlots.zscore, Name: "observed_notional_rate_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-		),
+		states: make(map[string]*symbolState),
 	}
 }
 
@@ -231,77 +46,129 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 		return nil
 	}
 
-	input := nmtypes.Frame{}
-	input.Put(symbolObservedBid, 0)
-	input.Put(symbolObservedAsk, 0)
-	input.Put(symbolAddBid, 0)
-	input.Put(symbolAddAsk, 0)
-	input.Put(symbolModifyBid, 0)
-	input.Put(symbolModifyAsk, 0)
-	input.Put(symbolDeleteBid, 0)
-	input.Put(symbolDeleteAsk, 0)
-	input.Put(symbolMutationBid, 0)
-	input.Put(symbolMutationAsk, 0)
+	var observedBid, observedAsk float64
+	var addBid, addAsk float64
+	var modifyBid, modifyAsk float64
+	var deleteBid, deleteAsk float64
+	mutationBid := float64(len(message.Bids))
+	mutationAsk := float64(len(message.Asks))
 
-	if err := observeSide(message.Bids, true, &input); err != nil {
-		input.Err = err
-
-		return level3.projector.Project(
-			message.Symbol, "depthflow", message.Timestamp, message.Timestamp, input,
-		)
+	var err error
+	observedBid, addBid, modifyBid, deleteBid, err = observeSide(message.Bids)
+	if err != nil {
+		return &data.Measurement[float64]{Err: err}
 	}
 
-	if err := observeSide(message.Asks, false, &input); err != nil {
-		input.Err = err
-
-		return level3.projector.Project(
-			message.Symbol, "depthflow", message.Timestamp, message.Timestamp, input,
-		)
+	observedAsk, addAsk, modifyAsk, deleteAsk, err = observeSide(message.Asks)
+	if err != nil {
+		return &data.Measurement[float64]{Err: err}
 	}
 
-	at := message.Timestamp
-	previousSec := float64(at.Unix())
-	previousNsec := float64(at.Nanosecond())
+	level3.mu.Lock()
+	defer level3.mu.Unlock()
 
-	if committed, found := level3.number.Project(message.Symbol); found {
-		previousSec, _ = committed.Get(nmtypes.EventTimeSec)
-		previousNsec, _ = committed.Get(nmtypes.EventTimeNsec)
+	state, found := level3.states[message.Symbol]
+	if !found {
+		state = &symbolState{}
+		level3.states[message.Symbol] = state
+	}
 
-		if float64(at.Unix()) < previousSec ||
-			(float64(at.Unix()) == previousSec && float64(at.Nanosecond()) < previousNsec) {
-			return nil
+	if state.hasTime && message.Timestamp.Before(state.lastTimestamp) {
+		return nil
+	}
+
+	id := message.Symbol + ":depthflow:" + message.Timestamp.Format(time.RFC3339Nano)
+	measurement := data.NewMeasurement[float64](
+		id, message.Symbol, "depthflow", message.Timestamp, message.Timestamp,
+	)
+
+	observedTotal := observedBid + observedAsk
+	observedDiff := observedBid - observedAsk
+	mutationTotal := mutationBid + mutationAsk
+	mutationDiff := mutationBid - mutationAsk
+
+	putMetric(measurement, "observed_notional:bid", observedBid, data.UnitRate, data.TimescaleInstantaneous)
+	putMetric(measurement, "observed_notional:ask", observedAsk, data.UnitRate, data.TimescaleInstantaneous)
+	putMetric(measurement, "observed_notional", observedTotal, data.UnitRate, data.TimescaleInstantaneous)
+	putMetric(measurement, "observed_notional_diff", observedDiff, data.UnitRate, data.TimescaleInstantaneous)
+
+	putMetric(measurement, "add_notional:bid", addBid, data.UnitRate, data.TimescaleInstantaneous)
+	putMetric(measurement, "add_notional:ask", addAsk, data.UnitRate, data.TimescaleInstantaneous)
+	putMetric(measurement, "modify_remaining_notional:bid", modifyBid, data.UnitRate, data.TimescaleInstantaneous)
+	putMetric(measurement, "modify_remaining_notional:ask", modifyAsk, data.UnitRate, data.TimescaleInstantaneous)
+	putMetric(measurement, "delete_count:bid", deleteBid, data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "delete_count:ask", deleteAsk, data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "mutation_count:bid", mutationBid, data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "mutation_count:ask", mutationAsk, data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "mutation_count", mutationTotal, data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "mutation_count_diff", mutationDiff, data.UnitDimensionless, data.TimescaleInstantaneous)
+
+	if mutationTotal > 0 {
+		putMetric(measurement, "mutation_activity_imbalance", mutationDiff/mutationTotal, data.UnitDimensionless, data.TimescaleInstantaneous)
+	}
+
+	if observedTotal > 0 {
+		imbalance := observedDiff / observedTotal
+		putMetric(measurement, "observed_notional_imbalance", imbalance, data.UnitDimensionless, data.TimescaleInstantaneous)
+
+		// Causal imbalance estimator
+		state.imbalanceEstimator.Step(types.Scalar(imbalance))
+
+		if state.imbalanceEstimator.HasPrior() {
+			putMetric(measurement, "observed_notional_imbalance_baseline", float64(state.imbalanceEstimator.Baseline()), data.UnitDimensionless, data.TimescaleInstantaneous)
+			putMetric(measurement, "observed_notional_imbalance_divergence", float64(state.imbalanceEstimator.Residual()), data.UnitDimensionless, data.TimescaleInstantaneous)
+			putMetric(measurement, "observed_notional_imbalance_zscore", float64(state.imbalanceEstimator.ZScore()), data.UnitDimensionless, data.TimescaleInstantaneous)
+
+			disp := float64(state.imbalanceEstimator.Dispersion())
+			if disp > 0 {
+				measurement.SNR = float64(state.imbalanceEstimator.Residual()) * float64(state.imbalanceEstimator.Residual()) / (disp * disp)
+				measurement.SNRDefined = true
+			}
 		}
 	}
 
+	// Rate estimator uses elapsed time
+	var elapsed float64
+	if state.hasTime {
+		elapsed = message.Timestamp.Sub(state.lastTimestamp).Seconds()
 
-	input.Put(nmtypes.EventTimeSec, float64(at.Unix()))
-	input.Put(nmtypes.EventTimeNsec, float64(at.Nanosecond()))
-	input.Put(temporal.SymbolCurrentSec, float64(at.Unix()))
-	input.Put(temporal.SymbolCurrentNsec, float64(at.Nanosecond()))
-	input.Put(temporal.SymbolPreviousSec, previousSec)
-	input.Put(temporal.SymbolPreviousNsec, previousNsec)
+		if elapsed < 0 {
+			return nil
+		}
 
-	frame := level3.number.Step(message.Symbol, input)
+		if elapsed > 0 {
+			rate := observedTotal / elapsed
+			putMetric(measurement, "observed_notional_rate", rate, data.UnitPerSecond, data.TimescalePerSecond)
 
-	return level3.projector.Project(message.Symbol, "depthflow", at, at, frame)
+			state.rateEstimator.Step(types.Scalar(rate))
+
+			if state.rateEstimator.HasPrior() {
+				putMetric(measurement, "observed_notional_rate_baseline", float64(state.rateEstimator.Baseline()), data.UnitPerSecond, data.TimescaleInstantaneous)
+				putMetric(measurement, "observed_notional_rate_divergence", float64(state.rateEstimator.Residual()), data.UnitPerSecond, data.TimescaleInstantaneous)
+				putMetric(measurement, "observed_notional_rate_zscore", float64(state.rateEstimator.ZScore()), data.UnitDimensionless, data.TimescaleInstantaneous)
+			}
+		}
+	}
+
+	state.lastTimestamp = message.Timestamp
+	state.hasTime = true
+
+	measurement.Maturity = float64(state.imbalanceEstimator.Maturity())
+
+	return measurement
 }
 
-func observeSide(orders []kraken.Level3Order, bid bool, input *nmtypes.Frame) error {
-	observed := 0.0
-	added := 0.0
-	modified := 0.0
-	deleted := 0.0
-
+func observeSide(orders []kraken.Level3Order) (observed, added, modified, deleted float64, err error) {
 	for _, order := range orders {
 		if order.LimitPrice == nil || order.OrderQty == nil {
-			return fmt.Errorf("depthflow: level3 order requires price and quantity")
+			return 0, 0, 0, 0, fmt.Errorf("depthflow: level3 order requires price and quantity")
 		}
 
 		price := order.LimitPrice.Float64()
 		quantity := order.OrderQty.Float64()
 
 		if price <= 0 || quantity < 0 {
-			return fmt.Errorf("depthflow: level3 order requires positive price and non-negative quantity")
+			return 0, 0, 0, 0, fmt.Errorf("depthflow: level3 order requires positive price and non-negative quantity")
 		}
 
 		notional := price * quantity
@@ -316,27 +183,20 @@ func observeSide(orders []kraken.Level3Order, bid bool, input *nmtypes.Frame) er
 		case "delete":
 			deleted++
 		default:
-			return fmt.Errorf("depthflow: unknown level3 event %q", order.Event)
+			return 0, 0, 0, 0, fmt.Errorf("depthflow: unknown level3 event %q", order.Event)
 		}
 	}
 
-	if bid {
-		input.Put(symbolObservedBid, observed)
-		input.Put(symbolAddBid, added)
-		input.Put(symbolModifyBid, modified)
-		input.Put(symbolDeleteBid, deleted)
-		input.Put(symbolMutationBid, float64(len(orders)))
-
-		return nil
-	}
-
-	input.Put(symbolObservedAsk, observed)
-	input.Put(symbolAddAsk, added)
-	input.Put(symbolModifyAsk, modified)
-	input.Put(symbolDeleteAsk, deleted)
-	input.Put(symbolMutationAsk, float64(len(orders)))
-
-	return nil
+	return observed, added, modified, deleted, nil
 }
 
 func (level3 *Level3) Close() error { return nil }
+
+func putMetric(m *data.Measurement[float64], label string, raw float64, unit data.Unit, timescale data.Timescale) {
+	m.PutMetric(data.Metric[float64]{
+		Label:     label,
+		Raw:       raw,
+		Unit:      unit,
+		Timescale: timescale,
+	})
+}

@@ -1,409 +1,227 @@
 package pumpdump
 
 import (
+	"fmt"
+	"math"
+	"sync"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/temporal"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
-/*
-Input/output slot symbols for the volume-clock activity pipeline.
-*/
-var (
-	symbolTradeNotional      = nmtypes.MustIntern("pumpdump/trade_notional")
-	symbolBarQuantityTotal   = nmtypes.MustIntern("pumpdump/bar_quantity_total")
-	symbolBarNotionalTotal   = nmtypes.MustIntern("pumpdump/bar_notional_total")
-	symbolBarTradeCount      = nmtypes.MustIntern("pumpdump/bar_trade_count_total")
-	symbolBarQuantity        = nmtypes.MustIntern("pumpdump/volume_bar_quantity")
-	symbolBarNotional        = nmtypes.MustIntern("pumpdump/volume_bar_notional")
-	symbolBarTradeCountSnap  = nmtypes.MustIntern("pumpdump/volume_bar_trade_count")
-	symbolVolumeRate         = nmtypes.MustIntern("pumpdump/volume_rate")
-	symbolNotionalRate       = nmtypes.MustIntern("pumpdump/notional_rate")
-	symbolTradeRate          = nmtypes.MustIntern("pumpdump/trade_rate")
-	symbolTradeInterval      = nmtypes.MustIntern("pumpdump/trade_interval_seconds")
-	symbolHasMidpoint        = nmtypes.MustIntern("pumpdump/has_midpoint")
-	symbolHasBarOpenMidpoint = nmtypes.MustIntern("pumpdump/has_bar_open_midpoint")
-	symbolBarOpenMidpoint    = nmtypes.MustIntern("pumpdump/bar_open_midpoint")
-	symbolMidpointLogReturn  = nmtypes.MustIntern("pumpdump/midpoint_log_return")
-	symbolMidpointReturnRate = nmtypes.MustIntern("pumpdump/midpoint_return_rate")
-	symbolNegMidpointReturn  = nmtypes.MustIntern("pumpdump/neg_midpoint_return")
-	symbolPositiveReturn     = nmtypes.MustIntern("pumpdump/positive_midpoint_return")
-	symbolNegativeReturn     = nmtypes.MustIntern("pumpdump/negative_midpoint_return")
-	symbolLogNotionalRate    = nmtypes.MustIntern("pumpdump/log_notional_rate")
-	symbolNotionalRateBase   = nmtypes.MustIntern("pumpdump/notional_rate_baseline")
-	symbolNotionalRateRatio  = nmtypes.MustIntern("pumpdump/notional_rate_ratio")
-)
-
-/*
-Trade owns the volume-clock activity Number pipeline and its projector.
-*/
-type Trade struct {
-	number    *nomagique.KeyedNumber[string]
-	projector *data.Projector
-	quote     func(symbol string) (bid, ask *decimal.Decimal)
+type tradeState struct {
+	spanStore           store.Store
+	rateResidual        equation.CausalResidual
+	accumulatedQty      float64
+	accumulatedNotional float64
+	barTradeCount       float64
+	barStart            time.Time
+	hasBarStart         bool
+	prevTradeTime       time.Time
+	hasPrevTradeTime    bool
+	barOrdinal          float64
+	barOpenMidpoint     float64
+	hasBarOpenMidpoint  bool
+	prevLogReturn       float64
+	hasPrevLogReturn    bool
 }
 
 /*
-NewTrade constructs the quantity clock, completed-bar rates, notional-rate
-context, midpoint response, and named projections.
+Trade owns the volume-clock activity pipeline.
+It accumulates trades into volume bars sized adaptively by median transaction size,
+measuring throughput rates and response price dynamics without Frame or Wire blocks.
 */
+type Trade struct {
+	states map[string]*tradeState
+	quote  func(symbol string) (bid, ask *decimal.Decimal)
+	mu     sync.RWMutex
+}
+
 func NewTrade() *Trade {
 	return &Trade{
-		number: nomagique.NewNumberWithInitial[string](
-			func(key string) nmtypes.Frame {
-				initial := nmtypes.Frame{}
-				initial.Put(equation.SymbolClosed, 1)
-
-				return initial
-			},
-			nmtypes.Pipe(
-				nmtypes.Assign(symbolZero, 0),
-				nmtypes.Assign(symbolOne, 1),
-				calculus.Clear(
-					symbolMidpoint,
-					symbolMidpointLogReturn,
-					symbolMidpointReturnRate,
-					symbolNegMidpointReturn,
-					symbolPositiveReturn,
-					symbolNegativeReturn,
-				),
-				logic.If(
-					openingCondition(),
-					nmtypes.Pipe(
-						calculus.Clear(symbolBarOpenMidpoint),
-						nmtypes.Assign(symbolHasBarOpenMidpoint, 0),
-					),
-					nmtypes.Identity,
-				),
-				// trade_interval_seconds: elapsed event time between trades.
-				temporal.Observer("trade_interval", nmtypes.Quantity),
-				logic.If(
-					readyCondition(),
-					nmtypes.Wire(
-						temporal.Duration,
-						nmtypes.In(nmtypes.EventTimeSec, temporal.SymbolCurrentSec),
-						nmtypes.In(nmtypes.EventTimeNsec, temporal.SymbolCurrentNsec),
-						nmtypes.In(prefixed("trade_interval", "temporal/observed_sec"), temporal.SymbolPreviousSec),
-						nmtypes.In(prefixed("trade_interval", "temporal/observed_nsec"), temporal.SymbolPreviousNsec),
-						nmtypes.Out(temporal.SymbolDelta, symbolTradeInterval),
-					),
-					nmtypes.Identity,
-				),
-				// Executable touch from the shared book, when present, and the
-				// bar-opening midpoint latch: capture the midpoint when a new bar
-				// opens, otherwise keep the retained opening midpoint.
-				logic.If(
-					hasMidpointCondition(),
-					nmtypes.Pipe(
-						nmtypes.Wire(
-							calculus.Average,
-							nmtypes.In(symbolBidPrice, calculus.PortA),
-							nmtypes.In(symbolAskPrice, calculus.PortB),
-							nmtypes.Out(calculus.PortResult, symbolMidpoint),
-						),
-						logic.If(
-							openingCondition(),
-							nmtypes.Pipe(
-								route(symbolMidpoint, symbolBarOpenMidpoint),
-								nmtypes.Assign(symbolHasBarOpenMidpoint, 1),
-							),
-							nmtypes.Identity,
-						),
-					),
-					nmtypes.Identity,
-				),
-				// The volume clock sizes each bar from the symbol's own prior
-				// quantity median and exposes the target, close flag, duration,
-				// and the completed span's log price change.
-				equation.Acceleration(),
-				// Trade notional: n = price * qty
-				nmtypes.Wire(
-					calculus.Product,
-					nmtypes.In(nmtypes.AlphaPrice, calculus.PortA),
-					nmtypes.In(nmtypes.Quantity, calculus.PortB),
-					nmtypes.Out(calculus.PortResult, symbolTradeNotional),
-				),
-				// Accumulate quantity, notional, and trade count over the bar.
-				nmtypes.Wire(
-					calculus.Accumulate,
-					nmtypes.In(nmtypes.Quantity, calculus.SymbolDelta),
-					nmtypes.State(symbolBarQuantityTotal, calculus.SymbolTotal),
-				),
-				nmtypes.Wire(
-					calculus.Accumulate,
-					nmtypes.In(symbolTradeNotional, calculus.SymbolDelta),
-					nmtypes.State(symbolBarNotionalTotal, calculus.SymbolTotal),
-				),
-				nmtypes.Wire(
-					calculus.Accumulate,
-					nmtypes.In(symbolOne, calculus.SymbolDelta),
-					nmtypes.State(symbolBarTradeCount, calculus.SymbolTotal),
-				),
-				// Snapshot the running totals so they survive the bar reset.
-				route(symbolBarQuantityTotal, symbolBarQuantity),
-				route(symbolBarNotionalTotal, symbolBarNotional),
-				route(symbolBarTradeCount, symbolBarTradeCountSnap),
-				// Only a completed bar exposes throughput rates; the close trade is
-				// included before the accumulators reset for the next bar.
-				logic.If(
-					closedCondition(),
-					nmtypes.Pipe(
-						nmtypes.Wire(
-							calculus.Quotient,
-							nmtypes.In(symbolBarQuantityTotal, calculus.PortA),
-							nmtypes.In(calculus.SymbolDuration, calculus.PortB),
-							nmtypes.Out(calculus.PortResult, symbolVolumeRate),
-						),
-						nmtypes.Wire(
-							calculus.Quotient,
-							nmtypes.In(symbolBarNotionalTotal, calculus.PortA),
-							nmtypes.In(calculus.SymbolDuration, calculus.PortB),
-							nmtypes.Out(calculus.PortResult, symbolNotionalRate),
-						),
-						nmtypes.Wire(
-							calculus.Quotient,
-							nmtypes.In(symbolBarTradeCount, calculus.PortA),
-							nmtypes.In(calculus.SymbolDuration, calculus.PortB),
-							nmtypes.Out(calculus.PortResult, symbolTradeRate),
-						),
-						// notional_rate_velocity: first difference of the rate.
-						velocityOver("notional_rate_velocity", symbolNotionalRate),
-						// Positive notional rate enters a multiplicative log baseline.
-						logic.If(
-							greaterThanCondition(symbolNotionalRate),
-							nmtypes.Pipe(
-								nmtypes.Wire(
-									calculus.Log,
-									nmtypes.In(symbolNotionalRate, calculus.PortX),
-									nmtypes.Out(calculus.PortResult, symbolLogNotionalRate),
-								),
-								// Causal notional-rate baseline/z-score, with the
-								// departure and noise power mapped before the
-								// baseline overwrites the series readiness.
-								route(symbolLogNotionalRate, prefixed("notional_rate", "sample")),
-								route(nmtypes.EventTimeSec, prefixed("notional_rate", "unix_sec")),
-								route(nmtypes.EventTimeNsec, prefixed("notional_rate", "unix_nsec")),
-								statistic.ZScore("notional_rate"),
-								logic.If(
-									seriesReadyCondition("notional_rate"),
-									nmtypes.Pipe(
-										route(prefixed("notional_rate", "z/residual"), symbolDivergence),
-										nmtypes.Wire(
-											calculus.Product,
-											nmtypes.In(prefixed("notional_rate", "z/dispersion"), calculus.PortA),
-											nmtypes.In(prefixed("notional_rate", "z/dispersion"), calculus.PortB),
-											nmtypes.Out(calculus.PortResult, symbolNoiseVariance),
-										),
-									),
-									nmtypes.Identity,
-								),
-								statistic.Baseline("notional_rate"),
-								temporal.Window("notional_rate"),
-								nmtypes.Wire(
-									calculus.Exp,
-									nmtypes.In(prefixed("notional_rate", "baseline/value"), calculus.PortX),
-									nmtypes.Out(calculus.PortResult, symbolNotionalRateBase),
-								),
-								nmtypes.Wire(
-									calculus.Quotient,
-									nmtypes.In(symbolNotionalRate, calculus.PortA),
-									nmtypes.In(symbolNotionalRateBase, calculus.PortB),
-									nmtypes.Out(calculus.PortResult, symbolNotionalRateRatio),
-								),
-							),
-							nmtypes.Identity,
-						),
-						// Midpoint response over the completed bar.
-						logic.If(
-							hasMidpointCondition(),
-							logic.If(
-								greaterThanCondition(symbolHasBarOpenMidpoint),
-								logic.If(
-									greaterThanCondition(symbolBarOpenMidpoint),
-									nmtypes.Pipe(
-										nmtypes.Wire(
-											calculus.LogRatio,
-											nmtypes.In(symbolMidpoint, calculus.SymbolCurrent),
-											nmtypes.In(symbolBarOpenMidpoint, calculus.SymbolPrevious),
-											nmtypes.Out(calculus.PortResult, symbolMidpointLogReturn),
-										),
-										nmtypes.Wire(
-											calculus.Quotient,
-											nmtypes.In(symbolMidpointLogReturn, calculus.PortA),
-											nmtypes.In(calculus.SymbolDuration, calculus.PortB),
-											nmtypes.Out(calculus.PortResult, symbolMidpointReturnRate),
-										),
-										nmtypes.Wire(
-											calculus.Positive,
-											nmtypes.In(symbolMidpointLogReturn, calculus.PortX),
-											nmtypes.Out(calculus.PortResult, symbolPositiveReturn),
-										),
-										nmtypes.Wire(
-											calculus.Negative,
-											nmtypes.In(symbolMidpointLogReturn, calculus.PortX),
-											nmtypes.Out(calculus.PortResult, symbolNegMidpointReturn),
-										),
-										nmtypes.Wire(
-											calculus.Positive,
-											nmtypes.In(symbolNegMidpointReturn, calculus.PortX),
-											nmtypes.Out(calculus.PortResult, symbolNegativeReturn),
-										),
-										velocityOver("midpoint_return_velocity", symbolMidpointLogReturn),
-										baselineZScore("midpoint_return", symbolMidpointLogReturn),
-									),
-									nmtypes.Identity,
-								),
-								nmtypes.Identity,
-							),
-							nmtypes.Identity,
-						),
-						calculus.Clear(
-							symbolBarQuantityTotal,
-							symbolBarNotionalTotal,
-							symbolBarTradeCount,
-						),
-					),
-					nmtypes.Identity,
-				),
-			),
-		),
-		projector: data.NewProjector(
-			data.Binding{From: nmtypes.AlphaPrice, Name: "trade_price", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmtypes.Quantity, Name: "trade_quantity", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolTradeNotional, Name: "trade_notional", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolTradeInterval, Name: "trade_interval_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: temporal.SymbolCompletedSpans, Name: "completed_volume_bar_ordinal", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: equation.SymbolTarget, Name: "volume_bar_target_quantity", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolBarQuantity, Name: "volume_bar_quantity", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolBarNotional, Name: "volume_bar_notional", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolBarTradeCountSnap, Name: "volume_bar_trade_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: calculus.SymbolDuration, Name: "volume_bar_duration", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolVolumeRate, Name: "volume_rate", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
-			data.Binding{From: symbolNotionalRate, Name: "notional_rate", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
-			data.Binding{From: symbolTradeRate, Name: "trade_rate", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
-			data.Binding{From: prefixed("notional_rate_velocity", "velocity/delta"), Name: "notional_rate_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
-			data.Binding{From: symbolNotionalRateBase, Name: "notional_rate_baseline", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
-			data.Binding{From: symbolNotionalRateRatio, Name: "notional_rate_ratio", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: prefixed("notional_rate", "z/residual"), Name: "notional_rate_divergence", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: prefixed("notional_rate", "z/value"), Name: "notional_rate_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolBarOpenMidpoint, Name: "midpoint:from", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolMidpoint, Name: "midpoint:at", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolMidpoint, Name: "midpoint", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolMidpointLogReturn, Name: "midpoint_log_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolMidpointReturnRate, Name: "midpoint_return_rate", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
-			data.Binding{From: symbolPositiveReturn, Name: "positive_midpoint_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolNegativeReturn, Name: "negative_midpoint_return", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: prefixed("midpoint_return", "baseline/value"), Name: "midpoint_return_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: prefixed("midpoint_return", "z/residual"), Name: "midpoint_return_divergence", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: prefixed("midpoint_return", "z/value"), Name: "midpoint_return_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: prefixed("midpoint_return_velocity", "velocity/delta"), Name: "midpoint_return_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescalePerSecond},
-		),
+		states: make(map[string]*tradeState),
 	}
 }
 
-/* SetQuote installs the completed-volume-bar top-of-book quote source. */
+func (trade *Trade) Close() error {
+	return nil
+}
+
 func (trade *Trade) SetQuote(quote func(symbol string) (bid, ask *decimal.Decimal)) {
+	trade.mu.Lock()
+	defer trade.mu.Unlock()
+
 	trade.quote = quote
 }
 
-/*
-Step receives one trade data point, loads the tape facts and the shared book
-midpoint, runs the Number pipeline, and projects exactly one Measurement. The
-interval origin is read from the pipeline output to preserve the completed bar's
-From time.
-*/
-func (trade *Trade) Step(point kraken.TradeData) *data.Measurement[float64] {
-	if committed, found := trade.number.Project(point.Symbol); found {
-		previousSec, _ := committed.Get(nmtypes.EventTimeSec)
-		previousNsec, _ := committed.Get(nmtypes.EventTimeNsec)
+func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
+	price := tick.Price.Float64()
+	qty := tick.Qty
 
-		if float64(point.Timestamp.Unix()) < previousSec ||
-			(float64(point.Timestamp.Unix()) == previousSec && float64(point.Timestamp.Nanosecond()) < previousNsec) {
-			return nil
+	if price <= 0 || qty <= 0 {
+		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: non-positive trade (price=%f, qty=%f)", price, qty)}
+	}
+
+	trade.mu.Lock()
+	defer trade.mu.Unlock()
+
+	state, found := trade.states[tick.Symbol]
+
+	if !found {
+		state = &tradeState{
+			spanStore: store.Store{
+				Type:     store.DynamicRing,
+				Adaptive: adaptive.Window{Type: adaptive.ADWIN},
+				Reduce:   statistic.MedianReduction,
+			},
+		}
+		trade.states[tick.Symbol] = state
+	}
+
+	notional := price * qty
+	targetQty := float64(state.spanStore.Step(types.Scalar(qty)))
+
+	if targetQty <= 0 {
+		targetQty = qty
+	}
+
+	if !state.hasBarStart {
+		state.barStart = tick.Timestamp
+		state.hasBarStart = true
+	}
+
+	state.accumulatedQty += qty
+	state.accumulatedNotional += notional
+	state.barTradeCount++
+
+	var intervalSeconds float64
+	hasInterval := state.hasPrevTradeTime
+
+	if hasInterval {
+		intervalSeconds = tick.Timestamp.Sub(state.prevTradeTime).Seconds()
+	}
+
+	state.prevTradeTime = tick.Timestamp
+	state.hasPrevTradeTime = true
+
+	duration := tick.Timestamp.Sub(state.barStart).Seconds()
+	id := fmt.Sprintf("pumpdump:%s:%d", tick.Symbol, tick.Timestamp.UnixNano())
+	measurement := data.NewMeasurement[float64](id, tick.Symbol, "pumpdump", tick.Timestamp, tick.Timestamp)
+	measurement.Metadata = make(map[string]float64)
+
+	putPumpDumpMetric(measurement, "trade_price", price, data.UnitRate)
+	putPumpDumpMetric(measurement, "trade_quantity", qty, data.UnitCount)
+	putPumpDumpMetric(measurement, "trade_notional", notional, data.UnitCount)
+	putPumpDumpMetric(measurement, "volume_bar_target_quantity", targetQty, data.UnitCount)
+	putPumpDumpMetric(measurement, "volume_bar_quantity", state.accumulatedQty, data.UnitCount)
+	putPumpDumpMetric(measurement, "volume_bar_notional", state.accumulatedNotional, data.UnitCount)
+	putPumpDumpMetric(measurement, "volume_bar_trade_count", state.barTradeCount, data.UnitCount)
+	putPumpDumpMetric(measurement, "volume_bar_duration", duration, data.UnitSecond)
+
+	if hasInterval {
+		putPumpDumpMetric(measurement, "trade_interval_seconds", intervalSeconds, data.UnitSecond)
+	}
+
+	putPumpDumpMetric(measurement, "completed_volume_bar_ordinal", state.barOrdinal, data.UnitCount)
+
+	// Midpoint quote resolution
+	var currentMidpoint float64
+	var hasMidpoint bool
+
+	if trade.quote != nil {
+		bid, ask := trade.quote(tick.Symbol)
+
+		if bid != nil && ask != nil {
+			bidVal := bid.Float64()
+			askVal := ask.Float64()
+
+			if bidVal > 0 && askVal > bidVal {
+				currentMidpoint = (bidVal + askVal) / 2.0
+				hasMidpoint = true
+			}
 		}
 	}
 
-	input := nmtypes.Frame{}
-	input.Put(nmtypes.Quantity, point.Qty)
-	input.Put(nmtypes.AlphaPrice, point.Price.Float64())
-	input.Put(nmtypes.EventTimeSec, float64(point.Timestamp.Unix()))
-	input.Put(nmtypes.EventTimeNsec, float64(point.Timestamp.Nanosecond()))
+	if hasMidpoint && !state.hasBarOpenMidpoint {
+		state.barOpenMidpoint = currentMidpoint
+		state.hasBarOpenMidpoint = true
+	}
 
+	// Closure: accumulated >= targetQty && duration > 0
+	if state.accumulatedQty >= targetQty && duration > 0 {
+		state.barOrdinal++
+		putPumpDumpMetric(measurement, "completed_volume_bar_ordinal", state.barOrdinal, data.UnitCount)
 
-	trade.loadQuote(point.Symbol, &input)
+		volumeRate := state.accumulatedQty / duration
+		notionalRate := state.accumulatedNotional / duration
+		tradeRate := state.barTradeCount / duration
 
-	output := trade.number.Step(point.Symbol, input)
-	from := point.Timestamp
+		putPumpDumpMetric(measurement, "volume_rate", volumeRate, data.UnitPerSecond)
+		putPumpDumpMetric(measurement, "notional_rate", notionalRate, data.UnitPerSecond)
+		putPumpDumpMetric(measurement, "trade_rate", tradeRate, data.UnitPerSecond)
 
-	if seconds, found := output.Get(temporal.SymbolObservedSec); found {
-		if nanoseconds, found := output.Get(temporal.SymbolObservedNsec); found {
-			from = time.Unix(int64(seconds), int64(nanoseconds)).UTC()
+		priorRateCount := state.rateResidual.Count()
+		priorRateMean := float64(state.rateResidual.Mean())
+
+		state.rateResidual.Step(types.Scalar(notionalRate))
+
+		if priorRateCount == 0 {
+			putPumpDumpMetric(measurement, "notional_rate_baseline", notionalRate, data.UnitPerSecond)
+			putPumpDumpMetric(measurement, "notional_rate_ratio", 1.0, data.UnitDimensionless)
+		} else {
+			putPumpDumpMetric(measurement, "notional_rate_baseline", priorRateMean, data.UnitPerSecond)
+			putPumpDumpMetric(measurement, "notional_rate_ratio", notionalRate/priorRateMean, data.UnitDimensionless)
 		}
+
+		if hasMidpoint {
+			putPumpDumpMetric(measurement, "midpoint", currentMidpoint, data.UnitRate)
+			putPumpDumpMetric(measurement, "midpoint:at", currentMidpoint, data.UnitRate)
+
+			if state.hasBarOpenMidpoint && state.barOpenMidpoint > 0 {
+				putPumpDumpMetric(measurement, "midpoint:from", state.barOpenMidpoint, data.UnitRate)
+				logReturn := math.Log(currentMidpoint / state.barOpenMidpoint)
+				returnRate := logReturn / duration
+
+				putPumpDumpMetric(measurement, "midpoint_log_return", logReturn, data.UnitDimensionless)
+				putPumpDumpMetric(measurement, "midpoint_return_rate", returnRate, data.UnitPerSecond)
+
+				posReturn := 0.0
+				negReturn := 0.0
+
+				if logReturn > 0 {
+					posReturn = logReturn
+				} else if logReturn < 0 {
+					negReturn = -logReturn
+				}
+
+				putPumpDumpMetric(measurement, "positive_midpoint_return", posReturn, data.UnitDimensionless)
+				putPumpDumpMetric(measurement, "negative_midpoint_return", negReturn, data.UnitDimensionless)
+
+				if state.hasPrevLogReturn {
+					velocity := logReturn - state.prevLogReturn
+					putPumpDumpMetric(measurement, "midpoint_return_velocity", velocity, data.UnitPerSecond)
+				}
+
+				state.prevLogReturn = logReturn
+				state.hasPrevLogReturn = true
+			}
+
+			state.barOpenMidpoint = currentMidpoint
+		}
+
+		// Reset bar state
+		state.accumulatedQty = 0
+		state.accumulatedNotional = 0
+		state.barTradeCount = 0
+		state.barStart = tick.Timestamp
 	}
 
-	return trade.projector.Project(point.Symbol, "pumpdump", point.Timestamp, from, output)
-}
-
-/*
-loadQuote puts a valid contemporaneous executable touch into the midpoint slots.
-*/
-func (trade *Trade) loadQuote(symbol string, input *nmtypes.Frame) {
-	input.Put(symbolHasMidpoint, 0)
-
-	if trade == nil || trade.quote == nil {
-		return
-	}
-
-	bid, ask := trade.quote(symbol)
-
-	if bid == nil || ask == nil {
-		return
-	}
-
-	bidValue := bid.Float64()
-	askValue := ask.Float64()
-
-	if bidValue <= 0 || askValue <= bidValue {
-		return
-	}
-
-	input.Put(symbolBidPrice, bidValue)
-	input.Put(symbolAskPrice, askValue)
-	input.Put(symbolHasMidpoint, 1)
-}
-
-func (trade *Trade) Close() error { return nil }
-
-func closedCondition() nmtypes.Primitive {
-	return nmtypes.Wire(
-		nmtypes.Identity,
-		nmtypes.In(equation.SymbolClosed, logic.SymbolCondition),
-		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
-	)
-}
-
-func hasMidpointCondition() nmtypes.Primitive {
-	return nmtypes.Wire(
-		nmtypes.Identity,
-		nmtypes.In(symbolHasMidpoint, logic.SymbolCondition),
-		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
-	)
-}
-
-func openingCondition() nmtypes.Primitive {
-	return nmtypes.Wire(
-		logic.Equal,
-		nmtypes.In(equation.SymbolClosed, calculus.PortA),
-		nmtypes.In(symbolOne, calculus.PortB),
-		nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
-	)
+	return measurement
 }

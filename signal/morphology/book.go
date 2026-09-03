@@ -12,10 +12,10 @@ import (
 	"sync"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/distribution"
 	"github.com/theapemachine/symm/nomagique/equation"
+	types "github.com/theapemachine/symm/nomagique/types"
 )
 
 type symbolState struct {
@@ -143,7 +143,7 @@ func (morphology *Book) Step(message kraken.Level3Data) *data.Measurement[float6
 	}
 
 	// Update standardizer with current observation
-	state.standardizer.Step(nomagique.Number(morphologyChange))
+	state.standardizer.Step(types.Scalar(morphologyChange))
 	morphology.mu.Unlock()
 
 	measurement.Metadata[data.MetadataSupport] = float64(state.count)

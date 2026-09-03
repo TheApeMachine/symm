@@ -3,8 +3,6 @@ package types
 import (
 	"slices"
 	"time"
-
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 /* PerspectiveQuestion is the stable semantic question an Advisor answers. */
@@ -61,7 +59,7 @@ or completed-volume-bar ordinal); From and Until are positions on that clock.
 No wall-clock duration or universal fixed window is implied.
 */
 type PerspectiveLease struct {
-	Clock nmtypes.Symbol
+	Clock string
 	From  uint64
 	Until uint64
 }
@@ -117,7 +115,7 @@ type Perspective struct {
 	Peer       string
 	PositionID string
 
-	Advisor            nmtypes.Symbol
+	Advisor            string
 	Question           PerspectiveQuestion
 	IssuedAt           time.Time
 	ResolvedAt         time.Time
@@ -146,7 +144,7 @@ type PerspectiveKey struct {
 	Symbol     string
 	Peer       string
 	PositionID string
-	Advisor    nmtypes.Symbol
+	Advisor    string
 	Question   PerspectiveQuestion
 }
 

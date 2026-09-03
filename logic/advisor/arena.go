@@ -18,19 +18,17 @@ type Arena struct {
 	classes map[types.PerspectiveState]*Class
 	active  map[string]map[types.PerspectiveKey]*arenaRound
 	support map[types.PerspectiveKey]uint64
-	/*
-		court is the War Room whose credibility ledger this Arena reports to.
+	// court is the War Room whose credibility ledger this Arena reports to.
 
-		This is the Court of Causal Accountability of MCTS.md §6. The Arena is
-		the only place that observes whether a falsifiable prediction was borne
-		out, so it is the only place that can hold an advisor to it. Without
-		this link the ledger was written once at construction and never again:
-		every advisor kept credibility 1.0 forever, and being repeatedly wrong
-		cost nothing.
+	// This is the Court of Causal Accountability of MCTS.md §6. The Arena is
+	// the only place that observes whether a falsifiable prediction was borne
+	// out, so it is the only place that can hold an advisor to it. Without
+	// this link the ledger was written once at construction and never again:
+	// every advisor kept credibility 1.0 forever, and being repeatedly wrong
+	// cost nothing.
 
-		It is optional. An Arena built without a court still runs its rounds;
-		it simply reports to no one.
-	*/
+	// It is optional. An Arena built without a court still runs its rounds;
+	// it simply reports to no one.
 	court      *WarRoom
 	activeSize int
 	capacity   int
@@ -121,27 +119,25 @@ func (arena *Arena) Step(envelope *types.Envelope) *types.Envelope {
 			return nil
 		}
 
-		/*
-			The advisor speaks now, and is judged later.
+		// 	The advisor speaks now, and is judged later.
 
-			This used to swallow the freshly issued Perspective: it entered the
-			pending-round map and was re-emitted only once one of its
-			falsifiable predictions had survived a full volume bar. The War Room
-			therefore never heard a current reading — only a past one that had
-			already been proven — so on a live symbol the council was empty and
-			the planner reported "no advisor prediction has survived a round for
-			this symbol yet" forever.
+		// 	This used to swallow the freshly issued Perspective: it entered the
+		// 	pending-round map and was re-emitted only once one of its
+		// 	falsifiable predictions had survived a full volume bar. The War Room
+		// 	therefore never heard a current reading — only a past one that had
+		// 	already been proven — so on a live symbol the council was empty and
+		// 	the planner reported "no advisor prediction has survived a round for
+		// 	this symbol yet" forever.
 
-			That inverts the architecture (MCTS.md §3 and §6). Deliberation is
-			about what the specialists observe *right now*; the Thunderdome is a
-			Court of Causal Accountability that adjusts credibility *afterwards*.
-			An advisor whose past calls were poor should be quieter at the table
-			— which credibility weighting already does — not absent from it.
+		// 	That inverts the architecture (MCTS.md §3 and §6). Deliberation is
+		// 	about what the specialists observe *right now*; the Thunderdome is a
+		// 	Court of Causal Accountability that adjusts credibility *afterwards*.
+		// 	An advisor whose past calls were poor should be quieter at the table
+		// 	— which credibility weighting already does — not absent from it.
 
-			So the round is still admitted above (accountability is preserved,
-			and a survived Perspective is still re-emitted by resolve with its
-			Support incremented), and the reading is also published immediately.
-		*/
+		// 	So the round is still admitted above (accountability is preserved,
+		// 	and a survived Perspective is still re-emitted by resolve with its
+		// 	Support incremented), and the reading is also published immediately.
 		envelope.Perspectives = append(envelope.Perspectives, perspective)
 	}
 
@@ -361,15 +357,9 @@ func (arena *Arena) evict(symbol string, key types.PerspectiveKey) {
 }
 
 /* Error returns Arena's first terminal lifecycle failure. */
-func (arena *Arena) Error() error {
-	return arena.err
-}
+func (arena *Arena) Error() error { return arena.err }
 
-func (arena *Arena) fail(err error) {
-	arena.err = errnie.Error(err)
-}
+func (arena *Arena) fail(err error) { arena.err = errnie.Error(err) }
 
 /* Active reports the number of retained prediction rounds. */
-func (arena *Arena) Active() int {
-	return arena.activeSize
-}
+func (arena *Arena) Active() int { return arena.activeSize }

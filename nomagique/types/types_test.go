@@ -21,12 +21,3 @@ func TestMeasurementRetainsBoundaryMetadata(t *testing.T) {
 	}
 }
 
-func TestFrameMigrationAliases(t *testing.T) {
-	symbol := MustIntern("types_test/value")
-	frame := Frame{}
-	frame.Put(symbol, 3)
-
-	if frame.MustGet(symbol) != 3 {
-		t.Fatal("Frame alias did not retain the value")
-	}
-}

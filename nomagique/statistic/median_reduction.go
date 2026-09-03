@@ -1,6 +1,8 @@
 package statistic
 
 import (
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
@@ -71,4 +73,35 @@ func quickSelect(values []types.Number, target int) types.Number {
 	}
 
 	return values[target]
+}
+
+/*
+MedianAbsoluteOf computes the median of the absolute values of a slice.
+*/
+func MedianAbsoluteOf(values []float64) (float64, bool) {
+	if len(values) == 0 {
+		return 0, false
+	}
+
+	absValues := make([]types.Number, 0, len(values))
+
+	for _, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, false
+		}
+
+		absValues = append(absValues, types.Number(math.Abs(value)))
+	}
+
+	count := len(absValues)
+	middle := count / 2
+	upper := quickSelect(absValues, middle)
+
+	if count%2 != 0 {
+		return float64(upper), true
+	}
+
+	lower := quickSelect(absValues[:middle], middle-1)
+
+	return float64(lower + (upper-lower)/2), true
 }

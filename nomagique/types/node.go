@@ -1,9 +1,6 @@
 package types
 
-/*
-Node is the closed engine contract for all transformations, filters, equations,
-and reductions in nomagique.
-*/
+// Node is the closed transformation contract across all primitives and compositions.
 type Node interface {
-	Step(Number) Number
+	Step(Scalar) Scalar
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -58,33 +57,20 @@ func TestNewEquityReading(t *testing.T) {
 }
 
 /*
-settledCoder runs a predictive coder long enough that its manifold has real
+settledManifold runs a predictive manifold long enough that it has real
 layer states to project, so the encoder is exercised against a live model
 rather than a zero-valued one.
 */
-func settledCoder() *learning.PredictiveCoder {
-	coder := learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
-		CustomArch: []int{4, 8, 4},
-		MaxHorizon: 4,
-		Target:     learning.DirectionalTarget(0.01),
-		Pace:       0.03,
-		Learn:      true,
-	})
+func settledManifold() *learning.ResonanceManifold {
+	manifold := learning.NewResonanceManifold([]int{4, 8, 4}, 1, 0.03)
 
 	for step := range 32 {
 		value := float64(step % 5)
-
-		_, err := coder.Step(learning.PredictiveInput{
-			Features:     []float64{value, value / 2, value / 3, 1},
-			Reference:    value,
-			HasReference: true,
-			Step:         int64(step),
-		})
-
-		So(err, ShouldBeNil)
+		_ = manifold.Settle([]float64{value, value / 2, value / 3, 1}, false)
+		_ = manifold.Learn([]float64{value})
 	}
 
-	return coder
+	return manifold
 }
 
 func TestEncodeResonanceArtifact(t *testing.T) {
@@ -92,7 +78,8 @@ func TestEncodeResonanceArtifact(t *testing.T) {
 		artifact := &ResonanceArtifact{
 			Symbol:           "BTC/USD",
 			At:               time.Now(),
-			Manifold:         settledCoder().Manifold(),
+			Manifold:         settledManifold(),
+			Dynamics:         &telemetry.EnvelopeResonanceDynamicsT{Ready: 1, Velocity: 0.5},
 			ForwardCurve:     []float64{0.01, 0.02},
 			SupportedHorizon: 2,
 		}
@@ -160,7 +147,7 @@ func TestEnvelopeEncode(t *testing.T) {
 	Convey("Given an envelope carrying a class-tagged Advisor Perspective", t, func() {
 		envelope := &Envelope{Perspectives: []*Perspective{{
 			Symbol:   "BTC/USD",
-			Advisor:  nmtypes.MustIntern("momentum"),
+			Advisor:  "momentum",
 			Question: "momentum",
 			Classes: []PerspectiveClass{
 				{State: "building", Probability: 0.7},
@@ -172,7 +159,7 @@ func TestEnvelopeEncode(t *testing.T) {
 				Effect: PredictionSupports,
 			}},
 			Lease: PerspectiveLease{
-				Clock: nmtypes.MustIntern("pumpdump/completed_volume_bar_ordinal"),
+				Clock: "pumpdump/completed_volume_bar_ordinal",
 				From:  2,
 				Until: 4,
 			},

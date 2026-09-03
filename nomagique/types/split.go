@@ -1,44 +1,35 @@
 package types
 
-/*
-Split distributes an incoming signal across parallel branches and computes
-their weighted summation: Output = sum(w_i * Branch_i(x)).
-Degenerate zero-value behavior: empty slots contribute 0 (additive identity).
-*/
+// Split evaluates branches in parallel and computes their weighted sum: sum(w_i * Branch_i(x)).
+// Empty slots degenerate to 0. Empty Route defaults to broadcast (w_i = 1).
 type Split struct {
-	Route Router
-	A     Node
-	B     Node
-	C     Node
-	D     Node
+	Route      Router
+	A, B, C, D Node
 }
 
-func (split *Split) Step(number Number) Number {
-	weightA := Number(1)
-	weightB := Number(1)
-	weightC := Number(1)
-	weightD := Number(1)
+func (s *Split) Step(x Scalar) Scalar {
+	wA, wB, wC, wD := Scalar(1), Scalar(1), Scalar(1), Scalar(1)
 
-	if split.Route != nil {
-		weightA, weightB, weightC, weightD = split.Route.Route(number)
+	if s.Route != nil {
+		wA, wB, wC, wD = s.Route.Route(x)
 	}
 
-	var sum Number
+	var sum Scalar
 
-	if split.A != nil && weightA > 0 {
-		sum += weightA * split.A.Step(number)
+	if s.A != nil && wA > 0 {
+		sum += wA * s.A.Step(x)
 	}
 
-	if split.B != nil && weightB > 0 {
-		sum += weightB * split.B.Step(number)
+	if s.B != nil && wB > 0 {
+		sum += wB * s.B.Step(x)
 	}
 
-	if split.C != nil && weightC > 0 {
-		sum += weightC * split.C.Step(number)
+	if s.C != nil && wC > 0 {
+		sum += wC * s.C.Step(x)
 	}
 
-	if split.D != nil && weightD > 0 {
-		sum += weightD * split.D.Step(number)
+	if s.D != nil && wD > 0 {
+		sum += wD * s.D.Step(x)
 	}
 
 	return sum

@@ -9,9 +9,7 @@ import (
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -576,52 +574,6 @@ func encodeCognition(cognition *Cognition) *telemetry.EnvelopeCognitionT {
 	return encoded
 }
 
-func encodeFrame(frame nmtypes.Frame) *telemetry.EnvelopeFrameT {
-	mask := make([]uint64, len(frame.Mask))
-
-	copy(mask, frame.Mask[:])
-
-	data := make([]float64, len(frame.Data))
-	copy(data, frame.Data[:])
-
-	return &telemetry.EnvelopeFrameT{Mask: mask, Data: data}
-}
-
-/*
-encodeResonanceDynamics reads the physical dynamics frame's slots by name onto
-the wire. The frame itself crosses as an opaque mask/data pair, which a
-consumer cannot pull a named quantity out of, so the named projection is what
-makes the continuous dynamics readable at all.
-*/
-func encodeResonanceDynamics(dynamics nmtypes.Frame) *telemetry.EnvelopeResonanceDynamicsT {
-	value := func(symbol nmtypes.Symbol) float64 {
-		reading, _ := dynamics.Get(symbol)
-
-		return reading
-	}
-
-	return &telemetry.EnvelopeResonanceDynamicsT{
-		Ready:              value(learning.SymbolDynamicsReady),
-		DeltaTime:          value(learning.SymbolDynamicsDeltaTime),
-		Position:           value(learning.SymbolDynamicsPosition),
-		Velocity:           value(learning.SymbolDynamicsVelocity),
-		Acceleration:       value(learning.SymbolDynamicsAcceleration),
-		Memory:             value(learning.SymbolDynamicsMemory),
-		MemoryScale:        value(learning.SymbolDynamicsMemoryScale),
-		StoredEnergy:       value(learning.SymbolDynamicsStoredEnergy),
-		SuppliedPower:      value(learning.SymbolDynamicsSuppliedPower),
-		Dissipation:        value(learning.SymbolDynamicsDissipation),
-		PassivityResidue:   value(learning.SymbolDynamicsPassivityResidue),
-		ContinuousVariance: value(learning.SymbolDynamicsContinuousVariance),
-		JumpAmplitude:      value(learning.SymbolDynamicsJumpAmplitude),
-		JumpVariance:       value(learning.SymbolDynamicsJumpVariance),
-		SampleCount:        value(learning.SymbolDynamicsSampleCount),
-		RotorScalar:        value(learning.SymbolDynamicsRotorScalar),
-		RotorBivector:      value(learning.SymbolDynamicsRotorBivector),
-		EquivarianceNorm:   value(learning.SymbolDynamicsEquivarianceNorm),
-	}
-}
-
 func encodeResonanceArtifact(resonance *ResonanceArtifact) *telemetry.EnvelopeResonanceArtifactT {
 	if resonance == nil {
 		return nil
@@ -630,7 +582,6 @@ func encodeResonanceArtifact(resonance *ResonanceArtifact) *telemetry.EnvelopeRe
 	encoded := &telemetry.EnvelopeResonanceArtifactT{
 		Symbol:                   resonance.Symbol,
 		AtNs:                     timeNs(resonance.At),
-		Dynamics:                 encodeFrame(resonance.Dynamics),
 		ForwardCurve:             resonance.ForwardCurve,
 		ForwardRetention:         resonance.ForwardRetention,
 		SupportedHorizon:         int64(resonance.SupportedHorizon),
@@ -664,7 +615,7 @@ func encodeResonanceArtifact(resonance *ResonanceArtifact) *telemetry.EnvelopeRe
 		encoded.TaskScale, encoded.TaskScaleReady = manifold.TaskScale()
 	}
 
-	encoded.DynamicsNamed = encodeResonanceDynamics(resonance.Dynamics)
+	encoded.DynamicsNamed = resonance.Dynamics
 
 	if resonance.Forecast != nil {
 		encoded.Forecast = &telemetry.EnvelopeReturnForecastT{
@@ -1039,7 +990,7 @@ func encodePerspective(perspective *Perspective) *telemetry.EnvelopePerspectiveT
 		Symbol:             perspective.Symbol,
 		Peer:               perspective.Peer,
 		PositionId:         perspective.PositionID,
-		Advisor:            perspectiveSymbolName(perspective.Advisor, "advisor"),
+		Advisor:            perspective.Advisor,
 		Question:           string(perspective.Question),
 		IssuedAt:           timeNs(perspective.IssuedAt),
 		ResolvedAt:         timeNs(perspective.ResolvedAt),
@@ -1050,7 +1001,7 @@ func encodePerspective(perspective *Perspective) *telemetry.EnvelopePerspectiveT
 		Classes:            classes,
 		Predictions:        predictions,
 		Lease: &telemetry.EnvelopePerspectiveLeaseT{
-			Clock: perspectiveSymbolName(perspective.Lease.Clock, "market clock"),
+			Clock: perspective.Lease.Clock,
 			From:  perspective.Lease.From,
 			Until: perspective.Lease.Until,
 		},
@@ -1075,17 +1026,6 @@ func encodePerspectives(perspectives []*Perspective) []*telemetry.EnvelopePerspe
 	}
 
 	return encoded
-}
-
-/* perspectiveSymbolName refuses to persist an opaque process-local slot. */
-func perspectiveSymbolName(symbol nmtypes.Symbol, role string) string {
-	name, found := nmtypes.SymbolName(symbol)
-
-	if !found {
-		panic("types: cannot encode Perspective with unregistered " + role)
-	}
-
-	return name
 }
 
 /*

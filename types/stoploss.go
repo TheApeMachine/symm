@@ -599,7 +599,7 @@ func (stoploss *Stoploss) ObservePerspective(perspective *Perspective) {
 		stoploss.Causative.ActivePerspectives = make(map[string]string)
 	}
 
-	stoploss.Causative.ActivePerspectives[perspective.Advisor.String()] = string(perspective.TopClass())
+	stoploss.Causative.ActivePerspectives[perspective.Advisor] = string(perspective.TopClass())
 }
 
 /*

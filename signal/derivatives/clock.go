@@ -3,20 +3,7 @@ package derivatives
 import (
 	"sync"
 	"time"
-
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/logic"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
-
-/*
-symbolTimelineAdvanced is 1 when the event being stepped is the newest
-observation on its symbol's causal timeline, and 0 when it arrived late. Every
-pipeline stage that reads or advances the event clock is gated on it, so a late
-event contributes its order-independent facts without being differenced,
-windowed, or rate-divided as though it were the newest.
-*/
-var symbolTimelineAdvanced = nmtypes.MustIntern("derivatives/timeline_advanced")
 
 /*
 causalClock keeps one monotonic timeline per symbol, distinguishing a timestamp
@@ -41,6 +28,10 @@ without advancing the timeline.
 */
 type causalClock struct {
 	last sync.Map
+}
+
+func newCausalClock() causalClock {
+	return causalClock{}
 }
 
 /*
@@ -79,36 +70,4 @@ func (clock *causalClock) stamp(
 	clock.last.Store(symbol, timestamp)
 
 	return timestamp, true
-}
-
-/*
-withoutStaleClockFacts runs `advance` when the event is the newest observation
-on its symbol's timeline, and otherwise CLEARS the slots that stage would have
-written.
-
-Clearing is the whole point. A Frame is persistent state carried between steps,
-so a gate that merely skips a stage leaves that stage's PREVIOUS value sitting
-in the slot -- and the projector, which publishes every populated binding,
-would then republish a stale number stamped with this event's identity. That is
-worse than the wrong value it replaced: it is a wrong value wearing a fresh
-timestamp. An absent metric is honest; a stale one is not.
-*/
-func withoutStaleClockFacts(
-	advance nmtypes.Primitive,
-	derived ...nmtypes.Symbol,
-) nmtypes.Primitive {
-	return logic.If(
-		nmtypes.Wire(
-			logic.GreaterThan,
-			nmtypes.In(symbolTimelineAdvanced, calculus.PortA),
-			nmtypes.In(symbolZero, calculus.PortB),
-			nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
-		),
-		advance,
-		func(frame *nmtypes.Frame) {
-			for _, symbol := range derived {
-				frame.Delete(symbol)
-			}
-		},
-	)
 }

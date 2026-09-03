@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/nomagique/learning"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
 /*
@@ -18,27 +18,19 @@ const (
 	ChannelLevel3         = "level3"
 	ChannelFuturesTickers = "futures_tickers"
 	ChannelFuturesTrades  = "futures_trades"
-	ChannelFuturesBooks   = "futures_books"
-	ChannelMeasurements   = "measurements"
-	ChannelCategories     = "categories"
-	ChannelResonance      = "resonance"
-	ChannelCausal         = "causal"
-	ChannelDiagnostics    = "diagnostics"
-	ChannelCognition      = "cognition"
-	ChannelPhase          = "phase"
-	ChannelGraphs         = "graphs"
-	ChannelRelations      = "relations"
-	ChannelCausalState    = "causal_state"
-	ChannelOpportunities  = "opportunities"
-	ChannelDecisions      = "decisions"
-	ChannelExecutions     = "executions"
-	ChannelRegulator      = "regulator"
-	ChannelHawkes         = "hawkes"
-	ChannelUI             = "ui"
-	ChannelFluid          = "fluid"
-	ChannelCrossSection   = "cross_section"
-	ChannelDisconnect     = "disconnect"
+
+	ChannelSignals     = "signals"
+	ChannelEnvelopes   = "envelopes"
+	ChannelPerspectives = "perspectives"
+	ChannelDecisions   = "decisions"
+	ChannelExecutions  = "executions"
+	ChannelOrders      = "orders"
+	ChannelPositions   = "positions"
+	ChannelPnl         = "pnl"
+	ChannelTelemetry   = "telemetry"
 )
+
+
 
 /*
 ResonanceArtifact carries one settled predictive manifold to downstream stages.
@@ -50,7 +42,7 @@ type ResonanceArtifact struct {
 	At       time.Time
 	Manifold *learning.ResonanceManifold
 	Forecast *ResonanceReturnForecast
-	Dynamics nmtypes.Frame
+	Dynamics *telemetry.EnvelopeResonanceDynamicsT
 
 	// Predictive-head projection data. The workspace observer projects these
 	// into the dashboard ResonanceFrame, so the domain payload carries the wire
@@ -63,18 +55,11 @@ type ResonanceArtifact struct {
 	Readout          []float64
 	Confidence       float64
 	// LastResolutionPrediction is the direction the head actually issued at t,
-	// as distinct from the target it was scored against. Without it a consumer
-	// can only show the realized move twice over and never the call that was
-	// made.
+	// preserved so the outcome check at t+1 scores that decision and not a
+	// recomputed forecast.
 	LastResolutionPrediction float64
 	LastResolutionTarget     float64
 	LastResolutionError      float64
+	// TargetSeries records which candidate feature the head was trained to forecast.
+	TargetSeries string
 }
-
-/*
-CausalOutput carries one symbol's causal reading to the graph stage.
-*/
-// NOTE: removed — the Pearl-ladder CausalOutput was a UI-only telemetry type
-// that duplicated the real causal engine (logic/causal/model.go CausalModel).
-// No other stage consumed it, so it was removed rather than left as a
-// publish-only surface. Field spacing is intentionally preserved.

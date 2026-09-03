@@ -24,28 +24,13 @@ type RegressionAccumulator struct {
 	yty        float64
 	rows       int
 
-	// fitCoefficients and fitInverse are Fit's scratch space, reused across
-	// calls on the same accumulator. A prequential walk calls Fit once per
-	// resident row (hundreds per candidate pair), so a fresh gonum vector and
-	// matrix on every call was the single largest allocator in the process;
-	// both are purely local to one Fit call and never retained past it.
 	fitCoefficients []float64
 	fitInverse      []float64
 
-	// luScratch, pvtScratch and colScratch are the in-place LU solver's
-	// working space (the decomposed p×p matrix, the pivot permutation, and
-	// one p-length column buffer for inversion), reused across every solveLU
-	// and invertLU call on this accumulator so neither ever allocates.
 	luScratch  []float64
 	pvtScratch []int
 	colScratch []float64
 
-	// rlsP, rlsW, rlsScratch and rlsReady hold the recursive least-squares
-	// prequential state: the running inverse (XᵀX)⁻¹ in row-major p×p form, the
-	// running coefficient vector, a reusable p-vector scratch, and the
-	// definiteness flag. They are populated lazily by PrequentialAdd and exist
-	// so a prequential walk can score every row in O(p²) with zero allocations
-	// instead of solving the normal equations (an LU factorization) per row.
 	rlsP       []float64
 	rlsW       []float64
 	rlsScratch []float64
@@ -144,16 +129,7 @@ func (accumulator *RegressionAccumulator) Add(predictors []float64, target float
 
 /*
 PrequentialPredict returns the model's prediction for one design row using the
-model fit on every previously incorporated row, without allocating. It reports
-false until the accumulated design is non-singular (more rows than parameters
-and a well-defined inverse), mirroring Fit's Defined gate.
-
-The running inverse (XᵀX)⁻¹ is maintained exactly, not via a regularized or
-damped update: it is initialized once from the accumulated normal equations at
-the first defined row, then updated with the textbook Sherman-Morrison rank-1
-formula as each new row arrives, so every subsequent prediction is precisely the
-ordinary-least-squares prequential one-step forecast, at O(p²) and zero
-allocations per row.
+model fit on every previously incorporated row, without allocating.
 */
 func (accumulator *RegressionAccumulator) PrequentialPredict(predictors []float64) (float64, bool) {
 	if accumulator == nil || len(predictors) != accumulator.parameters || !accumulator.rlsReady {
@@ -171,13 +147,7 @@ func (accumulator *RegressionAccumulator) PrequentialPredict(predictors []float6
 
 /*
 PrequentialAdd incorporates one design row after it has been scored by
-PrequentialPredict. The incremental moments (xtx/xty/yty/rows) advance
-identically to Add so the final exact Fit matches; the recursive inverse and
-coefficient vector then advance with the rank-1 Sherman-Morrison update so the
-next PrequentialPredict is allocation-free. The inverse is initialized from the
-exact accumulated cross-product on the first row that leaves the design
-non-singular; a singular update (denominator zero) leaves rlsReady false, which
-is the same rank-deficiency signal Fit reports.
+PrequentialPredict.
 */
 func (accumulator *RegressionAccumulator) PrequentialAdd(predictors []float64, target float64) {
 	if accumulator == nil || len(predictors) != accumulator.parameters {
@@ -196,7 +166,6 @@ func (accumulator *RegressionAccumulator) PrequentialAdd(predictors []float64, t
 		}
 	}
 
-	// k = (P x) / (1 + xᵀ P x)
 	denominator := 1.0
 
 	for row := 0; row < accumulator.parameters; row++ {
@@ -223,7 +192,6 @@ func (accumulator *RegressionAccumulator) PrequentialAdd(predictors []float64, t
 		errorTerm -= accumulator.rlsW[column] * predictors[column]
 	}
 
-	// w = w + (k * error); P = P - (k ⊗ (xᵀ P)) / denominator.
 	for row := 0; row < accumulator.parameters; row++ {
 		gain := accumulator.rlsScratch[row] * invDenominator
 		accumulator.rlsW[row] += gain * errorTerm
@@ -234,11 +202,6 @@ func (accumulator *RegressionAccumulator) PrequentialAdd(predictors []float64, t
 	}
 }
 
-/*
-initializeRLS seeds the recursive inverse and coefficient vector from the exact
-accumulated normal equations at the first non-singular design. It returns false
-when XᵀX is singular, matching Fit's rank-deficiency signal.
-*/
 func (accumulator *RegressionAccumulator) initializeRLS() bool {
 	if !invertLU(
 		accumulator.xtx, accumulator.rlsP, accumulator.parameters,
@@ -264,22 +227,14 @@ func (accumulator *RegressionAccumulator) initializeRLS() bool {
 }
 
 /*
-Fit solves the normal equations over the incorporated rows. It is undefined
-when there are not more rows than parameters or when X'X is singular
-(rank-deficient design).
+Fit solves the normal equations over the incorporated rows.
 */
 func (accumulator *RegressionAccumulator) Fit() RegressionFit {
 	return accumulator.fit(true)
 }
 
 /*
-Coefficients solves the normal equations for the coefficient vector only,
-skipping the covariance inverse. It is the prequential-prediction shape of Fit:
-a per-row walk needs the current coefficients to score the next observation but
-never the coefficient variance, and the inverse is the single most expensive
-per-call operation (a fresh Dense matrix and mat.Inverse). Defined, Predict, and
-the residual scatter are identical to Fit; only CoefficientVariance is left
-undefined (nil) and must be obtained from Fit at the end of the walk.
+Coefficients solves the normal equations for the coefficient vector only.
 */
 func (accumulator *RegressionAccumulator) Coefficients() RegressionFit {
 	return accumulator.fit(false)
@@ -301,12 +256,9 @@ func (accumulator *RegressionAccumulator) fit(withVariance bool) RegressionFit {
 		accumulator.xtx, accumulator.xty, accumulator.fitCoefficients, accumulator.parameters,
 		accumulator.luScratch, accumulator.pvtScratch,
 	) {
-		// Singular cross-product: rank-deficient design.
 		return fit
 	}
 
-	// solveLU wrote the solution into the reused fitCoefficients backing
-	// slice; copy it out directly without a fresh allocation.
 	fit.Coefficients = append(fit.Coefficients[:0], accumulator.fitCoefficients...)
 
 	sse := accumulator.yty
@@ -331,6 +283,34 @@ func (accumulator *RegressionAccumulator) fit(withVariance bool) RegressionFit {
 	return fit
 }
 
+func (accumulator *RegressionAccumulator) coefficientVarianceFromCrossProduct(residualVariance float64) []float64 {
+	if math.IsNaN(residualVariance) || residualVariance < 0 {
+		return nil
+	}
+
+	if !invertLU(
+		accumulator.xtx, accumulator.fitInverse, accumulator.parameters,
+		accumulator.luScratch, accumulator.pvtScratch, accumulator.colScratch,
+	) {
+		return nil
+	}
+
+	variances := make([]float64, accumulator.parameters)
+
+	for index := 0; index < accumulator.parameters; index++ {
+		diag := accumulator.fitInverse[index*accumulator.parameters+index]
+		variance := residualVariance * diag
+
+		if variance < 0 || math.IsNaN(variance) {
+			return nil
+		}
+
+		variances[index] = variance
+	}
+
+	return variances
+}
+
 /*
 Predict evaluates the fitted model on one design row.
 */
@@ -349,23 +329,7 @@ func (fit RegressionFit) Predict(predictors []float64) (float64, bool) {
 }
 
 /*
-RegressionFit is the result of one accumulator fit. Undefined fields remain
-undefined; rank deficiency is an explicit state.
-*/
-type RegressionFit struct {
-	Coefficients        []float64
-	CoefficientVariance []float64 // diag of sigma² (X'X)⁻¹; nil when unavailable
-	ResidualSSE         float64
-	ResidualVariance    float64
-	Observations        int
-	Parameters          int
-	Defined             bool
-}
-
-/*
-VarianceAt returns the coefficient variance at a column index, reporting
-false for negative, out-of-range, or unavailable entries so callers never
-index an absent variance slice.
+VarianceAt returns the coefficient variance at a column index.
 */
 func (fit RegressionFit) VarianceAt(column int) (float64, bool) {
 	if column < 0 || column >= fit.Parameters || len(fit.CoefficientVariance) != fit.Parameters {
@@ -376,180 +340,14 @@ func (fit RegressionFit) VarianceAt(column int) (float64, bool) {
 }
 
 /*
-coefficientVarianceFromCrossProduct computes diag(sigma² (X'X)⁻¹) from the
-accumulator's cross-product matrix, using its reused fitInverse/luScratch/
-colScratch buffers. It returns nil when the inverse is not computable, which
-is an explicit undefined state for coefficient uncertainty.
+RegressionFit is the result of one accumulator fit.
 */
-func (accumulator *RegressionAccumulator) coefficientVarianceFromCrossProduct(residualVariance float64) []float64 {
-	if !invertLU(
-		accumulator.xtx, accumulator.fitInverse, accumulator.parameters,
-		accumulator.luScratch, accumulator.pvtScratch, accumulator.colScratch,
-	) {
-		return nil
-	}
-
-	variance := make([]float64, accumulator.parameters)
-
-	for index := 0; index < accumulator.parameters; index++ {
-		variance[index] = residualVariance * accumulator.fitInverse[index*accumulator.parameters+index]
-	}
-
-	return variance
-}
-
-/*
-solveLU solves A x = b in-place using LU decomposition with partial pivoting.
-a is p×p row-major and left untouched; lu and pvt are the caller's reusable
-p×p and p-length scratch buffers. It returns false when A is singular to
-working precision, matching the rank-deficiency signal callers already expect
-from a normal-equations solve.
-*/
-func solveLU(a, b, x []float64, p int, lu []float64, pvt []int) bool {
-	copy(lu, a)
-	copy(x, b)
-
-	for i := 0; i < p; i++ {
-		pvt[i] = i
-	}
-
-	for k := 0; k < p; k++ {
-		maxVal := math.Abs(lu[k*p+k])
-		maxRow := k
-
-		for i := k + 1; i < p; i++ {
-			val := math.Abs(lu[i*p+k])
-			if val > maxVal {
-				maxVal = val
-				maxRow = i
-			}
-		}
-
-		if maxVal <= 1e-15 || math.IsNaN(maxVal) {
-			return false
-		}
-
-		if maxRow != k {
-			pvt[k], pvt[maxRow] = pvt[maxRow], pvt[k]
-
-			for j := 0; j < p; j++ {
-				lu[k*p+j], lu[maxRow*p+j] = lu[maxRow*p+j], lu[k*p+j]
-			}
-
-			x[k], x[maxRow] = x[maxRow], x[k]
-		}
-
-		pivotVal := lu[k*p+k]
-
-		for i := k + 1; i < p; i++ {
-			factor := lu[i*p+k] / pivotVal
-			lu[i*p+k] = factor
-
-			for j := k + 1; j < p; j++ {
-				lu[i*p+j] -= factor * lu[k*p+j]
-			}
-
-			x[i] -= factor * x[k]
-		}
-	}
-
-	for i := p - 1; i >= 0; i-- {
-		sum := x[i]
-
-		for j := i + 1; j < p; j++ {
-			sum -= lu[i*p+j] * x[j]
-		}
-
-		x[i] = sum / lu[i*p+i]
-	}
-
-	return true
-}
-
-/*
-invertLU computes inv = A⁻¹ in-place using LU decomposition with partial
-pivoting. a is p×p row-major and left untouched; lu, pvt and col are the
-caller's reusable p×p, p-length, and p-length scratch buffers.
-*/
-func invertLU(a, inv []float64, p int, lu []float64, pvt []int, col []float64) bool {
-	copy(lu, a)
-
-	for i := 0; i < p; i++ {
-		pvt[i] = i
-	}
-
-	for k := 0; k < p; k++ {
-		maxVal := math.Abs(lu[k*p+k])
-		maxRow := k
-
-		for i := k + 1; i < p; i++ {
-			val := math.Abs(lu[i*p+k])
-			if val > maxVal {
-				maxVal = val
-				maxRow = i
-			}
-		}
-
-		if maxVal <= 1e-15 || math.IsNaN(maxVal) {
-			return false
-		}
-
-		if maxRow != k {
-			pvt[k], pvt[maxRow] = pvt[maxRow], pvt[k]
-
-			for j := 0; j < p; j++ {
-				lu[k*p+j], lu[maxRow*p+j] = lu[maxRow*p+j], lu[k*p+j]
-			}
-		}
-
-		pivotVal := lu[k*p+k]
-
-		for i := k + 1; i < p; i++ {
-			factor := lu[i*p+k] / pivotVal
-			lu[i*p+k] = factor
-
-			for j := k + 1; j < p; j++ {
-				lu[i*p+j] -= factor * lu[k*p+j]
-			}
-		}
-	}
-
-	for j := 0; j < p; j++ {
-		for i := 0; i < p; i++ {
-			col[i] = 0.0
-		}
-
-		for i := 0; i < p; i++ {
-			if pvt[i] == j {
-				col[i] = 1.0
-				break
-			}
-		}
-
-		for i := 0; i < p; i++ {
-			sum := col[i]
-
-			for k := 0; k < i; k++ {
-				sum -= lu[i*p+k] * col[k]
-			}
-
-			col[i] = sum
-		}
-
-		for i := p - 1; i >= 0; i-- {
-			sum := col[i]
-
-			for k := i + 1; k < p; k++ {
-				sum -= lu[i*p+k] * col[k]
-			}
-
-			col[i] = sum / lu[i*p+i]
-		}
-
-		for i := 0; i < p; i++ {
-			inv[i*p+j] = col[i]
-		}
-	}
-
-	return true
+type RegressionFit struct {
+	Coefficients        []float64
+	CoefficientVariance []float64
+	ResidualSSE         float64
+	ResidualVariance    float64
+	Observations        int
+	Parameters          int
+	Defined             bool
 }

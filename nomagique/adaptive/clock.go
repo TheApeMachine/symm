@@ -36,12 +36,6 @@ const (
 	LowSensitivityMultiplier    = 0.5
 )
 
-// EntropyBinCount is the discrete quantization resolution for entropy estimation (8 bins).
-const EntropyBinCount = 8
-
-// MaximumShannonEntropyForEightBins = log2(8) = 3.0 bits.
-const MaximumShannonEntropyForEightBins = 3.0
-
 /*
 Sensitivity configures clock responsiveness without magic constants.
 */
@@ -62,7 +56,7 @@ type Clock struct {
 	welford    WelfordEngine
 	lastSample float64
 	entropy    float64
-	bins       [EntropyBinCount]float64
+	bins       []float64
 }
 
 // Step calculates the emergent information-time elapsed increment.
@@ -106,8 +100,20 @@ func (clock *Clock) Step(number Number) Number {
 		return Number((magnitude / mean) * factor)
 
 	case ENTROPY:
-		// Shannon entropy over quantized arrival bins: delta_tau = (H / H_max) * factor
-		binIndex := int(math.Mod(math.Abs(value), float64(EntropyBinCount)))
+		// Sturges' rule: k = ceil(log2(N) + 1)
+		k := int(math.Ceil(math.Log2(clock.count) + 1.0))
+
+		if k < 2 {
+			k = 2
+		}
+
+		if len(clock.bins) < k {
+			newBins := make([]float64, k)
+			copy(newBins, clock.bins)
+			clock.bins = newBins
+		}
+
+		binIndex := int(math.Mod(math.Abs(value), float64(k)))
 		clock.bins[binIndex]++
 
 		var total float64
@@ -128,7 +134,12 @@ func (clock *Clock) Step(number Number) Number {
 		}
 
 		clock.entropy = entropy
-		normalizedEntropy := entropy / MaximumShannonEntropyForEightBins
+		maxEntropy := math.Log2(float64(k))
+		normalizedEntropy := 0.0
+
+		if maxEntropy > 0 {
+			normalizedEntropy = entropy / maxEntropy
+		}
 
 		return Number(normalizedEntropy * factor)
 

@@ -12,11 +12,8 @@ type EnvelopeType int
 const (
 	EVT EnvelopeType = iota
 	CHEBYSHEV_ENVELOPE
-	BOLLINGER
+	GAUSSIAN_TAIL
 )
-
-// BollingerSigmaMultiplier = 2.0 is the canonical two-standard-deviation envelope established by John Bollinger (1983).
-const BollingerSigmaMultiplier = 2.0
 
 // MinimumSampleCountForEnvelope is the degrees of freedom threshold required before bounding samples (n >= 2).
 const MinimumSampleCountForEnvelope = 2.0
@@ -59,10 +56,11 @@ func (envelope *Envelope) Step(number Number) Number {
 		envelope.lower = mean - k*stdDev
 		envelope.upper = mean + k*stdDev
 
-	case BOLLINGER:
-		// Canonical 2-sigma boundary (Bollinger 1983)
-		envelope.lower = mean - BollingerSigmaMultiplier*stdDev
-		envelope.upper = mean + BollingerSigmaMultiplier*stdDev
+	case GAUSSIAN_TAIL:
+		// Empirical Gaussian tail boundary adapting to sample depth: k = sqrt(2 * ln(count))
+		k := math.Sqrt(2.0 * math.Log(envelope.count))
+		envelope.lower = mean - k*stdDev
+		envelope.upper = mean + k*stdDev
 
 	default:
 		k := math.Sqrt(envelope.count)

@@ -1,106 +1,114 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/temporal"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
-)
+	"math"
 
-var (
-	SymbolClosed = nmtypes.MustIntern("equation/closed")
-	SymbolTarget = nmtypes.MustIntern("equation/target")
+	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-Acceleration is a quantity-clocked rate equation. A data-derived median sizes
-each accumulation span; event time supplies its duration; and the configured
-alpha price is observed only at completed spans to expose a causal log change.
+RenewalRate (formerly Acceleration) is an event-accumulated rate equation.
+An adaptive median sizes each accumulation span. When accumulated volume crosses
+the emergent threshold, it computes the throughput rate and log-signal change.
+
+Fulfills Tier 4 Equation rules:
+- Zero Wire blocks.
+- Embeds lower-tier primitives by value.
+- Owns its memory privately (no global symbol table).
+- Zero allocations in steady state.
 */
-func Acceleration() nmtypes.Primitive {
-	return nmtypes.Pipe(
-		logic.Observe(
-			nmtypes.Quantity,
-			nmtypes.AlphaPrice,
-			nmtypes.EventTimeSec,
-			nmtypes.EventTimeNsec,
-		),
-		temporal.Window(""),
-		statistic.Median,
-		nmtypes.Wire(
-			nmtypes.Identity,
-			nmtypes.In(statistic.SymbolResult, SymbolTarget),
-			nmtypes.Out(SymbolTarget, SymbolTarget),
-		),
-		nmtypes.Wire(
-			nmtypes.Identity,
-			nmtypes.In(SymbolTarget, calculus.SymbolBaseline),
-			nmtypes.Out(calculus.SymbolBaseline, calculus.SymbolBaseline),
-		),
-		temporal.Since,
-		nmtypes.Wire(
-			calculus.Accumulate,
-			nmtypes.In(nmtypes.Quantity, calculus.SymbolDelta),
-			nmtypes.State(calculus.SymbolTotal, calculus.SymbolTotal),
-			nmtypes.Out(calculus.SymbolTotal, calculus.SymbolTotal),
-		),
-		logic.If(accelerationClosed(), closeAcceleration(), openAcceleration()),
-	)
+type RenewalRate struct {
+	// Composed lower-tier primitives
+	spanStore store.Store
+
+	// Private state owned directly on the struct
+	accumulated types.Scalar
+	lastSample  types.Scalar
+	spanStart   float64
+	hasSample   bool
+	hasOrigin   bool
+
+	// Latest evaluation outputs
+	rate     types.Scalar
+	change   types.Scalar
+	closed   bool
+	maturity types.Scalar
+	spans    float64
 }
 
-func accelerationClosed() nmtypes.Primitive {
-	return nmtypes.Pipe(
-		nmtypes.Fork(
-			nmtypes.Wire(
-				logic.GreaterOrEqual,
-				nmtypes.In(calculus.SymbolTotal, calculus.PortA),
-				nmtypes.In(calculus.SymbolBaseline, calculus.PortB),
-				nmtypes.Out(logic.SymbolCondition, calculus.PortA),
-			),
-			nmtypes.Wire(
-				nmtypes.Identity,
-				nmtypes.In(temporal.SymbolAdvanced, calculus.PortB),
-				nmtypes.Out(calculus.PortB, calculus.PortB),
-			),
-		),
-		logic.And,
-	)
+// NewRenewalRate initializes the equation with an adaptive ADWIN window.
+func NewRenewalRate() *RenewalRate {
+	return &RenewalRate{
+		spanStore: store.Store{
+			Type:     store.DynamicRing,
+			Adaptive: adaptive.Window{Type: adaptive.ADWIN},
+			Reduce:   statistic.MedianReduction,
+		},
+	}
 }
 
-func closeAcceleration() nmtypes.Primitive {
-	return nmtypes.Pipe(
-		nmtypes.Wire(
-			calculus.Rate,
-			nmtypes.In(calculus.SymbolTotal, calculus.SymbolCount),
-			nmtypes.In(calculus.SymbolDuration, calculus.SymbolDuration),
-			nmtypes.Out(calculus.SymbolRate, calculus.SymbolRate),
-		),
-		temporal.Observer("", nmtypes.AlphaPrice),
-		logic.If(
-			nmtypes.Wire(
-				nmtypes.Identity,
-				nmtypes.In(calculus.SymbolReady, logic.SymbolCondition),
-				nmtypes.Out(logic.SymbolCondition, logic.SymbolCondition),
-			),
-			nmtypes.Wire(
-				calculus.LogRatio,
-				nmtypes.In(calculus.SymbolCurrent, calculus.SymbolCurrent),
-				nmtypes.In(calculus.SymbolPrevious, calculus.SymbolPrevious),
-				nmtypes.Out(calculus.PortResult, SymbolChange),
-			),
-			nmtypes.Identity,
-		),
-		temporal.Restart,
-		calculus.Clear(calculus.SymbolTotal),
-		nmtypes.Assign(SymbolClosed, 1),
-		statistic.Maturity(temporal.SymbolCompletedSpans),
-	)
+/*
+Step evaluates one arrival increment and signal sample.
+Returns the computed rate as the primary carrier signal.
+*/
+func (eq *RenewalRate) Step(increment, sample types.Scalar, timestamp float64) types.Scalar {
+	if !eq.hasOrigin {
+		eq.spanStart = timestamp
+		eq.hasOrigin = true
+	}
+
+	// 1. Update the adaptive span target using the incoming increment
+	targetSpan := eq.spanStore.Step(increment)
+
+	if targetSpan <= 0 {
+		targetSpan = increment
+	}
+
+	// 2. Accumulate increment
+	eq.accumulated += increment
+	elapsed := timestamp - eq.spanStart
+
+	// 3. Evaluate closure threshold: Total >= Target && Elapsed > 0
+	if eq.accumulated >= targetSpan && elapsed > 0 {
+		// Calculate renewal rate: Total / Elapsed
+		eq.rate = eq.accumulated / types.Scalar(elapsed)
+
+		// Calculate logarithmic change of the primary signal: ln(x_t / x_{t-1})
+		if eq.hasSample && eq.lastSample > 0 && sample > 0 {
+			eq.change = types.Scalar(math.Log(float64(sample / eq.lastSample)))
+		} else {
+			eq.change = 0
+		}
+
+		// Reset span state
+		eq.lastSample = sample
+		eq.hasSample = true
+		eq.spanStart = timestamp
+		eq.accumulated = 0
+		eq.closed = true
+		eq.spans++
+
+		// Empirical maturity over completed spans: n / (n + 1)
+		eq.maturity = types.Scalar(eq.spans / (eq.spans + 1.0))
+	} else {
+		eq.closed = false
+	}
+
+	return eq.rate
 }
 
-func openAcceleration() nmtypes.Primitive {
-	return nmtypes.Pipe(
-		nmtypes.Assign(SymbolClosed, 0),
-		statistic.Maturity(temporal.SymbolCompletedSpans),
-	)
+// Zero-cost auxiliary property accessors:
+func (eq *RenewalRate) Rate() types.Scalar     { return eq.rate }
+func (eq *RenewalRate) Change() types.Scalar   { return eq.change }
+func (eq *RenewalRate) Closed() bool           { return eq.closed }
+func (eq *RenewalRate) Maturity() types.Scalar { return eq.maturity }
+
+// Acceleration is an alias for RenewalRate adhering to the equation taxonomy.
+type Acceleration = RenewalRate
+
+func NewAcceleration() *Acceleration {
+	return NewRenewalRate()
 }

@@ -1,33 +1,27 @@
 package types
 
-/*
-Chain executes an ordered sequence of transformations in series (x -> A -> B -> C -> D -> y).
-The output of slot A feeds directly into slot B, etc.
-Degenerate zero-value behavior: empty slots are transparent (I(x) = x).
-*/
+// Chain evaluates nodes sequentially in series: x -> A -> B -> C -> D -> y.
+// Empty slots degenerate to the functional identity I(x) = x.
 type Chain struct {
-	A Node
-	B Node
-	C Node
-	D Node
+	A, B, C, D Node
 }
 
-func (chain *Chain) Step(number Number) Number {
-	if chain.A != nil {
-		number = chain.A.Step(number)
+func (c *Chain) Step(x Scalar) Scalar {
+	if c.A != nil {
+		x = c.A.Step(x)
 	}
 
-	if chain.B != nil {
-		number = chain.B.Step(number)
+	if c.B != nil {
+		x = c.B.Step(x)
 	}
 
-	if chain.C != nil {
-		number = chain.C.Step(number)
+	if c.C != nil {
+		x = c.C.Step(x)
 	}
 
-	if chain.D != nil {
-		number = chain.D.Step(number)
+	if c.D != nil {
+		x = c.D.Step(x)
 	}
 
-	return number
+	return x
 }

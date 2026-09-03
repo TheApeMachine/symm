@@ -1,10 +1,10 @@
 package types
 
-/*
-IdentityNode is the functional identity wire I(x) = x for Node pipelines.
-*/
-type IdentityNode struct{}
+// Identity is the transparent identity pass-through: I(x) = x.
+type Identity struct{}
 
-func (identity IdentityNode) Step(number Number) Number {
-	return number
+func (Identity) Step(x Scalar) Scalar {
+	return x
 }
+
+type IdentityNode = Identity

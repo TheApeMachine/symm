@@ -1,9 +1,6 @@
 package types
 
-/*
-Router is the universal condition key for parallel Split nodes.
-It returns four branch weights (wA, wB, wC, wD) evaluated from the input sample.
-*/
+// Router evaluates an incoming signal and emits 4 branch weights for parallel routing.
 type Router interface {
-	Route(Number) (Number, Number, Number, Number)
+	Route(Scalar) (Scalar, Scalar, Scalar, Scalar)
 }

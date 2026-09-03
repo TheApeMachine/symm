@@ -1,9 +1,7 @@
 package types
 
-/*
-Sum evaluates all non-nil branches and computes their unweighted summation.
-Degenerate zero-value behavior: omitted slots contribute 0.
-*/
+// Sum evaluates all non-nil branches and computes their unweighted summation.
+// Degenerate zero-value behavior: omitted slots contribute 0.
 type Sum struct {
 	A Node
 	B Node
@@ -11,23 +9,23 @@ type Sum struct {
 	D Node
 }
 
-func (sumNode *Sum) Step(number Number) Number {
-	var sum Number
+func (sumNode *Sum) Step(x Scalar) Scalar {
+	var sum Scalar
 
 	if sumNode.A != nil {
-		sum += sumNode.A.Step(number)
+		sum += sumNode.A.Step(x)
 	}
 
 	if sumNode.B != nil {
-		sum += sumNode.B.Step(number)
+		sum += sumNode.B.Step(x)
 	}
 
 	if sumNode.C != nil {
-		sum += sumNode.C.Step(number)
+		sum += sumNode.C.Step(x)
 	}
 
 	if sumNode.D != nil {
-		sum += sumNode.D.Step(number)
+		sum += sumNode.D.Step(x)
 	}
 
 	return sum

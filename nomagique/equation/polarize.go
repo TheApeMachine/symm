@@ -1,68 +1,46 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
-var (
-	SymbolAlpha           = types.MustIntern("equation/alpha")
-	SymbolBeta            = types.MustIntern("equation/beta")
-	SymbolAlphaNormalized = types.MustIntern("equation/alpha_normalized")
-	SymbolBetaNormalized  = types.MustIntern("equation/beta_normalized")
-	symbolNegatedChange   = types.MustIntern("equation/negated_change")
-)
-
-// Polarize decomposes a signed change and explicitly normalizes both components.
-func Polarize() types.Primitive {
-	return types.Pipe(
-		logic.EnsureFinite(SymbolChange, calculus.SymbolScale, calculus.SymbolReady),
-		Decompose(),
-		logic.If(
-			types.Wire(
-				types.Identity,
-				types.In(calculus.SymbolReady, logic.SymbolCondition),
-				types.Out(logic.SymbolCondition, logic.SymbolCondition),
-			),
-			types.ForkStrict(
-				types.Wire(
-					calculus.Squash,
-					types.In(SymbolAlpha, calculus.PortX),
-					types.In(calculus.SymbolScale, calculus.SymbolScale),
-					types.Out(calculus.PortResult, SymbolAlphaNormalized),
-				),
-				types.Wire(
-					calculus.Squash,
-					types.In(SymbolBeta, calculus.PortX),
-					types.In(calculus.SymbolScale, calculus.SymbolScale),
-					types.Out(calculus.PortResult, SymbolBetaNormalized),
-				),
-			),
-			types.Identity,
-		),
-	)
+/*
+Polarize decomposes a signed scalar into reciprocal non-negative components
+(Alpha and Beta) and normalizes them against an adaptive scale.
+Tier 4 Equation: zero Wire blocks, zero Frame allocations, zero MustIntern symbols.
+*/
+type Polarize struct {
+	alpha           types.Scalar
+	beta            types.Scalar
+	alphaNormalized types.Scalar
+	betaNormalized  types.Scalar
 }
 
-// Decompose splits one signed change into reciprocal non-negative components.
-func Decompose() types.Primitive {
-	return types.Pipe(
-		types.ForkStrict(
-			types.Wire(
-				calculus.Positive,
-				types.In(SymbolChange, calculus.PortX),
-				types.Out(calculus.PortResult, SymbolAlpha),
-			),
-			types.Wire(
-				calculus.Negative,
-				types.In(SymbolChange, calculus.PortX),
-				types.Out(calculus.PortResult, symbolNegatedChange),
-			),
-		),
-		types.Wire(
-			calculus.Positive,
-			types.In(symbolNegatedChange, calculus.PortX),
-			types.Out(calculus.PortResult, SymbolBeta),
-		),
-	)
+func (p *Polarize) Step(x types.Scalar) types.Scalar {
+	return p.StepScaled(x, 1.0)
 }
+
+func (p *Polarize) StepScaled(x, scale types.Scalar) types.Scalar {
+	if x > 0 {
+		p.alpha = x
+		p.beta = 0
+	} else {
+		p.alpha = 0
+		p.beta = -x
+	}
+
+	if scale > 0 {
+		p.alphaNormalized = p.alpha / (p.alpha + scale)
+		p.betaNormalized = p.beta / (p.beta + scale)
+	} else {
+		p.alphaNormalized = 0
+		p.betaNormalized = 0
+	}
+
+	return p.alphaNormalized - p.betaNormalized
+}
+
+func (p *Polarize) Alpha() types.Scalar           { return p.alpha }
+func (p *Polarize) Beta() types.Scalar            { return p.beta }
+func (p *Polarize) AlphaNormalized() types.Scalar { return p.alphaNormalized }
+func (p *Polarize) BetaNormalized() types.Scalar  { return p.betaNormalized }
