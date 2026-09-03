@@ -126,7 +126,9 @@ func TestHawkesRejectsTimeRegressionTransactionally(t *testing.T) {
 		t.Fatal("regressed timestamp should fail")
 	}
 
-	if !stream.Project().Equal(committed) {
+	projected := stream.Project()
+
+	if !projected.Equal(&committed) {
 		t.Fatal("failed transition changed committed Hawkes state")
 	}
 }

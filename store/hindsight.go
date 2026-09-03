@@ -57,7 +57,7 @@ func (store *SQLite) ReadCaptureFrame(
 	runID string,
 	sequence uint64,
 ) (CaptureEntry, []byte, bool, error) {
-	if store == nil || store.database == nil {
+	if store == nil || store.reader == nil {
 		return CaptureEntry{}, nil, false, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -82,7 +82,7 @@ func (store *SQLite) ReadCaptureFrame(
 
 	entry.Identity.Run = hindsight.RunID(runID)
 
-	err := store.database.QueryRow(
+	err := store.reader.QueryRow(
 		`SELECT capture_seq, stream, stream_epoch, stream_seq, kind, endpoint, at, data, encoding
 		 FROM events
 		 WHERE run_id = ? AND capture_seq = ?`,
@@ -152,7 +152,7 @@ ListGaps returns every recorded defect for one run, oldest first, so the UI can
 show exactly why a run is GAPPED or CORRUPT.
 */
 func (store *SQLite) ListGaps(runID string) ([]GapView, error) {
-	if store == nil || store.database == nil {
+	if store == nil || store.reader == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -168,7 +168,7 @@ func (store *SQLite) ListGaps(runID string) ([]GapView, error) {
 		))
 	}
 
-	rows, err := store.database.Query(
+	rows, err := store.reader.Query(
 		"SELECT run_id, encoding, sequence, detail FROM gaps WHERE run_id = ? ORDER BY id ASC",
 		runID,
 	)
@@ -207,7 +207,7 @@ ListRuns returns every captured Run, newest first, as the actual Run records
 persisted to the runs table.
 */
 func (store *SQLite) ListRuns() ([]hindsight.Run, error) {
-	if store == nil || store.database == nil {
+	if store == nil || store.reader == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -215,7 +215,7 @@ func (store *SQLite) ListRuns() ([]hindsight.Run, error) {
 		))
 	}
 
-	rows, err := store.database.Query(
+	rows, err := store.reader.Query(
 		`SELECT id, started_at, code_commit, build_id, config_digest,
 		        schema_versions, integrity
 		 FROM runs
@@ -274,7 +274,7 @@ order — the replay order (§52). It returns the exact CaptureIdentity recorded
 for each frame, not a recomputed identity.
 */
 func (store *SQLite) ListCaptures(runID string, limit int) ([]CaptureEntry, error) {
-	if store == nil || store.database == nil {
+	if store == nil || store.reader == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -294,7 +294,7 @@ func (store *SQLite) ListCaptures(runID string, limit int) ([]CaptureEntry, erro
 		limit = 500
 	}
 
-	rows, err := store.database.Query(
+	rows, err := store.reader.Query(
 		`SELECT run_id, capture_seq, stream, stream_epoch, stream_seq,
 		        kind, endpoint, at
 		 FROM events
@@ -355,7 +355,7 @@ timeline read: the UI walks the causal tape in fixed pages without ever loading
 a whole run. The ordering is CaptureSequence — never venue/receive time.
 */
 func (store *SQLite) ListCapturesAfter(runID string, afterSeq uint64, limit int) ([]CaptureEntry, error) {
-	if store == nil || store.database == nil {
+	if store == nil || store.reader == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -375,7 +375,7 @@ func (store *SQLite) ListCapturesAfter(runID string, afterSeq uint64, limit int)
 		limit = 500
 	}
 
-	rows, err := store.database.Query(
+	rows, err := store.reader.Query(
 		`SELECT run_id, capture_seq, stream, stream_epoch, stream_seq,
 		        kind, endpoint, at
 		 FROM events
@@ -435,7 +435,7 @@ ListStates returns every persisted historical EnvelopeState of one Run, in
 capture order, each carrying its EnvelopeRef and the exact flatbuffer bytes.
 */
 func (store *SQLite) ListStates(runID string) ([]StateEntry, error) {
-	if store == nil || store.database == nil {
+	if store == nil || store.reader == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -451,7 +451,7 @@ func (store *SQLite) ListStates(runID string) ([]StateEntry, error) {
 		))
 	}
 
-	rows, err := store.database.Query(
+	rows, err := store.reader.Query(
 		`SELECT witness FROM witnesses
 		 WHERE origin_run = ? AND artifact_kind = 'state'
 		 ORDER BY origin_seq ASC`,
@@ -502,7 +502,7 @@ ReadState returns the single persisted EnvelopeState for one exact EnvelopeRef
 the exact-identity reverse of the witness node's "state" write.
 */
 func (store *SQLite) ReadState(runID string, sequence uint64, ordinal uint64) (StateEntry, bool, error) {
-	if store == nil || store.database == nil {
+	if store == nil || store.reader == nil {
 		return StateEntry{}, false, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -518,7 +518,7 @@ func (store *SQLite) ReadState(runID string, sequence uint64, ordinal uint64) (S
 		))
 	}
 
-	rows, err := store.database.Query(
+	rows, err := store.reader.Query(
 		`SELECT witness FROM witnesses
 		 WHERE origin_run = ? AND origin_seq = ? AND artifact_kind = 'state'`,
 		runID,
@@ -571,7 +571,7 @@ capture sequence, in ordinal order — the raw-frame → envelope fan-out for a
 single capture.
 */
 func (store *SQLite) ListManifestsForCapture(runID string, sequence uint64) ([]hindsight.EnvelopeManifest, error) {
-	if store == nil || store.database == nil {
+	if store == nil || store.reader == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -587,7 +587,7 @@ func (store *SQLite) ListManifestsForCapture(runID string, sequence uint64) ([]h
 		))
 	}
 
-	rows, err := store.database.Query(
+	rows, err := store.reader.Query(
 		`SELECT manifest FROM envelopes
 		 WHERE origin_run = ? AND origin_seq = ?
 		 ORDER BY ordinal ASC`,
@@ -640,7 +640,7 @@ capture sequence, in ordinal then boundary order — what the running binary
 produced from that raw frame.
 */
 func (store *SQLite) ListWitnessesForCapture(runID string, sequence uint64) ([]hindsight.ArtifactWitness, error) {
-	if store == nil || store.database == nil {
+	if store == nil || store.reader == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -656,7 +656,7 @@ func (store *SQLite) ListWitnessesForCapture(runID string, sequence uint64) ([]h
 		))
 	}
 
-	rows, err := store.database.Query(
+	rows, err := store.reader.Query(
 		`SELECT witness FROM witnesses
 		 WHERE origin_run = ? AND origin_seq = ?
 		 ORDER BY id ASC`,
@@ -705,7 +705,7 @@ first, each carrying its decision-ID correlation so the UI can join it to the
 decision witness that caused it.
 */
 func (store *SQLite) ListLifecycleEvents(runID string) ([]hindsight.LifecycleEvent, error) {
-	if store == nil || store.database == nil {
+	if store == nil || store.reader == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -721,7 +721,7 @@ func (store *SQLite) ListLifecycleEvents(runID string) ([]hindsight.LifecycleEve
 		))
 	}
 
-	rows, err := store.database.Query(
+	rows, err := store.reader.Query(
 		`SELECT decision_id, symbol, kind, action, at, execution
 		 FROM lifecycle WHERE run_id = ? ORDER BY id ASC`,
 		runID,

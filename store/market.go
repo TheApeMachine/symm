@@ -22,6 +22,24 @@ WHERE kind IN ('ticker', 'trade');
 `
 
 /*
+captureIdentityIndex accelerates every read that addresses a capture by its
+identity rather than by its market kind: the frame under the playhead, the
+strip of frames around it, and the per-run capture listing.
+
+It is deliberately not partial. captureMarketIndex above covers only ticker and
+trade rows, so the planner cannot use it for a query that does not constrain
+kind — an inspection read then degrades to a full scan of the whole events
+table. On a multi-tens-of-gigabyte capture tape that scan holds the repository
+connection for tens of seconds, and because the capture writer commits over
+that same connection, inspection stalls the recording of raw market input. The
+index exists so an inspection read can never do that.
+*/
+const captureIdentityIndex = `
+CREATE INDEX IF NOT EXISTS idx_events_run_capture
+ON events(run_id, capture_seq);
+`
+
+/*
 ListMarketObservations reads one Run's raw capture tape and returns the
 external market observations it carried, in CaptureSequence order.
 
@@ -36,7 +54,7 @@ the deterministic ordinal it had inside its frame, so it is addressable by the
 same EnvelopeRef identity the pipeline assigned (§12).
 */
 func (store *SQLite) ListMarketObservations(runID string) ([]hindsight.Observation, error) {
-	if store == nil || store.database == nil {
+	if store == nil || store.reader == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -52,7 +70,7 @@ func (store *SQLite) ListMarketObservations(runID string) ([]hindsight.Observati
 		))
 	}
 
-	rows, err := store.database.Query(
+	rows, err := store.reader.Query(
 		`SELECT capture_seq, stream, stream_epoch, stream_seq, kind, endpoint, at, data, encoding
 		 FROM events
 		 WHERE run_id = ? AND kind IN ('ticker', 'trade')

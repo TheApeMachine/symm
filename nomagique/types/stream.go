@@ -42,7 +42,7 @@ func (stream *Stream) Step(input Frame) Frame {
 	}
 
 	stream.scratch = stream.state
-	stream.scratch.Merge(input)
+	stream.scratch.Merge(&input)
 	Step(stream.primitive, &stream.scratch)
 
 	if stream.scratch.Err == nil {
@@ -130,7 +130,7 @@ func (stream *AtomicStream) Step(input Frame) Frame {
 	for {
 		current := stream.state.Load()
 		merged := *current
-		merged.Merge(input)
+		merged.Merge(&input)
 		Step(stream.primitive, &merged)
 
 		if merged.Err != nil {

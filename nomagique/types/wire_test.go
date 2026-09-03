@@ -99,8 +99,6 @@ func TestWireDataBoundary(t *testing.T) {
 	})
 
 	Convey("Established wiring performs no heap allocation", t, func() {
-		input := Frame{}.Set(wireFactA, 3).Set(wireFactB, 4)
-
 		// Reuse one output frame across iterations so the measurement
 		// isolates Wire's own steady-state churn (pool Get/Reset/runWire/Put)
 		// rather than the caller's one-time frame escape. Under the *Frame
@@ -108,12 +106,25 @@ func TestWireDataBoundary(t *testing.T) {
 		// Primitive forces that frame onto the heap once; Wire must not add
 		// any allocation on top of that unavoidable cost once the pool is
 		// warm.
-		output := input
-		wired(&output)
+		//
+		// The frame is an explicit *Frame, and the per-iteration reset
+		// restores only the two input slots rather than assigning the whole
+		// frame. Both details keep this assertion about Wire rather than
+		// about sizeof(Frame): a Frame value local whose address is taken
+		// inside the measured closure is heap-allocated by the compiler once
+		// the struct is large enough (MaxSlots float64s), and AllocsPerRun
+		// would then charge the caller's own unavoidable frame escape to
+		// Wire on every iteration. Allocating it once, up front, leaves the
+		// closure measuring exactly the pool Get/Reset/runWire/Put round-trip.
+		output := &Frame{}
+		output.Put(wireFactA, 3)
+		output.Put(wireFactB, 4)
+		wired(output)
 
 		allocations := testing.AllocsPerRun(1000, func() {
-			output = input
-			wired(&output)
+			output.Put(wireFactA, 3)
+			output.Put(wireFactB, 4)
+			wired(output)
 
 			if output.Err != nil {
 				panic(output.Err)

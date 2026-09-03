@@ -37,7 +37,9 @@ func TestStreamRejectsFailedCandidate(t *testing.T) {
 		t.Fatal("negative input should fail")
 	}
 
-	if got := stream.Project().MustGet(stateSymbol); got != 3 {
+	projected := stream.Project()
+
+	if got := projected.MustGet(stateSymbol); got != 3 {
 		t.Fatalf("state=%v; want retained value 3", got)
 	}
 }
@@ -73,7 +75,9 @@ func TestAtomicStreamCommitsConcurrentTransitions(t *testing.T) {
 
 	waitGroup.Wait()
 
-	if got := stream.Project().MustGet(totalSymbol); got != 200 {
+	projected := stream.Project()
+
+	if got := projected.MustGet(totalSymbol); got != 200 {
 		t.Fatalf("total=%v; want 200", got)
 	}
 }

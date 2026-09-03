@@ -99,7 +99,7 @@ func TestFrameContracts(t *testing.T) {
 	Convey("Merge overlays only populated facts and Delete removes presence", t, func() {
 		frame := Frame{}.Set(first, 1).Set(second, 2)
 		overlay := Frame{}.Set(second, 20).Set(third, 30)
-		frame.Merge(overlay)
+		frame.Merge(&overlay)
 		So(frame.MustGet(first), ShouldEqual, 1.0)
 		So(frame.MustGet(second), ShouldEqual, 20.0)
 		So(frame.MustGet(third), ShouldEqual, 30.0)
@@ -122,20 +122,29 @@ func TestFrameContracts(t *testing.T) {
 	})
 
 	Convey("Finite actively rejects NaN and both infinities", t, func() {
-		So(Frame{}.Set(first, 1).Finite(), ShouldBeTrue)
-		So(Frame{}.Set(first, math.NaN()).Finite(), ShouldBeFalse)
-		So(Frame{}.Set(first, math.Inf(1)).Finite(), ShouldBeFalse)
-		So(Frame{}.Set(first, math.Inf(-1)).Finite(), ShouldBeFalse)
+		// The read-only Frame methods take a pointer receiver so that reading
+		// a Frame never copies its MaxSlots-wide backing array; a composite
+		// literal is not addressable, so bind before asking.
+		finite := func(frame Frame) bool { return frame.Finite() }
+
+		So(finite(Frame{}.Set(first, 1)), ShouldBeTrue)
+		So(finite(Frame{}.Set(first, math.NaN())), ShouldBeFalse)
+		So(finite(Frame{}.Set(first, math.Inf(1))), ShouldBeFalse)
+		So(finite(Frame{}.Set(first, math.Inf(-1))), ShouldBeFalse)
 	})
 
 	Convey("Equal compares presence and exact IEEE-754 representations", t, func() {
 		positiveZero := Frame{}.Set(first, 0)
 		negativeZero := Frame{}.Set(first, math.Copysign(0, -1))
-		So(positiveZero.Equal(negativeZero), ShouldBeFalse)
-		So(positiveZero.Equal(Frame{}.Set(first, 0)), ShouldBeTrue)
-		So(positiveZero.Equal(Frame{}), ShouldBeFalse)
+		samePositiveZero := Frame{}.Set(first, 0)
+		empty := Frame{}
+		So(positiveZero.Equal(&negativeZero), ShouldBeFalse)
+		So(positiveZero.Equal(&samePositiveZero), ShouldBeTrue)
+		So(positiveZero.Equal(&empty), ShouldBeFalse)
 		nanBits := math.Float64frombits(0x7ff8000000000042)
-		So(Frame{}.Set(first, nanBits).Equal(Frame{}.Set(first, nanBits)), ShouldBeTrue)
+		leftNaN := Frame{}.Set(first, nanBits)
+		rightNaN := Frame{}.Set(first, nanBits)
+		So(leftNaN.Equal(&rightNaN), ShouldBeTrue)
 	})
 
 	Convey("Reset clears every populated slot without touching unpopulated ones", t, func() {
@@ -190,7 +199,7 @@ func TestFrameMergeChanged(t *testing.T) {
 		branch.Put(slot, 2)
 
 		target := Frame{}.Set(slot, 9)
-		target.MergeChanged(baseline, branch)
+		target.MergeChanged(&baseline, &branch)
 
 		Convey("the changed value is overlaid", func() {
 			So(target.MustGet(slot), ShouldEqual, 2.0)
@@ -204,7 +213,7 @@ func TestFrameMergeChanged(t *testing.T) {
 		// The target already moved past the baseline — another branch of the
 		// same fork wrote here. An untouched carry-through must not revert it.
 		target := Frame{}.Set(slot, 9)
-		target.MergeChanged(baseline, branch)
+		target.MergeChanged(&baseline, &branch)
 
 		Convey("the target keeps its own newer value", func() {
 			So(target.MustGet(slot), ShouldEqual, 9.0)
@@ -217,7 +226,7 @@ func TestFrameMergeChanged(t *testing.T) {
 		branch.Put(other, 5)
 
 		target := Frame{}
-		target.MergeChanged(baseline, branch)
+		target.MergeChanged(&baseline, &branch)
 
 		Convey("the new slot is carried over", func() {
 			So(target.MustGet(other), ShouldEqual, 5.0)
@@ -230,7 +239,7 @@ func TestFrameMergeChanged(t *testing.T) {
 		branch.Put(slot, 1)
 
 		target := Frame{}.Set(slot, 9)
-		target.MergeChanged(baseline, branch)
+		target.MergeChanged(&baseline, &branch)
 
 		Convey("it reads as unchanged, since the value is what it was", func() {
 			So(target.MustGet(slot), ShouldEqual, 9.0)

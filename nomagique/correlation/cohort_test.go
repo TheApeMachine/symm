@@ -13,7 +13,8 @@ func TestCohort(t *testing.T) {
 		Cohort(&state)
 		So(state.Err, ShouldBeNil)
 		merged := state
-		merged.Merge(cohortPair(-0.25, 4, 4, 2))
+		secondPair := cohortPair(-0.25, 4, 4, 2)
+		merged.Merge(&secondPair)
 		Cohort(&merged)
 
 		So(merged.Err, ShouldBeNil)
@@ -56,7 +57,7 @@ func BenchmarkCohort(benchmark *testing.B) {
 
 	for benchmark.Loop() {
 		merged := state
-		merged.Merge(input)
+		merged.Merge(&input)
 		Cohort(&merged)
 	}
 }

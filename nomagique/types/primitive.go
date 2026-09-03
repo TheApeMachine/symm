@@ -83,7 +83,7 @@ func Fork(primitives ...Primitive) Primitive {
 				return
 			}
 
-			frame.MergeChanged(input, branch)
+			frame.MergeChanged(&input, &branch)
 		}
 	}
 }
@@ -110,7 +110,7 @@ func TryFork(primitives ...Primitive) Primitive {
 			Step(primitive, &branch)
 
 			if branch.Err != nil {
-				if branch.Equal(input) {
+				if branch.Equal(&input) {
 					continue
 				}
 
@@ -119,7 +119,7 @@ func TryFork(primitives ...Primitive) Primitive {
 				return
 			}
 
-			frame.Merge(branch)
+			frame.Merge(&branch)
 		}
 	}
 }

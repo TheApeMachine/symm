@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { HindsightResident } from "./hindsight-types";
+import type {
+	HindsightMetricMap,
+	HindsightResident,
+} from "./hindsight-types";
 import { StatePanel } from "./inspector";
 
 const resident: HindsightResident = {
@@ -66,5 +69,60 @@ describe("StatePanel", () => {
 		expect(markup).toContain("hawkes");
 		expect(markup).toContain("reached back 4 captures");
 		expect(markup).not.toContain("No exact or resident historical state");
+	});
+});
+
+const semantics: HindsightMetricMap = {
+	baselineCommit: "abc123",
+	metrics: {
+		"hawkes/conditional_intensity": {
+			identity: "hawkes/conditional_intensity",
+			source: "hawkes",
+			metric: "conditional_intensity",
+			role: "ARRIVAL_MODEL_STATE",
+			class: "fitted_model_quantity",
+			purpose: "Conditional arrival intensity of marked events.",
+			forbidden: "Do not infer direction from intensity.",
+		},
+	},
+	signals: {
+		hawkes: {
+			source: "hawkes",
+			purpose:
+				"The Hawkes signal measures the temporal arrival structure of marked market events.",
+		},
+	},
+};
+
+describe("MetricDetail through StatePanel", () => {
+	it("states the estimator's own support in plain words, not a market verdict", () => {
+		const markup = renderToStaticMarkup(
+			<StatePanel
+				state={null}
+				resident={resident}
+				envelope={null}
+				semantics={semantics}
+				plain={true}
+			/>,
+		);
+
+		expect(markup).toContain("well supported");
+		expect(markup).not.toMatch(/bullish|bearish|buy signal/i);
+	});
+
+	it("keeps the system's own vocabulary in expert mode", () => {
+		const markup = renderToStaticMarkup(
+			<StatePanel
+				state={null}
+				resident={resident}
+				envelope={null}
+				semantics={semantics}
+				plain={false}
+			/>,
+		);
+
+		expect(markup).toContain("mat");
+		expect(markup).toContain("snr");
+		expect(markup).not.toContain("well supported");
 	});
 });

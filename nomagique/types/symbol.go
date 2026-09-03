@@ -13,8 +13,26 @@ direct Frame offset and never hash or compare strings.
 type Symbol uint16
 
 const (
-	frameMaskWordBits  = 64
-	fullStackMaskWords = 128
+	frameMaskWordBits = 64
+	// fullStackMaskWords sizes the Frame mask, and with it the whole slot space.
+	// Every symbol is a direct Frame.Data offset, so the registry capacity and
+	// the Frame width are the same number and cannot be tuned apart.
+	//
+	// 128 words (8192 slots) was not enough. The program interns ~2050 fixed
+	// facts, and every namespaced series that owns a retention ring lazily
+	// claims up to MaxSamples further slots as its elastic window doubles
+	// toward the ceiling. With 46 such series the static ceiling is
+	// 2050 + 46*128 = 7944 of 8192 — under 250 slots of headroom, which the
+	// cross-section scratch series exhausted at runtime. Nothing leaks: the
+	// demand is simply bounded above the old ceiling.
+	//
+	// 192 words (12288 slots) clears that 7944 with ~4300 slots spare. The
+	// ceiling is deliberately not raised further: every slot widens Frame,
+	// and Frame is copied by value on the engine's hottest path (Number.Step
+	// commits through a scratch copy), so slot count buys headroom in direct
+	// exchange for memcpy time and resident memory per retained stream.
+	// Symbol is a uint16, so this remains a valid slot index.
+	fullStackMaskWords = 192
 	// MaxSlots bounds both the registry and the universal Frame representation.
 	// It must cover every distinct interned symbol across the whole program:
 	// each namespaced estimator series reserves its own sample-slot block.

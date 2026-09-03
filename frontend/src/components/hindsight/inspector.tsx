@@ -13,6 +13,14 @@ import type {
 	HindsightRun,
 	MetricSemantics,
 } from "./hindsight-types";
+import {
+	readClass,
+	readRole,
+	readStance,
+	readSupport,
+	summarise,
+	UNDECLARED,
+} from "./reading";
 import { formatClock } from "./timeline-scale";
 
 /*
@@ -495,6 +503,17 @@ const Quantity = ({ value }: { value: number | null }) =>
 	);
 
 /*
+SUPPORT_TONE colours the estimator's own statement of support. It reads the
+declared maturity and SNR back, and says nothing about whether the market is
+favourable — no such claim exists to render.
+*/
+const SUPPORT_TONE: Record<string, string> = {
+	strong: "var(--up)",
+	fair: "var(--warn)",
+	weak: "var(--down)",
+};
+
+/*
 MetricDetail states what one number physically means, quoting METRIC_MAP.md
 rather than summarising it.
 
@@ -510,13 +529,89 @@ const MetricDetail = ({
 	referenced,
 	observedAt,
 	version,
+	plain,
 }: {
 	identity: string;
 	declared: MetricSemantics | null;
 	referenced: Array<{ category: string; stance: string }>;
 	observedAt: string;
 	version: { component: string; version: number } | null;
-}) => (
+	plain: boolean;
+}) => {
+	const role = readRole(declared?.role);
+	const metricClass = readClass(declared?.class);
+
+	if (plain) {
+		return (
+			<Flex.Column gap={2} className="font-mono text-[9px] leading-relaxed">
+				<p className="text-(--f1)">{summarise(declared)}</p>
+
+				{role === null && metricClass === null ? null : (
+					<Flex.Row gap={4} className="flex-wrap">
+						{role === null ? null : (
+							<Flex.Column className="min-w-0 max-w-80">
+								<span className="text-(--acc) text-[8px] uppercase tracking-widest">
+									{role.title}
+								</span>
+								<span className="text-(--f2)">{role.plain}</span>
+							</Flex.Column>
+						)}
+						{metricClass === null ? null : (
+							<Flex.Column className="min-w-0 max-w-80">
+								<span className="text-(--f4) text-[8px] uppercase tracking-widest">
+									reads as · {metricClass.title}
+								</span>
+								<span className="text-(--f2)">{metricClass.plain}</span>
+							</Flex.Column>
+						)}
+					</Flex.Row>
+				)}
+
+				{declared?.forbidden ? (
+					<p className="text-(--warn)">
+						<span className="text-[8px] uppercase tracking-widest">
+							do not conclude
+						</span>{" "}
+						{declared.forbidden}
+					</p>
+				) : null}
+
+				{referenced.length === 0 ? null : (
+					<Flex.Column gap={1}>
+						<span className="text-(--f4) text-[8px] uppercase tracking-widest">
+							what the system did with it here
+						</span>
+						{referenced.map((entry) => {
+							const stance = readStance(entry.stance);
+
+							return (
+								<span
+									key={`${entry.category}-${entry.stance}`}
+									className="text-(--f2)"
+								>
+									<span
+										style={{
+											color:
+												stance.tone === "up"
+													? "var(--up)"
+													: stance.tone === "down"
+														? "var(--down)"
+														: "var(--f4)",
+										}}
+									>
+										{stance.label}
+									</span>{" "}
+									{entry.category} — {stance.plain}
+								</span>
+							);
+						})}
+					</Flex.Column>
+				)}
+			</Flex.Column>
+		);
+	}
+
+	return (
 	<Flex.Column gap={1} className="font-mono text-[8px] leading-relaxed">
 		<Flex.Row gap={3} className="flex-wrap text-(--f4)">
 			<span>
@@ -554,6 +649,12 @@ const MetricDetail = ({
 			<>
 				{declared.purpose ? (
 					<p className="text-(--f2)">{declared.purpose}</p>
+				) : null}
+				{declared.definedness ? (
+					<p className="text-(--f4)">
+						<span className="uppercase tracking-widest">defined when</span>{" "}
+						{declared.definedness}
+					</p>
 				) : null}
 				{declared.destinations ? (
 					<p className="text-(--f4)">
@@ -597,7 +698,8 @@ const MetricDetail = ({
 			</Flex.Row>
 		) : null}
 	</Flex.Column>
-);
+	);
+};
 
 /*
 MeasurementPanel is the Signals / Measurements view of a SystemSnapshot (§32):
@@ -614,11 +716,13 @@ const MeasurementPanel = ({
 	semantics,
 	versions,
 	evidence,
+	plain,
 }: {
 	measurements: MeasurementReading[];
 	semantics: HindsightMetricMap | null;
 	versions: Map<string, { component: string; version: number }>;
 	evidence: Map<string, Array<{ category: string; stance: string }>>;
+	plain: boolean;
 }) => {
 	const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
 	const [metric, setMetric] = useState<string | null>(null);
@@ -656,6 +760,8 @@ const MeasurementPanel = ({
 			<Section.Body>
 				{measurements.map((measurement) => {
 					const expanded = open.has(measurement.signal);
+					const support = readSupport(measurement.maturity, measurement.snr);
+					const family = semantics?.signals?.[measurement.signal] ?? null;
 
 					return (
 						<div
@@ -688,15 +794,29 @@ const MeasurementPanel = ({
 											</span>
 										</span>
 									) : null}
-									<span title="Estimator support, as the component reported it.">
-										mat{" "}
-										<span className="text-(--f2) tabular-nums">
-											{measurement.maturity.toFixed(3)}
+									{plain ? (
+										<span
+											style={{ color: SUPPORT_TONE[support.tone] }}
+											title={`${support.plain} (maturity ${measurement.maturity.toFixed(3)}${measurement.snr === null ? ", no signal-to-noise defined" : `, snr ${formatValue(measurement.snr)}`})`}
+										>
+											● {support.label}
 										</span>
-									</span>
-									<span title="Signal-to-noise, where the estimator could define one.">
-										snr <Quantity value={measurement.snr} />
-									</span>
+									) : (
+										<>
+											<span title="Estimator support, as the component reported it.">
+												mat{" "}
+												<span
+													className="tabular-nums"
+													style={{ color: SUPPORT_TONE[support.tone] }}
+												>
+													{measurement.maturity.toFixed(3)}
+												</span>
+											</span>
+											<span title="Signal-to-noise, where the estimator could define one.">
+												snr <Quantity value={measurement.snr} />
+											</span>
+										</>
+									)}
 									<span className="tabular-nums">
 										{measurement.metrics.length} metrics
 									</span>
@@ -705,6 +825,12 @@ const MeasurementPanel = ({
 
 							{expanded ? (
 								<div className="bg-(--bg) px-2.5 py-1.5">
+									{plain ? (
+										<p className="pb-1.5 font-mono text-[9px] text-(--f2) leading-relaxed">
+											{family?.purpose ?? UNDECLARED}
+										</p>
+									) : null}
+
 									<div className="flex flex-wrap gap-x-4 gap-y-0.5 pb-1.5 font-mono text-[8px] text-(--f4)">
 										<span>
 											source{" "}
@@ -832,6 +958,7 @@ const MeasurementPanel = ({
 																			version={
 																				versions.get(measurement.id) ?? null
 																			}
+																			plain={plain}
 																		/>
 																	</td>
 																</tr>
@@ -895,11 +1022,13 @@ export const StatePanel = ({
 	resident,
 	envelope,
 	semantics,
+	plain = true,
 }: {
 	state: EnvelopeState | null;
 	resident: HindsightResident | null;
 	envelope: HindsightEnvelope | null;
 	semantics: HindsightMetricMap | null;
+	plain?: boolean;
 }) => {
 	const residentMeasurements = useMemo<MeasurementReading[]>(
 		() =>
@@ -1130,6 +1259,7 @@ export const StatePanel = ({
 						semantics={semantics}
 						versions={new Map()}
 						evidence={residentEvidence}
+						plain={plain}
 					/>
 
 					{resident.categories.length > 0 ? (
@@ -1207,6 +1337,7 @@ export const StatePanel = ({
 					semantics={semantics}
 					versions={versions}
 					evidence={evidence}
+					plain={plain}
 				/>
 			) : null}
 

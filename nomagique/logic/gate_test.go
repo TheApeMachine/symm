@@ -56,7 +56,7 @@ func TestGateAndObservationPrimitives(t *testing.T) {
 		output := input
 		Observe(first, second)(&output)
 		So(output.Err, ShouldBeNil)
-		So(output.Equal(input), ShouldBeTrue)
+		So(output.Equal(&input), ShouldBeTrue)
 
 		output = types.Frame{}.Set(first, 1)
 		Observe(first, second)(&output)

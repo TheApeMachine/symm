@@ -21,7 +21,7 @@ func TestObserve(t *testing.T) {
 			output := input
 			primitive(&output)
 			So(output.Err, ShouldBeNil)
-			So(output.Equal(input), ShouldBeTrue)
+			So(output.Equal(&input), ShouldBeTrue)
 		})
 	})
 

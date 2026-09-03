@@ -125,6 +125,14 @@ ALTER TABLE events ADD COLUMN stream_seq INTEGER NOT NULL DEFAULT 0;
 `
 
 /*
+maxReaderConns bounds the inspection pool. Inspection is a single operator
+looking at one frame at a time, and the surface issues a handful of reads per
+parked playhead, so a small pool serves it without letting a browser open an
+unbounded number of scans against the capture tape.
+*/
+const maxReaderConns = 4
+
+/*
 SQLite is the default Repository engine. It persists every WriteEvent as one
 row in a single kind-tagged event table, so replay is a single ordered scan per
 kind rather than a per-domain table sprawl. The endpoint column names the origin
@@ -134,8 +142,36 @@ The connection is opened once and serialized with WAL and a busy timeout.
 */
 type SQLite struct {
 	database *sql.DB
-	encoder  *zstd.Encoder
-	decoder  *zstd.Decoder
+	/*
+		reader is the inspection path's own connection pool.
+
+		The write connection is deliberately serialised to one, and the capture
+		writer commits raw market input over it. An inspection read sharing that
+		connection therefore queues ahead of recording the market: a long read
+		holds the connection, the writer's bounded queue fills behind it, and
+		capture — which is not replayable — stalls waiting on a browser.
+
+		WAL admits readers concurrently with the writer, so inspection reads run
+		here instead. They are opened read-only, which makes the separation a
+		property the database enforces rather than a convention this package has
+		to remember.
+	*/
+	reader  *sql.DB
+	encoder *zstd.Encoder
+	decoder *zstd.Decoder
+}
+
+/*
+Reader returns the connection inspection reads must use. It is never the
+capture writer's connection, so no inspection query can delay recording the
+market.
+*/
+func (store *SQLite) Reader() *sql.DB {
+	if store == nil || store.reader == nil {
+		return nil
+	}
+
+	return store.reader
 }
 
 /*
@@ -171,12 +207,36 @@ func NewSQLite(path string) (*SQLite, error) {
 
 	database.SetMaxOpenConns(1)
 
+	// Inspection reads get their own read-only pool. WAL lets these proceed
+	// concurrently with the writer, so a slow read can no longer hold the
+	// connection the capture path commits over.
+	// The file: prefix is required: without it go-sqlite3 treats the string as
+	// a bare path and silently ignores mode=ro, which would leave the
+	// inspection pool writable and the separation unenforced.
+	reader, err := sql.Open(
+		"sqlite3",
+		"file:"+path+"?_journal_mode=WAL&_busy_timeout=5000&mode=ro",
+	)
+
+	if err != nil {
+		_ = database.Close()
+
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			fmt.Sprintf("store: open reader failed for %s [%s]", path, err.Error()),
+			err,
+		))
+	}
+
+	reader.SetMaxOpenConns(maxReaderConns)
+
 	encoder, err := zstd.NewWriter(nil,
 		zstd.WithEncoderLevel(zstd.SpeedFastest),
 		zstd.WithEncoderConcurrency(1),
 	)
 
 	if err != nil {
+		_ = reader.Close()
 		_ = database.Close()
 		return nil, fmt.Errorf("store: construct zstd encoder: %w", err)
 	}
@@ -185,11 +245,17 @@ func NewSQLite(path string) (*SQLite, error) {
 
 	if err != nil {
 		encoder.Close()
+		_ = reader.Close()
 		_ = database.Close()
 		return nil, fmt.Errorf("store: construct zstd decoder: %w", err)
 	}
 
-	store := &SQLite{database: database, encoder: encoder, decoder: decoder}
+	store := &SQLite{
+		database: database,
+		reader:   reader,
+		encoder:  encoder,
+		decoder:  decoder,
+	}
 
 	if err := store.EnsureSchema(); err != nil {
 		_ = store.Close()
@@ -296,6 +362,17 @@ func (store *SQLite) EnsureSchema() error {
 		return errnie.Error(errnie.Err(
 			errnie.IO,
 			"store: ensure capture market index failed",
+			err,
+		))
+	}
+
+	// Identity-addressed reads constrain (run_id, capture_seq) without naming a
+	// kind, so they cannot use the partial index above and would otherwise scan
+	// the entire capture tape.
+	if _, err := store.database.Exec(captureIdentityIndex); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: ensure capture identity index failed",
 			err,
 		))
 	}
@@ -815,7 +892,7 @@ one CaptureIdentity. It is an exact-identity read — no timestamp search — an
 the durable reverse of WriteCapture: what the process actually received.
 */
 func (store *SQLite) ReadCapture(identity hindsight.CaptureIdentity) ([]byte, error) {
-	if store == nil || store.database == nil {
+	if store == nil || store.reader == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -836,7 +913,7 @@ func (store *SQLite) ReadCapture(identity hindsight.CaptureIdentity) ([]byte, er
 		encoding string
 	)
 
-	err := store.database.QueryRow(
+	err := store.reader.QueryRow(
 		"SELECT data, encoding FROM events WHERE run_id = ? AND capture_seq = ?",
 		string(identity.Run),
 		uint64(identity.Sequence),
@@ -864,7 +941,7 @@ ReadWitness returns the witness record for one ArtifactID persisted under one
 origin, reconstructing the artifact → envelope → raw-frame chain by identity.
 */
 func (store *SQLite) ReadWitness(origin hindsight.CaptureIdentity, artifact string) (hindsight.ArtifactWitness, error) {
-	if store == nil || store.database == nil {
+	if store == nil || store.reader == nil {
 		return hindsight.ArtifactWitness{}, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"store: sqlite database required",
@@ -874,7 +951,7 @@ func (store *SQLite) ReadWitness(origin hindsight.CaptureIdentity, artifact stri
 
 	var encoded string
 
-	err := store.database.QueryRow(
+	err := store.reader.QueryRow(
 		"SELECT witness FROM witnesses WHERE origin_run = ? AND origin_seq = ? AND artifact_id = ?",
 		string(origin.Run),
 		uint64(origin.Sequence),
@@ -916,6 +993,10 @@ func (store *SQLite) Close() error {
 
 	if store.decoder != nil {
 		store.decoder.Close()
+	}
+
+	if store.reader != nil {
+		_ = store.reader.Close()
 	}
 
 	return store.database.Close()

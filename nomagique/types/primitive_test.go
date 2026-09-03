@@ -25,7 +25,7 @@ func TestPrimitiveTransactions(t *testing.T) {
 		output := initial
 		Step(nil, &output)
 		So(output.Err, ShouldNotBeNil)
-		So(output.Equal(initial), ShouldBeTrue)
+		So(output.Equal(&initial), ShouldBeTrue)
 
 		bad := func(input *Frame) {
 			input.Put(primitiveShared, 99)
@@ -65,7 +65,7 @@ func TestPrimitiveTransactions(t *testing.T) {
 		output := frame
 		Pipe()(&output)
 		So(output.Err, ShouldBeNil)
-		So(output.Equal(frame), ShouldBeTrue)
+		So(output.Equal(&frame), ShouldBeTrue)
 	})
 }
 

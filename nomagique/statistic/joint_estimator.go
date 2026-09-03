@@ -279,6 +279,8 @@ func (estimator *JointDecayedEstimator) Primitive(
 
 		// Effective support for maturity, and the derived regression horizon
 		// (effective memory N_eff expressed as a time window: N_eff × cadence).
+		horizon := 0.0
+
 		sumW, _ := frame.Get(estimator.weightSum)
 		sumW2, _ := frame.Get(estimator.weightSqSum)
 
@@ -286,10 +288,12 @@ func (estimator *JointDecayedEstimator) Primitive(
 			neff := sumW * sumW / sumW2
 			frame.Put(estimator.neff, neff)
 
-			if horizon, found := frame.Get(estimator.spanHat); found && horizon > 0 {
-				frame.Put(estimator.horizon, neff*horizon)
+			if span, found := frame.Get(estimator.spanHat); found && span > 0 {
+				horizon = neff * span
 			}
 		}
+
+		frame.Put(estimator.horizon, horizon)
 	}
 }
 

@@ -78,7 +78,8 @@ func TestIfRouting(t *testing.T) {
 		stream := types.NewStream(If(predicate(1), badBranch, nil), initial)
 		output := stream.Step(types.Frame{})
 		So(output.Err, ShouldNotBeNil)
-		So(stream.Project().Equal(initial), ShouldBeTrue)
+		projected := stream.Project()
+		So(projected.Equal(&initial), ShouldBeTrue)
 	})
 }
 
@@ -133,6 +134,7 @@ func TestCircuitRouting(t *testing.T) {
 		stream := types.NewStream(program, initial)
 		output := stream.Step(types.Frame{})
 		So(output.Err, ShouldNotBeNil)
-		So(stream.Project().Equal(initial), ShouldBeTrue)
+		projected := stream.Project()
+		So(projected.Equal(&initial), ShouldBeTrue)
 	})
 }

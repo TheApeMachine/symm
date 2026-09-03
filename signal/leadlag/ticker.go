@@ -195,8 +195,10 @@ func (ticker *Ticker) Step(tickerData kraken.TickerData) *data.Measurement[float
 
 	if err == nil && reduced {
 		if ready, found := crossSectionFrame.Get(nmcorrelation.SymbolLeadLagReady); found && ready != 0 {
-			projection.Merge(crossSectionFrame)
-			projection.Merge(ticker.stepPairHistory(tickerData.Symbol, tickerData.Timestamp, crossSectionFrame))
+			pairHistory := ticker.stepPairHistory(tickerData.Symbol, tickerData.Timestamp, crossSectionFrame)
+
+			projection.Merge(&crossSectionFrame)
+			projection.Merge(&pairHistory)
 		}
 	}
 

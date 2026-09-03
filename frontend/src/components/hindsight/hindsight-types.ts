@@ -352,14 +352,26 @@ export type MetricSemantics = {
 	class?: string;
 	role?: string;
 	purpose?: string;
+	definedness?: string;
 	destinations?: string;
 	forbidden?: string;
 	status?: string;
 };
 
+/*
+SignalSemantics is one signal family's declared purpose, quoted from that
+family's own specification. It answers "what does this whole family of numbers
+measure?" for a reader who does not already know the family.
+*/
+export type SignalSemantics = {
+	source: string;
+	purpose: string;
+};
+
 export type HindsightMetricMap = {
 	baselineCommit: string;
 	metrics: Record<string, MetricSemantics>;
+	signals: Record<string, SignalSemantics>;
 };
 
 /*

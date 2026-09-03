@@ -46,6 +46,7 @@ import {
 	buildPositions,
 	type Position,
 } from "#/components/hindsight/positions";
+import { Guide } from "#/components/hindsight/guide";
 import { EpisodeTargets, SymbolTargets } from "#/components/hindsight/targets";
 import { Overview, Timeline } from "#/components/hindsight/timeline";
 import {
@@ -77,6 +78,29 @@ const COORDINATES: MarketCoordinate[] = ["midpoint", "trade", "last"];
 const AXES: TimelineAxis[] = ["time", "capture"];
 const DETAIL_BUCKETS = 320;
 const OVERVIEW_BUCKETS = 200;
+
+/*
+The reader's working posture, remembered between sessions. A split is the
+fraction of the inspection row given to provenance, held away from either edge
+so a pane can never be dragged out of existence.
+*/
+const SPLIT_KEY = "hindsight.split";
+const PLAIN_KEY = "hindsight.plain";
+const MIN_SPLIT = 0.15;
+const MAX_SPLIT = 0.85;
+
+const storedSplit = (): number => {
+	const stored = Number(globalThis.localStorage?.getItem(SPLIT_KEY));
+
+	if (!Number.isFinite(stored) || stored < MIN_SPLIT || stored > MAX_SPLIT) {
+		return 0.5;
+	}
+
+	return stored;
+};
+
+const INITIAL_SPLIT = storedSplit();
+const INITIAL_PLAIN = globalThis.localStorage?.getItem(PLAIN_KEY) !== "0";
 
 const digest = (value?: string | null): string =>
 	value == null || value === "" ? "—" : value.slice(0, 10);
@@ -113,6 +137,27 @@ const HindsightRoute = () => {
 	);
 	const [compareMode, setCompareMode] = useState<CompareMode>("resident");
 	const [resolving, setResolving] = useState(false);
+
+	/*
+		Layout is the reader's, not the surface's. Inspection starts as a band
+		under the market record, but once a finding is being read the evidence is
+		the whole job — so the inspector can take the surface, and the split
+		between provenance and state can be dragged. Both choices are the
+		reader's working posture rather than a property of the run, so they are
+		remembered across runs and reloads.
+	*/
+	const [focus, setFocus] = useState(false);
+	const [guide, setGuide] = useState(false);
+	const [split, setSplit] = useState(INITIAL_SPLIT);
+	const [plain, setPlain] = useState(INITIAL_PLAIN);
+
+	useEffect(() => {
+		globalThis.localStorage?.setItem(SPLIT_KEY, String(split));
+	}, [split]);
+
+	useEffect(() => {
+		globalThis.localStorage?.setItem(PLAIN_KEY, plain ? "1" : "0");
+	}, [plain]);
 
 	const surface = useRef<HTMLDivElement | null>(null);
 
@@ -542,7 +587,26 @@ const HindsightRoute = () => {
 				case "m":
 					mark();
 					break;
+				case "e":
+					setFocus((current) => !current);
+					break;
+				case "?":
+					setPlain((current) => !current);
+					break;
+				case "h":
+					setGuide((current) => !current);
+					break;
 				case "Escape":
+					if (guide) {
+						setGuide(false);
+						break;
+					}
+
+					if (focus) {
+						setFocus(false);
+						break;
+					}
+
 					setViewport(null);
 					setEpisode(null);
 					setPosition(null);
@@ -557,7 +621,7 @@ const HindsightRoute = () => {
 		globalThis.addEventListener("keydown", onKey);
 
 		return () => globalThis.removeEventListener("keydown", onKey);
-	}, [stepReference, mark]);
+	}, [stepReference, mark, focus, guide]);
 
 	return (
 		<div
@@ -577,8 +641,14 @@ const HindsightRoute = () => {
 				onAxis={setAxis}
 			/>
 
-			<div className="flex min-h-0 flex-1 overflow-hidden">
-				<div className="flex w-56 shrink-0 flex-col border-(--line) border-r">
+			{guide ? <Guide onClose={() => setGuide(false)} /> : null}
+
+			<div
+				className={`${guide ? "hidden" : "flex"} min-h-0 flex-1 overflow-hidden`}
+			>
+				<div
+					className={`${focus ? "hidden" : "flex"} w-56 shrink-0 flex-col border-(--line) border-r`}
+				>
 					<SymbolTargets
 						summaries={overview?.symbols ?? []}
 						selected={symbol}
@@ -598,6 +668,11 @@ const HindsightRoute = () => {
 						references={references.length}
 						marks={marks}
 						playhead={playhead?.sequence ?? null}
+						focus={focus}
+						plain={plain}
+						onGuide={() => setGuide((current) => !current)}
+						onFocus={() => setFocus((current) => !current)}
+						onPlain={() => setPlain((current) => !current)}
 						onMark={mark}
 						onReset={() => {
 							setViewport(null);
@@ -605,7 +680,9 @@ const HindsightRoute = () => {
 						}}
 					/>
 
-					<div className="shrink-0 border-(--line) border-b">
+					<div
+						className={`${focus ? "hidden" : "block"} shrink-0 border-(--line) border-b`}
+					>
 						<Timeline
 							timeline={detail ?? overview}
 							gaps={gaps}
@@ -644,7 +721,9 @@ const HindsightRoute = () => {
 					</div>
 
 					<div className="flex min-h-0 flex-1 overflow-hidden">
-						<div className="flex w-80 shrink-0 flex-col border-(--line) border-r">
+						<div
+							className={`${focus ? "hidden" : "flex"} w-80 shrink-0 flex-col border-(--line) border-r`}
+						>
 							<EpisodeTargets
 								timeline={detail ?? overview}
 								selected={episode}
@@ -693,32 +772,118 @@ const HindsightRoute = () => {
 										playhead={playhead?.sequence ?? null}
 										onSelect={jumpChart}
 									/>
-									<div className="min-h-0 flex-1 overflow-auto">
-										<div className="grid grid-cols-2">
-											<div className="min-w-0 border-(--line) border-r">
-												<ProvenancePanel
-													envelope={envelope}
-													onSelect={(sequence, ordinal) =>
-														jumpRef({ sequence, ordinal })
-													}
-												/>
-											</div>
-											<div className="min-w-0">
-												<StatePanel
-													state={state}
-													resident={resident}
-													envelope={envelope}
-													semantics={semantics}
-												/>
-											</div>
-										</div>
-									</div>
+									<InspectionRow
+										split={split}
+										onSplit={setSplit}
+										provenance={
+											<ProvenancePanel
+												envelope={envelope}
+												onSelect={(sequence, ordinal) =>
+													jumpRef({ sequence, ordinal })
+												}
+											/>
+										}
+										state={
+											<StatePanel
+												state={state}
+												resident={resident}
+												envelope={envelope}
+												semantics={semantics}
+												plain={plain}
+											/>
+										}
+									/>
 								</>
 							)}
 						</Flex.Column>
 					</div>
 				</Flex.Column>
 			</div>
+		</div>
+	);
+};
+
+/*
+InspectionRow is the evidence row: provenance on the left, the state the binary
+held on the right, with the boundary between them owned by the reader.
+
+The split is dragged rather than stepped because the two panes are read at very
+different widths depending on the question — walking a causal chain wants the
+left, reading a metric table wants the right — and no fixed ratio serves both.
+The handle is also a real focusable control, so the split can be moved without
+a pointer.
+*/
+const InspectionRow = ({
+	split,
+	onSplit,
+	provenance,
+	state,
+}: {
+	split: number;
+	onSplit: (next: number) => void;
+	provenance: React.ReactNode;
+	state: React.ReactNode;
+}) => {
+	const row = useRef<HTMLDivElement | null>(null);
+
+	const drag = useCallback(
+		(event: React.PointerEvent<HTMLDivElement>) => {
+			event.preventDefault();
+
+			const bounds = row.current?.getBoundingClientRect();
+
+			if (bounds === undefined || bounds.width === 0) return;
+
+			const move = (moved: PointerEvent) => {
+				const fraction = (moved.clientX - bounds.left) / bounds.width;
+
+				onSplit(Math.min(Math.max(fraction, MIN_SPLIT), MAX_SPLIT));
+			};
+
+			const release = () => {
+				globalThis.removeEventListener("pointermove", move);
+				globalThis.removeEventListener("pointerup", release);
+			};
+
+			globalThis.addEventListener("pointermove", move);
+			globalThis.addEventListener("pointerup", release);
+		},
+		[onSplit],
+	);
+
+	return (
+		<div ref={row} className="flex min-h-0 flex-1 overflow-hidden">
+			<div
+				className="min-w-0 overflow-auto"
+				style={{ flexBasis: `${split * 100}%` }}
+			>
+				{provenance}
+			</div>
+
+			<div
+				role="slider"
+				aria-label="Resize the evidence panes"
+				aria-orientation="vertical"
+				aria-valuemin={Math.round(MIN_SPLIT * 100)}
+				aria-valuemax={Math.round(MAX_SPLIT * 100)}
+				aria-valuenow={Math.round(split * 100)}
+				tabIndex={0}
+				title="Drag to rebalance · ← → to nudge · double-click to even up"
+				className="w-1 shrink-0 cursor-col-resize border-(--line) border-x bg-(--line) hover:bg-(--acc) focus:bg-(--acc) focus:outline-none"
+				onPointerDown={drag}
+				onDoubleClick={() => onSplit(0.5)}
+				onKeyDown={(event) => {
+					if (event.key === "ArrowLeft") {
+						onSplit(Math.max(split - 0.05, MIN_SPLIT));
+					}
+
+					if (event.key === "ArrowRight") {
+						onSplit(Math.min(split + 0.05, MAX_SPLIT));
+					}
+				}}
+			/>
+
+			<div className="min-w-0 flex-1 overflow-auto">{state}</div>
 		</div>
 	);
 };
@@ -900,6 +1065,11 @@ const TimelineHeader = ({
 	references,
 	marks,
 	playhead,
+	focus,
+	plain,
+	onGuide,
+	onFocus,
+	onPlain,
 	onMark,
 	onReset,
 }: {
@@ -909,6 +1079,11 @@ const TimelineHeader = ({
 	references: number;
 	marks: Mark[];
 	playhead: number | null;
+	focus: boolean;
+	plain: boolean;
+	onGuide: () => void;
+	onFocus: () => void;
+	onPlain: () => void;
 	onMark: () => void;
 	onReset: () => void;
 }) => (
@@ -942,6 +1117,49 @@ const TimelineHeader = ({
 		</span>
 
 		<span className="ml-auto" />
+
+		<Button
+			variant="bare"
+			title="What every band of this surface is, and how to read it. (h)"
+			className="rounded-[3px] border border-(--line) px-1.5 py-0.5 font-mono text-[9px] text-(--f4) hover:text-(--f2)"
+			onClick={onGuide}
+		>
+			how to read this (h)
+		</Button>
+
+		<Button
+			variant="bare"
+			title={
+				plain
+					? "Reading in plain language. Switch to the system's own vocabulary. (?)"
+					: "Reading in the system's own vocabulary. Switch to plain language. (?)"
+			}
+			className={`rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] ${
+				plain
+					? "border-(--acc) text-(--f1)"
+					: "border-(--line) text-(--f4) hover:text-(--f2)"
+			}`}
+			onClick={onPlain}
+		>
+			{plain ? "plain" : "expert"}
+		</Button>
+
+		<Button
+			variant="bare"
+			title={
+				focus
+					? "Bring the market record back. (e / Esc)"
+					: "Give the whole surface to the evidence. (e)"
+			}
+			className={`rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] ${
+				focus
+					? "border-(--acc) text-(--f1)"
+					: "border-(--line) text-(--f4) hover:text-(--f2)"
+			}`}
+			onClick={onFocus}
+		>
+			{focus ? "exit focus (e)" : "focus (e)"}
+		</Button>
 
 		<MarkBar marks={marks} playhead={playhead} onMark={onMark} />
 

@@ -44,7 +44,8 @@ func TestPredictiveDynamics(t *testing.T) {
 			output := stream.Step(regressed)
 
 			So(output.Err, ShouldNotBeNil)
-			So(stream.Project().Equal(before), ShouldBeTrue)
+			projected := stream.Project()
+			So(projected.Equal(&before), ShouldBeTrue)
 		})
 	})
 }

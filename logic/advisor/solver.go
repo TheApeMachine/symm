@@ -100,7 +100,7 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 	if !clockFound {
 		if symbol != "" {
 			frame := solver.frames[symbol]
-			frame.Merge(input)
+			frame.Merge(&input)
 			solver.frames[symbol] = frame
 		}
 
@@ -121,7 +121,7 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 	}
 
 	frame := solver.frames[symbol]
-	frame.Merge(input)
+	frame.Merge(&input)
 	solver.frames[symbol] = frame
 
 	advanced, err := solver.clockAdvanced(symbol, clock)

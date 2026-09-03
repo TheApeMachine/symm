@@ -67,7 +67,7 @@ func (number *Number[Key]) Step(key Key, input Frame) Frame {
 	defer stream.mutex.Unlock()
 
 	stream.scratch = stream.frame
-	stream.scratch.Merge(input)
+	stream.scratch.Merge(&input)
 	Step(number.primitive, &stream.scratch)
 
 	if stream.scratch.Err == nil {
@@ -224,7 +224,7 @@ func (number *Number[Key]) CrossSection(
 			return true
 		}
 
-		accumulator.Merge(out)
+		accumulator.Merge(&out)
 		Step(reduce, &accumulator)
 
 		if accumulator.Err != nil {
@@ -442,7 +442,7 @@ func NewSingle(primitives ...Primitive) Single {
 
 	return func(input Frame) Frame {
 		*scratch = *state
-		scratch.Merge(input)
+		scratch.Merge(&input)
 		Step(pipeline, scratch)
 
 		if scratch.Err == nil {

@@ -22,7 +22,8 @@ func TestFramePrimitive(t *testing.T) {
 			So(output.Has(SymbolEnergy), ShouldBeTrue)
 			So(output.Has(SymbolSurprise), ShouldBeTrue)
 			So(output.MustGet(SymbolLatentCount), ShouldEqual, 2)
-			So(stream.Project().MustGet(SymbolInvocation), ShouldEqual, 1)
+			projected := stream.Project()
+			So(projected.MustGet(SymbolInvocation), ShouldEqual, 1)
 		})
 	})
 }

@@ -18,7 +18,7 @@ func TestGovernor(t *testing.T) {
 		input.Put(types.MustIntern("stability"), 0.5)
 
 		merged := state
-		merged.Merge(input)
+		merged.Merge(&input)
 		Governor(&merged)
 
 		So(merged.Err, ShouldBeNil)
@@ -34,7 +34,7 @@ func TestGovernor(t *testing.T) {
 		input.Put(types.MustIntern("stability"), 1)
 
 		merged := state
-		merged.Merge(input)
+		merged.Merge(&input)
 		Governor(&merged)
 
 		So(merged.Err, ShouldBeNil)
@@ -53,7 +53,7 @@ func BenchmarkGovernor(benchmark *testing.B) {
 
 	for benchmark.Loop() {
 		merged := state
-		merged.Merge(input)
+		merged.Merge(&input)
 		Governor(&merged)
 	}
 }

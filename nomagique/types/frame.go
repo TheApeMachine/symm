@@ -46,7 +46,7 @@ func (frame *Frame) Get(symbol Symbol) (float64, bool) {
 }
 
 // MustGet returns the value stored at symbol or panics.
-func (frame Frame) MustGet(symbol Symbol) float64 {
+func (frame *Frame) MustGet(symbol Symbol) float64 {
 	value, found := frame.Get(symbol)
 
 	if !found {
@@ -57,7 +57,7 @@ func (frame Frame) MustGet(symbol Symbol) float64 {
 }
 
 // Has reports whether symbol is populated.
-func (frame Frame) Has(symbol Symbol) bool {
+func (frame *Frame) Has(symbol Symbol) bool {
 	_, found := frame.Get(symbol)
 
 	return found
@@ -130,10 +130,17 @@ func (frame *Frame) Delete(symbol Symbol) {
 	frame.Data[index] = 0
 }
 
-// Merge overlays every populated slot from other onto frame.
-func (frame *Frame) Merge(other Frame) {
+// Merge overlays every populated slot from other onto frame. other is taken by
+// pointer, never by value: a Frame carries a MaxSlots-wide backing array, and a
+// value parameter would copy the whole thing onto the heap on every call to
+// what is the hottest path in the engine.
+func (frame *Frame) Merge(other *Frame) {
 	if frame == nil {
 		panic("nomagique: cannot merge into a nil Frame")
+	}
+
+	if other == nil {
+		return
 	}
 
 	for maskIndex, mask := range other.Mask {
@@ -155,9 +162,13 @@ It is what lets independent branches of one Fork write into the same frame
 without the later ones reverting the earlier ones' work to the shared
 pre-fork snapshot they all began from.
 */
-func (frame *Frame) MergeChanged(baseline Frame, branch Frame) {
+func (frame *Frame) MergeChanged(baseline *Frame, branch *Frame) {
 	if frame == nil {
 		panic("nomagique: cannot merge into a nil Frame")
+	}
+
+	if baseline == nil || branch == nil {
+		return
 	}
 
 	for maskIndex, mask := range branch.Mask {
@@ -178,13 +189,13 @@ func (frame *Frame) MergeChanged(baseline Frame, branch Frame) {
 
 // Merged returns a copied Frame with other overlaid.
 func (frame Frame) Merged(other Frame) Frame {
-	frame.Merge(other)
+	frame.Merge(&other)
 
 	return frame
 }
 
 // Count returns the number of populated slots.
-func (frame Frame) Count() int {
+func (frame *Frame) Count() int {
 	count := 0
 
 	for _, mask := range frame.Mask {
@@ -195,7 +206,7 @@ func (frame Frame) Count() int {
 }
 
 // All iterates populated slots in ascending symbol order.
-func (frame Frame) All() iter.Seq2[Symbol, float64] {
+func (frame *Frame) All() iter.Seq2[Symbol, float64] {
 	return func(yield func(Symbol, float64) bool) {
 		for maskIndex, mask := range frame.Mask {
 			for remaining := mask; remaining != 0; remaining &= remaining - 1 {
@@ -211,7 +222,7 @@ func (frame Frame) All() iter.Seq2[Symbol, float64] {
 }
 
 // Finite reports whether every populated value is finite.
-func (frame Frame) Finite() bool {
+func (frame *Frame) Finite() bool {
 	for maskIndex, mask := range frame.Mask {
 		for remaining := mask; remaining != 0; remaining &= remaining - 1 {
 			bit := bits.TrailingZeros64(remaining)
@@ -226,8 +237,14 @@ func (frame Frame) Finite() bool {
 	return true
 }
 
-// Equal compares exact populated slots and IEEE-754 bit patterns.
-func (frame Frame) Equal(other Frame) bool {
+// Equal compares exact populated slots and IEEE-754 bit patterns. Like Merge,
+// other is taken by pointer so that comparing two frames never copies a
+// MaxSlots-wide backing array.
+func (frame *Frame) Equal(other *Frame) bool {
+	if other == nil {
+		return false
+	}
+
 	if frame.Mask != other.Mask {
 		return false
 	}

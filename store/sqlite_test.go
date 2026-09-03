@@ -75,6 +75,44 @@ func TestNewSQLite(t *testing.T) {
 				).Scan(&marketIndex), ShouldBeNil)
 				So(marketIndex, ShouldEqual, 1)
 			})
+
+			Convey("An identity-addressed read never scans the capture tape", func() {
+				var identityIndex int
+				So(engine.database.QueryRow(
+					`SELECT count(*) FROM sqlite_master
+					 WHERE type = 'index' AND name = 'idx_events_run_capture'`,
+				).Scan(&identityIndex), ShouldBeNil)
+				So(identityIndex, ShouldEqual, 1)
+
+				/*
+					The partial market index cannot serve a query that does not
+					constrain kind, so without the identity index above this plan
+					degrades to a full scan of every captured frame — which is what
+					held the writer's connection and stalled capture.
+				*/
+				var plan string
+				So(engine.database.QueryRow(
+					`EXPLAIN QUERY PLAN
+					 SELECT run_id, capture_seq FROM events
+					 WHERE run_id = 'r' AND capture_seq > 0
+					 ORDER BY capture_seq ASC LIMIT 8`,
+				).Scan(new(int), new(int), new(int), &plan), ShouldBeNil)
+				So(plan, ShouldContainSubstring, "idx_events_run_capture")
+				So(plan, ShouldNotContainSubstring, "SCAN events")
+			})
+
+			Convey("Inspection reads never share the capture writer's connection", func() {
+				So(engine.Reader(), ShouldNotBeNil)
+				So(engine.Reader(), ShouldNotEqual, engine.database)
+
+				Convey("And the inspection pool is read-only", func() {
+					_, err := engine.Reader().Exec(
+						`INSERT INTO events (kind, endpoint, at, data)
+						 VALUES ('ticker', 'e', '2026-01-01T00:00:00Z', x'00')`,
+					)
+					So(err, ShouldNotBeNil)
+				})
+			})
 		})
 	})
 }
