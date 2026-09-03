@@ -13,6 +13,7 @@ type (
 	Identity  = types.Identity
 	Reduction = types.Reduction
 	Router    = types.Router
+	Tap       = types.Tap
 )
 
 // Pipeline wraps a composed Node graph, exposing steppable evaluation methods.

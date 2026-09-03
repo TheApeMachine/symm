@@ -390,38 +390,33 @@ func (solver *Solver) classify(
 
 /*
 categoryStrength is the geometric mean of a category's current positive
-affinities, expressed through the shared probability.Geomean primitive. The
-solver lifts the affinities into a Frame of sample slots, steps the atomic
-primitive, and projects the result back out.
+affinities, folded by the shared probability.Geomean reduction. The geometric
+mean is the right aggregate here because affinities combine multiplicatively:
+one near-zero affinity should drag the category's strength down rather than
+being averaged away by its stronger siblings.
 */
 func categoryStrength(items []evidenceItem) (float64, error) {
-	frame := nmtypes.Frame{}
+	affinities := make([]nmtypes.Scalar, len(items))
 
 	for index, item := range items {
-		frame.Put(nmtypes.MustSampleSymbol(index), item.Affinity)
+		affinities[index] = nmtypes.Scalar(item.Affinity)
 	}
 
-	nmtypes.Step(nomagique_probability.Geomean, &frame)
-
-	if frame.Err != nil {
-		return 0, frame.Err
-	}
-
-	return frame.MustGet(nomagique_probability.SymbolResult), nil
+	return float64(nomagique_probability.Geomean(affinities)), nil
 }
 
 /*
-lift projects a strength vector into a Frame of generic sample slots, so the
-probability primitives can reduce it without knowing category identity.
+lift converts a strength vector into the carrier the probability reductions
+fold over, so they reduce it without knowing category identity.
 */
-func lift(strengths []float64) nmtypes.Frame {
-	frame := nmtypes.Frame{}
+func lift(strengths []float64) []nmtypes.Scalar {
+	values := make([]nmtypes.Scalar, len(strengths))
 
 	for index, strength := range strengths {
-		frame.Put(nmtypes.MustSampleSymbol(index), strength)
+		values[index] = nmtypes.Scalar(strength)
 	}
 
-	return frame
+	return values
 }
 
 /*
@@ -480,27 +475,14 @@ func (solver *Solver) buildBatch(
 	evidence := lift(strengths)
 	confidences := make([]float64, count)
 
-	ambiguityFrame := evidence
-	nmtypes.Step(nomagique_probability.ShannonAmbiguity(), &ambiguityFrame)
-
-	if ambiguityFrame.Err != nil {
-		return nil, ambiguityFrame.Err
-	}
-
-	uncertainty := ambiguityFrame.MustGet(nomagique_probability.SymbolAmbiguity)
+	// The batch shares one uncertainty: how evenly the evidence is spread
+	// across the whole declared vocabulary.
+	uncertainty := float64(nomagique_probability.ShannonAmbiguity(evidence))
 
 	for index := range solver.categories {
-		// Preselect the winner so EvidenceShare resolves this category's share.
-		selected := evidence
-		selected.Put(nomagique_probability.SymbolWinner, float64(index))
-
-		nmtypes.Step(nomagique_probability.EvidenceShare(), &selected)
-
-		if selected.Err != nil {
-			return nil, selected.Err
-		}
-
-		confidences[index] = selected.MustGet(nomagique_probability.SymbolConfidence)
+		confidences[index] = float64(
+			nomagique_probability.EvidenceShare(evidence, index),
+		)
 	}
 
 	categories := make([]types.Category, 0, count)

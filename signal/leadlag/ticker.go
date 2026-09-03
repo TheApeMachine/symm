@@ -3,363 +3,373 @@ package leadlag
 import (
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/calculus"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-Finalize output slots derived from CrossLag's raw nanoseconds quantities:
-seconds-valued lag metrics and the absolute correlation gain. CrossLag already
-emits the signed contemporaneous and best-lag correlations, the lag index, the
-lag fraction, the search/sample/overlap/effective-support counts, and the
-peak-shape facts; the finalize only rescales and derives.
-*/
-var (
-	symbolAbsoluteCorrelationGain       = nmtypes.MustIntern("leadlag/absolute_correlation_gain")
-	symbolBestLagSeconds                = nmtypes.MustIntern("leadlag/best_lag_seconds")
-	symbolLagSearchResolutionSec        = nmtypes.MustIntern("leadlag/lag_search_resolution_seconds")
-	symbolLagSearchSpanSeconds          = nmtypes.MustIntern("leadlag/lag_search_span")
-	symbolNanosPerSecond                = nmtypes.MustIntern("leadlag/nanos_per_second")
-	symbolNegBestLagNanos               = nmtypes.MustIntern("leadlag/neg_best_lag_nanos")
-	symbolAbsBestLagCorrelation         = nmtypes.MustIntern("leadlag/abs_best_lag_correlation")
-	symbolAbsContemporaneousCorrelation = nmtypes.MustIntern("leadlag/abs_contemporaneous_correlation")
-)
+Ticker is the per-symbol price-path entity.
 
-/*
-Pair-history series prefixes. Each holds one focal-level pair metric across
-ticks so the namespaced Baseline/ZScore/Velocity estimators can derive its
-causal history without touching the per-symbol price path.
-*/
-const (
-	prefixLagSeconds         = "pair/lag_seconds"
-	prefixGain               = "pair/gain"
-	prefixBestLagCorrelation = "pair/best_lag_correlation"
-)
-
-var (
-	lagSecondsSeries         = temporal.NewSeries(prefixLagSeconds)
-	gainSeries               = temporal.NewSeries(prefixGain)
-	bestLagCorrelationSeries = temporal.NewSeries(prefixBestLagCorrelation)
-
-	symbolLagBaselineSeconds   = nmtypes.MustIntern(temporal.JoinPrefix(prefixLagSeconds, "baseline/value"))
-	symbolLagDivergenceSeconds = nmtypes.MustIntern(temporal.JoinPrefix(prefixLagSeconds, "z/residual"))
-	symbolLagNoiseScaleSeconds = nmtypes.MustIntern(temporal.JoinPrefix(prefixLagSeconds, "z/dispersion"))
-	symbolLagZScore            = nmtypes.MustIntern(temporal.JoinPrefix(prefixLagSeconds, "z/value"))
-	symbolLagVelocity          = nmtypes.MustIntern(temporal.JoinPrefix(prefixLagSeconds, "velocity/delta"))
-
-	symbolGainBaseline = nmtypes.MustIntern(temporal.JoinPrefix(prefixGain, "baseline/value"))
-	symbolGainZScore   = nmtypes.MustIntern(temporal.JoinPrefix(prefixGain, "z/value"))
-	symbolGainVelocity = nmtypes.MustIntern(temporal.JoinPrefix(prefixGain, "velocity/delta"))
-
-	symbolBestLagCorrelationBaseline = nmtypes.MustIntern(temporal.JoinPrefix(prefixBestLagCorrelation, "baseline/value"))
-	symbolBestLagCorrelationZScore   = nmtypes.MustIntern(temporal.JoinPrefix(prefixBestLagCorrelation, "z/value"))
-)
-
-/*
-Ticker is the per-symbol price-path entity. It owns the per-symbol path Number,
-the pair-history Number for focal-level causal estimators, one projector naming
-the output slots, and the once-built cross-sectional stages.
+It connects market data to one nomagique pipeline per focal symbol and names
+the readings that pipeline produces. It holds no mathematics and no
+estimator state of its own: the paths, the lag search, the significance test
+and the causal estimators are all nodes inside the composition.
 */
 type Ticker struct {
-	number      *nomagique.KeyedNumber[string]
-	pairHistory *nomagique.KeyedNumber[string]
-	projector   *data.Projector
-	pair        func(focal *nmtypes.Frame, peer *nmtypes.Frame) nmtypes.Frame
-	reduce      nmtypes.Primitive
-	finalize    nmtypes.Primitive
+	mutex sync.Mutex
+
+	// paths is the retained observation store per symbol. The lag search is
+	// cross-sectional, so a focal symbol is measured against every other path.
+	paths map[string]*nmcorrelation.Path
+
+	// pipelines holds one composed pipeline per focal symbol, so each symbol's
+	// estimators accumulate their own history.
+	pipelines map[string]*pipeline
 }
 
 /*
-NewTicker constructs the Ticker entity: the per-symbol path pipeline, the
-pair-history pipeline, the projector, and the cross-sectional stages built
-exactly once.
+pipeline is one focal symbol's complete composition, declared once in
+newPipeline and stepped once per tick.
+*/
+type pipeline struct {
+	leadLag nmcorrelation.LeadLag
+	fisher  nmcorrelation.Fisher
+
+	// Causal estimators over this signal's focal-level readings, each fed by
+	// a Tap on the search stage.
+	lagSeconds         equation.CausalResidual
+	gain               equation.CausalResidual
+	bestLagCorrelation equation.CausalResidual
+
+	lagVelocity  temporal.Velocity
+	gainVelocity temporal.Velocity
+	eventClock   temporal.Clock
+
+	number *nomagique.Pipeline
+}
+
+/*
+newPipeline declares one focal symbol's whole measurement as a single
+composition. It is the signal's entire mathematics.
+
+The Chain runs three stages in series:
+  - A searches the lead-lag surface across every emergent shift.
+  - B tests the peak's significance, reading its own support and search
+    breadth back out of the search stage.
+  - C fans out to the causal estimators over the readings that search
+    exposes. Each branch is a Tap, which returns 0, so the carrier passes
+    through the Split uncorrupted (Law of Sinks).
+*/
+func newPipeline(focal *nmcorrelation.Path, peer *nmcorrelation.Path) *pipeline {
+	built := &pipeline{}
+
+	search := &built.leadLag
+	search.Left = focal
+	search.Right = peer
+
+	built.fisher.Support = &nomagique.Tap{Read: search.Support}
+	built.fisher.SearchCount = &nomagique.Tap{Read: search.SearchCount}
+
+	built.lagVelocity.Source = &nomagique.Tap{Read: search.LagSeconds}
+	built.lagVelocity.Clock = &built.eventClock
+	built.gainVelocity.Source = &nomagique.Tap{Read: search.AbsoluteGain}
+	built.gainVelocity.Clock = &built.eventClock
+
+	built.number = nomagique.Number(&nomagique.Chain{
+		A: search,
+		B: &built.fisher,
+		C: &nomagique.Split{
+			A: &nomagique.Split{
+				A: &nomagique.Tap{Read: search.LagSeconds, Into: &built.lagSeconds},
+				B: &nomagique.Tap{Read: search.AbsoluteGain, Into: &built.gain},
+				C: &nomagique.Tap{
+					Read: search.LagCorrelation,
+					Into: &built.bestLagCorrelation,
+				},
+			},
+			B: &nomagique.Split{
+				A: &built.lagVelocity,
+				B: &built.gainVelocity,
+			},
+		},
+	})
+
+	return built
+}
+
+/*
+NewTicker constructs the Ticker entity.
 */
 func NewTicker() *Ticker {
 	return &Ticker{
-		number: nomagique.NewNumber[string](temporal.Path("")),
-		pairHistory: nomagique.NewNumber[string](nmtypes.Fork(
-			pairHistoryStage(prefixLagSeconds),
-			pairHistoryStage(prefixGain),
-			nmtypes.Pipe(
-				pairHistoryStage(prefixBestLagCorrelation),
-				// best_lag_correlation is this signal's headline metric, so its
-				// estimator is the one whose departure and noise power become
-				// the measurement's SNR.
-				statistic.QualityFrom(prefixBestLagCorrelation),
-			),
-		)),
-		projector: data.NewProjector(
-			data.Binding{From: temporal.DefaultSeries.ValueSymbol, Name: "last_price", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmtypes.SampleCount, Name: "observation_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolContempCorrelation, Name: "contemporaneous_correlation", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolLagCorrelation, Name: "best_lag_correlation", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolLagBars, Name: "best_lag_index", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolBestLagSeconds, Name: "best_lag_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolAbsoluteCorrelationGain, Name: "absolute_correlation_gain", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolLagFraction, Name: "lag_fraction", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolLagSearchResolutionSec, Name: "lag_search_resolution_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolLagSearchSpanSeconds, Name: "lag_search_span", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolReferenceReturns, Name: "reference_return_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolMeasuredReturns, Name: "measured_return_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolOverlapPairs, Name: "overlap_pair_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolEffectiveSupport, Name: "effective_sample_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolLeadLagSearchCount, Name: "search_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolLagPeakProminence, Name: "lag_peak_prominence", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolLagPeakCurvature, Name: "lag_peak_curvature", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolPValue, Name: "correlation_p_value", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolSearchAdjustedP, Name: "search_adjusted_p_value", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolLagBaselineSeconds, Name: "lag_baseline_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolLagDivergenceSeconds, Name: "lag_divergence_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolLagNoiseScaleSeconds, Name: "lag_noise_scale_seconds", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolLagZScore, Name: "lag_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolLagVelocity, Name: "lag_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolGainBaseline, Name: "correlation_gain_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolGainZScore, Name: "correlation_gain_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolGainVelocity, Name: "correlation_gain_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolBestLagCorrelationBaseline, Name: "best_lag_correlation_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolBestLagCorrelationZScore, Name: "best_lag_correlation_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-		),
-		pair:     newLeadLagPair(),
-		reduce:   nmcorrelation.Cohort,
-		finalize: leadLagFinalize(),
+		paths:     make(map[string]*nmcorrelation.Path),
+		pipelines: make(map[string]*pipeline),
 	}
 }
 
 /*
-Step receives one market data point, appends the price into the symbol's
-retained path, evaluates the cross-sectional lag search over every other
-committed path, advances the focal-level pair-history estimators, and projects
-exactly one Measurement. The per-symbol path facts are always projected;
-lead-lag and pair-history facts appear only once their estimators are ready. An
-explicit zero last means no recent trade price was observed: it produces an
-undefined, zero-support measurement without advancing the retained path.
+Step receives one market data point, records it into the symbol's retained
+path, steps that symbol's pipeline against every other observed path, and
+names exactly one Measurement from the readings the pipeline exposes.
+
+An explicit zero last means no recent trade price was observed: it produces
+an undefined, zero-support measurement without entering the path, so an
+untraded quote never becomes evidence.
 */
 func (ticker *Ticker) Step(tickerData kraken.TickerData) *data.Measurement[float64] {
 	if tickerData.Last == nil {
-		return &data.Measurement[float64]{Err: fmt.Errorf("leadlag: ticker requires a last price")}
+		return &data.Measurement[float64]{Err: fmt.Errorf(
+			"leadlag: ticker requires a last price",
+		)}
 	}
 
 	last := tickerData.Last.Float64()
 
 	if math.IsNaN(last) || math.IsInf(last, 0) || last < 0 {
-		return &data.Measurement[float64]{Err: fmt.Errorf("leadlag: ticker last price must be finite and non-negative")}
+		return &data.Measurement[float64]{Err: fmt.Errorf(
+			"leadlag: ticker last price must be finite and non-negative",
+		)}
 	}
 
-	if last == 0 {
-		projection := nmtypes.Frame{}
+	measurement := data.NewMeasurement[float64](
+		tickerData.Symbol+":leadlag:"+tickerData.Timestamp.Format(time.RFC3339Nano),
+		tickerData.Symbol,
+		"leadlag",
+		tickerData.Timestamp,
+		tickerData.Timestamp,
+	)
 
-		measurement := ticker.projector.Project(
-			ticker.label(tickerData.Symbol),
-			"leadlag",
-			tickerData.Timestamp,
-			tickerData.Timestamp,
-			projection,
-		)
-		measurement.Metadata[data.MetadataSupport] = 0
-		measurement.Finalize()
+	if last == 0 {
+		measurement.Metadata = map[string]float64{data.MetadataSupport: 0}
 		measurement.Provenance = map[string]string{
 			"last_trade_price_state": "unobserved",
 		}
+		measurement.Finalize()
 
 		return measurement
 	}
 
-	input := nmtypes.Frame{}
-	input.Put(temporal.DefaultSeries.ValueSymbol, last)
-	input.Put(temporal.DefaultSeries.SecSymbol, float64(tickerData.Timestamp.Unix()))
-	input.Put(temporal.DefaultSeries.NsecSymbol, float64(tickerData.Timestamp.Nanosecond()))
+	ticker.mutex.Lock()
+	defer ticker.mutex.Unlock()
 
-	pathFrame := ticker.number.Step(tickerData.Symbol, input)
+	focal := ticker.pathFor(tickerData.Symbol)
 
-	crossSectionFrame, reduced, err := ticker.number.CrossSection(
-		tickerData.Symbol,
-		ticker.pair,
-		ticker.reduce,
-		ticker.finalize,
-	)
+	if !focal.Observe(tickerData.Timestamp.UnixNano(), nmtypes.Number(last)) {
+		measurement.Err = fmt.Errorf(
+			"leadlag: ticker event time regressed for %s", tickerData.Symbol,
+		)
 
-	projection := pathFrame
-
-	if err != nil {
-		projection.Err = err
+		return measurement
 	}
 
-	if err == nil && reduced {
-		if ready, found := crossSectionFrame.Get(nmcorrelation.SymbolLeadLagReady); found && ready != 0 {
-			pairHistory := ticker.stepPairHistory(tickerData.Symbol, tickerData.Timestamp, crossSectionFrame)
+	putMetric(measurement, "last_price", nmtypes.Number(last),
+		data.UnitRate, data.TimescaleInstantaneous)
+	putMetric(measurement, "observation_count", nmtypes.Number(focal.Len()),
+		data.UnitCount, data.TimescaleInstantaneous)
 
-			projection.Merge(&crossSectionFrame)
-			projection.Merge(&pairHistory)
+	built := ticker.step(tickerData.Symbol, focal, tickerData.Timestamp)
+
+	if built == nil {
+		measurement.Metadata = map[string]float64{data.MetadataSupport: 0}
+		measurement.Finalize()
+
+		return measurement
+	}
+
+	built.project(measurement)
+
+	if from, _, ok := focal.Span(); ok {
+		measurement.From = time.Unix(0, from)
+	}
+
+	measurement.Finalize()
+
+	return measurement
+}
+
+func (ticker *Ticker) pathFor(symbol string) *nmcorrelation.Path {
+	path, found := ticker.paths[symbol]
+
+	if !found {
+		path = &nmcorrelation.Path{}
+		ticker.paths[symbol] = path
+	}
+
+	return path
+}
+
+/*
+step drives the focal symbol's pipeline against each peer path, returning the
+pipeline once any peer yielded a defined estimate.
+*/
+func (ticker *Ticker) step(
+	symbol string,
+	focal *nmcorrelation.Path,
+	at time.Time,
+) *pipeline {
+	var defined *pipeline
+
+	for peerSymbol, peer := range ticker.paths {
+		if peerSymbol == symbol {
+			continue
+		}
+
+		built := ticker.pipelineFor(symbol, focal, peer)
+		built.tick(at)
+
+		if built.leadLag.Ready() {
+			defined = built
 		}
 	}
 
-	return ticker.projector.Project(
-		ticker.label(tickerData.Symbol),
-		"leadlag",
-		tickerData.Timestamp,
-		tickerData.Timestamp,
-		projection,
-	)
+	return defined
+}
+
+func (ticker *Ticker) pipelineFor(
+	symbol string,
+	focal *nmcorrelation.Path,
+	peer *nmcorrelation.Path,
+) *pipeline {
+	built, found := ticker.pipelines[symbol]
+
+	if !found {
+		built = newPipeline(focal, peer)
+		ticker.pipelines[symbol] = built
+	}
+
+	// The focal symbol is measured against each peer in turn; only the peer
+	// slot changes between steps.
+	built.leadLag.Right = peer
+
+	return built
+}
+
+/*
+tick advances the composition's event clock and steps the whole pipeline once.
+*/
+func (built *pipeline) tick(at time.Time) {
+	built.eventClock.Observe(at)
+	built.number.Step(0)
+}
+
+/*
+project names every reading the composition exposes. Each value is read from
+a node; the signal derives none of them.
+*/
+func (built *pipeline) project(measurement *data.Measurement[float64]) {
+	search := &built.leadLag
+
+	putMetric(measurement, "contemporaneous_correlation", search.Contemporaneous(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "best_lag_correlation", search.LagCorrelation(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "best_lag_index", search.LagBars(),
+		data.UnitCount, data.TimescaleInstantaneous)
+	putMetric(measurement, "best_lag_seconds", search.LagSeconds(),
+		data.UnitSecond, data.TimescaleInstantaneous)
+	putMetric(measurement, "absolute_correlation_gain", search.AbsoluteGain(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "lag_fraction", search.LagFraction(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "lag_search_resolution_seconds",
+		search.SearchResolutionSeconds(),
+		data.UnitSecond, data.TimescaleInstantaneous)
+	putMetric(measurement, "lag_search_span",
+		search.SearchSpanSeconds(),
+		data.UnitSecond, data.TimescaleInstantaneous)
+	putMetric(measurement, "reference_return_count", search.LeftReturns(),
+		data.UnitCount, data.TimescaleInstantaneous)
+	putMetric(measurement, "measured_return_count", search.RightReturns(),
+		data.UnitCount, data.TimescaleInstantaneous)
+	putMetric(measurement, "overlap_pair_count", search.Support(),
+		data.UnitCount, data.TimescaleInstantaneous)
+	putMetric(measurement, "effective_sample_count", search.Support(),
+		data.UnitCount, data.TimescaleInstantaneous)
+	putMetric(measurement, "search_count", search.SearchCount(),
+		data.UnitCount, data.TimescaleInstantaneous)
+
+	if prominence, ok := search.PeakProminence(); ok {
+		putMetric(measurement, "lag_peak_prominence", prominence,
+			data.UnitDimensionless, data.TimescaleInstantaneous)
+	}
+
+	if curvature, ok := search.PeakCurvature(); ok {
+		putMetric(measurement, "lag_peak_curvature", curvature,
+			data.UnitPerSecond, data.TimescaleInstantaneous)
+	}
+
+	if built.fisher.Ready() {
+		putMetric(measurement, "correlation_p_value", built.fisher.PValue(),
+			data.UnitDimensionless, data.TimescaleInstantaneous)
+
+		if adjusted, ok := built.fisher.SearchAdjustedPValue(); ok {
+			putMetric(measurement, "search_adjusted_p_value", adjusted,
+				data.UnitDimensionless, data.TimescaleInstantaneous)
+		}
+	}
+
+	putMetric(measurement, "lag_baseline_seconds", built.lagSeconds.Baseline(),
+		data.UnitSecond, data.TimescaleInstantaneous)
+	putMetric(measurement, "lag_divergence_seconds", built.lagSeconds.Residual(),
+		data.UnitSecond, data.TimescaleInstantaneous)
+	putMetric(measurement, "lag_noise_scale_seconds", built.lagSeconds.Dispersion(),
+		data.UnitSecond, data.TimescaleInstantaneous)
+	putMetric(measurement, "lag_zscore", built.lagSeconds.ZScore(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "lag_velocity", built.lagVelocity.Rate(),
+		data.UnitPerSecond, data.TimescaleInstantaneous)
+
+	putMetric(measurement, "correlation_gain_baseline", built.gain.Baseline(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "correlation_gain_zscore", built.gain.ZScore(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "correlation_gain_velocity", built.gainVelocity.Rate(),
+		data.UnitPerSecond, data.TimescaleInstantaneous)
+
+	putMetric(measurement, "best_lag_correlation_baseline",
+		built.bestLagCorrelation.Baseline(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "best_lag_correlation_zscore",
+		built.bestLagCorrelation.ZScore(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+
+	// best_lag_correlation is the headline reading, so its estimator supplies
+	// the quality facts Finalize derives maturity and SNR from.
+	if measurement.Metadata == nil {
+		measurement.Metadata = map[string]float64{}
+	}
+
+	measurement.Metadata[data.MetadataSupport] = built.bestLagCorrelation.Count()
+
+	if built.bestLagCorrelation.HasPrior() {
+		measurement.Metadata[data.MetadataDivergence] =
+			float64(built.bestLagCorrelation.Residual())
+		measurement.Metadata[data.MetadataNoiseVariance] =
+			float64(built.bestLagCorrelation.NoiseVariance())
+	}
 }
 
 func (ticker *Ticker) Close() error { return nil }
 
-/*
-stepPairHistory feeds the focal-level lag metrics into their namespaced
-pair-history series and evaluates the causal Baseline/ZScore/Velocity estimators.
-It runs only once CrossLag is ready, so every required coordinate is present.
-*/
-func (ticker *Ticker) stepPairHistory(
-	symbol string,
-	at time.Time,
-	crossSection nmtypes.Frame,
-) nmtypes.Frame {
-	lagSeconds, hasLagSeconds := crossSection.Get(symbolBestLagSeconds)
-	gain, hasGain := crossSection.Get(symbolAbsoluteCorrelationGain)
-	bestLagCorrelation, hasBestLagCorrelation := crossSection.Get(nmcorrelation.SymbolLagCorrelation)
-
-	if !hasLagSeconds || !hasGain || !hasBestLagCorrelation {
-		return nmtypes.Frame{}
-	}
-
-	input := nmtypes.Frame{}
-	loadPairHistory(&input, lagSecondsSeries, lagSeconds, at)
-	loadPairHistory(&input, gainSeries, gain, at)
-	loadPairHistory(&input, bestLagCorrelationSeries, bestLagCorrelation, at)
-
-	return ticker.pairHistory.Step(symbol, input)
-}
-
-func loadPairHistory(
-	input *nmtypes.Frame,
-	series temporal.Series,
-	value float64,
-	at time.Time,
+func putMetric(
+	measurement *data.Measurement[float64],
+	label string,
+	raw nmtypes.Number,
+	unit data.Unit,
+	timescale data.Timescale,
 ) {
-	input.Put(series.ValueSymbol, value)
-	input.Put(series.SecSymbol, float64(at.Unix()))
-	input.Put(series.NsecSymbol, float64(at.Nanosecond()))
-}
-
-/*
-label names the measurement with its measured symbol. The focal symbol is the
-stable channel key and graph evidence identity; peer provenance is carried by the
-lag/support metrics (sample_count, search_count, overlap_pair_count) so a
-lag-search measurement never mints a bogus thesis symbol per peer-set
-permutation (which would also explode the measurement lane space and orphan
-evidence on every universe change).
-*/
-func (ticker *Ticker) label(symbol string) string {
-	return symbol
-}
-
-/*
-newLeadLagPair relocates the focal committed path into the "previous" series and
-the peer path into the "current" series, scans the cross-lag correlation surface,
-then derives the Fisher p-values for the selected best lag.
-*/
-func newLeadLagPair() func(focal *nmtypes.Frame, peer *nmtypes.Frame) nmtypes.Frame {
-	previous := temporal.NewSeries("previous")
-	current := temporal.NewSeries("current")
-	crossLag := nmcorrelation.CrossLag("previous", "current")
-
-	return func(focal *nmtypes.Frame, peer *nmtypes.Frame) nmtypes.Frame {
-		output := nmtypes.Frame{}
-		previous.CopyFrom(&output, focal)
-		current.CopyFrom(&output, peer)
-
-		crossLag(&output)
-
-		if ready, found := output.Get(nmcorrelation.SymbolLeadLagReady); !found || ready == 0 {
-			return output
-		}
-
-		// PValue reads the generic correlation/support/search-count slots; relocate
-		// CrossLag's best-lag facts into those coordinates before deriving p-values.
-		output.Put(nmcorrelation.SymbolCorrelation, output.MustGet(nmcorrelation.SymbolLagCorrelation))
-		output.Put(nmcorrelation.SymbolSupport, output.MustGet(nmcorrelation.SymbolEffectiveSupport))
-		output.Put(nmcorrelation.SymbolSearchCount, output.MustGet(nmcorrelation.SymbolLeadLagSearchCount))
-
-		nmcorrelation.PValue(&output)
-
-		return output
-	}
-}
-
-/*
-leadLagFinalize is the declarative scoring stage rescaling CrossLag's nanosecond
-lag quantities into seconds and deriving the absolute correlation gain
-(|best lag correlation| - |contemporaneous correlation|). Readiness gates the
-derivation so an unready search emits no derived slot instead of an error.
-*/
-func leadLagFinalize() nmtypes.Primitive {
-	predicate := nmtypes.Relay(nmcorrelation.SymbolLeadLagReady, logic.SymbolCondition)
-
-	whenTrue := nmtypes.Pipe(
-		nmtypes.Assign(symbolNanosPerSecond, 1e9),
-		nmtypes.Wire(
-			calculus.Negative,
-			nmtypes.In(nmcorrelation.SymbolBestLagNanos, calculus.PortX),
-			nmtypes.Out(calculus.PortResult, symbolNegBestLagNanos),
-		),
-		nmtypes.Wire(
-			calculus.Quotient,
-			nmtypes.In(symbolNegBestLagNanos, calculus.PortA),
-			nmtypes.In(symbolNanosPerSecond, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolBestLagSeconds),
-		),
-		nmtypes.Wire(
-			calculus.Quotient,
-			nmtypes.In(nmcorrelation.SymbolLagSearchResolution, calculus.PortA),
-			nmtypes.In(symbolNanosPerSecond, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolLagSearchResolutionSec),
-		),
-		nmtypes.Wire(
-			calculus.Quotient,
-			nmtypes.In(nmcorrelation.SymbolLagSearchSpan, calculus.PortA),
-			nmtypes.In(symbolNanosPerSecond, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolLagSearchSpanSeconds),
-		),
-		nmtypes.Wire(
-			calculus.Absolute,
-			nmtypes.In(nmcorrelation.SymbolLagCorrelation, calculus.PortX),
-			nmtypes.Out(calculus.PortResult, symbolAbsBestLagCorrelation),
-		),
-		nmtypes.Wire(
-			calculus.Absolute,
-			nmtypes.In(nmcorrelation.SymbolContempCorrelation, calculus.PortX),
-			nmtypes.Out(calculus.PortResult, symbolAbsContemporaneousCorrelation),
-		),
-		nmtypes.Wire(
-			calculus.Difference,
-			nmtypes.In(symbolAbsBestLagCorrelation, calculus.PortA),
-			nmtypes.In(symbolAbsContemporaneousCorrelation, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolAbsoluteCorrelationGain),
-		),
-	)
-
-	return logic.If(predicate, whenTrue, nil)
-}
-
-/*
-pairHistoryStage is the causal estimator chain for one namespaced pair-metric
-series: retain the value, evaluate it against the previous baseline, then update
-the baseline, then difference for velocity.
-*/
-func pairHistoryStage(prefix string) nmtypes.Primitive {
-	return nmtypes.Pipe(
-		temporal.Window(prefix),
-		statistic.ZScore(prefix),
-		statistic.Baseline(prefix),
-		statistic.Velocity(prefix),
-	)
+	measurement.PutMetric(data.Metric[float64]{
+		Label:     label,
+		Raw:       float64(raw),
+		Unit:      unit,
+		Timescale: timescale,
+	})
 }

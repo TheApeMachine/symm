@@ -12,10 +12,10 @@ import (
 
 /* Issuer owns the identity and lifecycle sequence of one Advisor's claims. */
 type Issuer struct {
-	name     nmtypes.Symbol
+	name     string
 	features []*Feature
 	groups   []vector.Group
-	clock    nmtypes.Symbol
+	clock    string
 	rounds   map[string]uint64
 	sequence uint64
 }
@@ -24,10 +24,10 @@ func newIssuer(
 	name string,
 	features []*Feature,
 	groups []vector.Group,
-	clock nmtypes.Symbol,
+	clock string,
 ) *Issuer {
 	return &Issuer{
-		name:     nmtypes.MustIntern(name),
+		name:     name,
 		features: slices.Clone(features),
 		groups:   groups,
 		clock:    clock,
@@ -37,9 +37,7 @@ func newIssuer(
 
 /* Name returns the stable declared Advisor identity. */
 func (issuer *Issuer) Name() string {
-	name, _ := nmtypes.SymbolName(issuer.name)
-
-	return name
+	return issuer.name
 }
 
 func envelopeAt(envelope *types.Envelope) time.Time {
@@ -62,11 +60,9 @@ func envelopeAt(envelope *types.Envelope) time.Time {
 /* Issue emits one falsifiable round when the distribution has a unique lean. */
 func (issuer *Issuer) Issue(
 	envelope *types.Envelope,
-	frame nmtypes.Frame,
+	distribution vector.Reading,
 	coordinate uint64,
 ) error {
-	distribution := vector.Unpack(frame, issuer.groups)
-
 	if !distribution.Ready || distribution.Sharpness <= 0 {
 		return nil
 	}

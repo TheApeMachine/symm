@@ -295,9 +295,9 @@ func (room *WarRoom) admit(
 			continue
 		}
 
-		name, found := nmtypes.SymbolName(perspective.Advisor)
+		name := perspective.Advisor
 
-		if !found {
+		if name == "" {
 			continue
 		}
 

@@ -62,4 +62,3 @@ func TestCoefficientSNR(t *testing.T) {
 		})
 	})
 }
-

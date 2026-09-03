@@ -81,7 +81,7 @@ func (eq *AdaptiveZScore) Step(x types.Scalar) types.Scalar {
 }
 
 // Accessors for multi-metric projection (0 allocs)
-func (eq *AdaptiveZScore) HasPrior() bool          { return eq.hasPrior }
+func (eq *AdaptiveZScore) HasPrior() bool           { return eq.hasPrior }
 func (eq *AdaptiveZScore) ZScore() types.Scalar     { return eq.lastZ }
 func (eq *AdaptiveZScore) Baseline() types.Scalar   { return eq.lastBaseline }
 func (eq *AdaptiveZScore) Ratio() types.Scalar      { return eq.lastRatio }

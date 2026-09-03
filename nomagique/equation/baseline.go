@@ -62,15 +62,26 @@ func (eq *CausalResidual) Step(x types.Scalar) types.Scalar {
 
 // Auxiliary readings are zero-cost field accesses:
 func (eq *CausalResidual) HasPrior() bool         { return eq.hasPrior }
-func (eq *CausalResidual) Mean() types.Scalar      { return types.Scalar(eq.welford.Mean()) }
-func (eq *CausalResidual) Baseline() types.Scalar  { return eq.lastPriorMean }
-func (eq *CausalResidual) Residual() types.Scalar  { return eq.lastResidual }
-func (eq *CausalResidual) ZScore() types.Scalar    { return eq.lastZScore }
-func (eq *CausalResidual) Maturity() types.Scalar  { return eq.lastMaturity }
+func (eq *CausalResidual) Mean() types.Scalar     { return types.Scalar(eq.welford.Mean()) }
+func (eq *CausalResidual) Baseline() types.Scalar { return eq.lastPriorMean }
+func (eq *CausalResidual) Residual() types.Scalar { return eq.lastResidual }
+func (eq *CausalResidual) ZScore() types.Scalar   { return eq.lastZScore }
+func (eq *CausalResidual) Maturity() types.Scalar { return eq.lastMaturity }
 func (eq *CausalResidual) Dispersion() types.Scalar {
 	return types.Scalar(eq.welford.Dispersion())
 }
 func (eq *CausalResidual) Count() float64 { return eq.welford.Count() }
+
+/*
+NoiseVariance returns the residual noise power the ZScore normalizes by: the
+dispersion before the square root. A consumer derives the scalar SNR from it
+without re-deriving the estimator's own noise model.
+*/
+func (eq *CausalResidual) NoiseVariance() types.Scalar {
+	dispersion := eq.Dispersion()
+
+	return dispersion * dispersion
+}
 
 // CausalBaseline is an alias for CausalResidual adhering to the monomorphic equation contract.
 type CausalBaseline = CausalResidual

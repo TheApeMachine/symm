@@ -20,4 +20,3 @@ func TestMeasurementRetainsBoundaryMetadata(t *testing.T) {
 		t.Fatal("missing metric should be reported")
 	}
 }
-

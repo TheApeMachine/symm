@@ -38,6 +38,15 @@ func (standardizer *Standardizer) Step(number types.Number) types.Number {
 	return standardizer.lastZ
 }
 
+/*
+ZScore returns the most recent standardized deviation without advancing the
+estimator, so a consumer reads the score the last Step produced rather than
+stepping again and folding the same observation in twice.
+*/
+func (standardizer *Standardizer) ZScore() types.Number {
+	return standardizer.lastZ
+}
+
 func (standardizer *Standardizer) Mean() float64 {
 	if standardizer.Engine != nil {
 		return standardizer.Engine.Mean()

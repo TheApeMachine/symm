@@ -42,12 +42,12 @@ type AggregateView struct {
 }
 
 type aggregateEstimator struct {
-	baseline  float64
-	energy    float64
-	lastValue float64
-	lastAt    float64
+	baseline     float64
+	energy       float64
+	lastValue    float64
+	lastAt       float64
 	observations int
-	hasValue  bool
+	hasValue     bool
 }
 
 /*
@@ -58,7 +58,7 @@ per-aggregate causal estimator views. Interpretation (breadth, leadership,
 returns) belongs to the consumer, never to this container.
 */
 type Snapshot struct {
-	At   time.Time
+	At    time.Time
 	Count int
 	// TotalMembers counts every key that has ever contributed an observation.
 	TotalMembers int
@@ -75,16 +75,16 @@ type Snapshot struct {
 	Iqr            float64
 	Rms            float64
 	// Extremes by magnitude.
-	ExtremeKey           string
-	ExtremeMagnitude     float64
-	ExtremeSigned        float64
-	ExtremeSecond        float64
-	ExtremeTieCount      int
-	SumMagnitude         float64
+	ExtremeKey       string
+	ExtremeMagnitude float64
+	ExtremeSigned    float64
+	ExtremeSecond    float64
+	ExtremeTieCount  int
+	SumMagnitude     float64
 	// Ages in seconds since the observation time.
-	MaxAge       float64
-	MeanAge      float64
-	MedianAge    float64
+	MaxAge        float64
+	MeanAge       float64
+	MedianAge     float64
 	MedianFromAge float64
 	// Focal-relative comparisons, populated for the focal key when one is set.
 	SameDirectionCount     int

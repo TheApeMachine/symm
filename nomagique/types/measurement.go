@@ -18,25 +18,25 @@ Provenance contract (set correctly at emit; never rewritten downstream):
     these timestamps are not inferred from the local interval downstream.
 */
 type Measurement struct {
-	ID               string                      `json:"id"`
-	Source           string                      `json:"source"`
-	Symbol           string                      `json:"symbol"`
-	Tick             int64                       `json:"tick,omitempty"`
-	Peer             string                      `json:"peer,omitempty"`
-	At               time.Time                   `json:"at"`
-	ObservedFrom     time.Time                   `json:"observedFrom,omitempty"`
-	Horizon          time.Duration               `json:"horizon,omitempty"`
-	PeerAt           time.Time                   `json:"peerAt,omitempty"`
-	PeerObservedFrom time.Time                   `json:"peerObservedFrom,omitempty"`
-	Maturity         float64                     `json:"maturity"`
-	SNR              float64                     `json:"snr"`
+	ID               string        `json:"id"`
+	Source           string        `json:"source"`
+	Symbol           string        `json:"symbol"`
+	Tick             int64         `json:"tick,omitempty"`
+	Peer             string        `json:"peer,omitempty"`
+	At               time.Time     `json:"at"`
+	ObservedFrom     time.Time     `json:"observedFrom,omitempty"`
+	Horizon          time.Duration `json:"horizon,omitempty"`
+	PeerAt           time.Time     `json:"peerAt,omitempty"`
+	PeerObservedFrom time.Time     `json:"peerObservedFrom,omitempty"`
+	Maturity         float64       `json:"maturity"`
+	SNR              float64       `json:"snr"`
 	// SNRDefined distinguishes a measured SNR (including a genuine zero
 	// departure) from an undefined SNR where no noise model was estimable.
 	// Undefined is not zero.
-	SNRDefined bool                         `json:"snrDefined"`
-	Metrics    map[string]*Metric[float64]  `json:"metrics,omitempty"`
-	Metadata   map[string]float64           `json:"metadata,omitempty"`
-	Err        error                        `json:"-"`
+	SNRDefined bool                        `json:"snrDefined"`
+	Metrics    map[string]*Metric[float64] `json:"metrics,omitempty"`
+	Metadata   map[string]float64          `json:"metadata,omitempty"`
+	Err        error                       `json:"-"`
 }
 
 func NewMeasurement(id string, source string, at int64, from int64) *Measurement {
@@ -76,7 +76,6 @@ func (measurement *Measurement) AddMetrics(metrics ...*Metric[float64]) *Measure
 
 	return measurement
 }
-
 
 func (measurement *Measurement) Metric(name string) *Metric[float64] {
 	metric, found := measurement.Metrics[name]

@@ -14,13 +14,13 @@ This is a pure v2 equation: zero Frame, zero Symbol, zero MustIntern.
 */
 type LocalRegression struct {
 	// Online sufficient statistics for OLS: slope = S_xy / S_xx
-	sumX   float64 // sum of elapsed-seconds
-	sumY   float64 // sum of values
-	sumXX  float64 // sum of (elapsed)^2
-	sumXY  float64 // sum of (elapsed * value)
-	sumYY  float64 // sum of value^2
-	count  float64
-	origin int64 // first timestamp in nanoseconds
+	sumX      float64 // sum of elapsed-seconds
+	sumY      float64 // sum of values
+	sumXX     float64 // sum of (elapsed)^2
+	sumXY     float64 // sum of (elapsed * value)
+	sumYY     float64 // sum of value^2
+	count     float64
+	origin    int64 // first timestamp in nanoseconds
 	hasOrigin bool
 }
 

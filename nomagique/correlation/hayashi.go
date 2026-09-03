@@ -3,258 +3,263 @@ package correlation
 import (
 	"math"
 
-	"github.com/theapemachine/symm/nomagique/temporal"
+	"github.com/theapemachine/symm/nomagique/statistic"
 	"github.com/theapemachine/symm/nomagique/types"
 )
 
-var (
-	SymbolCorrelation   = types.MustIntern("correlation")
-	SymbolCovariance    = types.MustIntern("covariance")
-	SymbolLeftVariance  = types.MustIntern("correlation/left_variance")
-	SymbolRightVariance = types.MustIntern("correlation/right_variance")
-	SymbolSupport       = types.MustIntern("support")
-	SymbolReady         = types.MustIntern("ready")
-	SymbolLeftShift     = types.MustIntern("correlation/left_shift_nanos")
-	SymbolLeftReturns   = types.MustIntern("correlation/left_return_count")
-	SymbolRightReturns  = types.MustIntern("correlation/right_return_count")
-	SymbolLeftFromNanos = types.MustIntern("correlation/left_from_nanos")
-	SymbolLeftToNanos   = types.MustIntern("correlation/left_to_nanos")
-	SymbolRightFromNanos = types.MustIntern("correlation/right_from_nanos")
-	SymbolRightToNanos  = types.MustIntern("correlation/right_to_nanos")
-	SymbolLeftEnergy    = types.MustIntern("correlation/left_energy_rate")
-	SymbolRightEnergy   = types.MustIntern("correlation/right_energy_rate")
-)
-
 /*
-Hayashi returns the primitive that evaluates two asynchronous path series —
-leftPrefix and rightPrefix in one Frame — over every overlapping return
-interval, without resampling either path onto an invented clock. Neither
-projection is mutated.
+Hayashi is the Hayashi-Yoshida (2005) asynchronous covariance primitive.
+Every pair of return intervals that overlap in time contributes their
+product; neither path is resampled onto an invented clock.
+
+Left and Right are the two path slots. Shift offsets the Left path in
+nanoseconds, so a lag search reuses one Hayashi across every candidate.
+
+Step returns the correlation. The covariance, per-side variances, overlap
+support and timestamp bounds are exposed as zero-cost accessors per the
+multi-output Equation Encapsulation rule.
+
+Degenerate behavior: an omitted path slot yields 0 — no path, no dependence.
 */
-func Hayashi(leftPrefix string, rightPrefix string) types.Primitive {
-	leftSeries := temporal.NewSeries(leftPrefix)
-	rightSeries := temporal.NewSeries(rightPrefix)
+type Hayashi struct {
+	Left  *Path
+	Right *Path
+	Shift types.Node
 
-	return func(input *types.Frame) {
-		shiftValue, hasShift := input.Get(SymbolLeftShift)
+	leftReturns  []Interval
+	rightReturns []Interval
+	energies     []types.Number
 
-		if hasShift && shiftValue != math.Trunc(shiftValue) {
-			input.Err = correlationError(
-				"left shift must contain integral nanoseconds",
-			)
-
-			return
-		}
-
-		left, leftCount := seriesPoints(leftSeries, input)
-		right, rightCount := seriesPoints(rightSeries, input)
-		leftReturns, leftReturnCount, leftVariance := seriesReturns(&left, leftCount)
-		rightReturns, rightReturnCount, rightVariance := seriesReturns(&right, rightCount)
-
-		correlation, covariance, leftVariance, rightVariance, support, ready :=
-			hayashiPoints(&leftReturns, leftReturnCount, leftVariance, &rightReturns, rightReturnCount, rightVariance, int64(shiftValue))
-
-		input.Put(SymbolCorrelation, correlation)
-		input.Put(SymbolCovariance, covariance)
-		input.Put(SymbolLeftVariance, leftVariance)
-		input.Put(SymbolRightVariance, rightVariance)
-		input.Put(SymbolSupport, float64(support))
-		input.Put(SymbolReady, truth(ready))
-
-		if leftCount > 1 {
-			input.Put(SymbolLeftReturns, float64(leftCount-1))
-			input.Put(SymbolLeftFromNanos, float64(left[0].timestamp))
-			input.Put(SymbolLeftToNanos, float64(left[leftCount-1].timestamp))
-			input.Put(SymbolLeftEnergy, pathEnergyRate(&left, leftCount))
-		}
-
-		if rightCount > 1 {
-			input.Put(SymbolRightReturns, float64(rightCount-1))
-			input.Put(SymbolRightFromNanos, float64(right[0].timestamp))
-			input.Put(SymbolRightToNanos, float64(right[rightCount-1].timestamp))
-			input.Put(SymbolRightEnergy, pathEnergyRate(&right, rightCount))
-		}
-	}
+	correlation   types.Number
+	covariance    types.Number
+	leftVariance  types.Number
+	rightVariance types.Number
+	support       int
+	ready         bool
 }
 
-type point struct {
-	timestamp int64
-	value     float64
-}
+func (hayashi *Hayashi) Step(x types.Number) types.Number {
+	hayashi.reset()
 
-func seriesPoints(
-	series temporal.Series,
-	path *types.Frame,
-) ([temporal.MaxPathSamples]point, int) {
-	points := [temporal.MaxPathSamples]point{}
-	count := series.Count(*path)
-
-	for index := 0; index < count; index++ {
-		timestamp, value, found := series.Sample(path, index)
-
-		if !found {
-			continue
-		}
-
-		points[index] = point{timestamp: timestamp, value: value}
-	}
-
-	return points, count
-}
-
-type returnInterval struct {
-	from int64
-	to   int64
-	val  float64
-}
-
-func seriesReturns(points *[temporal.MaxPathSamples]point, count int) ([temporal.MaxPathSamples]returnInterval, int, float64) {
-	returns := [temporal.MaxPathSamples]returnInterval{}
-	returnCount := 0
-	variance := 0.0
-
-	for index := 1; index < count; index++ {
-		previous := points[index-1]
-		current := points[index]
-
-		if previous.timestamp >= current.timestamp ||
-			previous.value <= 0 || current.value <= 0 {
-			continue
-		}
-
-		val := math.Log(current.value / previous.value)
-		returns[returnCount] = returnInterval{
-			from: previous.timestamp,
-			to:   current.timestamp,
-			val:  val,
-		}
-		returnCount++
-		variance += val * val
-	}
-
-	return returns, returnCount, variance
-}
-
-
-
-/*
-pathEnergyRate returns the median interval-normalized log-return energy of one
-path: the median of r²/Δt over its valid return intervals. It is the robust
-typical return-energy rate the path contributes to a pair.
-*/
-func pathEnergyRate(points *[temporal.MaxPathSamples]point, count int) float64 {
-	rates := [temporal.MaxPathSamples]float64{}
-	rateCount := 0
-
-	for index := 1; index < count; index++ {
-		previous := points[index-1]
-		current := points[index]
-
-		if previous.timestamp >= current.timestamp ||
-			previous.value <= 0 || current.value <= 0 {
-			continue
-		}
-
-		returnValue := math.Log(current.value / previous.value)
-		elapsed := float64(current.timestamp-previous.timestamp) / 1e9
-
-		if elapsed <= 0 {
-			continue
-		}
-
-		rates[rateCount] = returnValue * returnValue / elapsed
-		rateCount++
-	}
-
-	if rateCount == 0 {
+	if hayashi.Left == nil || hayashi.Right == nil {
 		return 0
 	}
 
-	for index := 1; index < rateCount; index++ {
-		value := rates[index]
-		position := index
+	hayashi.leftReturns = hayashi.Left.Returns(hayashi.leftReturns)
+	hayashi.rightReturns = hayashi.Right.Returns(hayashi.rightReturns)
 
-		for position > 0 && rates[position-1] > value {
-			rates[position] = rates[position-1]
-			position--
-		}
+	hayashi.leftVariance = energyOf(hayashi.leftReturns)
+	hayashi.rightVariance = energyOf(hayashi.rightReturns)
 
-		rates[position] = value
+	var shift int64
+
+	if hayashi.Shift != nil {
+		shift = int64(hayashi.Shift.Step(x))
 	}
 
-	middle := rateCount / 2
+	hayashi.accumulate(shift)
 
-	if rateCount%2 == 0 {
-		return (rates[middle-1] + rates[middle]) / 2
+	if hayashi.support == 0 ||
+		hayashi.leftVariance <= 0 || hayashi.rightVariance <= 0 {
+		return 0
 	}
 
-	return rates[middle]
+	scale := math.Sqrt(float64(hayashi.leftVariance * hayashi.rightVariance))
+
+	if scale <= 0 {
+		return 0
+	}
+
+	correlation := float64(hayashi.covariance) / scale
+
+	if math.IsNaN(correlation) || math.IsInf(correlation, 0) {
+		return 0
+	}
+
+	// The cumulative estimator is not guaranteed to land inside [-1, 1] on a
+	// finite asynchronous sample; saturate rather than emit an impossible
+	// correlation.
+	hayashi.correlation = types.Number(math.Max(-1, math.Min(1, correlation)))
+	hayashi.ready = true
+
+	return hayashi.correlation
 }
 
-func hayashiPoints(
-	left *[temporal.MaxPathSamples]returnInterval,
-	leftCount int,
-	leftVariance float64,
-	right *[temporal.MaxPathSamples]returnInterval,
-	rightCount int,
-	rightVariance float64,
-	leftShift int64,
-) (float64, float64, float64, float64, int, bool) {
-	covariance := 0.0
-	support := 0
+/*
+accumulate sums the products of every overlapping pair of return intervals.
+Both sides ascend in time, so the right-hand scan resumes from the first
+interval that could still overlap rather than restarting.
+*/
+func (hayashi *Hayashi) accumulate(shift int64) {
 	rightStart := 0
 
-	for leftIndex := 0; leftIndex < leftCount; leftIndex++ {
-		leftInterval := left[leftIndex]
-		leftFrom := leftInterval.from + leftShift
-		leftTo := leftInterval.to + leftShift
+	for _, left := range hayashi.leftReturns {
+		from := left.From + shift
+		to := left.To + shift
 
-		for rightStart < rightCount {
-			if leftFrom >= right[rightStart].to {
-				rightStart++
-				continue
-			}
-			break
+		for rightStart < len(hayashi.rightReturns) &&
+			from >= hayashi.rightReturns[rightStart].To {
+			rightStart++
 		}
 
-		for rightIndex := rightStart; rightIndex < rightCount; rightIndex++ {
-			rightInterval := right[rightIndex]
+		for index := rightStart; index < len(hayashi.rightReturns); index++ {
+			right := hayashi.rightReturns[index]
 
-			if rightInterval.from >= leftTo {
+			if right.From >= to {
 				break
 			}
 
-			covariance += leftInterval.val * rightInterval.val
-			support++
+			hayashi.covariance += left.Value * right.Value
+			hayashi.support++
 		}
 	}
+}
 
-	if support == 0 || leftVariance <= 0 || rightVariance <= 0 {
-		return 0, covariance, leftVariance, rightVariance, support, false
+func (hayashi *Hayashi) reset() {
+	hayashi.correlation = 0
+	hayashi.covariance = 0
+	hayashi.leftVariance = 0
+	hayashi.rightVariance = 0
+	hayashi.support = 0
+	hayashi.ready = false
+}
+
+// Ready reports whether the last step produced a defined correlation.
+func (hayashi *Hayashi) Ready() bool { return hayashi.ready }
+
+// Correlation returns the last estimated correlation.
+func (hayashi *Hayashi) Correlation() types.Number { return hayashi.correlation }
+
+// Covariance returns the accumulated cumulative covariance.
+func (hayashi *Hayashi) Covariance() types.Number { return hayashi.covariance }
+
+// LeftVariance returns the total return energy of the Left path.
+func (hayashi *Hayashi) LeftVariance() types.Number { return hayashi.leftVariance }
+
+// RightVariance returns the total return energy of the Right path.
+func (hayashi *Hayashi) RightVariance() types.Number { return hayashi.rightVariance }
+
+// Support returns the count of overlapping return-interval pairs.
+func (hayashi *Hayashi) Support() types.Number { return types.Number(hayashi.support) }
+
+// LeftReturns returns the count of valid Left return intervals.
+func (hayashi *Hayashi) LeftReturns() types.Number {
+	return types.Number(len(hayashi.leftReturns))
+}
+
+// RightReturns returns the count of valid Right return intervals.
+func (hayashi *Hayashi) RightReturns() types.Number {
+	return types.Number(len(hayashi.rightReturns))
+}
+
+/*
+LeftEnergyRate returns the median interval-normalized return energy of the
+Left path: its typical return energy per second, robust to a single
+outlying interval.
+*/
+func (hayashi *Hayashi) LeftEnergyRate() types.Number {
+	if hayashi.Left == nil {
+		return 0
 	}
 
-	correlation := covariance / math.Sqrt(leftVariance*rightVariance)
-	correlation = math.Max(-1, math.Min(1, correlation))
+	hayashi.energies = hayashi.Left.Energies(hayashi.energies)
 
-	return correlation, covariance, leftVariance, rightVariance, support, true
+	return statistic.MedianReduction(hayashi.energies)
 }
 
-func truth(value bool) float64 {
-	if value {
-		return 1
+// RightEnergyRate returns the median interval-normalized energy of the Right path.
+func (hayashi *Hayashi) RightEnergyRate() types.Number {
+	if hayashi.Right == nil {
+		return 0
 	}
 
-	return 0
+	hayashi.energies = hayashi.Right.Energies(hayashi.energies)
+
+	return statistic.MedianReduction(hayashi.energies)
 }
 
-func correlationError(message string) error {
-	return &hayashiError{message: message}
+/*
+SharedTime returns the seconds during which both paths were observed: the
+intersection of their timestamp spans, floored at zero when they never
+coexisted.
+*/
+func (hayashi *Hayashi) SharedTime() types.Number {
+	if hayashi.Left == nil || hayashi.Right == nil {
+		return 0
+	}
+
+	leftFrom, leftTo, hasLeft := hayashi.Left.Span()
+	rightFrom, rightTo, hasRight := hayashi.Right.Span()
+
+	if !hasLeft || !hasRight {
+		return 0
+	}
+
+	overlap := float64(minimum(leftTo, rightTo) - maximum(leftFrom, rightFrom))
+
+	if overlap <= 0 {
+		return 0
+	}
+
+	return types.Number(overlap / NanosPerSecond)
 }
 
-type hayashiError struct {
-	message string
+/*
+OverlapDensity returns the overlapping return pairs per second of shared
+time: how densely the two paths co-sampled, as opposed to how long they
+merely coexisted.
+*/
+func (hayashi *Hayashi) OverlapDensity() types.Number {
+	shared := hayashi.SharedTime()
+
+	if shared <= 0 {
+		return 0
+	}
+
+	return hayashi.Support() / shared
 }
 
-func (err *hayashiError) Error() string {
-	return "correlation: hayashi " + err.message
+/*
+energyOf folds return intervals into their total squared energy — the
+unnormalized variance the correlation denominator is built from.
+*/
+func energyOf(intervals []Interval) types.Number {
+	var energy types.Number
+
+	for _, interval := range intervals {
+		energy += interval.Value * interval.Value
+	}
+
+	return energy
+}
+
+func minimum(a int64, b int64) int64 {
+	if a < b {
+		return a
+	}
+
+	return b
+}
+
+func maximum(a int64, b int64) int64 {
+	if a > b {
+		return a
+	}
+
+	return b
+}
+
+var _ types.Node = (*Hayashi)(nil)
+
+/*
+SupportSlot exposes this Hayashi's overlap support as a node, so a downstream
+stage reads it as a slot inside one composition rather than the caller
+shuttling the value between stages.
+*/
+func (hayashi *Hayashi) SupportSlot() types.Node { return supportSlot{hayashi} }
+
+type supportSlot struct{ hayashi *Hayashi }
+
+func (slot supportSlot) Step(types.Number) types.Number {
+	return slot.hayashi.Support()
 }

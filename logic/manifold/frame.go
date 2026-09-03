@@ -1,11 +1,12 @@
 package manifold
 
 import (
-	"math"
 	"sync"
 
-	"github.com/theapemachine/symm/nomagique/adaptive"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/equation"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
@@ -15,21 +16,54 @@ deviation on every axis and places it at the origin, which is how thousands of
 distinct orders end up stacked on one coordinate. The frame that places an order
 therefore has to be resident, not derived from the message.
 
-These are the retained slots for one symbol: a Standardizer over log price and
-another over log quantity. Each observation is scored against the moments the
+frame is one symbol's resident coordinate system: a standardizer over log price
+and another over log quantity, each composed with the squash that places its
+deviation on a domain axis. Every observation is scored against the moments the
 symbol has already shown and then folds itself into them, so the projector never
 waits out a warmup — the first order is placed at the centre it defines, and the
 frame sharpens from there.
 */
-var (
-	priceValue = types.MustIntern("manifold/frame/price/value")
-	priceScore = types.MustIntern("manifold/frame/price/z/value")
-	sizeValue  = types.MustIntern("manifold/frame/size/value")
-	sizeScore  = types.MustIntern("manifold/frame/size/z/value")
+type frame struct {
+	price    equation.CausalResidual
+	quantity equation.CausalResidual
 
-	standardizePrice = adaptive.Standardizer("manifold/frame/price")
-	standardizeSize  = adaptive.Standardizer("manifold/frame/size")
-)
+	priceAxis    nomagique.Pipeline
+	quantityAxis nomagique.Pipeline
+}
+
+/*
+newFrame composes one symbol's two axes.
+
+Each axis is a Chain: CausalResidual scores the observation against the
+moments the symbol showed BEFORE it — a standardizer that folded the current
+observation into its own scale would read a burst of near-identical prices as
+near-zero dispersion and blow the score up — and UnitAxis squashes that
+deviation onto the domain.
+
+The domain is periodic — position_to_cell wraps a coordinate into [0, grid) —
+so a raw z-score, which is unbounded and routinely several times the domain's
+extent, folds back onto the faces and stacks particles into walls. The squash
+keeps every order strictly inside the domain while preserving its ordering and
+its distance from the centre, so dispersion reads as real spatial spread rather
+than as wrapping.
+*/
+func newFrame() *frame {
+	built := &frame{}
+
+	span := calculus.Constant{Value: frameAxisSpan}
+
+	built.priceAxis = *nomagique.Number(&nomagique.Chain{
+		A: &built.price,
+		B: &calculus.UnitAxis{Span: span},
+	})
+
+	built.quantityAxis = *nomagique.Number(&nomagique.Chain{
+		A: &built.quantity,
+		B: &calculus.UnitAxis{Span: span},
+	})
+
+	return built
+}
 
 /*
 frames holds one resident frame per symbol. Level3 arrives for the whole
@@ -38,24 +72,17 @@ themselves are only ever touched by the projector holding that lock.
 */
 type frames struct {
 	mu       sync.Mutex
-	bySymbol map[string]*types.Frame
+	bySymbol map[string]*frame
 }
 
 func newFrames() *frames {
-	return &frames{bySymbol: make(map[string]*types.Frame)}
+	return &frames{bySymbol: make(map[string]*frame)}
 }
 
 /*
 place scores one order against its symbol's resident frame and returns the
 position it occupies on the domain's price and quantity axes, along with the
 signed price deviation the oscillator's frequency is derived from.
-
-The domain is periodic — position_to_cell wraps a coordinate into [0, grid) — so
-a raw z-score, which is unbounded and routinely several times the domain's
-extent, folds back onto the faces and stacks particles into walls. Squashing the
-score through tanh keeps every order strictly inside the domain while preserving
-its ordering and its distance from the frame's centre, so dispersion reads as
-real spatial spread rather than as wrapping.
 */
 func (registry *frames) place(
 	symbol string,
@@ -90,34 +117,21 @@ func (registry *frames) score(
 	resident, seen := registry.bySymbol[symbol]
 
 	if !seen {
-		resident = &types.Frame{}
+		resident = newFrame()
 		registry.bySymbol[symbol] = resident
 	}
 
-	resident.Put(priceValue, logPrice)
-	standardizePrice(resident)
-	priceDeviation, _ = resident.Get(priceScore)
+	// Each axis steps its standardizer exactly once; the deviation behind the
+	// placement is read back from that same step, never re-derived.
+	positionX = float64(resident.priceAxis.Step(nmtypes.Number(logPrice)))
+	priceDeviation = float64(resident.price.ZScore())
 
 	if !hasQuantity {
-		return unitAxis(priceDeviation), 0.5, priceDeviation, 0
+		return positionX, 0.5, priceDeviation, 0
 	}
 
-	resident.Put(sizeValue, logQuantity)
-	standardizeSize(resident)
-	quantityDeviation, _ = resident.Get(sizeScore)
+	positionY = float64(resident.quantityAxis.Step(nmtypes.Number(logQuantity)))
+	quantityDeviation = float64(resident.quantity.ZScore())
 
-	return unitAxis(priceDeviation),
-		unitAxis(quantityDeviation),
-		priceDeviation,
-		quantityDeviation
-}
-
-/*
-unitAxis squashes a signed deviation onto (0, 1), the extent of one domain axis,
-placing the frame's centre at the middle of the domain. frameAxisSpan is how
-many deviations span the axis before tanh saturates: beyond it orders still
-order correctly, they simply crowd toward the wall they are heading for.
-*/
-func unitAxis(deviation float64) float64 {
-	return 0.5 + 0.5*math.Tanh(deviation/frameAxisSpan)
+	return positionX, positionY, priceDeviation, quantityDeviation
 }

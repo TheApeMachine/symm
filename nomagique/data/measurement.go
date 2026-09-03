@@ -18,14 +18,14 @@ from the measurement's own estimator facts, so no later step can fake or
 reward-hack them by writing the fields directly.
 */
 type Measurement[Value any] struct {
-	ID         string                   `json:"id"`
-	Label      string                   `json:"label"`
-	Source     string                   `json:"source"`
-	SeqIdx     int64                    `json:"seqIdx"`
-	At         time.Time                `json:"at"`
-	From       time.Time                `json:"from,omitempty"`
-	Maturity   float64                  `json:"maturity"`
-	SNR        float64                  `json:"snr"`
+	ID       string    `json:"id"`
+	Label    string    `json:"label"`
+	Source   string    `json:"source"`
+	SeqIdx   int64     `json:"seqIdx"`
+	At       time.Time `json:"at"`
+	From     time.Time `json:"from,omitempty"`
+	Maturity float64   `json:"maturity"`
+	SNR      float64   `json:"snr"`
 	// SNRDefined distinguishes a measured SNR (including a genuine zero
 	// departure) from an undefined SNR where no noise model was estimable.
 	SNRDefined bool                     `json:"snrDefined"`

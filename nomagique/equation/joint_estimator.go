@@ -18,12 +18,12 @@ This is a pure v2 equation: zero Frame, zero Symbol, zero MustIntern. All state
 is value-embedded in the struct.
 */
 type JointEstimator struct {
-	engines      [3]adaptive.WelfordEngine
-	lastValues   [3]float64
-	priorMeans   [3]float64
-	priorDisps   [3]float64
-	count        float64
-	horizon      int64
+	engines    [3]adaptive.WelfordEngine
+	lastValues [3]float64
+	priorMeans [3]float64
+	priorDisps [3]float64
+	count      float64
+	horizon    int64
 }
 
 func (joint *JointEstimator) HasMean() bool {

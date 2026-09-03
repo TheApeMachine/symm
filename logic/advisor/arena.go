@@ -13,7 +13,7 @@ or market-clock expiry resolves them. Only supported Perspectives reach Node.
 */
 type Arena struct {
 	node    runtime.Node[*types.Envelope]
-	advisor nmtypes.Symbol
+	advisor string
 	name    string
 	classes map[types.PerspectiveState]*Class
 	active  map[string]map[types.PerspectiveKey]*arenaRound
@@ -73,7 +73,7 @@ func NewArena(
 
 	return &Arena{
 		node:     node,
-		advisor:  nmtypes.MustIntern(name),
+		advisor:  name,
 		name:     name,
 		classes:  classes,
 		active:   make(map[string]map[types.PerspectiveKey]*arenaRound),
@@ -239,7 +239,7 @@ func (arena *Arena) report(round *arenaRound, supported bool) {
 
 func (arena *Arena) admit(envelope *types.Envelope, perspective *types.Perspective) error {
 	if perspective.Lifecycle != types.PerspectiveIssued || perspective.Symbol == "" ||
-		perspective.Lease.Clock == 0 || perspective.Lease.Until <= perspective.Lease.From {
+		perspective.Lease.Clock == "" || perspective.Lease.Until <= perspective.Lease.From {
 		return errnie.Err(
 			errnie.UnprocessableContent,
 			"[advisor] Arena received an invalid issued Perspective",

@@ -2,489 +2,397 @@ package correlation
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/calculus"
 	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/statistic"
+	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
 
 /*
-Cohort output slots produced by the finalize scoring stage. The raw Cohort
-sufficient statistics are reduced into the README's non-interpretive cohort
-metrics: signed/absolute correlation, peer energy, relative return energy, and
-the shared-time/overlap-density support facts derived from Hayashi's timestamp
-bounds.
-*/
-var (
-	symbolCohortReady    = nmtypes.MustIntern("correlation/cohort_ready")
-	symbolCohortSigned   = nmtypes.MustIntern("correlation/cohort_signed_correlation")
-	symbolCohortAbsolute = nmtypes.MustIntern("correlation/cohort_absolute_correlation")
-	symbolPeerEnergy     = nmtypes.MustIntern("correlation/peer_return_energy")
-	symbolRelativeEnergy = nmtypes.MustIntern("correlation/relative_return_energy")
-	symbolSharedTime     = nmtypes.MustIntern("correlation/shared_time")
-	symbolOverlapDensity = nmtypes.MustIntern("correlation/overlap_density")
+Ticker is the per-symbol price-path entity.
 
-	symbolCohortSignedFisher  = nmtypes.MustIntern("correlation/cohort_signed_fisher")
-	symbolAbsSigned           = nmtypes.MustIntern("correlation/abs_signed")
-	symbolCorrelationBaseline = nmtypes.MustIntern("correlation/correlation_baseline")
-
-	// Finalize intermediates for shared_time/overlap_density and the Fisher
-	// transform, plus the tanh coordinate constants.
-	symbolNanosPerSecond  = nmtypes.MustIntern("correlation/nanos_per_second")
-	symbolZero            = nmtypes.MustIntern("correlation/zero")
-	symbolOne             = nmtypes.MustIntern("correlation/one")
-	symbolTwo             = nmtypes.MustIntern("correlation/two")
-	symbolMinToNanos      = nmtypes.MustIntern("correlation/min_to_nanos")
-	symbolMaxFromNanos    = nmtypes.MustIntern("correlation/max_from_nanos")
-	symbolOverlapNanos    = nmtypes.MustIntern("correlation/overlap_nanos")
-	symbolSharedTimeNanos = nmtypes.MustIntern("correlation/shared_time_nanos")
-
-	symbolTwoBaseline     = nmtypes.MustIntern("correlation/two_baseline")
-	symbolExpTwoBaseline  = nmtypes.MustIntern("correlation/exp_two_baseline")
-	symbolTanhNumerator   = nmtypes.MustIntern("correlation/tanh_numerator")
-	symbolTanhDenominator = nmtypes.MustIntern("correlation/tanh_denominator")
-)
-
-/*
-Pair-history series prefixes. Each holds one focal-level pair metric across
-ticks so the namespaced Baseline/ZScore/Velocity estimators can derive its
-causal history without touching the per-symbol price path.
-*/
-const (
-	prefixSignedCorrelation = "pair/signed_correlation"
-	prefixRelativeEnergy    = "pair/relative_energy"
-)
-
-var (
-	signedCorrelationSeries = temporal.NewSeries(prefixSignedCorrelation)
-	relativeEnergySeries    = temporal.NewSeries(prefixRelativeEnergy)
-
-	symbolCorrelationDivergence = nmtypes.MustIntern(temporal.JoinPrefix(prefixSignedCorrelation, "z/residual"))
-	symbolCorrelationZScore     = nmtypes.MustIntern(temporal.JoinPrefix(prefixSignedCorrelation, "z/value"))
-	symbolCorrelationVelocity   = nmtypes.MustIntern(temporal.JoinPrefix(prefixSignedCorrelation, "velocity/delta"))
-
-	symbolRelativeEnergyBaseline   = nmtypes.MustIntern(temporal.JoinPrefix(prefixRelativeEnergy, "baseline/value"))
-	symbolRelativeEnergyDivergence = nmtypes.MustIntern(temporal.JoinPrefix(prefixRelativeEnergy, "z/residual"))
-	symbolRelativeEnergyZScore     = nmtypes.MustIntern(temporal.JoinPrefix(prefixRelativeEnergy, "z/value"))
-	symbolRelativeEnergyVelocity   = nmtypes.MustIntern(temporal.JoinPrefix(prefixRelativeEnergy, "velocity/delta"))
-)
-
-/*
-Ticker is the per-symbol price-path entity. It owns the per-symbol path Number,
-the pair-history Number for focal-level causal estimators, one projector naming
-the output slots, and the once-built cross-sectional stages.
+It connects market data to one nomagique pipeline per focal symbol and names
+the readings that pipeline produces. It holds no mathematics and no estimator
+state of its own.
 */
 type Ticker struct {
-	number      *nomagique.KeyedNumber[string]
-	pairHistory *nomagique.KeyedNumber[string]
-	projector   *data.Projector
-	pair        func(focal *nmtypes.Frame, peer *nmtypes.Frame) nmtypes.Frame
-	reduce      nmtypes.Primitive
-	finalize    nmtypes.Primitive
+	mutex sync.Mutex
+
+	// paths is the retained observation store per symbol. Correlation is
+	// cross-sectional, so a focal symbol is measured against every other path.
+	paths map[string]*nmcorrelation.Path
+
+	// pipelines holds one composed pipeline per focal symbol, so each symbol's
+	// estimators accumulate their own history.
+	pipelines map[string]*pipeline
 }
 
 /*
-NewTicker constructs the Ticker entity: the per-symbol path pipeline, the
-pair-history pipeline, the projector, and the cross-sectional stages built
-exactly once.
+pipeline is one focal symbol's complete composition, declared once in
+newPipeline and stepped once per peer.
+*/
+type pipeline struct {
+	hayashi nmcorrelation.Hayashi
+	fisher  nmcorrelation.Fisher
+	cohort  nmcorrelation.Cohort
+
+	// The signed correlation's causal history lives in Fisher coordinates,
+	// where its dispersion is stationary; the baseline maps back into [-1, 1].
+	signedCorrelation nmcorrelation.FisherEstimator
+	relativeEnergy    equation.CausalResidual
+
+	correlationVelocity temporal.Velocity
+	energyVelocity      temporal.Velocity
+	eventClock          temporal.Clock
+
+	pairwise *nomagique.Pipeline
+	cohortal *nomagique.Pipeline
+}
+
+/*
+newPipeline declares one focal symbol's whole measurement as two
+compositions: one stepped per peer, one stepped once the cohort is complete.
+
+pairwise runs per peer:
+  - A estimates the asynchronous correlation against that peer.
+  - B tests its significance, reading support back out of the estimate.
+  - C folds the peer into the cross-sectional accumulator, weighted by the
+    overlap support it actually carried.
+
+cohortal runs once the peers are folded, advancing the causal estimators over
+the cohort's own readings. Every branch is a Tap, which returns 0, so the
+carrier passes through each Split uncorrupted (Law of Sinks).
+*/
+func newPipeline(focal *nmcorrelation.Path, peer *nmcorrelation.Path) *pipeline {
+	built := &pipeline{}
+
+	pair := &built.hayashi
+	pair.Left = focal
+	pair.Right = peer
+
+	built.fisher.Support = &nomagique.Tap{Read: pair.Support}
+
+	built.cohort.Support = &nomagique.Tap{Read: pair.Support}
+	built.cohort.PeerEnergy = &nomagique.Tap{Read: pair.RightEnergyRate}
+
+	cohort := &built.cohort
+
+	built.correlationVelocity.Source = &nomagique.Tap{Read: cohort.SignedCorrelation}
+	built.correlationVelocity.Clock = &built.eventClock
+	built.energyVelocity.Source = &nomagique.Tap{Read: built.relativeEnergyOf}
+	built.energyVelocity.Clock = &built.eventClock
+
+	built.pairwise = nomagique.Number(&nomagique.Chain{
+		A: pair,
+		B: &built.fisher,
+		C: &nomagique.Tap{Read: pair.Correlation, Into: cohort},
+	})
+
+	built.cohortal = nomagique.Number(&nomagique.Split{
+		A: &nomagique.Split{
+			A: &nomagique.Tap{
+				Read: cohort.SignedCorrelation,
+				Into: &built.signedCorrelation,
+			},
+			B: &nomagique.Tap{
+				Read: built.relativeEnergyOf,
+				Into: &built.relativeEnergy,
+			},
+		},
+		B: &nomagique.Split{
+			A: &built.correlationVelocity,
+			B: &built.energyVelocity,
+		},
+	})
+
+	return built
+}
+
+/*
+relativeEnergyOf reads the focal path's return energy as a multiple of its
+cohort's. The focal energy is the Hayashi stage's left-hand reading and the
+cohort supplies the peer average, so the ratio is read from the two nodes
+rather than tracked by the signal.
+*/
+func (built *pipeline) relativeEnergyOf() nmtypes.Number {
+	peerEnergy := built.cohort.PeerEnergyRate()
+
+	if peerEnergy <= 0 {
+		return 0
+	}
+
+	return built.hayashi.LeftEnergyRate() / peerEnergy
+}
+
+/*
+NewTicker constructs the Ticker entity.
 */
 func NewTicker() *Ticker {
 	return &Ticker{
-		number: nomagique.NewNumber[string](temporal.Path("")),
-		pairHistory: nomagique.NewNumber[string](nmtypes.Fork(
-			correlationHistoryStage(),
-			pairHistoryStage(prefixRelativeEnergy),
-		)),
-		projector: data.NewProjector(
-			data.Binding{From: temporal.DefaultSeries.ValueSymbol, Name: "last_price", Unit: data.UnitRate, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmtypes.SampleCount, Name: "observation_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolCohortSigned, Name: "signed_correlation", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolCohortAbsolute, Name: "absolute_correlation", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolCohortSigned, Name: "cohort_signed_correlation", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolCohortAbsolute, Name: "cohort_absolute_correlation", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolCovariance, Name: "covariance", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolRightVariance, Name: "return_energy:reference", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolLeftVariance, Name: "return_energy:measured", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolRightEnergy, Name: "return_energy_rate:reference", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolLeftEnergy, Name: "return_energy_rate:measured", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolRightEnergy, Name: "peer_return_energy_rate", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolLeftEnergy, Name: "focal_return_energy_rate", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolLeftReturns, Name: "supported_return_count:measured", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolRightReturns, Name: "supported_return_count:reference", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolSharedTime, Name: "shared_time", Unit: data.UnitSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolOverlapDensity, Name: "overlap_density", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolSupport, Name: "overlap_pair_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolSupport, Name: "effective_sample_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolPValue, Name: "correlation_p_value", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolFisherStandardErr, Name: "correlation_standard_error_fisher", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolPeerCount, Name: "cohort_peer_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolCohortDispersion, Name: "cohort_correlation_dispersion", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: nmcorrelation.SymbolEffectivePeers, Name: "cohort_effective_peer_count", Unit: data.UnitCount, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolRelativeEnergy, Name: "relative_return_energy", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolRelativeEnergy, Name: "relative_cohort_return_energy", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolCorrelationBaseline, Name: "correlation_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolCorrelationDivergence, Name: "correlation_divergence", Unit: data.UnitNat, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolCorrelationZScore, Name: "correlation_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolCorrelationVelocity, Name: "correlation_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolRelativeEnergyBaseline, Name: "relative_return_energy_baseline", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolRelativeEnergyDivergence, Name: "relative_return_energy_divergence", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolRelativeEnergyZScore, Name: "relative_return_energy_zscore", Unit: data.UnitDimensionless, Timescale: data.TimescaleInstantaneous},
-			data.Binding{From: symbolRelativeEnergyVelocity, Name: "relative_return_energy_velocity", Unit: data.UnitPerSecond, Timescale: data.TimescaleInstantaneous},
-		),
-		pair:     newCorrelationPair(),
-		reduce:   nmcorrelation.Cohort,
-		finalize: cohortFinalize(),
+		paths:     make(map[string]*nmcorrelation.Path),
+		pipelines: make(map[string]*pipeline),
 	}
 }
 
 /*
-Step receives one market data point, appends the price into the symbol's
-retained path, evaluates the cross-sectional cohort over every other committed
-path, advances the focal-level pair-history estimators, and projects exactly one
-Measurement. The per-symbol path facts are always projected; cohort and
-pair-history facts appear only once their estimators are ready. An explicit zero
-last means no recent trade price was observed: it produces an undefined,
-zero-support measurement without advancing the retained path.
+Step receives one market data point, records it into the symbol's retained
+path, steps that symbol's pipeline against every other observed path, and
+names exactly one Measurement from the readings the pipeline exposes.
+
+An explicit zero last means no recent trade price was observed: it produces
+an undefined, zero-support measurement without entering the path, so an
+untraded quote never becomes evidence.
 */
 func (ticker *Ticker) Step(tickerData kraken.TickerData) *data.Measurement[float64] {
 	if tickerData.Last == nil {
-		return &data.Measurement[float64]{Err: fmt.Errorf("correlation: ticker requires a last price")}
+		return &data.Measurement[float64]{Err: fmt.Errorf(
+			"correlation: ticker requires a last price",
+		)}
 	}
 
 	last := tickerData.Last.Float64()
 
 	if last < 0 {
-		return &data.Measurement[float64]{Err: fmt.Errorf("correlation: ticker last price must be non-negative")}
+		return &data.Measurement[float64]{Err: fmt.Errorf(
+			"correlation: ticker last price must be non-negative",
+		)}
 	}
 
-	if last == 0 {
-		projection := nmtypes.Frame{}
+	measurement := data.NewMeasurement[float64](
+		tickerData.Symbol+":correlation:"+tickerData.Timestamp.Format(time.RFC3339Nano),
+		tickerData.Symbol,
+		"correlation",
+		tickerData.Timestamp,
+		tickerData.Timestamp,
+	)
 
-		measurement := ticker.projector.Project(
-			ticker.label(tickerData.Symbol),
-			"correlation",
-			tickerData.Timestamp,
-			tickerData.Timestamp,
-			projection,
-		)
-		measurement.Metadata[data.MetadataSupport] = 0
-		measurement.Finalize()
+	if last == 0 {
+		measurement.Metadata = map[string]float64{data.MetadataSupport: 0}
 		measurement.Provenance = map[string]string{
 			"last_trade_price_state": "unobserved",
 		}
+		measurement.Finalize()
 
 		return measurement
 	}
 
-	input := nmtypes.Frame{}
-	input.Put(temporal.DefaultSeries.ValueSymbol, last)
-	input.Put(temporal.DefaultSeries.SecSymbol, float64(tickerData.Timestamp.Unix()))
-	input.Put(temporal.DefaultSeries.NsecSymbol, float64(tickerData.Timestamp.Nanosecond()))
+	ticker.mutex.Lock()
+	defer ticker.mutex.Unlock()
 
-	pathFrame := ticker.number.Step(tickerData.Symbol, input)
+	focal := ticker.pathFor(tickerData.Symbol)
 
-	crossSectionFrame, reduced, err := ticker.number.CrossSection(
-		tickerData.Symbol,
-		ticker.pair,
-		ticker.reduce,
-		ticker.finalize,
-	)
+	if !focal.Observe(tickerData.Timestamp.UnixNano(), nmtypes.Number(last)) {
+		measurement.Err = fmt.Errorf(
+			"correlation: ticker event time regressed for %s", tickerData.Symbol,
+		)
 
-	projection := pathFrame
-
-	if err == nil && reduced {
-		if ready, found := crossSectionFrame.Get(symbolCohortReady); found && ready != 0 {
-			pairHistory := ticker.stepPairHistory(tickerData.Symbol, tickerData.Timestamp, crossSectionFrame)
-
-			projection.Merge(&crossSectionFrame)
-			projection.Merge(&pairHistory)
-		}
+		return measurement
 	}
 
-	return ticker.projector.Project(
-		ticker.label(tickerData.Symbol),
-		"correlation",
-		tickerData.Timestamp,
-		tickerData.Timestamp,
-		projection,
-	)
+	putMetric(measurement, "last_price", nmtypes.Number(last),
+		data.UnitRate, data.TimescaleInstantaneous)
+	putMetric(measurement, "observation_count", nmtypes.Number(focal.Len()),
+		data.UnitCount, data.TimescaleInstantaneous)
+
+	built := ticker.step(tickerData.Symbol, focal, tickerData.Timestamp)
+
+	if built == nil || !built.cohort.Ready() {
+		measurement.Metadata = map[string]float64{data.MetadataSupport: 0}
+		measurement.Finalize()
+
+		return measurement
+	}
+
+	built.project(measurement)
+
+	if from, _, ok := focal.Span(); ok {
+		measurement.From = time.Unix(0, from)
+	}
+
+	measurement.Finalize()
+
+	return measurement
+}
+
+func (ticker *Ticker) pathFor(symbol string) *nmcorrelation.Path {
+	path, found := ticker.paths[symbol]
+
+	if !found {
+		path = &nmcorrelation.Path{}
+		ticker.paths[symbol] = path
+	}
+
+	return path
+}
+
+/*
+step folds every peer into the focal symbol's cross-sectional accumulator,
+then advances the cohort-level estimators once.
+*/
+func (ticker *Ticker) step(
+	symbol string,
+	focal *nmcorrelation.Path,
+	at time.Time,
+) *pipeline {
+	built, found := ticker.pipelines[symbol]
+
+	if !found {
+		built = newPipeline(focal, nil)
+		ticker.pipelines[symbol] = built
+	}
+
+	built.cohort.Reset()
+	built.eventClock.Observe(at)
+
+	folded := false
+
+	for peerSymbol, peer := range ticker.paths {
+		if peerSymbol == symbol {
+			continue
+		}
+
+		// The focal path is measured against each peer in turn; only the peer
+		// slot changes between steps.
+		built.hayashi.Right = peer
+		built.pairwise.Step(0)
+
+		folded = true
+	}
+
+	if !folded {
+		return nil
+	}
+
+	built.cohortal.Step(0)
+
+	return built
+}
+
+/*
+project names every reading the composition exposes. Each value is read from
+a node; the signal derives none of them.
+*/
+func (built *pipeline) project(measurement *data.Measurement[float64]) {
+	pair := &built.hayashi
+	cohort := &built.cohort
+
+	putMetric(measurement, "signed_correlation", cohort.SignedCorrelation(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "absolute_correlation", cohort.AbsoluteCorrelation(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "cohort_signed_correlation", cohort.SignedCorrelation(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "cohort_absolute_correlation", cohort.AbsoluteCorrelation(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+
+	putMetric(measurement, "covariance", pair.Covariance(),
+		data.UnitNat, data.TimescaleInstantaneous)
+	putMetric(measurement, "return_energy:reference", pair.RightVariance(),
+		data.UnitNat, data.TimescaleInstantaneous)
+	putMetric(measurement, "return_energy:measured", pair.LeftVariance(),
+		data.UnitNat, data.TimescaleInstantaneous)
+	putMetric(measurement, "return_energy_rate:reference", pair.RightEnergyRate(),
+		data.UnitPerSecond, data.TimescaleInstantaneous)
+	putMetric(measurement, "return_energy_rate:measured", pair.LeftEnergyRate(),
+		data.UnitPerSecond, data.TimescaleInstantaneous)
+	putMetric(measurement, "peer_return_energy_rate", cohort.PeerEnergyRate(),
+		data.UnitPerSecond, data.TimescaleInstantaneous)
+	putMetric(measurement, "focal_return_energy_rate", pair.LeftEnergyRate(),
+		data.UnitPerSecond, data.TimescaleInstantaneous)
+	putMetric(measurement, "supported_return_count:measured", pair.LeftReturns(),
+		data.UnitCount, data.TimescaleInstantaneous)
+	putMetric(measurement, "supported_return_count:reference", pair.RightReturns(),
+		data.UnitCount, data.TimescaleInstantaneous)
+
+	putMetric(measurement, "shared_time", pair.SharedTime(),
+		data.UnitSecond, data.TimescaleInstantaneous)
+	putMetric(measurement, "overlap_density", pair.OverlapDensity(),
+		data.UnitPerSecond, data.TimescaleInstantaneous)
+	putMetric(measurement, "overlap_pair_count", pair.Support(),
+		data.UnitCount, data.TimescaleInstantaneous)
+	putMetric(measurement, "effective_sample_count", pair.Support(),
+		data.UnitCount, data.TimescaleInstantaneous)
+
+	if built.fisher.Ready() {
+		putMetric(measurement, "correlation_p_value", built.fisher.PValue(),
+			data.UnitDimensionless, data.TimescaleInstantaneous)
+		putMetric(measurement, "correlation_standard_error_fisher",
+			built.fisher.StandardError(),
+			data.UnitDimensionless, data.TimescaleInstantaneous)
+	}
+
+	putMetric(measurement, "cohort_peer_count", cohort.Peers(),
+		data.UnitCount, data.TimescaleInstantaneous)
+	putMetric(measurement, "cohort_correlation_dispersion", cohort.Dispersion(),
+		data.UnitNat, data.TimescaleInstantaneous)
+	putMetric(measurement, "cohort_effective_peer_count", cohort.EffectivePeers(),
+		data.UnitCount, data.TimescaleInstantaneous)
+
+	relative := built.relativeEnergyOf()
+
+	putMetric(measurement, "relative_return_energy", relative,
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "relative_cohort_return_energy", relative,
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+
+	putMetric(measurement, "correlation_baseline", built.signedCorrelation.Baseline(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "correlation_divergence", built.signedCorrelation.Divergence(),
+		data.UnitNat, data.TimescaleInstantaneous)
+	putMetric(measurement, "correlation_zscore", built.signedCorrelation.ZScore(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "correlation_velocity", built.correlationVelocity.Rate(),
+		data.UnitPerSecond, data.TimescaleInstantaneous)
+
+	putMetric(measurement, "relative_return_energy_baseline",
+		built.relativeEnergy.Baseline(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "relative_return_energy_divergence",
+		built.relativeEnergy.Residual(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "relative_return_energy_zscore",
+		built.relativeEnergy.ZScore(),
+		data.UnitDimensionless, data.TimescaleInstantaneous)
+	putMetric(measurement, "relative_return_energy_velocity",
+		built.energyVelocity.Rate(),
+		data.UnitPerSecond, data.TimescaleInstantaneous)
+
+	// signed_correlation is the headline reading, so its Fisher-space
+	// estimator supplies the quality facts Finalize derives maturity and SNR
+	// from. The residual and the dispersion normalizing it share one space.
+	if measurement.Metadata == nil {
+		measurement.Metadata = map[string]float64{}
+	}
+
+	measurement.Metadata[data.MetadataSupport] = built.signedCorrelation.Count()
+
+	if built.signedCorrelation.HasPrior() {
+		measurement.Metadata[data.MetadataDivergence] =
+			float64(built.signedCorrelation.Divergence())
+		measurement.Metadata[data.MetadataNoiseVariance] =
+			float64(built.signedCorrelation.NoiseVariance())
+	}
 }
 
 func (ticker *Ticker) Close() error { return nil }
 
-/*
-stepPairHistory feeds the focal-level cohort metrics into their namespaced
-pair-history series and evaluates the causal Baseline/ZScore/Velocity estimators.
-The signed correlation is fed in Fisher space (atanh) so the divergence, z-score,
-and velocity are the README §12/§16 Fisher-coordinate quantities. It runs only
-once the cohort is ready and the Fisher transform is defined (|ρ| < 1).
-*/
-func (ticker *Ticker) stepPairHistory(
-	symbol string,
-	at time.Time,
-	crossSection nmtypes.Frame,
-) nmtypes.Frame {
-	signedFisher, hasSignedFisher := crossSection.Get(symbolCohortSignedFisher)
-	relative, hasRelative := crossSection.Get(symbolRelativeEnergy)
-
-	if !hasSignedFisher || !hasRelative {
-		return nmtypes.Frame{}
-	}
-
-	input := nmtypes.Frame{}
-	loadPairHistory(&input, signedCorrelationSeries, signedFisher, at)
-	loadPairHistory(&input, relativeEnergySeries, relative, at)
-
-	return ticker.pairHistory.Step(symbol, input)
-}
-
-func loadPairHistory(
-	input *nmtypes.Frame,
-	series temporal.Series,
-	value float64,
-	at time.Time,
+func putMetric(
+	measurement *data.Measurement[float64],
+	label string,
+	raw nmtypes.Number,
+	unit data.Unit,
+	timescale data.Timescale,
 ) {
-	input.Put(series.ValueSymbol, value)
-	input.Put(series.SecSymbol, float64(at.Unix()))
-	input.Put(series.NsecSymbol, float64(at.Nanosecond()))
-}
-
-/*
-label names the measurement with its measured symbol. The focal symbol is the
-stable channel key and graph evidence identity; peer provenance is carried by the
-cohort metrics (cohort_peer_count, effective_sample_count, overlap_pair_count)
-so a cohort-based measurement never mints a bogus thesis symbol per peer-set
-permutation (which would also explode the measurement lane space and orphan
-evidence on every universe change).
-*/
-func (ticker *Ticker) label(symbol string) string {
-	return symbol
-}
-
-/*
-newCorrelationPair relocates the focal committed path into the "previous"
-series and the peer path into the "current" series, evaluates the Hayashi-Yoshida
-asynchronous correlation, then derives the Fisher p-value for the estimate.
-*/
-func newCorrelationPair() func(focal *nmtypes.Frame, peer *nmtypes.Frame) nmtypes.Frame {
-	previous := temporal.NewSeries("previous")
-	current := temporal.NewSeries("current")
-	hayashi := nmcorrelation.Hayashi("previous", "current")
-
-	return func(focal *nmtypes.Frame, peer *nmtypes.Frame) nmtypes.Frame {
-		paired := nmtypes.Frame{}
-		previous.CopyFrom(&paired, focal)
-		current.CopyFrom(&paired, peer)
-
-		hayashi(&paired)
-
-		nmcorrelation.PValue(&paired)
-
-		return paired
-	}
-}
-
-/*
-cohortFinalize is the declarative scoring stage that reduces Cohort's sufficient
-statistics and Hayashi's timestamp bounds into the README's non-interpretive
-cohort metrics, including shared_time and overlap_density, plus the Fisher
-transform of the signed correlation. It is composed only from nomagique
-primitives; readiness gates the reduction so an unready cohort emits no metric
-slots instead of an error.
-*/
-func cohortFinalize() nmtypes.Primitive {
-	predicate := nmtypes.Relay(nmcorrelation.SymbolReady, logic.SymbolCondition)
-
-	whenTrue := nmtypes.Pipe(
-		nmtypes.Wire(
-			calculus.Quotient,
-			nmtypes.In(nmcorrelation.SymbolWeightedSigned, calculus.PortA),
-			nmtypes.In(nmcorrelation.SymbolTotalSupport, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolCohortSigned),
-		),
-		nmtypes.Wire(
-			calculus.Quotient,
-			nmtypes.In(nmcorrelation.SymbolWeightedAbsolute, calculus.PortA),
-			nmtypes.In(nmcorrelation.SymbolTotalSupport, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolCohortAbsolute),
-		),
-		nmtypes.Wire(
-			calculus.Quotient,
-			nmtypes.In(nmcorrelation.SymbolWeightedPeerEnergy, calculus.PortA),
-			nmtypes.In(nmcorrelation.SymbolTotalSupport, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolPeerEnergy),
-		),
-		nmtypes.Wire(
-			calculus.Quotient,
-			nmtypes.In(nmcorrelation.SymbolFocalEnergy, calculus.PortA),
-			nmtypes.In(symbolPeerEnergy, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolRelativeEnergy),
-		),
-		sharedTimeStages(),
-		fisherTransform(),
-		nmtypes.Assign(symbolCohortReady, 1),
-	)
-
-	whenFalse := nmtypes.Assign(symbolCohortReady, 0)
-
-	return logic.If(predicate, whenTrue, whenFalse)
-}
-
-/*
-sharedTimeStages derives shared_time = max(0, min(leftTo,rightTo) -
-max(leftFrom,rightFrom))/1e9 and overlap_density = overlap_pair_count/shared_time
-from Hayashi's per-side timestamp bounds.
-*/
-func sharedTimeStages() nmtypes.Primitive {
-	return nmtypes.Pipe(
-		nmtypes.Assign(symbolNanosPerSecond, 1e9),
-		nmtypes.Assign(symbolZero, 0),
-		nmtypes.Wire(
-			calculus.Minimum,
-			nmtypes.In(nmcorrelation.SymbolLeftToNanos, calculus.PortA),
-			nmtypes.In(nmcorrelation.SymbolRightToNanos, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolMinToNanos),
-		),
-		nmtypes.Wire(
-			calculus.Maximum,
-			nmtypes.In(nmcorrelation.SymbolLeftFromNanos, calculus.PortA),
-			nmtypes.In(nmcorrelation.SymbolRightFromNanos, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolMaxFromNanos),
-		),
-		nmtypes.Wire(
-			calculus.Difference,
-			nmtypes.In(symbolMinToNanos, calculus.PortA),
-			nmtypes.In(symbolMaxFromNanos, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolOverlapNanos),
-		),
-		nmtypes.Wire(
-			calculus.Maximum,
-			nmtypes.In(symbolOverlapNanos, calculus.PortA),
-			nmtypes.In(symbolZero, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolSharedTimeNanos),
-		),
-		nmtypes.Wire(
-			calculus.Quotient,
-			nmtypes.In(symbolSharedTimeNanos, calculus.PortA),
-			nmtypes.In(symbolNanosPerSecond, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolSharedTime),
-		),
-		nmtypes.Wire(
-			calculus.Quotient,
-			nmtypes.In(nmcorrelation.SymbolSupport, calculus.PortA),
-			nmtypes.In(symbolSharedTime, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolOverlapDensity),
-		),
-	)
-}
-
-/*
-fisherTransform emits the Fisher coordinate atanh(signed_correlation) only when
-the correlation is strictly inside (-1, 1); at a saturated ±1 the Fisher-space
-metrics are undefined and the slot is left absent.
-*/
-func fisherTransform() nmtypes.Primitive {
-	predicate := nmtypes.Pipe(
-		nmtypes.Assign(symbolOne, 1),
-		nmtypes.Wire(
-			calculus.Absolute,
-			nmtypes.In(symbolCohortSigned, calculus.PortX),
-			nmtypes.Out(calculus.PortResult, symbolAbsSigned),
-		),
-		nmtypes.Relay(symbolAbsSigned, calculus.PortA),
-		nmtypes.Relay(symbolOne, calculus.PortB),
-		logic.LessThan,
-	)
-
-	whenTrue := nmtypes.Wire(
-		calculus.Atanh,
-		nmtypes.In(symbolCohortSigned, calculus.PortX),
-		nmtypes.Out(calculus.PortResult, symbolCohortSignedFisher),
-	)
-
-	return logic.If(predicate, whenTrue, nil)
-}
-
-/*
-pairHistoryStage is the causal estimator chain for one namespaced pair-metric
-series: retain the value, evaluate it against the previous baseline, then update
-the baseline, then difference for velocity.
-*/
-func pairHistoryStage(prefix string) nmtypes.Primitive {
-	return nmtypes.Pipe(
-		temporal.Window(prefix),
-		statistic.ZScore(prefix),
-		statistic.Baseline(prefix),
-		statistic.Velocity(prefix),
-	)
-}
-
-/*
-correlationHistoryStage is the Fisher-space history of the signed correlation:
-the atanh-transformed value flows through the standard estimator chain, and the
-Fisher-space baseline is mapped back to a [-1,1] correlation via tanh (README
-§12.1) so correlation_baseline keeps its documented range.
-*/
-func correlationHistoryStage() nmtypes.Primitive {
-	return nmtypes.Pipe(
-		temporal.Window(prefixSignedCorrelation),
-		statistic.ZScore(prefixSignedCorrelation),
-		statistic.Baseline(prefixSignedCorrelation),
-		statistic.Velocity(prefixSignedCorrelation),
-		tanhBaselineStage(prefixSignedCorrelation),
-		// signed_correlation is this signal's headline metric, so its Fisher-space
-		// estimator is the one whose departure and noise power become the
-		// measurement's SNR. The residual is measured in Fisher space, where the
-		// dispersion that normalizes it also lives, so the ratio is consistent.
-		statistic.QualityFrom(prefixSignedCorrelation),
-	)
-}
-
-/*
-tanhBaselineStage converts one series' Fisher-space baseline back into
-correlation space: tanh(b) = (e^{2b} - 1) / (e^{2b} + 1).
-*/
-func tanhBaselineStage(prefix string) nmtypes.Primitive {
-	baselineValue := nmtypes.MustIntern(temporal.JoinPrefix(prefix, "baseline/value"))
-
-	return nmtypes.Pipe(
-		nmtypes.Assign(symbolTwo, 2),
-		nmtypes.Assign(symbolOne, 1),
-		nmtypes.Wire(
-			calculus.Product,
-			nmtypes.In(baselineValue, calculus.PortA),
-			nmtypes.In(symbolTwo, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolTwoBaseline),
-		),
-		nmtypes.Wire(
-			calculus.Exp,
-			nmtypes.In(symbolTwoBaseline, calculus.PortX),
-			nmtypes.Out(calculus.PortResult, symbolExpTwoBaseline),
-		),
-		nmtypes.Wire(
-			calculus.Difference,
-			nmtypes.In(symbolExpTwoBaseline, calculus.PortA),
-			nmtypes.In(symbolOne, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolTanhNumerator),
-		),
-		nmtypes.Wire(
-			calculus.Sum,
-			nmtypes.In(symbolExpTwoBaseline, calculus.PortA),
-			nmtypes.In(symbolOne, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolTanhDenominator),
-		),
-		nmtypes.Wire(
-			calculus.Quotient,
-			nmtypes.In(symbolTanhNumerator, calculus.PortA),
-			nmtypes.In(symbolTanhDenominator, calculus.PortB),
-			nmtypes.Out(calculus.PortResult, symbolCorrelationBaseline),
-		),
-	)
+	measurement.PutMetric(data.Metric[float64]{
+		Label:     label,
+		Raw:       float64(raw),
+		Unit:      unit,
+		Timescale: timescale,
+	})
 }
