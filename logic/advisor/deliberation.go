@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 

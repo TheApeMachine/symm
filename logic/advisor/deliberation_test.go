@@ -5,7 +5,6 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -15,7 +14,7 @@ perspectiveFor builds a resolved perspective whose top class is the named state.
 func perspectiveFor(advisorName, state string, probability float64, support uint64) *types.Perspective {
 	return &types.Perspective{
 		Symbol:  "TEST/USD",
-		Advisor: nmtypes.MustIntern(advisorName),
+		Advisor: advisorName,
 		Support: support,
 		Classes: []types.PerspectiveClass{
 			{State: types.PerspectiveState(state), Probability: probability},

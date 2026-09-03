@@ -6,7 +6,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/logic/advisor"
 	"github.com/theapemachine/symm/nomagique/mcts"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -128,7 +127,7 @@ advisorPerspective builds a resolved perspective for planner deliberation tests.
 func advisorPerspective(name, state string, probability float64) *types.Perspective {
 	return &types.Perspective{
 		Symbol:  "TEST/USD",
-		Advisor: nmtypes.MustIntern(name),
+		Advisor: name,
 		Support: 100,
 		Classes: []types.PerspectiveClass{
 			{State: types.PerspectiveState(state), Probability: probability},

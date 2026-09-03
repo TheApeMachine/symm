@@ -6,10 +6,8 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/vector"
 	"github.com/theapemachine/symm/types"
 )
@@ -21,9 +19,10 @@ type Solver struct {
 	cancel        context.CancelFunc
 	err           error
 	status        *runtime.Status
-	number        *nomagique.KeyedNumber[string]
+	groupSpec     []vector.Group
+	classifiers   map[string]*vector.Classifier
 	clocks        map[string]float64
-	frames        map[string]nmtypes.Frame
+	observations  map[string]map[string]float64
 	ObserveModule func(string, time.Duration)
 }
 
@@ -31,11 +30,12 @@ type Solver struct {
 func NewSolver(ctx context.Context, name string, features []*Feature) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 	solver := &Solver{
-		ctx:    ctx,
-		cancel: cancel,
-		status: runtime.NewStatus(),
-		clocks: make(map[string]float64),
-		frames: make(map[string]nmtypes.Frame),
+		ctx:          ctx,
+		cancel:       cancel,
+		status:       runtime.NewStatus(),
+		clocks:       make(map[string]float64),
+		observations: make(map[string]map[string]float64),
+		classifiers:  make(map[string]*vector.Classifier),
 	}
 
 	if name == "" {
@@ -53,9 +53,7 @@ func NewSolver(ctx context.Context, name string, features []*Feature) *Solver {
 	}
 
 	solver.Issuer = newIssuer(name, features, groups, clock)
-	solver.number = nomagique.NewNumber[string](
-		vector.AdaptiveClassifier(groups...),
-	)
+	solver.groupSpec = groups
 	solver.status.Transition(runtime.READY)
 
 	return solver
@@ -87,21 +85,20 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 		}
 	}()
 
-	input := data.Lift(envelope.SignalMeasurements())
+	measurements := envelope.SignalMeasurements()
+	input, liftErr := data.Lift(measurements[:])
 
-	if input.Err != nil {
-		solver.fail(errnie.UnprocessableContent, "advisor measurement lift failed", input.Err)
+	if liftErr != nil {
+		solver.fail(errnie.UnprocessableContent, "advisor measurement lift failed", liftErr)
 
 		return nil
 	}
 
-	clock, clockFound := input.Get(solver.clock)
+	clock, clockFound := input[solver.clock]
 
 	if !clockFound {
 		if symbol != "" {
-			frame := solver.frames[symbol]
-			frame.Merge(&input)
-			solver.frames[symbol] = frame
+			solver.observe(symbol, input)
 		}
 
 		if envelope.TypeID == types.EnvelopeTrade &&
@@ -120,9 +117,7 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 		return nil
 	}
 
-	frame := solver.frames[symbol]
-	frame.Merge(&input)
-	solver.frames[symbol] = frame
+	observation := solver.observe(symbol, input)
 
 	advanced, err := solver.clockAdvanced(symbol, clock)
 
@@ -138,29 +133,21 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 
 	solver.status.Transition(runtime.WAITING)
 
-	if !vector.GroupsComplete(&frame, solver.groups) {
+	classifier := solver.classifierFor(symbol)
+
+	if !classifier.Complete(observation) {
 		return envelope
 	}
 
 	solver.status.Transition(runtime.READY)
 
-	output := solver.number.Step(symbol, frame)
-
-	if output.Err != nil {
-		solver.fail(errnie.Internal, "advisor classification failed", output.Err)
-
-		return nil
-	}
-
-	ready, found := output.Get(nmtypes.SampleReady)
-
-	if !found || ready != 1 {
+	if !classifier.Observe(observation) {
 		solver.fail(errnie.ExpectationFailed, "advisor classification produced no distribution", nil)
 
 		return nil
 	}
 
-	if err := solver.Issue(envelope, output, uint64(clock)); err != nil {
+	if err := solver.Issue(envelope, classifier.Read(), uint64(clock)); err != nil {
 		solver.halt(err)
 
 		return nil
@@ -177,13 +164,13 @@ func (solver *Solver) Distribution(
 		return nil, 0, false, solver.err
 	}
 
-	frame, found := solver.number.Project(symbol)
+	classifier, found := solver.classifiers[symbol]
 
 	if !found {
 		return nil, 0, false, nil
 	}
 
-	distribution := vector.Unpack(frame, solver.groups)
+	distribution := classifier.Read()
 
 	if !distribution.Ready {
 		return nil, 0, false, errnie.Error(errnie.Err(
@@ -205,9 +192,9 @@ func (solver *Solver) Distribution(
 	return classes, distribution.Sharpness, true, nil
 }
 
-func featureGroups(features []*Feature) ([]vector.Group, nmtypes.Symbol, error) {
+func featureGroups(features []*Feature) ([]vector.Group, string, error) {
 	if len(features) < 2 {
-		return nil, 0, errnie.Err(
+		return nil, "", errnie.Err(
 			errnie.Validation,
 			"Advisor requires at least two competing Features",
 			nil,
@@ -222,7 +209,7 @@ func featureGroups(features []*Feature) ([]vector.Group, nmtypes.Symbol, error) 
 
 	for index, feature := range features {
 		if feature == nil || feature.Class == nil || feature.Class.Label == "" {
-			return nil, 0, errnie.Err(
+			return nil, "", errnie.Err(
 				errnie.Validation,
 				"Advisor Feature requires exactly one named Class",
 				nil,
@@ -230,7 +217,7 @@ func featureGroups(features []*Feature) ([]vector.Group, nmtypes.Symbol, error) 
 		}
 
 		if labels[feature.Class.Label] {
-			return nil, 0, errnie.Err(
+			return nil, "", errnie.Err(
 				errnie.Validation,
 				"Advisor class label must be unique: "+feature.Class.Label,
 				nil,
@@ -238,7 +225,7 @@ func featureGroups(features []*Feature) ([]vector.Group, nmtypes.Symbol, error) 
 		}
 
 		if err := validateFeatureKeys(feature); err != nil {
-			return nil, 0, errnie.Err(
+			return nil, "", errnie.Err(
 				errnie.Validation,
 				"[advisor] failed to validate feature keys for: "+feature.Class.Label,
 				err,
@@ -246,7 +233,7 @@ func featureGroups(features []*Feature) ([]vector.Group, nmtypes.Symbol, error) 
 		}
 
 		if err := feature.validatePredictions(); err != nil {
-			return nil, 0, err
+			return nil, "", err
 		}
 
 		if index == 0 {
@@ -256,7 +243,7 @@ func featureGroups(features []*Feature) ([]vector.Group, nmtypes.Symbol, error) 
 
 		if index > 0 && ((len(feature.Class.Predictions) > 0) != predictive ||
 			feature.Class.Within != within) {
-			return nil, 0, errnie.Err(
+			return nil, "", errnie.Err(
 				errnie.Validation,
 				"Advisor Classes require one shared prediction horizon and complete declarations",
 				nil,
@@ -268,7 +255,7 @@ func featureGroups(features []*Feature) ([]vector.Group, nmtypes.Symbol, error) 
 		}
 
 		if feature.Clock == "" || feature.Clock != clock {
-			return nil, 0, errnie.Err(
+			return nil, "", errnie.Err(
 				errnie.Validation,
 				"Advisor Features require one shared market clock",
 				nil,
@@ -279,7 +266,7 @@ func featureGroups(features []*Feature) ([]vector.Group, nmtypes.Symbol, error) 
 		groups[index] = vector.NewGroup(feature.Class.Label, feature.Keys...)
 	}
 
-	return groups, nmtypes.MustIntern(clock), nil
+	return groups, clock, nil
 }
 
 func validateFeatureKeys(feature *Feature) error {
@@ -318,34 +305,69 @@ func validateFeatureKeys(feature *Feature) error {
 	return nil
 }
 
-func hasClockSourceObservation(
-	input nmtypes.Frame,
-	clock nmtypes.Symbol,
-	groups []vector.Group,
-) bool {
-	clockName, found := nmtypes.SymbolName(clock)
+/*
+observe merges one lifted observation into the symbol's retained evidence and
+returns it. Metrics arrive across many envelopes, so the observation
+accumulates until every declared metric is present.
+*/
+func (solver *Solver) observe(
+	symbol string,
+	input map[string]float64,
+) map[string]float64 {
+	observation, found := solver.observations[symbol]
 
 	if !found {
-		return false
+		observation = make(map[string]float64)
+		solver.observations[symbol] = observation
 	}
 
-	clockSource, _, hasSlash := strings.Cut(clockName, "/")
+	for key, value := range input {
+		observation[key] = value
+	}
+
+	return observation
+}
+
+/*
+classifierFor returns the symbol's classifier, compiling one on first use so
+each symbol's standardizers accumulate their own causal history.
+*/
+func (solver *Solver) classifierFor(symbol string) *vector.Classifier {
+	classifier, found := solver.classifiers[symbol]
+
+	if !found {
+		classifier, _ = vector.NewClassifier(solver.groupSpec...)
+		solver.classifiers[symbol] = classifier
+	}
+
+	return classifier
+}
+
+/*
+hasClockSourceObservation reports whether the observation carries a metric
+from the same source as the declared market clock. A clock source that is
+speaking but has not stated its clock is a contract failure, not a wait.
+*/
+func hasClockSourceObservation(
+	input map[string]float64,
+	clock string,
+	groups []vector.Group,
+) bool {
+	clockSource, _, hasSlash := strings.Cut(clock, "/")
 
 	if !hasSlash {
 		return false
 	}
 
 	for _, group := range groups {
-		for _, symbol := range group.Symbols {
-			name, nameFound := nmtypes.SymbolName(symbol)
+		for _, key := range group.Keys {
+			source, _, _ := strings.Cut(key, "/")
 
-			if !nameFound {
+			if source != clockSource {
 				continue
 			}
 
-			source, _, _ := strings.Cut(name, "/")
-
-			if source == clockSource && input.Has(symbol) {
+			if _, present := input[key]; present {
 				return true
 			}
 		}

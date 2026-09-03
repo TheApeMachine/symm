@@ -2,7 +2,6 @@ package advisor
 
 import (
 	"github.com/theapemachine/errnie"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -20,9 +19,9 @@ func newArenaRound(
 	perspective *types.Perspective,
 	class *Class,
 ) (*arenaRound, error) {
-	clock, found := nmtypes.SymbolName(perspective.Lease.Clock)
+	clock := perspective.Lease.Clock
 
-	if !found {
+	if clock == "" {
 		return nil, errnie.Err(
 			errnie.UnprocessableContent,
 			"[advisor] Arena received an opaque market clock",

@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/theapemachine/symm/nomagique/data"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -83,7 +82,7 @@ func TestNewParticipation(t *testing.T) {
 func participationPerspective() *types.Perspective {
 	return &types.Perspective{
 		Symbol:   "BTC/USD",
-		Advisor:  nmtypes.MustIntern(ParticipationName),
+		Advisor:  ParticipationName,
 		Question: types.PerspectiveQuestion(ParticipationName),
 		Classes: []types.PerspectiveClass{
 			{State: "BroadLift", Probability: 0.7},
@@ -92,7 +91,7 @@ func participationPerspective() *types.Perspective {
 			{State: "IsolatedMove", Probability: 0.1},
 		},
 		Lease: types.PerspectiveLease{
-			Clock: nmtypes.MustIntern(participationClock),
+			Clock: participationClock,
 			From:  1,
 			Until: 2,
 		},

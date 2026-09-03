@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/theapemachine/symm/nomagique/data"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -83,7 +82,7 @@ func TestNewMomentum(t *testing.T) {
 func momentumPerspective() *types.Perspective {
 	return &types.Perspective{
 		Symbol:   "BTC/USD",
-		Advisor:  nmtypes.MustIntern(MomentumName),
+		Advisor:  MomentumName,
 		Question: types.PerspectiveQuestion(MomentumName),
 		Classes: []types.PerspectiveClass{
 			{State: "Building", Probability: 0.7},
@@ -92,7 +91,7 @@ func momentumPerspective() *types.Perspective {
 			{State: "Reversing", Probability: 0.1},
 		},
 		Lease: types.PerspectiveLease{
-			Clock: nmtypes.MustIntern(momentumClock),
+			Clock: momentumClock,
 			From:  1,
 			Until: 2,
 		},

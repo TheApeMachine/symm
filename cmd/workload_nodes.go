@@ -134,7 +134,7 @@ func (node *deskContextNode) Step(envelope *types.Envelope) *types.Envelope {
 	}
 
 	for _, perspective := range envelope.Perspectives {
-		causative.ActivePerspectives[perspective.Advisor.String()] = string(perspective.TopClass())
+		causative.ActivePerspectives[perspective.Advisor] = string(perspective.TopClass())
 	}
 
 	if envelope.Hawkes != nil {

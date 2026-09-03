@@ -15,7 +15,10 @@ import (
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/adaptive"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+
+	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
@@ -215,10 +218,10 @@ func (solver *Solver) Update(
 	detector, found := solver.detectors.Load(symbolName)
 	if !found {
 		detector = learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
-			CustomArch: []int{len(features), len(features) * 4, len(features) * 2, len(features)}, // Overcomplete dictionary with latent space
-			MaxHorizon: 300,                                                                       // Multi-step forward rollouts up to t+8
-			Target:     solver.directionalTarget(symbolName),                                      // Noise-scaled directional call
-			Pace:       solver.pace,                                                               // Adaptive learning pace
+			CustomArch: []int{len(features), len(features) * 4, len(features) * 2, len(features)},  // Overcomplete dictionary with latent space
+			MaxHorizon: 300,                                                                        // Multi-step forward rollouts up to t+8
+			Target:     solver.directionalTarget(symbolName),                                       // Noise-scaled directional call
+			Pace:       learning.NewPaceController(learning.PaceConfig{InitialAlpha: solver.pace}), // Adaptive learning pace
 			Learn:      true,
 		})
 		solver.detectors.Store(symbolName, detector)
@@ -364,75 +367,85 @@ func (solver *Solver) standardize(
 	width := len(features)
 	key := symbolName + "\x00" + strconv.Itoa(width)
 
-	loaded, _ := solver.standardizers.LoadOrStore(
-		key,
-		nomagique.NewNumber[string](standardizerPipeline(width)),
-	)
-	number, valid := loaded.(*nomagique.KeyedNumber[string])
+	loaded, _ := solver.standardizers.LoadOrStore(key, newFeatureScorer(width))
+	scorer, valid := loaded.(*featureScorer)
 
-	if !valid || number == nil {
-		number = nomagique.NewNumber[string](standardizerPipeline(width))
-		solver.standardizers.Store(key, number)
+	if !valid || scorer == nil {
+		scorer = newFeatureScorer(width)
+		solver.standardizers.Store(key, scorer)
 	}
 
-	input := nmtypes.Frame{}
-
-	for index, value := range features {
-		input.Put(standardizerValueSymbol(index), value)
-	}
-
-	output := number.Step(key, input)
-
-	if output.Err != nil {
-		return nil, output.Err
-	}
-
-	standardized := make([]float64, width)
-
-	for index := range features {
-		score, found := output.Get(standardizerScoreSymbol(index))
-
-		if !found {
-			return nil, fmt.Errorf("resonance: standardizer missing score for feature %d", index)
-		}
-
-		standardized[index] = score
-	}
-
-	return standardized, nil
+	return scorer.Score(features), nil
 }
 
 /*
-standardizerPipeline builds one standardizer primitive per feature slot, each
-over its own namespaced prefix so the running moments cannot collide within the
-shared frame.
-*/
-func standardizerPipeline(width int) nomagique.Primitive {
-	primitives := make([]nomagique.Primitive, 0, width)
+featureScorer standardizes a feature vector, one causal estimator per slot.
 
-	for index := 0; index < width; index++ {
-		primitives = append(primitives, adaptive.Standardizer(
-			standardizerPrefix(index),
-		))
+Each slot owns its own estimator, so a feature's running moments cannot be
+contaminated by another's. Scoring is causal: a feature is measured against
+the moments its slot showed BEFORE it, so a burst of near-identical values
+cannot collapse its own scale and blow the score up.
+*/
+type featureScorer struct {
+	slots        []equation.CausalResidual
+	pipelines    []nomagique.Pipeline
+	standardized []float64
+}
+
+func newFeatureScorer(width int) *featureScorer {
+	scorer := &featureScorer{
+		slots:        make([]equation.CausalResidual, width),
+		pipelines:    make([]nomagique.Pipeline, width),
+		standardized: make([]float64, width),
 	}
 
-	return nmtypes.Fork(primitives...)
+	for index := range scorer.slots {
+		scorer.pipelines[index] = *nomagique.Number(&nomagique.Chain{
+			A: &scorer.slots[index],
+			B: calculus.Finite{},
+		})
+	}
+
+	return scorer
 }
 
-func standardizerPrefix(index int) string {
-	return "resonance/feature/" + strconv.Itoa(index)
+/*
+Score steps every slot's pipeline once and returns the standardized vector.
+The retained slice is reused, so a steady-state score does not allocate.
+*/
+func (scorer *featureScorer) Score(features []float64) []float64 {
+	for index, value := range features {
+		if index >= len(scorer.pipelines) {
+			break
+		}
+
+		scorer.pipelines[index].Step(nmtypes.Number(value))
+		scorer.standardized[index] = float64(scorer.slots[index].ZScore())
+	}
+
+	return scorer.standardized
 }
 
-func standardizerValueSymbol(index int) nmtypes.Symbol {
-	return nmtypes.MustIntern(
-		"resonance/feature/" + strconv.Itoa(index) + "/value",
-	)
-}
+/*
+resonanceDynamics maps the coder's manifold reading onto the telemetry wire
+type. nomagique carries no telemetry types, so the projection happens here at
+the domain boundary.
+*/
+func resonanceDynamics(
+	dynamics *learning.ResonanceDynamics,
+) *wire.EnvelopeResonanceDynamicsT {
+	if dynamics == nil {
+		return nil
+	}
 
-func standardizerScoreSymbol(index int) nmtypes.Symbol {
-	return nmtypes.MustIntern(
-		"resonance/feature/" + strconv.Itoa(index) + "/z/value",
-	)
+	return &wire.EnvelopeResonanceDynamicsT{
+		Ready:            1,
+		StoredEnergy:     dynamics.Energy,
+		SuppliedPower:    dynamics.PredictionEnergy,
+		Dissipation:      dynamics.ReconstructionError,
+		PassivityResidue: dynamics.TemporalError,
+		MemoryScale:      dynamics.Alpha,
+	}
 }
 
 /*
@@ -458,7 +471,7 @@ func (solver *Solver) publishReturns(
 		Symbol:           symbol,
 		At:               at,
 		Manifold:         coder.Manifold(),
-		Dynamics:         out.Dynamics,
+		Dynamics:         resonanceDynamics(out.Dynamics),
 		ForwardCurve:     out.ForwardCurve,
 		ForwardRetention: out.ForwardRetention,
 		SupportedHorizon: out.SupportedHorizon,

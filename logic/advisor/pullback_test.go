@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/theapemachine/symm/nomagique/data"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -83,7 +82,7 @@ func TestNewPullback(t *testing.T) {
 func pullbackPerspective() *types.Perspective {
 	return &types.Perspective{
 		Symbol:   "BTC/USD",
-		Advisor:  nmtypes.MustIntern(PullbackName),
+		Advisor:  PullbackName,
 		Question: types.PerspectiveQuestion(PullbackName),
 		Classes: []types.PerspectiveClass{
 			{State: "OrderlyPullback", Probability: 0.1},
@@ -92,7 +91,7 @@ func pullbackPerspective() *types.Perspective {
 			{State: "Unresolved", Probability: 0.1},
 		},
 		Lease: types.PerspectiveLease{
-			Clock: nmtypes.MustIntern(pullbackClock),
+			Clock: pullbackClock,
 			From:  1,
 			Until: 2,
 		},

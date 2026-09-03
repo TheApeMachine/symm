@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/nomagique/vector"
 	"github.com/theapemachine/symm/types"
 )

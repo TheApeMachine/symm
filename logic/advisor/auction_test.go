@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/theapemachine/symm/nomagique/data"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -85,7 +84,7 @@ func TestNewAuction(t *testing.T) {
 func auctionPerspective() *types.Perspective {
 	return &types.Perspective{
 		Symbol:   "BTC/USD",
-		Advisor:  nmtypes.MustIntern(AuctionName),
+		Advisor:  AuctionName,
 		Question: types.PerspectiveQuestion(AuctionName),
 		Classes: []types.PerspectiveClass{
 			{State: "BuyersBreakingThrough", Probability: 0.7},
@@ -95,7 +94,7 @@ func auctionPerspective() *types.Perspective {
 			{State: "Balanced", Probability: 0.05},
 		},
 		Lease: types.PerspectiveLease{
-			Clock: nmtypes.MustIntern(auctionClock),
+			Clock: auctionClock,
 			From:  1,
 			Until: 2,
 		},

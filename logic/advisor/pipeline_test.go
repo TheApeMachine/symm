@@ -82,13 +82,20 @@ func TestAdvisorPipelineTest(t *testing.T) {
 			return envelope
 		}
 
+		lift := func(envelope *types.Envelope) (map[string]float64, error) {
+			measurements := envelope.SignalMeasurements()
+
+			return nmdata.Lift(measurements[:])
+		}
+
 		Convey("A ticker envelope lifts cleanly, carrying its own metrics", func() {
 			envelope := step(tickerEnvelope(start, 100, 100.5))
-			frame := nmdata.Lift(envelope.SignalMeasurements())
+			observation, err := lift(envelope)
 
 			// Before the fix this was non-nil: hawkes and cvd rejected the
 			// absent trade and erased pumpdump's ticker metrics with it.
-			So(frame.Err, ShouldBeNil)
+			So(err, ShouldBeNil)
+			So(len(observation), ShouldBeGreaterThan, 0)
 			So(envelope.PumpDump, ShouldNotBeNil)
 			So(envelope.Hawkes, ShouldBeNil)
 			So(envelope.CVD, ShouldBeNil)
@@ -100,39 +107,40 @@ func TestAdvisorPipelineTest(t *testing.T) {
 			envelope := step(tradeEnvelope(
 				start.Add(time.Second), 100.2, 5, "buy",
 			))
-			frame := nmdata.Lift(envelope.SignalMeasurements())
+			observation, err := lift(envelope)
 
-			So(frame.Err, ShouldBeNil)
+			So(err, ShouldBeNil)
+			So(len(observation), ShouldBeGreaterThan, 0)
 			So(envelope.Hawkes, ShouldNotBeNil)
 		})
 
-		Convey("Metrics from both envelope kinds accumulate into one frame", func() {
-			accumulated := nmdata.Lift(
-				step(tickerEnvelope(start, 100, 100.5)).SignalMeasurements(),
-			)
+		Convey("Metrics from both envelope kinds accumulate into one observation", func() {
+			accumulated, err := lift(step(tickerEnvelope(start, 100, 100.5)))
+			So(err, ShouldBeNil)
+
+			// A signal that legitimately rejected its observation carries an
+			// Err; Lift skips it and keeps every other signal's metrics, which
+			// is the whole point of the fix this test guards.
+			merge := func(envelope *types.Envelope) {
+				observation, _ := lift(envelope)
+
+				for key, value := range observation {
+					accumulated[key] = value
+				}
+			}
 
 			for index := 1; index <= 12; index++ {
 				at := start.Add(time.Duration(index) * time.Second)
 
-				trade := nmdata.Lift(
-					step(tradeEnvelope(at, 100+float64(index)*0.1, 5, "buy")).
-						SignalMeasurements(),
-				)
-				accumulated.Merge(&trade)
-
-				ticker := nmdata.Lift(
-					step(tickerEnvelope(at, 100+float64(index)*0.1, 100.6)).
-						SignalMeasurements(),
-				)
-				accumulated.Merge(&ticker)
+				merge(step(tradeEnvelope(at, 100+float64(index)*0.1, 5, "buy")))
+				merge(step(tickerEnvelope(at, 100+float64(index)*0.1, 100.6+float64(index)*0.1)))
 			}
 
-			So(accumulated.Err, ShouldBeNil)
-
 			// The accumulator must now hold metrics sourced from BOTH clocks
-			// at once. That co-presence is precisely what GroupsComplete needs
-			// and precisely what the lift abort used to make impossible.
-			So(accumulated.Count(), ShouldBeGreaterThan, 20)
+			// at once. That co-presence is precisely what a complete feature
+			// group needs, and precisely what the lift abort used to make
+			// impossible.
+			So(len(accumulated), ShouldBeGreaterThan, 20)
 		})
 	})
 }

@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	nmdata "github.com/theapemachine/symm/nomagique/data"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 
 	"github.com/theapemachine/symm/signal/cvd"
@@ -64,12 +63,13 @@ func TestEnvelopeGatingTest(t *testing.T) {
 				},
 			}
 
-			frame := nmdata.Lift(envelope.SignalMeasurements())
+			measurements := envelope.SignalMeasurements()
+			observation, err := nmdata.Lift(measurements[:])
 
 			// The whole point: one signal stepped out of turn must not be able
 			// to erase the metrics every other signal produced here.
-			So(frame.Err, ShouldBeNil)
-			So(frame.Has(nmtypes.MustIntern("pumpdump/midpoint_log_return")), ShouldBeTrue)
+			So(err, ShouldBeNil)
+			So(observation, ShouldContainKey, "pumpdump/midpoint_log_return")
 		})
 	})
 

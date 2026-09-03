@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/theapemachine/symm/nomagique/data"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -85,7 +84,7 @@ func TestNewBasis(t *testing.T) {
 func basisPerspective() *types.Perspective {
 	return &types.Perspective{
 		Symbol:   "BTC/USD",
-		Advisor:  nmtypes.MustIntern(BasisName),
+		Advisor:  BasisName,
 		Question: types.PerspectiveQuestion(BasisName),
 		Classes: []types.PerspectiveClass{
 			{State: "LeverageSqueeze", Probability: 0.7},
@@ -95,7 +94,7 @@ func basisPerspective() *types.Perspective {
 			{State: "NeutralBasis", Probability: 0.05},
 		},
 		Lease: types.PerspectiveLease{
-			Clock: nmtypes.MustIntern(basisClock),
+			Clock: basisClock,
 			From:  1,
 			Until: 2,
 		},

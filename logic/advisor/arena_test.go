@@ -8,7 +8,6 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/data"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -153,7 +152,7 @@ func arenaPerspective(
 
 	return &types.Perspective{
 		Symbol:   symbol,
-		Advisor:  nmtypes.MustIntern("midpoint"),
+		Advisor:  "midpoint",
 		Question: "midpoint",
 		Classes:  classes,
 		Predictions: []types.PerspectivePrediction{
@@ -163,7 +162,7 @@ func arenaPerspective(
 			{Class: "breakdown", Event: "pumpdump/positive_midpoint_return", Effect: types.PredictionFalsifies},
 		},
 		Lease: types.PerspectiveLease{
-			Clock: nmtypes.MustIntern("pumpdump/completed_volume_bar_ordinal"),
+			Clock: "pumpdump/completed_volume_bar_ordinal",
 			From:  from,
 			Until: until,
 		},
