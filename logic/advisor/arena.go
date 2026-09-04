@@ -1,10 +1,19 @@
 package advisor
 
 import (
+	"math"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
+
+/*
+classTieTolerance is the mass difference below which two classes are held to
+lean the same way. Class probabilities arrive from a softmax normalization, so
+exact equality is a property of the float encoding rather than of the market.
+*/
+const classTieTolerance = 1e-9
 
 /*
 Arena retains issued Perspectives until their declared support, contradiction,
@@ -28,10 +37,46 @@ type Arena struct {
 
 	// It is optional. An Arena built without a court still runs its rounds;
 	// it simply reports to no one.
-	court      *WarRoom
+	court *WarRoom
+
+	// rejected counts Perspectives this Arena declined to admit. They are a
+	// normal operating condition, not a lifecycle failure.
+	rejected map[string]uint64
+
+	semanticHits      map[string]uint64
+	semanticMisses    map[string]uint64
+	directionalHits   map[string]uint64
+	directionalMisses map[string]uint64
+	expiredRounds     map[string]uint64
+	censoredRounds    map[string]uint64
+
+	// booted reports whether the system has finished coming up. Until it
+	// returns true the Arena issues no Perspectives at all: during boot the
+	// symbol universe is only partially subscribed, so every classifier is
+	// cold and its distribution is uniform noise. Deciding on that is not a
+	// weaker decision, it is a meaningless one.
+	//
+	// A nil booted means no gate was attached, and the Arena runs unguarded.
+	booted func() bool
+
 	activeSize int
 	capacity   int
 	err        error
+}
+
+/*
+Booted attaches the readiness predicate that must report true before this
+Arena will admit or issue any Perspective.
+*/
+func (arena *Arena) Booted(ready func() bool) *Arena {
+	arena.booted = ready
+
+	return arena
+}
+
+/* ready reports whether the boot gate, if any, is open. */
+func (arena *Arena) ready() bool {
+	return arena.booted == nil || arena.booted()
 }
 
 /* Court attaches the credibility ledger this Arena reports verdicts to. */
@@ -71,13 +116,20 @@ func NewArena(
 	}
 
 	return &Arena{
-		node:     node,
-		advisor:  name,
-		name:     name,
-		classes:  classes,
-		active:   make(map[string]map[types.PerspectiveKey]*arenaRound),
-		support:  make(map[types.PerspectiveKey]uint64),
-		capacity: capacity,
+		node:              node,
+		advisor:           name,
+		name:              name,
+		classes:           classes,
+		active:            make(map[string]map[types.PerspectiveKey]*arenaRound),
+		support:           make(map[types.PerspectiveKey]uint64),
+		capacity:          capacity,
+		rejected:          make(map[string]uint64),
+		semanticHits:      make(map[string]uint64),
+		semanticMisses:    make(map[string]uint64),
+		directionalHits:   make(map[string]uint64),
+		directionalMisses: make(map[string]uint64),
+		expiredRounds:     make(map[string]uint64),
+		censoredRounds:    make(map[string]uint64),
 	}, nil
 }
 
@@ -97,6 +149,19 @@ func (arena *Arena) Step(envelope *types.Envelope) *types.Envelope {
 		return nil
 	}
 
+	// The system must be fully booted before any decision is made. While the
+	// instrument universe is still subscribing, only the first batch of
+	// symbols is streaming and every classifier is cold, so the distributions
+	// carry no information. Drop the issued Perspectives on the floor and let
+	// the envelope pass through untouched: no round is opened, no advisor is
+	// judged on a reading it could not have made, and the pipeline below still
+	// sees the market data.
+	if !arena.ready() {
+		envelope.Perspectives = nil
+
+		return arena.node.Step(envelope)
+	}
+
 	issued := envelope.Perspectives
 	envelope.Perspectives = nil
 
@@ -112,10 +177,18 @@ func (arena *Arena) Step(envelope *types.Envelope) *types.Envelope {
 			continue
 		}
 
+		// A Perspective that cannot be admitted is a fact about that one
+		// Perspective, not about the Arena. A stale round, an exhausted
+		// capacity, or a distribution with no declared winner used to call
+		// fail(), which latches arena.err permanently — every later envelope
+		// then returned nil, so a single bad frame silenced this advisor and
+		// everything downstream of it for the rest of the process. Skip the
+		// Perspective, keep serving the stream.
 		if err := arena.admit(envelope, perspective); err != nil {
-			arena.fail(err)
+			arena.rejected[arena.advisor]++
+			errnie.Error(err)
 
-			return nil
+			continue
 		}
 
 		// 	The advisor speaks now, and is judged later.
@@ -155,6 +228,14 @@ func (arena *Arena) resolve(envelope *types.Envelope) error {
 		}
 
 		if advanced && coordinate > round.perspective.Lease.Until {
+			advisor := round.perspective.Advisor
+
+			if advisor == "" {
+				advisor = arena.name
+			}
+
+			arena.expiredRounds[advisor]++
+
 			if arena.court != nil {
 				arena.court.Evict(symbol, round.perspective.Advisor)
 			}
@@ -207,6 +288,14 @@ func (arena *Arena) resolve(envelope *types.Envelope) error {
 		}
 
 		if advanced && coordinate == round.perspective.Lease.Until {
+			advisor := round.perspective.Advisor
+
+			if advisor == "" {
+				advisor = arena.name
+			}
+
+			arena.expiredRounds[advisor]++
+
 			if arena.court != nil {
 				arena.court.Evict(symbol, round.perspective.Advisor)
 			}
@@ -222,17 +311,23 @@ func (arena *Arena) resolve(envelope *types.Envelope) error {
 report submits one resolved prediction to the Court of Causal Accountability.
 
 An advisor is judged on the move it actually argued for against the realized market
-move. A prediction that was borne out directionally is credited; one the market
-falsified or moved counter to is debited — and a reading that imposed a veto is held
-to the higher standard, because blocking a move that then happened is the expensive
-error (MCTS.md §6.1).
-
-The verdict is expressed as the realized move observed from market price return over
-the round's lifespan.
+move. Semantic accuracy and directional move accuracy are tracked separately.
 */
 func (arena *Arena) report(round *arenaRound, supported bool) {
-	if arena.court == nil || round == nil {
+	if round == nil {
 		return
+	}
+
+	advisor := round.perspective.Advisor
+
+	if advisor == "" {
+		advisor = arena.name
+	}
+
+	if supported {
+		arena.semanticHits[advisor]++
+	} else {
+		arena.semanticMisses[advisor]++
 	}
 
 	claimed := MoveForState(string(round.perspective.TopClass()))
@@ -242,18 +337,64 @@ func (arena *Arena) report(round *arenaRound, supported bool) {
 		returnFrac := (round.latestPrice - round.baselinePrice) / round.baselinePrice
 		realized = MoveForReturn(returnFrac)
 
+		if math.Abs(float64(realized-claimed)) <= 1 {
+			arena.directionalHits[advisor]++
+		} else {
+			arena.directionalMisses[advisor]++
+		}
+
 		if !supported && realized == claimed {
 			realized = -claimed
 		}
 	} else if !supported {
+		arena.directionalMisses[advisor]++
 		realized = -claimed
+	} else {
+		arena.directionalHits[advisor]++
 	}
 
-	// A reading that argues against the market moving up is the one capable of
-	// vetoing an entry, and is scored under the veto standard.
-	wasVeto := claimed <= MoveStagnant
+	if arena.court == nil {
+		return
+	}
 
-	arena.court.UpdateCredibility(arena.name, wasVeto, realized, claimed)
+	wasVeto := claimed <= MoveStagnant
+	arena.court.UpdateCredibility(advisor, wasVeto, realized, claimed)
+}
+
+/* SemanticAccuracy returns the observed semantic hit and miss counts for an advisor. */
+func (arena *Arena) SemanticAccuracy(advisor string) (uint64, uint64) {
+	if arena == nil {
+		return 0, 0
+	}
+
+	return arena.semanticHits[advisor], arena.semanticMisses[advisor]
+}
+
+/* DirectionalAccuracy returns the observed directional move hit and miss counts for an advisor. */
+func (arena *Arena) DirectionalAccuracy(advisor string) (uint64, uint64) {
+	if arena == nil {
+		return 0, 0
+	}
+
+	return arena.directionalHits[advisor], arena.directionalMisses[advisor]
+}
+
+/* ExpiredRounds returns the count of rounds that reached lease expiry for an advisor. */
+func (arena *Arena) ExpiredRounds(advisor string) uint64 {
+	if arena == nil {
+		return 0
+	}
+
+	return arena.expiredRounds[advisor]
+}
+
+/* CensoredRounds returns the count of censored rounds for an advisor. */
+func (arena *Arena) CensoredRounds(advisor string) uint64 {
+	if arena == nil {
+		return 0
+	}
+
+	return arena.censoredRounds[advisor]
 }
 
 func (arena *Arena) admit(envelope *types.Envelope, perspective *types.Perspective) error {
@@ -270,6 +411,12 @@ func (arena *Arena) admit(envelope *types.Envelope, perspective *types.Perspecti
 
 	if err != nil {
 		return err
+	}
+
+	// The distribution had no unique winner: the advisor has nothing to say
+	// this frame. Open no round and keep the Arena alive.
+	if class == nil {
+		return nil
 	}
 
 	if len(class.Predictions) == 0 {
@@ -329,27 +476,37 @@ func (arena *Arena) winningClass(perspective *types.Perspective) (*Class, error)
 		)
 	}
 
+	// Find the winner first, then judge the tie against it. Deciding both in
+	// one incremental pass was wrong: `tied` was only cleared by a strictly
+	// greater class, so a distribution whose leaders tie ahead of a later
+	// smaller class stayed flagged, and one whose equals appear after the
+	// winner was never flagged at all.
 	winner := perspective.Classes[0]
-	tied := false
 
 	for _, class := range perspective.Classes[1:] {
 		if class.Probability > winner.Probability {
 			winner = class
-			tied = false
-			continue
-		}
-
-		if class.Probability == winner.Probability {
-			tied = true
 		}
 	}
 
-	if tied {
-		return nil, errnie.Err(
-			errnie.NotAcceptable,
-			"[advisor] Arena cannot admit a tied Perspective",
-			nil,
-		)
+	// Compare on a tolerance, never on ==. These probabilities are a softmax
+	// normalization, so two classes that hold the same mass routinely differ
+	// in the last bits, and two that differ only by float noise are not
+	// meaningfully distinct either way.
+	leaders := 0
+
+	for _, class := range perspective.Classes {
+		if math.Abs(class.Probability-winner.Probability) <= classTieTolerance {
+			leaders++
+		}
+	}
+
+	if leaders > 1 {
+		// No unique lean. This is a normal, expected state — an advisor whose
+		// classifier currently holds no opinion — not a lifecycle failure.
+		// Reporting it as terminal made one uninformative frame latch
+		// arena.err and silence the advisor for the rest of the process.
+		return nil, nil
 	}
 
 	class := arena.classes[winner.State]

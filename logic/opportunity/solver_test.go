@@ -276,7 +276,7 @@ func TestSolverStep(t *testing.T) {
 			So(solver.Error().Error(), ShouldContainSubstring, "one symbol and event time")
 		})
 
-		Convey("commit order governs lifecycle when event provenance regresses", func() {
+		Convey("older event provenance does not regress resident state", func() {
 			formed := stepBatch(solver, activeBatch(
 				secondEventTime,
 				"HMAID",
@@ -292,9 +292,9 @@ func TestSolverStep(t *testing.T) {
 
 			So(formed, ShouldHaveLength, 1)
 			So(candidates, ShouldHaveLength, 1)
-			So(candidates[0].Phase, ShouldEqual, types.PhaseArmed)
-			So(candidates[0].Sequence, ShouldEqual, uint64(2))
-			So(candidates[0].Updated, ShouldResemble, firstEventTime)
+			So(candidates[0].Phase, ShouldEqual, types.PhaseForming)
+			So(candidates[0].Sequence, ShouldEqual, uint64(1))
+			So(candidates[0].Updated, ShouldResemble, secondEventTime)
 			So(solver.Error(), ShouldBeNil)
 		})
 	})
@@ -370,12 +370,12 @@ func TestFamilyMaturity(t *testing.T) {
 
 	Convey("Given active evidence with differing maturity", t, func() {
 		active := map[types.CategoryType]float64{
-			types.CoiledCompression: 0.3,
-			types.HiddenAbsorption:  0.8,
+			types.BookThinning: 0.3,
+			types.Frenzy:       0.8,
 		}
 
-		Convey("familyMaturity reports the strongest maturity", func() {
-			So(familyMaturity(declared, active), ShouldEqual, 0.8)
+		Convey("familyMaturity reports the conjunction minimum maturity", func() {
+			So(familyMaturity(declared, active), ShouldEqual, 0.3)
 		})
 
 		Convey("familyMaturity reports zero with no evidence", func() {
@@ -392,8 +392,6 @@ func BenchmarkSolverStep(b *testing.B) {
 		types.CoiledCompression,
 		types.HiddenAbsorption,
 	)
-
-	
 
 	for b.Loop() {
 		stepBatch(solver, categories)

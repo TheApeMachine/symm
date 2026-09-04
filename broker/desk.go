@@ -319,7 +319,6 @@ func (desk *Desk) StepPerspective(perspective *types.Perspective) error {
 	return position.publishGuardian(perspective)
 }
 
-
 /*
 executionReducer returns the symbol's continuously-resident execution reducer,
 constructed atomically so exactly one resident reducer per symbol exists for the

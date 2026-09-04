@@ -2,6 +2,7 @@ package advisor
 
 import (
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,13 +93,33 @@ distribution over the seven market moves, plus the vetoes and synergies that
 shaped it.
 */
 type DeliberationOutcome struct {
-	Probabilities map[MarketMove]float64 `json:"probabilities"`
-	DominantMove  MarketMove             `json:"dominantMove"`
-	Confidence    float64                `json:"confidence"`
-	Vetoes        []string               `json:"vetoes,omitempty"`
-	Synergies     []string               `json:"synergies,omitempty"`
-	Participants  int                    `json:"participants"`
-	At            time.Time              `json:"at"`
+	Probabilities      map[MarketMove]float64 `json:"probabilities"`
+	DominantMove       MarketMove             `json:"dominantMove"`
+	Confidence         float64                `json:"confidence"`
+	Vetoes             []string               `json:"vetoes,omitempty"`
+	Synergies          []string               `json:"synergies,omitempty"`
+	Participants       int                    `json:"participants"`
+	IndependentSources int                    `json:"independentSources,omitempty"`
+	At                 time.Time              `json:"at"`
+}
+
+func advisorSourceGroup(advisor string) string {
+	switch strings.ToLower(advisor) {
+	case "auction", "depth", "book_depth", "wall_building", "liquidity_sweep":
+		return "BookDepth"
+	case "basis", "cross_venue", "futures", "derivatives":
+		return "Derivatives"
+	case "liquidity", "replenishment", "withdrawal":
+		return "Liquidity"
+	case "momentum", "hawkes", "excitation", "branching":
+		return "Hawkes"
+	case "participation", "flow", "cvd", "order_flow":
+		return "OrderFlow"
+	case "profit_run", "pullback", "trend":
+		return "TrendDynamics"
+	default:
+		return advisor
+	}
 }
 
 /*
@@ -265,13 +286,29 @@ func (room *WarRoom) Deliberate(
 
 	mass := priorMass()
 
+	uniqueSources := make(map[string]int)
+
+	for name := range active {
+		group := advisorSourceGroup(name)
+		uniqueSources[group]++
+	}
+
 	for name, perspective := range active {
-		room.project(mass, name, perspective)
+		group := advisorSourceGroup(name)
+		groupCount := uniqueSources[group]
+		discount := 1.0
+
+		if groupCount > 1 {
+			discount = 1.0 / math.Sqrt(float64(groupCount))
+		}
+
+		room.project(mass, name, perspective, discount)
 	}
 
 	outcome := &DeliberationOutcome{
-		Participants: len(active),
-		At:           at,
+		Participants:       len(active),
+		IndependentSources: len(uniqueSources),
+		At:                 at,
 	}
 
 	room.crossExamine(mass, active, outcome)
@@ -352,6 +389,20 @@ func (room *WarRoom) Admit(
 			room.resident[perspective.Symbol] = seats
 		}
 
+		if existing, exists := seats[name]; exists && existing != nil {
+			if perspective.Sequence > 0 && existing.Sequence > 0 && perspective.Sequence <= existing.Sequence {
+				continue
+			}
+
+			if !perspective.IssuedAt.IsZero() && !existing.IssuedAt.IsZero() && perspective.IssuedAt.Before(existing.IssuedAt) {
+				continue
+			}
+
+			if perspective.Lease.Clock != "" && existing.Lease.Clock == perspective.Lease.Clock && perspective.Lease.From < existing.Lease.From {
+				continue
+			}
+		}
+
 		if perspective.Lease.Clock != "" {
 			symbolClocks := room.clocks[perspective.Symbol]
 
@@ -405,41 +456,60 @@ func (room *WarRoom) Admit(
 }
 
 /*
-project applies one advisor's own lean to the move mass, weighted by how much
-that advisor has earned the right to be heard.
+project applies one advisor's full perspective distribution to the move mass,
+weighted by probability, credibility, maturity, and source group discount.
 */
 func (room *WarRoom) project(
 	mass map[MarketMove]float64,
 	name string,
 	perspective *types.Perspective,
+	discount float64,
 ) {
-	topClass := string(perspective.TopClass())
-	probability, found := perspective.Probability(types.PerspectiveState(topClass))
-
-	if !found {
+	if perspective == nil {
 		return
 	}
 
 	credibility := room.credibilityOf(name)
 
-	// A perspective that has survived at most one round reports zero maturity.
-	// Multiplying by it would mute a freshly speaking advisor entirely, so an
-	// unproven reading is discounted rather than silenced: on a cold start
-	// every advisor would otherwise weigh nothing and the council would fall
-	// back to its own stagnant prior, vetoing every entry.
 	maturity := perspective.Maturity()
 
 	if maturity < baselineMaturity {
 		maturity = baselineMaturity
 	}
 
-	weight := probability * credibility * maturity
+	if discount <= 0 {
+		discount = 1.0
+	}
 
-	if weight <= 0 {
+	factor := credibility * maturity * discount
+
+	if factor <= 0 {
 		return
 	}
 
-	switch topClass {
+	if len(perspective.Classes) == 0 {
+		topClass := string(perspective.TopClass())
+		probability, found := perspective.Probability(types.PerspectiveState(topClass))
+
+		if !found {
+			return
+		}
+
+		projectClass(mass, topClass, probability*factor)
+		return
+	}
+
+	for _, pc := range perspective.Classes {
+		if pc.Probability <= 0 {
+			continue
+		}
+
+		projectClass(mass, string(pc.State), pc.Probability*factor)
+	}
+}
+
+func projectClass(mass map[MarketMove]float64, className string, weight float64) {
+	switch className {
 	case "Building", "BuyersBreakingThrough":
 		mass[MoveExplosivePump] += weight * 1.5
 		mass[MoveSteadyTrend] += weight

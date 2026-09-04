@@ -144,7 +144,30 @@ type EconomicState struct {
 	MaxSteps    int
 	Accumulated float64
 
+	EntryPrice        float64
+	PeakPrice         float64
+	HardFloor         float64
+	Floor             float64
+	ProfitLine        float64
+	ProfitLatched     bool
+	StoplossTriggered bool
+
 	observationalHistory [][]float64
+}
+
+/*
+WithStoplossPolicy configures stoploss geometry for post-entry continuation simulation.
+*/
+func (state *EconomicState) WithStoplossPolicy(hardFloor, profitLine float64) *EconomicState {
+	if state == nil {
+		return nil
+	}
+
+	state.HardFloor = hardFloor
+	state.Floor = hardFloor
+	state.ProfitLine = profitLine
+
+	return state
 }
 
 /*
@@ -212,7 +235,7 @@ position reality, exposure policy, and cash coverage only; no evidence
 threshold ever gates an action.
 */
 func (state *EconomicState) GetPossibleActions() []Action {
-	if state == nil || state.IsTerminal() {
+	if state == nil || state.IsTerminal() || state.StoplossTriggered {
 		return nil
 	}
 
@@ -224,15 +247,10 @@ func (state *EconomicState) GetPossibleActions() []Action {
 		return []Action{Wait}
 	}
 
-	actions := []Action{Wait, Exit}
-
-	if state.MaxPosition <= 0 || state.Portfolio.Position+state.UnitQuantity <= state.MaxPosition {
-		if state.affordable(state.UnitQuantity) {
-			actions = append(actions, Scale)
-		}
-	}
-
-	return actions
+	// Post-entry MCTS continuation simulates the production Stoploss policy.
+	// Production does not allow unconstrained Scale/Exit branching post-entry;
+	// the position is held under the simulated Stoploss until triggered or expired.
+	return []Action{Wait}
 }
 
 /*
@@ -264,6 +282,14 @@ func (state *EconomicState) ApplyAction(action Action, random *rand.Rand) (State
 	position := state.Portfolio.Position
 	actionDelta := 0.0
 
+	entryPrice := state.EntryPrice
+	peakPrice := state.PeakPrice
+	hardFloor := state.HardFloor
+	floor := state.Floor
+	profitLine := state.ProfitLine
+	profitLatched := state.ProfitLatched
+	stoplossTriggered := state.StoplossTriggered
+
 	switch action {
 	case Wait:
 	case Enter:
@@ -281,6 +307,19 @@ func (state *EconomicState) ApplyAction(action Action, random *rand.Rand) (State
 		cash -= notional + cost
 		position = state.UnitQuantity
 		actionDelta = -cost
+
+		entryPrice = price
+		peakPrice = price
+
+		if hardFloor <= 0 {
+			hardFloor = price * (1.0 - 0.02)
+		}
+
+		floor = hardFloor
+
+		if profitLine <= 0 {
+			profitLine = price * (1.0 + 0.03)
+		}
 	case Exit:
 		if position == 0 {
 			return nil, fmt.Errorf("mcts: exit requires an open position")
@@ -291,6 +330,7 @@ func (state *EconomicState) ApplyAction(action Action, random *rand.Rand) (State
 		cash += notional - cost
 		position = 0
 		actionDelta = -cost
+		stoplossTriggered = true
 	case Scale:
 		if position == 0 {
 			return nil, fmt.Errorf("mcts: scale requires an open position")
@@ -328,20 +368,59 @@ func (state *EconomicState) ApplyAction(action Action, random *rand.Rand) (State
 
 	marketDelta := position * (newPrice - price)
 
+	if position > 0 {
+		if newPrice > peakPrice {
+			peakPrice = newPrice
+		}
+
+		if profitLine > 0 && newPrice >= profitLine {
+			profitLatched = true
+
+			if entryPrice > floor {
+				floor = entryPrice
+			}
+		}
+
+		if profitLatched && peakPrice > entryPrice {
+			trailDist := entryPrice - hardFloor
+
+			if trailDist > 0 && (peakPrice-trailDist) > floor {
+				floor = peakPrice - trailDist
+			}
+		}
+
+		if (floor > 0 && newPrice <= floor) || (hardFloor > 0 && newPrice <= hardFloor) {
+			notional := position * newPrice
+			exitCost := notional * state.Costs.TotalFraction()
+			cash += notional - exitCost
+			actionDelta -= exitCost
+			position = 0
+			stoplossTriggered = true
+		}
+	}
+
 	return &EconomicState{
 		Portfolio: PortfolioState{
 			Cash:      cash,
 			Position:  position,
 			MarkPrice: newPrice,
 		},
-		Market:       nextMarket,
-		MarketModel:  state.MarketModel,
-		Costs:        state.Costs,
-		UnitQuantity: state.UnitQuantity,
-		MaxPosition:  state.MaxPosition,
-		Step:         state.Step + 1,
-		MaxSteps:     state.MaxSteps,
-		Accumulated:  state.Accumulated + actionDelta + marketDelta,
+		Market:               nextMarket,
+		MarketModel:          state.MarketModel,
+		Costs:                state.Costs,
+		UnitQuantity:         state.UnitQuantity,
+		MaxPosition:          state.MaxPosition,
+		Step:                 state.Step + 1,
+		MaxSteps:             state.MaxSteps,
+		Accumulated:          state.Accumulated + actionDelta + marketDelta,
+		EntryPrice:           entryPrice,
+		PeakPrice:            peakPrice,
+		HardFloor:            hardFloor,
+		Floor:                floor,
+		ProfitLine:           profitLine,
+		ProfitLatched:        profitLatched,
+		StoplossTriggered:    stoplossTriggered,
+		observationalHistory: state.observationalHistory,
 	}, nil
 }
 

@@ -181,6 +181,18 @@ func NewSearch(iterations int, explorationConstant float64, uncertaintyWeight fl
 }
 
 /*
+SetSeed updates the search engine's deterministic seed and resets its random generator.
+*/
+func (search *Search) SetSeed(seed int64) {
+	if search == nil {
+		return
+	}
+
+	search.Seed = seed
+	search.rng = rand.New(rand.NewSource(seed))
+}
+
+/*
 Run searches the action space from the root state under the economic
 objective. The selection rule is:
 

@@ -57,18 +57,18 @@ so a position opened midway through a stream immediately consumes truthful
 current state rather than promoting the next update to a snapshot.
 */
 type liquidationReducer struct {
-	mu      sync.RWMutex
-	symbol  string
-	epoch   uint64
-	seeded  bool
-	valid   bool
-	depth   int
-	bidIdx  map[string]int
-	askIdx  map[string]int
-	bids    []liquidationOrder
-	bidLen  int
-	asks    []liquidationOrder
-	askLen  int
+	mu       sync.RWMutex
+	symbol   string
+	epoch    uint64
+	seeded   bool
+	valid    bool
+	depth    int
+	bidIdx   map[string]int
+	askIdx   map[string]int
+	bids     []liquidationOrder
+	bidLen   int
+	asks     []liquidationOrder
+	askLen   int
 	overflow bool
 }
 

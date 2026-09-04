@@ -20,17 +20,17 @@ type quotePair struct {
 }
 
 type symbolState struct {
-	firstTimestamp    time.Time
-	lastTimestamp     time.Time
-	tradeCount        float64
-	buyCount          float64
-	sellCount         float64
-	buyQty            float64
-	sellQty           float64
-	buyNotional       float64
-	sellNotional      float64
-	priorMidpoint     float64
-	hasPriorMidpoint  bool
+	firstTimestamp       time.Time
+	lastTimestamp        time.Time
+	tradeCount           float64
+	buyCount             float64
+	sellCount            float64
+	buyQty               float64
+	sellQty              float64
+	buyNotional          float64
+	sellNotional         float64
+	priorMidpoint        float64
+	hasPriorMidpoint     bool
 	netFractionEstimator equation.CausalResidual
 }
 

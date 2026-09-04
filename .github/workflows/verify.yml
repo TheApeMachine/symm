@@ -8,7 +8,7 @@ on:
       - master
 
 jobs:
-  verify:
+  gofmt:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout symm
@@ -21,30 +21,14 @@ jobs:
         with:
           repository: theapemachine/datura
           path: datura
+          ref: v1.2.11
 
       - name: Checkout nomagique
         uses: actions/checkout@v4
         with:
           repository: theapemachine/nomagique
           path: nomagique
-
-      - name: Checkout errnie
-        uses: actions/checkout@v4
-        with:
-          repository: theapemachine/errnie
-          path: errnie
-
-      - name: Checkout qpool
-        uses: actions/checkout@v4
-        with:
-          repository: theapemachine/qpool
-          path: qpool
-
-      - name: Checkout sonic
-        uses: actions/checkout@v4
-        with:
-          repository: bytedance/sonic
-          path: sonic
+          ref: master
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -54,6 +38,130 @@ jobs:
             symm/go.sum
             datura/go.sum
             nomagique/go.sum
+
+      - name: Check Go Format
+        working-directory: symm
+        run: ./scripts/verify.sh fmt
+
+  test-go:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout symm
+        uses: actions/checkout@v4
+        with:
+          path: symm
+
+      - name: Checkout datura
+        uses: actions/checkout@v4
+        with:
+          repository: theapemachine/datura
+          path: datura
+          ref: v1.2.11
+
+      - name: Checkout nomagique
+        uses: actions/checkout@v4
+        with:
+          repository: theapemachine/nomagique
+          path: nomagique
+          ref: master
+
+      - name: Checkout errnie
+        uses: actions/checkout@v4
+        with:
+          repository: theapemachine/errnie
+          path: errnie
+          ref: v1.2.9
+
+      - name: Checkout qpool
+        uses: actions/checkout@v4
+        with:
+          repository: theapemachine/qpool
+          path: qpool
+          ref: master
+
+      - name: Checkout sonic
+        uses: actions/checkout@v4
+        with:
+          repository: bytedance/sonic
+          path: sonic
+          ref: v1.15.2
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: symm/go.mod
+          cache-dependency-path: |
+            symm/go.sum
+            datura/go.sum
+            nomagique/go.sum
+
+      - name: Run Go Unit Tests
+        working-directory: symm
+        run: ./scripts/verify.sh test
+
+  test-race:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout symm
+        uses: actions/checkout@v4
+        with:
+          path: symm
+
+      - name: Checkout datura
+        uses: actions/checkout@v4
+        with:
+          repository: theapemachine/datura
+          path: datura
+          ref: v1.2.11
+
+      - name: Checkout nomagique
+        uses: actions/checkout@v4
+        with:
+          repository: theapemachine/nomagique
+          path: nomagique
+          ref: master
+
+      - name: Checkout errnie
+        uses: actions/checkout@v4
+        with:
+          repository: theapemachine/errnie
+          path: errnie
+          ref: v1.2.9
+
+      - name: Checkout qpool
+        uses: actions/checkout@v4
+        with:
+          repository: theapemachine/qpool
+          path: qpool
+          ref: master
+
+      - name: Checkout sonic
+        uses: actions/checkout@v4
+        with:
+          repository: bytedance/sonic
+          path: sonic
+          ref: v1.15.2
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: symm/go.mod
+          cache-dependency-path: |
+            symm/go.sum
+            datura/go.sum
+            nomagique/go.sum
+
+      - name: Run Go Race Tests
+        working-directory: symm
+        run: ./scripts/verify.sh race
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout symm
+        uses: actions/checkout@v4
+        with:
+          path: symm
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -67,6 +175,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: symm/frontend/pnpm-lock.yaml
 
-      - name: Verify
+      - name: Run Frontend Checks
         working-directory: symm
-        run: ./scripts/verify.sh
+        run: ./scripts/verify.sh frontend

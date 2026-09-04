@@ -324,16 +324,17 @@ func TestPositionOnExecutionTerminalPartialEntry(t *testing.T) {
 			ForecastHorizon:  1,
 			Mark:             mustDecimal("2.00"),
 		}
-		stoploss, err := types.NewStoploss(
+		stoploss, err := types.NewStoplossWithPlan(
 			t.Context(),
 			"TEST/USD",
 			mustDecimal("2.00"),
 			mustDecimal("2.00"),
 			&learning.RLSOutput{Ready: true},
-			nil,
+			0,
 			mustDecimal("0.01"),
 			mustDecimal("0.008"),
 			mustDecimal("0.008"),
+			nil,
 			time.Now(),
 		)
 		So(err, ShouldBeNil)

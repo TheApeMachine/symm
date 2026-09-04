@@ -292,7 +292,6 @@ func (position *Position) onPerspective(perspective *types.Perspective) {
 	position.Holding.Stoploss.ObservePerspective(perspective)
 }
 
-
 func (position *Position) status() types.Status {
 	status := position.Status.Load()
 

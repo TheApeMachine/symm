@@ -224,16 +224,17 @@ func TestExecutionDeliveryEndToEnd(t *testing.T) {
 		// A real, armed stoploss is required by the entry-fill path. It is
 		// constructed from a ready forecast and an empty forward curve so the
 		// geometry reduces to a one-tick floor below the entry mark.
-		stoploss, err := types.NewStoploss(
+		stoploss, err := types.NewStoplossWithPlan(
 			t.Context(),
 			"TEST/USD",
 			mustDecimal("2.00"),
 			mustDecimal("2.00"),
 			&learning.RLSOutput{Ready: true},
-			nil,
+			0,
 			mustDecimal("0.01"),
 			mustDecimal("0.008"),
 			mustDecimal("0.008"),
+			nil,
 			time.Now(),
 		)
 		So(err, ShouldBeNil)

@@ -6,7 +6,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/logic/advisor",
       "file": "logic/advisor/arena.go",
-      "line": 4,
+      "line": 6,
       "targets": [
         "github.com/theapemachine/errnie",
         "github.com/theapemachine/symm/nomagique/runtime",
@@ -68,7 +68,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/logic/advisor",
       "file": "logic/advisor/deliberation.go",
-      "line": 8,
+      "line": 9,
       "targets": [
         "github.com/theapemachine/symm/types"
       ]
@@ -262,7 +262,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 316,
+      "line": 308,
       "targets": [
         "derivatives/liquidation_notional_rate"
       ]
@@ -272,7 +272,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 268,
+      "line": 260,
       "targets": [
         "cvd/signed_net_fraction_divergence",
         "cvd/signed_net_fraction_zscore"
@@ -283,7 +283,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 265,
+      "line": 257,
       "targets": [
         "leadlag/best_lag_correlation_zscore"
       ]
@@ -293,7 +293,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 284,
+      "line": 276,
       "targets": [
         "depthflow/mutation_activity_imbalance"
       ]
@@ -303,7 +303,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 289,
+      "line": 281,
       "targets": [
         "pumpdump/relative_spread",
         "pumpdump/spread_zscore",
@@ -315,7 +315,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 255,
+      "line": 247,
       "targets": [
         "correlation/relative_return_energy_divergence",
         "correlation/relative_return_energy_zscore"
@@ -326,7 +326,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 264,
+      "line": 256,
       "targets": [
         "leadlag/lag_zscore"
       ]
@@ -336,7 +336,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 283,
+      "line": 275,
       "targets": [
         "depthflow/observed_notional_rate_zscore"
       ]
@@ -346,7 +346,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 319,
+      "line": 311,
       "targets": [
         "derivatives/basis_rate",
         "derivatives/basis_zscore"
@@ -357,7 +357,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 309,
+      "line": 301,
       "targets": [
         "sentiment/median_absolute_return_zscore",
         "sentiment/return_dispersion_zscore"
@@ -368,7 +368,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 258,
+      "line": 250,
       "targets": [
         "correlation/cohort_correlation_dispersion",
         "correlation/correlation_divergence"
@@ -379,7 +379,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 298,
+      "line": 290,
       "targets": [
         "liquidity/relative_spread"
       ]
@@ -389,7 +389,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 294,
+      "line": 286,
       "targets": [
         "pumpdump/midpoint_return_zscore"
       ]
@@ -399,7 +399,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 276,
+      "line": 268,
       "targets": [
         "hawkes/excitation_intensity:buy",
         "hawkes/excitation_intensity:sell"
@@ -410,7 +410,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 262,
+      "line": 254,
       "targets": [
         "leadlag/correlation_gain_zscore"
       ]
@@ -420,7 +420,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 278,
+      "line": 270,
       "targets": [
         "hawkes/arrival_rate"
       ]
@@ -430,7 +430,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 314,
+      "line": 306,
       "targets": [
         "derivatives/open_interest_growth_rate",
         "derivatives/open_interest_growth_zscore"
@@ -441,7 +441,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 323,
+      "line": 315,
       "targets": [
         "toxicity/fill_fraction_zscore:ask",
         "toxicity/fill_fraction_zscore:bid"
@@ -452,7 +452,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 281,
+      "line": 273,
       "targets": [
         "depthflow/observed_notional_imbalance_divergence",
         "depthflow/observed_notional_imbalance_zscore"
@@ -463,7 +463,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 317,
+      "line": 309,
       "targets": [
         "derivatives/liquidation_share",
         "derivatives/net_liquidation_notional"
@@ -474,7 +474,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 292,
+      "line": 284,
       "targets": [
         "pumpdump/midpoint_return_zscore",
         "pumpdump/trade_interval_seconds"
@@ -485,7 +485,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 307,
+      "line": 299,
       "targets": [
         "sentiment/directional_agreement",
         "sentiment/directional_consensus"
@@ -496,7 +496,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 299,
+      "line": 291,
       "targets": [
         "liquidity/two_sided_touch_notional"
       ]
@@ -506,7 +506,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 271,
+      "line": 263,
       "targets": [
         "cvd/flow_aligned_midpoint_return",
         "cvd/midpoint_return_rate_zscore"
@@ -517,7 +517,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 257,
+      "line": 249,
       "targets": [
         "correlation/correlation_zscore"
       ]
@@ -527,7 +527,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 263,
+      "line": 255,
       "targets": [
         "leadlag/contemporaneous_correlation"
       ]
@@ -537,7 +537,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 253,
+      "line": 245,
       "targets": [
         "correlation/cohort_signed_correlation",
         "correlation/signed_correlation"
@@ -548,7 +548,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 311,
+      "line": 303,
       "targets": [
         "sentiment/breadth_zscore"
       ]
@@ -558,7 +558,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 275,
+      "line": 267,
       "targets": [
         "hawkes/branching_spectral_radius"
       ]
@@ -568,7 +568,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 287,
+      "line": 279,
       "targets": [
         "cvd/signed_net_fraction_zscore",
         "depthflow/observed_notional_imbalance_zscore",
@@ -583,7 +583,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/types",
       "file": "types/category.go",
-      "line": 270,
+      "line": 262,
       "targets": [
         "cvd/gross_notional_rate_divergence"
       ]

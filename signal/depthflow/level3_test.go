@@ -145,7 +145,6 @@ func BenchmarkLevel3Step(b *testing.B) {
 
 	level3.Step(message)
 	b.ReportAllocs()
-	
 
 	for b.Loop() {
 		message.Timestamp = message.Timestamp.Add(time.Nanosecond)

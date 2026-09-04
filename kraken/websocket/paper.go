@@ -216,7 +216,11 @@ func (paper *Paper) Write(
 
 		return paper.Replay(trades)
 	default:
-		return types.ClosedError{Component: "paper:" + request.Params.Channel}
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"paper: something went wrong",
+			nil,
+		))
 	}
 }
 
@@ -224,7 +228,11 @@ func (paper *Paper) Write(
 Post satisfies Conn; paper REST operations remain explicit typed methods.
 */
 func (paper *Paper) Post(string, json.Marshaler) ([]byte, error) {
-	return nil, types.ClosedError{Component: "paper:rest"}
+	return nil, errnie.Error(errnie.Err(
+		errnie.Internal,
+		"paper: something went wrong",
+		nil,
+	))
 }
 
 /*

@@ -3,6 +3,7 @@ package opportunity
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -121,6 +122,50 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 	categories := envelope.Categories
 
 	if len(categories) == 0 {
+		symbol := envelopeSymbol(envelope)
+
+		if symbol == "" {
+			return envelope
+		}
+
+		solver.mutex.Lock()
+		defer solver.mutex.Unlock()
+
+		slots := solver.slotsFor(symbol)
+		eventTime := envelopeEventTime(envelope)
+
+		candidates := make([]*types.OpportunityCandidate, 0, len(slots))
+
+		if precursor := solver.checkVolumeSurgePrecursor(envelope, slots, symbol, eventTime); precursor != nil {
+			candidates = append(candidates, precursor)
+		}
+
+		for _, resident := range slots {
+			if resident == nil || resident.invalidated {
+				continue
+			}
+
+			if resident.candidate.Phase == types.PhaseArmed || resident.candidate.Phase == types.PhaseIgnition {
+				alreadyAdded := false
+
+				for _, candidate := range candidates {
+					if candidate.Archetype == resident.candidate.Archetype {
+						alreadyAdded = true
+						break
+					}
+				}
+
+				if !alreadyAdded {
+					candidateCopy := resident.candidate
+					candidates = append(candidates, &candidateCopy)
+				}
+			}
+		}
+
+		if len(candidates) > 0 {
+			envelope.Opportunities = candidates
+		}
+
 		return envelope
 	}
 
@@ -150,6 +195,10 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 	for _, declared := range families {
 		phase, found := phaseFor(declared, active)
 
+		if phase == types.PhaseArmed && !hasIndependentPrecursors(declared, categories) {
+			phase = types.PhaseForming
+		}
+
 		if candidate := solver.advance(slots, declared, symbol, phase, found, active, eventTime); candidate != nil {
 			candidates = append(candidates, candidate)
 		}
@@ -164,6 +213,44 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 	}
 
 	return envelope
+}
+
+func hasIndependentPrecursors(declared family, categories []types.Category) bool {
+	sources := make(map[string]bool)
+	precursorCount := 0
+
+	for _, category := range categories {
+		if category.Strength < 0.5 || category.Maturity <= 0 {
+			continue
+		}
+
+		isPrecursor := false
+
+		for _, precursor := range declared.Precursors {
+			if category.Type == precursor {
+				isPrecursor = true
+				break
+			}
+		}
+
+		if isPrecursor {
+			precursorCount++
+
+			for _, src := range category.Supporting {
+				sources[src] = true
+			}
+		}
+	}
+
+	if precursorCount < armedPrecursorCount {
+		return false
+	}
+
+	if len(sources) > 0 && len(sources) < 2 {
+		return false
+	}
+
+	return true
 }
 
 func (solver *Solver) checkVolumeSurgePrecursor(
@@ -181,16 +268,19 @@ func (solver *Solver) checkVolumeSurgePrecursor(
 	velMetric, hasVel := envelope.PumpDump.Metrics["notional_rate_velocity"]
 
 	ratio := 0.0
+
 	if hasRatio {
 		ratio = ratioMetric.Raw
 	}
 
 	zscore := 0.0
+
 	if hasZScore {
 		zscore = zscoreMetric.Raw
 	}
 
 	velocity := 0.0
+
 	if hasVel {
 		velocity = velMetric.Raw
 	}
@@ -200,20 +290,37 @@ func (solver *Solver) checkVolumeSurgePrecursor(
 	archetype := types.ArchetypeVolumeSurgePrecursor
 	slot, exists := slots[archetype]
 
-
 	if !isSurge {
 		if !exists || slot.invalidated {
 			return nil
 		}
 
-		slot.invalidated = true
-		slot.candidate.Phase = types.PhaseInvalidated
-		slot.candidate.Updated = eventTime
-		slot.candidate.Sequence++
-		delete(slots, archetype)
+		dumpMetric, hasDump := envelope.PumpDump.Metrics["is_dump"]
+		isContradicted := hasDump && dumpMetric.Raw > 0
+
+		if isContradicted {
+			slot.invalidated = true
+			slot.candidate.Phase = types.PhaseInvalidated
+			slot.candidate.Updated = eventTime
+			slot.candidate.Sequence++
+			delete(slots, archetype)
+
+			candidate := slot.candidate
+
+			return &candidate
+		}
 
 		candidate := slot.candidate
+
 		return &candidate
+	}
+
+	maturity := 0.5
+
+	if zscore >= 3.0 {
+		maturity = math.Min(1.0, zscore/6.0)
+	} else if ratio >= 100.0 {
+		maturity = math.Min(1.0, ratio/200.0)
 	}
 
 	if !exists {
@@ -225,22 +332,30 @@ func (solver *Solver) checkVolumeSurgePrecursor(
 			FirstSeen:  eventTime,
 			Updated:    eventTime,
 			Sequence:   1,
-			Provenance: types.ProvenanceCategory | types.ProvenanceResonance,
-			Maturity:   1.0,
+			Provenance: types.ProvenanceCognition,
+			Maturity:   maturity,
 		}
 		slots[archetype] = &resident{candidate: candidate}
+
+		return &candidate
+	}
+
+	if eventTime.Before(slot.candidate.Updated) {
+		candidate := slot.candidate
+
 		return &candidate
 	}
 
 	slot.candidate.Phase = types.PhaseArmed
 	slot.candidate.Updated = eventTime
 	slot.candidate.Sequence++
-	slot.candidate.Maturity = 1.0
+	slot.candidate.Provenance = types.ProvenanceCognition
+	slot.candidate.Maturity = maturity
 
 	candidate := slot.candidate
+
 	return &candidate
 }
-
 
 func validateBatch(categories []types.Category) (string, time.Time, error) {
 	if len(categories) == 0 {
@@ -292,6 +407,12 @@ func (solver *Solver) advance(
 	eventTime time.Time,
 ) *types.OpportunityCandidate {
 	slot, exists := slots[declared.Archetype]
+
+	if exists && eventTime.Before(slot.candidate.Updated) {
+		candidate := slot.candidate
+
+		return &candidate
+	}
 
 	if !found {
 		if !exists {
@@ -345,16 +466,14 @@ func (solver *Solver) advance(
 }
 
 /*
-activeCategories reduces a ranked batch to the categories carrying positive
-support, keyed by category and valued by maturity. Strength > 0 is the honest
-"this category has supporting evidence" signal; Confidence is an evidence share
-that stays near-uniform when many regimes fire.
+activeCategories reduces a ranked batch to the categories carrying material
+support. Arming requires material strength and positive maturity.
 */
 func activeCategories(categories []types.Category) map[types.CategoryType]float64 {
 	active := make(map[types.CategoryType]float64, len(categories))
 
 	for _, category := range categories {
-		if category.Strength > 0 {
+		if category.Strength >= 0.5 && category.Maturity > 0 {
 			active[category.Type] = category.Maturity
 		}
 	}
@@ -392,21 +511,78 @@ func phaseFor(declared family, active map[types.CategoryType]float64) (types.Opp
 }
 
 /*
-familyMaturity is the strongest maturity among the family's active evidence,
-without allocating a combined slice.
+familyMaturity computes conjunction semantics: the minimum maturity among
+active required precursors, reflecting the weakest link of the hypothesis.
 */
 func familyMaturity(declared family, active map[types.CategoryType]float64) float64 {
-	maturity := 0.0
+	if val, confirmed := active[declared.Confirmation]; confirmed {
+		return val
+	}
+
+	minMaturity := 1.0
+	count := 0
 
 	for _, precursor := range declared.Precursors {
-		if value, present := active[precursor]; present && value > maturity {
-			maturity = value
+		if value, present := active[precursor]; present {
+			count++
+
+			if value < minMaturity {
+				minMaturity = value
+			}
 		}
 	}
 
-	if value, present := active[declared.Confirmation]; present && value > maturity {
-		maturity = value
+	if count < armedPrecursorCount {
+		if count > 0 {
+			return minMaturity
+		}
+
+		return 0.0
 	}
 
-	return maturity
+	return minMaturity
+}
+
+func envelopeSymbol(envelope *types.Envelope) string {
+	if envelope == nil {
+		return ""
+	}
+
+	if envelope.TickerData.Symbol != "" {
+		return envelope.TickerData.Symbol
+	}
+
+	if envelope.TradeData.Symbol != "" {
+		return envelope.TradeData.Symbol
+	}
+
+	if envelope.PumpDump != nil && envelope.PumpDump.Symbol() != "" {
+		return envelope.PumpDump.Symbol()
+	}
+
+	if envelope.Key != "" {
+		return envelope.Key
+	}
+
+	return ""
+}
+
+func envelopeEventTime(envelope *types.Envelope) time.Time {
+	if envelope == nil {
+		return time.Time{}
+	}
+
+	if !envelope.TickerData.Timestamp.IsZero() {
+		return envelope.TickerData.Timestamp
+	}
+
+	if !envelope.TradeData.Timestamp.IsZero() {
+		return envelope.TradeData.Timestamp
+	}
+
+	if envelope.PumpDump != nil && !envelope.PumpDump.At.IsZero() {
+		return envelope.PumpDump.At
+	}
+
+	return time.Now()
 }

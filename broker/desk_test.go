@@ -98,16 +98,17 @@ func newLevel3GuardianDesk(t testing.TB) (*Desk, *Position) {
 	})
 
 	entry := mustDecimal("2.00")
-	stoploss, err := types.NewStoploss(
+	stoploss, err := types.NewStoplossWithPlan(
 		t.Context(),
 		"TEST/USD",
 		entry,
 		entry,
 		&learning.RLSOutput{Ready: true},
-		nil,
+		0,
 		mustDecimal("0.01"),
 		mustDecimal("0"),
 		mustDecimal("0"),
+		nil,
 		time.Now(),
 	)
 	if err != nil {
@@ -180,16 +181,17 @@ func TestDeskPositionOpenedAfterSnapshotConsumesContinuousState(t *testing.T) {
 		}), ShouldBeNil)
 
 		entry := mustDecimal("2.00")
-		stoploss, err := types.NewStoploss(
+		stoploss, err := types.NewStoplossWithPlan(
 			t.Context(),
 			"TEST/USD",
 			entry,
 			entry,
 			&learning.RLSOutput{Ready: true},
-			nil,
+			0,
 			mustDecimal("0.01"),
 			mustDecimal("0"),
 			mustDecimal("0"),
+			nil,
 			time.Now(),
 		)
 

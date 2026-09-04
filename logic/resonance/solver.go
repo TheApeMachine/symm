@@ -219,7 +219,7 @@ func (solver *Solver) Update(
 	if !found {
 		detector = learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
 			CustomArch: []int{len(features), len(features) * 4, len(features) * 2, len(features)},  // Overcomplete dictionary with latent space
-			MaxHorizon: 300,                                                                        // Forward rollouts to t+300: a next-tick call is not actionable
+			MaxHorizon: 50,                                                                         // Forward rollouts to t+300: a next-tick call is not actionable
 			Target:     solver.directionalTarget(symbolName),                                       // Noise-scaled directional call
 			Pace:       learning.NewPaceController(learning.PaceConfig{InitialAlpha: solver.pace}), // Adaptive learning pace
 			Learn:      true,

@@ -32,7 +32,7 @@ func BenchmarkStreamsAdvance(b *testing.B) {
 	streams.Next("trade")
 	b.ReportAllocs()
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for b.Loop() {
 		streams.Advance()
 	}
 }

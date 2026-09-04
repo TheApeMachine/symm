@@ -42,6 +42,18 @@ func newPassageTracker(
 		}
 	}
 
+	openedTick := int64(0)
+
+	if position != nil && !position.Decision.At.IsZero() {
+		openedTick = position.Decision.At.UTC().UnixNano()
+	} else if position != nil && position.Decision.EntryAt != nil && !position.Decision.EntryAt.IsZero() {
+		openedTick = position.Decision.EntryAt.UTC().UnixNano()
+	}
+
+	if openedTick == 0 {
+		openedTick = time.Now().UTC().UnixNano()
+	}
+
 	tracker := &passageTracker{
 		regime: regime,
 		episode: types.PassageEpisode{
@@ -49,7 +61,7 @@ func newPassageTracker(
 			Symbol:       position.Decision.Symbol,
 			Regime:       regime,
 			ATR:          atr,
-			OpenedTick:   time.Now().UTC().UnixNano(),
+			OpenedTick:   openedTick,
 			Horizon:      float64(horizon),
 			Entry:        entryPrice.Float64(),
 			HardFloor:    hardFloorOf(position, entryPrice),
@@ -140,7 +152,19 @@ func (tracker *passageTracker) complete(
 		return types.PassageEpisode{}, false
 	}
 
-	tracker.episode.ClosedTick = time.Now().UTC().UnixNano()
+	closedTick := int64(0)
+
+	if position != nil && position.Decision.ExitAt != nil && !position.Decision.ExitAt.IsZero() {
+		closedTick = position.Decision.ExitAt.UTC().UnixNano()
+	} else if tick := liveTick(position); tick != nil && !tick.Timestamp.IsZero() {
+		closedTick = tick.Timestamp.UTC().UnixNano()
+	}
+
+	if closedTick == 0 {
+		closedTick = time.Now().UTC().UnixNano()
+	}
+
+	tracker.episode.ClosedTick = closedTick
 	tracker.episode.ExitReason = lotTriggerReason(position)
 
 	outcome, decided := passageOutcome(tracker.episode.ExitReason)
@@ -278,4 +302,80 @@ func (desk *Desk) PassageAdverseQuantileForRegime(
 	}
 
 	return desk.passage.AdverseQuantileForRegime(regime, confidence)
+}
+
+/*
+PassageFavorableQuantileForRegime exposes the empirical favorable-excursion
+quantile for movement magnitude within a specific regime.
+*/
+func (desk *Desk) PassageFavorableQuantileForRegime(
+	regime string,
+	confidence float64,
+) (float64, bool) {
+	if desk == nil || desk.passage == nil {
+		return 0, false
+	}
+
+	return desk.passage.FavorableQuantileForRegime(regime, confidence)
+}
+
+/*
+PassageOutcomeProbabilities exposes empirical outcome frequencies for a regime.
+*/
+func (desk *Desk) PassageOutcomeProbabilities(
+	regime string,
+) (float64, float64, float64, float64) {
+	if desk == nil || desk.passage == nil {
+		return 1.0 / 3, 1.0 / 3, 1.0 / 3, 0
+	}
+
+	return desk.passage.OutcomeProbabilities(regime)
+}
+
+/*
+PassageEconomics returns calibrated opportunity economics derived from realized Passage history.
+*/
+func (desk *Desk) PassageEconomics(regime string) types.OpportunityEconomics {
+	if desk == nil || desk.passage == nil {
+		return types.OpportunityEconomics{}
+	}
+
+	profitFirst, lossFirst, _, support := desk.passage.OutcomeProbabilities(regime)
+	favLow, _ := desk.passage.FavorableQuantileForRegime(regime, 0.25)
+	favMid, favMidOk := desk.passage.FavorableQuantileForRegime(regime, 0.50)
+	favHigh, _ := desk.passage.FavorableQuantileForRegime(regime, 0.75)
+	advLow, _ := desk.passage.NormalAdverseQuantileForRegime(regime, 0.25)
+	advMid, advMidOk := desk.passage.NormalAdverseQuantileForRegime(regime, 0.50)
+	advHigh, _ := desk.passage.NormalAdverseQuantileForRegime(regime, 0.75)
+	duration := desk.passage.ResolutionDuration(regime)
+
+	calibrated := support >= 12.0 && favMidOk && advMidOk
+
+	return types.OpportunityEconomics{
+		Calibrated:            calibrated,
+		TransitionProbability: profitFirst + lossFirst,
+		ProfitFirst:           profitFirst,
+		FavorableExcursion: types.Excursion{
+			Low:  favLow,
+			Mid:  favMid,
+			High: favHigh,
+		},
+		AdverseExcursion: types.Excursion{
+			Low:  advLow,
+			Mid:  advMid,
+			High: advHigh,
+		},
+		Resolution: duration,
+	}
+}
+
+/*
+PassageMovementMagnitude returns the average movement magnitude for one regime.
+*/
+func (desk *Desk) PassageMovementMagnitude(regime string) float64 {
+	if desk == nil || desk.passage == nil {
+		return 0
+	}
+
+	return desk.passage.MovementMagnitude(regime)
 }

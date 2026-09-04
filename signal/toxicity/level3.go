@@ -19,15 +19,15 @@ type level3State struct {
 	hasRetainedBid bool
 	hasRetainedAsk bool
 
-	prevBid        float64
-	prevAsk        float64
-	prevBidQty     float64
-	prevAskQty     float64
-	hasPrevTouch   bool
-	prevSec        float64
-	prevNsec       float64
+	prevBid      float64
+	prevAsk      float64
+	prevBidQty   float64
+	prevAskQty   float64
+	hasPrevTouch bool
+	prevSec      float64
+	prevNsec     float64
 
-	lastSec float64
+	lastSec  float64
 	lastNsec float64
 	hasTime  bool
 

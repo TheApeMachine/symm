@@ -603,11 +603,22 @@ var (
 			// held credibility 1.0 forever and being wrong cost nothing.
 			court := planner.Court()
 
+			// No Arena decides anything until the system is fully booted.
+			// instrument.Subscribe walks the symbol universe in paced batches,
+			// so the first batch streams live while later batches are still
+			// connecting. Classifiers fed that partial universe are cold, their
+			// distributions are uniform, and a uniform distribution has no
+			// winner to act on. Gating on instrument READY means the advisors
+			// stay silent until the whole universe is subscribed.
+			booted := func() bool {
+				return instrument.Status() == nmruntime.READY
+			}
+
 			for _, arena := range []*advisor.Arena{
 				momentumArena, auctionArena, participationArena, profitRunArena,
 				pullbackArena, liquidityArena, basisArena,
 			} {
-				arena.Court(court)
+				arena.Court(court).Booted(booted)
 			}
 
 			// Phase 2 — declare the complete streaming topology as Workloads.

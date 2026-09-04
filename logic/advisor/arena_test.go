@@ -128,9 +128,96 @@ func TestArenaStep(t *testing.T) {
 		second := arenaEnvelope("ETH/USD", 1, 1, 1)
 		second.Perspectives = []*types.Perspective{arenaPerspective("ETH/USD", "recovery", 1, 3)}
 
-		Convey("a new structural key fails visibly instead of evicting another round", func() {
-			So(arena.Step(second), ShouldBeNil)
-			So(errnie.IsTooManyRequests(arena.Error()), ShouldBeTrue)
+		Convey("a new structural key is refused instead of evicting another round", func() {
+			// The refusal is logged and counted, but it does not kill the
+			// Arena: capacity pressure is a normal operating condition, and
+			// latching it as terminal silenced the advisor and everything
+			// downstream of it for the rest of the process.
+			So(arena.Step(second), ShouldEqual, second)
+			So(arena.Error(), ShouldBeNil)
+			So(arena.Active(), ShouldEqual, 1)
+		})
+
+		Convey("the Arena keeps serving the stream afterwards", func() {
+			So(arena.Step(second), ShouldNotBeNil)
+			third := arenaEnvelope("BTC/USD", 1, 1, 2)
+
+			So(arena.Step(third), ShouldEqual, third)
+			So(arena.Error(), ShouldBeNil)
+		})
+	})
+}
+
+func TestArenaBootGate(t *testing.T) {
+	Convey("Given an Arena gated on a system that has not finished booting", t, func() {
+		node := &arenaNode{}
+		arena, err := NewArena("midpoint", predictiveMidpointFeatures(), node, 2)
+		So(err, ShouldBeNil)
+
+		booted := false
+		arena.Booted(func() bool { return booted })
+
+		issued := arenaEnvelope("BTC/USD", 1, 1, 1)
+		issued.Perspectives = []*types.Perspective{
+			arenaPerspective("BTC/USD", "recovery", 1, 3),
+		}
+
+		Convey("no Perspective is issued and no round is opened", func() {
+			So(arena.Step(issued), ShouldEqual, issued)
+			So(arena.Active(), ShouldEqual, 0)
+			So(node.perspectives, ShouldBeEmpty)
+		})
+
+		Convey("market data still reaches the wrapped Node", func() {
+			So(arena.Step(issued), ShouldNotBeNil)
+			So(node.calls, ShouldEqual, 1)
+		})
+
+		Convey("a tied distribution during boot does not fail the Arena", func() {
+			// A cold classifier yields a uniform distribution, whose classes
+			// carry bit-identical probabilities. That reached winningClass and
+			// latched a terminal error, silencing the advisor for the whole
+			// process. Behind the gate it is simply never admitted.
+			tied := arenaEnvelope("BTC/USD", 1, 1, 1)
+			perspective := arenaPerspective("BTC/USD", "recovery", 1, 3)
+			perspective.Classes[0].Probability = 0.5
+			perspective.Classes[1].Probability = 0.5
+			tied.Perspectives = []*types.Perspective{perspective}
+
+			So(arena.Step(tied), ShouldEqual, tied)
+			So(arena.Error(), ShouldBeNil)
+			So(arena.Active(), ShouldEqual, 0)
+		})
+
+		Convey("once booted the Arena admits and publishes normally", func() {
+			So(arena.Step(issued), ShouldNotBeNil)
+			So(arena.Active(), ShouldEqual, 0)
+
+			booted = true
+			later := arenaEnvelope("BTC/USD", 1, 1, 1)
+			later.Perspectives = []*types.Perspective{
+				arenaPerspective("BTC/USD", "recovery", 1, 3),
+			}
+
+			So(arena.Step(later), ShouldEqual, later)
+			So(arena.Active(), ShouldEqual, 1)
+			So(node.perspectives, ShouldHaveLength, 1)
+			So(node.perspectives[0].Lifecycle, ShouldEqual, types.PerspectiveIssued)
+		})
+	})
+
+	Convey("Given an Arena with no boot gate attached", t, func() {
+		node := &arenaNode{}
+		arena, err := NewArena("midpoint", predictiveMidpointFeatures(), node, 2)
+		So(err, ShouldBeNil)
+		issued := arenaEnvelope("BTC/USD", 1, 1, 1)
+		issued.Perspectives = []*types.Perspective{
+			arenaPerspective("BTC/USD", "recovery", 1, 3),
+		}
+
+		Convey("it runs unguarded", func() {
+			So(arena.Step(issued), ShouldNotBeNil)
+			So(arena.Active(), ShouldEqual, 1)
 		})
 	})
 }
