@@ -30,3 +30,8 @@ func (sumNode *Sum) Step(x Scalar) Scalar {
 
 	return sum
 }
+
+// Slots exposes the nodes this sum is composed of.
+func (sumNode *Sum) Slots() []Node {
+	return []Node{sumNode.A, sumNode.B, sumNode.C, sumNode.D}
+}

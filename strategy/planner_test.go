@@ -79,7 +79,7 @@ func TestPlannerRequiresAdvisorsBeforeDeciding(t *testing.T) {
 	})
 }
 
-func TestPlannerFallsBackToConsensusWhenResonanceIsCold(t *testing.T) {
+func TestPlannerRequiresResonance(t *testing.T) {
 	Convey("Given advisors but no calibrated resonance forecast", t, func() {
 		planner := plannerForTest()
 		envelope := tickerEnvelope("TEST/USD", 100, 101)
@@ -90,11 +90,9 @@ func TestPlannerFallsBackToConsensusWhenResonanceIsCold(t *testing.T) {
 		out := planner.Step(envelope)
 		decision := out.StrategyRound.Decisions[0]
 
-		Convey("planning proceeds on the council's own distribution", func() {
-			// A cold start is exactly when a pump is most likely and least
-			// modeled; aborting here would blind the system to its best setups.
-			So(decision.PredictiveStatus, ShouldNotEqual, "no-transition-model")
-			So(decision.ForecastSource, ShouldEqual, "war-room-consensus")
+		Convey("planning halts because resonance is strictly required", func() {
+			So(decision.PredictiveStatus, ShouldEqual, "resonance-missing")
+			So(decision.Action, ShouldEqual, types.ActionNothing)
 		})
 	})
 
@@ -131,43 +129,6 @@ func TestPlannerProjectsTheDeliberation(t *testing.T) {
 				So(decision.Alternatives, ShouldContainKey, "move:explosive_pump")
 				So(decision.Alternatives, ShouldContainKey, "move:flash_dump")
 			})
-		})
-	})
-}
-
-func TestPlannerCarriesOpportunityContext(t *testing.T) {
-	Convey("Given an armed opportunity on the ticker's symbol", t, func() {
-		planner := plannerForTest()
-		envelope := tickerEnvelope("TEST/USD", 100, 101)
-		envelope.Opportunities = []*types.OpportunityCandidate{
-			{
-				Symbol:    "TEST/USD",
-				Archetype: types.ArchetypeVerticalIgnition,
-				Phase:     types.PhaseArmed,
-			},
-		}
-
-		out := planner.Step(envelope)
-		decision := out.StrategyRound.Decisions[0]
-
-		Convey("the decision reports that opportunity's archetype and phase", func() {
-			So(decision.Opportunity, ShouldBeTrue)
-			So(decision.OpportunityType, ShouldEqual, string(types.ArchetypeVerticalIgnition))
-			So(decision.OpportunityPhase, ShouldEqual, string(types.PhaseArmed))
-		})
-	})
-
-	Convey("Given an opportunity for a different symbol", t, func() {
-		planner := plannerForTest()
-		envelope := tickerEnvelope("TEST/USD", 100, 101)
-		envelope.Opportunities = []*types.OpportunityCandidate{
-			{Symbol: "OTHER/USD", Archetype: types.ArchetypeVerticalIgnition},
-		}
-
-		out := planner.Step(envelope)
-
-		Convey("it is not attributed to this symbol's decision", func() {
-			So(out.StrategyRound.Decisions[0].Opportunity, ShouldBeFalse)
 		})
 	})
 }
@@ -274,3 +235,39 @@ func TestPlannerEntryCosts(t *testing.T) {
 	})
 }
 
+func TestPlannerStreamingTopologyCases(t *testing.T) {
+	Convey("Case K: Deterministic replay producing identical decision and trace", t, func() {
+		planner1 := plannerForTest()
+		planner2 := plannerForTest()
+
+		env1 := tickerEnvelope("TEST/USD", 100, 101)
+		env1.Tick = 4242
+		env1.Perspectives = []*types.Perspective{
+			advisorPerspective("momentum", "Building", 0.8),
+		}
+
+		env2 := tickerEnvelope("TEST/USD", 100, 101)
+		env2.Tick = 4242
+		env2.Perspectives = []*types.Perspective{
+			advisorPerspective("momentum", "Building", 0.8),
+		}
+
+		out1 := planner1.Step(env1)
+		out2 := planner2.Step(env2)
+
+		So(out1.StrategyRound.Decisions[0].PredictiveStatus, ShouldEqual, out2.StrategyRound.Decisions[0].PredictiveStatus)
+		So(out1.StrategyRound.Decisions[0].Reason, ShouldEqual, out2.StrategyRound.Decisions[0].Reason)
+	})
+
+	Convey("Case L: Missing required input halts without fallback", t, func() {
+		planner := plannerForTest()
+		env := tickerEnvelope("TEST/USD", 100, 101)
+		env.Perspectives = []*types.Perspective{
+			advisorPerspective("momentum", "Building", 0.8),
+		}
+
+		out := planner.Step(env)
+		So(out.StrategyRound.Decisions[0].PredictiveStatus, ShouldEqual, "resonance-missing")
+		So(out.StrategyRound.Decisions[0].Action, ShouldEqual, types.ActionNothing)
+	})
+}

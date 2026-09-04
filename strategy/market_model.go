@@ -28,20 +28,32 @@ uncalibrated artifact yields no drift at all, and the per-step magnitude is
 bounded, so the search cannot manufacture an edge from a forecast that does not
 claim one.
 */
+type MarketScenario struct {
+	Probability float64
+	LogReturn   float64
+}
+
 type resonanceMarketModel struct {
 	// drift is the per-step expected log return, signed by the direction call.
 	drift float64
 	// volatility is the per-step log-return standard deviation.
 	volatility float64
+	// direction is the sign (+1, -1, 0) from Resonance.
+	direction float64
+	// confidence is the forecast confidence.
+	confidence float64
+	// uncertainty is the per-step forecast uncertainty.
+	uncertainty float64
+	// magnitude is the inferred move magnitude from Passage or economics.
+	magnitude float64
+	// scenarios preserves the discrete multimodal distribution across rollouts.
+	scenarios []MarketScenario
 	// cadence is the event-time spacing one step represents.
 	cadence time.Duration
 }
 
 /*
-maxStepDrift bounds one rollout step's expected log return. Resonance reports a
-direction and an uncertainty, never a magnitude, so the magnitude here is
-strategy policy and is capped rather than left to scale with an unbounded
-confidence.
+maxStepDrift bounds one rollout step's expected log return when unscaled.
 */
 const maxStepDrift = 0.002
 
@@ -60,6 +72,7 @@ declines to search rather than rolling out on invented dynamics.
 func newResonanceMarketModel(
 	artifact *types.ResonanceArtifact,
 	cadence time.Duration,
+	magnitude ...float64,
 ) (*resonanceMarketModel, bool) {
 	if artifact == nil || !artifact.Calibrated || artifact.Forecast == nil {
 		return nil, false
@@ -97,10 +110,15 @@ func newResonanceMarketModel(
 	stepScale := scale / math.Sqrt(horizon)
 	volatility := math.Max(stepScale, minStepVolatility)
 
-	// The direction call carries the sign; confidence scales the magnitude
-	// within an explicit cap.
+	mag := maxStepDrift
+
+	if len(magnitude) > 0 && magnitude[0] > 0 {
+		mag = magnitude[0]
+	}
+
+	// The direction call carries the sign; confidence scales the magnitude.
 	drift := math.Copysign(
-		math.Min(maxStepDrift*artifact.Confidence, maxStepDrift),
+		math.Min(mag*artifact.Confidence, mag),
 		forecast.Call,
 	)
 
@@ -108,10 +126,25 @@ func newResonanceMarketModel(
 		cadence = time.Second
 	}
 
+	direction := forecast.Call
+	confidence := artifact.Confidence
+	uncertainty := volatility
+
+	scenarios := []MarketScenario{
+		{Probability: confidence, LogReturn: math.Copysign(mag, direction)},
+		{Probability: (1 - confidence) * 0.7, LogReturn: 0},
+		{Probability: (1 - confidence) * 0.3, LogReturn: math.Copysign(-mag*0.5, direction)},
+	}
+
 	return &resonanceMarketModel{
-		drift:      drift,
-		volatility: volatility,
-		cadence:    cadence,
+		drift:       drift,
+		volatility:  volatility,
+		direction:   direction,
+		confidence:  confidence,
+		uncertainty: uncertainty,
+		magnitude:   mag,
+		scenarios:   scenarios,
+		cadence:     cadence,
 	}, true
 }
 
@@ -130,7 +163,26 @@ func (model *resonanceMarketModel) Step(
 
 	logReturn := model.drift
 
-	if random != nil {
+	if len(model.scenarios) > 0 {
+		u := 0.5
+
+		if random != nil {
+			u = random.Float64()
+		}
+
+		cum := 0.0
+
+		for _, sc := range model.scenarios {
+			cum += sc.Probability
+
+			if u <= cum {
+				logReturn = sc.LogReturn
+				break
+			}
+		}
+	}
+
+	if random != nil && model.volatility > 0 {
 		logReturn += random.NormFloat64() * model.volatility
 	}
 
@@ -153,36 +205,39 @@ func (model *resonanceMarketModel) Step(
 	return next, logReturn, model.volatility, nil
 }
 
-/*
-moveDrift is the per-step expected log return each qualitative market move
-implies. These are regime magnitudes, not price predictions: an explosive pump
-is a different kind of event from a weak drift, and a rollout that cannot tell
-them apart cannot weigh entering one against waiting through the other.
-
-They are declared strategy policy. The scale is deliberately large relative to
-the resonance model's bounded drift, because that model answers a different
-question — how a calibrated forecast expects price to creep — while these
-answer what a named regime does when it happens.
-*/
-func moveDrift(move advisor.MarketMove) float64 {
+func moveMultiplier(move advisor.MarketMove) float64 {
 	switch move {
 	case advisor.MoveExplosivePump:
-		return 0.030
+		return 2.0
 	case advisor.MoveSteadyTrend:
-		return 0.008
+		return 1.0
 	case advisor.MoveWeakDrift:
-		return 0.002
+		return 0.25
 	case advisor.MoveStagnant:
 		return 0
 	case advisor.MoveWeakBleed:
-		return -0.002
+		return -0.25
 	case advisor.MoveStructuralPullback:
-		return -0.008
+		return -1.0
 	case advisor.MoveFlashDump:
-		return -0.040
+		return -2.0
 	default:
 		return 0
 	}
+}
+
+/*
+moveDrift scales a qualitative market move by an explicit inferred magnitude,
+never by uncalibrated magic percentages.
+*/
+func moveDrift(move advisor.MarketMove, magnitude ...float64) float64 {
+	mag := 0.008
+
+	if len(magnitude) > 0 && magnitude[0] > 0 {
+		mag = magnitude[0]
+	}
+
+	return moveMultiplier(move) * mag
 }
 
 /*
@@ -195,33 +250,38 @@ const consensusVolatilityFloor = 0.004
 
 /*
 newConsensusMarketModel derives a transition model from the War Room's
-deliberated distribution over the seven market moves.
-
-This is the cold-start path. Resonance needs many completed volume bars before
-it calibrates, and a newly listed or newly active symbol has none — which is
-exactly when a pump is most likely and least modeled. Aborting there would make
-the system structurally blind to its best setups.
-
-The drift is the probability-weighted expectation across the moves, so a
-council that is 70% confident of an explosive pump rolls out an explosive
-regime while a divided council rolls out something close to flat. The
-volatility is the distribution's own spread: genuine disagreement about which
-regime is coming is uncertainty, and it belongs in the rollout rather than
-being averaged away.
+deliberated distribution over the seven market moves, sampling discrete
+multimodal scenarios rather than collapsing to a single Gaussian mean.
 */
 func newConsensusMarketModel(
 	consensus *advisor.DeliberationOutcome,
 	cadence time.Duration,
+	magnitude ...float64,
 ) (*resonanceMarketModel, bool) {
 	if consensus == nil || consensus.Participants == 0 ||
 		len(consensus.Probabilities) == 0 {
 		return nil, false
 	}
 
+	mag := 0.008
+
+	if len(magnitude) > 0 && magnitude[0] > 0 {
+		mag = magnitude[0]
+	}
+
 	drift := 0.0
+	var scenarios []MarketScenario
 
 	for move, probability := range consensus.Probabilities {
-		drift += probability * moveDrift(move)
+		d := moveDrift(move, mag)
+		drift += probability * d
+
+		if probability > 0 {
+			scenarios = append(scenarios, MarketScenario{
+				Probability: probability,
+				LogReturn:   d,
+			})
+		}
 	}
 
 	// The spread of the move distribution is the council's disagreement about
@@ -229,7 +289,7 @@ func newConsensusMarketModel(
 	variance := 0.0
 
 	for move, probability := range consensus.Probabilities {
-		deviation := moveDrift(move) - drift
+		deviation := moveDrift(move, mag) - drift
 		variance += probability * deviation * deviation
 	}
 
@@ -249,8 +309,13 @@ func newConsensusMarketModel(
 	}
 
 	return &resonanceMarketModel{
-		drift:      drift,
-		volatility: volatility,
-		cadence:    cadence,
+		drift:       drift,
+		volatility:  volatility,
+		direction:   math.Copysign(1, drift),
+		confidence:  consensus.Confidence,
+		uncertainty: volatility,
+		magnitude:   mag,
+		scenarios:   scenarios,
+		cadence:     cadence,
 	}, true
 }

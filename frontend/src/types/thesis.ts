@@ -1,5 +1,3 @@
-
-import type { Status } from "#/types/status";
 import type { RiskPlan, Stoploss } from "#/types/stoploss";
 
 /*
@@ -33,25 +31,45 @@ export type DecisionMCTSTreeNode = {
 	children?: DecisionMCTSTreeNode[];
 };
 
+/*
+DecisionTrace mirrors Go types.DecisionTrace: the council's deliberation and
+the causal search it fed. Every field here is written by strategy/trace.go on
+each decision round — nothing is declared that the backend does not populate.
+*/
 export type DecisionTrace = {
-	hypothesis?: string;
-	graphSupports: number;
-	graphContradicts: number;
-	graphConditions: number;
-	thesisBalance: number;
-	thesisConfidence: number;
-	mcts: {
-		iterations: number;
-		branches: Array<{
-			action: string;
-			visits: number;
-			meanReward: number;
-		}>;
-		recommendedAction?: string;
-		tree?: DecisionMCTSTreeNode;
-		maxDepth?: number;
-		totalNodes?: number;
-	};
+	// Deliberation: the War Room consensus the search was handed.
+	consensusDominantMove?: string;
+	consensusConfidence?: number;
+	consensusParticipants?: number;
+	consensusProbabilities?: Record<string, number>;
+	vetoes?: string[];
+	synergies?: string[];
+	// MCTS: what the search was configured with and what it concluded.
+	identificationStatus?: string;
+	decisionUnavailable?: boolean;
+	expectedOutcome?: number;
+	outcomeUncertainty?: number;
+	horizon?: number;
+	explorationConstant?: number;
+	uncertaintyWeight?: number;
+	transitionSource?: string;
+	iterations?: number;
+	recommendedAction?: string;
+	maxDepth?: number;
+	totalNodes?: number;
+	branches?: Array<{
+		action: string;
+		visits: number;
+		meanReward: number;
+		blendedValue: number;
+		rewardStd: number;
+		counterfactualMass: number;
+		effectiveVisits: number;
+		causalExpectation: number;
+		causalExpectationDefined: boolean;
+		pruned: boolean;
+	}>;
+	tree?: DecisionMCTSTreeNode;
 };
 
 export type EntryCost = {
@@ -68,27 +86,22 @@ export type EntryCost = {
 	breakEven?: string;
 };
 
+/*
+Decision mirrors Go types.Decision field for field. The gate sequence in
+strategy/planner.go writes predictiveStatus and reason on every path, so a
+rejected round explains itself as fully as an admitted one.
+*/
 export interface Decision {
 	id: string;
 	action: Action;
 	symbol: string;
 	at: Date;
-	utility: number;
-	graphScore: number;
-	thesisScore: number;
-	thesisConfidence: number;
-	thesisSupport: number;
-	thesisContradiction: number;
-	thesisConditions: number;
 	direction: number;
-	allocation_haircut: number;
-	allocation_haircut_reason: string;
 	alternatives: Record<string, number>;
 	allocationClass: string;
 	opportunity: boolean;
 	opportunityType?: string;
-	reserveEligible: boolean;
-	reserveReason?: string;
+	opportunityPhase?: string;
 	predictiveReady: boolean;
 	predictiveStatus: string;
 	taskSkill: number;
@@ -96,34 +109,16 @@ export interface Decision {
 	proposedNotional: string;
 	proposedQuantity: string;
 	referencePrice: string;
-	validThroughEpoch: number;
-	arbitrationRound?: number;
 	forecastSource: string;
 	forecastModel: string;
-	forecastEpoch: number;
 	forecastHorizon: number;
 	calibrationCount: number;
-	expectedReturn: string;
-	expectedFees: string;
-	expectedSpread: string;
-	expectedImpact: string;
-	adverseSelection: string;
-	uncertainty: number;
 	confidence: number;
-	causalPrecision: number;
-	opportunityMargin: number;
-	cognitiveLead: number;
-	basinConfidence: number;
 	availableCapital: string;
 	openPositions: number;
-	slotCapacity: number;
 	cause: string;
 	reason: string;
-	displaces?: string;
-	displacedQuantity?: string;
-	displacedPrice?: string;
 	reservationId?: string;
-	positionStatus?: Status;
 	sellableQty?: string;
 	entryAt?: Date;
 	exitAt?: Date;
@@ -177,13 +172,9 @@ export type ThesisForecast = {
 	calibrationSamples: number;
 	incrementalMSE: number;
 	incrementalSkillLowerBound: number;
-	expectedReturn: number;
 	referencePrice: string;
 	buyCapacity: string;
 	sellCapacity: string;
-	expectedFees: number;
-	expectedSpread: number;
-	expectedImpact: number;
 	expectedAdverseSelection: number;
 	uncertainty: number;
 	confidence: number;

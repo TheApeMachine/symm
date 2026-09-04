@@ -7,15 +7,6 @@ import (
 )
 
 /*
-evidenceFreshness is how long a strategy reading may keep gating stop geometry.
-
-It is generous relative to the tick rate and deliberately finite: a stalled
-analysis pipeline that stops publishing must not leave a stale toxicity reading
-suppressing every peak for the rest of the position's life.
-*/
-const evidenceFreshness = 30 * time.Second
-
-/*
 StopEvidence is one observation of an open lot: the price a sale of it would
 actually realise right now, and whether that price is trustworthy enough to
 move the stop's geometry.
@@ -102,47 +93,3 @@ pinned the trail at entry for the whole life of a position. A fifth of the touch
 disappearing is a different claim from a few percent.
 */
 const hollowMateriality = 0.2
-
-/*
-GeometryValid reports whether this observation may set a new peak.
-
-Absent evidence is treated as valid: a mark that arrived without a toxicity
-reading is the ordinary case, and freezing the peak whenever the strategy has
-not spoken would leave the trail permanently anchored at entry. Stale evidence
-is treated the same way — a reading nobody has refreshed in half a minute is not
-a reading about this book.
-*/
-func (evidence StopEvidence) GeometryValid() bool {
-	return evidence.GeometryValidAt(time.Now().UTC())
-}
-
-/*
-Fresh reports whether the matched strategy reading may still update execution
-noise. A missing or future timestamp is not a current observation.
-*/
-func (evidence StopEvidence) Fresh(now time.Time) bool {
-	if evidence.ObservedAt.IsZero() {
-		return false
-	}
-
-	age := now.Sub(evidence.ObservedAt)
-	return age >= 0 && age <= evidenceFreshness
-}
-
-/*
-GeometryValidAt reports whether this observation may set a new peak at now.
-*/
-func (evidence StopEvidence) GeometryValidAt(now time.Time) bool {
-	if !evidence.HollowReady || evidence.HollowPressure <= hollowMateriality {
-		return true
-	}
-
-	// A material reading with no time on it cannot be aged out, so it is
-	// honoured rather than assumed current.
-	if evidence.ObservedAt.IsZero() {
-		return false
-	}
-
-	age := now.Sub(evidence.ObservedAt)
-	return age > evidenceFreshness
-}

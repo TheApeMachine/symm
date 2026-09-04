@@ -75,6 +75,8 @@ type Planner struct {
 	search                *mcts.Search
 	maxAllocationFraction float64
 	observations          map[string][][]float64
+	lastSequences         map[string]uint64
+	lastTimestamps        map[string]time.Time
 }
 
 func NewPlanner(
@@ -98,7 +100,7 @@ func NewPlanner(
 	ctx, cancel := context.WithCancel(ctx)
 
 	search := mcts.NewSearch(
-		searchIterations, searchExploration, searchUncertainty, time.Now().UnixNano(),
+		searchIterations, searchExploration, searchUncertainty, 42,
 	)
 	search.Causal = mcts.DefaultCausalEngine{Linear: true}
 	search.CausalPolicy = mcts.EconomicCausalPolicy(
@@ -118,6 +120,8 @@ func NewPlanner(
 		search:                search,
 		maxAllocationFraction: config.MaxAllocationFraction,
 		observations:          make(map[string][][]float64),
+		lastSequences:         make(map[string]uint64),
+		lastTimestamps:        make(map[string]time.Time),
 	}, nil
 }
 
@@ -172,7 +176,23 @@ func (planner *Planner) Step(envelope *types.Envelope) *types.Envelope {
 
 	planner.recordObservation(envelope)
 
-	if planner.desk.Holding(envelope.TickerData.Symbol) > 0 {
+	if planner.desk != nil && planner.desk.Holding(envelope.TickerData.Symbol) > 0 {
+		holdingRound := &types.StrategyRound{
+			Symbol:    envelope.TickerData.Symbol,
+			Evaluated: true,
+			Outcome:   "managed",
+			Decisions: []*types.Decision{
+				{
+					Action:           types.ActionNothing,
+					Symbol:           envelope.TickerData.Symbol,
+					At:               envelope.TickerData.Timestamp,
+					PredictiveStatus: "position-held-desk-managed",
+					Reason:           "planner: position is open and desk-managed by stoploss",
+				},
+			},
+		}
+		envelope.StrategyRound = holdingRound
+
 		return envelope
 	}
 
@@ -205,12 +225,11 @@ exact reason, never a fabricated entry.
 */
 func (planner *Planner) plan(envelope *types.Envelope) *types.StrategyRound {
 	ticker := envelope.TickerData
-	opportunity := planner.opportunity(envelope)
 
 	decision := types.NewDecision(types.ActionNothing, ticker.Symbol)
 	decision.At = ticker.Timestamp
 	decision.Direction = 1
-	decision.ForecastSource = "war-room-deliberation"
+	decision.ForecastSource = "resonance-forecast"
 	decision.ForecastModel = "causal-mcts-pearl-v1"
 	decision.ForecastHorizon = 0
 
@@ -221,10 +240,7 @@ func (planner *Planner) plan(envelope *types.Envelope) *types.StrategyRound {
 	}
 
 	decision.AllocationClass = "none"
-	decision.Cause = "opportunity-conditioned market context"
-	decision.Opportunity = opportunity.Archetype != ""
-	decision.OpportunityType = string(opportunity.Archetype)
-	decision.OpportunityPhase = string(opportunity.Phase)
+	decision.Cause = "advisor-deliberated market context"
 
 	round := &types.StrategyRound{
 		Symbol:    ticker.Symbol,
@@ -240,43 +256,76 @@ func (planner *Planner) plan(envelope *types.Envelope) *types.StrategyRound {
 	decision.Alternatives = consensusAlternatives(consensus)
 
 	if consensus.Participants == 0 {
-		// An advisor speaks as soon as its feature group is complete on the
-		// volume-bar clock; it does not have to first survive a round (that
-		// inversion is what kept this council permanently empty). So an empty
-		// council now means the specialists have genuinely not classified this
-		// symbol yet — a thin instrument, or one still accumulating its first
-		// bars — rather than a reading being withheld.
 		decision.PredictiveStatus = "awaiting-advisor-consensus"
 		decision.Reason = "planner: no advisor has classified this symbol yet"
 
 		return round
 	}
 
-	// The precursor rule: position while armed, never once ignition prints.
-	admissible := entryAdmissible(opportunity)
+	// 1. Resonance Is Required (Discrepancy 1)
+	if envelope.Resonance == nil {
+		decision.PredictiveStatus = "resonance-missing"
+		decision.Reason = "planner: resonance artifact is required but missing from envelope"
 
-	if !admissible {
-		decision.PredictiveStatus = "precursor-not-armed"
-		decision.Reason = "planner: entry requires an armed long precursor, phase is " +
-			string(opportunity.Phase)
+		return round
 	}
 
-	// Resonance is preferred when it has calibrated: it is a measured forecast
-	// rather than a regime prior. When it has not — a cold start, a newly
-	// active symbol, or a held call — the council's own distribution supplies
-	// the transition model instead of aborting. Refusing to plan there would
-	// blind the system precisely when a pump is most likely and least modeled.
-	model, ready := newResonanceMarketModel(envelope.Resonance, tickerCadence)
+	if envelope.Resonance.Symbol != "" && envelope.Resonance.Symbol != ticker.Symbol {
+		decision.PredictiveStatus = "resonance-symbol-mismatch"
+		decision.Reason = fmt.Sprintf("planner: resonance symbol %s does not match ticker %s", envelope.Resonance.Symbol, ticker.Symbol)
+
+		return round
+	}
+
+	if !envelope.Resonance.Calibrated {
+		decision.PredictiveStatus = "resonance-uncalibrated"
+		decision.Reason = "planner: resonance artifact is uncalibrated"
+
+		return round
+	}
+
+	if envelope.Resonance.SupportedHorizon <= 0 {
+		decision.PredictiveStatus = "resonance-horizon-invalid"
+		decision.Reason = "planner: resonance supported horizon must be positive"
+
+		return round
+	}
+
+	if envelope.Resonance.Forecast == nil {
+		decision.PredictiveStatus = "resonance-forecast-missing"
+		decision.Reason = "planner: resonance forecast is missing"
+
+		return round
+	}
+
+	if envelope.Resonance.Forecast.Held || envelope.Resonance.Forecast.Call == 0 {
+		decision.PredictiveStatus = "resonance-call-held"
+		decision.Reason = "planner: resonance forecast call is held or neutral"
+
+		return round
+	}
+
+	// Magnitude comes from the desk's own realized passage economics: how far
+	// this symbol actually travels, measured, rather than asserted by a
+	// precursor archetype.
+	magnitude := 0.0
+
+	if planner.desk != nil {
+		pe := planner.desk.PassageEconomics(ticker.Symbol)
+
+		if pe.FavorableExcursion.Mid > 0 {
+			magnitude = pe.FavorableExcursion.Mid
+		} else {
+			magnitude = planner.desk.PassageMovementMagnitude(ticker.Symbol)
+		}
+	}
+
+	model, ready := newResonanceMarketModel(envelope.Resonance, tickerCadence, magnitude)
 	transitionSource := "resonance-forecast"
 
 	if !ready {
-		model, ready = newConsensusMarketModel(consensus, tickerCadence)
-		transitionSource = "war-room-consensus"
-	}
-
-	if !ready {
-		decision.PredictiveStatus = "no-transition-model"
-		decision.Reason = "planner: neither resonance nor consensus could model the transition"
+		decision.PredictiveStatus = "support-insufficient"
+		decision.Reason = "planner: resonance could not model the transition"
 
 		return round
 	}
@@ -286,23 +335,40 @@ func (planner *Planner) plan(envelope *types.Envelope) *types.StrategyRound {
 	state, built := planner.rootState(envelope, model)
 
 	if !built {
-		decision.PredictiveStatus = "portfolio-state-unavailable"
+		decision.PredictiveStatus = "feasibility-infeasible"
 		decision.Reason = "planner: cannot price the portfolio to open a search"
 
 		return round
 	}
 
-	result := planner.search.Run(state, &opportunityEstimator{
-		consensus:       consensus,
-		opportunity:     opportunity,
-		entryAdmissible: admissible,
+	// Deterministic RNG seed (Discrepancy 27)
+	seed := envelope.Tick
+
+	if seed == 0 {
+		seed = int64(envelope.Stream.Sequence)
+	}
+
+	if seed == 0 {
+		seed = ticker.Timestamp.UnixNano()
+	}
+
+	for _, char := range ticker.Symbol {
+		seed = seed*31 + int64(char)
+	}
+
+	if planner.search != nil {
+		planner.search.SetSeed(seed)
+	}
+
+	result := planner.search.Run(state, &consensusEstimator{
+		consensus: consensus,
 	})
 
 	planner.recordSearch(decision, result, consensus)
 	decision.Trace = buildTrace(consensus, result, transitionSource)
 
 	if result.DecisionUnavailable {
-		decision.PredictiveStatus = "decision-unavailable"
+		decision.PredictiveStatus = "support-insufficient"
 		decision.Reason = "planner: no feasible action had an estimable causal outcome (" +
 			result.IdentificationStatus.String() + ")"
 
@@ -310,15 +376,16 @@ func (planner *Planner) plan(envelope *types.Envelope) *types.StrategyRound {
 	}
 
 	decision.PredictiveReady = true
-	decision.PredictiveStatus = "causal-search-resolved"
 
 	if result.SelectedAction != mcts.Enter {
+		decision.PredictiveStatus = "unattractive"
 		decision.Reason = "planner: causal search selected " +
 			result.SelectedAction.String() + " over entering"
 
 		return round
 	}
 
+	decision.PredictiveStatus = "causal-search-resolved"
 	decision.Action = types.ActionEnter
 	decision.Reason = "planner: causal search selected entry on the armed precursor"
 	round.Outcome = "entry"
@@ -336,7 +403,7 @@ func (planner *Planner) rootState(
 ) (*mcts.EconomicState, bool) {
 	ticker := envelope.TickerData
 
-	if planner.desk == nil || planner.desk.Balance() == nil {
+	if planner.desk == nil || planner.desk.Balance() == nil || planner.desk.Price() == nil {
 		return nil, false
 	}
 
@@ -346,39 +413,40 @@ func (planner *Planner) rootState(
 		return nil, false
 	}
 
-	mark := ticker.Bid.Float64()
+	ask := ticker.Ask.Float64()
+	bid := ticker.Bid.Float64()
 
-	if mark <= 0 {
+	if ask <= 0 || bid <= 0 || ask < bid {
+		return nil, false
+	}
+
+	feeRate, err := planner.feeRate(ticker.Symbol)
+
+	if err != nil {
 		return nil, false
 	}
 
 	budget := cash.Float64() * planner.maxAllocationFraction
-	unit := budget / mark
+	unit := budget / ask
 
 	if unit <= 0 {
 		return nil, false
 	}
 
-	costs := mcts.CostModel{FeeRate: planner.feeRate(ticker.Symbol)}
+	crossingFraction := (ask - bid) / ask
 
-	if spread := ticker.Ask.Float64() - mark; spread > 0 {
-		costs.SpreadFraction = spread / mark / 2
+	baseCosts := mcts.CostModel{
+		FeeRate:        feeRate,
+		SpreadFraction: crossingFraction,
 	}
 
-	if planner.desk != nil && planner.desk.Price() != nil {
-		costs = planner.entryCosts(ticker.Symbol, unit, costs)
-	}
+	costs := planner.entryCosts(ticker.Symbol, unit, baseCosts)
 
 	state := mcts.NewEconomicState(
 		mcts.PortfolioState{
-			Cash: cash.Float64(),
-			// Flat by construction: Step returns early when this symbol is
-			// already held, so the search always opens from no exposure.
-			// Desk.Holding counts open positions, not base quantity, and
-			// PortfolioState.Position is explicitly a base quantity — the
-			// two must never be conflated.
+			Cash:      cash.Float64(),
 			Position:  0,
-			MarkPrice: mark,
+			MarkPrice: ask,
 		},
 		mcts.MarketState{At: ticker.Timestamp},
 		model,
@@ -475,22 +543,21 @@ func (planner *Planner) entryCosts(
 }
 
 /*
-feeRate returns the venue taker fee fraction for one symbol, or zero when the
-schedule is unavailable. A missing fee is never treated as a discount: the
-caller's break-even pricing carries the authoritative figure.
+feeRate returns the venue taker fee fraction for one symbol, or an error when the
+schedule is unavailable. Unknown execution facts are never defaulted to optimistic zeros.
 */
-func (planner *Planner) feeRate(symbol string) float64 {
+func (planner *Planner) feeRate(symbol string) (float64, error) {
 	if planner.desk == nil || planner.desk.Price() == nil {
-		return 0
+		return 0, fmt.Errorf("planner: price service required for fee")
 	}
 
 	fee := planner.desk.Price().Fee(symbol)
 
 	if fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 {
-		return 0
+		return 0, fmt.Errorf("planner: valid fee required for %s", symbol)
 	}
 
-	return fee.Fee.Float64() / 100.0
+	return fee.Fee.Float64() / 100.0, nil
 }
 
 /*
@@ -544,33 +611,47 @@ func (planner *Planner) recordSearch(
 	}
 }
 
-/*
-opportunity returns the tracked candidate for the envelope's symbol, or a zero
-candidate when none is active.
-*/
-func (planner *Planner) opportunity(envelope *types.Envelope) types.OpportunityCandidate {
-	symbol := envelope.TickerData.Symbol
-
-	for _, candidate := range envelope.Opportunities {
-		if candidate != nil && candidate.Symbol == symbol {
-			return *candidate
-		}
-	}
-
-	return types.OpportunityCandidate{}
-}
-
 func (planner *Planner) validateTicker(envelope *types.Envelope) error {
 	ticker := envelope.TickerData
 
 	if ticker.Symbol == "" || ticker.Bid == nil || ticker.Ask == nil ||
 		ticker.Bid.Sign() <= 0 || ticker.Ask.Sign() <= 0 {
-
 		return fmt.Errorf("ticker symbol and positive bid/ask required")
 	}
 
 	if ticker.Timestamp.IsZero() {
 		return fmt.Errorf("ticker event time required")
+	}
+
+	if envelope.Resonance != nil && envelope.Resonance.Symbol != "" && envelope.Resonance.Symbol != ticker.Symbol {
+		return fmt.Errorf("symbol mismatch between ticker (%s) and resonance (%s)", ticker.Symbol, envelope.Resonance.Symbol)
+	}
+
+	if planner.lastSequences != nil {
+		lastSeq := planner.lastSequences[ticker.Symbol]
+		seq := envelope.Stream.Sequence
+
+		if seq == 0 && envelope.Tick > 0 {
+			seq = uint64(envelope.Tick)
+		}
+
+		if seq > 0 && lastSeq > 0 && seq < lastSeq {
+			return fmt.Errorf("envelope sequence regression for %s: %d < %d", ticker.Symbol, seq, lastSeq)
+		}
+
+		if seq > 0 {
+			planner.lastSequences[ticker.Symbol] = seq
+		}
+	}
+
+	if planner.lastTimestamps != nil {
+		lastTime := planner.lastTimestamps[ticker.Symbol]
+
+		if !lastTime.IsZero() && ticker.Timestamp.Before(lastTime) {
+			return fmt.Errorf("envelope timestamp regression for %s: %v < %v", ticker.Symbol, ticker.Timestamp, lastTime)
+		}
+
+		planner.lastTimestamps[ticker.Symbol] = ticker.Timestamp
 	}
 
 	return nil

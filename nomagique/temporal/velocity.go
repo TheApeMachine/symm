@@ -58,6 +58,20 @@ func (velocity *Velocity) Step(x types.Number) types.Number {
 // Rate returns the most recent rate of change per unit of event time.
 func (velocity *Velocity) Rate() types.Number { return velocity.rate }
 
+/*
+Readings publishes the rate of change. It is undefined on the first
+observation, which has no predecessor to have changed from.
+*/
+func (velocity *Velocity) Readings() []types.Reading {
+	return []types.Reading{{
+		Label:     "velocity",
+		Unit:      "per_second",
+		Timescale: "per_second",
+		Value:     velocity.rate,
+		Defined:   velocity.hasPrior,
+	}}
+}
+
 // Value returns the most recent observed source reading.
 func (velocity *Velocity) Value() types.Number { return velocity.previous }
 
@@ -86,3 +100,8 @@ var (
 	_ types.Node = (*Velocity)(nil)
 	_ types.Node = (*Clock)(nil)
 )
+
+// Slots exposes the nodes this velocity is composed of.
+func (velocity *Velocity) Slots() []types.Node {
+	return []types.Node{velocity.Source, velocity.Clock}
+}

@@ -204,14 +204,6 @@ func CategoryIndex(category CategoryType) int {
 	return 0
 }
 
-func CategoryByIndex(index int) CategoryType {
-	if index <= 0 || index > len(CategoryOrder) {
-		return CategoryTypeNone
-	}
-
-	return CategoryOrder[index-1]
-}
-
 /*
 CategoryOrderLess reports whether left precedes right in the stable category
 vocabulary order. It is the deterministic tie-break the category solver uses to

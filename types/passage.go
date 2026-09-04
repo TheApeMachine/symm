@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 /*
@@ -230,11 +231,21 @@ losses.
 The zero value is usable and answers with the prior.
 */
 type PassageModel struct {
-	mutex         sync.RWMutex
-	buckets       map[string]*passageCounts
-	total         float64
-	winners       []float64
-	regimeWinners map[string][]float64
+	mutex           sync.RWMutex
+	buckets         map[string]*passageCounts
+	total           float64
+	winners         []float64
+	regimeWinners   map[string][]float64
+	allAdverse      []float64
+	regimeAllAdv    map[string][]float64
+	favorable       []float64
+	regimeFavorable map[string][]float64
+	durations       []float64
+	regimeDurations map[string][]float64
+	censoredCount   float64
+	regimeCensored  map[string]float64
+	outcomeCounts   map[PassageOutcome]float64
+	regimeOutcomes  map[string]map[PassageOutcome]float64
 }
 
 /*
@@ -242,8 +253,14 @@ NewPassageModel constructs an empty model.
 */
 func NewPassageModel() *PassageModel {
 	return &PassageModel{
-		buckets:       map[string]*passageCounts{},
-		regimeWinners: map[string][]float64{},
+		buckets:         map[string]*passageCounts{},
+		regimeWinners:   map[string][]float64{},
+		regimeAllAdv:    map[string][]float64{},
+		regimeFavorable: map[string][]float64{},
+		regimeDurations: map[string][]float64{},
+		regimeCensored:  map[string]float64{},
+		outcomeCounts:   map[PassageOutcome]float64{},
+		regimeOutcomes:  map[string]map[PassageOutcome]float64{},
 	}
 }
 
@@ -370,10 +387,7 @@ func (model *PassageModel) Total() float64 {
 
 /*
 Fold records one finished episode into the competing-risk model and retains
-the winner's adverse excursion for stop calibration. Censored episodes — ones
-that ended for reasons unrelated to either boundary — still count for the
-passage probabilities but contribute no excursion, because their boundary was
-never allowed to decide.
+the realized excursions across all outcomes for calibration.
 */
 func (model *PassageModel) Fold(episode PassageEpisode) {
 	if model == nil {
@@ -382,39 +396,109 @@ func (model *PassageModel) Fold(episode PassageEpisode) {
 
 	model.ObserveEpisode(episode.Observations, episode.Outcome)
 
-	if episode.Censored || episode.Outcome != OutcomeProfitFirst {
-		return
-	}
+	regime := episode.Regime
 
-	if math.IsNaN(episode.MaxAdverse) || math.IsInf(episode.MaxAdverse, 0) ||
-		episode.MaxAdverse < 0 {
-		return
+	if regime == "" && len(episode.Observations) > 0 {
+		regime = episode.Observations[0].Regime
 	}
 
 	model.mutex.Lock()
 	defer model.mutex.Unlock()
 
-	if model.winners == nil {
-		model.winners = make([]float64, 0, passageLocalSupport)
+	if episode.Censored {
+		model.censoredCount++
+
+		if regime != "" {
+			if model.regimeCensored == nil {
+				model.regimeCensored = make(map[string]float64)
+			}
+
+			model.regimeCensored[regime]++
+		}
 	}
 
-	model.winners = append(model.winners, episode.MaxAdverse)
-
-	regime := episode.Regime
-	if regime == "" && len(episode.Observations) > 0 {
-		regime = episode.Observations[0].Regime
-	}
-
-	if regime != "" {
-		if model.regimeWinners == nil {
-			model.regimeWinners = make(map[string][]float64)
+	if !episode.Censored {
+		if model.outcomeCounts == nil {
+			model.outcomeCounts = make(map[PassageOutcome]float64)
 		}
 
-		model.regimeWinners[regime] = append(model.regimeWinners[regime], episode.MaxAdverse)
+		model.outcomeCounts[episode.Outcome]++
+
+		if regime != "" {
+			if model.regimeOutcomes == nil {
+				model.regimeOutcomes = make(map[string]map[PassageOutcome]float64)
+			}
+
+			counts, found := model.regimeOutcomes[regime]
+
+			if !found {
+				counts = make(map[PassageOutcome]float64)
+				model.regimeOutcomes[regime] = counts
+			}
+
+			counts[episode.Outcome]++
+		}
+	}
+
+	if episode.ClosedTick > episode.OpenedTick {
+		durationSec := float64(episode.ClosedTick-episode.OpenedTick) / 1e9
+		model.durations = append(model.durations, durationSec)
+
+		if regime != "" {
+			if model.regimeDurations == nil {
+				model.regimeDurations = make(map[string][]float64)
+			}
+
+			model.regimeDurations[regime] = append(model.regimeDurations[regime], durationSec)
+		}
+	}
+
+	if !math.IsNaN(episode.MaxAdverse) && !math.IsInf(episode.MaxAdverse, 0) && episode.MaxAdverse >= 0 {
+		model.allAdverse = append(model.allAdverse, episode.MaxAdverse)
+
+		if regime != "" {
+			if model.regimeAllAdv == nil {
+				model.regimeAllAdv = make(map[string][]float64)
+			}
+
+			model.regimeAllAdv[regime] = append(model.regimeAllAdv[regime], episode.MaxAdverse)
+		}
+
+		if !episode.Censored && episode.Outcome == OutcomeProfitFirst {
+			if model.winners == nil {
+				model.winners = make([]float64, 0, int(passageLocalSupport))
+			}
+
+			model.winners = append(model.winners, episode.MaxAdverse)
+
+			if regime != "" {
+				if model.regimeWinners == nil {
+					model.regimeWinners = make(map[string][]float64)
+				}
+
+				model.regimeWinners[regime] = append(model.regimeWinners[regime], episode.MaxAdverse)
+			}
+		}
+	}
+
+	if !math.IsNaN(episode.MaxFavorable) && !math.IsInf(episode.MaxFavorable, 0) && episode.MaxFavorable >= 0 {
+		model.favorable = append(model.favorable, episode.MaxFavorable)
+
+		if regime != "" {
+			if model.regimeFavorable == nil {
+				model.regimeFavorable = make(map[string][]float64)
+			}
+
+			model.regimeFavorable[regime] = append(model.regimeFavorable[regime], episode.MaxFavorable)
+		}
 	}
 }
 
 func computeQuantile(samples []float64, confidence float64) (float64, bool) {
+	if len(samples) == 0 {
+		return 0, false
+	}
+
 	slices.Sort(samples)
 
 	position := confidence * float64(len(samples)-1)
@@ -498,6 +582,181 @@ func (model *PassageModel) AdverseQuantileForRegime(
 	model.mutex.RUnlock()
 
 	return model.AdverseQuantile(confidence)
+}
+
+/*
+FavorableQuantile computes the empirical favorable excursion quantile across all observed episodes.
+*/
+func (model *PassageModel) FavorableQuantile(confidence float64) (float64, bool) {
+	if model == nil || confidence <= 0 || confidence >= 1 {
+		return 0, false
+	}
+
+	model.mutex.RLock()
+	defer model.mutex.RUnlock()
+
+	if len(model.favorable) < int(passageLocalSupport) {
+		return 0, false
+	}
+
+	samples := append([]float64(nil), model.favorable...)
+
+	return computeQuantile(samples, confidence)
+}
+
+/*
+FavorableQuantileForRegime computes the empirical favorable excursion quantile for a specific regime.
+*/
+func (model *PassageModel) FavorableQuantileForRegime(
+	regime string,
+	confidence float64,
+) (float64, bool) {
+	if model == nil || confidence <= 0 || confidence >= 1 {
+		return 0, false
+	}
+
+	if regime == "" {
+		return model.FavorableQuantile(confidence)
+	}
+
+	model.mutex.RLock()
+
+	if model.regimeFavorable != nil && len(model.regimeFavorable[regime]) >= int(passageLocalSupport) {
+		samples := append([]float64(nil), model.regimeFavorable[regime]...)
+		model.mutex.RUnlock()
+
+		return computeQuantile(samples, confidence)
+	}
+
+	model.mutex.RUnlock()
+
+	return model.FavorableQuantile(confidence)
+}
+
+/*
+NormalAdverseQuantile computes the adverse excursion across all observed episodes, not only winners.
+*/
+func (model *PassageModel) NormalAdverseQuantile(confidence float64) (float64, bool) {
+	if model == nil || confidence <= 0 || confidence >= 1 {
+		return 0, false
+	}
+
+	model.mutex.RLock()
+	defer model.mutex.RUnlock()
+
+	if len(model.allAdverse) < int(passageLocalSupport) {
+		return 0, false
+	}
+
+	samples := append([]float64(nil), model.allAdverse...)
+
+	return computeQuantile(samples, confidence)
+}
+
+/*
+NormalAdverseQuantileForRegime computes the adverse excursion for a specific regime across all observed episodes.
+*/
+func (model *PassageModel) NormalAdverseQuantileForRegime(
+	regime string,
+	confidence float64,
+) (float64, bool) {
+	if model == nil || confidence <= 0 || confidence >= 1 {
+		return 0, false
+	}
+
+	if regime == "" {
+		return model.NormalAdverseQuantile(confidence)
+	}
+
+	model.mutex.RLock()
+
+	if model.regimeAllAdv != nil && len(model.regimeAllAdv[regime]) >= int(passageLocalSupport) {
+		samples := append([]float64(nil), model.regimeAllAdv[regime]...)
+		model.mutex.RUnlock()
+
+		return computeQuantile(samples, confidence)
+	}
+
+	model.mutex.RUnlock()
+
+	return model.NormalAdverseQuantile(confidence)
+}
+
+/*
+OutcomeProbabilities returns empirical frequencies of profit_first, loss_first, and timeout for a regime.
+*/
+func (model *PassageModel) OutcomeProbabilities(regime string) (float64, float64, float64, float64) {
+	if model == nil {
+		return 1.0 / 3, 1.0 / 3, 1.0 / 3, 0
+	}
+
+	model.mutex.RLock()
+	defer model.mutex.RUnlock()
+
+	var profitCount, lossCount, timeoutCount, total float64
+
+	if regime != "" && model.regimeOutcomes != nil && model.regimeOutcomes[regime] != nil {
+		counts := model.regimeOutcomes[regime]
+		profitCount = counts[OutcomeProfitFirst]
+		lossCount = counts[OutcomeLossFirst]
+		timeoutCount = counts[OutcomeTimeout]
+		total = profitCount + lossCount + timeoutCount
+	}
+
+	if total < passageLocalSupport && model.outcomeCounts != nil {
+		profitCount = model.outcomeCounts[OutcomeProfitFirst]
+		lossCount = model.outcomeCounts[OutcomeLossFirst]
+		timeoutCount = model.outcomeCounts[OutcomeTimeout]
+		total = profitCount + lossCount + timeoutCount
+	}
+
+	if total <= 0 {
+		return 1.0 / 3, 1.0 / 3, 1.0 / 3, 0
+	}
+
+	return profitCount / total, lossCount / total, timeoutCount / total, total
+}
+
+/*
+ResolutionDuration returns median resolution duration for a regime.
+*/
+func (model *PassageModel) ResolutionDuration(regime string) time.Duration {
+	if model == nil {
+		return 0
+	}
+
+	model.mutex.RLock()
+	defer model.mutex.RUnlock()
+
+	var samples []float64
+
+	if regime != "" && model.regimeDurations != nil && len(model.regimeDurations[regime]) > 0 {
+		samples = append([]float64(nil), model.regimeDurations[regime]...)
+	} else if len(model.durations) > 0 {
+		samples = append([]float64(nil), model.durations...)
+	}
+
+	if len(samples) == 0 {
+		return 0
+	}
+
+	slices.Sort(samples)
+	medianSec := samples[len(samples)/2]
+
+	return time.Duration(medianSec * float64(time.Second))
+}
+
+/*
+MovementMagnitude returns the empirical median favorable excursion (scale of movement).
+*/
+func (model *PassageModel) MovementMagnitude(regime string) float64 {
+	magnitude, ok := model.FavorableQuantileForRegime(regime, 0.5)
+
+	if !ok || magnitude <= 0 {
+		return 0.005
+	}
+
+	return magnitude
 }
 
 /*

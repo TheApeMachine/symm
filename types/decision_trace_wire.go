@@ -37,24 +37,45 @@ func decisionTraceWire(trace *DecisionTrace) *telemetry.DecisionTraceT {
 		})
 	}
 
+	// Sorted so the same council reading always projects to the same wire
+	// order, matching how Decision.Alternatives is emitted.
+	moves := make([]string, 0, len(council.Probabilities))
+
+	for move := range council.Probabilities {
+		moves = append(moves, move)
+	}
+
+	sort.Strings(moves)
+	probabilities := make([]*telemetry.NamedNumberT, 0, len(moves))
+
+	for _, move := range moves {
+		probabilities = append(probabilities, &telemetry.NamedNumberT{
+			Name:  move,
+			Value: council.Probabilities[move],
+		})
+	}
+
 	return &telemetry.DecisionTraceT{
-		Iterations:            int64(search.Iterations),
-		Horizon:               int64(search.Horizon),
-		ExplorationConstant:   search.ExplorationConstant,
-		UncertaintyWeight:     search.UncertaintyWeight,
-		RecommendedAction:     search.RecommendedAction,
-		ExpectedOutcome:       search.ExpectedOutcome,
-		OutcomeUncertainty:    search.OutcomeUncertainty,
-		IdentificationStatus:  search.IdentificationStatus,
-		DecisionUnavailable:   search.DecisionUnavailable,
-		TransitionSource:      search.TransitionSource,
-		Branches:              branches,
-		Tree:                  mctsNodeWire(search.Tree),
-		ConsensusDominantMove: council.DominantMove,
-		ConsensusConfidence:   council.Confidence,
-		ConsensusParticipants: int64(council.Participants),
-		Vetoes:                append([]string(nil), council.Vetoes...),
-		Synergies:             append([]string(nil), council.Synergies...),
+		Iterations:             int64(search.Iterations),
+		Horizon:                int64(search.Horizon),
+		ExplorationConstant:    search.ExplorationConstant,
+		UncertaintyWeight:      search.UncertaintyWeight,
+		RecommendedAction:      search.RecommendedAction,
+		ExpectedOutcome:        search.ExpectedOutcome,
+		OutcomeUncertainty:     search.OutcomeUncertainty,
+		IdentificationStatus:   search.IdentificationStatus,
+		DecisionUnavailable:    search.DecisionUnavailable,
+		TransitionSource:       search.TransitionSource,
+		Branches:               branches,
+		Tree:                   mctsNodeWire(search.Tree),
+		MaxDepth:               int64(search.MaxDepth),
+		TotalNodes:             int64(search.TotalNodes),
+		ConsensusDominantMove:  council.DominantMove,
+		ConsensusConfidence:    council.Confidence,
+		ConsensusParticipants:  int64(council.Participants),
+		ConsensusProbabilities: probabilities,
+		Vetoes:                 append([]string(nil), council.Vetoes...),
+		Synergies:              append([]string(nil), council.Synergies...),
 	}
 }
 
@@ -94,28 +115,4 @@ func mctsNodeWire(node *MCTSNodeTrace) *telemetry.MCTSNodeT {
 	}
 
 	return wire
-}
-
-/*
-deliberationProbabilities orders the consensus distribution deterministically
-so a live surface does not reshuffle rows between frames.
-*/
-func deliberationProbabilities(council DeliberationTrace) []*telemetry.NamedNumberT {
-	names := make([]string, 0, len(council.Probabilities))
-
-	for name := range council.Probabilities {
-		names = append(names, name)
-	}
-
-	sort.Strings(names)
-	values := make([]*telemetry.NamedNumberT, 0, len(names))
-
-	for _, name := range names {
-		values = append(values, &telemetry.NamedNumberT{
-			Name:  name,
-			Value: council.Probabilities[name],
-		})
-	}
-
-	return values
 }

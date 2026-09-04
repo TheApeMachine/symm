@@ -179,7 +179,6 @@ func TestBranchResolve(t *testing.T) {
 			stoploss := &Stoploss{
 				Status: ARMED,
 				Causative: CausativeContext{
-					PrecursorPumpEntry: true,
 					ActivePerspectives: map[string]string{
 						"momentum": "Stalling",
 					},

@@ -348,7 +348,6 @@ table MCTSNode {
   children:[MCTSNode];
 }
 table DecisionTrace {
-  hypothesis:string;
   identificationStatus:string;
   decisionUnavailable:bool;
   expectedOutcome:double;
@@ -360,17 +359,20 @@ table DecisionTrace {
   consensusDominantMove:string;
   consensusConfidence:double;
   consensusParticipants:long;
+  // The council's full move distribution, keyed by move name. The dominant
+  // move alone hides whether the winner led by a nose or a mile.
+  consensusProbabilities:[NamedNumber];
   vetoes:[string];
   synergies:[string];
-  graphSupports:double;
-  graphContradicts:double;
-  graphConditions:double;
-  thesisBalance:double;
-  thesisConfidence:double;
   iterations:long;
   branches:[MCTSBranch];
   recommendedAction:string;
   tree:MCTSNode;
+  // How far and how wide the search actually got. Both are computed on every
+  // round; without them an operator cannot tell a deep considered search from
+  // one that fanned out twice and stopped.
+  maxDepth:long;
+  totalNodes:long;
 }
 table EntryCost {
   entryPrice:string;
@@ -421,27 +423,12 @@ table Decision {
   action:string;
   symbol:string;
   at:long;
-  utility:double;
-  graphScore:double;
-  thesisScore:double;
-  thesisConfidence:double;
-  thesisSupport:double;
-  thesisContradiction:double;
-  thesisConditions:double;
   direction:double;
-  perspectiveReturn:double;
-  perspectiveConfidence:double;
-  admissionGraphThreshold:double;
-  admissionUtilityThreshold:double;
-  allocationHaircut:double;
-  allocationHaircutReason:string;
   alternatives:[NamedNumber];
   allocationClass:string;
   opportunity:bool;
   opportunityType:string;
   opportunityPhase:string;
-  reserveEligible:bool;
-  reserveReason:string;
   predictiveReady:bool;
   predictiveStatus:string;
   taskSkill:double;
@@ -449,35 +436,16 @@ table Decision {
   proposedNotional:string;
   proposedQuantity:string;
   referencePrice:string;
-  validThroughEpoch:ulong;
-  arbitrationRound:long;
   forecastSource:string;
   forecastModel:string;
-  forecastEpoch:ulong;
   forecastHorizon:long;
-  forwardCurve:[double];
   calibrationCount:ulong;
-  expectedReturn:string;
-  expectedFees:string;
-  expectedSpread:string;
-  expectedImpact:string;
-  adverseSelection:string;
-  uncertainty:double;
   confidence:double;
-  causalPrecision:double;
-  opportunityMargin:double;
-  cognitiveLead:double;
-  basinConfidence:double;
   availableCapital:string;
   openPositions:long;
-  slotCapacity:long;
   cause:string;
   reason:string;
-  displaces:string;
-  displacedQuantity:string;
-  displacedPrice:string;
   reservationId:string;
-  positionStatus:string;
   sellableQty:string;
   entryAt:long;
   exitAt:long;
@@ -492,12 +460,6 @@ table Decision {
   stoploss:Stoploss;
   risk:RiskPlan;
   trace:DecisionTrace;
-  utilityAvailable:bool;
-  valuationAttempted:bool;
-  valuationAvailable:bool;
-  valuationStatus:string;
-  causalIdentification:string;
-  causalBlockingCoordinate:string;
 }
 table StrategyFrame { evaluated:bool; outcome:string; decisions:[Decision]; }
 

@@ -54,6 +54,7 @@ type Decision struct {
 	ForecastModel    string              `json:"forecastModel"`
 	Forecast         *learning.RLSOutput `json:"forecast,omitempty"`
 	ForecastHorizon  int                 `json:"forecastHorizon" validate:"min=0"`
+	ForecastClock    string              `json:"forecastClock,omitempty"`
 	CalibrationCount uint64              `json:"calibrationCount"`
 	Confidence       float64             `json:"confidence" validate:"finite,min=0,max=1"`
 	AvailableCapital *decimal.Decimal    `json:"availableCapital" validate:"required"`

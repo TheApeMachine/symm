@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
 )
 
@@ -49,49 +48,6 @@ type Holding struct {
 	// same realized economics that produce RealizedPnL, never from a ticker
 	// mark or a current-price estimate.
 	RealizedReturn *decimal.Decimal `json:"realized_return,omitempty"`
-}
-
-/*
-NewHolding constructs a pending Thesis lot with the Stoploss regulator Position
-advances from live executable marks.
-*/
-func NewHolding(
-	ctx context.Context,
-	symbol string,
-	decision Decision,
-) (*Holding, error) {
-	errnie.Info("creating holding for: " + symbol)
-
-	if decision.Stoploss == nil {
-		return nil, errnie.Err(
-			errnie.Validation,
-			"holding: strategy stoploss required",
-			nil,
-		)
-	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	holding := &Holding{
-		ctx:           ctx,
-		cancel:        cancel,
-		Symbol:        symbol,
-		Qty:           decision.ProposedQuantity,
-		SellableQty:   decision.ProposedQuantity,
-		Mark:          decision.Mark,
-		Status:        PENDING,
-		ReservationID: decision.ReservationID,
-		IsOpportunity: decision.Opportunity,
-		EntryAt:       decision.EntryAt,
-		EntryPrice:    decision.EntryPrice,
-		EntryFee:      decision.EntryFee,
-		Stoploss:      decision.Stoploss,
-	}
-
-	if decision.ReturnPct != nil {
-		holding.ReturnPct = *decision.ReturnPct
-	}
-
-	return holding, nil
 }
 
 /*

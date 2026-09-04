@@ -88,10 +88,12 @@ type ActiveLotEntry = {
 	peak: string;
 	locked: boolean;
 	surgeArmed: boolean;
-	thesisScore: string;
-	thesisConfidence: string;
 	riskDistance: string;
 	trailDistance: string;
+	opportunityType: string;
+	opportunityPhase: string;
+	predictiveStatus: string;
+	confidence: string;
 };
 
 type JournalTradeEntry = {
@@ -113,14 +115,6 @@ type JournalTradeEntry = {
 	exitAt: string;
 	exitAtSort: number;
 	// Analysis fields sourced from Decision, not previously surfaced.
-	thesisScore: string;
-	thesisConfidence: string;
-	causalIdentification: string;
-	allocationHaircut: string;
-	allocationHaircutReason: string;
-	adverseSelection: string;
-	expectedReturn: string;
-	expectedFees: string;
 	bestAsk: string;
 	bestBid: string;
 	spread: string;
@@ -129,10 +123,18 @@ type JournalTradeEntry = {
 	riskDistance: string;
 	trailDistance: string;
 	maxLoss: string;
-	hypothesis: string;
+	roundTripFees: string;
+	// What the system actually decided on: the opportunity it was positioning
+	// for, how far the gate sequence got, and what the causal search concluded.
+	opportunityType: string;
+	opportunityPhase: string;
+	predictiveStatus: string;
+	confidence: string;
+	dominantMove: string;
 	recommendedAction: string;
-	graphSupports: string;
-	graphContradicts: string;
+	iterations: string;
+	expectedOutcome: string;
+	outcomeUncertainty: string;
 	source: "live" | "history";
 };
 
@@ -183,14 +185,6 @@ const fromRecord = (record: TradeRecord): JournalTradeEntry | null => {
 		surgeArmed: stoploss?.surgeArmed ?? false,
 		exitAt: timeOf(holding.exitAt),
 		exitAtSort: sortOf(exitAtSort),
-		thesisScore: formatNumber(decision?.thesisScore, 3),
-		thesisConfidence: formatPct((decision?.thesisConfidence ?? 0) * 100, 1),
-		causalIdentification: decision?.causalIdentification || "—",
-		allocationHaircut: formatPct((decision?.allocationHaircut ?? 0) * 100, 1),
-		allocationHaircutReason: decision?.allocationHaircutReason || "—",
-		adverseSelection: formatNumber(decision?.adverseSelection, 6),
-		expectedReturn: formatNumber(decision?.expectedReturn, 6),
-		expectedFees: formatNumber(decision?.expectedFees, 6),
 		bestAsk: formatNumber(entryCost?.bestAsk, 6),
 		bestBid: formatNumber(entryCost?.bestBid, 6),
 		spread: formatNumber(entryCost?.spread, 6),
@@ -199,10 +193,16 @@ const fromRecord = (record: TradeRecord): JournalTradeEntry | null => {
 		riskDistance: formatNumber(risk?.riskDistance, 6),
 		trailDistance: formatNumber(risk?.trailDistance, 6),
 		maxLoss: formatNumber(risk?.maxLoss, 4),
-		hypothesis: trace?.hypothesis || "—",
+		roundTripFees: formatNumber(entryCost?.roundTripFees, 6),
+		opportunityType: decision?.opportunityType || "—",
+		opportunityPhase: decision?.opportunityPhase || "—",
+		predictiveStatus: decision?.predictiveStatus || "—",
+		confidence: formatPct((decision?.confidence ?? 0) * 100, 1),
+		dominantMove: trace?.consensusDominantMove || "—",
 		recommendedAction: trace?.recommendedAction || "—",
-		graphSupports: formatNumber(trace?.graphSupports, 0),
-		graphContradicts: formatNumber(trace?.graphContradicts, 0),
+		iterations: formatNumber(trace?.iterations, 0),
+		expectedOutcome: formatNumber(trace?.expectedOutcome, 4),
+		outcomeUncertainty: formatNumber(trace?.outcomeUncertainty, 4),
 		source: "history",
 	};
 };
@@ -291,25 +291,6 @@ export const JournalSurface = () => {
 						surgeArmed: currentStoploss?.surgeArmed() ?? false,
 						exitAt: timeOf(exitNano),
 						exitAtSort: sortOf(exitNano),
-						thesisScore: formatNumber(currentDecision?.thesisScore(), 3),
-						thesisConfidence: formatPct(
-							(currentDecision?.thesisConfidence() ?? 0) * 100,
-							1,
-						),
-						causalIdentification:
-							currentDecision?.causalIdentification() || "—",
-						allocationHaircut: formatPct(
-							(currentDecision?.allocationHaircut() ?? 0) * 100,
-							1,
-						),
-						allocationHaircutReason:
-							currentDecision?.allocationHaircutReason() || "—",
-						adverseSelection: formatNumber(
-							currentDecision?.adverseSelection(),
-							6,
-						),
-						expectedReturn: formatNumber(currentDecision?.expectedReturn(), 6),
-						expectedFees: formatNumber(currentDecision?.expectedFees(), 6),
 						bestAsk: formatNumber(currentEntryCost?.bestAsk(), 6),
 						bestBid: formatNumber(currentEntryCost?.bestBid(), 6),
 						spread: formatNumber(currentEntryCost?.spread(), 6),
@@ -318,10 +299,22 @@ export const JournalSurface = () => {
 						riskDistance: formatNumber(currentRisk?.riskDistance(), 6),
 						trailDistance: formatNumber(currentRisk?.trailDistance(), 6),
 						maxLoss: formatNumber(currentRisk?.maxLoss(), 4),
-						hypothesis: currentTrace?.hypothesis() || "—",
+						roundTripFees: formatNumber(currentEntryCost?.roundTripFees(), 6),
+						opportunityType: currentDecision?.opportunityType() || "—",
+						opportunityPhase: currentDecision?.opportunityPhase() || "—",
+						predictiveStatus: currentDecision?.predictiveStatus() || "—",
+						confidence: formatPct(
+							(currentDecision?.confidence() ?? 0) * 100,
+							1,
+						),
+						dominantMove: currentTrace?.consensusDominantMove() || "—",
 						recommendedAction: currentTrace?.recommendedAction() || "—",
-						graphSupports: formatNumber(currentTrace?.graphSupports(), 0),
-						graphContradicts: formatNumber(currentTrace?.graphContradicts(), 0),
+						iterations: formatNumber(currentTrace?.iterations(), 0),
+						expectedOutcome: formatNumber(currentTrace?.expectedOutcome(), 4),
+						outcomeUncertainty: formatNumber(
+							currentTrace?.outcomeUncertainty(),
+							4,
+						),
 						source: "live",
 					});
 					continue;
@@ -337,15 +330,14 @@ export const JournalSurface = () => {
 					returnPct: formatPct(currentHolding.returnPct(), 2),
 					entryPrice: formatNumber(currentHolding.entryPrice(), 6),
 					entryAt: entryTimestamp,
+					opportunityType: currentDecision?.opportunityType() || "—",
+					opportunityPhase: currentDecision?.opportunityPhase() || "—",
+					predictiveStatus: currentDecision?.predictiveStatus() || "—",
+					confidence: formatPct((currentDecision?.confidence() ?? 0) * 100, 1),
 					floor: formatNumber(currentStoploss?.floor(), 6),
 					peak: formatNumber(currentStoploss?.peak(), 6),
 					locked: currentStoploss?.locked() ?? false,
 					surgeArmed: currentStoploss?.surgeArmed() ?? false,
-					thesisScore: formatNumber(currentDecision?.thesisScore(), 3),
-					thesisConfidence: formatPct(
-						(currentDecision?.thesisConfidence() ?? 0) * 100,
-						1,
-					),
 					riskDistance: formatNumber(currentRisk?.riskDistance(), 6),
 					trailDistance: formatNumber(currentRisk?.trailDistance(), 6),
 				});
@@ -456,8 +448,9 @@ export const JournalSurface = () => {
 											</Typography.Span>
 										</Flex.Row>
 										<Flex.Row className="items-center justify-between gap-2 border-(--line) border-t pt-1 text-[9px] text-(--f4)">
-											<Typography.Span>
-												thesis {lot.thesisScore} ({lot.thesisConfidence})
+											<Typography.Span className="truncate">
+												{lot.opportunityType} · {lot.opportunityPhase} (
+												{lot.confidence})
 											</Typography.Span>
 											<Typography.Span>
 												risk {lot.riskDistance} · trail {lot.trailDistance}
@@ -492,7 +485,8 @@ export const JournalSurface = () => {
 							const tone = pnlTone(trade.pnlValue);
 							const stopError = trade.stopStatus === "error";
 							const hasDiagnostics =
-								trade.hypothesis !== "—" || trade.recommendedAction !== "—";
+								trade.opportunityType !== "—" ||
+								trade.recommendedAction !== "—";
 							return (
 								<Panel
 									key={trade.id}
@@ -576,26 +570,20 @@ export const JournalSurface = () => {
 									<div className="flex flex-col gap-1 rounded-xs bg-(--sunken) px-2 py-1.5 text-[9px] text-(--f4)">
 										<Flex.Row className="items-center justify-between">
 											<Typography.Span>
-												thesis{" "}
-												<span className="text-(--f3)">{trade.thesisScore}</span>{" "}
-												({trade.thesisConfidence}) · causal{" "}
-												{trade.causalIdentification}
+												opportunity{" "}
+												<span className="text-(--f3)">
+													{trade.opportunityType}
+												</span>{" "}
+												({trade.opportunityPhase}) · {trade.predictiveStatus}
 											</Typography.Span>
-											<Typography.Span>
-												haircut {trade.allocationHaircut}
-												{trade.allocationHaircutReason !== "—"
-													? ` (${trade.allocationHaircutReason})`
-													: ""}
-											</Typography.Span>
+											<Typography.Span>conf {trade.confidence}</Typography.Span>
 										</Flex.Row>
 										<Flex.Row className="items-center justify-between">
 											<Typography.Span>
-												spread {trade.spread} · impact {trade.impact} · adverse{" "}
-												{trade.adverseSelection}
+												spread {trade.spread} · impact {trade.impact}
 											</Typography.Span>
 											<Typography.Span>
-												expected {trade.expectedReturn} ({trade.expectedFees}{" "}
-												fees)
+												round-trip fees {trade.roundTripFees}
 											</Typography.Span>
 										</Flex.Row>
 										<Flex.Row className="items-center justify-between">
@@ -611,11 +599,12 @@ export const JournalSurface = () => {
 										{hasDiagnostics ? (
 											<Flex.Row className="items-center justify-between border-(--line) border-t pt-1">
 												<Typography.Span className="truncate">
-													hypothesis: {trade.hypothesis}
+													council: {trade.dominantMove}
 												</Typography.Span>
 												<Typography.Span>
-													mcts: {trade.recommendedAction} (+
-													{trade.graphSupports}/-{trade.graphContradicts})
+													mcts: {trade.recommendedAction} · {trade.iterations}{" "}
+													iters · E {trade.expectedOutcome} ±{" "}
+													{trade.outcomeUncertainty}
 												</Typography.Span>
 											</Flex.Row>
 										) : null}

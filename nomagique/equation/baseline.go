@@ -73,6 +73,45 @@ func (eq *CausalResidual) Dispersion() types.Scalar {
 func (eq *CausalResidual) Count() float64 { return eq.welford.Count() }
 
 /*
+Support, Divergence and NoiseVariance state the confidence this estimate
+carries, so a terminal Projection can declare the facts a signal-to-noise
+ratio is derived from without deriving it a second time.
+*/
+func (eq *CausalResidual) Support() float64         { return eq.welford.Count() }
+func (eq *CausalResidual) Divergence() types.Scalar { return eq.lastResidual }
+
+/*
+Readings publishes the standardization this equation performed: the baseline
+it measured against, the distance from it, and that distance in units of the
+estimate's own dispersion. All three are undefined until a prior exists.
+*/
+func (eq *CausalResidual) Readings() []types.Reading {
+	return []types.Reading{
+		{
+			Label:     "baseline",
+			Unit:      "dimensionless",
+			Timescale: "instantaneous",
+			Value:     eq.lastPriorMean,
+			Defined:   eq.hasPrior,
+		},
+		{
+			Label:     "divergence",
+			Unit:      "dimensionless",
+			Timescale: "instantaneous",
+			Value:     eq.lastResidual,
+			Defined:   eq.hasPrior,
+		},
+		{
+			Label:     "zscore",
+			Unit:      "dimensionless",
+			Timescale: "instantaneous",
+			Value:     eq.lastZScore,
+			Defined:   eq.hasPrior,
+		},
+	}
+}
+
+/*
 NoiseVariance returns the residual noise power the ZScore normalizes by: the
 dispersion before the square root. A consumer derives the scalar SNR from it
 without re-deriving the estimator's own noise model.

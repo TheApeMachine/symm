@@ -92,9 +92,8 @@ func TestCoiledSetupSelectsEntryEndToEnd(t *testing.T) {
 			20, 20, searchHorizon,
 		).WithHistory(sampleObservationalHistory(16))
 
-		result := plannerSearch(7).Run(state, &opportunityEstimator{
-			consensus:       consensus,
-			entryAdmissible: true,
+		result := plannerSearch(7).Run(state, &consensusEstimator{
+			consensus: consensus,
 		})
 
 		Convey("the causal search selects entry", func() {
@@ -181,9 +180,8 @@ func TestBearishCouncilRefusesEntryEndToEnd(t *testing.T) {
 			20, 20, searchHorizon,
 		)
 
-		result := plannerSearch(11).Run(state, &opportunityEstimator{
-			consensus:       consensus,
-			entryAdmissible: true,
+		result := plannerSearch(11).Run(state, &consensusEstimator{
+			consensus: consensus,
 		})
 
 		Convey("entry is never selected into a vetoed book", func() {
@@ -259,8 +257,8 @@ func TestDecisionCarriesItsReasoningTrace(t *testing.T) {
 			20, 20, searchHorizon,
 		).WithHistory(sampleObservationalHistory(16))
 
-		result := plannerSearch(7).Run(state, &opportunityEstimator{
-			consensus: consensus, entryAdmissible: true,
+		result := plannerSearch(7).Run(state, &consensusEstimator{
+			consensus: consensus,
 		})
 
 		trace := buildTrace(consensus, result, "war-room-consensus")
@@ -335,8 +333,8 @@ func TestTraceEncodesToTelemetry(t *testing.T) {
 			20, 20, searchHorizon,
 		).WithHistory(sampleObservationalHistory(16))
 
-		result := plannerSearch(7).Run(state, &opportunityEstimator{
-			consensus: consensus, entryAdmissible: true,
+		result := plannerSearch(7).Run(state, &consensusEstimator{
+			consensus: consensus,
 		})
 
 		decision := types.NewDecision(types.ActionEnter, "TEST/USD")

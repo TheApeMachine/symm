@@ -11,27 +11,12 @@ type DecisionT struct {
 	Action string `json:"action"`
 	Symbol string `json:"symbol"`
 	At int64 `json:"at"`
-	Utility float64 `json:"utility"`
-	GraphScore float64 `json:"graphScore"`
-	ThesisScore float64 `json:"thesisScore"`
-	ThesisConfidence float64 `json:"thesisConfidence"`
-	ThesisSupport float64 `json:"thesisSupport"`
-	ThesisContradiction float64 `json:"thesisContradiction"`
-	ThesisConditions float64 `json:"thesisConditions"`
 	Direction float64 `json:"direction"`
-	PerspectiveReturn float64 `json:"perspectiveReturn"`
-	PerspectiveConfidence float64 `json:"perspectiveConfidence"`
-	AdmissionGraphThreshold float64 `json:"admissionGraphThreshold"`
-	AdmissionUtilityThreshold float64 `json:"admissionUtilityThreshold"`
-	AllocationHaircut float64 `json:"allocationHaircut"`
-	AllocationHaircutReason string `json:"allocationHaircutReason"`
 	Alternatives []*NamedNumberT `json:"alternatives"`
 	AllocationClass string `json:"allocationClass"`
 	Opportunity bool `json:"opportunity"`
 	OpportunityType string `json:"opportunityType"`
 	OpportunityPhase string `json:"opportunityPhase"`
-	ReserveEligible bool `json:"reserveEligible"`
-	ReserveReason string `json:"reserveReason"`
 	PredictiveReady bool `json:"predictiveReady"`
 	PredictiveStatus string `json:"predictiveStatus"`
 	TaskSkill float64 `json:"taskSkill"`
@@ -39,35 +24,16 @@ type DecisionT struct {
 	ProposedNotional string `json:"proposedNotional"`
 	ProposedQuantity string `json:"proposedQuantity"`
 	ReferencePrice string `json:"referencePrice"`
-	ValidThroughEpoch uint64 `json:"validThroughEpoch"`
-	ArbitrationRound int64 `json:"arbitrationRound"`
 	ForecastSource string `json:"forecastSource"`
 	ForecastModel string `json:"forecastModel"`
-	ForecastEpoch uint64 `json:"forecastEpoch"`
 	ForecastHorizon int64 `json:"forecastHorizon"`
-	ForwardCurve []float64 `json:"forwardCurve"`
 	CalibrationCount uint64 `json:"calibrationCount"`
-	ExpectedReturn string `json:"expectedReturn"`
-	ExpectedFees string `json:"expectedFees"`
-	ExpectedSpread string `json:"expectedSpread"`
-	ExpectedImpact string `json:"expectedImpact"`
-	AdverseSelection string `json:"adverseSelection"`
-	Uncertainty float64 `json:"uncertainty"`
 	Confidence float64 `json:"confidence"`
-	CausalPrecision float64 `json:"causalPrecision"`
-	OpportunityMargin float64 `json:"opportunityMargin"`
-	CognitiveLead float64 `json:"cognitiveLead"`
-	BasinConfidence float64 `json:"basinConfidence"`
 	AvailableCapital string `json:"availableCapital"`
 	OpenPositions int64 `json:"openPositions"`
-	SlotCapacity int64 `json:"slotCapacity"`
 	Cause string `json:"cause"`
 	Reason string `json:"reason"`
-	Displaces string `json:"displaces"`
-	DisplacedQuantity string `json:"displacedQuantity"`
-	DisplacedPrice string `json:"displacedPrice"`
 	ReservationId string `json:"reservationId"`
-	PositionStatus string `json:"positionStatus"`
 	SellableQty string `json:"sellableQty"`
 	EntryAt int64 `json:"entryAt"`
 	ExitAt int64 `json:"exitAt"`
@@ -82,12 +48,6 @@ type DecisionT struct {
 	Stoploss *StoplossT `json:"stoploss"`
 	Risk *RiskPlanT `json:"risk"`
 	Trace *DecisionTraceT `json:"trace"`
-	UtilityAvailable bool `json:"utilityAvailable"`
-	ValuationAttempted bool `json:"valuationAttempted"`
-	ValuationAvailable bool `json:"valuationAvailable"`
-	ValuationStatus string `json:"valuationStatus"`
-	CausalIdentification string `json:"causalIdentification"`
-	CausalBlockingCoordinate string `json:"causalBlockingCoordinate"`
 }
 
 func (t *DecisionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -105,10 +65,6 @@ func (t *DecisionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	symbolOffset := flatbuffers.UOffsetT(0)
 	if t.Symbol != "" {
 		symbolOffset = builder.CreateString(t.Symbol)
-	}
-	allocationHaircutReasonOffset := flatbuffers.UOffsetT(0)
-	if t.AllocationHaircutReason != "" {
-		allocationHaircutReasonOffset = builder.CreateString(t.AllocationHaircutReason)
 	}
 	alternativesOffset := flatbuffers.UOffsetT(0)
 	if t.Alternatives != nil {
@@ -135,10 +91,6 @@ func (t *DecisionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t.OpportunityPhase != "" {
 		opportunityPhaseOffset = builder.CreateString(t.OpportunityPhase)
 	}
-	reserveReasonOffset := flatbuffers.UOffsetT(0)
-	if t.ReserveReason != "" {
-		reserveReasonOffset = builder.CreateString(t.ReserveReason)
-	}
 	predictiveStatusOffset := flatbuffers.UOffsetT(0)
 	if t.PredictiveStatus != "" {
 		predictiveStatusOffset = builder.CreateString(t.PredictiveStatus)
@@ -163,35 +115,6 @@ func (t *DecisionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t.ForecastModel != "" {
 		forecastModelOffset = builder.CreateString(t.ForecastModel)
 	}
-	forwardCurveOffset := flatbuffers.UOffsetT(0)
-	if t.ForwardCurve != nil {
-		forwardCurveLength := len(t.ForwardCurve)
-		DecisionStartForwardCurveVector(builder, forwardCurveLength)
-		for j := forwardCurveLength - 1; j >= 0; j-- {
-			builder.PrependFloat64(t.ForwardCurve[j])
-		}
-		forwardCurveOffset = builder.EndVector(forwardCurveLength)
-	}
-	expectedReturnOffset := flatbuffers.UOffsetT(0)
-	if t.ExpectedReturn != "" {
-		expectedReturnOffset = builder.CreateString(t.ExpectedReturn)
-	}
-	expectedFeesOffset := flatbuffers.UOffsetT(0)
-	if t.ExpectedFees != "" {
-		expectedFeesOffset = builder.CreateString(t.ExpectedFees)
-	}
-	expectedSpreadOffset := flatbuffers.UOffsetT(0)
-	if t.ExpectedSpread != "" {
-		expectedSpreadOffset = builder.CreateString(t.ExpectedSpread)
-	}
-	expectedImpactOffset := flatbuffers.UOffsetT(0)
-	if t.ExpectedImpact != "" {
-		expectedImpactOffset = builder.CreateString(t.ExpectedImpact)
-	}
-	adverseSelectionOffset := flatbuffers.UOffsetT(0)
-	if t.AdverseSelection != "" {
-		adverseSelectionOffset = builder.CreateString(t.AdverseSelection)
-	}
 	availableCapitalOffset := flatbuffers.UOffsetT(0)
 	if t.AvailableCapital != "" {
 		availableCapitalOffset = builder.CreateString(t.AvailableCapital)
@@ -204,25 +127,9 @@ func (t *DecisionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t.Reason != "" {
 		reasonOffset = builder.CreateString(t.Reason)
 	}
-	displacesOffset := flatbuffers.UOffsetT(0)
-	if t.Displaces != "" {
-		displacesOffset = builder.CreateString(t.Displaces)
-	}
-	displacedQuantityOffset := flatbuffers.UOffsetT(0)
-	if t.DisplacedQuantity != "" {
-		displacedQuantityOffset = builder.CreateString(t.DisplacedQuantity)
-	}
-	displacedPriceOffset := flatbuffers.UOffsetT(0)
-	if t.DisplacedPrice != "" {
-		displacedPriceOffset = builder.CreateString(t.DisplacedPrice)
-	}
 	reservationIdOffset := flatbuffers.UOffsetT(0)
 	if t.ReservationId != "" {
 		reservationIdOffset = builder.CreateString(t.ReservationId)
-	}
-	positionStatusOffset := flatbuffers.UOffsetT(0)
-	if t.PositionStatus != "" {
-		positionStatusOffset = builder.CreateString(t.PositionStatus)
 	}
 	sellableQtyOffset := flatbuffers.UOffsetT(0)
 	if t.SellableQty != "" {
@@ -256,44 +163,17 @@ func (t *DecisionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	stoplossOffset := t.Stoploss.Pack(builder)
 	riskOffset := t.Risk.Pack(builder)
 	traceOffset := t.Trace.Pack(builder)
-	valuationStatusOffset := flatbuffers.UOffsetT(0)
-	if t.ValuationStatus != "" {
-		valuationStatusOffset = builder.CreateString(t.ValuationStatus)
-	}
-	causalIdentificationOffset := flatbuffers.UOffsetT(0)
-	if t.CausalIdentification != "" {
-		causalIdentificationOffset = builder.CreateString(t.CausalIdentification)
-	}
-	causalBlockingCoordinateOffset := flatbuffers.UOffsetT(0)
-	if t.CausalBlockingCoordinate != "" {
-		causalBlockingCoordinateOffset = builder.CreateString(t.CausalBlockingCoordinate)
-	}
 	DecisionStart(builder)
 	DecisionAddId(builder, idOffset)
 	DecisionAddAction(builder, actionOffset)
 	DecisionAddSymbol(builder, symbolOffset)
 	DecisionAddAt(builder, t.At)
-	DecisionAddUtility(builder, t.Utility)
-	DecisionAddGraphScore(builder, t.GraphScore)
-	DecisionAddThesisScore(builder, t.ThesisScore)
-	DecisionAddThesisConfidence(builder, t.ThesisConfidence)
-	DecisionAddThesisSupport(builder, t.ThesisSupport)
-	DecisionAddThesisContradiction(builder, t.ThesisContradiction)
-	DecisionAddThesisConditions(builder, t.ThesisConditions)
 	DecisionAddDirection(builder, t.Direction)
-	DecisionAddPerspectiveReturn(builder, t.PerspectiveReturn)
-	DecisionAddPerspectiveConfidence(builder, t.PerspectiveConfidence)
-	DecisionAddAdmissionGraphThreshold(builder, t.AdmissionGraphThreshold)
-	DecisionAddAdmissionUtilityThreshold(builder, t.AdmissionUtilityThreshold)
-	DecisionAddAllocationHaircut(builder, t.AllocationHaircut)
-	DecisionAddAllocationHaircutReason(builder, allocationHaircutReasonOffset)
 	DecisionAddAlternatives(builder, alternativesOffset)
 	DecisionAddAllocationClass(builder, allocationClassOffset)
 	DecisionAddOpportunity(builder, t.Opportunity)
 	DecisionAddOpportunityType(builder, opportunityTypeOffset)
 	DecisionAddOpportunityPhase(builder, opportunityPhaseOffset)
-	DecisionAddReserveEligible(builder, t.ReserveEligible)
-	DecisionAddReserveReason(builder, reserveReasonOffset)
 	DecisionAddPredictiveReady(builder, t.PredictiveReady)
 	DecisionAddPredictiveStatus(builder, predictiveStatusOffset)
 	DecisionAddTaskSkill(builder, t.TaskSkill)
@@ -301,35 +181,16 @@ func (t *DecisionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	DecisionAddProposedNotional(builder, proposedNotionalOffset)
 	DecisionAddProposedQuantity(builder, proposedQuantityOffset)
 	DecisionAddReferencePrice(builder, referencePriceOffset)
-	DecisionAddValidThroughEpoch(builder, t.ValidThroughEpoch)
-	DecisionAddArbitrationRound(builder, t.ArbitrationRound)
 	DecisionAddForecastSource(builder, forecastSourceOffset)
 	DecisionAddForecastModel(builder, forecastModelOffset)
-	DecisionAddForecastEpoch(builder, t.ForecastEpoch)
 	DecisionAddForecastHorizon(builder, t.ForecastHorizon)
-	DecisionAddForwardCurve(builder, forwardCurveOffset)
 	DecisionAddCalibrationCount(builder, t.CalibrationCount)
-	DecisionAddExpectedReturn(builder, expectedReturnOffset)
-	DecisionAddExpectedFees(builder, expectedFeesOffset)
-	DecisionAddExpectedSpread(builder, expectedSpreadOffset)
-	DecisionAddExpectedImpact(builder, expectedImpactOffset)
-	DecisionAddAdverseSelection(builder, adverseSelectionOffset)
-	DecisionAddUncertainty(builder, t.Uncertainty)
 	DecisionAddConfidence(builder, t.Confidence)
-	DecisionAddCausalPrecision(builder, t.CausalPrecision)
-	DecisionAddOpportunityMargin(builder, t.OpportunityMargin)
-	DecisionAddCognitiveLead(builder, t.CognitiveLead)
-	DecisionAddBasinConfidence(builder, t.BasinConfidence)
 	DecisionAddAvailableCapital(builder, availableCapitalOffset)
 	DecisionAddOpenPositions(builder, t.OpenPositions)
-	DecisionAddSlotCapacity(builder, t.SlotCapacity)
 	DecisionAddCause(builder, causeOffset)
 	DecisionAddReason(builder, reasonOffset)
-	DecisionAddDisplaces(builder, displacesOffset)
-	DecisionAddDisplacedQuantity(builder, displacedQuantityOffset)
-	DecisionAddDisplacedPrice(builder, displacedPriceOffset)
 	DecisionAddReservationId(builder, reservationIdOffset)
-	DecisionAddPositionStatus(builder, positionStatusOffset)
 	DecisionAddSellableQty(builder, sellableQtyOffset)
 	DecisionAddEntryAt(builder, t.EntryAt)
 	DecisionAddExitAt(builder, t.ExitAt)
@@ -344,12 +205,6 @@ func (t *DecisionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	DecisionAddStoploss(builder, stoplossOffset)
 	DecisionAddRisk(builder, riskOffset)
 	DecisionAddTrace(builder, traceOffset)
-	DecisionAddUtilityAvailable(builder, t.UtilityAvailable)
-	DecisionAddValuationAttempted(builder, t.ValuationAttempted)
-	DecisionAddValuationAvailable(builder, t.ValuationAvailable)
-	DecisionAddValuationStatus(builder, valuationStatusOffset)
-	DecisionAddCausalIdentification(builder, causalIdentificationOffset)
-	DecisionAddCausalBlockingCoordinate(builder, causalBlockingCoordinateOffset)
 	return DecisionEnd(builder)
 }
 
@@ -358,20 +213,7 @@ func (rcv *Decision) UnPackTo(t *DecisionT) {
 	t.Action = string(rcv.Action())
 	t.Symbol = string(rcv.Symbol())
 	t.At = rcv.At()
-	t.Utility = rcv.Utility()
-	t.GraphScore = rcv.GraphScore()
-	t.ThesisScore = rcv.ThesisScore()
-	t.ThesisConfidence = rcv.ThesisConfidence()
-	t.ThesisSupport = rcv.ThesisSupport()
-	t.ThesisContradiction = rcv.ThesisContradiction()
-	t.ThesisConditions = rcv.ThesisConditions()
 	t.Direction = rcv.Direction()
-	t.PerspectiveReturn = rcv.PerspectiveReturn()
-	t.PerspectiveConfidence = rcv.PerspectiveConfidence()
-	t.AdmissionGraphThreshold = rcv.AdmissionGraphThreshold()
-	t.AdmissionUtilityThreshold = rcv.AdmissionUtilityThreshold()
-	t.AllocationHaircut = rcv.AllocationHaircut()
-	t.AllocationHaircutReason = string(rcv.AllocationHaircutReason())
 	alternativesLength := rcv.AlternativesLength()
 	t.Alternatives = make([]*NamedNumberT, alternativesLength)
 	for j := 0; j < alternativesLength; j++ {
@@ -383,8 +225,6 @@ func (rcv *Decision) UnPackTo(t *DecisionT) {
 	t.Opportunity = rcv.Opportunity()
 	t.OpportunityType = string(rcv.OpportunityType())
 	t.OpportunityPhase = string(rcv.OpportunityPhase())
-	t.ReserveEligible = rcv.ReserveEligible()
-	t.ReserveReason = string(rcv.ReserveReason())
 	t.PredictiveReady = rcv.PredictiveReady()
 	t.PredictiveStatus = string(rcv.PredictiveStatus())
 	t.TaskSkill = rcv.TaskSkill()
@@ -392,39 +232,16 @@ func (rcv *Decision) UnPackTo(t *DecisionT) {
 	t.ProposedNotional = string(rcv.ProposedNotional())
 	t.ProposedQuantity = string(rcv.ProposedQuantity())
 	t.ReferencePrice = string(rcv.ReferencePrice())
-	t.ValidThroughEpoch = rcv.ValidThroughEpoch()
-	t.ArbitrationRound = rcv.ArbitrationRound()
 	t.ForecastSource = string(rcv.ForecastSource())
 	t.ForecastModel = string(rcv.ForecastModel())
-	t.ForecastEpoch = rcv.ForecastEpoch()
 	t.ForecastHorizon = rcv.ForecastHorizon()
-	forwardCurveLength := rcv.ForwardCurveLength()
-	t.ForwardCurve = make([]float64, forwardCurveLength)
-	for j := 0; j < forwardCurveLength; j++ {
-		t.ForwardCurve[j] = rcv.ForwardCurve(j)
-	}
 	t.CalibrationCount = rcv.CalibrationCount()
-	t.ExpectedReturn = string(rcv.ExpectedReturn())
-	t.ExpectedFees = string(rcv.ExpectedFees())
-	t.ExpectedSpread = string(rcv.ExpectedSpread())
-	t.ExpectedImpact = string(rcv.ExpectedImpact())
-	t.AdverseSelection = string(rcv.AdverseSelection())
-	t.Uncertainty = rcv.Uncertainty()
 	t.Confidence = rcv.Confidence()
-	t.CausalPrecision = rcv.CausalPrecision()
-	t.OpportunityMargin = rcv.OpportunityMargin()
-	t.CognitiveLead = rcv.CognitiveLead()
-	t.BasinConfidence = rcv.BasinConfidence()
 	t.AvailableCapital = string(rcv.AvailableCapital())
 	t.OpenPositions = rcv.OpenPositions()
-	t.SlotCapacity = rcv.SlotCapacity()
 	t.Cause = string(rcv.Cause())
 	t.Reason = string(rcv.Reason())
-	t.Displaces = string(rcv.Displaces())
-	t.DisplacedQuantity = string(rcv.DisplacedQuantity())
-	t.DisplacedPrice = string(rcv.DisplacedPrice())
 	t.ReservationId = string(rcv.ReservationId())
-	t.PositionStatus = string(rcv.PositionStatus())
 	t.SellableQty = string(rcv.SellableQty())
 	t.EntryAt = rcv.EntryAt()
 	t.ExitAt = rcv.ExitAt()
@@ -439,12 +256,6 @@ func (rcv *Decision) UnPackTo(t *DecisionT) {
 	t.Stoploss = rcv.Stoploss(nil).UnPack()
 	t.Risk = rcv.Risk(nil).UnPack()
 	t.Trace = rcv.Trace(nil).UnPack()
-	t.UtilityAvailable = rcv.UtilityAvailable()
-	t.ValuationAttempted = rcv.ValuationAttempted()
-	t.ValuationAvailable = rcv.ValuationAvailable()
-	t.ValuationStatus = string(rcv.ValuationStatus())
-	t.CausalIdentification = string(rcv.CausalIdentification())
-	t.CausalBlockingCoordinate = string(rcv.CausalBlockingCoordinate())
 }
 
 func (rcv *Decision) UnPack() *DecisionT {
@@ -527,7 +338,7 @@ func (rcv *Decision) MutateAt(n int64) bool {
 	return rcv._tab.MutateInt64Slot(10, n)
 }
 
-func (rcv *Decision) Utility() float64 {
+func (rcv *Decision) Direction() float64 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
@@ -535,164 +346,12 @@ func (rcv *Decision) Utility() float64 {
 	return 0.0
 }
 
-func (rcv *Decision) MutateUtility(n float64) bool {
+func (rcv *Decision) MutateDirection(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
 
-func (rcv *Decision) GraphScore() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutateGraphScore(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(14, n)
-}
-
-func (rcv *Decision) ThesisScore() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutateThesisScore(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(16, n)
-}
-
-func (rcv *Decision) ThesisConfidence() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutateThesisConfidence(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(18, n)
-}
-
-func (rcv *Decision) ThesisSupport() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutateThesisSupport(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(20, n)
-}
-
-func (rcv *Decision) ThesisContradiction() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutateThesisContradiction(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(22, n)
-}
-
-func (rcv *Decision) ThesisConditions() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutateThesisConditions(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(24, n)
-}
-
-func (rcv *Decision) Direction() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutateDirection(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(26, n)
-}
-
-func (rcv *Decision) PerspectiveReturn() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutatePerspectiveReturn(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(28, n)
-}
-
-func (rcv *Decision) PerspectiveConfidence() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutatePerspectiveConfidence(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(30, n)
-}
-
-func (rcv *Decision) AdmissionGraphThreshold() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutateAdmissionGraphThreshold(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(32, n)
-}
-
-func (rcv *Decision) AdmissionUtilityThreshold() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutateAdmissionUtilityThreshold(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(34, n)
-}
-
-func (rcv *Decision) AllocationHaircut() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutateAllocationHaircut(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(36, n)
-}
-
-func (rcv *Decision) AllocationHaircutReason() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
 func (rcv *Decision) Alternatives(obj *NamedNumber, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -704,7 +363,7 @@ func (rcv *Decision) Alternatives(obj *NamedNumber, j int) bool {
 }
 
 func (rcv *Decision) AlternativesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -712,7 +371,7 @@ func (rcv *Decision) AlternativesLength() int {
 }
 
 func (rcv *Decision) AllocationClass() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -720,7 +379,7 @@ func (rcv *Decision) AllocationClass() []byte {
 }
 
 func (rcv *Decision) Opportunity() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
@@ -728,11 +387,11 @@ func (rcv *Decision) Opportunity() bool {
 }
 
 func (rcv *Decision) MutateOpportunity(n bool) bool {
-	return rcv._tab.MutateBoolSlot(44, n)
+	return rcv._tab.MutateBoolSlot(18, n)
 }
 
 func (rcv *Decision) OpportunityType() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -740,27 +399,7 @@ func (rcv *Decision) OpportunityType() []byte {
 }
 
 func (rcv *Decision) OpportunityPhase() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Decision) ReserveEligible() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
-	if o != 0 {
-		return rcv._tab.GetBool(o + rcv._tab.Pos)
-	}
-	return false
-}
-
-func (rcv *Decision) MutateReserveEligible(n bool) bool {
-	return rcv._tab.MutateBoolSlot(50, n)
-}
-
-func (rcv *Decision) ReserveReason() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -768,7 +407,7 @@ func (rcv *Decision) ReserveReason() []byte {
 }
 
 func (rcv *Decision) PredictiveReady() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
@@ -776,11 +415,11 @@ func (rcv *Decision) PredictiveReady() bool {
 }
 
 func (rcv *Decision) MutatePredictiveReady(n bool) bool {
-	return rcv._tab.MutateBoolSlot(54, n)
+	return rcv._tab.MutateBoolSlot(24, n)
 }
 
 func (rcv *Decision) PredictiveStatus() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -788,7 +427,7 @@ func (rcv *Decision) PredictiveStatus() []byte {
 }
 
 func (rcv *Decision) TaskSkill() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -796,11 +435,11 @@ func (rcv *Decision) TaskSkill() float64 {
 }
 
 func (rcv *Decision) MutateTaskSkill(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(58, n)
+	return rcv._tab.MutateFloat64Slot(28, n)
 }
 
 func (rcv *Decision) TaskSkillReady() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
@@ -808,11 +447,11 @@ func (rcv *Decision) TaskSkillReady() bool {
 }
 
 func (rcv *Decision) MutateTaskSkillReady(n bool) bool {
-	return rcv._tab.MutateBoolSlot(60, n)
+	return rcv._tab.MutateBoolSlot(30, n)
 }
 
 func (rcv *Decision) ProposedNotional() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -820,7 +459,7 @@ func (rcv *Decision) ProposedNotional() []byte {
 }
 
 func (rcv *Decision) ProposedQuantity() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -828,39 +467,15 @@ func (rcv *Decision) ProposedQuantity() []byte {
 }
 
 func (rcv *Decision) ReferencePrice() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
 	return nil
 }
 
-func (rcv *Decision) ValidThroughEpoch() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
-	if o != 0 {
-		return rcv._tab.GetUint64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *Decision) MutateValidThroughEpoch(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(68, n)
-}
-
-func (rcv *Decision) ArbitrationRound() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
-	if o != 0 {
-		return rcv._tab.GetInt64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *Decision) MutateArbitrationRound(n int64) bool {
-	return rcv._tab.MutateInt64Slot(70, n)
-}
-
 func (rcv *Decision) ForecastSource() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -868,27 +483,15 @@ func (rcv *Decision) ForecastSource() []byte {
 }
 
 func (rcv *Decision) ForecastModel() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
 	return nil
 }
 
-func (rcv *Decision) ForecastEpoch() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
-	if o != 0 {
-		return rcv._tab.GetUint64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *Decision) MutateForecastEpoch(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(76, n)
-}
-
 func (rcv *Decision) ForecastHorizon() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
@@ -896,37 +499,11 @@ func (rcv *Decision) ForecastHorizon() int64 {
 }
 
 func (rcv *Decision) MutateForecastHorizon(n int64) bool {
-	return rcv._tab.MutateInt64Slot(78, n)
-}
-
-func (rcv *Decision) ForwardCurve(j int) float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
-	if o != 0 {
-		a := rcv._tab.Vector(o)
-		return rcv._tab.GetFloat64(a + flatbuffers.UOffsetT(j*8))
-	}
-	return 0
-}
-
-func (rcv *Decision) ForwardCurveLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
-	if o != 0 {
-		return rcv._tab.VectorLen(o)
-	}
-	return 0
-}
-
-func (rcv *Decision) MutateForwardCurve(j int, n float64) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
-	if o != 0 {
-		a := rcv._tab.Vector(o)
-		return rcv._tab.MutateFloat64(a+flatbuffers.UOffsetT(j*8), n)
-	}
-	return false
+	return rcv._tab.MutateInt64Slot(42, n)
 }
 
 func (rcv *Decision) CalibrationCount() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(82))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
@@ -934,63 +511,11 @@ func (rcv *Decision) CalibrationCount() uint64 {
 }
 
 func (rcv *Decision) MutateCalibrationCount(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(82, n)
-}
-
-func (rcv *Decision) ExpectedReturn() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(84))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Decision) ExpectedFees() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(86))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Decision) ExpectedSpread() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(88))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Decision) ExpectedImpact() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(90))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Decision) AdverseSelection() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(92))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Decision) Uncertainty() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(94))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutateUncertainty(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(94, n)
+	return rcv._tab.MutateUint64Slot(44, n)
 }
 
 func (rcv *Decision) Confidence() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(96))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -998,59 +523,11 @@ func (rcv *Decision) Confidence() float64 {
 }
 
 func (rcv *Decision) MutateConfidence(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(96, n)
-}
-
-func (rcv *Decision) CausalPrecision() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(98))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutateCausalPrecision(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(98, n)
-}
-
-func (rcv *Decision) OpportunityMargin() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(100))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutateOpportunityMargin(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(100, n)
-}
-
-func (rcv *Decision) CognitiveLead() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(102))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutateCognitiveLead(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(102, n)
-}
-
-func (rcv *Decision) BasinConfidence() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(104))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *Decision) MutateBasinConfidence(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(104, n)
+	return rcv._tab.MutateFloat64Slot(46, n)
 }
 
 func (rcv *Decision) AvailableCapital() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(106))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -1058,7 +535,7 @@ func (rcv *Decision) AvailableCapital() []byte {
 }
 
 func (rcv *Decision) OpenPositions() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(108))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
@@ -1066,23 +543,11 @@ func (rcv *Decision) OpenPositions() int64 {
 }
 
 func (rcv *Decision) MutateOpenPositions(n int64) bool {
-	return rcv._tab.MutateInt64Slot(108, n)
-}
-
-func (rcv *Decision) SlotCapacity() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(110))
-	if o != 0 {
-		return rcv._tab.GetInt64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *Decision) MutateSlotCapacity(n int64) bool {
-	return rcv._tab.MutateInt64Slot(110, n)
+	return rcv._tab.MutateInt64Slot(50, n)
 }
 
 func (rcv *Decision) Cause() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(112))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -1090,31 +555,7 @@ func (rcv *Decision) Cause() []byte {
 }
 
 func (rcv *Decision) Reason() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(114))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Decision) Displaces() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(116))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Decision) DisplacedQuantity() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(118))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Decision) DisplacedPrice() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(120))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -1122,15 +563,7 @@ func (rcv *Decision) DisplacedPrice() []byte {
 }
 
 func (rcv *Decision) ReservationId() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(122))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Decision) PositionStatus() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(124))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(56))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -1138,7 +571,7 @@ func (rcv *Decision) PositionStatus() []byte {
 }
 
 func (rcv *Decision) SellableQty() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(126))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(58))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -1146,7 +579,7 @@ func (rcv *Decision) SellableQty() []byte {
 }
 
 func (rcv *Decision) EntryAt() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(128))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(60))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
@@ -1154,11 +587,11 @@ func (rcv *Decision) EntryAt() int64 {
 }
 
 func (rcv *Decision) MutateEntryAt(n int64) bool {
-	return rcv._tab.MutateInt64Slot(128, n)
+	return rcv._tab.MutateInt64Slot(60, n)
 }
 
 func (rcv *Decision) ExitAt() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(130))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(62))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
@@ -1166,11 +599,11 @@ func (rcv *Decision) ExitAt() int64 {
 }
 
 func (rcv *Decision) MutateExitAt(n int64) bool {
-	return rcv._tab.MutateInt64Slot(130, n)
+	return rcv._tab.MutateInt64Slot(62, n)
 }
 
 func (rcv *Decision) EntryPrice() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(132))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(64))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -1178,7 +611,7 @@ func (rcv *Decision) EntryPrice() []byte {
 }
 
 func (rcv *Decision) EntryFee() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(134))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(66))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -1186,7 +619,7 @@ func (rcv *Decision) EntryFee() []byte {
 }
 
 func (rcv *Decision) ExitPrice() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(136))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(68))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -1194,7 +627,7 @@ func (rcv *Decision) ExitPrice() []byte {
 }
 
 func (rcv *Decision) ExitFee() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(138))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(70))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -1202,7 +635,7 @@ func (rcv *Decision) ExitFee() []byte {
 }
 
 func (rcv *Decision) Pnl() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(140))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(72))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -1210,7 +643,7 @@ func (rcv *Decision) Pnl() []byte {
 }
 
 func (rcv *Decision) ReturnPct() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(142))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(74))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -1218,11 +651,11 @@ func (rcv *Decision) ReturnPct() float64 {
 }
 
 func (rcv *Decision) MutateReturnPct(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(142, n)
+	return rcv._tab.MutateFloat64Slot(74, n)
 }
 
 func (rcv *Decision) Mark() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(144))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -1230,7 +663,7 @@ func (rcv *Decision) Mark() []byte {
 }
 
 func (rcv *Decision) EntryCost(obj *EntryCost) *EntryCost {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(146))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -1243,7 +676,7 @@ func (rcv *Decision) EntryCost(obj *EntryCost) *EntryCost {
 }
 
 func (rcv *Decision) Stoploss(obj *Stoploss) *Stoploss {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(148))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -1256,7 +689,7 @@ func (rcv *Decision) Stoploss(obj *Stoploss) *Stoploss {
 }
 
 func (rcv *Decision) Risk(obj *RiskPlan) *RiskPlan {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(150))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(82))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -1269,7 +702,7 @@ func (rcv *Decision) Risk(obj *RiskPlan) *RiskPlan {
 }
 
 func (rcv *Decision) Trace(obj *DecisionTrace) *DecisionTrace {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(152))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(84))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -1281,68 +714,8 @@ func (rcv *Decision) Trace(obj *DecisionTrace) *DecisionTrace {
 	return nil
 }
 
-func (rcv *Decision) UtilityAvailable() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(154))
-	if o != 0 {
-		return rcv._tab.GetBool(o + rcv._tab.Pos)
-	}
-	return false
-}
-
-func (rcv *Decision) MutateUtilityAvailable(n bool) bool {
-	return rcv._tab.MutateBoolSlot(154, n)
-}
-
-func (rcv *Decision) ValuationAttempted() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(156))
-	if o != 0 {
-		return rcv._tab.GetBool(o + rcv._tab.Pos)
-	}
-	return false
-}
-
-func (rcv *Decision) MutateValuationAttempted(n bool) bool {
-	return rcv._tab.MutateBoolSlot(156, n)
-}
-
-func (rcv *Decision) ValuationAvailable() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(158))
-	if o != 0 {
-		return rcv._tab.GetBool(o + rcv._tab.Pos)
-	}
-	return false
-}
-
-func (rcv *Decision) MutateValuationAvailable(n bool) bool {
-	return rcv._tab.MutateBoolSlot(158, n)
-}
-
-func (rcv *Decision) ValuationStatus() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(160))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Decision) CausalIdentification() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(162))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *Decision) CausalBlockingCoordinate() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(164))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
 func DecisionStart(builder *flatbuffers.Builder) {
-	builder.StartObject(81)
+	builder.StartObject(41)
 }
 func DecisionAddId(builder *flatbuffers.Builder, id flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(id), 0)
@@ -1356,242 +729,119 @@ func DecisionAddSymbol(builder *flatbuffers.Builder, symbol flatbuffers.UOffsetT
 func DecisionAddAt(builder *flatbuffers.Builder, at int64) {
 	builder.PrependInt64Slot(3, at, 0)
 }
-func DecisionAddUtility(builder *flatbuffers.Builder, utility float64) {
-	builder.PrependFloat64Slot(4, utility, 0.0)
-}
-func DecisionAddGraphScore(builder *flatbuffers.Builder, graphScore float64) {
-	builder.PrependFloat64Slot(5, graphScore, 0.0)
-}
-func DecisionAddThesisScore(builder *flatbuffers.Builder, thesisScore float64) {
-	builder.PrependFloat64Slot(6, thesisScore, 0.0)
-}
-func DecisionAddThesisConfidence(builder *flatbuffers.Builder, thesisConfidence float64) {
-	builder.PrependFloat64Slot(7, thesisConfidence, 0.0)
-}
-func DecisionAddThesisSupport(builder *flatbuffers.Builder, thesisSupport float64) {
-	builder.PrependFloat64Slot(8, thesisSupport, 0.0)
-}
-func DecisionAddThesisContradiction(builder *flatbuffers.Builder, thesisContradiction float64) {
-	builder.PrependFloat64Slot(9, thesisContradiction, 0.0)
-}
-func DecisionAddThesisConditions(builder *flatbuffers.Builder, thesisConditions float64) {
-	builder.PrependFloat64Slot(10, thesisConditions, 0.0)
-}
 func DecisionAddDirection(builder *flatbuffers.Builder, direction float64) {
-	builder.PrependFloat64Slot(11, direction, 0.0)
-}
-func DecisionAddPerspectiveReturn(builder *flatbuffers.Builder, perspectiveReturn float64) {
-	builder.PrependFloat64Slot(12, perspectiveReturn, 0.0)
-}
-func DecisionAddPerspectiveConfidence(builder *flatbuffers.Builder, perspectiveConfidence float64) {
-	builder.PrependFloat64Slot(13, perspectiveConfidence, 0.0)
-}
-func DecisionAddAdmissionGraphThreshold(builder *flatbuffers.Builder, admissionGraphThreshold float64) {
-	builder.PrependFloat64Slot(14, admissionGraphThreshold, 0.0)
-}
-func DecisionAddAdmissionUtilityThreshold(builder *flatbuffers.Builder, admissionUtilityThreshold float64) {
-	builder.PrependFloat64Slot(15, admissionUtilityThreshold, 0.0)
-}
-func DecisionAddAllocationHaircut(builder *flatbuffers.Builder, allocationHaircut float64) {
-	builder.PrependFloat64Slot(16, allocationHaircut, 0.0)
-}
-func DecisionAddAllocationHaircutReason(builder *flatbuffers.Builder, allocationHaircutReason flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(17, flatbuffers.UOffsetT(allocationHaircutReason), 0)
+	builder.PrependFloat64Slot(4, direction, 0.0)
 }
 func DecisionAddAlternatives(builder *flatbuffers.Builder, alternatives flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(18, flatbuffers.UOffsetT(alternatives), 0)
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(alternatives), 0)
 }
 func DecisionStartAlternativesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func DecisionAddAllocationClass(builder *flatbuffers.Builder, allocationClass flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(19, flatbuffers.UOffsetT(allocationClass), 0)
+	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(allocationClass), 0)
 }
 func DecisionAddOpportunity(builder *flatbuffers.Builder, opportunity bool) {
-	builder.PrependBoolSlot(20, opportunity, false)
+	builder.PrependBoolSlot(7, opportunity, false)
 }
 func DecisionAddOpportunityType(builder *flatbuffers.Builder, opportunityType flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(21, flatbuffers.UOffsetT(opportunityType), 0)
+	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(opportunityType), 0)
 }
 func DecisionAddOpportunityPhase(builder *flatbuffers.Builder, opportunityPhase flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(22, flatbuffers.UOffsetT(opportunityPhase), 0)
-}
-func DecisionAddReserveEligible(builder *flatbuffers.Builder, reserveEligible bool) {
-	builder.PrependBoolSlot(23, reserveEligible, false)
-}
-func DecisionAddReserveReason(builder *flatbuffers.Builder, reserveReason flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(24, flatbuffers.UOffsetT(reserveReason), 0)
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(opportunityPhase), 0)
 }
 func DecisionAddPredictiveReady(builder *flatbuffers.Builder, predictiveReady bool) {
-	builder.PrependBoolSlot(25, predictiveReady, false)
+	builder.PrependBoolSlot(10, predictiveReady, false)
 }
 func DecisionAddPredictiveStatus(builder *flatbuffers.Builder, predictiveStatus flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(26, flatbuffers.UOffsetT(predictiveStatus), 0)
+	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(predictiveStatus), 0)
 }
 func DecisionAddTaskSkill(builder *flatbuffers.Builder, taskSkill float64) {
-	builder.PrependFloat64Slot(27, taskSkill, 0.0)
+	builder.PrependFloat64Slot(12, taskSkill, 0.0)
 }
 func DecisionAddTaskSkillReady(builder *flatbuffers.Builder, taskSkillReady bool) {
-	builder.PrependBoolSlot(28, taskSkillReady, false)
+	builder.PrependBoolSlot(13, taskSkillReady, false)
 }
 func DecisionAddProposedNotional(builder *flatbuffers.Builder, proposedNotional flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(29, flatbuffers.UOffsetT(proposedNotional), 0)
+	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(proposedNotional), 0)
 }
 func DecisionAddProposedQuantity(builder *flatbuffers.Builder, proposedQuantity flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(30, flatbuffers.UOffsetT(proposedQuantity), 0)
+	builder.PrependUOffsetTSlot(15, flatbuffers.UOffsetT(proposedQuantity), 0)
 }
 func DecisionAddReferencePrice(builder *flatbuffers.Builder, referencePrice flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(31, flatbuffers.UOffsetT(referencePrice), 0)
-}
-func DecisionAddValidThroughEpoch(builder *flatbuffers.Builder, validThroughEpoch uint64) {
-	builder.PrependUint64Slot(32, validThroughEpoch, 0)
-}
-func DecisionAddArbitrationRound(builder *flatbuffers.Builder, arbitrationRound int64) {
-	builder.PrependInt64Slot(33, arbitrationRound, 0)
+	builder.PrependUOffsetTSlot(16, flatbuffers.UOffsetT(referencePrice), 0)
 }
 func DecisionAddForecastSource(builder *flatbuffers.Builder, forecastSource flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(34, flatbuffers.UOffsetT(forecastSource), 0)
+	builder.PrependUOffsetTSlot(17, flatbuffers.UOffsetT(forecastSource), 0)
 }
 func DecisionAddForecastModel(builder *flatbuffers.Builder, forecastModel flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(35, flatbuffers.UOffsetT(forecastModel), 0)
-}
-func DecisionAddForecastEpoch(builder *flatbuffers.Builder, forecastEpoch uint64) {
-	builder.PrependUint64Slot(36, forecastEpoch, 0)
+	builder.PrependUOffsetTSlot(18, flatbuffers.UOffsetT(forecastModel), 0)
 }
 func DecisionAddForecastHorizon(builder *flatbuffers.Builder, forecastHorizon int64) {
-	builder.PrependInt64Slot(37, forecastHorizon, 0)
-}
-func DecisionAddForwardCurve(builder *flatbuffers.Builder, forwardCurve flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(38, flatbuffers.UOffsetT(forwardCurve), 0)
-}
-func DecisionStartForwardCurveVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(8, numElems, 8)
+	builder.PrependInt64Slot(19, forecastHorizon, 0)
 }
 func DecisionAddCalibrationCount(builder *flatbuffers.Builder, calibrationCount uint64) {
-	builder.PrependUint64Slot(39, calibrationCount, 0)
-}
-func DecisionAddExpectedReturn(builder *flatbuffers.Builder, expectedReturn flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(40, flatbuffers.UOffsetT(expectedReturn), 0)
-}
-func DecisionAddExpectedFees(builder *flatbuffers.Builder, expectedFees flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(41, flatbuffers.UOffsetT(expectedFees), 0)
-}
-func DecisionAddExpectedSpread(builder *flatbuffers.Builder, expectedSpread flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(42, flatbuffers.UOffsetT(expectedSpread), 0)
-}
-func DecisionAddExpectedImpact(builder *flatbuffers.Builder, expectedImpact flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(43, flatbuffers.UOffsetT(expectedImpact), 0)
-}
-func DecisionAddAdverseSelection(builder *flatbuffers.Builder, adverseSelection flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(44, flatbuffers.UOffsetT(adverseSelection), 0)
-}
-func DecisionAddUncertainty(builder *flatbuffers.Builder, uncertainty float64) {
-	builder.PrependFloat64Slot(45, uncertainty, 0.0)
+	builder.PrependUint64Slot(20, calibrationCount, 0)
 }
 func DecisionAddConfidence(builder *flatbuffers.Builder, confidence float64) {
-	builder.PrependFloat64Slot(46, confidence, 0.0)
-}
-func DecisionAddCausalPrecision(builder *flatbuffers.Builder, causalPrecision float64) {
-	builder.PrependFloat64Slot(47, causalPrecision, 0.0)
-}
-func DecisionAddOpportunityMargin(builder *flatbuffers.Builder, opportunityMargin float64) {
-	builder.PrependFloat64Slot(48, opportunityMargin, 0.0)
-}
-func DecisionAddCognitiveLead(builder *flatbuffers.Builder, cognitiveLead float64) {
-	builder.PrependFloat64Slot(49, cognitiveLead, 0.0)
-}
-func DecisionAddBasinConfidence(builder *flatbuffers.Builder, basinConfidence float64) {
-	builder.PrependFloat64Slot(50, basinConfidence, 0.0)
+	builder.PrependFloat64Slot(21, confidence, 0.0)
 }
 func DecisionAddAvailableCapital(builder *flatbuffers.Builder, availableCapital flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(51, flatbuffers.UOffsetT(availableCapital), 0)
+	builder.PrependUOffsetTSlot(22, flatbuffers.UOffsetT(availableCapital), 0)
 }
 func DecisionAddOpenPositions(builder *flatbuffers.Builder, openPositions int64) {
-	builder.PrependInt64Slot(52, openPositions, 0)
-}
-func DecisionAddSlotCapacity(builder *flatbuffers.Builder, slotCapacity int64) {
-	builder.PrependInt64Slot(53, slotCapacity, 0)
+	builder.PrependInt64Slot(23, openPositions, 0)
 }
 func DecisionAddCause(builder *flatbuffers.Builder, cause flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(54, flatbuffers.UOffsetT(cause), 0)
+	builder.PrependUOffsetTSlot(24, flatbuffers.UOffsetT(cause), 0)
 }
 func DecisionAddReason(builder *flatbuffers.Builder, reason flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(55, flatbuffers.UOffsetT(reason), 0)
-}
-func DecisionAddDisplaces(builder *flatbuffers.Builder, displaces flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(56, flatbuffers.UOffsetT(displaces), 0)
-}
-func DecisionAddDisplacedQuantity(builder *flatbuffers.Builder, displacedQuantity flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(57, flatbuffers.UOffsetT(displacedQuantity), 0)
-}
-func DecisionAddDisplacedPrice(builder *flatbuffers.Builder, displacedPrice flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(58, flatbuffers.UOffsetT(displacedPrice), 0)
+	builder.PrependUOffsetTSlot(25, flatbuffers.UOffsetT(reason), 0)
 }
 func DecisionAddReservationId(builder *flatbuffers.Builder, reservationId flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(59, flatbuffers.UOffsetT(reservationId), 0)
-}
-func DecisionAddPositionStatus(builder *flatbuffers.Builder, positionStatus flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(60, flatbuffers.UOffsetT(positionStatus), 0)
+	builder.PrependUOffsetTSlot(26, flatbuffers.UOffsetT(reservationId), 0)
 }
 func DecisionAddSellableQty(builder *flatbuffers.Builder, sellableQty flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(61, flatbuffers.UOffsetT(sellableQty), 0)
+	builder.PrependUOffsetTSlot(27, flatbuffers.UOffsetT(sellableQty), 0)
 }
 func DecisionAddEntryAt(builder *flatbuffers.Builder, entryAt int64) {
-	builder.PrependInt64Slot(62, entryAt, 0)
+	builder.PrependInt64Slot(28, entryAt, 0)
 }
 func DecisionAddExitAt(builder *flatbuffers.Builder, exitAt int64) {
-	builder.PrependInt64Slot(63, exitAt, 0)
+	builder.PrependInt64Slot(29, exitAt, 0)
 }
 func DecisionAddEntryPrice(builder *flatbuffers.Builder, entryPrice flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(64, flatbuffers.UOffsetT(entryPrice), 0)
+	builder.PrependUOffsetTSlot(30, flatbuffers.UOffsetT(entryPrice), 0)
 }
 func DecisionAddEntryFee(builder *flatbuffers.Builder, entryFee flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(65, flatbuffers.UOffsetT(entryFee), 0)
+	builder.PrependUOffsetTSlot(31, flatbuffers.UOffsetT(entryFee), 0)
 }
 func DecisionAddExitPrice(builder *flatbuffers.Builder, exitPrice flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(66, flatbuffers.UOffsetT(exitPrice), 0)
+	builder.PrependUOffsetTSlot(32, flatbuffers.UOffsetT(exitPrice), 0)
 }
 func DecisionAddExitFee(builder *flatbuffers.Builder, exitFee flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(67, flatbuffers.UOffsetT(exitFee), 0)
+	builder.PrependUOffsetTSlot(33, flatbuffers.UOffsetT(exitFee), 0)
 }
 func DecisionAddPnl(builder *flatbuffers.Builder, pnl flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(68, flatbuffers.UOffsetT(pnl), 0)
+	builder.PrependUOffsetTSlot(34, flatbuffers.UOffsetT(pnl), 0)
 }
 func DecisionAddReturnPct(builder *flatbuffers.Builder, returnPct float64) {
-	builder.PrependFloat64Slot(69, returnPct, 0.0)
+	builder.PrependFloat64Slot(35, returnPct, 0.0)
 }
 func DecisionAddMark(builder *flatbuffers.Builder, mark flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(70, flatbuffers.UOffsetT(mark), 0)
+	builder.PrependUOffsetTSlot(36, flatbuffers.UOffsetT(mark), 0)
 }
 func DecisionAddEntryCost(builder *flatbuffers.Builder, entryCost flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(71, flatbuffers.UOffsetT(entryCost), 0)
+	builder.PrependUOffsetTSlot(37, flatbuffers.UOffsetT(entryCost), 0)
 }
 func DecisionAddStoploss(builder *flatbuffers.Builder, stoploss flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(72, flatbuffers.UOffsetT(stoploss), 0)
+	builder.PrependUOffsetTSlot(38, flatbuffers.UOffsetT(stoploss), 0)
 }
 func DecisionAddRisk(builder *flatbuffers.Builder, risk flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(73, flatbuffers.UOffsetT(risk), 0)
+	builder.PrependUOffsetTSlot(39, flatbuffers.UOffsetT(risk), 0)
 }
 func DecisionAddTrace(builder *flatbuffers.Builder, trace flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(74, flatbuffers.UOffsetT(trace), 0)
-}
-func DecisionAddUtilityAvailable(builder *flatbuffers.Builder, utilityAvailable bool) {
-	builder.PrependBoolSlot(75, utilityAvailable, false)
-}
-func DecisionAddValuationAttempted(builder *flatbuffers.Builder, valuationAttempted bool) {
-	builder.PrependBoolSlot(76, valuationAttempted, false)
-}
-func DecisionAddValuationAvailable(builder *flatbuffers.Builder, valuationAvailable bool) {
-	builder.PrependBoolSlot(77, valuationAvailable, false)
-}
-func DecisionAddValuationStatus(builder *flatbuffers.Builder, valuationStatus flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(78, flatbuffers.UOffsetT(valuationStatus), 0)
-}
-func DecisionAddCausalIdentification(builder *flatbuffers.Builder, causalIdentification flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(79, flatbuffers.UOffsetT(causalIdentification), 0)
-}
-func DecisionAddCausalBlockingCoordinate(builder *flatbuffers.Builder, causalBlockingCoordinate flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(80, flatbuffers.UOffsetT(causalBlockingCoordinate), 0)
+	builder.PrependUOffsetTSlot(40, flatbuffers.UOffsetT(trace), 0)
 }
 func DecisionEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

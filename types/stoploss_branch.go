@@ -111,17 +111,19 @@ func (branch *Branch) Resolve(
 	case StopProtectedFloor:
 		matches = stoploss.Locked
 	case StopMomentumLost:
-		if stoploss.Causative.PrecursorPumpEntry || stoploss.SurgeArmed {
-			if momentum, ok := stoploss.Causative.ActivePerspectives["momentum"]; ok {
-				if momentum == "Stalling" || momentum == "Reversing" {
-					matches = true
-				}
+		// The advisors speak for every position, not only for entries the old
+		// precursor layer tagged. That layer is gone, and gating this exit on
+		// its flag left the momentum-decay path unreachable: a stalling or
+		// reversing council could no longer close anything.
+		if momentum, ok := stoploss.Causative.ActivePerspectives["momentum"]; ok {
+			if momentum == "Stalling" || momentum == "Reversing" {
+				matches = true
 			}
+		}
 
-			if profitRun, ok := stoploss.Causative.ActivePerspectives["profit_run"]; ok {
-				if profitRun == "Exhausting" || profitRun == "GivingBack" {
-					matches = true
-				}
+		if profitRun, ok := stoploss.Causative.ActivePerspectives["profit_run"]; ok {
+			if profitRun == "Exhausting" || profitRun == "GivingBack" {
+				matches = true
 			}
 		}
 

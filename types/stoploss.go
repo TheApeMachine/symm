@@ -70,6 +70,7 @@ type Stoploss struct {
 	Horizon              int                 `json:"horizon,omitempty"`
 	Observed             int                 `json:"observed,omitempty"`
 	ClockArmed           bool                `json:"clock_armed,omitempty"`
+	HorizonClock         string              `json:"horizon_clock,omitempty"`
 	// BookObserved latches true once valid executable L3 state has been
 	// observed after the stop became live. It distinguishes clean initial
 	// bootstrap (no executable state yet, stay armed and wait) from
@@ -118,63 +119,6 @@ type CausativeContext struct {
 	NetReplenishmentBid  float64           `json:"net_replenishment_bid,omitempty"`
 	NetWithdrawalBid     float64           `json:"net_withdrawal_bid,omitempty"`
 	ActivePerspectives   map[string]string `json:"active_perspectives,omitempty"`
-	PrecursorPumpEntry   bool              `json:"precursor_pump_entry,omitempty"`
-}
-
-/*
-NewStoploss constructs the entry regulator from the admitted forecast and venue facts.
-*/
-func NewStoploss(
-	ctx context.Context,
-	symbol string,
-	entryPrice *decimal.Decimal,
-	mark *decimal.Decimal,
-	forecast *learning.RLSOutput,
-	forwardCurve []float64,
-	tickSize *decimal.Decimal,
-	entryFeeRate *decimal.Decimal,
-	exitFeeRate *decimal.Decimal,
-	entryAt time.Time,
-) (*Stoploss, error) {
-	if symbol == "" {
-		return nil, fmt.Errorf("stoploss: symbol required")
-	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	stoploss := &Stoploss{
-		ctx:          ctx,
-		cancel:       cancel,
-		forecast:     forecast,
-		TickSize:     tickSize,
-		EntryFeeRate: entryFeeRate,
-		ExitFeeRate:  exitFeeRate,
-		Status:       ARMED,
-		Symbol:       symbol,
-		Horizon:      len(forwardCurve),
-		ConfirmMarks: 3,
-		MinEdge:      tickSize,
-	}
-
-	floor, trailDistance, err := stoploss.forecastGeometry(mark, forwardCurve)
-
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-
-	stoploss.Mark = mark
-	stoploss.Peak = mark
-	stoploss.Floor = floor
-	stoploss.TrailDistance = trailDistance
-	stoploss.RiskDistance = trailDistance
-	stoploss.NoiseBand = trailDistance
-
-	if err := stoploss.RebindFill(entryPrice, mark, entryAt); err != nil {
-		cancel()
-		return nil, err
-	}
-
-	return stoploss, nil
 }
 
 /*
@@ -268,6 +212,17 @@ func (stoploss *Stoploss) SetRiskPlan(plan RiskPlan) {
 }
 
 /*
+HardFloor returns the lot's floor price boundary.
+*/
+func (stoploss *Stoploss) HardFloor() *decimal.Decimal {
+	if stoploss == nil {
+		return nil
+	}
+
+	return stoploss.Floor
+}
+
+/*
 SetHorizon configures or updates the admitted forecast horizon for this lot.
 */
 func (stoploss *Stoploss) SetHorizon(horizon int) {
@@ -342,7 +297,20 @@ func (stoploss *Stoploss) Update(mark *decimal.Decimal) {
 
 	stoploss.observeMark(mark)
 
-	if stoploss.ClockArmed && stoploss.Status == ARMED {
+	if stoploss.ClockArmed && stoploss.Status == ARMED && (stoploss.HorizonClock == "" || stoploss.HorizonClock == "ticker") {
+		stoploss.Observed++
+	}
+}
+
+/*
+AdvanceClock advances the forecast-horizon clock for non-ticker native event clocks.
+*/
+func (stoploss *Stoploss) AdvanceClock(clock string) {
+	if stoploss == nil || !stoploss.ClockArmed || stoploss.Status != ARMED {
+		return
+	}
+
+	if stoploss.HorizonClock != "" && stoploss.HorizonClock == clock {
 		stoploss.Observed++
 	}
 }

@@ -15,9 +15,8 @@ const decObj = new Decision();
 type DecisionRow = {
 	id: string;
 	symbol: string;
-	utility: number;
-	utilityAvailable: boolean;
 	action: string;
+	confidence: number;
 	reason: string;
 };
 
@@ -38,9 +37,8 @@ export const Decisions = () => {
 				merged.set(symbol, {
 					id: dec.id() ?? `dec-${symbol}`,
 					symbol,
-					utility: dec.utility(),
-					utilityAvailable: dec.utilityAvailable(),
 					action: dec.action() ?? "—",
+					confidence: dec.confidence(),
 					reason: dec.reason() ?? "No rejection reason published",
 				});
 			}
@@ -87,9 +85,9 @@ export const Decisions = () => {
 							</Typography.Span>
 							<Flex.Row className="items-center gap-2">
 								<Typography.Span className="text-[8.5px] text-(--f4)">
-									u=
+									conf=
 									<span className="tabular-nums text-(--f2)">
-										{dec.utilityAvailable ? dec.utility.toFixed(4) : "—"}
+										{dec.confidence.toFixed(4)}
 									</span>
 								</Typography.Span>
 								<Typography.Span className="rounded-xs border border-(--line) px-1.5 py-px text-[8.5px] uppercase">
@@ -106,5 +104,3 @@ export const Decisions = () => {
 		</Flex.Column>
 	);
 };
-
-

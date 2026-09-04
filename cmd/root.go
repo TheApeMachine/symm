@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	// Registers the /debug/pprof handlers on http.DefaultServeMux, which is
+	// the mux startPprof serves. Without it the profiling endpoint answers
+	// 404 and the server is dead weight.
 	_ "net/http/pprof"
 	"os"
 	"path/filepath"
@@ -17,17 +20,18 @@ import (
 	"sync"
 	"time"
 
-	pyroscope "github.com/grafana/pyroscope-go"
+	"github.com/grafana/pyroscope-go"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic/advisor"
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/cognition"
-
-	// "github.com/theapemachine/symm/logic/manifold"
-	"github.com/theapemachine/symm/logic/opportunity"
 	"github.com/theapemachine/symm/logic/resonance"
+	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
 	"github.com/theapemachine/symm/signal/depthflow"
@@ -39,17 +43,12 @@ import (
 	"github.com/theapemachine/symm/signal/pumpdump"
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
-	"github.com/theapemachine/symm/ui"
-	"github.com/theapemachine/symm/utils"
-
-	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
-	"github.com/theapemachine/errnie"
-	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
+	"github.com/theapemachine/symm/ui"
+	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -290,7 +289,6 @@ var (
 			// remain the complete topology; there is no secondary observation store.
 			categorySolver := category.NewSolver(runtimeCtx)
 			cognitionSolver := cognition.NewSolver(runtimeCtx)
-			opportunitySolver := opportunity.NewSolver(runtimeCtx)
 			resonanceSolver := resonance.NewSolver(runtimeCtx, 0)
 			resonanceSolver.SetObserver(hub.PublishResonance)
 
@@ -751,7 +749,6 @@ var (
 					},
 					{
 						system.NewTraced("logic.cognition", cognitionSolver),
-						system.NewTraced("logic.opportunity", opportunitySolver),
 					},
 					{system.NewDiagnostic("logic.complete")},
 				},

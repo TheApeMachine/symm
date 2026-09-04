@@ -148,6 +148,67 @@ func TestArenaStep(t *testing.T) {
 	})
 }
 
+func TestArenaTiedPerspective(t *testing.T) {
+	Convey("Given a fully booted Arena and a tied distribution", t, func() {
+		node := &arenaNode{}
+		arena, err := NewArena("midpoint", predictiveMidpointFeatures(), node, 2)
+		So(err, ShouldBeNil)
+
+		tied := arenaEnvelope("BTC/USD", 1, 1, 1)
+		perspective := arenaPerspective("BTC/USD", "recovery", 1, 3)
+		perspective.Classes[0].Probability = 0.5
+		perspective.Classes[1].Probability = 0.5
+		tied.Perspectives = []*types.Perspective{perspective}
+
+		Convey("the tie is refused without killing the Arena", func() {
+			So(arena.Step(tied), ShouldEqual, tied)
+			So(arena.Error(), ShouldBeNil)
+			So(arena.Active(), ShouldEqual, 0)
+		})
+
+		Convey("a later decisive Perspective is still admitted and published", func() {
+			// This is the regression that mattered: one uninformative frame
+			// used to latch arena.err, so every following envelope returned
+			// nil and no decision ever reached the frontend again.
+			So(arena.Step(tied), ShouldNotBeNil)
+
+			decisive := arenaEnvelope("BTC/USD", 1, 1, 2)
+			decisive.Perspectives = []*types.Perspective{
+				arenaPerspective("BTC/USD", "recovery", 2, 4),
+			}
+
+			So(arena.Step(decisive), ShouldEqual, decisive)
+			So(arena.Error(), ShouldBeNil)
+			So(arena.Active(), ShouldEqual, 1)
+			So(node.perspectives, ShouldHaveLength, 1)
+			So(node.perspectives[0].Lifecycle, ShouldEqual, types.PerspectiveIssued)
+		})
+
+		Convey("classes separated only by float noise count as tied", func() {
+			noisy := arenaEnvelope("ETH/USD", 1, 1, 1)
+			near := arenaPerspective("ETH/USD", "recovery", 1, 3)
+			near.Classes[0].Probability = 0.5
+			near.Classes[1].Probability = 0.5 + 1e-15
+			noisy.Perspectives = []*types.Perspective{near}
+
+			So(arena.Step(noisy), ShouldEqual, noisy)
+			So(arena.Error(), ShouldBeNil)
+			So(arena.Active(), ShouldEqual, 0)
+		})
+
+		Convey("a genuine separation is still admitted", func() {
+			clear := arenaEnvelope("ETH/USD", 1, 1, 1)
+			clear.Perspectives = []*types.Perspective{
+				arenaPerspective("ETH/USD", "breakdown", 1, 3),
+			}
+
+			So(arena.Step(clear), ShouldEqual, clear)
+			So(arena.Error(), ShouldBeNil)
+			So(arena.Active(), ShouldEqual, 1)
+		})
+	})
+}
+
 func TestArenaBootGate(t *testing.T) {
 	Convey("Given an Arena gated on a system that has not finished booting", t, func() {
 		node := &arenaNode{}

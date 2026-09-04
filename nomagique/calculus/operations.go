@@ -341,3 +341,128 @@ func (axis *UnitAxis) Step(x types.Number) types.Number {
 }
 
 var _ types.Node = (*UnitAxis)(nil)
+
+/*
+Accumulator is the unbounded running total of the value emitted from its
+Source slot: every observation is added to the sum of every observation before
+it, over the whole life of the node.
+
+It is distinct from a Store, which retains a bounded adaptive window and
+forgets what falls out of it. A running total has no window to forget from —
+it is the quantity itself, carried forward, which is what a cumulative
+measure such as executed volume or signed flow since an epoch actually is.
+
+Total() reads the sum without advancing it, so a composition may branch on
+the same accumulation from several slots.
+
+Degenerate behavior: an omitted Source accumulates the carrier itself.
+*/
+type Accumulator struct {
+	Source types.Node
+
+	total types.Number
+}
+
+func (accumulator *Accumulator) Step(x types.Number) types.Number {
+	value := x
+
+	if accumulator.Source != nil {
+		value = accumulator.Source.Step(x)
+	}
+
+	accumulator.total += value
+
+	return accumulator.total
+}
+
+// Total returns the running sum without advancing it.
+func (accumulator *Accumulator) Total() types.Number { return accumulator.total }
+
+/*
+Readings publishes the accumulation itself, so a terminal Projection harvests
+it by walking the composition rather than being handed a pointer to it.
+*/
+func (accumulator *Accumulator) Readings() []types.Reading {
+	return []types.Reading{{
+		Label:     "total",
+		Unit:      "count",
+		Timescale: "instantaneous",
+		Value:     accumulator.total,
+		Defined:   true,
+	}}
+}
+
+/*
+Read exposes the running sum as a node that observes without advancing, so a
+projection or any other reader can compose against the accumulation without
+double-counting the observation that produced it.
+*/
+func (accumulator *Accumulator) Read() types.Node {
+	return &reader{read: accumulator.Total}
+}
+
+/*
+reader turns a value-returning method into a node that ignores the carrier.
+It is how a stateful primitive offers itself to a composition for reading
+rather than for advancing.
+*/
+type reader struct {
+	read func() types.Number
+}
+
+func (node *reader) Step(types.Number) types.Number {
+	if node.read == nil {
+		return 0
+	}
+
+	return node.read()
+}
+
+var _ types.Node = (*reader)(nil)
+
+var _ types.Node = (*Accumulator)(nil)
+
+/*
+Gate emits the value from its Source slot when its When slot emits a non-zero
+value, and zero otherwise. It is how a composition states that a quantity only
+counts under a condition — a buy-side notional, say — without the consumer
+branching around the pipeline.
+
+Degenerate behavior: an omitted Source emits the carrier; an omitted When
+gates nothing open, so the node emits zero rather than silently passing the
+value through unconditioned.
+*/
+type Gate struct {
+	Source types.Node
+	When   types.Node
+}
+
+func (gate *Gate) Step(x types.Number) types.Number {
+	if gate.When == nil || gate.When.Step(x) == 0 {
+		return 0
+	}
+
+	if gate.Source == nil {
+		return x
+	}
+
+	return gate.Source.Step(x)
+}
+
+var _ types.Node = (*Gate)(nil)
+
+// Slots exposes the nodes each operation is composed of, so a walk of the
+// composition reaches everything nested inside them.
+func (ratio *Ratio) Slots() []types.Node {
+	return []types.Node{ratio.Numerator, ratio.Denominator}
+}
+
+func (difference *Difference) Slots() []types.Node {
+	return []types.Node{difference.Minuend, difference.Subtrahend}
+}
+
+func (gate *Gate) Slots() []types.Node { return []types.Node{gate.Source, gate.When} }
+
+func (accumulator *Accumulator) Slots() []types.Node { return []types.Node{accumulator.Source} }
+
+func (scale *Scale) Slots() []types.Node { return []types.Node{scale.Factor} }

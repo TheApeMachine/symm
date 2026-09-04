@@ -479,16 +479,19 @@ export type TradeRecord = {
 	decision?:
 		| (Record<string, unknown> & {
 				id?: string;
-				thesisScore?: number;
-				thesisConfidence?: number;
-				causalIdentification?: string;
-				allocationHaircut?: number;
-				allocationHaircutReason?: string;
-				adverseSelection?: string;
-				expectedReturn?: string;
-				expectedFees?: string;
-				expectedSpread?: string;
-				expectedImpact?: string;
+				// The opportunity this entry was positioning for, how far the
+				// planner's gate sequence got, and the council's confidence.
+				opportunityType?: string;
+				opportunityPhase?: string;
+				predictiveReady?: boolean;
+				predictiveStatus?: string;
+				confidence?: number;
+				calibrationCount?: number;
+				forecastSource?: string;
+				forecastModel?: string;
+				forecastHorizon?: number;
+				cause?: string;
+				reason?: string;
 				entryCost?: {
 					bestAsk?: string;
 					bestBid?: string;
@@ -506,10 +509,23 @@ export type TradeRecord = {
 					minEdge?: string;
 				} | null;
 				trace?: {
-					hypothesis?: string;
+					// What the council concluded and what the causal search did
+					// with it. Written by strategy/trace.go on every round.
+					consensusDominantMove?: string;
+					consensusConfidence?: number;
+					consensusParticipants?: number;
+					vetoes?: string[] | null;
+					synergies?: string[] | null;
 					recommendedAction?: string;
-					graphSupports?: number;
-					graphContradicts?: number;
+					identificationStatus?: string;
+					decisionUnavailable?: boolean;
+					transitionSource?: string;
+					iterations?: number;
+					horizon?: number;
+					expectedOutcome?: number;
+					outcomeUncertainty?: number;
+					maxDepth?: number;
+					totalNodes?: number;
 				} | null;
 		  })
 		| null;

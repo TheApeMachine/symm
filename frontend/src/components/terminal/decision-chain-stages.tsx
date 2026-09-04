@@ -78,7 +78,10 @@ export const PrecursorStage = ({ decision }: { decision: DecisionT }) => {
 	const armed = phase === "armed";
 
 	return (
-		<DecisionStage title="1 · precursor" meta="position while armed, never on ignition">
+		<DecisionStage
+			title="1 · precursor"
+			meta="position while armed, never on ignition"
+		>
 			<TraceValue
 				label="archetype"
 				value={text(decision.opportunityType)}
@@ -90,14 +93,8 @@ export const PrecursorStage = ({ decision }: { decision: DecisionT }) => {
 				className={armed ? "text-(--up)" : "text-(--f2)"}
 				title="Entry is admitted only at PhaseArmed and refused once PhaseIgnition prints."
 			/>
-			<TraceValue
-				label="tracked"
-				value={decision.opportunity ? "yes" : "no"}
-			/>
-			<TraceValue
-				label="direction"
-				value={num(decision.direction, 0)}
-			/>
+			<TraceValue label="tracked" value={decision.opportunity ? "yes" : "no"} />
+			<TraceValue label="direction" value={num(decision.direction, 0)} />
 			<TraceValue
 				label="horizon"
 				value={
@@ -139,10 +136,7 @@ export const ReadinessStage = ({ decision }: { decision: DecisionT }) => {
 				value={text(decision.forecastSource)}
 				title="Which model supplied the market transition: resonance forecast, or the council's own distribution."
 			/>
-			<TraceValue
-				label="model"
-				value={text(decision.forecastModel)}
-			/>
+			<TraceValue label="model" value={text(decision.forecastModel)} />
 			<TraceValue
 				label="rollouts"
 				value={
@@ -169,20 +163,20 @@ export const ExecutionStage = ({ decision }: { decision: DecisionT }) => (
 			value={text(decision.referencePrice)}
 			className="text-(--acc)"
 		/>
-		<TraceValue label="expected fees" value={text(decision.expectedFees)} />
-		<TraceValue label="expected spread" value={text(decision.expectedSpread)} />
-		<TraceValue label="expected impact" value={text(decision.expectedImpact)} />
 		<TraceValue
-			label="adverse selection"
-			value={text(decision.adverseSelection)}
+			label="round-trip fees"
+			value={text(decision.entryCost?.roundTripFees)}
+		/>
+		<TraceValue label="spread" value={text(decision.entryCost?.spread)} />
+		<TraceValue label="impact" value={text(decision.entryCost?.impact)} />
+		<TraceValue
+			label="break even"
+			value={text(decision.entryCost?.breakEven)}
 			className="text-(--down)"
-			title="The informed-flow cost the causal head attributed to trading here."
+			title="The sale price that recovers the entry fee and the exit fee owed at that price."
 		/>
 		<TraceValue label="quantity" value={text(decision.proposedQuantity)} />
 		<TraceValue label="notional" value={text(decision.proposedNotional)} />
-		<TraceValue
-			label="allocation"
-			value={text(decision.allocationClass)}
-		/>
+		<TraceValue label="allocation" value={text(decision.allocationClass)} />
 	</DecisionStage>
 );

@@ -30,3 +30,8 @@ func (productNode *Product) Step(x Scalar) Scalar {
 
 	return product
 }
+
+// Slots exposes the nodes this product is composed of.
+func (productNode *Product) Slots() []Node {
+	return []Node{productNode.A, productNode.B, productNode.C, productNode.D}
+}

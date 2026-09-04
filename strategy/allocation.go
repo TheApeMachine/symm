@@ -135,6 +135,53 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 	remainingCash := decimal.NewFromInt64(0).Add(cash)
 	occupied := occupiedSymbols(allocation.desk)
 
+	maxLossFraction := config.MaxLossFraction
+
+	if maxLossFraction <= 0 {
+		maxLossFraction = 0.02
+	}
+
+	aggregateMaxLossFraction := config.AggregateMaxLossFraction
+
+	if aggregateMaxLossFraction <= 0 {
+		aggregateMaxLossFraction = 0.06
+	}
+
+	maxLossBudget := decimal.NewFromInt64(0).Add(cash).Mul(
+		decimal.NewFromFloat64(maxLossFraction),
+	)
+	aggregateMaxLossBudget := decimal.NewFromInt64(0).Add(cash).Mul(
+		decimal.NewFromFloat64(aggregateMaxLossFraction),
+	)
+
+	openRisk := decimal.NewFromInt64(0)
+
+	if allocation.desk != nil {
+		for pos := range allocation.desk.Positions() {
+			if pos == nil {
+				continue
+			}
+
+			st := pos.Status.Load()
+
+			if st != nil && *st == types.CLOSED {
+				continue
+			}
+
+			dec := pos.Decision
+
+			if dec.Stoploss != nil && dec.ProposedQuantity != nil && dec.ProposedQuantity.Sign() > 0 {
+				hardFloor := dec.Stoploss.HardFloor()
+
+				if hardFloor != nil && dec.EntryPrice != nil && dec.EntryPrice.Cmp(hardFloor) > 0 {
+					lossPerUnit := decimal.NewFromInt64(0).Add(dec.EntryPrice).Sub(hardFloor)
+					posRisk := lossPerUnit.Mul(dec.ProposedQuantity)
+					openRisk = openRisk.Add(posRisk)
+				}
+			}
+		}
+	}
+
 	for _, decision := range decisions {
 		if decision == nil || decision.Action != types.ActionEnter {
 			continue
@@ -151,6 +198,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 
 		if remainingCash.Sign() <= 0 {
 			decision.Action = types.ActionNothing
+			decision.PredictiveStatus = "feasibility-infeasible"
 			decision.Reason = "planner: no quote cash remains for entry"
 			continue
 		}
@@ -167,6 +215,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		if tick == nil || tick.Ask == nil || tick.Ask.Sign() <= 0 ||
 			tick.Bid == nil || tick.Bid.Sign() <= 0 {
 			decision.Action = types.ActionNothing
+			decision.PredictiveStatus = "feasibility-infeasible"
 			decision.Reason = "planner: executable bid and ask required"
 			continue
 		}
@@ -175,6 +224,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 
 		if quantity == nil || quantity.Sign() <= 0 {
 			decision.Action = types.ActionNothing
+			decision.PredictiveStatus = "feasibility-infeasible"
 			decision.Reason = "planner: allocation produced no executable quantity"
 			continue
 		}
@@ -184,6 +234,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 
 		if err != nil || executable == nil || executable.Sign() <= 0 {
 			decision.Action = types.ActionNothing
+			decision.PredictiveStatus = "feasibility-infeasible"
 			decision.Reason = "planner: current visible asks cannot fill an entry"
 
 			if err != nil {
@@ -200,6 +251,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 
 		if pair.Symbol == "" || pair.TickSize.Sign() <= 0 {
 			decision.Action = types.ActionNothing
+			decision.PredictiveStatus = "feasibility-infeasible"
 			decision.Reason = "planner: instrument tick size required"
 			continue
 		}
@@ -209,6 +261,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		if fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 ||
 			fee.Fee.Cmp(decimal.NewFromInt64(100)) >= 0 {
 			decision.Action = types.ActionNothing
+			decision.PredictiveStatus = "feasibility-infeasible"
 			decision.Reason = "planner: valid taker fee required"
 			continue
 		}
@@ -220,6 +273,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 
 		if err != nil {
 			decision.Action = types.ActionNothing
+			decision.PredictiveStatus = "feasibility-infeasible"
 			decision.Reason = "planner: current entry cannot be priced: " + err.Error()
 			continue
 		}
@@ -233,12 +287,13 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			TickSize:       &pair.TickSize,
 			ExitFeeRate:    feeRate,
 			EntryFeeRate:   feeRate,
-			MaxLoss:        notionalBudget,
+			MaxLoss:        maxLossBudget,
 			Multiples:      multiples,
 		})
 
 		if !riskPlan.Present {
 			decision.Action = types.ActionNothing
+			decision.PredictiveStatus = "risk-limit-exceeded"
 			decision.Reason = "planner: current execution geometry cannot support a risk plan"
 			continue
 		}
@@ -250,6 +305,7 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 
 			if err != nil {
 				decision.Action = types.ActionNothing
+				decision.PredictiveStatus = "feasibility-infeasible"
 				decision.Reason = "planner: risk-capped entry cannot be priced: " + err.Error()
 				continue
 			}
@@ -262,24 +318,50 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 				TickSize:       &pair.TickSize,
 				ExitFeeRate:    feeRate,
 				EntryFeeRate:   feeRate,
-				MaxLoss:        notionalBudget,
+				MaxLoss:        maxLossBudget,
 				Multiples:      multiples,
 			})
 
 			if !riskPlan.Present {
 				decision.Action = types.ActionNothing
+				decision.PredictiveStatus = "risk-limit-exceeded"
 				decision.Reason = "planner: risk-capped execution geometry is invalid"
 				continue
 			}
 		}
 
+		lossPerUnit := riskPlan.LossPerUnit(cost.EntryPrice)
+
+		if lossPerUnit == nil || lossPerUnit.Sign() <= 0 {
+			decision.Action = types.ActionNothing
+			decision.PredictiveStatus = "risk-limit-exceeded"
+			decision.Reason = "planner: risk geometry produced invalid loss per unit"
+			continue
+		}
+
+		candidateRisk := lossPerUnit.Mul(quantity)
+
+		if openRisk.Add(candidateRisk).Cmp(aggregateMaxLossBudget) > 0 {
+			decision.Action = types.ActionNothing
+			decision.PredictiveStatus = "risk-limit-exceeded"
+			decision.Reason = "planner: candidate trade exceeds aggregate portfolio risk limit"
+			continue
+		}
+
 		if reason := venueMinimumReason(pair, quantity, cost.GrossNotional); reason != "" {
 			decision.Action = types.ActionNothing
+			decision.PredictiveStatus = "feasibility-infeasible"
 			decision.Reason = reason
 			continue
 		}
 
 		horizon := max(0, decision.ForecastHorizon)
+		entryAt := decision.At
+
+		if entryAt.IsZero() {
+			entryAt = time.Now()
+		}
+
 		stoploss, err := types.NewStoplossWithPlan(
 			allocation.ctx,
 			decision.Symbol,
@@ -291,13 +373,18 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 			feeRate,
 			feeRate,
 			&riskPlan,
-			time.Now(),
+			entryAt,
 		)
 
 		if err != nil {
 			decision.Action = types.ActionNothing
+			decision.PredictiveStatus = "risk-limit-exceeded"
 			decision.Reason = "planner: current risk plan cannot construct a stop: " + err.Error()
 			continue
+		}
+
+		if decision.ForecastClock != "" {
+			stoploss.HorizonClock = decision.ForecastClock
 		}
 
 		decision.AvailableCapital = decimal.NewFromInt64(0).Add(cash)
@@ -311,14 +398,10 @@ func (allocation *Allocation) Calculate(decisions []*types.Decision) error {
 		decision.EntryCost = cost
 		decision.Risk = riskPlan
 		decision.Stoploss = stoploss
-
-		if decision.OpportunityType == string(types.ArchetypeVolumeSurgePrecursor) {
-			stoploss.Causative.PrecursorPumpEntry = true
-		}
-
 		decision.AllocationClass = "capital"
 
 		occupied[decision.Symbol] = true
+		openRisk = openRisk.Add(candidateRisk)
 		remainingCash = decimal.NewFromInt64(0).Add(remainingCash).Sub(
 			decision.ProposedNotional,
 		)

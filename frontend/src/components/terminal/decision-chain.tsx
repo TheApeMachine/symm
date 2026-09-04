@@ -2,12 +2,12 @@ import { useSelector } from "@tanstack/react-store";
 import { type MouseEvent, useEffect, useRef } from "react";
 import { decisionStore } from "#/collections/app";
 import {
-	PrecursorStage,
 	ExecutionStage,
+	PrecursorStage,
 	ReadinessStage,
 } from "#/components/terminal/decision-chain-stages";
-import { WarRoom } from "#/components/terminal/war-room";
 import { setDecisionsScopeSymbol } from "#/components/terminal/decision-side";
+import { WarRoom } from "#/components/terminal/war-room";
 import { Typography } from "#/components/ui/typography";
 
 const selectRow = (row: HTMLElement, symbol: string): void => {
@@ -62,9 +62,7 @@ export const DecisionChain = ({ symbol }: { symbol: string }) => {
 
 		set("symbol", text(decision.symbol));
 		set("reason", text(decision.reason));
-		set("thesisScore", decision.thesisScore.toFixed(4));
-		set("thesisConfidence", `${(decision.confidence * 100).toFixed(1)}%`);
-		set("graphScore", decision.graphScore.toFixed(5));
+		set("confidence", `${(decision.confidence * 100).toFixed(1)}%`);
 		set("action", text(decision.action) || "—");
 		set("cause", text(decision.reason) || "pending");
 	}, [decision]);
@@ -83,9 +81,7 @@ export const DecisionChain = ({ symbol }: { symbol: string }) => {
 	const seed = {
 		symbol: text(decision.symbol),
 		reason: text(decision.reason),
-		thesisScore: decision.thesisScore.toFixed(4),
-		thesisConfidence: `${(decision.confidence * 100).toFixed(1)}%`,
-		graphScore: decision.graphScore.toFixed(5),
+		confidence: `${(decision.confidence * 100).toFixed(1)}%`,
 		action: text(decision.action) || "—",
 	};
 
@@ -93,7 +89,7 @@ export const DecisionChain = ({ symbol }: { symbol: string }) => {
 		<button
 			ref={rowRef}
 			type="button"
-						data-decision-chain="row"
+			data-decision-chain="row"
 			data-selected="false"
 			aria-expanded="false"
 			onClick={selectDecision}
@@ -117,21 +113,9 @@ export const DecisionChain = ({ symbol }: { symbol: string }) => {
 				</div>
 				<div className="flex shrink-0 items-center gap-2 font-mono">
 					<span className="text-[9px] text-(--f4)">
-						thesis=
-						<b data-df="thesisScore" className="font-normal text-(--acc)">
-							{seed.thesisScore}
-						</b>
-					</span>
-					<span className="text-[9px] text-(--f4)">
 						conf=
-						<b data-df="thesisConfidence" className="font-normal text-(--f2)">
-							{seed.thesisConfidence}
-						</b>
-					</span>
-					<span className="text-[9px] text-(--f4)">
-						graph=
-						<b data-df="graphScore" className="font-normal text-(--f2)">
-							{seed.graphScore}
+						<b data-df="confidence" className="font-normal text-(--acc)">
+							{seed.confidence}
 						</b>
 					</span>
 					<Typography.Span
