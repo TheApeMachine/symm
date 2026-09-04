@@ -24,6 +24,8 @@ type Keyed struct {
 	Build  func() Node
 	Select func() string
 
+	tick *Tick
+
 	branches map[string]Node
 	active   Node
 }
@@ -50,7 +52,7 @@ func (keyed *Keyed) Step(x Scalar) Scalar {
 		// enclosing pipeline was. Bind and resolve it here so a terminal
 		// projection and any in-graph reference inside the branch are wired
 		// against the branch they actually belong to.
-		Bind(branch)
+		Bind(branch, keyed.tick)
 
 		keyed.branches[key] = branch
 	}
@@ -59,6 +61,12 @@ func (keyed *Keyed) Step(x Scalar) Scalar {
 
 	return branch.Step(x)
 }
+
+/*
+Bind attaches the observation counter every branch this node builds is
+measured against.
+*/
+func (keyed *Keyed) Bind(tick *Tick) { keyed.tick = tick }
 
 // Active returns the sub-composition the most recent Step routed to.
 func (keyed *Keyed) Active() Node { return keyed.active }
@@ -73,7 +81,7 @@ graph it terminates, and an in-graph reference finds the quantity it names.
 The top-level builder calls it for the composition it is given; Keyed calls it
 for each branch it constructs, since those come into being later.
 */
-func Bind(root Node) {
+func Bind(root Node, tick *Tick) {
 	Walk(root, func(node Node) {
 		if binder, ok := node.(interface{ Bind(Node) }); ok {
 			binder.Bind(root)
@@ -81,6 +89,13 @@ func Bind(root Node) {
 
 		if resolver, ok := node.(interface{ Resolve(Node) }); ok {
 			resolver.Resolve(root)
+		}
+
+		// A stateful node reached by several paths of one graph must advance
+		// once per observation, not once per path. Attaching the composition's
+		// observation counter is what lets it tell the difference.
+		if guarded, ok := node.(interface{ Bind(*Tick) }); ok {
+			guarded.Bind(tick)
 		}
 	})
 }

@@ -29,6 +29,7 @@ type Measurement[Value any] struct {
 	// SNRDefined distinguishes a measured SNR (including a genuine zero
 	// departure) from an undefined SNR where no noise model was estimable.
 	SNRDefined bool                     `json:"snrDefined"`
+	Estimated  bool                     `json:"estimated"`
 	Err        error                    `json:"-"`
 	Metrics    map[string]Metric[Value] `json:"metrics,omitempty"`
 	Metadata   map[string]float64       `json:"metadata,omitempty"`
@@ -163,19 +164,25 @@ func (measurement *Measurement[Value]) Finalize() {
 		measurement.Metadata = map[string]float64{}
 	}
 
+	_, hasSupport := measurement.Metadata[MetadataSupport]
+	_, hasDivergence := measurement.Metadata[MetadataDivergence]
+	_, hasMahalanobis := measurement.Metadata[MetadataMahalanobisSNR]
+
+	measurement.Estimated = hasSupport || hasDivergence || hasMahalanobis
+
 	// Derive the scalar SNR first so even a stateless measurement with the
 	// estimator facts still reports it, then fall back to Maturity handling.
-	divergence, hasDivergence := measurement.Metadata[MetadataDivergence]
+	divergence, hasDivergenceVal := measurement.Metadata[MetadataDivergence]
 	noiseVariance, hasNoise := measurement.Metadata[MetadataNoiseVariance]
 
-	if hasDivergence && hasNoise && noiseVariance > 0 {
+	if hasDivergenceVal && hasNoise && noiseVariance > 0 {
 		measurement.SNR = divergence * divergence / noiseVariance
 		measurement.SNRDefined = true
 	}
 
-	support, hasSupport := measurement.Metadata[MetadataSupport]
+	support, hasSupportVal := measurement.Metadata[MetadataSupport]
 
-	if !hasSupport {
+	if !hasSupportVal {
 		// Stateless direct measurement: whole.
 		measurement.Maturity = 1
 		return
@@ -188,8 +195,82 @@ func (measurement *Measurement[Value]) Finalize() {
 
 	measurement.Maturity = 1 - 1/support
 
-	if mahalanobisSNR, hasMahalanobis := measurement.Metadata[MetadataMahalanobisSNR]; hasMahalanobis && mahalanobisSNR >= 0 {
+	if mahalanobisSNR, hasMahalanobisVal := measurement.Metadata[MetadataMahalanobisSNR]; hasMahalanobisVal && mahalanobisSNR >= 0 {
 		measurement.SNR = mahalanobisSNR
 		measurement.SNRDefined = true
 	}
 }
+
+/*
+Readout returns one metric from the measurement wrapped as a Readout with the
+measurement's own maturity, SNR, and event timestamp.
+*/
+func (measurement *Measurement[Value]) Readout(label string) *Readout {
+	if measurement == nil || measurement.Metrics == nil {
+		return nil
+	}
+
+	if measurement.Maturity == 0 && !measurement.SNRDefined && !measurement.Estimated {
+		measurement.Finalize()
+	}
+
+	metric, found := measurement.Metrics[label]
+
+	if !found {
+		return nil
+	}
+
+	var raw float64
+
+	if floatVal, ok := any(metric.Raw).(float64); ok {
+		raw = floatVal
+	}
+
+	readout := NewReadout(
+		measurement.Source,
+		label,
+		raw,
+		measurement.Maturity,
+		measurement.SNR,
+		measurement.SNRDefined,
+		measurement.Estimated,
+		measurement.At,
+	)
+
+	if metric.Normalized != nil {
+		if normVal, ok := any(*metric.Normalized).(float64); ok {
+			readout.Normalized = &normVal
+		}
+	}
+
+	if metric.Standardized != nil {
+		if stdVal, ok := any(*metric.Standardized).(float64); ok {
+			readout.Standardized = &stdVal
+		}
+	}
+
+	readout.Unit = metric.Unit
+	readout.Timescale = metric.Timescale
+
+	return readout
+}
+
+/*
+Readouts returns all metrics of this measurement converted to Readouts.
+*/
+func (measurement *Measurement[Value]) Readouts() map[string]*Readout {
+	if measurement == nil || measurement.Metrics == nil {
+		return nil
+	}
+
+	readouts := make(map[string]*Readout, len(measurement.Metrics))
+
+	for label := range measurement.Metrics {
+		if r := measurement.Readout(label); r != nil {
+			readouts[label] = r
+		}
+	}
+
+	return readouts
+}
+

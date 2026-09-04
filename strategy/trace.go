@@ -46,7 +46,7 @@ func buildTrace(
 	}
 
 	if result.Tree != nil {
-		tree := nodeTrace(result.Tree, result.SelectedAction, 0)
+		tree := nodeTrace(result.Tree, result.SelectedAction, 0, true)
 		trace.MCTS.Tree = &tree
 		trace.MCTS.MaxDepth = treeDepth(&tree)
 		trace.MCTS.TotalNodes = countNodes(&tree)
@@ -77,6 +77,7 @@ func deliberationTrace(consensus *advisor.DeliberationOutcome) types.Deliberatio
 		Probabilities: probabilities,
 		Vetoes:        append([]string(nil), consensus.Vetoes...),
 		Synergies:     append([]string(nil), consensus.Synergies...),
+		Advisors:      append([]types.AdvisorOpinion(nil), consensus.Advisors...),
 	}
 }
 
@@ -104,13 +105,14 @@ func branchTraces(branches []mcts.BranchTrace) []types.MCTSBranchTrace {
 }
 
 /*
-nodeTrace projects one search node and its subtree. The selected action is
-marked at depth one so the surface can highlight the path actually taken.
+nodeTrace projects one search node and its subtree, illuminating the complete
+principal variation trajectory chosen by the search across all depth levels.
 */
 func nodeTrace(
 	node *mcts.SearchNode,
 	selected mcts.Action,
 	depth int,
+	onPath bool,
 ) types.MCTSNodeTrace {
 	action := node.Action.String()
 
@@ -132,17 +134,31 @@ func nodeTrace(
 		CausalExpectation:        node.CausalExpectation,
 		CausalExpectationDefined: node.CausalExpectationDefined,
 		Pruned:                   node.Pruned,
-		Selected:                 depth == 1 && node.Action == selected,
+		Selected:                 onPath && depth > 0,
 	}
 
 	if len(node.Children) == 0 {
 		return trace
 	}
 
+	var nextOnPath *mcts.SearchNode
+
+	if depth == 0 {
+		for _, child := range node.Children {
+			if child.Action == selected {
+				nextOnPath = child
+				break
+			}
+		}
+	} else if onPath {
+		nextOnPath = node.BestChild()
+	}
+
 	trace.Children = make([]types.MCTSNodeTrace, 0, len(node.Children))
 
 	for _, child := range node.Children {
-		trace.Children = append(trace.Children, nodeTrace(child, selected, depth+1))
+		childOnPath := (child == nextOnPath)
+		trace.Children = append(trace.Children, nodeTrace(child, selected, depth+1, childOnPath))
 	}
 
 	return trace

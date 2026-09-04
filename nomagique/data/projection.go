@@ -99,6 +99,12 @@ func (projection *Projection) Step(x types.Scalar) types.Scalar {
 			})
 		}
 
+		// A wrapper that renames a stage's readings forwards its evidence but
+		// is not itself an estimator; asking it first would record a zero.
+		if reporter, ok := node.(interface{ Evidently() bool }); ok && !reporter.Evidently() {
+			continue
+		}
+
 		if evidence, ok := node.(types.Evidence); ok {
 			metadata[MetadataSupport] = evidence.Support()
 			metadata[MetadataDivergence] = float64(evidence.Divergence())

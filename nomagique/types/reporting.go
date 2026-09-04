@@ -59,6 +59,48 @@ func (labelled *Labelled) Step(x Scalar) Scalar {
 	return labelled.Node.Step(x)
 }
 
+/*
+Support, Divergence and NoiseVariance forward the evidence of the node this
+wrapper renames, so renaming a stage's readings does not hide the confidence
+that stage declared.
+*/
+func (labelled *Labelled) Support() float64 {
+	evidence, ok := labelled.Node.(Evidence)
+
+	if !ok {
+		return 0
+	}
+
+	return evidence.Support()
+}
+
+func (labelled *Labelled) Divergence() Scalar {
+	evidence, ok := labelled.Node.(Evidence)
+
+	if !ok {
+		return 0
+	}
+
+	return evidence.Divergence()
+}
+
+func (labelled *Labelled) NoiseVariance() Scalar {
+	evidence, ok := labelled.Node.(Evidence)
+
+	if !ok {
+		return 0
+	}
+
+	return evidence.NoiseVariance()
+}
+
+// Evidently reports whether the wrapped node declares evidence at all.
+func (labelled *Labelled) Evidently() bool {
+	_, ok := labelled.Node.(Evidence)
+
+	return ok
+}
+
 func (labelled *Labelled) Readings() []Reading {
 	reporter, ok := labelled.Node.(Reporter)
 
@@ -226,11 +268,23 @@ func (report *Report) Step(x Scalar) Scalar {
 		report.reading.Defined = false
 	}
 
-	return x
+	// A report emits what it published, so chaining a stage after one hands
+	// that stage the quantity the name refers to rather than the carrier the
+	// report happened to be stepped with.
+	return report.reading.Value
 }
 
 func (report *Report) Readings() []Reading {
-	return []Reading{report.reading}
+	// The declared name is known before the first Step, so a reference can
+	// resolve against a report the composition has not yet advanced. Until it
+	// has, the reading is undefined rather than a zero standing in for a
+	// measurement that has not happened.
+	reading := report.reading
+	reading.Label = report.Label
+	reading.Unit = report.Unit
+	reading.Timescale = report.Timescale
+
+	return []Reading{reading}
 }
 
 // Slots exposes the nodes this report is composed of.

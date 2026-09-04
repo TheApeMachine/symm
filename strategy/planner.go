@@ -314,8 +314,21 @@ func (planner *Planner) plan(envelope *types.Envelope) *types.StrategyRound {
 		pe := planner.desk.PassageEconomics(ticker.Symbol)
 
 		if pe.FavorableExcursion.Mid > 0 {
-			magnitude = pe.FavorableExcursion.Mid
-		} else {
+			riskDistanceFraction := 0.01
+			ask := ticker.Ask.Float64()
+
+			if ask > 0 {
+				spread := (ask - ticker.Bid.Float64()) / ask
+
+				if spread > 0.001 {
+					riskDistanceFraction = spread * 3.0
+				}
+			}
+
+			magnitude = pe.FavorableExcursion.Mid * riskDistanceFraction
+		}
+
+		if magnitude == 0 {
 			magnitude = planner.desk.PassageMovementMagnitude(ticker.Symbol)
 		}
 	}
@@ -360,8 +373,32 @@ func (planner *Planner) plan(envelope *types.Envelope) *types.StrategyRound {
 		planner.search.SetSeed(seed)
 	}
 
+	var liquidationShare float64
+
+	if envelope.Derivatives != nil && envelope.Derivatives.Metrics != nil {
+		if metric, found := envelope.Derivatives.Metrics["liquidation_share"]; found {
+			liquidationShare = metric.Raw
+		}
+	}
+
+	opportunity := SynthesizeOpportunity(OpportunityInput{
+		Symbol:           ticker.Symbol,
+		Consensus:        consensus,
+		Resonance:        envelope.Resonance,
+		Cognition:        envelope.Cognition,
+		LiquidationShare: liquidationShare,
+		Desk:             planner.desk,
+		At:               ticker.Timestamp,
+	})
+
+	if opportunity != nil {
+		decision.OpportunityType = string(opportunity.Archetype)
+		decision.OpportunityPhase = string(opportunity.Phase)
+	}
+
 	result := planner.search.Run(state, &consensusEstimator{
-		consensus: consensus,
+		consensus:   consensus,
+		opportunity: opportunity,
 	})
 
 	planner.recordSearch(decision, result, consensus)
@@ -381,6 +418,13 @@ func (planner *Planner) plan(envelope *types.Envelope) *types.StrategyRound {
 		decision.PredictiveStatus = "unattractive"
 		decision.Reason = "planner: causal search selected " +
 			result.SelectedAction.String() + " over entering"
+
+		return round
+	}
+
+	if opportunity == nil {
+		decision.PredictiveStatus = "unattractive"
+		decision.Reason = "planner: no qualified opportunity precursor to enter"
 
 		return round
 	}

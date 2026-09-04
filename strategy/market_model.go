@@ -113,12 +113,18 @@ func newResonanceMarketModel(
 	mag := maxStepDrift
 
 	if len(magnitude) > 0 && magnitude[0] > 0 {
-		mag = magnitude[0]
+		stepDrift := magnitude[0] / horizon
+
+		if stepDrift > maxStepDrift {
+			stepDrift = maxStepDrift
+		}
+
+		mag = stepDrift
 	}
 
 	// The direction call carries the sign; confidence scales the magnitude.
 	drift := math.Copysign(
-		math.Min(mag*artifact.Confidence, mag),
+		math.Min(mag*artifact.Confidence, maxStepDrift),
 		forecast.Call,
 	)
 

@@ -247,13 +247,25 @@ func TestPathGrowsBeyondV1Clamp(t *testing.T) {
 TestPathHorizonContractsOnDrift proves the Horizon slot is real: an ADWIN
 horizon sheds observations when the stream drifts, while the same stream with
 no Horizon retains everything.
+
+The stream must actually drift. A bounded cycle such as 100, 101, 102 repeated
+holds a constant mean and is stationary by construction, however much each
+individual sample departs from it; a horizon that contracts on that is
+reporting sample noise as regime change, not detecting drift.
 */
 func TestPathHorizonContractsOnDrift(t *testing.T) {
 	bounded := &Path{Horizon: &adaptive.Window{Type: adaptive.ADWIN}}
 	unbounded := &Path{}
 
 	for index := range 200 {
-		value := types.Number(100 + index%3)
+		// A sustained level shift partway through the stream.
+		level := 100.0
+
+		if index >= 100 {
+			level = 140.0
+		}
+
+		value := types.Number(level + float64(index%3))
 		nanos := int64(index) * 1_000_000
 
 		bounded.Observe(nanos, value)
@@ -267,6 +279,25 @@ func TestPathHorizonContractsOnDrift(t *testing.T) {
 	if bounded.Len() >= unbounded.Len() {
 		t.Fatalf("bounded path retained %d, want fewer than the unbounded %d",
 			bounded.Len(), unbounded.Len())
+	}
+}
+
+/*
+TestPathHorizonHoldsOnStationaryStream is the other half of the contract: a
+horizon that contracts on a stationary stream destroys the evidence it exists
+to bound, which is the same truncation the Horizon slot was introduced to
+replace.
+*/
+func TestPathHorizonHoldsOnStationaryStream(t *testing.T) {
+	bounded := &Path{Horizon: &adaptive.Window{Type: adaptive.ADWIN}}
+
+	for index := range 200 {
+		bounded.Observe(int64(index)*1_000_000, types.Number(100+index%3))
+	}
+
+	if bounded.Len() < 190 {
+		t.Fatalf("stationary stream retained only %d of 200 observations",
+			bounded.Len())
 	}
 }
 

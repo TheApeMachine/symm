@@ -32,6 +32,7 @@ func NewAuction() *Auction {
 		"cvd/flow_aligned_midpoint_return",
 		"toxicity/net_replenishment_fraction:ask",
 		"toxicity/matched_touch_trade_quantity:ask",
+		"hawkes/excitation_amplitude:sell_from_buy",
 	}
 
 	sellersBreakingThroughKeys := []string{
@@ -46,6 +47,7 @@ func NewAuction() *Auction {
 		"cvd/flow_aligned_midpoint_return",
 		"toxicity/net_replenishment_fraction:bid",
 		"toxicity/matched_touch_trade_quantity:bid",
+		"hawkes/excitation_amplitude:buy_from_sell",
 	}
 
 	balancedKeys := []string{

@@ -347,6 +347,13 @@ table MCTSNode {
   state:[NamedNumber];
   children:[MCTSNode];
 }
+table AdvisorOpinion {
+  advisor:string;
+  state:string;
+  probability:double;
+  credibility:double;
+  weight:double;
+}
 table DecisionTrace {
   identificationStatus:string;
   decisionUnavailable:bool;
@@ -373,6 +380,7 @@ table DecisionTrace {
   // one that fanned out twice and stopped.
   maxDepth:long;
   totalNodes:long;
+  advisors:[AdvisorOpinion];
 }
 table EntryCost {
   entryPrice:string;

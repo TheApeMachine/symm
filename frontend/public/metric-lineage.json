@@ -25,6 +25,8 @@
         "cvd/midpoint_response_per_net_notional",
         "cvd/sell_notional_rate",
         "cvd/signed_net_fraction",
+        "hawkes/excitation_amplitude:buy_from_sell",
+        "hawkes/excitation_amplitude:sell_from_buy",
         "liquidity/relative_spread",
         "liquidity/touch_notional_imbalance",
         "pumpdump/completed_volume_bar_ordinal",
@@ -68,7 +70,7 @@
       "kind": "bound",
       "package": "github.com/theapemachine/symm/logic/advisor",
       "file": "logic/advisor/deliberation.go",
-      "line": 9,
+      "line": 10,
       "targets": [
         "github.com/theapemachine/symm/types"
       ]
@@ -90,13 +92,15 @@
         "liquidity/touch_notional_imbalance",
         "liquidity/touch_quantity:bid",
         "liquidity/two_sided_touch_notional",
+        "morphology/morphology_change_zscore",
         "pumpdump/completed_volume_bar_ordinal",
         "toxicity/net_replenished_quantity:bid",
         "toxicity/net_replenishment_fraction:bid",
         "toxicity/net_replenishment_rate:bid",
         "toxicity/touch_fill_fraction:bid",
         "toxicity/touch_fill_quantity:bid",
-        "toxicity/touch_fill_rate:bid"
+        "toxicity/touch_fill_rate:bid",
+        "toxicity/withdrawal_fraction_zscore:bid"
       ]
     },
     {
@@ -194,6 +198,8 @@
         "cvd/midpoint_response_per_net_notional",
         "cvd/net_notional_rate",
         "cvd/signed_net_fraction",
+        "derivatives/liquidation_share",
+        "derivatives/open_interest_growth_rate",
         "pumpdump/completed_volume_bar_ordinal",
         "pumpdump/midpoint_log_return",
         "pumpdump/midpoint_return_velocity",
@@ -222,6 +228,7 @@
         "liquidity/relative_spread",
         "liquidity/touch_notional:bid",
         "liquidity/touch_notional_imbalance",
+        "morphology/morphology_change_zscore",
         "pumpdump/completed_volume_bar_ordinal",
         "pumpdump/spread_divergence",
         "toxicity/net_replenishment_fraction:bid",
@@ -295,7 +302,8 @@
       "file": "types/category.go",
       "line": 276,
       "targets": [
-        "depthflow/mutation_activity_imbalance"
+        "depthflow/mutation_activity_imbalance",
+        "morphology/morphology_change"
       ]
     },
     {
@@ -401,8 +409,8 @@
       "file": "types/category.go",
       "line": 268,
       "targets": [
-        "hawkes/excitation_intensity:buy",
-        "hawkes/excitation_intensity:sell"
+        "hawkes/excitation_share:buy",
+        "hawkes/excitation_share:sell"
       ]
     },
     {
@@ -560,7 +568,8 @@
       "file": "types/category.go",
       "line": 267,
       "targets": [
-        "hawkes/branching_spectral_radius"
+        "hawkes/branching_spectral_radius",
+        "morphology/morphology_change"
       ]
     },
     {
@@ -573,6 +582,7 @@
         "cvd/signed_net_fraction_zscore",
         "depthflow/observed_notional_imbalance_zscore",
         "hawkes/branching_spectral_radius",
+        "hawkes/log_likelihood_gain_per_event_vs_poisson",
         "pumpdump/notional_rate_zscore",
         "pumpdump/volume_bar_quantity",
         "pumpdump/volume_rate"
@@ -606,7 +616,7 @@
     "deadProducers": 0,
     "referencedProducers": 0,
     "kernelOnlyProducers": 0,
-    "boundConsumerEdges": 274,
+    "boundConsumerEdges": 285,
     "catalogConsumerEdges": 2,
     "learnedConsumerEdges": 0,
     "kernelConsumerEdges": 0,

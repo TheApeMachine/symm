@@ -3,6 +3,7 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
+export { AdvisorOpinion, AdvisorOpinionT } from './telemetry/advisor-opinion.js';
 export { Balance, BalanceT } from './telemetry/balance.js';
 export { BalancesFrame, BalancesFrameT } from './telemetry/balances-frame.js';
 export { Batch, BatchT } from './telemetry/batch.js';

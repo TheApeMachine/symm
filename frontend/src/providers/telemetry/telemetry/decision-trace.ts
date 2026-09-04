@@ -5,6 +5,7 @@
 
 import * as flatbuffers from 'flatbuffers';
 
+import { AdvisorOpinion, AdvisorOpinionT } from '../telemetry/advisor-opinion.js';
 import { MCTSBranch, MCTSBranchT } from '../telemetry/mctsbranch.js';
 import { MCTSNode, MCTSNodeT } from '../telemetry/mctsnode.js';
 import { NamedNumber, NamedNumberT } from '../telemetry/named-number.js';
@@ -160,8 +161,18 @@ totalNodes():bigint {
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
+advisors(index: number, obj?:AdvisorOpinion):AdvisorOpinion|null {
+  const offset = this.bb!.__offset(this.bb_pos, 44);
+  return offset ? (obj || new AdvisorOpinion()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+advisorsLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 44);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
 static startDecisionTrace(builder:flatbuffers.Builder) {
-  builder.startObject(20);
+  builder.startObject(21);
 }
 
 static addIdentificationStatus(builder:flatbuffers.Builder, identificationStatusOffset:flatbuffers.Offset) {
@@ -292,6 +303,22 @@ static addTotalNodes(builder:flatbuffers.Builder, totalNodes:bigint) {
   builder.addFieldInt64(19, totalNodes, BigInt('0'));
 }
 
+static addAdvisors(builder:flatbuffers.Builder, advisorsOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(20, advisorsOffset, 0);
+}
+
+static createAdvisorsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startAdvisorsVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
 static endDecisionTrace(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
@@ -319,7 +346,8 @@ unpack(): DecisionTraceT {
     this.recommendedAction(),
     (this.tree() !== null ? this.tree()!.unpack() : null),
     this.maxDepth(),
-    this.totalNodes()
+    this.totalNodes(),
+    this.bb!.createObjList<AdvisorOpinion, AdvisorOpinionT>(this.advisors.bind(this), this.advisorsLength())
   );
 }
 
@@ -345,6 +373,7 @@ unpackTo(_o: DecisionTraceT): void {
   _o.tree = (this.tree() !== null ? this.tree()!.unpack() : null);
   _o.maxDepth = this.maxDepth();
   _o.totalNodes = this.totalNodes();
+  _o.advisors = this.bb!.createObjList<AdvisorOpinion, AdvisorOpinionT>(this.advisors.bind(this), this.advisorsLength());
 }
 }
 
@@ -369,7 +398,8 @@ constructor(
   public recommendedAction: string|Uint8Array|null = null,
   public tree: MCTSNodeT|null = null,
   public maxDepth: bigint = BigInt('0'),
-  public totalNodes: bigint = BigInt('0')
+  public totalNodes: bigint = BigInt('0'),
+  public advisors: (AdvisorOpinionT)[] = []
 ){}
 
 
@@ -383,6 +413,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const branches = DecisionTrace.createBranchesVector(builder, builder.createObjectOffsetList(this.branches));
   const recommendedAction = (this.recommendedAction !== null ? builder.createString(this.recommendedAction!) : 0);
   const tree = (this.tree !== null ? this.tree!.pack(builder) : 0);
+  const advisors = DecisionTrace.createAdvisorsVector(builder, builder.createObjectOffsetList(this.advisors));
 
   DecisionTrace.startDecisionTrace(builder);
   DecisionTrace.addIdentificationStatus(builder, identificationStatus);
@@ -405,6 +436,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   DecisionTrace.addTree(builder, tree);
   DecisionTrace.addMaxDepth(builder, this.maxDepth);
   DecisionTrace.addTotalNodes(builder, this.totalNodes);
+  DecisionTrace.addAdvisors(builder, advisors);
 
   return DecisionTrace.endDecisionTrace(builder);
 }

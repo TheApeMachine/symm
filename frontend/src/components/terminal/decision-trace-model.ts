@@ -36,12 +36,21 @@ export type TraceBranch = {
 	pruned: boolean;
 };
 
+export type AdvisorOpinion = {
+	advisor: string;
+	state: string;
+	probability: number;
+	credibility: number;
+	weight: number;
+};
+
 export type CouncilTrace = {
 	dominantMove: string;
 	confidence: number;
 	participants: number;
 	vetoes: string[];
 	synergies: string[];
+	advisors: AdvisorOpinion[];
 };
 
 export type DecisionTraceModel = {
@@ -172,6 +181,25 @@ export const readDecisionTrace = (
 		synergies.push(trace.synergies(index));
 	}
 
+	const advisors: AdvisorOpinion[] = [];
+	const advisorCount = trace.advisorsLength?.() ?? 0;
+
+	for (let index = 0; index < advisorCount; index += 1) {
+		const opinion = trace.advisors(index);
+
+		if (!opinion) {
+			continue;
+		}
+
+		advisors.push({
+			advisor: opinion.advisor() ?? "",
+			state: opinion.state() ?? "",
+			probability: opinion.probability(),
+			credibility: opinion.credibility(),
+			weight: opinion.weight(),
+		});
+	}
+
 	return {
 		council: {
 			dominantMove: trace.consensusDominantMove() ?? "",
@@ -179,6 +207,7 @@ export const readDecisionTrace = (
 			participants: Number(trace.consensusParticipants()),
 			vetoes,
 			synergies,
+			advisors,
 		},
 		iterations: Number(trace.iterations()),
 		horizon: Number(trace.horizon()),

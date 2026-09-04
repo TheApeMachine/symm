@@ -25,6 +25,7 @@ func NewPullback() *Pullback {
 		"cvd/signed_net_fraction",
 		"toxicity/retreat_fraction:bid",
 		"hawkes/branching_spectral_radius",
+		"morphology/morphology_change_zscore",
 	}
 
 	liquiditySweepKeys := []string{
@@ -39,6 +40,7 @@ func NewPullback() *Pullback {
 		"toxicity/net_withdrawal_rate:bid",
 		"pumpdump/spread_divergence",
 		"liquidity/relative_spread",
+		"morphology/morphology_change_zscore",
 	}
 
 	unresolvedKeys := []string{

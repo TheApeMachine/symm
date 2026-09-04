@@ -25,13 +25,15 @@ func NewLiquidity() *Liquidity {
 		"liquidity/two_sided_touch_notional",
 		"liquidity/depth_ratio:bid",
 		"liquidity/touch_quantity:bid",
+		"morphology/morphology_change_zscore",
 	}
 
 	vacuumFormingKeys := []string{
 		"liquidity/relative_spread",
 		"liquidity/spread_divergence",
 		"liquidity/spread_zscore",
-		"liquidity/relative_spread_baseline",
+		"liquidity/spread_baseline",
+		"toxicity/withdrawal_fraction_zscore:bid",
 	}
 
 	replenishingKeys := []string{

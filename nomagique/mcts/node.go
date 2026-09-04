@@ -149,3 +149,29 @@ func (node *SearchNode) BlendedValue() float64 {
 
 	return (node.Mean*observedWeight + node.CounterfactualMean()*virtualWeight) / total
 }
+
+/*
+BestChild returns the child with the highest blended economic outcome that has
+been evaluated with at least one real rollout, or nil if no such child exists.
+*/
+func (node *SearchNode) BestChild() *SearchNode {
+	if node == nil || len(node.Children) == 0 {
+		return nil
+	}
+
+	var best *SearchNode
+
+	for _, child := range node.Children {
+		if child.Visits == 0 {
+			continue
+		}
+
+		if best == nil || child.BlendedValue() > best.BlendedValue() ||
+			(child.BlendedValue() == best.BlendedValue() &&
+				child.EffectiveVisits() > best.EffectiveVisits()) {
+			best = child
+		}
+	}
+
+	return best
+}

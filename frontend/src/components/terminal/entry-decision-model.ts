@@ -64,7 +64,7 @@ type PositionState = ReturnType<typeof positionStore.get>;
 
 const text = (value: string | null): string => value ?? "";
 
-const findDecision = (
+export const findDecision = (
 	state: PositionState,
 	symbol: string,
 ): Decision | null => {
@@ -193,12 +193,16 @@ export const evidenceMeaning = (key: string): string => {
 		case "return:degrees_of_freedom":
 			return "How heavily the forecast allowed for unusually large moves in either direction.";
 		case "execution:coverage":
+		case "execution:visible_coverage":
 			return "How much of the requested quantity the visible order book could actually supply.";
 		case "execution:spread":
+		case "execution:spread_fraction":
 			return "The fraction of entry price lost to the visible bid/ask gap.";
 		case "execution:impact":
+		case "execution:impact_fraction":
 			return "The fraction of entry price lost by consuming multiple ask levels.";
 		case "execution:friction":
+		case "execution:friction_fraction":
 			return "Spread and order-book impact combined—the immediate market cost before fees.";
 		case "horizon:ticker_steps":
 			return "How many future ticker observations the adaptive forecast covered.";
@@ -210,7 +214,40 @@ export const evidenceMeaning = (key: string): string => {
 			return "Count of inputs describing whether the move remained tradable after market costs.";
 		case "features:semantic_review":
 			return "Count of inputs that passed their declared meaning and routing constraints.";
+		case "consensus:dominant":
+			return "The dominant qualitative market move synthesized by the War Room council.";
+		case "consensus:participants":
+			return "Number of distinct advisors that deliberated on this decision.";
+		case "consensus:synergies":
+			return "Number of reinforcing cross-advisor synergy rules triggered.";
+		case "consensus:vetoes":
+			return "Number of cross-advisor veto rules that suppressed conflicting moves.";
+		case "branch:enter:blended":
+			return "Blended economic value for entering: real rollout outcomes merged with counterfactual evidence.";
+		case "branch:enter:mean":
+			return "Sample average net-wealth change from rollouts that took the enter action.";
+		case "branch:enter:visits":
+			return "Number of simulated rollout paths that explored the enter action.";
+		case "branch:enter:counterfactual_mass":
+			return "Virtual experience mass accrued on the enter branch via Pearl counterfactuals.";
+		case "branch:wait:blended":
+			return "Blended economic value for waiting / doing nothing.";
+		case "branch:wait:mean":
+			return "Sample average net-wealth change from rollouts that took the wait action.";
+		case "branch:wait:visits":
+			return "Number of simulated rollout paths that explored waiting.";
+		case "branch:wait:counterfactual_mass":
+			return "Virtual experience mass accrued on the wait branch via Pearl counterfactuals.";
+		case "search:expected_outcome":
+			return "Expected dollar outcome modeled over the search horizon for the selected action.";
+		case "search:outcome_uncertainty":
+			return "Standard error of the simulated economic outcome across rollouts.";
+		case "search:visits":
+			return "Total MCTS rollout iterations completed across all branches.";
 		default:
+			if (key.startsWith("move:")) {
+				return `Probability mass assigned by the advisor council to ${key.slice(5).replace(/_/g, " ")}.`;
+			}
 			return "A named fact recorded on the frozen entry decision.";
 	}
 };
@@ -218,13 +255,30 @@ export const evidenceMeaning = (key: string): string => {
 export const evidenceValue = (evidence: DecisionEvidence): string => {
 	if (
 		evidence.key.startsWith("probability:") ||
-		evidence.key.startsWith("execution:")
+		evidence.key.startsWith("execution:") ||
+		evidence.key.startsWith("move:")
 	) {
 		return `${(evidence.value * 100).toFixed(2)}%`;
 	}
 
+	if (evidence.key === "consensus:dominant") {
+		const moves: Record<number, string> = {
+			3: "explosive_pump",
+			2: "steady_trend",
+			1: "weak_drift",
+			0: "stagnant",
+			[-1]: "weak_bleed",
+			[-2]: "structural_pullback",
+			[-3]: "flash_dump",
+		};
+		return moves[Math.round(evidence.value)] ?? evidence.value.toFixed(0);
+	}
+
 	if (
 		evidence.key.startsWith("features:") ||
+		evidence.key.endsWith(":visits") ||
+		evidence.key === "search:visits" ||
+		evidence.key.startsWith("consensus:") ||
 		evidence.key === "horizon:ticker_steps"
 	) {
 		return evidence.value.toFixed(0);

@@ -2,7 +2,7 @@ import { useSelector } from "@tanstack/react-store";
 import { terminalStore } from "#/collections/terminal";
 import { EntryDecisionSnapshot } from "#/components/terminal/entry-decision-snapshot";
 import { ThesisDetailRail } from "#/components/terminal/thesis-detail-rail";
-import { WarRoom } from "#/components/terminal/war-room";
+import { useTrace, WarRoom } from "#/components/terminal/war-room";
 import { Typography } from "#/components/ui/typography";
 import { cn } from "#/lib/utils";
 
@@ -26,6 +26,7 @@ export const closeThesisShell = () => {
 
 export const ThesisModal = () => {
 	const symbol = useSelector(terminalStore, (state) => state.thesisSymbol);
+	const { isLive } = useTrace(symbol ?? "");
 
 	if (symbol === null || symbol === "") {
 		return null;
@@ -82,13 +83,20 @@ export const ThesisModal = () => {
 						{/*
 							The entry snapshot is why the lot was opened, frozen at
 							entry. The War Room below is what the search is concluding
-							about this symbol now — the same reasoning the decision
-							board shows, asked about a symbol already held.
+							about this symbol now — or the entry search trace if no
+							new round ran for this held asset.
 						*/}
 						<div className="flex h-104 shrink-0 flex-col border-(--line) border-t">
-							<div className="shrink-0 border-(--line) border-b px-3 py-1.5">
+							<div className="flex shrink-0 items-center justify-between border-(--line) border-b px-3 py-1.5">
 								<span className="font-mono text-[9px] text-(--acc) uppercase tracking-wide">
-									Live reasoning · current round
+									{isLive
+										? "Live reasoning · current round"
+										: "Entry reasoning · frozen decision"}
+								</span>
+								<span className="font-mono text-[8px] text-(--f4)">
+									{isLive
+										? "simulating live market horizon"
+										: "snapshot at position execution"}
 								</span>
 							</div>
 							<WarRoom symbol={symbol} className="min-h-0 flex-1" />

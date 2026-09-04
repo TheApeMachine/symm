@@ -265,8 +265,8 @@ var CategorySchemas = []CategorySchema{
 
 	// Hawkes: arrival/excitation dynamics.
 	{Source: SourceHawkes, Metric: "branching_spectral_radius", Category: Turbulent},
-	{Source: SourceHawkes, Metric: "excitation_intensity:buy", Category: Frenzy},
-	{Source: SourceHawkes, Metric: "excitation_intensity:sell", Category: Frenzy},
+	{Source: SourceHawkes, Metric: "excitation_share:buy", Category: Frenzy},
+	{Source: SourceHawkes, Metric: "excitation_share:sell", Category: Frenzy},
 	{Source: SourceHawkes, Metric: "arrival_rate", Category: Inertial},
 
 	// DepthFlow: facts present in each Level-3 mutation.
@@ -315,11 +315,16 @@ var CategorySchemas = []CategorySchema{
 	{Source: SourceToxicity, Metric: "fill_fraction_zscore:bid", Category: LiquidityVacuum},
 	{Source: SourceToxicity, Metric: "fill_fraction_zscore:ask", Category: LiquidityVacuum},
 
+	// Morphology: whole-book shape dislocation.
+	{Source: SourceMorphology, Metric: "morphology_change", Category: Turbulent},
+	{Source: SourceMorphology, Metric: "morphology_change", Category: BookThinning},
+
 	// VerticalIgnition corroborated complex: PumpDump volume breakout anchors
 	// it; Hawkes near-critical cascade clustering, DepthFlow ask-side mutation,
 	// and CVD aggressive drive corroborate.
 	{Source: SourcePumpDump, Metric: "volume_bar_quantity", Category: VerticalIgnition},
 	{Source: SourceCVD, Metric: "signed_net_fraction_zscore", Category: VerticalIgnition},
 	{Source: SourceHawkes, Metric: "branching_spectral_radius", Category: VerticalIgnition},
+	{Source: SourceHawkes, Metric: "log_likelihood_gain_per_event_vs_poisson", Category: VerticalIgnition},
 	{Source: SourceDepthFlow, Metric: "observed_notional_imbalance_zscore", Category: VerticalIgnition},
 }

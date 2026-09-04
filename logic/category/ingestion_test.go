@@ -16,9 +16,9 @@ singleMetric builds one envelope-field measurement for the category Step test.
 */
 func singleMetric(source, symbol, metric string, at time.Time, value float64) *data.Measurement[float64] {
 	return &data.Measurement[float64]{
-		Label:   symbol,
-		Source:  source,
-		At:      at,
+		Label:  symbol,
+		Source: source,
+		At:     at,
 		Metrics: map[string]data.Metric[float64]{
 			metric: {Raw: value},
 		},

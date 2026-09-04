@@ -359,15 +359,53 @@ Degenerate behavior: an omitted Source accumulates the carrier itself.
 */
 type Accumulator struct {
 	Source types.Node
+	Key    func() string
 
-	total types.Number
+	types.Guard
+	total  types.Number
+	totals map[string]types.Number
 }
 
+func (accumulator *Accumulator) key() string {
+	if accumulator.Key != nil {
+		return accumulator.Key()
+	}
+
+	return ""
+}
+
+/*
+Step advances the running total once per observation. Reached again within the
+same observation — as it is whenever several derived quantities depend on the
+same accumulation — it returns the total it already holds rather than adding
+the observation a second time.
+*/
 func (accumulator *Accumulator) Step(x types.Number) types.Number {
+	activeKey := accumulator.key()
+
+	if !accumulator.Fresh() {
+		if activeKey != "" && accumulator.totals != nil {
+			return accumulator.totals[activeKey]
+		}
+
+		return accumulator.total
+	}
+
 	value := x
 
 	if accumulator.Source != nil {
 		value = accumulator.Source.Step(x)
+	}
+
+	if activeKey != "" {
+		if accumulator.totals == nil {
+			accumulator.totals = make(map[string]types.Number)
+		}
+
+		accumulator.totals[activeKey] += value
+		accumulator.total = accumulator.totals[activeKey]
+
+		return accumulator.total
 	}
 
 	accumulator.total += value
@@ -376,7 +414,15 @@ func (accumulator *Accumulator) Step(x types.Number) types.Number {
 }
 
 // Total returns the running sum without advancing it.
-func (accumulator *Accumulator) Total() types.Number { return accumulator.total }
+func (accumulator *Accumulator) Total() types.Number {
+	activeKey := accumulator.key()
+
+	if activeKey != "" && accumulator.totals != nil {
+		return accumulator.totals[activeKey]
+	}
+
+	return accumulator.total
+}
 
 /*
 Readings publishes the accumulation itself, so a terminal Projection harvests
@@ -387,7 +433,7 @@ func (accumulator *Accumulator) Readings() []types.Reading {
 		Label:     "total",
 		Unit:      "count",
 		Timescale: "instantaneous",
-		Value:     accumulator.total,
+		Value:     accumulator.Total(),
 		Defined:   true,
 	}}
 }

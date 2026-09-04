@@ -55,6 +55,18 @@ func decisionTraceWire(trace *DecisionTrace) *telemetry.DecisionTraceT {
 		})
 	}
 
+	advisors := make([]*telemetry.AdvisorOpinionT, 0, len(council.Advisors))
+
+	for _, opinion := range council.Advisors {
+		advisors = append(advisors, &telemetry.AdvisorOpinionT{
+			Advisor:     opinion.Advisor,
+			State:       opinion.State,
+			Probability: opinion.Probability,
+			Credibility: opinion.Credibility,
+			Weight:      opinion.Weight,
+		})
+	}
+
 	return &telemetry.DecisionTraceT{
 		Iterations:             int64(search.Iterations),
 		Horizon:                int64(search.Horizon),
@@ -76,6 +88,7 @@ func decisionTraceWire(trace *DecisionTrace) *telemetry.DecisionTraceT {
 		ConsensusProbabilities: probabilities,
 		Vetoes:                 append([]string(nil), council.Vetoes...),
 		Synergies:              append([]string(nil), council.Synergies...),
+		Advisors:               advisors,
 	}
 }
 

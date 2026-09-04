@@ -116,14 +116,18 @@ func (node *deskContextNode) Step(envelope *types.Envelope) *types.Envelope {
 		symbol = envelope.TickerData.Symbol
 	}
 
-	if symbol == "" && len(envelope.Perspectives) > 0 {
-		symbol = envelope.Perspectives[0].Symbol
+	if symbol == "" {
+		for _, perspective := range envelope.Perspectives {
+			if perspective != nil && perspective.Symbol != "" {
+				symbol = perspective.Symbol
+				break
+			}
+		}
 	}
 
 	if symbol == "" {
 		return envelope
 	}
-
 
 	for _, perspective := range envelope.Perspectives {
 		_ = node.desk.StepPerspective(perspective)
@@ -175,4 +179,3 @@ func (node *deskContextNode) Step(envelope *types.Envelope) *types.Envelope {
 
 	return envelope
 }
-

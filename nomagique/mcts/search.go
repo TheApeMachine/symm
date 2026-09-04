@@ -278,9 +278,9 @@ func (search *Search) Run(rootState State, estimator ActionEstimator) *SearchRes
 		return result
 	}
 
-	best, found := bestChild(root)
+	best := root.BestChild()
 
-	if !found {
+	if best == nil {
 		// Every expanded child has zero visits (all rollouts failed); the
 		// economic objective could not be evaluated. This is an explicit
 		// unavailable result, not a Wait win.
@@ -757,23 +757,7 @@ It reports whether any child was actually visited, so the caller can
 represent an unevaluated search explicitly instead of panicking.
 */
 func bestChild(root *SearchNode) (*SearchNode, bool) {
-	var best *SearchNode
-
-	for _, child := range root.Children {
-		// At least one real rollout is required. Counterfactual evidence
-		// may rank a branch, but it may never be the sole grounds for
-		// acting: an action that never survived a simulated trajectory is
-		// imagination, and this decision spends real capital.
-		if child.Visits == 0 {
-			continue
-		}
-
-		if best == nil || child.BlendedValue() > best.BlendedValue() ||
-			(child.BlendedValue() == best.BlendedValue() &&
-				child.EffectiveVisits() > best.EffectiveVisits()) {
-			best = child
-		}
-	}
+	best := root.BestChild()
 
 	return best, best != nil
 }
@@ -798,10 +782,13 @@ func (search *Search) trace(root *SearchNode, rootState State, alternatives []Ac
 		Horizon:             search.horizon(rootState),
 		ExplorationConstant: search.ExplorationConstant,
 		UncertaintyWeight:   search.UncertaintyWeight,
-		Branches:            make([]BranchTrace, 0, len(root.Children)),
+		Branches:            make([]BranchTrace, 0, len(root.Children)+len(alternatives)),
 	}
 
+	seen := make(map[Action]bool, len(root.Children))
+
 	for _, child := range root.Children {
+		seen[child.Action] = true
 		trace.Branches = append(trace.Branches, BranchTrace{
 			Action:                   child.Action,
 			Visits:                   child.Visits,
@@ -816,6 +803,20 @@ func (search *Search) trace(root *SearchNode, rootState State, alternatives []Ac
 			CausalExpectation:        child.CausalExpectation,
 			CausalExpectationDefined: child.CausalExpectationDefined,
 			Pruned:                   child.Pruned,
+		})
+	}
+
+	for _, estimate := range alternatives {
+		if seen[estimate.Action] {
+			continue
+		}
+
+		trace.Branches = append(trace.Branches, BranchTrace{
+			Action:                   estimate.Action,
+			Estimated:                estimate,
+			CausalExpectation:        estimate.ExpectedOutcome,
+			CausalExpectationDefined: estimate.Defined,
+			Pruned:                   true,
 		})
 	}
 

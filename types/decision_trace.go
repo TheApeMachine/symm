@@ -66,6 +66,18 @@ type MCTSTrace struct {
 }
 
 /*
+AdvisorOpinion records one advisor's individual conclusion for a round: its top
+chosen market state, probability mass, empirical credibility, and effective weighting.
+*/
+type AdvisorOpinion struct {
+	Advisor     string  `json:"advisor"`
+	State       string  `json:"state"`
+	Probability float64 `json:"probability"`
+	Credibility float64 `json:"credibility"`
+	Weight      float64 `json:"weight"`
+}
+
+/*
 DeliberationTrace is the War Room's consensus for one decision round, retained
 so an operator can see which readings shaped the odds the search then used.
 */
@@ -76,6 +88,7 @@ type DeliberationTrace struct {
 	Probabilities map[string]float64
 	Vetoes        []string
 	Synergies     []string
+	Advisors      []AdvisorOpinion
 }
 
 /*

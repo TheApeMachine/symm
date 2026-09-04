@@ -26,6 +26,11 @@ type tickerState struct {
 	prevSpot  float64
 	prevOI    float64
 	prevBasis float64
+
+	prevBasisRate    float64
+	hasPrevBasisRate bool
+	prevReturnGap    float64
+	hasPrevReturnGap bool
 }
 
 /*
@@ -145,6 +150,19 @@ func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[flo
 			basisRate := basisChange / dt
 			putDerivMetric(measurement, "basis_change", basisChange, data.UnitDimensionless)
 			putDerivMetric(measurement, "basis_rate", basisRate, data.UnitPerSecond)
+
+			// Velocity is the change in the RATE between consecutive
+			// observations: basis_rate says how fast the basis is moving,
+			// basis_velocity says whether that movement is accelerating.
+			if state.hasPrevBasisRate {
+				putDerivMetric(
+					measurement, "basis_velocity",
+					basisRate-state.prevBasisRate, data.UnitPerSecond,
+				)
+			}
+
+			state.prevBasisRate = basisRate
+			state.hasPrevBasisRate = true
 		}
 
 		var hasDerivReturn, hasRefReturn bool
@@ -163,7 +181,18 @@ func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[flo
 		}
 
 		if hasDerivReturn && hasRefReturn {
-			putDerivMetric(measurement, "return_gap", derivLogReturn-refLogReturn, data.UnitDimensionless)
+			returnGap := derivLogReturn - refLogReturn
+			putDerivMetric(measurement, "return_gap", returnGap, data.UnitDimensionless)
+
+			if state.hasPrevReturnGap {
+				putDerivMetric(
+					measurement, "return_gap_velocity",
+					returnGap-state.prevReturnGap, data.UnitDimensionless,
+				)
+			}
+
+			state.prevReturnGap = returnGap
+			state.hasPrevReturnGap = true
 		}
 	}
 

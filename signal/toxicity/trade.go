@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/calculus"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/equation"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -21,36 +24,139 @@ type tradeState struct {
 	prevNsec           float64
 	hasTime            bool
 	hasPrevTime        bool
-	bidFractionStd     equation.Standardizer
-	askFractionStd     equation.Standardizer
 	bidFractionSamples int
 	askFractionSamples int
 }
 
-/*
-Trade matches incoming trades against the symbol's retained book touch.
-Outputs are directly projected into data.Measurement without intermediate
-Frame allocations or string intern table lookups.
-*/
-type Trade struct {
-	states map[string]*tradeState
-	mu     sync.RWMutex
+type tradeInput struct {
+	bracketQty       calculus.Constant
+	matchedBidQty    calculus.Constant
+	matchedAskQty    calculus.Constant
+	touchFillBidQty  calculus.Constant
+	touchFillAskQty  calculus.Constant
+	touchFillBidFrac calculus.Constant
+	touchFillAskFrac calculus.Constant
+	touchFillBidRate calculus.Constant
+	touchFillAskRate calculus.Constant
+	hasRate          calculus.Constant
 }
 
 /*
-NewTrade constructs the Trade entity.
+Trade matches incoming trades against the symbol's retained book touch.
+It maintains a single inlined nomagique.Number composition.
+*/
+type Trade struct {
+	mu     sync.Mutex
+	number *nomagique.Pipeline
+
+	states map[string]*tradeState
+	symbol string
+	at     time.Time
+
+	bidStd *equation.CausalResidual
+	askStd *equation.CausalResidual
+
+	in tradeInput
+}
+
+/*
+NewTrade constructs the Trade entity with a single inlined Number composition.
 */
 func NewTrade() *Trade {
-	return &Trade{
+	trade := &Trade{
 		states: make(map[string]*tradeState),
 	}
+
+	keyFn := func() string { return trade.symbol }
+	trade.bidStd = &equation.CausalResidual{Key: keyFn}
+	trade.askStd = &equation.CausalResidual{Key: keyFn}
+
+	in := &trade.in
+
+	trade.number = nomagique.Number(&nmtypes.Chain{
+		A: &nmtypes.Split{
+			A: &nmtypes.Report{
+				Label: "bracket_trade_quantity", Unit: "count", Timescale: "instantaneous",
+				Value: &in.bracketQty,
+			},
+			B: &nmtypes.Report{
+				Label: "matched_touch_trade_quantity:bid", Unit: "count", Timescale: "instantaneous",
+				Value: &in.matchedBidQty,
+			},
+			C: &nmtypes.Report{
+				Label: "matched_touch_trade_quantity:ask", Unit: "count", Timescale: "instantaneous",
+				Value: &in.matchedAskQty,
+			},
+			D: &nmtypes.Report{
+				Label: "touch_fill_quantity:bid", Unit: "count", Timescale: "instantaneous",
+				Value: &in.touchFillBidQty,
+			},
+		},
+		B: &nmtypes.Split{
+			A: &nmtypes.Report{
+				Label: "touch_fill_quantity:ask", Unit: "count", Timescale: "instantaneous",
+				Value: &in.touchFillAskQty,
+			},
+			B: &nmtypes.Report{
+				Label: "touch_fill_fraction:bid", Unit: "dimensionless", Timescale: "instantaneous",
+				Value: &in.touchFillBidFrac,
+			},
+			C: &nmtypes.Report{
+				Label: "touch_fill_fraction:ask", Unit: "dimensionless", Timescale: "instantaneous",
+				Value: &in.touchFillAskFrac,
+			},
+		},
+		C: &nmtypes.Split{
+			A: &nmtypes.Report{
+				Label: "touch_fill_rate:bid", Unit: "per_second", Timescale: "per_second",
+				Value: &in.touchFillBidRate, Defined: &in.hasRate,
+			},
+			B: &nmtypes.Report{
+				Label: "touch_fill_rate:ask", Unit: "per_second", Timescale: "per_second",
+				Value: &in.touchFillAskRate, Defined: &in.hasRate,
+			},
+			C: &nmtypes.Chain{
+				A: &in.touchFillBidFrac,
+				B: &nmtypes.Labelled{
+					Prefix: "fill_fraction_",
+					Node: &nmtypes.Labelled{
+						Names: map[string]string{
+							"baseline":   "baseline:bid",
+							"divergence": "divergence:bid",
+							"zscore":     "zscore:bid",
+						},
+						Node: trade.bidStd,
+					},
+				},
+			},
+			D: &nmtypes.Chain{
+				A: &in.touchFillAskFrac,
+				B: &nmtypes.Labelled{
+					Prefix: "fill_fraction_",
+					Node: &nmtypes.Labelled{
+						Names: map[string]string{
+							"baseline":   "baseline:ask",
+							"divergence": "divergence:ask",
+							"zscore":     "zscore:ask",
+						},
+						Node: trade.askStd,
+					},
+				},
+			},
+		},
+		D: &data.Projection{
+			Source:   "toxicity",
+			Identity: trade.identity,
+		},
+	})
+
+	return trade
 }
 
 func (trade *Trade) Close() error { return nil }
 
 /*
 Step matches one trade against the given touch and projects the fill attribution.
-A zero touch (nothing observed yet for this symbol) yields no measurement.
 */
 func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQty float64) *data.Measurement[float64] {
 	if bidPrice == 0 || askPrice == 0 {
@@ -61,6 +167,8 @@ func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQ
 	nsec := float64(tick.Timestamp.Nanosecond())
 
 	trade.mu.Lock()
+	defer trade.mu.Unlock()
+
 	state, found := trade.states[tick.Symbol]
 
 	if !found {
@@ -70,13 +178,10 @@ func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQ
 
 	if state.hasTime {
 		if sec < state.lastSec || (sec == state.lastSec && nsec < state.lastNsec) {
-			trade.mu.Unlock()
-
 			return nil
 		}
 	}
 
-	// Update trade clock
 	if state.hasTime {
 		state.prevSec = state.lastSec
 		state.prevNsec = state.lastNsec
@@ -119,70 +224,58 @@ func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQ
 		askFillFraction = askFillQty / askQty
 	}
 
-	id := fmt.Sprintf("toxicity:trade:%s:%d", tick.Symbol, tick.Timestamp.UnixNano())
-	measurement := data.NewMeasurement[float64](id, tick.Symbol, "toxicity", tick.Timestamp, tick.Timestamp)
-	measurement.Metadata = make(map[string]float64)
+	trade.symbol = tick.Symbol
+	trade.at = tick.Timestamp
 
-	putTradeMetric(measurement, "bracket_trade_quantity", state.bracketQty, data.UnitCount)
-	putTradeMetric(measurement, "matched_touch_trade_quantity:bid", state.matchedBidQty, data.UnitCount)
-	putTradeMetric(measurement, "matched_touch_trade_quantity:ask", state.matchedAskQty, data.UnitCount)
-	putTradeMetric(measurement, "touch_fill_quantity:bid", bidFillQty, data.UnitCount)
-	putTradeMetric(measurement, "touch_fill_quantity:ask", askFillQty, data.UnitCount)
-	putTradeMetric(measurement, "touch_fill_fraction:bid", bidFillFraction, data.UnitDimensionless)
-	putTradeMetric(measurement, "touch_fill_fraction:ask", askFillFraction, data.UnitDimensionless)
+	in := &trade.in
+	in.bracketQty.Value = nmtypes.Number(state.bracketQty)
+	in.matchedBidQty.Value = nmtypes.Number(state.matchedBidQty)
+	in.matchedAskQty.Value = nmtypes.Number(state.matchedAskQty)
+	in.touchFillBidQty.Value = nmtypes.Number(bidFillQty)
+	in.touchFillAskQty.Value = nmtypes.Number(askFillQty)
+	in.touchFillBidFrac.Value = nmtypes.Number(bidFillFraction)
+	in.touchFillAskFrac.Value = nmtypes.Number(askFillFraction)
 
-	// Fill rates
-	if state.hasPrevTime {
-		deltaT := (sec - state.prevSec) + (nsec-state.prevNsec)*1e-9
+	deltaT := (sec - state.prevSec) + (nsec-state.prevNsec)*1e-9
 
-		if deltaT > 0 {
-			putTradeMetric(measurement, "touch_fill_rate:bid", bidFillQty/deltaT, data.UnitPerSecond)
-			putTradeMetric(measurement, "touch_fill_rate:ask", askFillQty/deltaT, data.UnitPerSecond)
-		}
+	if state.hasPrevTime && deltaT > 0 {
+		in.touchFillBidRate.Value = nmtypes.Number(bidFillQty / deltaT)
+		in.touchFillAskRate.Value = nmtypes.Number(askFillQty / deltaT)
+		in.hasRate.Value = 1
+	} else {
+		in.hasRate.Value = 0
 	}
 
-	// Bid standardizer / baseline
 	if bidFillFraction > 0 {
 		state.bidFractionSamples++
-		bidZ := state.bidFractionStd.Step(nmtypes.Number(bidFillFraction))
-		bidMean := state.bidFractionStd.Mean()
-		bidDiv := bidFillFraction - bidMean
-
-		putTradeMetric(measurement, "fill_fraction_baseline:bid", bidMean, data.UnitDimensionless)
-		putTradeMetric(measurement, "fill_fraction_divergence:bid", bidDiv, data.UnitDimensionless)
-		putTradeMetric(measurement, "fill_fraction_zscore:bid", float64(bidZ), data.UnitDimensionless)
-
-		if state.bidFractionSamples >= 3 {
-			measurement.SNRDefined = true
-			measurement.SNR = math.Abs(float64(bidZ))
-		}
 	}
 
-	// Ask standardizer / baseline
 	if askFillFraction > 0 {
 		state.askFractionSamples++
-		askZ := state.askFractionStd.Step(nmtypes.Number(askFillFraction))
-		askMean := state.askFractionStd.Mean()
-		askDiv := askFillFraction - askMean
-
-		putTradeMetric(measurement, "fill_fraction_baseline:ask", askMean, data.UnitDimensionless)
-		putTradeMetric(measurement, "fill_fraction_divergence:ask", askDiv, data.UnitDimensionless)
-		putTradeMetric(measurement, "fill_fraction_zscore:ask", float64(askZ), data.UnitDimensionless)
-
-		if state.askFractionSamples >= 3 {
-			measurement.SNRDefined = true
-			measurement.SNR = math.Abs(float64(askZ))
-		}
 	}
 
-	trade.mu.Unlock()
-	measurement.Finalize()
+	trade.number.Step(1.0)
+	measurement := trade.number.Measurement()
+
+	if measurement != nil {
+		if state.bidFractionSamples >= 3 {
+			measurement.SNRDefined = true
+			measurement.SNR = math.Abs(float64(trade.bidStd.ZScore()))
+		} else if state.askFractionSamples >= 3 {
+			measurement.SNRDefined = true
+			measurement.SNR = math.Abs(float64(trade.askStd.ZScore()))
+		} else {
+			measurement.SNRDefined = false
+			measurement.SNR = 0
+		}
+	}
 
 	return measurement
 }
 
-func putTradeMetric(measurement *data.Measurement[float64], name string, value float64, unit data.Unit) {
-	measurement.PutMetric(data.NewMetric(
-		name, value, nil, nil, unit, data.TimescaleInstantaneous,
-	))
+func (trade *Trade) identity() (string, string, time.Time, time.Time) {
+	return fmt.Sprintf("toxicity:trade:%s:%d", trade.symbol, trade.at.UnixNano()),
+		trade.symbol,
+		trade.at,
+		trade.at
 }

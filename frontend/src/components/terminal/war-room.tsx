@@ -1,11 +1,13 @@
 import { useSelector } from "@tanstack/react-store";
 import * as flatbuffers from "flatbuffers";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { decisionStore } from "#/collections/app";
+import { decisionStore, positionStore } from "#/collections/app";
 import {
+	type AdvisorOpinion,
 	type DecisionTraceModel,
 	readDecisionTrace,
 } from "#/components/terminal/decision-trace-model";
+import { findDecision } from "#/components/terminal/entry-decision-model";
 import {
 	drawWarRoomTree,
 	layoutWarRoomTree,
@@ -33,34 +35,58 @@ const fmt = (value: number, digits = 4): string =>
 const pct = (value: number): string =>
 	Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "—";
 
-/*
-readTrace pulls one symbol's decision out of the symbol-keyed store and packs
-it back into a flatbuffer accessor's shape.
+export type WarRoomTraceResult = {
+	trace: DecisionTraceModel | null;
+	isLive: boolean;
+};
 
-The store holds the unpacked DecisionT, which is the durable form; the trace
-reader works against the accessor API. Packing here keeps a single reader for
-both paths rather than a second parallel projection that could drift.
+/*
+useTrace pulls one symbol's decision out of the symbol-keyed live store, or
+falls back to the position's retained entry decision if no new search ran
+this round.
 */
-const useTrace = (symbol: string): DecisionTraceModel | null => {
-	const decision = useSelector(
+export const useTrace = (symbol: string): WarRoomTraceResult => {
+	const liveDecision = useSelector(
 		decisionStore,
 		(state) => state.bySymbol[symbol],
 	);
 
+	const positionTrace = useSelector(
+		positionStore,
+		(state) => {
+			const decision = findDecision(state, symbol);
+			return decision ? readDecisionTrace(decision) : null;
+		},
+		{
+			compare: (previous, next) =>
+				previous === next ||
+				(previous?.recommendedAction === next?.recommendedAction &&
+					previous?.iterations === next?.iterations &&
+					previous?.council.participants === next?.council.participants),
+		},
+	);
+
 	return useMemo(() => {
-		if (!decision) {
-			return null;
+		if (liveDecision) {
+			const builder = new flatbuffers.Builder(1024);
+			builder.finish(liveDecision.pack(builder));
+
+			const accessor = Decision.getRootAsDecision(
+				new flatbuffers.ByteBuffer(builder.asUint8Array()),
+			);
+
+			const liveTrace = readDecisionTrace(accessor);
+			if (liveTrace) {
+				return { trace: liveTrace, isLive: true };
+			}
 		}
 
-		const builder = new flatbuffers.Builder(1024);
-		builder.finish(decision.pack(builder));
+		if (positionTrace) {
+			return { trace: positionTrace, isLive: false };
+		}
 
-		const accessor = Decision.getRootAsDecision(
-			new flatbuffers.ByteBuffer(builder.asUint8Array()),
-		);
-
-		return readDecisionTrace(accessor);
-	}, [decision]);
+		return { trace: null, isLive: false };
+	}, [liveDecision, positionTrace]);
 };
 
 /*
@@ -139,6 +165,16 @@ const SearchCanvas = ({ trace }: { trace: DecisionTraceModel }) => {
 	);
 };
 
+const ALL_ADVISORS = [
+	"momentum",
+	"auction",
+	"participation",
+	"pullback",
+	"profit_run",
+	"liquidity",
+	"basis",
+] as const;
+
 /*
 CouncilStrip is the War Room proper: who deliberated, what they concluded, and
 which reading vetoed or reinforced another.
@@ -147,41 +183,118 @@ A veto is not a low score. It is one advisor invalidating another's conclusion,
 which is why it is drawn as its own statement rather than folded into the
 confidence number.
 */
-const CouncilStrip = ({ trace }: { trace: DecisionTraceModel }) => (
-	<div className="flex flex-col gap-1.5 border-(--line) border-b px-3 py-2">
-		<div className="flex items-baseline justify-between gap-3">
-			<span className="font-mono text-[8px] text-(--f4) uppercase tracking-widest">
-				war room · {trace.council.participants} advisor
-				{trace.council.participants === 1 ? "" : "s"} deliberated
-			</span>
-			<span className="font-mono text-[10px]">
-				<span className="text-(--f1)">
-					{trace.council.dominantMove || "—"}
-				</span>{" "}
-				<span className="text-(--f4)">{pct(trace.council.confidence)}</span>
-			</span>
+const CouncilStrip = ({ trace }: { trace: DecisionTraceModel }) => {
+	const roster = useMemo(() => {
+		const opinions = new Map<string, AdvisorOpinion>();
+		for (const opinion of trace.council.advisors) {
+			opinions.set(opinion.advisor.toLowerCase(), opinion);
+		}
+
+		const seen = new Set<string>();
+		const items: { name: string; opinion: AdvisorOpinion | null }[] = [];
+
+		for (const name of ALL_ADVISORS) {
+			seen.add(name);
+			items.push({ name, opinion: opinions.get(name) ?? null });
+		}
+
+		for (const opinion of trace.council.advisors) {
+			const lower = opinion.advisor.toLowerCase();
+			if (!seen.has(lower)) {
+				seen.add(lower);
+				items.push({ name: opinion.advisor, opinion });
+			}
+		}
+
+		return items;
+	}, [trace.council.advisors]);
+
+	return (
+		<div className="flex flex-col gap-2 border-(--line) border-b px-3 py-2.5">
+			<div className="flex items-baseline justify-between gap-3">
+				<span className="font-mono text-[8px] text-(--f4) uppercase tracking-widest">
+					war room · {trace.council.participants} advisor
+					{trace.council.participants === 1 ? "" : "s"} deliberated
+				</span>
+				<span className="font-mono text-[10px]">
+					<span className="text-(--f1)">
+						{trace.council.dominantMove || "—"}
+					</span>{" "}
+					<span className="text-(--f4)">{pct(trace.council.confidence)}</span>
+				</span>
+			</div>
+
+			<div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4 lg:grid-cols-7">
+				{roster.map(({ name, opinion }) => {
+					if (opinion !== null) {
+						return (
+							<div
+								key={name}
+								className="flex flex-col justify-between rounded-[3px] border border-(--line2) bg-(--sunken) px-2 py-1.5 transition-colors"
+							>
+								<div className="flex items-center justify-between gap-1">
+									<span className="truncate font-mono text-[9px] font-semibold text-(--f1) uppercase tracking-tight">
+										{name}
+									</span>
+									<span className="truncate rounded bg-(--line) px-1 py-0.2 font-mono text-[8px] text-(--acc)">
+										{opinion.state || "—"}
+									</span>
+								</div>
+								<div className="mt-1 flex items-center justify-between font-mono text-[8px] text-(--f3)">
+									<span title="Predicted probability">
+										P: {pct(opinion.probability)}
+									</span>
+									<span title="Historical credibility" className="text-(--f4)">
+										C: {fmt(opinion.credibility, 2)}
+									</span>
+									<span title="Consensus weight" className="text-(--f2)">
+										W: {fmt(opinion.weight, 2)}
+									</span>
+								</div>
+							</div>
+						);
+					}
+
+					return (
+						<div
+							key={name}
+							className="flex flex-col justify-between rounded-[3px] border border-(--line) bg-(--sunken)/40 px-2 py-1.5 opacity-45"
+						>
+							<div className="flex items-center justify-between gap-1">
+								<span className="font-mono text-[9px] text-(--f4) uppercase tracking-tight">
+									{name}
+								</span>
+								<span className="font-mono text-[8px] text-(--f4)">silent</span>
+							</div>
+							<div className="mt-1 font-mono text-[8px] text-(--f4) italic">
+								awaiting bar
+							</div>
+						</div>
+					);
+				})}
+			</div>
+
+			{trace.council.synergies.length === 0 &&
+			trace.council.vetoes.length === 0 ? (
+				<span className="font-mono text-[9px] text-(--f4)">
+					No advisor reinforced or invalidated another this round.
+				</span>
+			) : null}
+
+			{trace.council.synergies.map((reason) => (
+				<span key={reason} className="font-mono text-[9px] text-(--up)">
+					+ {reason}
+				</span>
+			))}
+
+			{trace.council.vetoes.map((reason) => (
+				<span key={reason} className="font-mono text-[9px] text-(--down)">
+					− {reason} <span className="text-(--f4)">(veto)</span>
+				</span>
+			))}
 		</div>
-
-		{trace.council.synergies.length === 0 &&
-		trace.council.vetoes.length === 0 ? (
-			<span className="font-mono text-[9px] text-(--f4)">
-				No advisor reinforced or invalidated another this round.
-			</span>
-		) : null}
-
-		{trace.council.synergies.map((reason) => (
-			<span key={reason} className="font-mono text-[9px] text-(--up)">
-				+ {reason}
-			</span>
-		))}
-
-		{trace.council.vetoes.map((reason) => (
-			<span key={reason} className="font-mono text-[9px] text-(--down)">
-				− {reason} <span className="text-(--f4)">(veto)</span>
-			</span>
-		))}
-	</div>
-);
+	);
+};
 
 /*
 BranchLedger is the per-action causal ledger: for each action the search could
@@ -313,7 +426,7 @@ export const WarRoom = ({
 	symbol: string;
 	className?: string;
 }) => {
-	const trace = useTrace(symbol);
+	const { trace, isLive } = useTrace(symbol);
 
 	if (trace === null) {
 		return (
@@ -321,7 +434,7 @@ export const WarRoom = ({
 				className={`flex min-h-0 items-center justify-center px-4 py-8 ${className ?? ""}`}
 			>
 				<span className="font-mono text-[10px] text-(--f4) leading-relaxed">
-					No search ran for {symbol} this round — the council was silent, or no
+					No search ran for {symbol} — the council was silent, or no
 					transition model was available.
 				</span>
 			</div>
@@ -338,6 +451,11 @@ export const WarRoom = ({
 				</span>
 				<span className="font-mono text-[8px] text-(--f4)">
 					{trace.transitionSource}
+					{!isLive && (
+						<span className="ml-1.5 rounded bg-(--line) px-1 py-0.2 text-(--acc)">
+							frozen at entry
+						</span>
+					)}
 				</span>
 			</div>
 

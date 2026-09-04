@@ -19,18 +19,16 @@ const (
 	ChannelFuturesTickers = "futures_tickers"
 	ChannelFuturesTrades  = "futures_trades"
 
-	ChannelSignals     = "signals"
-	ChannelEnvelopes   = "envelopes"
+	ChannelSignals      = "signals"
+	ChannelEnvelopes    = "envelopes"
 	ChannelPerspectives = "perspectives"
-	ChannelDecisions   = "decisions"
-	ChannelExecutions  = "executions"
-	ChannelOrders      = "orders"
-	ChannelPositions   = "positions"
-	ChannelPnl         = "pnl"
-	ChannelTelemetry   = "telemetry"
+	ChannelDecisions    = "decisions"
+	ChannelExecutions   = "executions"
+	ChannelOrders       = "orders"
+	ChannelPositions    = "positions"
+	ChannelPnl          = "pnl"
+	ChannelTelemetry    = "telemetry"
 )
-
-
 
 /*
 ResonanceArtifact carries one settled predictive manifold to downstream stages.

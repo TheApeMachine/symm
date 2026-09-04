@@ -19,6 +19,8 @@ import (
 type tradeState struct {
 	spanStore           store.Store
 	rateResidual        equation.CausalResidual
+	returnResidual      equation.CausalResidual
+	returnRateResidual  equation.CausalResidual
 	accumulatedQty      float64
 	accumulatedNotional float64
 	barTradeCount       float64
@@ -31,6 +33,8 @@ type tradeState struct {
 	hasBarOpenMidpoint  bool
 	prevLogReturn       float64
 	hasPrevLogReturn    bool
+	prevNotionalRate    float64
+	hasPrevNotionalRate bool
 }
 
 /*
@@ -180,6 +184,27 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 			putPumpDumpMetric(measurement, "notional_rate_ratio", notionalRate/priorRateMean, data.UnitDimensionless)
 		}
 
+		// notional_rate_zscore is this entity's headline throughput reading and
+		// the evidence VerticalIgnition reads. The ratio above says how many
+		// times the baseline this bar ran at; the z-score says whether that
+		// distance is large against the estimator's own noise.
+		putResidualReadings(
+			measurement, "notional_rate", &state.rateResidual, data.UnitPerSecond,
+		)
+
+		// notional_rate says how fast capital is moving through this bar;
+		// notional_rate_velocity says whether that is accelerating. Momentum
+		// and ProfitRun both read the acceleration, not the level.
+		if state.hasPrevNotionalRate {
+			putPumpDumpMetric(
+				measurement, "notional_rate_velocity",
+				notionalRate-state.prevNotionalRate, data.UnitPerSecond,
+			)
+		}
+
+		state.prevNotionalRate = notionalRate
+		state.hasPrevNotionalRate = true
+
 		if hasMidpoint {
 			putPumpDumpMetric(measurement, "midpoint", currentMidpoint, data.UnitRate)
 			putPumpDumpMetric(measurement, "midpoint:at", currentMidpoint, data.UnitRate)
@@ -191,6 +216,25 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 
 				putPumpDumpMetric(measurement, "midpoint_log_return", logReturn, data.UnitDimensionless)
 				putPumpDumpMetric(measurement, "midpoint_return_rate", returnRate, data.UnitPerSecond)
+
+				// OrganicTrend and FadedExhaustion read these two standardized
+				// forms: a bar's move, and that move per second, each against
+				// the run of bars this symbol has already produced.
+				state.returnResidual.Step(types.Scalar(logReturn))
+				state.returnRateResidual.Step(types.Scalar(returnRate))
+
+				putPumpDumpMetric(
+					measurement, "midpoint_return_baseline",
+					float64(state.returnResidual.Baseline()), data.UnitDimensionless,
+				)
+				putResidualReadings(
+					measurement, "midpoint_return", &state.returnResidual,
+					data.UnitDimensionless,
+				)
+				putResidualReadings(
+					measurement, "midpoint_return_rate", &state.returnRateResidual,
+					data.UnitPerSecond,
+				)
 
 				posReturn := 0.0
 				negReturn := 0.0
@@ -223,5 +267,48 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 		state.barStart = tick.Timestamp
 	}
 
+	// Quality is derived by Finalize from the measurement's own facts. This
+	// entity always carries a throughput estimator, so it always declares its
+	// support: an absent support slot would tell Finalize this is a stateless
+	// direct reading and mark it whole, when in truth it may still be immature.
+	measurement.Metadata[data.MetadataSupport] = state.rateResidual.Support()
+
+	if state.rateResidual.HasPrior() {
+		if noiseVariance := float64(state.rateResidual.NoiseVariance()); noiseVariance > 0 {
+			measurement.Metadata[data.MetadataDivergence] = float64(state.rateResidual.Divergence())
+			measurement.Metadata[data.MetadataNoiseVariance] = noiseVariance
+		}
+	}
+
+	measurement.Finalize()
+
 	return measurement
+}
+
+/*
+putResidualReadings publishes the standardized forms of one metric: its
+divergence from the estimator's prior mean, and that divergence in units of
+the estimator's own dispersion. Both are undefined until a prior exists, so
+nothing is emitted on the first observation rather than a fabricated zero.
+
+The estimator must already have observed this sample; the caller Steps it, so
+that a metric whose raw form is emitted conditionally cannot silently skip the
+update and leave the baseline behind the tape.
+*/
+func putResidualReadings(
+	measurement *data.Measurement[float64],
+	name string,
+	estimator *equation.CausalResidual,
+	unit data.Unit,
+) {
+	if !estimator.HasPrior() {
+		return
+	}
+
+	putPumpDumpMetric(
+		measurement, name+"_divergence", float64(estimator.Divergence()), unit,
+	)
+	putPumpDumpMetric(
+		measurement, name+"_zscore", float64(estimator.ZScore()), data.UnitDimensionless,
+	)
 }

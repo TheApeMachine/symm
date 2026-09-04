@@ -14,6 +14,7 @@ const (
 	SourceSentiment   SourceType = "sentiment"
 	SourceToxicity    SourceType = "toxicity"
 	SourceDerivatives SourceType = "derivatives"
+	SourceMorphology  SourceType = "morphology"
 	SourceManifold    SourceType = "manifold"
 	SourceResonance   SourceType = "resonance"
 	SourceCausal      SourceType = "causal"
@@ -45,6 +46,7 @@ var SignalSources = []SourceType{
 	SourceSentiment,
 	SourceToxicity,
 	SourceDerivatives,
+	SourceMorphology,
 }
 
 var SignalSourceStrings = []string{
@@ -58,6 +60,7 @@ var SignalSourceStrings = []string{
 	"sentiment",
 	"toxicity",
 	"derivatives",
+	"morphology",
 }
 
 var LogicSourceStrings = []string{
@@ -116,12 +119,14 @@ var Level3Receivers = []SourceType{
 	SourceDepthFlow,
 	SourceToxicity,
 	SourcePumpDump,
+	SourceMorphology,
 }
 
 var Level3ReceiverStrings = []string{
 	"depthflow",
 	"toxicity",
 	"pumpdump",
+	"morphology",
 }
 
 /*

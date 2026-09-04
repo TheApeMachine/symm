@@ -172,7 +172,11 @@ func (arena *Arena) Step(envelope *types.Envelope) *types.Envelope {
 	}
 
 	for _, perspective := range issued {
-		if perspective == nil || perspective.Advisor != arena.advisor {
+		if perspective == nil {
+			continue
+		}
+
+		if perspective.Advisor != arena.advisor {
 			envelope.Perspectives = append(envelope.Perspectives, perspective)
 			continue
 		}

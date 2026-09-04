@@ -2,6 +2,7 @@ package advisor
 
 import (
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -100,6 +101,7 @@ type DeliberationOutcome struct {
 	Synergies          []string               `json:"synergies,omitempty"`
 	Participants       int                    `json:"participants"`
 	IndependentSources int                    `json:"independentSources,omitempty"`
+	Advisors           []types.AdvisorOpinion `json:"advisors,omitempty"`
 	At                 time.Time              `json:"at"`
 }
 
@@ -145,6 +147,22 @@ type WarRoom struct {
 	// participants and the system would never trade.
 	resident map[string]map[string]*types.Perspective
 	clocks   map[string]map[string]uint64
+
+	// unmapped collects advisor classes this round that projectClass did not
+	// recognise. Their weight never reached the consensus, so a non-empty
+	// slice means the council deliberated on less evidence than it was given.
+	unmapped []string
+}
+
+/*
+Unmapped returns the advisor classes the last deliberation could not project
+onto the move space, as "advisor:class". It is empty in a correct build.
+*/
+func (room *WarRoom) Unmapped() []string {
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+
+	return append([]string(nil), room.unmapped...)
 }
 
 /*
@@ -293,6 +311,8 @@ func (room *WarRoom) Deliberate(
 		uniqueSources[group]++
 	}
 
+	advisors := make([]types.AdvisorOpinion, 0, len(active))
+
 	for name, perspective := range active {
 		group := advisorSourceGroup(name)
 		groupCount := uniqueSources[group]
@@ -303,11 +323,39 @@ func (room *WarRoom) Deliberate(
 		}
 
 		room.project(mass, name, perspective, discount)
+
+		topState := string(perspective.TopClass())
+		probability, _ := perspective.Probability(types.PerspectiveState(topState))
+		credibility := room.credibilityOf(name)
+		maturity := perspective.Maturity()
+
+		if maturity < baselineMaturity {
+			maturity = baselineMaturity
+		}
+
+		factor := credibility * maturity * discount
+
+		advisors = append(advisors, types.AdvisorOpinion{
+			Advisor:     name,
+			State:       topState,
+			Probability: probability,
+			Credibility: credibility,
+			Weight:      factor,
+		})
 	}
+
+	slices.SortFunc(advisors, func(left, right types.AdvisorOpinion) int {
+		if left.Advisor < right.Advisor {
+			return -1
+		}
+
+		return 1
+	})
 
 	outcome := &DeliberationOutcome{
 		Participants:       len(active),
 		IndependentSources: len(uniqueSources),
+		Advisors:           advisors,
 		At:                 at,
 	}
 
@@ -495,7 +543,10 @@ func (room *WarRoom) project(
 			return
 		}
 
-		projectClass(mass, topClass, probability*factor)
+		if !projectClass(mass, topClass, probability*factor) {
+			room.unmapped = append(room.unmapped, name+":"+topClass)
+		}
+
 		return
 	}
 
@@ -504,11 +555,23 @@ func (room *WarRoom) project(
 			continue
 		}
 
-		projectClass(mass, string(pc.State), pc.Probability*factor)
+		if !projectClass(mass, string(pc.State), pc.Probability*factor) {
+			room.unmapped = append(room.unmapped, name+":"+string(pc.State))
+		}
 	}
 }
 
-func projectClass(mass map[MarketMove]float64, className string, weight float64) {
+/*
+projectClass adds one advisor class's weight to the moves that class asserts.
+
+It reports whether the class was recognised. An unmapped class is a contract
+failure, not a neutral event: its weight would otherwise vanish from the
+consensus while the advisor still appears to have spoken, so the council would
+silently deliberate on a fraction of the evidence it was given. Every label any
+Advisor can emit must appear here, and TestProjectClassCoversEveryAdvisorClass
+holds that closed.
+*/
+func projectClass(mass map[MarketMove]float64, className string, weight float64) bool {
 	switch className {
 	case "Building", "BuyersBreakingThrough":
 		mass[MoveExplosivePump] += weight * 1.5
@@ -533,7 +596,24 @@ func projectClass(mass map[MarketMove]float64, className string, weight float64)
 		"LiquidationsCascading":
 		mass[MoveFlashDump] += weight * 1.5
 		mass[MoveStructuralPullback] += weight
+
+	// This instrument is moving ahead of its peer group: a real directional
+	// impulse, but a narrow one that the group has not yet joined.
+	case "LocalLeader":
+		mass[MoveSteadyTrend] += weight
+		mass[MoveExplosivePump] += weight * 0.5
+
+	// This instrument is moving with no peer participation at all. The move is
+	// real but unconfirmed, which is the shape that reverts rather than trends.
+	case "IsolatedMove":
+		mass[MoveWeakDrift] += weight
+		mass[MoveStagnant] += weight * 0.5
+
+	default:
+		return false
 	}
+
+	return true
 }
 
 /*
@@ -621,8 +701,21 @@ func (room *WarRoom) crossExamine(
 		probabilityA, _ := first.Probability(types.PerspectiveState(rule.StateA))
 		probabilityB, _ := second.Probability(types.PerspectiveState(rule.StateB))
 
+		maturityA := first.Maturity()
+
+		if maturityA < baselineMaturity {
+			maturityA = baselineMaturity
+		}
+
+		maturityB := second.Maturity()
+
+		if maturityB < baselineMaturity {
+			maturityB = baselineMaturity
+		}
+
 		joint := probabilityA * probabilityB *
-			room.credibilityOf(rule.AdvisorA) * room.credibilityOf(rule.AdvisorB)
+			room.credibilityOf(rule.AdvisorA) * room.credibilityOf(rule.AdvisorB) *
+			maturityA * maturityB
 
 		if joint <= 0 {
 			continue

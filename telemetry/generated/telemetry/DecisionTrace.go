@@ -27,6 +27,7 @@ type DecisionTraceT struct {
 	Tree *MCTSNodeT `json:"tree"`
 	MaxDepth int64 `json:"maxDepth"`
 	TotalNodes int64 `json:"totalNodes"`
+	Advisors []*AdvisorOpinionT `json:"advisors"`
 }
 
 func (t *DecisionTraceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -102,6 +103,19 @@ func (t *DecisionTraceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 		recommendedActionOffset = builder.CreateString(t.RecommendedAction)
 	}
 	treeOffset := t.Tree.Pack(builder)
+	advisorsOffset := flatbuffers.UOffsetT(0)
+	if t.Advisors != nil {
+		advisorsLength := len(t.Advisors)
+		advisorsOffsets := make([]flatbuffers.UOffsetT, advisorsLength)
+		for j := 0; j < advisorsLength; j++ {
+			advisorsOffsets[j] = t.Advisors[j].Pack(builder)
+		}
+		DecisionTraceStartAdvisorsVector(builder, advisorsLength)
+		for j := advisorsLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(advisorsOffsets[j])
+		}
+		advisorsOffset = builder.EndVector(advisorsLength)
+	}
 	DecisionTraceStart(builder)
 	DecisionTraceAddIdentificationStatus(builder, identificationStatusOffset)
 	DecisionTraceAddDecisionUnavailable(builder, t.DecisionUnavailable)
@@ -123,6 +137,7 @@ func (t *DecisionTraceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	DecisionTraceAddTree(builder, treeOffset)
 	DecisionTraceAddMaxDepth(builder, t.MaxDepth)
 	DecisionTraceAddTotalNodes(builder, t.TotalNodes)
+	DecisionTraceAddAdvisors(builder, advisorsOffset)
 	return DecisionTraceEnd(builder)
 }
 
@@ -167,6 +182,13 @@ func (rcv *DecisionTrace) UnPackTo(t *DecisionTraceT) {
 	t.Tree = rcv.Tree(nil).UnPack()
 	t.MaxDepth = rcv.MaxDepth()
 	t.TotalNodes = rcv.TotalNodes()
+	advisorsLength := rcv.AdvisorsLength()
+	t.Advisors = make([]*AdvisorOpinionT, advisorsLength)
+	for j := 0; j < advisorsLength; j++ {
+		x := AdvisorOpinion{}
+		rcv.Advisors(&x, j)
+		t.Advisors[j] = x.UnPack()
+	}
 }
 
 func (rcv *DecisionTrace) UnPack() *DecisionTraceT {
@@ -464,8 +486,28 @@ func (rcv *DecisionTrace) MutateTotalNodes(n int64) bool {
 	return rcv._tab.MutateInt64Slot(42, n)
 }
 
+func (rcv *DecisionTrace) Advisors(obj *AdvisorOpinion, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *DecisionTrace) AdvisorsLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
 func DecisionTraceStart(builder *flatbuffers.Builder) {
-	builder.StartObject(20)
+	builder.StartObject(21)
 }
 func DecisionTraceAddIdentificationStatus(builder *flatbuffers.Builder, identificationStatus flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(identificationStatus), 0)
@@ -538,6 +580,12 @@ func DecisionTraceAddMaxDepth(builder *flatbuffers.Builder, maxDepth int64) {
 }
 func DecisionTraceAddTotalNodes(builder *flatbuffers.Builder, totalNodes int64) {
 	builder.PrependInt64Slot(19, totalNodes, 0)
+}
+func DecisionTraceAddAdvisors(builder *flatbuffers.Builder, advisors flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(20, flatbuffers.UOffsetT(advisors), 0)
+}
+func DecisionTraceStartAdvisorsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
 func DecisionTraceEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

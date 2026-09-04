@@ -6,30 +6,54 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/data"
-	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/temporal"
+	nmtypes "github.com/theapemachine/symm/nomagique/types"
 )
+
+type input struct {
+	clock temporal.Clock
+}
 
 /*
 Trade is the arrival-dynamics market entity. It maintains an online bivariate
-Hawkes process model per symbol and projects data.Measurement outputs.
+Hawkes process model via a single nomagique.Number composition and projects
+data.Measurement outputs.
 */
 type Trade struct {
-	mu      sync.Mutex
-	engines map[string]*nmhawkes.Engine
+	mu     sync.Mutex
+	number *nomagique.Pipeline
+	hawkes *algo.Hawkes
+
+	in     input
+	symbol string
+	at     time.Time
 }
 
 /*
-NewTrade constructs the Trade entity.
+NewTrade constructs the Trade entity with a single inlined Number composition.
 */
 func NewTrade() *Trade {
-	return &Trade{
-		engines: make(map[string]*nmhawkes.Engine),
-	}
+	trade := &Trade{}
+
+	keyStore := store.NewKeyStore(func() string { return trade.symbol })
+
+	trade.hawkes = algo.NewHawkes(algo.HawkesConfig{
+		Clock: &trade.in.clock,
+		Store: keyStore,
+		Key:   func() string { return trade.symbol },
+	})
+
+	trade.number = nomagique.Number(trade.hawkes)
+
+	return trade
 }
 
 /*
-Step receives one trade, advances the bivariate Hawkes arrival process engine,
+Step receives one trade, advances the bivariate Hawkes arrival pipeline,
 and projects exactly one Measurement.
 */
 func (trade *Trade) Step(observation kraken.TradeData) *data.Measurement[float64] {
@@ -42,30 +66,14 @@ func (trade *Trade) Step(observation kraken.TradeData) *data.Measurement[float64
 	trade.mu.Lock()
 	defer trade.mu.Unlock()
 
-	engine, found := trade.engines[observation.Symbol]
-	if !found {
-		engine = nmhawkes.NewEngine()
-		trade.engines[observation.Symbol] = engine
-	}
-
-	id := observation.Symbol + ":hawkes:" + observation.Timestamp.Format(time.RFC3339Nano)
-	measurement := data.NewMeasurement[float64](
-		id,
-		observation.Symbol,
-		"hawkes",
-		observation.Timestamp,
-		observation.Timestamp,
-	)
+	trade.symbol = observation.Symbol
+	trade.at = observation.Timestamp
+	trade.in.clock.Observe(observation.Timestamp)
 
 	mark := markForSide(observation.Side)
-	from, err := engine.Step(mark, observation.Timestamp, measurement)
-	if err != nil {
-		measurement.Err = err
-		return measurement
-	}
-	measurement.From = from
+	trade.number.Step(nmtypes.Scalar(mark))
 
-	return measurement
+	return trade.number.Measurement()
 }
 
 /*

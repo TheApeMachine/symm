@@ -168,7 +168,7 @@ func envelopeSymbol(envelope *types.Envelope) string {
 		return envelope.Opportunities[0].Symbol
 	}
 
-	if len(envelope.Perspectives) > 0 {
+	if len(envelope.Perspectives) > 0 && envelope.Perspectives[0] != nil {
 		return envelope.Perspectives[0].Symbol
 	}
 
