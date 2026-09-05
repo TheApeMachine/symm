@@ -16,10 +16,9 @@ learningDesk routes the agent's policy intents to the configured account. It
 is the only place an agent decision becomes an order, and it is attached only
 when an account is configured, so a run without one cannot reach a venue.
 
-The agent owns the exit: it re-evaluates every open position on each book
-update and issues its own EXIT. Entries are therefore submitted self-managed —
-the desk still sizes them under its risk plan and keeps that plan as a
-catastrophic floor, but the strategy stop is not what closes them.
+The agent owns the whole trade life-cycle. It re-evaluates every open position
+on each book update and issues its own EXIT, so nothing else holds protective
+geometry: the desk carries the lot and executes what it is told.
 */
 type learningDesk struct {
 	desk        *broker.Desk
@@ -91,7 +90,6 @@ func (bridge *learningDesk) Submit(intent strategy.ExecutionIntent) error {
 
 	decision := types.NewDecision(types.ActionEnter, intent.Symbol)
 	decision.At = intent.At
-	decision.SelfManaged = true
 	decision.AllocationClass = "capital"
 	decision.Cause = "policy_edge"
 	decision.Reason = intent.Skill.Reason

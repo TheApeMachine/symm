@@ -24,18 +24,17 @@ fan-out behind.
 */
 type Desk struct {
 	*PositionStore
-	ctx        context.Context
-	cancel     context.CancelFunc
-	err        error
-	status     types.Status
-	api        *websocket.API
-	instrument *Instrument
-	price      *Price
-	balance    *Balance
-	equity     atomic.Pointer[types.EquityReading]
-	recovery   *Recovery
-	positions  *sync.Map
-	passage    *types.PassageModel
+	ctx            context.Context
+	cancel         context.CancelFunc
+	err            error
+	status         types.Status
+	api            *websocket.API
+	instrument     *Instrument
+	price          *Price
+	balance        *Balance
+	equity         atomic.Pointer[types.EquityReading]
+	recovery       *Recovery
+	positions      *sync.Map
 	balanceRefresh atomic.Bool
 	// lifecycleRecorder is the optional Hindsight trading-lifecycle sink. It
 	// records entry/fill/position-open/exit/close transitions observationally;
@@ -55,21 +54,12 @@ type LifecycleRecorder interface {
 }
 
 /*
-MarkObserver consumes executable position marks as predictive context. It is a
-separate optional interface so broker valuation remains the only account-level
-outcome while intra-position evidence can arrive at ticker cadence.
-*/
-type MarkObserver interface {
-	ObserveMark(types.MarkFeedback) error
-}
-
-/*
 NewDesk constructs the serial broker owner from its explicit dependencies. The
 desk owns no transport or account objects itself: the caller supplies the API,
 instrument, price, balance, and recovery handler it will
 route through, so the live wiring and tests share one construction path rather
 than a half-built struct. positions is the shared open-position map the recovery
-publisher repopulates on boot. store persists position stoploss state; the desk
+publisher repopulates on boot. store persists open-lot entry facts; the desk
 embeds it so Save resolves against a live database rather than a nil pointer.
 */
 func NewDesk(
@@ -95,7 +85,6 @@ func NewDesk(
 		recovery:      recovery,
 		PositionStore: store,
 		positions:     positions,
-		passage:       types.NewPassageModel(),
 	}
 
 	if desk.positions == nil {
@@ -255,54 +244,6 @@ func (desk *Desk) stepLevel3(level3 kraken.Level3Data, epoch uint64) error {
 
 	return nil
 }
-
-/*
-StepCausative routes cross-stream causative context to an open position.
-*/
-func (desk *Desk) StepCausative(symbol string, causative types.CausativeContext) error {
-	if desk == nil || desk.positions == nil || symbol == "" {
-		return nil
-	}
-
-	found, ok := desk.positions.Load(symbol)
-
-	if !ok || found == nil {
-		return nil
-	}
-
-	position, ok := found.(*Position)
-
-	if !ok || position == nil {
-		return nil
-	}
-
-	return position.publishGuardian(causative)
-}
-
-/*
-StepPerspective routes an Advisor perspective update to an open position.
-*/
-func (desk *Desk) StepPerspective(perspective *types.Perspective) error {
-	if desk == nil || desk.positions == nil || perspective == nil || perspective.Symbol == "" {
-		return nil
-	}
-
-	found, ok := desk.positions.Load(perspective.Symbol)
-
-	if !ok || found == nil {
-		return nil
-	}
-
-	position, ok := found.(*Position)
-
-	if !ok || position == nil {
-		return nil
-	}
-
-	return position.publishGuardian(perspective)
-}
-
-
 
 /*
 Price exposes the desk's price surface so the market data path can keep it
@@ -539,15 +480,15 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 
 	switch decision.Action {
 	case types.ActionEnter:
-		// A self-managed entry supplies no strategy stop because its issuer
-		// exits it directly on every book update. The desk still builds and
-		// enforces its own risk plan below, which stays as a catastrophic
-		// floor rather than as the exit mechanism.
+		// The issuing agent owns the exit: it re-evaluates every open position
+		// on each book update and commands its own exit. The desk holds the
+		// lot and executes what it is told; it does not carry protective
+		// geometry of its own.
 		if decision.ProposedQuantity == nil || decision.ProposedQuantity.Sign() <= 0 ||
-			(decision.Stoploss == nil && !decision.SelfManaged) || desk.price == nil {
+			desk.price == nil {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
-				"desk: quantity, price, and either a strategy stoploss or self-managed exit required for entry",
+				"desk: quantity and a live price are required for entry",
 				nil,
 			))
 		}
@@ -606,75 +547,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			))
 		}
 
-		feeRate := decimal.NewFromInt64(0).Add(fee.Fee).Div(
-			decimal.NewFromInt64(100),
-		)
-		multiples := decision.Risk.Multiples
-
-		if multiples.Risk <= 0 {
-			multiples = types.DefaultRiskMultiples()
-		}
-
-		maxLoss := decision.Risk.MaxLoss
-
-		if maxLoss == nil || maxLoss.Sign() <= 0 {
-			maxLoss = decision.ProposedNotional
-		}
-
-		plan := types.NewRiskPlan(types.RiskInputs{
-			ReferencePrice: cost.EntryPrice,
-			Spread:         cost.Spread,
-			Impact:         cost.Impact,
-			TickSize:       &pair.TickSize,
-			ExitFeeRate:    feeRate,
-			EntryFeeRate:   feeRate,
-			MaxLoss:        maxLoss,
-			Multiples:      multiples,
-		})
-
-		if !plan.Present {
-			return errnie.Error(errnie.Err(
-				errnie.NotAcceptable,
-				"desk: current execution geometry cannot support the admitted risk plan",
-				nil,
-			))
-		}
-
-		if maximum := plan.MaxQuantity(cost.EntryPrice); maximum != nil &&
-			maximum.Sign() > 0 && maximum.Cmp(decision.ProposedQuantity) < 0 {
-			return errnie.Error(errnie.Err(
-				errnie.NotAcceptable,
-				"desk: current risk budget no longer supports the admitted quantity",
-				nil,
-			))
-		}
-
-		stoploss, stopErr := types.NewStoplossWithPlan(
-			desk.ctx,
-			decision.Symbol,
-			cost.EntryPrice,
-			cost.BestBid,
-			decision.Forecast,
-			max(0, decision.ForecastHorizon),
-			&pair.TickSize,
-			feeRate,
-			feeRate,
-			&plan,
-			time.Now(),
-		)
-
-		if stopErr != nil {
-			return errnie.Error(errnie.Err(
-				errnie.NotAcceptable,
-				"desk: current risk plan cannot construct an entry stop",
-				stopErr,
-			))
-		}
-
-		if decision.Stoploss != nil {
-			_ = decision.Stoploss.Close()
-		}
-
 		decision.EntryCost = cost
 		decision.ReferencePrice = decimal.NewFromInt64(0).Add(cost.BestAsk)
 		decision.EntryPrice = decimal.NewFromInt64(0).Add(cost.EntryPrice)
@@ -682,8 +554,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		decision.ProposedNotional = decimal.NewFromInt64(0).Add(cost.GrossNotional).Add(
 			cost.EntryFee,
 		)
-		decision.Risk = plan
-		decision.Stoploss = stoploss
 		position := NewPosition(
 			desk.ctx,
 			desk.api,
@@ -694,7 +564,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			pair,
 			decision,
 		)
-
 
 		position.onClose = func() {
 			desk.positions.CompareAndDelete(decision.Symbol, position)

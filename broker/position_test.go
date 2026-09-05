@@ -1,7 +1,6 @@
 package broker
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -10,8 +9,6 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -231,83 +228,6 @@ func TestPartialFillExitAccumulatesWholeOrder(t *testing.T) {
 	})
 }
 
-/*
-triggeredExitPosition builds an open lot whose stoploss has already latched
-TRIGGERED, mirroring the state Exit() requires before it will submit anything.
-*/
-func triggeredExitPosition(t *testing.T, private *mockConn) *Position {
-	api := websocket.NewAPI(t.Context(), newMockConn(), private)
-
-	position := &Position{
-		pair: kraken.InstrumentPair{Symbol: "SHAPE/USD"},
-		api:  api,
-		Decision: types.Decision{
-			ID:     "shape-decision",
-			Symbol: "SHAPE/USD",
-		},
-		EntryOrder: &spot.AddOrderRequest{
-			ClOrdId: "shape-entry",
-			Type:    "buy",
-			Volume:  "100000",
-			Pair:    "SHAPE/USD",
-		},
-		Holding: &types.Holding{
-			Symbol:      "SHAPE/USD",
-			Qty:         mustDecimal("100000"),
-			SellableQty: mustDecimal("100000"),
-			EntryPrice:  mustDecimal("0.000490"),
-			EntryFee:    mustDecimal("0.04"),
-			Stoploss: &types.Stoploss{
-				Status: types.TRIGGERED,
-				Symbol: "SHAPE/USD",
-				Locked: true,
-			},
-		},
-	}
-
-	position.setStatus(types.OPEN)
-
-	return position
-}
-
-/*
-A triggered stop is only meaningful if Exit() gets another chance after a
-failed submission — otherwise a single transient AddOrder error (a dropped
-connection, an exchange-side rejection) permanently strands the position: the
-stop stays latched TRIGGERED forever with no order ever in flight, while price
-keeps moving underneath it. exitClaim used to latch true on the first attempt
-and never release on failure, so every subsequent tick's Exit() call would
-silently no-op instead of retrying.
-*/
-func TestExitRetriesAfterFailedSubmission(t *testing.T) {
-	Convey("Given a triggered stop whose first exit submission fails", t, func() {
-		private := newMockConn()
-		private.AddOrderErr = errors.New("exchange rejected order")
-		position := triggeredExitPosition(t, private)
-
-		_, err := position.Exit()
-		So(err, ShouldNotBeNil)
-		So(position.ExitOrder, ShouldBeNil)
-
-		Convey("a later tick can retry and submit the exit successfully", func() {
-			private.AddOrderErr = nil
-
-			_, err := position.Exit()
-
-			So(err, ShouldBeNil)
-			So(position.ExitOrder, ShouldNotBeNil)
-			So(position.ExitOrder.ClOrdId, ShouldNotEqual, position.EntryOrder.ClOrdId)
-			So(position.ExitOrder.ClOrdId, ShouldEqual, uuid.NewSHA1(
-				uuid.NameSpaceOID,
-				[]byte("symm:exit:"+position.EntryOrder.ClOrdId),
-			).String())
-			_, uuidErr := uuid.Parse(position.ExitOrder.ClOrdId)
-			So(uuidErr, ShouldBeNil)
-			So(position.Holding.Status, ShouldEqual, types.PENDING)
-		})
-	})
-}
-
 func TestPositionOnExecutionTerminalPartialEntry(t *testing.T) {
 	Convey("Given a live entry that partially fills before Kraken cancels its remainder", t, func() {
 		conn := newExecutingConn(nil)
@@ -324,21 +244,6 @@ func TestPositionOnExecutionTerminalPartialEntry(t *testing.T) {
 			ForecastHorizon:  1,
 			Mark:             mustDecimal("2.00"),
 		}
-		stoploss, err := types.NewStoplossWithPlan(
-			t.Context(),
-			"TEST/USD",
-			mustDecimal("2.00"),
-			mustDecimal("2.00"),
-			&learning.RLSOutput{Ready: true},
-			0,
-			mustDecimal("0.01"),
-			mustDecimal("0.008"),
-			mustDecimal("0.008"),
-			nil,
-			time.Now(),
-		)
-		So(err, ShouldBeNil)
-		decision.Stoploss = stoploss
 		position := NewPosition(
 			t.Context(), desk.api, desk.instrument, desk.price, desk.balance,
 			desk.PositionStore,
@@ -368,7 +273,7 @@ func TestPositionOnExecutionTerminalPartialEntry(t *testing.T) {
 			OrderStatus:   "canceled",
 		}
 
-		Convey("the filled inventory remains open and protected", func() {
+		Convey("the filled inventory remains open and owned", func() {
 			finished := position.onExecution(kraken.Execution{
 				Channel: "executions",
 				Type:    "update",
@@ -382,7 +287,6 @@ func TestPositionOnExecutionTerminalPartialEntry(t *testing.T) {
 			So(position.Holding.SellableQty.Cmp(mustDecimal("40")), ShouldEqual, 0)
 			So(position.Holding.EntryPrice.Cmp(mustDecimal("2.00")), ShouldEqual, 0)
 			So(position.Holding.EntryFee.Cmp(mustDecimal("0.20")), ShouldEqual, 0)
-			So(position.Holding.Stoploss.Status, ShouldEqual, types.ARMED)
 		})
 
 		Convey("a later terminal status without trade fields retains the prior partial fill", func() {
@@ -414,34 +318,6 @@ func TestPositionOnExecutionTerminalPartialEntry(t *testing.T) {
 			So(position.Holding.Status, ShouldEqual, types.OPEN)
 			So(position.Holding.Qty.Cmp(mustDecimal("40")), ShouldEqual, 0)
 			So(position.Holding.SellableQty.Cmp(mustDecimal("40")), ShouldEqual, 0)
-			So(position.Holding.Stoploss.Status, ShouldEqual, types.ARMED)
-		})
-	})
-}
-
-/*
-The operator's manual EXIT button dispatches through the guardian ring
-(ManualExit -> publishGuardian -> handleGuardian -> executeManualExit), and
-handleGuardian used to discard executeManualExit's error entirely — a click
-that failed for any reason (a stop not in an overridable state, a rejected
-order, an already-claimed exit) looked identical to a click that worked: no
-log, no error, the button just stuck on "EXITING" forever. This asserts the
-failure is no longer silent — executeManualExit itself returns a real error
-that a caller (or handleGuardian's log) can observe.
-*/
-func TestExecuteManualExitReportsFailure(t *testing.T) {
-	Convey("Given a lot whose stoploss cannot be manually overridden", t, func() {
-		private := newMockConn()
-		position := triggeredExitPosition(t, private)
-		// PENDING is neither ARMED (overridable) nor TRIGGERED (already an
-		// exit path) — TriggerManualOverride must refuse it.
-		position.Holding.Stoploss.Status = types.PENDING
-
-		Convey("executeManualExit surfaces the rejection instead of pretending success", func() {
-			err := position.executeManualExit()
-
-			So(err, ShouldNotBeNil)
-			So(position.ExitOrder, ShouldBeNil)
 		})
 	})
 }

@@ -178,23 +178,17 @@ func TestRecoverContinuesPastOneAssetFailure(t *testing.T) {
 
 		// EntryAt must match what recoverBasis derives from the BBB trade
 		// fixture's Time (decimal 1) — time.Unix(1, 0).UTC() — since Load
-		// now keys on (symbol, entry_at) rather than symbol alone.
+		// keys on (symbol, entry_at) rather than symbol alone.
 		bbbEntryAt := time.Unix(1, 0).UTC()
-		bbbStoploss := &types.Stoploss{
-			Symbol:        "BBB/USD",
-			Status:        types.ARMED,
-			TickSize:      mustDecimal("0.01"),
-			TrailDistance: mustDecimal("0.1"),
-			Floor:         mustDecimal("1.5"),
-			Mark:          mustDecimal("2.0"),
-			Peak:          mustDecimal("2.2"),
-			ProfitLine:    mustDecimal("1.8"),
-			ArmAt:         mustDecimal("1.7"),
-			LockFloor:     mustDecimal("1.6"),
-			EntryAt:       &bbbEntryAt,
-		}
-		if err := recovery.store.Save(bbbStoploss); err != nil {
-			t.Fatalf("failed to seed BBB stoploss: %v", err)
+		if err := recovery.store.Save(&types.Holding{
+			Symbol:     "BBB/USD",
+			Status:     types.OPEN,
+			Qty:        mustDecimal("2"),
+			EntryPrice: mustDecimal("2.0"),
+			EntryFee:   mustDecimal("0.01"),
+			EntryAt:    &bbbEntryAt,
+		}); err != nil {
+			t.Fatalf("failed to seed BBB open position: %v", err)
 		}
 
 		// CCC has no registered instrument pair (recoveryConn.SubInstrument
@@ -219,81 +213,35 @@ func TestRecoverContinuesPastOneAssetFailure(t *testing.T) {
 }
 
 /*
-A wallet balance with a real, unmatched buy in trade history is a genuinely
-open position even when the local SQLite stoploss row backing it is gone —
-the process can die between a fill landing and its execution frame persisting
-that row. Recovery used to treat the missing row as fatal and drop the
-position entirely: the exchange still shows the inventory, but the running
-system loses all track of it, unprotected and invisible in the UI. This
-proves the position is instead recovered with protection rebuilt from current
-market geometry.
+TestRecoverAdoptsOpenLotWithoutStoredRow covers the wallet being authoritative
+for whether a lot exists. A wallet balance with a real, unmatched buy in trade
+history is a genuinely open position even when the local row backing it is
+gone — the process can die between a fill landing and its execution frame
+persisting that row. It is adopted with its basis reconstructed from trade
+history and flagged degraded, never dropped and never left untracked.
 */
-func TestRecoverSynthesizesStoplossWhenStoreRowMissing(t *testing.T) {
-	Convey("Given an open asset whose stoploss row is missing from the store", t, func() {
+func TestRecoverAdoptsOpenLotWithoutStoredRow(t *testing.T) {
+	Convey("Given an open asset with no stored row in the position store", t, func() {
 		balances := map[string]*decimal.Decimal{
-			"AAA": mustDecimal("10"),
+			"AAA": mustDecimal("2"),
 		}
 		trades := map[string]spot.Trade{
-			"t-aaa": tradeFixture("AAA/USD", "10", "1.0", "10.0"),
+			"t-aaa": tradeFixture("AAA/USD", "2", "1.0", "2.0"),
 		}
-
 		recovery, positions := newTestRecovery(t, balances, trades)
 
-		Convey("Recover rebuilds protection and restores the position", func() {
-			err := recovery.Recover()
-
-			So(err, ShouldBeNil)
+		Convey("Recover restores the position and marks the recovery degraded", func() {
+			So(recovery.Recover(), ShouldBeNil)
 
 			value, restored := positions.Load("AAA/USD")
 			So(restored, ShouldBeTrue)
 
 			position, ok := value.(*Position)
 			So(ok, ShouldBeTrue)
-			So(position.Holding.Stoploss, ShouldNotBeNil)
-			So(position.Holding.Stoploss.Status, ShouldEqual, types.ARMED)
-			So(position.Holding.Stoploss.Floor, ShouldNotBeNil)
-			So(position.Holding.Stoploss.Floor.Sign(), ShouldBeGreaterThan, 0)
-		})
-	})
-}
-
-/*
-Recover runs before the instrument subscription has delivered any ticker or
-book frame for the symbols it is trying to protect — that subscription
-happens much later in boot, batched across the whole tradeable universe. A
-position whose stored stoploss row is missing must still be recoverable in
-that window: synthesizeStoploss cannot require a live quote it has no way to
-have yet, only the wallet balance, trade history, and the venue's own tick
-size.
-*/
-func TestRecoverSynthesizesStoplossWithoutLiveQuote(t *testing.T) {
-	Convey("Given an open asset with no ticker or book data available yet", t, func() {
-		balances := map[string]*decimal.Decimal{
-			"AAA": mustDecimal("10"),
-		}
-		trades := map[string]spot.Trade{
-			"t-aaa": tradeFixture("AAA/USD", "10", "1.0", "10.0"),
-		}
-
-		recovery, positions := newTestRecoveryWithOptions(t, balances, trades, false)
-
-		Convey("Recover still rebuilds protection from entry price and tick size alone", func() {
-			err := recovery.Recover()
-
-			So(err, ShouldBeNil)
-
-			value, restored := positions.Load("AAA/USD")
-			So(restored, ShouldBeTrue)
-
-			position, ok := value.(*Position)
-			So(ok, ShouldBeTrue)
-			So(position.Holding.Stoploss, ShouldNotBeNil)
-			So(position.Holding.Stoploss.Status, ShouldEqual, types.ARMED)
-			So(position.Holding.Stoploss.Floor, ShouldNotBeNil)
-			So(position.Holding.Stoploss.Floor.Sign(), ShouldBeGreaterThan, 0)
-			// With no live book, mark starts at the known entry price rather
-			// than an unavailable BestBid.
-			So(position.Holding.Stoploss.Mark.Cmp(mustDecimal("1.0")), ShouldEqual, 0)
+			So(position.DegradedRecovery, ShouldBeTrue)
+			So(position.Holding.Qty.Cmp(mustDecimal("2")), ShouldEqual, 0)
+			So(position.Holding.EntryPrice, ShouldNotBeNil)
+			So(position.Holding.EntryPrice.Sign(), ShouldBeGreaterThan, 0)
 		})
 	})
 }

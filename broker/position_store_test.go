@@ -1,230 +1,92 @@
 package broker
 
 import (
-	"database/sql"
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/types"
 )
 
 const (
 	testPositionStoreQueueDepth = 64
-	testPositionStoreBatchSize  = 16
+	testPositionStoreBatchSize  = 8
 )
 
-/*
-legacyStoplossRow marshals a Stoploss the way a pre-entry_at build did: state
-JSON with no entry_at field at all, inserted into a symbol-only schema table.
-*/
-func legacyStoplossRow(t *testing.T, symbol string) []byte {
-	t.Helper()
-
-	stoploss := &types.Stoploss{
-		Symbol:        symbol,
-		Status:        types.ARMED,
-		TickSize:      mustDecimal("0.01"),
-		TrailDistance: mustDecimal("0.1"),
-		Floor:         mustDecimal("1.5"),
-		Mark:          mustDecimal("2.0"),
-		Peak:          mustDecimal("2.2"),
-		ProfitLine:    mustDecimal("1.8"),
-		ArmAt:         mustDecimal("1.7"),
-		LockFloor:     mustDecimal("1.6"),
+/* openLot builds one filled lot's durable entry facts. */
+func openLot(symbol string, entryAt time.Time) *types.Holding {
+	return &types.Holding{
+		Symbol:     symbol,
+		Status:     types.OPEN,
+		Qty:        mustDecimal("3"),
+		EntryPrice: mustDecimal("2.00"),
+		EntryFee:   mustDecimal("0.01"),
+		EntryAt:    &entryAt,
 	}
-
-	state, err := stoploss.MarshalState()
-	if err != nil {
-		t.Fatalf("failed to marshal legacy stoploss: %v", err)
-	}
-
-	return state
 }
 
-func TestPositionStoreEnsureSchema(t *testing.T) {
-	Convey("Given a database created under the pre-entry_at symbol-only schema", t, func() {
-		storePath := t.TempDir() + "/legacy.sqlite"
+func newTestPositionStore(t *testing.T) *PositionStore {
+	t.Helper()
 
-		seed, err := sql.Open("sqlite3", storePath)
-		if err != nil {
-			t.Fatalf("failed to open seed database: %v", err)
-		}
+	store, err := NewPositionStore(
+		t.TempDir()+"/positions.sqlite",
+		testPositionStoreQueueDepth,
+		testPositionStoreBatchSize,
+	)
 
-		if _, err := seed.Exec(`
-CREATE TABLE position_stoplosses (
-    symbol TEXT PRIMARY KEY,
-    state BLOB NOT NULL
-) STRICT;`); err != nil {
-			t.Fatalf("failed to create legacy schema: %v", err)
-		}
+	if err != nil {
+		t.Fatalf("open position store: %v", err)
+	}
 
-		if _, err := seed.Exec(
-			"INSERT INTO position_stoplosses (symbol, state) VALUES (?, ?)",
-			"AAA/USD", legacyStoplossRow(t, "AAA/USD"),
-		); err != nil {
-			t.Fatalf("failed to seed legacy row: %v", err)
-		}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
+}
 
-		if err := seed.Close(); err != nil {
-			t.Fatalf("failed to close seed database: %v", err)
-		}
+func TestPositionStoreOpenLots(t *testing.T) {
+	entryAt := time.Unix(1_700_000_000, 0).UTC()
 
-		Convey("Opening it through NewPositionStore migrates the table without data loss of position identity", func() {
-			store, err := NewPositionStore(
-				storePath, testPositionStoreQueueDepth, testPositionStoreBatchSize,
-			)
+	Convey("Given a store holding one open lot's entry facts", t, func() {
+		store := newTestPositionStore(t)
+		So(store.Save(openLot("AAA/USD", entryAt)), ShouldBeNil)
+
+		Convey("It reads back the basis the lot was actually opened on", func() {
+			holding, err := store.Load(t.Context(), "AAA/USD", entryAt)
 			So(err, ShouldBeNil)
-			defer store.Close()
+			So(holding, ShouldNotBeNil)
+			So(holding.Symbol, ShouldEqual, "AAA/USD")
+			So(holding.EntryPrice.String(), ShouldEqual, "2.00")
+			So(holding.Qty.String(), ShouldEqual, "3")
+		})
 
-			var columnCount int
-			err = store.database.QueryRow(
-				"SELECT count(*) FROM pragma_table_info('position_stoplosses') WHERE name = 'entry_at'",
-			).Scan(&columnCount)
+		Convey("A different entry time is a different lot, never this one's basis", func() {
+			holding, err := store.Load(t.Context(), "AAA/USD", entryAt.Add(time.Second))
 			So(err, ShouldBeNil)
-			So(columnCount, ShouldEqual, 1)
+			So(holding, ShouldBeNil)
+		})
 
-			var legacyTableCount int
-			err = store.database.QueryRow(
-				"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='position_stoplosses_pre_entry_at'",
-			).Scan(&legacyTableCount)
+		Convey("A lot that was never stored reports absent rather than empty facts", func() {
+			holding, err := store.Load(t.Context(), "BBB/USD", entryAt)
 			So(err, ShouldBeNil)
-			So(legacyTableCount, ShouldEqual, 0)
+			So(holding, ShouldBeNil)
+		})
 
-			Convey("A legacy row with no entry_at is dropped, not silently misattributed to a new lot", func() {
-				var rowCount int
-				err = store.database.QueryRow(
-					"SELECT count(*) FROM position_stoplosses WHERE symbol = 'AAA/USD'",
-				).Scan(&rowCount)
-				So(err, ShouldBeNil)
-				So(rowCount, ShouldEqual, 0)
-			})
+		Convey("Closing the position clears every row the symbol left behind", func() {
+			So(store.Save(openLot("AAA/USD", entryAt.Add(time.Hour))), ShouldBeNil)
+			So(store.Delete("AAA/USD"), ShouldBeNil)
+			So(store.Sync(), ShouldBeNil)
 
-			Convey("The store is fully usable afterward for new saves and loads", func() {
-				entryAt := time.Unix(1700000000, 0).UTC()
-				stoploss := &types.Stoploss{
-					Symbol:        "BBB/USD",
-					Status:        types.ARMED,
-					TickSize:      mustDecimal("0.01"),
-					TrailDistance: mustDecimal("0.1"),
-					Floor:         mustDecimal("1.5"),
-					Mark:          mustDecimal("2.0"),
-					Peak:          mustDecimal("2.2"),
-					ProfitLine:    mustDecimal("1.8"),
-					ArmAt:         mustDecimal("1.7"),
-					LockFloor:     mustDecimal("1.6"),
-					EntryAt:       &entryAt,
-				}
-
-				So(store.Save(stoploss), ShouldBeNil)
-
-				loaded, err := store.Load(t.Context(), "BBB/USD", entryAt)
-				So(err, ShouldBeNil)
-				So(loaded, ShouldNotBeNil)
-				So(loaded.Symbol, ShouldEqual, "BBB/USD")
-			})
+			holding, err := store.Load(t.Context(), "AAA/USD", entryAt)
+			So(err, ShouldBeNil)
+			So(holding, ShouldBeNil)
 		})
 	})
 
-	Convey("Given a fresh database with no existing tables", t, func() {
-		storePath := t.TempDir() + "/fresh.sqlite"
+	Convey("Given a holding that never filled", t, func() {
+		store := newTestPositionStore(t)
 
-		Convey("NewPositionStore creates the current schema directly", func() {
-			store, err := NewPositionStore(
-				storePath, testPositionStoreQueueDepth, testPositionStoreBatchSize,
-			)
-			So(err, ShouldBeNil)
-			defer store.Close()
-
-			var columnCount int
-			err = store.database.QueryRow(
-				"SELECT count(*) FROM pragma_table_info('position_stoplosses') WHERE name = 'entry_at'",
-			).Scan(&columnCount)
-			So(err, ShouldBeNil)
-			So(columnCount, ShouldEqual, 1)
-		})
-	})
-
-	Convey("Given a database already migrated to the current schema", t, func() {
-		storePath := t.TempDir() + "/current.sqlite"
-
-		store, err := NewPositionStore(
-			storePath, testPositionStoreQueueDepth, testPositionStoreBatchSize,
-		)
-		if err != nil {
-			t.Fatalf("failed to open store: %v", err)
-		}
-
-		entryAt := time.Unix(1700000000, 0).UTC()
-		stoploss := &types.Stoploss{
-			Symbol:        "CCC/USD",
-			Status:        types.ARMED,
-			TickSize:      mustDecimal("0.01"),
-			TrailDistance: mustDecimal("0.1"),
-			Floor:         mustDecimal("1.5"),
-			Mark:          mustDecimal("2.0"),
-			Peak:          mustDecimal("2.2"),
-			ProfitLine:    mustDecimal("1.8"),
-			ArmAt:         mustDecimal("1.7"),
-			LockFloor:     mustDecimal("1.6"),
-			EntryAt:       &entryAt,
-		}
-
-		if err := store.Save(stoploss); err != nil {
-			t.Fatalf("failed to save stoploss: %v", err)
-		}
-
-		if err := store.Close(); err != nil {
-			t.Fatalf("failed to close store: %v", err)
-		}
-
-		Convey("Re-opening it is a no-op that preserves the existing row", func() {
-			reopened, err := NewPositionStore(
-				storePath, testPositionStoreQueueDepth, testPositionStoreBatchSize,
-			)
-			So(err, ShouldBeNil)
-			defer reopened.Close()
-
-			loaded, err := reopened.Load(t.Context(), "CCC/USD", entryAt)
-			So(err, ShouldBeNil)
-			So(loaded, ShouldNotBeNil)
-			So(loaded.Symbol, ShouldEqual, "CCC/USD")
-		})
-	})
-
-	Convey("Given a PositionStore with minimal queue depth", t, func() {
-		storePath := t.TempDir() + "/shedding.sqlite"
-
-		store, err := NewPositionStore(storePath, 1, 1)
-		So(err, ShouldBeNil)
-		defer store.Close()
-
-		entryAt := time.Unix(1700000000, 0).UTC()
-		stoploss := &types.Stoploss{
-			Symbol:        "BURST/USD",
-			Status:        types.ARMED,
-			TickSize:      mustDecimal("0.01"),
-			TrailDistance: mustDecimal("0.1"),
-			Floor:         mustDecimal("1.5"),
-			Mark:          mustDecimal("2.0"),
-			Peak:          mustDecimal("2.2"),
-			ProfitLine:    mustDecimal("1.8"),
-			ArmAt:         mustDecimal("1.7"),
-			LockFloor:     mustDecimal("1.6"),
-			EntryAt:       &entryAt,
-		}
-
-		Convey("A massive burst of rapid save operations does not block the caller", func() {
-			for iteration := 0; iteration < 200; iteration++ {
-				err := store.Save(stoploss)
-				So(err, ShouldBeNil)
-			}
-
-			Convey("Persistence can be synchronized without deadlock", func() {
-				err := store.Sync()
-				So(err, ShouldBeNil)
-			})
+		Convey("It is refused rather than written as a position that opened", func() {
+			So(store.Save(&types.Holding{Symbol: "AAA/USD"}), ShouldNotBeNil)
+			So(store.Save(nil), ShouldNotBeNil)
 		})
 	})
 }
@@ -241,24 +103,12 @@ func BenchmarkPositionStoreSave(b *testing.B) {
 	}
 
 	entryAt := time.Unix(1_700_000_000, 0).UTC()
-	stoploss := &types.Stoploss{
-		Symbol:        "BENCH/USD",
-		Status:        types.ARMED,
-		TickSize:      mustDecimal("0.01"),
-		TrailDistance: mustDecimal("0.1"),
-		Floor:         mustDecimal("1.5"),
-		Mark:          mustDecimal("2.0"),
-		Peak:          mustDecimal("2.2"),
-		ProfitLine:    mustDecimal("1.8"),
-		ArmAt:         mustDecimal("1.7"),
-		LockFloor:     mustDecimal("1.6"),
-		EntryAt:       &entryAt,
-	}
+	holding := openLot("BENCH/USD", entryAt)
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for iteration := 0; iteration < b.N; iteration++ {
-		if err := store.Save(stoploss); err != nil {
+	for b.Loop() {
+		if err := store.Save(holding); err != nil {
 			b.Fatal(err)
 		}
 	}

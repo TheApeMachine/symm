@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"math"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -46,7 +45,6 @@ type Position struct {
 	recordFill     func(kind string, execution kraken.ExecutionData)
 	pair           kraken.InstrumentPair
 	seenExecutions map[string]struct{}
-	passage        *passageTracker
 	Status         atomic.Pointer[types.Status] `json:"-"`
 	/*
 		Decision is the arbitration that opened this lot, kept verbatim.
@@ -163,7 +161,6 @@ func NewPosition(
 			EntryPrice:    decision.EntryPrice,
 			Mark:          decision.Mark,
 			IsOpportunity: decision.Opportunity,
-			Stoploss:      decision.Stoploss,
 		},
 	}
 	guardian := &guardianHandler{position: position}
@@ -252,10 +249,6 @@ func (position *Position) handleGuardian(value any) {
 		})
 	case kraken.Level3Data:
 		position.onLevel3(payload)
-	case types.CausativeContext:
-		position.onCausative(payload)
-	case *types.Perspective:
-		position.onPerspective(payload)
 	case string: // e.g. "manual_exit"
 		if payload == "manual_exit" {
 			if err := position.executeManualExit(); err != nil {
@@ -267,22 +260,6 @@ func (position *Position) handleGuardian(value any) {
 			}
 		}
 	}
-}
-
-func (position *Position) onCausative(causative types.CausativeContext) {
-	if position == nil || position.Holding == nil || position.Holding.Stoploss == nil {
-		return
-	}
-
-	position.Holding.Stoploss.ObserveCausative(causative)
-}
-
-func (position *Position) onPerspective(perspective *types.Perspective) {
-	if position == nil || position.Holding == nil || position.Holding.Stoploss == nil || perspective == nil {
-		return
-	}
-
-	position.Holding.Stoploss.ObservePerspective(perspective)
 }
 
 func (position *Position) status() types.Status {
@@ -319,8 +296,10 @@ func (position *Position) Wire() *wire.PositionT {
 }
 
 /*
-onTicker refreshes the mark cache for this position's holding and lets the
-bound stoploss regulator judge the price a sale would actually realise.
+onTicker refreshes this position's mark and realized-return view from the live
+quote. It decides nothing: the agent that opened the lot re-evaluates it on
+every book update and commands its own exit, so there is no protective
+geometry here to advance and no path by which a ticker closes a position.
 */
 func (position *Position) onTicker(ticker kraken.TickerData) {
 	if position.Holding == nil {
@@ -337,99 +316,16 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 		return
 	}
 
-	if position.Holding.Stoploss == nil {
+	// Executable L3 state owns the mark once it can price the whole lot,
+	// because that is what a sale would actually realise. Best bid seeds the
+	// position until then, and a later ticker must not overwrite a
+	// liquidation mark with a top-of-book one.
+	if ticker.Bid != nil && position.Holding.Mark == nil {
 		position.Holding.Mark = ticker.Bid
-		position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
-		position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
-		return
 	}
 
-	/*
-		A fill whose RebindFill failed at execution time leaves the stop in ERROR
-		with no geometry (Floor/Peak/ArmAt/LockFloor all nil) and would otherwise
-		sit unprotected forever, since nothing else ever calls RebindFill again.
-		Retry it on every tick using the live bid: the inputs that matter
-		(TickSize, fee rates, RiskDistance, Plan) live on the Stoploss itself and
-		don't depend on the tick that originally failed, so a later mark that
-		clears the tick-rounded positive-floor requirement recovers the position
-		into a normally armed stop.
-	*/
-	if position.Holding.Stoploss.Status == types.ERROR {
-		if ticker.Bid == nil {
-			return
-		}
-
-		entryAt := time.Time{}
-
-		if position.Holding.EntryAt != nil {
-			entryAt = *position.Holding.EntryAt
-		}
-
-		if err := position.Holding.Stoploss.RebindFill(
-			position.Holding.EntryPrice,
-			ticker.Bid,
-			entryAt,
-		); err != nil {
-			position.Holding.Mark = ticker.Bid
-			position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
-			position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
-			return
-		}
-
-		position.Holding.Status = types.OPEN
-
-		if position.store != nil {
-			errnie.Error(position.store.Save(position.Holding.Stoploss))
-		}
-	}
-
-	// One economic mark: once valid executable L3 state has been observed
-	// (BookObserved), the executable-liquidation VWAP owns Holding.Mark and the
-	// stoploss geometry. A later ticker must refresh the cache (price.Update
-	// above) and advance the forecast-horizon clock, but must NOT overwrite the
-	// mark with best-bid or re-run the stoploss against it — otherwise a
-	// mid-run ticker undoes the L3 mark ("never mind, mark is best bid Y, now
-	// run the stoploss again"). Before executable L3 state has produced a
-	// coherent frame, best-bid is the only available mark and seeds the
-	// position.
-	mark := ticker.Bid
-
-	if position.Holding.Stoploss.BookObserved && position.Holding.Mark != nil {
-		mark = position.Holding.Mark
-	}
-
-	previousRevision := position.Holding.Stoploss.Revision
-
-	stoploss := position.Holding.Stoploss
-	stoploss.Update(mark)
-	position.Holding.Mark = mark
 	position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
 	position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
-
-	if position.passage != nil {
-		position.passage.observe(position, position.Holding.Mark)
-	}
-
-	triggered := stoploss.Status == types.TRIGGERED
-
-	/*
-		Exit initiation happens first and independently of persistence,
-		checkpoint, UI, diagnostics, model feedback, and logging. Only the
-		goroutine that atomically claims the exit may submit the initial order.
-	*/
-	if triggered && stoploss.Status == types.TRIGGERED {
-		position.initiateProtectiveExit()
-	}
-
-	if stoploss.Revision != previousRevision && position.store != nil {
-		if err := position.store.Save(stoploss); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"position: failed to persist stoploss transition",
-				err,
-			))
-		}
-	}
 }
 
 /*
@@ -454,34 +350,20 @@ func (position *Position) onLevel3(level3 kraken.Level3Data) {
 }
 
 /*
-evaluateExecutable derives the current executable-liquidation surface for this
-position's actual SellableQty from the continuously-resident execution state
-and feeds it to the bound stoploss through ObserveExecutable. It is the single
-evaluation path for the L3 market-state clock, used by both live L3 frames and
-recovery. It only
-runs for positions with positive sellable inventory, so a closed or unfilled
-lot performs no L3 execution work.
+evaluateExecutable marks this position at the price its actual sellable
+inventory would realise against the resident executable state, rather than at
+top of book. It is the single evaluation path for the L3 market-state clock,
+used by both live frames and recovery.
 
-The mark, peak, floor, and any execution-regime trigger are driven by the
-complete executable state, never by ticker.Bid, and never once per intermediate
-order mutation.
+This is a valuation, not a decision. A partial-depth surface prices a sale that
+cannot complete, so it is not accepted as a mark and the previous one stands.
 */
 func (position *Position) evaluateExecutable(symbol string, at time.Time) {
-	if position.Holding == nil {
+	if position.Holding == nil || position.price == nil {
 		return
 	}
 
 	if position.Holding.SellableQty == nil || position.Holding.SellableQty.Sign() <= 0 {
-		return
-	}
-
-	stoploss := position.Holding.Stoploss
-
-	if stoploss == nil || stoploss.Status == types.TRIGGERED {
-		return
-	}
-
-	if position.price == nil {
 		return
 	}
 
@@ -491,108 +373,16 @@ func (position *Position) evaluateExecutable(symbol string, at time.Time) {
 		return
 	}
 
-	surface := position.price.Surface(
-		symbol,
-		position.Holding.SellableQty,
-		stoploss.Floor,
-		fee,
-		at,
-	)
+	surface := position.price.Surface(symbol, position.Holding.SellableQty, nil, fee, at)
 
-	previousRevision := stoploss.Revision
-
-	stoploss.ObserveExecutable(surface)
-
-	if surface.ExecutableVWAP != nil && surface.ExecutableVWAP.Sign() > 0 {
-		position.Holding.Mark = surface.ExecutableVWAP
+	if surface == nil || !surface.BookComplete || !surface.FullyExecutable ||
+		surface.ExecutableVWAP == nil || surface.ExecutableVWAP.Sign() <= 0 {
+		return
 	}
 
+	position.Holding.Mark = surface.ExecutableVWAP
 	position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
 	position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
-
-	if position.passage != nil && surface.ExecutableVWAP != nil {
-		position.passage.observe(position, surface.ExecutableVWAP)
-	}
-
-	triggered := stoploss.Status == types.TRIGGERED
-
-	if triggered {
-		position.initiateProtectiveExit()
-	}
-
-	if stoploss.Revision != previousRevision && position.store != nil {
-		if err := position.store.Save(stoploss); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"position: failed to persist stoploss transition",
-				err,
-			))
-		}
-	}
-}
-
-/*
-initiateProtectiveExit submits the initial exit order through Exit, which claims
-the exit atomically. It is idempotent: repeated triggering ticks before the
-exchange acknowledges cannot re-submit.
-*/
-func (position *Position) initiateProtectiveExit() {
-	if _, err := position.Exit(); err != nil {
-		errnie.Error(err)
-	}
-}
-
-/*
-MarkFeedback snapshots the live position geometry after one ticker has updated
-the holding and its stop. Distances are dimensionless so the global regulator
-can compare instruments without confusing quote-currency price scales.
-*/
-func (position *Position) MarkFeedback(at time.Time) types.MarkFeedback {
-	feedback := types.MarkFeedback{}
-
-	if position == nil || position.Holding == nil {
-		return feedback
-	}
-
-	holding := position.Holding
-	feedback.PositionID = position.Decision.ID
-	feedback.Symbol = holding.Symbol
-	feedback.At = at.UTC()
-
-	if feedback.At.IsZero() {
-		feedback.At = time.Now().UTC()
-	}
-
-	feedback.ReturnPct = holding.ReturnPct
-	feedback.Exposed = holding.Qty != nil && holding.Qty.Sign() > 0
-
-	if holding.Mark != nil {
-		feedback.Mark = holding.Mark.Float64()
-	}
-
-	if holding.PnL != nil {
-		feedback.PnL = holding.PnL.Float64()
-	}
-
-	stoploss := holding.Stoploss
-
-	if stoploss == nil {
-		return feedback
-	}
-
-	feedback.StopStatus = stoploss.Status
-	feedback.TriggerReason = stoploss.TriggerReason
-	feedback.SurgeArmed = stoploss.SurgeArmed
-
-	if feedback.Mark > 0 && stoploss.Floor != nil {
-		feedback.FloorDistance = (feedback.Mark - stoploss.Floor.Float64()) / feedback.Mark
-	}
-
-	if feedback.Mark > 0 && stoploss.Peak != nil && stoploss.Peak.Sign() > 0 {
-		feedback.PeakDrawdown = math.Min(0, math.Log(feedback.Mark/stoploss.Peak.Float64()))
-	}
-
-	return feedback
 }
 
 func (position *Position) onExecution(message kraken.Execution) bool {
@@ -729,25 +519,6 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 		position.Holding.EntryQty = decimal.NewFromInt64(0).Add(execution.CumQty)
 		position.Holding.EntryFees = decimal.NewFromInt64(0).Add(execution.FeeUsdEquiv)
 
-		if err := position.Holding.Stoploss.RebindFill(
-			position.Holding.EntryPrice,
-			position.Holding.Mark,
-			execution.Timestamp,
-		); err != nil {
-			position.setStatus(types.ERROR)
-			position.Holding.Status = types.ERROR
-			position.Holding.Stoploss.Status = types.ERROR
-			errnie.Error(err)
-			continue
-		}
-
-		position.Holding.Stoploss.ArmClock()
-		position.Holding.Stoploss.Update(position.Holding.Mark)
-		position.passage = newPassageTracker(
-			position,
-			position.Holding.EntryPrice,
-			max(1, position.Decision.ForecastHorizon),
-		)
 		position.Holding.PnL = position.price.PnL(position.pair, position.Holding)
 		position.Holding.ReturnPct = position.price.ReturnPct(position.pair, position.Holding)
 
@@ -756,7 +527,7 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 		}
 
 		if position.store != nil {
-			errnie.Error(position.store.Save(position.Holding.Stoploss))
+			errnie.Error(position.store.Save(position.Holding))
 			errnie.Error(position.store.SaveTrade(position))
 		}
 	}
@@ -897,7 +668,6 @@ func (position *Position) Enter() (*Position, error) {
 	if err != nil {
 		position.setStatus(types.ERROR)
 		position.Holding.Status = types.ERROR
-		position.Holding.Stoploss.Status = types.ERROR
 
 		return position, errnie.Error(errnie.Err(
 			errnie.Internal,
@@ -946,28 +716,6 @@ func (position *Position) executeManualExit() error {
 		return nil
 	}
 
-	if position.Holding.Stoploss == nil {
-		return errnie.Err(
-			errnie.NotAcceptable,
-			"position: regulator is required for a manual exit",
-			nil,
-		)
-	}
-
-	if err := position.Holding.Stoploss.TriggerManualOverride(); err != nil {
-		return err
-	}
-
-	if position.store != nil {
-		if err := position.store.Save(position.Holding.Stoploss); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"position: persist manual exit transition",
-				err,
-			))
-		}
-	}
-
 	_, err := position.Exit()
 	return err
 }
@@ -991,11 +739,13 @@ func (position *Position) Exit() (*Position, error) {
 		return position, nil
 	}
 
-	if position.Holding == nil || position.Holding.Stoploss == nil ||
-		position.Holding.Stoploss.Status != types.TRIGGERED {
+	// The exit is commanded, not triggered. Whoever opened the lot decides
+	// when it closes, and the only precondition is that there is inventory to
+	// sell and no sell order already in flight.
+	if position.Holding == nil {
 		return position, errnie.Err(
 			errnie.NotAcceptable,
-			"position: triggered stoploss required to submit an exit",
+			"position: an open holding is required to submit an exit",
 			nil,
 		)
 	}

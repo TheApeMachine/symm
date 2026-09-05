@@ -8,16 +8,17 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+
 	// Registers the /debug/pprof handlers on http.DefaultServeMux, which is
 	// the mux startPprof serves. Without it the profiling endpoint answers
 	// 404 and the server is dead weight.
 	_ "net/http/pprof"
 	"os"
 	"path/filepath"
-	"sync"
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/grafana/pyroscope-go"

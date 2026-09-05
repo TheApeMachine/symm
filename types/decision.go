@@ -59,15 +59,6 @@ type Decision struct {
 	Confidence       float64             `json:"confidence" validate:"finite,min=0,max=1"`
 	AvailableCapital *decimal.Decimal    `json:"availableCapital" validate:"required"`
 	OpenPositions    int                 `json:"openPositions" validate:"min=0"`
-	/*
-		SelfManaged marks a decision whose issuer re-evaluates the position on
-		every book update and owns its exit. The desk still sizes the entry
-		under a risk plan and keeps that plan as a catastrophic floor, but the
-		strategy stop is not the exit mechanism and its absence is not an
-		incomplete decision.
-	*/
-	SelfManaged bool `json:"selfManaged,omitempty"`
-
 	Cause            string              `json:"cause"`
 	Reason           string              `json:"reason"`
 	ReservationID    string              `json:"reservationId,omitempty"`
@@ -82,20 +73,6 @@ type Decision struct {
 	ReturnPct        *float64            `json:"returnPct,omitempty"`
 	Mark             *decimal.Decimal    `json:"mark,omitempty"`
 	EntryCost        *EntryCost          `json:"entryCost,omitempty"`
-	Stoploss         *Stoploss           `json:"stoploss,omitempty"`
-	/*
-		Risk is the stop geometry this entry was sized under. It travels with
-		the decision because the quantity above was derived from it: the
-		allocator capped the size so that the distance to the hard floor costs
-		no more than the loss budget, and a stop later placed at some other
-		distance would silently undo that.
-	*/
-	Risk RiskPlan `json:"risk"`
-
-	// Trace is the reasoning record behind this decision: the War Room's
-	// deliberation and the causal search it fed. It is present only for
-	// rounds that actually ran a search.
-	Trace *DecisionTrace
 }
 
 /*

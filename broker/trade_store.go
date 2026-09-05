@@ -130,37 +130,6 @@ func (store *PositionStore) SaveTrade(position *Position) error {
 			pnl = &value
 		}
 
-		if holding.Stoploss != nil {
-			stoploss := holding.Stoploss
-
-			if stoploss.TriggerReason != "" {
-				triggerReason = &stoploss.TriggerReason
-			}
-
-			if stoploss.TriggerMark != nil {
-				value := stoploss.TriggerMark.String()
-				triggerMark = &value
-			}
-
-			if stoploss.Floor != nil {
-				value := stoploss.Floor.String()
-				floor = &value
-			}
-
-			if stoploss.Peak != nil {
-				value := stoploss.Peak.String()
-				peak = &value
-			}
-
-			if stoploss.ProfitLine != nil {
-				value := stoploss.ProfitLine.String()
-				profitLine = &value
-			}
-
-			if stoploss.Locked {
-				locked = 1
-			}
-		}
 	}
 
 	query := `

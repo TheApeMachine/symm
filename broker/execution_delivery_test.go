@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/learning"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
 )
@@ -220,25 +219,6 @@ func TestExecutionDeliveryEndToEnd(t *testing.T) {
 			ProposedNotional: mustDecimal("200.00"),
 			ForecastHorizon:  1,
 		}
-
-		// A real, armed stoploss is required by the entry-fill path. It is
-		// constructed from a ready forecast and an empty forward curve so the
-		// geometry reduces to a one-tick floor below the entry mark.
-		stoploss, err := types.NewStoplossWithPlan(
-			t.Context(),
-			"TEST/USD",
-			mustDecimal("2.00"),
-			mustDecimal("2.00"),
-			&learning.RLSOutput{Ready: true},
-			0,
-			mustDecimal("0.01"),
-			mustDecimal("0.008"),
-			mustDecimal("0.008"),
-			nil,
-			time.Now(),
-		)
-		So(err, ShouldBeNil)
-		decision.Stoploss = stoploss
 
 		pair := kraken.InstrumentPair{Symbol: "TEST/USD", TickSize: *decimal.NewFromFloat64(0.01)}
 		position := NewPosition(

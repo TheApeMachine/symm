@@ -33,7 +33,6 @@ type Holding struct {
 	Mark            *decimal.Decimal `json:"mark"`
 	IsOpportunity   bool             `json:"is_opportunity"`
 	ReservationID   string           `json:"reservation_id,omitempty"`
-	Stoploss        *Stoploss        `json:"stoploss"`
 
 	// Authoritative realized economics, separated so the journal can reconcile
 	// fee-net exits against entry basis without overloading one field.
@@ -69,7 +68,6 @@ func (holding *Holding) Update(
 	}
 
 	holding.Mark = ticker.Bid
-	holding.Stoploss.Update(holding.Mark)
 
 	return nil
 }
@@ -77,10 +75,6 @@ func (holding *Holding) Update(
 func (holding *Holding) Close() (err error) {
 	if holding.cancel != nil {
 		holding.cancel()
-	}
-
-	if holding.Stoploss != nil {
-		err = holding.Stoploss.Close()
 	}
 
 	holding.Status = CLOSED

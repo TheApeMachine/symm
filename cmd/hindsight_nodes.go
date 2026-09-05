@@ -119,7 +119,6 @@ func (node *witnessNode) shouldWitness(envelope *types.Envelope) bool {
 	}
 
 	hasState := envelope.StrategyRound != nil ||
-		len(envelope.Perspectives) > 0 ||
 		len(envelope.Categories) > 0 ||
 		len(envelope.Opportunities) > 0 ||
 		envelope.PumpDump != nil ||
@@ -166,10 +165,6 @@ func envelopeSymbol(envelope *types.Envelope) string {
 
 	if len(envelope.Opportunities) > 0 && envelope.Opportunities[0] != nil && envelope.Opportunities[0].Symbol != "" {
 		return envelope.Opportunities[0].Symbol
-	}
-
-	if len(envelope.Perspectives) > 0 && envelope.Perspectives[0] != nil {
-		return envelope.Perspectives[0].Symbol
 	}
 
 	return ""

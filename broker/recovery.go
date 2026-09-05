@@ -279,24 +279,21 @@ func (recovery *Recovery) recoverAsset(
 		))
 	}
 
-	stoploss, err := recovery.store.Load(recovery.ctx, symbol, entryAt)
+	// The wallet is authoritative for whether a lot exists; the stored row only
+	// ever carried its recorded basis. A lot with no stored row is still a real
+	// lot and is adopted with the basis reconstructed from trade history — it
+	// is flagged degraded so the difference is visible, never hidden.
+	stored, err := recovery.store.Load(recovery.ctx, symbol, entryAt)
 
 	if err != nil {
 		return errnie.Error(err)
 	}
 
-	degraded := false
+	degraded := stored == nil
 
-	if stoploss == nil {
-		stoploss, err = recovery.synthesizeStoploss(pair, symbol, quantity, entryPrice, entryAt)
-
-		if err != nil {
-			return err
-		}
-
-		degraded = true
+	if degraded {
 		errnie.Warn("recovery: DEGRADED RECOVERY for " + symbol +
-			" — no stored stoploss at this entry; rebuilt protection from current market (entry-only synthesis, NOT the lost historical StopLoss)")
+			" — no stored open position at this entry; basis reconstructed from trade history")
 	}
 
 	entryDecision, err := recovery.store.LoadOpenDecision(symbol)
@@ -306,7 +303,7 @@ func (recovery *Recovery) recoverAsset(
 	}
 
 	position := recovery.recoveredPosition(
-		pair, asset, quantity, entryPrice, entryFee, entryAt, stoploss,
+		pair, asset, quantity, entryPrice, entryFee, entryAt, entryPrice,
 	)
 	position.decisionWire = entryDecision
 	position.DegradedRecovery = degraded
@@ -326,125 +323,6 @@ func (recovery *Recovery) recoverAsset(
 	return nil
 }
 
-/*
-synthesizeStoploss rebuilds protection for a position whose wallet inventory
-and trade history are intact but whose stored stoploss row is gone (the
-process died between a fill landing and its execution frame persisting one,
-or the row was otherwise lost). It mirrors the desk's live entry construction
-in NewDesk's admission path: same NewRiskPlan with DefaultRiskMultiples, same
-NewStoplossWithPlan call. Horizon is forced to 0 so Reconsider can never
-expire a forecast this recovered lot never had.
-
-Recovery runs before the instrument subscription has delivered any ticker or
-book frame — there is no live quote to price a spread or market-impact band
-from yet, only the wallet balance and trade history. NewRiskPlan already
-falls back to a tick-granularity noise band when spread and impact are absent
-(the standard "no book yet" case, not a recovery-specific concession), so this
-prices the plan directly off entryPrice and the venue's own tick size rather
-than requiring a live EntryCost read. The lot's mark starts at its own entry
-price for the same reason: the desk's own evaluateExecutable call right after
-construction (recovery.go's recoveredPosition) supplies the real mark as soon
-as the first coherent tick or L3 frame arrives, exactly as a fresh entry does
-before its own first tick.
-
-The wallet is authoritative for whether a position exists; the stoploss store
-only ever supplied its protection parameters. Refusing to track a real
-position for want of that row leaves it live and completely unprotected, which
-is strictly worse than a hard-floor stop rebuilt from known entry economics.
-*/
-func (recovery *Recovery) synthesizeStoploss(
-	pair kraken.InstrumentPair,
-	symbol string,
-	quantity *decimal.Decimal,
-	entryPrice *decimal.Decimal,
-	entryAt time.Time,
-) (*types.Stoploss, error) {
-	if pair.TickSize.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"recovery: positive tick size required to rebuild protection for "+symbol,
-			nil,
-		))
-	}
-
-	fee := recovery.price.Fee(symbol)
-
-	if fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 ||
-		fee.Fee.Cmp(decimal.NewFromInt64(100)) >= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"recovery: valid taker fee required to rebuild protection for "+symbol,
-			nil,
-		))
-	}
-
-	feeRate := decimal.NewFromInt64(0).Add(fee.Fee).Div(decimal.NewFromInt64(100))
-
-	// A live book is a bonus when it happens to already be available, not a
-	// requirement: its spread/impact only sharpen the noise band NewRiskPlan
-	// would otherwise floor at venue tick granularity.
-	var spread, impact *decimal.Decimal
-	mark := entryPrice
-
-	if cost, err := recovery.price.EntryCost(symbol, quantity); err == nil {
-		spread = cost.Spread
-		impact = cost.Impact
-		mark = cost.BestBid
-	}
-
-	plan := types.NewRiskPlan(types.RiskInputs{
-		ReferencePrice: entryPrice,
-		Spread:         spread,
-		Impact:         impact,
-		TickSize:       &pair.TickSize,
-		ExitFeeRate:    feeRate,
-		EntryFeeRate:   feeRate,
-		MaxLoss:        decimal.NewFromInt64(0).Add(entryPrice).Mul(quantity),
-		Multiples:      types.DefaultRiskMultiples(),
-	})
-
-	if !plan.Present {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"recovery: current execution geometry cannot support rebuilt protection for "+symbol,
-			nil,
-		))
-	}
-
-	stoploss, err := types.NewStoplossWithPlan(
-		recovery.ctx,
-		symbol,
-		entryPrice,
-		mark,
-		nil,
-		0,
-		&pair.TickSize,
-		feeRate,
-		feeRate,
-		&plan,
-		entryAt,
-	)
-
-	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotAcceptable,
-			"recovery: could not rebuild protection for "+symbol,
-			err,
-		))
-	}
-
-	return stoploss, nil
-}
-
-/*
-recoverBasis nets one symbol's trade history into a per-unit entry price. The
-fourth return value, hasFullClose, is true when a sell fully or over-closed
-the tracked buy quantity at least once: proof this symbol's ledger genuinely
-went to zero, not merely that the running total happens to be small. Recovery
-uses it to tell a confirmed-closed wallet remainder (whatever dust the venue's
-own settlement leaves behind after a real round trip) apart from a balance
-this trade history simply never explains.
-*/
 func (recovery *Recovery) recoverBasis(
 	pair kraken.InstrumentPair,
 	history map[string]spot.Trade,
@@ -523,7 +401,7 @@ func (recovery *Recovery) recoveredPosition(
 	entryPrice *decimal.Decimal,
 	entryFee *decimal.Decimal,
 	entryAt time.Time,
-	stoploss *types.Stoploss,
+	mark *decimal.Decimal,
 ) *Position {
 	position := NewPosition(
 		recovery.ctx, recovery.api, recovery.instrument, recovery.price,
@@ -532,8 +410,7 @@ func (recovery *Recovery) recoveredPosition(
 			ProposedQuantity: quantity,
 			EntryPrice:       entryPrice,
 			EntryFee:         entryFee,
-			Mark:             stoploss.Mark,
-			Stoploss:         stoploss,
+			Mark:             mark,
 		},
 	)
 
@@ -549,13 +426,10 @@ func (recovery *Recovery) recoveredPosition(
 	}
 	recovery.positions.Store(pair.Symbol, position)
 
-	// Restore persisted protection and immediately derive the current
-	// executable state from the continuously-resident execution reducer, so a
-	// recovered exposed position is evaluated at startup rather than left
-	// waiting for the next ticker. During clean bootstrap the execution state
-	// is not yet valid and ObserveExecutable stays armed; a valid feed that has
-	// already diverged surfaces execution risk immediately. No magic bootstrap
-	// timeout is introduced.
+	// Mark the recovered lot from the continuously-resident execution state
+	// immediately, so it is valued at startup rather than left waiting for the
+	// next ticker. Its own entry price seeds the mark until the first coherent
+	// frame arrives, exactly as a fresh entry does.
 	position.evaluateExecutable(pair.Symbol, time.Now())
 
 	return position

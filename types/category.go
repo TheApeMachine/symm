@@ -580,5 +580,3 @@ var CategorySchemas = []CategorySchema{
 	{Source: SourceHawkes, Metric: "log_likelihood_gain_per_event_vs_poisson", Category: VerticalIgnition},
 	{Source: SourceDepthFlow, Metric: "observed_notional_imbalance_zscore", Category: VerticalIgnition},
 }
-
-

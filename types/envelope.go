@@ -221,15 +221,6 @@ type Envelope struct {
 	Cognition *Cognition
 
 	// LiquiditySweepWithRecovery is the named Advisor's sparse lifecycle
-	// update. It is not a generic Perspective bucket: this field has one writer
-	// and one semantic question, preserving the envelope's lock-free ownership.
-	Perspectives []*Perspective
-
-	// AdvisorSilences records the advisors that could not publish on this
-	// envelope and the declared evidence they were missing. It is written on
-	// the same envelopes Perspectives are, so a round can report why a seat was
-	// empty rather than only that it was.
-	AdvisorSilences []AdvisorSilence
 
 	// StrategyRound is the strategy stage's last decision round, produced by
 	// the planner once per engine tick and stamped by tickNode so the same
@@ -305,32 +296,6 @@ func (envelope *Envelope) BoundarySnapshot() []BoundaryStamp {
 	}
 
 	return append([]BoundaryStamp(nil), envelope.Boundaries...)
-}
-
-/*
-AppendPerspective adds one Perspective to Perspectives under advisorsMu.
-*/
-func (envelope *Envelope) AppendPerspective(perspective *Perspective) {
-	if envelope == nil || perspective == nil {
-		return
-	}
-
-	envelope.advisorsMu.Lock()
-	envelope.Perspectives = append(envelope.Perspectives, perspective)
-	envelope.advisorsMu.Unlock()
-}
-
-/*
-AppendAdvisorSilence adds one AdvisorSilence to AdvisorSilences under advisorsMu.
-*/
-func (envelope *Envelope) AppendAdvisorSilence(silence AdvisorSilence) {
-	if envelope == nil {
-		return
-	}
-
-	envelope.advisorsMu.Lock()
-	envelope.AdvisorSilences = append(envelope.AdvisorSilences, silence)
-	envelope.advisorsMu.Unlock()
 }
 
 func NewEnvelope(typeID TypeID) *Envelope {
@@ -1055,75 +1020,6 @@ func encodePositions(positions []*telemetry.PositionT) *telemetry.PositionsFrame
 	return &telemetry.PositionsFrameT{Rows: positions}
 }
 
-/* encodePerspective preserves one semantic Advisor round without slot IDs. */
-func encodePerspective(perspective *Perspective) *telemetry.EnvelopePerspectiveT {
-	if perspective == nil {
-		return nil
-	}
-
-	classes := make([]*telemetry.EnvelopePerspectiveClassT, 0, len(perspective.Classes))
-
-	for _, class := range perspective.Classes {
-		classes = append(classes, &telemetry.EnvelopePerspectiveClassT{
-			State:       string(class.State),
-			Probability: class.Probability,
-			Evidence:    class.Evidence,
-		})
-	}
-
-	predictions := make([]*telemetry.EnvelopePerspectivePredictionT, 0, len(perspective.Predictions))
-
-	for _, prediction := range perspective.Predictions {
-		predictions = append(predictions, &telemetry.EnvelopePerspectivePredictionT{
-			Class:  string(prediction.Class),
-			Event:  string(prediction.Event),
-			Effect: prediction.Effect.String(),
-			Move:   prediction.Move,
-		})
-	}
-
-	encoded := &telemetry.EnvelopePerspectiveT{
-		Symbol:             perspective.Symbol,
-		Peer:               perspective.Peer,
-		PositionId:         perspective.PositionID,
-		Advisor:            perspective.Advisor,
-		Question:           string(perspective.Question),
-		IssuedAt:           timeNs(perspective.IssuedAt),
-		ResolvedAt:         timeNs(perspective.ResolvedAt),
-		ResolvedCoordinate: perspective.ResolvedCoordinate,
-		Sequence:           perspective.Sequence,
-		Round:              perspective.Round,
-		Support:            perspective.Support,
-		Classes:            classes,
-		Predictions:        predictions,
-		Lease: &telemetry.EnvelopePerspectiveLeaseT{
-			Clock: perspective.Lease.Clock,
-			From:  perspective.Lease.From,
-			Until: perspective.Lease.Until,
-		},
-		Lifecycle:  perspective.Lifecycle.String(),
-		ResolvedBy: string(perspective.ResolvedBy),
-	}
-
-	if perspective.Err != nil {
-		encoded.Error = perspective.Err.Error()
-	}
-
-	return encoded
-}
-
-func encodePerspectives(perspectives []*Perspective) []*telemetry.EnvelopePerspectiveT {
-	encoded := make([]*telemetry.EnvelopePerspectiveT, 0, len(perspectives))
-
-	for _, perspective := range perspectives {
-		if perspective != nil {
-			encoded = append(encoded, encodePerspective(perspective))
-		}
-	}
-
-	return encoded
-}
-
 /*
 Encode converts the Envelope's exported state into its FlatBuffers mirror,
 verbatim: every populated field crosses as itself, with only the type
@@ -1216,7 +1112,6 @@ func (envelope *Envelope) encodeBase(
 		Opportunities:     encodeOpportunities(envelope.Opportunities),
 		GraphUpdate:       encodeGraphUpdate(envelope.GraphUpdate),
 		Cognition:         encodeCognition(envelope.Cognition),
-		Perspectives:      encodePerspectives(envelope.Perspectives),
 		Strategy:          encodeStrategyRound(envelope.StrategyRound),
 		Equity:            encodeEquity(envelope.Equity),
 		Positions:         encodePositions(envelope.Positions),
@@ -1316,9 +1211,6 @@ func DecisionWire(decision *Decision) *telemetry.DecisionT {
 		ReturnPct:        floatPointer(decision.ReturnPct),
 		Mark:             decimalString(decision.Mark),
 		EntryCost:        entryCostWire(decision.EntryCost),
-		Stoploss:         StoplossWire(decision.Stoploss),
-		Risk:             riskWire(&decision.Risk),
-		Trace:            decisionTraceWire(decision.Trace),
 	}
 }
 
