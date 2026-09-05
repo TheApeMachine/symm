@@ -189,6 +189,7 @@ describe("LearningVisualizer", () => {
 		expect(markup).toContain("Edge distribution");
 		expect(markup).toContain("Action spectrum");
 		expect(markup).toContain("Trajectory");
+		expect(markup).toContain("pointer-events-auto");
 		expect(markup).toContain("3.0 bp");
 		expect(markup).toContain("buy ·1/1");
 	});

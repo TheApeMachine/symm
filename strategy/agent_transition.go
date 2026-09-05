@@ -268,6 +268,8 @@ func (agent *Agent) resolve(
 		agent.resolved++
 
 		event := lane.event(market, index, "resolved", experience.id, marketAt)
+		event.Context = append([]uint64(nil), experience.tokens[:experience.count]...)
+		event.Authority = experience.authority
 		event.Action, event.Power, event.Reduce = string(experience.action.Kind), experience.action.Power, experience.action.Reduce
 		event.Target, event.Prior, event.Profit = target, prior, lane.outcome.TotalReward
 		event.Horizon, event.Authorized, event.Truncated = market.horizon(), agent.Mode().String(), truncated
@@ -339,7 +341,10 @@ func (agent *Agent) issue(market *learningMarket, index int, book *spotbook.Book
 	if lane.wallet.quantity.Sign() > 0 && lane.equity > 0 {
 		gross, _ := new(big.Rat).Mul(&lane.wallet.quantity, book.Bids.High.Price.Rat()).Float64()
 		fraction := gross / lane.equity
-		exposure = uint64(max(0, -math.Floor(math.Log2(fraction)))) + 1
+
+		if fraction > 0 {
+			exposure = uint64(max(0, -math.Floor(math.Log2(fraction)))) + 1
+		}
 	}
 
 	// Zero separates region IDs (which start at one) from numeric lane context.

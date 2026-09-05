@@ -153,6 +153,25 @@ func TestModelRecall(t *testing.T) {
 			So(reordered.Mean, ShouldEqual, 2)
 		})
 
+		Convey("matching never reuses tokens beyond the former 32-bit bookkeeping limit", func() {
+			longModel := NewModel[string, int]()
+			learned := make([]uint64, 40)
+			query := make([]uint64, len(learned))
+
+			for index := range learned {
+				learned[index] = 1
+				query[index] = 2
+			}
+
+			query[32] = 1
+
+			for _, outcome := range []float64{1, 2} {
+				So(longModel.Observe("market", learned, 1, outcome, 1), ShouldBeNil)
+			}
+
+			So(longModel.Recall("market", query, 1).Depth, ShouldEqual, 1)
+		})
+
 		Convey("a different key or action shares no evidence at any depth", func() {
 			for _, context := range contexts {
 				So(model.Recall("second", context, [2]int{1, 10}).Defined, ShouldBeFalse)
@@ -179,6 +198,54 @@ func TestModelRecall(t *testing.T) {
 			So(model.Recall("first", contexts[0], [2]int{2, 10}).Mean, ShouldEqual, 5)
 			So(model.Recall("first", contexts[0], [2]int{1, 20}).Mean, ShouldEqual, 6)
 		})
+	})
+}
+
+func TestModelRecallRetainedEvidence(t *testing.T) {
+	Convey("Given a deep context aging while its broad context refreshes", t, func() {
+		model := NewModel[string, int](8) // Eight-resolution retention fixture.
+		deep := []uint64{1, 2, 3, 4, 5, 6, 7, 8}
+		for _, outcome := range []float64{9, 11, 10} {
+			So(model.Observe("market", deep, 1, outcome, 1), ShouldBeNil)
+		}
+		So(model.Recall("market", deep, 1).Depth, ShouldEqual, len(deep))
+		for range 64 { // Eight fixture memory spans make the leaf dormant.
+			So(model.Observe("market", []uint64{1, 2}, 1, 0, 1), ShouldBeNil)
+		}
+		reading := model.Recall("market", deep, 1)
+		So(reading.Depth, ShouldEqual, 2)
+		So(reading.Mean, ShouldBeLessThan, 0.01)
+		So(reading.VarianceDefined, ShouldBeTrue)
+		for range 64 {
+			So(model.Observe("market", deep, 1, -5, 1), ShouldBeNil)
+		}
+		So(model.Recall("market", deep, 1).Depth, ShouldEqual, len(deep))
+	})
+}
+
+func TestModelObserve(t *testing.T) {
+	Convey("Given historical events to warm up the model", t, func() {
+		model := NewModel[string, [2]int]()
+		context := []uint64{10, 20, 30}
+		action := [2]int{1, 5}
+
+		So(model.Recall("test", context, action).Defined, ShouldBeFalse)
+
+		err := model.Observe("test", context, action, 12.0, 0.8)
+		So(err, ShouldBeNil)
+
+		reading := model.Recall("test", context, action)
+		So(reading.Defined, ShouldBeTrue)
+		So(reading.Mean, ShouldEqual, 12.0)
+		So(reading.Depth, ShouldEqual, 3)
+
+		prefixReading := model.Recall("test", []uint64{10}, action)
+		So(prefixReading.Defined, ShouldBeTrue)
+		So(prefixReading.Mean, ShouldEqual, 12.0)
+		So(prefixReading.Depth, ShouldEqual, 1)
+
+		So(model.Observe("test", context, action, 0, -0.1), ShouldNotBeNil)
+		So(model.Observe("test", context, action, 0, 1.5), ShouldNotBeNil)
 	})
 }
 
@@ -225,5 +292,20 @@ func BenchmarkModelResolve(b *testing.B) {
 
 		model.Recall(key, context, action)
 		index++
+	}
+}
+
+func BenchmarkModelRecall(b *testing.B) {
+	model := NewModel[string, int](8)
+	context := []uint64{1, 2, 3, 4, 5, 6, 7, 8}
+	for _, outcome := range []float64{-1, 2} {
+		if err := model.Observe("market", context, 1, outcome, 1); err != nil {
+			b.Fatal(err)
+		}
+	}
+	query := []uint64{2, 1, 3, 4, 5, 6, 7, 8}
+	b.ReportAllocs()
+	for b.Loop() {
+		model.Recall("market", query, 1)
 	}
 }

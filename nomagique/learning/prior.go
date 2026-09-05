@@ -71,16 +71,17 @@ type PriorReading struct {
 	// Depth is how many context tokens this reading was conditioned on. Zero
 	// is the key's unconditioned evidence; the caller's full context length is
 	// the most specific answer available.
-	Depth           int
-	Samples         uint64
-	Defined         bool
-	Mean            float64
-	Variance        float64
-	VarianceDefined bool
-	Support         float64
-	Maturity        float64
-	Authority       float64
-	Memory          float64
+	Depth             int
+	Samples           uint64
+	Defined           bool
+	Mean              float64
+	Variance          float64
+	VarianceDefined   bool
+	Support           float64
+	Maturity          float64
+	EvidenceAuthority float64 // Retained authority-weighted input authority, independent of reward.
+	Authority         float64
+	Memory            float64
 }
 
 /*
@@ -129,7 +130,7 @@ func (prior *Prior) Observe(value, authority float64, epoch ...uint64) error {
 	return nil
 }
 
-/* Reading returns the current estimate without modifying its evidence. */
+/* Reading ages retained evidence to the supplied epoch and returns its estimate. */
 func (prior *Prior) Reading(epoch ...uint64) PriorReading {
 	if len(epoch) > 0 {
 		prior.age(epoch[0])
@@ -143,6 +144,7 @@ func (prior *Prior) Reading(epoch ...uint64) PriorReading {
 
 	reading.Defined = true
 	reading.Mean = prior.mean
+	reading.EvidenceAuthority = prior.squaredWeight / prior.weight
 	reading.Support = prior.weight * prior.weight / prior.squaredWeight
 
 	if reading.Support <= 1 {
@@ -150,16 +152,26 @@ func (prior *Prior) Reading(epoch ...uint64) PriorReading {
 	}
 
 	degrees := prior.weight - prior.squaredWeight/prior.weight
+
+	if degrees <= 0 {
+		return reading
+	}
+
 	reading.VarianceDefined = true
 	// Reliability-weighted sample variance: M2 / (sum(w) - sum(w*w)/sum(w)).
 	// https://numpy.org/doc/stable/reference/generated/numpy.cov.html#notes
 	reading.Variance = prior.deviation / degrees
+
+	if reading.Variance < 0 {
+		reading.Variance = 0
+	}
+
 	reading.Maturity = (reading.Support - 1) / reading.Support
 	power := reading.Mean * reading.Mean
 	totalPower := power + reading.Variance
 
 	if totalPower > 0 {
-		inputAuthority := prior.squaredWeight / prior.weight
+		inputAuthority := reading.EvidenceAuthority
 		reading.Authority = reading.Maturity * inputAuthority * power / totalPower
 	}
 

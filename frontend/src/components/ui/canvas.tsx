@@ -61,7 +61,7 @@ export const Canvas = ({
 
 		{topRight === undefined ? null : (
 			<div className="pointer-events-none absolute top-2.75 right-3 text-right font-mono text-[9.5px] text-(--f3) leading-[1.6]">
-				{topRight}
+				<div className="pointer-events-auto inline-block">{topRight}</div>
 			</div>
 		)}
 

@@ -607,7 +607,11 @@ export const LearningVisualizer = ({
 			meta="intuitive diagnostics · statistical edge · action divergence"
 			className={`h-full w-full min-h-80 ${className ?? ""}`}
 			topRight={
-				<Flex.Row gap={1} align="center">
+				<Flex.Row
+					gap={1}
+					align="center"
+					className="pointer-events-auto relative z-10"
+				>
 					<Button
 						size="xs"
 						variant={mode === "edge" ? "solid" : "quiet"}

@@ -18,7 +18,7 @@ behaviour; they just want none of its paint.
 
 export const buttonVariants = cva(
 	[
-		"inline-flex cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap",
+		"inline-flex cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap pointer-events-auto",
 		"[--button-tone:var(--f2)]",
 		"transition-colors",
 		"disabled:pointer-events-none disabled:opacity-45",

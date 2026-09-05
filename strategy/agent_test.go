@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -61,7 +62,13 @@ func agentFixture(testingTB testing.TB, record func(hindsight.LearningEvent) err
 func TestAgentStep(t *testing.T) {
 	Convey("Given the real multi-leg market tape and symbol-only notifications", t, func() {
 		events := []hindsight.LearningEvent{}
-		agent, books := agentFixture(t, func(event hindsight.LearningEvent) error { events = append(events, event); return nil })
+		agent, books := agentFixture(t, func(event hindsight.LearningEvent) error {
+			if _, err := json.Marshal(event); err != nil {
+				return err
+			}
+			events = append(events, event)
+			return nil
+		})
 		books.current = spotbook.New()
 		books.current.NoBookCrossing = false
 		tape := markettest.NewLevel3ChurnTape("TEST/USD", time.Unix(100, 0), 64)
@@ -317,6 +324,61 @@ func TestLearningViewRealizationObservability(t *testing.T) {
 			So(v.RealizationAllowed, ShouldBeFalse)
 			So(v.RealizationReason, ShouldContainSubstring, "catastrophic single-fill slippage exceeded bound")
 		})
+	})
+}
+
+func TestAgentWarmup(t *testing.T) {
+	Convey("Given an agent and historical learning events from previous runs", t, func() {
+		agent, _ := agentFixture(t, func(hindsight.LearningEvent) error { return nil })
+		context := []uint64{5, 12, 18}
+		action := LearningAction{Kind: types.ActionEnter, Power: 50, Reduce: false}
+		key := [2]string{"TEST/USD", "virtual"}
+
+		So(agent.Model.Recall(key, context, action).Defined, ShouldBeFalse)
+		So(agent.Mode(), ShouldEqual, ModeLearning)
+
+		history := []hindsight.LearningEvent{
+			{
+				ID:        1,
+				Symbol:    "TEST/USD",
+				Kind:      "issued",
+				Context:   context,
+				Authority: 0.75,
+			},
+			{
+				ID:        1,
+				Symbol:    "TEST/USD",
+				Kind:      "resolved",
+				Action:    string(action.Kind),
+				Power:     action.Power,
+				Reduce:    action.Reduce,
+				Target:    0.05,
+			},
+			{
+				ID:        2,
+				Symbol:    "TEST/USD",
+				Kind:      "resolved",
+				Context:   context,
+				Authority: 0.85,
+				Action:    string(action.Kind),
+				Power:     action.Power,
+				Reduce:    action.Reduce,
+				Target:    0.08,
+			},
+		}
+
+		warmed := agent.Warmup(history)
+		So(warmed, ShouldEqual, 2)
+
+		reading := agent.Model.Recall(key, context, action)
+		So(reading.Defined, ShouldBeTrue)
+		So(reading.Samples, ShouldEqual, 2)
+		So(reading.Mean, ShouldBeGreaterThan, 0.05)
+
+		// Live skill meter must remain in learning mode: stored model provides prior boost
+		// but does not grant execution authority without live forward verification.
+		So(agent.Mode(), ShouldEqual, ModeLearning)
+		So(agent.Skill.Reading().Samples, ShouldEqual, 0)
 	})
 }
 

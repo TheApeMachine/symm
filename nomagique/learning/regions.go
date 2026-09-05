@@ -212,7 +212,10 @@ func (regions *regions) collect() {
 
 	for index := range regions.output {
 		region := &regions.output[index]
-		region.Authority /= region.Strength
+
+		if region.Strength > 0 {
+			region.Authority /= region.Strength
+		}
 	}
 
 	slices.SortFunc(regions.output, func(left, right Region) int {

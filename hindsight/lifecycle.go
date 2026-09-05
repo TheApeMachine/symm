@@ -4,27 +4,27 @@ import "time"
 
 /*
 LifecycleEvent is one real trading-lifecycle transition: an entry submitted, a
-fill, a position opening, a stop-loss protection change, an exit, a close. It is
-decision-correlated (keyed by the decision ID that caused it) rather than
-envelope-correlated, because a lifecycle transition happens inside the broker
-after the planner committed a decision — the decision witness carries the exact
-EnvelopeRef, and the lifecycle event names that decision as its cause.
+fill, a position opening, a stop-loss protection change, an exit, a close.
+DecisionID links the position's entry witness. ActionCorrelationID separately
+identifies the instruction whose client order produced an execution. These
+identities coincide for entry and differ for reductions and exits.
 
 This is a recording of what the live/paper production system actually did, never
 a separate backtest trade model.
 */
 type LifecycleEvent struct {
-	// DecisionID is the correlation key back to the decision witness that
-	// caused this transition.
-	DecisionID string    `json:"decisionId"`
-	Symbol     string    `json:"symbol"`
-	Kind       string    `json:"kind"`
-	Action     string    `json:"action,omitempty"`
-	At         time.Time `json:"at"`
+	// ActionCorrelationID is the client order ID of the particular instruction.
+	// DecisionID retains the position entry witness; it must not price later actions.
+	ActionCorrelationID string    `json:"actionCorrelationId,omitempty"`
+	DecisionID          string    `json:"decisionId"`
+	Symbol              string    `json:"symbol"`
+	Kind                string    `json:"kind"`
+	Action              string    `json:"action,omitempty"`
+	At                  time.Time `json:"at"`
 
-	// Execution carries the authoritative venue fill facts when the transition
-	// is an entry_fill or exit_fill. It is nil for transitions that carry no
-	// fill (order submission, position open, position close).
+	// Execution carries order identity for submission/failure and authoritative
+	// venue economics for terminal and fill events. Position open/close events
+	// have no execution fact.
 	Execution *ExecutionFact `json:"execution,omitempty"`
 
 	// CaptureSeq is the capture sequence of the envelope whose decision caused
@@ -39,7 +39,7 @@ type LifecycleEvent struct {
 ExecutionFact is the authoritative fill record for one execution: the venue's
 reported order, quantity, price, cumulative economics, fee, and the resulting
 position transition. It is correlated to the decision that produced the order
-through the enclosing LifecycleEvent's DecisionID.
+through the enclosing LifecycleEvent's ActionCorrelationID.
 */
 type ExecutionFact struct {
 	OrderID       string    `json:"orderId"`

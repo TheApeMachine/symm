@@ -379,6 +379,13 @@ var (
 			}
 			learner.SetExecution(newLearningDesk(runtimeCtx, desk, instrument), account)
 
+			if storageEngine != nil {
+				if pastEvents, err := storageEngine.RecentLearningEvents(5000); err == nil && len(pastEvents) > 0 {
+					warmed := learner.Warmup(pastEvents)
+					errnie.Info(fmt.Sprintf("agent: warmed up %d priors from %d historical events", warmed, len(pastEvents)))
+				}
+			}
+
 			// Forward testing, not back testing: the reviewer runs behind the
 			// tape and reports what the market actually offered while the agent
 			// was deciding without that knowledge.

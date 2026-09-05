@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"math"
 	"time"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -47,10 +48,9 @@ type Agent struct {
 	*/
 	Skill       *SkillMeter
 	Desk        ExecutionDesk
-	Realization    *RealizationMeter
-	attribution    attribution
-	dispatched     uint64
-	correlationSeq uint64
+	Realization *RealizationMeter
+	attribution attribution
+	dispatched  uint64
 
 	/*
 		skillWindow is the end of the last forward window admitted into the
@@ -150,16 +150,16 @@ func NewAgent(
 	}
 
 	return &Agent{
-		Grid:        grid,
-		Model:       learning.NewModel[[2]string, LearningAction](2048.0),
-		ctx:         ctx,
-		books:       books,
-		pair:        pair,
-		fee:         fee,
-		initial:     initial.Copy(),
-		Record:      record,
-		markets:     make(map[string]*learningMarket), requests: make(chan learningRequest), now: time.Now,
-		reviews:     make(chan []hindsight.Episode, 1), reviewed: make(map[string]struct{}),
+		Grid:    grid,
+		Model:   learning.NewModel[[2]string, LearningAction](2048.0),
+		ctx:     ctx,
+		books:   books,
+		pair:    pair,
+		fee:     fee,
+		initial: initial.Copy(),
+		Record:  record,
+		markets: make(map[string]*learningMarket), requests: make(chan learningRequest), now: time.Now,
+		reviews: make(chan []hindsight.Episode, 1), reviewed: make(map[string]struct{}),
 		Skill:       NewSkillMeter(AccountNone, time.Now()),
 		Realization: NewRealizationMeter(),
 	}, nil
@@ -315,4 +315,64 @@ func (agent *Agent) initialize(market *learningMarket) error {
 	}
 
 	return nil
+}
+
+/*
+Warmup incorporates historical resolved decisions from earlier runs into the
+action model and feature attribution. Live SkillMeter is deliberately left
+untouched: past recordings provide initial priors, but forward execution
+competence must be earned anew on the current session's live tape.
+*/
+func (agent *Agent) Warmup(events []hindsight.LearningEvent) int {
+	issuedContexts := make(map[uint64][]uint64)
+	issuedAuthorities := make(map[uint64]float64)
+	warmed := 0
+
+	for _, event := range events {
+		if event.Kind == "issued" {
+			issuedContexts[event.ID] = event.Context
+			issuedAuthorities[event.ID] = event.Authority
+			continue
+		}
+
+		if event.Kind != "resolved" {
+			continue
+		}
+
+		context := event.Context
+
+		if len(context) == 0 {
+			context = issuedContexts[event.ID]
+		}
+
+		authority := event.Authority
+
+		if authority <= 0 {
+			authority = issuedAuthorities[event.ID]
+		}
+
+		if authority <= 0 || authority > 1 || math.IsNaN(authority) || math.IsInf(authority, 0) {
+			continue
+		}
+
+		if math.IsNaN(event.Target) || math.IsInf(event.Target, 0) {
+			continue
+		}
+
+		action := LearningAction{
+			Kind:   types.Action(event.Action),
+			Power:  event.Power,
+			Reduce: event.Reduce,
+		}
+		key := [2]string{event.Symbol, "virtual"}
+
+		if err := agent.Model.Observe(key, context, action, event.Target, authority); err != nil {
+			continue
+		}
+
+		_ = agent.attribution.observe(context, action.Kind, event.Target, authority)
+		warmed++
+	}
+
+	return warmed
 }

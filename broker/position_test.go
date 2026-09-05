@@ -9,6 +9,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -320,6 +321,69 @@ func TestPositionOnExecutionTerminalPartialEntry(t *testing.T) {
 			So(position.Holding.SellableQty.Cmp(mustDecimal("40")), ShouldEqual, 0)
 		})
 	})
+}
+
+func TestPositionOnExecutionActionCorrelation(t *testing.T) {
+	Convey("Given a lot with distinct entry, reduction and exit orders", t, func() {
+		position := closeFillPosition("10", "100", "0")
+		position.EntryOrder = &spot.AddOrderRequest{ClOrdId: "entry"}
+		position.ReduceOrder = &spot.AddOrderRequest{ClOrdId: "reduce"}
+		var terminalIDs []string
+		position.recordFill = func(kind string, execution kraken.ExecutionData) {
+			if kind == "execution_terminal" {
+				terminalIDs = append(terminalIDs, execution.ClientOrderID)
+			}
+		}
+		execution := executionFixture("120", "120", "2", "240", "0")
+		execution.ClientOrderID, execution.ExecID, execution.OrderStatus = "reduce", "reduce-fill", "filled"
+		So(position.onExecution(kraken.Execution{Data: []kraken.ExecutionData{execution}}), ShouldBeFalse)
+		So(position.Holding.Qty.Cmp(mustDecimal("8")), ShouldEqual, 0)
+		So(position.ReduceOrder, ShouldBeNil)
+		position.ExitOrder = &spot.AddOrderRequest{ClOrdId: "exit"}
+		execution = executionFixture("80", "80", "8", "640", "0")
+		execution.ClientOrderID, execution.ExecID, execution.OrderStatus = "exit", "exit-fill", "filled"
+		So(position.onExecution(kraken.Execution{Data: []kraken.ExecutionData{execution}}), ShouldBeTrue)
+		So(terminalIDs, ShouldResemble, []string{"reduce", "exit"})
+		So(position.Decision.ID, ShouldEqual, "shape-decision")
+	})
+}
+
+func TestPositionHandleGuardianActionCorrelation(t *testing.T) {
+	Convey("Given policy commands serialized with execution reports", t, func() {
+		conn := newMockConn()
+		position := closeFillPosition("10", "100", "0")
+		position.api = websocket.NewAPI(t.Context(), conn, conn)
+		position.EntryOrder = &spot.AddOrderRequest{ClOrdId: uuid.NewString()}
+		reduceID, exitID := uuid.NewString(), uuid.NewString()
+		position.handleGuardian(types.Decision{ID: reduceID, Action: types.ActionScale, ProposedQuantity: mustDecimal("2")})
+		So(position.ReduceOrder.ClOrdId, ShouldEqual, reduceID)
+		position.applyReduceFill(kraken.ExecutionData{OrderStatus: "canceled"})
+		position.handleGuardian(types.Decision{ID: exitID, Action: types.ActionExit})
+		So(position.ExitOrder.ClOrdId, ShouldEqual, exitID)
+		Convey("a competing command is rejected with its own identity", func() {
+			var failedID string
+			position.recordFill = func(kind string, execution kraken.ExecutionData) {
+				if kind == "execution_failed" {
+					failedID = execution.ClientOrderID
+				}
+			}
+			position.handleGuardian(types.Decision{ID: "competing", Action: types.ActionExit})
+			So(failedID, ShouldEqual, "competing")
+			So(position.ExitOrder.ClOrdId, ShouldEqual, exitID)
+		})
+	})
+}
+
+func BenchmarkPositionOnExecution(b *testing.B) {
+	position := closeFillPosition("10", "100", "0")
+	order := &spot.AddOrderRequest{ClOrdId: "reduction"}
+	message := kraken.Execution{Data: []kraken.ExecutionData{{ClientOrderID: "reduction", OrderStatus: "canceled"}}}
+	position.recordFill = func(string, kraken.ExecutionData) {}
+	b.ReportAllocs()
+	for b.Loop() {
+		position.ReduceOrder = order
+		position.onExecution(message)
+	}
 }
 
 func BenchmarkPositionWire(b *testing.B) {

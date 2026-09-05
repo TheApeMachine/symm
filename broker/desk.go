@@ -280,9 +280,10 @@ func (desk *Desk) Recovery() *Recovery {
 /*
 Reduce sells part of an open lot without closing it, for a policy that sizes
 its own exposure. A symbol with no open position has nothing to reduce and
-says so rather than doing something else with the account.
+says so rather than doing something else with the account. The guardian
+serializes submission with fills; a nil return acknowledges queue admission.
 */
-func (desk *Desk) Reduce(symbol string, volume *decimal.Decimal) error {
+func (desk *Desk) Reduce(symbol string, volume *decimal.Decimal, correlationID ...string) error {
 	if desk == nil || desk.positions == nil || symbol == "" {
 		return errnie.Err(
 			errnie.Validation,
@@ -311,7 +312,13 @@ func (desk *Desk) Reduce(symbol string, volume *decimal.Decimal) error {
 		)
 	}
 
-	return position.Reduce(volume)
+	decision := types.Decision{Action: types.ActionScale, ProposedQuantity: volume}
+
+	if len(correlationID) > 0 {
+		decision.ID = correlationID[0]
+	}
+
+	return position.publishGuardian(decision)
 }
 
 /*
@@ -319,7 +326,7 @@ ManualExit executes an operator override for one open symbol. The desk's
 execution lock serializes it against entry admission and repeated override
 clicks, while Position owns the regulator transition and market order.
 */
-func (desk *Desk) ManualExit(symbol string) error {
+func (desk *Desk) ManualExit(symbol string, correlationID ...string) error {
 	if desk == nil || desk.positions == nil || symbol == "" {
 		return errnie.Err(
 			errnie.Validation,
@@ -348,7 +355,7 @@ func (desk *Desk) ManualExit(symbol string) error {
 		)
 	}
 
-	return position.ManualExit()
+	return position.ManualExit(correlationID...)
 }
 
 func (desk *Desk) OpenPositions() int {
@@ -613,16 +620,17 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			})
 		}
 
-		// recordFill persists the authoritative venue fill (entry or exit) as a
-		// decision-correlated Hindsight lifecycle event. It is emitted only after
-		// the position transition itself.
+		// Keep the entry witness separate from each order's action identity.
+		// Terminal execution facts are emitted before accounting; fill events
+		// describe the resulting position transition.
 		position.recordFill = func(kind string, execution kraken.ExecutionData) {
 			desk.emitLifecycle(hindsight.LifecycleEvent{
-				DecisionID: decision.ID,
-				Symbol:     decision.Symbol,
-				Kind:       kind,
-				At:         execution.Timestamp,
-				Execution:  executionFact(execution),
+				ActionCorrelationID: execution.ClientOrderID,
+				DecisionID:          decision.ID,
+				Symbol:              decision.Symbol,
+				Kind:                kind,
+				At:                  execution.Timestamp,
+				Execution:           executionFact(execution),
 			})
 		}
 		desk.positions.Store(decision.Symbol, position)

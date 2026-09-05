@@ -161,8 +161,18 @@ func (grid *Grid) update(row int, measurement *data.Measurement[float64]) {
 			snr = measurement.SNR
 		}
 
+		snrFactor := 0.0
+
+		if snr > 0 {
+			snrFactor = 1.0
+
+			if snr < 1e12 {
+				snrFactor = snr / (1 + snr)
+			}
+		}
+
 		quality := float64(baseline.Maturity()) *
-			measurement.Maturity * (snr / (1 + snr))
+			measurement.Maturity * snrFactor
 		// Square-root weighting makes each squared activation carry quality
 		// once in the accumulated second moment, rather than squaring it.
 		grid.activations[row][column] = movement * math.Sqrt(quality)

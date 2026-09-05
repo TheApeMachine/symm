@@ -261,16 +261,35 @@ func (position *Position) handleGuardian(value any) {
 		})
 	case kraken.Level3Data:
 		position.onLevel3(payload)
-	case string: // e.g. "manual_exit"
-		if payload == "manual_exit" {
-			if err := position.executeManualExit(); err != nil {
-				errnie.Error(errnie.Err(
-					errnie.UnprocessableContent,
-					"position: manual exit did not execute for "+position.pair.Symbol,
-					err,
-				))
-			}
+	case types.Decision:
+		var err error
+
+		switch payload.Action {
+		case types.ActionScale:
+			err = position.Reduce(payload.ProposedQuantity, payload.ID)
+		case types.ActionExit:
+			err = position.executeManualExit(payload.ID)
+		default:
+			err = errnie.Err(errnie.Validation, "position: unsupported guardian action", nil)
 		}
+
+		if err != nil {
+			errnie.Error(err)
+
+			if position.recordFill != nil {
+				position.recordFill("execution_failed", kraken.ExecutionData{
+					ClientOrderID: payload.ID, OrderStatus: "rejected", Timestamp: time.Now().UTC(),
+				})
+			}
+			return
+		}
+
+		if position.recordFill != nil {
+			position.recordFill("execution_submitted", kraken.ExecutionData{
+				ClientOrderID: payload.ID, Timestamp: time.Now().UTC(),
+			})
+		}
+
 	}
 }
 
@@ -413,6 +432,22 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 			}
 
 			position.seenExecutions[execution.ExecID] = struct{}{}
+		}
+
+		knownOrder := position.EntryOrder != nil && execution.ClientOrderID == position.EntryOrder.ClOrdId ||
+			position.ExitOrder != nil && execution.ClientOrderID == position.ExitOrder.ClOrdId ||
+			position.ReduceOrder != nil && execution.ClientOrderID == position.ReduceOrder.ClOrdId
+
+		if knownOrder && position.recordFill != nil {
+			switch execution.OrderStatus {
+			case "filled", "iceberg_filled", "canceled", "expired", "rejected":
+				position.recordFill("execution_terminal", execution)
+			}
+		}
+
+		if position.ReduceOrder != nil && execution.ClientOrderID == position.ReduceOrder.ClOrdId {
+			position.applyReduceFill(execution)
+			continue
 		}
 
 		if position.ExitOrder != nil &&
@@ -707,7 +742,7 @@ A reduction never claims the exit. Claiming it would latch the lot as closing
 and block the real exit that follows, and the two orders answer different
 questions — "hold less of this" is not "stop holding this".
 */
-func (position *Position) Reduce(volume *decimal.Decimal) error {
+func (position *Position) Reduce(volume *decimal.Decimal, correlationID ...string) error {
 	position.exitMu.Lock()
 	defer position.exitMu.Unlock()
 
@@ -721,7 +756,7 @@ func (position *Position) Reduce(volume *decimal.Decimal) error {
 
 	// A lot already selling everything it has cannot also sell part of it.
 	if position.ExitOrder != nil || position.ReduceOrder != nil {
-		return nil
+		return errnie.Err(errnie.Conflict, "position: sell order already in flight", nil)
 	}
 
 	sellable := position.Holding.SellableQty
@@ -752,6 +787,10 @@ func (position *Position) Reduce(volume *decimal.Decimal) error {
 		OrderType: "market",
 		Volume:    volume.String(),
 		Pair:      position.pair.Symbol,
+	}
+
+	if len(correlationID) > 0 && correlationID[0] != "" {
+		order.ClOrdId = correlationID[0]
 	}
 
 	if _, err := position.api.AddOrder(order); err != nil {
@@ -813,11 +852,17 @@ func (position *Position) applyReduceFill(execution kraken.ExecutionData) {
 ManualExit is the operator override for one filled lot. It pushes a command to the
 guardian ring to guarantee order with market events.
 */
-func (position *Position) ManualExit() error {
-	return position.publishGuardian("manual_exit")
+func (position *Position) ManualExit(correlationID ...string) error {
+	decision := types.Decision{Action: types.ActionExit}
+
+	if len(correlationID) > 0 {
+		decision.ID = correlationID[0]
+	}
+
+	return position.publishGuardian(decision)
 }
 
-func (position *Position) executeManualExit() error {
+func (position *Position) executeManualExit(correlationID ...string) error {
 	if position == nil || position.Holding == nil ||
 		position.Holding.Qty == nil || position.Holding.Qty.Sign() <= 0 {
 		return errnie.Err(
@@ -835,18 +880,18 @@ func (position *Position) executeManualExit() error {
 		)
 	}
 
-	if position.ExitOrder != nil {
-		return nil
+	if position.ExitOrder != nil || position.ReduceOrder != nil {
+		return errnie.Err(errnie.Conflict, "position: sell order already in flight", nil)
 	}
 
-	_, err := position.Exit()
+	_, err := position.Exit(correlationID...)
 	return err
 }
 
 /*
 Exit is the single sell-order boundary for an open lot.
 */
-func (position *Position) Exit() (*Position, error) {
+func (position *Position) Exit(correlationID ...string) (*Position, error) {
 	if position.status() == types.CLOSED {
 		return position, nil
 	}
@@ -888,6 +933,10 @@ func (position *Position) Exit() (*Position, error) {
 		OrderType: "market",
 		Volume:    volume.String(),
 		Pair:      position.pair.Symbol,
+	}
+
+	if len(correlationID) > 0 && correlationID[0] != "" {
+		exitOrder.ClOrdId = correlationID[0]
 	}
 
 	result, err := position.api.AddOrder(exitOrder)

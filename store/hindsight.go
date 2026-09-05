@@ -841,6 +841,7 @@ func (store *SQLite) ListLifecycleEvents(runID string) ([]hindsight.LifecycleEve
 			}
 
 			event.Execution = &fact
+			event.ActionCorrelationID = fact.ClientOrderID
 		}
 
 		events = append(events, event)

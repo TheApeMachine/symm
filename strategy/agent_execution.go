@@ -1,11 +1,10 @@
 package strategy
 
 import (
-	"fmt"
 	"math/big"
-	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
@@ -116,7 +115,7 @@ func (agent *Agent) dispatch(
 		reference = book.Bids.High.Price.Rat()
 	}
 
-	correlationID := fmt.Sprintf("%s-%d", market.symbol, atomic.AddUint64(&agent.correlationSeq, 1))
+	correlationID := uuid.NewString()
 
 	intent := ExecutionIntent{
 		CorrelationID: correlationID,

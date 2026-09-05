@@ -63,8 +63,8 @@ one to the whole sequence. A long context is precise but rare: on its own, a
 context of several jittering identities almost never repeats, so no prior ever
 reaches a second observation and the model can never leave exploration. Every
 prefix carries the same evidence at a coarser resolution, and Recall reads the
-longest one that has any, so precision is used where it has been earned and
-falls back where it has not.
+deepest usable reading with competitive retained authority, so precision
+yields when broader evidence is stronger or fresher.
 */
 func (model *Model[Key, Action]) Issue(
 	key Key, context []uint64, action Action, authority float64,
@@ -166,15 +166,19 @@ func (model *Model[Key, Action]) Resolve(identity uint64, outcome float64) (Prio
 }
 
 /*
-Recall returns the completed evidence for this key and action at the longest
-prefix of the supplied context that has any, backing off towards the empty
-context as needed. Lookup does not allocate or create evidence.
+Recall prefers the deepest variance-defined reading whose retained input
 
-This is exact prefix matching at a coarser resolution, not approximate
-matching: a returned reading was measured under a context this one genuinely
-begins with, never under a similar-looking different one. Depth reports how
-many tokens that reading was conditioned on, so a caller can tell a specific
-answer from a general one.
+	authority is at least that of the selected shallower reading. Uniform aging
+	leaves Kish support unchanged, so retained input authority is compared separately
+	from dispersion and reward signal power. Fresh measured zero outcomes remain evidence.
+
+Lookup first tries the token at the current depth, then scans unused supplied
+
+	tokens in input order for an existing child. This is greedy permutation/subset
+	recovery over learned ordered paths, intended to tolerate region-rank jitter;
+	it is not strict prefix matching or an exhaustive search of permutations.
+	Depth counts matched tokens, not an ordered prefix of the supplied context.
+	Lookup creates no evidence.
 */
 func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action) PriorReading {
 	node := model.contexts[key]
@@ -189,7 +193,7 @@ func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action
 		reading = prior.Reading(model.epoch)
 	}
 
-	var used uint32
+	used := make([]bool, len(context))
 	depth := 0
 
 	for depth < len(context) {
@@ -201,11 +205,11 @@ func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action
 		next := node.children[token]
 		matchedIndex := depth
 
-		if next == nil || (depth < 32 && (used&(1<<depth)) != 0) {
+		if next == nil || used[depth] {
 			next = nil
 
 			for candidateIndex, candidateToken := range context {
-				if candidateIndex < 32 && (used&(1<<candidateIndex)) != 0 {
+				if used[candidateIndex] {
 					continue
 				}
 
@@ -221,9 +225,7 @@ func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action
 			break
 		}
 
-		if matchedIndex < 32 {
-			used |= 1 << matchedIndex
-		}
+		used[matchedIndex] = true
 
 		node = next
 		depth++
@@ -234,24 +236,67 @@ func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action
 			continue
 		}
 
-		/*
-			A deeper context is more specific and wins as soon as it can state a
-			dispersion of its own. While nothing at any depth can, the deepest
-			available reading is still the most specific answer there is. A
-			shallower reading is only preferred when it can say something about
-			spread that the deeper one cannot.
-		*/
+		// Specificity wins ties in retained input authority.
 		deeper := prior.Reading(model.epoch)
 
 		if !deeper.Defined {
 			continue
 		}
 
-		if deeper.VarianceDefined || !reading.VarianceDefined {
+		if (deeper.VarianceDefined || !reading.VarianceDefined) &&
+			deeper.EvidenceAuthority >= reading.EvidenceAuthority {
 			deeper.Depth = depth
 			reading = deeper
 		}
 	}
 
 	return reading
+}
+
+/*
+Observe incorporates an action outcome directly into all context prefix priors
+without requiring an inflight pending ticket. This enables historical warmup
+across process restarts while preserving prefix-tree evidence structure.
+*/
+func (model *Model[Key, Action]) Observe(
+	key Key, context []uint64, action Action, outcome, authority float64,
+) error {
+	if authority <= 0 || authority > 1 {
+		return errnie.Err(errnie.Validation, "model: authority must be in (0, 1]", nil)
+	}
+
+	node := model.contexts[key]
+
+	if node == nil {
+		node = &modelContext[Action]{}
+		model.contexts[key] = node
+	}
+
+	model.epoch++
+	priors := make([]*Prior, 0, len(context)+1)
+	priors = append(priors, node.prior(action, model.memory))
+
+	for _, token := range context {
+		if node.children == nil {
+			node.children = make(map[uint64]*modelContext[Action])
+		}
+
+		next := node.children[token]
+
+		if next == nil {
+			next = &modelContext[Action]{}
+			node.children[token] = next
+		}
+
+		node = next
+		priors = append(priors, node.prior(action, model.memory))
+	}
+
+	for _, prior := range priors {
+		if err := prior.Observe(outcome, authority, model.epoch); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

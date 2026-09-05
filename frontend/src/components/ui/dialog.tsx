@@ -1,13 +1,35 @@
 import { useSelector } from "@tanstack/react-store";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { appStore } from "#/collections/app";
 import { Flex } from "./flex";
 import { Grid } from "./grid";
 
 export const Dialog = () => {
-	const app = useSelector(appStore, (state) => state);
+	const error = useSelector(appStore, (state) => state.error);
 	const errorDialogRef = useRef<HTMLDialogElement>(null);
 	const dismissRef = useRef<HTMLButtonElement>(null);
+
+	useEffect(() => {
+		const dialog = errorDialogRef.current;
+
+		if (dialog === null) {
+			return;
+		}
+
+		if (error) {
+			if (!dialog.open) {
+				dialog.showModal();
+			}
+
+			dismissRef.current?.focus();
+
+			return;
+		}
+
+		if (dialog.open) {
+			dialog.close();
+		}
+	}, [error]);
 
 	return (
 		<dialog
@@ -33,7 +55,7 @@ export const Dialog = () => {
 				}
 			}}
 		>
-			{app.error ? (
+			{error ? (
 				<Flex.Column
 					className="mx-auto max-h-full w-full max-w-3xl border border-[#5f2d2d] bg-[#1a0f0e] shadow-[0_18px_80px_rgba(0,0,0,0.55)]"
 					fullWidth
@@ -60,7 +82,7 @@ export const Dialog = () => {
 						cols={2}
 						className="min-h-0 flex-1 grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-2 overflow-auto p-4 font-mono text-[11px]"
 					>
-						{Object.entries(app.error).map(([key, value]) => (
+						{Object.entries(error).map(([key, value]) => (
 							<Flex
 								key={`${key}:${value === null ? "null" : typeof value === "object" ? JSON.stringify(value) : String(value)}`}
 								className="contents"

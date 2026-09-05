@@ -240,6 +240,11 @@ func (meter *SkillMeter) Reading() SkillReading {
 	}
 
 	degrees := meter.weight - meter.squaredWeight/meter.weight
+
+	if degrees <= 0 {
+		return reading
+	}
+
 	reading.VarianceDefined = true
 	reading.Variance = meter.deviation / degrees
 

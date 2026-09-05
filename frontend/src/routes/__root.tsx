@@ -7,7 +7,7 @@ import {
 	useNavigate,
 } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { appStore } from "#/collections/app";
 import { type TerminalSurface, terminalStore } from "#/collections/terminal";
 import { CommandPalette } from "#/components/terminal/palette";
@@ -77,10 +77,7 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 	const navigate = useNavigate();
 	const location = useLocation();
 	const surface = parseSurface(location.pathname);
-	const app = useSelector(appStore, (state) => state);
 	const scanlines = useSelector(terminalStore, (state) => state.scanlines);
-	const errorDialogRef = useRef<HTMLDialogElement>(null);
-	const dismissRef = useRef<HTMLButtonElement>(null);
 	const {
 		openPalette,
 		closePalette,
@@ -89,28 +86,6 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 		inspectSource,
 	} = terminalStore.actions;
 	const { updateFocusSymbol } = appStore.actions;
-
-	useEffect(() => {
-		const dialog = errorDialogRef.current;
-
-		if (dialog === null) {
-			return;
-		}
-
-		if (app.error) {
-			if (!dialog.open) {
-				dialog.showModal();
-			}
-
-			dismissRef.current?.focus();
-
-			return;
-		}
-
-		if (dialog.open) {
-			dialog.close();
-		}
-	}, [app.error]);
 
 	const runPalette = (
 		nextSurface: TerminalSurface,

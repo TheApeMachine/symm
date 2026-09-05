@@ -68,7 +68,13 @@ func (model *Model[Key, Action]) Select(
 				effectiveSupport = 1.0
 			}
 
-			score += rand.NormFloat64() * math.Sqrt(prior.Variance/effectiveSupport)
+			variance := prior.Variance
+
+			if variance < 0 {
+				variance = 0
+			}
+
+			score += rand.NormFloat64() * math.Sqrt(variance/effectiveSupport)
 		}
 
 		if score > best {

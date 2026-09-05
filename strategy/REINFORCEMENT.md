@@ -83,14 +83,16 @@ decision changed the context it would next be recalled under, so no prior ever
 accumulated a second observation, exploration could never leave its
 unestimable-variance branch, and the policy lane recalled nothing.
 
-An outcome trains its action at every prefix of that context, and Recall reads
-the longest prefix that can state a dispersion of its own, backing off towards
-the unconditioned estimate as needed. Ordered region identities jitter, so a
-long context still almost never repeats exactly; every prefix carries the same
-evidence at a coarser resolution, and precision is used where it has been
-earned rather than assumed. This is exact prefix matching at a coarser
-resolution, not approximate matching: a returned reading was measured under a
-context this one genuinely begins with. `PriorReading.Depth` reports which.
+An outcome trains its action at every ordered prefix. Recall follows learned
+paths greedily: it first tries the token at the current depth, then scans unused
+supplied tokens in input order for an existing child. This permits permutation
+and subset recovery when region ranks jitter; it is not strict prefix matching
+or an exhaustive permutation search. `PriorReading.Depth` counts matched tokens.
+A deeper reading must retain at least the selected broader reading's input
+authority, as well as define dispersion when the broader reading can. Ties favor
+specificity. Retained input authority is `sum(w²)/sum(w)`, independent of reward
+sign or magnitude, so old deep evidence yields to refreshed broader evidence
+without an arbitrary age cutoff or treating a measured zero reward as missing.
 
 `nomagique.learning.Model` accepts an opaque key, numeric context, comparable
 action and an explicit authority in [0,1]. Issue captures those facts before
@@ -293,10 +295,12 @@ writer into the indexed `learning_events` table after book locks are released. R
 The dashboard refresh interval and journal page size control inspection only;
 neither is a learning horizon or an evidence cutoff.
 
-The learner currently starts fresh on each process run. The journal preserves
-action and account evidence but is not a model/grid checkpoint, and restart
-does not reconstruct learned priors automatically. Virtual results are forward
-observations under the stated fill model, not proof of exchange profitability.
+The learner preserves action and account evidence in the durable learning journal.
+On process startup, the agent warms up action priors and feature attribution from
+recent historical decisions across previous runs to provide an initial boost rather
+than starting completely cold. Live execution authority remains strictly gated by
+forward skill calibration on the current session's live tape. Virtual results are
+forward observations under the stated fill model, not proof of exchange profitability.
 
 ## Package boundary
 
