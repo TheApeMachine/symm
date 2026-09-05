@@ -9,7 +9,6 @@ export type TerminalSurface =
 	| "lineage"
 	| "fluid"
 	| "signals"
-	| "decisions"
 	| "journal"
 	| "xray"
 	| "cortex"

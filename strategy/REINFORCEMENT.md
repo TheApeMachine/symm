@@ -157,8 +157,15 @@ orders, and records its own outcomes under the same identity it selects from —
 otherwise its experience trains a subtree nothing reads. Positive evidence
 influences new exposure through prior authority; absence of positive evidence
 leaves a flat policy account waiting. Reductions are feasible without that
-scaling. Default startup mounts this owner instead of the former
-advisor/planner/stoploss execution path.
+scaling.
+
+This owner is the only decision path. The advisor deliberation package, the
+planner/opportunity/allocation layer and the stoploss regulator have been
+removed rather than left unmounted: an entry carries no protective geometry,
+`broker.Position` marks and reports but never closes itself, and an exit
+happens because the agent commanded one. A second mechanism that could close a
+position would be a second policy, learning nothing and contradicting the one
+whose outcomes are being measured.
 
 ## Measured skill and going live
 

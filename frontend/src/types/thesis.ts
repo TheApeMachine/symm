@@ -1,4 +1,3 @@
-import type { RiskPlan, Stoploss } from "#/types/stoploss";
 
 /*
 Decision mirrors the backend types.Decision payload published on each
@@ -130,8 +129,6 @@ export interface Decision {
 	returnPct?: number;
 	mark?: string;
 	entryCost?: EntryCost;
-	stoploss?: Stoploss;
-	risk?: RiskPlan;
 	trace?: DecisionTrace;
 }
 

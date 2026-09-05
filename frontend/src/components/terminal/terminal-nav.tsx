@@ -14,7 +14,6 @@ type TerminalRoutePath =
 	| "/lineage"
 	| "/fluid"
 	| "/signals"
-	| "/decisions"
 	| "/journal"
 	| "/xray"
 	| "/cortex"
@@ -50,7 +49,6 @@ export const SURFACE_ITEMS: Array<{
 	},
 	{ key: "fluid", label: "Fluid manifold", icon: "scan", to: "/fluid" },
 	{ key: "signals", label: "Signal insight", icon: "signal", to: "/signals" },
-	{ key: "decisions", label: "Decision tree", icon: "tree", to: "/decisions" },
 	{ key: "journal", label: "Trade journal", icon: "journal", to: "/journal" },
 	{ key: "xray", label: "Latent x-ray", icon: "scan", to: "/xray" },
 	{ key: "cortex", label: "Cognitive tree", icon: "cortex", to: "/cortex" },

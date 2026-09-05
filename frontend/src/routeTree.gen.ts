@@ -20,7 +20,6 @@ import { Route as HindsightRouteImport } from './routes/hindsight'
 import { Route as GraphRouteImport } from './routes/graph'
 import { Route as FluidRouteImport } from './routes/fluid'
 import { Route as DiagnosticsRouteImport } from './routes/diagnostics'
-import { Route as DecisionsRouteImport } from './routes/decisions'
 import { Route as CortexRouteImport } from './routes/cortex'
 import { Route as AllocationRouteImport } from './routes/allocation'
 import { Route as IndexRouteImport } from './routes/index'
@@ -80,11 +79,6 @@ const DiagnosticsRoute = DiagnosticsRouteImport.update({
   path: '/diagnostics',
   getParentRoute: () => rootRouteImport,
 } as any)
-const DecisionsRoute = DecisionsRouteImport.update({
-  id: '/decisions',
-  path: '/decisions',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const CortexRoute = CortexRouteImport.update({
   id: '/cortex',
   path: '/cortex',
@@ -105,7 +99,6 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/allocation': typeof AllocationRoute
   '/cortex': typeof CortexRoute
-  '/decisions': typeof DecisionsRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/fluid': typeof FluidRoute
   '/graph': typeof GraphRoute
@@ -122,7 +115,6 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/allocation': typeof AllocationRoute
   '/cortex': typeof CortexRoute
-  '/decisions': typeof DecisionsRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/fluid': typeof FluidRoute
   '/graph': typeof GraphRoute
@@ -140,7 +132,6 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/allocation': typeof AllocationRoute
   '/cortex': typeof CortexRoute
-  '/decisions': typeof DecisionsRoute
   '/diagnostics': typeof DiagnosticsRoute
   '/fluid': typeof FluidRoute
   '/graph': typeof GraphRoute
@@ -159,7 +150,6 @@ export interface FileRouteTypes {
     | '/'
     | '/allocation'
     | '/cortex'
-    | '/decisions'
     | '/diagnostics'
     | '/fluid'
     | '/graph'
@@ -176,7 +166,6 @@ export interface FileRouteTypes {
     | '/'
     | '/allocation'
     | '/cortex'
-    | '/decisions'
     | '/diagnostics'
     | '/fluid'
     | '/graph'
@@ -193,7 +182,6 @@ export interface FileRouteTypes {
     | '/'
     | '/allocation'
     | '/cortex'
-    | '/decisions'
     | '/diagnostics'
     | '/fluid'
     | '/graph'
@@ -211,7 +199,6 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AllocationRoute: typeof AllocationRoute
   CortexRoute: typeof CortexRoute
-  DecisionsRoute: typeof DecisionsRoute
   DiagnosticsRoute: typeof DiagnosticsRoute
   FluidRoute: typeof FluidRoute
   GraphRoute: typeof GraphRoute
@@ -304,13 +291,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DiagnosticsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/decisions': {
-      id: '/decisions'
-      path: '/decisions'
-      fullPath: '/decisions'
-      preLoaderRoute: typeof DecisionsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/cortex': {
       id: '/cortex'
       path: '/cortex'
@@ -339,7 +319,6 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AllocationRoute: AllocationRoute,
   CortexRoute: CortexRoute,
-  DecisionsRoute: DecisionsRoute,
   DiagnosticsRoute: DiagnosticsRoute,
   FluidRoute: FluidRoute,
   GraphRoute: GraphRoute,

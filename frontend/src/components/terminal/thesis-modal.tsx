@@ -2,7 +2,6 @@ import { useSelector } from "@tanstack/react-store";
 import { terminalStore } from "#/collections/terminal";
 import { EntryDecisionSnapshot } from "#/components/terminal/entry-decision-snapshot";
 import { ThesisDetailRail } from "#/components/terminal/thesis-detail-rail";
-import { useTrace, WarRoom } from "#/components/terminal/war-room";
 import { Typography } from "#/components/ui/typography";
 import { cn } from "#/lib/utils";
 
@@ -10,7 +9,7 @@ import { cn } from "#/lib/utils";
 ThesisModal separates two different truths about one open lot:
 
   the immutable decision and market economics recorded at entry;
-  the position's live mark, return, and protection state now.
+  the position's live mark and return now.
 
 The entry side always comes from Position.Decision. It never consults the
 current strategy round, so opening the modal later cannot rewrite why the trade
@@ -26,7 +25,6 @@ export const closeThesisShell = () => {
 
 export const ThesisModal = () => {
 	const symbol = useSelector(terminalStore, (state) => state.thesisSymbol);
-	const { isLive } = useTrace(symbol ?? "");
 
 	if (symbol === null || symbol === "") {
 		return null;
@@ -86,21 +84,6 @@ export const ThesisModal = () => {
 							about this symbol now — or the entry search trace if no
 							new round ran for this held asset.
 						*/}
-						<div className="flex h-104 shrink-0 flex-col border-(--line) border-t">
-							<div className="flex shrink-0 items-center justify-between border-(--line) border-b px-3 py-1.5">
-								<span className="font-mono text-[9px] text-(--acc) uppercase tracking-wide">
-									{isLive
-										? "Live reasoning · current round"
-										: "Entry reasoning · frozen decision"}
-								</span>
-								<span className="font-mono text-[8px] text-(--f4)">
-									{isLive
-										? "simulating live market horizon"
-										: "snapshot at position execution"}
-								</span>
-							</div>
-							<WarRoom symbol={symbol} className="min-h-0 flex-1" />
-						</div>
 					</div>
 
 					<div className="min-h-0 overflow-y-auto p-3.5">

@@ -1,4 +1,3 @@
-import type { Stoploss } from "#/types/stoploss";
 import type {
 	Decision,
 	Finding,
@@ -17,7 +16,6 @@ export type {
 	ThesisCategory,
 	ThesisForecast,
 	ThesisHypothesis,
-	Stoploss,
 };
 
 /*
@@ -56,7 +54,6 @@ export type Holding = {
 	return_pct: number | string;
 	is_opportunity: boolean;
 	reservation_id?: string;
-	stoploss: Stoploss | null;
 };
 
 export type Fill = {

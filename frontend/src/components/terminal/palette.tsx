@@ -42,7 +42,6 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 		hint: "Particle gas · gas volume · complex wave field",
 	},
 	{ id: "signals", label: "Signal insight", hint: "Per-kernel forensics" },
-	{ id: "decisions", label: "Decision tree", hint: "Gate-by-gate trace" },
 	{
 		id: "journal",
 		label: "Trade journal",

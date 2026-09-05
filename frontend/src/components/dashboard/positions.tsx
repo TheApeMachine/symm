@@ -9,7 +9,6 @@ import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { Position } from "#/providers/telemetry/telemetry/position";
 import { Stoploss } from "#/providers/telemetry/telemetry/stoploss";
 import { sendPositionExit } from "#/providers/websocket";
-import { PositionStopGeometry } from "./position-stop-geometry";
 
 const formatValue = (value: unknown, digits: number): string =>
 	typeof value === "number"
@@ -174,7 +173,6 @@ export const Positions = () => {
 							</Typography.Span>
 						</Flex.Row>
 
-						<PositionStopGeometry symbol={pos.symbol} />
 					</Flex.Column>
 				</div>
 			))}
