@@ -23,6 +23,65 @@ type LearningView struct {
 	Regions        []learning.Region `json:"regions"`
 	Points         []LearningPoint   `json:"points"`
 	Lanes          []LearningWallet  `json:"lanes"`
+
+	/*
+		Skill is the measured competence of the policy lane and the execution
+		authority it justifies. Dispatched counts intents actually handed to an
+		account: it is zero in a learning-only run by construction.
+	*/
+	Skill      SkillReading `json:"skill"`
+	Dispatched uint64       `json:"dispatched"`
+
+	/*
+		Horizon is the forward window every decision in this market is scored
+		over, derived from Epochs observed impulse changes averaging EpochMean
+		seconds. Until an interval has been observed the horizon is zero and
+		nothing resolves.
+	*/
+	Horizon       time.Duration `json:"horizonNs"`
+	HorizonEpochs int           `json:"horizonEpochs"`
+	EpochMean     float64       `json:"epochMean"`
+	Epochs        uint64        `json:"epochs"`
+
+	/*
+		Impulse is the ordered context the next decision is conditioned on,
+		with each token resolved back to the quantity it names. Candidates are
+		the feasible actions at that context with the evidence recalled for
+		each, so a chosen action can be read against the ones it beat.
+	*/
+	Impulse    []LearningToken     `json:"impulse"`
+	Candidates []LearningCandidate `json:"candidates"`
+
+	/*
+		Influence ranks which measured quantities have accumulated outcome
+		evidence for which actions. It is association under the agent's own
+		exploration, not a controlled comparison.
+	*/
+	Influence []MetricInfluence `json:"influence"`
+}
+
+/* LearningToken resolves one context token back to the quantity it identifies. */
+type LearningToken struct {
+	Token     uint64  `json:"token"`
+	Source    string  `json:"source"`
+	Label     string  `json:"label"`
+	Strength  float64 `json:"strength"`
+	Authority float64 `json:"authority"`
+	Members   int     `json:"members"`
+}
+
+/*
+LearningCandidate is one feasible action at the current context together with
+the evidence recalled for it. Selected marks the action the policy lane would
+take now; an undefined prior means this action has never completed here, which
+is why exploration would reach for it.
+*/
+type LearningCandidate struct {
+	Kind     string                `json:"kind"`
+	Power    uint16                `json:"power"`
+	Reduce   bool                  `json:"reduce"`
+	Selected bool                  `json:"selected"`
+	Prior    learning.PriorReading `json:"prior"`
 }
 
 /* LearningSummary locates active independent contexts without combining capital. */
@@ -64,6 +123,18 @@ type LearningWallet struct {
 	Resolved   uint64                `json:"resolved"`
 	Unresolved int                   `json:"unresolved"`
 	Prior      learning.PriorReading `json:"prior"`
+
+	/*
+		Episodes counts finished accounts: a lane that spent its capital on
+		execution costs restarts on a fresh clone of the same known balance.
+		Realized is what those finished episodes actually returned and Spent is
+		what they paid in fees. Neither is a balance anyone holds, and they are
+		never summed across lanes.
+	*/
+	Episodes  uint64  `json:"episodes"`
+	Realized  float64 `json:"realized"`
+	Spent     float64 `json:"spent"`
+	Exhausted bool    `json:"exhausted"`
 }
 
 /* learningRequest crosses into the workspace owner; it never reads live maps. */
@@ -102,7 +173,13 @@ func (agent *Agent) Snapshot(ctx context.Context, symbol string) (LearningView, 
 func (agent *Agent) view(symbol string) LearningView {
 	view := LearningView{At: agent.now(), Symbol: symbol, Status: "waiting for market observations",
 		Steps: agent.steps, Decisions: agent.decisions, Resolved: agent.resolved,
-		GridVersion: agent.Grid.Version, Columns: len(agent.Grid.Columns), InitialCapital: agent.initial.String()}
+		GridVersion: agent.Grid.Version, Columns: len(agent.Grid.Columns), InitialCapital: agent.initial.String(),
+		Dispatched: agent.dispatched, HorizonEpochs: horizonEpochs,
+		Influence: agent.attribution.report(agent.Grid.Columns)}
+
+	if agent.Skill != nil {
+		view.Skill = agent.Skill.Reading()
+	}
 
 	for key, market := range agent.markets {
 		summary := LearningSummary{Symbol: key, Status: market.status}
@@ -137,17 +214,46 @@ func (agent *Agent) view(symbol string) LearningView {
 	}
 	view.Symbol, view.Status = symbol, market.status
 	view.Regions = append([]learning.Region(nil), market.regions...)
+	view.Horizon, view.EpochMean, view.Epochs = market.horizon(), market.epochMean, market.epochs
+
+	for _, region := range market.regions {
+		token := LearningToken{Token: region.ID, Strength: region.Strength,
+			Authority: region.Authority, Members: region.Members}
+
+		if index := int(region.ID) - 1; index >= 0 && index < len(agent.Grid.Columns) {
+			token.Source, token.Label = agent.Grid.Columns[index][0], agent.Grid.Columns[index][1]
+		}
+
+		view.Impulse = append(view.Impulse, token)
+	}
+
+	// The last context and feasible set belong to the policy lane, which runs
+	// last. Recall never creates evidence, so inspecting it cannot train.
+	if len(market.context) > 0 {
+		selected, _, err := agent.Model.Select(
+			[2]string{symbol, "virtual"}, market.context, market.actions, false,
+		)
+
+		for _, candidate := range market.actions {
+			view.Candidates = append(view.Candidates, LearningCandidate{
+				Kind: string(candidate.Kind), Power: candidate.Power, Reduce: candidate.Reduce,
+				Selected: err == nil && candidate == selected,
+				Prior:    agent.Model.Recall([2]string{symbol, "virtual"}, market.context, candidate),
+			})
+		}
+	}
 
 	for index, lane := range market.lanes {
 		mode := "virtual"
 		if lane.paper {
-			mode = "paper"
+			mode = "policy"
 		}
 		view.Lanes = append(view.Lanes, LearningWallet{Lane: index, Mode: mode,
 			Cash: lane.wallet.cash.FloatString(lane.wallet.scale), Quantity: lane.wallet.quantity.FloatString(lane.wallet.pair.QtyPrecision), Fees: lane.wallet.fees.FloatString(lane.wallet.scale),
 			Equity: lane.equity, Profit: lane.outcome.TotalReward, Rate: lane.outcome.Rate, Complete: lane.complete,
 			At: lane.outcome.Through.At, Action: lane.action, Pending: lane.pending != 0,
-			Issued: lane.issued, Fills: lane.fills, Resolved: lane.resolved, Unresolved: len(lane.trace), Prior: lane.lastPrior})
+			Issued: lane.issued, Fills: lane.fills, Resolved: lane.resolved, Unresolved: len(lane.trace), Prior: lane.lastPrior,
+			Episodes: lane.episodes, Realized: lane.realized, Spent: lane.spent, Exhausted: lane.exhausted})
 	}
 
 	for row, key := range agent.Grid.Rows {

@@ -539,11 +539,15 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 
 	switch decision.Action {
 	case types.ActionEnter:
+		// A self-managed entry supplies no strategy stop because its issuer
+		// exits it directly on every book update. The desk still builds and
+		// enforces its own risk plan below, which stays as a catastrophic
+		// floor rather than as the exit mechanism.
 		if decision.ProposedQuantity == nil || decision.ProposedQuantity.Sign() <= 0 ||
-			decision.Stoploss == nil || desk.price == nil {
+			(decision.Stoploss == nil && !decision.SelfManaged) || desk.price == nil {
 			return errnie.Error(errnie.Err(
 				errnie.Validation,
-				"desk: quantity, price, and strategy stoploss required for entry",
+				"desk: quantity, price, and either a strategy stoploss or self-managed exit required for entry",
 				nil,
 			))
 		}

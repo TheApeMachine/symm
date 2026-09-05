@@ -237,3 +237,18 @@ func (wallet *virtualWallet) fill(book *spotbook.Book, action LearningAction, re
 	wallet.quantity.Add(&wallet.quantity, quantity)
 	return quantity, gross, fee
 }
+
+/*
+restart clones the same known starting capital into a spent account. Venue
+rules, fee schedule and formatting scale are unchanged: this is the same
+account economics beginning a new episode, not a different instrument. The
+fees consumed by the finished episode are returned so a lane can retain what
+its exploration actually cost across episodes.
+*/
+func (wallet *virtualWallet) restart(initial *decimal.Decimal) *big.Rat {
+	spent := new(big.Rat).Set(&wallet.fees)
+	wallet.cash.Set(initial.Rat())
+	wallet.quantity.SetInt64(0)
+	wallet.fees.SetInt64(0)
+	return spent
+}

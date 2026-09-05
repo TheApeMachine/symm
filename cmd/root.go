@@ -14,6 +14,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"path/filepath"
+	"sync"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -319,10 +320,54 @@ var (
 				}
 			}
 
-			if viper.GetString("trading.model") != "paper" {
-				return errnie.Err(errnie.Validation, "symm learning run requires trading.model: paper", nil)
+			// The configured model names the account the agent trades once it
+			// has earned it. It is not a rung the agent climbs: paper and real
+			// are the same behaviour against different accounts, and the agent
+			// starts calibrating either way.
+			account := strategy.ParseAccount(viper.GetString("trading.model"))
+
+			if account == strategy.AccountNone {
+				return errnie.Err(errnie.Validation,
+					"symm: trading.model must name the account to trade — paper or real", nil)
 			}
+
 			balance := broker.NewBalance(api)
+			positionStore, err := broker.NewPositionStore(
+				filepath.Join(dataPath, "positions.sqlite"),
+				viper.GetInt("system.streaming.lane_capacity"),
+				viper.GetInt("system.streaming.drain_limit"),
+			)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: open position store",
+					err,
+				))
+			}
+
+			defer positionStore.Close()
+
+			// The account is live from the first tick, whether or not the agent
+			// has earned the right to trade it. An operator watching a
+			// calibrating agent is still watching a real balance, and a desk
+			// mounted only on promotion would show nothing until then.
+			openPositions := &sync.Map{}
+			desk, err := broker.NewDesk(
+				runtimeCtx, api, instrument, price, balance,
+				broker.NewRecovery(runtimeCtx, api, instrument, price, balance, positionStore, openPositions),
+				positionStore, openPositions,
+			)
+
+			if err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: construct trading desk",
+					err,
+				))
+			}
+
+			defer desk.Close()
 			grid := &gridNode{Grid: learning.NewGrid(), cognition: cognitionSolver}
 			learner, err := strategy.NewAgent(runtimeCtx, grid.Grid, api,
 				instrument.Pair, price.FeeIfAvailable, balance.Cash(),
@@ -331,6 +376,7 @@ var (
 			if err != nil {
 				return err
 			}
+			learner.SetExecution(newLearningDesk(desk, instrument), account)
 			hub.SetLearner(learner, runID)
 			grid.learner = learner
 			grid.prepare = []nmruntime.Node[*types.Envelope]{
@@ -345,7 +391,7 @@ var (
 				"ticker",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("ticker.ingress")},
-					{&learningTickNode{price: price}},
+					{&learningTickNode{price: price, desk: desk}},
 					{
 						system.NewTraced("ticker.correlation", correlation.NewSignal(runtimeCtx)),
 						system.NewTraced("ticker.leadlag", leadlag.NewSignal(runtimeCtx)),
@@ -376,6 +422,7 @@ var (
 				"level3",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("level3.ingress")},
+					{level3Node{desk: desk}},
 					{
 						system.NewTraced("level3.manifold", manifoldSolver),
 					},
@@ -389,6 +436,7 @@ var (
 				"executions",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("executions.ingress")},
+					{executionNode{desk: desk}},
 				},
 			)
 

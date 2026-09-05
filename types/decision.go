@@ -59,6 +59,15 @@ type Decision struct {
 	Confidence       float64             `json:"confidence" validate:"finite,min=0,max=1"`
 	AvailableCapital *decimal.Decimal    `json:"availableCapital" validate:"required"`
 	OpenPositions    int                 `json:"openPositions" validate:"min=0"`
+	/*
+		SelfManaged marks a decision whose issuer re-evaluates the position on
+		every book update and owns its exit. The desk still sizes the entry
+		under a risk plan and keeps that plan as a catastrophic floor, but the
+		strategy stop is not the exit mechanism and its absence is not an
+		incomplete decision.
+	*/
+	SelfManaged bool `json:"selfManaged,omitempty"`
+
 	Cause            string              `json:"cause"`
 	Reason           string              `json:"reason"`
 	ReservationID    string              `json:"reservationId,omitempty"`

@@ -74,10 +74,14 @@ unobserved simultaneous movement between asynchronous producers.
 `symm` defines feasible WAIT, ENTER, EXIT and SCALE actions. Quantity candidates
 successively bisect the currently executable range down to venue lot and cost
 minimums. Bisection is a search basis, not a selected allocation percentage.
-The context contains ordered region IDs, a delimiter, dyadic inventory exposure,
-and the previous action, its refinement and its direction. The model matches
-these numeric identities exactly. It neither parses their semantic names nor
-merges nearby contexts using an invented tolerance.
+The context contains ordered region IDs, a delimiter and dyadic inventory
+exposure. The model matches these numeric identities exactly. It neither parses
+their semantic names nor merges nearby contexts using an invented tolerance.
+
+The previous action is deliberately not part of that identity. With it, every
+decision changed the context it would next be recalled under, so no prior ever
+accumulated a second observation, exploration could never leave its
+unestimable-variance branch, and the policy lane recalled nothing.
 
 `nomagique.learning.Model` accepts an opaque key, numeric context, comparable
 action and an explicit authority in [0,1]. Issue captures those facts before
@@ -96,10 +100,19 @@ No exploration bonus, temperature or chosen warmup count is configured.
 
 ## Independent accounts and reward
 
-Each symbol has four exploratory account lanes, corresponding to the four-action
-vocabulary, and one paper policy lane. Each starts with its own full copy of the
-known cash balance and zero inventory. Lanes do not share capital. Their profits
-must not be summed into a purported fundable account.
+Each symbol has four exploratory account lanes and one policy lane. The four
+are independent samplers of the same action vocabulary, not one lane per
+action: they explore the same evidence in parallel to raise its rate, and they
+are expected to reach similar results. Each starts with its own full copy of
+the known cash balance and zero inventory. Lanes do not share capital. Their
+profits must not be summed into a purported fundable account.
+
+A lane that has spent its capital on execution costs restarts. It is flat,
+cannot afford one venue lot, and every further decision it appears to make is
+a forced wait, so it resolves its outstanding decisions against the equity it
+actually ended with and begins a new episode on a fresh clone of the same
+known balance. Episodes are separate accounts in sequence; the retained total
+is a record of what a lane realized, never a balance anyone holds.
 
 An action fixes its requested quantity before its next book notification. Fills
 model taker IOC execution on the subsequently available displayed depth, with
@@ -117,22 +130,92 @@ including exit fees. External funding is explicitly known to be zero within
 these cloned accounts. `strategy.AccountReward` supplies funding-adjusted
 cumulative numerical values to the domain-free `learning.RewardLedger`.
 
-When an account becomes flat, each unresolved action receives its own subsequent
-return-to-go: change from its issue equity, minus the reward rate known at issue
-times actual elapsed seconds, divided by starting capital. Entry targets thus
-include their subsequent execution costs and outcome. Overlapping targets are
-correlated; the account ledger counts economic profit only once. A negative
-historical reward rate can give inactivity positive relative feedback while
-actual cash profit remains zero. There is no invented inactivity fine forcing
-loss-making trades, and no claim of causal attribution from overlapping returns.
+Every decision is scored over the same forward window: change from its issue
+equity, minus the reward rate known at issue times actual elapsed seconds,
+divided by starting capital. The window is `horizonEpochs` multiples of this
+market's own measured cadence of impulse change, so a fast instrument is scored
+on a fast window; an unmeasured cadence resolves nothing rather than assuming
+one. Settlement runs on every book update, and an open position is valued at
+executable liquidation prices including its exit fee, so waiting and holding
+are measured, not merely permitted.
 
-The paper lane selects from completed virtual priors without exploratory orders.
-Positive evidence influences new exposure through prior authority; absence of
-positive evidence leaves a flat paper account waiting. Reductions are feasible
-without that scaling. This is continuous use of observed skill, not a claim
-that a profitability certification threshold has been crossed. Default startup
-mounts this owner instead of the former advisor/planner/stoploss execution path.
-No exchange orders are sent by these lanes.
+Waiting and acting must share that window. Resolving a wait on the next book
+update because the wallet happened to be flat, while an entry waited for its
+position to close, measured two different things and made waiting look
+reliably harmless. A decision settled early because its account ran out of
+capital is marked truncated in the journal and is not presented as a completed
+measurement.
+
+Overlapping targets are correlated; the account ledger counts economic profit
+only once. A negative historical reward rate can give inactivity positive
+relative feedback while actual cash profit remains zero. There is no invented
+inactivity fine forcing loss-making trades, and no claim of causal attribution
+from overlapping returns.
+
+The policy lane selects from completed exploration priors without exploratory
+orders, and records its own outcomes under the same identity it selects from —
+otherwise its experience trains a subtree nothing reads. Positive evidence
+influences new exposure through prior authority; absence of positive evidence
+leaves a flat policy account waiting. Reductions are feasible without that
+scaling. Default startup mounts this owner instead of the former
+advisor/planner/stoploss execution path.
+
+## Measured skill and going live
+
+`strategy.SkillMeter` estimates the policy lane's forward competence from its
+own resolved outcomes, under exponential forgetting at a declared retention
+rate, so an edge earned in one regime decays out instead of being averaged
+away.
+
+Only decisions covering disjoint forward windows enter that estimate. Decisions
+issue far faster than a window closes, so a whole batch of them resolves
+against one account valuation with near-identical targets; admitting all of
+them reports one observation as many, collapses the measured dispersion and
+saturates confidence, which then flips sign with the next batch. A decision is
+admitted only when its window began at or after the end of the last admitted
+one, and truncated windows are never admitted because they cover less forward
+tape than the horizon. The excluded decisions still train their own action
+priors — this gate governs the competence estimate that grants execution
+authority, not what the agent learns. Promotion requires the mean minus `skillSigma` standard errors to exceed
+zero, on effective evidence of at least `skillSigma` squared: an edge must be
+larger than its own measurement error, and a short run of similar outcomes
+reporting near-zero dispersion cannot read as certainty. A reading below that
+floor is reported unqualified and its bound is not displayed at all, rather
+than shown as a number an operator could mistake for a measurement. Demotion requires only a
+non-positive mean. That asymmetry is deliberate hysteresis.
+
+There are two modes: calibrating, and trading the account. `trading.model`
+names which account that is — paper or real — and the agent does not earn its
+way from one to the other. Paper and real are the same behaviour against
+different accounts; only whether it is trading at all is earned.
+
+Learning never stops. A trading agent keeps exploring and re-estimating on its
+own virtual lanes, which is what lets a degrading edge pull it back to
+calibrating without any separate supervision. Without an attached
+`ExecutionDesk` no account is attached and the agent can never leave
+calibrating, so such a run has no code path that reaches an account. This is
+continuous use of observed skill, not a claim that a profitability
+certification threshold has been crossed.
+
+The account itself is live from the first tick either way. `cmd.learningDesk`
+routes policy intents to `broker.Desk`, and `cmd.learningTickNode` steps that
+desk and stamps its equity and open positions onto every ticker envelope, so
+an operator watching a calibrating agent is watching a real balance rather
+than an empty one.
+
+Entries reach the desk self-managed: the agent re-evaluates every open position
+on each book update and issues its own EXIT, so it does not hand over a
+strategy stop. The desk still sizes the entry under its own risk plan and
+retains that plan as a catastrophic floor. Partial reductions have no desk
+operation yet and are refused and counted rather than executed as something
+else — an account that quietly did a different thing from the one the agent
+recorded would corrupt every later measurement drawn from that lane.
+
+`strategy.attribution` accumulates, per hot quantity and action kind, the
+outcomes of decisions issued while that quantity was hot. That is the discovery
+question — which measurements should determine which actions — answered from
+resolved evidence rather than declared by hand. It is association under the
+agent's own exploration, not a controlled comparison.
 
 ## Inspection and persistence
 

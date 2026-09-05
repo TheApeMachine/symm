@@ -9,6 +9,7 @@ import {
 import { terminalStore } from "#/collections/terminal";
 import { Balance } from "#/components/balance";
 import { Count } from "#/components/count";
+import { AgentSkill } from "#/components/learning/agent-skill";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
@@ -54,7 +55,6 @@ const TickCounter = () => {
 	);
 };
 
-
 /*
 ResonanceTransportBadge surfaces WebRTC data-channel health next to the websocket
 liveness badge so a dead telemetry transport is never mistaken for a quiet
@@ -67,7 +67,11 @@ const ResonanceTransportBadge = () => {
 
 	const live = status === "ONLINE";
 	const connecting = status === "CONNECTING";
-	const label = live ? "rtc live" : connecting ? "rtc connecting" : "rtc offline";
+	const label = live
+		? "rtc live"
+		: connecting
+			? "rtc connecting"
+			: "rtc offline";
 	const variant = live ? "success" : connecting ? "warning" : "error";
 
 	return (
@@ -102,6 +106,7 @@ export const TerminalTopBar = () => {
 				pulse={online}
 			/>
 			<ResonanceTransportBadge />
+			<AgentSkill />
 			<Count />
 
 			<Toolbar.Spacer />

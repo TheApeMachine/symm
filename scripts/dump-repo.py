@@ -41,7 +41,8 @@ SKIP_DIRECTORY_NAMES: frozenset[str] = frozenset(
         "telemetry",
         "specs",
         "tests",
-        "frontend",
+        "advisor",
+        "frontend"
     }
 )
 
@@ -52,9 +53,11 @@ SKIP_FILE_NAMES: frozenset[str] = frozenset(
         "_test.go",
         ".test.ts",
         ".test.tsx",
+        ".bench.ts",
         ".pnpm-lock.yaml",
         "AGENTS.md",
         "pnpm-lock.yaml",
+        ".md",
     }
 )
 
@@ -67,7 +70,6 @@ ALLOWED_SUFFIXES: tuple[str, ...] = (
     ".mm",
     ".m",
     ".h",
-    ".py"
 )
 
 
@@ -96,7 +98,7 @@ def collect_relative_paths(root: Path) -> list[str]:
             if file_name.startswith("."):
                 continue
 
-            if file_name in SKIP_FILE_NAMES:
+            if any(skip_file_name in file_name for skip_file_name in SKIP_FILE_NAMES):
                 continue
 
             if not file_name.endswith(ALLOWED_SUFFIXES):
@@ -110,7 +112,6 @@ def collect_relative_paths(root: Path) -> list[str]:
 
             absolute_file = Path(dir_path) / file_name
             relative_file = absolute_file.relative_to(root)
-
             matches.append(relative_file.as_posix())
 
     matches.sort()

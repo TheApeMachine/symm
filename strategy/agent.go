@@ -38,6 +38,17 @@ type Agent struct {
 	now                        func() time.Time
 	err                        error
 	steps, decisions, resolved uint64
+
+	/*
+		Skill measures the policy lane's forward competence and owns the
+		execution authority that measurement justifies. Desk is the account
+		the policy lane reaches once promoted; it stays nil in a learning-only
+		run and no order can be produced without it.
+	*/
+	Skill       *SkillMeter
+	Desk        ExecutionDesk
+	attribution attribution
+	dispatched  uint64
 }
 
 /* learningMarket owns persistent wallets and the latest ordered impulse. */
@@ -51,6 +62,50 @@ type learningMarket struct {
 	events         []hindsight.LearningEvent
 	at             time.Time
 	gridVersion    uint64
+
+	/*
+		epochs measures this instrument's own cadence of impulse change: the
+		mean interval between grid versions that actually moved. The decision
+		horizon is derived from it, so a fast instrument is scored over a fast
+		window and a slow one is not judged on noise.
+	*/
+	epochAt   time.Time
+	epochMean float64
+	epochs    uint64
+
+	/*
+		skillWindow is the end of the last forward window admitted into the
+		skill estimate for this market. Decisions issue far faster than a
+		window closes, so their return windows overlap almost completely and
+		a whole batch of them resolves against one account valuation. Feeding
+		every one of those to the estimator reports a cluster of near-identical
+		targets as independent evidence, collapsing the measured dispersion and
+		saturating confidence on what is really a single observation.
+	*/
+	skillWindow time.Time
+}
+
+/* epoch folds one observed interval between impulse changes into the mean. */
+func (market *learningMarket) epoch(at time.Time) {
+	if !market.epochAt.IsZero() && at.After(market.epochAt) {
+		market.epochs++
+		market.epochMean += (at.Sub(market.epochAt).Seconds() - market.epochMean) / float64(market.epochs)
+	}
+
+	market.epochAt = at
+}
+
+/*
+horizon is the measured forward window every decision in this market is scored
+over. It is unavailable until an interval has actually been observed; an
+unmeasured horizon resolves nothing rather than inventing a default one.
+*/
+func (market *learningMarket) horizon() time.Duration {
+	if market.epochs == 0 || market.epochMean <= 0 {
+		return 0
+	}
+
+	return time.Duration(market.epochMean * horizonEpochs * float64(time.Second))
 }
 
 /* NewAgent wires explicit numerical, execution and recording dependencies. */
@@ -81,6 +136,7 @@ func NewAgent(
 		initial: initial.Copy(),
 		Record:  record,
 		markets: make(map[string]*learningMarket), requests: make(chan learningRequest), now: time.Now,
+		Skill:   NewSkillMeter(AccountNone, time.Now()),
 	}, nil
 }
 
@@ -103,6 +159,34 @@ func (agent *Agent) Step(envelope *types.Envelope) *types.Envelope {
 
 /* Error exposes actual failed processing to the workspace's failure boundary. */
 func (agent *Agent) Error() error { return agent.err }
+
+/* Mode reports the execution authority the measured skill currently justifies. */
+func (agent *Agent) Mode() Mode {
+	if agent.Skill == nil {
+		return ModeLearning
+	}
+
+	return agent.Skill.Mode()
+}
+
+/*
+SetExecution attaches the account the agent trades once it has earned it. The
+account is configuration — paper or real, the same behaviour either way — and
+the agent does not earn its way between them.
+
+Without a desk no account is attached and the agent can never leave learning,
+however good its measurement looks, so a learning-only run has no code path
+that reaches an account at all.
+*/
+func (agent *Agent) SetExecution(desk ExecutionDesk, account Account) {
+	agent.Desk = desk
+
+	if desk == nil {
+		account = AccountNone
+	}
+
+	agent.Skill = NewSkillMeter(account, agent.now())
+}
 
 /* advance uses one coherent current book for all independent virtual wallets. */
 func (agent *Agent) advance(message kraken.Level3Data) error {

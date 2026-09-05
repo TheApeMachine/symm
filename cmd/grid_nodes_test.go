@@ -151,9 +151,14 @@ func BenchmarkGridNodeStep(b *testing.B) {
 	}
 
 	index := 0
+	// Advance the fixture's own clock each cycle, so producer baselines see
+	// fresh observations rather than repeatedly processing old timestamps.
+	cycle := tape.Messages[len(tape.Messages)-1].Timestamp.Sub(tape.Messages[0].Timestamp) +
+		tape.Messages[1].Timestamp.Sub(tape.Messages[0].Timestamp)
 	b.ReportAllocs()
 
 	for b.Loop() {
+		envelopes[index].Level3Data.Timestamp = envelopes[index].Level3Data.Timestamp.Add(cycle)
 		node.Step(envelopes[index])
 
 		if err := node.Error(); err != nil {
