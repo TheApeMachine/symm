@@ -55,37 +55,46 @@ export const SkillPanel = ({ view }: { view: LearningView | null }) => {
 				title="Agent skill"
 				meta={`${skill.samples.toLocaleString()} resolved policy decisions`}
 			/>
-			<Flex.Row className="items-center gap-3 border-(--line) border-b p-3">
-				<Badge
-					label={skill.mode === "trading" ? "trading" : "learning"}
-					variant={
-						skill.mode !== "trading"
-							? "info"
-							: skill.account === "real"
-								? "error"
-								: "success"
-					}
-					dot
-					size="m"
-				/>
-				<Badge
-					label={`account · ${skill.account}`}
-					variant="disabled"
-					size="m"
-				/>
-				{view?.realizationAllowed === false && (
+			{/*
+				The status line wraps rather than widening. This panel lives in a
+				fixed-width scrolling column, so a long veto reason on one
+				unwrapped row gave the whole column a horizontal scrollbar and
+				pushed every reading below it out of view. The badges wrap among
+				themselves and the reason takes its own full-width line.
+			*/}
+			<Flex.Column className="min-w-0 gap-2 border-(--line) border-b p-3">
+				<Flex.Row className="flex-wrap items-center gap-2">
 					<Badge
-						label="realization vetoed"
-						variant="error"
+						label={skill.mode === "trading" ? "trading" : "learning"}
+						variant={
+							skill.mode !== "trading"
+								? "info"
+								: skill.account === "real"
+									? "error"
+									: "success"
+						}
+						dot
 						size="m"
 					/>
-				)}
-				<Typography.Mono size="s" tone={view?.realizationAllowed === false ? "down" : "f3"}>
+					<Badge
+						label={`account · ${skill.account}`}
+						variant="disabled"
+						size="m"
+					/>
+					{view?.realizationAllowed === false && (
+						<Badge label="realization vetoed" variant="error" size="m" />
+					)}
+				</Flex.Row>
+				<Typography.Mono
+					size="s"
+					tone={view?.realizationAllowed === false ? "down" : "f3"}
+					className="min-w-0 break-words"
+				>
 					{view?.realizationAllowed === false && view?.realizationReason
 						? `${view.realizationReason} (authority revoked to ${view.authorizedMode ?? "learning"})`
 						: `${skill.reason} · since ${clock(skill.since)}`}
 				</Typography.Mono>
-			</Flex.Row>
+			</Flex.Column>
 			<Flex.Column>
 				<Reading
 					label="Mean forward return per decision"

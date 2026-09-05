@@ -60,6 +60,35 @@ func TestModelSelect(t *testing.T) {
 			_, _, err := model.Select("first", context, nil, true)
 			So(err, ShouldNotBeNil)
 		})
+
+		Convey("Recovered evidence and inflight work use the same prior", func() {
+			model := NewModel[string, int]()
+			for _, action := range []int{0, 1} {
+				So(model.Observe("first", []uint64{1, 2}, action, 1, 1), ShouldBeNil)
+			}
+
+			// A zero-authority completion counts as completed work but supplies
+			// no second trusted observation, so dispersion remains undefined.
+			identity, err := model.Issue("first", []uint64{1, 2}, 1, 0)
+			So(err, ShouldBeNil)
+			_, err = model.Resolve(identity, 0)
+			So(err, ShouldBeNil)
+
+			// Action zero has one completion and two inflight tickets. Action
+			// one has two completions: its smaller total must win without ties.
+			for range 2 {
+				_, err := model.Issue("first", []uint64{1, 2}, 0, 1)
+				So(err, ShouldBeNil)
+			}
+
+			for _, query := range [][]uint64{{2, 1}, {1}, {99}} {
+				reading := model.Recall("first", query, 0)
+				So(reading.Pending, ShouldEqual, 2)
+				selected, _, err := model.Select("first", query, []int{0, 1}, true)
+				So(err, ShouldBeNil)
+				So(selected, ShouldEqual, 1)
+			}
+		})
 	})
 }
 
@@ -83,8 +112,16 @@ func BenchmarkModelSelect(b *testing.B) {
 
 	b.ReportAllocs()
 
+	// Exercise the same ordered, rank-jittered and subset lookups used by the
+	// policy. All queries recover the existing evidence; none trains new data.
+	queries := [][]uint64{context, {1, 3, 2}, {2, 3}}
+	iteration := 0
+
 	for b.Loop() {
-		if _, _, err := model.Select("first", context, actions, true); err != nil {
+		query := queries[iteration%len(queries)]
+		iteration++
+
+		if _, _, err := model.Select("first", query, actions, true); err != nil {
 			b.Fatal(err)
 		}
 	}

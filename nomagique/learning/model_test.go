@@ -15,7 +15,7 @@ func TestModelIssue(t *testing.T) {
 		identity, err := model.Issue("first", context, action, authority)
 		So(err, ShouldBeNil)
 		So(identity, ShouldNotEqual, 0)
-		So(model.Recall("first", context, action), ShouldResemble, PriorReading{})
+		So(model.Recall("first", context, action), ShouldResemble, PriorReading{Pending: 1})
 
 		Convey("input reuse cannot rewrite an issued context or its authority", func() {
 			context[0] = 9
@@ -68,6 +68,7 @@ func TestModelResolve(t *testing.T) {
 			before := model.Recall(1, context, 1)
 			identity, err := model.Issue(1, context, 1, authority)
 			So(err, ShouldBeNil)
+			before.Pending++
 			So(model.Recall(1, context, 1), ShouldResemble, before)
 			_, err = model.Resolve(identity, value)
 			So(err, ShouldBeNil)

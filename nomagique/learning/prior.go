@@ -71,7 +71,10 @@ type PriorReading struct {
 	// Depth is how many context tokens this reading was conditioned on. Zero
 	// is the key's unconditioned evidence; the caller's full context length is
 	// the most specific answer available.
-	Depth             int
+	Depth int
+	// Pending belongs to the same interned prior as Samples and Depth.
+	// Exploration must not count tickets from a different lookup path.
+	Pending           uint64
 	Samples           uint64
 	Defined           bool
 	Mean              float64
@@ -136,7 +139,7 @@ func (prior *Prior) Reading(epoch ...uint64) PriorReading {
 		prior.age(epoch[0])
 	}
 
-	reading := PriorReading{Samples: prior.samples, Memory: prior.memory}
+	reading := PriorReading{Samples: prior.samples, Pending: prior.pending, Memory: prior.memory}
 
 	if prior.weight == 0 {
 		return reading

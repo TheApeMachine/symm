@@ -42,7 +42,7 @@ func (model *Model[Key, Action]) Select(
 		score := prior.Mean * prior.Authority
 
 		if explore && !prior.VarianceDefined {
-			issued := prior.Samples + model.inflight(key, context, action)
+			issued := prior.Samples + prior.Pending
 
 			if !unsupported || issued < least {
 				selected, selectedPrior, least = action, prior, issued
@@ -83,21 +83,4 @@ func (model *Model[Key, Action]) Select(
 	}
 
 	return selected, selectedPrior, nil
-}
-
-/* inflight reads the count stored with an action's interned prior. */
-func (model *Model[Key, Action]) inflight(key Key, context []uint64, action Action) uint64 {
-	node := model.contexts[key]
-
-	for _, token := range context {
-		if node == nil {
-			return 0
-		}
-		node = node.children[token]
-	}
-
-	if node == nil || node.priors[action] == nil {
-		return 0
-	}
-	return node.priors[action].pending
 }
