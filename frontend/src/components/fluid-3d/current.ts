@@ -55,9 +55,7 @@ export class PhaseCurrent {
 		});
 		this.bindGroup = this.gpu.device.createBindGroup({
 			layout,
-			entries: [
-				{ binding: 0, resource: { buffer: fieldsUniformBuffer } },
-			],
+			entries: [{ binding: 0, resource: { buffer: fieldsUniformBuffer } }],
 		});
 		this.pipeline = this.gpu.device.createRenderPipeline({
 			layout: this.gpu.device.createPipelineLayout({
@@ -299,16 +297,9 @@ export class PhaseCurrent {
 		}
 
 		if (this.vertexBuffer === null) {
-			this.vertexBuffer = createVertexBuffer(
-				this.gpu.device,
-				this.vertices,
-			);
+			this.vertexBuffer = createVertexBuffer(this.gpu.device, this.vertices);
 		} else {
-			this.gpu.device.queue.writeBuffer(
-				this.vertexBuffer,
-				0,
-				this.vertices,
-			);
+			this.gpu.device.queue.writeBuffer(this.vertexBuffer, 0, this.vertices);
 		}
 
 		pass.setPipeline(this.pipeline);

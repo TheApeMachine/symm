@@ -45,9 +45,6 @@ type DecisionT struct {
 	ReturnPct float64 `json:"returnPct"`
 	Mark string `json:"mark"`
 	EntryCost *EntryCostT `json:"entryCost"`
-	Stoploss *StoplossT `json:"stoploss"`
-	Risk *RiskPlanT `json:"risk"`
-	Trace *DecisionTraceT `json:"trace"`
 }
 
 func (t *DecisionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -160,9 +157,6 @@ func (t *DecisionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 		markOffset = builder.CreateString(t.Mark)
 	}
 	entryCostOffset := t.EntryCost.Pack(builder)
-	stoplossOffset := t.Stoploss.Pack(builder)
-	riskOffset := t.Risk.Pack(builder)
-	traceOffset := t.Trace.Pack(builder)
 	DecisionStart(builder)
 	DecisionAddId(builder, idOffset)
 	DecisionAddAction(builder, actionOffset)
@@ -202,9 +196,6 @@ func (t *DecisionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	DecisionAddReturnPct(builder, t.ReturnPct)
 	DecisionAddMark(builder, markOffset)
 	DecisionAddEntryCost(builder, entryCostOffset)
-	DecisionAddStoploss(builder, stoplossOffset)
-	DecisionAddRisk(builder, riskOffset)
-	DecisionAddTrace(builder, traceOffset)
 	return DecisionEnd(builder)
 }
 
@@ -253,9 +244,6 @@ func (rcv *Decision) UnPackTo(t *DecisionT) {
 	t.ReturnPct = rcv.ReturnPct()
 	t.Mark = string(rcv.Mark())
 	t.EntryCost = rcv.EntryCost(nil).UnPack()
-	t.Stoploss = rcv.Stoploss(nil).UnPack()
-	t.Risk = rcv.Risk(nil).UnPack()
-	t.Trace = rcv.Trace(nil).UnPack()
 }
 
 func (rcv *Decision) UnPack() *DecisionT {
@@ -675,45 +663,6 @@ func (rcv *Decision) EntryCost(obj *EntryCost) *EntryCost {
 	return nil
 }
 
-func (rcv *Decision) Stoploss(obj *Stoploss) *Stoploss {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(80))
-	if o != 0 {
-		x := rcv._tab.Indirect(o + rcv._tab.Pos)
-		if obj == nil {
-			obj = new(Stoploss)
-		}
-		obj.Init(rcv._tab.Bytes, x)
-		return obj
-	}
-	return nil
-}
-
-func (rcv *Decision) Risk(obj *RiskPlan) *RiskPlan {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(82))
-	if o != 0 {
-		x := rcv._tab.Indirect(o + rcv._tab.Pos)
-		if obj == nil {
-			obj = new(RiskPlan)
-		}
-		obj.Init(rcv._tab.Bytes, x)
-		return obj
-	}
-	return nil
-}
-
-func (rcv *Decision) Trace(obj *DecisionTrace) *DecisionTrace {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(84))
-	if o != 0 {
-		x := rcv._tab.Indirect(o + rcv._tab.Pos)
-		if obj == nil {
-			obj = new(DecisionTrace)
-		}
-		obj.Init(rcv._tab.Bytes, x)
-		return obj
-	}
-	return nil
-}
-
 func DecisionStart(builder *flatbuffers.Builder) {
 	builder.StartObject(41)
 }
@@ -833,15 +782,6 @@ func DecisionAddMark(builder *flatbuffers.Builder, mark flatbuffers.UOffsetT) {
 }
 func DecisionAddEntryCost(builder *flatbuffers.Builder, entryCost flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(37, flatbuffers.UOffsetT(entryCost), 0)
-}
-func DecisionAddStoploss(builder *flatbuffers.Builder, stoploss flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(38, flatbuffers.UOffsetT(stoploss), 0)
-}
-func DecisionAddRisk(builder *flatbuffers.Builder, risk flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(39, flatbuffers.UOffsetT(risk), 0)
-}
-func DecisionAddTrace(builder *flatbuffers.Builder, trace flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(40, flatbuffers.UOffsetT(trace), 0)
 }
 func DecisionEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

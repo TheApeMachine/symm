@@ -6,7 +6,9 @@ import { Typography } from "#/components/ui/typography";
 const fmt = (value: unknown): string =>
 	typeof value === "number"
 		? value.toFixed(2)
-		: typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))
+		: typeof value === "string" &&
+				value.trim() !== "" &&
+				Number.isFinite(Number(value))
 			? Number(value).toFixed(2)
 			: "—";
 
@@ -70,5 +72,3 @@ export const Balance = () => {
 		</Flex.Row>
 	);
 };
-
-

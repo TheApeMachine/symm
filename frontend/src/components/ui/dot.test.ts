@@ -24,7 +24,9 @@ describe("dotVariants", () => {
 	*/
 	it("emits the tone classes the paint layer toggles", () => {
 		for (const variant of ["success", "error", "info", "muted"] as const) {
-			expect(dotVariants({ variant })).toMatch(/\[--dot-tone:var\(--[\w-]+\)\]/);
+			expect(dotVariants({ variant })).toMatch(
+				/\[--dot-tone:var\(--[\w-]+\)\]/,
+			);
 		}
 	});
 

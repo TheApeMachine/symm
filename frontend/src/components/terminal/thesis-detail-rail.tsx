@@ -7,7 +7,6 @@ import { Typography } from "#/components/ui/typography";
 import { cn } from "#/lib/utils";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { Position } from "#/providers/telemetry/telemetry/position";
-import { Stoploss } from "#/providers/telemetry/telemetry/stoploss";
 
 type PositionState = ReturnType<typeof positionStore.get>;
 
@@ -59,7 +58,6 @@ const currentPosition = (state: PositionState, symbol: string) => {
 	const frames = state.toArray();
 	const position = new Position();
 	const holding = new Holding();
-	const stoploss = new Stoploss();
 
 	for (let frameIndex = frames.length - 1; frameIndex >= 0; frameIndex--) {
 		const frame = frames[frameIndex];
@@ -72,7 +70,6 @@ const currentPosition = (state: PositionState, symbol: string) => {
 				continue;
 			}
 
-			const rowStoploss = rowHolding.stoploss(stoploss);
 			const returnPct = rowHolding.returnPct();
 
 			return {
@@ -84,34 +81,11 @@ const currentPosition = (state: PositionState, symbol: string) => {
 				returnPct: Number.isFinite(returnPct)
 					? `${returnPct.toFixed(2)}%`
 					: "—",
-				stopFloor: value(rowStoploss?.floor() ?? null),
-				peak: value(rowStoploss?.peak() ?? null),
-				profitLine: value(rowStoploss?.profitLine() ?? null),
-				stopStatus: value(rowStoploss?.status() ?? null),
-				locked: rowStoploss?.locked() ?? false,
 			};
 		}
 	}
 
 	return null;
-};
-
-const protectionExplanation = (
-	position: ReturnType<typeof currentPosition>,
-): string => {
-	if (position === null) {
-		return "No live position update is available yet.";
-	}
-
-	if (position.locked) {
-		return "The trailing floor has locked in protection. It may continue moving upward, but it will not move back down.";
-	}
-
-	if (position.stopStatus === "armed") {
-		return "Protection is armed and watching the realizable sell price. The floor is the price that would trigger an exit.";
-	}
-
-	return "This is the protection state now. It is live and deliberately separate from the frozen entry decision.";
 };
 
 export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
@@ -150,16 +124,6 @@ export const ThesisDetailRail = ({ symbol }: { symbol: string }) => {
 					label="return since entry"
 					value={position?.returnPct ?? "—"}
 					tone="text-(--pnl)"
-				/>
-			</Card>
-
-			<Card title="Protection now" caption={protectionExplanation(position)}>
-				<Row label="stop status" value={position?.stopStatus ?? "—"} />
-				<Row label="hard exit floor" value={position?.stopFloor ?? "—"} />
-				<Row label="highest price seen" value={position?.peak ?? "—"} />
-				<Row
-					label="trailing profit floor"
-					value={position?.profitLine ?? "—"}
 				/>
 			</Card>
 

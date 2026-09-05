@@ -1,9 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type {
-	HindsightMetricMap,
-	HindsightResident,
-} from "./hindsight-types";
+import type { HindsightMetricMap, HindsightResident } from "./hindsight-types";
 import { StatePanel } from "./inspector";
 
 const resident: HindsightResident = {

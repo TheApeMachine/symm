@@ -3,179 +3,212 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class EnvelopeBoundaryStamp
+	implements flatbuffers.IUnpackableObject<EnvelopeBoundaryStampT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeBoundaryStamp {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsEnvelopeBoundaryStamp(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeBoundaryStamp,
+	): EnvelopeBoundaryStamp {
+		return (obj || new EnvelopeBoundaryStamp()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class EnvelopeBoundaryStamp implements flatbuffers.IUnpackableObject<EnvelopeBoundaryStampT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeBoundaryStamp {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsEnvelopeBoundaryStamp(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeBoundaryStamp,
+	): EnvelopeBoundaryStamp {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopeBoundaryStamp()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsEnvelopeBoundaryStamp(bb:flatbuffers.ByteBuffer, obj?:EnvelopeBoundaryStamp):EnvelopeBoundaryStamp {
-  return (obj || new EnvelopeBoundaryStamp()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	label(): string | null;
+	label(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	label(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsEnvelopeBoundaryStamp(bb:flatbuffers.ByteBuffer, obj?:EnvelopeBoundaryStamp):EnvelopeBoundaryStamp {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeBoundaryStamp()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	atNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-label():string|null
-label(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-label(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	seqCount(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-atNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	avgGapNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-seqCount():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	lastGapNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-avgGapNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	backlog(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-lastGapNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	group(): string | null;
+	group(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	group(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-backlog():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	stage(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
+	}
 
-group():string|null
-group(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-group(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	static startEnvelopeBoundaryStamp(builder: flatbuffers.Builder) {
+		builder.startObject(8);
+	}
 
-stage():number {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
-}
+	static addLabel(
+		builder: flatbuffers.Builder,
+		labelOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, labelOffset, 0);
+	}
 
-static startEnvelopeBoundaryStamp(builder:flatbuffers.Builder) {
-  builder.startObject(8);
-}
+	static addAtNs(builder: flatbuffers.Builder, atNs: bigint) {
+		builder.addFieldInt64(1, atNs, BigInt("0"));
+	}
 
-static addLabel(builder:flatbuffers.Builder, labelOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, labelOffset, 0);
-}
+	static addSeqCount(builder: flatbuffers.Builder, seqCount: bigint) {
+		builder.addFieldInt64(2, seqCount, BigInt("0"));
+	}
 
-static addAtNs(builder:flatbuffers.Builder, atNs:bigint) {
-  builder.addFieldInt64(1, atNs, BigInt('0'));
-}
+	static addAvgGapNs(builder: flatbuffers.Builder, avgGapNs: bigint) {
+		builder.addFieldInt64(3, avgGapNs, BigInt("0"));
+	}
 
-static addSeqCount(builder:flatbuffers.Builder, seqCount:bigint) {
-  builder.addFieldInt64(2, seqCount, BigInt('0'));
-}
+	static addLastGapNs(builder: flatbuffers.Builder, lastGapNs: bigint) {
+		builder.addFieldInt64(4, lastGapNs, BigInt("0"));
+	}
 
-static addAvgGapNs(builder:flatbuffers.Builder, avgGapNs:bigint) {
-  builder.addFieldInt64(3, avgGapNs, BigInt('0'));
-}
+	static addBacklog(builder: flatbuffers.Builder, backlog: bigint) {
+		builder.addFieldInt64(5, backlog, BigInt("0"));
+	}
 
-static addLastGapNs(builder:flatbuffers.Builder, lastGapNs:bigint) {
-  builder.addFieldInt64(4, lastGapNs, BigInt('0'));
-}
+	static addGroup(
+		builder: flatbuffers.Builder,
+		groupOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(6, groupOffset, 0);
+	}
 
-static addBacklog(builder:flatbuffers.Builder, backlog:bigint) {
-  builder.addFieldInt64(5, backlog, BigInt('0'));
-}
+	static addStage(builder: flatbuffers.Builder, stage: number) {
+		builder.addFieldInt32(7, stage, 0);
+	}
 
-static addGroup(builder:flatbuffers.Builder, groupOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, groupOffset, 0);
-}
+	static endEnvelopeBoundaryStamp(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // label
+		return offset;
+	}
 
-static addStage(builder:flatbuffers.Builder, stage:number) {
-  builder.addFieldInt32(7, stage, 0);
-}
+	static createEnvelopeBoundaryStamp(
+		builder: flatbuffers.Builder,
+		labelOffset: flatbuffers.Offset,
+		atNs: bigint,
+		seqCount: bigint,
+		avgGapNs: bigint,
+		lastGapNs: bigint,
+		backlog: bigint,
+		groupOffset: flatbuffers.Offset,
+		stage: number,
+	): flatbuffers.Offset {
+		EnvelopeBoundaryStamp.startEnvelopeBoundaryStamp(builder);
+		EnvelopeBoundaryStamp.addLabel(builder, labelOffset);
+		EnvelopeBoundaryStamp.addAtNs(builder, atNs);
+		EnvelopeBoundaryStamp.addSeqCount(builder, seqCount);
+		EnvelopeBoundaryStamp.addAvgGapNs(builder, avgGapNs);
+		EnvelopeBoundaryStamp.addLastGapNs(builder, lastGapNs);
+		EnvelopeBoundaryStamp.addBacklog(builder, backlog);
+		EnvelopeBoundaryStamp.addGroup(builder, groupOffset);
+		EnvelopeBoundaryStamp.addStage(builder, stage);
+		return EnvelopeBoundaryStamp.endEnvelopeBoundaryStamp(builder);
+	}
 
-static endEnvelopeBoundaryStamp(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // label
-  return offset;
-}
+	unpack(): EnvelopeBoundaryStampT {
+		return new EnvelopeBoundaryStampT(
+			this.label(),
+			this.atNs(),
+			this.seqCount(),
+			this.avgGapNs(),
+			this.lastGapNs(),
+			this.backlog(),
+			this.group(),
+			this.stage(),
+		);
+	}
 
-static createEnvelopeBoundaryStamp(builder:flatbuffers.Builder, labelOffset:flatbuffers.Offset, atNs:bigint, seqCount:bigint, avgGapNs:bigint, lastGapNs:bigint, backlog:bigint, groupOffset:flatbuffers.Offset, stage:number):flatbuffers.Offset {
-  EnvelopeBoundaryStamp.startEnvelopeBoundaryStamp(builder);
-  EnvelopeBoundaryStamp.addLabel(builder, labelOffset);
-  EnvelopeBoundaryStamp.addAtNs(builder, atNs);
-  EnvelopeBoundaryStamp.addSeqCount(builder, seqCount);
-  EnvelopeBoundaryStamp.addAvgGapNs(builder, avgGapNs);
-  EnvelopeBoundaryStamp.addLastGapNs(builder, lastGapNs);
-  EnvelopeBoundaryStamp.addBacklog(builder, backlog);
-  EnvelopeBoundaryStamp.addGroup(builder, groupOffset);
-  EnvelopeBoundaryStamp.addStage(builder, stage);
-  return EnvelopeBoundaryStamp.endEnvelopeBoundaryStamp(builder);
-}
-
-unpack(): EnvelopeBoundaryStampT {
-  return new EnvelopeBoundaryStampT(
-    this.label(),
-    this.atNs(),
-    this.seqCount(),
-    this.avgGapNs(),
-    this.lastGapNs(),
-    this.backlog(),
-    this.group(),
-    this.stage()
-  );
-}
-
-
-unpackTo(_o: EnvelopeBoundaryStampT): void {
-  _o.label = this.label();
-  _o.atNs = this.atNs();
-  _o.seqCount = this.seqCount();
-  _o.avgGapNs = this.avgGapNs();
-  _o.lastGapNs = this.lastGapNs();
-  _o.backlog = this.backlog();
-  _o.group = this.group();
-  _o.stage = this.stage();
-}
+	unpackTo(_o: EnvelopeBoundaryStampT): void {
+		_o.label = this.label();
+		_o.atNs = this.atNs();
+		_o.seqCount = this.seqCount();
+		_o.avgGapNs = this.avgGapNs();
+		_o.lastGapNs = this.lastGapNs();
+		_o.backlog = this.backlog();
+		_o.group = this.group();
+		_o.stage = this.stage();
+	}
 }
 
 export class EnvelopeBoundaryStampT implements flatbuffers.IGeneratedObject {
-constructor(
-  public label: string|Uint8Array|null = null,
-  public atNs: bigint = BigInt('0'),
-  public seqCount: bigint = BigInt('0'),
-  public avgGapNs: bigint = BigInt('0'),
-  public lastGapNs: bigint = BigInt('0'),
-  public backlog: bigint = BigInt('0'),
-  public group: string|Uint8Array|null = null,
-  public stage: number = 0
-){}
+	constructor(
+		public label: string | Uint8Array | null = null,
+		public atNs: bigint = BigInt("0"),
+		public seqCount: bigint = BigInt("0"),
+		public avgGapNs: bigint = BigInt("0"),
+		public lastGapNs: bigint = BigInt("0"),
+		public backlog: bigint = BigInt("0"),
+		public group: string | Uint8Array | null = null,
+		public stage: number = 0,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const label = this.label !== null ? builder.createString(this.label!) : 0;
+		const group = this.group !== null ? builder.createString(this.group!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const label = (this.label !== null ? builder.createString(this.label!) : 0);
-  const group = (this.group !== null ? builder.createString(this.group!) : 0);
-
-  return EnvelopeBoundaryStamp.createEnvelopeBoundaryStamp(builder,
-    label,
-    this.atNs,
-    this.seqCount,
-    this.avgGapNs,
-    this.lastGapNs,
-    this.backlog,
-    group,
-    this.stage
-  );
-}
+		return EnvelopeBoundaryStamp.createEnvelopeBoundaryStamp(
+			builder,
+			label,
+			this.atNs,
+			this.seqCount,
+			this.avgGapNs,
+			this.lastGapNs,
+			this.backlog,
+			group,
+			this.stage,
+		);
+	}
 }

@@ -3,247 +3,349 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
-
-
+import * as flatbuffers from "flatbuffers";
 
 export class EntryCost implements flatbuffers.IUnpackableObject<EntryCostT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EntryCost {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EntryCost {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-static getRootAsEntryCost(bb:flatbuffers.ByteBuffer, obj?:EntryCost):EntryCost {
-  return (obj || new EntryCost()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getRootAsEntryCost(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EntryCost,
+	): EntryCost {
+		return (obj || new EntryCost()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsEntryCost(bb:flatbuffers.ByteBuffer, obj?:EntryCost):EntryCost {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EntryCost()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsEntryCost(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EntryCost,
+	): EntryCost {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EntryCost()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-entryPrice():string|null
-entryPrice(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-entryPrice(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	entryPrice(): string | null;
+	entryPrice(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	entryPrice(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-bestAsk():string|null
-bestAsk(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-bestAsk(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	bestAsk(): string | null;
+	bestAsk(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	bestAsk(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-bestBid():string|null
-bestBid(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-bestBid(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	bestBid(): string | null;
+	bestBid(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	bestBid(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-midpoint():string|null
-midpoint(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-midpoint(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	midpoint(): string | null;
+	midpoint(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	midpoint(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-grossNotional():string|null
-grossNotional(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-grossNotional(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	grossNotional(): string | null;
+	grossNotional(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	grossNotional(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-entryFee():string|null
-entryFee(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-entryFee(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	entryFee(): string | null;
+	entryFee(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	entryFee(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-exitFeeAtBreakEven():string|null
-exitFeeAtBreakEven(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-exitFeeAtBreakEven(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	exitFeeAtBreakEven(): string | null;
+	exitFeeAtBreakEven(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	exitFeeAtBreakEven(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-roundTripFees():string|null
-roundTripFees(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-roundTripFees(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	roundTripFees(): string | null;
+	roundTripFees(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	roundTripFees(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-spread():string|null
-spread(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-spread(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	spread(): string | null;
+	spread(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	spread(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-impact():string|null
-impact(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-impact(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	impact(): string | null;
+	impact(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	impact(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-breakEven():string|null
-breakEven(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-breakEven(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	breakEven(): string | null;
+	breakEven(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	breakEven(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static startEntryCost(builder:flatbuffers.Builder) {
-  builder.startObject(11);
-}
+	static startEntryCost(builder: flatbuffers.Builder) {
+		builder.startObject(11);
+	}
 
-static addEntryPrice(builder:flatbuffers.Builder, entryPriceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, entryPriceOffset, 0);
-}
+	static addEntryPrice(
+		builder: flatbuffers.Builder,
+		entryPriceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, entryPriceOffset, 0);
+	}
 
-static addBestAsk(builder:flatbuffers.Builder, bestAskOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, bestAskOffset, 0);
-}
+	static addBestAsk(
+		builder: flatbuffers.Builder,
+		bestAskOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, bestAskOffset, 0);
+	}
 
-static addBestBid(builder:flatbuffers.Builder, bestBidOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, bestBidOffset, 0);
-}
+	static addBestBid(
+		builder: flatbuffers.Builder,
+		bestBidOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, bestBidOffset, 0);
+	}
 
-static addMidpoint(builder:flatbuffers.Builder, midpointOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(3, midpointOffset, 0);
-}
+	static addMidpoint(
+		builder: flatbuffers.Builder,
+		midpointOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(3, midpointOffset, 0);
+	}
 
-static addGrossNotional(builder:flatbuffers.Builder, grossNotionalOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, grossNotionalOffset, 0);
-}
+	static addGrossNotional(
+		builder: flatbuffers.Builder,
+		grossNotionalOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(4, grossNotionalOffset, 0);
+	}
 
-static addEntryFee(builder:flatbuffers.Builder, entryFeeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, entryFeeOffset, 0);
-}
+	static addEntryFee(
+		builder: flatbuffers.Builder,
+		entryFeeOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(5, entryFeeOffset, 0);
+	}
 
-static addExitFeeAtBreakEven(builder:flatbuffers.Builder, exitFeeAtBreakEvenOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, exitFeeAtBreakEvenOffset, 0);
-}
+	static addExitFeeAtBreakEven(
+		builder: flatbuffers.Builder,
+		exitFeeAtBreakEvenOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(6, exitFeeAtBreakEvenOffset, 0);
+	}
 
-static addRoundTripFees(builder:flatbuffers.Builder, roundTripFeesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(7, roundTripFeesOffset, 0);
-}
+	static addRoundTripFees(
+		builder: flatbuffers.Builder,
+		roundTripFeesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(7, roundTripFeesOffset, 0);
+	}
 
-static addSpread(builder:flatbuffers.Builder, spreadOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, spreadOffset, 0);
-}
+	static addSpread(
+		builder: flatbuffers.Builder,
+		spreadOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(8, spreadOffset, 0);
+	}
 
-static addImpact(builder:flatbuffers.Builder, impactOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(9, impactOffset, 0);
-}
+	static addImpact(
+		builder: flatbuffers.Builder,
+		impactOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(9, impactOffset, 0);
+	}
 
-static addBreakEven(builder:flatbuffers.Builder, breakEvenOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(10, breakEvenOffset, 0);
-}
+	static addBreakEven(
+		builder: flatbuffers.Builder,
+		breakEvenOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(10, breakEvenOffset, 0);
+	}
 
-static endEntryCost(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	static endEntryCost(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static createEntryCost(builder:flatbuffers.Builder, entryPriceOffset:flatbuffers.Offset, bestAskOffset:flatbuffers.Offset, bestBidOffset:flatbuffers.Offset, midpointOffset:flatbuffers.Offset, grossNotionalOffset:flatbuffers.Offset, entryFeeOffset:flatbuffers.Offset, exitFeeAtBreakEvenOffset:flatbuffers.Offset, roundTripFeesOffset:flatbuffers.Offset, spreadOffset:flatbuffers.Offset, impactOffset:flatbuffers.Offset, breakEvenOffset:flatbuffers.Offset):flatbuffers.Offset {
-  EntryCost.startEntryCost(builder);
-  EntryCost.addEntryPrice(builder, entryPriceOffset);
-  EntryCost.addBestAsk(builder, bestAskOffset);
-  EntryCost.addBestBid(builder, bestBidOffset);
-  EntryCost.addMidpoint(builder, midpointOffset);
-  EntryCost.addGrossNotional(builder, grossNotionalOffset);
-  EntryCost.addEntryFee(builder, entryFeeOffset);
-  EntryCost.addExitFeeAtBreakEven(builder, exitFeeAtBreakEvenOffset);
-  EntryCost.addRoundTripFees(builder, roundTripFeesOffset);
-  EntryCost.addSpread(builder, spreadOffset);
-  EntryCost.addImpact(builder, impactOffset);
-  EntryCost.addBreakEven(builder, breakEvenOffset);
-  return EntryCost.endEntryCost(builder);
-}
+	static createEntryCost(
+		builder: flatbuffers.Builder,
+		entryPriceOffset: flatbuffers.Offset,
+		bestAskOffset: flatbuffers.Offset,
+		bestBidOffset: flatbuffers.Offset,
+		midpointOffset: flatbuffers.Offset,
+		grossNotionalOffset: flatbuffers.Offset,
+		entryFeeOffset: flatbuffers.Offset,
+		exitFeeAtBreakEvenOffset: flatbuffers.Offset,
+		roundTripFeesOffset: flatbuffers.Offset,
+		spreadOffset: flatbuffers.Offset,
+		impactOffset: flatbuffers.Offset,
+		breakEvenOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		EntryCost.startEntryCost(builder);
+		EntryCost.addEntryPrice(builder, entryPriceOffset);
+		EntryCost.addBestAsk(builder, bestAskOffset);
+		EntryCost.addBestBid(builder, bestBidOffset);
+		EntryCost.addMidpoint(builder, midpointOffset);
+		EntryCost.addGrossNotional(builder, grossNotionalOffset);
+		EntryCost.addEntryFee(builder, entryFeeOffset);
+		EntryCost.addExitFeeAtBreakEven(builder, exitFeeAtBreakEvenOffset);
+		EntryCost.addRoundTripFees(builder, roundTripFeesOffset);
+		EntryCost.addSpread(builder, spreadOffset);
+		EntryCost.addImpact(builder, impactOffset);
+		EntryCost.addBreakEven(builder, breakEvenOffset);
+		return EntryCost.endEntryCost(builder);
+	}
 
-unpack(): EntryCostT {
-  return new EntryCostT(
-    this.entryPrice(),
-    this.bestAsk(),
-    this.bestBid(),
-    this.midpoint(),
-    this.grossNotional(),
-    this.entryFee(),
-    this.exitFeeAtBreakEven(),
-    this.roundTripFees(),
-    this.spread(),
-    this.impact(),
-    this.breakEven()
-  );
-}
+	unpack(): EntryCostT {
+		return new EntryCostT(
+			this.entryPrice(),
+			this.bestAsk(),
+			this.bestBid(),
+			this.midpoint(),
+			this.grossNotional(),
+			this.entryFee(),
+			this.exitFeeAtBreakEven(),
+			this.roundTripFees(),
+			this.spread(),
+			this.impact(),
+			this.breakEven(),
+		);
+	}
 
-
-unpackTo(_o: EntryCostT): void {
-  _o.entryPrice = this.entryPrice();
-  _o.bestAsk = this.bestAsk();
-  _o.bestBid = this.bestBid();
-  _o.midpoint = this.midpoint();
-  _o.grossNotional = this.grossNotional();
-  _o.entryFee = this.entryFee();
-  _o.exitFeeAtBreakEven = this.exitFeeAtBreakEven();
-  _o.roundTripFees = this.roundTripFees();
-  _o.spread = this.spread();
-  _o.impact = this.impact();
-  _o.breakEven = this.breakEven();
-}
+	unpackTo(_o: EntryCostT): void {
+		_o.entryPrice = this.entryPrice();
+		_o.bestAsk = this.bestAsk();
+		_o.bestBid = this.bestBid();
+		_o.midpoint = this.midpoint();
+		_o.grossNotional = this.grossNotional();
+		_o.entryFee = this.entryFee();
+		_o.exitFeeAtBreakEven = this.exitFeeAtBreakEven();
+		_o.roundTripFees = this.roundTripFees();
+		_o.spread = this.spread();
+		_o.impact = this.impact();
+		_o.breakEven = this.breakEven();
+	}
 }
 
 export class EntryCostT implements flatbuffers.IGeneratedObject {
-constructor(
-  public entryPrice: string|Uint8Array|null = null,
-  public bestAsk: string|Uint8Array|null = null,
-  public bestBid: string|Uint8Array|null = null,
-  public midpoint: string|Uint8Array|null = null,
-  public grossNotional: string|Uint8Array|null = null,
-  public entryFee: string|Uint8Array|null = null,
-  public exitFeeAtBreakEven: string|Uint8Array|null = null,
-  public roundTripFees: string|Uint8Array|null = null,
-  public spread: string|Uint8Array|null = null,
-  public impact: string|Uint8Array|null = null,
-  public breakEven: string|Uint8Array|null = null
-){}
+	constructor(
+		public entryPrice: string | Uint8Array | null = null,
+		public bestAsk: string | Uint8Array | null = null,
+		public bestBid: string | Uint8Array | null = null,
+		public midpoint: string | Uint8Array | null = null,
+		public grossNotional: string | Uint8Array | null = null,
+		public entryFee: string | Uint8Array | null = null,
+		public exitFeeAtBreakEven: string | Uint8Array | null = null,
+		public roundTripFees: string | Uint8Array | null = null,
+		public spread: string | Uint8Array | null = null,
+		public impact: string | Uint8Array | null = null,
+		public breakEven: string | Uint8Array | null = null,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const entryPrice =
+			this.entryPrice !== null ? builder.createString(this.entryPrice!) : 0;
+		const bestAsk =
+			this.bestAsk !== null ? builder.createString(this.bestAsk!) : 0;
+		const bestBid =
+			this.bestBid !== null ? builder.createString(this.bestBid!) : 0;
+		const midpoint =
+			this.midpoint !== null ? builder.createString(this.midpoint!) : 0;
+		const grossNotional =
+			this.grossNotional !== null
+				? builder.createString(this.grossNotional!)
+				: 0;
+		const entryFee =
+			this.entryFee !== null ? builder.createString(this.entryFee!) : 0;
+		const exitFeeAtBreakEven =
+			this.exitFeeAtBreakEven !== null
+				? builder.createString(this.exitFeeAtBreakEven!)
+				: 0;
+		const roundTripFees =
+			this.roundTripFees !== null
+				? builder.createString(this.roundTripFees!)
+				: 0;
+		const spread =
+			this.spread !== null ? builder.createString(this.spread!) : 0;
+		const impact =
+			this.impact !== null ? builder.createString(this.impact!) : 0;
+		const breakEven =
+			this.breakEven !== null ? builder.createString(this.breakEven!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const entryPrice = (this.entryPrice !== null ? builder.createString(this.entryPrice!) : 0);
-  const bestAsk = (this.bestAsk !== null ? builder.createString(this.bestAsk!) : 0);
-  const bestBid = (this.bestBid !== null ? builder.createString(this.bestBid!) : 0);
-  const midpoint = (this.midpoint !== null ? builder.createString(this.midpoint!) : 0);
-  const grossNotional = (this.grossNotional !== null ? builder.createString(this.grossNotional!) : 0);
-  const entryFee = (this.entryFee !== null ? builder.createString(this.entryFee!) : 0);
-  const exitFeeAtBreakEven = (this.exitFeeAtBreakEven !== null ? builder.createString(this.exitFeeAtBreakEven!) : 0);
-  const roundTripFees = (this.roundTripFees !== null ? builder.createString(this.roundTripFees!) : 0);
-  const spread = (this.spread !== null ? builder.createString(this.spread!) : 0);
-  const impact = (this.impact !== null ? builder.createString(this.impact!) : 0);
-  const breakEven = (this.breakEven !== null ? builder.createString(this.breakEven!) : 0);
-
-  return EntryCost.createEntryCost(builder,
-    entryPrice,
-    bestAsk,
-    bestBid,
-    midpoint,
-    grossNotional,
-    entryFee,
-    exitFeeAtBreakEven,
-    roundTripFees,
-    spread,
-    impact,
-    breakEven
-  );
-}
+		return EntryCost.createEntryCost(
+			builder,
+			entryPrice,
+			bestAsk,
+			bestBid,
+			midpoint,
+			grossNotional,
+			entryFee,
+			exitFeeAtBreakEven,
+			roundTripFees,
+			spread,
+			impact,
+			breakEven,
+		);
+	}
 }

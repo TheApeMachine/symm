@@ -233,7 +233,8 @@ export const readStance = (
 	if (stance === "supports") {
 		return {
 			label: "argued for",
-			plain: "This reading was counted as evidence for that reading of the market.",
+			plain:
+				"This reading was counted as evidence for that reading of the market.",
 			tone: "up",
 		};
 	}

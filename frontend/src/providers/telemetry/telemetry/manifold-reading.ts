@@ -3,143 +3,168 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class ManifoldReading
+	implements flatbuffers.IUnpackableObject<ManifoldReadingT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): ManifoldReading {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsManifoldReading(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ManifoldReading,
+	): ManifoldReading {
+		return (obj || new ManifoldReading()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class ManifoldReading implements flatbuffers.IUnpackableObject<ManifoldReadingT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):ManifoldReading {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsManifoldReading(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ManifoldReading,
+	): ManifoldReading {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new ManifoldReading()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsManifoldReading(bb:flatbuffers.ByteBuffer, obj?:ManifoldReading):ManifoldReading {
-  return (obj || new ManifoldReading()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	divergence(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-static getSizePrefixedRootAsManifoldReading(bb:flatbuffers.ByteBuffer, obj?:ManifoldReading):ManifoldReading {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new ManifoldReading()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	guidanceSpeed(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-divergence():number {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	coherenceMag2(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-guidanceSpeed():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	pressureGradNorm(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-coherenceMag2():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	viscosityProxy(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-pressureGradNorm():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	kuramotoR(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-viscosityProxy():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static startManifoldReading(builder: flatbuffers.Builder) {
+		builder.startObject(6);
+	}
 
-kuramotoR():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static addDivergence(builder: flatbuffers.Builder, divergence: number) {
+		builder.addFieldFloat64(0, divergence, 0.0);
+	}
 
-static startManifoldReading(builder:flatbuffers.Builder) {
-  builder.startObject(6);
-}
+	static addGuidanceSpeed(builder: flatbuffers.Builder, guidanceSpeed: number) {
+		builder.addFieldFloat64(1, guidanceSpeed, 0.0);
+	}
 
-static addDivergence(builder:flatbuffers.Builder, divergence:number) {
-  builder.addFieldFloat64(0, divergence, 0.0);
-}
+	static addCoherenceMag2(builder: flatbuffers.Builder, coherenceMag2: number) {
+		builder.addFieldFloat64(2, coherenceMag2, 0.0);
+	}
 
-static addGuidanceSpeed(builder:flatbuffers.Builder, guidanceSpeed:number) {
-  builder.addFieldFloat64(1, guidanceSpeed, 0.0);
-}
+	static addPressureGradNorm(
+		builder: flatbuffers.Builder,
+		pressureGradNorm: number,
+	) {
+		builder.addFieldFloat64(3, pressureGradNorm, 0.0);
+	}
 
-static addCoherenceMag2(builder:flatbuffers.Builder, coherenceMag2:number) {
-  builder.addFieldFloat64(2, coherenceMag2, 0.0);
-}
+	static addViscosityProxy(
+		builder: flatbuffers.Builder,
+		viscosityProxy: number,
+	) {
+		builder.addFieldFloat64(4, viscosityProxy, 0.0);
+	}
 
-static addPressureGradNorm(builder:flatbuffers.Builder, pressureGradNorm:number) {
-  builder.addFieldFloat64(3, pressureGradNorm, 0.0);
-}
+	static addKuramotoR(builder: flatbuffers.Builder, kuramotoR: number) {
+		builder.addFieldFloat64(5, kuramotoR, 0.0);
+	}
 
-static addViscosityProxy(builder:flatbuffers.Builder, viscosityProxy:number) {
-  builder.addFieldFloat64(4, viscosityProxy, 0.0);
-}
+	static endManifoldReading(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static addKuramotoR(builder:flatbuffers.Builder, kuramotoR:number) {
-  builder.addFieldFloat64(5, kuramotoR, 0.0);
-}
+	static createManifoldReading(
+		builder: flatbuffers.Builder,
+		divergence: number,
+		guidanceSpeed: number,
+		coherenceMag2: number,
+		pressureGradNorm: number,
+		viscosityProxy: number,
+		kuramotoR: number,
+	): flatbuffers.Offset {
+		ManifoldReading.startManifoldReading(builder);
+		ManifoldReading.addDivergence(builder, divergence);
+		ManifoldReading.addGuidanceSpeed(builder, guidanceSpeed);
+		ManifoldReading.addCoherenceMag2(builder, coherenceMag2);
+		ManifoldReading.addPressureGradNorm(builder, pressureGradNorm);
+		ManifoldReading.addViscosityProxy(builder, viscosityProxy);
+		ManifoldReading.addKuramotoR(builder, kuramotoR);
+		return ManifoldReading.endManifoldReading(builder);
+	}
 
-static endManifoldReading(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): ManifoldReadingT {
+		return new ManifoldReadingT(
+			this.divergence(),
+			this.guidanceSpeed(),
+			this.coherenceMag2(),
+			this.pressureGradNorm(),
+			this.viscosityProxy(),
+			this.kuramotoR(),
+		);
+	}
 
-static createManifoldReading(builder:flatbuffers.Builder, divergence:number, guidanceSpeed:number, coherenceMag2:number, pressureGradNorm:number, viscosityProxy:number, kuramotoR:number):flatbuffers.Offset {
-  ManifoldReading.startManifoldReading(builder);
-  ManifoldReading.addDivergence(builder, divergence);
-  ManifoldReading.addGuidanceSpeed(builder, guidanceSpeed);
-  ManifoldReading.addCoherenceMag2(builder, coherenceMag2);
-  ManifoldReading.addPressureGradNorm(builder, pressureGradNorm);
-  ManifoldReading.addViscosityProxy(builder, viscosityProxy);
-  ManifoldReading.addKuramotoR(builder, kuramotoR);
-  return ManifoldReading.endManifoldReading(builder);
-}
-
-unpack(): ManifoldReadingT {
-  return new ManifoldReadingT(
-    this.divergence(),
-    this.guidanceSpeed(),
-    this.coherenceMag2(),
-    this.pressureGradNorm(),
-    this.viscosityProxy(),
-    this.kuramotoR()
-  );
-}
-
-
-unpackTo(_o: ManifoldReadingT): void {
-  _o.divergence = this.divergence();
-  _o.guidanceSpeed = this.guidanceSpeed();
-  _o.coherenceMag2 = this.coherenceMag2();
-  _o.pressureGradNorm = this.pressureGradNorm();
-  _o.viscosityProxy = this.viscosityProxy();
-  _o.kuramotoR = this.kuramotoR();
-}
+	unpackTo(_o: ManifoldReadingT): void {
+		_o.divergence = this.divergence();
+		_o.guidanceSpeed = this.guidanceSpeed();
+		_o.coherenceMag2 = this.coherenceMag2();
+		_o.pressureGradNorm = this.pressureGradNorm();
+		_o.viscosityProxy = this.viscosityProxy();
+		_o.kuramotoR = this.kuramotoR();
+	}
 }
 
 export class ManifoldReadingT implements flatbuffers.IGeneratedObject {
-constructor(
-  public divergence: number = 0.0,
-  public guidanceSpeed: number = 0.0,
-  public coherenceMag2: number = 0.0,
-  public pressureGradNorm: number = 0.0,
-  public viscosityProxy: number = 0.0,
-  public kuramotoR: number = 0.0
-){}
+	constructor(
+		public divergence: number = 0.0,
+		public guidanceSpeed: number = 0.0,
+		public coherenceMag2: number = 0.0,
+		public pressureGradNorm: number = 0.0,
+		public viscosityProxy: number = 0.0,
+		public kuramotoR: number = 0.0,
+	) {}
 
-
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  return ManifoldReading.createManifoldReading(builder,
-    this.divergence,
-    this.guidanceSpeed,
-    this.coherenceMag2,
-    this.pressureGradNorm,
-    this.viscosityProxy,
-    this.kuramotoR
-  );
-}
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		return ManifoldReading.createManifoldReading(
+			builder,
+			this.divergence,
+			this.guidanceSpeed,
+			this.coherenceMag2,
+			this.pressureGradNorm,
+			this.viscosityProxy,
+			this.kuramotoR,
+		);
+	}
 }

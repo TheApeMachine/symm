@@ -1,8 +1,8 @@
 import * as flatbuffers from "flatbuffers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BatchT } from "#/providers/telemetry/telemetry/batch";
-import { FrameEntryT } from "#/providers/telemetry/telemetry/frame-entry";
 import { Frame } from "#/providers/telemetry/telemetry/frame";
+import { FrameEntryT } from "#/providers/telemetry/telemetry/frame-entry";
 import { TickFrameT } from "#/providers/telemetry/telemetry/tick-frame";
 
 type EventListener = (event: MessageEvent) => void | Promise<void>;
@@ -122,7 +122,10 @@ describe("ws-worker", () => {
 
 		// Close socket: must notify main thread of OFFLINE
 		await socket.emit("close", {});
-		expect(scope.messages).toContainEqual({ type: "STATUS", status: "OFFLINE" });
+		expect(scope.messages).toContainEqual({
+			type: "STATUS",
+			status: "OFFLINE",
+		});
 	});
 
 	it("reconnects automatically after the socket closes", async () => {
@@ -142,7 +145,10 @@ describe("ws-worker", () => {
 		});
 
 		await reconnect;
-		expect(scope.messages).toContainEqual({ type: "STATUS", status: "OFFLINE" });
+		expect(scope.messages).toContainEqual({
+			type: "STATUS",
+			status: "OFFLINE",
+		});
 	});
 
 	it("dispatches main thread commands to the backend websocket", async () => {
@@ -160,5 +166,3 @@ describe("ws-worker", () => {
 		);
 	});
 });
-
-

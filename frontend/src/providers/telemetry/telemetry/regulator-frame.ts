@@ -3,399 +3,537 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { Subsystem, SubsystemT } from '../telemetry/subsystem.js';
+import { Subsystem, type SubsystemT } from "../telemetry/subsystem.js";
 
+export class RegulatorFrame
+	implements flatbuffers.IUnpackableObject<RegulatorFrameT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): RegulatorFrame {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-export class RegulatorFrame implements flatbuffers.IUnpackableObject<RegulatorFrameT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):RegulatorFrame {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getRootAsRegulatorFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: RegulatorFrame,
+	): RegulatorFrame {
+		return (obj || new RegulatorFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsRegulatorFrame(bb:flatbuffers.ByteBuffer, obj?:RegulatorFrame):RegulatorFrame {
-  return (obj || new RegulatorFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsRegulatorFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: RegulatorFrame,
+	): RegulatorFrame {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new RegulatorFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsRegulatorFrame(bb:flatbuffers.ByteBuffer, obj?:RegulatorFrame):RegulatorFrame {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new RegulatorFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	status(): string | null;
+	status(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	status(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-status():string|null
-status(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-status(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	surprise(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-surprise():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	energy(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-energy():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	pnl(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-pnl():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	predictedReturn(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-predictedReturn():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	predictionScale(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-predictionScale():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	predictedActive(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-predictedActive():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	activityScale(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-activityScale():number {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	samples(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-samples():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	markSamples(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
 
-markSamples():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
+	intervalMarks(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-intervalMarks():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	lastMarkSymbol(): string | null;
+	lastMarkSymbol(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	lastMarkSymbol(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-lastMarkSymbol():string|null
-lastMarkSymbol(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-lastMarkSymbol(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	lastMarkAt(): string | null;
+	lastMarkAt(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	lastMarkAt(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 28);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-lastMarkAt():string|null
-lastMarkAt(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-lastMarkAt(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	lastMarkReturn(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 30);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-lastMarkReturn():number {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	lastMarkDrawdown(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 32);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-lastMarkDrawdown():number {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	lastMarkFloorDistance(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 34);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-lastMarkFloorDistance():number {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	lastMarkSurgeArmed(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 36);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-lastMarkSurgeArmed():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	summary(): string | null;
+	summary(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	summary(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 38);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-summary():string|null
-summary(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-summary(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	subsystems(index: number, obj?: Subsystem): Subsystem | null {
+		const offset = this.bb!.__offset(this.bb_pos, 40);
+		return offset
+			? (obj || new Subsystem()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-subsystems(index: number, obj?:Subsystem):Subsystem|null {
-  const offset = this.bb!.__offset(this.bb_pos, 40);
-  return offset ? (obj || new Subsystem()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	subsystemsLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 40);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-subsystemsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 40);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	sparkline(index: number): number | null {
+		const offset = this.bb!.__offset(this.bb_pos, 42);
+		return offset
+			? this.bb!.readFloat64(
+					this.bb!.__vector(this.bb_pos + offset) + index * 8,
+				)
+			: 0;
+	}
 
-sparkline(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 42);
-  return offset ? this.bb!.readFloat64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : 0;
-}
+	sparklineLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 42);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-sparklineLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 42);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	sparklineArray(): Float64Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 42);
+		return offset
+			? new Float64Array(
+					this.bb!.bytes().buffer,
+					this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+					this.bb!.__vector_len(this.bb_pos + offset),
+				)
+			: null;
+	}
 
-sparklineArray():Float64Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 42);
-  return offset ? new Float64Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
-}
+	static startRegulatorFrame(builder: flatbuffers.Builder) {
+		builder.startObject(20);
+	}
 
-static startRegulatorFrame(builder:flatbuffers.Builder) {
-  builder.startObject(20);
-}
+	static addStatus(
+		builder: flatbuffers.Builder,
+		statusOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, statusOffset, 0);
+	}
 
-static addStatus(builder:flatbuffers.Builder, statusOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, statusOffset, 0);
-}
+	static addSurprise(builder: flatbuffers.Builder, surprise: number) {
+		builder.addFieldFloat64(1, surprise, 0.0);
+	}
 
-static addSurprise(builder:flatbuffers.Builder, surprise:number) {
-  builder.addFieldFloat64(1, surprise, 0.0);
-}
+	static addEnergy(builder: flatbuffers.Builder, energy: number) {
+		builder.addFieldFloat64(2, energy, 0.0);
+	}
 
-static addEnergy(builder:flatbuffers.Builder, energy:number) {
-  builder.addFieldFloat64(2, energy, 0.0);
-}
+	static addPnl(builder: flatbuffers.Builder, pnl: number) {
+		builder.addFieldFloat64(3, pnl, 0.0);
+	}
 
-static addPnl(builder:flatbuffers.Builder, pnl:number) {
-  builder.addFieldFloat64(3, pnl, 0.0);
-}
+	static addPredictedReturn(
+		builder: flatbuffers.Builder,
+		predictedReturn: number,
+	) {
+		builder.addFieldFloat64(4, predictedReturn, 0.0);
+	}
 
-static addPredictedReturn(builder:flatbuffers.Builder, predictedReturn:number) {
-  builder.addFieldFloat64(4, predictedReturn, 0.0);
-}
+	static addPredictionScale(
+		builder: flatbuffers.Builder,
+		predictionScale: number,
+	) {
+		builder.addFieldFloat64(5, predictionScale, 0.0);
+	}
 
-static addPredictionScale(builder:flatbuffers.Builder, predictionScale:number) {
-  builder.addFieldFloat64(5, predictionScale, 0.0);
-}
+	static addPredictedActive(
+		builder: flatbuffers.Builder,
+		predictedActive: number,
+	) {
+		builder.addFieldFloat64(6, predictedActive, 0.0);
+	}
 
-static addPredictedActive(builder:flatbuffers.Builder, predictedActive:number) {
-  builder.addFieldFloat64(6, predictedActive, 0.0);
-}
+	static addActivityScale(builder: flatbuffers.Builder, activityScale: number) {
+		builder.addFieldFloat64(7, activityScale, 0.0);
+	}
 
-static addActivityScale(builder:flatbuffers.Builder, activityScale:number) {
-  builder.addFieldFloat64(7, activityScale, 0.0);
-}
+	static addSamples(builder: flatbuffers.Builder, samples: bigint) {
+		builder.addFieldInt64(8, samples, BigInt("0"));
+	}
 
-static addSamples(builder:flatbuffers.Builder, samples:bigint) {
-  builder.addFieldInt64(8, samples, BigInt('0'));
-}
+	static addMarkSamples(builder: flatbuffers.Builder, markSamples: bigint) {
+		builder.addFieldInt64(9, markSamples, BigInt("0"));
+	}
 
-static addMarkSamples(builder:flatbuffers.Builder, markSamples:bigint) {
-  builder.addFieldInt64(9, markSamples, BigInt('0'));
-}
+	static addIntervalMarks(builder: flatbuffers.Builder, intervalMarks: bigint) {
+		builder.addFieldInt64(10, intervalMarks, BigInt("0"));
+	}
 
-static addIntervalMarks(builder:flatbuffers.Builder, intervalMarks:bigint) {
-  builder.addFieldInt64(10, intervalMarks, BigInt('0'));
-}
+	static addLastMarkSymbol(
+		builder: flatbuffers.Builder,
+		lastMarkSymbolOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(11, lastMarkSymbolOffset, 0);
+	}
 
-static addLastMarkSymbol(builder:flatbuffers.Builder, lastMarkSymbolOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(11, lastMarkSymbolOffset, 0);
-}
+	static addLastMarkAt(
+		builder: flatbuffers.Builder,
+		lastMarkAtOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(12, lastMarkAtOffset, 0);
+	}
 
-static addLastMarkAt(builder:flatbuffers.Builder, lastMarkAtOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(12, lastMarkAtOffset, 0);
-}
+	static addLastMarkReturn(
+		builder: flatbuffers.Builder,
+		lastMarkReturn: number,
+	) {
+		builder.addFieldFloat64(13, lastMarkReturn, 0.0);
+	}
 
-static addLastMarkReturn(builder:flatbuffers.Builder, lastMarkReturn:number) {
-  builder.addFieldFloat64(13, lastMarkReturn, 0.0);
-}
+	static addLastMarkDrawdown(
+		builder: flatbuffers.Builder,
+		lastMarkDrawdown: number,
+	) {
+		builder.addFieldFloat64(14, lastMarkDrawdown, 0.0);
+	}
 
-static addLastMarkDrawdown(builder:flatbuffers.Builder, lastMarkDrawdown:number) {
-  builder.addFieldFloat64(14, lastMarkDrawdown, 0.0);
-}
+	static addLastMarkFloorDistance(
+		builder: flatbuffers.Builder,
+		lastMarkFloorDistance: number,
+	) {
+		builder.addFieldFloat64(15, lastMarkFloorDistance, 0.0);
+	}
 
-static addLastMarkFloorDistance(builder:flatbuffers.Builder, lastMarkFloorDistance:number) {
-  builder.addFieldFloat64(15, lastMarkFloorDistance, 0.0);
-}
+	static addLastMarkSurgeArmed(
+		builder: flatbuffers.Builder,
+		lastMarkSurgeArmed: boolean,
+	) {
+		builder.addFieldInt8(16, +lastMarkSurgeArmed, +false);
+	}
 
-static addLastMarkSurgeArmed(builder:flatbuffers.Builder, lastMarkSurgeArmed:boolean) {
-  builder.addFieldInt8(16, +lastMarkSurgeArmed, +false);
-}
+	static addSummary(
+		builder: flatbuffers.Builder,
+		summaryOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(17, summaryOffset, 0);
+	}
 
-static addSummary(builder:flatbuffers.Builder, summaryOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(17, summaryOffset, 0);
-}
+	static addSubsystems(
+		builder: flatbuffers.Builder,
+		subsystemsOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(18, subsystemsOffset, 0);
+	}
 
-static addSubsystems(builder:flatbuffers.Builder, subsystemsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(18, subsystemsOffset, 0);
-}
+	static createSubsystemsVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createSubsystemsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startSubsystemsVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startSubsystemsVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static addSparkline(
+		builder: flatbuffers.Builder,
+		sparklineOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(19, sparklineOffset, 0);
+	}
 
-static addSparkline(builder:flatbuffers.Builder, sparklineOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(19, sparklineOffset, 0);
-}
+	static createSparklineVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Float64Array,
+	): flatbuffers.Offset;
+	/**
+	 * @deprecated This Uint8Array overload will be removed in the future.
+	 */
+	static createSparklineVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Uint8Array,
+	): flatbuffers.Offset;
+	static createSparklineVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Float64Array | Uint8Array,
+	): flatbuffers.Offset {
+		builder.startVector(8, data.length, 8);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addFloat64(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createSparklineVector(builder:flatbuffers.Builder, data:number[]|Float64Array):flatbuffers.Offset;
-/**
- * @deprecated This Uint8Array overload will be removed in the future.
- */
-static createSparklineVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset;
-static createSparklineVector(builder:flatbuffers.Builder, data:number[]|Float64Array|Uint8Array):flatbuffers.Offset {
-  builder.startVector(8, data.length, 8);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addFloat64(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startSparklineVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(8, numElems, 8);
+	}
 
-static startSparklineVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(8, numElems, 8);
-}
+	static endRegulatorFrame(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static endRegulatorFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	static createRegulatorFrame(
+		builder: flatbuffers.Builder,
+		statusOffset: flatbuffers.Offset,
+		surprise: number,
+		energy: number,
+		pnl: number,
+		predictedReturn: number,
+		predictionScale: number,
+		predictedActive: number,
+		activityScale: number,
+		samples: bigint,
+		markSamples: bigint,
+		intervalMarks: bigint,
+		lastMarkSymbolOffset: flatbuffers.Offset,
+		lastMarkAtOffset: flatbuffers.Offset,
+		lastMarkReturn: number,
+		lastMarkDrawdown: number,
+		lastMarkFloorDistance: number,
+		lastMarkSurgeArmed: boolean,
+		summaryOffset: flatbuffers.Offset,
+		subsystemsOffset: flatbuffers.Offset,
+		sparklineOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		RegulatorFrame.startRegulatorFrame(builder);
+		RegulatorFrame.addStatus(builder, statusOffset);
+		RegulatorFrame.addSurprise(builder, surprise);
+		RegulatorFrame.addEnergy(builder, energy);
+		RegulatorFrame.addPnl(builder, pnl);
+		RegulatorFrame.addPredictedReturn(builder, predictedReturn);
+		RegulatorFrame.addPredictionScale(builder, predictionScale);
+		RegulatorFrame.addPredictedActive(builder, predictedActive);
+		RegulatorFrame.addActivityScale(builder, activityScale);
+		RegulatorFrame.addSamples(builder, samples);
+		RegulatorFrame.addMarkSamples(builder, markSamples);
+		RegulatorFrame.addIntervalMarks(builder, intervalMarks);
+		RegulatorFrame.addLastMarkSymbol(builder, lastMarkSymbolOffset);
+		RegulatorFrame.addLastMarkAt(builder, lastMarkAtOffset);
+		RegulatorFrame.addLastMarkReturn(builder, lastMarkReturn);
+		RegulatorFrame.addLastMarkDrawdown(builder, lastMarkDrawdown);
+		RegulatorFrame.addLastMarkFloorDistance(builder, lastMarkFloorDistance);
+		RegulatorFrame.addLastMarkSurgeArmed(builder, lastMarkSurgeArmed);
+		RegulatorFrame.addSummary(builder, summaryOffset);
+		RegulatorFrame.addSubsystems(builder, subsystemsOffset);
+		RegulatorFrame.addSparkline(builder, sparklineOffset);
+		return RegulatorFrame.endRegulatorFrame(builder);
+	}
 
-static createRegulatorFrame(builder:flatbuffers.Builder, statusOffset:flatbuffers.Offset, surprise:number, energy:number, pnl:number, predictedReturn:number, predictionScale:number, predictedActive:number, activityScale:number, samples:bigint, markSamples:bigint, intervalMarks:bigint, lastMarkSymbolOffset:flatbuffers.Offset, lastMarkAtOffset:flatbuffers.Offset, lastMarkReturn:number, lastMarkDrawdown:number, lastMarkFloorDistance:number, lastMarkSurgeArmed:boolean, summaryOffset:flatbuffers.Offset, subsystemsOffset:flatbuffers.Offset, sparklineOffset:flatbuffers.Offset):flatbuffers.Offset {
-  RegulatorFrame.startRegulatorFrame(builder);
-  RegulatorFrame.addStatus(builder, statusOffset);
-  RegulatorFrame.addSurprise(builder, surprise);
-  RegulatorFrame.addEnergy(builder, energy);
-  RegulatorFrame.addPnl(builder, pnl);
-  RegulatorFrame.addPredictedReturn(builder, predictedReturn);
-  RegulatorFrame.addPredictionScale(builder, predictionScale);
-  RegulatorFrame.addPredictedActive(builder, predictedActive);
-  RegulatorFrame.addActivityScale(builder, activityScale);
-  RegulatorFrame.addSamples(builder, samples);
-  RegulatorFrame.addMarkSamples(builder, markSamples);
-  RegulatorFrame.addIntervalMarks(builder, intervalMarks);
-  RegulatorFrame.addLastMarkSymbol(builder, lastMarkSymbolOffset);
-  RegulatorFrame.addLastMarkAt(builder, lastMarkAtOffset);
-  RegulatorFrame.addLastMarkReturn(builder, lastMarkReturn);
-  RegulatorFrame.addLastMarkDrawdown(builder, lastMarkDrawdown);
-  RegulatorFrame.addLastMarkFloorDistance(builder, lastMarkFloorDistance);
-  RegulatorFrame.addLastMarkSurgeArmed(builder, lastMarkSurgeArmed);
-  RegulatorFrame.addSummary(builder, summaryOffset);
-  RegulatorFrame.addSubsystems(builder, subsystemsOffset);
-  RegulatorFrame.addSparkline(builder, sparklineOffset);
-  return RegulatorFrame.endRegulatorFrame(builder);
-}
+	unpack(): RegulatorFrameT {
+		return new RegulatorFrameT(
+			this.status(),
+			this.surprise(),
+			this.energy(),
+			this.pnl(),
+			this.predictedReturn(),
+			this.predictionScale(),
+			this.predictedActive(),
+			this.activityScale(),
+			this.samples(),
+			this.markSamples(),
+			this.intervalMarks(),
+			this.lastMarkSymbol(),
+			this.lastMarkAt(),
+			this.lastMarkReturn(),
+			this.lastMarkDrawdown(),
+			this.lastMarkFloorDistance(),
+			this.lastMarkSurgeArmed(),
+			this.summary(),
+			this.bb!.createObjList<Subsystem, SubsystemT>(
+				this.subsystems.bind(this),
+				this.subsystemsLength(),
+			),
+			this.bb!.createScalarList<number>(
+				this.sparkline.bind(this),
+				this.sparklineLength(),
+			),
+		);
+	}
 
-unpack(): RegulatorFrameT {
-  return new RegulatorFrameT(
-    this.status(),
-    this.surprise(),
-    this.energy(),
-    this.pnl(),
-    this.predictedReturn(),
-    this.predictionScale(),
-    this.predictedActive(),
-    this.activityScale(),
-    this.samples(),
-    this.markSamples(),
-    this.intervalMarks(),
-    this.lastMarkSymbol(),
-    this.lastMarkAt(),
-    this.lastMarkReturn(),
-    this.lastMarkDrawdown(),
-    this.lastMarkFloorDistance(),
-    this.lastMarkSurgeArmed(),
-    this.summary(),
-    this.bb!.createObjList<Subsystem, SubsystemT>(this.subsystems.bind(this), this.subsystemsLength()),
-    this.bb!.createScalarList<number>(this.sparkline.bind(this), this.sparklineLength())
-  );
-}
-
-
-unpackTo(_o: RegulatorFrameT): void {
-  _o.status = this.status();
-  _o.surprise = this.surprise();
-  _o.energy = this.energy();
-  _o.pnl = this.pnl();
-  _o.predictedReturn = this.predictedReturn();
-  _o.predictionScale = this.predictionScale();
-  _o.predictedActive = this.predictedActive();
-  _o.activityScale = this.activityScale();
-  _o.samples = this.samples();
-  _o.markSamples = this.markSamples();
-  _o.intervalMarks = this.intervalMarks();
-  _o.lastMarkSymbol = this.lastMarkSymbol();
-  _o.lastMarkAt = this.lastMarkAt();
-  _o.lastMarkReturn = this.lastMarkReturn();
-  _o.lastMarkDrawdown = this.lastMarkDrawdown();
-  _o.lastMarkFloorDistance = this.lastMarkFloorDistance();
-  _o.lastMarkSurgeArmed = this.lastMarkSurgeArmed();
-  _o.summary = this.summary();
-  _o.subsystems = this.bb!.createObjList<Subsystem, SubsystemT>(this.subsystems.bind(this), this.subsystemsLength());
-  _o.sparkline = this.bb!.createScalarList<number>(this.sparkline.bind(this), this.sparklineLength());
-}
+	unpackTo(_o: RegulatorFrameT): void {
+		_o.status = this.status();
+		_o.surprise = this.surprise();
+		_o.energy = this.energy();
+		_o.pnl = this.pnl();
+		_o.predictedReturn = this.predictedReturn();
+		_o.predictionScale = this.predictionScale();
+		_o.predictedActive = this.predictedActive();
+		_o.activityScale = this.activityScale();
+		_o.samples = this.samples();
+		_o.markSamples = this.markSamples();
+		_o.intervalMarks = this.intervalMarks();
+		_o.lastMarkSymbol = this.lastMarkSymbol();
+		_o.lastMarkAt = this.lastMarkAt();
+		_o.lastMarkReturn = this.lastMarkReturn();
+		_o.lastMarkDrawdown = this.lastMarkDrawdown();
+		_o.lastMarkFloorDistance = this.lastMarkFloorDistance();
+		_o.lastMarkSurgeArmed = this.lastMarkSurgeArmed();
+		_o.summary = this.summary();
+		_o.subsystems = this.bb!.createObjList<Subsystem, SubsystemT>(
+			this.subsystems.bind(this),
+			this.subsystemsLength(),
+		);
+		_o.sparkline = this.bb!.createScalarList<number>(
+			this.sparkline.bind(this),
+			this.sparklineLength(),
+		);
+	}
 }
 
 export class RegulatorFrameT implements flatbuffers.IGeneratedObject {
-constructor(
-  public status: string|Uint8Array|null = null,
-  public surprise: number = 0.0,
-  public energy: number = 0.0,
-  public pnl: number = 0.0,
-  public predictedReturn: number = 0.0,
-  public predictionScale: number = 0.0,
-  public predictedActive: number = 0.0,
-  public activityScale: number = 0.0,
-  public samples: bigint = BigInt('0'),
-  public markSamples: bigint = BigInt('0'),
-  public intervalMarks: bigint = BigInt('0'),
-  public lastMarkSymbol: string|Uint8Array|null = null,
-  public lastMarkAt: string|Uint8Array|null = null,
-  public lastMarkReturn: number = 0.0,
-  public lastMarkDrawdown: number = 0.0,
-  public lastMarkFloorDistance: number = 0.0,
-  public lastMarkSurgeArmed: boolean = false,
-  public summary: string|Uint8Array|null = null,
-  public subsystems: (SubsystemT)[] = [],
-  public sparkline: (number)[] = []
-){}
+	constructor(
+		public status: string | Uint8Array | null = null,
+		public surprise: number = 0.0,
+		public energy: number = 0.0,
+		public pnl: number = 0.0,
+		public predictedReturn: number = 0.0,
+		public predictionScale: number = 0.0,
+		public predictedActive: number = 0.0,
+		public activityScale: number = 0.0,
+		public samples: bigint = BigInt("0"),
+		public markSamples: bigint = BigInt("0"),
+		public intervalMarks: bigint = BigInt("0"),
+		public lastMarkSymbol: string | Uint8Array | null = null,
+		public lastMarkAt: string | Uint8Array | null = null,
+		public lastMarkReturn: number = 0.0,
+		public lastMarkDrawdown: number = 0.0,
+		public lastMarkFloorDistance: number = 0.0,
+		public lastMarkSurgeArmed: boolean = false,
+		public summary: string | Uint8Array | null = null,
+		public subsystems: SubsystemT[] = [],
+		public sparkline: number[] = [],
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const status =
+			this.status !== null ? builder.createString(this.status!) : 0;
+		const lastMarkSymbol =
+			this.lastMarkSymbol !== null
+				? builder.createString(this.lastMarkSymbol!)
+				: 0;
+		const lastMarkAt =
+			this.lastMarkAt !== null ? builder.createString(this.lastMarkAt!) : 0;
+		const summary =
+			this.summary !== null ? builder.createString(this.summary!) : 0;
+		const subsystems = RegulatorFrame.createSubsystemsVector(
+			builder,
+			builder.createObjectOffsetList(this.subsystems),
+		);
+		const sparkline = RegulatorFrame.createSparklineVector(
+			builder,
+			this.sparkline,
+		);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const status = (this.status !== null ? builder.createString(this.status!) : 0);
-  const lastMarkSymbol = (this.lastMarkSymbol !== null ? builder.createString(this.lastMarkSymbol!) : 0);
-  const lastMarkAt = (this.lastMarkAt !== null ? builder.createString(this.lastMarkAt!) : 0);
-  const summary = (this.summary !== null ? builder.createString(this.summary!) : 0);
-  const subsystems = RegulatorFrame.createSubsystemsVector(builder, builder.createObjectOffsetList(this.subsystems));
-  const sparkline = RegulatorFrame.createSparklineVector(builder, this.sparkline);
-
-  return RegulatorFrame.createRegulatorFrame(builder,
-    status,
-    this.surprise,
-    this.energy,
-    this.pnl,
-    this.predictedReturn,
-    this.predictionScale,
-    this.predictedActive,
-    this.activityScale,
-    this.samples,
-    this.markSamples,
-    this.intervalMarks,
-    lastMarkSymbol,
-    lastMarkAt,
-    this.lastMarkReturn,
-    this.lastMarkDrawdown,
-    this.lastMarkFloorDistance,
-    this.lastMarkSurgeArmed,
-    summary,
-    subsystems,
-    sparkline
-  );
-}
+		return RegulatorFrame.createRegulatorFrame(
+			builder,
+			status,
+			this.surprise,
+			this.energy,
+			this.pnl,
+			this.predictedReturn,
+			this.predictionScale,
+			this.predictedActive,
+			this.activityScale,
+			this.samples,
+			this.markSamples,
+			this.intervalMarks,
+			lastMarkSymbol,
+			lastMarkAt,
+			this.lastMarkReturn,
+			this.lastMarkDrawdown,
+			this.lastMarkFloorDistance,
+			this.lastMarkSurgeArmed,
+			summary,
+			subsystems,
+			sparkline,
+		);
+	}
 }

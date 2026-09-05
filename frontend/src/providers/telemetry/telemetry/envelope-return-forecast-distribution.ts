@@ -3,143 +3,179 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class EnvelopeReturnForecastDistribution
+	implements flatbuffers.IUnpackableObject<EnvelopeReturnForecastDistributionT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(
+		i: number,
+		bb: flatbuffers.ByteBuffer,
+	): EnvelopeReturnForecastDistribution {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsEnvelopeReturnForecastDistribution(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeReturnForecastDistribution,
+	): EnvelopeReturnForecastDistribution {
+		return (obj || new EnvelopeReturnForecastDistribution()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class EnvelopeReturnForecastDistribution implements flatbuffers.IUnpackableObject<EnvelopeReturnForecastDistributionT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeReturnForecastDistribution {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
+	static getSizePrefixedRootAsEnvelopeReturnForecastDistribution(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeReturnForecastDistribution,
+	): EnvelopeReturnForecastDistribution {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopeReturnForecastDistribution()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	value(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	scale(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	degreesOfFreedom(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	ready(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	innovation(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	reset(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	static startEnvelopeReturnForecastDistribution(builder: flatbuffers.Builder) {
+		builder.startObject(6);
+	}
+
+	static addValue(builder: flatbuffers.Builder, value: number) {
+		builder.addFieldFloat64(0, value, 0.0);
+	}
+
+	static addScale(builder: flatbuffers.Builder, scale: number) {
+		builder.addFieldFloat64(1, scale, 0.0);
+	}
+
+	static addDegreesOfFreedom(
+		builder: flatbuffers.Builder,
+		degreesOfFreedom: number,
+	) {
+		builder.addFieldFloat64(2, degreesOfFreedom, 0.0);
+	}
+
+	static addReady(builder: flatbuffers.Builder, ready: boolean) {
+		builder.addFieldInt8(3, +ready, +false);
+	}
+
+	static addInnovation(builder: flatbuffers.Builder, innovation: number) {
+		builder.addFieldFloat64(4, innovation, 0.0);
+	}
+
+	static addReset(builder: flatbuffers.Builder, reset: boolean) {
+		builder.addFieldInt8(5, +reset, +false);
+	}
+
+	static endEnvelopeReturnForecastDistribution(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
+
+	static createEnvelopeReturnForecastDistribution(
+		builder: flatbuffers.Builder,
+		value: number,
+		scale: number,
+		degreesOfFreedom: number,
+		ready: boolean,
+		innovation: number,
+		reset: boolean,
+	): flatbuffers.Offset {
+		EnvelopeReturnForecastDistribution.startEnvelopeReturnForecastDistribution(
+			builder,
+		);
+		EnvelopeReturnForecastDistribution.addValue(builder, value);
+		EnvelopeReturnForecastDistribution.addScale(builder, scale);
+		EnvelopeReturnForecastDistribution.addDegreesOfFreedom(
+			builder,
+			degreesOfFreedom,
+		);
+		EnvelopeReturnForecastDistribution.addReady(builder, ready);
+		EnvelopeReturnForecastDistribution.addInnovation(builder, innovation);
+		EnvelopeReturnForecastDistribution.addReset(builder, reset);
+		return EnvelopeReturnForecastDistribution.endEnvelopeReturnForecastDistribution(
+			builder,
+		);
+	}
+
+	unpack(): EnvelopeReturnForecastDistributionT {
+		return new EnvelopeReturnForecastDistributionT(
+			this.value(),
+			this.scale(),
+			this.degreesOfFreedom(),
+			this.ready(),
+			this.innovation(),
+			this.reset(),
+		);
+	}
+
+	unpackTo(_o: EnvelopeReturnForecastDistributionT): void {
+		_o.value = this.value();
+		_o.scale = this.scale();
+		_o.degreesOfFreedom = this.degreesOfFreedom();
+		_o.ready = this.ready();
+		_o.innovation = this.innovation();
+		_o.reset = this.reset();
+	}
 }
 
-static getRootAsEnvelopeReturnForecastDistribution(bb:flatbuffers.ByteBuffer, obj?:EnvelopeReturnForecastDistribution):EnvelopeReturnForecastDistribution {
-  return (obj || new EnvelopeReturnForecastDistribution()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+export class EnvelopeReturnForecastDistributionT
+	implements flatbuffers.IGeneratedObject
+{
+	constructor(
+		public value: number = 0.0,
+		public scale: number = 0.0,
+		public degreesOfFreedom: number = 0.0,
+		public ready: boolean = false,
+		public innovation: number = 0.0,
+		public reset: boolean = false,
+	) {}
 
-static getSizePrefixedRootAsEnvelopeReturnForecastDistribution(bb:flatbuffers.ByteBuffer, obj?:EnvelopeReturnForecastDistribution):EnvelopeReturnForecastDistribution {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeReturnForecastDistribution()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
-
-value():number {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-scale():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-degreesOfFreedom():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-ready():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-innovation():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-reset():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-static startEnvelopeReturnForecastDistribution(builder:flatbuffers.Builder) {
-  builder.startObject(6);
-}
-
-static addValue(builder:flatbuffers.Builder, value:number) {
-  builder.addFieldFloat64(0, value, 0.0);
-}
-
-static addScale(builder:flatbuffers.Builder, scale:number) {
-  builder.addFieldFloat64(1, scale, 0.0);
-}
-
-static addDegreesOfFreedom(builder:flatbuffers.Builder, degreesOfFreedom:number) {
-  builder.addFieldFloat64(2, degreesOfFreedom, 0.0);
-}
-
-static addReady(builder:flatbuffers.Builder, ready:boolean) {
-  builder.addFieldInt8(3, +ready, +false);
-}
-
-static addInnovation(builder:flatbuffers.Builder, innovation:number) {
-  builder.addFieldFloat64(4, innovation, 0.0);
-}
-
-static addReset(builder:flatbuffers.Builder, reset:boolean) {
-  builder.addFieldInt8(5, +reset, +false);
-}
-
-static endEnvelopeReturnForecastDistribution(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
-
-static createEnvelopeReturnForecastDistribution(builder:flatbuffers.Builder, value:number, scale:number, degreesOfFreedom:number, ready:boolean, innovation:number, reset:boolean):flatbuffers.Offset {
-  EnvelopeReturnForecastDistribution.startEnvelopeReturnForecastDistribution(builder);
-  EnvelopeReturnForecastDistribution.addValue(builder, value);
-  EnvelopeReturnForecastDistribution.addScale(builder, scale);
-  EnvelopeReturnForecastDistribution.addDegreesOfFreedom(builder, degreesOfFreedom);
-  EnvelopeReturnForecastDistribution.addReady(builder, ready);
-  EnvelopeReturnForecastDistribution.addInnovation(builder, innovation);
-  EnvelopeReturnForecastDistribution.addReset(builder, reset);
-  return EnvelopeReturnForecastDistribution.endEnvelopeReturnForecastDistribution(builder);
-}
-
-unpack(): EnvelopeReturnForecastDistributionT {
-  return new EnvelopeReturnForecastDistributionT(
-    this.value(),
-    this.scale(),
-    this.degreesOfFreedom(),
-    this.ready(),
-    this.innovation(),
-    this.reset()
-  );
-}
-
-
-unpackTo(_o: EnvelopeReturnForecastDistributionT): void {
-  _o.value = this.value();
-  _o.scale = this.scale();
-  _o.degreesOfFreedom = this.degreesOfFreedom();
-  _o.ready = this.ready();
-  _o.innovation = this.innovation();
-  _o.reset = this.reset();
-}
-}
-
-export class EnvelopeReturnForecastDistributionT implements flatbuffers.IGeneratedObject {
-constructor(
-  public value: number = 0.0,
-  public scale: number = 0.0,
-  public degreesOfFreedom: number = 0.0,
-  public ready: boolean = false,
-  public innovation: number = 0.0,
-  public reset: boolean = false
-){}
-
-
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  return EnvelopeReturnForecastDistribution.createEnvelopeReturnForecastDistribution(builder,
-    this.value,
-    this.scale,
-    this.degreesOfFreedom,
-    this.ready,
-    this.innovation,
-    this.reset
-  );
-}
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		return EnvelopeReturnForecastDistribution.createEnvelopeReturnForecastDistribution(
+			builder,
+			this.value,
+			this.scale,
+			this.degreesOfFreedom,
+			this.ready,
+			this.innovation,
+			this.reset,
+		);
+	}
 }

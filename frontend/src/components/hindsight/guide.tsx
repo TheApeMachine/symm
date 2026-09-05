@@ -137,9 +137,9 @@ export const Guide = ({ onClose }: { onClose: () => void }) => {
 				<div className="px-3 py-2.5">
 					<p className="max-w-3xl font-mono text-[10px] text-(--f2) leading-relaxed">
 						Hindsight replays a recorded run and shows what the system actually
-						held at any exact moment inside it. Nothing here is recalculated:
-						if the code produced a wrong number, the wrong number is what you
-						see, and that is the point.
+						held at any exact moment inside it. Nothing here is recalculated: if
+						the code produced a wrong number, the wrong number is what you see,
+						and that is the point.
 					</p>
 
 					<div className="pt-3">

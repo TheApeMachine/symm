@@ -45,7 +45,12 @@ export type ConsumerRow = {
 export type LineageReport = {
 	producers: ProducerRow[];
 	consumers: ConsumerRow[];
-	unresolved: Array<{ package: string; file: string; line: number; reason: string }>;
+	unresolved: Array<{
+		package: string;
+		file: string;
+		line: number;
+		reason: string;
+	}>;
 	summary: {
 		totalProducers: number;
 		deadProducers: number;
@@ -75,7 +80,8 @@ position this store's caller resolves separately, and the lineage report's
 "metric:side" producers are pre-split into metric/side fields, so callers
 that don't track side pass "" and still match every side-less metric.
 */
-export const lineageKey = (source: string, metric: string): string => `${source}/${metric}`;
+export const lineageKey = (source: string, metric: string): string =>
+	`${source}/${metric}`;
 
 const lineageStore = createStore<LineageState>({
 	report: null,
@@ -97,7 +103,8 @@ export const ensureLineageLoaded = (): void => {
 
 	fetch("/metric-lineage.json")
 		.then((response) => {
-			if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+			if (!response.ok)
+				throw new Error(`${response.status} ${response.statusText}`);
 			return response.json() as Promise<LineageReport>;
 		})
 		.then((report) => {
@@ -136,7 +143,13 @@ the value. The report therefore renders such rows "referenced" (neutral), never
 a metric with no bound/catalog reference at all is "unreferenced"; a metric
 whose only lead is a bulk kernel subscription is "kernelOnly".
 */
-export const lineageStatusOf = (row: ProducerRow | undefined): LineageStatus | null => {
+export const lineageStatusOf = (
+	row: ProducerRow | undefined,
+): LineageStatus | null => {
 	if (!row) return null;
-	return row.dead ? (row.kernelOnly ? "kernelOnly" : "unreferenced") : "referenced";
+	return row.dead
+		? row.kernelOnly
+			? "kernelOnly"
+			: "unreferenced"
+		: "referenced";
 };

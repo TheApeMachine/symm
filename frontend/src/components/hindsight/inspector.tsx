@@ -612,92 +612,92 @@ const MetricDetail = ({
 	}
 
 	return (
-	<Flex.Column gap={1} className="font-mono text-[8px] leading-relaxed">
-		<Flex.Row gap={3} className="flex-wrap text-(--f4)">
-			<span>
-				identity <span className="text-(--f2)">{identity}</span>
-			</span>
-			<span>
-				observed at <span className="text-(--f2)">{observedAt}</span>
-			</span>
-			{version === null ? null : (
+		<Flex.Column gap={1} className="font-mono text-[8px] leading-relaxed">
+			<Flex.Row gap={3} className="flex-wrap text-(--f4)">
 				<span>
-					state version{" "}
-					<span className="text-(--f2)">
-						{version.component}@v{version.version}
+					identity <span className="text-(--f2)">{identity}</span>
+				</span>
+				<span>
+					observed at <span className="text-(--f2)">{observedAt}</span>
+				</span>
+				{version === null ? null : (
+					<span>
+						state version{" "}
+						<span className="text-(--f2)">
+							{version.component}@v{version.version}
+						</span>
 					</span>
-				</span>
-			)}
-			{declared?.role ? (
-				<span>
-					role <span className="text-(--acc)">{declared.role}</span>
-				</span>
-			) : null}
-			{declared?.class ? (
-				<span>
-					class <span className="text-(--f2)">{declared.class}</span>
-				</span>
-			) : null}
-		</Flex.Row>
-
-		{declared === null ? (
-			<p className="text-(--warn)">
-				Not declared in METRIC_MAP.md. This surface has no statement of what the
-				number means, and will not invent one.
-			</p>
-		) : (
-			<>
-				{declared.purpose ? (
-					<p className="text-(--f2)">{declared.purpose}</p>
-				) : null}
-				{declared.definedness ? (
-					<p className="text-(--f4)">
-						<span className="uppercase tracking-widest">defined when</span>{" "}
-						{declared.definedness}
-					</p>
-				) : null}
-				{declared.destinations ? (
-					<p className="text-(--f4)">
-						<span className="uppercase tracking-widest">may inform</span>{" "}
-						{declared.destinations}
-					</p>
-				) : null}
-				{declared.forbidden ? (
-					<p className="text-(--warn)">
-						<span className="uppercase tracking-widest">never infer</span>{" "}
-						{declared.forbidden}
-					</p>
-				) : null}
-			</>
-		)}
-
-		{referenced.length > 0 ? (
-			<Flex.Row gap={1} className="flex-wrap pt-0.5">
-				<span
-					className="text-(--f4) uppercase tracking-widest"
-					title="Category hypotheses that named this exact metric as evidence at this boundary."
-				>
-					referenced by
-				</span>
-				{referenced.map((entry) => (
-					<span
-						key={`${entry.category}-${entry.stance}`}
-						className="rounded-xs border border-(--line2) px-1"
-						style={{
-							color:
-								entry.stance === "supports"
-									? "var(--up)"
-									: entry.stance === "contradicts"
-										? "var(--down)"
-										: "var(--f4)",
-						}}
-					>
-						{entry.category} · {entry.stance}
+				)}
+				{declared?.role ? (
+					<span>
+						role <span className="text-(--acc)">{declared.role}</span>
 					</span>
-				))}
+				) : null}
+				{declared?.class ? (
+					<span>
+						class <span className="text-(--f2)">{declared.class}</span>
+					</span>
+				) : null}
 			</Flex.Row>
-		) : null}
-	</Flex.Column>
+
+			{declared === null ? (
+				<p className="text-(--warn)">
+					Not declared in METRIC_MAP.md. This surface has no statement of what
+					the number means, and will not invent one.
+				</p>
+			) : (
+				<>
+					{declared.purpose ? (
+						<p className="text-(--f2)">{declared.purpose}</p>
+					) : null}
+					{declared.definedness ? (
+						<p className="text-(--f4)">
+							<span className="uppercase tracking-widest">defined when</span>{" "}
+							{declared.definedness}
+						</p>
+					) : null}
+					{declared.destinations ? (
+						<p className="text-(--f4)">
+							<span className="uppercase tracking-widest">may inform</span>{" "}
+							{declared.destinations}
+						</p>
+					) : null}
+					{declared.forbidden ? (
+						<p className="text-(--warn)">
+							<span className="uppercase tracking-widest">never infer</span>{" "}
+							{declared.forbidden}
+						</p>
+					) : null}
+				</>
+			)}
+
+			{referenced.length > 0 ? (
+				<Flex.Row gap={1} className="flex-wrap pt-0.5">
+					<span
+						className="text-(--f4) uppercase tracking-widest"
+						title="Category hypotheses that named this exact metric as evidence at this boundary."
+					>
+						referenced by
+					</span>
+					{referenced.map((entry) => (
+						<span
+							key={`${entry.category}-${entry.stance}`}
+							className="rounded-xs border border-(--line2) px-1"
+							style={{
+								color:
+									entry.stance === "supports"
+										? "var(--up)"
+										: entry.stance === "contradicts"
+											? "var(--down)"
+											: "var(--f4)",
+							}}
+						>
+							{entry.category} · {entry.stance}
+						</span>
+					))}
+				</Flex.Row>
+			) : null}
+		</Flex.Column>
 	);
 };
 

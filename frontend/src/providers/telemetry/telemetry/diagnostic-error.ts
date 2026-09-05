@@ -3,127 +3,162 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class DiagnosticError
+	implements flatbuffers.IUnpackableObject<DiagnosticErrorT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): DiagnosticError {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsDiagnosticError(
+		bb: flatbuffers.ByteBuffer,
+		obj?: DiagnosticError,
+	): DiagnosticError {
+		return (obj || new DiagnosticError()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class DiagnosticError implements flatbuffers.IUnpackableObject<DiagnosticErrorT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):DiagnosticError {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsDiagnosticError(
+		bb: flatbuffers.ByteBuffer,
+		obj?: DiagnosticError,
+	): DiagnosticError {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new DiagnosticError()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsDiagnosticError(bb:flatbuffers.ByteBuffer, obj?:DiagnosticError):DiagnosticError {
-  return (obj || new DiagnosticError()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	source(): string | null;
+	source(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	source(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsDiagnosticError(bb:flatbuffers.ByteBuffer, obj?:DiagnosticError):DiagnosticError {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new DiagnosticError()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	message(): string | null;
+	message(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	message(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-source():string|null
-source(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-source(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	caller(): string | null;
+	caller(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	caller(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-message():string|null
-message(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-message(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	atNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-caller():string|null
-caller(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-caller(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	static startDiagnosticError(builder: flatbuffers.Builder) {
+		builder.startObject(4);
+	}
 
-atNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	static addSource(
+		builder: flatbuffers.Builder,
+		sourceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, sourceOffset, 0);
+	}
 
-static startDiagnosticError(builder:flatbuffers.Builder) {
-  builder.startObject(4);
-}
+	static addMessage(
+		builder: flatbuffers.Builder,
+		messageOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, messageOffset, 0);
+	}
 
-static addSource(builder:flatbuffers.Builder, sourceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, sourceOffset, 0);
-}
+	static addCaller(
+		builder: flatbuffers.Builder,
+		callerOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, callerOffset, 0);
+	}
 
-static addMessage(builder:flatbuffers.Builder, messageOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, messageOffset, 0);
-}
+	static addAtNs(builder: flatbuffers.Builder, atNs: bigint) {
+		builder.addFieldInt64(3, atNs, BigInt("0"));
+	}
 
-static addCaller(builder:flatbuffers.Builder, callerOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, callerOffset, 0);
-}
+	static endDiagnosticError(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // source
+		builder.requiredField(offset, 6); // message
+		return offset;
+	}
 
-static addAtNs(builder:flatbuffers.Builder, atNs:bigint) {
-  builder.addFieldInt64(3, atNs, BigInt('0'));
-}
+	static createDiagnosticError(
+		builder: flatbuffers.Builder,
+		sourceOffset: flatbuffers.Offset,
+		messageOffset: flatbuffers.Offset,
+		callerOffset: flatbuffers.Offset,
+		atNs: bigint,
+	): flatbuffers.Offset {
+		DiagnosticError.startDiagnosticError(builder);
+		DiagnosticError.addSource(builder, sourceOffset);
+		DiagnosticError.addMessage(builder, messageOffset);
+		DiagnosticError.addCaller(builder, callerOffset);
+		DiagnosticError.addAtNs(builder, atNs);
+		return DiagnosticError.endDiagnosticError(builder);
+	}
 
-static endDiagnosticError(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // source
-  builder.requiredField(offset, 6) // message
-  return offset;
-}
+	unpack(): DiagnosticErrorT {
+		return new DiagnosticErrorT(
+			this.source(),
+			this.message(),
+			this.caller(),
+			this.atNs(),
+		);
+	}
 
-static createDiagnosticError(builder:flatbuffers.Builder, sourceOffset:flatbuffers.Offset, messageOffset:flatbuffers.Offset, callerOffset:flatbuffers.Offset, atNs:bigint):flatbuffers.Offset {
-  DiagnosticError.startDiagnosticError(builder);
-  DiagnosticError.addSource(builder, sourceOffset);
-  DiagnosticError.addMessage(builder, messageOffset);
-  DiagnosticError.addCaller(builder, callerOffset);
-  DiagnosticError.addAtNs(builder, atNs);
-  return DiagnosticError.endDiagnosticError(builder);
-}
-
-unpack(): DiagnosticErrorT {
-  return new DiagnosticErrorT(
-    this.source(),
-    this.message(),
-    this.caller(),
-    this.atNs()
-  );
-}
-
-
-unpackTo(_o: DiagnosticErrorT): void {
-  _o.source = this.source();
-  _o.message = this.message();
-  _o.caller = this.caller();
-  _o.atNs = this.atNs();
-}
+	unpackTo(_o: DiagnosticErrorT): void {
+		_o.source = this.source();
+		_o.message = this.message();
+		_o.caller = this.caller();
+		_o.atNs = this.atNs();
+	}
 }
 
 export class DiagnosticErrorT implements flatbuffers.IGeneratedObject {
-constructor(
-  public source: string|Uint8Array|null = null,
-  public message: string|Uint8Array|null = null,
-  public caller: string|Uint8Array|null = null,
-  public atNs: bigint = BigInt('0')
-){}
+	constructor(
+		public source: string | Uint8Array | null = null,
+		public message: string | Uint8Array | null = null,
+		public caller: string | Uint8Array | null = null,
+		public atNs: bigint = BigInt("0"),
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const source =
+			this.source !== null ? builder.createString(this.source!) : 0;
+		const message =
+			this.message !== null ? builder.createString(this.message!) : 0;
+		const caller =
+			this.caller !== null ? builder.createString(this.caller!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const source = (this.source !== null ? builder.createString(this.source!) : 0);
-  const message = (this.message !== null ? builder.createString(this.message!) : 0);
-  const caller = (this.caller !== null ? builder.createString(this.caller!) : 0);
-
-  return DiagnosticError.createDiagnosticError(builder,
-    source,
-    message,
-    caller,
-    this.atNs
-  );
-}
+		return DiagnosticError.createDiagnosticError(
+			builder,
+			source,
+			message,
+			caller,
+			this.atNs,
+		);
+	}
 }

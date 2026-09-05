@@ -1,4 +1,5 @@
 import { useSelector } from "@tanstack/react-store";
+import type { FrameBuffer } from "#/collections/app";
 import {
 	DEFAULT_KERNELS,
 	focusStore,
@@ -17,7 +18,6 @@ import {
 import { Flex } from "#/components/ui";
 import { Badge } from "#/components/ui/badge";
 import { cn } from "#/lib/utils";
-import type { FrameBuffer } from "#/collections/app";
 
 /*
 readingsOf collects a kernel's accumulated readings.
@@ -114,12 +114,18 @@ const KernelRow = ({
 	// means anything as a bar/sparkline.
 	const relativePoints = resonance ? points : relativeToOwnRange(points);
 	const paths = kernelSparkPaths(relativePoints, status);
-	const confidence = relativePoints.length > 0 ? relativePoints[relativePoints.length - 1] : 0;
+	const confidence =
+		relativePoints.length > 0 ? relativePoints[relativePoints.length - 1] : 0;
 	const barTitle = resonance
 		? "Predictive confidence for the focused symbol, once the head has calibrated"
 		: "SNR relative to this kernel's own recent range — not an absolute quality threshold";
 	const valueLabel = resonance ? "confidence" : "raw SNR";
-	const valueText = latest === null ? "—" : resonance ? `${(latest * 100).toFixed(0)}%` : latest.toFixed(2);
+	const valueText =
+		latest === null
+			? "—"
+			: resonance
+				? `${(latest * 100).toFixed(0)}%`
+				: latest.toFixed(2);
 
 	return (
 		<button
@@ -132,12 +138,23 @@ const KernelRow = ({
 			className="flex min-h-0 w-full flex-1 cursor-pointer flex-col justify-center border-(--line) border-b border-l-2 border-l-transparent bg-transparent px-3 py-1.5 text-left font-[inherit] hover:bg-(--raised)"
 		>
 			<Flex.Row align="center" justify="between" gap={2} className="shrink-0">
-				<span className={cn("truncate font-semibold text-(--f1)", compact && "text-[10px]")}>
+				<span
+					className={cn(
+						"truncate font-semibold text-(--f1)",
+						compact && "text-[10px]",
+					)}
+				>
 					{copy.name}
 				</span>
-				<Badge label={badge.label} variant={kernelStatusVariant(status)} size="xxs" />
+				<Badge
+					label={badge.label}
+					variant={kernelStatusVariant(status)}
+					size="xxs"
+				/>
 			</Flex.Row>
-			<div className="mt-0.5 shrink-0 truncate font-mono text-[9px] text-(--f4)">{copy.sub}</div>
+			<div className="mt-0.5 shrink-0 truncate font-mono text-[9px] text-(--f4)">
+				{copy.sub}
+			</div>
 			{/*
 				The sparkline is the row's elastic part: the name, sub, bar and
 				readout are all text that must keep its size, so the trace is what

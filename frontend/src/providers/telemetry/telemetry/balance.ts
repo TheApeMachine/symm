@@ -3,96 +3,110 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
-
-
+import * as flatbuffers from "flatbuffers";
 
 export class Balance implements flatbuffers.IUnpackableObject<BalanceT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):Balance {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): Balance {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-static getRootAsBalance(bb:flatbuffers.ByteBuffer, obj?:Balance):Balance {
-  return (obj || new Balance()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getRootAsBalance(bb: flatbuffers.ByteBuffer, obj?: Balance): Balance {
+		return (obj || new Balance()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsBalance(bb:flatbuffers.ByteBuffer, obj?:Balance):Balance {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new Balance()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsBalance(
+		bb: flatbuffers.ByteBuffer,
+		obj?: Balance,
+	): Balance {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new Balance()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-asset():string|null
-asset(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-asset(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	asset(): string | null;
+	asset(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	asset(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-amount():string|null
-amount(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-amount(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	amount(): string | null;
+	amount(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	amount(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static startBalance(builder:flatbuffers.Builder) {
-  builder.startObject(2);
-}
+	static startBalance(builder: flatbuffers.Builder) {
+		builder.startObject(2);
+	}
 
-static addAsset(builder:flatbuffers.Builder, assetOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, assetOffset, 0);
-}
+	static addAsset(
+		builder: flatbuffers.Builder,
+		assetOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, assetOffset, 0);
+	}
 
-static addAmount(builder:flatbuffers.Builder, amountOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, amountOffset, 0);
-}
+	static addAmount(
+		builder: flatbuffers.Builder,
+		amountOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, amountOffset, 0);
+	}
 
-static endBalance(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // asset
-  builder.requiredField(offset, 6) // amount
-  return offset;
-}
+	static endBalance(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // asset
+		builder.requiredField(offset, 6); // amount
+		return offset;
+	}
 
-static createBalance(builder:flatbuffers.Builder, assetOffset:flatbuffers.Offset, amountOffset:flatbuffers.Offset):flatbuffers.Offset {
-  Balance.startBalance(builder);
-  Balance.addAsset(builder, assetOffset);
-  Balance.addAmount(builder, amountOffset);
-  return Balance.endBalance(builder);
-}
+	static createBalance(
+		builder: flatbuffers.Builder,
+		assetOffset: flatbuffers.Offset,
+		amountOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		Balance.startBalance(builder);
+		Balance.addAsset(builder, assetOffset);
+		Balance.addAmount(builder, amountOffset);
+		return Balance.endBalance(builder);
+	}
 
-unpack(): BalanceT {
-  return new BalanceT(
-    this.asset(),
-    this.amount()
-  );
-}
+	unpack(): BalanceT {
+		return new BalanceT(this.asset(), this.amount());
+	}
 
-
-unpackTo(_o: BalanceT): void {
-  _o.asset = this.asset();
-  _o.amount = this.amount();
-}
+	unpackTo(_o: BalanceT): void {
+		_o.asset = this.asset();
+		_o.amount = this.amount();
+	}
 }
 
 export class BalanceT implements flatbuffers.IGeneratedObject {
-constructor(
-  public asset: string|Uint8Array|null = null,
-  public amount: string|Uint8Array|null = null
-){}
+	constructor(
+		public asset: string | Uint8Array | null = null,
+		public amount: string | Uint8Array | null = null,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const asset = this.asset !== null ? builder.createString(this.asset!) : 0;
+		const amount =
+			this.amount !== null ? builder.createString(this.amount!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const asset = (this.asset !== null ? builder.createString(this.asset!) : 0);
-  const amount = (this.amount !== null ? builder.createString(this.amount!) : 0);
-
-  return Balance.createBalance(builder,
-    asset,
-    amount
-  );
-}
+		return Balance.createBalance(builder, asset, amount);
+	}
 }

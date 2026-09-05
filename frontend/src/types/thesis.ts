@@ -1,4 +1,3 @@
-
 /*
 Decision mirrors the backend types.Decision payload published on each
 thesis tick so the frontend can render structural evidence, execution cost, and cause without

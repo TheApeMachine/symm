@@ -3,94 +3,123 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { Resonance, ResonanceT } from '../telemetry/resonance.js';
+import { Resonance, type ResonanceT } from "../telemetry/resonance.js";
 
+export class ResonanceFrame
+	implements flatbuffers.IUnpackableObject<ResonanceFrameT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): ResonanceFrame {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-export class ResonanceFrame implements flatbuffers.IUnpackableObject<ResonanceFrameT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):ResonanceFrame {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getRootAsResonanceFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ResonanceFrame,
+	): ResonanceFrame {
+		return (obj || new ResonanceFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsResonanceFrame(bb:flatbuffers.ByteBuffer, obj?:ResonanceFrame):ResonanceFrame {
-  return (obj || new ResonanceFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsResonanceFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ResonanceFrame,
+	): ResonanceFrame {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new ResonanceFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsResonanceFrame(bb:flatbuffers.ByteBuffer, obj?:ResonanceFrame):ResonanceFrame {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new ResonanceFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	rows(index: number, obj?: Resonance): Resonance | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? (obj || new Resonance()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-rows(index: number, obj?:Resonance):Resonance|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? (obj || new Resonance()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	rowsLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-rowsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	static startResonanceFrame(builder: flatbuffers.Builder) {
+		builder.startObject(1);
+	}
 
-static startResonanceFrame(builder:flatbuffers.Builder) {
-  builder.startObject(1);
-}
+	static addRows(builder: flatbuffers.Builder, rowsOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, rowsOffset, 0);
+	}
 
-static addRows(builder:flatbuffers.Builder, rowsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, rowsOffset, 0);
-}
+	static createRowsVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createRowsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startRowsVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startRowsVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static endResonanceFrame(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // rows
+		return offset;
+	}
 
-static endResonanceFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // rows
-  return offset;
-}
+	static createResonanceFrame(
+		builder: flatbuffers.Builder,
+		rowsOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		ResonanceFrame.startResonanceFrame(builder);
+		ResonanceFrame.addRows(builder, rowsOffset);
+		return ResonanceFrame.endResonanceFrame(builder);
+	}
 
-static createResonanceFrame(builder:flatbuffers.Builder, rowsOffset:flatbuffers.Offset):flatbuffers.Offset {
-  ResonanceFrame.startResonanceFrame(builder);
-  ResonanceFrame.addRows(builder, rowsOffset);
-  return ResonanceFrame.endResonanceFrame(builder);
-}
+	unpack(): ResonanceFrameT {
+		return new ResonanceFrameT(
+			this.bb!.createObjList<Resonance, ResonanceT>(
+				this.rows.bind(this),
+				this.rowsLength(),
+			),
+		);
+	}
 
-unpack(): ResonanceFrameT {
-  return new ResonanceFrameT(
-    this.bb!.createObjList<Resonance, ResonanceT>(this.rows.bind(this), this.rowsLength())
-  );
-}
-
-
-unpackTo(_o: ResonanceFrameT): void {
-  _o.rows = this.bb!.createObjList<Resonance, ResonanceT>(this.rows.bind(this), this.rowsLength());
-}
+	unpackTo(_o: ResonanceFrameT): void {
+		_o.rows = this.bb!.createObjList<Resonance, ResonanceT>(
+			this.rows.bind(this),
+			this.rowsLength(),
+		);
+	}
 }
 
 export class ResonanceFrameT implements flatbuffers.IGeneratedObject {
-constructor(
-  public rows: (ResonanceT)[] = []
-){}
+	constructor(public rows: ResonanceT[] = []) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const rows = ResonanceFrame.createRowsVector(
+			builder,
+			builder.createObjectOffsetList(this.rows),
+		);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const rows = ResonanceFrame.createRowsVector(builder, builder.createObjectOffsetList(this.rows));
-
-  return ResonanceFrame.createResonanceFrame(builder,
-    rows
-  );
-}
+		return ResonanceFrame.createResonanceFrame(builder, rows);
+	}
 }

@@ -12,6 +12,7 @@ export { RingBuffer };
 
 import type { FluidFields } from "#/components/fluid-3d/wire";
 import type { BalancesFrame } from "#/providers/telemetry/telemetry/balances-frame";
+import type { DecisionT } from "#/providers/telemetry/telemetry/decision";
 import type { EnvelopeCategory } from "#/providers/telemetry/telemetry/envelope-category";
 import type { EnvelopeCognition } from "#/providers/telemetry/telemetry/envelope-cognition";
 import type { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
@@ -24,7 +25,6 @@ import type { FluidPhaseFrame } from "#/providers/telemetry/telemetry/fluid-phas
 import type { GraphFrame } from "#/providers/telemetry/telemetry/graph-frame";
 import type { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
 import type { RegulatorFrame } from "#/providers/telemetry/telemetry/regulator-frame";
-import type { DecisionT } from "#/providers/telemetry/telemetry/decision";
 import type { StrategyFrame } from "#/providers/telemetry/telemetry/strategy-frame";
 import type { TradeRecord } from "./types";
 
@@ -233,7 +233,8 @@ everyone else's instead — different magnitudes at unrelated epochs. Keying by
 both is what makes a per-symbol series (a Hawkes intensity curve, say) actually
 be that symbol's series.
 */
-const measurementKey = (source: string, symbol: string) => `${source}\u0000${symbol}`;
+const measurementKey = (source: string, symbol: string) =>
+	`${source}\u0000${symbol}`;
 
 export const getMeasurementStore = (source: string, symbol: string) => {
 	const key = measurementKey(source, symbol);

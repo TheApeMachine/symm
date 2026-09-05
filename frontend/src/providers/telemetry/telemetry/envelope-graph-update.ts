@@ -3,92 +3,112 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class EnvelopeGraphUpdate
+	implements flatbuffers.IUnpackableObject<EnvelopeGraphUpdateT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeGraphUpdate {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsEnvelopeGraphUpdate(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeGraphUpdate,
+	): EnvelopeGraphUpdate {
+		return (obj || new EnvelopeGraphUpdate()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class EnvelopeGraphUpdate implements flatbuffers.IUnpackableObject<EnvelopeGraphUpdateT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeGraphUpdate {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsEnvelopeGraphUpdate(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeGraphUpdate,
+	): EnvelopeGraphUpdate {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopeGraphUpdate()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsEnvelopeGraphUpdate(bb:flatbuffers.ByteBuffer, obj?:EnvelopeGraphUpdate):EnvelopeGraphUpdate {
-  return (obj || new EnvelopeGraphUpdate()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	symbol(): string | null;
+	symbol(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	symbol(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsEnvelopeGraphUpdate(bb:flatbuffers.ByteBuffer, obj?:EnvelopeGraphUpdate):EnvelopeGraphUpdate {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeGraphUpdate()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	atNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-symbol():string|null
-symbol(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-symbol(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	static startEnvelopeGraphUpdate(builder: flatbuffers.Builder) {
+		builder.startObject(2);
+	}
 
-atNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	static addSymbol(
+		builder: flatbuffers.Builder,
+		symbolOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, symbolOffset, 0);
+	}
 
-static startEnvelopeGraphUpdate(builder:flatbuffers.Builder) {
-  builder.startObject(2);
-}
+	static addAtNs(builder: flatbuffers.Builder, atNs: bigint) {
+		builder.addFieldInt64(1, atNs, BigInt("0"));
+	}
 
-static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, symbolOffset, 0);
-}
+	static endEnvelopeGraphUpdate(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // symbol
+		return offset;
+	}
 
-static addAtNs(builder:flatbuffers.Builder, atNs:bigint) {
-  builder.addFieldInt64(1, atNs, BigInt('0'));
-}
+	static createEnvelopeGraphUpdate(
+		builder: flatbuffers.Builder,
+		symbolOffset: flatbuffers.Offset,
+		atNs: bigint,
+	): flatbuffers.Offset {
+		EnvelopeGraphUpdate.startEnvelopeGraphUpdate(builder);
+		EnvelopeGraphUpdate.addSymbol(builder, symbolOffset);
+		EnvelopeGraphUpdate.addAtNs(builder, atNs);
+		return EnvelopeGraphUpdate.endEnvelopeGraphUpdate(builder);
+	}
 
-static endEnvelopeGraphUpdate(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // symbol
-  return offset;
-}
+	unpack(): EnvelopeGraphUpdateT {
+		return new EnvelopeGraphUpdateT(this.symbol(), this.atNs());
+	}
 
-static createEnvelopeGraphUpdate(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset, atNs:bigint):flatbuffers.Offset {
-  EnvelopeGraphUpdate.startEnvelopeGraphUpdate(builder);
-  EnvelopeGraphUpdate.addSymbol(builder, symbolOffset);
-  EnvelopeGraphUpdate.addAtNs(builder, atNs);
-  return EnvelopeGraphUpdate.endEnvelopeGraphUpdate(builder);
-}
-
-unpack(): EnvelopeGraphUpdateT {
-  return new EnvelopeGraphUpdateT(
-    this.symbol(),
-    this.atNs()
-  );
-}
-
-
-unpackTo(_o: EnvelopeGraphUpdateT): void {
-  _o.symbol = this.symbol();
-  _o.atNs = this.atNs();
-}
+	unpackTo(_o: EnvelopeGraphUpdateT): void {
+		_o.symbol = this.symbol();
+		_o.atNs = this.atNs();
+	}
 }
 
 export class EnvelopeGraphUpdateT implements flatbuffers.IGeneratedObject {
-constructor(
-  public symbol: string|Uint8Array|null = null,
-  public atNs: bigint = BigInt('0')
-){}
+	constructor(
+		public symbol: string | Uint8Array | null = null,
+		public atNs: bigint = BigInt("0"),
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const symbol =
+			this.symbol !== null ? builder.createString(this.symbol!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const symbol = (this.symbol !== null ? builder.createString(this.symbol!) : 0);
-
-  return EnvelopeGraphUpdate.createEnvelopeGraphUpdate(builder,
-    symbol,
-    this.atNs
-  );
-}
+		return EnvelopeGraphUpdate.createEnvelopeGraphUpdate(
+			builder,
+			symbol,
+			this.atNs,
+		);
+	}
 }

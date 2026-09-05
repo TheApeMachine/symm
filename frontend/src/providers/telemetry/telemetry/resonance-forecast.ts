@@ -3,211 +3,326 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { Posterior, PosteriorT } from '../telemetry/posterior.js';
+import { Posterior, type PosteriorT } from "../telemetry/posterior.js";
 
+export class ResonanceForecast
+	implements flatbuffers.IUnpackableObject<ResonanceForecastT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): ResonanceForecast {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-export class ResonanceForecast implements flatbuffers.IUnpackableObject<ResonanceForecastT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):ResonanceForecast {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getRootAsResonanceForecast(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ResonanceForecast,
+	): ResonanceForecast {
+		return (obj || new ResonanceForecast()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsResonanceForecast(bb:flatbuffers.ByteBuffer, obj?:ResonanceForecast):ResonanceForecast {
-  return (obj || new ResonanceForecast()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsResonanceForecast(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ResonanceForecast,
+	): ResonanceForecast {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new ResonanceForecast()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsResonanceForecast(bb:flatbuffers.ByteBuffer, obj?:ResonanceForecast):ResonanceForecast {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new ResonanceForecast()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	forwardCurve(index: number): number | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.readFloat64(
+					this.bb!.__vector(this.bb_pos + offset) + index * 8,
+				)
+			: 0;
+	}
 
-forwardCurve(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readFloat64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : 0;
-}
+	forwardCurveLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-forwardCurveLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	forwardCurveArray(): Float64Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? new Float64Array(
+					this.bb!.bytes().buffer,
+					this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+					this.bb!.__vector_len(this.bb_pos + offset),
+				)
+			: null;
+	}
 
-forwardCurveArray():Float64Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? new Float64Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
-}
+	forwardRetention(index: number): number | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.readFloat64(
+					this.bb!.__vector(this.bb_pos + offset) + index * 8,
+				)
+			: 0;
+	}
 
-forwardRetention(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : 0;
-}
+	forwardRetentionLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-forwardRetentionLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	forwardRetentionArray(): Float64Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? new Float64Array(
+					this.bb!.bytes().buffer,
+					this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+					this.bb!.__vector_len(this.bb_pos + offset),
+				)
+			: null;
+	}
 
-forwardRetentionArray():Float64Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? new Float64Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
-}
+	supportedHorizon(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-supportedHorizon():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	probeHorizon(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-probeHorizon():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	aggregate(obj?: Posterior): Posterior | null {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset
+			? (obj || new Posterior()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
 
-aggregate(obj?:Posterior):Posterior|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? (obj || new Posterior()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
+	posterior(index: number, obj?: Posterior): Posterior | null {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset
+			? (obj || new Posterior()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-posterior(index: number, obj?:Posterior):Posterior|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? (obj || new Posterior()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	posteriorLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-posteriorLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	static startResonanceForecast(builder: flatbuffers.Builder) {
+		builder.startObject(6);
+	}
 
-static startResonanceForecast(builder:flatbuffers.Builder) {
-  builder.startObject(6);
-}
+	static addForwardCurve(
+		builder: flatbuffers.Builder,
+		forwardCurveOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, forwardCurveOffset, 0);
+	}
 
-static addForwardCurve(builder:flatbuffers.Builder, forwardCurveOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, forwardCurveOffset, 0);
-}
+	static createForwardCurveVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Float64Array,
+	): flatbuffers.Offset;
+	/**
+	 * @deprecated This Uint8Array overload will be removed in the future.
+	 */
+	static createForwardCurveVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Uint8Array,
+	): flatbuffers.Offset;
+	static createForwardCurveVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Float64Array | Uint8Array,
+	): flatbuffers.Offset {
+		builder.startVector(8, data.length, 8);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addFloat64(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createForwardCurveVector(builder:flatbuffers.Builder, data:number[]|Float64Array):flatbuffers.Offset;
-/**
- * @deprecated This Uint8Array overload will be removed in the future.
- */
-static createForwardCurveVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset;
-static createForwardCurveVector(builder:flatbuffers.Builder, data:number[]|Float64Array|Uint8Array):flatbuffers.Offset {
-  builder.startVector(8, data.length, 8);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addFloat64(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startForwardCurveVector(
+		builder: flatbuffers.Builder,
+		numElems: number,
+	) {
+		builder.startVector(8, numElems, 8);
+	}
 
-static startForwardCurveVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(8, numElems, 8);
-}
+	static addForwardRetention(
+		builder: flatbuffers.Builder,
+		forwardRetentionOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, forwardRetentionOffset, 0);
+	}
 
-static addForwardRetention(builder:flatbuffers.Builder, forwardRetentionOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, forwardRetentionOffset, 0);
-}
+	static createForwardRetentionVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Float64Array,
+	): flatbuffers.Offset;
+	/**
+	 * @deprecated This Uint8Array overload will be removed in the future.
+	 */
+	static createForwardRetentionVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Uint8Array,
+	): flatbuffers.Offset;
+	static createForwardRetentionVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Float64Array | Uint8Array,
+	): flatbuffers.Offset {
+		builder.startVector(8, data.length, 8);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addFloat64(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createForwardRetentionVector(builder:flatbuffers.Builder, data:number[]|Float64Array):flatbuffers.Offset;
-/**
- * @deprecated This Uint8Array overload will be removed in the future.
- */
-static createForwardRetentionVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset;
-static createForwardRetentionVector(builder:flatbuffers.Builder, data:number[]|Float64Array|Uint8Array):flatbuffers.Offset {
-  builder.startVector(8, data.length, 8);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addFloat64(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startForwardRetentionVector(
+		builder: flatbuffers.Builder,
+		numElems: number,
+	) {
+		builder.startVector(8, numElems, 8);
+	}
 
-static startForwardRetentionVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(8, numElems, 8);
-}
+	static addSupportedHorizon(
+		builder: flatbuffers.Builder,
+		supportedHorizon: bigint,
+	) {
+		builder.addFieldInt64(2, supportedHorizon, BigInt("0"));
+	}
 
-static addSupportedHorizon(builder:flatbuffers.Builder, supportedHorizon:bigint) {
-  builder.addFieldInt64(2, supportedHorizon, BigInt('0'));
-}
+	static addProbeHorizon(builder: flatbuffers.Builder, probeHorizon: bigint) {
+		builder.addFieldInt64(3, probeHorizon, BigInt("0"));
+	}
 
-static addProbeHorizon(builder:flatbuffers.Builder, probeHorizon:bigint) {
-  builder.addFieldInt64(3, probeHorizon, BigInt('0'));
-}
+	static addAggregate(
+		builder: flatbuffers.Builder,
+		aggregateOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(4, aggregateOffset, 0);
+	}
 
-static addAggregate(builder:flatbuffers.Builder, aggregateOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, aggregateOffset, 0);
-}
+	static addPosterior(
+		builder: flatbuffers.Builder,
+		posteriorOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(5, posteriorOffset, 0);
+	}
 
-static addPosterior(builder:flatbuffers.Builder, posteriorOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, posteriorOffset, 0);
-}
+	static createPosteriorVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createPosteriorVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startPosteriorVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startPosteriorVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static endResonanceForecast(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static endResonanceForecast(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): ResonanceForecastT {
+		return new ResonanceForecastT(
+			this.bb!.createScalarList<number>(
+				this.forwardCurve.bind(this),
+				this.forwardCurveLength(),
+			),
+			this.bb!.createScalarList<number>(
+				this.forwardRetention.bind(this),
+				this.forwardRetentionLength(),
+			),
+			this.supportedHorizon(),
+			this.probeHorizon(),
+			this.aggregate() !== null ? this.aggregate()!.unpack() : null,
+			this.bb!.createObjList<Posterior, PosteriorT>(
+				this.posterior.bind(this),
+				this.posteriorLength(),
+			),
+		);
+	}
 
-
-unpack(): ResonanceForecastT {
-  return new ResonanceForecastT(
-    this.bb!.createScalarList<number>(this.forwardCurve.bind(this), this.forwardCurveLength()),
-    this.bb!.createScalarList<number>(this.forwardRetention.bind(this), this.forwardRetentionLength()),
-    this.supportedHorizon(),
-    this.probeHorizon(),
-    (this.aggregate() !== null ? this.aggregate()!.unpack() : null),
-    this.bb!.createObjList<Posterior, PosteriorT>(this.posterior.bind(this), this.posteriorLength())
-  );
-}
-
-
-unpackTo(_o: ResonanceForecastT): void {
-  _o.forwardCurve = this.bb!.createScalarList<number>(this.forwardCurve.bind(this), this.forwardCurveLength());
-  _o.forwardRetention = this.bb!.createScalarList<number>(this.forwardRetention.bind(this), this.forwardRetentionLength());
-  _o.supportedHorizon = this.supportedHorizon();
-  _o.probeHorizon = this.probeHorizon();
-  _o.aggregate = (this.aggregate() !== null ? this.aggregate()!.unpack() : null);
-  _o.posterior = this.bb!.createObjList<Posterior, PosteriorT>(this.posterior.bind(this), this.posteriorLength());
-}
+	unpackTo(_o: ResonanceForecastT): void {
+		_o.forwardCurve = this.bb!.createScalarList<number>(
+			this.forwardCurve.bind(this),
+			this.forwardCurveLength(),
+		);
+		_o.forwardRetention = this.bb!.createScalarList<number>(
+			this.forwardRetention.bind(this),
+			this.forwardRetentionLength(),
+		);
+		_o.supportedHorizon = this.supportedHorizon();
+		_o.probeHorizon = this.probeHorizon();
+		_o.aggregate =
+			this.aggregate() !== null ? this.aggregate()!.unpack() : null;
+		_o.posterior = this.bb!.createObjList<Posterior, PosteriorT>(
+			this.posterior.bind(this),
+			this.posteriorLength(),
+		);
+	}
 }
 
 export class ResonanceForecastT implements flatbuffers.IGeneratedObject {
-constructor(
-  public forwardCurve: (number)[] = [],
-  public forwardRetention: (number)[] = [],
-  public supportedHorizon: bigint = BigInt('0'),
-  public probeHorizon: bigint = BigInt('0'),
-  public aggregate: PosteriorT|null = null,
-  public posterior: (PosteriorT)[] = []
-){}
+	constructor(
+		public forwardCurve: number[] = [],
+		public forwardRetention: number[] = [],
+		public supportedHorizon: bigint = BigInt("0"),
+		public probeHorizon: bigint = BigInt("0"),
+		public aggregate: PosteriorT | null = null,
+		public posterior: PosteriorT[] = [],
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const forwardCurve = ResonanceForecast.createForwardCurveVector(
+			builder,
+			this.forwardCurve,
+		);
+		const forwardRetention = ResonanceForecast.createForwardRetentionVector(
+			builder,
+			this.forwardRetention,
+		);
+		const aggregate =
+			this.aggregate !== null ? this.aggregate!.pack(builder) : 0;
+		const posterior = ResonanceForecast.createPosteriorVector(
+			builder,
+			builder.createObjectOffsetList(this.posterior),
+		);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const forwardCurve = ResonanceForecast.createForwardCurveVector(builder, this.forwardCurve);
-  const forwardRetention = ResonanceForecast.createForwardRetentionVector(builder, this.forwardRetention);
-  const aggregate = (this.aggregate !== null ? this.aggregate!.pack(builder) : 0);
-  const posterior = ResonanceForecast.createPosteriorVector(builder, builder.createObjectOffsetList(this.posterior));
+		ResonanceForecast.startResonanceForecast(builder);
+		ResonanceForecast.addForwardCurve(builder, forwardCurve);
+		ResonanceForecast.addForwardRetention(builder, forwardRetention);
+		ResonanceForecast.addSupportedHorizon(builder, this.supportedHorizon);
+		ResonanceForecast.addProbeHorizon(builder, this.probeHorizon);
+		ResonanceForecast.addAggregate(builder, aggregate);
+		ResonanceForecast.addPosterior(builder, posterior);
 
-  ResonanceForecast.startResonanceForecast(builder);
-  ResonanceForecast.addForwardCurve(builder, forwardCurve);
-  ResonanceForecast.addForwardRetention(builder, forwardRetention);
-  ResonanceForecast.addSupportedHorizon(builder, this.supportedHorizon);
-  ResonanceForecast.addProbeHorizon(builder, this.probeHorizon);
-  ResonanceForecast.addAggregate(builder, aggregate);
-  ResonanceForecast.addPosterior(builder, posterior);
-
-  return ResonanceForecast.endResonanceForecast(builder);
-}
+		return ResonanceForecast.endResonanceForecast(builder);
+	}
 }

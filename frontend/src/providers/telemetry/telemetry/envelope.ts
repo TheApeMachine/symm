@@ -3,141 +3,219 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { BalancesFrame, BalancesFrameT } from '../telemetry/balances-frame.js';
-import { CausalFrame, CausalFrameT } from '../telemetry/causal-frame.js';
-import { CognitionFrame, CognitionFrameT } from '../telemetry/cognition-frame.js';
-import { DiagnosticsFrame, DiagnosticsFrameT } from '../telemetry/diagnostics-frame.js';
-import { EnvelopeStateFrame, EnvelopeStateFrameT } from '../telemetry/envelope-state-frame.js';
-import { EquityFrame, EquityFrameT } from '../telemetry/equity-frame.js';
-import { ErrorFrame, ErrorFrameT } from '../telemetry/error-frame.js';
-import { FluidPhaseFrame, FluidPhaseFrameT } from '../telemetry/fluid-phase-frame.js';
-import { Frame, unionToFrame, unionListToFrame } from '../telemetry/frame.js';
-import { GraphFrame, GraphFrameT } from '../telemetry/graph-frame.js';
-import { ManifoldFrame, ManifoldFrameT } from '../telemetry/manifold-frame.js';
-import { MeasurementsFrame, MeasurementsFrameT } from '../telemetry/measurements-frame.js';
-import { PositionsFrame, PositionsFrameT } from '../telemetry/positions-frame.js';
-import { RegulatorFrame, RegulatorFrameT } from '../telemetry/regulator-frame.js';
-import { ResonanceFrame, ResonanceFrameT } from '../telemetry/resonance-frame.js';
-import { StrategyFrame, StrategyFrameT } from '../telemetry/strategy-frame.js';
-import { TickFrame, TickFrameT } from '../telemetry/tick-frame.js';
-
+import {
+	BalancesFrame,
+	type BalancesFrameT,
+} from "../telemetry/balances-frame.js";
+import { CausalFrame, type CausalFrameT } from "../telemetry/causal-frame.js";
+import {
+	CognitionFrame,
+	type CognitionFrameT,
+} from "../telemetry/cognition-frame.js";
+import {
+	DiagnosticsFrame,
+	type DiagnosticsFrameT,
+} from "../telemetry/diagnostics-frame.js";
+import {
+	EnvelopeStateFrame,
+	type EnvelopeStateFrameT,
+} from "../telemetry/envelope-state-frame.js";
+import { EquityFrame, type EquityFrameT } from "../telemetry/equity-frame.js";
+import { ErrorFrame, type ErrorFrameT } from "../telemetry/error-frame.js";
+import {
+	FluidPhaseFrame,
+	type FluidPhaseFrameT,
+} from "../telemetry/fluid-phase-frame.js";
+import { Frame, unionListToFrame, unionToFrame } from "../telemetry/frame.js";
+import { GraphFrame, type GraphFrameT } from "../telemetry/graph-frame.js";
+import {
+	ManifoldFrame,
+	type ManifoldFrameT,
+} from "../telemetry/manifold-frame.js";
+import {
+	MeasurementsFrame,
+	type MeasurementsFrameT,
+} from "../telemetry/measurements-frame.js";
+import {
+	PositionsFrame,
+	type PositionsFrameT,
+} from "../telemetry/positions-frame.js";
+import {
+	RegulatorFrame,
+	type RegulatorFrameT,
+} from "../telemetry/regulator-frame.js";
+import {
+	ResonanceFrame,
+	type ResonanceFrameT,
+} from "../telemetry/resonance-frame.js";
+import {
+	StrategyFrame,
+	type StrategyFrameT,
+} from "../telemetry/strategy-frame.js";
+import { TickFrame, type TickFrameT } from "../telemetry/tick-frame.js";
 
 export class Envelope implements flatbuffers.IUnpackableObject<EnvelopeT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):Envelope {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): Envelope {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-static getRootAsEnvelope(bb:flatbuffers.ByteBuffer, obj?:Envelope):Envelope {
-  return (obj || new Envelope()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getRootAsEnvelope(
+		bb: flatbuffers.ByteBuffer,
+		obj?: Envelope,
+	): Envelope {
+		return (obj || new Envelope()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsEnvelope(bb:flatbuffers.ByteBuffer, obj?:Envelope):Envelope {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new Envelope()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsEnvelope(
+		bb: flatbuffers.ByteBuffer,
+		obj?: Envelope,
+	): Envelope {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new Envelope()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static bufferHasIdentifier(bb:flatbuffers.ByteBuffer):boolean {
-  return bb.__has_identifier('SYMM');
-}
+	static bufferHasIdentifier(bb: flatbuffers.ByteBuffer): boolean {
+		return bb.__has_identifier("SYMM");
+	}
 
-sequence():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
+	sequence(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
 
-frameType():Frame {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readUint8(this.bb_pos + offset) : Frame.NONE;
-}
+	frameType(): Frame {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readUint8(this.bb_pos + offset) : Frame.NONE;
+	}
 
-frame<T extends flatbuffers.Table>(obj:any):any|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__union(obj, this.bb_pos + offset) : null;
-}
+	frame<T extends flatbuffers.Table>(obj: any): any | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.__union(obj, this.bb_pos + offset) : null;
+	}
 
-static startEnvelope(builder:flatbuffers.Builder) {
-  builder.startObject(3);
-}
+	static startEnvelope(builder: flatbuffers.Builder) {
+		builder.startObject(3);
+	}
 
-static addSequence(builder:flatbuffers.Builder, sequence:bigint) {
-  builder.addFieldInt64(0, sequence, BigInt('0'));
-}
+	static addSequence(builder: flatbuffers.Builder, sequence: bigint) {
+		builder.addFieldInt64(0, sequence, BigInt("0"));
+	}
 
-static addFrameType(builder:flatbuffers.Builder, frameType:Frame) {
-  builder.addFieldInt8(1, frameType, Frame.NONE);
-}
+	static addFrameType(builder: flatbuffers.Builder, frameType: Frame) {
+		builder.addFieldInt8(1, frameType, Frame.NONE);
+	}
 
-static addFrame(builder:flatbuffers.Builder, frameOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, frameOffset, 0);
-}
+	static addFrame(
+		builder: flatbuffers.Builder,
+		frameOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, frameOffset, 0);
+	}
 
-static endEnvelope(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 8) // frame
-  return offset;
-}
+	static endEnvelope(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 8); // frame
+		return offset;
+	}
 
-static finishEnvelopeBuffer(builder:flatbuffers.Builder, offset:flatbuffers.Offset) {
-  builder.finish(offset, 'SYMM');
-}
+	static finishEnvelopeBuffer(
+		builder: flatbuffers.Builder,
+		offset: flatbuffers.Offset,
+	) {
+		builder.finish(offset, "SYMM");
+	}
 
-static finishSizePrefixedEnvelopeBuffer(builder:flatbuffers.Builder, offset:flatbuffers.Offset) {
-  builder.finish(offset, 'SYMM', true);
-}
+	static finishSizePrefixedEnvelopeBuffer(
+		builder: flatbuffers.Builder,
+		offset: flatbuffers.Offset,
+	) {
+		builder.finish(offset, "SYMM", true);
+	}
 
-static createEnvelope(builder:flatbuffers.Builder, sequence:bigint, frameType:Frame, frameOffset:flatbuffers.Offset):flatbuffers.Offset {
-  Envelope.startEnvelope(builder);
-  Envelope.addSequence(builder, sequence);
-  Envelope.addFrameType(builder, frameType);
-  Envelope.addFrame(builder, frameOffset);
-  return Envelope.endEnvelope(builder);
-}
+	static createEnvelope(
+		builder: flatbuffers.Builder,
+		sequence: bigint,
+		frameType: Frame,
+		frameOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		Envelope.startEnvelope(builder);
+		Envelope.addSequence(builder, sequence);
+		Envelope.addFrameType(builder, frameType);
+		Envelope.addFrame(builder, frameOffset);
+		return Envelope.endEnvelope(builder);
+	}
 
-unpack(): EnvelopeT {
-  return new EnvelopeT(
-    this.sequence(),
-    this.frameType(),
-    (() => {
-      const temp = unionToFrame(this.frameType(), this.frame.bind(this));
-      if(temp === null) { return null; }
-      return temp.unpack()
-  })()
-  );
-}
+	unpack(): EnvelopeT {
+		return new EnvelopeT(
+			this.sequence(),
+			this.frameType(),
+			(() => {
+				const temp = unionToFrame(this.frameType(), this.frame.bind(this));
+				if (temp === null) {
+					return null;
+				}
+				return temp.unpack();
+			})(),
+		);
+	}
 
-
-unpackTo(_o: EnvelopeT): void {
-  _o.sequence = this.sequence();
-  _o.frameType = this.frameType();
-  _o.frame = (() => {
-      const temp = unionToFrame(this.frameType(), this.frame.bind(this));
-      if(temp === null) { return null; }
-      return temp.unpack()
-  })();
-}
+	unpackTo(_o: EnvelopeT): void {
+		_o.sequence = this.sequence();
+		_o.frameType = this.frameType();
+		_o.frame = (() => {
+			const temp = unionToFrame(this.frameType(), this.frame.bind(this));
+			if (temp === null) {
+				return null;
+			}
+			return temp.unpack();
+		})();
+	}
 }
 
 export class EnvelopeT implements flatbuffers.IGeneratedObject {
-constructor(
-  public sequence: bigint = BigInt('0'),
-  public frameType: Frame = Frame.NONE,
-  public frame: BalancesFrameT|CausalFrameT|CognitionFrameT|DiagnosticsFrameT|EnvelopeStateFrameT|EquityFrameT|ErrorFrameT|FluidPhaseFrameT|GraphFrameT|ManifoldFrameT|MeasurementsFrameT|PositionsFrameT|RegulatorFrameT|ResonanceFrameT|StrategyFrameT|TickFrameT|null = null
-){}
+	constructor(
+		public sequence: bigint = BigInt("0"),
+		public frameType: Frame = Frame.NONE,
+		public frame:
+			| BalancesFrameT
+			| CausalFrameT
+			| CognitionFrameT
+			| DiagnosticsFrameT
+			| EnvelopeStateFrameT
+			| EquityFrameT
+			| ErrorFrameT
+			| FluidPhaseFrameT
+			| GraphFrameT
+			| ManifoldFrameT
+			| MeasurementsFrameT
+			| PositionsFrameT
+			| RegulatorFrameT
+			| ResonanceFrameT
+			| StrategyFrameT
+			| TickFrameT
+			| null = null,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const frame = builder.createObjectOffset(this.frame);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const frame = builder.createObjectOffset(this.frame);
-
-  return Envelope.createEnvelope(builder,
-    this.sequence,
-    this.frameType,
-    frame
-  );
-}
+		return Envelope.createEnvelope(
+			builder,
+			this.sequence,
+			this.frameType,
+			frame,
+		);
+	}
 }

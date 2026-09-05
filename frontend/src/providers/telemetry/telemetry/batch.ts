@@ -3,108 +3,137 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { FrameEntry, FrameEntryT } from '../telemetry/frame-entry.js';
-
+import { FrameEntry, type FrameEntryT } from "../telemetry/frame-entry.js";
 
 export class Batch implements flatbuffers.IUnpackableObject<BatchT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):Batch {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): Batch {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-static getRootAsBatch(bb:flatbuffers.ByteBuffer, obj?:Batch):Batch {
-  return (obj || new Batch()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getRootAsBatch(bb: flatbuffers.ByteBuffer, obj?: Batch): Batch {
+		return (obj || new Batch()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsBatch(bb:flatbuffers.ByteBuffer, obj?:Batch):Batch {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new Batch()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsBatch(
+		bb: flatbuffers.ByteBuffer,
+		obj?: Batch,
+	): Batch {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new Batch()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-sequence():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
+	sequence(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
 
-frames(index: number, obj?:FrameEntry):FrameEntry|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? (obj || new FrameEntry()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	frames(index: number, obj?: FrameEntry): FrameEntry | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? (obj || new FrameEntry()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-framesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	framesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-static startBatch(builder:flatbuffers.Builder) {
-  builder.startObject(2);
-}
+	static startBatch(builder: flatbuffers.Builder) {
+		builder.startObject(2);
+	}
 
-static addSequence(builder:flatbuffers.Builder, sequence:bigint) {
-  builder.addFieldInt64(0, sequence, BigInt('0'));
-}
+	static addSequence(builder: flatbuffers.Builder, sequence: bigint) {
+		builder.addFieldInt64(0, sequence, BigInt("0"));
+	}
 
-static addFrames(builder:flatbuffers.Builder, framesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, framesOffset, 0);
-}
+	static addFrames(
+		builder: flatbuffers.Builder,
+		framesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, framesOffset, 0);
+	}
 
-static createFramesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static createFramesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static startFramesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static startFramesVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static endBatch(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 6) // frames
-  return offset;
-}
+	static endBatch(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 6); // frames
+		return offset;
+	}
 
-static createBatch(builder:flatbuffers.Builder, sequence:bigint, framesOffset:flatbuffers.Offset):flatbuffers.Offset {
-  Batch.startBatch(builder);
-  Batch.addSequence(builder, sequence);
-  Batch.addFrames(builder, framesOffset);
-  return Batch.endBatch(builder);
-}
+	static createBatch(
+		builder: flatbuffers.Builder,
+		sequence: bigint,
+		framesOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		Batch.startBatch(builder);
+		Batch.addSequence(builder, sequence);
+		Batch.addFrames(builder, framesOffset);
+		return Batch.endBatch(builder);
+	}
 
-unpack(): BatchT {
-  return new BatchT(
-    this.sequence(),
-    this.bb!.createObjList<FrameEntry, FrameEntryT>(this.frames.bind(this), this.framesLength())
-  );
-}
+	unpack(): BatchT {
+		return new BatchT(
+			this.sequence(),
+			this.bb!.createObjList<FrameEntry, FrameEntryT>(
+				this.frames.bind(this),
+				this.framesLength(),
+			),
+		);
+	}
 
-
-unpackTo(_o: BatchT): void {
-  _o.sequence = this.sequence();
-  _o.frames = this.bb!.createObjList<FrameEntry, FrameEntryT>(this.frames.bind(this), this.framesLength());
-}
+	unpackTo(_o: BatchT): void {
+		_o.sequence = this.sequence();
+		_o.frames = this.bb!.createObjList<FrameEntry, FrameEntryT>(
+			this.frames.bind(this),
+			this.framesLength(),
+		);
+	}
 }
 
 export class BatchT implements flatbuffers.IGeneratedObject {
-constructor(
-  public sequence: bigint = BigInt('0'),
-  public frames: (FrameEntryT)[] = []
-){}
+	constructor(
+		public sequence: bigint = BigInt("0"),
+		public frames: FrameEntryT[] = [],
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const frames = Batch.createFramesVector(
+			builder,
+			builder.createObjectOffsetList(this.frames),
+		);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const frames = Batch.createFramesVector(builder, builder.createObjectOffsetList(this.frames));
-
-  return Batch.createBatch(builder,
-    this.sequence,
-    frames
-  );
-}
+		return Batch.createBatch(builder, this.sequence, frames);
+	}
 }

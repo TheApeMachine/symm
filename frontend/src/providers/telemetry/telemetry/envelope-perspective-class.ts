@@ -3,126 +3,172 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class EnvelopePerspectiveClass
+	implements flatbuffers.IUnpackableObject<EnvelopePerspectiveClassT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopePerspectiveClass {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsEnvelopePerspectiveClass(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopePerspectiveClass,
+	): EnvelopePerspectiveClass {
+		return (obj || new EnvelopePerspectiveClass()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class EnvelopePerspectiveClass implements flatbuffers.IUnpackableObject<EnvelopePerspectiveClassT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopePerspectiveClass {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsEnvelopePerspectiveClass(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopePerspectiveClass,
+	): EnvelopePerspectiveClass {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopePerspectiveClass()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsEnvelopePerspectiveClass(bb:flatbuffers.ByteBuffer, obj?:EnvelopePerspectiveClass):EnvelopePerspectiveClass {
-  return (obj || new EnvelopePerspectiveClass()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	state(): string | null;
+	state(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	state(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsEnvelopePerspectiveClass(bb:flatbuffers.ByteBuffer, obj?:EnvelopePerspectiveClass):EnvelopePerspectiveClass {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopePerspectiveClass()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	probability(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-state():string|null
-state(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-state(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	evidence(index: number): string;
+	evidence(
+		index: number,
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array;
+	evidence(index: number, optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(
+					this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					optionalEncoding,
+				)
+			: null;
+	}
 
-probability():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	evidenceLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-evidence(index: number):string
-evidence(index: number,optionalEncoding:flatbuffers.Encoding):string|Uint8Array
-evidence(index: number,optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb!.__vector(this.bb_pos + offset) + index * 4, optionalEncoding) : null;
-}
+	static startEnvelopePerspectiveClass(builder: flatbuffers.Builder) {
+		builder.startObject(3);
+	}
 
-evidenceLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	static addState(
+		builder: flatbuffers.Builder,
+		stateOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, stateOffset, 0);
+	}
 
-static startEnvelopePerspectiveClass(builder:flatbuffers.Builder) {
-  builder.startObject(3);
-}
+	static addProbability(builder: flatbuffers.Builder, probability: number) {
+		builder.addFieldFloat64(1, probability, 0.0);
+	}
 
-static addState(builder:flatbuffers.Builder, stateOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, stateOffset, 0);
-}
+	static addEvidence(
+		builder: flatbuffers.Builder,
+		evidenceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, evidenceOffset, 0);
+	}
 
-static addProbability(builder:flatbuffers.Builder, probability:number) {
-  builder.addFieldFloat64(1, probability, 0.0);
-}
+	static createEvidenceVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static addEvidence(builder:flatbuffers.Builder, evidenceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, evidenceOffset, 0);
-}
+	static startEvidenceVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static createEvidenceVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static endEnvelopePerspectiveClass(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // state
+		return offset;
+	}
 
-static startEvidenceVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static createEnvelopePerspectiveClass(
+		builder: flatbuffers.Builder,
+		stateOffset: flatbuffers.Offset,
+		probability: number,
+		evidenceOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		EnvelopePerspectiveClass.startEnvelopePerspectiveClass(builder);
+		EnvelopePerspectiveClass.addState(builder, stateOffset);
+		EnvelopePerspectiveClass.addProbability(builder, probability);
+		EnvelopePerspectiveClass.addEvidence(builder, evidenceOffset);
+		return EnvelopePerspectiveClass.endEnvelopePerspectiveClass(builder);
+	}
 
-static endEnvelopePerspectiveClass(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // state
-  return offset;
-}
+	unpack(): EnvelopePerspectiveClassT {
+		return new EnvelopePerspectiveClassT(
+			this.state(),
+			this.probability(),
+			this.bb!.createScalarList<string>(
+				this.evidence.bind(this),
+				this.evidenceLength(),
+			),
+		);
+	}
 
-static createEnvelopePerspectiveClass(builder:flatbuffers.Builder, stateOffset:flatbuffers.Offset, probability:number, evidenceOffset:flatbuffers.Offset):flatbuffers.Offset {
-  EnvelopePerspectiveClass.startEnvelopePerspectiveClass(builder);
-  EnvelopePerspectiveClass.addState(builder, stateOffset);
-  EnvelopePerspectiveClass.addProbability(builder, probability);
-  EnvelopePerspectiveClass.addEvidence(builder, evidenceOffset);
-  return EnvelopePerspectiveClass.endEnvelopePerspectiveClass(builder);
-}
-
-unpack(): EnvelopePerspectiveClassT {
-  return new EnvelopePerspectiveClassT(
-    this.state(),
-    this.probability(),
-    this.bb!.createScalarList<string>(this.evidence.bind(this), this.evidenceLength())
-  );
-}
-
-
-unpackTo(_o: EnvelopePerspectiveClassT): void {
-  _o.state = this.state();
-  _o.probability = this.probability();
-  _o.evidence = this.bb!.createScalarList<string>(this.evidence.bind(this), this.evidenceLength());
-}
+	unpackTo(_o: EnvelopePerspectiveClassT): void {
+		_o.state = this.state();
+		_o.probability = this.probability();
+		_o.evidence = this.bb!.createScalarList<string>(
+			this.evidence.bind(this),
+			this.evidenceLength(),
+		);
+	}
 }
 
 export class EnvelopePerspectiveClassT implements flatbuffers.IGeneratedObject {
-constructor(
-  public state: string|Uint8Array|null = null,
-  public probability: number = 0.0,
-  public evidence: (string)[] = []
-){}
+	constructor(
+		public state: string | Uint8Array | null = null,
+		public probability: number = 0.0,
+		public evidence: string[] = [],
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const state = this.state !== null ? builder.createString(this.state!) : 0;
+		const evidence = EnvelopePerspectiveClass.createEvidenceVector(
+			builder,
+			builder.createObjectOffsetList(this.evidence),
+		);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const state = (this.state !== null ? builder.createString(this.state!) : 0);
-  const evidence = EnvelopePerspectiveClass.createEvidenceVector(builder, builder.createObjectOffsetList(this.evidence));
-
-  return EnvelopePerspectiveClass.createEnvelopePerspectiveClass(builder,
-    state,
-    this.probability,
-    evidence
-  );
-}
+		return EnvelopePerspectiveClass.createEnvelopePerspectiveClass(
+			builder,
+			state,
+			this.probability,
+			evidence,
+		);
+	}
 }

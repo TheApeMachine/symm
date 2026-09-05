@@ -33,6 +33,15 @@ type LearningView struct {
 	Dispatched uint64       `json:"dispatched"`
 
 	/*
+		Rejected counts policy intents the account did not accept, with the
+		most recent reason. The agent decides from its own simulated wallet, so
+		its intent and the account's actual position can disagree; that
+		disagreement is reported here rather than stopping the run.
+	*/
+	Rejected  uint64 `json:"rejected"`
+	Rejection string `json:"rejection,omitempty"`
+
+	/*
 		Horizon is the forward window every decision in this market is scored
 		over, derived from Epochs observed impulse changes averaging EpochMean
 		seconds. Until an interval has been observed the horizon is zero and
@@ -174,11 +183,15 @@ func (agent *Agent) view(symbol string) LearningView {
 	view := LearningView{At: agent.now(), Symbol: symbol, Status: "waiting for market observations",
 		Steps: agent.steps, Decisions: agent.decisions, Resolved: agent.resolved,
 		GridVersion: agent.Grid.Version, Columns: len(agent.Grid.Columns), InitialCapital: agent.initial.String(),
-		Dispatched: agent.dispatched, HorizonEpochs: horizonEpochs,
+		Dispatched: agent.dispatched, Rejected: agent.rejected, HorizonEpochs: horizonEpochs,
 		Influence: agent.attribution.report(agent.Grid.Columns)}
 
 	if agent.Skill != nil {
 		view.Skill = agent.Skill.Reading()
+	}
+
+	if agent.lastRejection != nil {
+		view.Rejection = agent.lastRejection.Error()
 	}
 
 	for key, market := range agent.markets {

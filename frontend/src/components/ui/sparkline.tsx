@@ -22,7 +22,8 @@ export const computeSparklinePath = (
 
 	for (let i = 0; i < count; i++) {
 		const x = (i / (count - 1)) * width;
-		const y = height - padding - ((points[i] - min) / range) * (height - padding * 2);
+		const y =
+			height - padding - ((points[i] - min) / range) * (height - padding * 2);
 		d += (i === 0 ? "M " : " L ") + x.toFixed(1) + "," + y.toFixed(1);
 	}
 
@@ -37,7 +38,6 @@ export type SparklineProps = Omit<SVGProps<SVGSVGElement>, "points"> & {
 	strokeColor?: string;
 	dataKey?: string;
 };
-
 
 export const Sparkline = ({
 	points = [],

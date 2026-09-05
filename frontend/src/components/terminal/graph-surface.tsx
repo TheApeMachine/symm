@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { graphStore } from "#/collections/app";
 import { ModelScope } from "#/components/graph/component";
 import type { Graph as RenderGraph } from "#/components/graph/core/graph";
 import {
@@ -9,7 +10,6 @@ import {
 	readGraphSurface,
 	subscribeGraphSurface,
 } from "#/components/terminal/graph-surface-store";
-import { graphStore } from "#/collections/app";
 import { Panel } from "#/components/ui/panel";
 import { Button } from "@/components/ui/button";
 

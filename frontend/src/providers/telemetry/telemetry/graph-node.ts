@@ -3,389 +3,454 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { GraphMetadata, GraphMetadataT } from '../telemetry/graph-metadata.js';
-
+import {
+	GraphMetadata,
+	type GraphMetadataT,
+} from "../telemetry/graph-metadata.js";
 
 export class GraphNode implements flatbuffers.IUnpackableObject<GraphNodeT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):GraphNode {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): GraphNode {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-static getRootAsGraphNode(bb:flatbuffers.ByteBuffer, obj?:GraphNode):GraphNode {
-  return (obj || new GraphNode()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getRootAsGraphNode(
+		bb: flatbuffers.ByteBuffer,
+		obj?: GraphNode,
+	): GraphNode {
+		return (obj || new GraphNode()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsGraphNode(bb:flatbuffers.ByteBuffer, obj?:GraphNode):GraphNode {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new GraphNode()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsGraphNode(
+		bb: flatbuffers.ByteBuffer,
+		obj?: GraphNode,
+	): GraphNode {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new GraphNode()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-id():string|null
-id(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-id(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	id(): string | null;
+	id(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	id(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-label():string|null
-label(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-label(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	label(): string | null;
+	label(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	label(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-symbol():string|null
-symbol(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-symbol(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	symbol(): string | null;
+	symbol(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	symbol(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-peer():string|null
-peer(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-peer(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	peer(): string | null;
+	peer(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	peer(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-source():string|null
-source(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-source(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	source(): string | null;
+	source(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	source(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-measurementId():string|null
-measurementId(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-measurementId(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	measurementId(): string | null;
+	measurementId(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	measurementId(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-metric():string|null
-metric(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-metric(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	metric(): string | null;
+	metric(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	metric(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-side():string|null
-side(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-side(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	side(): string | null;
+	side(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	side(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-kind():string|null
-kind(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-kind(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	kind(): string | null;
+	kind(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	kind(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-value():number {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	value(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-normalized():number {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	normalized(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-hasNormalized():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	hasNormalized(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-quality():number {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	quality(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 28);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-hasQuality():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	hasQuality(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 30);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-strength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	strength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 32);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-confidence():number {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	confidence(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 34);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-maturity():number {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	maturity(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 36);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-unit():string|null
-unit(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-unit(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	unit(): string | null;
+	unit(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	unit(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 38);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-observedFrom():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 40);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	observedFrom(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 40);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-horizon():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 42);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	horizon(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 42);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-at():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 44);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	at(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 44);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-metadata(obj?:GraphMetadata):GraphMetadata|null {
-  const offset = this.bb!.__offset(this.bb_pos, 46);
-  return offset ? (obj || new GraphMetadata()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
+	metadata(obj?: GraphMetadata): GraphMetadata | null {
+		const offset = this.bb!.__offset(this.bb_pos, 46);
+		return offset
+			? (obj || new GraphMetadata()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
 
-derived():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	derived(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 48);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-static startGraphNode(builder:flatbuffers.Builder) {
-  builder.startObject(23);
-}
+	static startGraphNode(builder: flatbuffers.Builder) {
+		builder.startObject(23);
+	}
 
-static addId(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, idOffset, 0);
-}
+	static addId(builder: flatbuffers.Builder, idOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, idOffset, 0);
+	}
 
-static addLabel(builder:flatbuffers.Builder, labelOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, labelOffset, 0);
-}
+	static addLabel(
+		builder: flatbuffers.Builder,
+		labelOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, labelOffset, 0);
+	}
 
-static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, symbolOffset, 0);
-}
+	static addSymbol(
+		builder: flatbuffers.Builder,
+		symbolOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, symbolOffset, 0);
+	}
 
-static addPeer(builder:flatbuffers.Builder, peerOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(3, peerOffset, 0);
-}
+	static addPeer(builder: flatbuffers.Builder, peerOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(3, peerOffset, 0);
+	}
 
-static addSource(builder:flatbuffers.Builder, sourceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, sourceOffset, 0);
-}
+	static addSource(
+		builder: flatbuffers.Builder,
+		sourceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(4, sourceOffset, 0);
+	}
 
-static addMeasurementId(builder:flatbuffers.Builder, measurementIdOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, measurementIdOffset, 0);
-}
+	static addMeasurementId(
+		builder: flatbuffers.Builder,
+		measurementIdOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(5, measurementIdOffset, 0);
+	}
 
-static addMetric(builder:flatbuffers.Builder, metricOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, metricOffset, 0);
-}
+	static addMetric(
+		builder: flatbuffers.Builder,
+		metricOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(6, metricOffset, 0);
+	}
 
-static addSide(builder:flatbuffers.Builder, sideOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(7, sideOffset, 0);
-}
+	static addSide(builder: flatbuffers.Builder, sideOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(7, sideOffset, 0);
+	}
 
-static addKind(builder:flatbuffers.Builder, kindOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, kindOffset, 0);
-}
+	static addKind(builder: flatbuffers.Builder, kindOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(8, kindOffset, 0);
+	}
 
-static addValue(builder:flatbuffers.Builder, value:number) {
-  builder.addFieldFloat64(9, value, 0.0);
-}
+	static addValue(builder: flatbuffers.Builder, value: number) {
+		builder.addFieldFloat64(9, value, 0.0);
+	}
 
-static addNormalized(builder:flatbuffers.Builder, normalized:number) {
-  builder.addFieldFloat64(10, normalized, 0.0);
-}
+	static addNormalized(builder: flatbuffers.Builder, normalized: number) {
+		builder.addFieldFloat64(10, normalized, 0.0);
+	}
 
-static addHasNormalized(builder:flatbuffers.Builder, hasNormalized:boolean) {
-  builder.addFieldInt8(11, +hasNormalized, +false);
-}
+	static addHasNormalized(
+		builder: flatbuffers.Builder,
+		hasNormalized: boolean,
+	) {
+		builder.addFieldInt8(11, +hasNormalized, +false);
+	}
 
-static addQuality(builder:flatbuffers.Builder, quality:number) {
-  builder.addFieldFloat64(12, quality, 0.0);
-}
+	static addQuality(builder: flatbuffers.Builder, quality: number) {
+		builder.addFieldFloat64(12, quality, 0.0);
+	}
 
-static addHasQuality(builder:flatbuffers.Builder, hasQuality:boolean) {
-  builder.addFieldInt8(13, +hasQuality, +false);
-}
+	static addHasQuality(builder: flatbuffers.Builder, hasQuality: boolean) {
+		builder.addFieldInt8(13, +hasQuality, +false);
+	}
 
-static addStrength(builder:flatbuffers.Builder, strength:number) {
-  builder.addFieldFloat64(14, strength, 0.0);
-}
+	static addStrength(builder: flatbuffers.Builder, strength: number) {
+		builder.addFieldFloat64(14, strength, 0.0);
+	}
 
-static addConfidence(builder:flatbuffers.Builder, confidence:number) {
-  builder.addFieldFloat64(15, confidence, 0.0);
-}
+	static addConfidence(builder: flatbuffers.Builder, confidence: number) {
+		builder.addFieldFloat64(15, confidence, 0.0);
+	}
 
-static addMaturity(builder:flatbuffers.Builder, maturity:number) {
-  builder.addFieldFloat64(16, maturity, 0.0);
-}
+	static addMaturity(builder: flatbuffers.Builder, maturity: number) {
+		builder.addFieldFloat64(16, maturity, 0.0);
+	}
 
-static addUnit(builder:flatbuffers.Builder, unitOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(17, unitOffset, 0);
-}
+	static addUnit(builder: flatbuffers.Builder, unitOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(17, unitOffset, 0);
+	}
 
-static addObservedFrom(builder:flatbuffers.Builder, observedFrom:bigint) {
-  builder.addFieldInt64(18, observedFrom, BigInt('0'));
-}
+	static addObservedFrom(builder: flatbuffers.Builder, observedFrom: bigint) {
+		builder.addFieldInt64(18, observedFrom, BigInt("0"));
+	}
 
-static addHorizon(builder:flatbuffers.Builder, horizon:bigint) {
-  builder.addFieldInt64(19, horizon, BigInt('0'));
-}
+	static addHorizon(builder: flatbuffers.Builder, horizon: bigint) {
+		builder.addFieldInt64(19, horizon, BigInt("0"));
+	}
 
-static addAt(builder:flatbuffers.Builder, at:bigint) {
-  builder.addFieldInt64(20, at, BigInt('0'));
-}
+	static addAt(builder: flatbuffers.Builder, at: bigint) {
+		builder.addFieldInt64(20, at, BigInt("0"));
+	}
 
-static addMetadata(builder:flatbuffers.Builder, metadataOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(21, metadataOffset, 0);
-}
+	static addMetadata(
+		builder: flatbuffers.Builder,
+		metadataOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(21, metadataOffset, 0);
+	}
 
-static addDerived(builder:flatbuffers.Builder, derived:boolean) {
-  builder.addFieldInt8(22, +derived, +false);
-}
+	static addDerived(builder: flatbuffers.Builder, derived: boolean) {
+		builder.addFieldInt8(22, +derived, +false);
+	}
 
-static endGraphNode(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // id
-  return offset;
-}
+	static endGraphNode(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // id
+		return offset;
+	}
 
+	unpack(): GraphNodeT {
+		return new GraphNodeT(
+			this.id(),
+			this.label(),
+			this.symbol(),
+			this.peer(),
+			this.source(),
+			this.measurementId(),
+			this.metric(),
+			this.side(),
+			this.kind(),
+			this.value(),
+			this.normalized(),
+			this.hasNormalized(),
+			this.quality(),
+			this.hasQuality(),
+			this.strength(),
+			this.confidence(),
+			this.maturity(),
+			this.unit(),
+			this.observedFrom(),
+			this.horizon(),
+			this.at(),
+			this.metadata() !== null ? this.metadata()!.unpack() : null,
+			this.derived(),
+		);
+	}
 
-unpack(): GraphNodeT {
-  return new GraphNodeT(
-    this.id(),
-    this.label(),
-    this.symbol(),
-    this.peer(),
-    this.source(),
-    this.measurementId(),
-    this.metric(),
-    this.side(),
-    this.kind(),
-    this.value(),
-    this.normalized(),
-    this.hasNormalized(),
-    this.quality(),
-    this.hasQuality(),
-    this.strength(),
-    this.confidence(),
-    this.maturity(),
-    this.unit(),
-    this.observedFrom(),
-    this.horizon(),
-    this.at(),
-    (this.metadata() !== null ? this.metadata()!.unpack() : null),
-    this.derived()
-  );
-}
-
-
-unpackTo(_o: GraphNodeT): void {
-  _o.id = this.id();
-  _o.label = this.label();
-  _o.symbol = this.symbol();
-  _o.peer = this.peer();
-  _o.source = this.source();
-  _o.measurementId = this.measurementId();
-  _o.metric = this.metric();
-  _o.side = this.side();
-  _o.kind = this.kind();
-  _o.value = this.value();
-  _o.normalized = this.normalized();
-  _o.hasNormalized = this.hasNormalized();
-  _o.quality = this.quality();
-  _o.hasQuality = this.hasQuality();
-  _o.strength = this.strength();
-  _o.confidence = this.confidence();
-  _o.maturity = this.maturity();
-  _o.unit = this.unit();
-  _o.observedFrom = this.observedFrom();
-  _o.horizon = this.horizon();
-  _o.at = this.at();
-  _o.metadata = (this.metadata() !== null ? this.metadata()!.unpack() : null);
-  _o.derived = this.derived();
-}
+	unpackTo(_o: GraphNodeT): void {
+		_o.id = this.id();
+		_o.label = this.label();
+		_o.symbol = this.symbol();
+		_o.peer = this.peer();
+		_o.source = this.source();
+		_o.measurementId = this.measurementId();
+		_o.metric = this.metric();
+		_o.side = this.side();
+		_o.kind = this.kind();
+		_o.value = this.value();
+		_o.normalized = this.normalized();
+		_o.hasNormalized = this.hasNormalized();
+		_o.quality = this.quality();
+		_o.hasQuality = this.hasQuality();
+		_o.strength = this.strength();
+		_o.confidence = this.confidence();
+		_o.maturity = this.maturity();
+		_o.unit = this.unit();
+		_o.observedFrom = this.observedFrom();
+		_o.horizon = this.horizon();
+		_o.at = this.at();
+		_o.metadata = this.metadata() !== null ? this.metadata()!.unpack() : null;
+		_o.derived = this.derived();
+	}
 }
 
 export class GraphNodeT implements flatbuffers.IGeneratedObject {
-constructor(
-  public id: string|Uint8Array|null = null,
-  public label: string|Uint8Array|null = null,
-  public symbol: string|Uint8Array|null = null,
-  public peer: string|Uint8Array|null = null,
-  public source: string|Uint8Array|null = null,
-  public measurementId: string|Uint8Array|null = null,
-  public metric: string|Uint8Array|null = null,
-  public side: string|Uint8Array|null = null,
-  public kind: string|Uint8Array|null = null,
-  public value: number = 0.0,
-  public normalized: number = 0.0,
-  public hasNormalized: boolean = false,
-  public quality: number = 0.0,
-  public hasQuality: boolean = false,
-  public strength: number = 0.0,
-  public confidence: number = 0.0,
-  public maturity: number = 0.0,
-  public unit: string|Uint8Array|null = null,
-  public observedFrom: bigint = BigInt('0'),
-  public horizon: bigint = BigInt('0'),
-  public at: bigint = BigInt('0'),
-  public metadata: GraphMetadataT|null = null,
-  public derived: boolean = false
-){}
+	constructor(
+		public id: string | Uint8Array | null = null,
+		public label: string | Uint8Array | null = null,
+		public symbol: string | Uint8Array | null = null,
+		public peer: string | Uint8Array | null = null,
+		public source: string | Uint8Array | null = null,
+		public measurementId: string | Uint8Array | null = null,
+		public metric: string | Uint8Array | null = null,
+		public side: string | Uint8Array | null = null,
+		public kind: string | Uint8Array | null = null,
+		public value: number = 0.0,
+		public normalized: number = 0.0,
+		public hasNormalized: boolean = false,
+		public quality: number = 0.0,
+		public hasQuality: boolean = false,
+		public strength: number = 0.0,
+		public confidence: number = 0.0,
+		public maturity: number = 0.0,
+		public unit: string | Uint8Array | null = null,
+		public observedFrom: bigint = BigInt("0"),
+		public horizon: bigint = BigInt("0"),
+		public at: bigint = BigInt("0"),
+		public metadata: GraphMetadataT | null = null,
+		public derived: boolean = false,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const id = this.id !== null ? builder.createString(this.id!) : 0;
+		const label = this.label !== null ? builder.createString(this.label!) : 0;
+		const symbol =
+			this.symbol !== null ? builder.createString(this.symbol!) : 0;
+		const peer = this.peer !== null ? builder.createString(this.peer!) : 0;
+		const source =
+			this.source !== null ? builder.createString(this.source!) : 0;
+		const measurementId =
+			this.measurementId !== null
+				? builder.createString(this.measurementId!)
+				: 0;
+		const metric =
+			this.metric !== null ? builder.createString(this.metric!) : 0;
+		const side = this.side !== null ? builder.createString(this.side!) : 0;
+		const kind = this.kind !== null ? builder.createString(this.kind!) : 0;
+		const unit = this.unit !== null ? builder.createString(this.unit!) : 0;
+		const metadata = this.metadata !== null ? this.metadata!.pack(builder) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const id = (this.id !== null ? builder.createString(this.id!) : 0);
-  const label = (this.label !== null ? builder.createString(this.label!) : 0);
-  const symbol = (this.symbol !== null ? builder.createString(this.symbol!) : 0);
-  const peer = (this.peer !== null ? builder.createString(this.peer!) : 0);
-  const source = (this.source !== null ? builder.createString(this.source!) : 0);
-  const measurementId = (this.measurementId !== null ? builder.createString(this.measurementId!) : 0);
-  const metric = (this.metric !== null ? builder.createString(this.metric!) : 0);
-  const side = (this.side !== null ? builder.createString(this.side!) : 0);
-  const kind = (this.kind !== null ? builder.createString(this.kind!) : 0);
-  const unit = (this.unit !== null ? builder.createString(this.unit!) : 0);
-  const metadata = (this.metadata !== null ? this.metadata!.pack(builder) : 0);
+		GraphNode.startGraphNode(builder);
+		GraphNode.addId(builder, id);
+		GraphNode.addLabel(builder, label);
+		GraphNode.addSymbol(builder, symbol);
+		GraphNode.addPeer(builder, peer);
+		GraphNode.addSource(builder, source);
+		GraphNode.addMeasurementId(builder, measurementId);
+		GraphNode.addMetric(builder, metric);
+		GraphNode.addSide(builder, side);
+		GraphNode.addKind(builder, kind);
+		GraphNode.addValue(builder, this.value);
+		GraphNode.addNormalized(builder, this.normalized);
+		GraphNode.addHasNormalized(builder, this.hasNormalized);
+		GraphNode.addQuality(builder, this.quality);
+		GraphNode.addHasQuality(builder, this.hasQuality);
+		GraphNode.addStrength(builder, this.strength);
+		GraphNode.addConfidence(builder, this.confidence);
+		GraphNode.addMaturity(builder, this.maturity);
+		GraphNode.addUnit(builder, unit);
+		GraphNode.addObservedFrom(builder, this.observedFrom);
+		GraphNode.addHorizon(builder, this.horizon);
+		GraphNode.addAt(builder, this.at);
+		GraphNode.addMetadata(builder, metadata);
+		GraphNode.addDerived(builder, this.derived);
 
-  GraphNode.startGraphNode(builder);
-  GraphNode.addId(builder, id);
-  GraphNode.addLabel(builder, label);
-  GraphNode.addSymbol(builder, symbol);
-  GraphNode.addPeer(builder, peer);
-  GraphNode.addSource(builder, source);
-  GraphNode.addMeasurementId(builder, measurementId);
-  GraphNode.addMetric(builder, metric);
-  GraphNode.addSide(builder, side);
-  GraphNode.addKind(builder, kind);
-  GraphNode.addValue(builder, this.value);
-  GraphNode.addNormalized(builder, this.normalized);
-  GraphNode.addHasNormalized(builder, this.hasNormalized);
-  GraphNode.addQuality(builder, this.quality);
-  GraphNode.addHasQuality(builder, this.hasQuality);
-  GraphNode.addStrength(builder, this.strength);
-  GraphNode.addConfidence(builder, this.confidence);
-  GraphNode.addMaturity(builder, this.maturity);
-  GraphNode.addUnit(builder, unit);
-  GraphNode.addObservedFrom(builder, this.observedFrom);
-  GraphNode.addHorizon(builder, this.horizon);
-  GraphNode.addAt(builder, this.at);
-  GraphNode.addMetadata(builder, metadata);
-  GraphNode.addDerived(builder, this.derived);
-
-  return GraphNode.endGraphNode(builder);
-}
+		return GraphNode.endGraphNode(builder);
+	}
 }

@@ -3,153 +3,182 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class ReasoningLink
+	implements flatbuffers.IUnpackableObject<ReasoningLinkT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): ReasoningLink {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsReasoningLink(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ReasoningLink,
+	): ReasoningLink {
+		return (obj || new ReasoningLink()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class ReasoningLink implements flatbuffers.IUnpackableObject<ReasoningLinkT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):ReasoningLink {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsReasoningLink(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ReasoningLink,
+	): ReasoningLink {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new ReasoningLink()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsReasoningLink(bb:flatbuffers.ByteBuffer, obj?:ReasoningLink):ReasoningLink {
-  return (obj || new ReasoningLink()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	from(): string | null;
+	from(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	from(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsReasoningLink(bb:flatbuffers.ByteBuffer, obj?:ReasoningLink):ReasoningLink {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new ReasoningLink()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	to(): string | null;
+	to(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	to(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-from():string|null
-from(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-from(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	relation(): string | null;
+	relation(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	relation(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-to():string|null
-to(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-to(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	weight(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-relation():string|null
-relation(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-relation(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	confidence(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-weight():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	derived(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-confidence():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static startReasoningLink(builder: flatbuffers.Builder) {
+		builder.startObject(6);
+	}
 
-derived():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	static addFrom(builder: flatbuffers.Builder, fromOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, fromOffset, 0);
+	}
 
-static startReasoningLink(builder:flatbuffers.Builder) {
-  builder.startObject(6);
-}
+	static addTo(builder: flatbuffers.Builder, toOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(1, toOffset, 0);
+	}
 
-static addFrom(builder:flatbuffers.Builder, fromOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, fromOffset, 0);
-}
+	static addRelation(
+		builder: flatbuffers.Builder,
+		relationOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, relationOffset, 0);
+	}
 
-static addTo(builder:flatbuffers.Builder, toOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, toOffset, 0);
-}
+	static addWeight(builder: flatbuffers.Builder, weight: number) {
+		builder.addFieldFloat64(3, weight, 0.0);
+	}
 
-static addRelation(builder:flatbuffers.Builder, relationOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, relationOffset, 0);
-}
+	static addConfidence(builder: flatbuffers.Builder, confidence: number) {
+		builder.addFieldFloat64(4, confidence, 0.0);
+	}
 
-static addWeight(builder:flatbuffers.Builder, weight:number) {
-  builder.addFieldFloat64(3, weight, 0.0);
-}
+	static addDerived(builder: flatbuffers.Builder, derived: boolean) {
+		builder.addFieldInt8(5, +derived, +false);
+	}
 
-static addConfidence(builder:flatbuffers.Builder, confidence:number) {
-  builder.addFieldFloat64(4, confidence, 0.0);
-}
+	static endReasoningLink(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static addDerived(builder:flatbuffers.Builder, derived:boolean) {
-  builder.addFieldInt8(5, +derived, +false);
-}
+	static createReasoningLink(
+		builder: flatbuffers.Builder,
+		fromOffset: flatbuffers.Offset,
+		toOffset: flatbuffers.Offset,
+		relationOffset: flatbuffers.Offset,
+		weight: number,
+		confidence: number,
+		derived: boolean,
+	): flatbuffers.Offset {
+		ReasoningLink.startReasoningLink(builder);
+		ReasoningLink.addFrom(builder, fromOffset);
+		ReasoningLink.addTo(builder, toOffset);
+		ReasoningLink.addRelation(builder, relationOffset);
+		ReasoningLink.addWeight(builder, weight);
+		ReasoningLink.addConfidence(builder, confidence);
+		ReasoningLink.addDerived(builder, derived);
+		return ReasoningLink.endReasoningLink(builder);
+	}
 
-static endReasoningLink(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): ReasoningLinkT {
+		return new ReasoningLinkT(
+			this.from(),
+			this.to(),
+			this.relation(),
+			this.weight(),
+			this.confidence(),
+			this.derived(),
+		);
+	}
 
-static createReasoningLink(builder:flatbuffers.Builder, fromOffset:flatbuffers.Offset, toOffset:flatbuffers.Offset, relationOffset:flatbuffers.Offset, weight:number, confidence:number, derived:boolean):flatbuffers.Offset {
-  ReasoningLink.startReasoningLink(builder);
-  ReasoningLink.addFrom(builder, fromOffset);
-  ReasoningLink.addTo(builder, toOffset);
-  ReasoningLink.addRelation(builder, relationOffset);
-  ReasoningLink.addWeight(builder, weight);
-  ReasoningLink.addConfidence(builder, confidence);
-  ReasoningLink.addDerived(builder, derived);
-  return ReasoningLink.endReasoningLink(builder);
-}
-
-unpack(): ReasoningLinkT {
-  return new ReasoningLinkT(
-    this.from(),
-    this.to(),
-    this.relation(),
-    this.weight(),
-    this.confidence(),
-    this.derived()
-  );
-}
-
-
-unpackTo(_o: ReasoningLinkT): void {
-  _o.from = this.from();
-  _o.to = this.to();
-  _o.relation = this.relation();
-  _o.weight = this.weight();
-  _o.confidence = this.confidence();
-  _o.derived = this.derived();
-}
+	unpackTo(_o: ReasoningLinkT): void {
+		_o.from = this.from();
+		_o.to = this.to();
+		_o.relation = this.relation();
+		_o.weight = this.weight();
+		_o.confidence = this.confidence();
+		_o.derived = this.derived();
+	}
 }
 
 export class ReasoningLinkT implements flatbuffers.IGeneratedObject {
-constructor(
-  public from: string|Uint8Array|null = null,
-  public to: string|Uint8Array|null = null,
-  public relation: string|Uint8Array|null = null,
-  public weight: number = 0.0,
-  public confidence: number = 0.0,
-  public derived: boolean = false
-){}
+	constructor(
+		public from: string | Uint8Array | null = null,
+		public to: string | Uint8Array | null = null,
+		public relation: string | Uint8Array | null = null,
+		public weight: number = 0.0,
+		public confidence: number = 0.0,
+		public derived: boolean = false,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const from = this.from !== null ? builder.createString(this.from!) : 0;
+		const to = this.to !== null ? builder.createString(this.to!) : 0;
+		const relation =
+			this.relation !== null ? builder.createString(this.relation!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const from = (this.from !== null ? builder.createString(this.from!) : 0);
-  const to = (this.to !== null ? builder.createString(this.to!) : 0);
-  const relation = (this.relation !== null ? builder.createString(this.relation!) : 0);
-
-  return ReasoningLink.createReasoningLink(builder,
-    from,
-    to,
-    relation,
-    this.weight,
-    this.confidence,
-    this.derived
-  );
-}
+		return ReasoningLink.createReasoningLink(
+			builder,
+			from,
+			to,
+			relation,
+			this.weight,
+			this.confidence,
+			this.derived,
+		);
+	}
 }

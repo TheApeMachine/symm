@@ -3,175 +3,220 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { EnvelopeReturnForecastDistribution, EnvelopeReturnForecastDistributionT } from '../telemetry/envelope-return-forecast-distribution.js';
+import {
+	EnvelopeReturnForecastDistribution,
+	type EnvelopeReturnForecastDistributionT,
+} from "../telemetry/envelope-return-forecast-distribution.js";
 
+export class EnvelopeReturnForecast
+	implements flatbuffers.IUnpackableObject<EnvelopeReturnForecastT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeReturnForecast {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-export class EnvelopeReturnForecast implements flatbuffers.IUnpackableObject<EnvelopeReturnForecastT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeReturnForecast {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getRootAsEnvelopeReturnForecast(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeReturnForecast,
+	): EnvelopeReturnForecast {
+		return (obj || new EnvelopeReturnForecast()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsEnvelopeReturnForecast(bb:flatbuffers.ByteBuffer, obj?:EnvelopeReturnForecast):EnvelopeReturnForecast {
-  return (obj || new EnvelopeReturnForecast()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsEnvelopeReturnForecast(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeReturnForecast,
+	): EnvelopeReturnForecast {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopeReturnForecast()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsEnvelopeReturnForecast(bb:flatbuffers.ByteBuffer, obj?:EnvelopeReturnForecast):EnvelopeReturnForecast {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeReturnForecast()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	distribution(
+		obj?: EnvelopeReturnForecastDistribution,
+	): EnvelopeReturnForecastDistribution | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? (obj || new EnvelopeReturnForecastDistribution()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
 
-distribution(obj?:EnvelopeReturnForecastDistribution):EnvelopeReturnForecastDistribution|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? (obj || new EnvelopeReturnForecastDistribution()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
+	horizon(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-horizon():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	candidateCall(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-candidateCall():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	call(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-call():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	stableCall(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-stableCall():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	held(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-held():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	switchConfidence(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-switchConfidence():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	switchThreshold(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-switchThreshold():number {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static startEnvelopeReturnForecast(builder: flatbuffers.Builder) {
+		builder.startObject(8);
+	}
 
-static startEnvelopeReturnForecast(builder:flatbuffers.Builder) {
-  builder.startObject(8);
-}
+	static addDistribution(
+		builder: flatbuffers.Builder,
+		distributionOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, distributionOffset, 0);
+	}
 
-static addDistribution(builder:flatbuffers.Builder, distributionOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, distributionOffset, 0);
-}
+	static addHorizon(builder: flatbuffers.Builder, horizon: bigint) {
+		builder.addFieldInt64(1, horizon, BigInt("0"));
+	}
 
-static addHorizon(builder:flatbuffers.Builder, horizon:bigint) {
-  builder.addFieldInt64(1, horizon, BigInt('0'));
-}
+	static addCandidateCall(builder: flatbuffers.Builder, candidateCall: number) {
+		builder.addFieldFloat64(2, candidateCall, 0.0);
+	}
 
-static addCandidateCall(builder:flatbuffers.Builder, candidateCall:number) {
-  builder.addFieldFloat64(2, candidateCall, 0.0);
-}
+	static addCall(builder: flatbuffers.Builder, call: number) {
+		builder.addFieldFloat64(3, call, 0.0);
+	}
 
-static addCall(builder:flatbuffers.Builder, call:number) {
-  builder.addFieldFloat64(3, call, 0.0);
-}
+	static addStableCall(builder: flatbuffers.Builder, stableCall: number) {
+		builder.addFieldFloat64(4, stableCall, 0.0);
+	}
 
-static addStableCall(builder:flatbuffers.Builder, stableCall:number) {
-  builder.addFieldFloat64(4, stableCall, 0.0);
-}
+	static addHeld(builder: flatbuffers.Builder, held: boolean) {
+		builder.addFieldInt8(5, +held, +false);
+	}
 
-static addHeld(builder:flatbuffers.Builder, held:boolean) {
-  builder.addFieldInt8(5, +held, +false);
-}
+	static addSwitchConfidence(
+		builder: flatbuffers.Builder,
+		switchConfidence: number,
+	) {
+		builder.addFieldFloat64(6, switchConfidence, 0.0);
+	}
 
-static addSwitchConfidence(builder:flatbuffers.Builder, switchConfidence:number) {
-  builder.addFieldFloat64(6, switchConfidence, 0.0);
-}
+	static addSwitchThreshold(
+		builder: flatbuffers.Builder,
+		switchThreshold: number,
+	) {
+		builder.addFieldFloat64(7, switchThreshold, 0.0);
+	}
 
-static addSwitchThreshold(builder:flatbuffers.Builder, switchThreshold:number) {
-  builder.addFieldFloat64(7, switchThreshold, 0.0);
-}
+	static endEnvelopeReturnForecast(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // distribution
+		return offset;
+	}
 
-static endEnvelopeReturnForecast(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // distribution
-  return offset;
-}
+	static createEnvelopeReturnForecast(
+		builder: flatbuffers.Builder,
+		distributionOffset: flatbuffers.Offset,
+		horizon: bigint,
+		candidateCall: number,
+		call: number,
+		stableCall: number,
+		held: boolean,
+		switchConfidence: number,
+		switchThreshold: number,
+	): flatbuffers.Offset {
+		EnvelopeReturnForecast.startEnvelopeReturnForecast(builder);
+		EnvelopeReturnForecast.addDistribution(builder, distributionOffset);
+		EnvelopeReturnForecast.addHorizon(builder, horizon);
+		EnvelopeReturnForecast.addCandidateCall(builder, candidateCall);
+		EnvelopeReturnForecast.addCall(builder, call);
+		EnvelopeReturnForecast.addStableCall(builder, stableCall);
+		EnvelopeReturnForecast.addHeld(builder, held);
+		EnvelopeReturnForecast.addSwitchConfidence(builder, switchConfidence);
+		EnvelopeReturnForecast.addSwitchThreshold(builder, switchThreshold);
+		return EnvelopeReturnForecast.endEnvelopeReturnForecast(builder);
+	}
 
-static createEnvelopeReturnForecast(builder:flatbuffers.Builder, distributionOffset:flatbuffers.Offset, horizon:bigint, candidateCall:number, call:number, stableCall:number, held:boolean, switchConfidence:number, switchThreshold:number):flatbuffers.Offset {
-  EnvelopeReturnForecast.startEnvelopeReturnForecast(builder);
-  EnvelopeReturnForecast.addDistribution(builder, distributionOffset);
-  EnvelopeReturnForecast.addHorizon(builder, horizon);
-  EnvelopeReturnForecast.addCandidateCall(builder, candidateCall);
-  EnvelopeReturnForecast.addCall(builder, call);
-  EnvelopeReturnForecast.addStableCall(builder, stableCall);
-  EnvelopeReturnForecast.addHeld(builder, held);
-  EnvelopeReturnForecast.addSwitchConfidence(builder, switchConfidence);
-  EnvelopeReturnForecast.addSwitchThreshold(builder, switchThreshold);
-  return EnvelopeReturnForecast.endEnvelopeReturnForecast(builder);
-}
+	unpack(): EnvelopeReturnForecastT {
+		return new EnvelopeReturnForecastT(
+			this.distribution() !== null ? this.distribution()!.unpack() : null,
+			this.horizon(),
+			this.candidateCall(),
+			this.call(),
+			this.stableCall(),
+			this.held(),
+			this.switchConfidence(),
+			this.switchThreshold(),
+		);
+	}
 
-unpack(): EnvelopeReturnForecastT {
-  return new EnvelopeReturnForecastT(
-    (this.distribution() !== null ? this.distribution()!.unpack() : null),
-    this.horizon(),
-    this.candidateCall(),
-    this.call(),
-    this.stableCall(),
-    this.held(),
-    this.switchConfidence(),
-    this.switchThreshold()
-  );
-}
-
-
-unpackTo(_o: EnvelopeReturnForecastT): void {
-  _o.distribution = (this.distribution() !== null ? this.distribution()!.unpack() : null);
-  _o.horizon = this.horizon();
-  _o.candidateCall = this.candidateCall();
-  _o.call = this.call();
-  _o.stableCall = this.stableCall();
-  _o.held = this.held();
-  _o.switchConfidence = this.switchConfidence();
-  _o.switchThreshold = this.switchThreshold();
-}
+	unpackTo(_o: EnvelopeReturnForecastT): void {
+		_o.distribution =
+			this.distribution() !== null ? this.distribution()!.unpack() : null;
+		_o.horizon = this.horizon();
+		_o.candidateCall = this.candidateCall();
+		_o.call = this.call();
+		_o.stableCall = this.stableCall();
+		_o.held = this.held();
+		_o.switchConfidence = this.switchConfidence();
+		_o.switchThreshold = this.switchThreshold();
+	}
 }
 
 export class EnvelopeReturnForecastT implements flatbuffers.IGeneratedObject {
-constructor(
-  public distribution: EnvelopeReturnForecastDistributionT|null = null,
-  public horizon: bigint = BigInt('0'),
-  public candidateCall: number = 0.0,
-  public call: number = 0.0,
-  public stableCall: number = 0.0,
-  public held: boolean = false,
-  public switchConfidence: number = 0.0,
-  public switchThreshold: number = 0.0
-){}
+	constructor(
+		public distribution: EnvelopeReturnForecastDistributionT | null = null,
+		public horizon: bigint = BigInt("0"),
+		public candidateCall: number = 0.0,
+		public call: number = 0.0,
+		public stableCall: number = 0.0,
+		public held: boolean = false,
+		public switchConfidence: number = 0.0,
+		public switchThreshold: number = 0.0,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const distribution =
+			this.distribution !== null ? this.distribution!.pack(builder) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const distribution = (this.distribution !== null ? this.distribution!.pack(builder) : 0);
-
-  return EnvelopeReturnForecast.createEnvelopeReturnForecast(builder,
-    distribution,
-    this.horizon,
-    this.candidateCall,
-    this.call,
-    this.stableCall,
-    this.held,
-    this.switchConfidence,
-    this.switchThreshold
-  );
-}
+		return EnvelopeReturnForecast.createEnvelopeReturnForecast(
+			builder,
+			distribution,
+			this.horizon,
+			this.candidateCall,
+			this.call,
+			this.stableCall,
+			this.held,
+			this.switchConfidence,
+			this.switchThreshold,
+		);
+	}
 }

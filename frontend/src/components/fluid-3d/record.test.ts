@@ -4,7 +4,12 @@ import { FluidRecordReader } from "./record";
 const CHUNK_HEADER_BYTES = 16;
 const MAGIC = [0x53, 0x46, 0x44, 0x31];
 
-const chunk = (frameId: number, chunkIndex: number, chunkCount: number, payload: Uint8Array) => {
+const chunk = (
+	frameId: number,
+	chunkIndex: number,
+	chunkCount: number,
+	payload: Uint8Array,
+) => {
 	const message = new Uint8Array(CHUNK_HEADER_BYTES + payload.byteLength);
 	message.set(MAGIC, 0);
 	const view = new DataView(message.buffer);
@@ -17,7 +22,9 @@ const chunk = (frameId: number, chunkIndex: number, chunkCount: number, payload:
 
 describe("FluidRecordReader.push", () => {
 	it("reassembles chunks into the original bytes regardless of arrival order", () => {
-		const source = new TextEncoder().encode('{"fields":{"Density":[0.25,0.5,1]}}');
+		const source = new TextEncoder().encode(
+			'{"fields":{"Density":[0.25,0.5,1]}}',
+		);
 		const reader = new FluidRecordReader();
 		const one = source.slice(0, 9);
 		const two = source.slice(9);

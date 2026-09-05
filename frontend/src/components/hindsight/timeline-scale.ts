@@ -70,7 +70,8 @@ export const buildScale = (
 		return {
 			xOf: (sequence) =>
 				Math.min(width, Math.max(0, ((sequence - from) / range) * width)),
-			sequenceAt: (x) => from + (Math.min(Math.max(x, 0), width) / width) * range,
+			sequenceAt: (x) =>
+				from + (Math.min(Math.max(x, 0), width) / width) * range,
 			bucketAt: () => null,
 			step,
 			width,

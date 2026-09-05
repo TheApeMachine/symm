@@ -3,176 +3,227 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
-
-
+import * as flatbuffers from "flatbuffers";
 
 export class Subsystem implements flatbuffers.IUnpackableObject<SubsystemT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):Subsystem {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): Subsystem {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-static getRootAsSubsystem(bb:flatbuffers.ByteBuffer, obj?:Subsystem):Subsystem {
-  return (obj || new Subsystem()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getRootAsSubsystem(
+		bb: flatbuffers.ByteBuffer,
+		obj?: Subsystem,
+	): Subsystem {
+		return (obj || new Subsystem()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsSubsystem(bb:flatbuffers.ByteBuffer, obj?:Subsystem):Subsystem {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new Subsystem()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsSubsystem(
+		bb: flatbuffers.ByteBuffer,
+		obj?: Subsystem,
+	): Subsystem {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new Subsystem()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-name():string|null
-name(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-name(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	name(): string | null;
+	name(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	name(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-label():string|null
-label(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-label(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	label(): string | null;
+	label(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	label(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-health():string|null
-health(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-health(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	health(): string | null;
+	health(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	health(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-direction():string|null
-direction(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-direction(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	direction(): string | null;
+	direction(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	direction(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-valueText():string|null
-valueText(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-valueText(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	valueText(): string | null;
+	valueText(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	valueText(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-explanation():string|null
-explanation(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-explanation(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	explanation(): string | null;
+	explanation(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	explanation(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-value():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	value(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-static startSubsystem(builder:flatbuffers.Builder) {
-  builder.startObject(7);
-}
+	static startSubsystem(builder: flatbuffers.Builder) {
+		builder.startObject(7);
+	}
 
-static addName(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, nameOffset, 0);
-}
+	static addName(builder: flatbuffers.Builder, nameOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, nameOffset, 0);
+	}
 
-static addLabel(builder:flatbuffers.Builder, labelOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, labelOffset, 0);
-}
+	static addLabel(
+		builder: flatbuffers.Builder,
+		labelOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, labelOffset, 0);
+	}
 
-static addHealth(builder:flatbuffers.Builder, healthOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, healthOffset, 0);
-}
+	static addHealth(
+		builder: flatbuffers.Builder,
+		healthOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, healthOffset, 0);
+	}
 
-static addDirection(builder:flatbuffers.Builder, directionOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(3, directionOffset, 0);
-}
+	static addDirection(
+		builder: flatbuffers.Builder,
+		directionOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(3, directionOffset, 0);
+	}
 
-static addValueText(builder:flatbuffers.Builder, valueTextOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, valueTextOffset, 0);
-}
+	static addValueText(
+		builder: flatbuffers.Builder,
+		valueTextOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(4, valueTextOffset, 0);
+	}
 
-static addExplanation(builder:flatbuffers.Builder, explanationOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, explanationOffset, 0);
-}
+	static addExplanation(
+		builder: flatbuffers.Builder,
+		explanationOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(5, explanationOffset, 0);
+	}
 
-static addValue(builder:flatbuffers.Builder, value:number) {
-  builder.addFieldFloat64(6, value, 0.0);
-}
+	static addValue(builder: flatbuffers.Builder, value: number) {
+		builder.addFieldFloat64(6, value, 0.0);
+	}
 
-static endSubsystem(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	static endSubsystem(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static createSubsystem(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset, labelOffset:flatbuffers.Offset, healthOffset:flatbuffers.Offset, directionOffset:flatbuffers.Offset, valueTextOffset:flatbuffers.Offset, explanationOffset:flatbuffers.Offset, value:number):flatbuffers.Offset {
-  Subsystem.startSubsystem(builder);
-  Subsystem.addName(builder, nameOffset);
-  Subsystem.addLabel(builder, labelOffset);
-  Subsystem.addHealth(builder, healthOffset);
-  Subsystem.addDirection(builder, directionOffset);
-  Subsystem.addValueText(builder, valueTextOffset);
-  Subsystem.addExplanation(builder, explanationOffset);
-  Subsystem.addValue(builder, value);
-  return Subsystem.endSubsystem(builder);
-}
+	static createSubsystem(
+		builder: flatbuffers.Builder,
+		nameOffset: flatbuffers.Offset,
+		labelOffset: flatbuffers.Offset,
+		healthOffset: flatbuffers.Offset,
+		directionOffset: flatbuffers.Offset,
+		valueTextOffset: flatbuffers.Offset,
+		explanationOffset: flatbuffers.Offset,
+		value: number,
+	): flatbuffers.Offset {
+		Subsystem.startSubsystem(builder);
+		Subsystem.addName(builder, nameOffset);
+		Subsystem.addLabel(builder, labelOffset);
+		Subsystem.addHealth(builder, healthOffset);
+		Subsystem.addDirection(builder, directionOffset);
+		Subsystem.addValueText(builder, valueTextOffset);
+		Subsystem.addExplanation(builder, explanationOffset);
+		Subsystem.addValue(builder, value);
+		return Subsystem.endSubsystem(builder);
+	}
 
-unpack(): SubsystemT {
-  return new SubsystemT(
-    this.name(),
-    this.label(),
-    this.health(),
-    this.direction(),
-    this.valueText(),
-    this.explanation(),
-    this.value()
-  );
-}
+	unpack(): SubsystemT {
+		return new SubsystemT(
+			this.name(),
+			this.label(),
+			this.health(),
+			this.direction(),
+			this.valueText(),
+			this.explanation(),
+			this.value(),
+		);
+	}
 
-
-unpackTo(_o: SubsystemT): void {
-  _o.name = this.name();
-  _o.label = this.label();
-  _o.health = this.health();
-  _o.direction = this.direction();
-  _o.valueText = this.valueText();
-  _o.explanation = this.explanation();
-  _o.value = this.value();
-}
+	unpackTo(_o: SubsystemT): void {
+		_o.name = this.name();
+		_o.label = this.label();
+		_o.health = this.health();
+		_o.direction = this.direction();
+		_o.valueText = this.valueText();
+		_o.explanation = this.explanation();
+		_o.value = this.value();
+	}
 }
 
 export class SubsystemT implements flatbuffers.IGeneratedObject {
-constructor(
-  public name: string|Uint8Array|null = null,
-  public label: string|Uint8Array|null = null,
-  public health: string|Uint8Array|null = null,
-  public direction: string|Uint8Array|null = null,
-  public valueText: string|Uint8Array|null = null,
-  public explanation: string|Uint8Array|null = null,
-  public value: number = 0.0
-){}
+	constructor(
+		public name: string | Uint8Array | null = null,
+		public label: string | Uint8Array | null = null,
+		public health: string | Uint8Array | null = null,
+		public direction: string | Uint8Array | null = null,
+		public valueText: string | Uint8Array | null = null,
+		public explanation: string | Uint8Array | null = null,
+		public value: number = 0.0,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const name = this.name !== null ? builder.createString(this.name!) : 0;
+		const label = this.label !== null ? builder.createString(this.label!) : 0;
+		const health =
+			this.health !== null ? builder.createString(this.health!) : 0;
+		const direction =
+			this.direction !== null ? builder.createString(this.direction!) : 0;
+		const valueText =
+			this.valueText !== null ? builder.createString(this.valueText!) : 0;
+		const explanation =
+			this.explanation !== null ? builder.createString(this.explanation!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const name = (this.name !== null ? builder.createString(this.name!) : 0);
-  const label = (this.label !== null ? builder.createString(this.label!) : 0);
-  const health = (this.health !== null ? builder.createString(this.health!) : 0);
-  const direction = (this.direction !== null ? builder.createString(this.direction!) : 0);
-  const valueText = (this.valueText !== null ? builder.createString(this.valueText!) : 0);
-  const explanation = (this.explanation !== null ? builder.createString(this.explanation!) : 0);
-
-  return Subsystem.createSubsystem(builder,
-    name,
-    label,
-    health,
-    direction,
-    valueText,
-    explanation,
-    this.value
-  );
-}
+		return Subsystem.createSubsystem(
+			builder,
+			name,
+			label,
+			health,
+			direction,
+			valueText,
+			explanation,
+			this.value,
+		);
+	}
 }

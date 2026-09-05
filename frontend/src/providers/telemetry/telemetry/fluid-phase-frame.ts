@@ -3,197 +3,278 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { Hydrodynamics, HydrodynamicsT } from '../telemetry/hydrodynamics.js';
-import { PhaseResponse, PhaseResponseT } from '../telemetry/phase-response.js';
-import { WaveMode, WaveModeT } from '../telemetry/wave-mode.js';
+import {
+	Hydrodynamics,
+	type HydrodynamicsT,
+} from "../telemetry/hydrodynamics.js";
+import {
+	PhaseResponse,
+	type PhaseResponseT,
+} from "../telemetry/phase-response.js";
+import { WaveMode, type WaveModeT } from "../telemetry/wave-mode.js";
 
+export class FluidPhaseFrame
+	implements flatbuffers.IUnpackableObject<FluidPhaseFrameT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): FluidPhaseFrame {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-export class FluidPhaseFrame implements flatbuffers.IUnpackableObject<FluidPhaseFrameT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):FluidPhaseFrame {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getRootAsFluidPhaseFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: FluidPhaseFrame,
+	): FluidPhaseFrame {
+		return (obj || new FluidPhaseFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsFluidPhaseFrame(bb:flatbuffers.ByteBuffer, obj?:FluidPhaseFrame):FluidPhaseFrame {
-  return (obj || new FluidPhaseFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsFluidPhaseFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: FluidPhaseFrame,
+	): FluidPhaseFrame {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new FluidPhaseFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsFluidPhaseFrame(bb:flatbuffers.ByteBuffer, obj?:FluidPhaseFrame):FluidPhaseFrame {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new FluidPhaseFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	source(): string | null;
+	source(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	source(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-source():string|null
-source(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-source(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	at(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-at():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	phaseReady(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-phaseReady():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	phaseReason(): string | null;
+	phaseReason(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	phaseReason(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-phaseReason():string|null
-phaseReason(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-phaseReason(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	wave(index: number, obj?: WaveMode): WaveMode | null {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset
+			? (obj || new WaveMode()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-wave(index: number, obj?:WaveMode):WaveMode|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? (obj || new WaveMode()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	waveLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-waveLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	hydrodynamics(obj?: Hydrodynamics): Hydrodynamics | null {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset
+			? (obj || new Hydrodynamics()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
 
-hydrodynamics(obj?:Hydrodynamics):Hydrodynamics|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? (obj || new Hydrodynamics()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
+	phaseScan(index: number, obj?: PhaseResponse): PhaseResponse | null {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset
+			? (obj || new PhaseResponse()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-phaseScan(index: number, obj?:PhaseResponse):PhaseResponse|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? (obj || new PhaseResponse()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	phaseScanLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-phaseScanLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	static startFluidPhaseFrame(builder: flatbuffers.Builder) {
+		builder.startObject(7);
+	}
 
-static startFluidPhaseFrame(builder:flatbuffers.Builder) {
-  builder.startObject(7);
-}
+	static addSource(
+		builder: flatbuffers.Builder,
+		sourceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, sourceOffset, 0);
+	}
 
-static addSource(builder:flatbuffers.Builder, sourceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, sourceOffset, 0);
-}
+	static addAt(builder: flatbuffers.Builder, at: bigint) {
+		builder.addFieldInt64(1, at, BigInt("0"));
+	}
 
-static addAt(builder:flatbuffers.Builder, at:bigint) {
-  builder.addFieldInt64(1, at, BigInt('0'));
-}
+	static addPhaseReady(builder: flatbuffers.Builder, phaseReady: boolean) {
+		builder.addFieldInt8(2, +phaseReady, +false);
+	}
 
-static addPhaseReady(builder:flatbuffers.Builder, phaseReady:boolean) {
-  builder.addFieldInt8(2, +phaseReady, +false);
-}
+	static addPhaseReason(
+		builder: flatbuffers.Builder,
+		phaseReasonOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(3, phaseReasonOffset, 0);
+	}
 
-static addPhaseReason(builder:flatbuffers.Builder, phaseReasonOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(3, phaseReasonOffset, 0);
-}
+	static addWave(builder: flatbuffers.Builder, waveOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(4, waveOffset, 0);
+	}
 
-static addWave(builder:flatbuffers.Builder, waveOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, waveOffset, 0);
-}
+	static createWaveVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createWaveVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startWaveVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startWaveVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static addHydrodynamics(
+		builder: flatbuffers.Builder,
+		hydrodynamicsOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(5, hydrodynamicsOffset, 0);
+	}
 
-static addHydrodynamics(builder:flatbuffers.Builder, hydrodynamicsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, hydrodynamicsOffset, 0);
-}
+	static addPhaseScan(
+		builder: flatbuffers.Builder,
+		phaseScanOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(6, phaseScanOffset, 0);
+	}
 
-static addPhaseScan(builder:flatbuffers.Builder, phaseScanOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, phaseScanOffset, 0);
-}
+	static createPhaseScanVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createPhaseScanVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startPhaseScanVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startPhaseScanVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static endFluidPhaseFrame(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // source
+		builder.requiredField(offset, 12); // wave
+		builder.requiredField(offset, 14); // hydrodynamics
+		return offset;
+	}
 
-static endFluidPhaseFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // source
-  builder.requiredField(offset, 12) // wave
-  builder.requiredField(offset, 14) // hydrodynamics
-  return offset;
-}
+	unpack(): FluidPhaseFrameT {
+		return new FluidPhaseFrameT(
+			this.source(),
+			this.at(),
+			this.phaseReady(),
+			this.phaseReason(),
+			this.bb!.createObjList<WaveMode, WaveModeT>(
+				this.wave.bind(this),
+				this.waveLength(),
+			),
+			this.hydrodynamics() !== null ? this.hydrodynamics()!.unpack() : null,
+			this.bb!.createObjList<PhaseResponse, PhaseResponseT>(
+				this.phaseScan.bind(this),
+				this.phaseScanLength(),
+			),
+		);
+	}
 
-
-unpack(): FluidPhaseFrameT {
-  return new FluidPhaseFrameT(
-    this.source(),
-    this.at(),
-    this.phaseReady(),
-    this.phaseReason(),
-    this.bb!.createObjList<WaveMode, WaveModeT>(this.wave.bind(this), this.waveLength()),
-    (this.hydrodynamics() !== null ? this.hydrodynamics()!.unpack() : null),
-    this.bb!.createObjList<PhaseResponse, PhaseResponseT>(this.phaseScan.bind(this), this.phaseScanLength())
-  );
-}
-
-
-unpackTo(_o: FluidPhaseFrameT): void {
-  _o.source = this.source();
-  _o.at = this.at();
-  _o.phaseReady = this.phaseReady();
-  _o.phaseReason = this.phaseReason();
-  _o.wave = this.bb!.createObjList<WaveMode, WaveModeT>(this.wave.bind(this), this.waveLength());
-  _o.hydrodynamics = (this.hydrodynamics() !== null ? this.hydrodynamics()!.unpack() : null);
-  _o.phaseScan = this.bb!.createObjList<PhaseResponse, PhaseResponseT>(this.phaseScan.bind(this), this.phaseScanLength());
-}
+	unpackTo(_o: FluidPhaseFrameT): void {
+		_o.source = this.source();
+		_o.at = this.at();
+		_o.phaseReady = this.phaseReady();
+		_o.phaseReason = this.phaseReason();
+		_o.wave = this.bb!.createObjList<WaveMode, WaveModeT>(
+			this.wave.bind(this),
+			this.waveLength(),
+		);
+		_o.hydrodynamics =
+			this.hydrodynamics() !== null ? this.hydrodynamics()!.unpack() : null;
+		_o.phaseScan = this.bb!.createObjList<PhaseResponse, PhaseResponseT>(
+			this.phaseScan.bind(this),
+			this.phaseScanLength(),
+		);
+	}
 }
 
 export class FluidPhaseFrameT implements flatbuffers.IGeneratedObject {
-constructor(
-  public source: string|Uint8Array|null = null,
-  public at: bigint = BigInt('0'),
-  public phaseReady: boolean = false,
-  public phaseReason: string|Uint8Array|null = null,
-  public wave: (WaveModeT)[] = [],
-  public hydrodynamics: HydrodynamicsT|null = null,
-  public phaseScan: (PhaseResponseT)[] = []
-){}
+	constructor(
+		public source: string | Uint8Array | null = null,
+		public at: bigint = BigInt("0"),
+		public phaseReady: boolean = false,
+		public phaseReason: string | Uint8Array | null = null,
+		public wave: WaveModeT[] = [],
+		public hydrodynamics: HydrodynamicsT | null = null,
+		public phaseScan: PhaseResponseT[] = [],
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const source =
+			this.source !== null ? builder.createString(this.source!) : 0;
+		const phaseReason =
+			this.phaseReason !== null ? builder.createString(this.phaseReason!) : 0;
+		const wave = FluidPhaseFrame.createWaveVector(
+			builder,
+			builder.createObjectOffsetList(this.wave),
+		);
+		const hydrodynamics =
+			this.hydrodynamics !== null ? this.hydrodynamics!.pack(builder) : 0;
+		const phaseScan = FluidPhaseFrame.createPhaseScanVector(
+			builder,
+			builder.createObjectOffsetList(this.phaseScan),
+		);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const source = (this.source !== null ? builder.createString(this.source!) : 0);
-  const phaseReason = (this.phaseReason !== null ? builder.createString(this.phaseReason!) : 0);
-  const wave = FluidPhaseFrame.createWaveVector(builder, builder.createObjectOffsetList(this.wave));
-  const hydrodynamics = (this.hydrodynamics !== null ? this.hydrodynamics!.pack(builder) : 0);
-  const phaseScan = FluidPhaseFrame.createPhaseScanVector(builder, builder.createObjectOffsetList(this.phaseScan));
+		FluidPhaseFrame.startFluidPhaseFrame(builder);
+		FluidPhaseFrame.addSource(builder, source);
+		FluidPhaseFrame.addAt(builder, this.at);
+		FluidPhaseFrame.addPhaseReady(builder, this.phaseReady);
+		FluidPhaseFrame.addPhaseReason(builder, phaseReason);
+		FluidPhaseFrame.addWave(builder, wave);
+		FluidPhaseFrame.addHydrodynamics(builder, hydrodynamics);
+		FluidPhaseFrame.addPhaseScan(builder, phaseScan);
 
-  FluidPhaseFrame.startFluidPhaseFrame(builder);
-  FluidPhaseFrame.addSource(builder, source);
-  FluidPhaseFrame.addAt(builder, this.at);
-  FluidPhaseFrame.addPhaseReady(builder, this.phaseReady);
-  FluidPhaseFrame.addPhaseReason(builder, phaseReason);
-  FluidPhaseFrame.addWave(builder, wave);
-  FluidPhaseFrame.addHydrodynamics(builder, hydrodynamics);
-  FluidPhaseFrame.addPhaseScan(builder, phaseScan);
-
-  return FluidPhaseFrame.endFluidPhaseFrame(builder);
-}
+		return FluidPhaseFrame.endFluidPhaseFrame(builder);
+	}
 }

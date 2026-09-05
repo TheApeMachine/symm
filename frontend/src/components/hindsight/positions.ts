@@ -89,7 +89,8 @@ const fillOf = (event: HindsightLifecycleEvent): PositionFill | null => {
 
 	return {
 		at: execution.fillAt || event.at,
-		price: numberOrNull(execution.avgPrice) ?? numberOrNull(execution.lastPrice),
+		price:
+			numberOrNull(execution.avgPrice) ?? numberOrNull(execution.lastPrice),
 		quantity: numberOrNull(execution.cumQty) ?? numberOrNull(execution.lastQty),
 		fee: numberOrNull(execution.feeUsdEquiv),
 		orderId: execution.orderId ?? "",
@@ -182,8 +183,7 @@ available so a reader is never left thinking the desk did nothing elsewhere.
 export const positionsFor = (
 	positions: Position[],
 	symbol: string,
-): Position[] =>
-	positions.filter((position) => position.symbol === symbol);
+): Position[] => positions.filter((position) => position.symbol === symbol);
 
 /*
 positionInstant is the instant a position edge sits at on a time axis: the

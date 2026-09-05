@@ -4,8 +4,6 @@ import { EntryCost } from "#/providers/telemetry/telemetry/entry-cost";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { NamedNumber } from "#/providers/telemetry/telemetry/named-number";
 import { Position } from "#/providers/telemetry/telemetry/position";
-import { RiskPlan } from "#/providers/telemetry/telemetry/risk-plan";
-import { Stoploss } from "#/providers/telemetry/telemetry/stoploss";
 
 export type DecisionEvidence = {
 	key: string;
@@ -48,15 +46,6 @@ export type FrozenEntryDecision = {
 		impact: string;
 		breakEven: string;
 	};
-	risk: {
-		present: boolean;
-		entryNoiseBand: string;
-		riskDistance: string;
-		trailDistance: string;
-		minEdge: string;
-		maxLoss: string;
-	};
-	stopFloor: string;
 	evidence: DecisionEvidence[];
 };
 
@@ -114,8 +103,6 @@ export const readEntryDecision = (
 	}
 
 	const cost = decision.entryCost(new EntryCost());
-	const risk = decision.risk(new RiskPlan());
-	const stop = decision.stoploss(new Stoploss());
 	const evidence: DecisionEvidence[] = [];
 	const alternative = new NamedNumber();
 
@@ -165,15 +152,6 @@ export const readEntryDecision = (
 			impact: text(cost?.impact() ?? null),
 			breakEven: text(cost?.breakEven() ?? null),
 		},
-		risk: {
-			present: risk?.present() ?? false,
-			entryNoiseBand: text(risk?.entryNoiseBand() ?? null),
-			riskDistance: text(risk?.riskDistance() ?? null),
-			trailDistance: text(risk?.trailDistance() ?? null),
-			minEdge: text(risk?.minEdge() ?? null),
-			maxLoss: text(risk?.maxLoss() ?? null),
-		},
-		stopFloor: text(stop?.floor() ?? null),
 		evidence,
 	};
 };

@@ -3,95 +3,110 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class NamedString
+	implements flatbuffers.IUnpackableObject<NamedStringT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): NamedString {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsNamedString(
+		bb: flatbuffers.ByteBuffer,
+		obj?: NamedString,
+	): NamedString {
+		return (obj || new NamedString()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class NamedString implements flatbuffers.IUnpackableObject<NamedStringT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):NamedString {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsNamedString(
+		bb: flatbuffers.ByteBuffer,
+		obj?: NamedString,
+	): NamedString {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new NamedString()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsNamedString(bb:flatbuffers.ByteBuffer, obj?:NamedString):NamedString {
-  return (obj || new NamedString()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	name(): string | null;
+	name(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	name(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsNamedString(bb:flatbuffers.ByteBuffer, obj?:NamedString):NamedString {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new NamedString()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	value(): string | null;
+	value(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	value(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-name():string|null
-name(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-name(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	static startNamedString(builder: flatbuffers.Builder) {
+		builder.startObject(2);
+	}
 
-value():string|null
-value(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-value(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	static addName(builder: flatbuffers.Builder, nameOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, nameOffset, 0);
+	}
 
-static startNamedString(builder:flatbuffers.Builder) {
-  builder.startObject(2);
-}
+	static addValue(
+		builder: flatbuffers.Builder,
+		valueOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, valueOffset, 0);
+	}
 
-static addName(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, nameOffset, 0);
-}
+	static endNamedString(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // name
+		return offset;
+	}
 
-static addValue(builder:flatbuffers.Builder, valueOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, valueOffset, 0);
-}
+	static createNamedString(
+		builder: flatbuffers.Builder,
+		nameOffset: flatbuffers.Offset,
+		valueOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		NamedString.startNamedString(builder);
+		NamedString.addName(builder, nameOffset);
+		NamedString.addValue(builder, valueOffset);
+		return NamedString.endNamedString(builder);
+	}
 
-static endNamedString(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // name
-  return offset;
-}
+	unpack(): NamedStringT {
+		return new NamedStringT(this.name(), this.value());
+	}
 
-static createNamedString(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset, valueOffset:flatbuffers.Offset):flatbuffers.Offset {
-  NamedString.startNamedString(builder);
-  NamedString.addName(builder, nameOffset);
-  NamedString.addValue(builder, valueOffset);
-  return NamedString.endNamedString(builder);
-}
-
-unpack(): NamedStringT {
-  return new NamedStringT(
-    this.name(),
-    this.value()
-  );
-}
-
-
-unpackTo(_o: NamedStringT): void {
-  _o.name = this.name();
-  _o.value = this.value();
-}
+	unpackTo(_o: NamedStringT): void {
+		_o.name = this.name();
+		_o.value = this.value();
+	}
 }
 
 export class NamedStringT implements flatbuffers.IGeneratedObject {
-constructor(
-  public name: string|Uint8Array|null = null,
-  public value: string|Uint8Array|null = null
-){}
+	constructor(
+		public name: string | Uint8Array | null = null,
+		public value: string | Uint8Array | null = null,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const name = this.name !== null ? builder.createString(this.name!) : 0;
+		const value = this.value !== null ? builder.createString(this.value!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const name = (this.name !== null ? builder.createString(this.name!) : 0);
-  const value = (this.value !== null ? builder.createString(this.value!) : 0);
-
-  return NamedString.createNamedString(builder,
-    name,
-    value
-  );
-}
+		return NamedString.createNamedString(builder, name, value);
+	}
 }

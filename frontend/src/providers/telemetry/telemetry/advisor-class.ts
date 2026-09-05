@@ -3,91 +3,104 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class AdvisorClass
+	implements flatbuffers.IUnpackableObject<AdvisorClassT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): AdvisorClass {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsAdvisorClass(
+		bb: flatbuffers.ByteBuffer,
+		obj?: AdvisorClass,
+	): AdvisorClass {
+		return (obj || new AdvisorClass()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class AdvisorClass implements flatbuffers.IUnpackableObject<AdvisorClassT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):AdvisorClass {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsAdvisorClass(
+		bb: flatbuffers.ByteBuffer,
+		obj?: AdvisorClass,
+	): AdvisorClass {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new AdvisorClass()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsAdvisorClass(bb:flatbuffers.ByteBuffer, obj?:AdvisorClass):AdvisorClass {
-  return (obj || new AdvisorClass()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	state(): string | null;
+	state(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	state(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsAdvisorClass(bb:flatbuffers.ByteBuffer, obj?:AdvisorClass):AdvisorClass {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new AdvisorClass()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	probability(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-state():string|null
-state(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-state(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	static startAdvisorClass(builder: flatbuffers.Builder) {
+		builder.startObject(2);
+	}
 
-probability():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static addState(
+		builder: flatbuffers.Builder,
+		stateOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, stateOffset, 0);
+	}
 
-static startAdvisorClass(builder:flatbuffers.Builder) {
-  builder.startObject(2);
-}
+	static addProbability(builder: flatbuffers.Builder, probability: number) {
+		builder.addFieldFloat64(1, probability, 0.0);
+	}
 
-static addState(builder:flatbuffers.Builder, stateOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, stateOffset, 0);
-}
+	static endAdvisorClass(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static addProbability(builder:flatbuffers.Builder, probability:number) {
-  builder.addFieldFloat64(1, probability, 0.0);
-}
+	static createAdvisorClass(
+		builder: flatbuffers.Builder,
+		stateOffset: flatbuffers.Offset,
+		probability: number,
+	): flatbuffers.Offset {
+		AdvisorClass.startAdvisorClass(builder);
+		AdvisorClass.addState(builder, stateOffset);
+		AdvisorClass.addProbability(builder, probability);
+		return AdvisorClass.endAdvisorClass(builder);
+	}
 
-static endAdvisorClass(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): AdvisorClassT {
+		return new AdvisorClassT(this.state(), this.probability());
+	}
 
-static createAdvisorClass(builder:flatbuffers.Builder, stateOffset:flatbuffers.Offset, probability:number):flatbuffers.Offset {
-  AdvisorClass.startAdvisorClass(builder);
-  AdvisorClass.addState(builder, stateOffset);
-  AdvisorClass.addProbability(builder, probability);
-  return AdvisorClass.endAdvisorClass(builder);
-}
-
-unpack(): AdvisorClassT {
-  return new AdvisorClassT(
-    this.state(),
-    this.probability()
-  );
-}
-
-
-unpackTo(_o: AdvisorClassT): void {
-  _o.state = this.state();
-  _o.probability = this.probability();
-}
+	unpackTo(_o: AdvisorClassT): void {
+		_o.state = this.state();
+		_o.probability = this.probability();
+	}
 }
 
 export class AdvisorClassT implements flatbuffers.IGeneratedObject {
-constructor(
-  public state: string|Uint8Array|null = null,
-  public probability: number = 0.0
-){}
+	constructor(
+		public state: string | Uint8Array | null = null,
+		public probability: number = 0.0,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const state = this.state !== null ? builder.createString(this.state!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const state = (this.state !== null ? builder.createString(this.state!) : 0);
-
-  return AdvisorClass.createAdvisorClass(builder,
-    state,
-    this.probability
-  );
-}
+		return AdvisorClass.createAdvisorClass(builder, state, this.probability);
+	}
 }

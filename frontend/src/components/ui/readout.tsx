@@ -49,7 +49,10 @@ export const Readout = ({
 				) : null}
 				<span
 					{...keyAttr}
-					className={cn("truncate font-mono text-[12px] font-bold tabular-nums", tone)}
+					className={cn(
+						"truncate font-mono text-[12px] font-bold tabular-nums",
+						tone,
+					)}
 				>
 					{value}
 				</span>

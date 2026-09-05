@@ -8,100 +8,6 @@ import (
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
-/*
-buildPerspectiveRecord projects one durable Perspective without changing its
-event-time contract. Issued records are optimizer inputs; later records remain
-available as auditable lifecycle evidence.
-*/
-func buildPerspectiveRecord(
-	runID string,
-	sequence uint64,
-	ordinal uint64,
-	tick int64,
-	perspective *telemetry.EnvelopePerspective,
-	metrics map[string]float64,
-) perspectiveRecord {
-	record := perspectiveRecord{
-		Kind:               "perspective",
-		Run:                runID,
-		Sequence:           sequence,
-		Ordinal:            ordinal,
-		Tick:               tick,
-		Symbol:             string(perspective.Symbol()),
-		Advisor:            string(perspective.Advisor()),
-		ClaimSequence:      perspective.Sequence(),
-		Classes:            make(map[string]float64, perspective.ClassesLength()),
-		Evidence:           make(map[string][]string, perspective.ClassesLength()),
-		Metrics:            metrics,
-		IssuedAt:           perspective.IssuedAt(),
-		ResolvedAt:         perspective.ResolvedAt(),
-		ResolvedCoordinate: perspective.ResolvedCoordinate(),
-		Round:              perspective.Round(),
-		Lifecycle:          string(perspective.Lifecycle()),
-		ResolvedBy:         string(perspective.ResolvedBy()),
-		Predictions:        make([]predictionRecord, 0, perspective.PredictionsLength()),
-	}
-
-	lease := perspective.Lease(nil)
-
-	if lease != nil {
-		record.Clock = string(lease.Clock())
-		record.LeaseFrom = lease.From()
-		record.LeaseUntil = lease.Until()
-	}
-
-	var highestProbability float64
-
-	for classIndex := range perspective.ClassesLength() {
-		perspectiveClass := new(telemetry.EnvelopePerspectiveClass)
-
-		if !perspective.Classes(perspectiveClass, classIndex) {
-			continue
-		}
-
-		className := string(perspectiveClass.State())
-		probability := perspectiveClass.Probability()
-		record.Classes[className] = probability
-		evidence := make([]string, 0, perspectiveClass.EvidenceLength())
-
-		for evidenceIndex := range perspectiveClass.EvidenceLength() {
-			evidence = append(evidence, string(perspectiveClass.Evidence(evidenceIndex)))
-		}
-
-		record.Evidence[className] = evidence
-
-		if probability > highestProbability {
-			highestProbability = probability
-			record.Class = className
-		}
-	}
-
-	for predictionIndex := range perspective.PredictionsLength() {
-		prediction := new(telemetry.EnvelopePerspectivePrediction)
-
-		if !perspective.Predictions(prediction, predictionIndex) {
-			continue
-		}
-
-		record.Predictions = append(record.Predictions, predictionRecord{
-			Class:  string(prediction.Class()),
-			Event:  string(prediction.Event()),
-			Effect: string(prediction.Effect()),
-			Move:   string(prediction.Move()),
-		})
-	}
-
-	return record
-}
-
-/*
-buildRound projects one persisted Decision onto the shared record.
-
-The alternatives map is the planner's own key/value record of the round, and
-its keys are already namespaced by concern (move:, consensus:, execution:,
-branch:, search:). Splitting them back out here keeps the exported object
-readable without inventing any value the planner did not write.
-*/
 func buildRound(
 	runID string,
 	sequence uint64,
@@ -155,7 +61,6 @@ func buildRound(
 		}
 	}
 
-	record.Search = buildSearch(decision.Trace(nil))
 
 	if includeMetrics && state != nil {
 		record.Metrics = extractAllMetrics(state)
@@ -270,58 +175,3 @@ func put(target map[string]float64, key string, value float64) map[string]float6
 	return target
 }
 
-/*
-buildSearch projects the causal search's trace. A round that stopped at an
-earlier gate has no trace, and reports none rather than an empty search that
-would read as a search that found nothing.
-*/
-func buildSearch(trace *telemetry.DecisionTrace) *searchRound {
-	if trace == nil {
-		return nil
-	}
-
-	search := &searchRound{
-		RecommendedAction:    string(trace.RecommendedAction()),
-		IdentificationStatus: string(trace.IdentificationStatus()),
-		DecisionUnavailable:  trace.DecisionUnavailable(),
-		Iterations:           trace.Iterations(),
-		Horizon:              trace.Horizon(),
-		MaxDepth:             trace.MaxDepth(),
-		TotalNodes:           trace.TotalNodes(),
-		ExpectedOutcome:      trace.ExpectedOutcome(),
-		OutcomeUncertainty:   trace.OutcomeUncertainty(),
-		TransitionSource:     string(trace.TransitionSource()),
-		DominantMove:         string(trace.ConsensusDominantMove()),
-		Participants:         trace.ConsensusParticipants(),
-	}
-
-	for index := range trace.VetoesLength() {
-		search.Vetoes = append(search.Vetoes, string(trace.Vetoes(index)))
-	}
-
-	for index := range trace.SynergiesLength() {
-		search.Synergies = append(search.Synergies, string(trace.Synergies(index)))
-	}
-
-	for index := range trace.BranchesLength() {
-		branch := new(telemetry.MCTSBranch)
-
-		if !trace.Branches(branch, index) {
-			continue
-		}
-
-		search.Branches = append(search.Branches, searchBranch{
-			Action:             string(branch.Action()),
-			Visits:             branch.Visits(),
-			MeanReward:         branch.MeanReward(),
-			BlendedValue:       branch.BlendedValue(),
-			RewardStd:          branch.RewardStd(),
-			CounterfactualMass: branch.CounterfactualMass(),
-			CausalExpectation:  branch.CausalExpectation(),
-			CausalDefined:      branch.CausalExpectationDefined(),
-			Pruned:             branch.Pruned(),
-		})
-	}
-
-	return search
-}

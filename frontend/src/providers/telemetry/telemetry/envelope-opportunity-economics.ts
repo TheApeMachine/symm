@@ -3,151 +3,209 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { EnvelopeExcursion, EnvelopeExcursionT } from '../telemetry/envelope-excursion.js';
+import {
+	EnvelopeExcursion,
+	type EnvelopeExcursionT,
+} from "../telemetry/envelope-excursion.js";
 
+export class EnvelopeOpportunityEconomics
+	implements flatbuffers.IUnpackableObject<EnvelopeOpportunityEconomicsT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeOpportunityEconomics {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-export class EnvelopeOpportunityEconomics implements flatbuffers.IUnpackableObject<EnvelopeOpportunityEconomicsT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeOpportunityEconomics {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
+	static getRootAsEnvelopeOpportunityEconomics(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeOpportunityEconomics,
+	): EnvelopeOpportunityEconomics {
+		return (obj || new EnvelopeOpportunityEconomics()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	static getSizePrefixedRootAsEnvelopeOpportunityEconomics(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeOpportunityEconomics,
+	): EnvelopeOpportunityEconomics {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopeOpportunityEconomics()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	calibrated(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	transitionProbability(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	profitFirst(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	favorableExcursion(obj?: EnvelopeExcursion): EnvelopeExcursion | null {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset
+			? (obj || new EnvelopeExcursion()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	adverseExcursion(obj?: EnvelopeExcursion): EnvelopeExcursion | null {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset
+			? (obj || new EnvelopeExcursion()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	resolutionNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	uncertainty(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	static startEnvelopeOpportunityEconomics(builder: flatbuffers.Builder) {
+		builder.startObject(7);
+	}
+
+	static addCalibrated(builder: flatbuffers.Builder, calibrated: boolean) {
+		builder.addFieldInt8(0, +calibrated, +false);
+	}
+
+	static addTransitionProbability(
+		builder: flatbuffers.Builder,
+		transitionProbability: number,
+	) {
+		builder.addFieldFloat64(1, transitionProbability, 0.0);
+	}
+
+	static addProfitFirst(builder: flatbuffers.Builder, profitFirst: number) {
+		builder.addFieldFloat64(2, profitFirst, 0.0);
+	}
+
+	static addFavorableExcursion(
+		builder: flatbuffers.Builder,
+		favorableExcursionOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(3, favorableExcursionOffset, 0);
+	}
+
+	static addAdverseExcursion(
+		builder: flatbuffers.Builder,
+		adverseExcursionOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(4, adverseExcursionOffset, 0);
+	}
+
+	static addResolutionNs(builder: flatbuffers.Builder, resolutionNs: bigint) {
+		builder.addFieldInt64(5, resolutionNs, BigInt("0"));
+	}
+
+	static addUncertainty(builder: flatbuffers.Builder, uncertainty: number) {
+		builder.addFieldFloat64(6, uncertainty, 0.0);
+	}
+
+	static endEnvelopeOpportunityEconomics(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
+
+	unpack(): EnvelopeOpportunityEconomicsT {
+		return new EnvelopeOpportunityEconomicsT(
+			this.calibrated(),
+			this.transitionProbability(),
+			this.profitFirst(),
+			this.favorableExcursion() !== null
+				? this.favorableExcursion()!.unpack()
+				: null,
+			this.adverseExcursion() !== null
+				? this.adverseExcursion()!.unpack()
+				: null,
+			this.resolutionNs(),
+			this.uncertainty(),
+		);
+	}
+
+	unpackTo(_o: EnvelopeOpportunityEconomicsT): void {
+		_o.calibrated = this.calibrated();
+		_o.transitionProbability = this.transitionProbability();
+		_o.profitFirst = this.profitFirst();
+		_o.favorableExcursion =
+			this.favorableExcursion() !== null
+				? this.favorableExcursion()!.unpack()
+				: null;
+		_o.adverseExcursion =
+			this.adverseExcursion() !== null
+				? this.adverseExcursion()!.unpack()
+				: null;
+		_o.resolutionNs = this.resolutionNs();
+		_o.uncertainty = this.uncertainty();
+	}
 }
 
-static getRootAsEnvelopeOpportunityEconomics(bb:flatbuffers.ByteBuffer, obj?:EnvelopeOpportunityEconomics):EnvelopeOpportunityEconomics {
-  return (obj || new EnvelopeOpportunityEconomics()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+export class EnvelopeOpportunityEconomicsT
+	implements flatbuffers.IGeneratedObject
+{
+	constructor(
+		public calibrated: boolean = false,
+		public transitionProbability: number = 0.0,
+		public profitFirst: number = 0.0,
+		public favorableExcursion: EnvelopeExcursionT | null = null,
+		public adverseExcursion: EnvelopeExcursionT | null = null,
+		public resolutionNs: bigint = BigInt("0"),
+		public uncertainty: number = 0.0,
+	) {}
 
-static getSizePrefixedRootAsEnvelopeOpportunityEconomics(bb:flatbuffers.ByteBuffer, obj?:EnvelopeOpportunityEconomics):EnvelopeOpportunityEconomics {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeOpportunityEconomics()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const favorableExcursion =
+			this.favorableExcursion !== null
+				? this.favorableExcursion!.pack(builder)
+				: 0;
+		const adverseExcursion =
+			this.adverseExcursion !== null ? this.adverseExcursion!.pack(builder) : 0;
 
-calibrated():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+		EnvelopeOpportunityEconomics.startEnvelopeOpportunityEconomics(builder);
+		EnvelopeOpportunityEconomics.addCalibrated(builder, this.calibrated);
+		EnvelopeOpportunityEconomics.addTransitionProbability(
+			builder,
+			this.transitionProbability,
+		);
+		EnvelopeOpportunityEconomics.addProfitFirst(builder, this.profitFirst);
+		EnvelopeOpportunityEconomics.addFavorableExcursion(
+			builder,
+			favorableExcursion,
+		);
+		EnvelopeOpportunityEconomics.addAdverseExcursion(builder, adverseExcursion);
+		EnvelopeOpportunityEconomics.addResolutionNs(builder, this.resolutionNs);
+		EnvelopeOpportunityEconomics.addUncertainty(builder, this.uncertainty);
 
-transitionProbability():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-profitFirst():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-favorableExcursion(obj?:EnvelopeExcursion):EnvelopeExcursion|null {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? (obj || new EnvelopeExcursion()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-adverseExcursion(obj?:EnvelopeExcursion):EnvelopeExcursion|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? (obj || new EnvelopeExcursion()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-resolutionNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-uncertainty():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-static startEnvelopeOpportunityEconomics(builder:flatbuffers.Builder) {
-  builder.startObject(7);
-}
-
-static addCalibrated(builder:flatbuffers.Builder, calibrated:boolean) {
-  builder.addFieldInt8(0, +calibrated, +false);
-}
-
-static addTransitionProbability(builder:flatbuffers.Builder, transitionProbability:number) {
-  builder.addFieldFloat64(1, transitionProbability, 0.0);
-}
-
-static addProfitFirst(builder:flatbuffers.Builder, profitFirst:number) {
-  builder.addFieldFloat64(2, profitFirst, 0.0);
-}
-
-static addFavorableExcursion(builder:flatbuffers.Builder, favorableExcursionOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(3, favorableExcursionOffset, 0);
-}
-
-static addAdverseExcursion(builder:flatbuffers.Builder, adverseExcursionOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, adverseExcursionOffset, 0);
-}
-
-static addResolutionNs(builder:flatbuffers.Builder, resolutionNs:bigint) {
-  builder.addFieldInt64(5, resolutionNs, BigInt('0'));
-}
-
-static addUncertainty(builder:flatbuffers.Builder, uncertainty:number) {
-  builder.addFieldFloat64(6, uncertainty, 0.0);
-}
-
-static endEnvelopeOpportunityEconomics(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
-
-
-unpack(): EnvelopeOpportunityEconomicsT {
-  return new EnvelopeOpportunityEconomicsT(
-    this.calibrated(),
-    this.transitionProbability(),
-    this.profitFirst(),
-    (this.favorableExcursion() !== null ? this.favorableExcursion()!.unpack() : null),
-    (this.adverseExcursion() !== null ? this.adverseExcursion()!.unpack() : null),
-    this.resolutionNs(),
-    this.uncertainty()
-  );
-}
-
-
-unpackTo(_o: EnvelopeOpportunityEconomicsT): void {
-  _o.calibrated = this.calibrated();
-  _o.transitionProbability = this.transitionProbability();
-  _o.profitFirst = this.profitFirst();
-  _o.favorableExcursion = (this.favorableExcursion() !== null ? this.favorableExcursion()!.unpack() : null);
-  _o.adverseExcursion = (this.adverseExcursion() !== null ? this.adverseExcursion()!.unpack() : null);
-  _o.resolutionNs = this.resolutionNs();
-  _o.uncertainty = this.uncertainty();
-}
-}
-
-export class EnvelopeOpportunityEconomicsT implements flatbuffers.IGeneratedObject {
-constructor(
-  public calibrated: boolean = false,
-  public transitionProbability: number = 0.0,
-  public profitFirst: number = 0.0,
-  public favorableExcursion: EnvelopeExcursionT|null = null,
-  public adverseExcursion: EnvelopeExcursionT|null = null,
-  public resolutionNs: bigint = BigInt('0'),
-  public uncertainty: number = 0.0
-){}
-
-
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const favorableExcursion = (this.favorableExcursion !== null ? this.favorableExcursion!.pack(builder) : 0);
-  const adverseExcursion = (this.adverseExcursion !== null ? this.adverseExcursion!.pack(builder) : 0);
-
-  EnvelopeOpportunityEconomics.startEnvelopeOpportunityEconomics(builder);
-  EnvelopeOpportunityEconomics.addCalibrated(builder, this.calibrated);
-  EnvelopeOpportunityEconomics.addTransitionProbability(builder, this.transitionProbability);
-  EnvelopeOpportunityEconomics.addProfitFirst(builder, this.profitFirst);
-  EnvelopeOpportunityEconomics.addFavorableExcursion(builder, favorableExcursion);
-  EnvelopeOpportunityEconomics.addAdverseExcursion(builder, adverseExcursion);
-  EnvelopeOpportunityEconomics.addResolutionNs(builder, this.resolutionNs);
-  EnvelopeOpportunityEconomics.addUncertainty(builder, this.uncertainty);
-
-  return EnvelopeOpportunityEconomics.endEnvelopeOpportunityEconomics(builder);
-}
+		return EnvelopeOpportunityEconomics.endEnvelopeOpportunityEconomics(
+			builder,
+		);
+	}
 }

@@ -3,176 +3,205 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class PerspectiveReading
+	implements flatbuffers.IUnpackableObject<PerspectiveReadingT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): PerspectiveReading {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsPerspectiveReading(
+		bb: flatbuffers.ByteBuffer,
+		obj?: PerspectiveReading,
+	): PerspectiveReading {
+		return (obj || new PerspectiveReading()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class PerspectiveReading implements flatbuffers.IUnpackableObject<PerspectiveReadingT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):PerspectiveReading {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsPerspectiveReading(
+		bb: flatbuffers.ByteBuffer,
+		obj?: PerspectiveReading,
+	): PerspectiveReading {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new PerspectiveReading()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsPerspectiveReading(bb:flatbuffers.ByteBuffer, obj?:PerspectiveReading):PerspectiveReading {
-  return (obj || new PerspectiveReading()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	metric(): string | null;
+	metric(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	metric(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsPerspectiveReading(bb:flatbuffers.ByteBuffer, obj?:PerspectiveReading):PerspectiveReading {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new PerspectiveReading()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	value(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-metric():string|null
-metric(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-metric(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	defined(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-value():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	observedAt(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-defined():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	from(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-observedAt():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	maturity(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-from():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	snr(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-maturity():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	snrDefined(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-snr():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static startPerspectiveReading(builder: flatbuffers.Builder) {
+		builder.startObject(8);
+	}
 
-snrDefined():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	static addMetric(
+		builder: flatbuffers.Builder,
+		metricOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, metricOffset, 0);
+	}
 
-static startPerspectiveReading(builder:flatbuffers.Builder) {
-  builder.startObject(8);
-}
+	static addValue(builder: flatbuffers.Builder, value: number) {
+		builder.addFieldFloat64(1, value, 0.0);
+	}
 
-static addMetric(builder:flatbuffers.Builder, metricOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, metricOffset, 0);
-}
+	static addDefined(builder: flatbuffers.Builder, defined: boolean) {
+		builder.addFieldInt8(2, +defined, +false);
+	}
 
-static addValue(builder:flatbuffers.Builder, value:number) {
-  builder.addFieldFloat64(1, value, 0.0);
-}
+	static addObservedAt(builder: flatbuffers.Builder, observedAt: bigint) {
+		builder.addFieldInt64(3, observedAt, BigInt("0"));
+	}
 
-static addDefined(builder:flatbuffers.Builder, defined:boolean) {
-  builder.addFieldInt8(2, +defined, +false);
-}
+	static addFrom(builder: flatbuffers.Builder, from: bigint) {
+		builder.addFieldInt64(4, from, BigInt("0"));
+	}
 
-static addObservedAt(builder:flatbuffers.Builder, observedAt:bigint) {
-  builder.addFieldInt64(3, observedAt, BigInt('0'));
-}
+	static addMaturity(builder: flatbuffers.Builder, maturity: number) {
+		builder.addFieldFloat64(5, maturity, 0.0);
+	}
 
-static addFrom(builder:flatbuffers.Builder, from:bigint) {
-  builder.addFieldInt64(4, from, BigInt('0'));
-}
+	static addSnr(builder: flatbuffers.Builder, snr: number) {
+		builder.addFieldFloat64(6, snr, 0.0);
+	}
 
-static addMaturity(builder:flatbuffers.Builder, maturity:number) {
-  builder.addFieldFloat64(5, maturity, 0.0);
-}
+	static addSnrDefined(builder: flatbuffers.Builder, snrDefined: boolean) {
+		builder.addFieldInt8(7, +snrDefined, +false);
+	}
 
-static addSnr(builder:flatbuffers.Builder, snr:number) {
-  builder.addFieldFloat64(6, snr, 0.0);
-}
+	static endPerspectiveReading(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // metric
+		return offset;
+	}
 
-static addSnrDefined(builder:flatbuffers.Builder, snrDefined:boolean) {
-  builder.addFieldInt8(7, +snrDefined, +false);
-}
+	static createPerspectiveReading(
+		builder: flatbuffers.Builder,
+		metricOffset: flatbuffers.Offset,
+		value: number,
+		defined: boolean,
+		observedAt: bigint,
+		from: bigint,
+		maturity: number,
+		snr: number,
+		snrDefined: boolean,
+	): flatbuffers.Offset {
+		PerspectiveReading.startPerspectiveReading(builder);
+		PerspectiveReading.addMetric(builder, metricOffset);
+		PerspectiveReading.addValue(builder, value);
+		PerspectiveReading.addDefined(builder, defined);
+		PerspectiveReading.addObservedAt(builder, observedAt);
+		PerspectiveReading.addFrom(builder, from);
+		PerspectiveReading.addMaturity(builder, maturity);
+		PerspectiveReading.addSnr(builder, snr);
+		PerspectiveReading.addSnrDefined(builder, snrDefined);
+		return PerspectiveReading.endPerspectiveReading(builder);
+	}
 
-static endPerspectiveReading(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // metric
-  return offset;
-}
+	unpack(): PerspectiveReadingT {
+		return new PerspectiveReadingT(
+			this.metric(),
+			this.value(),
+			this.defined(),
+			this.observedAt(),
+			this.from(),
+			this.maturity(),
+			this.snr(),
+			this.snrDefined(),
+		);
+	}
 
-static createPerspectiveReading(builder:flatbuffers.Builder, metricOffset:flatbuffers.Offset, value:number, defined:boolean, observedAt:bigint, from:bigint, maturity:number, snr:number, snrDefined:boolean):flatbuffers.Offset {
-  PerspectiveReading.startPerspectiveReading(builder);
-  PerspectiveReading.addMetric(builder, metricOffset);
-  PerspectiveReading.addValue(builder, value);
-  PerspectiveReading.addDefined(builder, defined);
-  PerspectiveReading.addObservedAt(builder, observedAt);
-  PerspectiveReading.addFrom(builder, from);
-  PerspectiveReading.addMaturity(builder, maturity);
-  PerspectiveReading.addSnr(builder, snr);
-  PerspectiveReading.addSnrDefined(builder, snrDefined);
-  return PerspectiveReading.endPerspectiveReading(builder);
-}
-
-unpack(): PerspectiveReadingT {
-  return new PerspectiveReadingT(
-    this.metric(),
-    this.value(),
-    this.defined(),
-    this.observedAt(),
-    this.from(),
-    this.maturity(),
-    this.snr(),
-    this.snrDefined()
-  );
-}
-
-
-unpackTo(_o: PerspectiveReadingT): void {
-  _o.metric = this.metric();
-  _o.value = this.value();
-  _o.defined = this.defined();
-  _o.observedAt = this.observedAt();
-  _o.from = this.from();
-  _o.maturity = this.maturity();
-  _o.snr = this.snr();
-  _o.snrDefined = this.snrDefined();
-}
+	unpackTo(_o: PerspectiveReadingT): void {
+		_o.metric = this.metric();
+		_o.value = this.value();
+		_o.defined = this.defined();
+		_o.observedAt = this.observedAt();
+		_o.from = this.from();
+		_o.maturity = this.maturity();
+		_o.snr = this.snr();
+		_o.snrDefined = this.snrDefined();
+	}
 }
 
 export class PerspectiveReadingT implements flatbuffers.IGeneratedObject {
-constructor(
-  public metric: string|Uint8Array|null = null,
-  public value: number = 0.0,
-  public defined: boolean = false,
-  public observedAt: bigint = BigInt('0'),
-  public from: bigint = BigInt('0'),
-  public maturity: number = 0.0,
-  public snr: number = 0.0,
-  public snrDefined: boolean = false
-){}
+	constructor(
+		public metric: string | Uint8Array | null = null,
+		public value: number = 0.0,
+		public defined: boolean = false,
+		public observedAt: bigint = BigInt("0"),
+		public from: bigint = BigInt("0"),
+		public maturity: number = 0.0,
+		public snr: number = 0.0,
+		public snrDefined: boolean = false,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const metric =
+			this.metric !== null ? builder.createString(this.metric!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const metric = (this.metric !== null ? builder.createString(this.metric!) : 0);
-
-  return PerspectiveReading.createPerspectiveReading(builder,
-    metric,
-    this.value,
-    this.defined,
-    this.observedAt,
-    this.from,
-    this.maturity,
-    this.snr,
-    this.snrDefined
-  );
-}
+		return PerspectiveReading.createPerspectiveReading(
+			builder,
+			metric,
+			this.value,
+			this.defined,
+			this.observedAt,
+			this.from,
+			this.maturity,
+			this.snr,
+			this.snrDefined,
+		);
+	}
 }

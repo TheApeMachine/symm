@@ -3,693 +3,1056 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
-
-import { EnvelopeBoundaryStamp, EnvelopeBoundaryStampT } from '../telemetry/envelope-boundary-stamp.js';
-import { EnvelopeCategory, EnvelopeCategoryT } from '../telemetry/envelope-category.js';
-import { EnvelopeCognition, EnvelopeCognitionT } from '../telemetry/envelope-cognition.js';
-import { EnvelopeFuturesTickerData, EnvelopeFuturesTickerDataT } from '../telemetry/envelope-futures-ticker-data.js';
-import { EnvelopeFuturesTradeData, EnvelopeFuturesTradeDataT } from '../telemetry/envelope-futures-trade-data.js';
-import { EnvelopeGraphUpdate, EnvelopeGraphUpdateT } from '../telemetry/envelope-graph-update.js';
-import { EnvelopeLevel3Data, EnvelopeLevel3DataT } from '../telemetry/envelope-level3-data.js';
-import { EnvelopeLiquiditySweepWithRecoveryUpdate, EnvelopeLiquiditySweepWithRecoveryUpdateT } from '../telemetry/envelope-liquidity-sweep-with-recovery-update.js';
-import { EnvelopeManifoldState, EnvelopeManifoldStateT } from '../telemetry/envelope-manifold-state.js';
-import { EnvelopeMeasurement, EnvelopeMeasurementT } from '../telemetry/envelope-measurement.js';
-import { EnvelopeOpportunityCandidate, EnvelopeOpportunityCandidateT } from '../telemetry/envelope-opportunity-candidate.js';
-import { EnvelopePerspective, EnvelopePerspectiveT } from '../telemetry/envelope-perspective.js';
-import { EnvelopeResonanceArtifact, EnvelopeResonanceArtifactT } from '../telemetry/envelope-resonance-artifact.js';
-import { EnvelopeTickerData, EnvelopeTickerDataT } from '../telemetry/envelope-ticker-data.js';
-import { EnvelopeTradeData, EnvelopeTradeDataT } from '../telemetry/envelope-trade-data.js';
-import { EquityFrame, EquityFrameT } from '../telemetry/equity-frame.js';
-import { PerspectiveFrame, PerspectiveFrameT } from '../telemetry/perspective-frame.js';
-import { PositionsFrame, PositionsFrameT } from '../telemetry/positions-frame.js';
-import { StrategyFrame, StrategyFrameT } from '../telemetry/strategy-frame.js';
-
-
-export class EnvelopeState implements flatbuffers.IUnpackableObject<EnvelopeStateT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeState {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
-
-static getRootAsEnvelopeState(bb:flatbuffers.ByteBuffer, obj?:EnvelopeState):EnvelopeState {
-  return (obj || new EnvelopeState()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
-
-static getSizePrefixedRootAsEnvelopeState(bb:flatbuffers.ByteBuffer, obj?:EnvelopeState):EnvelopeState {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeState()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
-
-key():string|null
-key(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-key(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-typeId():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readUint8(this.bb_pos + offset) : 0;
-}
-
-captureRun():string|null
-captureRun(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-captureRun(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-captureSeq():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
-
-captureStream():string|null
-captureStream(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-captureStream(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-captureEpoch():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
-
-captureStreamSeq():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
-
-captureOrdinal():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
-
-tickerData(obj?:EnvelopeTickerData):EnvelopeTickerData|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? (obj || new EnvelopeTickerData()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-tradeData(obj?:EnvelopeTradeData):EnvelopeTradeData|null {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? (obj || new EnvelopeTradeData()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-level3Data(obj?:EnvelopeLevel3Data):EnvelopeLevel3Data|null {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? (obj || new EnvelopeLevel3Data()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-futuresTickerData(obj?:EnvelopeFuturesTickerData):EnvelopeFuturesTickerData|null {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? (obj || new EnvelopeFuturesTickerData()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-futuresTradeData(obj?:EnvelopeFuturesTradeData):EnvelopeFuturesTradeData|null {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? (obj || new EnvelopeFuturesTradeData()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-correlation(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
-  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-leadLag(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
-  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-liquidity(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
-  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-sentiment(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
-  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-cvd(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
-  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-depthFlow(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
-  const offset = this.bb!.__offset(this.bb_pos, 40);
-  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-morphology(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
-  const offset = this.bb!.__offset(this.bb_pos, 42);
-  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-hawkes(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
-  const offset = this.bb!.__offset(this.bb_pos, 44);
-  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-pumpDump(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
-  const offset = this.bb!.__offset(this.bb_pos, 46);
-  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-toxicity(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
-  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-derivatives(obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
-  const offset = this.bb!.__offset(this.bb_pos, 50);
-  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-categories(index: number, obj?:EnvelopeCategory):EnvelopeCategory|null {
-  const offset = this.bb!.__offset(this.bb_pos, 52);
-  return offset ? (obj || new EnvelopeCategory()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
-
-categoriesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 52);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-opportunities(index: number, obj?:EnvelopeOpportunityCandidate):EnvelopeOpportunityCandidate|null {
-  const offset = this.bb!.__offset(this.bb_pos, 54);
-  return offset ? (obj || new EnvelopeOpportunityCandidate()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
-
-opportunitiesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 54);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-graphUpdate(obj?:EnvelopeGraphUpdate):EnvelopeGraphUpdate|null {
-  const offset = this.bb!.__offset(this.bb_pos, 56);
-  return offset ? (obj || new EnvelopeGraphUpdate()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-resonance(obj?:EnvelopeResonanceArtifact):EnvelopeResonanceArtifact|null {
-  const offset = this.bb!.__offset(this.bb_pos, 58);
-  return offset ? (obj || new EnvelopeResonanceArtifact()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-manifold(obj?:EnvelopeManifoldState):EnvelopeManifoldState|null {
-  const offset = this.bb!.__offset(this.bb_pos, 60);
-  return offset ? (obj || new EnvelopeManifoldState()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-cognition(obj?:EnvelopeCognition):EnvelopeCognition|null {
-  const offset = this.bb!.__offset(this.bb_pos, 62);
-  return offset ? (obj || new EnvelopeCognition()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-boundaries(index: number, obj?:EnvelopeBoundaryStamp):EnvelopeBoundaryStamp|null {
-  const offset = this.bb!.__offset(this.bb_pos, 64);
-  return offset ? (obj || new EnvelopeBoundaryStamp()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
-
-boundariesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 64);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-strategy(obj?:StrategyFrame):StrategyFrame|null {
-  const offset = this.bb!.__offset(this.bb_pos, 66);
-  return offset ? (obj || new StrategyFrame()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-perspectiveFrames(index: number, obj?:PerspectiveFrame):PerspectiveFrame|null {
-  const offset = this.bb!.__offset(this.bb_pos, 68);
-  return offset ? (obj || new PerspectiveFrame()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
-
-perspectiveFramesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 68);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-tick():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 70);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-equity(obj?:EquityFrame):EquityFrame|null {
-  const offset = this.bb!.__offset(this.bb_pos, 72);
-  return offset ? (obj || new EquityFrame()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-positions(obj?:PositionsFrame):PositionsFrame|null {
-  const offset = this.bb!.__offset(this.bb_pos, 74);
-  return offset ? (obj || new PositionsFrame()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-liquiditySweepWithRecovery(obj?:EnvelopeLiquiditySweepWithRecoveryUpdate):EnvelopeLiquiditySweepWithRecoveryUpdate|null {
-  const offset = this.bb!.__offset(this.bb_pos, 76);
-  return offset ? (obj || new EnvelopeLiquiditySweepWithRecoveryUpdate()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-perspectives(index: number, obj?:EnvelopePerspective):EnvelopePerspective|null {
-  const offset = this.bb!.__offset(this.bb_pos, 78);
-  return offset ? (obj || new EnvelopePerspective()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
-
-perspectivesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 78);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-static startEnvelopeState(builder:flatbuffers.Builder) {
-  builder.startObject(38);
-}
-
-static addKey(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, keyOffset, 0);
-}
-
-static addTypeId(builder:flatbuffers.Builder, typeId:number) {
-  builder.addFieldInt8(1, typeId, 0);
-}
-
-static addCaptureRun(builder:flatbuffers.Builder, captureRunOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, captureRunOffset, 0);
-}
-
-static addCaptureSeq(builder:flatbuffers.Builder, captureSeq:bigint) {
-  builder.addFieldInt64(3, captureSeq, BigInt('0'));
-}
-
-static addCaptureStream(builder:flatbuffers.Builder, captureStreamOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, captureStreamOffset, 0);
-}
-
-static addCaptureEpoch(builder:flatbuffers.Builder, captureEpoch:bigint) {
-  builder.addFieldInt64(5, captureEpoch, BigInt('0'));
-}
-
-static addCaptureStreamSeq(builder:flatbuffers.Builder, captureStreamSeq:bigint) {
-  builder.addFieldInt64(6, captureStreamSeq, BigInt('0'));
-}
-
-static addCaptureOrdinal(builder:flatbuffers.Builder, captureOrdinal:bigint) {
-  builder.addFieldInt64(7, captureOrdinal, BigInt('0'));
-}
-
-static addTickerData(builder:flatbuffers.Builder, tickerDataOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, tickerDataOffset, 0);
-}
-
-static addTradeData(builder:flatbuffers.Builder, tradeDataOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(9, tradeDataOffset, 0);
-}
-
-static addLevel3Data(builder:flatbuffers.Builder, level3DataOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(10, level3DataOffset, 0);
-}
-
-static addFuturesTickerData(builder:flatbuffers.Builder, futuresTickerDataOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(11, futuresTickerDataOffset, 0);
-}
-
-static addFuturesTradeData(builder:flatbuffers.Builder, futuresTradeDataOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(12, futuresTradeDataOffset, 0);
-}
-
-static addCorrelation(builder:flatbuffers.Builder, correlationOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(13, correlationOffset, 0);
-}
-
-static addLeadLag(builder:flatbuffers.Builder, leadLagOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(14, leadLagOffset, 0);
-}
-
-static addLiquidity(builder:flatbuffers.Builder, liquidityOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(15, liquidityOffset, 0);
-}
-
-static addSentiment(builder:flatbuffers.Builder, sentimentOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(16, sentimentOffset, 0);
-}
-
-static addCvd(builder:flatbuffers.Builder, cvdOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(17, cvdOffset, 0);
-}
-
-static addDepthFlow(builder:flatbuffers.Builder, depthFlowOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(18, depthFlowOffset, 0);
-}
-
-static addMorphology(builder:flatbuffers.Builder, morphologyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(19, morphologyOffset, 0);
-}
-
-static addHawkes(builder:flatbuffers.Builder, hawkesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(20, hawkesOffset, 0);
-}
-
-static addPumpDump(builder:flatbuffers.Builder, pumpDumpOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(21, pumpDumpOffset, 0);
-}
-
-static addToxicity(builder:flatbuffers.Builder, toxicityOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(22, toxicityOffset, 0);
-}
-
-static addDerivatives(builder:flatbuffers.Builder, derivativesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(23, derivativesOffset, 0);
-}
-
-static addCategories(builder:flatbuffers.Builder, categoriesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(24, categoriesOffset, 0);
-}
-
-static createCategoriesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startCategoriesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static addOpportunities(builder:flatbuffers.Builder, opportunitiesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(25, opportunitiesOffset, 0);
-}
-
-static createOpportunitiesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startOpportunitiesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static addGraphUpdate(builder:flatbuffers.Builder, graphUpdateOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(26, graphUpdateOffset, 0);
-}
-
-static addResonance(builder:flatbuffers.Builder, resonanceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(27, resonanceOffset, 0);
-}
-
-static addManifold(builder:flatbuffers.Builder, manifoldOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(28, manifoldOffset, 0);
-}
-
-static addCognition(builder:flatbuffers.Builder, cognitionOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(29, cognitionOffset, 0);
-}
-
-static addBoundaries(builder:flatbuffers.Builder, boundariesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(30, boundariesOffset, 0);
-}
-
-static createBoundariesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startBoundariesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static addStrategy(builder:flatbuffers.Builder, strategyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(31, strategyOffset, 0);
-}
-
-static addPerspectiveFrames(builder:flatbuffers.Builder, perspectiveFramesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(32, perspectiveFramesOffset, 0);
-}
-
-static createPerspectiveFramesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startPerspectiveFramesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static addTick(builder:flatbuffers.Builder, tick:bigint) {
-  builder.addFieldInt64(33, tick, BigInt('0'));
-}
-
-static addEquity(builder:flatbuffers.Builder, equityOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(34, equityOffset, 0);
-}
-
-static addPositions(builder:flatbuffers.Builder, positionsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(35, positionsOffset, 0);
-}
-
-static addLiquiditySweepWithRecovery(builder:flatbuffers.Builder, liquiditySweepWithRecoveryOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(36, liquiditySweepWithRecoveryOffset, 0);
-}
-
-static addPerspectives(builder:flatbuffers.Builder, perspectivesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(37, perspectivesOffset, 0);
-}
-
-static createPerspectivesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startPerspectivesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static endEnvelopeState(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
-
-
-unpack(): EnvelopeStateT {
-  return new EnvelopeStateT(
-    this.key(),
-    this.typeId(),
-    this.captureRun(),
-    this.captureSeq(),
-    this.captureStream(),
-    this.captureEpoch(),
-    this.captureStreamSeq(),
-    this.captureOrdinal(),
-    (this.tickerData() !== null ? this.tickerData()!.unpack() : null),
-    (this.tradeData() !== null ? this.tradeData()!.unpack() : null),
-    (this.level3Data() !== null ? this.level3Data()!.unpack() : null),
-    (this.futuresTickerData() !== null ? this.futuresTickerData()!.unpack() : null),
-    (this.futuresTradeData() !== null ? this.futuresTradeData()!.unpack() : null),
-    (this.correlation() !== null ? this.correlation()!.unpack() : null),
-    (this.leadLag() !== null ? this.leadLag()!.unpack() : null),
-    (this.liquidity() !== null ? this.liquidity()!.unpack() : null),
-    (this.sentiment() !== null ? this.sentiment()!.unpack() : null),
-    (this.cvd() !== null ? this.cvd()!.unpack() : null),
-    (this.depthFlow() !== null ? this.depthFlow()!.unpack() : null),
-    (this.morphology() !== null ? this.morphology()!.unpack() : null),
-    (this.hawkes() !== null ? this.hawkes()!.unpack() : null),
-    (this.pumpDump() !== null ? this.pumpDump()!.unpack() : null),
-    (this.toxicity() !== null ? this.toxicity()!.unpack() : null),
-    (this.derivatives() !== null ? this.derivatives()!.unpack() : null),
-    this.bb!.createObjList<EnvelopeCategory, EnvelopeCategoryT>(this.categories.bind(this), this.categoriesLength()),
-    this.bb!.createObjList<EnvelopeOpportunityCandidate, EnvelopeOpportunityCandidateT>(this.opportunities.bind(this), this.opportunitiesLength()),
-    (this.graphUpdate() !== null ? this.graphUpdate()!.unpack() : null),
-    (this.resonance() !== null ? this.resonance()!.unpack() : null),
-    (this.manifold() !== null ? this.manifold()!.unpack() : null),
-    (this.cognition() !== null ? this.cognition()!.unpack() : null),
-    this.bb!.createObjList<EnvelopeBoundaryStamp, EnvelopeBoundaryStampT>(this.boundaries.bind(this), this.boundariesLength()),
-    (this.strategy() !== null ? this.strategy()!.unpack() : null),
-    this.bb!.createObjList<PerspectiveFrame, PerspectiveFrameT>(this.perspectiveFrames.bind(this), this.perspectiveFramesLength()),
-    this.tick(),
-    (this.equity() !== null ? this.equity()!.unpack() : null),
-    (this.positions() !== null ? this.positions()!.unpack() : null),
-    (this.liquiditySweepWithRecovery() !== null ? this.liquiditySweepWithRecovery()!.unpack() : null),
-    this.bb!.createObjList<EnvelopePerspective, EnvelopePerspectiveT>(this.perspectives.bind(this), this.perspectivesLength())
-  );
-}
-
-
-unpackTo(_o: EnvelopeStateT): void {
-  _o.key = this.key();
-  _o.typeId = this.typeId();
-  _o.captureRun = this.captureRun();
-  _o.captureSeq = this.captureSeq();
-  _o.captureStream = this.captureStream();
-  _o.captureEpoch = this.captureEpoch();
-  _o.captureStreamSeq = this.captureStreamSeq();
-  _o.captureOrdinal = this.captureOrdinal();
-  _o.tickerData = (this.tickerData() !== null ? this.tickerData()!.unpack() : null);
-  _o.tradeData = (this.tradeData() !== null ? this.tradeData()!.unpack() : null);
-  _o.level3Data = (this.level3Data() !== null ? this.level3Data()!.unpack() : null);
-  _o.futuresTickerData = (this.futuresTickerData() !== null ? this.futuresTickerData()!.unpack() : null);
-  _o.futuresTradeData = (this.futuresTradeData() !== null ? this.futuresTradeData()!.unpack() : null);
-  _o.correlation = (this.correlation() !== null ? this.correlation()!.unpack() : null);
-  _o.leadLag = (this.leadLag() !== null ? this.leadLag()!.unpack() : null);
-  _o.liquidity = (this.liquidity() !== null ? this.liquidity()!.unpack() : null);
-  _o.sentiment = (this.sentiment() !== null ? this.sentiment()!.unpack() : null);
-  _o.cvd = (this.cvd() !== null ? this.cvd()!.unpack() : null);
-  _o.depthFlow = (this.depthFlow() !== null ? this.depthFlow()!.unpack() : null);
-  _o.morphology = (this.morphology() !== null ? this.morphology()!.unpack() : null);
-  _o.hawkes = (this.hawkes() !== null ? this.hawkes()!.unpack() : null);
-  _o.pumpDump = (this.pumpDump() !== null ? this.pumpDump()!.unpack() : null);
-  _o.toxicity = (this.toxicity() !== null ? this.toxicity()!.unpack() : null);
-  _o.derivatives = (this.derivatives() !== null ? this.derivatives()!.unpack() : null);
-  _o.categories = this.bb!.createObjList<EnvelopeCategory, EnvelopeCategoryT>(this.categories.bind(this), this.categoriesLength());
-  _o.opportunities = this.bb!.createObjList<EnvelopeOpportunityCandidate, EnvelopeOpportunityCandidateT>(this.opportunities.bind(this), this.opportunitiesLength());
-  _o.graphUpdate = (this.graphUpdate() !== null ? this.graphUpdate()!.unpack() : null);
-  _o.resonance = (this.resonance() !== null ? this.resonance()!.unpack() : null);
-  _o.manifold = (this.manifold() !== null ? this.manifold()!.unpack() : null);
-  _o.cognition = (this.cognition() !== null ? this.cognition()!.unpack() : null);
-  _o.boundaries = this.bb!.createObjList<EnvelopeBoundaryStamp, EnvelopeBoundaryStampT>(this.boundaries.bind(this), this.boundariesLength());
-  _o.strategy = (this.strategy() !== null ? this.strategy()!.unpack() : null);
-  _o.perspectiveFrames = this.bb!.createObjList<PerspectiveFrame, PerspectiveFrameT>(this.perspectiveFrames.bind(this), this.perspectiveFramesLength());
-  _o.tick = this.tick();
-  _o.equity = (this.equity() !== null ? this.equity()!.unpack() : null);
-  _o.positions = (this.positions() !== null ? this.positions()!.unpack() : null);
-  _o.liquiditySweepWithRecovery = (this.liquiditySweepWithRecovery() !== null ? this.liquiditySweepWithRecovery()!.unpack() : null);
-  _o.perspectives = this.bb!.createObjList<EnvelopePerspective, EnvelopePerspectiveT>(this.perspectives.bind(this), this.perspectivesLength());
-}
+import * as flatbuffers from "flatbuffers";
+
+import {
+	EnvelopeBoundaryStamp,
+	type EnvelopeBoundaryStampT,
+} from "../telemetry/envelope-boundary-stamp.js";
+import {
+	EnvelopeCategory,
+	type EnvelopeCategoryT,
+} from "../telemetry/envelope-category.js";
+import {
+	EnvelopeCognition,
+	type EnvelopeCognitionT,
+} from "../telemetry/envelope-cognition.js";
+import {
+	EnvelopeFuturesTickerData,
+	type EnvelopeFuturesTickerDataT,
+} from "../telemetry/envelope-futures-ticker-data.js";
+import {
+	EnvelopeFuturesTradeData,
+	type EnvelopeFuturesTradeDataT,
+} from "../telemetry/envelope-futures-trade-data.js";
+import {
+	EnvelopeGraphUpdate,
+	type EnvelopeGraphUpdateT,
+} from "../telemetry/envelope-graph-update.js";
+import {
+	EnvelopeLevel3Data,
+	type EnvelopeLevel3DataT,
+} from "../telemetry/envelope-level3-data.js";
+import {
+	EnvelopeManifoldState,
+	type EnvelopeManifoldStateT,
+} from "../telemetry/envelope-manifold-state.js";
+import {
+	EnvelopeMeasurement,
+	type EnvelopeMeasurementT,
+} from "../telemetry/envelope-measurement.js";
+import {
+	EnvelopeOpportunityCandidate,
+	type EnvelopeOpportunityCandidateT,
+} from "../telemetry/envelope-opportunity-candidate.js";
+import {
+	EnvelopeResonanceArtifact,
+	type EnvelopeResonanceArtifactT,
+} from "../telemetry/envelope-resonance-artifact.js";
+import {
+	EnvelopeTickerData,
+	type EnvelopeTickerDataT,
+} from "../telemetry/envelope-ticker-data.js";
+import {
+	EnvelopeTradeData,
+	type EnvelopeTradeDataT,
+} from "../telemetry/envelope-trade-data.js";
+import { EquityFrame, type EquityFrameT } from "../telemetry/equity-frame.js";
+import {
+	PerspectiveFrame,
+	type PerspectiveFrameT,
+} from "../telemetry/perspective-frame.js";
+import {
+	PositionsFrame,
+	type PositionsFrameT,
+} from "../telemetry/positions-frame.js";
+import {
+	StrategyFrame,
+	type StrategyFrameT,
+} from "../telemetry/strategy-frame.js";
+
+export class EnvelopeState
+	implements flatbuffers.IUnpackableObject<EnvelopeStateT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeState {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
+
+	static getRootAsEnvelopeState(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeState,
+	): EnvelopeState {
+		return (obj || new EnvelopeState()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	static getSizePrefixedRootAsEnvelopeState(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeState,
+	): EnvelopeState {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopeState()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	key(): string | null;
+	key(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	key(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	typeId(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readUint8(this.bb_pos + offset) : 0;
+	}
+
+	captureRun(): string | null;
+	captureRun(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	captureRun(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	captureSeq(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	captureStream(): string | null;
+	captureStream(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	captureStream(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	captureEpoch(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	captureStreamSeq(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	captureOrdinal(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	tickerData(obj?: EnvelopeTickerData): EnvelopeTickerData | null {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset
+			? (obj || new EnvelopeTickerData()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	tradeData(obj?: EnvelopeTradeData): EnvelopeTradeData | null {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset
+			? (obj || new EnvelopeTradeData()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	level3Data(obj?: EnvelopeLevel3Data): EnvelopeLevel3Data | null {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset
+			? (obj || new EnvelopeLevel3Data()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	futuresTickerData(
+		obj?: EnvelopeFuturesTickerData,
+	): EnvelopeFuturesTickerData | null {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset
+			? (obj || new EnvelopeFuturesTickerData()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	futuresTradeData(
+		obj?: EnvelopeFuturesTradeData,
+	): EnvelopeFuturesTradeData | null {
+		const offset = this.bb!.__offset(this.bb_pos, 28);
+		return offset
+			? (obj || new EnvelopeFuturesTradeData()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	correlation(obj?: EnvelopeMeasurement): EnvelopeMeasurement | null {
+		const offset = this.bb!.__offset(this.bb_pos, 30);
+		return offset
+			? (obj || new EnvelopeMeasurement()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	leadLag(obj?: EnvelopeMeasurement): EnvelopeMeasurement | null {
+		const offset = this.bb!.__offset(this.bb_pos, 32);
+		return offset
+			? (obj || new EnvelopeMeasurement()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	liquidity(obj?: EnvelopeMeasurement): EnvelopeMeasurement | null {
+		const offset = this.bb!.__offset(this.bb_pos, 34);
+		return offset
+			? (obj || new EnvelopeMeasurement()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	sentiment(obj?: EnvelopeMeasurement): EnvelopeMeasurement | null {
+		const offset = this.bb!.__offset(this.bb_pos, 36);
+		return offset
+			? (obj || new EnvelopeMeasurement()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	cvd(obj?: EnvelopeMeasurement): EnvelopeMeasurement | null {
+		const offset = this.bb!.__offset(this.bb_pos, 38);
+		return offset
+			? (obj || new EnvelopeMeasurement()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	depthFlow(obj?: EnvelopeMeasurement): EnvelopeMeasurement | null {
+		const offset = this.bb!.__offset(this.bb_pos, 40);
+		return offset
+			? (obj || new EnvelopeMeasurement()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	morphology(obj?: EnvelopeMeasurement): EnvelopeMeasurement | null {
+		const offset = this.bb!.__offset(this.bb_pos, 42);
+		return offset
+			? (obj || new EnvelopeMeasurement()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	hawkes(obj?: EnvelopeMeasurement): EnvelopeMeasurement | null {
+		const offset = this.bb!.__offset(this.bb_pos, 44);
+		return offset
+			? (obj || new EnvelopeMeasurement()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	pumpDump(obj?: EnvelopeMeasurement): EnvelopeMeasurement | null {
+		const offset = this.bb!.__offset(this.bb_pos, 46);
+		return offset
+			? (obj || new EnvelopeMeasurement()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	toxicity(obj?: EnvelopeMeasurement): EnvelopeMeasurement | null {
+		const offset = this.bb!.__offset(this.bb_pos, 48);
+		return offset
+			? (obj || new EnvelopeMeasurement()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	derivatives(obj?: EnvelopeMeasurement): EnvelopeMeasurement | null {
+		const offset = this.bb!.__offset(this.bb_pos, 50);
+		return offset
+			? (obj || new EnvelopeMeasurement()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	categories(index: number, obj?: EnvelopeCategory): EnvelopeCategory | null {
+		const offset = this.bb!.__offset(this.bb_pos, 52);
+		return offset
+			? (obj || new EnvelopeCategory()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
+
+	categoriesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 52);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	opportunities(
+		index: number,
+		obj?: EnvelopeOpportunityCandidate,
+	): EnvelopeOpportunityCandidate | null {
+		const offset = this.bb!.__offset(this.bb_pos, 54);
+		return offset
+			? (obj || new EnvelopeOpportunityCandidate()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
+
+	opportunitiesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 54);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	graphUpdate(obj?: EnvelopeGraphUpdate): EnvelopeGraphUpdate | null {
+		const offset = this.bb!.__offset(this.bb_pos, 56);
+		return offset
+			? (obj || new EnvelopeGraphUpdate()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	resonance(obj?: EnvelopeResonanceArtifact): EnvelopeResonanceArtifact | null {
+		const offset = this.bb!.__offset(this.bb_pos, 58);
+		return offset
+			? (obj || new EnvelopeResonanceArtifact()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	manifold(obj?: EnvelopeManifoldState): EnvelopeManifoldState | null {
+		const offset = this.bb!.__offset(this.bb_pos, 60);
+		return offset
+			? (obj || new EnvelopeManifoldState()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	cognition(obj?: EnvelopeCognition): EnvelopeCognition | null {
+		const offset = this.bb!.__offset(this.bb_pos, 62);
+		return offset
+			? (obj || new EnvelopeCognition()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	boundaries(
+		index: number,
+		obj?: EnvelopeBoundaryStamp,
+	): EnvelopeBoundaryStamp | null {
+		const offset = this.bb!.__offset(this.bb_pos, 64);
+		return offset
+			? (obj || new EnvelopeBoundaryStamp()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
+
+	boundariesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 64);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	strategy(obj?: StrategyFrame): StrategyFrame | null {
+		const offset = this.bb!.__offset(this.bb_pos, 66);
+		return offset
+			? (obj || new StrategyFrame()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	perspectiveFrames(
+		index: number,
+		obj?: PerspectiveFrame,
+	): PerspectiveFrame | null {
+		const offset = this.bb!.__offset(this.bb_pos, 68);
+		return offset
+			? (obj || new PerspectiveFrame()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
+
+	perspectiveFramesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 68);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	tick(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 70);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	equity(obj?: EquityFrame): EquityFrame | null {
+		const offset = this.bb!.__offset(this.bb_pos, 72);
+		return offset
+			? (obj || new EquityFrame()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	positions(obj?: PositionsFrame): PositionsFrame | null {
+		const offset = this.bb!.__offset(this.bb_pos, 74);
+		return offset
+			? (obj || new PositionsFrame()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	static startEnvelopeState(builder: flatbuffers.Builder) {
+		builder.startObject(38);
+	}
+
+	static addKey(builder: flatbuffers.Builder, keyOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, keyOffset, 0);
+	}
+
+	static addTypeId(builder: flatbuffers.Builder, typeId: number) {
+		builder.addFieldInt8(1, typeId, 0);
+	}
+
+	static addCaptureRun(
+		builder: flatbuffers.Builder,
+		captureRunOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, captureRunOffset, 0);
+	}
+
+	static addCaptureSeq(builder: flatbuffers.Builder, captureSeq: bigint) {
+		builder.addFieldInt64(3, captureSeq, BigInt("0"));
+	}
+
+	static addCaptureStream(
+		builder: flatbuffers.Builder,
+		captureStreamOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(4, captureStreamOffset, 0);
+	}
+
+	static addCaptureEpoch(builder: flatbuffers.Builder, captureEpoch: bigint) {
+		builder.addFieldInt64(5, captureEpoch, BigInt("0"));
+	}
+
+	static addCaptureStreamSeq(
+		builder: flatbuffers.Builder,
+		captureStreamSeq: bigint,
+	) {
+		builder.addFieldInt64(6, captureStreamSeq, BigInt("0"));
+	}
+
+	static addCaptureOrdinal(
+		builder: flatbuffers.Builder,
+		captureOrdinal: bigint,
+	) {
+		builder.addFieldInt64(7, captureOrdinal, BigInt("0"));
+	}
+
+	static addTickerData(
+		builder: flatbuffers.Builder,
+		tickerDataOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(8, tickerDataOffset, 0);
+	}
+
+	static addTradeData(
+		builder: flatbuffers.Builder,
+		tradeDataOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(9, tradeDataOffset, 0);
+	}
+
+	static addLevel3Data(
+		builder: flatbuffers.Builder,
+		level3DataOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(10, level3DataOffset, 0);
+	}
+
+	static addFuturesTickerData(
+		builder: flatbuffers.Builder,
+		futuresTickerDataOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(11, futuresTickerDataOffset, 0);
+	}
+
+	static addFuturesTradeData(
+		builder: flatbuffers.Builder,
+		futuresTradeDataOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(12, futuresTradeDataOffset, 0);
+	}
+
+	static addCorrelation(
+		builder: flatbuffers.Builder,
+		correlationOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(13, correlationOffset, 0);
+	}
+
+	static addLeadLag(
+		builder: flatbuffers.Builder,
+		leadLagOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(14, leadLagOffset, 0);
+	}
+
+	static addLiquidity(
+		builder: flatbuffers.Builder,
+		liquidityOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(15, liquidityOffset, 0);
+	}
+
+	static addSentiment(
+		builder: flatbuffers.Builder,
+		sentimentOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(16, sentimentOffset, 0);
+	}
+
+	static addCvd(builder: flatbuffers.Builder, cvdOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(17, cvdOffset, 0);
+	}
+
+	static addDepthFlow(
+		builder: flatbuffers.Builder,
+		depthFlowOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(18, depthFlowOffset, 0);
+	}
+
+	static addMorphology(
+		builder: flatbuffers.Builder,
+		morphologyOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(19, morphologyOffset, 0);
+	}
+
+	static addHawkes(
+		builder: flatbuffers.Builder,
+		hawkesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(20, hawkesOffset, 0);
+	}
+
+	static addPumpDump(
+		builder: flatbuffers.Builder,
+		pumpDumpOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(21, pumpDumpOffset, 0);
+	}
+
+	static addToxicity(
+		builder: flatbuffers.Builder,
+		toxicityOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(22, toxicityOffset, 0);
+	}
+
+	static addDerivatives(
+		builder: flatbuffers.Builder,
+		derivativesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(23, derivativesOffset, 0);
+	}
+
+	static addCategories(
+		builder: flatbuffers.Builder,
+		categoriesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(24, categoriesOffset, 0);
+	}
+
+	static createCategoriesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startCategoriesVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static addOpportunities(
+		builder: flatbuffers.Builder,
+		opportunitiesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(25, opportunitiesOffset, 0);
+	}
+
+	static createOpportunitiesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startOpportunitiesVector(
+		builder: flatbuffers.Builder,
+		numElems: number,
+	) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static addGraphUpdate(
+		builder: flatbuffers.Builder,
+		graphUpdateOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(26, graphUpdateOffset, 0);
+	}
+
+	static addResonance(
+		builder: flatbuffers.Builder,
+		resonanceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(27, resonanceOffset, 0);
+	}
+
+	static addManifold(
+		builder: flatbuffers.Builder,
+		manifoldOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(28, manifoldOffset, 0);
+	}
+
+	static addCognition(
+		builder: flatbuffers.Builder,
+		cognitionOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(29, cognitionOffset, 0);
+	}
+
+	static addBoundaries(
+		builder: flatbuffers.Builder,
+		boundariesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(30, boundariesOffset, 0);
+	}
+
+	static createBoundariesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startBoundariesVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static addStrategy(
+		builder: flatbuffers.Builder,
+		strategyOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(31, strategyOffset, 0);
+	}
+
+	static addPerspectiveFrames(
+		builder: flatbuffers.Builder,
+		perspectiveFramesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(32, perspectiveFramesOffset, 0);
+	}
+
+	static createPerspectiveFramesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startPerspectiveFramesVector(
+		builder: flatbuffers.Builder,
+		numElems: number,
+	) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static addTick(builder: flatbuffers.Builder, tick: bigint) {
+		builder.addFieldInt64(33, tick, BigInt("0"));
+	}
+
+	static addEquity(
+		builder: flatbuffers.Builder,
+		equityOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(34, equityOffset, 0);
+	}
+
+	static addPositions(
+		builder: flatbuffers.Builder,
+		positionsOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(35, positionsOffset, 0);
+	}
+
+	static endEnvelopeState(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
+
+	unpack(): EnvelopeStateT {
+		return new EnvelopeStateT(
+			this.key(),
+			this.typeId(),
+			this.captureRun(),
+			this.captureSeq(),
+			this.captureStream(),
+			this.captureEpoch(),
+			this.captureStreamSeq(),
+			this.captureOrdinal(),
+			this.tickerData() !== null ? this.tickerData()!.unpack() : null,
+			this.tradeData() !== null ? this.tradeData()!.unpack() : null,
+			this.level3Data() !== null ? this.level3Data()!.unpack() : null,
+			this.futuresTickerData() !== null
+				? this.futuresTickerData()!.unpack()
+				: null,
+			this.futuresTradeData() !== null
+				? this.futuresTradeData()!.unpack()
+				: null,
+			this.correlation() !== null ? this.correlation()!.unpack() : null,
+			this.leadLag() !== null ? this.leadLag()!.unpack() : null,
+			this.liquidity() !== null ? this.liquidity()!.unpack() : null,
+			this.sentiment() !== null ? this.sentiment()!.unpack() : null,
+			this.cvd() !== null ? this.cvd()!.unpack() : null,
+			this.depthFlow() !== null ? this.depthFlow()!.unpack() : null,
+			this.morphology() !== null ? this.morphology()!.unpack() : null,
+			this.hawkes() !== null ? this.hawkes()!.unpack() : null,
+			this.pumpDump() !== null ? this.pumpDump()!.unpack() : null,
+			this.toxicity() !== null ? this.toxicity()!.unpack() : null,
+			this.derivatives() !== null ? this.derivatives()!.unpack() : null,
+			this.bb!.createObjList<EnvelopeCategory, EnvelopeCategoryT>(
+				this.categories.bind(this),
+				this.categoriesLength(),
+			),
+			this.bb!.createObjList<
+				EnvelopeOpportunityCandidate,
+				EnvelopeOpportunityCandidateT
+			>(this.opportunities.bind(this), this.opportunitiesLength()),
+			this.graphUpdate() !== null ? this.graphUpdate()!.unpack() : null,
+			this.resonance() !== null ? this.resonance()!.unpack() : null,
+			this.manifold() !== null ? this.manifold()!.unpack() : null,
+			this.cognition() !== null ? this.cognition()!.unpack() : null,
+			this.bb!.createObjList<EnvelopeBoundaryStamp, EnvelopeBoundaryStampT>(
+				this.boundaries.bind(this),
+				this.boundariesLength(),
+			),
+			this.strategy() !== null ? this.strategy()!.unpack() : null,
+			this.bb!.createObjList<PerspectiveFrame, PerspectiveFrameT>(
+				this.perspectiveFrames.bind(this),
+				this.perspectiveFramesLength(),
+			),
+			this.tick(),
+			this.equity() !== null ? this.equity()!.unpack() : null,
+			this.positions() !== null ? this.positions()!.unpack() : null,
+		);
+	}
+
+	unpackTo(_o: EnvelopeStateT): void {
+		_o.key = this.key();
+		_o.typeId = this.typeId();
+		_o.captureRun = this.captureRun();
+		_o.captureSeq = this.captureSeq();
+		_o.captureStream = this.captureStream();
+		_o.captureEpoch = this.captureEpoch();
+		_o.captureStreamSeq = this.captureStreamSeq();
+		_o.captureOrdinal = this.captureOrdinal();
+		_o.tickerData =
+			this.tickerData() !== null ? this.tickerData()!.unpack() : null;
+		_o.tradeData =
+			this.tradeData() !== null ? this.tradeData()!.unpack() : null;
+		_o.level3Data =
+			this.level3Data() !== null ? this.level3Data()!.unpack() : null;
+		_o.futuresTickerData =
+			this.futuresTickerData() !== null
+				? this.futuresTickerData()!.unpack()
+				: null;
+		_o.futuresTradeData =
+			this.futuresTradeData() !== null
+				? this.futuresTradeData()!.unpack()
+				: null;
+		_o.correlation =
+			this.correlation() !== null ? this.correlation()!.unpack() : null;
+		_o.leadLag = this.leadLag() !== null ? this.leadLag()!.unpack() : null;
+		_o.liquidity =
+			this.liquidity() !== null ? this.liquidity()!.unpack() : null;
+		_o.sentiment =
+			this.sentiment() !== null ? this.sentiment()!.unpack() : null;
+		_o.cvd = this.cvd() !== null ? this.cvd()!.unpack() : null;
+		_o.depthFlow =
+			this.depthFlow() !== null ? this.depthFlow()!.unpack() : null;
+		_o.morphology =
+			this.morphology() !== null ? this.morphology()!.unpack() : null;
+		_o.hawkes = this.hawkes() !== null ? this.hawkes()!.unpack() : null;
+		_o.pumpDump = this.pumpDump() !== null ? this.pumpDump()!.unpack() : null;
+		_o.toxicity = this.toxicity() !== null ? this.toxicity()!.unpack() : null;
+		_o.derivatives =
+			this.derivatives() !== null ? this.derivatives()!.unpack() : null;
+		_o.categories = this.bb!.createObjList<EnvelopeCategory, EnvelopeCategoryT>(
+			this.categories.bind(this),
+			this.categoriesLength(),
+		);
+		_o.opportunities = this.bb!.createObjList<
+			EnvelopeOpportunityCandidate,
+			EnvelopeOpportunityCandidateT
+		>(this.opportunities.bind(this), this.opportunitiesLength());
+		_o.graphUpdate =
+			this.graphUpdate() !== null ? this.graphUpdate()!.unpack() : null;
+		_o.resonance =
+			this.resonance() !== null ? this.resonance()!.unpack() : null;
+		_o.manifold = this.manifold() !== null ? this.manifold()!.unpack() : null;
+		_o.cognition =
+			this.cognition() !== null ? this.cognition()!.unpack() : null;
+		_o.boundaries = this.bb!.createObjList<
+			EnvelopeBoundaryStamp,
+			EnvelopeBoundaryStampT
+		>(this.boundaries.bind(this), this.boundariesLength());
+		_o.strategy = this.strategy() !== null ? this.strategy()!.unpack() : null;
+		_o.perspectiveFrames = this.bb!.createObjList<
+			PerspectiveFrame,
+			PerspectiveFrameT
+		>(this.perspectiveFrames.bind(this), this.perspectiveFramesLength());
+		_o.tick = this.tick();
+		_o.equity = this.equity() !== null ? this.equity()!.unpack() : null;
+		_o.positions =
+			this.positions() !== null ? this.positions()!.unpack() : null;
+	}
 }
 
 export class EnvelopeStateT implements flatbuffers.IGeneratedObject {
-constructor(
-  public key: string|Uint8Array|null = null,
-  public typeId: number = 0,
-  public captureRun: string|Uint8Array|null = null,
-  public captureSeq: bigint = BigInt('0'),
-  public captureStream: string|Uint8Array|null = null,
-  public captureEpoch: bigint = BigInt('0'),
-  public captureStreamSeq: bigint = BigInt('0'),
-  public captureOrdinal: bigint = BigInt('0'),
-  public tickerData: EnvelopeTickerDataT|null = null,
-  public tradeData: EnvelopeTradeDataT|null = null,
-  public level3Data: EnvelopeLevel3DataT|null = null,
-  public futuresTickerData: EnvelopeFuturesTickerDataT|null = null,
-  public futuresTradeData: EnvelopeFuturesTradeDataT|null = null,
-  public correlation: EnvelopeMeasurementT|null = null,
-  public leadLag: EnvelopeMeasurementT|null = null,
-  public liquidity: EnvelopeMeasurementT|null = null,
-  public sentiment: EnvelopeMeasurementT|null = null,
-  public cvd: EnvelopeMeasurementT|null = null,
-  public depthFlow: EnvelopeMeasurementT|null = null,
-  public morphology: EnvelopeMeasurementT|null = null,
-  public hawkes: EnvelopeMeasurementT|null = null,
-  public pumpDump: EnvelopeMeasurementT|null = null,
-  public toxicity: EnvelopeMeasurementT|null = null,
-  public derivatives: EnvelopeMeasurementT|null = null,
-  public categories: (EnvelopeCategoryT)[] = [],
-  public opportunities: (EnvelopeOpportunityCandidateT)[] = [],
-  public graphUpdate: EnvelopeGraphUpdateT|null = null,
-  public resonance: EnvelopeResonanceArtifactT|null = null,
-  public manifold: EnvelopeManifoldStateT|null = null,
-  public cognition: EnvelopeCognitionT|null = null,
-  public boundaries: (EnvelopeBoundaryStampT)[] = [],
-  public strategy: StrategyFrameT|null = null,
-  public perspectiveFrames: (PerspectiveFrameT)[] = [],
-  public tick: bigint = BigInt('0'),
-  public equity: EquityFrameT|null = null,
-  public positions: PositionsFrameT|null = null,
-  public liquiditySweepWithRecovery: EnvelopeLiquiditySweepWithRecoveryUpdateT|null = null,
-  public perspectives: (EnvelopePerspectiveT)[] = []
-){}
+	constructor(
+		public key: string | Uint8Array | null = null,
+		public typeId: number = 0,
+		public captureRun: string | Uint8Array | null = null,
+		public captureSeq: bigint = BigInt("0"),
+		public captureStream: string | Uint8Array | null = null,
+		public captureEpoch: bigint = BigInt("0"),
+		public captureStreamSeq: bigint = BigInt("0"),
+		public captureOrdinal: bigint = BigInt("0"),
+		public tickerData: EnvelopeTickerDataT | null = null,
+		public tradeData: EnvelopeTradeDataT | null = null,
+		public level3Data: EnvelopeLevel3DataT | null = null,
+		public futuresTickerData: EnvelopeFuturesTickerDataT | null = null,
+		public futuresTradeData: EnvelopeFuturesTradeDataT | null = null,
+		public correlation: EnvelopeMeasurementT | null = null,
+		public leadLag: EnvelopeMeasurementT | null = null,
+		public liquidity: EnvelopeMeasurementT | null = null,
+		public sentiment: EnvelopeMeasurementT | null = null,
+		public cvd: EnvelopeMeasurementT | null = null,
+		public depthFlow: EnvelopeMeasurementT | null = null,
+		public morphology: EnvelopeMeasurementT | null = null,
+		public hawkes: EnvelopeMeasurementT | null = null,
+		public pumpDump: EnvelopeMeasurementT | null = null,
+		public toxicity: EnvelopeMeasurementT | null = null,
+		public derivatives: EnvelopeMeasurementT | null = null,
+		public categories: EnvelopeCategoryT[] = [],
+		public opportunities: EnvelopeOpportunityCandidateT[] = [],
+		public graphUpdate: EnvelopeGraphUpdateT | null = null,
+		public resonance: EnvelopeResonanceArtifactT | null = null,
+		public manifold: EnvelopeManifoldStateT | null = null,
+		public cognition: EnvelopeCognitionT | null = null,
+		public boundaries: EnvelopeBoundaryStampT[] = [],
+		public strategy: StrategyFrameT | null = null,
+		public perspectiveFrames: PerspectiveFrameT[] = [],
+		public tick: bigint = BigInt("0"),
+		public equity: EquityFrameT | null = null,
+		public positions: PositionsFrameT | null = null,
+	) {}
 
-
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const key = (this.key !== null ? builder.createString(this.key!) : 0);
-  const captureRun = (this.captureRun !== null ? builder.createString(this.captureRun!) : 0);
-  const captureStream = (this.captureStream !== null ? builder.createString(this.captureStream!) : 0);
-  const tickerData = (this.tickerData !== null ? this.tickerData!.pack(builder) : 0);
-  const tradeData = (this.tradeData !== null ? this.tradeData!.pack(builder) : 0);
-  const level3Data = (this.level3Data !== null ? this.level3Data!.pack(builder) : 0);
-  const futuresTickerData = (this.futuresTickerData !== null ? this.futuresTickerData!.pack(builder) : 0);
-  const futuresTradeData = (this.futuresTradeData !== null ? this.futuresTradeData!.pack(builder) : 0);
-  const correlation = (this.correlation !== null ? this.correlation!.pack(builder) : 0);
-  const leadLag = (this.leadLag !== null ? this.leadLag!.pack(builder) : 0);
-  const liquidity = (this.liquidity !== null ? this.liquidity!.pack(builder) : 0);
-  const sentiment = (this.sentiment !== null ? this.sentiment!.pack(builder) : 0);
-  const cvd = (this.cvd !== null ? this.cvd!.pack(builder) : 0);
-  const depthFlow = (this.depthFlow !== null ? this.depthFlow!.pack(builder) : 0);
-  const morphology = (this.morphology !== null ? this.morphology!.pack(builder) : 0);
-  const hawkes = (this.hawkes !== null ? this.hawkes!.pack(builder) : 0);
-  const pumpDump = (this.pumpDump !== null ? this.pumpDump!.pack(builder) : 0);
-  const toxicity = (this.toxicity !== null ? this.toxicity!.pack(builder) : 0);
-  const derivatives = (this.derivatives !== null ? this.derivatives!.pack(builder) : 0);
-  const categories = EnvelopeState.createCategoriesVector(builder, builder.createObjectOffsetList(this.categories));
-  const opportunities = EnvelopeState.createOpportunitiesVector(builder, builder.createObjectOffsetList(this.opportunities));
-  const graphUpdate = (this.graphUpdate !== null ? this.graphUpdate!.pack(builder) : 0);
-  const resonance = (this.resonance !== null ? this.resonance!.pack(builder) : 0);
-  const manifold = (this.manifold !== null ? this.manifold!.pack(builder) : 0);
-  const cognition = (this.cognition !== null ? this.cognition!.pack(builder) : 0);
-  const boundaries = EnvelopeState.createBoundariesVector(builder, builder.createObjectOffsetList(this.boundaries));
-  const strategy = (this.strategy !== null ? this.strategy!.pack(builder) : 0);
-  const perspectiveFrames = EnvelopeState.createPerspectiveFramesVector(builder, builder.createObjectOffsetList(this.perspectiveFrames));
-  const equity = (this.equity !== null ? this.equity!.pack(builder) : 0);
-  const positions = (this.positions !== null ? this.positions!.pack(builder) : 0);
-  const liquiditySweepWithRecovery = (this.liquiditySweepWithRecovery !== null ? this.liquiditySweepWithRecovery!.pack(builder) : 0);
-  const perspectives = EnvelopeState.createPerspectivesVector(builder, builder.createObjectOffsetList(this.perspectives));
-
-  EnvelopeState.startEnvelopeState(builder);
-  EnvelopeState.addKey(builder, key);
-  EnvelopeState.addTypeId(builder, this.typeId);
-  EnvelopeState.addCaptureRun(builder, captureRun);
-  EnvelopeState.addCaptureSeq(builder, this.captureSeq);
-  EnvelopeState.addCaptureStream(builder, captureStream);
-  EnvelopeState.addCaptureEpoch(builder, this.captureEpoch);
-  EnvelopeState.addCaptureStreamSeq(builder, this.captureStreamSeq);
-  EnvelopeState.addCaptureOrdinal(builder, this.captureOrdinal);
-  EnvelopeState.addTickerData(builder, tickerData);
-  EnvelopeState.addTradeData(builder, tradeData);
-  EnvelopeState.addLevel3Data(builder, level3Data);
-  EnvelopeState.addFuturesTickerData(builder, futuresTickerData);
-  EnvelopeState.addFuturesTradeData(builder, futuresTradeData);
-  EnvelopeState.addCorrelation(builder, correlation);
-  EnvelopeState.addLeadLag(builder, leadLag);
-  EnvelopeState.addLiquidity(builder, liquidity);
-  EnvelopeState.addSentiment(builder, sentiment);
-  EnvelopeState.addCvd(builder, cvd);
-  EnvelopeState.addDepthFlow(builder, depthFlow);
-  EnvelopeState.addMorphology(builder, morphology);
-  EnvelopeState.addHawkes(builder, hawkes);
-  EnvelopeState.addPumpDump(builder, pumpDump);
-  EnvelopeState.addToxicity(builder, toxicity);
-  EnvelopeState.addDerivatives(builder, derivatives);
-  EnvelopeState.addCategories(builder, categories);
-  EnvelopeState.addOpportunities(builder, opportunities);
-  EnvelopeState.addGraphUpdate(builder, graphUpdate);
-  EnvelopeState.addResonance(builder, resonance);
-  EnvelopeState.addManifold(builder, manifold);
-  EnvelopeState.addCognition(builder, cognition);
-  EnvelopeState.addBoundaries(builder, boundaries);
-  EnvelopeState.addStrategy(builder, strategy);
-  EnvelopeState.addPerspectiveFrames(builder, perspectiveFrames);
-  EnvelopeState.addTick(builder, this.tick);
-  EnvelopeState.addEquity(builder, equity);
-  EnvelopeState.addPositions(builder, positions);
-  EnvelopeState.addLiquiditySweepWithRecovery(builder, liquiditySweepWithRecovery);
-  EnvelopeState.addPerspectives(builder, perspectives);
-
-  return EnvelopeState.endEnvelopeState(builder);
-}
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const key = this.key !== null ? builder.createString(this.key!) : 0;
+		const captureRun =
+			this.captureRun !== null ? builder.createString(this.captureRun!) : 0;
+		const captureStream =
+			this.captureStream !== null
+				? builder.createString(this.captureStream!)
+				: 0;
+		const tickerData =
+			this.tickerData !== null ? this.tickerData!.pack(builder) : 0;
+		const tradeData =
+			this.tradeData !== null ? this.tradeData!.pack(builder) : 0;
+		const level3Data =
+			this.level3Data !== null ? this.level3Data!.pack(builder) : 0;
+		const futuresTickerData =
+			this.futuresTickerData !== null
+				? this.futuresTickerData!.pack(builder)
+				: 0;
+		const futuresTradeData =
+			this.futuresTradeData !== null ? this.futuresTradeData!.pack(builder) : 0;
+		const correlation =
+			this.correlation !== null ? this.correlation!.pack(builder) : 0;
+		const leadLag = this.leadLag !== null ? this.leadLag!.pack(builder) : 0;
+		const liquidity =
+			this.liquidity !== null ? this.liquidity!.pack(builder) : 0;
+		const sentiment =
+			this.sentiment !== null ? this.sentiment!.pack(builder) : 0;
+		const cvd = this.cvd !== null ? this.cvd!.pack(builder) : 0;
+		const depthFlow =
+			this.depthFlow !== null ? this.depthFlow!.pack(builder) : 0;
+		const morphology =
+			this.morphology !== null ? this.morphology!.pack(builder) : 0;
+		const hawkes = this.hawkes !== null ? this.hawkes!.pack(builder) : 0;
+		const pumpDump = this.pumpDump !== null ? this.pumpDump!.pack(builder) : 0;
+		const toxicity = this.toxicity !== null ? this.toxicity!.pack(builder) : 0;
+		const derivatives =
+			this.derivatives !== null ? this.derivatives!.pack(builder) : 0;
+		const categories = EnvelopeState.createCategoriesVector(
+			builder,
+			builder.createObjectOffsetList(this.categories),
+		);
+		const opportunities = EnvelopeState.createOpportunitiesVector(
+			builder,
+			builder.createObjectOffsetList(this.opportunities),
+		);
+		const graphUpdate =
+			this.graphUpdate !== null ? this.graphUpdate!.pack(builder) : 0;
+		const resonance =
+			this.resonance !== null ? this.resonance!.pack(builder) : 0;
+		const manifold = this.manifold !== null ? this.manifold!.pack(builder) : 0;
+		const cognition =
+			this.cognition !== null ? this.cognition!.pack(builder) : 0;
+		const boundaries = EnvelopeState.createBoundariesVector(
+			builder,
+			builder.createObjectOffsetList(this.boundaries),
+		);
+		const strategy = this.strategy !== null ? this.strategy!.pack(builder) : 0;
+		const perspectiveFrames = EnvelopeState.createPerspectiveFramesVector(
+			builder,
+			builder.createObjectOffsetList(this.perspectiveFrames),
+		);
+		const equity = this.equity !== null ? this.equity!.pack(builder) : 0;
+		const positions =
+			this.positions !== null ? this.positions!.pack(builder) : 0;
+		EnvelopeState.startEnvelopeState(builder);
+		EnvelopeState.addKey(builder, key);
+		EnvelopeState.addTypeId(builder, this.typeId);
+		EnvelopeState.addCaptureRun(builder, captureRun);
+		EnvelopeState.addCaptureSeq(builder, this.captureSeq);
+		EnvelopeState.addCaptureStream(builder, captureStream);
+		EnvelopeState.addCaptureEpoch(builder, this.captureEpoch);
+		EnvelopeState.addCaptureStreamSeq(builder, this.captureStreamSeq);
+		EnvelopeState.addCaptureOrdinal(builder, this.captureOrdinal);
+		EnvelopeState.addTickerData(builder, tickerData);
+		EnvelopeState.addTradeData(builder, tradeData);
+		EnvelopeState.addLevel3Data(builder, level3Data);
+		EnvelopeState.addFuturesTickerData(builder, futuresTickerData);
+		EnvelopeState.addFuturesTradeData(builder, futuresTradeData);
+		EnvelopeState.addCorrelation(builder, correlation);
+		EnvelopeState.addLeadLag(builder, leadLag);
+		EnvelopeState.addLiquidity(builder, liquidity);
+		EnvelopeState.addSentiment(builder, sentiment);
+		EnvelopeState.addCvd(builder, cvd);
+		EnvelopeState.addDepthFlow(builder, depthFlow);
+		EnvelopeState.addMorphology(builder, morphology);
+		EnvelopeState.addHawkes(builder, hawkes);
+		EnvelopeState.addPumpDump(builder, pumpDump);
+		EnvelopeState.addToxicity(builder, toxicity);
+		EnvelopeState.addDerivatives(builder, derivatives);
+		EnvelopeState.addCategories(builder, categories);
+		EnvelopeState.addOpportunities(builder, opportunities);
+		EnvelopeState.addGraphUpdate(builder, graphUpdate);
+		EnvelopeState.addResonance(builder, resonance);
+		EnvelopeState.addManifold(builder, manifold);
+		EnvelopeState.addCognition(builder, cognition);
+		EnvelopeState.addBoundaries(builder, boundaries);
+		EnvelopeState.addStrategy(builder, strategy);
+		EnvelopeState.addPerspectiveFrames(builder, perspectiveFrames);
+		EnvelopeState.addTick(builder, this.tick);
+		EnvelopeState.addEquity(builder, equity);
+		EnvelopeState.addPositions(builder, positions);
+		return EnvelopeState.endEnvelopeState(builder);
+	}
 }

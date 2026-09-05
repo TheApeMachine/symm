@@ -215,21 +215,6 @@ const FrozenFacts = ({ decision }: { decision: FrozenEntryDecision }) => (
 					value={decision.allocationClass}
 					help="The budget class that supplied this order after capacity checks."
 				/>
-				<Fact
-					label="maximum loss budget"
-					value={decision.risk.maxLoss}
-					help="The sizing boundary used to cap the order; it is not a prediction of what will be lost."
-				/>
-				<Fact
-					label="initial hard floor"
-					value={decision.stopFloor}
-					help="The protective price constructed at entry from market noise, fees, and the risk budget."
-				/>
-				<Fact
-					label="risk / trail distance"
-					value={`${display(decision.risk.riskDistance)} / ${display(decision.risk.trailDistance)}`}
-					help="Risk distance controls initial exposure; trail distance controls how protection follows favorable movement."
-				/>
 			</Section.Body>
 		</Section>
 	</div>

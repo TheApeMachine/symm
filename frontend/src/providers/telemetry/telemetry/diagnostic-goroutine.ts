@@ -3,109 +3,133 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class DiagnosticGoroutine
+	implements flatbuffers.IUnpackableObject<DiagnosticGoroutineT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): DiagnosticGoroutine {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsDiagnosticGoroutine(
+		bb: flatbuffers.ByteBuffer,
+		obj?: DiagnosticGoroutine,
+	): DiagnosticGoroutine {
+		return (obj || new DiagnosticGoroutine()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class DiagnosticGoroutine implements flatbuffers.IUnpackableObject<DiagnosticGoroutineT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):DiagnosticGoroutine {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsDiagnosticGoroutine(
+		bb: flatbuffers.ByteBuffer,
+		obj?: DiagnosticGoroutine,
+	): DiagnosticGoroutine {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new DiagnosticGoroutine()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsDiagnosticGoroutine(bb:flatbuffers.ByteBuffer, obj?:DiagnosticGoroutine):DiagnosticGoroutine {
-  return (obj || new DiagnosticGoroutine()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	owner(): string | null;
+	owner(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	owner(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsDiagnosticGoroutine(bb:flatbuffers.ByteBuffer, obj?:DiagnosticGoroutine):DiagnosticGoroutine {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new DiagnosticGoroutine()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	count(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-owner():string|null
-owner(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-owner(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	state(): string | null;
+	state(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	state(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-count():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	static startDiagnosticGoroutine(builder: flatbuffers.Builder) {
+		builder.startObject(3);
+	}
 
-state():string|null
-state(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-state(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	static addOwner(
+		builder: flatbuffers.Builder,
+		ownerOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, ownerOffset, 0);
+	}
 
-static startDiagnosticGoroutine(builder:flatbuffers.Builder) {
-  builder.startObject(3);
-}
+	static addCount(builder: flatbuffers.Builder, count: bigint) {
+		builder.addFieldInt64(1, count, BigInt("0"));
+	}
 
-static addOwner(builder:flatbuffers.Builder, ownerOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, ownerOffset, 0);
-}
+	static addState(
+		builder: flatbuffers.Builder,
+		stateOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, stateOffset, 0);
+	}
 
-static addCount(builder:flatbuffers.Builder, count:bigint) {
-  builder.addFieldInt64(1, count, BigInt('0'));
-}
+	static endDiagnosticGoroutine(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // owner
+		return offset;
+	}
 
-static addState(builder:flatbuffers.Builder, stateOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, stateOffset, 0);
-}
+	static createDiagnosticGoroutine(
+		builder: flatbuffers.Builder,
+		ownerOffset: flatbuffers.Offset,
+		count: bigint,
+		stateOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		DiagnosticGoroutine.startDiagnosticGoroutine(builder);
+		DiagnosticGoroutine.addOwner(builder, ownerOffset);
+		DiagnosticGoroutine.addCount(builder, count);
+		DiagnosticGoroutine.addState(builder, stateOffset);
+		return DiagnosticGoroutine.endDiagnosticGoroutine(builder);
+	}
 
-static endDiagnosticGoroutine(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // owner
-  return offset;
-}
+	unpack(): DiagnosticGoroutineT {
+		return new DiagnosticGoroutineT(this.owner(), this.count(), this.state());
+	}
 
-static createDiagnosticGoroutine(builder:flatbuffers.Builder, ownerOffset:flatbuffers.Offset, count:bigint, stateOffset:flatbuffers.Offset):flatbuffers.Offset {
-  DiagnosticGoroutine.startDiagnosticGoroutine(builder);
-  DiagnosticGoroutine.addOwner(builder, ownerOffset);
-  DiagnosticGoroutine.addCount(builder, count);
-  DiagnosticGoroutine.addState(builder, stateOffset);
-  return DiagnosticGoroutine.endDiagnosticGoroutine(builder);
-}
-
-unpack(): DiagnosticGoroutineT {
-  return new DiagnosticGoroutineT(
-    this.owner(),
-    this.count(),
-    this.state()
-  );
-}
-
-
-unpackTo(_o: DiagnosticGoroutineT): void {
-  _o.owner = this.owner();
-  _o.count = this.count();
-  _o.state = this.state();
-}
+	unpackTo(_o: DiagnosticGoroutineT): void {
+		_o.owner = this.owner();
+		_o.count = this.count();
+		_o.state = this.state();
+	}
 }
 
 export class DiagnosticGoroutineT implements flatbuffers.IGeneratedObject {
-constructor(
-  public owner: string|Uint8Array|null = null,
-  public count: bigint = BigInt('0'),
-  public state: string|Uint8Array|null = null
-){}
+	constructor(
+		public owner: string | Uint8Array | null = null,
+		public count: bigint = BigInt("0"),
+		public state: string | Uint8Array | null = null,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const owner = this.owner !== null ? builder.createString(this.owner!) : 0;
+		const state = this.state !== null ? builder.createString(this.state!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const owner = (this.owner !== null ? builder.createString(this.owner!) : 0);
-  const state = (this.state !== null ? builder.createString(this.state!) : 0);
-
-  return DiagnosticGoroutine.createDiagnosticGoroutine(builder,
-    owner,
-    this.count,
-    state
-  );
-}
+		return DiagnosticGoroutine.createDiagnosticGoroutine(
+			builder,
+			owner,
+			this.count,
+			state,
+		);
+	}
 }

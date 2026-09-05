@@ -3,506 +3,765 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
-
-import { AdvisorOpinion, AdvisorOpinionT } from '../telemetry/advisor-opinion.js';
-import { AdvisorSilence, AdvisorSilenceT } from '../telemetry/advisor-silence.js';
-import { MCTSBranch, MCTSBranchT } from '../telemetry/mctsbranch.js';
-import { MCTSNode, MCTSNodeT } from '../telemetry/mctsnode.js';
-import { NamedNumber, NamedNumberT } from '../telemetry/named-number.js';
-
-
-export class DecisionTrace implements flatbuffers.IUnpackableObject<DecisionTraceT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):DecisionTrace {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
-
-static getRootAsDecisionTrace(bb:flatbuffers.ByteBuffer, obj?:DecisionTrace):DecisionTrace {
-  return (obj || new DecisionTrace()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
-
-static getSizePrefixedRootAsDecisionTrace(bb:flatbuffers.ByteBuffer, obj?:DecisionTrace):DecisionTrace {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new DecisionTrace()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
-
-identificationStatus():string|null
-identificationStatus(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-identificationStatus(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-decisionUnavailable():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-expectedOutcome():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-outcomeUncertainty():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-horizon():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-explorationConstant():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-uncertaintyWeight():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-transitionSource():string|null
-transitionSource(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-transitionSource(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-consensusDominantMove():string|null
-consensusDominantMove(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-consensusDominantMove(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-consensusConfidence():number {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-consensusParticipants():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-consensusProbabilities(index: number, obj?:NamedNumber):NamedNumber|null {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? (obj || new NamedNumber()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
-
-consensusProbabilitiesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-vetoes(index: number):string
-vetoes(index: number,optionalEncoding:flatbuffers.Encoding):string|Uint8Array
-vetoes(index: number,optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? this.bb!.__string(this.bb!.__vector(this.bb_pos + offset) + index * 4, optionalEncoding) : null;
-}
-
-vetoesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-synergies(index: number):string
-synergies(index: number,optionalEncoding:flatbuffers.Encoding):string|Uint8Array
-synergies(index: number,optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
-  return offset ? this.bb!.__string(this.bb!.__vector(this.bb_pos + offset) + index * 4, optionalEncoding) : null;
-}
-
-synergiesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-iterations():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-branches(index: number, obj?:MCTSBranch):MCTSBranch|null {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
-  return offset ? (obj || new MCTSBranch()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
-
-branchesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-recommendedAction():string|null
-recommendedAction(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-recommendedAction(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-tree(obj?:MCTSNode):MCTSNode|null {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
-  return offset ? (obj || new MCTSNode()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-maxDepth():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 40);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-totalNodes():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 42);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-advisors(index: number, obj?:AdvisorOpinion):AdvisorOpinion|null {
-  const offset = this.bb!.__offset(this.bb_pos, 44);
-  return offset ? (obj || new AdvisorOpinion()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
-
-advisorsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 44);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-advisorSilences(index: number, obj?:AdvisorSilence):AdvisorSilence|null {
-  const offset = this.bb!.__offset(this.bb_pos, 46);
-  return offset ? (obj || new AdvisorSilence()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
-
-advisorSilencesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 46);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-consensusUnmappedClasses(index: number):string
-consensusUnmappedClasses(index: number,optionalEncoding:flatbuffers.Encoding):string|Uint8Array
-consensusUnmappedClasses(index: number,optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
-  return offset ? this.bb!.__string(this.bb!.__vector(this.bb_pos + offset) + index * 4, optionalEncoding) : null;
-}
-
-consensusUnmappedClassesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-static startDecisionTrace(builder:flatbuffers.Builder) {
-  builder.startObject(23);
-}
-
-static addIdentificationStatus(builder:flatbuffers.Builder, identificationStatusOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, identificationStatusOffset, 0);
-}
-
-static addDecisionUnavailable(builder:flatbuffers.Builder, decisionUnavailable:boolean) {
-  builder.addFieldInt8(1, +decisionUnavailable, +false);
-}
-
-static addExpectedOutcome(builder:flatbuffers.Builder, expectedOutcome:number) {
-  builder.addFieldFloat64(2, expectedOutcome, 0.0);
-}
-
-static addOutcomeUncertainty(builder:flatbuffers.Builder, outcomeUncertainty:number) {
-  builder.addFieldFloat64(3, outcomeUncertainty, 0.0);
-}
-
-static addHorizon(builder:flatbuffers.Builder, horizon:bigint) {
-  builder.addFieldInt64(4, horizon, BigInt('0'));
-}
-
-static addExplorationConstant(builder:flatbuffers.Builder, explorationConstant:number) {
-  builder.addFieldFloat64(5, explorationConstant, 0.0);
-}
-
-static addUncertaintyWeight(builder:flatbuffers.Builder, uncertaintyWeight:number) {
-  builder.addFieldFloat64(6, uncertaintyWeight, 0.0);
-}
-
-static addTransitionSource(builder:flatbuffers.Builder, transitionSourceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(7, transitionSourceOffset, 0);
-}
-
-static addConsensusDominantMove(builder:flatbuffers.Builder, consensusDominantMoveOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, consensusDominantMoveOffset, 0);
-}
-
-static addConsensusConfidence(builder:flatbuffers.Builder, consensusConfidence:number) {
-  builder.addFieldFloat64(9, consensusConfidence, 0.0);
-}
-
-static addConsensusParticipants(builder:flatbuffers.Builder, consensusParticipants:bigint) {
-  builder.addFieldInt64(10, consensusParticipants, BigInt('0'));
-}
-
-static addConsensusProbabilities(builder:flatbuffers.Builder, consensusProbabilitiesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(11, consensusProbabilitiesOffset, 0);
-}
-
-static createConsensusProbabilitiesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startConsensusProbabilitiesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static addVetoes(builder:flatbuffers.Builder, vetoesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(12, vetoesOffset, 0);
-}
-
-static createVetoesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startVetoesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static addSynergies(builder:flatbuffers.Builder, synergiesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(13, synergiesOffset, 0);
-}
-
-static createSynergiesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startSynergiesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static addIterations(builder:flatbuffers.Builder, iterations:bigint) {
-  builder.addFieldInt64(14, iterations, BigInt('0'));
-}
-
-static addBranches(builder:flatbuffers.Builder, branchesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(15, branchesOffset, 0);
-}
-
-static createBranchesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startBranchesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static addRecommendedAction(builder:flatbuffers.Builder, recommendedActionOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(16, recommendedActionOffset, 0);
-}
-
-static addTree(builder:flatbuffers.Builder, treeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(17, treeOffset, 0);
-}
-
-static addMaxDepth(builder:flatbuffers.Builder, maxDepth:bigint) {
-  builder.addFieldInt64(18, maxDepth, BigInt('0'));
-}
-
-static addTotalNodes(builder:flatbuffers.Builder, totalNodes:bigint) {
-  builder.addFieldInt64(19, totalNodes, BigInt('0'));
-}
-
-static addAdvisors(builder:flatbuffers.Builder, advisorsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(20, advisorsOffset, 0);
-}
-
-static createAdvisorsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startAdvisorsVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static addAdvisorSilences(builder:flatbuffers.Builder, advisorSilencesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(21, advisorSilencesOffset, 0);
-}
-
-static createAdvisorSilencesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startAdvisorSilencesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static addConsensusUnmappedClasses(builder:flatbuffers.Builder, consensusUnmappedClassesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(22, consensusUnmappedClassesOffset, 0);
-}
-
-static createConsensusUnmappedClassesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startConsensusUnmappedClassesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static endDecisionTrace(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
-
-
-unpack(): DecisionTraceT {
-  return new DecisionTraceT(
-    this.identificationStatus(),
-    this.decisionUnavailable(),
-    this.expectedOutcome(),
-    this.outcomeUncertainty(),
-    this.horizon(),
-    this.explorationConstant(),
-    this.uncertaintyWeight(),
-    this.transitionSource(),
-    this.consensusDominantMove(),
-    this.consensusConfidence(),
-    this.consensusParticipants(),
-    this.bb!.createObjList<NamedNumber, NamedNumberT>(this.consensusProbabilities.bind(this), this.consensusProbabilitiesLength()),
-    this.bb!.createScalarList<string>(this.vetoes.bind(this), this.vetoesLength()),
-    this.bb!.createScalarList<string>(this.synergies.bind(this), this.synergiesLength()),
-    this.iterations(),
-    this.bb!.createObjList<MCTSBranch, MCTSBranchT>(this.branches.bind(this), this.branchesLength()),
-    this.recommendedAction(),
-    (this.tree() !== null ? this.tree()!.unpack() : null),
-    this.maxDepth(),
-    this.totalNodes(),
-    this.bb!.createObjList<AdvisorOpinion, AdvisorOpinionT>(this.advisors.bind(this), this.advisorsLength()),
-    this.bb!.createObjList<AdvisorSilence, AdvisorSilenceT>(this.advisorSilences.bind(this), this.advisorSilencesLength()),
-    this.bb!.createScalarList<string>(this.consensusUnmappedClasses.bind(this), this.consensusUnmappedClassesLength())
-  );
-}
-
-
-unpackTo(_o: DecisionTraceT): void {
-  _o.identificationStatus = this.identificationStatus();
-  _o.decisionUnavailable = this.decisionUnavailable();
-  _o.expectedOutcome = this.expectedOutcome();
-  _o.outcomeUncertainty = this.outcomeUncertainty();
-  _o.horizon = this.horizon();
-  _o.explorationConstant = this.explorationConstant();
-  _o.uncertaintyWeight = this.uncertaintyWeight();
-  _o.transitionSource = this.transitionSource();
-  _o.consensusDominantMove = this.consensusDominantMove();
-  _o.consensusConfidence = this.consensusConfidence();
-  _o.consensusParticipants = this.consensusParticipants();
-  _o.consensusProbabilities = this.bb!.createObjList<NamedNumber, NamedNumberT>(this.consensusProbabilities.bind(this), this.consensusProbabilitiesLength());
-  _o.vetoes = this.bb!.createScalarList<string>(this.vetoes.bind(this), this.vetoesLength());
-  _o.synergies = this.bb!.createScalarList<string>(this.synergies.bind(this), this.synergiesLength());
-  _o.iterations = this.iterations();
-  _o.branches = this.bb!.createObjList<MCTSBranch, MCTSBranchT>(this.branches.bind(this), this.branchesLength());
-  _o.recommendedAction = this.recommendedAction();
-  _o.tree = (this.tree() !== null ? this.tree()!.unpack() : null);
-  _o.maxDepth = this.maxDepth();
-  _o.totalNodes = this.totalNodes();
-  _o.advisors = this.bb!.createObjList<AdvisorOpinion, AdvisorOpinionT>(this.advisors.bind(this), this.advisorsLength());
-  _o.advisorSilences = this.bb!.createObjList<AdvisorSilence, AdvisorSilenceT>(this.advisorSilences.bind(this), this.advisorSilencesLength());
-  _o.consensusUnmappedClasses = this.bb!.createScalarList<string>(this.consensusUnmappedClasses.bind(this), this.consensusUnmappedClassesLength());
-}
+import * as flatbuffers from "flatbuffers";
+
+import {
+	AdvisorOpinion,
+	type AdvisorOpinionT,
+} from "../telemetry/advisor-opinion.js";
+import {
+	AdvisorSilence,
+	type AdvisorSilenceT,
+} from "../telemetry/advisor-silence.js";
+import { MCTSBranch, type MCTSBranchT } from "../telemetry/mctsbranch.js";
+import { MCTSNode, type MCTSNodeT } from "../telemetry/mctsnode.js";
+import { NamedNumber, type NamedNumberT } from "../telemetry/named-number.js";
+
+export class DecisionTrace
+	implements flatbuffers.IUnpackableObject<DecisionTraceT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): DecisionTrace {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
+
+	static getRootAsDecisionTrace(
+		bb: flatbuffers.ByteBuffer,
+		obj?: DecisionTrace,
+	): DecisionTrace {
+		return (obj || new DecisionTrace()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	static getSizePrefixedRootAsDecisionTrace(
+		bb: flatbuffers.ByteBuffer,
+		obj?: DecisionTrace,
+	): DecisionTrace {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new DecisionTrace()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	identificationStatus(): string | null;
+	identificationStatus(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	identificationStatus(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	decisionUnavailable(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	expectedOutcome(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	outcomeUncertainty(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	horizon(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	explorationConstant(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	uncertaintyWeight(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	transitionSource(): string | null;
+	transitionSource(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	transitionSource(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	consensusDominantMove(): string | null;
+	consensusDominantMove(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	consensusDominantMove(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	consensusConfidence(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	consensusParticipants(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	consensusProbabilities(index: number, obj?: NamedNumber): NamedNumber | null {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset
+			? (obj || new NamedNumber()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
+
+	consensusProbabilitiesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	vetoes(index: number): string;
+	vetoes(
+		index: number,
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array;
+	vetoes(index: number, optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 28);
+		return offset
+			? this.bb!.__string(
+					this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					optionalEncoding,
+				)
+			: null;
+	}
+
+	vetoesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 28);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	synergies(index: number): string;
+	synergies(
+		index: number,
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array;
+	synergies(index: number, optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 30);
+		return offset
+			? this.bb!.__string(
+					this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					optionalEncoding,
+				)
+			: null;
+	}
+
+	synergiesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 30);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	iterations(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 32);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	branches(index: number, obj?: MCTSBranch): MCTSBranch | null {
+		const offset = this.bb!.__offset(this.bb_pos, 34);
+		return offset
+			? (obj || new MCTSBranch()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
+
+	branchesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 34);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	recommendedAction(): string | null;
+	recommendedAction(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	recommendedAction(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 36);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	tree(obj?: MCTSNode): MCTSNode | null {
+		const offset = this.bb!.__offset(this.bb_pos, 38);
+		return offset
+			? (obj || new MCTSNode()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	maxDepth(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 40);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	totalNodes(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 42);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	advisors(index: number, obj?: AdvisorOpinion): AdvisorOpinion | null {
+		const offset = this.bb!.__offset(this.bb_pos, 44);
+		return offset
+			? (obj || new AdvisorOpinion()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
+
+	advisorsLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 44);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	advisorSilences(index: number, obj?: AdvisorSilence): AdvisorSilence | null {
+		const offset = this.bb!.__offset(this.bb_pos, 46);
+		return offset
+			? (obj || new AdvisorSilence()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
+
+	advisorSilencesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 46);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	consensusUnmappedClasses(index: number): string;
+	consensusUnmappedClasses(
+		index: number,
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array;
+	consensusUnmappedClasses(
+		index: number,
+		optionalEncoding?: any,
+	): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 48);
+		return offset
+			? this.bb!.__string(
+					this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					optionalEncoding,
+				)
+			: null;
+	}
+
+	consensusUnmappedClassesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 48);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	static startDecisionTrace(builder: flatbuffers.Builder) {
+		builder.startObject(23);
+	}
+
+	static addIdentificationStatus(
+		builder: flatbuffers.Builder,
+		identificationStatusOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, identificationStatusOffset, 0);
+	}
+
+	static addDecisionUnavailable(
+		builder: flatbuffers.Builder,
+		decisionUnavailable: boolean,
+	) {
+		builder.addFieldInt8(1, +decisionUnavailable, +false);
+	}
+
+	static addExpectedOutcome(
+		builder: flatbuffers.Builder,
+		expectedOutcome: number,
+	) {
+		builder.addFieldFloat64(2, expectedOutcome, 0.0);
+	}
+
+	static addOutcomeUncertainty(
+		builder: flatbuffers.Builder,
+		outcomeUncertainty: number,
+	) {
+		builder.addFieldFloat64(3, outcomeUncertainty, 0.0);
+	}
+
+	static addHorizon(builder: flatbuffers.Builder, horizon: bigint) {
+		builder.addFieldInt64(4, horizon, BigInt("0"));
+	}
+
+	static addExplorationConstant(
+		builder: flatbuffers.Builder,
+		explorationConstant: number,
+	) {
+		builder.addFieldFloat64(5, explorationConstant, 0.0);
+	}
+
+	static addUncertaintyWeight(
+		builder: flatbuffers.Builder,
+		uncertaintyWeight: number,
+	) {
+		builder.addFieldFloat64(6, uncertaintyWeight, 0.0);
+	}
+
+	static addTransitionSource(
+		builder: flatbuffers.Builder,
+		transitionSourceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(7, transitionSourceOffset, 0);
+	}
+
+	static addConsensusDominantMove(
+		builder: flatbuffers.Builder,
+		consensusDominantMoveOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(8, consensusDominantMoveOffset, 0);
+	}
+
+	static addConsensusConfidence(
+		builder: flatbuffers.Builder,
+		consensusConfidence: number,
+	) {
+		builder.addFieldFloat64(9, consensusConfidence, 0.0);
+	}
+
+	static addConsensusParticipants(
+		builder: flatbuffers.Builder,
+		consensusParticipants: bigint,
+	) {
+		builder.addFieldInt64(10, consensusParticipants, BigInt("0"));
+	}
+
+	static addConsensusProbabilities(
+		builder: flatbuffers.Builder,
+		consensusProbabilitiesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(11, consensusProbabilitiesOffset, 0);
+	}
+
+	static createConsensusProbabilitiesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startConsensusProbabilitiesVector(
+		builder: flatbuffers.Builder,
+		numElems: number,
+	) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static addVetoes(
+		builder: flatbuffers.Builder,
+		vetoesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(12, vetoesOffset, 0);
+	}
+
+	static createVetoesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startVetoesVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static addSynergies(
+		builder: flatbuffers.Builder,
+		synergiesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(13, synergiesOffset, 0);
+	}
+
+	static createSynergiesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startSynergiesVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static addIterations(builder: flatbuffers.Builder, iterations: bigint) {
+		builder.addFieldInt64(14, iterations, BigInt("0"));
+	}
+
+	static addBranches(
+		builder: flatbuffers.Builder,
+		branchesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(15, branchesOffset, 0);
+	}
+
+	static createBranchesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startBranchesVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static addRecommendedAction(
+		builder: flatbuffers.Builder,
+		recommendedActionOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(16, recommendedActionOffset, 0);
+	}
+
+	static addTree(builder: flatbuffers.Builder, treeOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(17, treeOffset, 0);
+	}
+
+	static addMaxDepth(builder: flatbuffers.Builder, maxDepth: bigint) {
+		builder.addFieldInt64(18, maxDepth, BigInt("0"));
+	}
+
+	static addTotalNodes(builder: flatbuffers.Builder, totalNodes: bigint) {
+		builder.addFieldInt64(19, totalNodes, BigInt("0"));
+	}
+
+	static addAdvisors(
+		builder: flatbuffers.Builder,
+		advisorsOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(20, advisorsOffset, 0);
+	}
+
+	static createAdvisorsVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startAdvisorsVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static addAdvisorSilences(
+		builder: flatbuffers.Builder,
+		advisorSilencesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(21, advisorSilencesOffset, 0);
+	}
+
+	static createAdvisorSilencesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startAdvisorSilencesVector(
+		builder: flatbuffers.Builder,
+		numElems: number,
+	) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static addConsensusUnmappedClasses(
+		builder: flatbuffers.Builder,
+		consensusUnmappedClassesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(22, consensusUnmappedClassesOffset, 0);
+	}
+
+	static createConsensusUnmappedClassesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startConsensusUnmappedClassesVector(
+		builder: flatbuffers.Builder,
+		numElems: number,
+	) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static endDecisionTrace(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
+
+	unpack(): DecisionTraceT {
+		return new DecisionTraceT(
+			this.identificationStatus(),
+			this.decisionUnavailable(),
+			this.expectedOutcome(),
+			this.outcomeUncertainty(),
+			this.horizon(),
+			this.explorationConstant(),
+			this.uncertaintyWeight(),
+			this.transitionSource(),
+			this.consensusDominantMove(),
+			this.consensusConfidence(),
+			this.consensusParticipants(),
+			this.bb!.createObjList<NamedNumber, NamedNumberT>(
+				this.consensusProbabilities.bind(this),
+				this.consensusProbabilitiesLength(),
+			),
+			this.bb!.createScalarList<string>(
+				this.vetoes.bind(this),
+				this.vetoesLength(),
+			),
+			this.bb!.createScalarList<string>(
+				this.synergies.bind(this),
+				this.synergiesLength(),
+			),
+			this.iterations(),
+			this.bb!.createObjList<MCTSBranch, MCTSBranchT>(
+				this.branches.bind(this),
+				this.branchesLength(),
+			),
+			this.recommendedAction(),
+			this.tree() !== null ? this.tree()!.unpack() : null,
+			this.maxDepth(),
+			this.totalNodes(),
+			this.bb!.createObjList<AdvisorOpinion, AdvisorOpinionT>(
+				this.advisors.bind(this),
+				this.advisorsLength(),
+			),
+			this.bb!.createObjList<AdvisorSilence, AdvisorSilenceT>(
+				this.advisorSilences.bind(this),
+				this.advisorSilencesLength(),
+			),
+			this.bb!.createScalarList<string>(
+				this.consensusUnmappedClasses.bind(this),
+				this.consensusUnmappedClassesLength(),
+			),
+		);
+	}
+
+	unpackTo(_o: DecisionTraceT): void {
+		_o.identificationStatus = this.identificationStatus();
+		_o.decisionUnavailable = this.decisionUnavailable();
+		_o.expectedOutcome = this.expectedOutcome();
+		_o.outcomeUncertainty = this.outcomeUncertainty();
+		_o.horizon = this.horizon();
+		_o.explorationConstant = this.explorationConstant();
+		_o.uncertaintyWeight = this.uncertaintyWeight();
+		_o.transitionSource = this.transitionSource();
+		_o.consensusDominantMove = this.consensusDominantMove();
+		_o.consensusConfidence = this.consensusConfidence();
+		_o.consensusParticipants = this.consensusParticipants();
+		_o.consensusProbabilities = this.bb!.createObjList<
+			NamedNumber,
+			NamedNumberT
+		>(
+			this.consensusProbabilities.bind(this),
+			this.consensusProbabilitiesLength(),
+		);
+		_o.vetoes = this.bb!.createScalarList<string>(
+			this.vetoes.bind(this),
+			this.vetoesLength(),
+		);
+		_o.synergies = this.bb!.createScalarList<string>(
+			this.synergies.bind(this),
+			this.synergiesLength(),
+		);
+		_o.iterations = this.iterations();
+		_o.branches = this.bb!.createObjList<MCTSBranch, MCTSBranchT>(
+			this.branches.bind(this),
+			this.branchesLength(),
+		);
+		_o.recommendedAction = this.recommendedAction();
+		_o.tree = this.tree() !== null ? this.tree()!.unpack() : null;
+		_o.maxDepth = this.maxDepth();
+		_o.totalNodes = this.totalNodes();
+		_o.advisors = this.bb!.createObjList<AdvisorOpinion, AdvisorOpinionT>(
+			this.advisors.bind(this),
+			this.advisorsLength(),
+		);
+		_o.advisorSilences = this.bb!.createObjList<
+			AdvisorSilence,
+			AdvisorSilenceT
+		>(this.advisorSilences.bind(this), this.advisorSilencesLength());
+		_o.consensusUnmappedClasses = this.bb!.createScalarList<string>(
+			this.consensusUnmappedClasses.bind(this),
+			this.consensusUnmappedClassesLength(),
+		);
+	}
 }
 
 export class DecisionTraceT implements flatbuffers.IGeneratedObject {
-constructor(
-  public identificationStatus: string|Uint8Array|null = null,
-  public decisionUnavailable: boolean = false,
-  public expectedOutcome: number = 0.0,
-  public outcomeUncertainty: number = 0.0,
-  public horizon: bigint = BigInt('0'),
-  public explorationConstant: number = 0.0,
-  public uncertaintyWeight: number = 0.0,
-  public transitionSource: string|Uint8Array|null = null,
-  public consensusDominantMove: string|Uint8Array|null = null,
-  public consensusConfidence: number = 0.0,
-  public consensusParticipants: bigint = BigInt('0'),
-  public consensusProbabilities: (NamedNumberT)[] = [],
-  public vetoes: (string)[] = [],
-  public synergies: (string)[] = [],
-  public iterations: bigint = BigInt('0'),
-  public branches: (MCTSBranchT)[] = [],
-  public recommendedAction: string|Uint8Array|null = null,
-  public tree: MCTSNodeT|null = null,
-  public maxDepth: bigint = BigInt('0'),
-  public totalNodes: bigint = BigInt('0'),
-  public advisors: (AdvisorOpinionT)[] = [],
-  public advisorSilences: (AdvisorSilenceT)[] = [],
-  public consensusUnmappedClasses: (string)[] = []
-){}
+	constructor(
+		public identificationStatus: string | Uint8Array | null = null,
+		public decisionUnavailable: boolean = false,
+		public expectedOutcome: number = 0.0,
+		public outcomeUncertainty: number = 0.0,
+		public horizon: bigint = BigInt("0"),
+		public explorationConstant: number = 0.0,
+		public uncertaintyWeight: number = 0.0,
+		public transitionSource: string | Uint8Array | null = null,
+		public consensusDominantMove: string | Uint8Array | null = null,
+		public consensusConfidence: number = 0.0,
+		public consensusParticipants: bigint = BigInt("0"),
+		public consensusProbabilities: NamedNumberT[] = [],
+		public vetoes: string[] = [],
+		public synergies: string[] = [],
+		public iterations: bigint = BigInt("0"),
+		public branches: MCTSBranchT[] = [],
+		public recommendedAction: string | Uint8Array | null = null,
+		public tree: MCTSNodeT | null = null,
+		public maxDepth: bigint = BigInt("0"),
+		public totalNodes: bigint = BigInt("0"),
+		public advisors: AdvisorOpinionT[] = [],
+		public advisorSilences: AdvisorSilenceT[] = [],
+		public consensusUnmappedClasses: string[] = [],
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const identificationStatus =
+			this.identificationStatus !== null
+				? builder.createString(this.identificationStatus!)
+				: 0;
+		const transitionSource =
+			this.transitionSource !== null
+				? builder.createString(this.transitionSource!)
+				: 0;
+		const consensusDominantMove =
+			this.consensusDominantMove !== null
+				? builder.createString(this.consensusDominantMove!)
+				: 0;
+		const consensusProbabilities =
+			DecisionTrace.createConsensusProbabilitiesVector(
+				builder,
+				builder.createObjectOffsetList(this.consensusProbabilities),
+			);
+		const vetoes = DecisionTrace.createVetoesVector(
+			builder,
+			builder.createObjectOffsetList(this.vetoes),
+		);
+		const synergies = DecisionTrace.createSynergiesVector(
+			builder,
+			builder.createObjectOffsetList(this.synergies),
+		);
+		const branches = DecisionTrace.createBranchesVector(
+			builder,
+			builder.createObjectOffsetList(this.branches),
+		);
+		const recommendedAction =
+			this.recommendedAction !== null
+				? builder.createString(this.recommendedAction!)
+				: 0;
+		const tree = this.tree !== null ? this.tree!.pack(builder) : 0;
+		const advisors = DecisionTrace.createAdvisorsVector(
+			builder,
+			builder.createObjectOffsetList(this.advisors),
+		);
+		const advisorSilences = DecisionTrace.createAdvisorSilencesVector(
+			builder,
+			builder.createObjectOffsetList(this.advisorSilences),
+		);
+		const consensusUnmappedClasses =
+			DecisionTrace.createConsensusUnmappedClassesVector(
+				builder,
+				builder.createObjectOffsetList(this.consensusUnmappedClasses),
+			);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const identificationStatus = (this.identificationStatus !== null ? builder.createString(this.identificationStatus!) : 0);
-  const transitionSource = (this.transitionSource !== null ? builder.createString(this.transitionSource!) : 0);
-  const consensusDominantMove = (this.consensusDominantMove !== null ? builder.createString(this.consensusDominantMove!) : 0);
-  const consensusProbabilities = DecisionTrace.createConsensusProbabilitiesVector(builder, builder.createObjectOffsetList(this.consensusProbabilities));
-  const vetoes = DecisionTrace.createVetoesVector(builder, builder.createObjectOffsetList(this.vetoes));
-  const synergies = DecisionTrace.createSynergiesVector(builder, builder.createObjectOffsetList(this.synergies));
-  const branches = DecisionTrace.createBranchesVector(builder, builder.createObjectOffsetList(this.branches));
-  const recommendedAction = (this.recommendedAction !== null ? builder.createString(this.recommendedAction!) : 0);
-  const tree = (this.tree !== null ? this.tree!.pack(builder) : 0);
-  const advisors = DecisionTrace.createAdvisorsVector(builder, builder.createObjectOffsetList(this.advisors));
-  const advisorSilences = DecisionTrace.createAdvisorSilencesVector(builder, builder.createObjectOffsetList(this.advisorSilences));
-  const consensusUnmappedClasses = DecisionTrace.createConsensusUnmappedClassesVector(builder, builder.createObjectOffsetList(this.consensusUnmappedClasses));
+		DecisionTrace.startDecisionTrace(builder);
+		DecisionTrace.addIdentificationStatus(builder, identificationStatus);
+		DecisionTrace.addDecisionUnavailable(builder, this.decisionUnavailable);
+		DecisionTrace.addExpectedOutcome(builder, this.expectedOutcome);
+		DecisionTrace.addOutcomeUncertainty(builder, this.outcomeUncertainty);
+		DecisionTrace.addHorizon(builder, this.horizon);
+		DecisionTrace.addExplorationConstant(builder, this.explorationConstant);
+		DecisionTrace.addUncertaintyWeight(builder, this.uncertaintyWeight);
+		DecisionTrace.addTransitionSource(builder, transitionSource);
+		DecisionTrace.addConsensusDominantMove(builder, consensusDominantMove);
+		DecisionTrace.addConsensusConfidence(builder, this.consensusConfidence);
+		DecisionTrace.addConsensusParticipants(builder, this.consensusParticipants);
+		DecisionTrace.addConsensusProbabilities(builder, consensusProbabilities);
+		DecisionTrace.addVetoes(builder, vetoes);
+		DecisionTrace.addSynergies(builder, synergies);
+		DecisionTrace.addIterations(builder, this.iterations);
+		DecisionTrace.addBranches(builder, branches);
+		DecisionTrace.addRecommendedAction(builder, recommendedAction);
+		DecisionTrace.addTree(builder, tree);
+		DecisionTrace.addMaxDepth(builder, this.maxDepth);
+		DecisionTrace.addTotalNodes(builder, this.totalNodes);
+		DecisionTrace.addAdvisors(builder, advisors);
+		DecisionTrace.addAdvisorSilences(builder, advisorSilences);
+		DecisionTrace.addConsensusUnmappedClasses(
+			builder,
+			consensusUnmappedClasses,
+		);
 
-  DecisionTrace.startDecisionTrace(builder);
-  DecisionTrace.addIdentificationStatus(builder, identificationStatus);
-  DecisionTrace.addDecisionUnavailable(builder, this.decisionUnavailable);
-  DecisionTrace.addExpectedOutcome(builder, this.expectedOutcome);
-  DecisionTrace.addOutcomeUncertainty(builder, this.outcomeUncertainty);
-  DecisionTrace.addHorizon(builder, this.horizon);
-  DecisionTrace.addExplorationConstant(builder, this.explorationConstant);
-  DecisionTrace.addUncertaintyWeight(builder, this.uncertaintyWeight);
-  DecisionTrace.addTransitionSource(builder, transitionSource);
-  DecisionTrace.addConsensusDominantMove(builder, consensusDominantMove);
-  DecisionTrace.addConsensusConfidence(builder, this.consensusConfidence);
-  DecisionTrace.addConsensusParticipants(builder, this.consensusParticipants);
-  DecisionTrace.addConsensusProbabilities(builder, consensusProbabilities);
-  DecisionTrace.addVetoes(builder, vetoes);
-  DecisionTrace.addSynergies(builder, synergies);
-  DecisionTrace.addIterations(builder, this.iterations);
-  DecisionTrace.addBranches(builder, branches);
-  DecisionTrace.addRecommendedAction(builder, recommendedAction);
-  DecisionTrace.addTree(builder, tree);
-  DecisionTrace.addMaxDepth(builder, this.maxDepth);
-  DecisionTrace.addTotalNodes(builder, this.totalNodes);
-  DecisionTrace.addAdvisors(builder, advisors);
-  DecisionTrace.addAdvisorSilences(builder, advisorSilences);
-  DecisionTrace.addConsensusUnmappedClasses(builder, consensusUnmappedClasses);
-
-  return DecisionTrace.endDecisionTrace(builder);
-}
+		return DecisionTrace.endDecisionTrace(builder);
+	}
 }

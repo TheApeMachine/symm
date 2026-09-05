@@ -1,5 +1,5 @@
-import { renderToStaticMarkup } from "react-dom/server";
 import * as flatbuffers from "flatbuffers";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { terminalStore } from "#/collections/terminal";
 import { EnvelopeMeasurement } from "#/providers/telemetry/telemetry/envelope-measurement";
@@ -16,9 +16,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 const { DEFAULT_FOCUS_SYMBOL, getKernelReadingStore, getMeasurementStore } =
-	await import(
-	"#/collections/app"
-);
+	await import("#/collections/app");
 const { KernelInspector } = await import("#/components/kernel/inspector");
 
 const renderInspector = () => renderToStaticMarkup(<KernelInspector />);
@@ -51,9 +49,8 @@ const metricMeasurement = (
 	EnvelopeMeasurementMetric.startEnvelopeMeasurementMetric(builder);
 	EnvelopeMeasurementMetric.addKey(builder, keyOffset);
 	EnvelopeMeasurementMetric.addValue(builder, metricValue);
-	const metric = EnvelopeMeasurementMetric.endEnvelopeMeasurementMetric(
-		builder,
-	);
+	const metric =
+		EnvelopeMeasurementMetric.endEnvelopeMeasurementMetric(builder);
 
 	const metrics = EnvelopeMeasurement.createMetricsVector(builder, [metric]);
 
@@ -174,7 +171,9 @@ describe("KernelInspector", () => {
 			metricMeasurement(3.5, "retreat_rate", 1.25, 0.5),
 		);
 		// Then a sparse row with no metrics lands on top of it.
-		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).actions.add(sparseMeasurement(2.0));
+		getMeasurementStore("toxicity", DEFAULT_FOCUS_SYMBOL).actions.add(
+			sparseMeasurement(2.0),
+		);
 		terminalStore.actions.inspectSource("toxicity");
 
 		const markup = renderInspector();

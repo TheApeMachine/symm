@@ -3,172 +3,248 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class ResonanceLayer
+	implements flatbuffers.IUnpackableObject<ResonanceLayerT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): ResonanceLayer {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsResonanceLayer(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ResonanceLayer,
+	): ResonanceLayer {
+		return (obj || new ResonanceLayer()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class ResonanceLayer implements flatbuffers.IUnpackableObject<ResonanceLayerT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):ResonanceLayer {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsResonanceLayer(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ResonanceLayer,
+	): ResonanceLayer {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new ResonanceLayer()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsResonanceLayer(bb:flatbuffers.ByteBuffer, obj?:ResonanceLayer):ResonanceLayer {
-  return (obj || new ResonanceLayer()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	state(index: number): number | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.readFloat64(
+					this.bb!.__vector(this.bb_pos + offset) + index * 8,
+				)
+			: 0;
+	}
 
-static getSizePrefixedRootAsResonanceLayer(bb:flatbuffers.ByteBuffer, obj?:ResonanceLayer):ResonanceLayer {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new ResonanceLayer()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	stateLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-state(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readFloat64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : 0;
-}
+	stateArray(): Float64Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? new Float64Array(
+					this.bb!.bytes().buffer,
+					this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+					this.bb!.__vector_len(this.bb_pos + offset),
+				)
+			: null;
+	}
 
-stateLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	prediction(index: number): number | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.readFloat64(
+					this.bb!.__vector(this.bb_pos + offset) + index * 8,
+				)
+			: 0;
+	}
 
-stateArray():Float64Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? new Float64Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
-}
+	predictionLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-prediction(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : 0;
-}
+	predictionArray(): Float64Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? new Float64Array(
+					this.bb!.bytes().buffer,
+					this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+					this.bb!.__vector_len(this.bb_pos + offset),
+				)
+			: null;
+	}
 
-predictionLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	errorNorm(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-predictionArray():Float64Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? new Float64Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
-}
+	temporal(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-errorNorm():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static startResonanceLayer(builder: flatbuffers.Builder) {
+		builder.startObject(4);
+	}
 
-temporal():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	static addState(
+		builder: flatbuffers.Builder,
+		stateOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, stateOffset, 0);
+	}
 
-static startResonanceLayer(builder:flatbuffers.Builder) {
-  builder.startObject(4);
-}
+	static createStateVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Float64Array,
+	): flatbuffers.Offset;
+	/**
+	 * @deprecated This Uint8Array overload will be removed in the future.
+	 */
+	static createStateVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Uint8Array,
+	): flatbuffers.Offset;
+	static createStateVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Float64Array | Uint8Array,
+	): flatbuffers.Offset {
+		builder.startVector(8, data.length, 8);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addFloat64(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static addState(builder:flatbuffers.Builder, stateOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, stateOffset, 0);
-}
+	static startStateVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(8, numElems, 8);
+	}
 
-static createStateVector(builder:flatbuffers.Builder, data:number[]|Float64Array):flatbuffers.Offset;
-/**
- * @deprecated This Uint8Array overload will be removed in the future.
- */
-static createStateVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset;
-static createStateVector(builder:flatbuffers.Builder, data:number[]|Float64Array|Uint8Array):flatbuffers.Offset {
-  builder.startVector(8, data.length, 8);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addFloat64(data[i]!);
-  }
-  return builder.endVector();
-}
+	static addPrediction(
+		builder: flatbuffers.Builder,
+		predictionOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, predictionOffset, 0);
+	}
 
-static startStateVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(8, numElems, 8);
-}
+	static createPredictionVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Float64Array,
+	): flatbuffers.Offset;
+	/**
+	 * @deprecated This Uint8Array overload will be removed in the future.
+	 */
+	static createPredictionVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Uint8Array,
+	): flatbuffers.Offset;
+	static createPredictionVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Float64Array | Uint8Array,
+	): flatbuffers.Offset {
+		builder.startVector(8, data.length, 8);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addFloat64(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static addPrediction(builder:flatbuffers.Builder, predictionOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, predictionOffset, 0);
-}
+	static startPredictionVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(8, numElems, 8);
+	}
 
-static createPredictionVector(builder:flatbuffers.Builder, data:number[]|Float64Array):flatbuffers.Offset;
-/**
- * @deprecated This Uint8Array overload will be removed in the future.
- */
-static createPredictionVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset;
-static createPredictionVector(builder:flatbuffers.Builder, data:number[]|Float64Array|Uint8Array):flatbuffers.Offset {
-  builder.startVector(8, data.length, 8);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addFloat64(data[i]!);
-  }
-  return builder.endVector();
-}
+	static addErrorNorm(builder: flatbuffers.Builder, errorNorm: number) {
+		builder.addFieldFloat64(2, errorNorm, 0.0);
+	}
 
-static startPredictionVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(8, numElems, 8);
-}
+	static addTemporal(builder: flatbuffers.Builder, temporal: boolean) {
+		builder.addFieldInt8(3, +temporal, +false);
+	}
 
-static addErrorNorm(builder:flatbuffers.Builder, errorNorm:number) {
-  builder.addFieldFloat64(2, errorNorm, 0.0);
-}
+	static endResonanceLayer(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static addTemporal(builder:flatbuffers.Builder, temporal:boolean) {
-  builder.addFieldInt8(3, +temporal, +false);
-}
+	static createResonanceLayer(
+		builder: flatbuffers.Builder,
+		stateOffset: flatbuffers.Offset,
+		predictionOffset: flatbuffers.Offset,
+		errorNorm: number,
+		temporal: boolean,
+	): flatbuffers.Offset {
+		ResonanceLayer.startResonanceLayer(builder);
+		ResonanceLayer.addState(builder, stateOffset);
+		ResonanceLayer.addPrediction(builder, predictionOffset);
+		ResonanceLayer.addErrorNorm(builder, errorNorm);
+		ResonanceLayer.addTemporal(builder, temporal);
+		return ResonanceLayer.endResonanceLayer(builder);
+	}
 
-static endResonanceLayer(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): ResonanceLayerT {
+		return new ResonanceLayerT(
+			this.bb!.createScalarList<number>(
+				this.state.bind(this),
+				this.stateLength(),
+			),
+			this.bb!.createScalarList<number>(
+				this.prediction.bind(this),
+				this.predictionLength(),
+			),
+			this.errorNorm(),
+			this.temporal(),
+		);
+	}
 
-static createResonanceLayer(builder:flatbuffers.Builder, stateOffset:flatbuffers.Offset, predictionOffset:flatbuffers.Offset, errorNorm:number, temporal:boolean):flatbuffers.Offset {
-  ResonanceLayer.startResonanceLayer(builder);
-  ResonanceLayer.addState(builder, stateOffset);
-  ResonanceLayer.addPrediction(builder, predictionOffset);
-  ResonanceLayer.addErrorNorm(builder, errorNorm);
-  ResonanceLayer.addTemporal(builder, temporal);
-  return ResonanceLayer.endResonanceLayer(builder);
-}
-
-unpack(): ResonanceLayerT {
-  return new ResonanceLayerT(
-    this.bb!.createScalarList<number>(this.state.bind(this), this.stateLength()),
-    this.bb!.createScalarList<number>(this.prediction.bind(this), this.predictionLength()),
-    this.errorNorm(),
-    this.temporal()
-  );
-}
-
-
-unpackTo(_o: ResonanceLayerT): void {
-  _o.state = this.bb!.createScalarList<number>(this.state.bind(this), this.stateLength());
-  _o.prediction = this.bb!.createScalarList<number>(this.prediction.bind(this), this.predictionLength());
-  _o.errorNorm = this.errorNorm();
-  _o.temporal = this.temporal();
-}
+	unpackTo(_o: ResonanceLayerT): void {
+		_o.state = this.bb!.createScalarList<number>(
+			this.state.bind(this),
+			this.stateLength(),
+		);
+		_o.prediction = this.bb!.createScalarList<number>(
+			this.prediction.bind(this),
+			this.predictionLength(),
+		);
+		_o.errorNorm = this.errorNorm();
+		_o.temporal = this.temporal();
+	}
 }
 
 export class ResonanceLayerT implements flatbuffers.IGeneratedObject {
-constructor(
-  public state: (number)[] = [],
-  public prediction: (number)[] = [],
-  public errorNorm: number = 0.0,
-  public temporal: boolean = false
-){}
+	constructor(
+		public state: number[] = [],
+		public prediction: number[] = [],
+		public errorNorm: number = 0.0,
+		public temporal: boolean = false,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const state = ResonanceLayer.createStateVector(builder, this.state);
+		const prediction = ResonanceLayer.createPredictionVector(
+			builder,
+			this.prediction,
+		);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const state = ResonanceLayer.createStateVector(builder, this.state);
-  const prediction = ResonanceLayer.createPredictionVector(builder, this.prediction);
-
-  return ResonanceLayer.createResonanceLayer(builder,
-    state,
-    prediction,
-    this.errorNorm,
-    this.temporal
-  );
-}
+		return ResonanceLayer.createResonanceLayer(
+			builder,
+			state,
+			prediction,
+			this.errorNorm,
+			this.temporal,
+		);
+	}
 }

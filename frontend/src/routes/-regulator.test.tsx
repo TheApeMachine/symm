@@ -9,18 +9,18 @@ if (RegulatorSurface === undefined) {
 }
 
 const render = async () => {
-  const stream = await renderToReadableStream(<RegulatorSurface />);
-  return new Response(stream).text();
+	const stream = await renderToReadableStream(<RegulatorSurface />);
+	return new Response(stream).text();
 };
 
 describe("RegulatorSurface", () => {
-  it("renders predictive controls and mark-level position context before the first frame", async () => {
-    const markup = await render();
+	it("renders predictive controls and mark-level position context before the first frame", async () => {
+		const markup = await render();
 
-    expect(markup).toContain("Global Predictive-Coding Regulator");
-    expect(markup).toContain("Position Marks");
-    expect(markup).toContain("Mark-level regulator context");
-    expect(markup).toContain("floor distance");
-    expect(markup).toContain("surge");
-  });
+		expect(markup).toContain("Global Predictive-Coding Regulator");
+		expect(markup).toContain("Position Marks");
+		expect(markup).toContain("Mark-level regulator context");
+		expect(markup).toContain("floor distance");
+		expect(markup).toContain("surge");
+	});
 });

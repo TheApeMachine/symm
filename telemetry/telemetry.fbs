@@ -306,6 +306,10 @@ table GraphFrame {
   reasoning:Reasoning;
 }
 
+// Retired with the advisor/planner/stoploss decision path. The slots stay
+// reserved and the tables stay declared because Hindsight decodes historical
+// captures that still carry them: deleting a field would shift every later
+// vtable slot and silently misread stored history. Nothing writes them.
 table MCTSBranch {
   action:string;
   visits:long;
@@ -347,6 +351,10 @@ table MCTSNode {
   state:[NamedNumber];
   children:[MCTSNode];
 }
+// Retired with the advisor/planner/stoploss decision path. The slots stay
+// reserved and the tables stay declared because Hindsight decodes historical
+// captures that still carry them: deleting a field would shift every later
+// vtable slot and silently misread stored history. Nothing writes them.
 table AdvisorClass {
   state:string;
   probability:double;
@@ -391,6 +399,10 @@ table AdvisorSilence {
   leaseUntil:ulong;
   clockNow:ulong;
 }
+// Retired with the advisor/planner/stoploss decision path. The slots stay
+// reserved and the tables stay declared because Hindsight decodes historical
+// captures that still carry them: deleting a field would shift every later
+// vtable slot and silently misread stored history. Nothing writes them.
 table DecisionTrace {
   identificationStatus:string;
   decisionUnavailable:bool;
@@ -434,6 +446,10 @@ table EntryCost {
   impact:string;
   breakEven:string;
 }
+// Retired with the advisor/planner/stoploss decision path. The slots stay
+// reserved and the tables stay declared because Hindsight decodes historical
+// captures that still carry them: deleting a field would shift every later
+// vtable slot and silently misread stored history. Nothing writes them.
 table RiskPlan {
   present:bool;
   entryNoiseBand:string;
@@ -447,6 +463,10 @@ table RiskPlan {
   exitFeeRate:string;
   entryFeeRate:string;
 }
+// Retired with the advisor/planner/stoploss decision path. The slots stay
+// reserved and the tables stay declared because Hindsight decodes historical
+// captures that still carry them: deleting a field would shift every later
+// vtable slot and silently misread stored history. Nothing writes them.
 table Stoploss {
   status:string;
   symbol:string;
@@ -504,9 +524,9 @@ table Decision {
   returnPct:double;
   mark:string;
   entryCost:EntryCost;
-  stoploss:Stoploss;
-  risk:RiskPlan;
-  trace:DecisionTrace;
+  stoploss:Stoploss (deprecated);
+  risk:RiskPlan (deprecated);
+  trace:DecisionTrace (deprecated);
 }
 table StrategyFrame { evaluated:bool; outcome:string; decisions:[Decision]; }
 
@@ -533,6 +553,10 @@ table PerspectiveFrame {
 // EnvelopePerspective* is the append-only durable mirror of the new semantic
 // Advisor contract. PerspectiveFrame above remains unchanged because persisted
 // Hindsight history still contains that legacy metric-bucket representation.
+// Retired with the advisor/planner/stoploss decision path. The slots stay
+// reserved and the tables stay declared because Hindsight decodes historical
+// captures that still carry them: deleting a field would shift every later
+// vtable slot and silently misread stored history. Nothing writes them.
 table EnvelopePerspectiveClass {
   state:string (required);
   probability:double;
@@ -595,7 +619,7 @@ table Holding {
   mark:string;
   isOpportunity:bool;
   reservationId:string;
-  stoploss:Stoploss;
+  stoploss:Stoploss (deprecated);
 }
 table Position { status:string; decision:Decision; holding:Holding; }
 table PositionsFrame { rows:[Position]; }
@@ -1250,12 +1274,11 @@ table EnvelopeState {
   // per row, closed lots excluded).
   positions:PositionsFrame;
 
-  // Append-only named Advisor lifecycle update.
-  liquiditySweepWithRecovery:EnvelopeLiquiditySweepWithRecoveryUpdate;
+  liquiditySweepWithRecovery:EnvelopeLiquiditySweepWithRecoveryUpdate (deprecated);
 
-  // Current falsifiable Advisor rounds. perspectiveFrames above is the
-  // persisted metric-bucket representation used by Hindsight analyzers.
-  perspectives:[EnvelopePerspective];
+  // perspectiveFrames above remains live: it is the persisted metric-bucket
+  // representation Hindsight analyzers still read out of stored history.
+  perspectives:[EnvelopePerspective] (deprecated);
 }
 
 table EnvelopeStateFrame { state:EnvelopeState (required); }

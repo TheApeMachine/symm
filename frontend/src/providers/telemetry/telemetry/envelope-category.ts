@@ -3,294 +3,399 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class EnvelopeCategory
+	implements flatbuffers.IUnpackableObject<EnvelopeCategoryT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeCategory {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsEnvelopeCategory(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeCategory,
+	): EnvelopeCategory {
+		return (obj || new EnvelopeCategory()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class EnvelopeCategory implements flatbuffers.IUnpackableObject<EnvelopeCategoryT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeCategory {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsEnvelopeCategory(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeCategory,
+	): EnvelopeCategory {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopeCategory()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsEnvelopeCategory(bb:flatbuffers.ByteBuffer, obj?:EnvelopeCategory):EnvelopeCategory {
-  return (obj || new EnvelopeCategory()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	atNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-static getSizePrefixedRootAsEnvelopeCategory(bb:flatbuffers.ByteBuffer, obj?:EnvelopeCategory):EnvelopeCategory {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeCategory()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	symbol(): string | null;
+	symbol(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	symbol(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-atNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	type(): string | null;
+	type(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	type(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-symbol():string|null
-symbol(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-symbol(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	confidence(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-type():string|null
-type(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-type(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	surprisal(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-confidence():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	strength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-surprisal():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	maturity(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-strength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	uncertainty(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-maturity():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	freshness(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-uncertainty():number {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	supporting(index: number): string;
+	supporting(
+		index: number,
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array;
+	supporting(
+		index: number,
+		optionalEncoding?: any,
+	): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset
+			? this.bb!.__string(
+					this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					optionalEncoding,
+				)
+			: null;
+	}
 
-freshness():number {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	supportingLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-supporting(index: number):string
-supporting(index: number,optionalEncoding:flatbuffers.Encoding):string|Uint8Array
-supporting(index: number,optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.__string(this.bb!.__vector(this.bb_pos + offset) + index * 4, optionalEncoding) : null;
-}
+	opposing(index: number): string;
+	opposing(
+		index: number,
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array;
+	opposing(index: number, optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset
+			? this.bb!.__string(
+					this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					optionalEncoding,
+				)
+			: null;
+	}
 
-supportingLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	opposingLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-opposing(index: number):string
-opposing(index: number,optionalEncoding:flatbuffers.Encoding):string|Uint8Array
-opposing(index: number,optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.__string(this.bb!.__vector(this.bb_pos + offset) + index * 4, optionalEncoding) : null;
-}
+	missing(index: number): string;
+	missing(
+		index: number,
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array;
+	missing(index: number, optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset
+			? this.bb!.__string(
+					this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					optionalEncoding,
+				)
+			: null;
+	}
 
-opposingLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	missingLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-missing(index: number):string
-missing(index: number,optionalEncoding:flatbuffers.Encoding):string|Uint8Array
-missing(index: number,optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? this.bb!.__string(this.bb!.__vector(this.bb_pos + offset) + index * 4, optionalEncoding) : null;
-}
+	static startEnvelopeCategory(builder: flatbuffers.Builder) {
+		builder.startObject(12);
+	}
 
-missingLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	static addAtNs(builder: flatbuffers.Builder, atNs: bigint) {
+		builder.addFieldInt64(0, atNs, BigInt("0"));
+	}
 
-static startEnvelopeCategory(builder:flatbuffers.Builder) {
-  builder.startObject(12);
-}
+	static addSymbol(
+		builder: flatbuffers.Builder,
+		symbolOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, symbolOffset, 0);
+	}
 
-static addAtNs(builder:flatbuffers.Builder, atNs:bigint) {
-  builder.addFieldInt64(0, atNs, BigInt('0'));
-}
+	static addType(builder: flatbuffers.Builder, typeOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(2, typeOffset, 0);
+	}
 
-static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, symbolOffset, 0);
-}
+	static addConfidence(builder: flatbuffers.Builder, confidence: number) {
+		builder.addFieldFloat64(3, confidence, 0.0);
+	}
 
-static addType(builder:flatbuffers.Builder, typeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, typeOffset, 0);
-}
+	static addSurprisal(builder: flatbuffers.Builder, surprisal: number) {
+		builder.addFieldFloat64(4, surprisal, 0.0);
+	}
 
-static addConfidence(builder:flatbuffers.Builder, confidence:number) {
-  builder.addFieldFloat64(3, confidence, 0.0);
-}
+	static addStrength(builder: flatbuffers.Builder, strength: number) {
+		builder.addFieldFloat64(5, strength, 0.0);
+	}
 
-static addSurprisal(builder:flatbuffers.Builder, surprisal:number) {
-  builder.addFieldFloat64(4, surprisal, 0.0);
-}
+	static addMaturity(builder: flatbuffers.Builder, maturity: number) {
+		builder.addFieldFloat64(6, maturity, 0.0);
+	}
 
-static addStrength(builder:flatbuffers.Builder, strength:number) {
-  builder.addFieldFloat64(5, strength, 0.0);
-}
+	static addUncertainty(builder: flatbuffers.Builder, uncertainty: number) {
+		builder.addFieldFloat64(7, uncertainty, 0.0);
+	}
 
-static addMaturity(builder:flatbuffers.Builder, maturity:number) {
-  builder.addFieldFloat64(6, maturity, 0.0);
-}
+	static addFreshness(builder: flatbuffers.Builder, freshness: number) {
+		builder.addFieldFloat64(8, freshness, 0.0);
+	}
 
-static addUncertainty(builder:flatbuffers.Builder, uncertainty:number) {
-  builder.addFieldFloat64(7, uncertainty, 0.0);
-}
+	static addSupporting(
+		builder: flatbuffers.Builder,
+		supportingOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(9, supportingOffset, 0);
+	}
 
-static addFreshness(builder:flatbuffers.Builder, freshness:number) {
-  builder.addFieldFloat64(8, freshness, 0.0);
-}
+	static createSupportingVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static addSupporting(builder:flatbuffers.Builder, supportingOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(9, supportingOffset, 0);
-}
+	static startSupportingVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static createSupportingVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static addOpposing(
+		builder: flatbuffers.Builder,
+		opposingOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(10, opposingOffset, 0);
+	}
 
-static startSupportingVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static createOpposingVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static addOpposing(builder:flatbuffers.Builder, opposingOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(10, opposingOffset, 0);
-}
+	static startOpposingVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static createOpposingVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static addMissing(
+		builder: flatbuffers.Builder,
+		missingOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(11, missingOffset, 0);
+	}
 
-static startOpposingVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static createMissingVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static addMissing(builder:flatbuffers.Builder, missingOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(11, missingOffset, 0);
-}
+	static startMissingVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static createMissingVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static endEnvelopeCategory(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static startMissingVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static createEnvelopeCategory(
+		builder: flatbuffers.Builder,
+		atNs: bigint,
+		symbolOffset: flatbuffers.Offset,
+		typeOffset: flatbuffers.Offset,
+		confidence: number,
+		surprisal: number,
+		strength: number,
+		maturity: number,
+		uncertainty: number,
+		freshness: number,
+		supportingOffset: flatbuffers.Offset,
+		opposingOffset: flatbuffers.Offset,
+		missingOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		EnvelopeCategory.startEnvelopeCategory(builder);
+		EnvelopeCategory.addAtNs(builder, atNs);
+		EnvelopeCategory.addSymbol(builder, symbolOffset);
+		EnvelopeCategory.addType(builder, typeOffset);
+		EnvelopeCategory.addConfidence(builder, confidence);
+		EnvelopeCategory.addSurprisal(builder, surprisal);
+		EnvelopeCategory.addStrength(builder, strength);
+		EnvelopeCategory.addMaturity(builder, maturity);
+		EnvelopeCategory.addUncertainty(builder, uncertainty);
+		EnvelopeCategory.addFreshness(builder, freshness);
+		EnvelopeCategory.addSupporting(builder, supportingOffset);
+		EnvelopeCategory.addOpposing(builder, opposingOffset);
+		EnvelopeCategory.addMissing(builder, missingOffset);
+		return EnvelopeCategory.endEnvelopeCategory(builder);
+	}
 
-static endEnvelopeCategory(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): EnvelopeCategoryT {
+		return new EnvelopeCategoryT(
+			this.atNs(),
+			this.symbol(),
+			this.type(),
+			this.confidence(),
+			this.surprisal(),
+			this.strength(),
+			this.maturity(),
+			this.uncertainty(),
+			this.freshness(),
+			this.bb!.createScalarList<string>(
+				this.supporting.bind(this),
+				this.supportingLength(),
+			),
+			this.bb!.createScalarList<string>(
+				this.opposing.bind(this),
+				this.opposingLength(),
+			),
+			this.bb!.createScalarList<string>(
+				this.missing.bind(this),
+				this.missingLength(),
+			),
+		);
+	}
 
-static createEnvelopeCategory(builder:flatbuffers.Builder, atNs:bigint, symbolOffset:flatbuffers.Offset, typeOffset:flatbuffers.Offset, confidence:number, surprisal:number, strength:number, maturity:number, uncertainty:number, freshness:number, supportingOffset:flatbuffers.Offset, opposingOffset:flatbuffers.Offset, missingOffset:flatbuffers.Offset):flatbuffers.Offset {
-  EnvelopeCategory.startEnvelopeCategory(builder);
-  EnvelopeCategory.addAtNs(builder, atNs);
-  EnvelopeCategory.addSymbol(builder, symbolOffset);
-  EnvelopeCategory.addType(builder, typeOffset);
-  EnvelopeCategory.addConfidence(builder, confidence);
-  EnvelopeCategory.addSurprisal(builder, surprisal);
-  EnvelopeCategory.addStrength(builder, strength);
-  EnvelopeCategory.addMaturity(builder, maturity);
-  EnvelopeCategory.addUncertainty(builder, uncertainty);
-  EnvelopeCategory.addFreshness(builder, freshness);
-  EnvelopeCategory.addSupporting(builder, supportingOffset);
-  EnvelopeCategory.addOpposing(builder, opposingOffset);
-  EnvelopeCategory.addMissing(builder, missingOffset);
-  return EnvelopeCategory.endEnvelopeCategory(builder);
-}
-
-unpack(): EnvelopeCategoryT {
-  return new EnvelopeCategoryT(
-    this.atNs(),
-    this.symbol(),
-    this.type(),
-    this.confidence(),
-    this.surprisal(),
-    this.strength(),
-    this.maturity(),
-    this.uncertainty(),
-    this.freshness(),
-    this.bb!.createScalarList<string>(this.supporting.bind(this), this.supportingLength()),
-    this.bb!.createScalarList<string>(this.opposing.bind(this), this.opposingLength()),
-    this.bb!.createScalarList<string>(this.missing.bind(this), this.missingLength())
-  );
-}
-
-
-unpackTo(_o: EnvelopeCategoryT): void {
-  _o.atNs = this.atNs();
-  _o.symbol = this.symbol();
-  _o.type = this.type();
-  _o.confidence = this.confidence();
-  _o.surprisal = this.surprisal();
-  _o.strength = this.strength();
-  _o.maturity = this.maturity();
-  _o.uncertainty = this.uncertainty();
-  _o.freshness = this.freshness();
-  _o.supporting = this.bb!.createScalarList<string>(this.supporting.bind(this), this.supportingLength());
-  _o.opposing = this.bb!.createScalarList<string>(this.opposing.bind(this), this.opposingLength());
-  _o.missing = this.bb!.createScalarList<string>(this.missing.bind(this), this.missingLength());
-}
+	unpackTo(_o: EnvelopeCategoryT): void {
+		_o.atNs = this.atNs();
+		_o.symbol = this.symbol();
+		_o.type = this.type();
+		_o.confidence = this.confidence();
+		_o.surprisal = this.surprisal();
+		_o.strength = this.strength();
+		_o.maturity = this.maturity();
+		_o.uncertainty = this.uncertainty();
+		_o.freshness = this.freshness();
+		_o.supporting = this.bb!.createScalarList<string>(
+			this.supporting.bind(this),
+			this.supportingLength(),
+		);
+		_o.opposing = this.bb!.createScalarList<string>(
+			this.opposing.bind(this),
+			this.opposingLength(),
+		);
+		_o.missing = this.bb!.createScalarList<string>(
+			this.missing.bind(this),
+			this.missingLength(),
+		);
+	}
 }
 
 export class EnvelopeCategoryT implements flatbuffers.IGeneratedObject {
-constructor(
-  public atNs: bigint = BigInt('0'),
-  public symbol: string|Uint8Array|null = null,
-  public type: string|Uint8Array|null = null,
-  public confidence: number = 0.0,
-  public surprisal: number = 0.0,
-  public strength: number = 0.0,
-  public maturity: number = 0.0,
-  public uncertainty: number = 0.0,
-  public freshness: number = 0.0,
-  public supporting: (string)[] = [],
-  public opposing: (string)[] = [],
-  public missing: (string)[] = []
-){}
+	constructor(
+		public atNs: bigint = BigInt("0"),
+		public symbol: string | Uint8Array | null = null,
+		public type: string | Uint8Array | null = null,
+		public confidence: number = 0.0,
+		public surprisal: number = 0.0,
+		public strength: number = 0.0,
+		public maturity: number = 0.0,
+		public uncertainty: number = 0.0,
+		public freshness: number = 0.0,
+		public supporting: string[] = [],
+		public opposing: string[] = [],
+		public missing: string[] = [],
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const symbol =
+			this.symbol !== null ? builder.createString(this.symbol!) : 0;
+		const type = this.type !== null ? builder.createString(this.type!) : 0;
+		const supporting = EnvelopeCategory.createSupportingVector(
+			builder,
+			builder.createObjectOffsetList(this.supporting),
+		);
+		const opposing = EnvelopeCategory.createOpposingVector(
+			builder,
+			builder.createObjectOffsetList(this.opposing),
+		);
+		const missing = EnvelopeCategory.createMissingVector(
+			builder,
+			builder.createObjectOffsetList(this.missing),
+		);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const symbol = (this.symbol !== null ? builder.createString(this.symbol!) : 0);
-  const type = (this.type !== null ? builder.createString(this.type!) : 0);
-  const supporting = EnvelopeCategory.createSupportingVector(builder, builder.createObjectOffsetList(this.supporting));
-  const opposing = EnvelopeCategory.createOpposingVector(builder, builder.createObjectOffsetList(this.opposing));
-  const missing = EnvelopeCategory.createMissingVector(builder, builder.createObjectOffsetList(this.missing));
-
-  return EnvelopeCategory.createEnvelopeCategory(builder,
-    this.atNs,
-    symbol,
-    type,
-    this.confidence,
-    this.surprisal,
-    this.strength,
-    this.maturity,
-    this.uncertainty,
-    this.freshness,
-    supporting,
-    opposing,
-    missing
-  );
-}
+		return EnvelopeCategory.createEnvelopeCategory(
+			builder,
+			this.atNs,
+			symbol,
+			type,
+			this.confidence,
+			this.surprisal,
+			this.strength,
+			this.maturity,
+			this.uncertainty,
+			this.freshness,
+			supporting,
+			opposing,
+			missing,
+		);
+	}
 }

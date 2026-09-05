@@ -3,244 +3,342 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
-
-
+import * as flatbuffers from "flatbuffers";
 
 export class RiskPlan implements flatbuffers.IUnpackableObject<RiskPlanT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):RiskPlan {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): RiskPlan {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-static getRootAsRiskPlan(bb:flatbuffers.ByteBuffer, obj?:RiskPlan):RiskPlan {
-  return (obj || new RiskPlan()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getRootAsRiskPlan(
+		bb: flatbuffers.ByteBuffer,
+		obj?: RiskPlan,
+	): RiskPlan {
+		return (obj || new RiskPlan()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsRiskPlan(bb:flatbuffers.ByteBuffer, obj?:RiskPlan):RiskPlan {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new RiskPlan()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsRiskPlan(
+		bb: flatbuffers.ByteBuffer,
+		obj?: RiskPlan,
+	): RiskPlan {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new RiskPlan()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-present():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	present(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-entryNoiseBand():string|null
-entryNoiseBand(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-entryNoiseBand(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	entryNoiseBand(): string | null;
+	entryNoiseBand(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	entryNoiseBand(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-noiseBand():string|null
-noiseBand(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-noiseBand(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	noiseBand(): string | null;
+	noiseBand(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	noiseBand(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-riskDistance():string|null
-riskDistance(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-riskDistance(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	riskDistance(): string | null;
+	riskDistance(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	riskDistance(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-trailDistance():string|null
-trailDistance(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-trailDistance(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	trailDistance(): string | null;
+	trailDistance(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	trailDistance(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-armBuffer():string|null
-armBuffer(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-armBuffer(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	armBuffer(): string | null;
+	armBuffer(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	armBuffer(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-lockBuffer():string|null
-lockBuffer(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-lockBuffer(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	lockBuffer(): string | null;
+	lockBuffer(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	lockBuffer(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-minEdge():string|null
-minEdge(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-minEdge(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	minEdge(): string | null;
+	minEdge(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	minEdge(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-maxLoss():string|null
-maxLoss(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-maxLoss(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	maxLoss(): string | null;
+	maxLoss(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	maxLoss(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-exitFeeRate():string|null
-exitFeeRate(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-exitFeeRate(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	exitFeeRate(): string | null;
+	exitFeeRate(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	exitFeeRate(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-entryFeeRate():string|null
-entryFeeRate(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-entryFeeRate(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	entryFeeRate(): string | null;
+	entryFeeRate(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	entryFeeRate(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static startRiskPlan(builder:flatbuffers.Builder) {
-  builder.startObject(11);
-}
+	static startRiskPlan(builder: flatbuffers.Builder) {
+		builder.startObject(11);
+	}
 
-static addPresent(builder:flatbuffers.Builder, present:boolean) {
-  builder.addFieldInt8(0, +present, +false);
-}
+	static addPresent(builder: flatbuffers.Builder, present: boolean) {
+		builder.addFieldInt8(0, +present, +false);
+	}
 
-static addEntryNoiseBand(builder:flatbuffers.Builder, entryNoiseBandOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, entryNoiseBandOffset, 0);
-}
+	static addEntryNoiseBand(
+		builder: flatbuffers.Builder,
+		entryNoiseBandOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, entryNoiseBandOffset, 0);
+	}
 
-static addNoiseBand(builder:flatbuffers.Builder, noiseBandOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, noiseBandOffset, 0);
-}
+	static addNoiseBand(
+		builder: flatbuffers.Builder,
+		noiseBandOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, noiseBandOffset, 0);
+	}
 
-static addRiskDistance(builder:flatbuffers.Builder, riskDistanceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(3, riskDistanceOffset, 0);
-}
+	static addRiskDistance(
+		builder: flatbuffers.Builder,
+		riskDistanceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(3, riskDistanceOffset, 0);
+	}
 
-static addTrailDistance(builder:flatbuffers.Builder, trailDistanceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, trailDistanceOffset, 0);
-}
+	static addTrailDistance(
+		builder: flatbuffers.Builder,
+		trailDistanceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(4, trailDistanceOffset, 0);
+	}
 
-static addArmBuffer(builder:flatbuffers.Builder, armBufferOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, armBufferOffset, 0);
-}
+	static addArmBuffer(
+		builder: flatbuffers.Builder,
+		armBufferOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(5, armBufferOffset, 0);
+	}
 
-static addLockBuffer(builder:flatbuffers.Builder, lockBufferOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, lockBufferOffset, 0);
-}
+	static addLockBuffer(
+		builder: flatbuffers.Builder,
+		lockBufferOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(6, lockBufferOffset, 0);
+	}
 
-static addMinEdge(builder:flatbuffers.Builder, minEdgeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(7, minEdgeOffset, 0);
-}
+	static addMinEdge(
+		builder: flatbuffers.Builder,
+		minEdgeOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(7, minEdgeOffset, 0);
+	}
 
-static addMaxLoss(builder:flatbuffers.Builder, maxLossOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, maxLossOffset, 0);
-}
+	static addMaxLoss(
+		builder: flatbuffers.Builder,
+		maxLossOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(8, maxLossOffset, 0);
+	}
 
-static addExitFeeRate(builder:flatbuffers.Builder, exitFeeRateOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(9, exitFeeRateOffset, 0);
-}
+	static addExitFeeRate(
+		builder: flatbuffers.Builder,
+		exitFeeRateOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(9, exitFeeRateOffset, 0);
+	}
 
-static addEntryFeeRate(builder:flatbuffers.Builder, entryFeeRateOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(10, entryFeeRateOffset, 0);
-}
+	static addEntryFeeRate(
+		builder: flatbuffers.Builder,
+		entryFeeRateOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(10, entryFeeRateOffset, 0);
+	}
 
-static endRiskPlan(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	static endRiskPlan(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static createRiskPlan(builder:flatbuffers.Builder, present:boolean, entryNoiseBandOffset:flatbuffers.Offset, noiseBandOffset:flatbuffers.Offset, riskDistanceOffset:flatbuffers.Offset, trailDistanceOffset:flatbuffers.Offset, armBufferOffset:flatbuffers.Offset, lockBufferOffset:flatbuffers.Offset, minEdgeOffset:flatbuffers.Offset, maxLossOffset:flatbuffers.Offset, exitFeeRateOffset:flatbuffers.Offset, entryFeeRateOffset:flatbuffers.Offset):flatbuffers.Offset {
-  RiskPlan.startRiskPlan(builder);
-  RiskPlan.addPresent(builder, present);
-  RiskPlan.addEntryNoiseBand(builder, entryNoiseBandOffset);
-  RiskPlan.addNoiseBand(builder, noiseBandOffset);
-  RiskPlan.addRiskDistance(builder, riskDistanceOffset);
-  RiskPlan.addTrailDistance(builder, trailDistanceOffset);
-  RiskPlan.addArmBuffer(builder, armBufferOffset);
-  RiskPlan.addLockBuffer(builder, lockBufferOffset);
-  RiskPlan.addMinEdge(builder, minEdgeOffset);
-  RiskPlan.addMaxLoss(builder, maxLossOffset);
-  RiskPlan.addExitFeeRate(builder, exitFeeRateOffset);
-  RiskPlan.addEntryFeeRate(builder, entryFeeRateOffset);
-  return RiskPlan.endRiskPlan(builder);
-}
+	static createRiskPlan(
+		builder: flatbuffers.Builder,
+		present: boolean,
+		entryNoiseBandOffset: flatbuffers.Offset,
+		noiseBandOffset: flatbuffers.Offset,
+		riskDistanceOffset: flatbuffers.Offset,
+		trailDistanceOffset: flatbuffers.Offset,
+		armBufferOffset: flatbuffers.Offset,
+		lockBufferOffset: flatbuffers.Offset,
+		minEdgeOffset: flatbuffers.Offset,
+		maxLossOffset: flatbuffers.Offset,
+		exitFeeRateOffset: flatbuffers.Offset,
+		entryFeeRateOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		RiskPlan.startRiskPlan(builder);
+		RiskPlan.addPresent(builder, present);
+		RiskPlan.addEntryNoiseBand(builder, entryNoiseBandOffset);
+		RiskPlan.addNoiseBand(builder, noiseBandOffset);
+		RiskPlan.addRiskDistance(builder, riskDistanceOffset);
+		RiskPlan.addTrailDistance(builder, trailDistanceOffset);
+		RiskPlan.addArmBuffer(builder, armBufferOffset);
+		RiskPlan.addLockBuffer(builder, lockBufferOffset);
+		RiskPlan.addMinEdge(builder, minEdgeOffset);
+		RiskPlan.addMaxLoss(builder, maxLossOffset);
+		RiskPlan.addExitFeeRate(builder, exitFeeRateOffset);
+		RiskPlan.addEntryFeeRate(builder, entryFeeRateOffset);
+		return RiskPlan.endRiskPlan(builder);
+	}
 
-unpack(): RiskPlanT {
-  return new RiskPlanT(
-    this.present(),
-    this.entryNoiseBand(),
-    this.noiseBand(),
-    this.riskDistance(),
-    this.trailDistance(),
-    this.armBuffer(),
-    this.lockBuffer(),
-    this.minEdge(),
-    this.maxLoss(),
-    this.exitFeeRate(),
-    this.entryFeeRate()
-  );
-}
+	unpack(): RiskPlanT {
+		return new RiskPlanT(
+			this.present(),
+			this.entryNoiseBand(),
+			this.noiseBand(),
+			this.riskDistance(),
+			this.trailDistance(),
+			this.armBuffer(),
+			this.lockBuffer(),
+			this.minEdge(),
+			this.maxLoss(),
+			this.exitFeeRate(),
+			this.entryFeeRate(),
+		);
+	}
 
-
-unpackTo(_o: RiskPlanT): void {
-  _o.present = this.present();
-  _o.entryNoiseBand = this.entryNoiseBand();
-  _o.noiseBand = this.noiseBand();
-  _o.riskDistance = this.riskDistance();
-  _o.trailDistance = this.trailDistance();
-  _o.armBuffer = this.armBuffer();
-  _o.lockBuffer = this.lockBuffer();
-  _o.minEdge = this.minEdge();
-  _o.maxLoss = this.maxLoss();
-  _o.exitFeeRate = this.exitFeeRate();
-  _o.entryFeeRate = this.entryFeeRate();
-}
+	unpackTo(_o: RiskPlanT): void {
+		_o.present = this.present();
+		_o.entryNoiseBand = this.entryNoiseBand();
+		_o.noiseBand = this.noiseBand();
+		_o.riskDistance = this.riskDistance();
+		_o.trailDistance = this.trailDistance();
+		_o.armBuffer = this.armBuffer();
+		_o.lockBuffer = this.lockBuffer();
+		_o.minEdge = this.minEdge();
+		_o.maxLoss = this.maxLoss();
+		_o.exitFeeRate = this.exitFeeRate();
+		_o.entryFeeRate = this.entryFeeRate();
+	}
 }
 
 export class RiskPlanT implements flatbuffers.IGeneratedObject {
-constructor(
-  public present: boolean = false,
-  public entryNoiseBand: string|Uint8Array|null = null,
-  public noiseBand: string|Uint8Array|null = null,
-  public riskDistance: string|Uint8Array|null = null,
-  public trailDistance: string|Uint8Array|null = null,
-  public armBuffer: string|Uint8Array|null = null,
-  public lockBuffer: string|Uint8Array|null = null,
-  public minEdge: string|Uint8Array|null = null,
-  public maxLoss: string|Uint8Array|null = null,
-  public exitFeeRate: string|Uint8Array|null = null,
-  public entryFeeRate: string|Uint8Array|null = null
-){}
+	constructor(
+		public present: boolean = false,
+		public entryNoiseBand: string | Uint8Array | null = null,
+		public noiseBand: string | Uint8Array | null = null,
+		public riskDistance: string | Uint8Array | null = null,
+		public trailDistance: string | Uint8Array | null = null,
+		public armBuffer: string | Uint8Array | null = null,
+		public lockBuffer: string | Uint8Array | null = null,
+		public minEdge: string | Uint8Array | null = null,
+		public maxLoss: string | Uint8Array | null = null,
+		public exitFeeRate: string | Uint8Array | null = null,
+		public entryFeeRate: string | Uint8Array | null = null,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const entryNoiseBand =
+			this.entryNoiseBand !== null
+				? builder.createString(this.entryNoiseBand!)
+				: 0;
+		const noiseBand =
+			this.noiseBand !== null ? builder.createString(this.noiseBand!) : 0;
+		const riskDistance =
+			this.riskDistance !== null ? builder.createString(this.riskDistance!) : 0;
+		const trailDistance =
+			this.trailDistance !== null
+				? builder.createString(this.trailDistance!)
+				: 0;
+		const armBuffer =
+			this.armBuffer !== null ? builder.createString(this.armBuffer!) : 0;
+		const lockBuffer =
+			this.lockBuffer !== null ? builder.createString(this.lockBuffer!) : 0;
+		const minEdge =
+			this.minEdge !== null ? builder.createString(this.minEdge!) : 0;
+		const maxLoss =
+			this.maxLoss !== null ? builder.createString(this.maxLoss!) : 0;
+		const exitFeeRate =
+			this.exitFeeRate !== null ? builder.createString(this.exitFeeRate!) : 0;
+		const entryFeeRate =
+			this.entryFeeRate !== null ? builder.createString(this.entryFeeRate!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const entryNoiseBand = (this.entryNoiseBand !== null ? builder.createString(this.entryNoiseBand!) : 0);
-  const noiseBand = (this.noiseBand !== null ? builder.createString(this.noiseBand!) : 0);
-  const riskDistance = (this.riskDistance !== null ? builder.createString(this.riskDistance!) : 0);
-  const trailDistance = (this.trailDistance !== null ? builder.createString(this.trailDistance!) : 0);
-  const armBuffer = (this.armBuffer !== null ? builder.createString(this.armBuffer!) : 0);
-  const lockBuffer = (this.lockBuffer !== null ? builder.createString(this.lockBuffer!) : 0);
-  const minEdge = (this.minEdge !== null ? builder.createString(this.minEdge!) : 0);
-  const maxLoss = (this.maxLoss !== null ? builder.createString(this.maxLoss!) : 0);
-  const exitFeeRate = (this.exitFeeRate !== null ? builder.createString(this.exitFeeRate!) : 0);
-  const entryFeeRate = (this.entryFeeRate !== null ? builder.createString(this.entryFeeRate!) : 0);
-
-  return RiskPlan.createRiskPlan(builder,
-    this.present,
-    entryNoiseBand,
-    noiseBand,
-    riskDistance,
-    trailDistance,
-    armBuffer,
-    lockBuffer,
-    minEdge,
-    maxLoss,
-    exitFeeRate,
-    entryFeeRate
-  );
-}
+		return RiskPlan.createRiskPlan(
+			builder,
+			this.present,
+			entryNoiseBand,
+			noiseBand,
+			riskDistance,
+			trailDistance,
+			armBuffer,
+			lockBuffer,
+			minEdge,
+			maxLoss,
+			exitFeeRate,
+			entryFeeRate,
+		);
+	}
 }

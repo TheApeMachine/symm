@@ -3,92 +3,110 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class EnvelopeCognitionPrediction
+	implements flatbuffers.IUnpackableObject<EnvelopeCognitionPredictionT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeCognitionPrediction {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsEnvelopeCognitionPrediction(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeCognitionPrediction,
+	): EnvelopeCognitionPrediction {
+		return (obj || new EnvelopeCognitionPrediction()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class EnvelopeCognitionPrediction implements flatbuffers.IUnpackableObject<EnvelopeCognitionPredictionT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeCognitionPrediction {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
+	static getSizePrefixedRootAsEnvelopeCognitionPrediction(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeCognitionPrediction,
+	): EnvelopeCognitionPrediction {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopeCognitionPrediction()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	key(): string | null;
+	key(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	key(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	value(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	static startEnvelopeCognitionPrediction(builder: flatbuffers.Builder) {
+		builder.startObject(2);
+	}
+
+	static addKey(builder: flatbuffers.Builder, keyOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, keyOffset, 0);
+	}
+
+	static addValue(builder: flatbuffers.Builder, value: number) {
+		builder.addFieldFloat64(1, value, 0.0);
+	}
+
+	static endEnvelopeCognitionPrediction(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // key
+		return offset;
+	}
+
+	static createEnvelopeCognitionPrediction(
+		builder: flatbuffers.Builder,
+		keyOffset: flatbuffers.Offset,
+		value: number,
+	): flatbuffers.Offset {
+		EnvelopeCognitionPrediction.startEnvelopeCognitionPrediction(builder);
+		EnvelopeCognitionPrediction.addKey(builder, keyOffset);
+		EnvelopeCognitionPrediction.addValue(builder, value);
+		return EnvelopeCognitionPrediction.endEnvelopeCognitionPrediction(builder);
+	}
+
+	unpack(): EnvelopeCognitionPredictionT {
+		return new EnvelopeCognitionPredictionT(this.key(), this.value());
+	}
+
+	unpackTo(_o: EnvelopeCognitionPredictionT): void {
+		_o.key = this.key();
+		_o.value = this.value();
+	}
 }
 
-static getRootAsEnvelopeCognitionPrediction(bb:flatbuffers.ByteBuffer, obj?:EnvelopeCognitionPrediction):EnvelopeCognitionPrediction {
-  return (obj || new EnvelopeCognitionPrediction()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+export class EnvelopeCognitionPredictionT
+	implements flatbuffers.IGeneratedObject
+{
+	constructor(
+		public key: string | Uint8Array | null = null,
+		public value: number = 0.0,
+	) {}
 
-static getSizePrefixedRootAsEnvelopeCognitionPrediction(bb:flatbuffers.ByteBuffer, obj?:EnvelopeCognitionPrediction):EnvelopeCognitionPrediction {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeCognitionPrediction()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const key = this.key !== null ? builder.createString(this.key!) : 0;
 
-key():string|null
-key(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-key(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-value():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-static startEnvelopeCognitionPrediction(builder:flatbuffers.Builder) {
-  builder.startObject(2);
-}
-
-static addKey(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, keyOffset, 0);
-}
-
-static addValue(builder:flatbuffers.Builder, value:number) {
-  builder.addFieldFloat64(1, value, 0.0);
-}
-
-static endEnvelopeCognitionPrediction(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // key
-  return offset;
-}
-
-static createEnvelopeCognitionPrediction(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset, value:number):flatbuffers.Offset {
-  EnvelopeCognitionPrediction.startEnvelopeCognitionPrediction(builder);
-  EnvelopeCognitionPrediction.addKey(builder, keyOffset);
-  EnvelopeCognitionPrediction.addValue(builder, value);
-  return EnvelopeCognitionPrediction.endEnvelopeCognitionPrediction(builder);
-}
-
-unpack(): EnvelopeCognitionPredictionT {
-  return new EnvelopeCognitionPredictionT(
-    this.key(),
-    this.value()
-  );
-}
-
-
-unpackTo(_o: EnvelopeCognitionPredictionT): void {
-  _o.key = this.key();
-  _o.value = this.value();
-}
-}
-
-export class EnvelopeCognitionPredictionT implements flatbuffers.IGeneratedObject {
-constructor(
-  public key: string|Uint8Array|null = null,
-  public value: number = 0.0
-){}
-
-
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const key = (this.key !== null ? builder.createString(this.key!) : 0);
-
-  return EnvelopeCognitionPrediction.createEnvelopeCognitionPrediction(builder,
-    key,
-    this.value
-  );
-}
+		return EnvelopeCognitionPrediction.createEnvelopeCognitionPrediction(
+			builder,
+			key,
+			this.value,
+		);
+	}
 }

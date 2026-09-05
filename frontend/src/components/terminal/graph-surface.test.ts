@@ -1,21 +1,23 @@
-import { describe, expect, it } from "vitest";
 import * as flatbuffers from "flatbuffers";
+import { describe, expect, it } from "vitest";
+import {
+	GraphFrame,
+	GraphFrameT,
+} from "#/providers/telemetry/telemetry/graph-frame";
+import { GraphMetadataT } from "#/providers/telemetry/telemetry/graph-metadata";
+import { GraphNodeT } from "#/providers/telemetry/telemetry/graph-node";
+import { NamedNumberT } from "#/providers/telemetry/telemetry/named-number";
+import { NamedStringT } from "#/providers/telemetry/telemetry/named-string";
 import {
 	adaptGraph,
 	graphFrameFromFlatBuffer,
 	graphFramePlan,
 	graphStructureKey,
-	renderedNodeIds,
 	type MarketGraphEdge,
 	type MarketGraphFrame,
 	type MarketGraphNode,
+	renderedNodeIds,
 } from "./graph-surface-store";
-import { GraphFrame } from "#/providers/telemetry/telemetry/graph-frame";
-import { GraphFrameT } from "#/providers/telemetry/telemetry/graph-frame";
-import { GraphMetadataT } from "#/providers/telemetry/telemetry/graph-metadata";
-import { GraphNodeT } from "#/providers/telemetry/telemetry/graph-node";
-import { NamedNumberT } from "#/providers/telemetry/telemetry/named-number";
-import { NamedStringT } from "#/providers/telemetry/telemetry/named-string";
 
 const frame = (): MarketGraphFrame & {
 	nodes: Record<string, MarketGraphNode>;
@@ -190,9 +192,10 @@ describe("graphFrameFromFlatBuffer", () => {
 		);
 
 		const decoded = graphFrameFromFlatBuffer(fb);
-		const node = decoded?.nodes?.[
-			"BTC/USD/cvd/signed_net_fraction_zscore//dimensionless/instantaneous/epoch=1"
-		];
+		const node =
+			decoded?.nodes?.[
+				"BTC/USD/cvd/signed_net_fraction_zscore//dimensionless/instantaneous/epoch=1"
+			];
 
 		expect(node).toBeDefined();
 		expect(node?.value).toBe(-1.5);

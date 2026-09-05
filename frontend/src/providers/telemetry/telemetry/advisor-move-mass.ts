@@ -3,91 +3,101 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class AdvisorMoveMass
+	implements flatbuffers.IUnpackableObject<AdvisorMoveMassT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): AdvisorMoveMass {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsAdvisorMoveMass(
+		bb: flatbuffers.ByteBuffer,
+		obj?: AdvisorMoveMass,
+	): AdvisorMoveMass {
+		return (obj || new AdvisorMoveMass()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class AdvisorMoveMass implements flatbuffers.IUnpackableObject<AdvisorMoveMassT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):AdvisorMoveMass {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsAdvisorMoveMass(
+		bb: flatbuffers.ByteBuffer,
+		obj?: AdvisorMoveMass,
+	): AdvisorMoveMass {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new AdvisorMoveMass()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsAdvisorMoveMass(bb:flatbuffers.ByteBuffer, obj?:AdvisorMoveMass):AdvisorMoveMass {
-  return (obj || new AdvisorMoveMass()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	move(): string | null;
+	move(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	move(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsAdvisorMoveMass(bb:flatbuffers.ByteBuffer, obj?:AdvisorMoveMass):AdvisorMoveMass {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new AdvisorMoveMass()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	mass(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-move():string|null
-move(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-move(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	static startAdvisorMoveMass(builder: flatbuffers.Builder) {
+		builder.startObject(2);
+	}
 
-mass():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static addMove(builder: flatbuffers.Builder, moveOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, moveOffset, 0);
+	}
 
-static startAdvisorMoveMass(builder:flatbuffers.Builder) {
-  builder.startObject(2);
-}
+	static addMass(builder: flatbuffers.Builder, mass: number) {
+		builder.addFieldFloat64(1, mass, 0.0);
+	}
 
-static addMove(builder:flatbuffers.Builder, moveOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, moveOffset, 0);
-}
+	static endAdvisorMoveMass(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static addMass(builder:flatbuffers.Builder, mass:number) {
-  builder.addFieldFloat64(1, mass, 0.0);
-}
+	static createAdvisorMoveMass(
+		builder: flatbuffers.Builder,
+		moveOffset: flatbuffers.Offset,
+		mass: number,
+	): flatbuffers.Offset {
+		AdvisorMoveMass.startAdvisorMoveMass(builder);
+		AdvisorMoveMass.addMove(builder, moveOffset);
+		AdvisorMoveMass.addMass(builder, mass);
+		return AdvisorMoveMass.endAdvisorMoveMass(builder);
+	}
 
-static endAdvisorMoveMass(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): AdvisorMoveMassT {
+		return new AdvisorMoveMassT(this.move(), this.mass());
+	}
 
-static createAdvisorMoveMass(builder:flatbuffers.Builder, moveOffset:flatbuffers.Offset, mass:number):flatbuffers.Offset {
-  AdvisorMoveMass.startAdvisorMoveMass(builder);
-  AdvisorMoveMass.addMove(builder, moveOffset);
-  AdvisorMoveMass.addMass(builder, mass);
-  return AdvisorMoveMass.endAdvisorMoveMass(builder);
-}
-
-unpack(): AdvisorMoveMassT {
-  return new AdvisorMoveMassT(
-    this.move(),
-    this.mass()
-  );
-}
-
-
-unpackTo(_o: AdvisorMoveMassT): void {
-  _o.move = this.move();
-  _o.mass = this.mass();
-}
+	unpackTo(_o: AdvisorMoveMassT): void {
+		_o.move = this.move();
+		_o.mass = this.mass();
+	}
 }
 
 export class AdvisorMoveMassT implements flatbuffers.IGeneratedObject {
-constructor(
-  public move: string|Uint8Array|null = null,
-  public mass: number = 0.0
-){}
+	constructor(
+		public move: string | Uint8Array | null = null,
+		public mass: number = 0.0,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const move = this.move !== null ? builder.createString(this.move!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const move = (this.move !== null ? builder.createString(this.move!) : 0);
-
-  return AdvisorMoveMass.createAdvisorMoveMass(builder,
-    move,
-    this.mass
-  );
-}
+		return AdvisorMoveMass.createAdvisorMoveMass(builder, move, this.mass);
+	}
 }

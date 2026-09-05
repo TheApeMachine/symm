@@ -3,686 +3,867 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { DecisionTrace, DecisionTraceT } from '../telemetry/decision-trace.js';
-import { EntryCost, EntryCostT } from '../telemetry/entry-cost.js';
-import { NamedNumber, NamedNumberT } from '../telemetry/named-number.js';
-import { RiskPlan, RiskPlanT } from '../telemetry/risk-plan.js';
-import { Stoploss, StoplossT } from '../telemetry/stoploss.js';
-
+import { EntryCost, type EntryCostT } from "../telemetry/entry-cost.js";
+import { NamedNumber, type NamedNumberT } from "../telemetry/named-number.js";
 
 export class Decision implements flatbuffers.IUnpackableObject<DecisionT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):Decision {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
-
-static getRootAsDecision(bb:flatbuffers.ByteBuffer, obj?:Decision):Decision {
-  return (obj || new Decision()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
-
-static getSizePrefixedRootAsDecision(bb:flatbuffers.ByteBuffer, obj?:Decision):Decision {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new Decision()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
-
-id():string|null
-id(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-id(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-action():string|null
-action(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-action(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-symbol():string|null
-symbol(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-symbol(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-at():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-direction():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-alternatives(index: number, obj?:NamedNumber):NamedNumber|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? (obj || new NamedNumber()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
-
-alternativesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-allocationClass():string|null
-allocationClass(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-allocationClass(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-opportunity():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-opportunityType():string|null
-opportunityType(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-opportunityType(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-opportunityPhase():string|null
-opportunityPhase(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-opportunityPhase(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-predictiveReady():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-predictiveStatus():string|null
-predictiveStatus(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-predictiveStatus(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-taskSkill():number {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-taskSkillReady():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-proposedNotional():string|null
-proposedNotional(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-proposedNotional(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-proposedQuantity():string|null
-proposedQuantity(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-proposedQuantity(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-referencePrice():string|null
-referencePrice(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-referencePrice(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-forecastSource():string|null
-forecastSource(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-forecastSource(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-forecastModel():string|null
-forecastModel(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-forecastModel(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 40);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-forecastHorizon():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 42);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-calibrationCount():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 44);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
-
-confidence():number {
-  const offset = this.bb!.__offset(this.bb_pos, 46);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-availableCapital():string|null
-availableCapital(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-availableCapital(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-openPositions():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 50);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-cause():string|null
-cause(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-cause(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 52);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-reason():string|null
-reason(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-reason(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 54);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-reservationId():string|null
-reservationId(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-reservationId(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 56);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-sellableQty():string|null
-sellableQty(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-sellableQty(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 58);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-entryAt():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 60);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-exitAt():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 62);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-entryPrice():string|null
-entryPrice(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-entryPrice(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 64);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-entryFee():string|null
-entryFee(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-entryFee(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 66);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-exitPrice():string|null
-exitPrice(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-exitPrice(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 68);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-exitFee():string|null
-exitFee(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-exitFee(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 70);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-pnl():string|null
-pnl(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-pnl(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 72);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-returnPct():number {
-  const offset = this.bb!.__offset(this.bb_pos, 74);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-mark():string|null
-mark(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-mark(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 76);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-entryCost(obj?:EntryCost):EntryCost|null {
-  const offset = this.bb!.__offset(this.bb_pos, 78);
-  return offset ? (obj || new EntryCost()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-stoploss(obj?:Stoploss):Stoploss|null {
-  const offset = this.bb!.__offset(this.bb_pos, 80);
-  return offset ? (obj || new Stoploss()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-risk(obj?:RiskPlan):RiskPlan|null {
-  const offset = this.bb!.__offset(this.bb_pos, 82);
-  return offset ? (obj || new RiskPlan()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-trace(obj?:DecisionTrace):DecisionTrace|null {
-  const offset = this.bb!.__offset(this.bb_pos, 84);
-  return offset ? (obj || new DecisionTrace()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-static startDecision(builder:flatbuffers.Builder) {
-  builder.startObject(41);
-}
-
-static addId(builder:flatbuffers.Builder, idOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, idOffset, 0);
-}
-
-static addAction(builder:flatbuffers.Builder, actionOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, actionOffset, 0);
-}
-
-static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, symbolOffset, 0);
-}
-
-static addAt(builder:flatbuffers.Builder, at:bigint) {
-  builder.addFieldInt64(3, at, BigInt('0'));
-}
-
-static addDirection(builder:flatbuffers.Builder, direction:number) {
-  builder.addFieldFloat64(4, direction, 0.0);
-}
-
-static addAlternatives(builder:flatbuffers.Builder, alternativesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, alternativesOffset, 0);
-}
-
-static createAlternativesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startAlternativesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static addAllocationClass(builder:flatbuffers.Builder, allocationClassOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, allocationClassOffset, 0);
-}
-
-static addOpportunity(builder:flatbuffers.Builder, opportunity:boolean) {
-  builder.addFieldInt8(7, +opportunity, +false);
-}
-
-static addOpportunityType(builder:flatbuffers.Builder, opportunityTypeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, opportunityTypeOffset, 0);
-}
-
-static addOpportunityPhase(builder:flatbuffers.Builder, opportunityPhaseOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(9, opportunityPhaseOffset, 0);
-}
-
-static addPredictiveReady(builder:flatbuffers.Builder, predictiveReady:boolean) {
-  builder.addFieldInt8(10, +predictiveReady, +false);
-}
-
-static addPredictiveStatus(builder:flatbuffers.Builder, predictiveStatusOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(11, predictiveStatusOffset, 0);
-}
-
-static addTaskSkill(builder:flatbuffers.Builder, taskSkill:number) {
-  builder.addFieldFloat64(12, taskSkill, 0.0);
-}
-
-static addTaskSkillReady(builder:flatbuffers.Builder, taskSkillReady:boolean) {
-  builder.addFieldInt8(13, +taskSkillReady, +false);
-}
-
-static addProposedNotional(builder:flatbuffers.Builder, proposedNotionalOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(14, proposedNotionalOffset, 0);
-}
-
-static addProposedQuantity(builder:flatbuffers.Builder, proposedQuantityOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(15, proposedQuantityOffset, 0);
-}
-
-static addReferencePrice(builder:flatbuffers.Builder, referencePriceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(16, referencePriceOffset, 0);
-}
-
-static addForecastSource(builder:flatbuffers.Builder, forecastSourceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(17, forecastSourceOffset, 0);
-}
-
-static addForecastModel(builder:flatbuffers.Builder, forecastModelOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(18, forecastModelOffset, 0);
-}
-
-static addForecastHorizon(builder:flatbuffers.Builder, forecastHorizon:bigint) {
-  builder.addFieldInt64(19, forecastHorizon, BigInt('0'));
-}
-
-static addCalibrationCount(builder:flatbuffers.Builder, calibrationCount:bigint) {
-  builder.addFieldInt64(20, calibrationCount, BigInt('0'));
-}
-
-static addConfidence(builder:flatbuffers.Builder, confidence:number) {
-  builder.addFieldFloat64(21, confidence, 0.0);
-}
-
-static addAvailableCapital(builder:flatbuffers.Builder, availableCapitalOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(22, availableCapitalOffset, 0);
-}
-
-static addOpenPositions(builder:flatbuffers.Builder, openPositions:bigint) {
-  builder.addFieldInt64(23, openPositions, BigInt('0'));
-}
-
-static addCause(builder:flatbuffers.Builder, causeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(24, causeOffset, 0);
-}
-
-static addReason(builder:flatbuffers.Builder, reasonOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(25, reasonOffset, 0);
-}
-
-static addReservationId(builder:flatbuffers.Builder, reservationIdOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(26, reservationIdOffset, 0);
-}
-
-static addSellableQty(builder:flatbuffers.Builder, sellableQtyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(27, sellableQtyOffset, 0);
-}
-
-static addEntryAt(builder:flatbuffers.Builder, entryAt:bigint) {
-  builder.addFieldInt64(28, entryAt, BigInt('0'));
-}
-
-static addExitAt(builder:flatbuffers.Builder, exitAt:bigint) {
-  builder.addFieldInt64(29, exitAt, BigInt('0'));
-}
-
-static addEntryPrice(builder:flatbuffers.Builder, entryPriceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(30, entryPriceOffset, 0);
-}
-
-static addEntryFee(builder:flatbuffers.Builder, entryFeeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(31, entryFeeOffset, 0);
-}
-
-static addExitPrice(builder:flatbuffers.Builder, exitPriceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(32, exitPriceOffset, 0);
-}
-
-static addExitFee(builder:flatbuffers.Builder, exitFeeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(33, exitFeeOffset, 0);
-}
-
-static addPnl(builder:flatbuffers.Builder, pnlOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(34, pnlOffset, 0);
-}
-
-static addReturnPct(builder:flatbuffers.Builder, returnPct:number) {
-  builder.addFieldFloat64(35, returnPct, 0.0);
-}
-
-static addMark(builder:flatbuffers.Builder, markOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(36, markOffset, 0);
-}
-
-static addEntryCost(builder:flatbuffers.Builder, entryCostOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(37, entryCostOffset, 0);
-}
-
-static addStoploss(builder:flatbuffers.Builder, stoplossOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(38, stoplossOffset, 0);
-}
-
-static addRisk(builder:flatbuffers.Builder, riskOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(39, riskOffset, 0);
-}
-
-static addTrace(builder:flatbuffers.Builder, traceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(40, traceOffset, 0);
-}
-
-static endDecision(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
-
-
-unpack(): DecisionT {
-  return new DecisionT(
-    this.id(),
-    this.action(),
-    this.symbol(),
-    this.at(),
-    this.direction(),
-    this.bb!.createObjList<NamedNumber, NamedNumberT>(this.alternatives.bind(this), this.alternativesLength()),
-    this.allocationClass(),
-    this.opportunity(),
-    this.opportunityType(),
-    this.opportunityPhase(),
-    this.predictiveReady(),
-    this.predictiveStatus(),
-    this.taskSkill(),
-    this.taskSkillReady(),
-    this.proposedNotional(),
-    this.proposedQuantity(),
-    this.referencePrice(),
-    this.forecastSource(),
-    this.forecastModel(),
-    this.forecastHorizon(),
-    this.calibrationCount(),
-    this.confidence(),
-    this.availableCapital(),
-    this.openPositions(),
-    this.cause(),
-    this.reason(),
-    this.reservationId(),
-    this.sellableQty(),
-    this.entryAt(),
-    this.exitAt(),
-    this.entryPrice(),
-    this.entryFee(),
-    this.exitPrice(),
-    this.exitFee(),
-    this.pnl(),
-    this.returnPct(),
-    this.mark(),
-    (this.entryCost() !== null ? this.entryCost()!.unpack() : null),
-    (this.stoploss() !== null ? this.stoploss()!.unpack() : null),
-    (this.risk() !== null ? this.risk()!.unpack() : null),
-    (this.trace() !== null ? this.trace()!.unpack() : null)
-  );
-}
-
-
-unpackTo(_o: DecisionT): void {
-  _o.id = this.id();
-  _o.action = this.action();
-  _o.symbol = this.symbol();
-  _o.at = this.at();
-  _o.direction = this.direction();
-  _o.alternatives = this.bb!.createObjList<NamedNumber, NamedNumberT>(this.alternatives.bind(this), this.alternativesLength());
-  _o.allocationClass = this.allocationClass();
-  _o.opportunity = this.opportunity();
-  _o.opportunityType = this.opportunityType();
-  _o.opportunityPhase = this.opportunityPhase();
-  _o.predictiveReady = this.predictiveReady();
-  _o.predictiveStatus = this.predictiveStatus();
-  _o.taskSkill = this.taskSkill();
-  _o.taskSkillReady = this.taskSkillReady();
-  _o.proposedNotional = this.proposedNotional();
-  _o.proposedQuantity = this.proposedQuantity();
-  _o.referencePrice = this.referencePrice();
-  _o.forecastSource = this.forecastSource();
-  _o.forecastModel = this.forecastModel();
-  _o.forecastHorizon = this.forecastHorizon();
-  _o.calibrationCount = this.calibrationCount();
-  _o.confidence = this.confidence();
-  _o.availableCapital = this.availableCapital();
-  _o.openPositions = this.openPositions();
-  _o.cause = this.cause();
-  _o.reason = this.reason();
-  _o.reservationId = this.reservationId();
-  _o.sellableQty = this.sellableQty();
-  _o.entryAt = this.entryAt();
-  _o.exitAt = this.exitAt();
-  _o.entryPrice = this.entryPrice();
-  _o.entryFee = this.entryFee();
-  _o.exitPrice = this.exitPrice();
-  _o.exitFee = this.exitFee();
-  _o.pnl = this.pnl();
-  _o.returnPct = this.returnPct();
-  _o.mark = this.mark();
-  _o.entryCost = (this.entryCost() !== null ? this.entryCost()!.unpack() : null);
-  _o.stoploss = (this.stoploss() !== null ? this.stoploss()!.unpack() : null);
-  _o.risk = (this.risk() !== null ? this.risk()!.unpack() : null);
-  _o.trace = (this.trace() !== null ? this.trace()!.unpack() : null);
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): Decision {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
+
+	static getRootAsDecision(
+		bb: flatbuffers.ByteBuffer,
+		obj?: Decision,
+	): Decision {
+		return (obj || new Decision()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	static getSizePrefixedRootAsDecision(
+		bb: flatbuffers.ByteBuffer,
+		obj?: Decision,
+	): Decision {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new Decision()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	id(): string | null;
+	id(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	id(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	action(): string | null;
+	action(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	action(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	symbol(): string | null;
+	symbol(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	symbol(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	at(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	direction(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	alternatives(index: number, obj?: NamedNumber): NamedNumber | null {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset
+			? (obj || new NamedNumber()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
+
+	alternativesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	allocationClass(): string | null;
+	allocationClass(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	allocationClass(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	opportunity(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	opportunityType(): string | null;
+	opportunityType(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	opportunityType(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	opportunityPhase(): string | null;
+	opportunityPhase(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	opportunityPhase(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	predictiveReady(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	predictiveStatus(): string | null;
+	predictiveStatus(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	predictiveStatus(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	taskSkill(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 28);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	taskSkillReady(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 30);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	proposedNotional(): string | null;
+	proposedNotional(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	proposedNotional(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 32);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	proposedQuantity(): string | null;
+	proposedQuantity(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	proposedQuantity(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 34);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	referencePrice(): string | null;
+	referencePrice(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	referencePrice(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 36);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	forecastSource(): string | null;
+	forecastSource(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	forecastSource(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 38);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	forecastModel(): string | null;
+	forecastModel(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	forecastModel(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 40);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	forecastHorizon(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 42);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	calibrationCount(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 44);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	confidence(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 46);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	availableCapital(): string | null;
+	availableCapital(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	availableCapital(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 48);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	openPositions(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 50);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	cause(): string | null;
+	cause(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	cause(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 52);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	reason(): string | null;
+	reason(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	reason(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 54);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	reservationId(): string | null;
+	reservationId(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	reservationId(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 56);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	sellableQty(): string | null;
+	sellableQty(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	sellableQty(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 58);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	entryAt(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 60);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	exitAt(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 62);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	entryPrice(): string | null;
+	entryPrice(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	entryPrice(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 64);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	entryFee(): string | null;
+	entryFee(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	entryFee(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 66);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	exitPrice(): string | null;
+	exitPrice(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	exitPrice(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 68);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	exitFee(): string | null;
+	exitFee(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	exitFee(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 70);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	pnl(): string | null;
+	pnl(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	pnl(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 72);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	returnPct(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 74);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	mark(): string | null;
+	mark(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	mark(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 76);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	entryCost(obj?: EntryCost): EntryCost | null {
+		const offset = this.bb!.__offset(this.bb_pos, 78);
+		return offset
+			? (obj || new EntryCost()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	static startDecision(builder: flatbuffers.Builder) {
+		builder.startObject(41);
+	}
+
+	static addId(builder: flatbuffers.Builder, idOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, idOffset, 0);
+	}
+
+	static addAction(
+		builder: flatbuffers.Builder,
+		actionOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, actionOffset, 0);
+	}
+
+	static addSymbol(
+		builder: flatbuffers.Builder,
+		symbolOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, symbolOffset, 0);
+	}
+
+	static addAt(builder: flatbuffers.Builder, at: bigint) {
+		builder.addFieldInt64(3, at, BigInt("0"));
+	}
+
+	static addDirection(builder: flatbuffers.Builder, direction: number) {
+		builder.addFieldFloat64(4, direction, 0.0);
+	}
+
+	static addAlternatives(
+		builder: flatbuffers.Builder,
+		alternativesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(5, alternativesOffset, 0);
+	}
+
+	static createAlternativesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startAlternativesVector(
+		builder: flatbuffers.Builder,
+		numElems: number,
+	) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static addAllocationClass(
+		builder: flatbuffers.Builder,
+		allocationClassOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(6, allocationClassOffset, 0);
+	}
+
+	static addOpportunity(builder: flatbuffers.Builder, opportunity: boolean) {
+		builder.addFieldInt8(7, +opportunity, +false);
+	}
+
+	static addOpportunityType(
+		builder: flatbuffers.Builder,
+		opportunityTypeOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(8, opportunityTypeOffset, 0);
+	}
+
+	static addOpportunityPhase(
+		builder: flatbuffers.Builder,
+		opportunityPhaseOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(9, opportunityPhaseOffset, 0);
+	}
+
+	static addPredictiveReady(
+		builder: flatbuffers.Builder,
+		predictiveReady: boolean,
+	) {
+		builder.addFieldInt8(10, +predictiveReady, +false);
+	}
+
+	static addPredictiveStatus(
+		builder: flatbuffers.Builder,
+		predictiveStatusOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(11, predictiveStatusOffset, 0);
+	}
+
+	static addTaskSkill(builder: flatbuffers.Builder, taskSkill: number) {
+		builder.addFieldFloat64(12, taskSkill, 0.0);
+	}
+
+	static addTaskSkillReady(
+		builder: flatbuffers.Builder,
+		taskSkillReady: boolean,
+	) {
+		builder.addFieldInt8(13, +taskSkillReady, +false);
+	}
+
+	static addProposedNotional(
+		builder: flatbuffers.Builder,
+		proposedNotionalOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(14, proposedNotionalOffset, 0);
+	}
+
+	static addProposedQuantity(
+		builder: flatbuffers.Builder,
+		proposedQuantityOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(15, proposedQuantityOffset, 0);
+	}
+
+	static addReferencePrice(
+		builder: flatbuffers.Builder,
+		referencePriceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(16, referencePriceOffset, 0);
+	}
+
+	static addForecastSource(
+		builder: flatbuffers.Builder,
+		forecastSourceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(17, forecastSourceOffset, 0);
+	}
+
+	static addForecastModel(
+		builder: flatbuffers.Builder,
+		forecastModelOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(18, forecastModelOffset, 0);
+	}
+
+	static addForecastHorizon(
+		builder: flatbuffers.Builder,
+		forecastHorizon: bigint,
+	) {
+		builder.addFieldInt64(19, forecastHorizon, BigInt("0"));
+	}
+
+	static addCalibrationCount(
+		builder: flatbuffers.Builder,
+		calibrationCount: bigint,
+	) {
+		builder.addFieldInt64(20, calibrationCount, BigInt("0"));
+	}
+
+	static addConfidence(builder: flatbuffers.Builder, confidence: number) {
+		builder.addFieldFloat64(21, confidence, 0.0);
+	}
+
+	static addAvailableCapital(
+		builder: flatbuffers.Builder,
+		availableCapitalOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(22, availableCapitalOffset, 0);
+	}
+
+	static addOpenPositions(builder: flatbuffers.Builder, openPositions: bigint) {
+		builder.addFieldInt64(23, openPositions, BigInt("0"));
+	}
+
+	static addCause(
+		builder: flatbuffers.Builder,
+		causeOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(24, causeOffset, 0);
+	}
+
+	static addReason(
+		builder: flatbuffers.Builder,
+		reasonOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(25, reasonOffset, 0);
+	}
+
+	static addReservationId(
+		builder: flatbuffers.Builder,
+		reservationIdOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(26, reservationIdOffset, 0);
+	}
+
+	static addSellableQty(
+		builder: flatbuffers.Builder,
+		sellableQtyOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(27, sellableQtyOffset, 0);
+	}
+
+	static addEntryAt(builder: flatbuffers.Builder, entryAt: bigint) {
+		builder.addFieldInt64(28, entryAt, BigInt("0"));
+	}
+
+	static addExitAt(builder: flatbuffers.Builder, exitAt: bigint) {
+		builder.addFieldInt64(29, exitAt, BigInt("0"));
+	}
+
+	static addEntryPrice(
+		builder: flatbuffers.Builder,
+		entryPriceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(30, entryPriceOffset, 0);
+	}
+
+	static addEntryFee(
+		builder: flatbuffers.Builder,
+		entryFeeOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(31, entryFeeOffset, 0);
+	}
+
+	static addExitPrice(
+		builder: flatbuffers.Builder,
+		exitPriceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(32, exitPriceOffset, 0);
+	}
+
+	static addExitFee(
+		builder: flatbuffers.Builder,
+		exitFeeOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(33, exitFeeOffset, 0);
+	}
+
+	static addPnl(builder: flatbuffers.Builder, pnlOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(34, pnlOffset, 0);
+	}
+
+	static addReturnPct(builder: flatbuffers.Builder, returnPct: number) {
+		builder.addFieldFloat64(35, returnPct, 0.0);
+	}
+
+	static addMark(builder: flatbuffers.Builder, markOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(36, markOffset, 0);
+	}
+
+	static addEntryCost(
+		builder: flatbuffers.Builder,
+		entryCostOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(37, entryCostOffset, 0);
+	}
+
+	static endDecision(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
+
+	unpack(): DecisionT {
+		return new DecisionT(
+			this.id(),
+			this.action(),
+			this.symbol(),
+			this.at(),
+			this.direction(),
+			this.bb!.createObjList<NamedNumber, NamedNumberT>(
+				this.alternatives.bind(this),
+				this.alternativesLength(),
+			),
+			this.allocationClass(),
+			this.opportunity(),
+			this.opportunityType(),
+			this.opportunityPhase(),
+			this.predictiveReady(),
+			this.predictiveStatus(),
+			this.taskSkill(),
+			this.taskSkillReady(),
+			this.proposedNotional(),
+			this.proposedQuantity(),
+			this.referencePrice(),
+			this.forecastSource(),
+			this.forecastModel(),
+			this.forecastHorizon(),
+			this.calibrationCount(),
+			this.confidence(),
+			this.availableCapital(),
+			this.openPositions(),
+			this.cause(),
+			this.reason(),
+			this.reservationId(),
+			this.sellableQty(),
+			this.entryAt(),
+			this.exitAt(),
+			this.entryPrice(),
+			this.entryFee(),
+			this.exitPrice(),
+			this.exitFee(),
+			this.pnl(),
+			this.returnPct(),
+			this.mark(),
+			this.entryCost() !== null ? this.entryCost()!.unpack() : null,
+		);
+	}
+
+	unpackTo(_o: DecisionT): void {
+		_o.id = this.id();
+		_o.action = this.action();
+		_o.symbol = this.symbol();
+		_o.at = this.at();
+		_o.direction = this.direction();
+		_o.alternatives = this.bb!.createObjList<NamedNumber, NamedNumberT>(
+			this.alternatives.bind(this),
+			this.alternativesLength(),
+		);
+		_o.allocationClass = this.allocationClass();
+		_o.opportunity = this.opportunity();
+		_o.opportunityType = this.opportunityType();
+		_o.opportunityPhase = this.opportunityPhase();
+		_o.predictiveReady = this.predictiveReady();
+		_o.predictiveStatus = this.predictiveStatus();
+		_o.taskSkill = this.taskSkill();
+		_o.taskSkillReady = this.taskSkillReady();
+		_o.proposedNotional = this.proposedNotional();
+		_o.proposedQuantity = this.proposedQuantity();
+		_o.referencePrice = this.referencePrice();
+		_o.forecastSource = this.forecastSource();
+		_o.forecastModel = this.forecastModel();
+		_o.forecastHorizon = this.forecastHorizon();
+		_o.calibrationCount = this.calibrationCount();
+		_o.confidence = this.confidence();
+		_o.availableCapital = this.availableCapital();
+		_o.openPositions = this.openPositions();
+		_o.cause = this.cause();
+		_o.reason = this.reason();
+		_o.reservationId = this.reservationId();
+		_o.sellableQty = this.sellableQty();
+		_o.entryAt = this.entryAt();
+		_o.exitAt = this.exitAt();
+		_o.entryPrice = this.entryPrice();
+		_o.entryFee = this.entryFee();
+		_o.exitPrice = this.exitPrice();
+		_o.exitFee = this.exitFee();
+		_o.pnl = this.pnl();
+		_o.returnPct = this.returnPct();
+		_o.mark = this.mark();
+		_o.entryCost =
+			this.entryCost() !== null ? this.entryCost()!.unpack() : null;
+	}
 }
 
 export class DecisionT implements flatbuffers.IGeneratedObject {
-constructor(
-  public id: string|Uint8Array|null = null,
-  public action: string|Uint8Array|null = null,
-  public symbol: string|Uint8Array|null = null,
-  public at: bigint = BigInt('0'),
-  public direction: number = 0.0,
-  public alternatives: (NamedNumberT)[] = [],
-  public allocationClass: string|Uint8Array|null = null,
-  public opportunity: boolean = false,
-  public opportunityType: string|Uint8Array|null = null,
-  public opportunityPhase: string|Uint8Array|null = null,
-  public predictiveReady: boolean = false,
-  public predictiveStatus: string|Uint8Array|null = null,
-  public taskSkill: number = 0.0,
-  public taskSkillReady: boolean = false,
-  public proposedNotional: string|Uint8Array|null = null,
-  public proposedQuantity: string|Uint8Array|null = null,
-  public referencePrice: string|Uint8Array|null = null,
-  public forecastSource: string|Uint8Array|null = null,
-  public forecastModel: string|Uint8Array|null = null,
-  public forecastHorizon: bigint = BigInt('0'),
-  public calibrationCount: bigint = BigInt('0'),
-  public confidence: number = 0.0,
-  public availableCapital: string|Uint8Array|null = null,
-  public openPositions: bigint = BigInt('0'),
-  public cause: string|Uint8Array|null = null,
-  public reason: string|Uint8Array|null = null,
-  public reservationId: string|Uint8Array|null = null,
-  public sellableQty: string|Uint8Array|null = null,
-  public entryAt: bigint = BigInt('0'),
-  public exitAt: bigint = BigInt('0'),
-  public entryPrice: string|Uint8Array|null = null,
-  public entryFee: string|Uint8Array|null = null,
-  public exitPrice: string|Uint8Array|null = null,
-  public exitFee: string|Uint8Array|null = null,
-  public pnl: string|Uint8Array|null = null,
-  public returnPct: number = 0.0,
-  public mark: string|Uint8Array|null = null,
-  public entryCost: EntryCostT|null = null,
-  public stoploss: StoplossT|null = null,
-  public risk: RiskPlanT|null = null,
-  public trace: DecisionTraceT|null = null
-){}
+	constructor(
+		public id: string | Uint8Array | null = null,
+		public action: string | Uint8Array | null = null,
+		public symbol: string | Uint8Array | null = null,
+		public at: bigint = BigInt("0"),
+		public direction: number = 0.0,
+		public alternatives: NamedNumberT[] = [],
+		public allocationClass: string | Uint8Array | null = null,
+		public opportunity: boolean = false,
+		public opportunityType: string | Uint8Array | null = null,
+		public opportunityPhase: string | Uint8Array | null = null,
+		public predictiveReady: boolean = false,
+		public predictiveStatus: string | Uint8Array | null = null,
+		public taskSkill: number = 0.0,
+		public taskSkillReady: boolean = false,
+		public proposedNotional: string | Uint8Array | null = null,
+		public proposedQuantity: string | Uint8Array | null = null,
+		public referencePrice: string | Uint8Array | null = null,
+		public forecastSource: string | Uint8Array | null = null,
+		public forecastModel: string | Uint8Array | null = null,
+		public forecastHorizon: bigint = BigInt("0"),
+		public calibrationCount: bigint = BigInt("0"),
+		public confidence: number = 0.0,
+		public availableCapital: string | Uint8Array | null = null,
+		public openPositions: bigint = BigInt("0"),
+		public cause: string | Uint8Array | null = null,
+		public reason: string | Uint8Array | null = null,
+		public reservationId: string | Uint8Array | null = null,
+		public sellableQty: string | Uint8Array | null = null,
+		public entryAt: bigint = BigInt("0"),
+		public exitAt: bigint = BigInt("0"),
+		public entryPrice: string | Uint8Array | null = null,
+		public entryFee: string | Uint8Array | null = null,
+		public exitPrice: string | Uint8Array | null = null,
+		public exitFee: string | Uint8Array | null = null,
+		public pnl: string | Uint8Array | null = null,
+		public returnPct: number = 0.0,
+		public mark: string | Uint8Array | null = null,
+		public entryCost: EntryCostT | null = null,
+	) {}
 
-
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const id = (this.id !== null ? builder.createString(this.id!) : 0);
-  const action = (this.action !== null ? builder.createString(this.action!) : 0);
-  const symbol = (this.symbol !== null ? builder.createString(this.symbol!) : 0);
-  const alternatives = Decision.createAlternativesVector(builder, builder.createObjectOffsetList(this.alternatives));
-  const allocationClass = (this.allocationClass !== null ? builder.createString(this.allocationClass!) : 0);
-  const opportunityType = (this.opportunityType !== null ? builder.createString(this.opportunityType!) : 0);
-  const opportunityPhase = (this.opportunityPhase !== null ? builder.createString(this.opportunityPhase!) : 0);
-  const predictiveStatus = (this.predictiveStatus !== null ? builder.createString(this.predictiveStatus!) : 0);
-  const proposedNotional = (this.proposedNotional !== null ? builder.createString(this.proposedNotional!) : 0);
-  const proposedQuantity = (this.proposedQuantity !== null ? builder.createString(this.proposedQuantity!) : 0);
-  const referencePrice = (this.referencePrice !== null ? builder.createString(this.referencePrice!) : 0);
-  const forecastSource = (this.forecastSource !== null ? builder.createString(this.forecastSource!) : 0);
-  const forecastModel = (this.forecastModel !== null ? builder.createString(this.forecastModel!) : 0);
-  const availableCapital = (this.availableCapital !== null ? builder.createString(this.availableCapital!) : 0);
-  const cause = (this.cause !== null ? builder.createString(this.cause!) : 0);
-  const reason = (this.reason !== null ? builder.createString(this.reason!) : 0);
-  const reservationId = (this.reservationId !== null ? builder.createString(this.reservationId!) : 0);
-  const sellableQty = (this.sellableQty !== null ? builder.createString(this.sellableQty!) : 0);
-  const entryPrice = (this.entryPrice !== null ? builder.createString(this.entryPrice!) : 0);
-  const entryFee = (this.entryFee !== null ? builder.createString(this.entryFee!) : 0);
-  const exitPrice = (this.exitPrice !== null ? builder.createString(this.exitPrice!) : 0);
-  const exitFee = (this.exitFee !== null ? builder.createString(this.exitFee!) : 0);
-  const pnl = (this.pnl !== null ? builder.createString(this.pnl!) : 0);
-  const mark = (this.mark !== null ? builder.createString(this.mark!) : 0);
-  const entryCost = (this.entryCost !== null ? this.entryCost!.pack(builder) : 0);
-  const stoploss = (this.stoploss !== null ? this.stoploss!.pack(builder) : 0);
-  const risk = (this.risk !== null ? this.risk!.pack(builder) : 0);
-  const trace = (this.trace !== null ? this.trace!.pack(builder) : 0);
-
-  Decision.startDecision(builder);
-  Decision.addId(builder, id);
-  Decision.addAction(builder, action);
-  Decision.addSymbol(builder, symbol);
-  Decision.addAt(builder, this.at);
-  Decision.addDirection(builder, this.direction);
-  Decision.addAlternatives(builder, alternatives);
-  Decision.addAllocationClass(builder, allocationClass);
-  Decision.addOpportunity(builder, this.opportunity);
-  Decision.addOpportunityType(builder, opportunityType);
-  Decision.addOpportunityPhase(builder, opportunityPhase);
-  Decision.addPredictiveReady(builder, this.predictiveReady);
-  Decision.addPredictiveStatus(builder, predictiveStatus);
-  Decision.addTaskSkill(builder, this.taskSkill);
-  Decision.addTaskSkillReady(builder, this.taskSkillReady);
-  Decision.addProposedNotional(builder, proposedNotional);
-  Decision.addProposedQuantity(builder, proposedQuantity);
-  Decision.addReferencePrice(builder, referencePrice);
-  Decision.addForecastSource(builder, forecastSource);
-  Decision.addForecastModel(builder, forecastModel);
-  Decision.addForecastHorizon(builder, this.forecastHorizon);
-  Decision.addCalibrationCount(builder, this.calibrationCount);
-  Decision.addConfidence(builder, this.confidence);
-  Decision.addAvailableCapital(builder, availableCapital);
-  Decision.addOpenPositions(builder, this.openPositions);
-  Decision.addCause(builder, cause);
-  Decision.addReason(builder, reason);
-  Decision.addReservationId(builder, reservationId);
-  Decision.addSellableQty(builder, sellableQty);
-  Decision.addEntryAt(builder, this.entryAt);
-  Decision.addExitAt(builder, this.exitAt);
-  Decision.addEntryPrice(builder, entryPrice);
-  Decision.addEntryFee(builder, entryFee);
-  Decision.addExitPrice(builder, exitPrice);
-  Decision.addExitFee(builder, exitFee);
-  Decision.addPnl(builder, pnl);
-  Decision.addReturnPct(builder, this.returnPct);
-  Decision.addMark(builder, mark);
-  Decision.addEntryCost(builder, entryCost);
-  Decision.addStoploss(builder, stoploss);
-  Decision.addRisk(builder, risk);
-  Decision.addTrace(builder, trace);
-
-  return Decision.endDecision(builder);
-}
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const id = this.id !== null ? builder.createString(this.id!) : 0;
+		const action =
+			this.action !== null ? builder.createString(this.action!) : 0;
+		const symbol =
+			this.symbol !== null ? builder.createString(this.symbol!) : 0;
+		const alternatives = Decision.createAlternativesVector(
+			builder,
+			builder.createObjectOffsetList(this.alternatives),
+		);
+		const allocationClass =
+			this.allocationClass !== null
+				? builder.createString(this.allocationClass!)
+				: 0;
+		const opportunityType =
+			this.opportunityType !== null
+				? builder.createString(this.opportunityType!)
+				: 0;
+		const opportunityPhase =
+			this.opportunityPhase !== null
+				? builder.createString(this.opportunityPhase!)
+				: 0;
+		const predictiveStatus =
+			this.predictiveStatus !== null
+				? builder.createString(this.predictiveStatus!)
+				: 0;
+		const proposedNotional =
+			this.proposedNotional !== null
+				? builder.createString(this.proposedNotional!)
+				: 0;
+		const proposedQuantity =
+			this.proposedQuantity !== null
+				? builder.createString(this.proposedQuantity!)
+				: 0;
+		const referencePrice =
+			this.referencePrice !== null
+				? builder.createString(this.referencePrice!)
+				: 0;
+		const forecastSource =
+			this.forecastSource !== null
+				? builder.createString(this.forecastSource!)
+				: 0;
+		const forecastModel =
+			this.forecastModel !== null
+				? builder.createString(this.forecastModel!)
+				: 0;
+		const availableCapital =
+			this.availableCapital !== null
+				? builder.createString(this.availableCapital!)
+				: 0;
+		const cause = this.cause !== null ? builder.createString(this.cause!) : 0;
+		const reason =
+			this.reason !== null ? builder.createString(this.reason!) : 0;
+		const reservationId =
+			this.reservationId !== null
+				? builder.createString(this.reservationId!)
+				: 0;
+		const sellableQty =
+			this.sellableQty !== null ? builder.createString(this.sellableQty!) : 0;
+		const entryPrice =
+			this.entryPrice !== null ? builder.createString(this.entryPrice!) : 0;
+		const entryFee =
+			this.entryFee !== null ? builder.createString(this.entryFee!) : 0;
+		const exitPrice =
+			this.exitPrice !== null ? builder.createString(this.exitPrice!) : 0;
+		const exitFee =
+			this.exitFee !== null ? builder.createString(this.exitFee!) : 0;
+		const pnl = this.pnl !== null ? builder.createString(this.pnl!) : 0;
+		const mark = this.mark !== null ? builder.createString(this.mark!) : 0;
+		const entryCost =
+			this.entryCost !== null ? this.entryCost!.pack(builder) : 0;
+		Decision.startDecision(builder);
+		Decision.addId(builder, id);
+		Decision.addAction(builder, action);
+		Decision.addSymbol(builder, symbol);
+		Decision.addAt(builder, this.at);
+		Decision.addDirection(builder, this.direction);
+		Decision.addAlternatives(builder, alternatives);
+		Decision.addAllocationClass(builder, allocationClass);
+		Decision.addOpportunity(builder, this.opportunity);
+		Decision.addOpportunityType(builder, opportunityType);
+		Decision.addOpportunityPhase(builder, opportunityPhase);
+		Decision.addPredictiveReady(builder, this.predictiveReady);
+		Decision.addPredictiveStatus(builder, predictiveStatus);
+		Decision.addTaskSkill(builder, this.taskSkill);
+		Decision.addTaskSkillReady(builder, this.taskSkillReady);
+		Decision.addProposedNotional(builder, proposedNotional);
+		Decision.addProposedQuantity(builder, proposedQuantity);
+		Decision.addReferencePrice(builder, referencePrice);
+		Decision.addForecastSource(builder, forecastSource);
+		Decision.addForecastModel(builder, forecastModel);
+		Decision.addForecastHorizon(builder, this.forecastHorizon);
+		Decision.addCalibrationCount(builder, this.calibrationCount);
+		Decision.addConfidence(builder, this.confidence);
+		Decision.addAvailableCapital(builder, availableCapital);
+		Decision.addOpenPositions(builder, this.openPositions);
+		Decision.addCause(builder, cause);
+		Decision.addReason(builder, reason);
+		Decision.addReservationId(builder, reservationId);
+		Decision.addSellableQty(builder, sellableQty);
+		Decision.addEntryAt(builder, this.entryAt);
+		Decision.addExitAt(builder, this.exitAt);
+		Decision.addEntryPrice(builder, entryPrice);
+		Decision.addEntryFee(builder, entryFee);
+		Decision.addExitPrice(builder, exitPrice);
+		Decision.addExitFee(builder, exitFee);
+		Decision.addPnl(builder, pnl);
+		Decision.addReturnPct(builder, this.returnPct);
+		Decision.addMark(builder, mark);
+		Decision.addEntryCost(builder, entryCost);
+		return Decision.endDecision(builder);
+	}
 }

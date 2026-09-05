@@ -95,19 +95,20 @@ export const HealthPanel = () => {
 	return (
 		<Panel size="lg" ref={root}>
 			<Flex.Row align="center" justify="between">
-				<Flex className="font-semibold text-(--f1) text-xs">
-					System health
-				</Flex>
-				<Badge label="live" className="rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide" />
+				<Flex className="font-semibold text-(--f1) text-xs">System health</Flex>
+				<Badge
+					label="live"
+					className="rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide"
+				/>
 			</Flex.Row>
 			<Flex.Row className="mt-3 gap-4.5">
 				<div className="font-mono text-(--f1)">
-					<span data-tick className="text-[19px] leading-none font-normal">—</span>
+					<span data-tick className="text-[19px] leading-none font-normal">
+						—
+					</span>
 					<span className="mt-1 text-[9px] text-(--f4) font-mono">tick</span>
 				</div>
 			</Flex.Row>
 		</Panel>
 	);
 };
-
-

@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
-import type { HindsightResident } from "./hindsight-types";
 import type { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
+import type { HindsightResident } from "./hindsight-types";
 /*
 Comparing what SYMM held at two or three exact capture coordinates.
 
@@ -53,7 +53,12 @@ type Fact = {
 	/* One entry per mark: a number, null for undefined, undefined for absent. */
 	values: Array<number | null | undefined>;
 	/* Where each value came from, in resident mode. */
-	origins: Array<{ sequence: number; ordinal: number; ageMs: number | null; carried: boolean } | null>;
+	origins: Array<{
+		sequence: number;
+		ordinal: number;
+		ageMs: number | null;
+		carried: boolean;
+	} | null>;
 	unit: string;
 };
 
@@ -62,7 +67,12 @@ type Reading = {
 	name: string;
 	unit: string;
 	value: number | null;
-	origin: { sequence: number; ordinal: number; ageMs: number | null; carried: boolean } | null;
+	origin: {
+		sequence: number;
+		ordinal: number;
+		ageMs: number | null;
+		carried: boolean;
+	} | null;
 };
 
 /*
@@ -323,7 +333,8 @@ export const ComparePanel = ({
 
 		return facts.filter((fact) => {
 			if (group !== null && fact.group !== group) return false;
-			if (needle !== "" && !fact.name.toLowerCase().includes(needle)) return false;
+			if (needle !== "" && !fact.name.toLowerCase().includes(needle))
+				return false;
 			if (onlyChanged && !changed(fact.values)) return false;
 
 			return true;
@@ -341,7 +352,9 @@ export const ComparePanel = ({
 				sticky
 				meta={
 					<span className="font-mono text-[9px] text-(--f4)">
-						{loading ? "resolving…" : `${moved} of ${facts.length} facts changed`}
+						{loading
+							? "resolving…"
+							: `${moved} of ${facts.length} facts changed`}
 					</span>
 				}
 			/>
@@ -411,8 +424,8 @@ export const ComparePanel = ({
 					</span>
 				) : (
 					<span className="ml-2">
-						showing only what each envelope itself carried — absent means this frame
-						did not produce it
+						showing only what each envelope itself carried — absent means this
+						frame did not produce it
 					</span>
 				)}
 			</Flex.Row>
@@ -476,7 +489,9 @@ export const ComparePanel = ({
 									? "border-(--acc) text-(--f1)"
 									: "border-(--line) text-(--f4) hover:text-(--f2)"
 							}`}
-							onClick={() => setGroup((current) => (current === option ? null : option))}
+							onClick={() =>
+								setGroup((current) => (current === option ? null : option))
+							}
 						>
 							{option}
 						</Button>
@@ -519,14 +534,20 @@ export const ComparePanel = ({
 						</thead>
 						<tbody>
 							{rows.map((fact) => (
-								<tr key={fact.id} className="border-(--line) border-t align-baseline">
+								<tr
+									key={fact.id}
+									className="border-(--line) border-t align-baseline"
+								>
 									<td className="px-2.5 py-0.5 text-(--f2)">
-										<span className="text-(--f4)">{fact.group.slice(0, 4)} </span>
+										<span className="text-(--f4)">
+											{fact.group.slice(0, 4)}{" "}
+										</span>
 										{fact.name}
 									</td>
 									{fact.values.map((value, index) => {
 										const origin = fact.origins[index];
-										const previous = index === 0 ? undefined : fact.values[index - 1];
+										const previous =
+											index === 0 ? undefined : fact.values[index - 1];
 										const moves =
 											index > 0 &&
 											(value === undefined || previous === undefined
@@ -579,7 +600,9 @@ export const ComparePanel = ({
 											</td>
 										);
 									})}
-									<td className="px-2 py-0.5 text-(--f4)">{fact.unit || "—"}</td>
+									<td className="px-2 py-0.5 text-(--f4)">
+										{fact.unit || "—"}
+									</td>
 								</tr>
 							))}
 						</tbody>
@@ -619,9 +642,15 @@ export const MarkBar = ({
 			<span>no marks</span>
 		) : (
 			marks.map((mark, index) => (
-				<span key={`${mark.sequence}:${mark.ordinal}`} className="text-(--info)">
+				<span
+					key={`${mark.sequence}:${mark.ordinal}`}
+					className="text-(--info)"
+				>
 					{String.fromCharCode(65 + index)}
-					<span className="text-(--f4)"> #{mark.sequence}:{mark.ordinal}</span>
+					<span className="text-(--f4)">
+						{" "}
+						#{mark.sequence}:{mark.ordinal}
+					</span>
 					{index < marks.length - 1 ? " →" : ""}
 				</span>
 			))

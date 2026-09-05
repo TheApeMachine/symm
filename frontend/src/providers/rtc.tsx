@@ -24,8 +24,9 @@ const RECONNECT_MAX_MS = 10_000;
 Every connection attempt owns a fresh RTCPeerConnection. These lifecycle states
 all mean "this peer is no longer usable": destroy it and schedule a retry.
 */
-const TERMINAL_CONNECTION_STATES: ReadonlySet<RTCPeerConnectionState> =
-	new Set(["failed", "disconnected", "closed"]);
+const TERMINAL_CONNECTION_STATES: ReadonlySet<RTCPeerConnectionState> = new Set(
+	["failed", "disconnected", "closed"],
+);
 
 const signalingURL = () =>
 	import.meta.env.VITE_SYMM_WEBRTC_URL?.trim() ||
@@ -176,7 +177,10 @@ export const RtcFeed = () => {
 				setTransport("ONLINE", connection.connectionState);
 			};
 
-			const openChannel = (label: string, onRecord: (state: unknown) => void) => {
+			const openChannel = (
+				label: string,
+				onRecord: (state: unknown) => void,
+			) => {
 				const channel = connection.createDataChannel(label, {
 					ordered: false,
 					maxRetransmits: 0,

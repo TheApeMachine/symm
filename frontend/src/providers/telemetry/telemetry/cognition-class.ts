@@ -3,91 +3,101 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class CognitionClass
+	implements flatbuffers.IUnpackableObject<CognitionClassT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): CognitionClass {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsCognitionClass(
+		bb: flatbuffers.ByteBuffer,
+		obj?: CognitionClass,
+	): CognitionClass {
+		return (obj || new CognitionClass()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class CognitionClass implements flatbuffers.IUnpackableObject<CognitionClassT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):CognitionClass {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsCognitionClass(
+		bb: flatbuffers.ByteBuffer,
+		obj?: CognitionClass,
+	): CognitionClass {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new CognitionClass()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsCognitionClass(bb:flatbuffers.ByteBuffer, obj?:CognitionClass):CognitionClass {
-  return (obj || new CognitionClass()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	name(): string | null;
+	name(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	name(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsCognitionClass(bb:flatbuffers.ByteBuffer, obj?:CognitionClass):CognitionClass {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new CognitionClass()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	probability(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-name():string|null
-name(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-name(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	static startCognitionClass(builder: flatbuffers.Builder) {
+		builder.startObject(2);
+	}
 
-probability():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static addName(builder: flatbuffers.Builder, nameOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, nameOffset, 0);
+	}
 
-static startCognitionClass(builder:flatbuffers.Builder) {
-  builder.startObject(2);
-}
+	static addProbability(builder: flatbuffers.Builder, probability: number) {
+		builder.addFieldFloat64(1, probability, 0.0);
+	}
 
-static addName(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, nameOffset, 0);
-}
+	static endCognitionClass(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static addProbability(builder:flatbuffers.Builder, probability:number) {
-  builder.addFieldFloat64(1, probability, 0.0);
-}
+	static createCognitionClass(
+		builder: flatbuffers.Builder,
+		nameOffset: flatbuffers.Offset,
+		probability: number,
+	): flatbuffers.Offset {
+		CognitionClass.startCognitionClass(builder);
+		CognitionClass.addName(builder, nameOffset);
+		CognitionClass.addProbability(builder, probability);
+		return CognitionClass.endCognitionClass(builder);
+	}
 
-static endCognitionClass(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): CognitionClassT {
+		return new CognitionClassT(this.name(), this.probability());
+	}
 
-static createCognitionClass(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset, probability:number):flatbuffers.Offset {
-  CognitionClass.startCognitionClass(builder);
-  CognitionClass.addName(builder, nameOffset);
-  CognitionClass.addProbability(builder, probability);
-  return CognitionClass.endCognitionClass(builder);
-}
-
-unpack(): CognitionClassT {
-  return new CognitionClassT(
-    this.name(),
-    this.probability()
-  );
-}
-
-
-unpackTo(_o: CognitionClassT): void {
-  _o.name = this.name();
-  _o.probability = this.probability();
-}
+	unpackTo(_o: CognitionClassT): void {
+		_o.name = this.name();
+		_o.probability = this.probability();
+	}
 }
 
 export class CognitionClassT implements flatbuffers.IGeneratedObject {
-constructor(
-  public name: string|Uint8Array|null = null,
-  public probability: number = 0.0
-){}
+	constructor(
+		public name: string | Uint8Array | null = null,
+		public probability: number = 0.0,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const name = this.name !== null ? builder.createString(this.name!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const name = (this.name !== null ? builder.createString(this.name!) : 0);
-
-  return CognitionClass.createCognitionClass(builder,
-    name,
-    this.probability
-  );
-}
+		return CognitionClass.createCognitionClass(builder, name, this.probability);
+	}
 }

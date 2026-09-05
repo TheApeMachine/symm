@@ -3,93 +3,125 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { Balance, BalanceT } from '../telemetry/balance.js';
+import { Balance, type BalanceT } from "../telemetry/balance.js";
 
+export class BalancesFrame
+	implements flatbuffers.IUnpackableObject<BalancesFrameT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): BalancesFrame {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-export class BalancesFrame implements flatbuffers.IUnpackableObject<BalancesFrameT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):BalancesFrame {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getRootAsBalancesFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: BalancesFrame,
+	): BalancesFrame {
+		return (obj || new BalancesFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsBalancesFrame(bb:flatbuffers.ByteBuffer, obj?:BalancesFrame):BalancesFrame {
-  return (obj || new BalancesFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsBalancesFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: BalancesFrame,
+	): BalancesFrame {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new BalancesFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsBalancesFrame(bb:flatbuffers.ByteBuffer, obj?:BalancesFrame):BalancesFrame {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new BalancesFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	balances(index: number, obj?: Balance): Balance | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? (obj || new Balance()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-balances(index: number, obj?:Balance):Balance|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? (obj || new Balance()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	balancesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-balancesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	static startBalancesFrame(builder: flatbuffers.Builder) {
+		builder.startObject(1);
+	}
 
-static startBalancesFrame(builder:flatbuffers.Builder) {
-  builder.startObject(1);
-}
+	static addBalances(
+		builder: flatbuffers.Builder,
+		balancesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, balancesOffset, 0);
+	}
 
-static addBalances(builder:flatbuffers.Builder, balancesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, balancesOffset, 0);
-}
+	static createBalancesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createBalancesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startBalancesVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startBalancesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static endBalancesFrame(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static endBalancesFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	static createBalancesFrame(
+		builder: flatbuffers.Builder,
+		balancesOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		BalancesFrame.startBalancesFrame(builder);
+		BalancesFrame.addBalances(builder, balancesOffset);
+		return BalancesFrame.endBalancesFrame(builder);
+	}
 
-static createBalancesFrame(builder:flatbuffers.Builder, balancesOffset:flatbuffers.Offset):flatbuffers.Offset {
-  BalancesFrame.startBalancesFrame(builder);
-  BalancesFrame.addBalances(builder, balancesOffset);
-  return BalancesFrame.endBalancesFrame(builder);
-}
+	unpack(): BalancesFrameT {
+		return new BalancesFrameT(
+			this.bb!.createObjList<Balance, BalanceT>(
+				this.balances.bind(this),
+				this.balancesLength(),
+			),
+		);
+	}
 
-unpack(): BalancesFrameT {
-  return new BalancesFrameT(
-    this.bb!.createObjList<Balance, BalanceT>(this.balances.bind(this), this.balancesLength())
-  );
-}
-
-
-unpackTo(_o: BalancesFrameT): void {
-  _o.balances = this.bb!.createObjList<Balance, BalanceT>(this.balances.bind(this), this.balancesLength());
-}
+	unpackTo(_o: BalancesFrameT): void {
+		_o.balances = this.bb!.createObjList<Balance, BalanceT>(
+			this.balances.bind(this),
+			this.balancesLength(),
+		);
+	}
 }
 
 export class BalancesFrameT implements flatbuffers.IGeneratedObject {
-constructor(
-  public balances: (BalanceT)[] = []
-){}
+	constructor(public balances: BalanceT[] = []) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const balances = BalancesFrame.createBalancesVector(
+			builder,
+			builder.createObjectOffsetList(this.balances),
+		);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const balances = BalancesFrame.createBalancesVector(builder, builder.createObjectOffsetList(this.balances));
-
-  return BalancesFrame.createBalancesFrame(builder,
-    balances
-  );
-}
+		return BalancesFrame.createBalancesFrame(builder, balances);
+	}
 }

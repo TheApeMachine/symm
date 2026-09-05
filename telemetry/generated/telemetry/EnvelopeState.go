@@ -43,8 +43,6 @@ type EnvelopeStateT struct {
 	Tick int64 `json:"tick"`
 	Equity *EquityFrameT `json:"equity"`
 	Positions *PositionsFrameT `json:"positions"`
-	LiquiditySweepWithRecovery *EnvelopeLiquiditySweepWithRecoveryUpdateT `json:"liquiditySweepWithRecovery"`
-	Perspectives []*EnvelopePerspectiveT `json:"perspectives"`
 }
 
 func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -138,20 +136,6 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	}
 	equityOffset := t.Equity.Pack(builder)
 	positionsOffset := t.Positions.Pack(builder)
-	liquiditySweepWithRecoveryOffset := t.LiquiditySweepWithRecovery.Pack(builder)
-	perspectivesOffset := flatbuffers.UOffsetT(0)
-	if t.Perspectives != nil {
-		perspectivesLength := len(t.Perspectives)
-		perspectivesOffsets := make([]flatbuffers.UOffsetT, perspectivesLength)
-		for j := 0; j < perspectivesLength; j++ {
-			perspectivesOffsets[j] = t.Perspectives[j].Pack(builder)
-		}
-		EnvelopeStateStartPerspectivesVector(builder, perspectivesLength)
-		for j := perspectivesLength - 1; j >= 0; j-- {
-			builder.PrependUOffsetT(perspectivesOffsets[j])
-		}
-		perspectivesOffset = builder.EndVector(perspectivesLength)
-	}
 	EnvelopeStateStart(builder)
 	EnvelopeStateAddKey(builder, keyOffset)
 	EnvelopeStateAddTypeId(builder, t.TypeId)
@@ -189,8 +173,6 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	EnvelopeStateAddTick(builder, t.Tick)
 	EnvelopeStateAddEquity(builder, equityOffset)
 	EnvelopeStateAddPositions(builder, positionsOffset)
-	EnvelopeStateAddLiquiditySweepWithRecovery(builder, liquiditySweepWithRecoveryOffset)
-	EnvelopeStateAddPerspectives(builder, perspectivesOffset)
 	return EnvelopeStateEnd(builder)
 }
 
@@ -255,14 +237,6 @@ func (rcv *EnvelopeState) UnPackTo(t *EnvelopeStateT) {
 	t.Tick = rcv.Tick()
 	t.Equity = rcv.Equity(nil).UnPack()
 	t.Positions = rcv.Positions(nil).UnPack()
-	t.LiquiditySweepWithRecovery = rcv.LiquiditySweepWithRecovery(nil).UnPack()
-	perspectivesLength := rcv.PerspectivesLength()
-	t.Perspectives = make([]*EnvelopePerspectiveT, perspectivesLength)
-	for j := 0; j < perspectivesLength; j++ {
-		x := EnvelopePerspective{}
-		rcv.Perspectives(&x, j)
-		t.Perspectives[j] = x.UnPack()
-	}
 }
 
 func (rcv *EnvelopeState) UnPack() *EnvelopeStateT {
@@ -784,39 +758,6 @@ func (rcv *EnvelopeState) Positions(obj *PositionsFrame) *PositionsFrame {
 	return nil
 }
 
-func (rcv *EnvelopeState) LiquiditySweepWithRecovery(obj *EnvelopeLiquiditySweepWithRecoveryUpdate) *EnvelopeLiquiditySweepWithRecoveryUpdate {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(76))
-	if o != 0 {
-		x := rcv._tab.Indirect(o + rcv._tab.Pos)
-		if obj == nil {
-			obj = new(EnvelopeLiquiditySweepWithRecoveryUpdate)
-		}
-		obj.Init(rcv._tab.Bytes, x)
-		return obj
-	}
-	return nil
-}
-
-func (rcv *EnvelopeState) Perspectives(obj *EnvelopePerspective, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
-	if o != 0 {
-		x := rcv._tab.Vector(o)
-		x += flatbuffers.UOffsetT(j) * 4
-		x = rcv._tab.Indirect(x)
-		obj.Init(rcv._tab.Bytes, x)
-		return true
-	}
-	return false
-}
-
-func (rcv *EnvelopeState) PerspectivesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(78))
-	if o != 0 {
-		return rcv._tab.VectorLen(o)
-	}
-	return 0
-}
-
 func EnvelopeStateStart(builder *flatbuffers.Builder) {
 	builder.StartObject(38)
 }
@@ -939,15 +880,6 @@ func EnvelopeStateAddEquity(builder *flatbuffers.Builder, equity flatbuffers.UOf
 }
 func EnvelopeStateAddPositions(builder *flatbuffers.Builder, positions flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(35, flatbuffers.UOffsetT(positions), 0)
-}
-func EnvelopeStateAddLiquiditySweepWithRecovery(builder *flatbuffers.Builder, liquiditySweepWithRecovery flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(36, flatbuffers.UOffsetT(liquiditySweepWithRecovery), 0)
-}
-func EnvelopeStateAddPerspectives(builder *flatbuffers.Builder, perspectives flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(37, flatbuffers.UOffsetT(perspectives), 0)
-}
-func EnvelopeStateStartPerspectivesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
-	return builder.StartVector(4, numElems, 4)
 }
 func EnvelopeStateEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

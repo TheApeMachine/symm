@@ -3,165 +3,201 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class EnvelopeLevel3Order
+	implements flatbuffers.IUnpackableObject<EnvelopeLevel3OrderT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeLevel3Order {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsEnvelopeLevel3Order(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeLevel3Order,
+	): EnvelopeLevel3Order {
+		return (obj || new EnvelopeLevel3Order()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class EnvelopeLevel3Order implements flatbuffers.IUnpackableObject<EnvelopeLevel3OrderT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeLevel3Order {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsEnvelopeLevel3Order(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeLevel3Order,
+	): EnvelopeLevel3Order {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopeLevel3Order()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsEnvelopeLevel3Order(bb:flatbuffers.ByteBuffer, obj?:EnvelopeLevel3Order):EnvelopeLevel3Order {
-  return (obj || new EnvelopeLevel3Order()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	event(): string | null;
+	event(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	event(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsEnvelopeLevel3Order(bb:flatbuffers.ByteBuffer, obj?:EnvelopeLevel3Order):EnvelopeLevel3Order {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeLevel3Order()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	orderId(): string | null;
+	orderId(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	orderId(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-event():string|null
-event(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-event(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	hasLimitPrice(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-orderId():string|null
-orderId(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-orderId(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	limitPrice(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-hasLimitPrice():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	hasOrderQty(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-limitPrice():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	orderQty(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-hasOrderQty():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	timestampNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-orderQty():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static startEnvelopeLevel3Order(builder: flatbuffers.Builder) {
+		builder.startObject(7);
+	}
 
-timestampNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	static addEvent(
+		builder: flatbuffers.Builder,
+		eventOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, eventOffset, 0);
+	}
 
-static startEnvelopeLevel3Order(builder:flatbuffers.Builder) {
-  builder.startObject(7);
-}
+	static addOrderId(
+		builder: flatbuffers.Builder,
+		orderIdOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, orderIdOffset, 0);
+	}
 
-static addEvent(builder:flatbuffers.Builder, eventOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, eventOffset, 0);
-}
+	static addHasLimitPrice(
+		builder: flatbuffers.Builder,
+		hasLimitPrice: boolean,
+	) {
+		builder.addFieldInt8(2, +hasLimitPrice, +false);
+	}
 
-static addOrderId(builder:flatbuffers.Builder, orderIdOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, orderIdOffset, 0);
-}
+	static addLimitPrice(builder: flatbuffers.Builder, limitPrice: number) {
+		builder.addFieldFloat64(3, limitPrice, 0.0);
+	}
 
-static addHasLimitPrice(builder:flatbuffers.Builder, hasLimitPrice:boolean) {
-  builder.addFieldInt8(2, +hasLimitPrice, +false);
-}
+	static addHasOrderQty(builder: flatbuffers.Builder, hasOrderQty: boolean) {
+		builder.addFieldInt8(4, +hasOrderQty, +false);
+	}
 
-static addLimitPrice(builder:flatbuffers.Builder, limitPrice:number) {
-  builder.addFieldFloat64(3, limitPrice, 0.0);
-}
+	static addOrderQty(builder: flatbuffers.Builder, orderQty: number) {
+		builder.addFieldFloat64(5, orderQty, 0.0);
+	}
 
-static addHasOrderQty(builder:flatbuffers.Builder, hasOrderQty:boolean) {
-  builder.addFieldInt8(4, +hasOrderQty, +false);
-}
+	static addTimestampNs(builder: flatbuffers.Builder, timestampNs: bigint) {
+		builder.addFieldInt64(6, timestampNs, BigInt("0"));
+	}
 
-static addOrderQty(builder:flatbuffers.Builder, orderQty:number) {
-  builder.addFieldFloat64(5, orderQty, 0.0);
-}
+	static endEnvelopeLevel3Order(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 6); // orderId
+		return offset;
+	}
 
-static addTimestampNs(builder:flatbuffers.Builder, timestampNs:bigint) {
-  builder.addFieldInt64(6, timestampNs, BigInt('0'));
-}
+	static createEnvelopeLevel3Order(
+		builder: flatbuffers.Builder,
+		eventOffset: flatbuffers.Offset,
+		orderIdOffset: flatbuffers.Offset,
+		hasLimitPrice: boolean,
+		limitPrice: number,
+		hasOrderQty: boolean,
+		orderQty: number,
+		timestampNs: bigint,
+	): flatbuffers.Offset {
+		EnvelopeLevel3Order.startEnvelopeLevel3Order(builder);
+		EnvelopeLevel3Order.addEvent(builder, eventOffset);
+		EnvelopeLevel3Order.addOrderId(builder, orderIdOffset);
+		EnvelopeLevel3Order.addHasLimitPrice(builder, hasLimitPrice);
+		EnvelopeLevel3Order.addLimitPrice(builder, limitPrice);
+		EnvelopeLevel3Order.addHasOrderQty(builder, hasOrderQty);
+		EnvelopeLevel3Order.addOrderQty(builder, orderQty);
+		EnvelopeLevel3Order.addTimestampNs(builder, timestampNs);
+		return EnvelopeLevel3Order.endEnvelopeLevel3Order(builder);
+	}
 
-static endEnvelopeLevel3Order(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 6) // orderId
-  return offset;
-}
+	unpack(): EnvelopeLevel3OrderT {
+		return new EnvelopeLevel3OrderT(
+			this.event(),
+			this.orderId(),
+			this.hasLimitPrice(),
+			this.limitPrice(),
+			this.hasOrderQty(),
+			this.orderQty(),
+			this.timestampNs(),
+		);
+	}
 
-static createEnvelopeLevel3Order(builder:flatbuffers.Builder, eventOffset:flatbuffers.Offset, orderIdOffset:flatbuffers.Offset, hasLimitPrice:boolean, limitPrice:number, hasOrderQty:boolean, orderQty:number, timestampNs:bigint):flatbuffers.Offset {
-  EnvelopeLevel3Order.startEnvelopeLevel3Order(builder);
-  EnvelopeLevel3Order.addEvent(builder, eventOffset);
-  EnvelopeLevel3Order.addOrderId(builder, orderIdOffset);
-  EnvelopeLevel3Order.addHasLimitPrice(builder, hasLimitPrice);
-  EnvelopeLevel3Order.addLimitPrice(builder, limitPrice);
-  EnvelopeLevel3Order.addHasOrderQty(builder, hasOrderQty);
-  EnvelopeLevel3Order.addOrderQty(builder, orderQty);
-  EnvelopeLevel3Order.addTimestampNs(builder, timestampNs);
-  return EnvelopeLevel3Order.endEnvelopeLevel3Order(builder);
-}
-
-unpack(): EnvelopeLevel3OrderT {
-  return new EnvelopeLevel3OrderT(
-    this.event(),
-    this.orderId(),
-    this.hasLimitPrice(),
-    this.limitPrice(),
-    this.hasOrderQty(),
-    this.orderQty(),
-    this.timestampNs()
-  );
-}
-
-
-unpackTo(_o: EnvelopeLevel3OrderT): void {
-  _o.event = this.event();
-  _o.orderId = this.orderId();
-  _o.hasLimitPrice = this.hasLimitPrice();
-  _o.limitPrice = this.limitPrice();
-  _o.hasOrderQty = this.hasOrderQty();
-  _o.orderQty = this.orderQty();
-  _o.timestampNs = this.timestampNs();
-}
+	unpackTo(_o: EnvelopeLevel3OrderT): void {
+		_o.event = this.event();
+		_o.orderId = this.orderId();
+		_o.hasLimitPrice = this.hasLimitPrice();
+		_o.limitPrice = this.limitPrice();
+		_o.hasOrderQty = this.hasOrderQty();
+		_o.orderQty = this.orderQty();
+		_o.timestampNs = this.timestampNs();
+	}
 }
 
 export class EnvelopeLevel3OrderT implements flatbuffers.IGeneratedObject {
-constructor(
-  public event: string|Uint8Array|null = null,
-  public orderId: string|Uint8Array|null = null,
-  public hasLimitPrice: boolean = false,
-  public limitPrice: number = 0.0,
-  public hasOrderQty: boolean = false,
-  public orderQty: number = 0.0,
-  public timestampNs: bigint = BigInt('0')
-){}
+	constructor(
+		public event: string | Uint8Array | null = null,
+		public orderId: string | Uint8Array | null = null,
+		public hasLimitPrice: boolean = false,
+		public limitPrice: number = 0.0,
+		public hasOrderQty: boolean = false,
+		public orderQty: number = 0.0,
+		public timestampNs: bigint = BigInt("0"),
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const event = this.event !== null ? builder.createString(this.event!) : 0;
+		const orderId =
+			this.orderId !== null ? builder.createString(this.orderId!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const event = (this.event !== null ? builder.createString(this.event!) : 0);
-  const orderId = (this.orderId !== null ? builder.createString(this.orderId!) : 0);
-
-  return EnvelopeLevel3Order.createEnvelopeLevel3Order(builder,
-    event,
-    orderId,
-    this.hasLimitPrice,
-    this.limitPrice,
-    this.hasOrderQty,
-    this.orderQty,
-    this.timestampNs
-  );
-}
+		return EnvelopeLevel3Order.createEnvelopeLevel3Order(
+			builder,
+			event,
+			orderId,
+			this.hasLimitPrice,
+			this.limitPrice,
+			this.hasOrderQty,
+			this.orderQty,
+			this.timestampNs,
+		);
+	}
 }

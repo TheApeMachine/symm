@@ -12,11 +12,15 @@ export const AllocationSurface = () => {
 		if (!root.current) return;
 		const last = state.getLast();
 		const cashEl = root.current.querySelector<HTMLElement>('[data-eq="cash"]');
-		const unrealizedEl = root.current.querySelector<HTMLElement>('[data-eq="unrealized"]');
-		const equityEl = root.current.querySelector<HTMLElement>('[data-eq="equity"]');
+		const unrealizedEl = root.current.querySelector<HTMLElement>(
+			'[data-eq="unrealized"]',
+		);
+		const equityEl =
+			root.current.querySelector<HTMLElement>('[data-eq="equity"]');
 
 		if (cashEl) cashEl.textContent = last ? num(last.cash(), 2) : "—";
-		if (unrealizedEl) unrealizedEl.textContent = last ? num(last.unrealized(), 2) : "—";
+		if (unrealizedEl)
+			unrealizedEl.textContent = last ? num(last.unrealized(), 2) : "—";
 		if (equityEl) equityEl.textContent = last ? num(last.equity(), 2) : "—";
 	});
 
@@ -34,16 +38,37 @@ export const AllocationSurface = () => {
 				</div>
 				<div className="ml-auto flex items-center gap-5">
 					<div className="flex flex-col items-end gap-px">
-						<span className="text-[9px] text-(--f4) uppercase tracking-widest">Deployable</span>
-						<span data-eq="cash" className="font-mono text-[13px] font-semibold text-(--f1)">—</span>
+						<span className="text-[9px] text-(--f4) uppercase tracking-widest">
+							Deployable
+						</span>
+						<span
+							data-eq="cash"
+							className="font-mono text-[13px] font-semibold text-(--f1)"
+						>
+							—
+						</span>
 					</div>
 					<div className="flex flex-col items-end gap-px">
-						<span className="text-[9px] text-(--f4) uppercase tracking-widest">Unrealized</span>
-						<span data-eq="unrealized" className="font-mono text-[13px] font-semibold text-(--acc)">—</span>
+						<span className="text-[9px] text-(--f4) uppercase tracking-widest">
+							Unrealized
+						</span>
+						<span
+							data-eq="unrealized"
+							className="font-mono text-[13px] font-semibold text-(--acc)"
+						>
+							—
+						</span>
 					</div>
 					<div className="flex flex-col items-end gap-px">
-						<span className="text-[9px] text-(--f4) uppercase tracking-widest">Equity</span>
-						<span data-eq="equity" className="font-mono text-[13px] font-semibold text-(--f1)">—</span>
+						<span className="text-[9px] text-(--f4) uppercase tracking-widest">
+							Equity
+						</span>
+						<span
+							data-eq="equity"
+							className="font-mono text-[13px] font-semibold text-(--f1)"
+						>
+							—
+						</span>
 					</div>
 				</div>
 			</div>
@@ -56,4 +81,3 @@ export const AllocationSurface = () => {
 		</div>
 	);
 };
-

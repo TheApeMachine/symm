@@ -3,188 +3,229 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class EnvelopeFuturesTradeData
+	implements flatbuffers.IUnpackableObject<EnvelopeFuturesTradeDataT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeFuturesTradeData {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsEnvelopeFuturesTradeData(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeFuturesTradeData,
+	): EnvelopeFuturesTradeData {
+		return (obj || new EnvelopeFuturesTradeData()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class EnvelopeFuturesTradeData implements flatbuffers.IUnpackableObject<EnvelopeFuturesTradeDataT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeFuturesTradeData {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsEnvelopeFuturesTradeData(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeFuturesTradeData,
+	): EnvelopeFuturesTradeData {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopeFuturesTradeData()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsEnvelopeFuturesTradeData(bb:flatbuffers.ByteBuffer, obj?:EnvelopeFuturesTradeData):EnvelopeFuturesTradeData {
-  return (obj || new EnvelopeFuturesTradeData()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	productId(): string | null;
+	productId(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	productId(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsEnvelopeFuturesTradeData(bb:flatbuffers.ByteBuffer, obj?:EnvelopeFuturesTradeData):EnvelopeFuturesTradeData {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeFuturesTradeData()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	symbol(): string | null;
+	symbol(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	symbol(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-productId():string|null
-productId(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-productId(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	price(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-symbol():string|null
-symbol(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-symbol(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	qty(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-price():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	side(): string | null;
+	side(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	side(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-qty():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	type(): string | null;
+	type(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	type(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-side():string|null
-side(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-side(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	uid(): string | null;
+	uid(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	uid(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-type():string|null
-type(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-type(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	timestampNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-uid():string|null
-uid(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-uid(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	static startEnvelopeFuturesTradeData(builder: flatbuffers.Builder) {
+		builder.startObject(8);
+	}
 
-timestampNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	static addProductId(
+		builder: flatbuffers.Builder,
+		productIdOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, productIdOffset, 0);
+	}
 
-static startEnvelopeFuturesTradeData(builder:flatbuffers.Builder) {
-  builder.startObject(8);
-}
+	static addSymbol(
+		builder: flatbuffers.Builder,
+		symbolOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, symbolOffset, 0);
+	}
 
-static addProductId(builder:flatbuffers.Builder, productIdOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, productIdOffset, 0);
-}
+	static addPrice(builder: flatbuffers.Builder, price: number) {
+		builder.addFieldFloat64(2, price, 0.0);
+	}
 
-static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, symbolOffset, 0);
-}
+	static addQty(builder: flatbuffers.Builder, qty: number) {
+		builder.addFieldFloat64(3, qty, 0.0);
+	}
 
-static addPrice(builder:flatbuffers.Builder, price:number) {
-  builder.addFieldFloat64(2, price, 0.0);
-}
+	static addSide(builder: flatbuffers.Builder, sideOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(4, sideOffset, 0);
+	}
 
-static addQty(builder:flatbuffers.Builder, qty:number) {
-  builder.addFieldFloat64(3, qty, 0.0);
-}
+	static addType(builder: flatbuffers.Builder, typeOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(5, typeOffset, 0);
+	}
 
-static addSide(builder:flatbuffers.Builder, sideOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, sideOffset, 0);
-}
+	static addUid(builder: flatbuffers.Builder, uidOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(6, uidOffset, 0);
+	}
 
-static addType(builder:flatbuffers.Builder, typeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, typeOffset, 0);
-}
+	static addTimestampNs(builder: flatbuffers.Builder, timestampNs: bigint) {
+		builder.addFieldInt64(7, timestampNs, BigInt("0"));
+	}
 
-static addUid(builder:flatbuffers.Builder, uidOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, uidOffset, 0);
-}
+	static endEnvelopeFuturesTradeData(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // productId
+		return offset;
+	}
 
-static addTimestampNs(builder:flatbuffers.Builder, timestampNs:bigint) {
-  builder.addFieldInt64(7, timestampNs, BigInt('0'));
-}
+	static createEnvelopeFuturesTradeData(
+		builder: flatbuffers.Builder,
+		productIdOffset: flatbuffers.Offset,
+		symbolOffset: flatbuffers.Offset,
+		price: number,
+		qty: number,
+		sideOffset: flatbuffers.Offset,
+		typeOffset: flatbuffers.Offset,
+		uidOffset: flatbuffers.Offset,
+		timestampNs: bigint,
+	): flatbuffers.Offset {
+		EnvelopeFuturesTradeData.startEnvelopeFuturesTradeData(builder);
+		EnvelopeFuturesTradeData.addProductId(builder, productIdOffset);
+		EnvelopeFuturesTradeData.addSymbol(builder, symbolOffset);
+		EnvelopeFuturesTradeData.addPrice(builder, price);
+		EnvelopeFuturesTradeData.addQty(builder, qty);
+		EnvelopeFuturesTradeData.addSide(builder, sideOffset);
+		EnvelopeFuturesTradeData.addType(builder, typeOffset);
+		EnvelopeFuturesTradeData.addUid(builder, uidOffset);
+		EnvelopeFuturesTradeData.addTimestampNs(builder, timestampNs);
+		return EnvelopeFuturesTradeData.endEnvelopeFuturesTradeData(builder);
+	}
 
-static endEnvelopeFuturesTradeData(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // productId
-  return offset;
-}
+	unpack(): EnvelopeFuturesTradeDataT {
+		return new EnvelopeFuturesTradeDataT(
+			this.productId(),
+			this.symbol(),
+			this.price(),
+			this.qty(),
+			this.side(),
+			this.type(),
+			this.uid(),
+			this.timestampNs(),
+		);
+	}
 
-static createEnvelopeFuturesTradeData(builder:flatbuffers.Builder, productIdOffset:flatbuffers.Offset, symbolOffset:flatbuffers.Offset, price:number, qty:number, sideOffset:flatbuffers.Offset, typeOffset:flatbuffers.Offset, uidOffset:flatbuffers.Offset, timestampNs:bigint):flatbuffers.Offset {
-  EnvelopeFuturesTradeData.startEnvelopeFuturesTradeData(builder);
-  EnvelopeFuturesTradeData.addProductId(builder, productIdOffset);
-  EnvelopeFuturesTradeData.addSymbol(builder, symbolOffset);
-  EnvelopeFuturesTradeData.addPrice(builder, price);
-  EnvelopeFuturesTradeData.addQty(builder, qty);
-  EnvelopeFuturesTradeData.addSide(builder, sideOffset);
-  EnvelopeFuturesTradeData.addType(builder, typeOffset);
-  EnvelopeFuturesTradeData.addUid(builder, uidOffset);
-  EnvelopeFuturesTradeData.addTimestampNs(builder, timestampNs);
-  return EnvelopeFuturesTradeData.endEnvelopeFuturesTradeData(builder);
-}
-
-unpack(): EnvelopeFuturesTradeDataT {
-  return new EnvelopeFuturesTradeDataT(
-    this.productId(),
-    this.symbol(),
-    this.price(),
-    this.qty(),
-    this.side(),
-    this.type(),
-    this.uid(),
-    this.timestampNs()
-  );
-}
-
-
-unpackTo(_o: EnvelopeFuturesTradeDataT): void {
-  _o.productId = this.productId();
-  _o.symbol = this.symbol();
-  _o.price = this.price();
-  _o.qty = this.qty();
-  _o.side = this.side();
-  _o.type = this.type();
-  _o.uid = this.uid();
-  _o.timestampNs = this.timestampNs();
-}
+	unpackTo(_o: EnvelopeFuturesTradeDataT): void {
+		_o.productId = this.productId();
+		_o.symbol = this.symbol();
+		_o.price = this.price();
+		_o.qty = this.qty();
+		_o.side = this.side();
+		_o.type = this.type();
+		_o.uid = this.uid();
+		_o.timestampNs = this.timestampNs();
+	}
 }
 
 export class EnvelopeFuturesTradeDataT implements flatbuffers.IGeneratedObject {
-constructor(
-  public productId: string|Uint8Array|null = null,
-  public symbol: string|Uint8Array|null = null,
-  public price: number = 0.0,
-  public qty: number = 0.0,
-  public side: string|Uint8Array|null = null,
-  public type: string|Uint8Array|null = null,
-  public uid: string|Uint8Array|null = null,
-  public timestampNs: bigint = BigInt('0')
-){}
+	constructor(
+		public productId: string | Uint8Array | null = null,
+		public symbol: string | Uint8Array | null = null,
+		public price: number = 0.0,
+		public qty: number = 0.0,
+		public side: string | Uint8Array | null = null,
+		public type: string | Uint8Array | null = null,
+		public uid: string | Uint8Array | null = null,
+		public timestampNs: bigint = BigInt("0"),
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const productId =
+			this.productId !== null ? builder.createString(this.productId!) : 0;
+		const symbol =
+			this.symbol !== null ? builder.createString(this.symbol!) : 0;
+		const side = this.side !== null ? builder.createString(this.side!) : 0;
+		const type = this.type !== null ? builder.createString(this.type!) : 0;
+		const uid = this.uid !== null ? builder.createString(this.uid!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const productId = (this.productId !== null ? builder.createString(this.productId!) : 0);
-  const symbol = (this.symbol !== null ? builder.createString(this.symbol!) : 0);
-  const side = (this.side !== null ? builder.createString(this.side!) : 0);
-  const type = (this.type !== null ? builder.createString(this.type!) : 0);
-  const uid = (this.uid !== null ? builder.createString(this.uid!) : 0);
-
-  return EnvelopeFuturesTradeData.createEnvelopeFuturesTradeData(builder,
-    productId,
-    symbol,
-    this.price,
-    this.qty,
-    side,
-    type,
-    uid,
-    this.timestampNs
-  );
-}
+		return EnvelopeFuturesTradeData.createEnvelopeFuturesTradeData(
+			builder,
+			productId,
+			symbol,
+			this.price,
+			this.qty,
+			side,
+			type,
+			uid,
+			this.timestampNs,
+		);
+	}
 }

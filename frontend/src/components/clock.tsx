@@ -34,5 +34,3 @@ export const Clock = () => {
 		</Flex.Column>
 	);
 };
-
-

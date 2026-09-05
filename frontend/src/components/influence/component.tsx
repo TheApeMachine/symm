@@ -219,7 +219,12 @@ const buildInfluencedNodes = (
 		}
 	}
 
-	const rawEdges: Array<{ from: string; to: string; reason: string; weight: number }> = [];
+	const rawEdges: Array<{
+		from: string;
+		to: string;
+		reason: string;
+		weight: number;
+	}> = [];
 	const seenPairs = new Set<string>();
 
 	for (const [consumer, rows] of byConsumer) {
@@ -268,12 +273,15 @@ const buildInfluencedNodes = (
 	const nodes: InfluencedNode[] = nodeIds.map((id) => {
 		const producer = byId.get(id);
 		const position = positions.get(id) ?? { x: width / 2, y: height / 2 };
-		const status: LineageStatus = producer ? (lineageStatusOf(producer) ?? "referenced") : "unreferenced";
+		const status: LineageStatus = producer
+			? (lineageStatusOf(producer) ?? "referenced")
+			: "unreferenced";
 		// referenced -> neutral weight (a declared input, not proof a read
 		// happened); unreferenced -> negative (toward --down); kernelOnly
 		// sits near zero (weak signal: something reads the whole kernel, but
 		// nothing names this metric).
-		const weight = status === "referenced" ? 1 : status === "kernelOnly" ? 0.15 : -1;
+		const weight =
+			status === "referenced" ? 1 : status === "kernelOnly" ? 0.15 : -1;
 
 		return {
 			id,
@@ -293,7 +301,8 @@ const buildInfluencedNodes = (
 	return { nodes, edges };
 };
 
-const shortLabel = (node: InfluencedNode): string => `${node.source ?? "?"} · ${node.producer?.metric ?? node.id}`;
+const shortLabel = (node: InfluencedNode): string =>
+	`${node.source ?? "?"} · ${node.producer?.metric ?? node.id}`;
 
 export const InfluenceField = () => {
 	const [dimensions, setDimensions] = useState({ width: 800, height: 500 });
@@ -355,22 +364,36 @@ export const InfluenceField = () => {
 	);
 
 	useEffect(() => {
-		if (activeNodeId !== null && !nodes.some((node) => node.id === activeNodeId)) {
+		if (
+			activeNodeId !== null &&
+			!nodes.some((node) => node.id === activeNodeId)
+		) {
 			setActiveNodeId(nodes[0]?.id ?? null);
 		} else if (activeNodeId === null && nodes.length > 0) {
 			setActiveNodeId(nodes[0].id);
 		}
 	}, [nodes, activeNodeId]);
 
-	const totalInfluencePower = nodes.reduce((acc, n) => acc + Math.abs(n.weight), 0);
+	const totalInfluencePower = nodes.reduce(
+		(acc, n) => acc + Math.abs(n.weight),
+		0,
+	);
 	const netSystemBalance = nodes.reduce((acc, n) => acc + n.weight, 0);
 	const meanConfidence =
-		nodes.length === 0 ? 0 : nodes.reduce((acc, n) => acc + (n.confidence ?? 0), 0) / nodes.length;
+		nodes.length === 0
+			? 0
+			: nodes.reduce((acc, n) => acc + (n.confidence ?? 0), 0) / nodes.length;
 
 	const gridColumns = 24;
 	const gridRows = 16;
 	const vectorArrows = useMemo(() => {
-		const arrows: Array<{ x: number; y: number; dx: number; dy: number; mag: number }> = [];
+		const arrows: Array<{
+			x: number;
+			y: number;
+			dx: number;
+			dy: number;
+			mag: number;
+		}> = [];
 		if (nodes.length === 0) return arrows;
 
 		for (let c = 1; c < gridColumns; c++) {
@@ -393,8 +416,10 @@ export const InfluenceField = () => {
 
 				const noiseIntensity = (1 - meanConfidence) * 25;
 				if (noiseIntensity > 0) {
-					const noiseX = Math.sin(vx * 0.05 + vy * 0.02 + phase) * noiseIntensity;
-					const noiseY = Math.cos(vy * 0.05 + vx * 0.02 + phase) * noiseIntensity;
+					const noiseX =
+						Math.sin(vx * 0.05 + vy * 0.02 + phase) * noiseIntensity;
+					const noiseY =
+						Math.cos(vy * 0.05 + vx * 0.02 + phase) * noiseIntensity;
 					fx += noiseX;
 					fy += noiseY;
 				}
@@ -416,7 +441,8 @@ export const InfluenceField = () => {
 	}, [nodes, dimensions.width, dimensions.height, meanConfidence, phase]);
 
 	const contourLevels = [25, 55, 95];
-	const activeNode = nodes.find((n) => n.id === activeNodeId) ?? nodes[0] ?? null;
+	const activeNode =
+		nodes.find((n) => n.id === activeNodeId) ?? nodes[0] ?? null;
 	const cx = dimensions.width / 2;
 	const cy = dimensions.height / 2;
 
@@ -476,11 +502,14 @@ export const InfluenceField = () => {
 						<span
 							className="h-2 w-2 rounded-full"
 							style={{
-								backgroundColor: activeNode.weight >= 0 ? "var(--up)" : "var(--down)",
+								backgroundColor:
+									activeNode.weight >= 0 ? "var(--up)" : "var(--down)",
 							}}
 						/>
 						{shortLabel(activeNode)}
-						<span className="text-[9px] text-(--f4) tabular-nums">({activeNode.status})</span>
+						<span className="text-[9px] text-(--f4) tabular-nums">
+							({activeNode.status})
+						</span>
 					</div>
 				) : null}
 
@@ -491,22 +520,49 @@ export const InfluenceField = () => {
 					className="block h-full w-full"
 				>
 					{/* Background Grid */}
-					<g opacity="0.08" stroke="currentColor" strokeWidth="1" className="text-(--f4)">
+					<g
+						opacity="0.08"
+						stroke="currentColor"
+						strokeWidth="1"
+						className="text-(--f4)"
+					>
 						{Array.from({ length: gridRows }).map((_, i) => {
 							const y = (dimensions.height / gridRows) * i;
-							return <line key={`hg-${y}`} x1="0" y1={y} x2={dimensions.width} y2={y} />;
+							return (
+								<line
+									key={`hg-${y}`}
+									x1="0"
+									y1={y}
+									x2={dimensions.width}
+									y2={y}
+								/>
+							);
 						})}
 						{Array.from({ length: gridColumns }).map((_, i) => {
 							const x = (dimensions.width / gridColumns) * i;
-							return <line key={`vg-${x}`} x1={x} y1="0" x2={x} y2={dimensions.height} />;
+							return (
+								<line
+									key={`vg-${x}`}
+									x1={x}
+									y1="0"
+									x2={x}
+									y2={dimensions.height}
+								/>
+							);
 						})}
 					</g>
 
 					{/* Contour Rings — radius from the node's own derived weight */}
 					{nodes.map((node) => (
-						<g key={`contour-${node.id}`} opacity={activeNodeId === node.id ? 0.25 : 0.05}>
+						<g
+							key={`contour-${node.id}`}
+							opacity={activeNodeId === node.id ? 0.25 : 0.05}
+						>
 							{contourLevels.map((level, idx) => {
-								const computedRadius = Math.max(10, Math.abs(node.weight) * (idx + 1) * 15);
+								const computedRadius = Math.max(
+									10,
+									Math.abs(node.weight) * (idx + 1) * 15,
+								);
 								return (
 									<circle
 										key={`c-ring-${level}`}
@@ -542,7 +598,12 @@ export const InfluenceField = () => {
 										strokeWidth="1.5"
 										strokeLinecap="round"
 									/>
-									<circle cx={arrow.dx / 2} cy={arrow.dy / 2} r="1.5" fill="var(--f2)" />
+									<circle
+										cx={arrow.dx / 2}
+										cy={arrow.dy / 2}
+										r="1.5"
+										fill="var(--f2)"
+									/>
 								</g>
 							);
 						})}
@@ -561,9 +622,13 @@ export const InfluenceField = () => {
 							const ctrlX = midX + (cx - midX) * weightFactor;
 							const ctrlY = midY + (cy - midY) * weightFactor;
 
-							const isActive = activeNodeId === source.id || activeNodeId === target.id;
+							const isActive =
+								activeNodeId === source.id || activeNodeId === target.id;
 							const confidence = edge.confidence ?? 0;
-							const strokeWidth = Math.min(4, 0.6 + Math.abs(edge.weight ?? 0) * 3);
+							const strokeWidth = Math.min(
+								4,
+								0.6 + Math.abs(edge.weight ?? 0) * 3,
+							);
 
 							return (
 								<path
@@ -576,7 +641,8 @@ export const InfluenceField = () => {
 									className="transition-colors duration-300"
 								>
 									<title>
-										{edge.from} → {edge.to} · {edge.reason ?? edge.relation ?? "shared consumer"}
+										{edge.from} → {edge.to} ·{" "}
+										{edge.reason ?? edge.relation ?? "shared consumer"}
 									</title>
 								</path>
 							);
@@ -681,7 +747,10 @@ export const InfluenceField = () => {
 						</Flex.Row>
 						<div className="grid grid-cols-2 gap-x-6 gap-y-1 font-mono text-[10px] text-(--f4) md:grid-cols-4">
 							<span>
-								source <b className="font-normal text-(--f2)">{activeNode.source ?? "—"}</b>
+								source{" "}
+								<b className="font-normal text-(--f2)">
+									{activeNode.source ?? "—"}
+								</b>
 							</span>
 							<span>
 								declared{" "}
@@ -698,7 +767,10 @@ export const InfluenceField = () => {
 								</b>
 							</span>
 							<span>
-								edges <b className="font-normal text-(--f2)">{activeNode.edgeCount}</b>
+								edges{" "}
+								<b className="font-normal text-(--f2)">
+									{activeNode.edgeCount}
+								</b>
 							</span>
 						</div>
 					</div>

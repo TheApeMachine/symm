@@ -8,7 +8,13 @@ import {
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 
-const Row = ({ label, children }: { label: string; children: React.ReactNode }) => (
+const Row = ({
+	label,
+	children,
+}: {
+	label: string;
+	children: React.ReactNode;
+}) => (
 	<Flex.Row justify="between" align="center" className="gap-2">
 		<Flex className="shrink-0 text-(--f4)">{label}</Flex>
 		{children}
@@ -58,5 +64,3 @@ export const Engine = () => {
 		</Panel>
 	);
 };
-
-

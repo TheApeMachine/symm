@@ -3,179 +3,229 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
-
-
+import * as flatbuffers from "flatbuffers";
 
 export class ErrorFrame implements flatbuffers.IUnpackableObject<ErrorFrameT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):ErrorFrame {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): ErrorFrame {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-static getRootAsErrorFrame(bb:flatbuffers.ByteBuffer, obj?:ErrorFrame):ErrorFrame {
-  return (obj || new ErrorFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getRootAsErrorFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ErrorFrame,
+	): ErrorFrame {
+		return (obj || new ErrorFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsErrorFrame(bb:flatbuffers.ByteBuffer, obj?:ErrorFrame):ErrorFrame {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new ErrorFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsErrorFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ErrorFrame,
+	): ErrorFrame {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new ErrorFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-level():string|null
-level(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-level(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	level(): string | null;
+	level(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	level(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-source():string|null
-source(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-source(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	source(): string | null;
+	source(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	source(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-error():string|null
-error(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-error(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	error(): string | null;
+	error(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	error(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-message():string|null
-message(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-message(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	message(): string | null;
+	message(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	message(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-msg():string|null
-msg(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-msg(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	msg(): string | null;
+	msg(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	msg(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-caller():string|null
-caller(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-caller(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	caller(): string | null;
+	caller(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	caller(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-time():string|null
-time(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-time(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	time(): string | null;
+	time(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	time(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static startErrorFrame(builder:flatbuffers.Builder) {
-  builder.startObject(7);
-}
+	static startErrorFrame(builder: flatbuffers.Builder) {
+		builder.startObject(7);
+	}
 
-static addLevel(builder:flatbuffers.Builder, levelOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, levelOffset, 0);
-}
+	static addLevel(
+		builder: flatbuffers.Builder,
+		levelOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, levelOffset, 0);
+	}
 
-static addSource(builder:flatbuffers.Builder, sourceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, sourceOffset, 0);
-}
+	static addSource(
+		builder: flatbuffers.Builder,
+		sourceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, sourceOffset, 0);
+	}
 
-static addError(builder:flatbuffers.Builder, errorOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, errorOffset, 0);
-}
+	static addError(
+		builder: flatbuffers.Builder,
+		errorOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, errorOffset, 0);
+	}
 
-static addMessage(builder:flatbuffers.Builder, messageOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(3, messageOffset, 0);
-}
+	static addMessage(
+		builder: flatbuffers.Builder,
+		messageOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(3, messageOffset, 0);
+	}
 
-static addMsg(builder:flatbuffers.Builder, msgOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, msgOffset, 0);
-}
+	static addMsg(builder: flatbuffers.Builder, msgOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(4, msgOffset, 0);
+	}
 
-static addCaller(builder:flatbuffers.Builder, callerOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, callerOffset, 0);
-}
+	static addCaller(
+		builder: flatbuffers.Builder,
+		callerOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(5, callerOffset, 0);
+	}
 
-static addTime(builder:flatbuffers.Builder, timeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, timeOffset, 0);
-}
+	static addTime(builder: flatbuffers.Builder, timeOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(6, timeOffset, 0);
+	}
 
-static endErrorFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	static endErrorFrame(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static createErrorFrame(builder:flatbuffers.Builder, levelOffset:flatbuffers.Offset, sourceOffset:flatbuffers.Offset, errorOffset:flatbuffers.Offset, messageOffset:flatbuffers.Offset, msgOffset:flatbuffers.Offset, callerOffset:flatbuffers.Offset, timeOffset:flatbuffers.Offset):flatbuffers.Offset {
-  ErrorFrame.startErrorFrame(builder);
-  ErrorFrame.addLevel(builder, levelOffset);
-  ErrorFrame.addSource(builder, sourceOffset);
-  ErrorFrame.addError(builder, errorOffset);
-  ErrorFrame.addMessage(builder, messageOffset);
-  ErrorFrame.addMsg(builder, msgOffset);
-  ErrorFrame.addCaller(builder, callerOffset);
-  ErrorFrame.addTime(builder, timeOffset);
-  return ErrorFrame.endErrorFrame(builder);
-}
+	static createErrorFrame(
+		builder: flatbuffers.Builder,
+		levelOffset: flatbuffers.Offset,
+		sourceOffset: flatbuffers.Offset,
+		errorOffset: flatbuffers.Offset,
+		messageOffset: flatbuffers.Offset,
+		msgOffset: flatbuffers.Offset,
+		callerOffset: flatbuffers.Offset,
+		timeOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		ErrorFrame.startErrorFrame(builder);
+		ErrorFrame.addLevel(builder, levelOffset);
+		ErrorFrame.addSource(builder, sourceOffset);
+		ErrorFrame.addError(builder, errorOffset);
+		ErrorFrame.addMessage(builder, messageOffset);
+		ErrorFrame.addMsg(builder, msgOffset);
+		ErrorFrame.addCaller(builder, callerOffset);
+		ErrorFrame.addTime(builder, timeOffset);
+		return ErrorFrame.endErrorFrame(builder);
+	}
 
-unpack(): ErrorFrameT {
-  return new ErrorFrameT(
-    this.level(),
-    this.source(),
-    this.error(),
-    this.message(),
-    this.msg(),
-    this.caller(),
-    this.time()
-  );
-}
+	unpack(): ErrorFrameT {
+		return new ErrorFrameT(
+			this.level(),
+			this.source(),
+			this.error(),
+			this.message(),
+			this.msg(),
+			this.caller(),
+			this.time(),
+		);
+	}
 
-
-unpackTo(_o: ErrorFrameT): void {
-  _o.level = this.level();
-  _o.source = this.source();
-  _o.error = this.error();
-  _o.message = this.message();
-  _o.msg = this.msg();
-  _o.caller = this.caller();
-  _o.time = this.time();
-}
+	unpackTo(_o: ErrorFrameT): void {
+		_o.level = this.level();
+		_o.source = this.source();
+		_o.error = this.error();
+		_o.message = this.message();
+		_o.msg = this.msg();
+		_o.caller = this.caller();
+		_o.time = this.time();
+	}
 }
 
 export class ErrorFrameT implements flatbuffers.IGeneratedObject {
-constructor(
-  public level: string|Uint8Array|null = null,
-  public source: string|Uint8Array|null = null,
-  public error: string|Uint8Array|null = null,
-  public message: string|Uint8Array|null = null,
-  public msg: string|Uint8Array|null = null,
-  public caller: string|Uint8Array|null = null,
-  public time: string|Uint8Array|null = null
-){}
+	constructor(
+		public level: string | Uint8Array | null = null,
+		public source: string | Uint8Array | null = null,
+		public error: string | Uint8Array | null = null,
+		public message: string | Uint8Array | null = null,
+		public msg: string | Uint8Array | null = null,
+		public caller: string | Uint8Array | null = null,
+		public time: string | Uint8Array | null = null,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const level = this.level !== null ? builder.createString(this.level!) : 0;
+		const source =
+			this.source !== null ? builder.createString(this.source!) : 0;
+		const error = this.error !== null ? builder.createString(this.error!) : 0;
+		const message =
+			this.message !== null ? builder.createString(this.message!) : 0;
+		const msg = this.msg !== null ? builder.createString(this.msg!) : 0;
+		const caller =
+			this.caller !== null ? builder.createString(this.caller!) : 0;
+		const time = this.time !== null ? builder.createString(this.time!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const level = (this.level !== null ? builder.createString(this.level!) : 0);
-  const source = (this.source !== null ? builder.createString(this.source!) : 0);
-  const error = (this.error !== null ? builder.createString(this.error!) : 0);
-  const message = (this.message !== null ? builder.createString(this.message!) : 0);
-  const msg = (this.msg !== null ? builder.createString(this.msg!) : 0);
-  const caller = (this.caller !== null ? builder.createString(this.caller!) : 0);
-  const time = (this.time !== null ? builder.createString(this.time!) : 0);
-
-  return ErrorFrame.createErrorFrame(builder,
-    level,
-    source,
-    error,
-    message,
-    msg,
-    caller,
-    time
-  );
-}
+		return ErrorFrame.createErrorFrame(
+			builder,
+			level,
+			source,
+			error,
+			message,
+			msg,
+			caller,
+			time,
+		);
+	}
 }

@@ -96,7 +96,9 @@ export const SymbolTargets = ({
 						const active = selected === summary.symbol;
 						const share = peak > 0 ? summary.topExcursion / peak : 0;
 						const descriptor =
-							summary.topKind === undefined ? null : describeEpisode(summary.topKind);
+							summary.topKind === undefined
+								? null
+								: describeEpisode(summary.topKind);
 
 						return (
 							<li key={summary.symbol}>
@@ -141,14 +143,16 @@ export const SymbolTargets = ({
 											title="Price-geometry episodes / microstructure-regime episodes"
 											className="tabular-nums"
 										>
-											{summary.priceEpisodes} price · {summary.regimeEpisodes} regime
+											{summary.priceEpisodes} price · {summary.regimeEpisodes}{" "}
+											regime
 										</span>
 										<span>·</span>
 										<span
 											className="tabular-nums"
 											title="Observations where the declared coordinate was defined, of all observations captured."
 										>
-											{formatCount(summary.defined)}/{formatCount(summary.observations)}
+											{formatCount(summary.defined)}/
+											{formatCount(summary.observations)}
 										</span>
 										{summary.insufficientData ? (
 											<span className="text-(--warn)">· short</span>
@@ -212,14 +216,20 @@ export const EpisodeTargets = ({
 						</span>{" "}
 						= max(floor {(discovery.policy.floorExcursion * 100).toFixed(2)}%,{" "}
 						{discovery.policy.excursionSigmas}σ ×{" "}
-						{discovery.hasSigma ? discovery.sigma.toExponential(2) : "σ undefined"} × √
-						{discovery.policy.excursionHorizon})
+						{discovery.hasSigma
+							? discovery.sigma.toExponential(2)
+							: "σ undefined"}{" "}
+						× √{discovery.policy.excursionHorizon})
 					</div>
 					<div>
 						measured on{" "}
-						<span className="text-(--f2)">{formatCount(discovery.defined)}</span> of{" "}
-						{formatCount(discovery.observations)} observations ·{" "}
-						<span className="text-(--warn)">{formatCount(discovery.undefined)}</span>{" "}
+						<span className="text-(--f2)">
+							{formatCount(discovery.defined)}
+						</span>{" "}
+						of {formatCount(discovery.observations)} observations ·{" "}
+						<span className="text-(--warn)">
+							{formatCount(discovery.undefined)}
+						</span>{" "}
 						undefined (not zero)
 					</div>
 				</div>
@@ -289,7 +299,8 @@ export const EpisodeTargets = ({
 													});
 												}}
 											>
-												{REFERENCE_GLYPHS[reference.role]} {reference.role.replace("_", " ")}{" "}
+												{REFERENCE_GLYPHS[reference.role]}{" "}
+												{reference.role.replace("_", " ")}{" "}
 												<span className="tabular-nums text-(--f4)">
 													#{reference.capture.sequence}:{reference.ordinal}
 												</span>

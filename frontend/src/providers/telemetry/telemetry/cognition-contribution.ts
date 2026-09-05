@@ -3,91 +3,110 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class CognitionContribution
+	implements flatbuffers.IUnpackableObject<CognitionContributionT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): CognitionContribution {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsCognitionContribution(
+		bb: flatbuffers.ByteBuffer,
+		obj?: CognitionContribution,
+	): CognitionContribution {
+		return (obj || new CognitionContribution()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class CognitionContribution implements flatbuffers.IUnpackableObject<CognitionContributionT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):CognitionContribution {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsCognitionContribution(
+		bb: flatbuffers.ByteBuffer,
+		obj?: CognitionContribution,
+	): CognitionContribution {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new CognitionContribution()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsCognitionContribution(bb:flatbuffers.ByteBuffer, obj?:CognitionContribution):CognitionContribution {
-  return (obj || new CognitionContribution()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	token(): string | null;
+	token(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	token(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsCognitionContribution(bb:flatbuffers.ByteBuffer, obj?:CognitionContribution):CognitionContribution {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new CognitionContribution()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	bits(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-token():string|null
-token(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-token(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	static startCognitionContribution(builder: flatbuffers.Builder) {
+		builder.startObject(2);
+	}
 
-bits():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static addToken(
+		builder: flatbuffers.Builder,
+		tokenOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, tokenOffset, 0);
+	}
 
-static startCognitionContribution(builder:flatbuffers.Builder) {
-  builder.startObject(2);
-}
+	static addBits(builder: flatbuffers.Builder, bits: number) {
+		builder.addFieldFloat64(1, bits, 0.0);
+	}
 
-static addToken(builder:flatbuffers.Builder, tokenOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, tokenOffset, 0);
-}
+	static endCognitionContribution(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static addBits(builder:flatbuffers.Builder, bits:number) {
-  builder.addFieldFloat64(1, bits, 0.0);
-}
+	static createCognitionContribution(
+		builder: flatbuffers.Builder,
+		tokenOffset: flatbuffers.Offset,
+		bits: number,
+	): flatbuffers.Offset {
+		CognitionContribution.startCognitionContribution(builder);
+		CognitionContribution.addToken(builder, tokenOffset);
+		CognitionContribution.addBits(builder, bits);
+		return CognitionContribution.endCognitionContribution(builder);
+	}
 
-static endCognitionContribution(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): CognitionContributionT {
+		return new CognitionContributionT(this.token(), this.bits());
+	}
 
-static createCognitionContribution(builder:flatbuffers.Builder, tokenOffset:flatbuffers.Offset, bits:number):flatbuffers.Offset {
-  CognitionContribution.startCognitionContribution(builder);
-  CognitionContribution.addToken(builder, tokenOffset);
-  CognitionContribution.addBits(builder, bits);
-  return CognitionContribution.endCognitionContribution(builder);
-}
-
-unpack(): CognitionContributionT {
-  return new CognitionContributionT(
-    this.token(),
-    this.bits()
-  );
-}
-
-
-unpackTo(_o: CognitionContributionT): void {
-  _o.token = this.token();
-  _o.bits = this.bits();
-}
+	unpackTo(_o: CognitionContributionT): void {
+		_o.token = this.token();
+		_o.bits = this.bits();
+	}
 }
 
 export class CognitionContributionT implements flatbuffers.IGeneratedObject {
-constructor(
-  public token: string|Uint8Array|null = null,
-  public bits: number = 0.0
-){}
+	constructor(
+		public token: string | Uint8Array | null = null,
+		public bits: number = 0.0,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const token = this.token !== null ? builder.createString(this.token!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const token = (this.token !== null ? builder.createString(this.token!) : 0);
-
-  return CognitionContribution.createCognitionContribution(builder,
-    token,
-    this.bits
-  );
-}
+		return CognitionContribution.createCognitionContribution(
+			builder,
+			token,
+			this.bits,
+		);
+	}
 }

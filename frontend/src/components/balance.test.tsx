@@ -78,7 +78,9 @@ describe("Balance", () => {
 		// An envelope with an empty equity frame must not blank a balance the
 		// dashboard has already been shown.
 		equityStore.actions.add(
-			encodeStateWithEquity("", "", "").equity(new EquityFrame()) as EquityFrame,
+			encodeStateWithEquity("", "", "").equity(
+				new EquityFrame(),
+			) as EquityFrame,
 		);
 
 		const markup = renderToStaticMarkup(<Balance />);

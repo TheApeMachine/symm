@@ -102,7 +102,8 @@ published before errorNorm existed.
 export const xrayLayersFromResonance = (
 	frame: ResonanceFrame | Record<string, unknown> | null | undefined,
 ): XrayLayer[] => {
-	const layers = (frame?.layers as Array<Record<string, unknown>> | undefined) ?? [];
+	const layers =
+		(frame?.layers as Array<Record<string, unknown>> | undefined) ?? [];
 
 	return layers.map((layer, index) => {
 		const state = numberArray(layer.state);
@@ -114,7 +115,9 @@ export const xrayLayersFromResonance = (
 			label: `L${index} · ${semanticLayerName(index, layers.length)}`,
 			state,
 			prediction,
-			error_norm: reported ?? layerError(state, prediction, frame?.surprise as number | undefined),
+			error_norm:
+				reported ??
+				layerError(state, prediction, frame?.surprise as number | undefined),
 		};
 	});
 };
@@ -141,13 +144,11 @@ const hawkesMetrics = (epoch: Measurement[]): HawkesMetrics => {
 		aggregateIntensity ??
 		(buyIntensity !== null && sellIntensity !== null
 			? buyIntensity + sellIntensity
-			: buyIntensity ?? sellIntensity);
+			: (buyIntensity ?? sellIntensity));
 
 	const exo =
 		aggregateBg ??
-		(buyBg !== null && sellBg !== null
-			? buyBg + sellBg
-			: buyBg ?? sellBg);
+		(buyBg !== null && sellBg !== null ? buyBg + sellBg : (buyBg ?? sellBg));
 
 	return {
 		intensity,
@@ -215,7 +216,9 @@ export const intensitySeriesFromRingRows = (
 	}
 
 	return [...byEpoch.entries()]
-		.sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0))
+		.sort((left, right) =>
+			left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0,
+		)
 		.map(([, value]) => value);
 };
 
@@ -322,21 +325,31 @@ Retained universe maps across sparse telemetry updates.
 const retainedResonance = new Map<string, Record<string, unknown>>();
 const retainedHawkes = new Map<string, Record<string, number>>();
 
-export const retainResonanceRow = (symbol: string, row: Record<string, unknown>) => {
+export const retainResonanceRow = (
+	symbol: string,
+	row: Record<string, unknown>,
+) => {
 	if (!symbol) return;
 	const existing = retainedResonance.get(symbol) ?? {};
 	retainedResonance.set(symbol, { ...existing, ...row, symbol });
 };
 
-export const getRetainedResonance = (symbol?: string): Record<string, unknown> | null => {
+export const getRetainedResonance = (
+	symbol?: string,
+): Record<string, unknown> | null => {
 	if (!symbol) return null;
 	return retainedResonance.get(symbol) ?? null;
 };
 
-export const getAllRetainedResonance = (): Array<Record<string, unknown>> =>
-	[...retainedResonance.values()];
+export const getAllRetainedResonance = (): Array<Record<string, unknown>> => [
+	...retainedResonance.values(),
+];
 
-export const retainHawkesMetric = (symbol: string, metric: string, raw: number) => {
+export const retainHawkesMetric = (
+	symbol: string,
+	metric: string,
+	raw: number,
+) => {
 	if (!symbol || !metric || !Number.isFinite(raw)) return;
 	const current = retainedHawkes.get(symbol) ?? {};
 	current[metric] = raw;

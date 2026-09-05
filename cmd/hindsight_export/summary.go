@@ -66,17 +66,6 @@ func (aggregate *summary) observe(record round, symbols map[string]bool, confide
 		aggregate.MeanMoveMass[move] += mass
 	}
 
-	if record.Search == nil {
-		return
-	}
-
-	aggregate.Searched++
-	aggregate.Recommended[record.Search.RecommendedAction]++
-	aggregate.Identified[record.Search.IdentificationStatus]++
-
-	if record.Search.DominantMove != "" {
-		aggregate.DominantMove[record.Search.DominantMove]++
-	}
 }
 
 /* finish converts running totals into the reported averages and quantiles. */

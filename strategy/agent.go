@@ -49,6 +49,14 @@ type Agent struct {
 	Desk        ExecutionDesk
 	attribution attribution
 	dispatched  uint64
+
+	/*
+		rejected counts policy intents the account did not accept, and
+		lastRejection retains the most recent reason. They are reported, never
+		fatal: an execution problem must not stop the agent from learning.
+	*/
+	rejected      uint64
+	lastRejection error
 }
 
 /* learningMarket owns persistent wallets and the latest ordered impulse. */

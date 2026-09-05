@@ -16,7 +16,6 @@ export type FluidFeedHandlers = {
 	onError: (error: Error) => void;
 };
 
-
 const signalingURL = () =>
 	import.meta.env.VITE_SYMM_WEBRTC_URL?.trim() ||
 	"http://127.0.0.1:8765/webrtc/manifold";

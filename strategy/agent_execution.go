@@ -79,12 +79,23 @@ func (agent *Agent) dispatch(
 		Skill:     agent.Skill.Reading(),
 	}
 
+	/*
+		A refused or failed submission is an account-side fact, not a broken
+		pipeline. Halting the workload on one would stop every symbol from
+		learning because a single venue could not take a single order, and the
+		lane whose measurement matters would go silent precisely when the
+		account is behaving unexpectedly. The failure is counted and reported;
+		the agent keeps observing.
+	*/
 	if err := agent.Desk.Submit(intent); err != nil {
-		return errnie.Error(errnie.Err(
+		agent.rejected++
+		agent.lastRejection = errnie.Error(errnie.Err(
 			errnie.IO,
-			"[agent] failed to submit policy intent",
+			"[agent] policy intent was not accepted by the account",
 			err,
 		))
+
+		return nil
 	}
 
 	agent.dispatched++

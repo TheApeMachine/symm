@@ -1,14 +1,14 @@
 import type {
 	HindsightCapture,
-	HindsightMetricMap,
-	HindsightResident,
-	HindsightTimeline,
-	HindsightTimelineQuery,
 	HindsightEnvelope,
 	HindsightGap,
 	HindsightLifecycleEvent,
+	HindsightMetricMap,
+	HindsightResident,
 	HindsightRun,
 	HindsightState,
+	HindsightTimeline,
+	HindsightTimelineQuery,
 } from "./hindsight-types";
 
 /*
@@ -18,7 +18,10 @@ websocket URL (env override with a localhost default), then hit the read-only
 */
 const hindsightBaseUrl = () => {
 	if (import.meta.env.VITE_SYMM_WS_URL) {
-		return import.meta.env.VITE_SYMM_WS_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
+		return import.meta.env.VITE_SYMM_WS_URL.replace(/^ws/, "http").replace(
+			/\/ws$/,
+			"",
+		);
 	}
 
 	const protocol = window.location.protocol === "https:" ? "https:" : "http:";

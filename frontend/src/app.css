@@ -3,17 +3,17 @@
 @import "./components/ui/theme.css";
 
 .node-group {
-  cursor: grab;
+	cursor: grab;
 }
 
 .node-group:active {
-  cursor: grabbing;
+	cursor: grabbing;
 }
 
 .node-glow {
-  transition: all 0.2s ease-in-out;
+	transition: all 0.2s ease-in-out;
 }
 
 .node-group:hover .node-glow {
-  filter: drop-shadow(0 0 15px currentColor) brightness(1.2);
+	filter: drop-shadow(0 0 15px currentColor) brightness(1.2);
 }

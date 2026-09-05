@@ -3,361 +3,429 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class EnvelopeFuturesTickerData
+	implements flatbuffers.IUnpackableObject<EnvelopeFuturesTickerDataT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeFuturesTickerData {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsEnvelopeFuturesTickerData(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeFuturesTickerData,
+	): EnvelopeFuturesTickerData {
+		return (obj || new EnvelopeFuturesTickerData()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class EnvelopeFuturesTickerData implements flatbuffers.IUnpackableObject<EnvelopeFuturesTickerDataT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeFuturesTickerData {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
+	static getSizePrefixedRootAsEnvelopeFuturesTickerData(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeFuturesTickerData,
+	): EnvelopeFuturesTickerData {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopeFuturesTickerData()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	productId(): string | null;
+	productId(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	productId(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	symbol(): string | null;
+	symbol(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	symbol(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	hasBid(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	bid(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	bidSize(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	hasAsk(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	ask(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	askSize(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	hasLast(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	last(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	openInterest(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	hasMarkPrice(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	markPrice(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 28);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	hasIndexPrice(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 30);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	indexPrice(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 32);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	hasFundingRate(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 34);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	fundingRate(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 36);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	hasFundingRatePrediction(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 38);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	fundingRatePrediction(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 40);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	volume(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 42);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	timestampNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 44);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	static startEnvelopeFuturesTickerData(builder: flatbuffers.Builder) {
+		builder.startObject(21);
+	}
+
+	static addProductId(
+		builder: flatbuffers.Builder,
+		productIdOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, productIdOffset, 0);
+	}
+
+	static addSymbol(
+		builder: flatbuffers.Builder,
+		symbolOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, symbolOffset, 0);
+	}
+
+	static addHasBid(builder: flatbuffers.Builder, hasBid: boolean) {
+		builder.addFieldInt8(2, +hasBid, +false);
+	}
+
+	static addBid(builder: flatbuffers.Builder, bid: number) {
+		builder.addFieldFloat64(3, bid, 0.0);
+	}
+
+	static addBidSize(builder: flatbuffers.Builder, bidSize: number) {
+		builder.addFieldFloat64(4, bidSize, 0.0);
+	}
+
+	static addHasAsk(builder: flatbuffers.Builder, hasAsk: boolean) {
+		builder.addFieldInt8(5, +hasAsk, +false);
+	}
+
+	static addAsk(builder: flatbuffers.Builder, ask: number) {
+		builder.addFieldFloat64(6, ask, 0.0);
+	}
+
+	static addAskSize(builder: flatbuffers.Builder, askSize: number) {
+		builder.addFieldFloat64(7, askSize, 0.0);
+	}
+
+	static addHasLast(builder: flatbuffers.Builder, hasLast: boolean) {
+		builder.addFieldInt8(8, +hasLast, +false);
+	}
+
+	static addLast(builder: flatbuffers.Builder, last: number) {
+		builder.addFieldFloat64(9, last, 0.0);
+	}
+
+	static addOpenInterest(builder: flatbuffers.Builder, openInterest: number) {
+		builder.addFieldFloat64(10, openInterest, 0.0);
+	}
+
+	static addHasMarkPrice(builder: flatbuffers.Builder, hasMarkPrice: boolean) {
+		builder.addFieldInt8(11, +hasMarkPrice, +false);
+	}
+
+	static addMarkPrice(builder: flatbuffers.Builder, markPrice: number) {
+		builder.addFieldFloat64(12, markPrice, 0.0);
+	}
+
+	static addHasIndexPrice(
+		builder: flatbuffers.Builder,
+		hasIndexPrice: boolean,
+	) {
+		builder.addFieldInt8(13, +hasIndexPrice, +false);
+	}
+
+	static addIndexPrice(builder: flatbuffers.Builder, indexPrice: number) {
+		builder.addFieldFloat64(14, indexPrice, 0.0);
+	}
+
+	static addHasFundingRate(
+		builder: flatbuffers.Builder,
+		hasFundingRate: boolean,
+	) {
+		builder.addFieldInt8(15, +hasFundingRate, +false);
+	}
+
+	static addFundingRate(builder: flatbuffers.Builder, fundingRate: number) {
+		builder.addFieldFloat64(16, fundingRate, 0.0);
+	}
+
+	static addHasFundingRatePrediction(
+		builder: flatbuffers.Builder,
+		hasFundingRatePrediction: boolean,
+	) {
+		builder.addFieldInt8(17, +hasFundingRatePrediction, +false);
+	}
+
+	static addFundingRatePrediction(
+		builder: flatbuffers.Builder,
+		fundingRatePrediction: number,
+	) {
+		builder.addFieldFloat64(18, fundingRatePrediction, 0.0);
+	}
+
+	static addVolume(builder: flatbuffers.Builder, volume: number) {
+		builder.addFieldFloat64(19, volume, 0.0);
+	}
+
+	static addTimestampNs(builder: flatbuffers.Builder, timestampNs: bigint) {
+		builder.addFieldInt64(20, timestampNs, BigInt("0"));
+	}
+
+	static endEnvelopeFuturesTickerData(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // productId
+		return offset;
+	}
+
+	static createEnvelopeFuturesTickerData(
+		builder: flatbuffers.Builder,
+		productIdOffset: flatbuffers.Offset,
+		symbolOffset: flatbuffers.Offset,
+		hasBid: boolean,
+		bid: number,
+		bidSize: number,
+		hasAsk: boolean,
+		ask: number,
+		askSize: number,
+		hasLast: boolean,
+		last: number,
+		openInterest: number,
+		hasMarkPrice: boolean,
+		markPrice: number,
+		hasIndexPrice: boolean,
+		indexPrice: number,
+		hasFundingRate: boolean,
+		fundingRate: number,
+		hasFundingRatePrediction: boolean,
+		fundingRatePrediction: number,
+		volume: number,
+		timestampNs: bigint,
+	): flatbuffers.Offset {
+		EnvelopeFuturesTickerData.startEnvelopeFuturesTickerData(builder);
+		EnvelopeFuturesTickerData.addProductId(builder, productIdOffset);
+		EnvelopeFuturesTickerData.addSymbol(builder, symbolOffset);
+		EnvelopeFuturesTickerData.addHasBid(builder, hasBid);
+		EnvelopeFuturesTickerData.addBid(builder, bid);
+		EnvelopeFuturesTickerData.addBidSize(builder, bidSize);
+		EnvelopeFuturesTickerData.addHasAsk(builder, hasAsk);
+		EnvelopeFuturesTickerData.addAsk(builder, ask);
+		EnvelopeFuturesTickerData.addAskSize(builder, askSize);
+		EnvelopeFuturesTickerData.addHasLast(builder, hasLast);
+		EnvelopeFuturesTickerData.addLast(builder, last);
+		EnvelopeFuturesTickerData.addOpenInterest(builder, openInterest);
+		EnvelopeFuturesTickerData.addHasMarkPrice(builder, hasMarkPrice);
+		EnvelopeFuturesTickerData.addMarkPrice(builder, markPrice);
+		EnvelopeFuturesTickerData.addHasIndexPrice(builder, hasIndexPrice);
+		EnvelopeFuturesTickerData.addIndexPrice(builder, indexPrice);
+		EnvelopeFuturesTickerData.addHasFundingRate(builder, hasFundingRate);
+		EnvelopeFuturesTickerData.addFundingRate(builder, fundingRate);
+		EnvelopeFuturesTickerData.addHasFundingRatePrediction(
+			builder,
+			hasFundingRatePrediction,
+		);
+		EnvelopeFuturesTickerData.addFundingRatePrediction(
+			builder,
+			fundingRatePrediction,
+		);
+		EnvelopeFuturesTickerData.addVolume(builder, volume);
+		EnvelopeFuturesTickerData.addTimestampNs(builder, timestampNs);
+		return EnvelopeFuturesTickerData.endEnvelopeFuturesTickerData(builder);
+	}
+
+	unpack(): EnvelopeFuturesTickerDataT {
+		return new EnvelopeFuturesTickerDataT(
+			this.productId(),
+			this.symbol(),
+			this.hasBid(),
+			this.bid(),
+			this.bidSize(),
+			this.hasAsk(),
+			this.ask(),
+			this.askSize(),
+			this.hasLast(),
+			this.last(),
+			this.openInterest(),
+			this.hasMarkPrice(),
+			this.markPrice(),
+			this.hasIndexPrice(),
+			this.indexPrice(),
+			this.hasFundingRate(),
+			this.fundingRate(),
+			this.hasFundingRatePrediction(),
+			this.fundingRatePrediction(),
+			this.volume(),
+			this.timestampNs(),
+		);
+	}
+
+	unpackTo(_o: EnvelopeFuturesTickerDataT): void {
+		_o.productId = this.productId();
+		_o.symbol = this.symbol();
+		_o.hasBid = this.hasBid();
+		_o.bid = this.bid();
+		_o.bidSize = this.bidSize();
+		_o.hasAsk = this.hasAsk();
+		_o.ask = this.ask();
+		_o.askSize = this.askSize();
+		_o.hasLast = this.hasLast();
+		_o.last = this.last();
+		_o.openInterest = this.openInterest();
+		_o.hasMarkPrice = this.hasMarkPrice();
+		_o.markPrice = this.markPrice();
+		_o.hasIndexPrice = this.hasIndexPrice();
+		_o.indexPrice = this.indexPrice();
+		_o.hasFundingRate = this.hasFundingRate();
+		_o.fundingRate = this.fundingRate();
+		_o.hasFundingRatePrediction = this.hasFundingRatePrediction();
+		_o.fundingRatePrediction = this.fundingRatePrediction();
+		_o.volume = this.volume();
+		_o.timestampNs = this.timestampNs();
+	}
 }
 
-static getRootAsEnvelopeFuturesTickerData(bb:flatbuffers.ByteBuffer, obj?:EnvelopeFuturesTickerData):EnvelopeFuturesTickerData {
-  return (obj || new EnvelopeFuturesTickerData()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+export class EnvelopeFuturesTickerDataT
+	implements flatbuffers.IGeneratedObject
+{
+	constructor(
+		public productId: string | Uint8Array | null = null,
+		public symbol: string | Uint8Array | null = null,
+		public hasBid: boolean = false,
+		public bid: number = 0.0,
+		public bidSize: number = 0.0,
+		public hasAsk: boolean = false,
+		public ask: number = 0.0,
+		public askSize: number = 0.0,
+		public hasLast: boolean = false,
+		public last: number = 0.0,
+		public openInterest: number = 0.0,
+		public hasMarkPrice: boolean = false,
+		public markPrice: number = 0.0,
+		public hasIndexPrice: boolean = false,
+		public indexPrice: number = 0.0,
+		public hasFundingRate: boolean = false,
+		public fundingRate: number = 0.0,
+		public hasFundingRatePrediction: boolean = false,
+		public fundingRatePrediction: number = 0.0,
+		public volume: number = 0.0,
+		public timestampNs: bigint = BigInt("0"),
+	) {}
 
-static getSizePrefixedRootAsEnvelopeFuturesTickerData(bb:flatbuffers.ByteBuffer, obj?:EnvelopeFuturesTickerData):EnvelopeFuturesTickerData {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeFuturesTickerData()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const productId =
+			this.productId !== null ? builder.createString(this.productId!) : 0;
+		const symbol =
+			this.symbol !== null ? builder.createString(this.symbol!) : 0;
 
-productId():string|null
-productId(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-productId(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-symbol():string|null
-symbol(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-symbol(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-hasBid():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-bid():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-bidSize():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-hasAsk():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-ask():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-askSize():number {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-hasLast():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-last():number {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-openInterest():number {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-hasMarkPrice():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-markPrice():number {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-hasIndexPrice():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-indexPrice():number {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-hasFundingRate():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-fundingRate():number {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-hasFundingRatePrediction():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-fundingRatePrediction():number {
-  const offset = this.bb!.__offset(this.bb_pos, 40);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-volume():number {
-  const offset = this.bb!.__offset(this.bb_pos, 42);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-timestampNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 44);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-static startEnvelopeFuturesTickerData(builder:flatbuffers.Builder) {
-  builder.startObject(21);
-}
-
-static addProductId(builder:flatbuffers.Builder, productIdOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, productIdOffset, 0);
-}
-
-static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, symbolOffset, 0);
-}
-
-static addHasBid(builder:flatbuffers.Builder, hasBid:boolean) {
-  builder.addFieldInt8(2, +hasBid, +false);
-}
-
-static addBid(builder:flatbuffers.Builder, bid:number) {
-  builder.addFieldFloat64(3, bid, 0.0);
-}
-
-static addBidSize(builder:flatbuffers.Builder, bidSize:number) {
-  builder.addFieldFloat64(4, bidSize, 0.0);
-}
-
-static addHasAsk(builder:flatbuffers.Builder, hasAsk:boolean) {
-  builder.addFieldInt8(5, +hasAsk, +false);
-}
-
-static addAsk(builder:flatbuffers.Builder, ask:number) {
-  builder.addFieldFloat64(6, ask, 0.0);
-}
-
-static addAskSize(builder:flatbuffers.Builder, askSize:number) {
-  builder.addFieldFloat64(7, askSize, 0.0);
-}
-
-static addHasLast(builder:flatbuffers.Builder, hasLast:boolean) {
-  builder.addFieldInt8(8, +hasLast, +false);
-}
-
-static addLast(builder:flatbuffers.Builder, last:number) {
-  builder.addFieldFloat64(9, last, 0.0);
-}
-
-static addOpenInterest(builder:flatbuffers.Builder, openInterest:number) {
-  builder.addFieldFloat64(10, openInterest, 0.0);
-}
-
-static addHasMarkPrice(builder:flatbuffers.Builder, hasMarkPrice:boolean) {
-  builder.addFieldInt8(11, +hasMarkPrice, +false);
-}
-
-static addMarkPrice(builder:flatbuffers.Builder, markPrice:number) {
-  builder.addFieldFloat64(12, markPrice, 0.0);
-}
-
-static addHasIndexPrice(builder:flatbuffers.Builder, hasIndexPrice:boolean) {
-  builder.addFieldInt8(13, +hasIndexPrice, +false);
-}
-
-static addIndexPrice(builder:flatbuffers.Builder, indexPrice:number) {
-  builder.addFieldFloat64(14, indexPrice, 0.0);
-}
-
-static addHasFundingRate(builder:flatbuffers.Builder, hasFundingRate:boolean) {
-  builder.addFieldInt8(15, +hasFundingRate, +false);
-}
-
-static addFundingRate(builder:flatbuffers.Builder, fundingRate:number) {
-  builder.addFieldFloat64(16, fundingRate, 0.0);
-}
-
-static addHasFundingRatePrediction(builder:flatbuffers.Builder, hasFundingRatePrediction:boolean) {
-  builder.addFieldInt8(17, +hasFundingRatePrediction, +false);
-}
-
-static addFundingRatePrediction(builder:flatbuffers.Builder, fundingRatePrediction:number) {
-  builder.addFieldFloat64(18, fundingRatePrediction, 0.0);
-}
-
-static addVolume(builder:flatbuffers.Builder, volume:number) {
-  builder.addFieldFloat64(19, volume, 0.0);
-}
-
-static addTimestampNs(builder:flatbuffers.Builder, timestampNs:bigint) {
-  builder.addFieldInt64(20, timestampNs, BigInt('0'));
-}
-
-static endEnvelopeFuturesTickerData(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // productId
-  return offset;
-}
-
-static createEnvelopeFuturesTickerData(builder:flatbuffers.Builder, productIdOffset:flatbuffers.Offset, symbolOffset:flatbuffers.Offset, hasBid:boolean, bid:number, bidSize:number, hasAsk:boolean, ask:number, askSize:number, hasLast:boolean, last:number, openInterest:number, hasMarkPrice:boolean, markPrice:number, hasIndexPrice:boolean, indexPrice:number, hasFundingRate:boolean, fundingRate:number, hasFundingRatePrediction:boolean, fundingRatePrediction:number, volume:number, timestampNs:bigint):flatbuffers.Offset {
-  EnvelopeFuturesTickerData.startEnvelopeFuturesTickerData(builder);
-  EnvelopeFuturesTickerData.addProductId(builder, productIdOffset);
-  EnvelopeFuturesTickerData.addSymbol(builder, symbolOffset);
-  EnvelopeFuturesTickerData.addHasBid(builder, hasBid);
-  EnvelopeFuturesTickerData.addBid(builder, bid);
-  EnvelopeFuturesTickerData.addBidSize(builder, bidSize);
-  EnvelopeFuturesTickerData.addHasAsk(builder, hasAsk);
-  EnvelopeFuturesTickerData.addAsk(builder, ask);
-  EnvelopeFuturesTickerData.addAskSize(builder, askSize);
-  EnvelopeFuturesTickerData.addHasLast(builder, hasLast);
-  EnvelopeFuturesTickerData.addLast(builder, last);
-  EnvelopeFuturesTickerData.addOpenInterest(builder, openInterest);
-  EnvelopeFuturesTickerData.addHasMarkPrice(builder, hasMarkPrice);
-  EnvelopeFuturesTickerData.addMarkPrice(builder, markPrice);
-  EnvelopeFuturesTickerData.addHasIndexPrice(builder, hasIndexPrice);
-  EnvelopeFuturesTickerData.addIndexPrice(builder, indexPrice);
-  EnvelopeFuturesTickerData.addHasFundingRate(builder, hasFundingRate);
-  EnvelopeFuturesTickerData.addFundingRate(builder, fundingRate);
-  EnvelopeFuturesTickerData.addHasFundingRatePrediction(builder, hasFundingRatePrediction);
-  EnvelopeFuturesTickerData.addFundingRatePrediction(builder, fundingRatePrediction);
-  EnvelopeFuturesTickerData.addVolume(builder, volume);
-  EnvelopeFuturesTickerData.addTimestampNs(builder, timestampNs);
-  return EnvelopeFuturesTickerData.endEnvelopeFuturesTickerData(builder);
-}
-
-unpack(): EnvelopeFuturesTickerDataT {
-  return new EnvelopeFuturesTickerDataT(
-    this.productId(),
-    this.symbol(),
-    this.hasBid(),
-    this.bid(),
-    this.bidSize(),
-    this.hasAsk(),
-    this.ask(),
-    this.askSize(),
-    this.hasLast(),
-    this.last(),
-    this.openInterest(),
-    this.hasMarkPrice(),
-    this.markPrice(),
-    this.hasIndexPrice(),
-    this.indexPrice(),
-    this.hasFundingRate(),
-    this.fundingRate(),
-    this.hasFundingRatePrediction(),
-    this.fundingRatePrediction(),
-    this.volume(),
-    this.timestampNs()
-  );
-}
-
-
-unpackTo(_o: EnvelopeFuturesTickerDataT): void {
-  _o.productId = this.productId();
-  _o.symbol = this.symbol();
-  _o.hasBid = this.hasBid();
-  _o.bid = this.bid();
-  _o.bidSize = this.bidSize();
-  _o.hasAsk = this.hasAsk();
-  _o.ask = this.ask();
-  _o.askSize = this.askSize();
-  _o.hasLast = this.hasLast();
-  _o.last = this.last();
-  _o.openInterest = this.openInterest();
-  _o.hasMarkPrice = this.hasMarkPrice();
-  _o.markPrice = this.markPrice();
-  _o.hasIndexPrice = this.hasIndexPrice();
-  _o.indexPrice = this.indexPrice();
-  _o.hasFundingRate = this.hasFundingRate();
-  _o.fundingRate = this.fundingRate();
-  _o.hasFundingRatePrediction = this.hasFundingRatePrediction();
-  _o.fundingRatePrediction = this.fundingRatePrediction();
-  _o.volume = this.volume();
-  _o.timestampNs = this.timestampNs();
-}
-}
-
-export class EnvelopeFuturesTickerDataT implements flatbuffers.IGeneratedObject {
-constructor(
-  public productId: string|Uint8Array|null = null,
-  public symbol: string|Uint8Array|null = null,
-  public hasBid: boolean = false,
-  public bid: number = 0.0,
-  public bidSize: number = 0.0,
-  public hasAsk: boolean = false,
-  public ask: number = 0.0,
-  public askSize: number = 0.0,
-  public hasLast: boolean = false,
-  public last: number = 0.0,
-  public openInterest: number = 0.0,
-  public hasMarkPrice: boolean = false,
-  public markPrice: number = 0.0,
-  public hasIndexPrice: boolean = false,
-  public indexPrice: number = 0.0,
-  public hasFundingRate: boolean = false,
-  public fundingRate: number = 0.0,
-  public hasFundingRatePrediction: boolean = false,
-  public fundingRatePrediction: number = 0.0,
-  public volume: number = 0.0,
-  public timestampNs: bigint = BigInt('0')
-){}
-
-
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const productId = (this.productId !== null ? builder.createString(this.productId!) : 0);
-  const symbol = (this.symbol !== null ? builder.createString(this.symbol!) : 0);
-
-  return EnvelopeFuturesTickerData.createEnvelopeFuturesTickerData(builder,
-    productId,
-    symbol,
-    this.hasBid,
-    this.bid,
-    this.bidSize,
-    this.hasAsk,
-    this.ask,
-    this.askSize,
-    this.hasLast,
-    this.last,
-    this.openInterest,
-    this.hasMarkPrice,
-    this.markPrice,
-    this.hasIndexPrice,
-    this.indexPrice,
-    this.hasFundingRate,
-    this.fundingRate,
-    this.hasFundingRatePrediction,
-    this.fundingRatePrediction,
-    this.volume,
-    this.timestampNs
-  );
-}
+		return EnvelopeFuturesTickerData.createEnvelopeFuturesTickerData(
+			builder,
+			productId,
+			symbol,
+			this.hasBid,
+			this.bid,
+			this.bidSize,
+			this.hasAsk,
+			this.ask,
+			this.askSize,
+			this.hasLast,
+			this.last,
+			this.openInterest,
+			this.hasMarkPrice,
+			this.markPrice,
+			this.hasIndexPrice,
+			this.indexPrice,
+			this.hasFundingRate,
+			this.fundingRate,
+			this.hasFundingRatePrediction,
+			this.fundingRatePrediction,
+			this.volume,
+			this.timestampNs,
+		);
+	}
 }

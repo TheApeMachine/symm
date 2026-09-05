@@ -3,311 +3,353 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class ResonanceDynamics
+	implements flatbuffers.IUnpackableObject<ResonanceDynamicsT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): ResonanceDynamics {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsResonanceDynamics(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ResonanceDynamics,
+	): ResonanceDynamics {
+		return (obj || new ResonanceDynamics()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class ResonanceDynamics implements flatbuffers.IUnpackableObject<ResonanceDynamicsT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):ResonanceDynamics {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsResonanceDynamics(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ResonanceDynamics,
+	): ResonanceDynamics {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new ResonanceDynamics()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsResonanceDynamics(bb:flatbuffers.ByteBuffer, obj?:ResonanceDynamics):ResonanceDynamics {
-  return (obj || new ResonanceDynamics()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	ready(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-static getSizePrefixedRootAsResonanceDynamics(bb:flatbuffers.ByteBuffer, obj?:ResonanceDynamics):ResonanceDynamics {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new ResonanceDynamics()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	deltaTime(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-ready():number {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	position(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-deltaTime():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	velocity(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-position():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	acceleration(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-velocity():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	memory(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-acceleration():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	memoryScale(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-memory():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	storedEnergy(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-memoryScale():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	suppliedPower(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-storedEnergy():number {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	dissipation(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-suppliedPower():number {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	passivityResidue(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-dissipation():number {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	continuousVariance(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-passivityResidue():number {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	jumpAmplitude(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 28);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-continuousVariance():number {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	jumpVariance(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 30);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-jumpAmplitude():number {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	sampleCount(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 32);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-jumpVariance():number {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	rotorScalar(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 34);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-sampleCount():number {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	rotorBivector(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 36);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-rotorScalar():number {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	equivarianceNorm(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 38);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-rotorBivector():number {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static startResonanceDynamics(builder: flatbuffers.Builder) {
+		builder.startObject(18);
+	}
 
-equivarianceNorm():number {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static addReady(builder: flatbuffers.Builder, ready: number) {
+		builder.addFieldFloat64(0, ready, 0.0);
+	}
 
-static startResonanceDynamics(builder:flatbuffers.Builder) {
-  builder.startObject(18);
-}
+	static addDeltaTime(builder: flatbuffers.Builder, deltaTime: number) {
+		builder.addFieldFloat64(1, deltaTime, 0.0);
+	}
 
-static addReady(builder:flatbuffers.Builder, ready:number) {
-  builder.addFieldFloat64(0, ready, 0.0);
-}
+	static addPosition(builder: flatbuffers.Builder, position: number) {
+		builder.addFieldFloat64(2, position, 0.0);
+	}
 
-static addDeltaTime(builder:flatbuffers.Builder, deltaTime:number) {
-  builder.addFieldFloat64(1, deltaTime, 0.0);
-}
+	static addVelocity(builder: flatbuffers.Builder, velocity: number) {
+		builder.addFieldFloat64(3, velocity, 0.0);
+	}
 
-static addPosition(builder:flatbuffers.Builder, position:number) {
-  builder.addFieldFloat64(2, position, 0.0);
-}
+	static addAcceleration(builder: flatbuffers.Builder, acceleration: number) {
+		builder.addFieldFloat64(4, acceleration, 0.0);
+	}
 
-static addVelocity(builder:flatbuffers.Builder, velocity:number) {
-  builder.addFieldFloat64(3, velocity, 0.0);
-}
+	static addMemory(builder: flatbuffers.Builder, memory: number) {
+		builder.addFieldFloat64(5, memory, 0.0);
+	}
 
-static addAcceleration(builder:flatbuffers.Builder, acceleration:number) {
-  builder.addFieldFloat64(4, acceleration, 0.0);
-}
+	static addMemoryScale(builder: flatbuffers.Builder, memoryScale: number) {
+		builder.addFieldFloat64(6, memoryScale, 0.0);
+	}
 
-static addMemory(builder:flatbuffers.Builder, memory:number) {
-  builder.addFieldFloat64(5, memory, 0.0);
-}
+	static addStoredEnergy(builder: flatbuffers.Builder, storedEnergy: number) {
+		builder.addFieldFloat64(7, storedEnergy, 0.0);
+	}
 
-static addMemoryScale(builder:flatbuffers.Builder, memoryScale:number) {
-  builder.addFieldFloat64(6, memoryScale, 0.0);
-}
+	static addSuppliedPower(builder: flatbuffers.Builder, suppliedPower: number) {
+		builder.addFieldFloat64(8, suppliedPower, 0.0);
+	}
 
-static addStoredEnergy(builder:flatbuffers.Builder, storedEnergy:number) {
-  builder.addFieldFloat64(7, storedEnergy, 0.0);
-}
+	static addDissipation(builder: flatbuffers.Builder, dissipation: number) {
+		builder.addFieldFloat64(9, dissipation, 0.0);
+	}
 
-static addSuppliedPower(builder:flatbuffers.Builder, suppliedPower:number) {
-  builder.addFieldFloat64(8, suppliedPower, 0.0);
-}
+	static addPassivityResidue(
+		builder: flatbuffers.Builder,
+		passivityResidue: number,
+	) {
+		builder.addFieldFloat64(10, passivityResidue, 0.0);
+	}
 
-static addDissipation(builder:flatbuffers.Builder, dissipation:number) {
-  builder.addFieldFloat64(9, dissipation, 0.0);
-}
+	static addContinuousVariance(
+		builder: flatbuffers.Builder,
+		continuousVariance: number,
+	) {
+		builder.addFieldFloat64(11, continuousVariance, 0.0);
+	}
 
-static addPassivityResidue(builder:flatbuffers.Builder, passivityResidue:number) {
-  builder.addFieldFloat64(10, passivityResidue, 0.0);
-}
+	static addJumpAmplitude(builder: flatbuffers.Builder, jumpAmplitude: number) {
+		builder.addFieldFloat64(12, jumpAmplitude, 0.0);
+	}
 
-static addContinuousVariance(builder:flatbuffers.Builder, continuousVariance:number) {
-  builder.addFieldFloat64(11, continuousVariance, 0.0);
-}
+	static addJumpVariance(builder: flatbuffers.Builder, jumpVariance: number) {
+		builder.addFieldFloat64(13, jumpVariance, 0.0);
+	}
 
-static addJumpAmplitude(builder:flatbuffers.Builder, jumpAmplitude:number) {
-  builder.addFieldFloat64(12, jumpAmplitude, 0.0);
-}
+	static addSampleCount(builder: flatbuffers.Builder, sampleCount: number) {
+		builder.addFieldFloat64(14, sampleCount, 0.0);
+	}
 
-static addJumpVariance(builder:flatbuffers.Builder, jumpVariance:number) {
-  builder.addFieldFloat64(13, jumpVariance, 0.0);
-}
+	static addRotorScalar(builder: flatbuffers.Builder, rotorScalar: number) {
+		builder.addFieldFloat64(15, rotorScalar, 0.0);
+	}
 
-static addSampleCount(builder:flatbuffers.Builder, sampleCount:number) {
-  builder.addFieldFloat64(14, sampleCount, 0.0);
-}
+	static addRotorBivector(builder: flatbuffers.Builder, rotorBivector: number) {
+		builder.addFieldFloat64(16, rotorBivector, 0.0);
+	}
 
-static addRotorScalar(builder:flatbuffers.Builder, rotorScalar:number) {
-  builder.addFieldFloat64(15, rotorScalar, 0.0);
-}
+	static addEquivarianceNorm(
+		builder: flatbuffers.Builder,
+		equivarianceNorm: number,
+	) {
+		builder.addFieldFloat64(17, equivarianceNorm, 0.0);
+	}
 
-static addRotorBivector(builder:flatbuffers.Builder, rotorBivector:number) {
-  builder.addFieldFloat64(16, rotorBivector, 0.0);
-}
+	static endResonanceDynamics(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static addEquivarianceNorm(builder:flatbuffers.Builder, equivarianceNorm:number) {
-  builder.addFieldFloat64(17, equivarianceNorm, 0.0);
-}
+	static createResonanceDynamics(
+		builder: flatbuffers.Builder,
+		ready: number,
+		deltaTime: number,
+		position: number,
+		velocity: number,
+		acceleration: number,
+		memory: number,
+		memoryScale: number,
+		storedEnergy: number,
+		suppliedPower: number,
+		dissipation: number,
+		passivityResidue: number,
+		continuousVariance: number,
+		jumpAmplitude: number,
+		jumpVariance: number,
+		sampleCount: number,
+		rotorScalar: number,
+		rotorBivector: number,
+		equivarianceNorm: number,
+	): flatbuffers.Offset {
+		ResonanceDynamics.startResonanceDynamics(builder);
+		ResonanceDynamics.addReady(builder, ready);
+		ResonanceDynamics.addDeltaTime(builder, deltaTime);
+		ResonanceDynamics.addPosition(builder, position);
+		ResonanceDynamics.addVelocity(builder, velocity);
+		ResonanceDynamics.addAcceleration(builder, acceleration);
+		ResonanceDynamics.addMemory(builder, memory);
+		ResonanceDynamics.addMemoryScale(builder, memoryScale);
+		ResonanceDynamics.addStoredEnergy(builder, storedEnergy);
+		ResonanceDynamics.addSuppliedPower(builder, suppliedPower);
+		ResonanceDynamics.addDissipation(builder, dissipation);
+		ResonanceDynamics.addPassivityResidue(builder, passivityResidue);
+		ResonanceDynamics.addContinuousVariance(builder, continuousVariance);
+		ResonanceDynamics.addJumpAmplitude(builder, jumpAmplitude);
+		ResonanceDynamics.addJumpVariance(builder, jumpVariance);
+		ResonanceDynamics.addSampleCount(builder, sampleCount);
+		ResonanceDynamics.addRotorScalar(builder, rotorScalar);
+		ResonanceDynamics.addRotorBivector(builder, rotorBivector);
+		ResonanceDynamics.addEquivarianceNorm(builder, equivarianceNorm);
+		return ResonanceDynamics.endResonanceDynamics(builder);
+	}
 
-static endResonanceDynamics(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): ResonanceDynamicsT {
+		return new ResonanceDynamicsT(
+			this.ready(),
+			this.deltaTime(),
+			this.position(),
+			this.velocity(),
+			this.acceleration(),
+			this.memory(),
+			this.memoryScale(),
+			this.storedEnergy(),
+			this.suppliedPower(),
+			this.dissipation(),
+			this.passivityResidue(),
+			this.continuousVariance(),
+			this.jumpAmplitude(),
+			this.jumpVariance(),
+			this.sampleCount(),
+			this.rotorScalar(),
+			this.rotorBivector(),
+			this.equivarianceNorm(),
+		);
+	}
 
-static createResonanceDynamics(builder:flatbuffers.Builder, ready:number, deltaTime:number, position:number, velocity:number, acceleration:number, memory:number, memoryScale:number, storedEnergy:number, suppliedPower:number, dissipation:number, passivityResidue:number, continuousVariance:number, jumpAmplitude:number, jumpVariance:number, sampleCount:number, rotorScalar:number, rotorBivector:number, equivarianceNorm:number):flatbuffers.Offset {
-  ResonanceDynamics.startResonanceDynamics(builder);
-  ResonanceDynamics.addReady(builder, ready);
-  ResonanceDynamics.addDeltaTime(builder, deltaTime);
-  ResonanceDynamics.addPosition(builder, position);
-  ResonanceDynamics.addVelocity(builder, velocity);
-  ResonanceDynamics.addAcceleration(builder, acceleration);
-  ResonanceDynamics.addMemory(builder, memory);
-  ResonanceDynamics.addMemoryScale(builder, memoryScale);
-  ResonanceDynamics.addStoredEnergy(builder, storedEnergy);
-  ResonanceDynamics.addSuppliedPower(builder, suppliedPower);
-  ResonanceDynamics.addDissipation(builder, dissipation);
-  ResonanceDynamics.addPassivityResidue(builder, passivityResidue);
-  ResonanceDynamics.addContinuousVariance(builder, continuousVariance);
-  ResonanceDynamics.addJumpAmplitude(builder, jumpAmplitude);
-  ResonanceDynamics.addJumpVariance(builder, jumpVariance);
-  ResonanceDynamics.addSampleCount(builder, sampleCount);
-  ResonanceDynamics.addRotorScalar(builder, rotorScalar);
-  ResonanceDynamics.addRotorBivector(builder, rotorBivector);
-  ResonanceDynamics.addEquivarianceNorm(builder, equivarianceNorm);
-  return ResonanceDynamics.endResonanceDynamics(builder);
-}
-
-unpack(): ResonanceDynamicsT {
-  return new ResonanceDynamicsT(
-    this.ready(),
-    this.deltaTime(),
-    this.position(),
-    this.velocity(),
-    this.acceleration(),
-    this.memory(),
-    this.memoryScale(),
-    this.storedEnergy(),
-    this.suppliedPower(),
-    this.dissipation(),
-    this.passivityResidue(),
-    this.continuousVariance(),
-    this.jumpAmplitude(),
-    this.jumpVariance(),
-    this.sampleCount(),
-    this.rotorScalar(),
-    this.rotorBivector(),
-    this.equivarianceNorm()
-  );
-}
-
-
-unpackTo(_o: ResonanceDynamicsT): void {
-  _o.ready = this.ready();
-  _o.deltaTime = this.deltaTime();
-  _o.position = this.position();
-  _o.velocity = this.velocity();
-  _o.acceleration = this.acceleration();
-  _o.memory = this.memory();
-  _o.memoryScale = this.memoryScale();
-  _o.storedEnergy = this.storedEnergy();
-  _o.suppliedPower = this.suppliedPower();
-  _o.dissipation = this.dissipation();
-  _o.passivityResidue = this.passivityResidue();
-  _o.continuousVariance = this.continuousVariance();
-  _o.jumpAmplitude = this.jumpAmplitude();
-  _o.jumpVariance = this.jumpVariance();
-  _o.sampleCount = this.sampleCount();
-  _o.rotorScalar = this.rotorScalar();
-  _o.rotorBivector = this.rotorBivector();
-  _o.equivarianceNorm = this.equivarianceNorm();
-}
+	unpackTo(_o: ResonanceDynamicsT): void {
+		_o.ready = this.ready();
+		_o.deltaTime = this.deltaTime();
+		_o.position = this.position();
+		_o.velocity = this.velocity();
+		_o.acceleration = this.acceleration();
+		_o.memory = this.memory();
+		_o.memoryScale = this.memoryScale();
+		_o.storedEnergy = this.storedEnergy();
+		_o.suppliedPower = this.suppliedPower();
+		_o.dissipation = this.dissipation();
+		_o.passivityResidue = this.passivityResidue();
+		_o.continuousVariance = this.continuousVariance();
+		_o.jumpAmplitude = this.jumpAmplitude();
+		_o.jumpVariance = this.jumpVariance();
+		_o.sampleCount = this.sampleCount();
+		_o.rotorScalar = this.rotorScalar();
+		_o.rotorBivector = this.rotorBivector();
+		_o.equivarianceNorm = this.equivarianceNorm();
+	}
 }
 
 export class ResonanceDynamicsT implements flatbuffers.IGeneratedObject {
-constructor(
-  public ready: number = 0.0,
-  public deltaTime: number = 0.0,
-  public position: number = 0.0,
-  public velocity: number = 0.0,
-  public acceleration: number = 0.0,
-  public memory: number = 0.0,
-  public memoryScale: number = 0.0,
-  public storedEnergy: number = 0.0,
-  public suppliedPower: number = 0.0,
-  public dissipation: number = 0.0,
-  public passivityResidue: number = 0.0,
-  public continuousVariance: number = 0.0,
-  public jumpAmplitude: number = 0.0,
-  public jumpVariance: number = 0.0,
-  public sampleCount: number = 0.0,
-  public rotorScalar: number = 0.0,
-  public rotorBivector: number = 0.0,
-  public equivarianceNorm: number = 0.0
-){}
+	constructor(
+		public ready: number = 0.0,
+		public deltaTime: number = 0.0,
+		public position: number = 0.0,
+		public velocity: number = 0.0,
+		public acceleration: number = 0.0,
+		public memory: number = 0.0,
+		public memoryScale: number = 0.0,
+		public storedEnergy: number = 0.0,
+		public suppliedPower: number = 0.0,
+		public dissipation: number = 0.0,
+		public passivityResidue: number = 0.0,
+		public continuousVariance: number = 0.0,
+		public jumpAmplitude: number = 0.0,
+		public jumpVariance: number = 0.0,
+		public sampleCount: number = 0.0,
+		public rotorScalar: number = 0.0,
+		public rotorBivector: number = 0.0,
+		public equivarianceNorm: number = 0.0,
+	) {}
 
-
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  return ResonanceDynamics.createResonanceDynamics(builder,
-    this.ready,
-    this.deltaTime,
-    this.position,
-    this.velocity,
-    this.acceleration,
-    this.memory,
-    this.memoryScale,
-    this.storedEnergy,
-    this.suppliedPower,
-    this.dissipation,
-    this.passivityResidue,
-    this.continuousVariance,
-    this.jumpAmplitude,
-    this.jumpVariance,
-    this.sampleCount,
-    this.rotorScalar,
-    this.rotorBivector,
-    this.equivarianceNorm
-  );
-}
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		return ResonanceDynamics.createResonanceDynamics(
+			builder,
+			this.ready,
+			this.deltaTime,
+			this.position,
+			this.velocity,
+			this.acceleration,
+			this.memory,
+			this.memoryScale,
+			this.storedEnergy,
+			this.suppliedPower,
+			this.dissipation,
+			this.passivityResidue,
+			this.continuousVariance,
+			this.jumpAmplitude,
+			this.jumpVariance,
+			this.sampleCount,
+			this.rotorScalar,
+			this.rotorBivector,
+			this.equivarianceNorm,
+		);
+	}
 }

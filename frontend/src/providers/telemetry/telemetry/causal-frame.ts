@@ -3,94 +3,123 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { Causal, CausalT } from '../telemetry/causal.js';
+import { Causal, type CausalT } from "../telemetry/causal.js";
 
+export class CausalFrame
+	implements flatbuffers.IUnpackableObject<CausalFrameT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): CausalFrame {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-export class CausalFrame implements flatbuffers.IUnpackableObject<CausalFrameT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):CausalFrame {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getRootAsCausalFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: CausalFrame,
+	): CausalFrame {
+		return (obj || new CausalFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsCausalFrame(bb:flatbuffers.ByteBuffer, obj?:CausalFrame):CausalFrame {
-  return (obj || new CausalFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsCausalFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: CausalFrame,
+	): CausalFrame {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new CausalFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsCausalFrame(bb:flatbuffers.ByteBuffer, obj?:CausalFrame):CausalFrame {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new CausalFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	rows(index: number, obj?: Causal): Causal | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? (obj || new Causal()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-rows(index: number, obj?:Causal):Causal|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? (obj || new Causal()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	rowsLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-rowsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	static startCausalFrame(builder: flatbuffers.Builder) {
+		builder.startObject(1);
+	}
 
-static startCausalFrame(builder:flatbuffers.Builder) {
-  builder.startObject(1);
-}
+	static addRows(builder: flatbuffers.Builder, rowsOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, rowsOffset, 0);
+	}
 
-static addRows(builder:flatbuffers.Builder, rowsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, rowsOffset, 0);
-}
+	static createRowsVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createRowsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startRowsVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startRowsVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static endCausalFrame(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // rows
+		return offset;
+	}
 
-static endCausalFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // rows
-  return offset;
-}
+	static createCausalFrame(
+		builder: flatbuffers.Builder,
+		rowsOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		CausalFrame.startCausalFrame(builder);
+		CausalFrame.addRows(builder, rowsOffset);
+		return CausalFrame.endCausalFrame(builder);
+	}
 
-static createCausalFrame(builder:flatbuffers.Builder, rowsOffset:flatbuffers.Offset):flatbuffers.Offset {
-  CausalFrame.startCausalFrame(builder);
-  CausalFrame.addRows(builder, rowsOffset);
-  return CausalFrame.endCausalFrame(builder);
-}
+	unpack(): CausalFrameT {
+		return new CausalFrameT(
+			this.bb!.createObjList<Causal, CausalT>(
+				this.rows.bind(this),
+				this.rowsLength(),
+			),
+		);
+	}
 
-unpack(): CausalFrameT {
-  return new CausalFrameT(
-    this.bb!.createObjList<Causal, CausalT>(this.rows.bind(this), this.rowsLength())
-  );
-}
-
-
-unpackTo(_o: CausalFrameT): void {
-  _o.rows = this.bb!.createObjList<Causal, CausalT>(this.rows.bind(this), this.rowsLength());
-}
+	unpackTo(_o: CausalFrameT): void {
+		_o.rows = this.bb!.createObjList<Causal, CausalT>(
+			this.rows.bind(this),
+			this.rowsLength(),
+		);
+	}
 }
 
 export class CausalFrameT implements flatbuffers.IGeneratedObject {
-constructor(
-  public rows: (CausalT)[] = []
-){}
+	constructor(public rows: CausalT[] = []) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const rows = CausalFrame.createRowsVector(
+			builder,
+			builder.createObjectOffsetList(this.rows),
+		);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const rows = CausalFrame.createRowsVector(builder, builder.createObjectOffsetList(this.rows));
-
-  return CausalFrame.createCausalFrame(builder,
-    rows
-  );
-}
+		return CausalFrame.createCausalFrame(builder, rows);
+	}
 }

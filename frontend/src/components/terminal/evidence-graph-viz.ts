@@ -5,10 +5,10 @@ import {
 	TERMINAL_COLORS,
 } from "#/components/terminal/canvas";
 import type {
-	GraphEdge,
 	Graph,
-	GraphNodeKind,
+	GraphEdge,
 	GraphNode,
+	GraphNodeKind,
 } from "#/types/thesis";
 
 export type GraphNodePosition = {
@@ -144,7 +144,9 @@ export const nodeLabel = (node: GraphNode): string => {
 	const measurement = node.measurement;
 
 	if (nodeKind(node) === "category") {
-		return node.category ?? measurementString(measurement, "metric") ?? "category";
+		return (
+			node.category ?? measurementString(measurement, "metric") ?? "category"
+		);
 	}
 
 	if (nodeKind(node) === "concept") {
@@ -545,8 +547,8 @@ export const edgeControlPoint = (
 	// this edge's own orientation. Without canonicalization the reversed chord
 	// and reversed side cancel, bowing both edges to the same visual side.
 	const forward = edge.from < edge.to;
-	const dx = (forward ? to.x - from.x : from.x - to.x);
-	const dy = (forward ? to.y - from.y : from.y - to.y);
+	const dx = forward ? to.x - from.x : from.x - to.x;
+	const dy = forward ? to.y - from.y : from.y - to.y;
 	const length = Math.hypot(dx, dy) || 1;
 	const side = forward ? 1 : -1;
 	const offset = Math.min(46, length * 0.22) * side;
@@ -594,10 +596,7 @@ const kindFill = (node: GraphNode): string => {
 	);
 };
 
-const drawLegend = (
-	context: CanvasRenderingContext2D,
-	width: number,
-): void => {
+const drawLegend = (context: CanvasRenderingContext2D, width: number): void => {
 	const startX = width - 132;
 	let y = 16;
 

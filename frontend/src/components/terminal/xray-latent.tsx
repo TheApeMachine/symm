@@ -1,8 +1,8 @@
-import { createRef } from "react";
 import { createStore } from "@tanstack/store";
+import { createRef } from "react";
 import { appStore } from "#/collections/app";
-import type { ResonanceFrame } from "#/collections/types";
 import { terminalStore } from "#/collections/terminal";
+import type { ResonanceFrame } from "#/collections/types";
 import {
 	clearCanvas,
 	resizeCanvas,

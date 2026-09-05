@@ -90,7 +90,9 @@ const graphMetadataFromFlatBuffer = (
 	return entries;
 };
 
-export const graphFrameFromFlatBuffer = (fb: GraphFrame | null): MarketGraphFrame | null => {
+export const graphFrameFromFlatBuffer = (
+	fb: GraphFrame | null,
+): MarketGraphFrame | null => {
 	if (!fb) return null;
 
 	const nodes: Record<string, MarketGraphNode> = {};
@@ -281,9 +283,19 @@ export const paintGraphSurface = (value: unknown): void => {
 	let frame: MarketGraphFrame | null = null;
 	if (value instanceof GraphFrame) {
 		frame = graphFrameFromFlatBuffer(value);
-	} else if (value && typeof value === "object" && "getLast" in value && typeof (value as any).getLast === "function") {
+	} else if (
+		value &&
+		typeof value === "object" &&
+		"getLast" in value &&
+		typeof (value as any).getLast === "function"
+	) {
 		frame = graphFrameFromFlatBuffer((value as any).getLast());
-	} else if (value && typeof value === "object" && "nodes" in value && "edges" in value) {
+	} else if (
+		value &&
+		typeof value === "object" &&
+		"nodes" in value &&
+		"edges" in value
+	) {
 		frame = value as MarketGraphFrame;
 	}
 
@@ -314,4 +326,3 @@ export const paintGraphSurface = (value: unknown): void => {
 		};
 	});
 };
-

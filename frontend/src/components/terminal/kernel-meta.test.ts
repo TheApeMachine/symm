@@ -23,7 +23,9 @@ describe("sourceHeadline", () => {
 
 describe("sourceHeadlineMetric", () => {
 	it("uses the dimensionless branching ratio as Hawkes' headline", () => {
-		expect(sourceHeadlineMetric("hawkes")).toBe("metrics.branching_spectral_radius");
+		expect(sourceHeadlineMetric("hawkes")).toBe(
+			"metrics.branching_spectral_radius",
+		);
 	});
 
 	it("uses a metric the live depthflow measurement publishes", () => {
@@ -34,13 +36,17 @@ describe("sourceHeadlineMetric", () => {
 	});
 
 	it("uses the live correlation hypothesis as its headline", () => {
-		expect(sourceHeadlineMetric("correlation")).toBe("metrics.signed_correlation");
+		expect(sourceHeadlineMetric("correlation")).toBe(
+			"metrics.signed_correlation",
+		);
 		expect(sourceMetrics("correlation")).toContain("signed_correlation");
 		expect(sourceMetrics("correlation")[0]).toBe("snr");
 	});
 
 	it("uses the anchor evidence names emitted by leadlag", () => {
-		expect(sourceHeadlineMetric("leadlag")).toBe("metrics.best_lag_correlation");
+		expect(sourceHeadlineMetric("leadlag")).toBe(
+			"metrics.best_lag_correlation",
+		);
 		expect(sourceMetrics("leadlag")).toContain("best_lag_correlation");
 		expect(sourceMetrics("leadlag")[0]).toBe("snr");
 	});

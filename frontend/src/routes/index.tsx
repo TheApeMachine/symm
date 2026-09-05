@@ -27,10 +27,7 @@ const RouteComponent = () => {
 					responsive={false}
 					className="h-full min-h-0 min-w-0 flex-1 grid-cols-[282px_minmax(360px,1fr)_332px]"
 				>
-					<Section
-						fit="pane"
-						className="min-h-0 border-(--line) border-r"
-					>
+					<Section fit="pane" className="min-h-0 border-(--line) border-r">
 						<Section.Header
 							sticky
 							title="Signal kernels"

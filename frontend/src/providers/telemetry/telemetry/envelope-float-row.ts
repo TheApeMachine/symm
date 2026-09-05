@@ -3,103 +3,140 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class EnvelopeFloatRow
+	implements flatbuffers.IUnpackableObject<EnvelopeFloatRowT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeFloatRow {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsEnvelopeFloatRow(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeFloatRow,
+	): EnvelopeFloatRow {
+		return (obj || new EnvelopeFloatRow()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class EnvelopeFloatRow implements flatbuffers.IUnpackableObject<EnvelopeFloatRowT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeFloatRow {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsEnvelopeFloatRow(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeFloatRow,
+	): EnvelopeFloatRow {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopeFloatRow()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsEnvelopeFloatRow(bb:flatbuffers.ByteBuffer, obj?:EnvelopeFloatRow):EnvelopeFloatRow {
-  return (obj || new EnvelopeFloatRow()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	values(index: number): number | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.readFloat64(
+					this.bb!.__vector(this.bb_pos + offset) + index * 8,
+				)
+			: 0;
+	}
 
-static getSizePrefixedRootAsEnvelopeFloatRow(bb:flatbuffers.ByteBuffer, obj?:EnvelopeFloatRow):EnvelopeFloatRow {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeFloatRow()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	valuesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-values(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readFloat64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : 0;
-}
+	valuesArray(): Float64Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? new Float64Array(
+					this.bb!.bytes().buffer,
+					this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+					this.bb!.__vector_len(this.bb_pos + offset),
+				)
+			: null;
+	}
 
-valuesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	static startEnvelopeFloatRow(builder: flatbuffers.Builder) {
+		builder.startObject(1);
+	}
 
-valuesArray():Float64Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? new Float64Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
-}
+	static addValues(
+		builder: flatbuffers.Builder,
+		valuesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, valuesOffset, 0);
+	}
 
-static startEnvelopeFloatRow(builder:flatbuffers.Builder) {
-  builder.startObject(1);
-}
+	static createValuesVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Float64Array,
+	): flatbuffers.Offset;
+	/**
+	 * @deprecated This Uint8Array overload will be removed in the future.
+	 */
+	static createValuesVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Uint8Array,
+	): flatbuffers.Offset;
+	static createValuesVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Float64Array | Uint8Array,
+	): flatbuffers.Offset {
+		builder.startVector(8, data.length, 8);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addFloat64(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static addValues(builder:flatbuffers.Builder, valuesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, valuesOffset, 0);
-}
+	static startValuesVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(8, numElems, 8);
+	}
 
-static createValuesVector(builder:flatbuffers.Builder, data:number[]|Float64Array):flatbuffers.Offset;
-/**
- * @deprecated This Uint8Array overload will be removed in the future.
- */
-static createValuesVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset;
-static createValuesVector(builder:flatbuffers.Builder, data:number[]|Float64Array|Uint8Array):flatbuffers.Offset {
-  builder.startVector(8, data.length, 8);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addFloat64(data[i]!);
-  }
-  return builder.endVector();
-}
+	static endEnvelopeFloatRow(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // values
+		return offset;
+	}
 
-static startValuesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(8, numElems, 8);
-}
+	static createEnvelopeFloatRow(
+		builder: flatbuffers.Builder,
+		valuesOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		EnvelopeFloatRow.startEnvelopeFloatRow(builder);
+		EnvelopeFloatRow.addValues(builder, valuesOffset);
+		return EnvelopeFloatRow.endEnvelopeFloatRow(builder);
+	}
 
-static endEnvelopeFloatRow(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // values
-  return offset;
-}
+	unpack(): EnvelopeFloatRowT {
+		return new EnvelopeFloatRowT(
+			this.bb!.createScalarList<number>(
+				this.values.bind(this),
+				this.valuesLength(),
+			),
+		);
+	}
 
-static createEnvelopeFloatRow(builder:flatbuffers.Builder, valuesOffset:flatbuffers.Offset):flatbuffers.Offset {
-  EnvelopeFloatRow.startEnvelopeFloatRow(builder);
-  EnvelopeFloatRow.addValues(builder, valuesOffset);
-  return EnvelopeFloatRow.endEnvelopeFloatRow(builder);
-}
-
-unpack(): EnvelopeFloatRowT {
-  return new EnvelopeFloatRowT(
-    this.bb!.createScalarList<number>(this.values.bind(this), this.valuesLength())
-  );
-}
-
-
-unpackTo(_o: EnvelopeFloatRowT): void {
-  _o.values = this.bb!.createScalarList<number>(this.values.bind(this), this.valuesLength());
-}
+	unpackTo(_o: EnvelopeFloatRowT): void {
+		_o.values = this.bb!.createScalarList<number>(
+			this.values.bind(this),
+			this.valuesLength(),
+		);
+	}
 }
 
 export class EnvelopeFloatRowT implements flatbuffers.IGeneratedObject {
-constructor(
-  public values: (number)[] = []
-){}
+	constructor(public values: number[] = []) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const values = EnvelopeFloatRow.createValuesVector(builder, this.values);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const values = EnvelopeFloatRow.createValuesVector(builder, this.values);
-
-  return EnvelopeFloatRow.createEnvelopeFloatRow(builder,
-    values
-  );
-}
+		return EnvelopeFloatRow.createEnvelopeFloatRow(builder, values);
+	}
 }

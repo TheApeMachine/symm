@@ -11,11 +11,7 @@ import {
 	pairKey,
 	reciprocalPairs,
 } from "#/components/terminal/evidence-graph-viz";
-import type {
-	GraphEdge,
-	Graph,
-	GraphNode,
-} from "#/types/thesis";
+import type { Graph, GraphEdge, GraphNode } from "#/types/thesis";
 
 /*
 categoryGraph models the real category-centered shape: two measurements draw

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	describeEpisode,
+	episodeReadout,
 	REFERENCE_GLYPHS,
 	REFERENCE_MEANING,
-	episodeReadout,
 } from "./episode-palette";
 import type {
 	HindsightEpisode,
@@ -12,11 +12,7 @@ import type {
 	HindsightTimeline,
 	HindsightTimelineBucket,
 } from "./hindsight-types";
-import {
-	type Position,
-	positionInstant,
-	positionsFor,
-} from "./positions";
+import { type Position, positionInstant, positionsFor } from "./positions";
 import {
 	buildScale,
 	buildValueScale,
@@ -92,7 +88,6 @@ const layout = (geometryLanes: number, regimeLanes: number): Lanes => {
 	cursor += OPERATIONAL_HEIGHT;
 	const axis = { top: cursor, height: AXIS_HEIGHT };
 	cursor += AXIS_HEIGHT;
-
 
 	return {
 		geometry,
@@ -215,7 +210,9 @@ export const Timeline = ({
 	const geometry = useMemo(
 		() =>
 			placeEpisodes(
-				episodes.filter((episode) => describeEpisode(episode.kind).lane === "geometry"),
+				episodes.filter(
+					(episode) => describeEpisode(episode.kind).lane === "geometry",
+				),
 				scale,
 			),
 		[episodes, scale],
@@ -224,7 +221,9 @@ export const Timeline = ({
 	const regime = useMemo(
 		() =>
 			placeEpisodes(
-				episodes.filter((episode) => describeEpisode(episode.kind).lane === "regime"),
+				episodes.filter(
+					(episode) => describeEpisode(episode.kind).lane === "regime",
+				),
 				scale,
 			),
 		[episodes, scale],
@@ -370,7 +369,8 @@ export const Timeline = ({
 		<div ref={ref} className="relative w-full select-none">
 			{empty ? (
 				<p className="px-4 py-8 font-mono text-[10px] text-(--f4)">
-					No market observations were captured for {timeline.symbol || "this run"}.
+					No market observations were captured for{" "}
+					{timeline.symbol || "this run"}.
 				</p>
 			) : (
 				<svg
@@ -382,7 +382,9 @@ export const Timeline = ({
 					onMouseMove={(event) => {
 						const x = positionOf(event);
 						setHover(x);
-						setDrag((current) => (current === null ? null : { ...current, to: x }));
+						setDrag((current) =>
+							current === null ? null : { ...current, to: x },
+						);
 					}}
 					onMouseLeave={() => {
 						setHover(null);
@@ -465,7 +467,11 @@ export const Timeline = ({
 						placed={geometry}
 						selected={selectedEpisode}
 					/>
-					<EpisodeBand band={lanes.regime} placed={regime} selected={selectedEpisode} />
+					<EpisodeBand
+						band={lanes.regime}
+						placed={regime}
+						selected={selectedEpisode}
+					/>
 
 					<CoordinateTrack
 						band={lanes.track}
@@ -486,7 +492,11 @@ export const Timeline = ({
 					/>
 
 					<ArrivalBand band={lanes.density} buckets={buckets} scale={scale} />
-					<MicrostructureBand band={lanes.micro} buckets={buckets} scale={scale} />
+					<MicrostructureBand
+						band={lanes.micro}
+						buckets={buckets}
+						scale={scale}
+					/>
 					<OperationalBand
 						band={lanes.operational}
 						timeline={timeline}
@@ -781,7 +791,11 @@ const CoordinateTrack = ({
 			})}
 
 			{values.defined ? (
-				<g className="pointer-events-none font-mono" fontSize={8} fill="var(--f4)">
+				<g
+					className="pointer-events-none font-mono"
+					fontSize={8}
+					fill="var(--f4)"
+				>
 					<text x={4} y={11}>
 						{formatPrice(values.high)}
 					</text>
@@ -800,7 +814,10 @@ const CoordinateTrack = ({
 					const descriptor = describeEpisode(episode.kind);
 
 					return (
-						<g key={`${episode.id}-${reference.role}`} className="pointer-events-auto">
+						<g
+							key={`${episode.id}-${reference.role}`}
+							className="pointer-events-auto"
+						>
 							<title>
 								{`${reference.role.replace("_", " ")} · capture ${reference.capture.sequence}:${reference.ordinal}\n` +
 									`${REFERENCE_MEANING[reference.role]}`}
@@ -830,7 +847,6 @@ const CoordinateTrack = ({
 		</g>
 	);
 };
-
 
 /*
 PositionOverlay draws what the desk actually did, on top of the coordinate the
@@ -1139,7 +1155,13 @@ const OperationalBand = ({
 
 	return (
 		<g transform={`translate(0, ${band.top})`}>
-			<rect x={0} y={0} width={width} height={band.height} fill="var(--surface)" />
+			<rect
+				x={0}
+				y={0}
+				width={width}
+				height={band.height}
+				fill="var(--surface)"
+			/>
 			<text
 				x={4}
 				y={9}
@@ -1170,7 +1192,12 @@ const OperationalBand = ({
 								strokeWidth={1}
 								strokeDasharray="2 2"
 							/>
-							<text x={x + 2} y={band.height - 2} fontSize={7} fill="var(--warn)">
+							<text
+								x={x + 2}
+								y={band.height - 2}
+								fontSize={7}
+								fill="var(--warn)"
+							>
 								↻{stream.epoch}
 							</text>
 						</g>
@@ -1213,7 +1240,8 @@ const OperationalBand = ({
 				if (bucket === undefined) return null;
 
 				const x = (bucket.index + 0.5) * scale.step;
-				const exit = event.kind.includes("exit") || event.kind.includes("close");
+				const exit =
+					event.kind.includes("exit") || event.kind.includes("close");
 
 				return (
 					<g key={`${event.decisionId}-${event.kind}-${event.at}`}>
@@ -1253,7 +1281,14 @@ const AxisBand = ({
 
 	return (
 		<g transform={`translate(0, ${band.top})`}>
-			<line x1={0} y1={0} x2={width} y2={0} stroke="var(--line)" strokeWidth={1} />
+			<line
+				x1={0}
+				y1={0}
+				x2={width}
+				y2={0}
+				stroke="var(--line)"
+				strokeWidth={1}
+			/>
 			{Array.from({ length: ticks + 1 }, (_, index) => index).map((index) => {
 				const x = Math.min(index * step, width - 1);
 				const bucket =
@@ -1273,7 +1308,14 @@ const AxisBand = ({
 
 				return (
 					<g key={`tick-${x}`}>
-						<line x1={x} y1={0} x2={x} y2={3} stroke="var(--line2)" strokeWidth={1} />
+						<line
+							x1={x}
+							y1={0}
+							x2={x}
+							y2={3}
+							stroke="var(--line2)"
+							strokeWidth={1}
+						/>
 						<text
 							x={index === ticks ? x - 2 : x + 2}
 							y={11}
@@ -1310,7 +1352,8 @@ const HoverReadout = ({
 				<span>
 					capture{" "}
 					<span className="text-(--f1) tabular-nums">
-						{bucket.observedFromSequence || "—"}–{bucket.observedToSequence || "—"}
+						{bucket.observedFromSequence || "—"}–
+						{bucket.observedToSequence || "—"}
 					</span>
 				</span>
 				<span>
@@ -1420,7 +1463,9 @@ export const Overview = ({
 				onMouseMove={(event) => {
 					const x = positionOf(event);
 
-					setDrag((current) => (current === null ? null : { ...current, to: x }));
+					setDrag((current) =>
+						current === null ? null : { ...current, to: x },
+					);
 				}}
 				onMouseLeave={() => setDrag(null)}
 				onMouseUp={(event) => {
@@ -1437,7 +1482,13 @@ export const Overview = ({
 				}}
 				onDoubleClick={onResetZoom}
 			>
-				<rect x={0} y={0} width={width} height={OVERVIEW_HEIGHT} fill="var(--sunken)" />
+				<rect
+					x={0}
+					y={0}
+					width={width}
+					height={OVERVIEW_HEIGHT}
+					fill="var(--sunken)"
+				/>
 				<path d={line} fill="none" stroke="var(--f3)" strokeWidth={1} />
 
 				{timeline.discovery.episodes.map((episode) => {

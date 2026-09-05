@@ -3,332 +3,399 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
-
-import { Stoploss, StoplossT } from '../telemetry/stoploss.js';
-
+import * as flatbuffers from "flatbuffers";
 
 export class Holding implements flatbuffers.IUnpackableObject<HoldingT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):Holding {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): Holding {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-static getRootAsHolding(bb:flatbuffers.ByteBuffer, obj?:Holding):Holding {
-  return (obj || new Holding()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getRootAsHolding(bb: flatbuffers.ByteBuffer, obj?: Holding): Holding {
+		return (obj || new Holding()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsHolding(bb:flatbuffers.ByteBuffer, obj?:Holding):Holding {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new Holding()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsHolding(
+		bb: flatbuffers.ByteBuffer,
+		obj?: Holding,
+	): Holding {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new Holding()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-status():string|null
-status(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-status(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	status(): string | null;
+	status(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	status(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-symbol():string|null
-symbol(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-symbol(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	symbol(): string | null;
+	symbol(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	symbol(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-asset():string|null
-asset(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-asset(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	asset(): string | null;
+	asset(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	asset(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-qty():string|null
-qty(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-qty(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	qty(): string | null;
+	qty(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	qty(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-sellableQty():string|null
-sellableQty(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-sellableQty(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	sellableQty(): string | null;
+	sellableQty(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	sellableQty(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-entryAt():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	entryAt(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-exitAt():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	exitAt(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-entryPrice():string|null
-entryPrice(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-entryPrice(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	entryPrice(): string | null;
+	entryPrice(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	entryPrice(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-entryFee():string|null
-entryFee(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-entryFee(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	entryFee(): string | null;
+	entryFee(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	entryFee(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-exitPrice():string|null
-exitPrice(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-exitPrice(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	exitPrice(): string | null;
+	exitPrice(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	exitPrice(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-exitFee():string|null
-exitFee(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-exitFee(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	exitFee(): string | null;
+	exitFee(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	exitFee(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-pnl():string|null
-pnl(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-pnl(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	pnl(): string | null;
+	pnl(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	pnl(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-profitThreshold():string|null
-profitThreshold(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-profitThreshold(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	profitThreshold(): string | null;
+	profitThreshold(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	profitThreshold(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 28);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-returnPct():number {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	returnPct(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 30);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-mark():string|null
-mark(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-mark(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	mark(): string | null;
+	mark(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	mark(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 32);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-isOpportunity():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	isOpportunity(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 34);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-reservationId():string|null
-reservationId(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-reservationId(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	reservationId(): string | null;
+	reservationId(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	reservationId(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 36);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-stoploss(obj?:Stoploss):Stoploss|null {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
-  return offset ? (obj || new Stoploss()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
+	static startHolding(builder: flatbuffers.Builder) {
+		builder.startObject(18);
+	}
 
-static startHolding(builder:flatbuffers.Builder) {
-  builder.startObject(18);
-}
+	static addStatus(
+		builder: flatbuffers.Builder,
+		statusOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, statusOffset, 0);
+	}
 
-static addStatus(builder:flatbuffers.Builder, statusOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, statusOffset, 0);
-}
+	static addSymbol(
+		builder: flatbuffers.Builder,
+		symbolOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, symbolOffset, 0);
+	}
 
-static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, symbolOffset, 0);
-}
+	static addAsset(
+		builder: flatbuffers.Builder,
+		assetOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, assetOffset, 0);
+	}
 
-static addAsset(builder:flatbuffers.Builder, assetOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, assetOffset, 0);
-}
+	static addQty(builder: flatbuffers.Builder, qtyOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(3, qtyOffset, 0);
+	}
 
-static addQty(builder:flatbuffers.Builder, qtyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(3, qtyOffset, 0);
-}
+	static addSellableQty(
+		builder: flatbuffers.Builder,
+		sellableQtyOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(4, sellableQtyOffset, 0);
+	}
 
-static addSellableQty(builder:flatbuffers.Builder, sellableQtyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, sellableQtyOffset, 0);
-}
+	static addEntryAt(builder: flatbuffers.Builder, entryAt: bigint) {
+		builder.addFieldInt64(5, entryAt, BigInt("0"));
+	}
 
-static addEntryAt(builder:flatbuffers.Builder, entryAt:bigint) {
-  builder.addFieldInt64(5, entryAt, BigInt('0'));
-}
+	static addExitAt(builder: flatbuffers.Builder, exitAt: bigint) {
+		builder.addFieldInt64(6, exitAt, BigInt("0"));
+	}
 
-static addExitAt(builder:flatbuffers.Builder, exitAt:bigint) {
-  builder.addFieldInt64(6, exitAt, BigInt('0'));
-}
+	static addEntryPrice(
+		builder: flatbuffers.Builder,
+		entryPriceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(7, entryPriceOffset, 0);
+	}
 
-static addEntryPrice(builder:flatbuffers.Builder, entryPriceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(7, entryPriceOffset, 0);
-}
+	static addEntryFee(
+		builder: flatbuffers.Builder,
+		entryFeeOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(8, entryFeeOffset, 0);
+	}
 
-static addEntryFee(builder:flatbuffers.Builder, entryFeeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, entryFeeOffset, 0);
-}
+	static addExitPrice(
+		builder: flatbuffers.Builder,
+		exitPriceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(9, exitPriceOffset, 0);
+	}
 
-static addExitPrice(builder:flatbuffers.Builder, exitPriceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(9, exitPriceOffset, 0);
-}
+	static addExitFee(
+		builder: flatbuffers.Builder,
+		exitFeeOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(10, exitFeeOffset, 0);
+	}
 
-static addExitFee(builder:flatbuffers.Builder, exitFeeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(10, exitFeeOffset, 0);
-}
+	static addPnl(builder: flatbuffers.Builder, pnlOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(11, pnlOffset, 0);
+	}
 
-static addPnl(builder:flatbuffers.Builder, pnlOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(11, pnlOffset, 0);
-}
+	static addProfitThreshold(
+		builder: flatbuffers.Builder,
+		profitThresholdOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(12, profitThresholdOffset, 0);
+	}
 
-static addProfitThreshold(builder:flatbuffers.Builder, profitThresholdOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(12, profitThresholdOffset, 0);
-}
+	static addReturnPct(builder: flatbuffers.Builder, returnPct: number) {
+		builder.addFieldFloat64(13, returnPct, 0.0);
+	}
 
-static addReturnPct(builder:flatbuffers.Builder, returnPct:number) {
-  builder.addFieldFloat64(13, returnPct, 0.0);
-}
+	static addMark(builder: flatbuffers.Builder, markOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(14, markOffset, 0);
+	}
 
-static addMark(builder:flatbuffers.Builder, markOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(14, markOffset, 0);
-}
+	static addIsOpportunity(
+		builder: flatbuffers.Builder,
+		isOpportunity: boolean,
+	) {
+		builder.addFieldInt8(15, +isOpportunity, +false);
+	}
 
-static addIsOpportunity(builder:flatbuffers.Builder, isOpportunity:boolean) {
-  builder.addFieldInt8(15, +isOpportunity, +false);
-}
+	static addReservationId(
+		builder: flatbuffers.Builder,
+		reservationIdOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(16, reservationIdOffset, 0);
+	}
 
-static addReservationId(builder:flatbuffers.Builder, reservationIdOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(16, reservationIdOffset, 0);
-}
+	static endHolding(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static addStoploss(builder:flatbuffers.Builder, stoplossOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(17, stoplossOffset, 0);
-}
+	unpack(): HoldingT {
+		return new HoldingT(
+			this.status(),
+			this.symbol(),
+			this.asset(),
+			this.qty(),
+			this.sellableQty(),
+			this.entryAt(),
+			this.exitAt(),
+			this.entryPrice(),
+			this.entryFee(),
+			this.exitPrice(),
+			this.exitFee(),
+			this.pnl(),
+			this.profitThreshold(),
+			this.returnPct(),
+			this.mark(),
+			this.isOpportunity(),
+			this.reservationId(),
+		);
+	}
 
-static endHolding(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
-
-
-unpack(): HoldingT {
-  return new HoldingT(
-    this.status(),
-    this.symbol(),
-    this.asset(),
-    this.qty(),
-    this.sellableQty(),
-    this.entryAt(),
-    this.exitAt(),
-    this.entryPrice(),
-    this.entryFee(),
-    this.exitPrice(),
-    this.exitFee(),
-    this.pnl(),
-    this.profitThreshold(),
-    this.returnPct(),
-    this.mark(),
-    this.isOpportunity(),
-    this.reservationId(),
-    (this.stoploss() !== null ? this.stoploss()!.unpack() : null)
-  );
-}
-
-
-unpackTo(_o: HoldingT): void {
-  _o.status = this.status();
-  _o.symbol = this.symbol();
-  _o.asset = this.asset();
-  _o.qty = this.qty();
-  _o.sellableQty = this.sellableQty();
-  _o.entryAt = this.entryAt();
-  _o.exitAt = this.exitAt();
-  _o.entryPrice = this.entryPrice();
-  _o.entryFee = this.entryFee();
-  _o.exitPrice = this.exitPrice();
-  _o.exitFee = this.exitFee();
-  _o.pnl = this.pnl();
-  _o.profitThreshold = this.profitThreshold();
-  _o.returnPct = this.returnPct();
-  _o.mark = this.mark();
-  _o.isOpportunity = this.isOpportunity();
-  _o.reservationId = this.reservationId();
-  _o.stoploss = (this.stoploss() !== null ? this.stoploss()!.unpack() : null);
-}
+	unpackTo(_o: HoldingT): void {
+		_o.status = this.status();
+		_o.symbol = this.symbol();
+		_o.asset = this.asset();
+		_o.qty = this.qty();
+		_o.sellableQty = this.sellableQty();
+		_o.entryAt = this.entryAt();
+		_o.exitAt = this.exitAt();
+		_o.entryPrice = this.entryPrice();
+		_o.entryFee = this.entryFee();
+		_o.exitPrice = this.exitPrice();
+		_o.exitFee = this.exitFee();
+		_o.pnl = this.pnl();
+		_o.profitThreshold = this.profitThreshold();
+		_o.returnPct = this.returnPct();
+		_o.mark = this.mark();
+		_o.isOpportunity = this.isOpportunity();
+		_o.reservationId = this.reservationId();
+	}
 }
 
 export class HoldingT implements flatbuffers.IGeneratedObject {
-constructor(
-  public status: string|Uint8Array|null = null,
-  public symbol: string|Uint8Array|null = null,
-  public asset: string|Uint8Array|null = null,
-  public qty: string|Uint8Array|null = null,
-  public sellableQty: string|Uint8Array|null = null,
-  public entryAt: bigint = BigInt('0'),
-  public exitAt: bigint = BigInt('0'),
-  public entryPrice: string|Uint8Array|null = null,
-  public entryFee: string|Uint8Array|null = null,
-  public exitPrice: string|Uint8Array|null = null,
-  public exitFee: string|Uint8Array|null = null,
-  public pnl: string|Uint8Array|null = null,
-  public profitThreshold: string|Uint8Array|null = null,
-  public returnPct: number = 0.0,
-  public mark: string|Uint8Array|null = null,
-  public isOpportunity: boolean = false,
-  public reservationId: string|Uint8Array|null = null,
-  public stoploss: StoplossT|null = null
-){}
+	constructor(
+		public status: string | Uint8Array | null = null,
+		public symbol: string | Uint8Array | null = null,
+		public asset: string | Uint8Array | null = null,
+		public qty: string | Uint8Array | null = null,
+		public sellableQty: string | Uint8Array | null = null,
+		public entryAt: bigint = BigInt("0"),
+		public exitAt: bigint = BigInt("0"),
+		public entryPrice: string | Uint8Array | null = null,
+		public entryFee: string | Uint8Array | null = null,
+		public exitPrice: string | Uint8Array | null = null,
+		public exitFee: string | Uint8Array | null = null,
+		public pnl: string | Uint8Array | null = null,
+		public profitThreshold: string | Uint8Array | null = null,
+		public returnPct: number = 0.0,
+		public mark: string | Uint8Array | null = null,
+		public isOpportunity: boolean = false,
+		public reservationId: string | Uint8Array | null = null,
+	) {}
 
-
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const status = (this.status !== null ? builder.createString(this.status!) : 0);
-  const symbol = (this.symbol !== null ? builder.createString(this.symbol!) : 0);
-  const asset = (this.asset !== null ? builder.createString(this.asset!) : 0);
-  const qty = (this.qty !== null ? builder.createString(this.qty!) : 0);
-  const sellableQty = (this.sellableQty !== null ? builder.createString(this.sellableQty!) : 0);
-  const entryPrice = (this.entryPrice !== null ? builder.createString(this.entryPrice!) : 0);
-  const entryFee = (this.entryFee !== null ? builder.createString(this.entryFee!) : 0);
-  const exitPrice = (this.exitPrice !== null ? builder.createString(this.exitPrice!) : 0);
-  const exitFee = (this.exitFee !== null ? builder.createString(this.exitFee!) : 0);
-  const pnl = (this.pnl !== null ? builder.createString(this.pnl!) : 0);
-  const profitThreshold = (this.profitThreshold !== null ? builder.createString(this.profitThreshold!) : 0);
-  const mark = (this.mark !== null ? builder.createString(this.mark!) : 0);
-  const reservationId = (this.reservationId !== null ? builder.createString(this.reservationId!) : 0);
-  const stoploss = (this.stoploss !== null ? this.stoploss!.pack(builder) : 0);
-
-  Holding.startHolding(builder);
-  Holding.addStatus(builder, status);
-  Holding.addSymbol(builder, symbol);
-  Holding.addAsset(builder, asset);
-  Holding.addQty(builder, qty);
-  Holding.addSellableQty(builder, sellableQty);
-  Holding.addEntryAt(builder, this.entryAt);
-  Holding.addExitAt(builder, this.exitAt);
-  Holding.addEntryPrice(builder, entryPrice);
-  Holding.addEntryFee(builder, entryFee);
-  Holding.addExitPrice(builder, exitPrice);
-  Holding.addExitFee(builder, exitFee);
-  Holding.addPnl(builder, pnl);
-  Holding.addProfitThreshold(builder, profitThreshold);
-  Holding.addReturnPct(builder, this.returnPct);
-  Holding.addMark(builder, mark);
-  Holding.addIsOpportunity(builder, this.isOpportunity);
-  Holding.addReservationId(builder, reservationId);
-  Holding.addStoploss(builder, stoploss);
-
-  return Holding.endHolding(builder);
-}
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const status =
+			this.status !== null ? builder.createString(this.status!) : 0;
+		const symbol =
+			this.symbol !== null ? builder.createString(this.symbol!) : 0;
+		const asset = this.asset !== null ? builder.createString(this.asset!) : 0;
+		const qty = this.qty !== null ? builder.createString(this.qty!) : 0;
+		const sellableQty =
+			this.sellableQty !== null ? builder.createString(this.sellableQty!) : 0;
+		const entryPrice =
+			this.entryPrice !== null ? builder.createString(this.entryPrice!) : 0;
+		const entryFee =
+			this.entryFee !== null ? builder.createString(this.entryFee!) : 0;
+		const exitPrice =
+			this.exitPrice !== null ? builder.createString(this.exitPrice!) : 0;
+		const exitFee =
+			this.exitFee !== null ? builder.createString(this.exitFee!) : 0;
+		const pnl = this.pnl !== null ? builder.createString(this.pnl!) : 0;
+		const profitThreshold =
+			this.profitThreshold !== null
+				? builder.createString(this.profitThreshold!)
+				: 0;
+		const mark = this.mark !== null ? builder.createString(this.mark!) : 0;
+		const reservationId =
+			this.reservationId !== null
+				? builder.createString(this.reservationId!)
+				: 0;
+		Holding.startHolding(builder);
+		Holding.addStatus(builder, status);
+		Holding.addSymbol(builder, symbol);
+		Holding.addAsset(builder, asset);
+		Holding.addQty(builder, qty);
+		Holding.addSellableQty(builder, sellableQty);
+		Holding.addEntryAt(builder, this.entryAt);
+		Holding.addExitAt(builder, this.exitAt);
+		Holding.addEntryPrice(builder, entryPrice);
+		Holding.addEntryFee(builder, entryFee);
+		Holding.addExitPrice(builder, exitPrice);
+		Holding.addExitFee(builder, exitFee);
+		Holding.addPnl(builder, pnl);
+		Holding.addProfitThreshold(builder, profitThreshold);
+		Holding.addReturnPct(builder, this.returnPct);
+		Holding.addMark(builder, mark);
+		Holding.addIsOpportunity(builder, this.isOpportunity);
+		Holding.addReservationId(builder, reservationId);
+		return Holding.endHolding(builder);
+	}
 }

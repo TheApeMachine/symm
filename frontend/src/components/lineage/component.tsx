@@ -1,24 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+	type ConsumerRow,
+	ensureLineageLoaded,
+	lineageStatusOf,
+	type ProducerRow,
+	readLineage,
+	LINEAGE_STATUS_COLOR as STATUS_COLOR,
+	subscribeLineage,
+} from "#/components/terminal/lineage-report";
 import { Chip } from "#/components/ui/chip";
 import { Flex } from "#/components/ui/flex";
 import { Icon } from "#/components/ui/icon";
 import { Panel } from "#/components/ui/panel";
 import { Toolbar } from "#/components/ui/toolbar";
 import { Typography } from "#/components/ui/typography";
-import {
-	type ConsumerRow,
-	ensureLineageLoaded,
-	LINEAGE_STATUS_COLOR as STATUS_COLOR,
-	lineageStatusOf,
-	type ProducerRow,
-	readLineage,
-	subscribeLineage,
-} from "#/components/terminal/lineage-report";
 import { cn } from "#/lib/utils";
 
 type StatusFilter = "all" | "unreferenced" | "referenced" | "kernelOnly";
 
-const statusOf = (p: ProducerRow): "unreferenced" | "referenced" | "kernelOnly" => lineageStatusOf(p) ?? "referenced";
+const statusOf = (
+	p: ProducerRow,
+): "unreferenced" | "referenced" | "kernelOnly" =>
+	lineageStatusOf(p) ?? "referenced";
 
 /*
 Point is one laid-out node: a kernel, a metric, or a consumer, positioned in
@@ -61,7 +64,9 @@ const buildLayout = (
 
 	let cursor = 0;
 	for (const source of sources) {
-		const rows = (bySource.get(source) ?? []).sort((a, b) => a.metric.localeCompare(b.metric));
+		const rows = (bySource.get(source) ?? []).sort((a, b) =>
+			a.metric.localeCompare(b.metric),
+		);
 		const bandHeight = (rows.length / total) * usableHeight;
 		const bandTop = padding + (cursor / total) * usableHeight;
 
@@ -128,7 +133,8 @@ export const MetricLineage = () => {
 	}, []);
 
 	const sources = useMemo(
-		() => (report ? [...new Set(report.producers.map((p) => p.source))].sort() : []),
+		() =>
+			report ? [...new Set(report.producers.map((p) => p.source))].sort() : [],
 		[report],
 	);
 
@@ -150,7 +156,13 @@ export const MetricLineage = () => {
 	}, [report, filteredProducers]);
 
 	const layout = useMemo(
-		() => buildLayout(filteredProducers, relevantConsumers, dimensions.width, dimensions.height),
+		() =>
+			buildLayout(
+				filteredProducers,
+				relevantConsumers,
+				dimensions.width,
+				dimensions.height,
+			),
 		[filteredProducers, relevantConsumers, dimensions.width, dimensions.height],
 	);
 
@@ -221,7 +233,14 @@ export const MetricLineage = () => {
 				<Chip label="catalog refs" value={summary.catalogConsumerEdges} />
 
 				<div className="ml-4 flex items-center gap-1">
-					{(["all", "referenced", "kernelOnly", "unreferenced"] as StatusFilter[]).map((filter) => (
+					{(
+						[
+							"all",
+							"referenced",
+							"kernelOnly",
+							"unreferenced",
+						] as StatusFilter[]
+					).map((filter) => (
 						<button
 							key={filter}
 							type="button"
@@ -262,13 +281,28 @@ export const MetricLineage = () => {
 					<title>Metric producer to consumer lineage</title>
 
 					{/* Column headers */}
-					<text x={dimensions.width * COLUMN_KERNEL} y={16} textAnchor="middle" className="fill-(--f4) font-mono text-[9px] uppercase tracking-wide">
+					<text
+						x={dimensions.width * COLUMN_KERNEL}
+						y={16}
+						textAnchor="middle"
+						className="fill-(--f4) font-mono text-[9px] uppercase tracking-wide"
+					>
 						kernels
 					</text>
-					<text x={dimensions.width * COLUMN_METRIC} y={16} textAnchor="middle" className="fill-(--f4) font-mono text-[9px] uppercase tracking-wide">
+					<text
+						x={dimensions.width * COLUMN_METRIC}
+						y={16}
+						textAnchor="middle"
+						className="fill-(--f4) font-mono text-[9px] uppercase tracking-wide"
+					>
 						metrics
 					</text>
-					<text x={dimensions.width * COLUMN_CONSUMER} y={16} textAnchor="middle" className="fill-(--f4) font-mono text-[9px] uppercase tracking-wide">
+					<text
+						x={dimensions.width * COLUMN_CONSUMER}
+						y={16}
+						textAnchor="middle"
+						className="fill-(--f4) font-mono text-[9px] uppercase tracking-wide"
+					>
 						consumers
 					</text>
 
@@ -279,7 +313,9 @@ export const MetricLineage = () => {
 							if (!row) return null;
 							const k = kernelPointById.get(row.source);
 							if (!k) return null;
-							return <line key={`k-${m.id}`} x1={k.x} y1={k.y} x2={m.x} y2={m.y} />;
+							return (
+								<line key={`k-${m.id}`} x1={k.x} y1={k.y} x2={m.x} y2={m.y} />
+							);
 						})}
 					</g>
 
@@ -355,11 +391,15 @@ export const MetricLineage = () => {
 								tabIndex={0}
 								aria-label={`Select ${row.id}`}
 								aria-pressed={activeMetricId === row.id}
-								onClick={() => setActiveMetricId(row.id === activeMetricId ? null : row.id)}
+								onClick={() =>
+									setActiveMetricId(row.id === activeMetricId ? null : row.id)
+								}
 								onKeyDown={(event) => {
 									if (event.key === "Enter" || event.key === " ") {
 										event.preventDefault();
-										setActiveMetricId(row.id === activeMetricId ? null : row.id);
+										setActiveMetricId(
+											row.id === activeMetricId ? null : row.id,
+										);
 									}
 								}}
 							>
@@ -427,9 +467,7 @@ export const MetricLineage = () => {
 						>
 							{c.id}
 							{row ? (
-								<span className="ml-1 text-(--f4)">
-									· {row.kind}
-								</span>
+								<span className="ml-1 text-(--f4)">· {row.kind}</span>
 							) : null}
 						</div>
 					);
@@ -459,8 +497,8 @@ export const MetricLineage = () => {
 						<div className="border-(--line) border-t pt-1.5">
 							{activeProducer.consumers.length === 0 ? (
 								<Typography.Span className="text-(--down)">
-									No consumer of any kind found — nothing in the codebase looks at
-									this metric.
+									No consumer of any kind found — nothing in the codebase looks
+									at this metric.
 								</Typography.Span>
 							) : (
 								<div className="flex flex-col gap-1">
@@ -496,10 +534,9 @@ export const MetricLineage = () => {
 						className="absolute right-3 bottom-3 max-w-[320px] p-3 font-mono text-[10px] text-(--f4)"
 					>
 						Click a metric dot for its full producer/consumer trace. Green =
-						named by a concrete fine-grained consumer. Amber =
-						kernel-only (a bulk subscription reads the whole kernel, but
-						nothing names this metric specifically). Red = no reference
-						anywhere.
+						named by a concrete fine-grained consumer. Amber = kernel-only (a
+						bulk subscription reads the whole kernel, but nothing names this
+						metric specifically). Red = no reference anywhere.
 					</Panel>
 				)}
 			</div>

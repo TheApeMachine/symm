@@ -3,111 +3,134 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class EquityFrame
+	implements flatbuffers.IUnpackableObject<EquityFrameT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EquityFrame {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsEquityFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EquityFrame,
+	): EquityFrame {
+		return (obj || new EquityFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class EquityFrame implements flatbuffers.IUnpackableObject<EquityFrameT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EquityFrame {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsEquityFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EquityFrame,
+	): EquityFrame {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EquityFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsEquityFrame(bb:flatbuffers.ByteBuffer, obj?:EquityFrame):EquityFrame {
-  return (obj || new EquityFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	cash(): string | null;
+	cash(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	cash(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsEquityFrame(bb:flatbuffers.ByteBuffer, obj?:EquityFrame):EquityFrame {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EquityFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	unrealized(): string | null;
+	unrealized(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	unrealized(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-cash():string|null
-cash(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-cash(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	equity(): string | null;
+	equity(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	equity(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-unrealized():string|null
-unrealized(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-unrealized(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	static startEquityFrame(builder: flatbuffers.Builder) {
+		builder.startObject(3);
+	}
 
-equity():string|null
-equity(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-equity(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	static addCash(builder: flatbuffers.Builder, cashOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, cashOffset, 0);
+	}
 
-static startEquityFrame(builder:flatbuffers.Builder) {
-  builder.startObject(3);
-}
+	static addUnrealized(
+		builder: flatbuffers.Builder,
+		unrealizedOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, unrealizedOffset, 0);
+	}
 
-static addCash(builder:flatbuffers.Builder, cashOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, cashOffset, 0);
-}
+	static addEquity(
+		builder: flatbuffers.Builder,
+		equityOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, equityOffset, 0);
+	}
 
-static addUnrealized(builder:flatbuffers.Builder, unrealizedOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, unrealizedOffset, 0);
-}
+	static endEquityFrame(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static addEquity(builder:flatbuffers.Builder, equityOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, equityOffset, 0);
-}
+	static createEquityFrame(
+		builder: flatbuffers.Builder,
+		cashOffset: flatbuffers.Offset,
+		unrealizedOffset: flatbuffers.Offset,
+		equityOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		EquityFrame.startEquityFrame(builder);
+		EquityFrame.addCash(builder, cashOffset);
+		EquityFrame.addUnrealized(builder, unrealizedOffset);
+		EquityFrame.addEquity(builder, equityOffset);
+		return EquityFrame.endEquityFrame(builder);
+	}
 
-static endEquityFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): EquityFrameT {
+		return new EquityFrameT(this.cash(), this.unrealized(), this.equity());
+	}
 
-static createEquityFrame(builder:flatbuffers.Builder, cashOffset:flatbuffers.Offset, unrealizedOffset:flatbuffers.Offset, equityOffset:flatbuffers.Offset):flatbuffers.Offset {
-  EquityFrame.startEquityFrame(builder);
-  EquityFrame.addCash(builder, cashOffset);
-  EquityFrame.addUnrealized(builder, unrealizedOffset);
-  EquityFrame.addEquity(builder, equityOffset);
-  return EquityFrame.endEquityFrame(builder);
-}
-
-unpack(): EquityFrameT {
-  return new EquityFrameT(
-    this.cash(),
-    this.unrealized(),
-    this.equity()
-  );
-}
-
-
-unpackTo(_o: EquityFrameT): void {
-  _o.cash = this.cash();
-  _o.unrealized = this.unrealized();
-  _o.equity = this.equity();
-}
+	unpackTo(_o: EquityFrameT): void {
+		_o.cash = this.cash();
+		_o.unrealized = this.unrealized();
+		_o.equity = this.equity();
+	}
 }
 
 export class EquityFrameT implements flatbuffers.IGeneratedObject {
-constructor(
-  public cash: string|Uint8Array|null = null,
-  public unrealized: string|Uint8Array|null = null,
-  public equity: string|Uint8Array|null = null
-){}
+	constructor(
+		public cash: string | Uint8Array | null = null,
+		public unrealized: string | Uint8Array | null = null,
+		public equity: string | Uint8Array | null = null,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const cash = this.cash !== null ? builder.createString(this.cash!) : 0;
+		const unrealized =
+			this.unrealized !== null ? builder.createString(this.unrealized!) : 0;
+		const equity =
+			this.equity !== null ? builder.createString(this.equity!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const cash = (this.cash !== null ? builder.createString(this.cash!) : 0);
-  const unrealized = (this.unrealized !== null ? builder.createString(this.unrealized!) : 0);
-  const equity = (this.equity !== null ? builder.createString(this.equity!) : 0);
-
-  return EquityFrame.createEquityFrame(builder,
-    cash,
-    unrealized,
-    equity
-  );
-}
+		return EquityFrame.createEquityFrame(builder, cash, unrealized, equity);
+	}
 }

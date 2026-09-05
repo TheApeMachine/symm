@@ -3,591 +3,758 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { NamedNumber, NamedNumberT } from '../telemetry/named-number.js';
-
+import { NamedNumber, type NamedNumberT } from "../telemetry/named-number.js";
 
 export class Causal implements flatbuffers.IUnpackableObject<CausalT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):Causal {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
-
-static getRootAsCausal(bb:flatbuffers.ByteBuffer, obj?:Causal):Causal {
-  return (obj || new Causal()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
-
-static getSizePrefixedRootAsCausal(bb:flatbuffers.ByteBuffer, obj?:Causal):Causal {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new Causal()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
-
-source():string|null
-source(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-source(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-symbol():string|null
-symbol(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-symbol(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-at():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-samples():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-precision():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-hypothesis():string|null
-hypothesis(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-hypothesis(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-treatment():string|null
-treatment(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-treatment(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-controls(index: number):string
-controls(index: number,optionalEncoding:flatbuffers.Encoding):string|Uint8Array
-controls(index: number,optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.__string(this.bb!.__vector(this.bb_pos + offset) + index * 4, optionalEncoding) : null;
-}
-
-controlsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-target():string|null
-target(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-target(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-value():number {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-category():number {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-confidence():number {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-confidenceBaseline():number {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-entryBaseline():number {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-exitBaseline():number {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-strength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-association():number {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-associationScore():number {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-intervention():number {
-  const offset = this.bb!.__offset(this.bb_pos, 40);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-interventionScore():number {
-  const offset = this.bb!.__offset(this.bb_pos, 42);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-doExpectation():number {
-  const offset = this.bb!.__offset(this.bb_pos, 44);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-uplift():number {
-  const offset = this.bb!.__offset(this.bb_pos, 46);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-upliftScore():number {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-residual():number {
-  const offset = this.bb!.__offset(this.bb_pos, 50);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-counterfactual():number {
-  const offset = this.bb!.__offset(this.bb_pos, 52);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-noise():number {
-  const offset = this.bb!.__offset(this.bb_pos, 54);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-noiseScore():number {
-  const offset = this.bb!.__offset(this.bb_pos, 56);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-contagion():number {
-  const offset = this.bb!.__offset(this.bb_pos, 58);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-condition():number {
-  const offset = this.bb!.__offset(this.bb_pos, 60);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-inverted():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 62);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-probabilities(index: number):number|null {
-  const offset = this.bb!.__offset(this.bb_pos, 64);
-  return offset ? this.bb!.readFloat64(this.bb!.__vector(this.bb_pos + offset) + index * 8) : 0;
-}
-
-probabilitiesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 64);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-probabilitiesArray():Float64Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 64);
-  return offset ? new Float64Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
-}
-
-distribution(index: number, obj?:NamedNumber):NamedNumber|null {
-  const offset = this.bb!.__offset(this.bb_pos, 66);
-  return offset ? (obj || new NamedNumber()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
-
-distributionLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 66);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-static startCausal(builder:flatbuffers.Builder) {
-  builder.startObject(32);
-}
-
-static addSource(builder:flatbuffers.Builder, sourceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, sourceOffset, 0);
-}
-
-static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, symbolOffset, 0);
-}
-
-static addAt(builder:flatbuffers.Builder, at:bigint) {
-  builder.addFieldInt64(2, at, BigInt('0'));
-}
-
-static addSamples(builder:flatbuffers.Builder, samples:bigint) {
-  builder.addFieldInt64(3, samples, BigInt('0'));
-}
-
-static addPrecision(builder:flatbuffers.Builder, precision:number) {
-  builder.addFieldFloat64(4, precision, 0.0);
-}
-
-static addHypothesis(builder:flatbuffers.Builder, hypothesisOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, hypothesisOffset, 0);
-}
-
-static addTreatment(builder:flatbuffers.Builder, treatmentOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, treatmentOffset, 0);
-}
-
-static addControls(builder:flatbuffers.Builder, controlsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(7, controlsOffset, 0);
-}
-
-static createControlsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startControlsVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static addTarget(builder:flatbuffers.Builder, targetOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, targetOffset, 0);
-}
-
-static addValue(builder:flatbuffers.Builder, value:number) {
-  builder.addFieldFloat64(9, value, 0.0);
-}
-
-static addCategory(builder:flatbuffers.Builder, category:number) {
-  builder.addFieldFloat64(10, category, 0.0);
-}
-
-static addConfidence(builder:flatbuffers.Builder, confidence:number) {
-  builder.addFieldFloat64(11, confidence, 0.0);
-}
-
-static addConfidenceBaseline(builder:flatbuffers.Builder, confidenceBaseline:number) {
-  builder.addFieldFloat64(12, confidenceBaseline, 0.0);
-}
-
-static addEntryBaseline(builder:flatbuffers.Builder, entryBaseline:number) {
-  builder.addFieldFloat64(13, entryBaseline, 0.0);
-}
-
-static addExitBaseline(builder:flatbuffers.Builder, exitBaseline:number) {
-  builder.addFieldFloat64(14, exitBaseline, 0.0);
-}
-
-static addStrength(builder:flatbuffers.Builder, strength:number) {
-  builder.addFieldFloat64(15, strength, 0.0);
-}
-
-static addAssociation(builder:flatbuffers.Builder, association:number) {
-  builder.addFieldFloat64(16, association, 0.0);
-}
-
-static addAssociationScore(builder:flatbuffers.Builder, associationScore:number) {
-  builder.addFieldFloat64(17, associationScore, 0.0);
-}
-
-static addIntervention(builder:flatbuffers.Builder, intervention:number) {
-  builder.addFieldFloat64(18, intervention, 0.0);
-}
-
-static addInterventionScore(builder:flatbuffers.Builder, interventionScore:number) {
-  builder.addFieldFloat64(19, interventionScore, 0.0);
-}
-
-static addDoExpectation(builder:flatbuffers.Builder, doExpectation:number) {
-  builder.addFieldFloat64(20, doExpectation, 0.0);
-}
-
-static addUplift(builder:flatbuffers.Builder, uplift:number) {
-  builder.addFieldFloat64(21, uplift, 0.0);
-}
-
-static addUpliftScore(builder:flatbuffers.Builder, upliftScore:number) {
-  builder.addFieldFloat64(22, upliftScore, 0.0);
-}
-
-static addResidual(builder:flatbuffers.Builder, residual:number) {
-  builder.addFieldFloat64(23, residual, 0.0);
-}
-
-static addCounterfactual(builder:flatbuffers.Builder, counterfactual:number) {
-  builder.addFieldFloat64(24, counterfactual, 0.0);
-}
-
-static addNoise(builder:flatbuffers.Builder, noise:number) {
-  builder.addFieldFloat64(25, noise, 0.0);
-}
-
-static addNoiseScore(builder:flatbuffers.Builder, noiseScore:number) {
-  builder.addFieldFloat64(26, noiseScore, 0.0);
-}
-
-static addContagion(builder:flatbuffers.Builder, contagion:number) {
-  builder.addFieldFloat64(27, contagion, 0.0);
-}
-
-static addCondition(builder:flatbuffers.Builder, condition:number) {
-  builder.addFieldFloat64(28, condition, 0.0);
-}
-
-static addInverted(builder:flatbuffers.Builder, inverted:boolean) {
-  builder.addFieldInt8(29, +inverted, +false);
-}
-
-static addProbabilities(builder:flatbuffers.Builder, probabilitiesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(30, probabilitiesOffset, 0);
-}
-
-static createProbabilitiesVector(builder:flatbuffers.Builder, data:number[]|Float64Array):flatbuffers.Offset;
-/**
- * @deprecated This Uint8Array overload will be removed in the future.
- */
-static createProbabilitiesVector(builder:flatbuffers.Builder, data:number[]|Uint8Array):flatbuffers.Offset;
-static createProbabilitiesVector(builder:flatbuffers.Builder, data:number[]|Float64Array|Uint8Array):flatbuffers.Offset {
-  builder.startVector(8, data.length, 8);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addFloat64(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startProbabilitiesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(8, numElems, 8);
-}
-
-static addDistribution(builder:flatbuffers.Builder, distributionOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(31, distributionOffset, 0);
-}
-
-static createDistributionVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startDistributionVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static endCausal(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 6) // symbol
-  return offset;
-}
-
-static createCausal(builder:flatbuffers.Builder, sourceOffset:flatbuffers.Offset, symbolOffset:flatbuffers.Offset, at:bigint, samples:bigint, precision:number, hypothesisOffset:flatbuffers.Offset, treatmentOffset:flatbuffers.Offset, controlsOffset:flatbuffers.Offset, targetOffset:flatbuffers.Offset, value:number, category:number, confidence:number, confidenceBaseline:number, entryBaseline:number, exitBaseline:number, strength:number, association:number, associationScore:number, intervention:number, interventionScore:number, doExpectation:number, uplift:number, upliftScore:number, residual:number, counterfactual:number, noise:number, noiseScore:number, contagion:number, condition:number, inverted:boolean, probabilitiesOffset:flatbuffers.Offset, distributionOffset:flatbuffers.Offset):flatbuffers.Offset {
-  Causal.startCausal(builder);
-  Causal.addSource(builder, sourceOffset);
-  Causal.addSymbol(builder, symbolOffset);
-  Causal.addAt(builder, at);
-  Causal.addSamples(builder, samples);
-  Causal.addPrecision(builder, precision);
-  Causal.addHypothesis(builder, hypothesisOffset);
-  Causal.addTreatment(builder, treatmentOffset);
-  Causal.addControls(builder, controlsOffset);
-  Causal.addTarget(builder, targetOffset);
-  Causal.addValue(builder, value);
-  Causal.addCategory(builder, category);
-  Causal.addConfidence(builder, confidence);
-  Causal.addConfidenceBaseline(builder, confidenceBaseline);
-  Causal.addEntryBaseline(builder, entryBaseline);
-  Causal.addExitBaseline(builder, exitBaseline);
-  Causal.addStrength(builder, strength);
-  Causal.addAssociation(builder, association);
-  Causal.addAssociationScore(builder, associationScore);
-  Causal.addIntervention(builder, intervention);
-  Causal.addInterventionScore(builder, interventionScore);
-  Causal.addDoExpectation(builder, doExpectation);
-  Causal.addUplift(builder, uplift);
-  Causal.addUpliftScore(builder, upliftScore);
-  Causal.addResidual(builder, residual);
-  Causal.addCounterfactual(builder, counterfactual);
-  Causal.addNoise(builder, noise);
-  Causal.addNoiseScore(builder, noiseScore);
-  Causal.addContagion(builder, contagion);
-  Causal.addCondition(builder, condition);
-  Causal.addInverted(builder, inverted);
-  Causal.addProbabilities(builder, probabilitiesOffset);
-  Causal.addDistribution(builder, distributionOffset);
-  return Causal.endCausal(builder);
-}
-
-unpack(): CausalT {
-  return new CausalT(
-    this.source(),
-    this.symbol(),
-    this.at(),
-    this.samples(),
-    this.precision(),
-    this.hypothesis(),
-    this.treatment(),
-    this.bb!.createScalarList<string>(this.controls.bind(this), this.controlsLength()),
-    this.target(),
-    this.value(),
-    this.category(),
-    this.confidence(),
-    this.confidenceBaseline(),
-    this.entryBaseline(),
-    this.exitBaseline(),
-    this.strength(),
-    this.association(),
-    this.associationScore(),
-    this.intervention(),
-    this.interventionScore(),
-    this.doExpectation(),
-    this.uplift(),
-    this.upliftScore(),
-    this.residual(),
-    this.counterfactual(),
-    this.noise(),
-    this.noiseScore(),
-    this.contagion(),
-    this.condition(),
-    this.inverted(),
-    this.bb!.createScalarList<number>(this.probabilities.bind(this), this.probabilitiesLength()),
-    this.bb!.createObjList<NamedNumber, NamedNumberT>(this.distribution.bind(this), this.distributionLength())
-  );
-}
-
-
-unpackTo(_o: CausalT): void {
-  _o.source = this.source();
-  _o.symbol = this.symbol();
-  _o.at = this.at();
-  _o.samples = this.samples();
-  _o.precision = this.precision();
-  _o.hypothesis = this.hypothesis();
-  _o.treatment = this.treatment();
-  _o.controls = this.bb!.createScalarList<string>(this.controls.bind(this), this.controlsLength());
-  _o.target = this.target();
-  _o.value = this.value();
-  _o.category = this.category();
-  _o.confidence = this.confidence();
-  _o.confidenceBaseline = this.confidenceBaseline();
-  _o.entryBaseline = this.entryBaseline();
-  _o.exitBaseline = this.exitBaseline();
-  _o.strength = this.strength();
-  _o.association = this.association();
-  _o.associationScore = this.associationScore();
-  _o.intervention = this.intervention();
-  _o.interventionScore = this.interventionScore();
-  _o.doExpectation = this.doExpectation();
-  _o.uplift = this.uplift();
-  _o.upliftScore = this.upliftScore();
-  _o.residual = this.residual();
-  _o.counterfactual = this.counterfactual();
-  _o.noise = this.noise();
-  _o.noiseScore = this.noiseScore();
-  _o.contagion = this.contagion();
-  _o.condition = this.condition();
-  _o.inverted = this.inverted();
-  _o.probabilities = this.bb!.createScalarList<number>(this.probabilities.bind(this), this.probabilitiesLength());
-  _o.distribution = this.bb!.createObjList<NamedNumber, NamedNumberT>(this.distribution.bind(this), this.distributionLength());
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): Causal {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
+
+	static getRootAsCausal(bb: flatbuffers.ByteBuffer, obj?: Causal): Causal {
+		return (obj || new Causal()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	static getSizePrefixedRootAsCausal(
+		bb: flatbuffers.ByteBuffer,
+		obj?: Causal,
+	): Causal {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new Causal()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	source(): string | null;
+	source(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	source(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	symbol(): string | null;
+	symbol(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	symbol(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	at(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	samples(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	precision(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	hypothesis(): string | null;
+	hypothesis(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	hypothesis(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	treatment(): string | null;
+	treatment(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	treatment(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	controls(index: number): string;
+	controls(
+		index: number,
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array;
+	controls(index: number, optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset
+			? this.bb!.__string(
+					this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					optionalEncoding,
+				)
+			: null;
+	}
+
+	controlsLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	target(): string | null;
+	target(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	target(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	value(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	category(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	confidence(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	confidenceBaseline(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 28);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	entryBaseline(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 30);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	exitBaseline(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 32);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	strength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 34);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	association(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 36);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	associationScore(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 38);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	intervention(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 40);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	interventionScore(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 42);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	doExpectation(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 44);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	uplift(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 46);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	upliftScore(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 48);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	residual(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 50);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	counterfactual(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 52);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	noise(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 54);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	noiseScore(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 56);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	contagion(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 58);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	condition(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 60);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	inverted(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 62);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	probabilities(index: number): number | null {
+		const offset = this.bb!.__offset(this.bb_pos, 64);
+		return offset
+			? this.bb!.readFloat64(
+					this.bb!.__vector(this.bb_pos + offset) + index * 8,
+				)
+			: 0;
+	}
+
+	probabilitiesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 64);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	probabilitiesArray(): Float64Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 64);
+		return offset
+			? new Float64Array(
+					this.bb!.bytes().buffer,
+					this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset),
+					this.bb!.__vector_len(this.bb_pos + offset),
+				)
+			: null;
+	}
+
+	distribution(index: number, obj?: NamedNumber): NamedNumber | null {
+		const offset = this.bb!.__offset(this.bb_pos, 66);
+		return offset
+			? (obj || new NamedNumber()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
+
+	distributionLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 66);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	static startCausal(builder: flatbuffers.Builder) {
+		builder.startObject(32);
+	}
+
+	static addSource(
+		builder: flatbuffers.Builder,
+		sourceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, sourceOffset, 0);
+	}
+
+	static addSymbol(
+		builder: flatbuffers.Builder,
+		symbolOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, symbolOffset, 0);
+	}
+
+	static addAt(builder: flatbuffers.Builder, at: bigint) {
+		builder.addFieldInt64(2, at, BigInt("0"));
+	}
+
+	static addSamples(builder: flatbuffers.Builder, samples: bigint) {
+		builder.addFieldInt64(3, samples, BigInt("0"));
+	}
+
+	static addPrecision(builder: flatbuffers.Builder, precision: number) {
+		builder.addFieldFloat64(4, precision, 0.0);
+	}
+
+	static addHypothesis(
+		builder: flatbuffers.Builder,
+		hypothesisOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(5, hypothesisOffset, 0);
+	}
+
+	static addTreatment(
+		builder: flatbuffers.Builder,
+		treatmentOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(6, treatmentOffset, 0);
+	}
+
+	static addControls(
+		builder: flatbuffers.Builder,
+		controlsOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(7, controlsOffset, 0);
+	}
+
+	static createControlsVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startControlsVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static addTarget(
+		builder: flatbuffers.Builder,
+		targetOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(8, targetOffset, 0);
+	}
+
+	static addValue(builder: flatbuffers.Builder, value: number) {
+		builder.addFieldFloat64(9, value, 0.0);
+	}
+
+	static addCategory(builder: flatbuffers.Builder, category: number) {
+		builder.addFieldFloat64(10, category, 0.0);
+	}
+
+	static addConfidence(builder: flatbuffers.Builder, confidence: number) {
+		builder.addFieldFloat64(11, confidence, 0.0);
+	}
+
+	static addConfidenceBaseline(
+		builder: flatbuffers.Builder,
+		confidenceBaseline: number,
+	) {
+		builder.addFieldFloat64(12, confidenceBaseline, 0.0);
+	}
+
+	static addEntryBaseline(builder: flatbuffers.Builder, entryBaseline: number) {
+		builder.addFieldFloat64(13, entryBaseline, 0.0);
+	}
+
+	static addExitBaseline(builder: flatbuffers.Builder, exitBaseline: number) {
+		builder.addFieldFloat64(14, exitBaseline, 0.0);
+	}
+
+	static addStrength(builder: flatbuffers.Builder, strength: number) {
+		builder.addFieldFloat64(15, strength, 0.0);
+	}
+
+	static addAssociation(builder: flatbuffers.Builder, association: number) {
+		builder.addFieldFloat64(16, association, 0.0);
+	}
+
+	static addAssociationScore(
+		builder: flatbuffers.Builder,
+		associationScore: number,
+	) {
+		builder.addFieldFloat64(17, associationScore, 0.0);
+	}
+
+	static addIntervention(builder: flatbuffers.Builder, intervention: number) {
+		builder.addFieldFloat64(18, intervention, 0.0);
+	}
+
+	static addInterventionScore(
+		builder: flatbuffers.Builder,
+		interventionScore: number,
+	) {
+		builder.addFieldFloat64(19, interventionScore, 0.0);
+	}
+
+	static addDoExpectation(builder: flatbuffers.Builder, doExpectation: number) {
+		builder.addFieldFloat64(20, doExpectation, 0.0);
+	}
+
+	static addUplift(builder: flatbuffers.Builder, uplift: number) {
+		builder.addFieldFloat64(21, uplift, 0.0);
+	}
+
+	static addUpliftScore(builder: flatbuffers.Builder, upliftScore: number) {
+		builder.addFieldFloat64(22, upliftScore, 0.0);
+	}
+
+	static addResidual(builder: flatbuffers.Builder, residual: number) {
+		builder.addFieldFloat64(23, residual, 0.0);
+	}
+
+	static addCounterfactual(
+		builder: flatbuffers.Builder,
+		counterfactual: number,
+	) {
+		builder.addFieldFloat64(24, counterfactual, 0.0);
+	}
+
+	static addNoise(builder: flatbuffers.Builder, noise: number) {
+		builder.addFieldFloat64(25, noise, 0.0);
+	}
+
+	static addNoiseScore(builder: flatbuffers.Builder, noiseScore: number) {
+		builder.addFieldFloat64(26, noiseScore, 0.0);
+	}
+
+	static addContagion(builder: flatbuffers.Builder, contagion: number) {
+		builder.addFieldFloat64(27, contagion, 0.0);
+	}
+
+	static addCondition(builder: flatbuffers.Builder, condition: number) {
+		builder.addFieldFloat64(28, condition, 0.0);
+	}
+
+	static addInverted(builder: flatbuffers.Builder, inverted: boolean) {
+		builder.addFieldInt8(29, +inverted, +false);
+	}
+
+	static addProbabilities(
+		builder: flatbuffers.Builder,
+		probabilitiesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(30, probabilitiesOffset, 0);
+	}
+
+	static createProbabilitiesVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Float64Array,
+	): flatbuffers.Offset;
+	/**
+	 * @deprecated This Uint8Array overload will be removed in the future.
+	 */
+	static createProbabilitiesVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Uint8Array,
+	): flatbuffers.Offset;
+	static createProbabilitiesVector(
+		builder: flatbuffers.Builder,
+		data: number[] | Float64Array | Uint8Array,
+	): flatbuffers.Offset {
+		builder.startVector(8, data.length, 8);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addFloat64(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startProbabilitiesVector(
+		builder: flatbuffers.Builder,
+		numElems: number,
+	) {
+		builder.startVector(8, numElems, 8);
+	}
+
+	static addDistribution(
+		builder: flatbuffers.Builder,
+		distributionOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(31, distributionOffset, 0);
+	}
+
+	static createDistributionVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startDistributionVector(
+		builder: flatbuffers.Builder,
+		numElems: number,
+	) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static endCausal(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 6); // symbol
+		return offset;
+	}
+
+	static createCausal(
+		builder: flatbuffers.Builder,
+		sourceOffset: flatbuffers.Offset,
+		symbolOffset: flatbuffers.Offset,
+		at: bigint,
+		samples: bigint,
+		precision: number,
+		hypothesisOffset: flatbuffers.Offset,
+		treatmentOffset: flatbuffers.Offset,
+		controlsOffset: flatbuffers.Offset,
+		targetOffset: flatbuffers.Offset,
+		value: number,
+		category: number,
+		confidence: number,
+		confidenceBaseline: number,
+		entryBaseline: number,
+		exitBaseline: number,
+		strength: number,
+		association: number,
+		associationScore: number,
+		intervention: number,
+		interventionScore: number,
+		doExpectation: number,
+		uplift: number,
+		upliftScore: number,
+		residual: number,
+		counterfactual: number,
+		noise: number,
+		noiseScore: number,
+		contagion: number,
+		condition: number,
+		inverted: boolean,
+		probabilitiesOffset: flatbuffers.Offset,
+		distributionOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		Causal.startCausal(builder);
+		Causal.addSource(builder, sourceOffset);
+		Causal.addSymbol(builder, symbolOffset);
+		Causal.addAt(builder, at);
+		Causal.addSamples(builder, samples);
+		Causal.addPrecision(builder, precision);
+		Causal.addHypothesis(builder, hypothesisOffset);
+		Causal.addTreatment(builder, treatmentOffset);
+		Causal.addControls(builder, controlsOffset);
+		Causal.addTarget(builder, targetOffset);
+		Causal.addValue(builder, value);
+		Causal.addCategory(builder, category);
+		Causal.addConfidence(builder, confidence);
+		Causal.addConfidenceBaseline(builder, confidenceBaseline);
+		Causal.addEntryBaseline(builder, entryBaseline);
+		Causal.addExitBaseline(builder, exitBaseline);
+		Causal.addStrength(builder, strength);
+		Causal.addAssociation(builder, association);
+		Causal.addAssociationScore(builder, associationScore);
+		Causal.addIntervention(builder, intervention);
+		Causal.addInterventionScore(builder, interventionScore);
+		Causal.addDoExpectation(builder, doExpectation);
+		Causal.addUplift(builder, uplift);
+		Causal.addUpliftScore(builder, upliftScore);
+		Causal.addResidual(builder, residual);
+		Causal.addCounterfactual(builder, counterfactual);
+		Causal.addNoise(builder, noise);
+		Causal.addNoiseScore(builder, noiseScore);
+		Causal.addContagion(builder, contagion);
+		Causal.addCondition(builder, condition);
+		Causal.addInverted(builder, inverted);
+		Causal.addProbabilities(builder, probabilitiesOffset);
+		Causal.addDistribution(builder, distributionOffset);
+		return Causal.endCausal(builder);
+	}
+
+	unpack(): CausalT {
+		return new CausalT(
+			this.source(),
+			this.symbol(),
+			this.at(),
+			this.samples(),
+			this.precision(),
+			this.hypothesis(),
+			this.treatment(),
+			this.bb!.createScalarList<string>(
+				this.controls.bind(this),
+				this.controlsLength(),
+			),
+			this.target(),
+			this.value(),
+			this.category(),
+			this.confidence(),
+			this.confidenceBaseline(),
+			this.entryBaseline(),
+			this.exitBaseline(),
+			this.strength(),
+			this.association(),
+			this.associationScore(),
+			this.intervention(),
+			this.interventionScore(),
+			this.doExpectation(),
+			this.uplift(),
+			this.upliftScore(),
+			this.residual(),
+			this.counterfactual(),
+			this.noise(),
+			this.noiseScore(),
+			this.contagion(),
+			this.condition(),
+			this.inverted(),
+			this.bb!.createScalarList<number>(
+				this.probabilities.bind(this),
+				this.probabilitiesLength(),
+			),
+			this.bb!.createObjList<NamedNumber, NamedNumberT>(
+				this.distribution.bind(this),
+				this.distributionLength(),
+			),
+		);
+	}
+
+	unpackTo(_o: CausalT): void {
+		_o.source = this.source();
+		_o.symbol = this.symbol();
+		_o.at = this.at();
+		_o.samples = this.samples();
+		_o.precision = this.precision();
+		_o.hypothesis = this.hypothesis();
+		_o.treatment = this.treatment();
+		_o.controls = this.bb!.createScalarList<string>(
+			this.controls.bind(this),
+			this.controlsLength(),
+		);
+		_o.target = this.target();
+		_o.value = this.value();
+		_o.category = this.category();
+		_o.confidence = this.confidence();
+		_o.confidenceBaseline = this.confidenceBaseline();
+		_o.entryBaseline = this.entryBaseline();
+		_o.exitBaseline = this.exitBaseline();
+		_o.strength = this.strength();
+		_o.association = this.association();
+		_o.associationScore = this.associationScore();
+		_o.intervention = this.intervention();
+		_o.interventionScore = this.interventionScore();
+		_o.doExpectation = this.doExpectation();
+		_o.uplift = this.uplift();
+		_o.upliftScore = this.upliftScore();
+		_o.residual = this.residual();
+		_o.counterfactual = this.counterfactual();
+		_o.noise = this.noise();
+		_o.noiseScore = this.noiseScore();
+		_o.contagion = this.contagion();
+		_o.condition = this.condition();
+		_o.inverted = this.inverted();
+		_o.probabilities = this.bb!.createScalarList<number>(
+			this.probabilities.bind(this),
+			this.probabilitiesLength(),
+		);
+		_o.distribution = this.bb!.createObjList<NamedNumber, NamedNumberT>(
+			this.distribution.bind(this),
+			this.distributionLength(),
+		);
+	}
 }
 
 export class CausalT implements flatbuffers.IGeneratedObject {
-constructor(
-  public source: string|Uint8Array|null = null,
-  public symbol: string|Uint8Array|null = null,
-  public at: bigint = BigInt('0'),
-  public samples: bigint = BigInt('0'),
-  public precision: number = 0.0,
-  public hypothesis: string|Uint8Array|null = null,
-  public treatment: string|Uint8Array|null = null,
-  public controls: (string)[] = [],
-  public target: string|Uint8Array|null = null,
-  public value: number = 0.0,
-  public category: number = 0.0,
-  public confidence: number = 0.0,
-  public confidenceBaseline: number = 0.0,
-  public entryBaseline: number = 0.0,
-  public exitBaseline: number = 0.0,
-  public strength: number = 0.0,
-  public association: number = 0.0,
-  public associationScore: number = 0.0,
-  public intervention: number = 0.0,
-  public interventionScore: number = 0.0,
-  public doExpectation: number = 0.0,
-  public uplift: number = 0.0,
-  public upliftScore: number = 0.0,
-  public residual: number = 0.0,
-  public counterfactual: number = 0.0,
-  public noise: number = 0.0,
-  public noiseScore: number = 0.0,
-  public contagion: number = 0.0,
-  public condition: number = 0.0,
-  public inverted: boolean = false,
-  public probabilities: (number)[] = [],
-  public distribution: (NamedNumberT)[] = []
-){}
+	constructor(
+		public source: string | Uint8Array | null = null,
+		public symbol: string | Uint8Array | null = null,
+		public at: bigint = BigInt("0"),
+		public samples: bigint = BigInt("0"),
+		public precision: number = 0.0,
+		public hypothesis: string | Uint8Array | null = null,
+		public treatment: string | Uint8Array | null = null,
+		public controls: string[] = [],
+		public target: string | Uint8Array | null = null,
+		public value: number = 0.0,
+		public category: number = 0.0,
+		public confidence: number = 0.0,
+		public confidenceBaseline: number = 0.0,
+		public entryBaseline: number = 0.0,
+		public exitBaseline: number = 0.0,
+		public strength: number = 0.0,
+		public association: number = 0.0,
+		public associationScore: number = 0.0,
+		public intervention: number = 0.0,
+		public interventionScore: number = 0.0,
+		public doExpectation: number = 0.0,
+		public uplift: number = 0.0,
+		public upliftScore: number = 0.0,
+		public residual: number = 0.0,
+		public counterfactual: number = 0.0,
+		public noise: number = 0.0,
+		public noiseScore: number = 0.0,
+		public contagion: number = 0.0,
+		public condition: number = 0.0,
+		public inverted: boolean = false,
+		public probabilities: number[] = [],
+		public distribution: NamedNumberT[] = [],
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const source =
+			this.source !== null ? builder.createString(this.source!) : 0;
+		const symbol =
+			this.symbol !== null ? builder.createString(this.symbol!) : 0;
+		const hypothesis =
+			this.hypothesis !== null ? builder.createString(this.hypothesis!) : 0;
+		const treatment =
+			this.treatment !== null ? builder.createString(this.treatment!) : 0;
+		const controls = Causal.createControlsVector(
+			builder,
+			builder.createObjectOffsetList(this.controls),
+		);
+		const target =
+			this.target !== null ? builder.createString(this.target!) : 0;
+		const probabilities = Causal.createProbabilitiesVector(
+			builder,
+			this.probabilities,
+		);
+		const distribution = Causal.createDistributionVector(
+			builder,
+			builder.createObjectOffsetList(this.distribution),
+		);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const source = (this.source !== null ? builder.createString(this.source!) : 0);
-  const symbol = (this.symbol !== null ? builder.createString(this.symbol!) : 0);
-  const hypothesis = (this.hypothesis !== null ? builder.createString(this.hypothesis!) : 0);
-  const treatment = (this.treatment !== null ? builder.createString(this.treatment!) : 0);
-  const controls = Causal.createControlsVector(builder, builder.createObjectOffsetList(this.controls));
-  const target = (this.target !== null ? builder.createString(this.target!) : 0);
-  const probabilities = Causal.createProbabilitiesVector(builder, this.probabilities);
-  const distribution = Causal.createDistributionVector(builder, builder.createObjectOffsetList(this.distribution));
-
-  return Causal.createCausal(builder,
-    source,
-    symbol,
-    this.at,
-    this.samples,
-    this.precision,
-    hypothesis,
-    treatment,
-    controls,
-    target,
-    this.value,
-    this.category,
-    this.confidence,
-    this.confidenceBaseline,
-    this.entryBaseline,
-    this.exitBaseline,
-    this.strength,
-    this.association,
-    this.associationScore,
-    this.intervention,
-    this.interventionScore,
-    this.doExpectation,
-    this.uplift,
-    this.upliftScore,
-    this.residual,
-    this.counterfactual,
-    this.noise,
-    this.noiseScore,
-    this.contagion,
-    this.condition,
-    this.inverted,
-    probabilities,
-    distribution
-  );
-}
+		return Causal.createCausal(
+			builder,
+			source,
+			symbol,
+			this.at,
+			this.samples,
+			this.precision,
+			hypothesis,
+			treatment,
+			controls,
+			target,
+			this.value,
+			this.category,
+			this.confidence,
+			this.confidenceBaseline,
+			this.entryBaseline,
+			this.exitBaseline,
+			this.strength,
+			this.association,
+			this.associationScore,
+			this.intervention,
+			this.interventionScore,
+			this.doExpectation,
+			this.uplift,
+			this.upliftScore,
+			this.residual,
+			this.counterfactual,
+			this.noise,
+			this.noiseScore,
+			this.contagion,
+			this.condition,
+			this.inverted,
+			probabilities,
+			distribution,
+		);
+	}
 }

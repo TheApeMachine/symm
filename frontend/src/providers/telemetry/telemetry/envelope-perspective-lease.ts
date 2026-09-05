@@ -3,106 +3,129 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class EnvelopePerspectiveLease
+	implements flatbuffers.IUnpackableObject<EnvelopePerspectiveLeaseT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopePerspectiveLease {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsEnvelopePerspectiveLease(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopePerspectiveLease,
+	): EnvelopePerspectiveLease {
+		return (obj || new EnvelopePerspectiveLease()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class EnvelopePerspectiveLease implements flatbuffers.IUnpackableObject<EnvelopePerspectiveLeaseT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopePerspectiveLease {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsEnvelopePerspectiveLease(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopePerspectiveLease,
+	): EnvelopePerspectiveLease {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopePerspectiveLease()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsEnvelopePerspectiveLease(bb:flatbuffers.ByteBuffer, obj?:EnvelopePerspectiveLease):EnvelopePerspectiveLease {
-  return (obj || new EnvelopePerspectiveLease()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	clock(): string | null;
+	clock(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	clock(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsEnvelopePerspectiveLease(bb:flatbuffers.ByteBuffer, obj?:EnvelopePerspectiveLease):EnvelopePerspectiveLease {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopePerspectiveLease()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	from(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
 
-clock():string|null
-clock(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-clock(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	until(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
 
-from():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
+	static startEnvelopePerspectiveLease(builder: flatbuffers.Builder) {
+		builder.startObject(3);
+	}
 
-until():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
+	static addClock(
+		builder: flatbuffers.Builder,
+		clockOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, clockOffset, 0);
+	}
 
-static startEnvelopePerspectiveLease(builder:flatbuffers.Builder) {
-  builder.startObject(3);
-}
+	static addFrom(builder: flatbuffers.Builder, from: bigint) {
+		builder.addFieldInt64(1, from, BigInt("0"));
+	}
 
-static addClock(builder:flatbuffers.Builder, clockOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, clockOffset, 0);
-}
+	static addUntil(builder: flatbuffers.Builder, until: bigint) {
+		builder.addFieldInt64(2, until, BigInt("0"));
+	}
 
-static addFrom(builder:flatbuffers.Builder, from:bigint) {
-  builder.addFieldInt64(1, from, BigInt('0'));
-}
+	static endEnvelopePerspectiveLease(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // clock
+		return offset;
+	}
 
-static addUntil(builder:flatbuffers.Builder, until:bigint) {
-  builder.addFieldInt64(2, until, BigInt('0'));
-}
+	static createEnvelopePerspectiveLease(
+		builder: flatbuffers.Builder,
+		clockOffset: flatbuffers.Offset,
+		from: bigint,
+		until: bigint,
+	): flatbuffers.Offset {
+		EnvelopePerspectiveLease.startEnvelopePerspectiveLease(builder);
+		EnvelopePerspectiveLease.addClock(builder, clockOffset);
+		EnvelopePerspectiveLease.addFrom(builder, from);
+		EnvelopePerspectiveLease.addUntil(builder, until);
+		return EnvelopePerspectiveLease.endEnvelopePerspectiveLease(builder);
+	}
 
-static endEnvelopePerspectiveLease(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // clock
-  return offset;
-}
+	unpack(): EnvelopePerspectiveLeaseT {
+		return new EnvelopePerspectiveLeaseT(
+			this.clock(),
+			this.from(),
+			this.until(),
+		);
+	}
 
-static createEnvelopePerspectiveLease(builder:flatbuffers.Builder, clockOffset:flatbuffers.Offset, from:bigint, until:bigint):flatbuffers.Offset {
-  EnvelopePerspectiveLease.startEnvelopePerspectiveLease(builder);
-  EnvelopePerspectiveLease.addClock(builder, clockOffset);
-  EnvelopePerspectiveLease.addFrom(builder, from);
-  EnvelopePerspectiveLease.addUntil(builder, until);
-  return EnvelopePerspectiveLease.endEnvelopePerspectiveLease(builder);
-}
-
-unpack(): EnvelopePerspectiveLeaseT {
-  return new EnvelopePerspectiveLeaseT(
-    this.clock(),
-    this.from(),
-    this.until()
-  );
-}
-
-
-unpackTo(_o: EnvelopePerspectiveLeaseT): void {
-  _o.clock = this.clock();
-  _o.from = this.from();
-  _o.until = this.until();
-}
+	unpackTo(_o: EnvelopePerspectiveLeaseT): void {
+		_o.clock = this.clock();
+		_o.from = this.from();
+		_o.until = this.until();
+	}
 }
 
 export class EnvelopePerspectiveLeaseT implements flatbuffers.IGeneratedObject {
-constructor(
-  public clock: string|Uint8Array|null = null,
-  public from: bigint = BigInt('0'),
-  public until: bigint = BigInt('0')
-){}
+	constructor(
+		public clock: string | Uint8Array | null = null,
+		public from: bigint = BigInt("0"),
+		public until: bigint = BigInt("0"),
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const clock = this.clock !== null ? builder.createString(this.clock!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const clock = (this.clock !== null ? builder.createString(this.clock!) : 0);
-
-  return EnvelopePerspectiveLease.createEnvelopePerspectiveLease(builder,
-    clock,
-    this.from,
-    this.until
-  );
-}
+		return EnvelopePerspectiveLease.createEnvelopePerspectiveLease(
+			builder,
+			clock,
+			this.from,
+			this.until,
+		);
+	}
 }

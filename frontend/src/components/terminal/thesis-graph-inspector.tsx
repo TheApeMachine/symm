@@ -63,9 +63,15 @@ const NodeDetail = ({ node }: { node: GraphNode }) => {
 			</div>
 			{kind === "measurement" ? (
 				<>
-					<Row label="source" value={measurementString(measurement, "source")} />
+					<Row
+						label="source"
+						value={measurementString(measurement, "source")}
+					/>
 					{measurementString(measurement, "subject") && (
-						<Row label="subject" value={measurementString(measurement, "subject")} />
+						<Row
+							label="subject"
+							value={measurementString(measurement, "subject")}
+						/>
 					)}
 					{measurementString(measurement, "side") && (
 						<Row label="side" value={measurementString(measurement, "side")} />

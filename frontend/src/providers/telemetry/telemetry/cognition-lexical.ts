@@ -3,108 +3,136 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class CognitionLexical
+	implements flatbuffers.IUnpackableObject<CognitionLexicalT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): CognitionLexical {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsCognitionLexical(
+		bb: flatbuffers.ByteBuffer,
+		obj?: CognitionLexical,
+	): CognitionLexical {
+		return (obj || new CognitionLexical()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class CognitionLexical implements flatbuffers.IUnpackableObject<CognitionLexicalT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):CognitionLexical {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsCognitionLexical(
+		bb: flatbuffers.ByteBuffer,
+		obj?: CognitionLexical,
+	): CognitionLexical {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new CognitionLexical()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsCognitionLexical(bb:flatbuffers.ByteBuffer, obj?:CognitionLexical):CognitionLexical {
-  return (obj || new CognitionLexical()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	original(): string | null;
+	original(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	original(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsCognitionLexical(bb:flatbuffers.ByteBuffer, obj?:CognitionLexical):CognitionLexical {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new CognitionLexical()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	mapped(): string | null;
+	mapped(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	mapped(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-original():string|null
-original(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-original(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	similarity(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-mapped():string|null
-mapped(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-mapped(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	static startCognitionLexical(builder: flatbuffers.Builder) {
+		builder.startObject(3);
+	}
 
-similarity():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static addOriginal(
+		builder: flatbuffers.Builder,
+		originalOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, originalOffset, 0);
+	}
 
-static startCognitionLexical(builder:flatbuffers.Builder) {
-  builder.startObject(3);
-}
+	static addMapped(
+		builder: flatbuffers.Builder,
+		mappedOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, mappedOffset, 0);
+	}
 
-static addOriginal(builder:flatbuffers.Builder, originalOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, originalOffset, 0);
-}
+	static addSimilarity(builder: flatbuffers.Builder, similarity: number) {
+		builder.addFieldFloat64(2, similarity, 0.0);
+	}
 
-static addMapped(builder:flatbuffers.Builder, mappedOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, mappedOffset, 0);
-}
+	static endCognitionLexical(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static addSimilarity(builder:flatbuffers.Builder, similarity:number) {
-  builder.addFieldFloat64(2, similarity, 0.0);
-}
+	static createCognitionLexical(
+		builder: flatbuffers.Builder,
+		originalOffset: flatbuffers.Offset,
+		mappedOffset: flatbuffers.Offset,
+		similarity: number,
+	): flatbuffers.Offset {
+		CognitionLexical.startCognitionLexical(builder);
+		CognitionLexical.addOriginal(builder, originalOffset);
+		CognitionLexical.addMapped(builder, mappedOffset);
+		CognitionLexical.addSimilarity(builder, similarity);
+		return CognitionLexical.endCognitionLexical(builder);
+	}
 
-static endCognitionLexical(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): CognitionLexicalT {
+		return new CognitionLexicalT(
+			this.original(),
+			this.mapped(),
+			this.similarity(),
+		);
+	}
 
-static createCognitionLexical(builder:flatbuffers.Builder, originalOffset:flatbuffers.Offset, mappedOffset:flatbuffers.Offset, similarity:number):flatbuffers.Offset {
-  CognitionLexical.startCognitionLexical(builder);
-  CognitionLexical.addOriginal(builder, originalOffset);
-  CognitionLexical.addMapped(builder, mappedOffset);
-  CognitionLexical.addSimilarity(builder, similarity);
-  return CognitionLexical.endCognitionLexical(builder);
-}
-
-unpack(): CognitionLexicalT {
-  return new CognitionLexicalT(
-    this.original(),
-    this.mapped(),
-    this.similarity()
-  );
-}
-
-
-unpackTo(_o: CognitionLexicalT): void {
-  _o.original = this.original();
-  _o.mapped = this.mapped();
-  _o.similarity = this.similarity();
-}
+	unpackTo(_o: CognitionLexicalT): void {
+		_o.original = this.original();
+		_o.mapped = this.mapped();
+		_o.similarity = this.similarity();
+	}
 }
 
 export class CognitionLexicalT implements flatbuffers.IGeneratedObject {
-constructor(
-  public original: string|Uint8Array|null = null,
-  public mapped: string|Uint8Array|null = null,
-  public similarity: number = 0.0
-){}
+	constructor(
+		public original: string | Uint8Array | null = null,
+		public mapped: string | Uint8Array | null = null,
+		public similarity: number = 0.0,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const original =
+			this.original !== null ? builder.createString(this.original!) : 0;
+		const mapped =
+			this.mapped !== null ? builder.createString(this.mapped!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const original = (this.original !== null ? builder.createString(this.original!) : 0);
-  const mapped = (this.mapped !== null ? builder.createString(this.mapped!) : 0);
-
-  return CognitionLexical.createCognitionLexical(builder,
-    original,
-    mapped,
-    this.similarity
-  );
-}
+		return CognitionLexical.createCognitionLexical(
+			builder,
+			original,
+			mapped,
+			this.similarity,
+		);
+	}
 }

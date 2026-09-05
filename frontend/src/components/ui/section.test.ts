@@ -12,7 +12,9 @@ describe("sectionVariants", () => {
 	});
 
 	it("leaves the scroll to an ancestor when it grows to its content", () => {
-		expect(sectionVariants({ fit: "content" })).not.toContain("overflow-hidden");
+		expect(sectionVariants({ fit: "content" })).not.toContain(
+			"overflow-hidden",
+		);
 	});
 });
 

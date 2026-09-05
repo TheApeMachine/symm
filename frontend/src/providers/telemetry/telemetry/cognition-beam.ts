@@ -3,108 +3,128 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class CognitionBeam
+	implements flatbuffers.IUnpackableObject<CognitionBeamT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): CognitionBeam {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsCognitionBeam(
+		bb: flatbuffers.ByteBuffer,
+		obj?: CognitionBeam,
+	): CognitionBeam {
+		return (obj || new CognitionBeam()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class CognitionBeam implements flatbuffers.IUnpackableObject<CognitionBeamT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):CognitionBeam {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsCognitionBeam(
+		bb: flatbuffers.ByteBuffer,
+		obj?: CognitionBeam,
+	): CognitionBeam {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new CognitionBeam()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsCognitionBeam(bb:flatbuffers.ByteBuffer, obj?:CognitionBeam):CognitionBeam {
-  return (obj || new CognitionBeam()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	sequence(): string | null;
+	sequence(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	sequence(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsCognitionBeam(bb:flatbuffers.ByteBuffer, obj?:CognitionBeam):CognitionBeam {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new CognitionBeam()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	key(): string | null;
+	key(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	key(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-sequence():string|null
-sequence(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-sequence(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	score(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-key():string|null
-key(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-key(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	static startCognitionBeam(builder: flatbuffers.Builder) {
+		builder.startObject(3);
+	}
 
-score():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static addSequence(
+		builder: flatbuffers.Builder,
+		sequenceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, sequenceOffset, 0);
+	}
 
-static startCognitionBeam(builder:flatbuffers.Builder) {
-  builder.startObject(3);
-}
+	static addKey(builder: flatbuffers.Builder, keyOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(1, keyOffset, 0);
+	}
 
-static addSequence(builder:flatbuffers.Builder, sequenceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, sequenceOffset, 0);
-}
+	static addScore(builder: flatbuffers.Builder, score: number) {
+		builder.addFieldFloat64(2, score, 0.0);
+	}
 
-static addKey(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, keyOffset, 0);
-}
+	static endCognitionBeam(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static addScore(builder:flatbuffers.Builder, score:number) {
-  builder.addFieldFloat64(2, score, 0.0);
-}
+	static createCognitionBeam(
+		builder: flatbuffers.Builder,
+		sequenceOffset: flatbuffers.Offset,
+		keyOffset: flatbuffers.Offset,
+		score: number,
+	): flatbuffers.Offset {
+		CognitionBeam.startCognitionBeam(builder);
+		CognitionBeam.addSequence(builder, sequenceOffset);
+		CognitionBeam.addKey(builder, keyOffset);
+		CognitionBeam.addScore(builder, score);
+		return CognitionBeam.endCognitionBeam(builder);
+	}
 
-static endCognitionBeam(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): CognitionBeamT {
+		return new CognitionBeamT(this.sequence(), this.key(), this.score());
+	}
 
-static createCognitionBeam(builder:flatbuffers.Builder, sequenceOffset:flatbuffers.Offset, keyOffset:flatbuffers.Offset, score:number):flatbuffers.Offset {
-  CognitionBeam.startCognitionBeam(builder);
-  CognitionBeam.addSequence(builder, sequenceOffset);
-  CognitionBeam.addKey(builder, keyOffset);
-  CognitionBeam.addScore(builder, score);
-  return CognitionBeam.endCognitionBeam(builder);
-}
-
-unpack(): CognitionBeamT {
-  return new CognitionBeamT(
-    this.sequence(),
-    this.key(),
-    this.score()
-  );
-}
-
-
-unpackTo(_o: CognitionBeamT): void {
-  _o.sequence = this.sequence();
-  _o.key = this.key();
-  _o.score = this.score();
-}
+	unpackTo(_o: CognitionBeamT): void {
+		_o.sequence = this.sequence();
+		_o.key = this.key();
+		_o.score = this.score();
+	}
 }
 
 export class CognitionBeamT implements flatbuffers.IGeneratedObject {
-constructor(
-  public sequence: string|Uint8Array|null = null,
-  public key: string|Uint8Array|null = null,
-  public score: number = 0.0
-){}
+	constructor(
+		public sequence: string | Uint8Array | null = null,
+		public key: string | Uint8Array | null = null,
+		public score: number = 0.0,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const sequence =
+			this.sequence !== null ? builder.createString(this.sequence!) : 0;
+		const key = this.key !== null ? builder.createString(this.key!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const sequence = (this.sequence !== null ? builder.createString(this.sequence!) : 0);
-  const key = (this.key !== null ? builder.createString(this.key!) : 0);
-
-  return CognitionBeam.createCognitionBeam(builder,
-    sequence,
-    key,
-    this.score
-  );
-}
+		return CognitionBeam.createCognitionBeam(
+			builder,
+			sequence,
+			key,
+			this.score,
+		);
+	}
 }

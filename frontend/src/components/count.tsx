@@ -18,5 +18,3 @@ export const Count = () => {
 		</span>
 	);
 };
-
-

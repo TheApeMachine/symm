@@ -6,6 +6,7 @@ import {
 	type Mark,
 	MarkBar,
 } from "#/components/hindsight/compare";
+import { Guide } from "#/components/hindsight/guide";
 import {
 	fetchHindsightCaptures,
 	fetchHindsightEnvelope,
@@ -42,12 +43,11 @@ import {
 	ProvenancePanel,
 	StatePanel,
 } from "#/components/hindsight/inspector";
+import { PositionIndex } from "#/components/hindsight/position-index";
 import {
 	buildPositions,
 	type Position,
 } from "#/components/hindsight/positions";
-import { PositionIndex } from "#/components/hindsight/position-index";
-import { Guide } from "#/components/hindsight/guide";
 import { EpisodeTargets, SymbolTargets } from "#/components/hindsight/targets";
 import { Overview, Timeline } from "#/components/hindsight/timeline";
 import {
@@ -571,8 +571,7 @@ const HindsightRoute = () => {
 	*/
 	const seekPosition = useCallback(
 		(selected: Position, edge: "entry" | "exit") => {
-			const sequence =
-				edge === "entry" ? selected.entrySeq : selected.exitSeq;
+			const sequence = edge === "entry" ? selected.entrySeq : selected.exitSeq;
 
 			if (sequence === null) return;
 

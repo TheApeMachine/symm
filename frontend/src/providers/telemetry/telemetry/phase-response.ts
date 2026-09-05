@@ -3,115 +3,144 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { PhaseOutcome, PhaseOutcomeT } from '../telemetry/phase-outcome.js';
+import {
+	PhaseOutcome,
+	type PhaseOutcomeT,
+} from "../telemetry/phase-outcome.js";
 
+export class PhaseResponse
+	implements flatbuffers.IUnpackableObject<PhaseResponseT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): PhaseResponse {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-export class PhaseResponse implements flatbuffers.IUnpackableObject<PhaseResponseT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):PhaseResponse {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getRootAsPhaseResponse(
+		bb: flatbuffers.ByteBuffer,
+		obj?: PhaseResponse,
+	): PhaseResponse {
+		return (obj || new PhaseResponse()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsPhaseResponse(bb:flatbuffers.ByteBuffer, obj?:PhaseResponse):PhaseResponse {
-  return (obj || new PhaseResponse()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsPhaseResponse(
+		bb: flatbuffers.ByteBuffer,
+		obj?: PhaseResponse,
+	): PhaseResponse {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new PhaseResponse()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsPhaseResponse(bb:flatbuffers.ByteBuffer, obj?:PhaseResponse):PhaseResponse {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new PhaseResponse()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	angle(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-angle():number {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	similarity(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-similarity():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	observedAt(): string | null;
+	observedAt(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	observedAt(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-observedAt():string|null
-observedAt(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-observedAt(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	outcome(obj?: PhaseOutcome): PhaseOutcome | null {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset
+			? (obj || new PhaseOutcome()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
 
-outcome(obj?:PhaseOutcome):PhaseOutcome|null {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? (obj || new PhaseOutcome()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
+	static startPhaseResponse(builder: flatbuffers.Builder) {
+		builder.startObject(4);
+	}
 
-static startPhaseResponse(builder:flatbuffers.Builder) {
-  builder.startObject(4);
-}
+	static addAngle(builder: flatbuffers.Builder, angle: number) {
+		builder.addFieldFloat64(0, angle, 0.0);
+	}
 
-static addAngle(builder:flatbuffers.Builder, angle:number) {
-  builder.addFieldFloat64(0, angle, 0.0);
-}
+	static addSimilarity(builder: flatbuffers.Builder, similarity: number) {
+		builder.addFieldFloat64(1, similarity, 0.0);
+	}
 
-static addSimilarity(builder:flatbuffers.Builder, similarity:number) {
-  builder.addFieldFloat64(1, similarity, 0.0);
-}
+	static addObservedAt(
+		builder: flatbuffers.Builder,
+		observedAtOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, observedAtOffset, 0);
+	}
 
-static addObservedAt(builder:flatbuffers.Builder, observedAtOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, observedAtOffset, 0);
-}
+	static addOutcome(
+		builder: flatbuffers.Builder,
+		outcomeOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(3, outcomeOffset, 0);
+	}
 
-static addOutcome(builder:flatbuffers.Builder, outcomeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(3, outcomeOffset, 0);
-}
+	static endPhaseResponse(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 10); // outcome
+		return offset;
+	}
 
-static endPhaseResponse(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 10) // outcome
-  return offset;
-}
+	unpack(): PhaseResponseT {
+		return new PhaseResponseT(
+			this.angle(),
+			this.similarity(),
+			this.observedAt(),
+			this.outcome() !== null ? this.outcome()!.unpack() : null,
+		);
+	}
 
-
-unpack(): PhaseResponseT {
-  return new PhaseResponseT(
-    this.angle(),
-    this.similarity(),
-    this.observedAt(),
-    (this.outcome() !== null ? this.outcome()!.unpack() : null)
-  );
-}
-
-
-unpackTo(_o: PhaseResponseT): void {
-  _o.angle = this.angle();
-  _o.similarity = this.similarity();
-  _o.observedAt = this.observedAt();
-  _o.outcome = (this.outcome() !== null ? this.outcome()!.unpack() : null);
-}
+	unpackTo(_o: PhaseResponseT): void {
+		_o.angle = this.angle();
+		_o.similarity = this.similarity();
+		_o.observedAt = this.observedAt();
+		_o.outcome = this.outcome() !== null ? this.outcome()!.unpack() : null;
+	}
 }
 
 export class PhaseResponseT implements flatbuffers.IGeneratedObject {
-constructor(
-  public angle: number = 0.0,
-  public similarity: number = 0.0,
-  public observedAt: string|Uint8Array|null = null,
-  public outcome: PhaseOutcomeT|null = null
-){}
+	constructor(
+		public angle: number = 0.0,
+		public similarity: number = 0.0,
+		public observedAt: string | Uint8Array | null = null,
+		public outcome: PhaseOutcomeT | null = null,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const observedAt =
+			this.observedAt !== null ? builder.createString(this.observedAt!) : 0;
+		const outcome = this.outcome !== null ? this.outcome!.pack(builder) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const observedAt = (this.observedAt !== null ? builder.createString(this.observedAt!) : 0);
-  const outcome = (this.outcome !== null ? this.outcome!.pack(builder) : 0);
+		PhaseResponse.startPhaseResponse(builder);
+		PhaseResponse.addAngle(builder, this.angle);
+		PhaseResponse.addSimilarity(builder, this.similarity);
+		PhaseResponse.addObservedAt(builder, observedAt);
+		PhaseResponse.addOutcome(builder, outcome);
 
-  PhaseResponse.startPhaseResponse(builder);
-  PhaseResponse.addAngle(builder, this.angle);
-  PhaseResponse.addSimilarity(builder, this.similarity);
-  PhaseResponse.addObservedAt(builder, observedAt);
-  PhaseResponse.addOutcome(builder, outcome);
-
-  return PhaseResponse.endPhaseResponse(builder);
-}
+		return PhaseResponse.endPhaseResponse(builder);
+	}
 }

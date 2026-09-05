@@ -25,7 +25,10 @@ export const SignalDetail = () => {
 	const root = useRef<HTMLDivElement>(null);
 
 	const source = selected || "cvd";
-	const copy = source === "" ? { name: "Signal detail", sub: "", blurb: "" } : kernelCopy(source, "");
+	const copy =
+		source === ""
+			? { name: "Signal detail", sub: "", blurb: "" }
+			: kernelCopy(source, "");
 	const metrics = source === "" ? [] : sourceMetrics(source);
 
 	useEffect(() => {
@@ -42,8 +45,16 @@ export const SignalDetail = () => {
 			};
 
 			set("symbol", focusSymbol);
-			set("at", row?.atNs() === undefined ? "—" : new Date(Number(row.atNs() / 1000000n)).toISOString().slice(11, 19));
-			set("maturity", row?.maturity() === undefined ? "—" : row.maturity().toFixed(3));
+			set(
+				"at",
+				row?.atNs() === undefined
+					? "—"
+					: new Date(Number(row.atNs() / 1000000n)).toISOString().slice(11, 19),
+			);
+			set(
+				"maturity",
+				row?.maturity() === undefined ? "—" : row.maturity().toFixed(3),
+			);
 			set("peer", "—");
 			set("epoch", String(measurementSourcesStore.state.length));
 
@@ -56,7 +67,9 @@ export const SignalDetail = () => {
 					const normalized = m.value()?.normalized() ?? 0;
 
 					set(`m:${name}`, raw.toFixed(4));
-					const bar = root.current?.querySelector<HTMLElement>(`[data-mbar="${name}"]`);
+					const bar = root.current?.querySelector<HTMLElement>(
+						`[data-mbar="${name}"]`,
+					);
 					if (bar instanceof HTMLElement) {
 						bar.style.width = `calc(clamp(0, ${Math.min(1, Math.max(0, normalized))}, 1) * 100%)`;
 					}
@@ -84,11 +97,17 @@ export const SignalDetail = () => {
 	}
 
 	return (
-		<Flex.Column key={`${source}:${focusSymbol}`} ref={root} className="min-h-0 overflow-auto px-5 py-4.5">
+		<Flex.Column
+			key={`${source}:${focusSymbol}`}
+			ref={root}
+			className="min-h-0 overflow-auto px-5 py-4.5"
+		>
 			<Flex.Row className="items-start justify-between gap-3">
 				<Flex.Column className="min-w-0 gap-1">
 					<Typography.Display size="xl">{copy.name}</Typography.Display>
-					<Typography.Mono size="s" tone="f4">{copy.sub}</Typography.Mono>
+					<Typography.Mono size="s" tone="f4">
+						{copy.sub}
+					</Typography.Mono>
 				</Flex.Column>
 			</Flex.Row>
 
@@ -100,30 +119,67 @@ export const SignalDetail = () => {
 				{metrics.map((metric) => (
 					<div key={metric}>
 						<Flex.Row justify="between" align="center" className="mb-1.5 gap-2">
-							<Typography.Label size="xxs" tone="f3" weight="normal">{metricLabel(metric)}</Typography.Label>
-							<Typography.Mono size="s" tone="f1" data-f={`m:${metric}`}>—</Typography.Mono>
+							<Typography.Label size="xxs" tone="f3" weight="normal">
+								{metricLabel(metric)}
+							</Typography.Label>
+							<Typography.Mono size="s" tone="f1" data-f={`m:${metric}`}>
+								—
+							</Typography.Mono>
 						</Flex.Row>
 						<div className="h-1.5 overflow-hidden rounded-[3px] bg-(--line)">
-							<div data-mbar={metric} className="h-full bg-(--acc) transition-[width] duration-500 ease-out" style={{ width: "0%" }} />
+							<div
+								data-mbar={metric}
+								className="h-full bg-(--acc) transition-[width] duration-500 ease-out"
+								style={{ width: "0%" }}
+							/>
 						</div>
 					</div>
 				))}
 			</div>
 
 			<div className="mt-5 grid grid-cols-2 gap-x-5.5 gap-y-2 border-(--line) border-t pt-3.5 font-mono text-xs">
-				<div className="flex justify-between"><Typography.Label size="xxs" tone="f3" weight="normal">Symbol</Typography.Label><span data-f="symbol" className="text-(--f1)" /></div>
-				<div className="flex justify-between"><Typography.Label size="xxs" tone="f3" weight="normal">Observed</Typography.Label><span data-f="at" className="text-(--f1)" /></div>
-				<div className="flex justify-between"><Typography.Label size="xxs" tone="f3" weight="normal">Maturity</Typography.Label><span data-f="maturity" className="text-(--f1)" /></div>
-				<div className="flex justify-between"><Typography.Label size="xxs" tone="f3" weight="normal">Peer</Typography.Label><span data-f="peer" className="text-(--f1)" /></div>
+				<div className="flex justify-between">
+					<Typography.Label size="xxs" tone="f3" weight="normal">
+						Symbol
+					</Typography.Label>
+					<span data-f="symbol" className="text-(--f1)" />
+				</div>
+				<div className="flex justify-between">
+					<Typography.Label size="xxs" tone="f3" weight="normal">
+						Observed
+					</Typography.Label>
+					<span data-f="at" className="text-(--f1)" />
+				</div>
+				<div className="flex justify-between">
+					<Typography.Label size="xxs" tone="f3" weight="normal">
+						Maturity
+					</Typography.Label>
+					<span data-f="maturity" className="text-(--f1)" />
+				</div>
+				<div className="flex justify-between">
+					<Typography.Label size="xxs" tone="f3" weight="normal">
+						Peer
+					</Typography.Label>
+					<span data-f="peer" className="text-(--f1)" />
+				</div>
 			</div>
 
 			<div className="mt-3.5 grid grid-cols-2 gap-x-5.5 gap-y-2 font-mono text-xs">
-				<div className="flex justify-between"><Typography.Label size="xxs" tone="f3" weight="normal">Readings this epoch</Typography.Label><span data-f="epoch" className="text-(--f1)" /></div>
+				<div className="flex justify-between">
+					<Typography.Label size="xxs" tone="f3" weight="normal">
+						Readings this epoch
+					</Typography.Label>
+					<span data-f="epoch" className="text-(--f1)" />
+				</div>
 			</div>
 
 			{symbols.length === 0 ? null : (
 				<div className="mt-5">
-					<Typography.Label size="xxs" tone="f3" className="mb-2 block tracking-[0.13em]">
+					<Typography.Label
+						size="xxs"
+						tone="f3"
+						className="mb-2 block tracking-[0.13em]"
+					>
 						Cross-section · {source} headline
 					</Typography.Label>
 					<div className="grid grid-cols-12 gap-0.75">

@@ -3,93 +3,257 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import { BalancesFrame, BalancesFrameT } from '../telemetry/balances-frame.js';
-import { CausalFrame, CausalFrameT } from '../telemetry/causal-frame.js';
-import { CognitionFrame, CognitionFrameT } from '../telemetry/cognition-frame.js';
-import { DiagnosticsFrame, DiagnosticsFrameT } from '../telemetry/diagnostics-frame.js';
-import { EnvelopeStateFrame, EnvelopeStateFrameT } from '../telemetry/envelope-state-frame.js';
-import { EquityFrame, EquityFrameT } from '../telemetry/equity-frame.js';
-import { ErrorFrame, ErrorFrameT } from '../telemetry/error-frame.js';
-import { FluidPhaseFrame, FluidPhaseFrameT } from '../telemetry/fluid-phase-frame.js';
-import { GraphFrame, GraphFrameT } from '../telemetry/graph-frame.js';
-import { ManifoldFrame, ManifoldFrameT } from '../telemetry/manifold-frame.js';
-import { MeasurementsFrame, MeasurementsFrameT } from '../telemetry/measurements-frame.js';
-import { PositionsFrame, PositionsFrameT } from '../telemetry/positions-frame.js';
-import { RegulatorFrame, RegulatorFrameT } from '../telemetry/regulator-frame.js';
-import { ResonanceFrame, ResonanceFrameT } from '../telemetry/resonance-frame.js';
-import { StrategyFrame, StrategyFrameT } from '../telemetry/strategy-frame.js';
-import { TickFrame, TickFrameT } from '../telemetry/tick-frame.js';
-
+import { BalancesFrame, BalancesFrameT } from "../telemetry/balances-frame.js";
+import { CausalFrame, CausalFrameT } from "../telemetry/causal-frame.js";
+import {
+	CognitionFrame,
+	CognitionFrameT,
+} from "../telemetry/cognition-frame.js";
+import {
+	DiagnosticsFrame,
+	DiagnosticsFrameT,
+} from "../telemetry/diagnostics-frame.js";
+import {
+	EnvelopeStateFrame,
+	EnvelopeStateFrameT,
+} from "../telemetry/envelope-state-frame.js";
+import { EquityFrame, EquityFrameT } from "../telemetry/equity-frame.js";
+import { ErrorFrame, ErrorFrameT } from "../telemetry/error-frame.js";
+import {
+	FluidPhaseFrame,
+	FluidPhaseFrameT,
+} from "../telemetry/fluid-phase-frame.js";
+import { GraphFrame, GraphFrameT } from "../telemetry/graph-frame.js";
+import { ManifoldFrame, ManifoldFrameT } from "../telemetry/manifold-frame.js";
+import {
+	MeasurementsFrame,
+	MeasurementsFrameT,
+} from "../telemetry/measurements-frame.js";
+import {
+	PositionsFrame,
+	PositionsFrameT,
+} from "../telemetry/positions-frame.js";
+import {
+	RegulatorFrame,
+	RegulatorFrameT,
+} from "../telemetry/regulator-frame.js";
+import {
+	ResonanceFrame,
+	ResonanceFrameT,
+} from "../telemetry/resonance-frame.js";
+import { StrategyFrame, StrategyFrameT } from "../telemetry/strategy-frame.js";
+import { TickFrame, TickFrameT } from "../telemetry/tick-frame.js";
 
 export enum Frame {
-  NONE = 0,
-  MeasurementsFrame = 1,
-  TickFrame = 2,
-  EquityFrame = 3,
-  BalancesFrame = 4,
-  ResonanceFrame = 5,
-  CognitionFrame = 6,
-  CausalFrame = 7,
-  GraphFrame = 8,
-  StrategyFrame = 9,
-  PositionsFrame = 10,
-  RegulatorFrame = 11,
-  ErrorFrame = 12,
-  FluidPhaseFrame = 13,
-  DiagnosticsFrame = 14,
-  ManifoldFrame = 15,
-  EnvelopeStateFrame = 16
+	NONE = 0,
+	MeasurementsFrame = 1,
+	TickFrame = 2,
+	EquityFrame = 3,
+	BalancesFrame = 4,
+	ResonanceFrame = 5,
+	CognitionFrame = 6,
+	CausalFrame = 7,
+	GraphFrame = 8,
+	StrategyFrame = 9,
+	PositionsFrame = 10,
+	RegulatorFrame = 11,
+	ErrorFrame = 12,
+	FluidPhaseFrame = 13,
+	DiagnosticsFrame = 14,
+	ManifoldFrame = 15,
+	EnvelopeStateFrame = 16,
 }
 
 export function unionToFrame(
-  type: Frame,
-  accessor: (obj:BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null
-): BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null {
-  switch(Frame[type]) {
-    case 'NONE': return null; 
-    case 'MeasurementsFrame': return accessor(new MeasurementsFrame())! as MeasurementsFrame;
-    case 'TickFrame': return accessor(new TickFrame())! as TickFrame;
-    case 'EquityFrame': return accessor(new EquityFrame())! as EquityFrame;
-    case 'BalancesFrame': return accessor(new BalancesFrame())! as BalancesFrame;
-    case 'ResonanceFrame': return accessor(new ResonanceFrame())! as ResonanceFrame;
-    case 'CognitionFrame': return accessor(new CognitionFrame())! as CognitionFrame;
-    case 'CausalFrame': return accessor(new CausalFrame())! as CausalFrame;
-    case 'GraphFrame': return accessor(new GraphFrame())! as GraphFrame;
-    case 'StrategyFrame': return accessor(new StrategyFrame())! as StrategyFrame;
-    case 'PositionsFrame': return accessor(new PositionsFrame())! as PositionsFrame;
-    case 'RegulatorFrame': return accessor(new RegulatorFrame())! as RegulatorFrame;
-    case 'ErrorFrame': return accessor(new ErrorFrame())! as ErrorFrame;
-    case 'FluidPhaseFrame': return accessor(new FluidPhaseFrame())! as FluidPhaseFrame;
-    case 'DiagnosticsFrame': return accessor(new DiagnosticsFrame())! as DiagnosticsFrame;
-    case 'ManifoldFrame': return accessor(new ManifoldFrame())! as ManifoldFrame;
-    case 'EnvelopeStateFrame': return accessor(new EnvelopeStateFrame())! as EnvelopeStateFrame;
-    default: return null;
-  }
+	type: Frame,
+	accessor: (
+		obj:
+			| BalancesFrame
+			| CausalFrame
+			| CognitionFrame
+			| DiagnosticsFrame
+			| EnvelopeStateFrame
+			| EquityFrame
+			| ErrorFrame
+			| FluidPhaseFrame
+			| GraphFrame
+			| ManifoldFrame
+			| MeasurementsFrame
+			| PositionsFrame
+			| RegulatorFrame
+			| ResonanceFrame
+			| StrategyFrame
+			| TickFrame,
+	) =>
+		| BalancesFrame
+		| CausalFrame
+		| CognitionFrame
+		| DiagnosticsFrame
+		| EnvelopeStateFrame
+		| EquityFrame
+		| ErrorFrame
+		| FluidPhaseFrame
+		| GraphFrame
+		| ManifoldFrame
+		| MeasurementsFrame
+		| PositionsFrame
+		| RegulatorFrame
+		| ResonanceFrame
+		| StrategyFrame
+		| TickFrame
+		| null,
+):
+	| BalancesFrame
+	| CausalFrame
+	| CognitionFrame
+	| DiagnosticsFrame
+	| EnvelopeStateFrame
+	| EquityFrame
+	| ErrorFrame
+	| FluidPhaseFrame
+	| GraphFrame
+	| ManifoldFrame
+	| MeasurementsFrame
+	| PositionsFrame
+	| RegulatorFrame
+	| ResonanceFrame
+	| StrategyFrame
+	| TickFrame
+	| null {
+	switch (Frame[type]) {
+		case "NONE":
+			return null;
+		case "MeasurementsFrame":
+			return accessor(new MeasurementsFrame())! as MeasurementsFrame;
+		case "TickFrame":
+			return accessor(new TickFrame())! as TickFrame;
+		case "EquityFrame":
+			return accessor(new EquityFrame())! as EquityFrame;
+		case "BalancesFrame":
+			return accessor(new BalancesFrame())! as BalancesFrame;
+		case "ResonanceFrame":
+			return accessor(new ResonanceFrame())! as ResonanceFrame;
+		case "CognitionFrame":
+			return accessor(new CognitionFrame())! as CognitionFrame;
+		case "CausalFrame":
+			return accessor(new CausalFrame())! as CausalFrame;
+		case "GraphFrame":
+			return accessor(new GraphFrame())! as GraphFrame;
+		case "StrategyFrame":
+			return accessor(new StrategyFrame())! as StrategyFrame;
+		case "PositionsFrame":
+			return accessor(new PositionsFrame())! as PositionsFrame;
+		case "RegulatorFrame":
+			return accessor(new RegulatorFrame())! as RegulatorFrame;
+		case "ErrorFrame":
+			return accessor(new ErrorFrame())! as ErrorFrame;
+		case "FluidPhaseFrame":
+			return accessor(new FluidPhaseFrame())! as FluidPhaseFrame;
+		case "DiagnosticsFrame":
+			return accessor(new DiagnosticsFrame())! as DiagnosticsFrame;
+		case "ManifoldFrame":
+			return accessor(new ManifoldFrame())! as ManifoldFrame;
+		case "EnvelopeStateFrame":
+			return accessor(new EnvelopeStateFrame())! as EnvelopeStateFrame;
+		default:
+			return null;
+	}
 }
 
 export function unionListToFrame(
-  type: Frame, 
-  accessor: (index: number, obj:BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame) => BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null, 
-  index: number
-): BalancesFrame|CausalFrame|CognitionFrame|DiagnosticsFrame|EnvelopeStateFrame|EquityFrame|ErrorFrame|FluidPhaseFrame|GraphFrame|ManifoldFrame|MeasurementsFrame|PositionsFrame|RegulatorFrame|ResonanceFrame|StrategyFrame|TickFrame|null {
-  switch(Frame[type]) {
-    case 'NONE': return null; 
-    case 'MeasurementsFrame': return accessor(index, new MeasurementsFrame())! as MeasurementsFrame;
-    case 'TickFrame': return accessor(index, new TickFrame())! as TickFrame;
-    case 'EquityFrame': return accessor(index, new EquityFrame())! as EquityFrame;
-    case 'BalancesFrame': return accessor(index, new BalancesFrame())! as BalancesFrame;
-    case 'ResonanceFrame': return accessor(index, new ResonanceFrame())! as ResonanceFrame;
-    case 'CognitionFrame': return accessor(index, new CognitionFrame())! as CognitionFrame;
-    case 'CausalFrame': return accessor(index, new CausalFrame())! as CausalFrame;
-    case 'GraphFrame': return accessor(index, new GraphFrame())! as GraphFrame;
-    case 'StrategyFrame': return accessor(index, new StrategyFrame())! as StrategyFrame;
-    case 'PositionsFrame': return accessor(index, new PositionsFrame())! as PositionsFrame;
-    case 'RegulatorFrame': return accessor(index, new RegulatorFrame())! as RegulatorFrame;
-    case 'ErrorFrame': return accessor(index, new ErrorFrame())! as ErrorFrame;
-    case 'FluidPhaseFrame': return accessor(index, new FluidPhaseFrame())! as FluidPhaseFrame;
-    case 'DiagnosticsFrame': return accessor(index, new DiagnosticsFrame())! as DiagnosticsFrame;
-    case 'ManifoldFrame': return accessor(index, new ManifoldFrame())! as ManifoldFrame;
-    case 'EnvelopeStateFrame': return accessor(index, new EnvelopeStateFrame())! as EnvelopeStateFrame;
-    default: return null;
-  }
+	type: Frame,
+	accessor: (
+		index: number,
+		obj:
+			| BalancesFrame
+			| CausalFrame
+			| CognitionFrame
+			| DiagnosticsFrame
+			| EnvelopeStateFrame
+			| EquityFrame
+			| ErrorFrame
+			| FluidPhaseFrame
+			| GraphFrame
+			| ManifoldFrame
+			| MeasurementsFrame
+			| PositionsFrame
+			| RegulatorFrame
+			| ResonanceFrame
+			| StrategyFrame
+			| TickFrame,
+	) =>
+		| BalancesFrame
+		| CausalFrame
+		| CognitionFrame
+		| DiagnosticsFrame
+		| EnvelopeStateFrame
+		| EquityFrame
+		| ErrorFrame
+		| FluidPhaseFrame
+		| GraphFrame
+		| ManifoldFrame
+		| MeasurementsFrame
+		| PositionsFrame
+		| RegulatorFrame
+		| ResonanceFrame
+		| StrategyFrame
+		| TickFrame
+		| null,
+	index: number,
+):
+	| BalancesFrame
+	| CausalFrame
+	| CognitionFrame
+	| DiagnosticsFrame
+	| EnvelopeStateFrame
+	| EquityFrame
+	| ErrorFrame
+	| FluidPhaseFrame
+	| GraphFrame
+	| ManifoldFrame
+	| MeasurementsFrame
+	| PositionsFrame
+	| RegulatorFrame
+	| ResonanceFrame
+	| StrategyFrame
+	| TickFrame
+	| null {
+	switch (Frame[type]) {
+		case "NONE":
+			return null;
+		case "MeasurementsFrame":
+			return accessor(index, new MeasurementsFrame())! as MeasurementsFrame;
+		case "TickFrame":
+			return accessor(index, new TickFrame())! as TickFrame;
+		case "EquityFrame":
+			return accessor(index, new EquityFrame())! as EquityFrame;
+		case "BalancesFrame":
+			return accessor(index, new BalancesFrame())! as BalancesFrame;
+		case "ResonanceFrame":
+			return accessor(index, new ResonanceFrame())! as ResonanceFrame;
+		case "CognitionFrame":
+			return accessor(index, new CognitionFrame())! as CognitionFrame;
+		case "CausalFrame":
+			return accessor(index, new CausalFrame())! as CausalFrame;
+		case "GraphFrame":
+			return accessor(index, new GraphFrame())! as GraphFrame;
+		case "StrategyFrame":
+			return accessor(index, new StrategyFrame())! as StrategyFrame;
+		case "PositionsFrame":
+			return accessor(index, new PositionsFrame())! as PositionsFrame;
+		case "RegulatorFrame":
+			return accessor(index, new RegulatorFrame())! as RegulatorFrame;
+		case "ErrorFrame":
+			return accessor(index, new ErrorFrame())! as ErrorFrame;
+		case "FluidPhaseFrame":
+			return accessor(index, new FluidPhaseFrame())! as FluidPhaseFrame;
+		case "DiagnosticsFrame":
+			return accessor(index, new DiagnosticsFrame())! as DiagnosticsFrame;
+		case "ManifoldFrame":
+			return accessor(index, new ManifoldFrame())! as ManifoldFrame;
+		case "EnvelopeStateFrame":
+			return accessor(index, new EnvelopeStateFrame())! as EnvelopeStateFrame;
+		default:
+			return null;
+	}
 }

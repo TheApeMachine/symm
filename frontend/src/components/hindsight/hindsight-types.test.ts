@@ -7,23 +7,38 @@ import {
 
 describe("HindsightRef identity", () => {
 	it("treats two ordinals within one capture as distinct causal points", () => {
-		expect(sameHindsightRef({ sequence: 100, ordinal: 0 }, { sequence: 100, ordinal: 1 })).toBe(
-			false,
-		);
-		expect(sameHindsightRef({ sequence: 100, ordinal: 0 }, { sequence: 100, ordinal: 0 })).toBe(
-			true,
-		);
+		expect(
+			sameHindsightRef(
+				{ sequence: 100, ordinal: 0 },
+				{ sequence: 100, ordinal: 1 },
+			),
+		).toBe(false);
+		expect(
+			sameHindsightRef(
+				{ sequence: 100, ordinal: 0 },
+				{ sequence: 100, ordinal: 0 },
+			),
+		).toBe(true);
 	});
 
 	it("orders by sequence first and ordinal second", () => {
 		expect(
-			compareHindsightRef({ sequence: 99, ordinal: 9 }, { sequence: 100, ordinal: 0 }),
+			compareHindsightRef(
+				{ sequence: 99, ordinal: 9 },
+				{ sequence: 100, ordinal: 0 },
+			),
 		).toBeLessThan(0);
 		expect(
-			compareHindsightRef({ sequence: 100, ordinal: 0 }, { sequence: 100, ordinal: 1 }),
+			compareHindsightRef(
+				{ sequence: 100, ordinal: 0 },
+				{ sequence: 100, ordinal: 1 },
+			),
 		).toBeLessThan(0);
 		expect(
-			compareHindsightRef({ sequence: 100, ordinal: 1 }, { sequence: 100, ordinal: 1 }),
+			compareHindsightRef(
+				{ sequence: 100, ordinal: 1 },
+				{ sequence: 100, ordinal: 1 },
+			),
 		).toBe(0);
 	});
 

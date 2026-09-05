@@ -20,7 +20,14 @@ export const XrayFactsPanel = () => {
 
 			// Reset every field first so a missing row cannot preserve the
 			// previously focused symbol's readout.
-			for (const field of ["winner", "confidence", "contrast", "entropy", "ambiguous", "sequence"]) {
+			for (const field of [
+				"winner",
+				"confidence",
+				"contrast",
+				"entropy",
+				"ambiguous",
+				"sequence",
+			]) {
 				set(field, "—");
 			}
 
@@ -49,30 +56,48 @@ export const XrayFactsPanel = () => {
 			<div className="mt-2 flex flex-col gap-2.5 border-(--line) border-t px-3.5 py-3 font-mono text-[12px]">
 				<div className="flex justify-between gap-3">
 					<span className="text-(--f3)">regime class</span>
-					<Typography.Span data-f="winner" className="text-right text-(--acc)">—</Typography.Span>
+					<Typography.Span data-f="winner" className="text-right text-(--acc)">
+						—
+					</Typography.Span>
 				</div>
 				<div className="flex justify-between gap-3">
 					<span className="text-(--f3)">coherence</span>
-					<Typography.Span data-f="confidence" className="text-right text-(--f1)">—</Typography.Span>
+					<Typography.Span
+						data-f="confidence"
+						className="text-right text-(--f1)"
+					>
+						—
+					</Typography.Span>
 				</div>
 				<div className="flex justify-between gap-3">
 					<span className="text-(--f3)">class contrast</span>
-					<Typography.Span data-f="contrast" className="text-right text-(--f1)">—</Typography.Span>
+					<Typography.Span data-f="contrast" className="text-right text-(--f1)">
+						—
+					</Typography.Span>
 				</div>
 				<div className="flex justify-between gap-3">
 					<span className="text-(--f3)">entropy bits</span>
-					<Typography.Span data-f="entropy" className="text-right text-(--f1)">—</Typography.Span>
+					<Typography.Span data-f="entropy" className="text-right text-(--f1)">
+						—
+					</Typography.Span>
 				</div>
 				<div className="flex justify-between gap-3">
 					<span className="text-(--f3)">ambiguous</span>
-					<Typography.Span data-f="ambiguous" className="text-right">—</Typography.Span>
+					<Typography.Span data-f="ambiguous" className="text-right">
+						—
+					</Typography.Span>
 				</div>
 				<div className="flex justify-between gap-3">
 					<span className="text-(--f3)">sequence</span>
-					<Typography.Span data-f="sequence" className="max-w-42 truncate text-right text-(--f3) text-[10px]" title="DMT token sequence the classifier is reading">—</Typography.Span>
+					<Typography.Span
+						data-f="sequence"
+						className="max-w-42 truncate text-right text-(--f3) text-[10px]"
+						title="DMT token sequence the classifier is reading"
+					>
+						—
+					</Typography.Span>
 				</div>
 			</div>
 		</div>
 	);
 };
-

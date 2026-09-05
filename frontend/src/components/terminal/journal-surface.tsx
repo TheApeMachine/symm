@@ -7,12 +7,9 @@ import { Panel } from "#/components/ui/panel";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
 import { Decision } from "#/providers/telemetry/telemetry/decision";
-import { DecisionTrace } from "#/providers/telemetry/telemetry/decision-trace";
 import { EntryCost } from "#/providers/telemetry/telemetry/entry-cost";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { Position } from "#/providers/telemetry/telemetry/position";
-import { RiskPlan } from "#/providers/telemetry/telemetry/risk-plan";
-import { Stoploss } from "#/providers/telemetry/telemetry/stoploss";
 import { cn } from "@/lib/utils";
 
 /*
@@ -68,28 +65,18 @@ const pnlTone = (value: number): "up" | "down" | "f3" =>
 
 const positionHolder = new Position();
 const holdingHolder = new Holding();
-const stoplossHolder = new Stoploss();
 const decisionHolder = new Decision();
 const entryCostHolder = new EntryCost();
-const riskHolder = new RiskPlan();
-const traceHolder = new DecisionTrace();
 
 type ActiveLotEntry = {
 	symbol: string;
 	status: string;
-	stopStatus: string;
 	pnl: string;
 	pnlValue: number;
 	mark: string;
 	returnPct: string;
 	entryPrice: string;
 	entryAt: string;
-	floor: string;
-	peak: string;
-	locked: boolean;
-	surgeArmed: boolean;
-	riskDistance: string;
-	trailDistance: string;
 	opportunityType: string;
 	opportunityPhase: string;
 	predictiveStatus: string;
@@ -108,10 +95,6 @@ type JournalTradeEntry = {
 	exitPrice: string;
 	entryFee: string;
 	exitFee: string;
-	triggerReason: string;
-	stopStatus: string;
-	locked: boolean;
-	surgeArmed: boolean;
 	exitAt: string;
 	exitAtSort: number;
 	// Analysis fields sourced from Decision, not previously surfaced.
@@ -120,9 +103,6 @@ type JournalTradeEntry = {
 	spread: string;
 	impact: string;
 	breakEven: string;
-	riskDistance: string;
-	trailDistance: string;
-	maxLoss: string;
 	roundTripFees: string;
 	// What the system actually decided on: the opportunity it was positioning
 	// for, how far the gate sequence got, and what the causal search concluded.
@@ -130,11 +110,6 @@ type JournalTradeEntry = {
 	opportunityPhase: string;
 	predictiveStatus: string;
 	confidence: string;
-	dominantMove: string;
-	recommendedAction: string;
-	iterations: string;
-	expectedOutcome: string;
-	outcomeUncertainty: string;
 	source: "live" | "history";
 };
 
@@ -160,11 +135,8 @@ const fromRecord = (record: TradeRecord): JournalTradeEntry | null => {
 	const holding = record.holding;
 	if (!holding?.symbol) return null;
 
-	const stoploss = holding.stoploss;
 	const decision = record.decision;
 	const entryCost = decision?.entryCost;
-	const risk = decision?.risk;
-	const trace = decision?.trace;
 	const exitAtSort = holding.exitAt ?? 0;
 
 	return {
@@ -179,10 +151,6 @@ const fromRecord = (record: TradeRecord): JournalTradeEntry | null => {
 		exitPrice: formatNumber(holding.exitPrice, 6),
 		entryFee: formatNumber(holding.entryFee, 4),
 		exitFee: formatNumber(holding.exitFee, 4),
-		triggerReason: stoploss?.triggerReason ?? "—",
-		stopStatus: stoploss?.status ?? "—",
-		locked: stoploss?.locked ?? false,
-		surgeArmed: stoploss?.surgeArmed ?? false,
 		exitAt: timeOf(holding.exitAt),
 		exitAtSort: sortOf(exitAtSort),
 		bestAsk: formatNumber(entryCost?.bestAsk, 6),
@@ -190,19 +158,11 @@ const fromRecord = (record: TradeRecord): JournalTradeEntry | null => {
 		spread: formatNumber(entryCost?.spread, 6),
 		impact: formatNumber(entryCost?.impact, 6),
 		breakEven: formatNumber(entryCost?.breakEven, 6),
-		riskDistance: formatNumber(risk?.riskDistance, 6),
-		trailDistance: formatNumber(risk?.trailDistance, 6),
-		maxLoss: formatNumber(risk?.maxLoss, 4),
 		roundTripFees: formatNumber(entryCost?.roundTripFees, 6),
 		opportunityType: decision?.opportunityType || "—",
 		opportunityPhase: decision?.opportunityPhase || "—",
 		predictiveStatus: decision?.predictiveStatus || "—",
 		confidence: formatPct((decision?.confidence ?? 0) * 100, 1),
-		dominantMove: trace?.consensusDominantMove || "—",
-		recommendedAction: trace?.recommendedAction || "—",
-		iterations: formatNumber(trace?.iterations, 0),
-		expectedOutcome: formatNumber(trace?.expectedOutcome, 4),
-		outcomeUncertainty: formatNumber(trace?.outcomeUncertainty, 4),
 		source: "history",
 	};
 };
@@ -262,9 +222,7 @@ export const JournalSurface = () => {
 					currentHolding.status() ?? currentPosition.status() ?? "—";
 				if (positionStatus === "closed" || currentHolding.exitPrice()) continue;
 
-				const currentStoploss = currentHolding.stoploss(stoplossHolder);
 				const currentDecision = currentPosition.decision(decisionHolder);
-				const currentRisk = currentDecision?.risk(riskHolder);
 
 				const entryNano = currentHolding.entryAt();
 				const entryTimestamp = entryNano > 0n ? timeOf(entryNano) : "—";
@@ -272,7 +230,6 @@ export const JournalSurface = () => {
 				activeMap.set(currentSymbol, {
 					symbol: currentSymbol,
 					status: positionStatus,
-					stopStatus: currentStoploss?.status() ?? "—",
 					pnl: `${formatNumber(currentHolding.pnl(), 4)} USD`,
 					pnlValue: numberOf(currentHolding.pnl()),
 					mark: formatNumber(currentHolding.mark(), 6),
@@ -283,12 +240,6 @@ export const JournalSurface = () => {
 					opportunityPhase: currentDecision?.opportunityPhase() || "—",
 					predictiveStatus: currentDecision?.predictiveStatus() || "—",
 					confidence: formatPct((currentDecision?.confidence() ?? 0) * 100, 1),
-					floor: formatNumber(currentStoploss?.floor(), 6),
-					peak: formatNumber(currentStoploss?.peak(), 6),
-					locked: currentStoploss?.locked() ?? false,
-					surgeArmed: currentStoploss?.surgeArmed() ?? false,
-					riskDistance: formatNumber(currentRisk?.riskDistance(), 6),
-					trailDistance: formatNumber(currentRisk?.trailDistance(), 6),
 				});
 			}
 		}
@@ -306,11 +257,8 @@ export const JournalSurface = () => {
 
 				const positionStatus =
 					currentHolding.status() ?? currentPosition.status() ?? "—";
-				const currentStoploss = currentHolding.stoploss(stoplossHolder);
 				const currentDecision = currentPosition.decision(decisionHolder);
 				const currentEntryCost = currentDecision?.entryCost(entryCostHolder);
-				const currentRisk = currentDecision?.risk(riskHolder);
-				const currentTrace = currentDecision?.trace(traceHolder);
 
 				const entryNano = currentHolding.entryAt();
 				const entryTimestamp = entryNano > 0n ? timeOf(entryNano) : "—";
@@ -330,10 +278,6 @@ export const JournalSurface = () => {
 						exitPrice: formatNumber(currentHolding.exitPrice(), 6),
 						entryFee: formatNumber(currentHolding.entryFee(), 4),
 						exitFee: formatNumber(currentHolding.exitFee(), 4),
-						triggerReason: currentStoploss?.triggerReason() ?? "—",
-						stopStatus: currentStoploss?.status() ?? "—",
-						locked: currentStoploss?.locked() ?? false,
-						surgeArmed: currentStoploss?.surgeArmed() ?? false,
 						exitAt: timeOf(exitNano),
 						exitAtSort: sortOf(exitNano),
 						bestAsk: formatNumber(currentEntryCost?.bestAsk(), 6),
@@ -341,9 +285,6 @@ export const JournalSurface = () => {
 						spread: formatNumber(currentEntryCost?.spread(), 6),
 						impact: formatNumber(currentEntryCost?.impact(), 6),
 						breakEven: formatNumber(currentEntryCost?.breakEven(), 6),
-						riskDistance: formatNumber(currentRisk?.riskDistance(), 6),
-						trailDistance: formatNumber(currentRisk?.trailDistance(), 6),
-						maxLoss: formatNumber(currentRisk?.maxLoss(), 4),
 						roundTripFees: formatNumber(currentEntryCost?.roundTripFees(), 6),
 						opportunityType: currentDecision?.opportunityType() || "—",
 						opportunityPhase: currentDecision?.opportunityPhase() || "—",
@@ -351,14 +292,6 @@ export const JournalSurface = () => {
 						confidence: formatPct(
 							(currentDecision?.confidence() ?? 0) * 100,
 							1,
-						),
-						dominantMove: currentTrace?.consensusDominantMove() || "—",
-						recommendedAction: currentTrace?.recommendedAction() || "—",
-						iterations: formatNumber(currentTrace?.iterations(), 0),
-						expectedOutcome: formatNumber(currentTrace?.expectedOutcome(), 4),
-						outcomeUncertainty: formatNumber(
-							currentTrace?.outcomeUncertainty(),
-							4,
 						),
 						source: "live",
 					});
@@ -414,7 +347,6 @@ export const JournalSurface = () => {
 						) : (
 							activeLots.map((lot) => {
 								const tone = pnlTone(lot.pnlValue);
-								const stopError = lot.stopStatus === "error";
 								return (
 									<Panel
 										key={lot.symbol}
@@ -445,37 +377,13 @@ export const JournalSurface = () => {
 												</Typography.Mono>
 											</Flex.Column>
 										</Flex.Row>
-										<Flex.Row className="items-center justify-between gap-2 border-(--line) border-t pt-1 text-[9px]">
-											<Typography.Span
-												className={cn(
-													"rounded-xs px-1 py-px uppercase tracking-wide",
-													stopError
-														? "bg-[color-mix(in_srgb,var(--down)_18%,transparent)] font-semibold text-(--down)"
-														: "text-(--f4)",
-												)}
-											>
-												{stopError ? "⚠ stop error" : `stop ${lot.stopStatus}`}
-											</Typography.Span>
-											<Typography.Span className="text-(--f4)">
-												floor {lot.floor} · peak {lot.peak}
-											</Typography.Span>
-										</Flex.Row>
 										<Flex.Row className="items-center justify-between gap-2 text-[9px] text-(--f4)">
 											<Typography.Span>entered {lot.entryAt}</Typography.Span>
-											<Typography.Span
-												className={lot.surgeArmed ? "text-(--acc)" : undefined}
-											>
-												{lot.locked ? "locked" : "unlocked"}
-												{lot.surgeArmed ? " · surge" : ""}
-											</Typography.Span>
 										</Flex.Row>
 										<Flex.Row className="items-center justify-between gap-2 border-(--line) border-t pt-1 text-[9px] text-(--f4)">
 											<Typography.Span className="truncate">
 												{lot.opportunityType} · {lot.opportunityPhase} (
 												{lot.confidence})
-											</Typography.Span>
-											<Typography.Span>
-												risk {lot.riskDistance} · trail {lot.trailDistance}
 											</Typography.Span>
 										</Flex.Row>
 									</Panel>
@@ -505,10 +413,6 @@ export const JournalSurface = () => {
 					) : (
 						closedTrades.map((trade) => {
 							const tone = pnlTone(trade.pnlValue);
-							const stopError = trade.stopStatus === "error";
-							const hasDiagnostics =
-								trade.opportunityType !== "—" ||
-								trade.recommendedAction !== "—";
 							return (
 								<Panel
 									key={trade.id}
@@ -527,16 +431,6 @@ export const JournalSurface = () => {
 											<Typography.Span className="font-semibold text-[13px] text-(--f1)">
 												{trade.symbol}
 											</Typography.Span>
-											<Typography.Span
-												className={cn(
-													"rounded-xs px-1 py-px text-[8.5px] uppercase tracking-wide",
-													stopError
-														? "bg-[color-mix(in_srgb,var(--down)_18%,transparent)] font-semibold text-(--down)"
-														: "bg-[color-mix(in_srgb,var(--warn)_14%,transparent)] text-(--warn)",
-												)}
-											>
-												{trade.triggerReason}
-											</Typography.Span>
 											{trade.source === "history" ? (
 												<Typography.Span className="rounded-xs border border-(--line) px-1 py-px text-[8px] uppercase text-(--f4)">
 													history
@@ -553,7 +447,7 @@ export const JournalSurface = () => {
 										</Flex.Row>
 									</Flex.Row>
 
-									{/* Secondary: prices, timing, fees, stop state. */}
+									{/* Secondary: prices, timing, fees. */}
 									<Flex.Row className="items-center justify-between text-[9.5px] text-(--f2)">
 										<Typography.Span>
 											{trade.entryPrice} → {trade.exitPrice}
@@ -565,26 +459,6 @@ export const JournalSurface = () => {
 									<Flex.Row className="items-center justify-between border-(--line) border-t pt-1.5 text-[9px] text-(--f4)">
 										<Typography.Span>
 											fees {trade.entryFee} → {trade.exitFee}
-										</Typography.Span>
-										<Typography.Span>
-											<Typography.Span
-												className={
-													stopError
-														? "font-semibold uppercase text-(--down)"
-														: "uppercase"
-												}
-											>
-												{stopError ? "⚠ stop error" : trade.stopStatus}
-											</Typography.Span>
-											{trade.locked ? " · locked" : ""}
-											{trade.surgeArmed ? (
-												<Typography.Span className="text-(--acc)">
-													{" "}
-													· surge
-												</Typography.Span>
-											) : (
-												""
-											)}
 										</Typography.Span>
 									</Flex.Row>
 
@@ -610,26 +484,10 @@ export const JournalSurface = () => {
 										</Flex.Row>
 										<Flex.Row className="items-center justify-between">
 											<Typography.Span>
-												risk {trade.riskDistance} · trail {trade.trailDistance}{" "}
-												· max loss {trade.maxLoss}
-											</Typography.Span>
-											<Typography.Span>
 												best {trade.bestBid} / {trade.bestAsk} · BE{" "}
 												{trade.breakEven}
 											</Typography.Span>
 										</Flex.Row>
-										{hasDiagnostics ? (
-											<Flex.Row className="items-center justify-between border-(--line) border-t pt-1">
-												<Typography.Span className="truncate">
-													council: {trade.dominantMove}
-												</Typography.Span>
-												<Typography.Span>
-													mcts: {trade.recommendedAction} · {trade.iterations}{" "}
-													iters · E {trade.expectedOutcome} ±{" "}
-													{trade.outcomeUncertainty}
-												</Typography.Span>
-											</Flex.Row>
-										) : null}
 									</div>
 								</Panel>
 							);

@@ -3,293 +3,442 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { DiagnosticClock, DiagnosticClockT } from '../telemetry/diagnostic-clock.js';
-import { DiagnosticError, DiagnosticErrorT } from '../telemetry/diagnostic-error.js';
-import { DiagnosticGoroutine, DiagnosticGoroutineT } from '../telemetry/diagnostic-goroutine.js';
-import { DiagnosticHop, DiagnosticHopT } from '../telemetry/diagnostic-hop.js';
-import { DiagnosticPass, DiagnosticPassT } from '../telemetry/diagnostic-pass.js';
-import { DiagnosticQueue, DiagnosticQueueT } from '../telemetry/diagnostic-queue.js';
+import {
+	DiagnosticClock,
+	type DiagnosticClockT,
+} from "../telemetry/diagnostic-clock.js";
+import {
+	DiagnosticError,
+	type DiagnosticErrorT,
+} from "../telemetry/diagnostic-error.js";
+import {
+	DiagnosticGoroutine,
+	type DiagnosticGoroutineT,
+} from "../telemetry/diagnostic-goroutine.js";
+import {
+	DiagnosticHop,
+	type DiagnosticHopT,
+} from "../telemetry/diagnostic-hop.js";
+import {
+	DiagnosticPass,
+	type DiagnosticPassT,
+} from "../telemetry/diagnostic-pass.js";
+import {
+	DiagnosticQueue,
+	type DiagnosticQueueT,
+} from "../telemetry/diagnostic-queue.js";
 
+export class DiagnosticsFrame
+	implements flatbuffers.IUnpackableObject<DiagnosticsFrameT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): DiagnosticsFrame {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-export class DiagnosticsFrame implements flatbuffers.IUnpackableObject<DiagnosticsFrameT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):DiagnosticsFrame {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getRootAsDiagnosticsFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: DiagnosticsFrame,
+	): DiagnosticsFrame {
+		return (obj || new DiagnosticsFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsDiagnosticsFrame(bb:flatbuffers.ByteBuffer, obj?:DiagnosticsFrame):DiagnosticsFrame {
-  return (obj || new DiagnosticsFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsDiagnosticsFrame(
+		bb: flatbuffers.ByteBuffer,
+		obj?: DiagnosticsFrame,
+	): DiagnosticsFrame {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new DiagnosticsFrame()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsDiagnosticsFrame(bb:flatbuffers.ByteBuffer, obj?:DiagnosticsFrame):DiagnosticsFrame {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new DiagnosticsFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	status(): string | null;
+	status(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	status(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-status():string|null
-status(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-status(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	enabled(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-enabled():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	atNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-atNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	startedNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-startedNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	stages(index: number, obj?: DiagnosticClock): DiagnosticClock | null {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset
+			? (obj || new DiagnosticClock()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-stages(index: number, obj?:DiagnosticClock):DiagnosticClock|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? (obj || new DiagnosticClock()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	stagesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-stagesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	hops(index: number, obj?: DiagnosticHop): DiagnosticHop | null {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset
+			? (obj || new DiagnosticHop()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-hops(index: number, obj?:DiagnosticHop):DiagnosticHop|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? (obj || new DiagnosticHop()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	hopsLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-hopsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	queues(index: number, obj?: DiagnosticQueue): DiagnosticQueue | null {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset
+			? (obj || new DiagnosticQueue()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-queues(index: number, obj?:DiagnosticQueue):DiagnosticQueue|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? (obj || new DiagnosticQueue()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	queuesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-queuesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	errors(index: number, obj?: DiagnosticError): DiagnosticError | null {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset
+			? (obj || new DiagnosticError()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-errors(index: number, obj?:DiagnosticError):DiagnosticError|null {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? (obj || new DiagnosticError()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	errorsLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-errorsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	pass(obj?: DiagnosticPass): DiagnosticPass | null {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset
+			? (obj || new DiagnosticPass()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
 
-pass(obj?:DiagnosticPass):DiagnosticPass|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? (obj || new DiagnosticPass()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
+	goroutines(
+		index: number,
+		obj?: DiagnosticGoroutine,
+	): DiagnosticGoroutine | null {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset
+			? (obj || new DiagnosticGoroutine()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-goroutines(index: number, obj?:DiagnosticGoroutine):DiagnosticGoroutine|null {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? (obj || new DiagnosticGoroutine()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	goroutinesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-goroutinesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	static startDiagnosticsFrame(builder: flatbuffers.Builder) {
+		builder.startObject(10);
+	}
 
-static startDiagnosticsFrame(builder:flatbuffers.Builder) {
-  builder.startObject(10);
-}
+	static addStatus(
+		builder: flatbuffers.Builder,
+		statusOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, statusOffset, 0);
+	}
 
-static addStatus(builder:flatbuffers.Builder, statusOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, statusOffset, 0);
-}
+	static addEnabled(builder: flatbuffers.Builder, enabled: boolean) {
+		builder.addFieldInt8(1, +enabled, +false);
+	}
 
-static addEnabled(builder:flatbuffers.Builder, enabled:boolean) {
-  builder.addFieldInt8(1, +enabled, +false);
-}
+	static addAtNs(builder: flatbuffers.Builder, atNs: bigint) {
+		builder.addFieldInt64(2, atNs, BigInt("0"));
+	}
 
-static addAtNs(builder:flatbuffers.Builder, atNs:bigint) {
-  builder.addFieldInt64(2, atNs, BigInt('0'));
-}
+	static addStartedNs(builder: flatbuffers.Builder, startedNs: bigint) {
+		builder.addFieldInt64(3, startedNs, BigInt("0"));
+	}
 
-static addStartedNs(builder:flatbuffers.Builder, startedNs:bigint) {
-  builder.addFieldInt64(3, startedNs, BigInt('0'));
-}
+	static addStages(
+		builder: flatbuffers.Builder,
+		stagesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(4, stagesOffset, 0);
+	}
 
-static addStages(builder:flatbuffers.Builder, stagesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, stagesOffset, 0);
-}
+	static createStagesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createStagesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startStagesVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startStagesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static addHops(builder: flatbuffers.Builder, hopsOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(5, hopsOffset, 0);
+	}
 
-static addHops(builder:flatbuffers.Builder, hopsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, hopsOffset, 0);
-}
+	static createHopsVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createHopsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startHopsVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startHopsVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static addQueues(
+		builder: flatbuffers.Builder,
+		queuesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(6, queuesOffset, 0);
+	}
 
-static addQueues(builder:flatbuffers.Builder, queuesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, queuesOffset, 0);
-}
+	static createQueuesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createQueuesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startQueuesVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startQueuesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static addErrors(
+		builder: flatbuffers.Builder,
+		errorsOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(7, errorsOffset, 0);
+	}
 
-static addErrors(builder:flatbuffers.Builder, errorsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(7, errorsOffset, 0);
-}
+	static createErrorsVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createErrorsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startErrorsVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startErrorsVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static addPass(builder: flatbuffers.Builder, passOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(8, passOffset, 0);
+	}
 
-static addPass(builder:flatbuffers.Builder, passOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, passOffset, 0);
-}
+	static addGoroutines(
+		builder: flatbuffers.Builder,
+		goroutinesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(9, goroutinesOffset, 0);
+	}
 
-static addGoroutines(builder:flatbuffers.Builder, goroutinesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(9, goroutinesOffset, 0);
-}
+	static createGoroutinesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createGoroutinesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startGoroutinesVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startGoroutinesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static endDiagnosticsFrame(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // status
+		builder.requiredField(offset, 12); // stages
+		builder.requiredField(offset, 14); // hops
+		builder.requiredField(offset, 16); // queues
+		builder.requiredField(offset, 18); // errors
+		builder.requiredField(offset, 20); // pass
+		return offset;
+	}
 
-static endDiagnosticsFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // status
-  builder.requiredField(offset, 12) // stages
-  builder.requiredField(offset, 14) // hops
-  builder.requiredField(offset, 16) // queues
-  builder.requiredField(offset, 18) // errors
-  builder.requiredField(offset, 20) // pass
-  return offset;
-}
+	unpack(): DiagnosticsFrameT {
+		return new DiagnosticsFrameT(
+			this.status(),
+			this.enabled(),
+			this.atNs(),
+			this.startedNs(),
+			this.bb!.createObjList<DiagnosticClock, DiagnosticClockT>(
+				this.stages.bind(this),
+				this.stagesLength(),
+			),
+			this.bb!.createObjList<DiagnosticHop, DiagnosticHopT>(
+				this.hops.bind(this),
+				this.hopsLength(),
+			),
+			this.bb!.createObjList<DiagnosticQueue, DiagnosticQueueT>(
+				this.queues.bind(this),
+				this.queuesLength(),
+			),
+			this.bb!.createObjList<DiagnosticError, DiagnosticErrorT>(
+				this.errors.bind(this),
+				this.errorsLength(),
+			),
+			this.pass() !== null ? this.pass()!.unpack() : null,
+			this.bb!.createObjList<DiagnosticGoroutine, DiagnosticGoroutineT>(
+				this.goroutines.bind(this),
+				this.goroutinesLength(),
+			),
+		);
+	}
 
-
-unpack(): DiagnosticsFrameT {
-  return new DiagnosticsFrameT(
-    this.status(),
-    this.enabled(),
-    this.atNs(),
-    this.startedNs(),
-    this.bb!.createObjList<DiagnosticClock, DiagnosticClockT>(this.stages.bind(this), this.stagesLength()),
-    this.bb!.createObjList<DiagnosticHop, DiagnosticHopT>(this.hops.bind(this), this.hopsLength()),
-    this.bb!.createObjList<DiagnosticQueue, DiagnosticQueueT>(this.queues.bind(this), this.queuesLength()),
-    this.bb!.createObjList<DiagnosticError, DiagnosticErrorT>(this.errors.bind(this), this.errorsLength()),
-    (this.pass() !== null ? this.pass()!.unpack() : null),
-    this.bb!.createObjList<DiagnosticGoroutine, DiagnosticGoroutineT>(this.goroutines.bind(this), this.goroutinesLength())
-  );
-}
-
-
-unpackTo(_o: DiagnosticsFrameT): void {
-  _o.status = this.status();
-  _o.enabled = this.enabled();
-  _o.atNs = this.atNs();
-  _o.startedNs = this.startedNs();
-  _o.stages = this.bb!.createObjList<DiagnosticClock, DiagnosticClockT>(this.stages.bind(this), this.stagesLength());
-  _o.hops = this.bb!.createObjList<DiagnosticHop, DiagnosticHopT>(this.hops.bind(this), this.hopsLength());
-  _o.queues = this.bb!.createObjList<DiagnosticQueue, DiagnosticQueueT>(this.queues.bind(this), this.queuesLength());
-  _o.errors = this.bb!.createObjList<DiagnosticError, DiagnosticErrorT>(this.errors.bind(this), this.errorsLength());
-  _o.pass = (this.pass() !== null ? this.pass()!.unpack() : null);
-  _o.goroutines = this.bb!.createObjList<DiagnosticGoroutine, DiagnosticGoroutineT>(this.goroutines.bind(this), this.goroutinesLength());
-}
+	unpackTo(_o: DiagnosticsFrameT): void {
+		_o.status = this.status();
+		_o.enabled = this.enabled();
+		_o.atNs = this.atNs();
+		_o.startedNs = this.startedNs();
+		_o.stages = this.bb!.createObjList<DiagnosticClock, DiagnosticClockT>(
+			this.stages.bind(this),
+			this.stagesLength(),
+		);
+		_o.hops = this.bb!.createObjList<DiagnosticHop, DiagnosticHopT>(
+			this.hops.bind(this),
+			this.hopsLength(),
+		);
+		_o.queues = this.bb!.createObjList<DiagnosticQueue, DiagnosticQueueT>(
+			this.queues.bind(this),
+			this.queuesLength(),
+		);
+		_o.errors = this.bb!.createObjList<DiagnosticError, DiagnosticErrorT>(
+			this.errors.bind(this),
+			this.errorsLength(),
+		);
+		_o.pass = this.pass() !== null ? this.pass()!.unpack() : null;
+		_o.goroutines = this.bb!.createObjList<
+			DiagnosticGoroutine,
+			DiagnosticGoroutineT
+		>(this.goroutines.bind(this), this.goroutinesLength());
+	}
 }
 
 export class DiagnosticsFrameT implements flatbuffers.IGeneratedObject {
-constructor(
-  public status: string|Uint8Array|null = null,
-  public enabled: boolean = false,
-  public atNs: bigint = BigInt('0'),
-  public startedNs: bigint = BigInt('0'),
-  public stages: (DiagnosticClockT)[] = [],
-  public hops: (DiagnosticHopT)[] = [],
-  public queues: (DiagnosticQueueT)[] = [],
-  public errors: (DiagnosticErrorT)[] = [],
-  public pass: DiagnosticPassT|null = null,
-  public goroutines: (DiagnosticGoroutineT)[] = []
-){}
+	constructor(
+		public status: string | Uint8Array | null = null,
+		public enabled: boolean = false,
+		public atNs: bigint = BigInt("0"),
+		public startedNs: bigint = BigInt("0"),
+		public stages: DiagnosticClockT[] = [],
+		public hops: DiagnosticHopT[] = [],
+		public queues: DiagnosticQueueT[] = [],
+		public errors: DiagnosticErrorT[] = [],
+		public pass: DiagnosticPassT | null = null,
+		public goroutines: DiagnosticGoroutineT[] = [],
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const status =
+			this.status !== null ? builder.createString(this.status!) : 0;
+		const stages = DiagnosticsFrame.createStagesVector(
+			builder,
+			builder.createObjectOffsetList(this.stages),
+		);
+		const hops = DiagnosticsFrame.createHopsVector(
+			builder,
+			builder.createObjectOffsetList(this.hops),
+		);
+		const queues = DiagnosticsFrame.createQueuesVector(
+			builder,
+			builder.createObjectOffsetList(this.queues),
+		);
+		const errors = DiagnosticsFrame.createErrorsVector(
+			builder,
+			builder.createObjectOffsetList(this.errors),
+		);
+		const pass = this.pass !== null ? this.pass!.pack(builder) : 0;
+		const goroutines = DiagnosticsFrame.createGoroutinesVector(
+			builder,
+			builder.createObjectOffsetList(this.goroutines),
+		);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const status = (this.status !== null ? builder.createString(this.status!) : 0);
-  const stages = DiagnosticsFrame.createStagesVector(builder, builder.createObjectOffsetList(this.stages));
-  const hops = DiagnosticsFrame.createHopsVector(builder, builder.createObjectOffsetList(this.hops));
-  const queues = DiagnosticsFrame.createQueuesVector(builder, builder.createObjectOffsetList(this.queues));
-  const errors = DiagnosticsFrame.createErrorsVector(builder, builder.createObjectOffsetList(this.errors));
-  const pass = (this.pass !== null ? this.pass!.pack(builder) : 0);
-  const goroutines = DiagnosticsFrame.createGoroutinesVector(builder, builder.createObjectOffsetList(this.goroutines));
+		DiagnosticsFrame.startDiagnosticsFrame(builder);
+		DiagnosticsFrame.addStatus(builder, status);
+		DiagnosticsFrame.addEnabled(builder, this.enabled);
+		DiagnosticsFrame.addAtNs(builder, this.atNs);
+		DiagnosticsFrame.addStartedNs(builder, this.startedNs);
+		DiagnosticsFrame.addStages(builder, stages);
+		DiagnosticsFrame.addHops(builder, hops);
+		DiagnosticsFrame.addQueues(builder, queues);
+		DiagnosticsFrame.addErrors(builder, errors);
+		DiagnosticsFrame.addPass(builder, pass);
+		DiagnosticsFrame.addGoroutines(builder, goroutines);
 
-  DiagnosticsFrame.startDiagnosticsFrame(builder);
-  DiagnosticsFrame.addStatus(builder, status);
-  DiagnosticsFrame.addEnabled(builder, this.enabled);
-  DiagnosticsFrame.addAtNs(builder, this.atNs);
-  DiagnosticsFrame.addStartedNs(builder, this.startedNs);
-  DiagnosticsFrame.addStages(builder, stages);
-  DiagnosticsFrame.addHops(builder, hops);
-  DiagnosticsFrame.addQueues(builder, queues);
-  DiagnosticsFrame.addErrors(builder, errors);
-  DiagnosticsFrame.addPass(builder, pass);
-  DiagnosticsFrame.addGoroutines(builder, goroutines);
-
-  return DiagnosticsFrame.endDiagnosticsFrame(builder);
-}
+		return DiagnosticsFrame.endDiagnosticsFrame(builder);
+	}
 }

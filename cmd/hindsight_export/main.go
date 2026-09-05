@@ -61,7 +61,6 @@ type round struct {
 	Consensus     map[string]float64 `json:"consensus,omitempty"`
 
 	// What the search did, when it ran at all.
-	Search *searchRound `json:"search,omitempty"`
 
 	// What entering would have cost at that moment.
 	Execution map[string]float64 `json:"execution,omitempty"`
@@ -76,28 +75,6 @@ type round struct {
 	ReferencePrice   string  `json:"referencePrice,omitempty"`
 	ProposedNotional string  `json:"proposedNotional,omitempty"`
 	TaskSkill        float64 `json:"taskSkill,omitempty"`
-}
-
-/*
-searchRound is the causal search's own account of the round: what it concluded,
-how hard it looked, and how the root actions compared.
-*/
-type searchRound struct {
-	RecommendedAction    string         `json:"recommendedAction"`
-	IdentificationStatus string         `json:"identificationStatus"`
-	DecisionUnavailable  bool           `json:"decisionUnavailable"`
-	Iterations           int64          `json:"iterations"`
-	Horizon              int64          `json:"horizon"`
-	MaxDepth             int64          `json:"maxDepth"`
-	TotalNodes           int64          `json:"totalNodes"`
-	ExpectedOutcome      float64        `json:"expectedOutcome"`
-	OutcomeUncertainty   float64        `json:"outcomeUncertainty"`
-	TransitionSource     string         `json:"transitionSource,omitempty"`
-	DominantMove         string         `json:"consensusDominantMove,omitempty"`
-	Participants         int64          `json:"consensusParticipants,omitempty"`
-	Vetoes               []string       `json:"vetoes,omitempty"`
-	Synergies            []string       `json:"synergies,omitempty"`
-	Branches             []searchBranch `json:"branches,omitempty"`
 }
 
 /* searchBranch is one root action's aggregate statistics. */
@@ -159,8 +136,6 @@ func main() {
 	limit := flag.Int("limit", 0, "stop after N exported records (0 = no limit)")
 	metrics := flag.Bool("metrics", false, "include signal metric measurements on each round")
 	summarize := flag.Bool("summary", false, "emit one aggregate object instead of per-round lines")
-	perspectives := flag.Bool("perspectives", false, "export advisor perspective records instead of decision rounds")
-	advisor := flag.String("advisor", "", "only this advisor name (when -perspectives is set)")
 	trainingClock := flag.String("training-clock", "", "also export retained metric observations when this clock advances")
 	opportunities := flag.Bool("opportunities", false, "also export canonical Hindsight price episodes")
 	// Go's flag package stops at the first positional argument, so parse the
@@ -230,7 +205,7 @@ func main() {
 	symbols := make(map[string]bool)
 	confidences := make([]float64, 0, len(states))
 
-	if *perspectives || *trainingClock != "" {
+	if *trainingClock != "" {
 		observationStream := newTrainingObservationStream(*trainingClock)
 
 		for _, entry := range states {
@@ -281,52 +256,6 @@ func main() {
 				}
 			}
 
-			if !*perspectives || state.PerspectivesLength() == 0 {
-				continue
-			}
-
-			for perspectiveIndex := 0; perspectiveIndex < state.PerspectivesLength(); perspectiveIndex++ {
-				perspective := new(telemetry.EnvelopePerspective)
-
-				if !state.Perspectives(perspective, perspectiveIndex) {
-					continue
-				}
-
-				advisorName := string(perspective.Advisor())
-
-				if *advisor != "" && advisorName != *advisor {
-					continue
-				}
-
-				symbolName := string(perspective.Symbol())
-
-				if *symbol != "" && symbolName != *symbol {
-					continue
-				}
-
-				record := buildPerspectiveRecord(
-					selected,
-					uint64(entry.Envelope.Origin.Sequence),
-					entry.Envelope.Ordinal,
-					state.Tick(),
-					perspective,
-					metricsMap,
-				)
-
-				written++
-
-				if err := encoder.Encode(record); err != nil {
-					fmt.Fprintln(os.Stderr, "encode perspective:", err)
-					os.Exit(1)
-				}
-
-				if *limit > 0 && written >= *limit {
-					buffered.Flush()
-					fmt.Fprintf(os.Stderr, "exported %d records from run %s\n", written, selected)
-
-					return
-				}
-			}
 		}
 
 		if *opportunities {

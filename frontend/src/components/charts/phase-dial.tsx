@@ -1,5 +1,6 @@
 import { createStore } from "@tanstack/store";
 import { createRef, useEffect } from "react";
+import type { FluidOscillator } from "#/components/fluid-3d/wire";
 import {
 	clearCanvas,
 	resizeCanvas,
@@ -9,7 +10,6 @@ import type {
 	TerminalPhaseStatus,
 	TerminalWaveMode,
 } from "#/components/terminal/charts-frame";
-import type { FluidOscillator } from "#/components/fluid-3d/wire";
 
 /*
 The order-book phase dial is the live oscillator state, not an HCAM corpus
@@ -73,9 +73,7 @@ export const phaseChannelResultants = (
 			count,
 			totalAmplitude,
 			coherence:
-				totalAmplitude > 0
-					? Math.hypot(real, imaginary) / totalAmplitude
-					: 0,
+				totalAmplitude > 0 ? Math.hypot(real, imaginary) / totalAmplitude : 0,
 			phase: count > 0 ? Math.atan2(imaginary, real) : 0,
 		};
 	});

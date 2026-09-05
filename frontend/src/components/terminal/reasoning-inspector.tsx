@@ -6,12 +6,7 @@ import type {
 	ReasoningTopology,
 } from "#/types/reasoning";
 
-const TIER_ORDER: ReasoningTier[] = [
-	"measurement",
-	"field",
-	"scm",
-	"decision",
-];
+const TIER_ORDER: ReasoningTier[] = ["measurement", "field", "scm", "decision"];
 
 const TIER_LABELS: Record<ReasoningTier, string> = {
 	measurement: "01 · Measurements",
@@ -107,9 +102,13 @@ const SearchBranch = ({
 					<span className="text-zinc-500">visits</span>
 					<span className="text-zinc-200">{node.visits}</span>
 					<span className="text-zinc-500">mean</span>
-					<span className={metricClass(node.meanReward)}>{finite(node.meanReward)}</span>
+					<span className={metricClass(node.meanReward)}>
+						{finite(node.meanReward)}
+					</span>
 					<span className="text-zinc-500">UCT exploit</span>
-					<span className={metricClass(node.exploitation)}>{finite(node.exploitation)}</span>
+					<span className={metricClass(node.exploitation)}>
+						{finite(node.exploitation)}
+					</span>
 					<span className="text-zinc-500">explore</span>
 					<span className="text-zinc-200">{finite(node.exploration)}</span>
 					<span className="text-zinc-500">do-expect</span>
@@ -117,13 +116,17 @@ const SearchBranch = ({
 						{finite(node.causalExpectation)}
 					</span>
 					<span className="text-zinc-500">score</span>
-					<span className={metricClass(node.selectionScore)}>{finite(node.selectionScore)}</span>
+					<span className={metricClass(node.selectionScore)}>
+						{finite(node.selectionScore)}
+					</span>
 				</div>
 
 				<div className="mt-2 h-1 overflow-hidden rounded-full bg-zinc-800">
 					<div
 						className="h-full bg-emerald-300/70"
-						style={{ width: `${Math.max(0, Math.min(100, observedShare * 100))}%` }}
+						style={{
+							width: `${Math.max(0, Math.min(100, observedShare * 100))}%`,
+						}}
 					/>
 				</div>
 				<div className="mt-1 flex justify-between font-mono text-[9px] uppercase text-zinc-500">
@@ -132,7 +135,9 @@ const SearchBranch = ({
 				</div>
 
 				<div className="mt-2 flex items-center justify-between gap-3 border-t border-zinc-800/80 pt-2 font-mono text-[9px] uppercase">
-					<span className={node.scmReady ? "text-emerald-300" : "text-amber-300"}>
+					<span
+						className={node.scmReady ? "text-emerald-300" : "text-amber-300"}
+					>
 						SCM {node.scmReady ? "ready" : "warming"}
 					</span>
 					<span className="truncate text-zinc-500" title={node.scmReason}>
@@ -196,7 +201,9 @@ const TopologyLane = ({
 							)}
 						</div>
 						<div className="mt-2 flex justify-between font-mono text-[9px] text-zinc-500">
-							<span className={metricClass(node.value)}>{finite(node.value)}</span>
+							<span className={metricClass(node.value)}>
+								{finite(node.value)}
+							</span>
 							<span>conf {percent(node.confidence)}</span>
 						</div>
 					</div>
@@ -214,15 +221,24 @@ export const ReasoningInspector = ({
 }: ReasoningInspectorProps) => {
 	const reasoningPayload = (payload ?? null) as ReasoningPayload | null;
 	const topology = explicitTopology ?? reasoningPayload?.reasoning ?? null;
-	const search = explicitSearch ?? reasoningPayload?.search ?? reasoningPayload?.root ?? null;
+	const search =
+		explicitSearch ??
+		reasoningPayload?.search ??
+		reasoningPayload?.root ??
+		null;
 	const stateEntries = useMemo(
-		() => Object.entries(topology?.currentState ?? {}).sort(([left], [right]) => left.localeCompare(right)),
+		() =>
+			Object.entries(topology?.currentState ?? {}).sort(([left], [right]) =>
+				left.localeCompare(right),
+			),
 		[topology],
 	);
 
 	if (!topology && !search) {
 		return (
-			<div className={`rounded-sm border border-zinc-800 bg-zinc-950/50 p-4 ${className}`}>
+			<div
+				className={`rounded-sm border border-zinc-800 bg-zinc-950/50 p-4 ${className}`}
+			>
 				<p className="font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-600">
 					Reasoning trace unavailable
 				</p>
@@ -231,7 +247,9 @@ export const ReasoningInspector = ({
 	}
 
 	return (
-		<section className={`grid min-h-0 gap-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(22rem,0.75fr)] ${className}`}>
+		<section
+			className={`grid min-h-0 gap-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(22rem,0.75fr)] ${className}`}
+		>
 			<div className="min-h-0 overflow-hidden rounded-sm border border-zinc-800 bg-zinc-950/40">
 				<div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-3 py-2">
 					<div>
@@ -244,7 +262,11 @@ export const ReasoningInspector = ({
 					</div>
 					{topology && (
 						<div className="flex items-center gap-3 font-mono text-[9px] uppercase text-zinc-500">
-							<span className={topology.ready ? "text-emerald-300" : "text-amber-300"}>
+							<span
+								className={
+									topology.ready ? "text-emerald-300" : "text-amber-300"
+								}
+							>
 								{topology.ready ? "search ready" : "evidence incomplete"}
 							</span>
 							<span>{topology.observedRows} observed rows</span>
@@ -266,13 +288,18 @@ export const ReasoningInspector = ({
 							</div>
 							<div className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3 lg:grid-cols-4">
 								{stateEntries.map(([name, value]) => (
-									<div key={name} className="flex justify-between gap-2 font-mono text-[9px]">
+									<div
+										key={name}
+										className="flex justify-between gap-2 font-mono text-[9px]"
+									>
 										<span className="truncate text-zinc-600">{name}</span>
 										<span className={metricClass(value)}>{finite(value)}</span>
 									</div>
 								))}
 							</div>
-							<p className="mt-3 font-mono text-[9px] text-zinc-600">{topology.reason}</p>
+							<p className="mt-3 font-mono text-[9px] text-zinc-600">
+								{topology.reason}
+							</p>
 						</div>
 					</>
 				)}

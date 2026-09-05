@@ -3,176 +3,199 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class DiagnosticClock
+	implements flatbuffers.IUnpackableObject<DiagnosticClockT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): DiagnosticClock {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsDiagnosticClock(
+		bb: flatbuffers.ByteBuffer,
+		obj?: DiagnosticClock,
+	): DiagnosticClock {
+		return (obj || new DiagnosticClock()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class DiagnosticClock implements flatbuffers.IUnpackableObject<DiagnosticClockT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):DiagnosticClock {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsDiagnosticClock(
+		bb: flatbuffers.ByteBuffer,
+		obj?: DiagnosticClock,
+	): DiagnosticClock {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new DiagnosticClock()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsDiagnosticClock(bb:flatbuffers.ByteBuffer, obj?:DiagnosticClock):DiagnosticClock {
-  return (obj || new DiagnosticClock()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	name(): string | null;
+	name(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	name(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsDiagnosticClock(bb:flatbuffers.ByteBuffer, obj?:DiagnosticClock):DiagnosticClock {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new DiagnosticClock()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	count(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
 
-name():string|null
-name(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-name(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	totalNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
 
-count():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
+	lastNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
 
-totalNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
+	maxNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
 
-lastNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
+	lastAtNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-maxNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
+	active(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
 
-lastAtNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	startedNs(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-active():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
+	static startDiagnosticClock(builder: flatbuffers.Builder) {
+		builder.startObject(8);
+	}
 
-startedNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	static addName(builder: flatbuffers.Builder, nameOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, nameOffset, 0);
+	}
 
-static startDiagnosticClock(builder:flatbuffers.Builder) {
-  builder.startObject(8);
-}
+	static addCount(builder: flatbuffers.Builder, count: bigint) {
+		builder.addFieldInt64(1, count, BigInt("0"));
+	}
 
-static addName(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, nameOffset, 0);
-}
+	static addTotalNs(builder: flatbuffers.Builder, totalNs: bigint) {
+		builder.addFieldInt64(2, totalNs, BigInt("0"));
+	}
 
-static addCount(builder:flatbuffers.Builder, count:bigint) {
-  builder.addFieldInt64(1, count, BigInt('0'));
-}
+	static addLastNs(builder: flatbuffers.Builder, lastNs: bigint) {
+		builder.addFieldInt64(3, lastNs, BigInt("0"));
+	}
 
-static addTotalNs(builder:flatbuffers.Builder, totalNs:bigint) {
-  builder.addFieldInt64(2, totalNs, BigInt('0'));
-}
+	static addMaxNs(builder: flatbuffers.Builder, maxNs: bigint) {
+		builder.addFieldInt64(4, maxNs, BigInt("0"));
+	}
 
-static addLastNs(builder:flatbuffers.Builder, lastNs:bigint) {
-  builder.addFieldInt64(3, lastNs, BigInt('0'));
-}
+	static addLastAtNs(builder: flatbuffers.Builder, lastAtNs: bigint) {
+		builder.addFieldInt64(5, lastAtNs, BigInt("0"));
+	}
 
-static addMaxNs(builder:flatbuffers.Builder, maxNs:bigint) {
-  builder.addFieldInt64(4, maxNs, BigInt('0'));
-}
+	static addActive(builder: flatbuffers.Builder, active: bigint) {
+		builder.addFieldInt64(6, active, BigInt("0"));
+	}
 
-static addLastAtNs(builder:flatbuffers.Builder, lastAtNs:bigint) {
-  builder.addFieldInt64(5, lastAtNs, BigInt('0'));
-}
+	static addStartedNs(builder: flatbuffers.Builder, startedNs: bigint) {
+		builder.addFieldInt64(7, startedNs, BigInt("0"));
+	}
 
-static addActive(builder:flatbuffers.Builder, active:bigint) {
-  builder.addFieldInt64(6, active, BigInt('0'));
-}
+	static endDiagnosticClock(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // name
+		return offset;
+	}
 
-static addStartedNs(builder:flatbuffers.Builder, startedNs:bigint) {
-  builder.addFieldInt64(7, startedNs, BigInt('0'));
-}
+	static createDiagnosticClock(
+		builder: flatbuffers.Builder,
+		nameOffset: flatbuffers.Offset,
+		count: bigint,
+		totalNs: bigint,
+		lastNs: bigint,
+		maxNs: bigint,
+		lastAtNs: bigint,
+		active: bigint,
+		startedNs: bigint,
+	): flatbuffers.Offset {
+		DiagnosticClock.startDiagnosticClock(builder);
+		DiagnosticClock.addName(builder, nameOffset);
+		DiagnosticClock.addCount(builder, count);
+		DiagnosticClock.addTotalNs(builder, totalNs);
+		DiagnosticClock.addLastNs(builder, lastNs);
+		DiagnosticClock.addMaxNs(builder, maxNs);
+		DiagnosticClock.addLastAtNs(builder, lastAtNs);
+		DiagnosticClock.addActive(builder, active);
+		DiagnosticClock.addStartedNs(builder, startedNs);
+		return DiagnosticClock.endDiagnosticClock(builder);
+	}
 
-static endDiagnosticClock(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // name
-  return offset;
-}
+	unpack(): DiagnosticClockT {
+		return new DiagnosticClockT(
+			this.name(),
+			this.count(),
+			this.totalNs(),
+			this.lastNs(),
+			this.maxNs(),
+			this.lastAtNs(),
+			this.active(),
+			this.startedNs(),
+		);
+	}
 
-static createDiagnosticClock(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset, count:bigint, totalNs:bigint, lastNs:bigint, maxNs:bigint, lastAtNs:bigint, active:bigint, startedNs:bigint):flatbuffers.Offset {
-  DiagnosticClock.startDiagnosticClock(builder);
-  DiagnosticClock.addName(builder, nameOffset);
-  DiagnosticClock.addCount(builder, count);
-  DiagnosticClock.addTotalNs(builder, totalNs);
-  DiagnosticClock.addLastNs(builder, lastNs);
-  DiagnosticClock.addMaxNs(builder, maxNs);
-  DiagnosticClock.addLastAtNs(builder, lastAtNs);
-  DiagnosticClock.addActive(builder, active);
-  DiagnosticClock.addStartedNs(builder, startedNs);
-  return DiagnosticClock.endDiagnosticClock(builder);
-}
-
-unpack(): DiagnosticClockT {
-  return new DiagnosticClockT(
-    this.name(),
-    this.count(),
-    this.totalNs(),
-    this.lastNs(),
-    this.maxNs(),
-    this.lastAtNs(),
-    this.active(),
-    this.startedNs()
-  );
-}
-
-
-unpackTo(_o: DiagnosticClockT): void {
-  _o.name = this.name();
-  _o.count = this.count();
-  _o.totalNs = this.totalNs();
-  _o.lastNs = this.lastNs();
-  _o.maxNs = this.maxNs();
-  _o.lastAtNs = this.lastAtNs();
-  _o.active = this.active();
-  _o.startedNs = this.startedNs();
-}
+	unpackTo(_o: DiagnosticClockT): void {
+		_o.name = this.name();
+		_o.count = this.count();
+		_o.totalNs = this.totalNs();
+		_o.lastNs = this.lastNs();
+		_o.maxNs = this.maxNs();
+		_o.lastAtNs = this.lastAtNs();
+		_o.active = this.active();
+		_o.startedNs = this.startedNs();
+	}
 }
 
 export class DiagnosticClockT implements flatbuffers.IGeneratedObject {
-constructor(
-  public name: string|Uint8Array|null = null,
-  public count: bigint = BigInt('0'),
-  public totalNs: bigint = BigInt('0'),
-  public lastNs: bigint = BigInt('0'),
-  public maxNs: bigint = BigInt('0'),
-  public lastAtNs: bigint = BigInt('0'),
-  public active: bigint = BigInt('0'),
-  public startedNs: bigint = BigInt('0')
-){}
+	constructor(
+		public name: string | Uint8Array | null = null,
+		public count: bigint = BigInt("0"),
+		public totalNs: bigint = BigInt("0"),
+		public lastNs: bigint = BigInt("0"),
+		public maxNs: bigint = BigInt("0"),
+		public lastAtNs: bigint = BigInt("0"),
+		public active: bigint = BigInt("0"),
+		public startedNs: bigint = BigInt("0"),
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const name = this.name !== null ? builder.createString(this.name!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const name = (this.name !== null ? builder.createString(this.name!) : 0);
-
-  return DiagnosticClock.createDiagnosticClock(builder,
-    name,
-    this.count,
-    this.totalNs,
-    this.lastNs,
-    this.maxNs,
-    this.lastAtNs,
-    this.active,
-    this.startedNs
-  );
-}
+		return DiagnosticClock.createDiagnosticClock(
+			builder,
+			name,
+			this.count,
+			this.totalNs,
+			this.lastNs,
+			this.maxNs,
+			this.lastAtNs,
+			this.active,
+			this.startedNs,
+		);
+	}
 }

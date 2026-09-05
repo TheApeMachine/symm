@@ -3,181 +3,217 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class EnvelopeCognitionBranch
+	implements flatbuffers.IUnpackableObject<EnvelopeCognitionBranchT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeCognitionBranch {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsEnvelopeCognitionBranch(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeCognitionBranch,
+	): EnvelopeCognitionBranch {
+		return (obj || new EnvelopeCognitionBranch()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class EnvelopeCognitionBranch implements flatbuffers.IUnpackableObject<EnvelopeCognitionBranchT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeCognitionBranch {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsEnvelopeCognitionBranch(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeCognitionBranch,
+	): EnvelopeCognitionBranch {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopeCognitionBranch()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsEnvelopeCognitionBranch(bb:flatbuffers.ByteBuffer, obj?:EnvelopeCognitionBranch):EnvelopeCognitionBranch {
-  return (obj || new EnvelopeCognitionBranch()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	id(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-static getSizePrefixedRootAsEnvelopeCognitionBranch(bb:flatbuffers.ByteBuffer, obj?:EnvelopeCognitionBranch):EnvelopeCognitionBranch {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeCognitionBranch()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	parentId(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-id():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	token(): string | null;
+	token(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	token(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-parentId():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	prefix(): string | null;
+	prefix(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	prefix(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-token():string|null
-token(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-token(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	key(): string | null;
+	key(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	key(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-prefix():string|null
-prefix(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-prefix(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	depth(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-key():string|null
-key(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-key(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	probability(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-depth():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	count(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
+	}
 
-probability():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static startEnvelopeCognitionBranch(builder: flatbuffers.Builder) {
+		builder.startObject(8);
+	}
 
-count():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
+	static addId(builder: flatbuffers.Builder, id: bigint) {
+		builder.addFieldInt64(0, id, BigInt("0"));
+	}
 
-static startEnvelopeCognitionBranch(builder:flatbuffers.Builder) {
-  builder.startObject(8);
-}
+	static addParentId(builder: flatbuffers.Builder, parentId: bigint) {
+		builder.addFieldInt64(1, parentId, BigInt("0"));
+	}
 
-static addId(builder:flatbuffers.Builder, id:bigint) {
-  builder.addFieldInt64(0, id, BigInt('0'));
-}
+	static addToken(
+		builder: flatbuffers.Builder,
+		tokenOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, tokenOffset, 0);
+	}
 
-static addParentId(builder:flatbuffers.Builder, parentId:bigint) {
-  builder.addFieldInt64(1, parentId, BigInt('0'));
-}
+	static addPrefix(
+		builder: flatbuffers.Builder,
+		prefixOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(3, prefixOffset, 0);
+	}
 
-static addToken(builder:flatbuffers.Builder, tokenOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, tokenOffset, 0);
-}
+	static addKey(builder: flatbuffers.Builder, keyOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(4, keyOffset, 0);
+	}
 
-static addPrefix(builder:flatbuffers.Builder, prefixOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(3, prefixOffset, 0);
-}
+	static addDepth(builder: flatbuffers.Builder, depth: bigint) {
+		builder.addFieldInt64(5, depth, BigInt("0"));
+	}
 
-static addKey(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, keyOffset, 0);
-}
+	static addProbability(builder: flatbuffers.Builder, probability: number) {
+		builder.addFieldFloat64(6, probability, 0.0);
+	}
 
-static addDepth(builder:flatbuffers.Builder, depth:bigint) {
-  builder.addFieldInt64(5, depth, BigInt('0'));
-}
+	static addCount(builder: flatbuffers.Builder, count: bigint) {
+		builder.addFieldInt64(7, count, BigInt("0"));
+	}
 
-static addProbability(builder:flatbuffers.Builder, probability:number) {
-  builder.addFieldFloat64(6, probability, 0.0);
-}
+	static endEnvelopeCognitionBranch(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static addCount(builder:flatbuffers.Builder, count:bigint) {
-  builder.addFieldInt64(7, count, BigInt('0'));
-}
+	static createEnvelopeCognitionBranch(
+		builder: flatbuffers.Builder,
+		id: bigint,
+		parentId: bigint,
+		tokenOffset: flatbuffers.Offset,
+		prefixOffset: flatbuffers.Offset,
+		keyOffset: flatbuffers.Offset,
+		depth: bigint,
+		probability: number,
+		count: bigint,
+	): flatbuffers.Offset {
+		EnvelopeCognitionBranch.startEnvelopeCognitionBranch(builder);
+		EnvelopeCognitionBranch.addId(builder, id);
+		EnvelopeCognitionBranch.addParentId(builder, parentId);
+		EnvelopeCognitionBranch.addToken(builder, tokenOffset);
+		EnvelopeCognitionBranch.addPrefix(builder, prefixOffset);
+		EnvelopeCognitionBranch.addKey(builder, keyOffset);
+		EnvelopeCognitionBranch.addDepth(builder, depth);
+		EnvelopeCognitionBranch.addProbability(builder, probability);
+		EnvelopeCognitionBranch.addCount(builder, count);
+		return EnvelopeCognitionBranch.endEnvelopeCognitionBranch(builder);
+	}
 
-static endEnvelopeCognitionBranch(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): EnvelopeCognitionBranchT {
+		return new EnvelopeCognitionBranchT(
+			this.id(),
+			this.parentId(),
+			this.token(),
+			this.prefix(),
+			this.key(),
+			this.depth(),
+			this.probability(),
+			this.count(),
+		);
+	}
 
-static createEnvelopeCognitionBranch(builder:flatbuffers.Builder, id:bigint, parentId:bigint, tokenOffset:flatbuffers.Offset, prefixOffset:flatbuffers.Offset, keyOffset:flatbuffers.Offset, depth:bigint, probability:number, count:bigint):flatbuffers.Offset {
-  EnvelopeCognitionBranch.startEnvelopeCognitionBranch(builder);
-  EnvelopeCognitionBranch.addId(builder, id);
-  EnvelopeCognitionBranch.addParentId(builder, parentId);
-  EnvelopeCognitionBranch.addToken(builder, tokenOffset);
-  EnvelopeCognitionBranch.addPrefix(builder, prefixOffset);
-  EnvelopeCognitionBranch.addKey(builder, keyOffset);
-  EnvelopeCognitionBranch.addDepth(builder, depth);
-  EnvelopeCognitionBranch.addProbability(builder, probability);
-  EnvelopeCognitionBranch.addCount(builder, count);
-  return EnvelopeCognitionBranch.endEnvelopeCognitionBranch(builder);
-}
-
-unpack(): EnvelopeCognitionBranchT {
-  return new EnvelopeCognitionBranchT(
-    this.id(),
-    this.parentId(),
-    this.token(),
-    this.prefix(),
-    this.key(),
-    this.depth(),
-    this.probability(),
-    this.count()
-  );
-}
-
-
-unpackTo(_o: EnvelopeCognitionBranchT): void {
-  _o.id = this.id();
-  _o.parentId = this.parentId();
-  _o.token = this.token();
-  _o.prefix = this.prefix();
-  _o.key = this.key();
-  _o.depth = this.depth();
-  _o.probability = this.probability();
-  _o.count = this.count();
-}
+	unpackTo(_o: EnvelopeCognitionBranchT): void {
+		_o.id = this.id();
+		_o.parentId = this.parentId();
+		_o.token = this.token();
+		_o.prefix = this.prefix();
+		_o.key = this.key();
+		_o.depth = this.depth();
+		_o.probability = this.probability();
+		_o.count = this.count();
+	}
 }
 
 export class EnvelopeCognitionBranchT implements flatbuffers.IGeneratedObject {
-constructor(
-  public id: bigint = BigInt('0'),
-  public parentId: bigint = BigInt('0'),
-  public token: string|Uint8Array|null = null,
-  public prefix: string|Uint8Array|null = null,
-  public key: string|Uint8Array|null = null,
-  public depth: bigint = BigInt('0'),
-  public probability: number = 0.0,
-  public count: bigint = BigInt('0')
-){}
+	constructor(
+		public id: bigint = BigInt("0"),
+		public parentId: bigint = BigInt("0"),
+		public token: string | Uint8Array | null = null,
+		public prefix: string | Uint8Array | null = null,
+		public key: string | Uint8Array | null = null,
+		public depth: bigint = BigInt("0"),
+		public probability: number = 0.0,
+		public count: bigint = BigInt("0"),
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const token = this.token !== null ? builder.createString(this.token!) : 0;
+		const prefix =
+			this.prefix !== null ? builder.createString(this.prefix!) : 0;
+		const key = this.key !== null ? builder.createString(this.key!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const token = (this.token !== null ? builder.createString(this.token!) : 0);
-  const prefix = (this.prefix !== null ? builder.createString(this.prefix!) : 0);
-  const key = (this.key !== null ? builder.createString(this.key!) : 0);
-
-  return EnvelopeCognitionBranch.createEnvelopeCognitionBranch(builder,
-    this.id,
-    this.parentId,
-    token,
-    prefix,
-    key,
-    this.depth,
-    this.probability,
-    this.count
-  );
-}
+		return EnvelopeCognitionBranch.createEnvelopeCognitionBranch(
+			builder,
+			this.id,
+			this.parentId,
+			token,
+			prefix,
+			key,
+			this.depth,
+			this.probability,
+			this.count,
+		);
+	}
 }

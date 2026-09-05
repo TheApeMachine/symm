@@ -63,5 +63,3 @@ describe("cognitiveScopes", () => {
 		).toEqual(["AAVE/USD", "SOL/USD"]);
 	});
 });
-
-

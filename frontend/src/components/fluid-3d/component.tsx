@@ -389,7 +389,8 @@ export const FluidInspector = () => {
 							wave modes
 						</span>
 						<span className="inline-flex items-center justify-end gap-1.5">
-							<span className="inline-block h-px w-3 bg-(--line2)" />50% amplitude
+							<span className="inline-block h-px w-3 bg-(--line2)" />
+							50% amplitude
 						</span>
 						<span className="inline-flex items-center justify-end gap-1.5">
 							<span className="inline-block h-1.5 w-3 bg-(--acc)" />

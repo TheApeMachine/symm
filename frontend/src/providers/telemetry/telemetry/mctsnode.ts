@@ -3,453 +3,572 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { NamedNumber, NamedNumberT } from '../telemetry/named-number.js';
-
+import { NamedNumber, type NamedNumberT } from "../telemetry/named-number.js";
 
 export class MCTSNode implements flatbuffers.IUnpackableObject<MCTSNodeT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):MCTSNode {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
-
-static getRootAsMCTSNode(bb:flatbuffers.ByteBuffer, obj?:MCTSNode):MCTSNode {
-  return (obj || new MCTSNode()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
-
-static getSizePrefixedRootAsMCTSNode(bb:flatbuffers.ByteBuffer, obj?:MCTSNode):MCTSNode {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new MCTSNode()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
-
-action():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-actionName():string|null
-actionName(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-actionName(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-depth():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-visits():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
-
-effectiveVisits():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-observedReward():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-counterfactualReward():number {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-counterfactualMass():number {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-counterfactualPrecision():number {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-totalReward():number {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-meanReward():number {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-exploitation():number {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-exploration():number {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-causalExpectation():number {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-selectionScore():number {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-scmReady():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-scmReason():string|null
-scmReason(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-scmReason(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-selected():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-principal():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 40);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-blendedValue():number {
-  const offset = this.bb!.__offset(this.bb_pos, 42);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-rewardStd():number {
-  const offset = this.bb!.__offset(this.bb_pos, 44);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-causalExpectationDefined():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 46);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-pruned():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
-state(index: number, obj?:NamedNumber):NamedNumber|null {
-  const offset = this.bb!.__offset(this.bb_pos, 50);
-  return offset ? (obj || new NamedNumber()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
-
-stateLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 50);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-children(index: number, obj?:MCTSNode):MCTSNode|null {
-  const offset = this.bb!.__offset(this.bb_pos, 52);
-  return offset ? (obj || new MCTSNode()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
-
-childrenLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 52);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
-
-static startMCTSNode(builder:flatbuffers.Builder) {
-  builder.startObject(25);
-}
-
-static addAction(builder:flatbuffers.Builder, action:bigint) {
-  builder.addFieldInt64(0, action, BigInt('0'));
-}
-
-static addActionName(builder:flatbuffers.Builder, actionNameOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, actionNameOffset, 0);
-}
-
-static addDepth(builder:flatbuffers.Builder, depth:bigint) {
-  builder.addFieldInt64(2, depth, BigInt('0'));
-}
-
-static addVisits(builder:flatbuffers.Builder, visits:bigint) {
-  builder.addFieldInt64(3, visits, BigInt('0'));
-}
-
-static addEffectiveVisits(builder:flatbuffers.Builder, effectiveVisits:number) {
-  builder.addFieldFloat64(4, effectiveVisits, 0.0);
-}
-
-static addObservedReward(builder:flatbuffers.Builder, observedReward:number) {
-  builder.addFieldFloat64(5, observedReward, 0.0);
-}
-
-static addCounterfactualReward(builder:flatbuffers.Builder, counterfactualReward:number) {
-  builder.addFieldFloat64(6, counterfactualReward, 0.0);
-}
-
-static addCounterfactualMass(builder:flatbuffers.Builder, counterfactualMass:number) {
-  builder.addFieldFloat64(7, counterfactualMass, 0.0);
-}
-
-static addCounterfactualPrecision(builder:flatbuffers.Builder, counterfactualPrecision:number) {
-  builder.addFieldFloat64(8, counterfactualPrecision, 0.0);
-}
-
-static addTotalReward(builder:flatbuffers.Builder, totalReward:number) {
-  builder.addFieldFloat64(9, totalReward, 0.0);
-}
-
-static addMeanReward(builder:flatbuffers.Builder, meanReward:number) {
-  builder.addFieldFloat64(10, meanReward, 0.0);
-}
-
-static addExploitation(builder:flatbuffers.Builder, exploitation:number) {
-  builder.addFieldFloat64(11, exploitation, 0.0);
-}
-
-static addExploration(builder:flatbuffers.Builder, exploration:number) {
-  builder.addFieldFloat64(12, exploration, 0.0);
-}
-
-static addCausalExpectation(builder:flatbuffers.Builder, causalExpectation:number) {
-  builder.addFieldFloat64(13, causalExpectation, 0.0);
-}
-
-static addSelectionScore(builder:flatbuffers.Builder, selectionScore:number) {
-  builder.addFieldFloat64(14, selectionScore, 0.0);
-}
-
-static addScmReady(builder:flatbuffers.Builder, scmReady:boolean) {
-  builder.addFieldInt8(15, +scmReady, +false);
-}
-
-static addScmReason(builder:flatbuffers.Builder, scmReasonOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(16, scmReasonOffset, 0);
-}
-
-static addSelected(builder:flatbuffers.Builder, selected:boolean) {
-  builder.addFieldInt8(17, +selected, +false);
-}
-
-static addPrincipal(builder:flatbuffers.Builder, principal:boolean) {
-  builder.addFieldInt8(18, +principal, +false);
-}
-
-static addBlendedValue(builder:flatbuffers.Builder, blendedValue:number) {
-  builder.addFieldFloat64(19, blendedValue, 0.0);
-}
-
-static addRewardStd(builder:flatbuffers.Builder, rewardStd:number) {
-  builder.addFieldFloat64(20, rewardStd, 0.0);
-}
-
-static addCausalExpectationDefined(builder:flatbuffers.Builder, causalExpectationDefined:boolean) {
-  builder.addFieldInt8(21, +causalExpectationDefined, +false);
-}
-
-static addPruned(builder:flatbuffers.Builder, pruned:boolean) {
-  builder.addFieldInt8(22, +pruned, +false);
-}
-
-static addState(builder:flatbuffers.Builder, stateOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(23, stateOffset, 0);
-}
-
-static createStateVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startStateVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static addChildren(builder:flatbuffers.Builder, childrenOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(24, childrenOffset, 0);
-}
-
-static createChildrenVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
-
-static startChildrenVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
-
-static endMCTSNode(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
-
-static createMCTSNode(builder:flatbuffers.Builder, action:bigint, actionNameOffset:flatbuffers.Offset, depth:bigint, visits:bigint, effectiveVisits:number, observedReward:number, counterfactualReward:number, counterfactualMass:number, counterfactualPrecision:number, totalReward:number, meanReward:number, exploitation:number, exploration:number, causalExpectation:number, selectionScore:number, scmReady:boolean, scmReasonOffset:flatbuffers.Offset, selected:boolean, principal:boolean, blendedValue:number, rewardStd:number, causalExpectationDefined:boolean, pruned:boolean, stateOffset:flatbuffers.Offset, childrenOffset:flatbuffers.Offset):flatbuffers.Offset {
-  MCTSNode.startMCTSNode(builder);
-  MCTSNode.addAction(builder, action);
-  MCTSNode.addActionName(builder, actionNameOffset);
-  MCTSNode.addDepth(builder, depth);
-  MCTSNode.addVisits(builder, visits);
-  MCTSNode.addEffectiveVisits(builder, effectiveVisits);
-  MCTSNode.addObservedReward(builder, observedReward);
-  MCTSNode.addCounterfactualReward(builder, counterfactualReward);
-  MCTSNode.addCounterfactualMass(builder, counterfactualMass);
-  MCTSNode.addCounterfactualPrecision(builder, counterfactualPrecision);
-  MCTSNode.addTotalReward(builder, totalReward);
-  MCTSNode.addMeanReward(builder, meanReward);
-  MCTSNode.addExploitation(builder, exploitation);
-  MCTSNode.addExploration(builder, exploration);
-  MCTSNode.addCausalExpectation(builder, causalExpectation);
-  MCTSNode.addSelectionScore(builder, selectionScore);
-  MCTSNode.addScmReady(builder, scmReady);
-  MCTSNode.addScmReason(builder, scmReasonOffset);
-  MCTSNode.addSelected(builder, selected);
-  MCTSNode.addPrincipal(builder, principal);
-  MCTSNode.addBlendedValue(builder, blendedValue);
-  MCTSNode.addRewardStd(builder, rewardStd);
-  MCTSNode.addCausalExpectationDefined(builder, causalExpectationDefined);
-  MCTSNode.addPruned(builder, pruned);
-  MCTSNode.addState(builder, stateOffset);
-  MCTSNode.addChildren(builder, childrenOffset);
-  return MCTSNode.endMCTSNode(builder);
-}
-
-unpack(): MCTSNodeT {
-  return new MCTSNodeT(
-    this.action(),
-    this.actionName(),
-    this.depth(),
-    this.visits(),
-    this.effectiveVisits(),
-    this.observedReward(),
-    this.counterfactualReward(),
-    this.counterfactualMass(),
-    this.counterfactualPrecision(),
-    this.totalReward(),
-    this.meanReward(),
-    this.exploitation(),
-    this.exploration(),
-    this.causalExpectation(),
-    this.selectionScore(),
-    this.scmReady(),
-    this.scmReason(),
-    this.selected(),
-    this.principal(),
-    this.blendedValue(),
-    this.rewardStd(),
-    this.causalExpectationDefined(),
-    this.pruned(),
-    this.bb!.createObjList<NamedNumber, NamedNumberT>(this.state.bind(this), this.stateLength()),
-    this.bb!.createObjList<MCTSNode, MCTSNodeT>(this.children.bind(this), this.childrenLength())
-  );
-}
-
-
-unpackTo(_o: MCTSNodeT): void {
-  _o.action = this.action();
-  _o.actionName = this.actionName();
-  _o.depth = this.depth();
-  _o.visits = this.visits();
-  _o.effectiveVisits = this.effectiveVisits();
-  _o.observedReward = this.observedReward();
-  _o.counterfactualReward = this.counterfactualReward();
-  _o.counterfactualMass = this.counterfactualMass();
-  _o.counterfactualPrecision = this.counterfactualPrecision();
-  _o.totalReward = this.totalReward();
-  _o.meanReward = this.meanReward();
-  _o.exploitation = this.exploitation();
-  _o.exploration = this.exploration();
-  _o.causalExpectation = this.causalExpectation();
-  _o.selectionScore = this.selectionScore();
-  _o.scmReady = this.scmReady();
-  _o.scmReason = this.scmReason();
-  _o.selected = this.selected();
-  _o.principal = this.principal();
-  _o.blendedValue = this.blendedValue();
-  _o.rewardStd = this.rewardStd();
-  _o.causalExpectationDefined = this.causalExpectationDefined();
-  _o.pruned = this.pruned();
-  _o.state = this.bb!.createObjList<NamedNumber, NamedNumberT>(this.state.bind(this), this.stateLength());
-  _o.children = this.bb!.createObjList<MCTSNode, MCTSNodeT>(this.children.bind(this), this.childrenLength());
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): MCTSNode {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
+
+	static getRootAsMCTSNode(
+		bb: flatbuffers.ByteBuffer,
+		obj?: MCTSNode,
+	): MCTSNode {
+		return (obj || new MCTSNode()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	static getSizePrefixedRootAsMCTSNode(
+		bb: flatbuffers.ByteBuffer,
+		obj?: MCTSNode,
+	): MCTSNode {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new MCTSNode()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	action(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	actionName(): string | null;
+	actionName(
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array | null;
+	actionName(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	depth(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	visits(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
+
+	effectiveVisits(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	observedReward(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	counterfactualReward(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	counterfactualMass(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	counterfactualPrecision(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	totalReward(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	meanReward(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	exploitation(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	exploration(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 28);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	causalExpectation(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 30);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	selectionScore(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 32);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	scmReady(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 34);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	scmReason(): string | null;
+	scmReason(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	scmReason(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 36);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	selected(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 38);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	principal(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 40);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	blendedValue(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 42);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	rewardStd(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 44);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
+
+	causalExpectationDefined(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 46);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	pruned(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 48);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
+
+	state(index: number, obj?: NamedNumber): NamedNumber | null {
+		const offset = this.bb!.__offset(this.bb_pos, 50);
+		return offset
+			? (obj || new NamedNumber()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
+
+	stateLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 50);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	children(index: number, obj?: MCTSNode): MCTSNode | null {
+		const offset = this.bb!.__offset(this.bb_pos, 52);
+		return offset
+			? (obj || new MCTSNode()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
+
+	childrenLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 52);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
+
+	static startMCTSNode(builder: flatbuffers.Builder) {
+		builder.startObject(25);
+	}
+
+	static addAction(builder: flatbuffers.Builder, action: bigint) {
+		builder.addFieldInt64(0, action, BigInt("0"));
+	}
+
+	static addActionName(
+		builder: flatbuffers.Builder,
+		actionNameOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, actionNameOffset, 0);
+	}
+
+	static addDepth(builder: flatbuffers.Builder, depth: bigint) {
+		builder.addFieldInt64(2, depth, BigInt("0"));
+	}
+
+	static addVisits(builder: flatbuffers.Builder, visits: bigint) {
+		builder.addFieldInt64(3, visits, BigInt("0"));
+	}
+
+	static addEffectiveVisits(
+		builder: flatbuffers.Builder,
+		effectiveVisits: number,
+	) {
+		builder.addFieldFloat64(4, effectiveVisits, 0.0);
+	}
+
+	static addObservedReward(
+		builder: flatbuffers.Builder,
+		observedReward: number,
+	) {
+		builder.addFieldFloat64(5, observedReward, 0.0);
+	}
+
+	static addCounterfactualReward(
+		builder: flatbuffers.Builder,
+		counterfactualReward: number,
+	) {
+		builder.addFieldFloat64(6, counterfactualReward, 0.0);
+	}
+
+	static addCounterfactualMass(
+		builder: flatbuffers.Builder,
+		counterfactualMass: number,
+	) {
+		builder.addFieldFloat64(7, counterfactualMass, 0.0);
+	}
+
+	static addCounterfactualPrecision(
+		builder: flatbuffers.Builder,
+		counterfactualPrecision: number,
+	) {
+		builder.addFieldFloat64(8, counterfactualPrecision, 0.0);
+	}
+
+	static addTotalReward(builder: flatbuffers.Builder, totalReward: number) {
+		builder.addFieldFloat64(9, totalReward, 0.0);
+	}
+
+	static addMeanReward(builder: flatbuffers.Builder, meanReward: number) {
+		builder.addFieldFloat64(10, meanReward, 0.0);
+	}
+
+	static addExploitation(builder: flatbuffers.Builder, exploitation: number) {
+		builder.addFieldFloat64(11, exploitation, 0.0);
+	}
+
+	static addExploration(builder: flatbuffers.Builder, exploration: number) {
+		builder.addFieldFloat64(12, exploration, 0.0);
+	}
+
+	static addCausalExpectation(
+		builder: flatbuffers.Builder,
+		causalExpectation: number,
+	) {
+		builder.addFieldFloat64(13, causalExpectation, 0.0);
+	}
+
+	static addSelectionScore(
+		builder: flatbuffers.Builder,
+		selectionScore: number,
+	) {
+		builder.addFieldFloat64(14, selectionScore, 0.0);
+	}
+
+	static addScmReady(builder: flatbuffers.Builder, scmReady: boolean) {
+		builder.addFieldInt8(15, +scmReady, +false);
+	}
+
+	static addScmReason(
+		builder: flatbuffers.Builder,
+		scmReasonOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(16, scmReasonOffset, 0);
+	}
+
+	static addSelected(builder: flatbuffers.Builder, selected: boolean) {
+		builder.addFieldInt8(17, +selected, +false);
+	}
+
+	static addPrincipal(builder: flatbuffers.Builder, principal: boolean) {
+		builder.addFieldInt8(18, +principal, +false);
+	}
+
+	static addBlendedValue(builder: flatbuffers.Builder, blendedValue: number) {
+		builder.addFieldFloat64(19, blendedValue, 0.0);
+	}
+
+	static addRewardStd(builder: flatbuffers.Builder, rewardStd: number) {
+		builder.addFieldFloat64(20, rewardStd, 0.0);
+	}
+
+	static addCausalExpectationDefined(
+		builder: flatbuffers.Builder,
+		causalExpectationDefined: boolean,
+	) {
+		builder.addFieldInt8(21, +causalExpectationDefined, +false);
+	}
+
+	static addPruned(builder: flatbuffers.Builder, pruned: boolean) {
+		builder.addFieldInt8(22, +pruned, +false);
+	}
+
+	static addState(
+		builder: flatbuffers.Builder,
+		stateOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(23, stateOffset, 0);
+	}
+
+	static createStateVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startStateVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static addChildren(
+		builder: flatbuffers.Builder,
+		childrenOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(24, childrenOffset, 0);
+	}
+
+	static createChildrenVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
+
+	static startChildrenVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
+
+	static endMCTSNode(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
+
+	static createMCTSNode(
+		builder: flatbuffers.Builder,
+		action: bigint,
+		actionNameOffset: flatbuffers.Offset,
+		depth: bigint,
+		visits: bigint,
+		effectiveVisits: number,
+		observedReward: number,
+		counterfactualReward: number,
+		counterfactualMass: number,
+		counterfactualPrecision: number,
+		totalReward: number,
+		meanReward: number,
+		exploitation: number,
+		exploration: number,
+		causalExpectation: number,
+		selectionScore: number,
+		scmReady: boolean,
+		scmReasonOffset: flatbuffers.Offset,
+		selected: boolean,
+		principal: boolean,
+		blendedValue: number,
+		rewardStd: number,
+		causalExpectationDefined: boolean,
+		pruned: boolean,
+		stateOffset: flatbuffers.Offset,
+		childrenOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		MCTSNode.startMCTSNode(builder);
+		MCTSNode.addAction(builder, action);
+		MCTSNode.addActionName(builder, actionNameOffset);
+		MCTSNode.addDepth(builder, depth);
+		MCTSNode.addVisits(builder, visits);
+		MCTSNode.addEffectiveVisits(builder, effectiveVisits);
+		MCTSNode.addObservedReward(builder, observedReward);
+		MCTSNode.addCounterfactualReward(builder, counterfactualReward);
+		MCTSNode.addCounterfactualMass(builder, counterfactualMass);
+		MCTSNode.addCounterfactualPrecision(builder, counterfactualPrecision);
+		MCTSNode.addTotalReward(builder, totalReward);
+		MCTSNode.addMeanReward(builder, meanReward);
+		MCTSNode.addExploitation(builder, exploitation);
+		MCTSNode.addExploration(builder, exploration);
+		MCTSNode.addCausalExpectation(builder, causalExpectation);
+		MCTSNode.addSelectionScore(builder, selectionScore);
+		MCTSNode.addScmReady(builder, scmReady);
+		MCTSNode.addScmReason(builder, scmReasonOffset);
+		MCTSNode.addSelected(builder, selected);
+		MCTSNode.addPrincipal(builder, principal);
+		MCTSNode.addBlendedValue(builder, blendedValue);
+		MCTSNode.addRewardStd(builder, rewardStd);
+		MCTSNode.addCausalExpectationDefined(builder, causalExpectationDefined);
+		MCTSNode.addPruned(builder, pruned);
+		MCTSNode.addState(builder, stateOffset);
+		MCTSNode.addChildren(builder, childrenOffset);
+		return MCTSNode.endMCTSNode(builder);
+	}
+
+	unpack(): MCTSNodeT {
+		return new MCTSNodeT(
+			this.action(),
+			this.actionName(),
+			this.depth(),
+			this.visits(),
+			this.effectiveVisits(),
+			this.observedReward(),
+			this.counterfactualReward(),
+			this.counterfactualMass(),
+			this.counterfactualPrecision(),
+			this.totalReward(),
+			this.meanReward(),
+			this.exploitation(),
+			this.exploration(),
+			this.causalExpectation(),
+			this.selectionScore(),
+			this.scmReady(),
+			this.scmReason(),
+			this.selected(),
+			this.principal(),
+			this.blendedValue(),
+			this.rewardStd(),
+			this.causalExpectationDefined(),
+			this.pruned(),
+			this.bb!.createObjList<NamedNumber, NamedNumberT>(
+				this.state.bind(this),
+				this.stateLength(),
+			),
+			this.bb!.createObjList<MCTSNode, MCTSNodeT>(
+				this.children.bind(this),
+				this.childrenLength(),
+			),
+		);
+	}
+
+	unpackTo(_o: MCTSNodeT): void {
+		_o.action = this.action();
+		_o.actionName = this.actionName();
+		_o.depth = this.depth();
+		_o.visits = this.visits();
+		_o.effectiveVisits = this.effectiveVisits();
+		_o.observedReward = this.observedReward();
+		_o.counterfactualReward = this.counterfactualReward();
+		_o.counterfactualMass = this.counterfactualMass();
+		_o.counterfactualPrecision = this.counterfactualPrecision();
+		_o.totalReward = this.totalReward();
+		_o.meanReward = this.meanReward();
+		_o.exploitation = this.exploitation();
+		_o.exploration = this.exploration();
+		_o.causalExpectation = this.causalExpectation();
+		_o.selectionScore = this.selectionScore();
+		_o.scmReady = this.scmReady();
+		_o.scmReason = this.scmReason();
+		_o.selected = this.selected();
+		_o.principal = this.principal();
+		_o.blendedValue = this.blendedValue();
+		_o.rewardStd = this.rewardStd();
+		_o.causalExpectationDefined = this.causalExpectationDefined();
+		_o.pruned = this.pruned();
+		_o.state = this.bb!.createObjList<NamedNumber, NamedNumberT>(
+			this.state.bind(this),
+			this.stateLength(),
+		);
+		_o.children = this.bb!.createObjList<MCTSNode, MCTSNodeT>(
+			this.children.bind(this),
+			this.childrenLength(),
+		);
+	}
 }
 
 export class MCTSNodeT implements flatbuffers.IGeneratedObject {
-constructor(
-  public action: bigint = BigInt('0'),
-  public actionName: string|Uint8Array|null = null,
-  public depth: bigint = BigInt('0'),
-  public visits: bigint = BigInt('0'),
-  public effectiveVisits: number = 0.0,
-  public observedReward: number = 0.0,
-  public counterfactualReward: number = 0.0,
-  public counterfactualMass: number = 0.0,
-  public counterfactualPrecision: number = 0.0,
-  public totalReward: number = 0.0,
-  public meanReward: number = 0.0,
-  public exploitation: number = 0.0,
-  public exploration: number = 0.0,
-  public causalExpectation: number = 0.0,
-  public selectionScore: number = 0.0,
-  public scmReady: boolean = false,
-  public scmReason: string|Uint8Array|null = null,
-  public selected: boolean = false,
-  public principal: boolean = false,
-  public blendedValue: number = 0.0,
-  public rewardStd: number = 0.0,
-  public causalExpectationDefined: boolean = false,
-  public pruned: boolean = false,
-  public state: (NamedNumberT)[] = [],
-  public children: (MCTSNodeT)[] = []
-){}
+	constructor(
+		public action: bigint = BigInt("0"),
+		public actionName: string | Uint8Array | null = null,
+		public depth: bigint = BigInt("0"),
+		public visits: bigint = BigInt("0"),
+		public effectiveVisits: number = 0.0,
+		public observedReward: number = 0.0,
+		public counterfactualReward: number = 0.0,
+		public counterfactualMass: number = 0.0,
+		public counterfactualPrecision: number = 0.0,
+		public totalReward: number = 0.0,
+		public meanReward: number = 0.0,
+		public exploitation: number = 0.0,
+		public exploration: number = 0.0,
+		public causalExpectation: number = 0.0,
+		public selectionScore: number = 0.0,
+		public scmReady: boolean = false,
+		public scmReason: string | Uint8Array | null = null,
+		public selected: boolean = false,
+		public principal: boolean = false,
+		public blendedValue: number = 0.0,
+		public rewardStd: number = 0.0,
+		public causalExpectationDefined: boolean = false,
+		public pruned: boolean = false,
+		public state: NamedNumberT[] = [],
+		public children: MCTSNodeT[] = [],
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const actionName =
+			this.actionName !== null ? builder.createString(this.actionName!) : 0;
+		const scmReason =
+			this.scmReason !== null ? builder.createString(this.scmReason!) : 0;
+		const state = MCTSNode.createStateVector(
+			builder,
+			builder.createObjectOffsetList(this.state),
+		);
+		const children = MCTSNode.createChildrenVector(
+			builder,
+			builder.createObjectOffsetList(this.children),
+		);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const actionName = (this.actionName !== null ? builder.createString(this.actionName!) : 0);
-  const scmReason = (this.scmReason !== null ? builder.createString(this.scmReason!) : 0);
-  const state = MCTSNode.createStateVector(builder, builder.createObjectOffsetList(this.state));
-  const children = MCTSNode.createChildrenVector(builder, builder.createObjectOffsetList(this.children));
-
-  return MCTSNode.createMCTSNode(builder,
-    this.action,
-    actionName,
-    this.depth,
-    this.visits,
-    this.effectiveVisits,
-    this.observedReward,
-    this.counterfactualReward,
-    this.counterfactualMass,
-    this.counterfactualPrecision,
-    this.totalReward,
-    this.meanReward,
-    this.exploitation,
-    this.exploration,
-    this.causalExpectation,
-    this.selectionScore,
-    this.scmReady,
-    scmReason,
-    this.selected,
-    this.principal,
-    this.blendedValue,
-    this.rewardStd,
-    this.causalExpectationDefined,
-    this.pruned,
-    state,
-    children
-  );
-}
+		return MCTSNode.createMCTSNode(
+			builder,
+			this.action,
+			actionName,
+			this.depth,
+			this.visits,
+			this.effectiveVisits,
+			this.observedReward,
+			this.counterfactualReward,
+			this.counterfactualMass,
+			this.counterfactualPrecision,
+			this.totalReward,
+			this.meanReward,
+			this.exploitation,
+			this.exploration,
+			this.causalExpectation,
+			this.selectionScore,
+			this.scmReady,
+			scmReason,
+			this.selected,
+			this.principal,
+			this.blendedValue,
+			this.rewardStd,
+			this.causalExpectationDefined,
+			this.pruned,
+			state,
+			children,
+		);
+	}
 }

@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useSelector } from "@tanstack/react-store";
 import { useEffect, useState } from "react";
 import {
-	DEFAULT_FOCUS_SYMBOL,
 	appStore,
+	DEFAULT_FOCUS_SYMBOL,
 	focusStore,
 	resonanceArtifactStore,
 	symbolsStore,

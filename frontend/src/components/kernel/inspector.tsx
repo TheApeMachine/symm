@@ -12,10 +12,10 @@ import {
 	kernelSparkPaths,
 	kernelStatusMeta,
 	kernelStatusVariant,
+	metricLabel,
 	type SignalHealthStatus,
 	sourceHeadline,
 	sourceMetrics,
-	metricLabel,
 } from "#/components/terminal/kernel-meta";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
@@ -34,7 +34,10 @@ readings collects the accumulated values for one kernel from the same rings the
 kernel list reads, so the panel that opens on a row agrees with the row itself
 rather than deriving a second, differently-shaped history.
 */
-const readings = (ring: { getBufferLength: () => number; get: (index: number) => number | undefined }) => {
+const readings = (ring: {
+	getBufferLength: () => number;
+	get: (index: number) => number | undefined;
+}) => {
 	const points: number[] = [];
 	const len = ring.getBufferLength();
 
@@ -71,7 +74,13 @@ update, and a carried metric with no value reads the same way — an absent valu
 stays null (the readout shows a dash) rather than being fabricated as zero.
 */
 const metricValues = (
-	row: { metricsLength: () => number; metrics: (index: number, obj: EnvelopeMeasurementMetric) => EnvelopeMeasurementMetric | null },
+	row: {
+		metricsLength: () => number;
+		metrics: (
+			index: number,
+			obj: EnvelopeMeasurementMetric,
+		) => EnvelopeMeasurementMetric | null;
+	},
 	names: string[],
 ): Record<string, { raw: number; normalized: number } | null> => {
 	// Every requested name is present in the result; a metric the row does not
@@ -153,9 +162,7 @@ export const KernelInspector = () => {
 	// publishes. Each metric's readout is its most recent value found scanning
 	// the buffer newest-first, so a metric absent from the newest sparse row
 	// keeps its last value instead of flickering to a dash.
-	const metrics = resonance
-		? []
-		: sourceMetrics(source);
+	const metrics = resonance ? [] : sourceMetrics(source);
 	const metricReadouts = metrics.map((name) => {
 		let raw: number | null = null;
 		let normalized = 0;
@@ -210,7 +217,10 @@ export const KernelInspector = () => {
 						{copy.sub}
 					</Typography.Mono>
 				</Flex.Column>
-				<Modal.Close aria-label="Close kernel inspector" onClick={closeInspect} />
+				<Modal.Close
+					aria-label="Close kernel inspector"
+					onClick={closeInspect}
+				/>
 			</Modal.Header>
 
 			<Modal.Body className="flex flex-col gap-3.5">

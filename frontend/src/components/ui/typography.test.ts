@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { labelVariants, monoVariants } from "./typography";
 import type { Size } from "./types";
+import { labelVariants, monoVariants } from "./typography";
 
 const SIZES: Size[] = ["xxs", "xs", "s", "m", "lg", "xl", "xxl"];
 

@@ -3,90 +3,117 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { EnvelopeMetric, EnvelopeMetricT } from '../telemetry/envelope-metric.js';
+import {
+	EnvelopeMetric,
+	type EnvelopeMetricT,
+} from "../telemetry/envelope-metric.js";
 
+export class EnvelopeMeasurementMetric
+	implements flatbuffers.IUnpackableObject<EnvelopeMeasurementMetricT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeMeasurementMetric {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-export class EnvelopeMeasurementMetric implements flatbuffers.IUnpackableObject<EnvelopeMeasurementMetricT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeMeasurementMetric {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
+	static getRootAsEnvelopeMeasurementMetric(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeMeasurementMetric,
+	): EnvelopeMeasurementMetric {
+		return (obj || new EnvelopeMeasurementMetric()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	static getSizePrefixedRootAsEnvelopeMeasurementMetric(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeMeasurementMetric,
+	): EnvelopeMeasurementMetric {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopeMeasurementMetric()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
+
+	key(): string | null;
+	key(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	key(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
+
+	value(obj?: EnvelopeMetric): EnvelopeMetric | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? (obj || new EnvelopeMetric()).__init(
+					this.bb!.__indirect(this.bb_pos + offset),
+					this.bb!,
+				)
+			: null;
+	}
+
+	static startEnvelopeMeasurementMetric(builder: flatbuffers.Builder) {
+		builder.startObject(2);
+	}
+
+	static addKey(builder: flatbuffers.Builder, keyOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, keyOffset, 0);
+	}
+
+	static addValue(
+		builder: flatbuffers.Builder,
+		valueOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, valueOffset, 0);
+	}
+
+	static endEnvelopeMeasurementMetric(
+		builder: flatbuffers.Builder,
+	): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // key
+		builder.requiredField(offset, 6); // value
+		return offset;
+	}
+
+	unpack(): EnvelopeMeasurementMetricT {
+		return new EnvelopeMeasurementMetricT(
+			this.key(),
+			this.value() !== null ? this.value()!.unpack() : null,
+		);
+	}
+
+	unpackTo(_o: EnvelopeMeasurementMetricT): void {
+		_o.key = this.key();
+		_o.value = this.value() !== null ? this.value()!.unpack() : null;
+	}
 }
 
-static getRootAsEnvelopeMeasurementMetric(bb:flatbuffers.ByteBuffer, obj?:EnvelopeMeasurementMetric):EnvelopeMeasurementMetric {
-  return (obj || new EnvelopeMeasurementMetric()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+export class EnvelopeMeasurementMetricT
+	implements flatbuffers.IGeneratedObject
+{
+	constructor(
+		public key: string | Uint8Array | null = null,
+		public value: EnvelopeMetricT | null = null,
+	) {}
 
-static getSizePrefixedRootAsEnvelopeMeasurementMetric(bb:flatbuffers.ByteBuffer, obj?:EnvelopeMeasurementMetric):EnvelopeMeasurementMetric {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeMeasurementMetric()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const key = this.key !== null ? builder.createString(this.key!) : 0;
+		const value = this.value !== null ? this.value!.pack(builder) : 0;
 
-key():string|null
-key(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-key(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+		EnvelopeMeasurementMetric.startEnvelopeMeasurementMetric(builder);
+		EnvelopeMeasurementMetric.addKey(builder, key);
+		EnvelopeMeasurementMetric.addValue(builder, value);
 
-value(obj?:EnvelopeMetric):EnvelopeMetric|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? (obj || new EnvelopeMetric()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
-}
-
-static startEnvelopeMeasurementMetric(builder:flatbuffers.Builder) {
-  builder.startObject(2);
-}
-
-static addKey(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, keyOffset, 0);
-}
-
-static addValue(builder:flatbuffers.Builder, valueOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, valueOffset, 0);
-}
-
-static endEnvelopeMeasurementMetric(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // key
-  builder.requiredField(offset, 6) // value
-  return offset;
-}
-
-
-unpack(): EnvelopeMeasurementMetricT {
-  return new EnvelopeMeasurementMetricT(
-    this.key(),
-    (this.value() !== null ? this.value()!.unpack() : null)
-  );
-}
-
-
-unpackTo(_o: EnvelopeMeasurementMetricT): void {
-  _o.key = this.key();
-  _o.value = (this.value() !== null ? this.value()!.unpack() : null);
-}
-}
-
-export class EnvelopeMeasurementMetricT implements flatbuffers.IGeneratedObject {
-constructor(
-  public key: string|Uint8Array|null = null,
-  public value: EnvelopeMetricT|null = null
-){}
-
-
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const key = (this.key !== null ? builder.createString(this.key!) : 0);
-  const value = (this.value !== null ? this.value!.pack(builder) : 0);
-
-  EnvelopeMeasurementMetric.startEnvelopeMeasurementMetric(builder);
-  EnvelopeMeasurementMetric.addKey(builder, key);
-  EnvelopeMeasurementMetric.addValue(builder, value);
-
-  return EnvelopeMeasurementMetric.endEnvelopeMeasurementMetric(builder);
-}
+		return EnvelopeMeasurementMetric.endEnvelopeMeasurementMetric(builder);
+	}
 }

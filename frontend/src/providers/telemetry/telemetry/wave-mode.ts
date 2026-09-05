@@ -3,115 +3,130 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
-
-
+import * as flatbuffers from "flatbuffers";
 
 export class WaveMode implements flatbuffers.IUnpackableObject<WaveModeT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):WaveMode {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): WaveMode {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-static getRootAsWaveMode(bb:flatbuffers.ByteBuffer, obj?:WaveMode):WaveMode {
-  return (obj || new WaveMode()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getRootAsWaveMode(
+		bb: flatbuffers.ByteBuffer,
+		obj?: WaveMode,
+	): WaveMode {
+		return (obj || new WaveMode()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsWaveMode(bb:flatbuffers.ByteBuffer, obj?:WaveMode):WaveMode {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new WaveMode()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsWaveMode(
+		bb: flatbuffers.ByteBuffer,
+		obj?: WaveMode,
+	): WaveMode {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new WaveMode()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-omega():number {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
-}
+	omega(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+	}
 
-real():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
-}
+	real(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+	}
 
-imaginary():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
-}
+	imaginary(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+	}
 
-linewidth():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
-}
+	linewidth(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+	}
 
-static startWaveMode(builder:flatbuffers.Builder) {
-  builder.startObject(4);
-}
+	static startWaveMode(builder: flatbuffers.Builder) {
+		builder.startObject(4);
+	}
 
-static addOmega(builder:flatbuffers.Builder, omega:number) {
-  builder.addFieldFloat32(0, omega, 0.0);
-}
+	static addOmega(builder: flatbuffers.Builder, omega: number) {
+		builder.addFieldFloat32(0, omega, 0.0);
+	}
 
-static addReal(builder:flatbuffers.Builder, real:number) {
-  builder.addFieldFloat32(1, real, 0.0);
-}
+	static addReal(builder: flatbuffers.Builder, real: number) {
+		builder.addFieldFloat32(1, real, 0.0);
+	}
 
-static addImaginary(builder:flatbuffers.Builder, imaginary:number) {
-  builder.addFieldFloat32(2, imaginary, 0.0);
-}
+	static addImaginary(builder: flatbuffers.Builder, imaginary: number) {
+		builder.addFieldFloat32(2, imaginary, 0.0);
+	}
 
-static addLinewidth(builder:flatbuffers.Builder, linewidth:number) {
-  builder.addFieldFloat32(3, linewidth, 0.0);
-}
+	static addLinewidth(builder: flatbuffers.Builder, linewidth: number) {
+		builder.addFieldFloat32(3, linewidth, 0.0);
+	}
 
-static endWaveMode(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	static endWaveMode(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static createWaveMode(builder:flatbuffers.Builder, omega:number, real:number, imaginary:number, linewidth:number):flatbuffers.Offset {
-  WaveMode.startWaveMode(builder);
-  WaveMode.addOmega(builder, omega);
-  WaveMode.addReal(builder, real);
-  WaveMode.addImaginary(builder, imaginary);
-  WaveMode.addLinewidth(builder, linewidth);
-  return WaveMode.endWaveMode(builder);
-}
+	static createWaveMode(
+		builder: flatbuffers.Builder,
+		omega: number,
+		real: number,
+		imaginary: number,
+		linewidth: number,
+	): flatbuffers.Offset {
+		WaveMode.startWaveMode(builder);
+		WaveMode.addOmega(builder, omega);
+		WaveMode.addReal(builder, real);
+		WaveMode.addImaginary(builder, imaginary);
+		WaveMode.addLinewidth(builder, linewidth);
+		return WaveMode.endWaveMode(builder);
+	}
 
-unpack(): WaveModeT {
-  return new WaveModeT(
-    this.omega(),
-    this.real(),
-    this.imaginary(),
-    this.linewidth()
-  );
-}
+	unpack(): WaveModeT {
+		return new WaveModeT(
+			this.omega(),
+			this.real(),
+			this.imaginary(),
+			this.linewidth(),
+		);
+	}
 
-
-unpackTo(_o: WaveModeT): void {
-  _o.omega = this.omega();
-  _o.real = this.real();
-  _o.imaginary = this.imaginary();
-  _o.linewidth = this.linewidth();
-}
+	unpackTo(_o: WaveModeT): void {
+		_o.omega = this.omega();
+		_o.real = this.real();
+		_o.imaginary = this.imaginary();
+		_o.linewidth = this.linewidth();
+	}
 }
 
 export class WaveModeT implements flatbuffers.IGeneratedObject {
-constructor(
-  public omega: number = 0.0,
-  public real: number = 0.0,
-  public imaginary: number = 0.0,
-  public linewidth: number = 0.0
-){}
+	constructor(
+		public omega: number = 0.0,
+		public real: number = 0.0,
+		public imaginary: number = 0.0,
+		public linewidth: number = 0.0,
+	) {}
 
-
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  return WaveMode.createWaveMode(builder,
-    this.omega,
-    this.real,
-    this.imaginary,
-    this.linewidth
-  );
-}
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		return WaveMode.createWaveMode(
+			builder,
+			this.omega,
+			this.real,
+			this.imaginary,
+			this.linewidth,
+		);
+	}
 }

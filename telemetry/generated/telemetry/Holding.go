@@ -24,7 +24,6 @@ type HoldingT struct {
 	Mark string `json:"mark"`
 	IsOpportunity bool `json:"isOpportunity"`
 	ReservationId string `json:"reservationId"`
-	Stoploss *StoplossT `json:"stoploss"`
 }
 
 func (t *HoldingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -83,7 +82,6 @@ func (t *HoldingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	if t.ReservationId != "" {
 		reservationIdOffset = builder.CreateString(t.ReservationId)
 	}
-	stoplossOffset := t.Stoploss.Pack(builder)
 	HoldingStart(builder)
 	HoldingAddStatus(builder, statusOffset)
 	HoldingAddSymbol(builder, symbolOffset)
@@ -102,7 +100,6 @@ func (t *HoldingT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	HoldingAddMark(builder, markOffset)
 	HoldingAddIsOpportunity(builder, t.IsOpportunity)
 	HoldingAddReservationId(builder, reservationIdOffset)
-	HoldingAddStoploss(builder, stoplossOffset)
 	return HoldingEnd(builder)
 }
 
@@ -124,7 +121,6 @@ func (rcv *Holding) UnPackTo(t *HoldingT) {
 	t.Mark = string(rcv.Mark())
 	t.IsOpportunity = rcv.IsOpportunity()
 	t.ReservationId = string(rcv.ReservationId())
-	t.Stoploss = rcv.Stoploss(nil).UnPack()
 }
 
 func (rcv *Holding) UnPack() *HoldingT {
@@ -323,19 +319,6 @@ func (rcv *Holding) ReservationId() []byte {
 	return nil
 }
 
-func (rcv *Holding) Stoploss(obj *Stoploss) *Stoploss {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
-	if o != 0 {
-		x := rcv._tab.Indirect(o + rcv._tab.Pos)
-		if obj == nil {
-			obj = new(Stoploss)
-		}
-		obj.Init(rcv._tab.Bytes, x)
-		return obj
-	}
-	return nil
-}
-
 func HoldingStart(builder *flatbuffers.Builder) {
 	builder.StartObject(18)
 }
@@ -389,9 +372,6 @@ func HoldingAddIsOpportunity(builder *flatbuffers.Builder, isOpportunity bool) {
 }
 func HoldingAddReservationId(builder *flatbuffers.Builder, reservationId flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(16, flatbuffers.UOffsetT(reservationId), 0)
-}
-func HoldingAddStoploss(builder *flatbuffers.Builder, stoploss flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(17, flatbuffers.UOffsetT(stoploss), 0)
 }
 func HoldingEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

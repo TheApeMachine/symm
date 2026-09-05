@@ -3,276 +3,339 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
-
-
+import * as flatbuffers from "flatbuffers";
 
 export class GraphEdge implements flatbuffers.IUnpackableObject<GraphEdgeT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):GraphEdge {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): GraphEdge {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-static getRootAsGraphEdge(bb:flatbuffers.ByteBuffer, obj?:GraphEdge):GraphEdge {
-  return (obj || new GraphEdge()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getRootAsGraphEdge(
+		bb: flatbuffers.ByteBuffer,
+		obj?: GraphEdge,
+	): GraphEdge {
+		return (obj || new GraphEdge()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsGraphEdge(bb:flatbuffers.ByteBuffer, obj?:GraphEdge):GraphEdge {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new GraphEdge()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsGraphEdge(
+		bb: flatbuffers.ByteBuffer,
+		obj?: GraphEdge,
+	): GraphEdge {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new GraphEdge()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-from():string|null
-from(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-from(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	from(): string | null;
+	from(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	from(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-to():string|null
-to(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-to(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	to(): string | null;
+	to(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	to(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-relation():string|null
-relation(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-relation(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	relation(): string | null;
+	relation(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	relation(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-weight():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	weight(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-confidence():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	confidence(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-quality():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	quality(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-hasQuality():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	hasQuality(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-evidence(index: number):string
-evidence(index: number,optionalEncoding:flatbuffers.Encoding):string|Uint8Array
-evidence(index: number,optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.__string(this.bb!.__vector(this.bb_pos + offset) + index * 4, optionalEncoding) : null;
-}
+	evidence(index: number): string;
+	evidence(
+		index: number,
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array;
+	evidence(index: number, optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset
+			? this.bb!.__string(
+					this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					optionalEncoding,
+				)
+			: null;
+	}
 
-evidenceLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	evidenceLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-observedFrom():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	observedFrom(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-horizon():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	horizon(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-at():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	at(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-reason():string|null
-reason(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-reason(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	reason(): string | null;
+	reason(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	reason(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-derived():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	derived(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 28);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-static startGraphEdge(builder:flatbuffers.Builder) {
-  builder.startObject(13);
-}
+	static startGraphEdge(builder: flatbuffers.Builder) {
+		builder.startObject(13);
+	}
 
-static addFrom(builder:flatbuffers.Builder, fromOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, fromOffset, 0);
-}
+	static addFrom(builder: flatbuffers.Builder, fromOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, fromOffset, 0);
+	}
 
-static addTo(builder:flatbuffers.Builder, toOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, toOffset, 0);
-}
+	static addTo(builder: flatbuffers.Builder, toOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(1, toOffset, 0);
+	}
 
-static addRelation(builder:flatbuffers.Builder, relationOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, relationOffset, 0);
-}
+	static addRelation(
+		builder: flatbuffers.Builder,
+		relationOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, relationOffset, 0);
+	}
 
-static addWeight(builder:flatbuffers.Builder, weight:number) {
-  builder.addFieldFloat64(3, weight, 0.0);
-}
+	static addWeight(builder: flatbuffers.Builder, weight: number) {
+		builder.addFieldFloat64(3, weight, 0.0);
+	}
 
-static addConfidence(builder:flatbuffers.Builder, confidence:number) {
-  builder.addFieldFloat64(4, confidence, 0.0);
-}
+	static addConfidence(builder: flatbuffers.Builder, confidence: number) {
+		builder.addFieldFloat64(4, confidence, 0.0);
+	}
 
-static addQuality(builder:flatbuffers.Builder, quality:number) {
-  builder.addFieldFloat64(5, quality, 0.0);
-}
+	static addQuality(builder: flatbuffers.Builder, quality: number) {
+		builder.addFieldFloat64(5, quality, 0.0);
+	}
 
-static addHasQuality(builder:flatbuffers.Builder, hasQuality:boolean) {
-  builder.addFieldInt8(6, +hasQuality, +false);
-}
+	static addHasQuality(builder: flatbuffers.Builder, hasQuality: boolean) {
+		builder.addFieldInt8(6, +hasQuality, +false);
+	}
 
-static addEvidence(builder:flatbuffers.Builder, evidenceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(7, evidenceOffset, 0);
-}
+	static addEvidence(
+		builder: flatbuffers.Builder,
+		evidenceOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(7, evidenceOffset, 0);
+	}
 
-static createEvidenceVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static createEvidenceVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static startEvidenceVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static startEvidenceVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static addObservedFrom(builder:flatbuffers.Builder, observedFrom:bigint) {
-  builder.addFieldInt64(8, observedFrom, BigInt('0'));
-}
+	static addObservedFrom(builder: flatbuffers.Builder, observedFrom: bigint) {
+		builder.addFieldInt64(8, observedFrom, BigInt("0"));
+	}
 
-static addHorizon(builder:flatbuffers.Builder, horizon:bigint) {
-  builder.addFieldInt64(9, horizon, BigInt('0'));
-}
+	static addHorizon(builder: flatbuffers.Builder, horizon: bigint) {
+		builder.addFieldInt64(9, horizon, BigInt("0"));
+	}
 
-static addAt(builder:flatbuffers.Builder, at:bigint) {
-  builder.addFieldInt64(10, at, BigInt('0'));
-}
+	static addAt(builder: flatbuffers.Builder, at: bigint) {
+		builder.addFieldInt64(10, at, BigInt("0"));
+	}
 
-static addReason(builder:flatbuffers.Builder, reasonOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(11, reasonOffset, 0);
-}
+	static addReason(
+		builder: flatbuffers.Builder,
+		reasonOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(11, reasonOffset, 0);
+	}
 
-static addDerived(builder:flatbuffers.Builder, derived:boolean) {
-  builder.addFieldInt8(12, +derived, +false);
-}
+	static addDerived(builder: flatbuffers.Builder, derived: boolean) {
+		builder.addFieldInt8(12, +derived, +false);
+	}
 
-static endGraphEdge(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // from
-  builder.requiredField(offset, 6) // to
-  return offset;
-}
+	static endGraphEdge(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // from
+		builder.requiredField(offset, 6); // to
+		return offset;
+	}
 
-static createGraphEdge(builder:flatbuffers.Builder, fromOffset:flatbuffers.Offset, toOffset:flatbuffers.Offset, relationOffset:flatbuffers.Offset, weight:number, confidence:number, quality:number, hasQuality:boolean, evidenceOffset:flatbuffers.Offset, observedFrom:bigint, horizon:bigint, at:bigint, reasonOffset:flatbuffers.Offset, derived:boolean):flatbuffers.Offset {
-  GraphEdge.startGraphEdge(builder);
-  GraphEdge.addFrom(builder, fromOffset);
-  GraphEdge.addTo(builder, toOffset);
-  GraphEdge.addRelation(builder, relationOffset);
-  GraphEdge.addWeight(builder, weight);
-  GraphEdge.addConfidence(builder, confidence);
-  GraphEdge.addQuality(builder, quality);
-  GraphEdge.addHasQuality(builder, hasQuality);
-  GraphEdge.addEvidence(builder, evidenceOffset);
-  GraphEdge.addObservedFrom(builder, observedFrom);
-  GraphEdge.addHorizon(builder, horizon);
-  GraphEdge.addAt(builder, at);
-  GraphEdge.addReason(builder, reasonOffset);
-  GraphEdge.addDerived(builder, derived);
-  return GraphEdge.endGraphEdge(builder);
-}
+	static createGraphEdge(
+		builder: flatbuffers.Builder,
+		fromOffset: flatbuffers.Offset,
+		toOffset: flatbuffers.Offset,
+		relationOffset: flatbuffers.Offset,
+		weight: number,
+		confidence: number,
+		quality: number,
+		hasQuality: boolean,
+		evidenceOffset: flatbuffers.Offset,
+		observedFrom: bigint,
+		horizon: bigint,
+		at: bigint,
+		reasonOffset: flatbuffers.Offset,
+		derived: boolean,
+	): flatbuffers.Offset {
+		GraphEdge.startGraphEdge(builder);
+		GraphEdge.addFrom(builder, fromOffset);
+		GraphEdge.addTo(builder, toOffset);
+		GraphEdge.addRelation(builder, relationOffset);
+		GraphEdge.addWeight(builder, weight);
+		GraphEdge.addConfidence(builder, confidence);
+		GraphEdge.addQuality(builder, quality);
+		GraphEdge.addHasQuality(builder, hasQuality);
+		GraphEdge.addEvidence(builder, evidenceOffset);
+		GraphEdge.addObservedFrom(builder, observedFrom);
+		GraphEdge.addHorizon(builder, horizon);
+		GraphEdge.addAt(builder, at);
+		GraphEdge.addReason(builder, reasonOffset);
+		GraphEdge.addDerived(builder, derived);
+		return GraphEdge.endGraphEdge(builder);
+	}
 
-unpack(): GraphEdgeT {
-  return new GraphEdgeT(
-    this.from(),
-    this.to(),
-    this.relation(),
-    this.weight(),
-    this.confidence(),
-    this.quality(),
-    this.hasQuality(),
-    this.bb!.createScalarList<string>(this.evidence.bind(this), this.evidenceLength()),
-    this.observedFrom(),
-    this.horizon(),
-    this.at(),
-    this.reason(),
-    this.derived()
-  );
-}
+	unpack(): GraphEdgeT {
+		return new GraphEdgeT(
+			this.from(),
+			this.to(),
+			this.relation(),
+			this.weight(),
+			this.confidence(),
+			this.quality(),
+			this.hasQuality(),
+			this.bb!.createScalarList<string>(
+				this.evidence.bind(this),
+				this.evidenceLength(),
+			),
+			this.observedFrom(),
+			this.horizon(),
+			this.at(),
+			this.reason(),
+			this.derived(),
+		);
+	}
 
-
-unpackTo(_o: GraphEdgeT): void {
-  _o.from = this.from();
-  _o.to = this.to();
-  _o.relation = this.relation();
-  _o.weight = this.weight();
-  _o.confidence = this.confidence();
-  _o.quality = this.quality();
-  _o.hasQuality = this.hasQuality();
-  _o.evidence = this.bb!.createScalarList<string>(this.evidence.bind(this), this.evidenceLength());
-  _o.observedFrom = this.observedFrom();
-  _o.horizon = this.horizon();
-  _o.at = this.at();
-  _o.reason = this.reason();
-  _o.derived = this.derived();
-}
+	unpackTo(_o: GraphEdgeT): void {
+		_o.from = this.from();
+		_o.to = this.to();
+		_o.relation = this.relation();
+		_o.weight = this.weight();
+		_o.confidence = this.confidence();
+		_o.quality = this.quality();
+		_o.hasQuality = this.hasQuality();
+		_o.evidence = this.bb!.createScalarList<string>(
+			this.evidence.bind(this),
+			this.evidenceLength(),
+		);
+		_o.observedFrom = this.observedFrom();
+		_o.horizon = this.horizon();
+		_o.at = this.at();
+		_o.reason = this.reason();
+		_o.derived = this.derived();
+	}
 }
 
 export class GraphEdgeT implements flatbuffers.IGeneratedObject {
-constructor(
-  public from: string|Uint8Array|null = null,
-  public to: string|Uint8Array|null = null,
-  public relation: string|Uint8Array|null = null,
-  public weight: number = 0.0,
-  public confidence: number = 0.0,
-  public quality: number = 0.0,
-  public hasQuality: boolean = false,
-  public evidence: (string)[] = [],
-  public observedFrom: bigint = BigInt('0'),
-  public horizon: bigint = BigInt('0'),
-  public at: bigint = BigInt('0'),
-  public reason: string|Uint8Array|null = null,
-  public derived: boolean = false
-){}
+	constructor(
+		public from: string | Uint8Array | null = null,
+		public to: string | Uint8Array | null = null,
+		public relation: string | Uint8Array | null = null,
+		public weight: number = 0.0,
+		public confidence: number = 0.0,
+		public quality: number = 0.0,
+		public hasQuality: boolean = false,
+		public evidence: string[] = [],
+		public observedFrom: bigint = BigInt("0"),
+		public horizon: bigint = BigInt("0"),
+		public at: bigint = BigInt("0"),
+		public reason: string | Uint8Array | null = null,
+		public derived: boolean = false,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const from = this.from !== null ? builder.createString(this.from!) : 0;
+		const to = this.to !== null ? builder.createString(this.to!) : 0;
+		const relation =
+			this.relation !== null ? builder.createString(this.relation!) : 0;
+		const evidence = GraphEdge.createEvidenceVector(
+			builder,
+			builder.createObjectOffsetList(this.evidence),
+		);
+		const reason =
+			this.reason !== null ? builder.createString(this.reason!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const from = (this.from !== null ? builder.createString(this.from!) : 0);
-  const to = (this.to !== null ? builder.createString(this.to!) : 0);
-  const relation = (this.relation !== null ? builder.createString(this.relation!) : 0);
-  const evidence = GraphEdge.createEvidenceVector(builder, builder.createObjectOffsetList(this.evidence));
-  const reason = (this.reason !== null ? builder.createString(this.reason!) : 0);
-
-  return GraphEdge.createGraphEdge(builder,
-    from,
-    to,
-    relation,
-    this.weight,
-    this.confidence,
-    this.quality,
-    this.hasQuality,
-    evidence,
-    this.observedFrom,
-    this.horizon,
-    this.at,
-    reason,
-    this.derived
-  );
-}
+		return GraphEdge.createGraphEdge(
+			builder,
+			from,
+			to,
+			relation,
+			this.weight,
+			this.confidence,
+			this.quality,
+			this.hasQuality,
+			evidence,
+			this.observedFrom,
+			this.horizon,
+			this.at,
+			reason,
+			this.derived,
+		);
+	}
 }

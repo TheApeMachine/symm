@@ -3,150 +3,184 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class ResonanceVerdict
+	implements flatbuffers.IUnpackableObject<ResonanceVerdictT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): ResonanceVerdict {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsResonanceVerdict(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ResonanceVerdict,
+	): ResonanceVerdict {
+		return (obj || new ResonanceVerdict()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class ResonanceVerdict implements flatbuffers.IUnpackableObject<ResonanceVerdictT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):ResonanceVerdict {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsResonanceVerdict(
+		bb: flatbuffers.ByteBuffer,
+		obj?: ResonanceVerdict,
+	): ResonanceVerdict {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new ResonanceVerdict()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsResonanceVerdict(bb:flatbuffers.ByteBuffer, obj?:ResonanceVerdict):ResonanceVerdict {
-  return (obj || new ResonanceVerdict()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	learning(): string | null;
+	learning(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	learning(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static getSizePrefixedRootAsResonanceVerdict(bb:flatbuffers.ByteBuffer, obj?:ResonanceVerdict):ResonanceVerdict {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new ResonanceVerdict()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	tuning(): string | null;
+	tuning(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	tuning(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-learning():string|null
-learning(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-learning(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	learningHealth(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-tuning():string|null
-tuning(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-tuning(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	tuningHealth(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-learningHealth():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	direction(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-tuningHealth():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	conviction(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-direction():number {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static startResonanceVerdict(builder: flatbuffers.Builder) {
+		builder.startObject(6);
+	}
 
-conviction():number {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	static addLearning(
+		builder: flatbuffers.Builder,
+		learningOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, learningOffset, 0);
+	}
 
-static startResonanceVerdict(builder:flatbuffers.Builder) {
-  builder.startObject(6);
-}
+	static addTuning(
+		builder: flatbuffers.Builder,
+		tuningOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, tuningOffset, 0);
+	}
 
-static addLearning(builder:flatbuffers.Builder, learningOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, learningOffset, 0);
-}
+	static addLearningHealth(
+		builder: flatbuffers.Builder,
+		learningHealth: number,
+	) {
+		builder.addFieldFloat64(2, learningHealth, 0.0);
+	}
 
-static addTuning(builder:flatbuffers.Builder, tuningOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, tuningOffset, 0);
-}
+	static addTuningHealth(builder: flatbuffers.Builder, tuningHealth: number) {
+		builder.addFieldFloat64(3, tuningHealth, 0.0);
+	}
 
-static addLearningHealth(builder:flatbuffers.Builder, learningHealth:number) {
-  builder.addFieldFloat64(2, learningHealth, 0.0);
-}
+	static addDirection(builder: flatbuffers.Builder, direction: number) {
+		builder.addFieldFloat64(4, direction, 0.0);
+	}
 
-static addTuningHealth(builder:flatbuffers.Builder, tuningHealth:number) {
-  builder.addFieldFloat64(3, tuningHealth, 0.0);
-}
+	static addConviction(builder: flatbuffers.Builder, conviction: number) {
+		builder.addFieldFloat64(5, conviction, 0.0);
+	}
 
-static addDirection(builder:flatbuffers.Builder, direction:number) {
-  builder.addFieldFloat64(4, direction, 0.0);
-}
+	static endResonanceVerdict(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static addConviction(builder:flatbuffers.Builder, conviction:number) {
-  builder.addFieldFloat64(5, conviction, 0.0);
-}
+	static createResonanceVerdict(
+		builder: flatbuffers.Builder,
+		learningOffset: flatbuffers.Offset,
+		tuningOffset: flatbuffers.Offset,
+		learningHealth: number,
+		tuningHealth: number,
+		direction: number,
+		conviction: number,
+	): flatbuffers.Offset {
+		ResonanceVerdict.startResonanceVerdict(builder);
+		ResonanceVerdict.addLearning(builder, learningOffset);
+		ResonanceVerdict.addTuning(builder, tuningOffset);
+		ResonanceVerdict.addLearningHealth(builder, learningHealth);
+		ResonanceVerdict.addTuningHealth(builder, tuningHealth);
+		ResonanceVerdict.addDirection(builder, direction);
+		ResonanceVerdict.addConviction(builder, conviction);
+		return ResonanceVerdict.endResonanceVerdict(builder);
+	}
 
-static endResonanceVerdict(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): ResonanceVerdictT {
+		return new ResonanceVerdictT(
+			this.learning(),
+			this.tuning(),
+			this.learningHealth(),
+			this.tuningHealth(),
+			this.direction(),
+			this.conviction(),
+		);
+	}
 
-static createResonanceVerdict(builder:flatbuffers.Builder, learningOffset:flatbuffers.Offset, tuningOffset:flatbuffers.Offset, learningHealth:number, tuningHealth:number, direction:number, conviction:number):flatbuffers.Offset {
-  ResonanceVerdict.startResonanceVerdict(builder);
-  ResonanceVerdict.addLearning(builder, learningOffset);
-  ResonanceVerdict.addTuning(builder, tuningOffset);
-  ResonanceVerdict.addLearningHealth(builder, learningHealth);
-  ResonanceVerdict.addTuningHealth(builder, tuningHealth);
-  ResonanceVerdict.addDirection(builder, direction);
-  ResonanceVerdict.addConviction(builder, conviction);
-  return ResonanceVerdict.endResonanceVerdict(builder);
-}
-
-unpack(): ResonanceVerdictT {
-  return new ResonanceVerdictT(
-    this.learning(),
-    this.tuning(),
-    this.learningHealth(),
-    this.tuningHealth(),
-    this.direction(),
-    this.conviction()
-  );
-}
-
-
-unpackTo(_o: ResonanceVerdictT): void {
-  _o.learning = this.learning();
-  _o.tuning = this.tuning();
-  _o.learningHealth = this.learningHealth();
-  _o.tuningHealth = this.tuningHealth();
-  _o.direction = this.direction();
-  _o.conviction = this.conviction();
-}
+	unpackTo(_o: ResonanceVerdictT): void {
+		_o.learning = this.learning();
+		_o.tuning = this.tuning();
+		_o.learningHealth = this.learningHealth();
+		_o.tuningHealth = this.tuningHealth();
+		_o.direction = this.direction();
+		_o.conviction = this.conviction();
+	}
 }
 
 export class ResonanceVerdictT implements flatbuffers.IGeneratedObject {
-constructor(
-  public learning: string|Uint8Array|null = null,
-  public tuning: string|Uint8Array|null = null,
-  public learningHealth: number = 0.0,
-  public tuningHealth: number = 0.0,
-  public direction: number = 0.0,
-  public conviction: number = 0.0
-){}
+	constructor(
+		public learning: string | Uint8Array | null = null,
+		public tuning: string | Uint8Array | null = null,
+		public learningHealth: number = 0.0,
+		public tuningHealth: number = 0.0,
+		public direction: number = 0.0,
+		public conviction: number = 0.0,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const learning =
+			this.learning !== null ? builder.createString(this.learning!) : 0;
+		const tuning =
+			this.tuning !== null ? builder.createString(this.tuning!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const learning = (this.learning !== null ? builder.createString(this.learning!) : 0);
-  const tuning = (this.tuning !== null ? builder.createString(this.tuning!) : 0);
-
-  return ResonanceVerdict.createResonanceVerdict(builder,
-    learning,
-    tuning,
-    this.learningHealth,
-    this.tuningHealth,
-    this.direction,
-    this.conviction
-  );
-}
+		return ResonanceVerdict.createResonanceVerdict(
+			builder,
+			learning,
+			tuning,
+			this.learningHealth,
+			this.tuningHealth,
+			this.direction,
+			this.conviction,
+		);
+	}
 }

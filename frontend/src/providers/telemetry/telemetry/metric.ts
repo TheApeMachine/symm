@@ -3,137 +3,157 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
-
-
+import * as flatbuffers from "flatbuffers";
 
 export class Metric implements flatbuffers.IUnpackableObject<MetricT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):Metric {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): Metric {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-static getRootAsMetric(bb:flatbuffers.ByteBuffer, obj?:Metric):Metric {
-  return (obj || new Metric()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getRootAsMetric(bb: flatbuffers.ByteBuffer, obj?: Metric): Metric {
+		return (obj || new Metric()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsMetric(bb:flatbuffers.ByteBuffer, obj?:Metric):Metric {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new Metric()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsMetric(
+		bb: flatbuffers.ByteBuffer,
+		obj?: Metric,
+	): Metric {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new Metric()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-name():string|null
-name(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-name(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	name(): string | null;
+	name(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	name(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-raw():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	raw(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-normalized():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	normalized(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-hasNormalized():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	hasNormalized(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-unit():string|null
-unit(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-unit(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	unit(): string | null;
+	unit(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	unit(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-static startMetric(builder:flatbuffers.Builder) {
-  builder.startObject(5);
-}
+	static startMetric(builder: flatbuffers.Builder) {
+		builder.startObject(5);
+	}
 
-static addName(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, nameOffset, 0);
-}
+	static addName(builder: flatbuffers.Builder, nameOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(0, nameOffset, 0);
+	}
 
-static addRaw(builder:flatbuffers.Builder, raw:number) {
-  builder.addFieldFloat64(1, raw, 0.0);
-}
+	static addRaw(builder: flatbuffers.Builder, raw: number) {
+		builder.addFieldFloat64(1, raw, 0.0);
+	}
 
-static addNormalized(builder:flatbuffers.Builder, normalized:number) {
-  builder.addFieldFloat64(2, normalized, 0.0);
-}
+	static addNormalized(builder: flatbuffers.Builder, normalized: number) {
+		builder.addFieldFloat64(2, normalized, 0.0);
+	}
 
-static addHasNormalized(builder:flatbuffers.Builder, hasNormalized:boolean) {
-  builder.addFieldInt8(3, +hasNormalized, +false);
-}
+	static addHasNormalized(
+		builder: flatbuffers.Builder,
+		hasNormalized: boolean,
+	) {
+		builder.addFieldInt8(3, +hasNormalized, +false);
+	}
 
-static addUnit(builder:flatbuffers.Builder, unitOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(4, unitOffset, 0);
-}
+	static addUnit(builder: flatbuffers.Builder, unitOffset: flatbuffers.Offset) {
+		builder.addFieldOffset(4, unitOffset, 0);
+	}
 
-static endMetric(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  builder.requiredField(offset, 4) // name
-  return offset;
-}
+	static endMetric(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		builder.requiredField(offset, 4); // name
+		return offset;
+	}
 
-static createMetric(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset, raw:number, normalized:number, hasNormalized:boolean, unitOffset:flatbuffers.Offset):flatbuffers.Offset {
-  Metric.startMetric(builder);
-  Metric.addName(builder, nameOffset);
-  Metric.addRaw(builder, raw);
-  Metric.addNormalized(builder, normalized);
-  Metric.addHasNormalized(builder, hasNormalized);
-  Metric.addUnit(builder, unitOffset);
-  return Metric.endMetric(builder);
-}
+	static createMetric(
+		builder: flatbuffers.Builder,
+		nameOffset: flatbuffers.Offset,
+		raw: number,
+		normalized: number,
+		hasNormalized: boolean,
+		unitOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		Metric.startMetric(builder);
+		Metric.addName(builder, nameOffset);
+		Metric.addRaw(builder, raw);
+		Metric.addNormalized(builder, normalized);
+		Metric.addHasNormalized(builder, hasNormalized);
+		Metric.addUnit(builder, unitOffset);
+		return Metric.endMetric(builder);
+	}
 
-unpack(): MetricT {
-  return new MetricT(
-    this.name(),
-    this.raw(),
-    this.normalized(),
-    this.hasNormalized(),
-    this.unit()
-  );
-}
+	unpack(): MetricT {
+		return new MetricT(
+			this.name(),
+			this.raw(),
+			this.normalized(),
+			this.hasNormalized(),
+			this.unit(),
+		);
+	}
 
-
-unpackTo(_o: MetricT): void {
-  _o.name = this.name();
-  _o.raw = this.raw();
-  _o.normalized = this.normalized();
-  _o.hasNormalized = this.hasNormalized();
-  _o.unit = this.unit();
-}
+	unpackTo(_o: MetricT): void {
+		_o.name = this.name();
+		_o.raw = this.raw();
+		_o.normalized = this.normalized();
+		_o.hasNormalized = this.hasNormalized();
+		_o.unit = this.unit();
+	}
 }
 
 export class MetricT implements flatbuffers.IGeneratedObject {
-constructor(
-  public name: string|Uint8Array|null = null,
-  public raw: number = 0.0,
-  public normalized: number = 0.0,
-  public hasNormalized: boolean = false,
-  public unit: string|Uint8Array|null = null
-){}
+	constructor(
+		public name: string | Uint8Array | null = null,
+		public raw: number = 0.0,
+		public normalized: number = 0.0,
+		public hasNormalized: boolean = false,
+		public unit: string | Uint8Array | null = null,
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const name = this.name !== null ? builder.createString(this.name!) : 0;
+		const unit = this.unit !== null ? builder.createString(this.unit!) : 0;
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const name = (this.name !== null ? builder.createString(this.name!) : 0);
-  const unit = (this.unit !== null ? builder.createString(this.unit!) : 0);
-
-  return Metric.createMetric(builder,
-    name,
-    this.raw,
-    this.normalized,
-    this.hasNormalized,
-    unit
-  );
-}
+		return Metric.createMetric(
+			builder,
+			name,
+			this.raw,
+			this.normalized,
+			this.hasNormalized,
+			unit,
+		);
+	}
 }

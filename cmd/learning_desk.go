@@ -25,6 +25,8 @@ type learningDesk struct {
 	instrument  *broker.Instrument
 	submitted   atomic.Uint64
 	unsupported atomic.Uint64
+	diverged    atomic.Uint64
+	failed      atomic.Uint64
 }
 
 /* newLearningDesk attaches the account; a nil desk attaches nothing. */
@@ -41,10 +43,10 @@ Submit turns one policy intent into account action. Reductions close the open
 position; entries open one at the quantity the agent fixed against the same
 displayed book it was measured on.
 
-A partial reduction has no desk operation yet, so it is counted and refused
-rather than silently executed as something else: an account that quietly did
-a different thing from the one the agent recorded would corrupt every later
-measurement drawn from that lane.
+The agent decides from its own simulated wallet, so its intent and the
+account's actual position can disagree — an entry the account already holds, or
+an exit on a symbol it never opened. That is reconciliation, not failure: the
+intent is counted as diverged and the account is left alone.
 */
 func (bridge *learningDesk) Submit(intent strategy.ExecutionIntent) error {
 	if intent.Quantity == nil || intent.Quantity.Sign() <= 0 {
@@ -54,6 +56,15 @@ func (bridge *learningDesk) Submit(intent strategy.ExecutionIntent) error {
 	if intent.Reduce {
 		if intent.Kind != types.ActionExit {
 			bridge.unsupported.Add(1)
+			return nil
+		}
+
+		// The agent decides from its own simulated wallet, which is not the
+		// account. When the account holds nothing there is nothing to close,
+		// and that is a reconciliation fact, not a failure: the intent is
+		// counted as diverged and the account is left as it is.
+		if bridge.desk.Holding(intent.Symbol) <= 0 {
+			bridge.diverged.Add(1)
 			return nil
 		}
 
@@ -70,6 +81,14 @@ func (bridge *learningDesk) Submit(intent strategy.ExecutionIntent) error {
 
 	if intent.Kind != types.ActionEnter {
 		bridge.unsupported.Add(1)
+		return nil
+	}
+
+	// The desk already owns one lot per symbol. An entry the account cannot
+	// take is divergence between the simulated wallet and the account, not an
+	// execution failure.
+	if bridge.desk.Holding(intent.Symbol) > 0 {
+		bridge.diverged.Add(1)
 		return nil
 	}
 

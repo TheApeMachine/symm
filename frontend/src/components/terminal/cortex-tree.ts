@@ -1,4 +1,7 @@
-import type { CognitiveBranch, CognitiveBeam as FrameBeam } from "#/collections/types";
+import type {
+	CognitiveBranch,
+	CognitiveBeam as FrameBeam,
+} from "#/collections/types";
 import type { Variant } from "@/components/ui/types";
 
 export type CortexBeam = {

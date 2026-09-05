@@ -39,15 +39,6 @@ const decision: FrozenEntryDecision = {
 		impact: "0.000002",
 		breakEven: "0.000493",
 	},
-	risk: {
-		present: true,
-		entryNoiseBand: "0.000004",
-		riskDistance: "0.000009",
-		trailDistance: "0.000007",
-		minEdge: "0.000003",
-		maxLoss: "1.25",
-	},
-	stopFloor: "0.000481",
 	evidence: [
 		{ key: "probability:profitable", value: 0.73 },
 		{ key: "return:expected_log", value: 0.018 },

@@ -54,7 +54,13 @@ export const Pulse = () => {
 		>
 			<Reading
 				which="tick"
-				value={lastTick ? new Date(Number(lastTick.timestampNs() / 1000000n)).toISOString().slice(11, 19) : "—"}
+				value={
+					lastTick
+						? new Date(Number(lastTick.timestampNs() / 1000000n))
+								.toISOString()
+								.slice(11, 19)
+						: "—"
+				}
 			/>
 			<Reading
 				label="phase"
@@ -67,11 +73,7 @@ export const Pulse = () => {
 				which="cand"
 				value={lastStrategy ? String(lastStrategy.decisionsLength()) : "—"}
 			/>
-			<Reading
-				label="meas"
-				which="meas"
-				value={String(measurementCount)}
-			/>
+			<Reading label="meas" which="meas" value={String(measurementCount)} />
 			<Reading
 				label="open"
 				which="open"
@@ -80,5 +82,3 @@ export const Pulse = () => {
 		</Flex.Row>
 	);
 };
-
-

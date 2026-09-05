@@ -5,7 +5,7 @@ import {
 	drawCortexTree,
 } from "#/components/terminal/cortex-draw";
 import { cortexTreeFromReading } from "#/components/terminal/cortex-tree";
-import { EnvelopeCognition } from "#/providers/telemetry/telemetry/envelope-cognition";
+import type { EnvelopeCognition } from "#/providers/telemetry/telemetry/envelope-cognition";
 import { EnvelopeCognitionBeam } from "#/providers/telemetry/telemetry/envelope-cognition-beam";
 import { EnvelopeCognitionBranch } from "#/providers/telemetry/telemetry/envelope-cognition-branch";
 import { EnvelopeCognitionClass } from "#/providers/telemetry/telemetry/envelope-cognition-class";
@@ -14,7 +14,9 @@ const branchObj = new EnvelopeCognitionBranch();
 const beamObj = new EnvelopeCognitionBeam();
 const classObj = new EnvelopeCognitionClass();
 
-const cognitionToRecord = (cog: EnvelopeCognition | null): Record<string, unknown> | null => {
+const cognitionToRecord = (
+	cog: EnvelopeCognition | null,
+): Record<string, unknown> | null => {
 	if (!cog) return null;
 
 	const branches: any[] = [];
@@ -141,7 +143,6 @@ export const CortexCanvas = ({
 			subscription.unsubscribe();
 			observer.disconnect();
 		};
-
 	}, [symbol]);
 
 	return <canvas ref={canvasRef} className={className} />;

@@ -3,192 +3,304 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { NamedBool, NamedBoolT } from '../telemetry/named-bool.js';
-import { NamedNumber, NamedNumberT } from '../telemetry/named-number.js';
-import { NamedString, NamedStringT } from '../telemetry/named-string.js';
-import { NamedStrings, NamedStringsT } from '../telemetry/named-strings.js';
+import { NamedBool, type NamedBoolT } from "../telemetry/named-bool.js";
+import { NamedNumber, type NamedNumberT } from "../telemetry/named-number.js";
+import { NamedString, type NamedStringT } from "../telemetry/named-string.js";
+import {
+	NamedStrings,
+	type NamedStringsT,
+} from "../telemetry/named-strings.js";
 
+export class GraphMetadata
+	implements flatbuffers.IUnpackableObject<GraphMetadataT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): GraphMetadata {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-export class GraphMetadata implements flatbuffers.IUnpackableObject<GraphMetadataT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):GraphMetadata {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getRootAsGraphMetadata(
+		bb: flatbuffers.ByteBuffer,
+		obj?: GraphMetadata,
+	): GraphMetadata {
+		return (obj || new GraphMetadata()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsGraphMetadata(bb:flatbuffers.ByteBuffer, obj?:GraphMetadata):GraphMetadata {
-  return (obj || new GraphMetadata()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsGraphMetadata(
+		bb: flatbuffers.ByteBuffer,
+		obj?: GraphMetadata,
+	): GraphMetadata {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new GraphMetadata()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsGraphMetadata(bb:flatbuffers.ByteBuffer, obj?:GraphMetadata):GraphMetadata {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new GraphMetadata()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	numbers(index: number, obj?: NamedNumber): NamedNumber | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? (obj || new NamedNumber()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-numbers(index: number, obj?:NamedNumber):NamedNumber|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? (obj || new NamedNumber()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	numbersLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-numbersLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	strings(index: number, obj?: NamedString): NamedString | null {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset
+			? (obj || new NamedString()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-strings(index: number, obj?:NamedString):NamedString|null {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? (obj || new NamedString()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	stringsLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-stringsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	bools(index: number, obj?: NamedBool): NamedBool | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? (obj || new NamedBool()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-bools(index: number, obj?:NamedBool):NamedBool|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? (obj || new NamedBool()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	boolsLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-boolsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	stringLists(index: number, obj?: NamedStrings): NamedStrings | null {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset
+			? (obj || new NamedStrings()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-stringLists(index: number, obj?:NamedStrings):NamedStrings|null {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? (obj || new NamedStrings()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	stringListsLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-stringListsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	static startGraphMetadata(builder: flatbuffers.Builder) {
+		builder.startObject(4);
+	}
 
-static startGraphMetadata(builder:flatbuffers.Builder) {
-  builder.startObject(4);
-}
+	static addNumbers(
+		builder: flatbuffers.Builder,
+		numbersOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, numbersOffset, 0);
+	}
 
-static addNumbers(builder:flatbuffers.Builder, numbersOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, numbersOffset, 0);
-}
+	static createNumbersVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createNumbersVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startNumbersVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startNumbersVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static addStrings(
+		builder: flatbuffers.Builder,
+		stringsOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(1, stringsOffset, 0);
+	}
 
-static addStrings(builder:flatbuffers.Builder, stringsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(1, stringsOffset, 0);
-}
+	static createStringsVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createStringsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startStringsVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startStringsVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static addBools(
+		builder: flatbuffers.Builder,
+		boolsOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, boolsOffset, 0);
+	}
 
-static addBools(builder:flatbuffers.Builder, boolsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, boolsOffset, 0);
-}
+	static createBoolsVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createBoolsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startBoolsVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startBoolsVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static addStringLists(
+		builder: flatbuffers.Builder,
+		stringListsOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(3, stringListsOffset, 0);
+	}
 
-static addStringLists(builder:flatbuffers.Builder, stringListsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(3, stringListsOffset, 0);
-}
+	static createStringListsVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static createStringListsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static startStringListsVector(
+		builder: flatbuffers.Builder,
+		numElems: number,
+	) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static startStringListsVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static endGraphMetadata(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static endGraphMetadata(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	static createGraphMetadata(
+		builder: flatbuffers.Builder,
+		numbersOffset: flatbuffers.Offset,
+		stringsOffset: flatbuffers.Offset,
+		boolsOffset: flatbuffers.Offset,
+		stringListsOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		GraphMetadata.startGraphMetadata(builder);
+		GraphMetadata.addNumbers(builder, numbersOffset);
+		GraphMetadata.addStrings(builder, stringsOffset);
+		GraphMetadata.addBools(builder, boolsOffset);
+		GraphMetadata.addStringLists(builder, stringListsOffset);
+		return GraphMetadata.endGraphMetadata(builder);
+	}
 
-static createGraphMetadata(builder:flatbuffers.Builder, numbersOffset:flatbuffers.Offset, stringsOffset:flatbuffers.Offset, boolsOffset:flatbuffers.Offset, stringListsOffset:flatbuffers.Offset):flatbuffers.Offset {
-  GraphMetadata.startGraphMetadata(builder);
-  GraphMetadata.addNumbers(builder, numbersOffset);
-  GraphMetadata.addStrings(builder, stringsOffset);
-  GraphMetadata.addBools(builder, boolsOffset);
-  GraphMetadata.addStringLists(builder, stringListsOffset);
-  return GraphMetadata.endGraphMetadata(builder);
-}
+	unpack(): GraphMetadataT {
+		return new GraphMetadataT(
+			this.bb!.createObjList<NamedNumber, NamedNumberT>(
+				this.numbers.bind(this),
+				this.numbersLength(),
+			),
+			this.bb!.createObjList<NamedString, NamedStringT>(
+				this.strings.bind(this),
+				this.stringsLength(),
+			),
+			this.bb!.createObjList<NamedBool, NamedBoolT>(
+				this.bools.bind(this),
+				this.boolsLength(),
+			),
+			this.bb!.createObjList<NamedStrings, NamedStringsT>(
+				this.stringLists.bind(this),
+				this.stringListsLength(),
+			),
+		);
+	}
 
-unpack(): GraphMetadataT {
-  return new GraphMetadataT(
-    this.bb!.createObjList<NamedNumber, NamedNumberT>(this.numbers.bind(this), this.numbersLength()),
-    this.bb!.createObjList<NamedString, NamedStringT>(this.strings.bind(this), this.stringsLength()),
-    this.bb!.createObjList<NamedBool, NamedBoolT>(this.bools.bind(this), this.boolsLength()),
-    this.bb!.createObjList<NamedStrings, NamedStringsT>(this.stringLists.bind(this), this.stringListsLength())
-  );
-}
-
-
-unpackTo(_o: GraphMetadataT): void {
-  _o.numbers = this.bb!.createObjList<NamedNumber, NamedNumberT>(this.numbers.bind(this), this.numbersLength());
-  _o.strings = this.bb!.createObjList<NamedString, NamedStringT>(this.strings.bind(this), this.stringsLength());
-  _o.bools = this.bb!.createObjList<NamedBool, NamedBoolT>(this.bools.bind(this), this.boolsLength());
-  _o.stringLists = this.bb!.createObjList<NamedStrings, NamedStringsT>(this.stringLists.bind(this), this.stringListsLength());
-}
+	unpackTo(_o: GraphMetadataT): void {
+		_o.numbers = this.bb!.createObjList<NamedNumber, NamedNumberT>(
+			this.numbers.bind(this),
+			this.numbersLength(),
+		);
+		_o.strings = this.bb!.createObjList<NamedString, NamedStringT>(
+			this.strings.bind(this),
+			this.stringsLength(),
+		);
+		_o.bools = this.bb!.createObjList<NamedBool, NamedBoolT>(
+			this.bools.bind(this),
+			this.boolsLength(),
+		);
+		_o.stringLists = this.bb!.createObjList<NamedStrings, NamedStringsT>(
+			this.stringLists.bind(this),
+			this.stringListsLength(),
+		);
+	}
 }
 
 export class GraphMetadataT implements flatbuffers.IGeneratedObject {
-constructor(
-  public numbers: (NamedNumberT)[] = [],
-  public strings: (NamedStringT)[] = [],
-  public bools: (NamedBoolT)[] = [],
-  public stringLists: (NamedStringsT)[] = []
-){}
+	constructor(
+		public numbers: NamedNumberT[] = [],
+		public strings: NamedStringT[] = [],
+		public bools: NamedBoolT[] = [],
+		public stringLists: NamedStringsT[] = [],
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const numbers = GraphMetadata.createNumbersVector(
+			builder,
+			builder.createObjectOffsetList(this.numbers),
+		);
+		const strings = GraphMetadata.createStringsVector(
+			builder,
+			builder.createObjectOffsetList(this.strings),
+		);
+		const bools = GraphMetadata.createBoolsVector(
+			builder,
+			builder.createObjectOffsetList(this.bools),
+		);
+		const stringLists = GraphMetadata.createStringListsVector(
+			builder,
+			builder.createObjectOffsetList(this.stringLists),
+		);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const numbers = GraphMetadata.createNumbersVector(builder, builder.createObjectOffsetList(this.numbers));
-  const strings = GraphMetadata.createStringsVector(builder, builder.createObjectOffsetList(this.strings));
-  const bools = GraphMetadata.createBoolsVector(builder, builder.createObjectOffsetList(this.bools));
-  const stringLists = GraphMetadata.createStringListsVector(builder, builder.createObjectOffsetList(this.stringLists));
-
-  return GraphMetadata.createGraphMetadata(builder,
-    numbers,
-    strings,
-    bools,
-    stringLists
-  );
-}
+		return GraphMetadata.createGraphMetadata(
+			builder,
+			numbers,
+			strings,
+			bools,
+			stringLists,
+		);
+	}
 }

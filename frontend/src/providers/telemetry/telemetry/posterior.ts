@@ -3,115 +3,133 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
-
-
+import * as flatbuffers from "flatbuffers";
 
 export class Posterior implements flatbuffers.IUnpackableObject<PosteriorT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):Posterior {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): Posterior {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-static getRootAsPosterior(bb:flatbuffers.ByteBuffer, obj?:Posterior):Posterior {
-  return (obj || new Posterior()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getRootAsPosterior(
+		bb: flatbuffers.ByteBuffer,
+		obj?: Posterior,
+	): Posterior {
+		return (obj || new Posterior()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsPosterior(bb:flatbuffers.ByteBuffer, obj?:Posterior):Posterior {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new Posterior()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsPosterior(
+		bb: flatbuffers.ByteBuffer,
+		obj?: Posterior,
+	): Posterior {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new Posterior()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-value():number {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	value(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-scale():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	scale(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-degreesOfFreedom():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
+	degreesOfFreedom(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+	}
 
-ready():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	ready(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-static startPosterior(builder:flatbuffers.Builder) {
-  builder.startObject(4);
-}
+	static startPosterior(builder: flatbuffers.Builder) {
+		builder.startObject(4);
+	}
 
-static addValue(builder:flatbuffers.Builder, value:number) {
-  builder.addFieldFloat64(0, value, 0.0);
-}
+	static addValue(builder: flatbuffers.Builder, value: number) {
+		builder.addFieldFloat64(0, value, 0.0);
+	}
 
-static addScale(builder:flatbuffers.Builder, scale:number) {
-  builder.addFieldFloat64(1, scale, 0.0);
-}
+	static addScale(builder: flatbuffers.Builder, scale: number) {
+		builder.addFieldFloat64(1, scale, 0.0);
+	}
 
-static addDegreesOfFreedom(builder:flatbuffers.Builder, degreesOfFreedom:number) {
-  builder.addFieldFloat64(2, degreesOfFreedom, 0.0);
-}
+	static addDegreesOfFreedom(
+		builder: flatbuffers.Builder,
+		degreesOfFreedom: number,
+	) {
+		builder.addFieldFloat64(2, degreesOfFreedom, 0.0);
+	}
 
-static addReady(builder:flatbuffers.Builder, ready:boolean) {
-  builder.addFieldInt8(3, +ready, +false);
-}
+	static addReady(builder: flatbuffers.Builder, ready: boolean) {
+		builder.addFieldInt8(3, +ready, +false);
+	}
 
-static endPosterior(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	static endPosterior(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static createPosterior(builder:flatbuffers.Builder, value:number, scale:number, degreesOfFreedom:number, ready:boolean):flatbuffers.Offset {
-  Posterior.startPosterior(builder);
-  Posterior.addValue(builder, value);
-  Posterior.addScale(builder, scale);
-  Posterior.addDegreesOfFreedom(builder, degreesOfFreedom);
-  Posterior.addReady(builder, ready);
-  return Posterior.endPosterior(builder);
-}
+	static createPosterior(
+		builder: flatbuffers.Builder,
+		value: number,
+		scale: number,
+		degreesOfFreedom: number,
+		ready: boolean,
+	): flatbuffers.Offset {
+		Posterior.startPosterior(builder);
+		Posterior.addValue(builder, value);
+		Posterior.addScale(builder, scale);
+		Posterior.addDegreesOfFreedom(builder, degreesOfFreedom);
+		Posterior.addReady(builder, ready);
+		return Posterior.endPosterior(builder);
+	}
 
-unpack(): PosteriorT {
-  return new PosteriorT(
-    this.value(),
-    this.scale(),
-    this.degreesOfFreedom(),
-    this.ready()
-  );
-}
+	unpack(): PosteriorT {
+		return new PosteriorT(
+			this.value(),
+			this.scale(),
+			this.degreesOfFreedom(),
+			this.ready(),
+		);
+	}
 
-
-unpackTo(_o: PosteriorT): void {
-  _o.value = this.value();
-  _o.scale = this.scale();
-  _o.degreesOfFreedom = this.degreesOfFreedom();
-  _o.ready = this.ready();
-}
+	unpackTo(_o: PosteriorT): void {
+		_o.value = this.value();
+		_o.scale = this.scale();
+		_o.degreesOfFreedom = this.degreesOfFreedom();
+		_o.ready = this.ready();
+	}
 }
 
 export class PosteriorT implements flatbuffers.IGeneratedObject {
-constructor(
-  public value: number = 0.0,
-  public scale: number = 0.0,
-  public degreesOfFreedom: number = 0.0,
-  public ready: boolean = false
-){}
+	constructor(
+		public value: number = 0.0,
+		public scale: number = 0.0,
+		public degreesOfFreedom: number = 0.0,
+		public ready: boolean = false,
+	) {}
 
-
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  return Posterior.createPosterior(builder,
-    this.value,
-    this.scale,
-    this.degreesOfFreedom,
-    this.ready
-  );
-}
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		return Posterior.createPosterior(
+			builder,
+			this.value,
+			this.scale,
+			this.degreesOfFreedom,
+			this.ready,
+		);
+	}
 }

@@ -3,115 +3,132 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
+export class EnvelopeWaveMode
+	implements flatbuffers.IUnpackableObject<EnvelopeWaveModeT>
+{
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeWaveMode {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
+	static getRootAsEnvelopeWaveMode(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeWaveMode,
+	): EnvelopeWaveMode {
+		return (obj || new EnvelopeWaveMode()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-export class EnvelopeWaveMode implements flatbuffers.IUnpackableObject<EnvelopeWaveModeT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeWaveMode {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	static getSizePrefixedRootAsEnvelopeWaveMode(
+		bb: flatbuffers.ByteBuffer,
+		obj?: EnvelopeWaveMode,
+	): EnvelopeWaveMode {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new EnvelopeWaveMode()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getRootAsEnvelopeWaveMode(bb:flatbuffers.ByteBuffer, obj?:EnvelopeWaveMode):EnvelopeWaveMode {
-  return (obj || new EnvelopeWaveMode()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	omega(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+	}
 
-static getSizePrefixedRootAsEnvelopeWaveMode(bb:flatbuffers.ByteBuffer, obj?:EnvelopeWaveMode):EnvelopeWaveMode {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new EnvelopeWaveMode()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	real(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+	}
 
-omega():number {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
-}
+	imaginary(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+	}
 
-real():number {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
-}
+	linewidth(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
+	}
 
-imaginary():number {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
-}
+	static startEnvelopeWaveMode(builder: flatbuffers.Builder) {
+		builder.startObject(4);
+	}
 
-linewidth():number {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readFloat32(this.bb_pos + offset) : 0.0;
-}
+	static addOmega(builder: flatbuffers.Builder, omega: number) {
+		builder.addFieldFloat32(0, omega, 0.0);
+	}
 
-static startEnvelopeWaveMode(builder:flatbuffers.Builder) {
-  builder.startObject(4);
-}
+	static addReal(builder: flatbuffers.Builder, real: number) {
+		builder.addFieldFloat32(1, real, 0.0);
+	}
 
-static addOmega(builder:flatbuffers.Builder, omega:number) {
-  builder.addFieldFloat32(0, omega, 0.0);
-}
+	static addImaginary(builder: flatbuffers.Builder, imaginary: number) {
+		builder.addFieldFloat32(2, imaginary, 0.0);
+	}
 
-static addReal(builder:flatbuffers.Builder, real:number) {
-  builder.addFieldFloat32(1, real, 0.0);
-}
+	static addLinewidth(builder: flatbuffers.Builder, linewidth: number) {
+		builder.addFieldFloat32(3, linewidth, 0.0);
+	}
 
-static addImaginary(builder:flatbuffers.Builder, imaginary:number) {
-  builder.addFieldFloat32(2, imaginary, 0.0);
-}
+	static endEnvelopeWaveMode(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static addLinewidth(builder:flatbuffers.Builder, linewidth:number) {
-  builder.addFieldFloat32(3, linewidth, 0.0);
-}
+	static createEnvelopeWaveMode(
+		builder: flatbuffers.Builder,
+		omega: number,
+		real: number,
+		imaginary: number,
+		linewidth: number,
+	): flatbuffers.Offset {
+		EnvelopeWaveMode.startEnvelopeWaveMode(builder);
+		EnvelopeWaveMode.addOmega(builder, omega);
+		EnvelopeWaveMode.addReal(builder, real);
+		EnvelopeWaveMode.addImaginary(builder, imaginary);
+		EnvelopeWaveMode.addLinewidth(builder, linewidth);
+		return EnvelopeWaveMode.endEnvelopeWaveMode(builder);
+	}
 
-static endEnvelopeWaveMode(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	unpack(): EnvelopeWaveModeT {
+		return new EnvelopeWaveModeT(
+			this.omega(),
+			this.real(),
+			this.imaginary(),
+			this.linewidth(),
+		);
+	}
 
-static createEnvelopeWaveMode(builder:flatbuffers.Builder, omega:number, real:number, imaginary:number, linewidth:number):flatbuffers.Offset {
-  EnvelopeWaveMode.startEnvelopeWaveMode(builder);
-  EnvelopeWaveMode.addOmega(builder, omega);
-  EnvelopeWaveMode.addReal(builder, real);
-  EnvelopeWaveMode.addImaginary(builder, imaginary);
-  EnvelopeWaveMode.addLinewidth(builder, linewidth);
-  return EnvelopeWaveMode.endEnvelopeWaveMode(builder);
-}
-
-unpack(): EnvelopeWaveModeT {
-  return new EnvelopeWaveModeT(
-    this.omega(),
-    this.real(),
-    this.imaginary(),
-    this.linewidth()
-  );
-}
-
-
-unpackTo(_o: EnvelopeWaveModeT): void {
-  _o.omega = this.omega();
-  _o.real = this.real();
-  _o.imaginary = this.imaginary();
-  _o.linewidth = this.linewidth();
-}
+	unpackTo(_o: EnvelopeWaveModeT): void {
+		_o.omega = this.omega();
+		_o.real = this.real();
+		_o.imaginary = this.imaginary();
+		_o.linewidth = this.linewidth();
+	}
 }
 
 export class EnvelopeWaveModeT implements flatbuffers.IGeneratedObject {
-constructor(
-  public omega: number = 0.0,
-  public real: number = 0.0,
-  public imaginary: number = 0.0,
-  public linewidth: number = 0.0
-){}
+	constructor(
+		public omega: number = 0.0,
+		public real: number = 0.0,
+		public imaginary: number = 0.0,
+		public linewidth: number = 0.0,
+	) {}
 
-
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  return EnvelopeWaveMode.createEnvelopeWaveMode(builder,
-    this.omega,
-    this.real,
-    this.imaginary,
-    this.linewidth
-  );
-}
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		return EnvelopeWaveMode.createEnvelopeWaveMode(
+			builder,
+			this.omega,
+			this.real,
+			this.imaginary,
+			this.linewidth,
+		);
+	}
 }

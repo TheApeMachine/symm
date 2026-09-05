@@ -4,11 +4,7 @@ import { createKeyedStore } from "./store";
 
 describe("createKeyedStore via frames regression", () => {
 	it("retains bounded history under one key", () => {
-		const store = createKeyedStore<{ n: number }>()(
-			"tick",
-			3,
-			() => "current",
-		);
+		const store = createKeyedStore<{ n: number }>()("tick", 3, () => "current");
 
 		store.actions.updateFrame([{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }]);
 

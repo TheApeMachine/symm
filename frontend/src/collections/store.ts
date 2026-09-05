@@ -57,9 +57,7 @@ export const Nested = <T>(): NestedNode<T> => {
 			const rows: unknown[] = [];
 
 			for (const child of Object.values(node)) {
-				if (
-					typeof (child as CircularBuffer<T>).values === "function"
-				) {
+				if (typeof (child as CircularBuffer<T>).values === "function") {
 					rows.push(...(child as CircularBuffer<T>).values());
 					continue;
 				}

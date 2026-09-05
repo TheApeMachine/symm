@@ -31,10 +31,16 @@ export type HindsightRef = {
 	ordinal: number;
 };
 
-export const sameHindsightRef = (left: HindsightRef, right: HindsightRef): boolean =>
+export const sameHindsightRef = (
+	left: HindsightRef,
+	right: HindsightRef,
+): boolean =>
 	left.sequence === right.sequence && left.ordinal === right.ordinal;
 
-export const compareHindsightRef = (left: HindsightRef, right: HindsightRef): number =>
+export const compareHindsightRef = (
+	left: HindsightRef,
+	right: HindsightRef,
+): number =>
 	left.sequence !== right.sequence
 		? left.sequence - right.sequence
 		: left.ordinal - right.ordinal;

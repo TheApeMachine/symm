@@ -3,320 +3,475 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from 'flatbuffers';
+import * as flatbuffers from "flatbuffers";
 
-import { NamedNumber, NamedNumberT } from '../telemetry/named-number.js';
-import { ReasoningLink, ReasoningLinkT } from '../telemetry/reasoning-link.js';
-import { ReasoningNode, ReasoningNodeT } from '../telemetry/reasoning-node.js';
-
+import { NamedNumber, type NamedNumberT } from "../telemetry/named-number.js";
+import {
+	ReasoningLink,
+	type ReasoningLinkT,
+} from "../telemetry/reasoning-link.js";
+import {
+	ReasoningNode,
+	type ReasoningNodeT,
+} from "../telemetry/reasoning-node.js";
 
 export class Reasoning implements flatbuffers.IUnpackableObject<ReasoningT> {
-  bb: flatbuffers.ByteBuffer|null = null;
-  bb_pos = 0;
-  __init(i:number, bb:flatbuffers.ByteBuffer):Reasoning {
-  this.bb_pos = i;
-  this.bb = bb;
-  return this;
-}
+	bb: flatbuffers.ByteBuffer | null = null;
+	bb_pos = 0;
+	__init(i: number, bb: flatbuffers.ByteBuffer): Reasoning {
+		this.bb_pos = i;
+		this.bb = bb;
+		return this;
+	}
 
-static getRootAsReasoning(bb:flatbuffers.ByteBuffer, obj?:Reasoning):Reasoning {
-  return (obj || new Reasoning()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getRootAsReasoning(
+		bb: flatbuffers.ByteBuffer,
+		obj?: Reasoning,
+	): Reasoning {
+		return (obj || new Reasoning()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-static getSizePrefixedRootAsReasoning(bb:flatbuffers.ByteBuffer, obj?:Reasoning):Reasoning {
-  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-  return (obj || new Reasoning()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
-}
+	static getSizePrefixedRootAsReasoning(
+		bb: flatbuffers.ByteBuffer,
+		obj?: Reasoning,
+	): Reasoning {
+		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+		return (obj || new Reasoning()).__init(
+			bb.readInt32(bb.position()) + bb.position(),
+			bb,
+		);
+	}
 
-symbol():string|null
-symbol(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-symbol(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 4);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	symbol(): string | null;
+	symbol(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	symbol(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 4);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-ready():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 6);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
+	ready(): boolean {
+		const offset = this.bb!.__offset(this.bb_pos, 6);
+		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+	}
 
-reason():string|null
-reason(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-reason(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 8);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	reason(): string | null;
+	reason(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	reason(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 8);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-observedRows():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 10);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	observedRows(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 10);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-maximumHorizon():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 12);
-  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
-}
+	maximumHorizon(): bigint {
+		const offset = this.bb!.__offset(this.bb_pos, 12);
+		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
+	}
 
-treatment():string|null
-treatment(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-treatment(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 14);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	treatment(): string | null;
+	treatment(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	treatment(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 14);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-mediator():string|null
-mediator(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-mediator(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 16);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	mediator(): string | null;
+	mediator(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	mediator(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 16);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-target():string|null
-target(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-target(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 18);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
+	target(): string | null;
+	target(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
+	target(optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 18);
+		return offset
+			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
+			: null;
+	}
 
-controls(index: number):string
-controls(index: number,optionalEncoding:flatbuffers.Encoding):string|Uint8Array
-controls(index: number,optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.__string(this.bb!.__vector(this.bb_pos + offset) + index * 4, optionalEncoding) : null;
-}
+	controls(index: number): string;
+	controls(
+		index: number,
+		optionalEncoding: flatbuffers.Encoding,
+	): string | Uint8Array;
+	controls(index: number, optionalEncoding?: any): string | Uint8Array | null {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset
+			? this.bb!.__string(
+					this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					optionalEncoding,
+				)
+			: null;
+	}
 
-controlsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	controlsLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 20);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-currentState(index: number, obj?:NamedNumber):NamedNumber|null {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? (obj || new NamedNumber()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	currentState(index: number, obj?: NamedNumber): NamedNumber | null {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset
+			? (obj || new NamedNumber()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-currentStateLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	currentStateLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 22);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-nodes(index: number, obj?:ReasoningNode):ReasoningNode|null {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? (obj || new ReasoningNode()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	nodes(index: number, obj?: ReasoningNode): ReasoningNode | null {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset
+			? (obj || new ReasoningNode()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-nodesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	nodesLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 24);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-links(index: number, obj?:ReasoningLink):ReasoningLink|null {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? (obj || new ReasoningLink()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
-}
+	links(index: number, obj?: ReasoningLink): ReasoningLink | null {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset
+			? (obj || new ReasoningLink()).__init(
+					this.bb!.__indirect(
+						this.bb!.__vector(this.bb_pos + offset) + index * 4,
+					),
+					this.bb!,
+				)
+			: null;
+	}
 
-linksLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-}
+	linksLength(): number {
+		const offset = this.bb!.__offset(this.bb_pos, 26);
+		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+	}
 
-static startReasoning(builder:flatbuffers.Builder) {
-  builder.startObject(12);
-}
+	static startReasoning(builder: flatbuffers.Builder) {
+		builder.startObject(12);
+	}
 
-static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(0, symbolOffset, 0);
-}
+	static addSymbol(
+		builder: flatbuffers.Builder,
+		symbolOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(0, symbolOffset, 0);
+	}
 
-static addReady(builder:flatbuffers.Builder, ready:boolean) {
-  builder.addFieldInt8(1, +ready, +false);
-}
+	static addReady(builder: flatbuffers.Builder, ready: boolean) {
+		builder.addFieldInt8(1, +ready, +false);
+	}
 
-static addReason(builder:flatbuffers.Builder, reasonOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(2, reasonOffset, 0);
-}
+	static addReason(
+		builder: flatbuffers.Builder,
+		reasonOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(2, reasonOffset, 0);
+	}
 
-static addObservedRows(builder:flatbuffers.Builder, observedRows:bigint) {
-  builder.addFieldInt64(3, observedRows, BigInt('0'));
-}
+	static addObservedRows(builder: flatbuffers.Builder, observedRows: bigint) {
+		builder.addFieldInt64(3, observedRows, BigInt("0"));
+	}
 
-static addMaximumHorizon(builder:flatbuffers.Builder, maximumHorizon:bigint) {
-  builder.addFieldInt64(4, maximumHorizon, BigInt('0'));
-}
+	static addMaximumHorizon(
+		builder: flatbuffers.Builder,
+		maximumHorizon: bigint,
+	) {
+		builder.addFieldInt64(4, maximumHorizon, BigInt("0"));
+	}
 
-static addTreatment(builder:flatbuffers.Builder, treatmentOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(5, treatmentOffset, 0);
-}
+	static addTreatment(
+		builder: flatbuffers.Builder,
+		treatmentOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(5, treatmentOffset, 0);
+	}
 
-static addMediator(builder:flatbuffers.Builder, mediatorOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(6, mediatorOffset, 0);
-}
+	static addMediator(
+		builder: flatbuffers.Builder,
+		mediatorOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(6, mediatorOffset, 0);
+	}
 
-static addTarget(builder:flatbuffers.Builder, targetOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(7, targetOffset, 0);
-}
+	static addTarget(
+		builder: flatbuffers.Builder,
+		targetOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(7, targetOffset, 0);
+	}
 
-static addControls(builder:flatbuffers.Builder, controlsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, controlsOffset, 0);
-}
+	static addControls(
+		builder: flatbuffers.Builder,
+		controlsOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(8, controlsOffset, 0);
+	}
 
-static createControlsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static createControlsVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static startControlsVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static startControlsVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static addCurrentState(builder:flatbuffers.Builder, currentStateOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(9, currentStateOffset, 0);
-}
+	static addCurrentState(
+		builder: flatbuffers.Builder,
+		currentStateOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(9, currentStateOffset, 0);
+	}
 
-static createCurrentStateVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static createCurrentStateVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static startCurrentStateVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static startCurrentStateVector(
+		builder: flatbuffers.Builder,
+		numElems: number,
+	) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static addNodes(builder:flatbuffers.Builder, nodesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(10, nodesOffset, 0);
-}
+	static addNodes(
+		builder: flatbuffers.Builder,
+		nodesOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(10, nodesOffset, 0);
+	}
 
-static createNodesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static createNodesVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static startNodesVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static startNodesVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static addLinks(builder:flatbuffers.Builder, linksOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(11, linksOffset, 0);
-}
+	static addLinks(
+		builder: flatbuffers.Builder,
+		linksOffset: flatbuffers.Offset,
+	) {
+		builder.addFieldOffset(11, linksOffset, 0);
+	}
 
-static createLinksVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
-  builder.startVector(4, data.length, 4);
-  for (let i = data.length - 1; i >= 0; i--) {
-    builder.addOffset(data[i]!);
-  }
-  return builder.endVector();
-}
+	static createLinksVector(
+		builder: flatbuffers.Builder,
+		data: flatbuffers.Offset[],
+	): flatbuffers.Offset {
+		builder.startVector(4, data.length, 4);
+		for (let i = data.length - 1; i >= 0; i--) {
+			builder.addOffset(data[i]!);
+		}
+		return builder.endVector();
+	}
 
-static startLinksVector(builder:flatbuffers.Builder, numElems:number) {
-  builder.startVector(4, numElems, 4);
-}
+	static startLinksVector(builder: flatbuffers.Builder, numElems: number) {
+		builder.startVector(4, numElems, 4);
+	}
 
-static endReasoning(builder:flatbuffers.Builder):flatbuffers.Offset {
-  const offset = builder.endObject();
-  return offset;
-}
+	static endReasoning(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const offset = builder.endObject();
+		return offset;
+	}
 
-static createReasoning(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset, ready:boolean, reasonOffset:flatbuffers.Offset, observedRows:bigint, maximumHorizon:bigint, treatmentOffset:flatbuffers.Offset, mediatorOffset:flatbuffers.Offset, targetOffset:flatbuffers.Offset, controlsOffset:flatbuffers.Offset, currentStateOffset:flatbuffers.Offset, nodesOffset:flatbuffers.Offset, linksOffset:flatbuffers.Offset):flatbuffers.Offset {
-  Reasoning.startReasoning(builder);
-  Reasoning.addSymbol(builder, symbolOffset);
-  Reasoning.addReady(builder, ready);
-  Reasoning.addReason(builder, reasonOffset);
-  Reasoning.addObservedRows(builder, observedRows);
-  Reasoning.addMaximumHorizon(builder, maximumHorizon);
-  Reasoning.addTreatment(builder, treatmentOffset);
-  Reasoning.addMediator(builder, mediatorOffset);
-  Reasoning.addTarget(builder, targetOffset);
-  Reasoning.addControls(builder, controlsOffset);
-  Reasoning.addCurrentState(builder, currentStateOffset);
-  Reasoning.addNodes(builder, nodesOffset);
-  Reasoning.addLinks(builder, linksOffset);
-  return Reasoning.endReasoning(builder);
-}
+	static createReasoning(
+		builder: flatbuffers.Builder,
+		symbolOffset: flatbuffers.Offset,
+		ready: boolean,
+		reasonOffset: flatbuffers.Offset,
+		observedRows: bigint,
+		maximumHorizon: bigint,
+		treatmentOffset: flatbuffers.Offset,
+		mediatorOffset: flatbuffers.Offset,
+		targetOffset: flatbuffers.Offset,
+		controlsOffset: flatbuffers.Offset,
+		currentStateOffset: flatbuffers.Offset,
+		nodesOffset: flatbuffers.Offset,
+		linksOffset: flatbuffers.Offset,
+	): flatbuffers.Offset {
+		Reasoning.startReasoning(builder);
+		Reasoning.addSymbol(builder, symbolOffset);
+		Reasoning.addReady(builder, ready);
+		Reasoning.addReason(builder, reasonOffset);
+		Reasoning.addObservedRows(builder, observedRows);
+		Reasoning.addMaximumHorizon(builder, maximumHorizon);
+		Reasoning.addTreatment(builder, treatmentOffset);
+		Reasoning.addMediator(builder, mediatorOffset);
+		Reasoning.addTarget(builder, targetOffset);
+		Reasoning.addControls(builder, controlsOffset);
+		Reasoning.addCurrentState(builder, currentStateOffset);
+		Reasoning.addNodes(builder, nodesOffset);
+		Reasoning.addLinks(builder, linksOffset);
+		return Reasoning.endReasoning(builder);
+	}
 
-unpack(): ReasoningT {
-  return new ReasoningT(
-    this.symbol(),
-    this.ready(),
-    this.reason(),
-    this.observedRows(),
-    this.maximumHorizon(),
-    this.treatment(),
-    this.mediator(),
-    this.target(),
-    this.bb!.createScalarList<string>(this.controls.bind(this), this.controlsLength()),
-    this.bb!.createObjList<NamedNumber, NamedNumberT>(this.currentState.bind(this), this.currentStateLength()),
-    this.bb!.createObjList<ReasoningNode, ReasoningNodeT>(this.nodes.bind(this), this.nodesLength()),
-    this.bb!.createObjList<ReasoningLink, ReasoningLinkT>(this.links.bind(this), this.linksLength())
-  );
-}
+	unpack(): ReasoningT {
+		return new ReasoningT(
+			this.symbol(),
+			this.ready(),
+			this.reason(),
+			this.observedRows(),
+			this.maximumHorizon(),
+			this.treatment(),
+			this.mediator(),
+			this.target(),
+			this.bb!.createScalarList<string>(
+				this.controls.bind(this),
+				this.controlsLength(),
+			),
+			this.bb!.createObjList<NamedNumber, NamedNumberT>(
+				this.currentState.bind(this),
+				this.currentStateLength(),
+			),
+			this.bb!.createObjList<ReasoningNode, ReasoningNodeT>(
+				this.nodes.bind(this),
+				this.nodesLength(),
+			),
+			this.bb!.createObjList<ReasoningLink, ReasoningLinkT>(
+				this.links.bind(this),
+				this.linksLength(),
+			),
+		);
+	}
 
-
-unpackTo(_o: ReasoningT): void {
-  _o.symbol = this.symbol();
-  _o.ready = this.ready();
-  _o.reason = this.reason();
-  _o.observedRows = this.observedRows();
-  _o.maximumHorizon = this.maximumHorizon();
-  _o.treatment = this.treatment();
-  _o.mediator = this.mediator();
-  _o.target = this.target();
-  _o.controls = this.bb!.createScalarList<string>(this.controls.bind(this), this.controlsLength());
-  _o.currentState = this.bb!.createObjList<NamedNumber, NamedNumberT>(this.currentState.bind(this), this.currentStateLength());
-  _o.nodes = this.bb!.createObjList<ReasoningNode, ReasoningNodeT>(this.nodes.bind(this), this.nodesLength());
-  _o.links = this.bb!.createObjList<ReasoningLink, ReasoningLinkT>(this.links.bind(this), this.linksLength());
-}
+	unpackTo(_o: ReasoningT): void {
+		_o.symbol = this.symbol();
+		_o.ready = this.ready();
+		_o.reason = this.reason();
+		_o.observedRows = this.observedRows();
+		_o.maximumHorizon = this.maximumHorizon();
+		_o.treatment = this.treatment();
+		_o.mediator = this.mediator();
+		_o.target = this.target();
+		_o.controls = this.bb!.createScalarList<string>(
+			this.controls.bind(this),
+			this.controlsLength(),
+		);
+		_o.currentState = this.bb!.createObjList<NamedNumber, NamedNumberT>(
+			this.currentState.bind(this),
+			this.currentStateLength(),
+		);
+		_o.nodes = this.bb!.createObjList<ReasoningNode, ReasoningNodeT>(
+			this.nodes.bind(this),
+			this.nodesLength(),
+		);
+		_o.links = this.bb!.createObjList<ReasoningLink, ReasoningLinkT>(
+			this.links.bind(this),
+			this.linksLength(),
+		);
+	}
 }
 
 export class ReasoningT implements flatbuffers.IGeneratedObject {
-constructor(
-  public symbol: string|Uint8Array|null = null,
-  public ready: boolean = false,
-  public reason: string|Uint8Array|null = null,
-  public observedRows: bigint = BigInt('0'),
-  public maximumHorizon: bigint = BigInt('0'),
-  public treatment: string|Uint8Array|null = null,
-  public mediator: string|Uint8Array|null = null,
-  public target: string|Uint8Array|null = null,
-  public controls: (string)[] = [],
-  public currentState: (NamedNumberT)[] = [],
-  public nodes: (ReasoningNodeT)[] = [],
-  public links: (ReasoningLinkT)[] = []
-){}
+	constructor(
+		public symbol: string | Uint8Array | null = null,
+		public ready: boolean = false,
+		public reason: string | Uint8Array | null = null,
+		public observedRows: bigint = BigInt("0"),
+		public maximumHorizon: bigint = BigInt("0"),
+		public treatment: string | Uint8Array | null = null,
+		public mediator: string | Uint8Array | null = null,
+		public target: string | Uint8Array | null = null,
+		public controls: string[] = [],
+		public currentState: NamedNumberT[] = [],
+		public nodes: ReasoningNodeT[] = [],
+		public links: ReasoningLinkT[] = [],
+	) {}
 
+	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
+		const symbol =
+			this.symbol !== null ? builder.createString(this.symbol!) : 0;
+		const reason =
+			this.reason !== null ? builder.createString(this.reason!) : 0;
+		const treatment =
+			this.treatment !== null ? builder.createString(this.treatment!) : 0;
+		const mediator =
+			this.mediator !== null ? builder.createString(this.mediator!) : 0;
+		const target =
+			this.target !== null ? builder.createString(this.target!) : 0;
+		const controls = Reasoning.createControlsVector(
+			builder,
+			builder.createObjectOffsetList(this.controls),
+		);
+		const currentState = Reasoning.createCurrentStateVector(
+			builder,
+			builder.createObjectOffsetList(this.currentState),
+		);
+		const nodes = Reasoning.createNodesVector(
+			builder,
+			builder.createObjectOffsetList(this.nodes),
+		);
+		const links = Reasoning.createLinksVector(
+			builder,
+			builder.createObjectOffsetList(this.links),
+		);
 
-pack(builder:flatbuffers.Builder): flatbuffers.Offset {
-  const symbol = (this.symbol !== null ? builder.createString(this.symbol!) : 0);
-  const reason = (this.reason !== null ? builder.createString(this.reason!) : 0);
-  const treatment = (this.treatment !== null ? builder.createString(this.treatment!) : 0);
-  const mediator = (this.mediator !== null ? builder.createString(this.mediator!) : 0);
-  const target = (this.target !== null ? builder.createString(this.target!) : 0);
-  const controls = Reasoning.createControlsVector(builder, builder.createObjectOffsetList(this.controls));
-  const currentState = Reasoning.createCurrentStateVector(builder, builder.createObjectOffsetList(this.currentState));
-  const nodes = Reasoning.createNodesVector(builder, builder.createObjectOffsetList(this.nodes));
-  const links = Reasoning.createLinksVector(builder, builder.createObjectOffsetList(this.links));
-
-  return Reasoning.createReasoning(builder,
-    symbol,
-    this.ready,
-    reason,
-    this.observedRows,
-    this.maximumHorizon,
-    treatment,
-    mediator,
-    target,
-    controls,
-    currentState,
-    nodes,
-    links
-  );
-}
+		return Reasoning.createReasoning(
+			builder,
+			symbol,
+			this.ready,
+			reason,
+			this.observedRows,
+			this.maximumHorizon,
+			treatment,
+			mediator,
+			target,
+			controls,
+			currentState,
+			nodes,
+			links,
+		);
+	}
 }

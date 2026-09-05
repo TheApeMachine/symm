@@ -135,28 +135,28 @@ export const TimeSlider = ({
 
 		toggleRepeat: () => setRepeating((value) => !value),
 
-			expandRange: () => {
-				const snapshot = propsReference.current;
-				const nextExpanded = !expanded;
+		expandRange: () => {
+			const snapshot = propsReference.current;
+			const nextExpanded = !expanded;
 
-				if (nextExpanded) {
-					savedWindowReference.current = {
-						from: snapshot.from,
-						to: snapshot.to,
-					};
-					snapshot.onChange(snapshot.min, snapshot.max);
-				} else {
-					const stored = savedWindowReference.current;
+			if (nextExpanded) {
+				savedWindowReference.current = {
+					from: snapshot.from,
+					to: snapshot.to,
+				};
+				snapshot.onChange(snapshot.min, snapshot.max);
+			} else {
+				const stored = savedWindowReference.current;
 
-					if (stored) {
-						snapshot.onChange(stored.from, stored.to);
-					}
-
-					savedWindowReference.current = null;
+				if (stored) {
+					snapshot.onChange(stored.from, stored.to);
 				}
 
-				setExpanded(nextExpanded);
-			},
+				savedWindowReference.current = null;
+			}
+
+			setExpanded(nextExpanded);
+		},
 	}));
 
 	const handleFromSlide = useCallback(

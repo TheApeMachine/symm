@@ -7,24 +7,23 @@ import { List } from "#/components/ui/list";
 import { Typography } from "#/components/ui/typography";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { Position } from "#/providers/telemetry/telemetry/position";
-import { Stoploss } from "#/providers/telemetry/telemetry/stoploss";
 import { sendPositionExit } from "#/providers/websocket";
 
 const formatValue = (value: unknown, digits: number): string =>
 	typeof value === "number"
 		? value.toFixed(digits)
-		: typeof value === "string" && value !== "" && Number.isFinite(Number(value))
+		: typeof value === "string" &&
+				value !== "" &&
+				Number.isFinite(Number(value))
 			? Number(value).toFixed(digits)
 			: String(value ?? "—");
 
 const positionObject = new Position();
 const holdingObject = new Holding();
-const stoplossObject = new Stoploss();
 
 type PositionCardData = {
 	symbol: string;
 	status: string;
-	stoploss: string;
 	pnl: string;
 	entryPrice: string;
 	mark: string;
@@ -48,17 +47,15 @@ export const Positions = () => {
 			const currentSymbol = currentHolding.symbol() ?? "";
 			if (!currentSymbol) continue;
 
-			const positionStatus = currentHolding.status() ?? currentPosition.status() ?? "—";
+			const positionStatus =
+				currentHolding.status() ?? currentPosition.status() ?? "—";
 			if (positionStatus === "closed") {
 				continue;
 			}
 
-			const currentStoploss = currentHolding.stoploss(stoplossObject);
-
 			currentPositions.push({
 				symbol: currentSymbol,
 				status: positionStatus,
-				stoploss: currentStoploss?.status() ?? "—",
 				pnl: `${formatValue(currentHolding.pnl(), 4)} USD`,
 				entryPrice: formatValue(currentHolding.entryPrice(), 6),
 				mark: formatValue(currentHolding.mark(), 6),
@@ -70,7 +67,9 @@ export const Positions = () => {
 			leftPosition.symbol.localeCompare(rightPosition.symbol),
 		);
 	});
-	const [pendingExits, setPendingExits] = useState<ReadonlySet<string>>(new Set());
+	const [pendingExits, setPendingExits] = useState<ReadonlySet<string>>(
+		new Set(),
+	);
 
 	// A closed lot drops out of `positions` entirely, so its pending flag would
 	// otherwise linger forever — clear it the moment the symbol is no longer
@@ -79,7 +78,9 @@ export const Positions = () => {
 		const openSymbols = new Set(positions.map((pos) => pos.symbol));
 
 		setPendingExits((current) => {
-			const next = new Set([...current].filter((symbol) => openSymbols.has(symbol)));
+			const next = new Set(
+				[...current].filter((symbol) => openSymbols.has(symbol)),
+			);
 			return next.size === current.size ? current : next;
 		});
 	}, [positions]);
@@ -134,15 +135,6 @@ export const Positions = () => {
 								<Typography.Span className="rounded-xs border border-(--line) px-1 py-px text-[8px] uppercase tracking-wide">
 									{pos.status}
 								</Typography.Span>
-								<Typography.Span
-									className={
-										pos.stoploss === "error"
-											? "text-[8px] font-semibold uppercase text-(--down)"
-											: "text-[8px] uppercase text-(--f4)"
-									}
-								>
-									{pos.stoploss === "error" ? "⚠ stop error" : pos.stoploss}
-								</Typography.Span>
 							</Flex.Row>
 							<Flex.Row className="items-center gap-1.5">
 								<Typography.Span className="text-right font-semibold text-[11.5px] text-(--pnl)">
@@ -172,7 +164,6 @@ export const Positions = () => {
 								{pos.returnPct}
 							</Typography.Span>
 						</Flex.Row>
-
 					</Flex.Column>
 				</div>
 			))}
