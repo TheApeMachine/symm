@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"math"
 	"sync"
 	"time"
 )
@@ -13,19 +14,27 @@ execution: submission rejections, execution failures, and realized slippage.
 
 It operates as a circuit-breaker / veto key in a two-key execution system:
 both policy skill and execution realization must be valid to trade.
+
+Veto semantics are deliberately latching: once tripped by consecutive placement
+failures, a catastrophic single-fill slippage event, or sustained adverse EWMA
+slippage, execution authority is revoked until an explicit operator Reset()
+is invoked.
 */
 type RealizationMeter struct {
-	lock                sync.RWMutex
-	consecutiveFailures uint32
-	maxFailures         uint32
-	totalSubmissions    uint64
-	totalFailures       uint64
-	totalFills          uint64
-	slippageSum         float64
-	maxSlippageBps      float64
-	vetoed              bool
-	vetoReason          string
-	vetoTime            time.Time
+	lock                 sync.RWMutex
+	consecutiveFailures  uint32
+	maxFailures          uint32
+	totalSubmissions     uint64
+	totalFailures        uint64
+	totalFills           uint64
+	slippageSum          float64
+	slippageEwma         float64
+	ewmaAlpha            float64
+	maxSlippageBps       float64
+	maxSingleSlippageBps float64
+	vetoed               bool
+	vetoReason           string
+	vetoTime             time.Time
 }
 
 /*
@@ -34,8 +43,10 @@ It allows trading until authoritative venue feedback trips a veto condition.
 */
 func NewRealizationMeter() *RealizationMeter {
 	return &RealizationMeter{
-		maxFailures:    3,
-		maxSlippageBps: 50.0,
+		maxFailures:          3,
+		maxSlippageBps:       50.0,
+		maxSingleSlippageBps: 150.0,
+		ewmaAlpha:            0.1,
 	}
 }
 
@@ -61,6 +72,18 @@ func (meter *RealizationMeter) Reason() string {
 	defer meter.lock.RUnlock()
 
 	return meter.vetoReason
+}
+
+/* VetoTime reports when the circuit breaker was tripped, or zero time if not vetoed. */
+func (meter *RealizationMeter) VetoTime() time.Time {
+	if meter == nil {
+		return time.Time{}
+	}
+
+	meter.lock.RLock()
+	defer meter.lock.RUnlock()
+
+	return meter.vetoTime
 }
 
 /*
@@ -95,7 +118,8 @@ func (meter *RealizationMeter) ObserveSubmission(err error) {
 
 /*
 ObserveFill records execution slippage between the intent's reference price and
-the venue fill price. Adverse slippage exceeding the allowed budget trips a veto.
+the venue fill price. A single catastrophic fill or sustained adverse EWMA
+slippage trips the latching veto.
 */
 func (meter *RealizationMeter) ObserveFill(referencePrice, fillPrice float64, reduce bool) {
 	if meter == nil || referencePrice <= 0 || fillPrice <= 0 {
@@ -122,12 +146,28 @@ func (meter *RealizationMeter) ObserveFill(referencePrice, fillPrice float64, re
 		meter.slippageSum += slippageBps
 	}
 
-	averageSlippage := meter.slippageSum / float64(meter.totalFills)
-
-	if averageSlippage > meter.maxSlippageBps && !meter.vetoed {
+	// Instantaneous catastrophic bound check
+	if slippageBps > meter.maxSingleSlippageBps && !meter.vetoed {
 		meter.vetoed = true
 		meter.vetoTime = time.Now()
-		meter.vetoReason = "realized execution slippage exceeded tolerance"
+		meter.vetoReason = "catastrophic single-fill slippage exceeded bound"
+
+		return
+	}
+
+	// Retained EWMA statistic
+	if meter.totalFills == 1 {
+		meter.slippageEwma = math.Max(0, slippageBps)
+	}
+
+	if meter.totalFills > 1 {
+		meter.slippageEwma = meter.ewmaAlpha*math.Max(0, slippageBps) + (1.0-meter.ewmaAlpha)*meter.slippageEwma
+	}
+
+	if meter.slippageEwma > meter.maxSlippageBps && !meter.vetoed {
+		meter.vetoed = true
+		meter.vetoTime = time.Now()
+		meter.vetoReason = "realized execution slippage EWMA exceeded tolerance"
 	}
 }
 
@@ -142,6 +182,7 @@ func (meter *RealizationMeter) Reset() {
 
 	meter.consecutiveFailures = 0
 	meter.slippageSum = 0
+	meter.slippageEwma = 0
 	meter.totalFills = 0
 	meter.vetoed = false
 	meter.vetoReason = ""

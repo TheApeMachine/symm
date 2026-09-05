@@ -120,7 +120,7 @@ func (agent *Agent) transition(
 		lane.version++
 
 		if lane.paper {
-			market.markExposure(lane.wallet.quantity.Sign() > 0, market.at)
+			market.markExposure(lane.wallet.quantity.Sign() > 0, market.seq, market.at)
 		}
 
 		outcome, err := lane.ledger.Measure(EquityMark{

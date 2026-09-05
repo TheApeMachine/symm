@@ -147,6 +147,25 @@ func TestPriorReading(t *testing.T) {
 			So(reading.Mean, ShouldBeLessThan, -5.0)
 			So(reading.Support, ShouldBeLessThan, 105)
 		})
+
+		Convey("dormant gaps age the prior without requiring local observations", func() {
+			dormant := NewPrior(50)
+			So(dormant.Observe(10.0, 1.0, 10), ShouldBeNil)
+			before := dormant.Reading(10)
+			So(before.Support, ShouldAlmostEqual, 1.0)
+
+			// Fast forward 100 resolution epochs without any observations on this prior
+			aged := dormant.Reading(110)
+			So(aged.Support, ShouldAlmostEqual, 1.0)
+			// Weight decayed by (1 - 1/50)^100 ~ 0.1326
+			So(dormant.weight, ShouldAlmostEqual, 0.13261955, 1e-4)
+
+			// An incoming observation at epoch 110 incorporates onto the decayed base
+			So(dormant.Observe(20.0, 1.0, 110), ShouldBeNil)
+			after := dormant.Reading(110)
+			// Mean should be heavily pulled toward the fresh 20.0 outcome
+			So(after.Mean, ShouldBeGreaterThan, 18.0)
+		})
 	})
 }
 

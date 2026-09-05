@@ -47,9 +47,10 @@ type Agent struct {
 	*/
 	Skill       *SkillMeter
 	Desk        ExecutionDesk
-	Realization *RealizationMeter
-	attribution attribution
-	dispatched  uint64
+	Realization    *RealizationMeter
+	attribution    attribution
+	dispatched     uint64
+	correlationSeq uint64
 
 	/*
 		skillWindow is the end of the last forward window admitted into the
@@ -89,6 +90,7 @@ type learningMarket struct {
 	actions        []LearningAction
 	events         []hindsight.LearningEvent
 	at             time.Time
+	seq            hindsight.CaptureSequence
 	gridVersion    uint64
 
 	/*
@@ -167,8 +169,13 @@ func NewAgent(
 func (agent *Agent) Step(envelope *types.Envelope) *types.Envelope {
 	agent.steps++
 
+	var seq hindsight.CaptureSequence
+	if envelope != nil {
+		seq = envelope.CaptureID.Sequence
+	}
+
 	if envelope != nil && envelope.TypeID == types.EnvelopeLevel3 && agent.err == nil {
-		agent.err = agent.advance(envelope.Level3Data)
+		agent.err = agent.advance(envelope.Level3Data, seq)
 	}
 
 	select {
@@ -218,10 +225,14 @@ func (agent *Agent) SetExecution(desk ExecutionDesk, account Account) {
 
 	agent.Skill = NewSkillMeter(account, agent.now())
 	agent.Realization = NewRealizationMeter()
+
+	if feedback, ok := desk.(RealizationFeedback); ok && feedback != nil {
+		feedback.AttachRealization(agent.Realization)
+	}
 }
 
 /* advance uses one coherent current book for all independent virtual wallets. */
-func (agent *Agent) advance(message kraken.Level3Data) error {
+func (agent *Agent) advance(message kraken.Level3Data, seq hindsight.CaptureSequence) error {
 	market := agent.markets[message.Symbol]
 
 	if market == nil {
@@ -230,6 +241,7 @@ func (agent *Agent) advance(message kraken.Level3Data) error {
 	}
 
 	market.at = agent.now()
+	market.seq = seq
 	regions, version, err := agent.Grid.Regions(message.Symbol)
 
 	if err != nil {

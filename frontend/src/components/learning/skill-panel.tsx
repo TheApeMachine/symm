@@ -73,8 +73,17 @@ export const SkillPanel = ({ view }: { view: LearningView | null }) => {
 					variant="disabled"
 					size="m"
 				/>
-				<Typography.Mono size="s" tone="f3">
-					{skill.reason} · since {clock(skill.since)}
+				{view?.realizationAllowed === false && (
+					<Badge
+						label="realization vetoed"
+						variant="error"
+						size="m"
+					/>
+				)}
+				<Typography.Mono size="s" tone={view?.realizationAllowed === false ? "down" : "f3"}>
+					{view?.realizationAllowed === false && view?.realizationReason
+						? `${view.realizationReason} (authority revoked to ${view.authorizedMode ?? "learning"})`
+						: `${skill.reason} · since ${clock(skill.since)}`}
 				</Typography.Mono>
 			</Flex.Row>
 			<Flex.Column>

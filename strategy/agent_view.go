@@ -29,8 +29,11 @@ type LearningView struct {
 		authority it justifies. Dispatched counts intents actually handed to an
 		account: it is zero in a learning-only run by construction.
 	*/
-	Skill      SkillReading `json:"skill"`
-	Dispatched uint64       `json:"dispatched"`
+	Skill              SkillReading `json:"skill"`
+	AuthorizedMode     Mode         `json:"authorizedMode"`
+	RealizationAllowed bool         `json:"realizationAllowed"`
+	RealizationReason  string       `json:"realizationReason,omitempty"`
+	Dispatched         uint64       `json:"dispatched"`
 
 	/*
 		Rejected counts policy intents the account did not accept, with the
@@ -202,6 +205,14 @@ func (agent *Agent) view(symbol string) LearningView {
 
 	if agent.Skill != nil {
 		view.Skill = agent.Skill.Reading()
+	}
+
+	view.AuthorizedMode = agent.Mode()
+	if agent.Realization != nil {
+		view.RealizationAllowed = agent.Realization.AllowsTrading()
+		view.RealizationReason = agent.Realization.Reason()
+	} else {
+		view.RealizationAllowed = true
 	}
 
 	if reporter, ok := agent.Desk.(ExecutionReporter); ok && reporter != nil {

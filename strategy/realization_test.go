@@ -34,11 +34,25 @@ func TestRealizationMeter(t *testing.T) {
 			})
 		})
 
-		Convey("excessive adverse slippage trips the circuit breaker", func() {
-			// reference price 100, fill price 101 -> 100 bps slippage (limit is 50 bps)
-			meter.ObserveFill(100.0, 101.0, false)
+		Convey("catastrophic single fill slippage trips the circuit breaker immediately", func() {
+			// reference price 100, fill price 102 -> 200 bps slippage (catastrophic bound is 150 bps)
+			meter.ObserveFill(100.0, 102.0, false)
 			So(meter.AllowsTrading(), ShouldBeFalse)
-			So(meter.Reason(), ShouldEqual, "realized execution slippage exceeded tolerance")
+			So(meter.Reason(), ShouldEqual, "catastrophic single-fill slippage exceeded bound")
+			So(meter.VetoTime().IsZero(), ShouldBeFalse)
+
+			Convey("reset restores trading permission", func() {
+				meter.Reset()
+				So(meter.AllowsTrading(), ShouldBeTrue)
+				So(meter.Reason(), ShouldEqual, "")
+			})
+		})
+
+		Convey("sustained adverse EWMA slippage trips the circuit breaker", func() {
+			// 60 bps adverse slippage on first fill -> EWMA becomes 60 bps (> 50 bps max)
+			meter.ObserveFill(100.0, 100.60, false)
+			So(meter.AllowsTrading(), ShouldBeFalse)
+			So(meter.Reason(), ShouldEqual, "realized execution slippage EWMA exceeded tolerance")
 		})
 
 		Convey("acceptable slippage allows trading", func() {

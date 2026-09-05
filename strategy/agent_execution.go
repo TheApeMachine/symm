@@ -1,7 +1,9 @@
 package strategy
 
 import (
+	"fmt"
 	"math/big"
+	"sync/atomic"
 	"time"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -19,15 +21,16 @@ it. Mode records the authority under which the intent was produced, so an
 order can never be attributed to a lower authority than the one that made it.
 */
 type ExecutionIntent struct {
-	Symbol    string
-	At        time.Time
-	MarketAt  time.Time
-	Kind      types.Action
-	Reduce    bool
-	Quantity  *big.Rat
-	Reference *big.Rat
-	Mode      Mode
-	Skill     SkillReading
+	CorrelationID string
+	Symbol        string
+	At            time.Time
+	MarketAt      time.Time
+	Kind          types.Action
+	Reduce        bool
+	Quantity      *big.Rat
+	Reference     *big.Rat
+	Mode          Mode
+	Skill         SkillReading
 }
 
 /*
@@ -43,6 +46,14 @@ elsewhere.
 */
 type ExecutionDesk interface {
 	Submit(ExecutionIntent) error
+}
+
+/*
+RealizationFeedback connects an execution desk's asynchronous placement and fill
+feedback to the agent's realization circuit breaker.
+*/
+type RealizationFeedback interface {
+	AttachRealization(*RealizationMeter)
 }
 
 /*
@@ -105,13 +116,19 @@ func (agent *Agent) dispatch(
 		reference = book.Bids.High.Price.Rat()
 	}
 
+	correlationID := fmt.Sprintf("%s-%d", market.symbol, atomic.AddUint64(&agent.correlationSeq, 1))
+
 	intent := ExecutionIntent{
-		Symbol: market.symbol, At: market.at, MarketAt: marketAt,
-		Kind: action.Kind, Reduce: action.Reduce,
-		Quantity:  new(big.Rat).Set(requested),
-		Reference: new(big.Rat).Set(reference),
-		Mode:      agent.Mode(),
-		Skill:     agent.Skill.Reading(),
+		CorrelationID: correlationID,
+		Symbol:        market.symbol,
+		At:            market.at,
+		MarketAt:      marketAt,
+		Kind:          action.Kind,
+		Reduce:        action.Reduce,
+		Quantity:      new(big.Rat).Set(requested),
+		Reference:     new(big.Rat).Set(reference),
+		Mode:          agent.Mode(),
+		Skill:         agent.Skill.Reading(),
 	}
 
 	/*
@@ -121,13 +138,13 @@ func (agent *Agent) dispatch(
 		lane whose measurement matters would go silent precisely when the
 		account is behaving unexpectedly. The failure is counted and reported;
 		the agent keeps observing.
+
+		Realization does not observe submission here because Submit is only the
+		synchronous queue handoff; actual venue placement and fill outcomes are
+		observed asynchronously by the execution desk.
 	*/
 	if err := agent.Desk.Submit(intent); err != nil {
 		agent.rejected++
-
-		if agent.Realization != nil {
-			agent.Realization.ObserveSubmission(err)
-		}
 
 		agent.lastRejection = errnie.Error(errnie.Err(
 			errnie.IO,
@@ -136,10 +153,6 @@ func (agent *Agent) dispatch(
 		))
 
 		return nil
-	}
-
-	if agent.Realization != nil {
-		agent.Realization.ObserveSubmission(nil)
 	}
 
 	agent.dispatched++

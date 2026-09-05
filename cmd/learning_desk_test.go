@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
@@ -80,6 +81,55 @@ func TestSubmitNeverWaitsOnTheVenue(t *testing.T) {
 			So(status.Queued, ShouldEqual, 0)
 			So(status.Diverged, ShouldEqual, 0)
 			So(status.Dropped, ShouldEqual, 0)
+		})
+
+		Convey("When realization is attached, dropped submissions report to realization", func() {
+			meter := strategy.NewRealizationMeter()
+			bridge.AttachRealization(meter)
+
+			So(meter.AllowsTrading(), ShouldBeTrue)
+			// Queue capacity is 2; sending 2 fills the queue, next 3 drop (3 consecutive failures)
+			for range 5 {
+				_ = bridge.Submit(entryIntent("TEST/USD"))
+			}
+
+			So(meter.AllowsTrading(), ShouldBeFalse)
+			So(meter.Reason(), ShouldContainSubstring, "consecutive execution submission failures exceeded threshold")
+		})
+
+		Convey("Authoritative fill records report realized slippage to RealizationMeter", func() {
+			meter := strategy.NewRealizationMeter()
+			bridge.AttachRealization(meter)
+
+			intent := entryIntent("TEST/USD")
+			intent.CorrelationID = "decision-123"
+			intent.Reference = big.NewRat(100, 1) // ref price = 100.0
+			bridge.inFlight.Store("decision-123", intent)
+
+			// Clean fill at 100.1 (10 bps slippage)
+			bridge.RecordLifecycle(hindsight.LifecycleEvent{
+				DecisionID: "decision-123",
+				Symbol:     "TEST/USD",
+				Kind:       "entry_fill",
+				Execution: &hindsight.ExecutionFact{
+					AvgPrice: "100.1",
+				},
+			})
+
+			So(meter.AllowsTrading(), ShouldBeTrue)
+
+			// Catastrophic fill at 102.0 (200 bps slippage > 150 bps bound)
+			bridge.RecordLifecycle(hindsight.LifecycleEvent{
+				DecisionID: "decision-123",
+				Symbol:     "TEST/USD",
+				Kind:       "entry_fill",
+				Execution: &hindsight.ExecutionFact{
+					AvgPrice: "102.0",
+				},
+			})
+
+			So(meter.AllowsTrading(), ShouldBeFalse)
+			So(meter.Reason(), ShouldContainSubstring, "catastrophic single-fill slippage exceeded bound")
 		})
 	})
 }

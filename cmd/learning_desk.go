@@ -3,11 +3,14 @@ package cmd
 import (
 	"context"
 	"math/big"
+	"strconv"
+	"sync"
 	"sync/atomic"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
@@ -37,9 +40,11 @@ on each book update and issues its own EXIT, so nothing else holds protective
 geometry: the desk carries the lot and executes what it is told.
 */
 type learningDesk struct {
-	desk       *broker.Desk
-	instrument *broker.Instrument
-	intents    chan strategy.ExecutionIntent
+	desk        *broker.Desk
+	instrument  *broker.Instrument
+	intents     chan strategy.ExecutionIntent
+	realization *strategy.RealizationMeter
+	inFlight    sync.Map
 
 	submitted   atomic.Uint64
 	unsupported atomic.Uint64
@@ -47,6 +52,15 @@ type learningDesk struct {
 	dropped     atomic.Uint64
 	failed      atomic.Uint64
 	lastFailure atomic.Pointer[string]
+}
+
+/* AttachRealization connects the agent's circuit breaker to authoritative venue feedback. */
+func (bridge *learningDesk) AttachRealization(meter *strategy.RealizationMeter) {
+	if bridge == nil {
+		return
+	}
+
+	bridge.realization = meter
 }
 
 /* newLearningDesk attaches the account; a nil desk attaches nothing. */
@@ -61,6 +75,7 @@ func newLearningDesk(
 		desk: desk, instrument: instrument,
 		intents: make(chan strategy.ExecutionIntent, executionQueue),
 	}
+	desk.AddLifecycleRecorder(bridge)
 	go bridge.run(ctx)
 
 	return bridge
@@ -103,6 +118,15 @@ func (bridge *learningDesk) Submit(intent strategy.ExecutionIntent) error {
 		// stale before the queue drains, and blocking here would stop every
 		// symbol from learning while one order is in flight.
 		bridge.dropped.Add(1)
+
+		if bridge.realization != nil {
+			bridge.realization.ObserveSubmission(errnie.Err(
+				errnie.IO,
+				"symm: execution queue full, dropped intent for "+intent.Symbol,
+				nil,
+			))
+		}
+
 		return nil
 	}
 }
@@ -136,6 +160,11 @@ func (bridge *learningDesk) run(ctx context.Context) {
 				bridge.failed.Add(1)
 				reason := err.Error()
 				bridge.lastFailure.Store(&reason)
+
+				if bridge.realization != nil {
+					bridge.realization.ObserveSubmission(err)
+				}
+
 				errnie.Error(err)
 			}
 		}
@@ -164,6 +193,11 @@ func (bridge *learningDesk) place(intent strategy.ExecutionIntent) error {
 	}
 
 	bridge.submitted.Add(1)
+	bridge.inFlight.Store(intent.Symbol, intent)
+
+	if intent.CorrelationID != "" {
+		bridge.inFlight.Store(intent.CorrelationID, intent)
+	}
 
 	if intent.Reduce {
 		if intent.Kind == types.ActionExit {
@@ -171,6 +205,10 @@ func (bridge *learningDesk) place(intent strategy.ExecutionIntent) error {
 				return errnie.Err(
 					errnie.IO, "symm: policy exit failed for "+intent.Symbol, err,
 				)
+			}
+
+			if bridge.realization != nil {
+				bridge.realization.ObserveSubmission(nil)
 			}
 
 			return nil
@@ -189,6 +227,10 @@ func (bridge *learningDesk) place(intent strategy.ExecutionIntent) error {
 			)
 		}
 
+		if bridge.realization != nil {
+			bridge.realization.ObserveSubmission(nil)
+		}
+
 		return nil
 	}
 
@@ -201,6 +243,11 @@ func (bridge *learningDesk) place(intent strategy.ExecutionIntent) error {
 	}
 
 	decision := types.NewDecision(types.ActionEnter, intent.Symbol)
+
+	if intent.CorrelationID != "" {
+		decision.ID = intent.CorrelationID
+	}
+
 	decision.At = intent.At
 	decision.AllocationClass = "capital"
 	decision.Cause = "policy_edge"
@@ -213,13 +260,73 @@ func (bridge *learningDesk) place(intent strategy.ExecutionIntent) error {
 	decision.AvailableCapital = bridge.desk.Cash()
 	decision.OpenPositions = bridge.desk.OpenPositions()
 
+	bridge.inFlight.Store(decision.ID, intent)
+
 	if err := bridge.desk.Execute(*decision); err != nil {
 		return errnie.Err(
 			errnie.IO, "symm: policy entry failed for "+intent.Symbol, err,
 		)
 	}
 
+	if bridge.realization != nil {
+		bridge.realization.ObserveSubmission(nil)
+	}
+
 	return nil
+}
+
+/*
+RecordLifecycle receives authoritative broker execution facts (fills, closes) and
+reports realized execution slippage to RealizationMeter.
+*/
+func (bridge *learningDesk) RecordLifecycle(event hindsight.LifecycleEvent) {
+	if bridge == nil || bridge.realization == nil || event.Execution == nil {
+		return
+	}
+
+	if event.Kind != "entry_fill" && event.Kind != "exit_fill" && event.Kind != "reduce_fill" {
+		return
+	}
+
+	var intent strategy.ExecutionIntent
+	var found bool
+
+	if event.DecisionID != "" {
+		if val, ok := bridge.inFlight.Load(event.DecisionID); ok {
+			intent, found = val.(strategy.ExecutionIntent), true
+		}
+	}
+
+	if !found && event.Symbol != "" {
+		if val, ok := bridge.inFlight.Load(event.Symbol); ok {
+			intent, found = val.(strategy.ExecutionIntent), true
+		}
+	}
+
+	if !found || intent.Reference == nil {
+		return
+	}
+
+	refPrice, _ := intent.Reference.Float64()
+
+	if refPrice <= 0 {
+		return
+	}
+
+	fillPriceStr := event.Execution.AvgPrice
+
+	if fillPriceStr == "" {
+		fillPriceStr = event.Execution.LastPrice
+	}
+
+	fillPrice, err := strconv.ParseFloat(fillPriceStr, 64)
+
+	if err != nil || fillPrice <= 0 {
+		return
+	}
+
+	reduce := intent.Reduce || event.Kind == "exit_fill" || event.Kind == "reduce_fill"
+	bridge.realization.ObserveFill(refPrice, fillPrice, reduce)
 }
 
 /*

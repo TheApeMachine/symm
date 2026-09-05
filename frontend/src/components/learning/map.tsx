@@ -1,12 +1,15 @@
 import { Canvas } from "#/components/ui/canvas";
+import { cn } from "#/lib/utils";
 import type { Point, Region } from "./state";
 
 export const ImpulseMap = ({
 	points,
 	regions,
+	className,
 }: {
 	points: Point[];
 	regions: Region[];
+	className?: string;
 }) => {
 	const extent = Math.max(
 		...points.flatMap((point) => [Math.abs(point.x), Math.abs(point.y)]),
@@ -19,7 +22,7 @@ export const ImpulseMap = ({
 		<Canvas
 			title="Impulse map"
 			meta={`${points.length} numeric cells · ${regions.length} hot regions`}
-			className="min-h-80 flex-1"
+			className={cn("min-h-80 flex-1", className)}
 			footer="Position: learned affinity · brightness: current activity · hover to inspect"
 		>
 			<svg

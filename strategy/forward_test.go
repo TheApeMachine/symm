@@ -19,23 +19,32 @@ func TestForwardReviewJudgesAgainstActualExposure(t *testing.T) {
 		}
 	}
 
+	episodeSeq := func(id string, fromSeq, toSeq hindsight.CaptureSequence, from, to time.Time) hindsight.Episode {
+		ep := episode(id, from, to)
+		ep.FromSequence = fromSeq
+		ep.ToSequence = toSeq
+		return ep
+	}
+
 	Convey("Given a policy lane that held inventory over one stretch of tape", t, func() {
 		agent, _ := agentFixture(t, func(hindsight.LearningEvent) error { return nil })
 		agent.now = func() time.Time { return base.Add(time.Hour) }
 		market := &learningMarket{symbol: "TEST/USD"}
 		agent.markets["TEST/USD"] = market
 
-		market.markExposure(true, base.Add(10*time.Minute))
-		market.markExposure(true, base.Add(12*time.Minute))
-		market.markExposure(false, base.Add(15*time.Minute))
+		market.markExposure(true, 100, base.Add(10*time.Minute))
+		market.markExposure(true, 120, base.Add(12*time.Minute))
+		market.markExposure(false, 150, base.Add(15*time.Minute))
 
-		Convey("An excursion it was holding through is captured, not missed", func() {
+		Convey("An excursion it was holding through is exposed, not unexposed", func() {
 			agent.review([]hindsight.Episode{
-				episode("a", base.Add(11*time.Minute), base.Add(14*time.Minute)),
+				episodeSeq("a", 110, 140, base.Add(11*time.Minute), base.Add(14*time.Minute)),
 			})
 
 			So(agent.forward.Reviewed, ShouldEqual, 1)
+			So(agent.forward.Exposed, ShouldEqual, 1)
 			So(agent.forward.Captured, ShouldEqual, 1)
+			So(agent.forward.Unexposed, ShouldEqual, 0)
 			So(agent.forward.Missed, ShouldEqual, 0)
 			So(agent.forward.Recent[0].Exposed, ShouldBeTrue)
 		})
@@ -45,6 +54,7 @@ func TestForwardReviewJudgesAgainstActualExposure(t *testing.T) {
 				episode("b", base.Add(20*time.Minute), base.Add(25*time.Minute)),
 			})
 
+			So(agent.forward.Unexposed, ShouldEqual, 1)
 			So(agent.forward.Missed, ShouldEqual, 1)
 			So(agent.forward.Recent[0].Exposed, ShouldBeFalse)
 			So(agent.forward.Recent[0].Unreviewable, ShouldBeFalse)

@@ -32,12 +32,12 @@ export const ForwardPanel = ({ view }: { view: LearningView | null }) => {
 			/>
 			<Flex.Row className="flex-wrap gap-3 border-(--line) border-b p-3">
 				<Badge
-					label={`${forward?.captured ?? 0} held through`}
+					label={`${forward?.exposed ?? forward?.captured ?? 0} exposed`}
 					variant="success"
 					size="m"
 				/>
 				<Badge
-					label={`${forward?.missed ?? 0} sat out`}
+					label={`${forward?.unexposed ?? forward?.missed ?? 0} unexposed`}
 					variant="warning"
 					size="m"
 				/>

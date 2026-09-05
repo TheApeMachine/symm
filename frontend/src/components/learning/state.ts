@@ -115,6 +115,8 @@ export type MissedOpportunity = {
 };
 export type ForwardReview = {
 	reviewed: number;
+	exposed?: number;
+	unexposed?: number;
 	captured: number;
 	missed: number;
 	unreviewable: number;
@@ -132,6 +134,9 @@ export type LearningView = {
 	columns: number;
 	initialCapital: string;
 	skill: Skill;
+	authorizedMode?: string;
+	realizationAllowed?: boolean;
+	realizationReason?: string;
 	dispatched: number;
 	rejected: number;
 	rejection?: string;

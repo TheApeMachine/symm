@@ -276,6 +276,50 @@ func TestPolicyLaneUpdatesVirtualModel(t *testing.T) {
 	})
 }
 
+type testDesk struct{}
+
+func (desk *testDesk) Submit(ExecutionIntent) error {
+	return nil
+}
+
+func TestLearningViewRealizationObservability(t *testing.T) {
+	Convey("Given an agent with attached execution and realization", t, func() {
+		agent, _ := agentFixture(t, func(hindsight.LearningEvent) error { return nil })
+		desk := &testDesk{}
+		agent.SetExecution(desk, AccountPaper)
+
+		Convey("Under normal operation, view reports realization allowed and matching mode", func() {
+			v := agent.view("TEST/USD")
+			So(v.RealizationAllowed, ShouldBeTrue)
+			So(v.RealizationReason, ShouldBeEmpty)
+			So(v.AuthorizedMode, ShouldEqual, ModeLearning)
+		})
+
+		Convey("When realization circuit breaker trips, view reflects veto while preserving skill reading", func() {
+			base := time.Now()
+			for range 20 {
+				agent.Skill.Observe(0.02, 1.0, base)
+			}
+
+			So(agent.Skill.Mode(), ShouldEqual, ModeTrading)
+
+			// Trip realization circuit breaker via catastrophic slippage
+			agent.Realization.ObserveFill(100.0, 105.0, false) // 500 bps slippage
+			So(agent.Realization.AllowsTrading(), ShouldBeFalse)
+
+			// Effective mode is downgraded to learning
+			So(agent.Mode(), ShouldEqual, ModeLearning)
+
+			// View exposes the separation transparently
+			v := agent.view("TEST/USD")
+			So(v.Skill.Mode, ShouldEqual, "trading")
+			So(v.AuthorizedMode, ShouldEqual, ModeLearning)
+			So(v.RealizationAllowed, ShouldBeFalse)
+			So(v.RealizationReason, ShouldContainSubstring, "catastrophic single-fill slippage exceeded bound")
+		})
+	})
+}
+
 func BenchmarkAgentStep(b *testing.B) {
 	agent, _ := agentFixture(b, func(hindsight.LearningEvent) error { return nil })
 	measurement := data.NewMeasurement[float64]("", "TEST/USD", "source", time.Time{}, time.Time{})

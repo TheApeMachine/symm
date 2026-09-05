@@ -36,12 +36,12 @@ type Desk struct {
 	recovery       *Recovery
 	positions      *sync.Map
 	balanceRefresh atomic.Bool
-	// lifecycleRecorder is the optional Hindsight trading-lifecycle sink. It
-	// records entry/fill/position-open/exit/close transitions observationally;
-	// it is nil when Hindsight is not wired, and its failure never affects
-	// trading progress.
-	lifecycleRecorder LifecycleRecorder
-	ObserveModule     func(string, time.Duration)
+	// lifecycleRecorders are the optional Hindsight trading-lifecycle sinks and
+	// execution feedback observers. They record entry/fill/position-open/exit/close
+	// transitions observationally; empty when neither Hindsight nor execution
+	// realization is wired, and their failure never affects trading progress.
+	lifecycleRecorders []LifecycleRecorder
+	ObserveModule      func(string, time.Duration)
 }
 
 /*
@@ -605,25 +605,19 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		position.onClose = func() {
 			desk.positions.CompareAndDelete(decision.Symbol, position)
 
-			if desk.lifecycleRecorder != nil {
-				desk.lifecycleRecorder.RecordLifecycle(hindsight.LifecycleEvent{
-					DecisionID: decision.ID,
-					Symbol:     decision.Symbol,
-					Kind:       "position_close",
-					At:         time.Now().UTC(),
-				})
-			}
+			desk.emitLifecycle(hindsight.LifecycleEvent{
+				DecisionID: decision.ID,
+				Symbol:     decision.Symbol,
+				Kind:       "position_close",
+				At:         time.Now().UTC(),
+			})
 		}
 
 		// recordFill persists the authoritative venue fill (entry or exit) as a
 		// decision-correlated Hindsight lifecycle event. It is emitted only after
 		// the position transition itself.
 		position.recordFill = func(kind string, execution kraken.ExecutionData) {
-			if desk.lifecycleRecorder == nil {
-				return
-			}
-
-			desk.lifecycleRecorder.RecordLifecycle(hindsight.LifecycleEvent{
+			desk.emitLifecycle(hindsight.LifecycleEvent{
 				DecisionID: decision.ID,
 				Symbol:     decision.Symbol,
 				Kind:       kind,
@@ -640,15 +634,13 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			return err
 		}
 
-		if desk.lifecycleRecorder != nil {
-			desk.lifecycleRecorder.RecordLifecycle(hindsight.LifecycleEvent{
-				DecisionID: decision.ID,
-				Symbol:     decision.Symbol,
-				Kind:       "position_open",
-				Action:     string(decision.Action),
-				At:         time.Now().UTC(),
-			})
-		}
+		desk.emitLifecycle(hindsight.LifecycleEvent{
+			DecisionID: decision.ID,
+			Symbol:     decision.Symbol,
+			Kind:       "position_open",
+			Action:     string(decision.Action),
+			At:         time.Now().UTC(),
+		})
 
 	}
 
@@ -665,7 +657,34 @@ func (desk *Desk) SetLifecycleRecorder(recorder LifecycleRecorder) {
 		return
 	}
 
-	desk.lifecycleRecorder = recorder
+	if recorder == nil {
+		desk.lifecycleRecorders = nil
+		return
+	}
+
+	desk.lifecycleRecorders = []LifecycleRecorder{recorder}
+}
+
+/*
+AddLifecycleRecorder registers an additional lifecycle sink, such as an
+execution realization feedback bridge.
+*/
+func (desk *Desk) AddLifecycleRecorder(recorder LifecycleRecorder) {
+	if desk == nil || recorder == nil {
+		return
+	}
+
+	desk.lifecycleRecorders = append(desk.lifecycleRecorders, recorder)
+}
+
+func (desk *Desk) emitLifecycle(event hindsight.LifecycleEvent) {
+	if desk == nil {
+		return
+	}
+
+	for _, recorder := range desk.lifecycleRecorders {
+		recorder.RecordLifecycle(event)
+	}
 }
 
 /*

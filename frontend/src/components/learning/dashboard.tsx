@@ -15,6 +15,7 @@ import { action, amount, basis, clock, duration, percent } from "./format";
 import { ImpulseMap } from "./map";
 import { SkillPanel } from "./skill-panel";
 import { type LearningEvent, useLearning } from "./state";
+import { LearningVisualizer } from "./visualizer";
 
 const KIND_TONE: Record<
 	string,
@@ -172,10 +173,22 @@ export const LearningDashboard = () => {
 							grid v{view?.gridVersion ?? 0}
 						</Typography.Mono>
 					</Flex.Row>
-					<ImpulseMap
-						points={view?.points ?? []}
-						regions={view?.regions ?? []}
-					/>
+					<div className="flex min-h-[340px] border-(--line) border-b max-xl:flex-col">
+						<div className="w-[380px] shrink-0 border-(--line) border-r max-xl:w-full max-xl:border-r-0 max-xl:border-b">
+							<ImpulseMap
+								points={view?.points ?? []}
+								regions={view?.regions ?? []}
+								className="h-full w-full min-h-[340px]"
+							/>
+						</div>
+						<div className="min-w-0 flex-1 bg-(--surface)">
+							<LearningVisualizer
+								view={view}
+								events={events}
+								className="h-full w-full min-h-[340px]"
+							/>
+						</div>
+					</div>
 
 					<Flex.Row gap={2} className="border-(--line) border-b px-3 py-2">
 						{TABS.map((entry) => (

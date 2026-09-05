@@ -1,6 +1,10 @@
 package learning
 
-import "github.com/theapemachine/errnie"
+import (
+	"math"
+
+	"github.com/theapemachine/errnie"
+)
 
 /*
 Prior summarizes completed outcomes with weighted, online Welford moments.
@@ -15,6 +19,7 @@ type Prior struct {
 	weight        float64
 	squaredWeight float64
 	deviation     float64
+	lastEpoch     uint64
 }
 
 /*
@@ -31,6 +36,23 @@ func NewPrior(memory ...float64) *Prior {
 	}
 
 	return prior
+}
+
+func (prior *Prior) age(currentEpoch uint64) {
+	if prior.memory <= 1 || prior.weight == 0 || currentEpoch <= prior.lastEpoch {
+		if currentEpoch > prior.lastEpoch {
+			prior.lastEpoch = currentEpoch
+		}
+
+		return
+	}
+
+	gap := float64(currentEpoch - prior.lastEpoch)
+	decay := math.Pow(1.0-1.0/prior.memory, gap)
+	prior.weight *= decay
+	prior.squaredWeight *= decay * decay
+	prior.deviation *= decay
+	prior.lastEpoch = currentEpoch
 }
 
 /*
@@ -65,8 +87,10 @@ type PriorReading struct {
 Observe incorporates one completed outcome with authority in [0, 1], derived
 at issue time. Zero authority records completion without
 inventing trusted evidence. A measured zero with positive authority is evidence.
+When an epoch is supplied, decay accounts for the resolution gap since this prior's
+last update, ensuring dormant leaves age with the model.
 */
-func (prior *Prior) Observe(value, authority float64) error {
+func (prior *Prior) Observe(value, authority float64, epoch ...uint64) error {
 	if authority < 0 || authority > 1 {
 		return errnie.Err(errnie.Validation, "prior: authority must be in [0, 1]", nil)
 	}
@@ -77,7 +101,11 @@ func (prior *Prior) Observe(value, authority float64) error {
 		return nil
 	}
 
-	if prior.memory > 1 {
+	if len(epoch) > 0 {
+		prior.age(epoch[0])
+	}
+
+	if len(epoch) == 0 && prior.memory > 1 {
 		decay := 1.0 - 1.0/prior.memory
 		prior.weight *= decay
 		prior.squaredWeight *= decay * decay
@@ -102,7 +130,11 @@ func (prior *Prior) Observe(value, authority float64) error {
 }
 
 /* Reading returns the current estimate without modifying its evidence. */
-func (prior *Prior) Reading() PriorReading {
+func (prior *Prior) Reading(epoch ...uint64) PriorReading {
+	if len(epoch) > 0 {
+		prior.age(epoch[0])
+	}
+
 	reading := PriorReading{Samples: prior.samples, Memory: prior.memory}
 
 	if prior.weight == 0 {

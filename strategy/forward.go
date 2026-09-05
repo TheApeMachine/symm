@@ -18,8 +18,9 @@ const exposureSpans = 64
 
 /* exposureSpan is one stretch during which the policy lane held inventory. */
 type exposureSpan struct {
-	from, to time.Time
-	open     bool
+	fromSeq, toSeq hindsight.CaptureSequence
+	from, to       time.Time
+	open           bool
 }
 
 /*
@@ -34,14 +35,16 @@ the retained exposure history, where the honest answer is that we no longer
 know.
 */
 type MissedOpportunity struct {
-	Symbol       string    `json:"symbol"`
-	Kind         string    `json:"kind"`
-	FromAt       time.Time `json:"fromAt"`
-	ToAt         time.Time `json:"toAt"`
-	Excursion    float64   `json:"excursion"`
-	Observations int       `json:"observations"`
-	Exposed      bool      `json:"exposed"`
-	Unreviewable bool      `json:"unreviewable"`
+	Symbol       string                    `json:"symbol"`
+	Kind         string                    `json:"kind"`
+	FromSequence hindsight.CaptureSequence `json:"fromSequence,omitempty"`
+	ToSequence   hindsight.CaptureSequence `json:"toSequence,omitempty"`
+	FromAt       time.Time                 `json:"fromAt"`
+	ToAt         time.Time                 `json:"toAt"`
+	Excursion    float64                   `json:"excursion"`
+	Observations int                       `json:"observations"`
+	Exposed      bool                      `json:"exposed"`
+	Unreviewable bool                      `json:"unreviewable"`
 }
 
 /*
@@ -50,13 +53,16 @@ policy lane held. It is the forward-testing counterpart to a backtest: rather
 than replaying history against the current model, it lets the market run
 slightly ahead of the reviewer and asks what actually happened.
 
-Captured and Missed count confirmed excursions the lane was and was not holding
+Exposed and Unexposed count confirmed excursions the lane was and was not holding
 through. Neither is a score — an excursion nobody could have known about in
 advance is not a mistake — but a policy that is never exposed to any of them
-has no path to an edge, and that is visible here and nowhere else.
+has no path to an edge, and that is visible here and nowhere else. Captured and
+Missed are retained as alias fields for wire compatibility.
 */
 type ForwardReview struct {
 	Reviewed     uint64              `json:"reviewed"`
+	Exposed      uint64              `json:"exposed"`
+	Unexposed    uint64              `json:"unexposed"`
 	Captured     uint64              `json:"captured"`
 	Missed       uint64              `json:"missed"`
 	Unreviewable uint64              `json:"unreviewable"`
@@ -70,18 +76,26 @@ const recentReviewed = 40
 /*
 markExposure records the policy lane's inventory transitions for this symbol.
 Only transitions are stored: a lane holding through a thousand book updates is
-one span, not a thousand.
+one span, not a thousand. Both capture sequence (causal order) and wall time
+are recorded.
 */
-func (market *learningMarket) markExposure(exposed bool, at time.Time) {
+func (market *learningMarket) markExposure(
+	exposed bool, seq hindsight.CaptureSequence, at time.Time,
+) {
 	last := len(market.exposure) - 1
 
 	if exposed {
 		if last >= 0 && market.exposure[last].open {
 			market.exposure[last].to = at
+			market.exposure[last].toSeq = seq
 			return
 		}
 
-		market.exposure = append(market.exposure, exposureSpan{from: at, to: at, open: true})
+		market.exposure = append(market.exposure, exposureSpan{
+			fromSeq: seq, toSeq: seq,
+			from: at, to: at,
+			open: true,
+		})
 
 		if len(market.exposure) > exposureSpans {
 			market.exposure = append(market.exposure[:0], market.exposure[1:]...)
@@ -91,14 +105,43 @@ func (market *learningMarket) markExposure(exposed bool, at time.Time) {
 	}
 
 	if last >= 0 && market.exposure[last].open {
-		market.exposure[last].to, market.exposure[last].open = at, false
+		market.exposure[last].to = at
+		market.exposure[last].toSeq = seq
+		market.exposure[last].open = false
 	}
 }
 
-/* heldDuring reports whether the policy lane held inventory inside a window. */
-func (market *learningMarket) heldDuring(from, to time.Time) (held, known bool) {
+/*
+heldDuring reports whether the policy lane held inventory inside an episode window.
+Causal sequence identity (FromSequence/ToSequence) is preferred over wall time
+whenever positive sequence values are present.
+*/
+func (market *learningMarket) heldDuring(
+	fromSeq, toSeq hindsight.CaptureSequence, from, to time.Time,
+) (held, known bool) {
 	if len(market.exposure) == 0 {
 		return false, false
+	}
+
+	// Use causal sequence order if both boundaries carry positive sequences.
+	if fromSeq > 0 && toSeq > 0 && market.exposure[0].fromSeq > 0 {
+		if toSeq < market.exposure[0].fromSeq {
+			return false, false
+		}
+
+		for _, span := range market.exposure {
+			endSeq := span.toSeq
+
+			if span.open {
+				endSeq = toSeq
+			}
+
+			if span.fromSeq <= toSeq && endSeq >= fromSeq {
+				return true, true
+			}
+		}
+
+		return false, true
 	}
 
 	// An episode that ended before the retained history began cannot be judged
@@ -162,6 +205,7 @@ func (agent *Agent) review(episodes []hindsight.Episode) {
 		agent.reviewed[episode.ID] = struct{}{}
 		opportunity := MissedOpportunity{
 			Symbol: episode.Symbol, Kind: string(episode.Kind),
+			FromSequence: episode.FromSequence, ToSequence: episode.ToSequence,
 			FromAt: episode.FromAt, ToAt: episode.ToAt,
 			Excursion: episode.ObservedExcursion, Observations: episode.Observations,
 		}
@@ -171,7 +215,9 @@ func (agent *Agent) review(episodes []hindsight.Episode) {
 		if market == nil {
 			opportunity.Unreviewable = true
 		} else {
-			held, known := market.heldDuring(episode.FromAt, episode.ToAt)
+			held, known := market.heldDuring(
+				episode.FromSequence, episode.ToSequence, episode.FromAt, episode.ToAt,
+			)
 			opportunity.Exposed, opportunity.Unreviewable = held, !known
 		}
 
@@ -181,8 +227,10 @@ func (agent *Agent) review(episodes []hindsight.Episode) {
 		case opportunity.Unreviewable:
 			agent.forward.Unreviewable++
 		case opportunity.Exposed:
+			agent.forward.Exposed++
 			agent.forward.Captured++
 		default:
+			agent.forward.Unexposed++
 			agent.forward.Missed++
 		}
 
@@ -190,6 +238,12 @@ func (agent *Agent) review(episodes []hindsight.Episode) {
 	}
 
 	slices.SortFunc(agent.forward.Recent, func(left, right MissedOpportunity) int {
+		if right.ToSequence != left.ToSequence {
+			if right.ToSequence > left.ToSequence {
+				return 1
+			}
+			return -1
+		}
 		return right.ToAt.Compare(left.ToAt)
 	})
 

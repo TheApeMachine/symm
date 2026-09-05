@@ -18,6 +18,7 @@ type Model[Key comparable, Action comparable] struct {
 	contexts map[Key]*modelContext[Action]
 	pending  map[uint64]pendingAction
 	sequence uint64
+	epoch    uint64
 	memory   float64
 }
 
@@ -143,8 +144,10 @@ func (model *Model[Key, Action]) Resolve(identity uint64, outcome float64) (Prio
 		)
 	}
 
+	model.epoch++
+
 	for _, prior := range pending.priors {
-		if err := prior.Observe(outcome, pending.authority); err != nil {
+		if err := prior.Observe(outcome, pending.authority, model.epoch); err != nil {
 			return PriorReading{}, err
 		}
 
@@ -156,7 +159,7 @@ func (model *Model[Key, Action]) Resolve(identity uint64, outcome float64) (Prio
 	// The reading reported back is the longest context's, which is the one the
 	// caller asked about. Shorter prefixes were trained too, and Recall uses
 	// them while this one is still too sparse to say anything.
-	reading := pending.priors[len(pending.priors)-1].Reading()
+	reading := pending.priors[len(pending.priors)-1].Reading(model.epoch)
 	reading.Depth = len(pending.priors) - 1
 
 	return reading, nil
@@ -183,7 +186,7 @@ func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action
 	reading := PriorReading{}
 
 	if prior := node.priors[action]; prior != nil {
-		reading = prior.Reading()
+		reading = prior.Reading(model.epoch)
 	}
 
 	var used uint32
@@ -237,12 +240,8 @@ func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action
 			available reading is still the most specific answer there is. A
 			shallower reading is only preferred when it can say something about
 			spread that the deeper one cannot.
-
-			Empirical Bayes shrinkage: when a deeper context has estimable variance
-			but thin Kish support (maturity < 1), shrink its mean toward the
-			shallower reading's mean to avoid overfitting noisy leaves.
 		*/
-		deeper := prior.Reading()
+		deeper := prior.Reading(model.epoch)
 
 		if !deeper.Defined {
 			continue
