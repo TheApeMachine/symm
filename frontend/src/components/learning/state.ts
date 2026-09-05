@@ -94,6 +94,24 @@ export type Wallet = {
 	spent: number;
 	exhausted: boolean;
 };
+export type MissedOpportunity = {
+	symbol: string;
+	kind: string;
+	fromAt: string;
+	toAt: string;
+	excursion: number;
+	observations: number;
+	exposed: boolean;
+	unreviewable: boolean;
+};
+export type ForwardReview = {
+	reviewed: number;
+	captured: number;
+	missed: number;
+	unreviewable: number;
+	at: string;
+	recent: MissedOpportunity[] | null;
+};
 export type LearningView = {
 	at: string;
 	symbol: string;
@@ -106,6 +124,9 @@ export type LearningView = {
 	initialCapital: string;
 	skill: Skill;
 	dispatched: number;
+	rejected: number;
+	rejection?: string;
+	forward: ForwardReview;
 	horizonNs: number;
 	horizonEpochs: number;
 	epochMean: number;

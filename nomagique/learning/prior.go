@@ -8,12 +8,29 @@ Weight is observation authority, not reward magnitude: a large outcome cannot
 give itself extra influence. No individual historical outcomes are retained.
 */
 type Prior struct {
+	memory        float64
 	samples       uint64
 	pending       uint64
 	mean          float64
 	weight        float64
 	squaredWeight float64
 	deviation     float64
+}
+
+/*
+NewPrior constructs an online Welford prior with an optional exponential
+retention memory window. When memory is greater than 1, older evidence decays
+with every observation. When memory is not provided or <= 1, cumulative
+un-decayed Welford is preserved.
+*/
+func NewPrior(memory ...float64) *Prior {
+	prior := &Prior{}
+
+	if len(memory) > 0 && memory[0] > 1 {
+		prior.memory = memory[0]
+	}
+
+	return prior
 }
 
 /*
@@ -29,6 +46,10 @@ support for the mean's departure from zero;
 it is not a probability of success or a substitute for Mean in accounting.
 */
 type PriorReading struct {
+	// Depth is how many context tokens this reading was conditioned on. Zero
+	// is the key's unconditioned evidence; the caller's full context length is
+	// the most specific answer available.
+	Depth           int
 	Samples         uint64
 	Defined         bool
 	Mean            float64
@@ -37,6 +58,7 @@ type PriorReading struct {
 	Support         float64
 	Maturity        float64
 	Authority       float64
+	Memory          float64
 }
 
 /*
@@ -53,6 +75,13 @@ func (prior *Prior) Observe(value, authority float64) error {
 
 	if authority == 0 {
 		return nil
+	}
+
+	if prior.memory > 1 {
+		decay := 1.0 - 1.0/prior.memory
+		prior.weight *= decay
+		prior.squaredWeight *= decay * decay
+		prior.deviation *= decay
 	}
 
 	if prior.weight == 0 {
@@ -74,7 +103,7 @@ func (prior *Prior) Observe(value, authority float64) error {
 
 /* Reading returns the current estimate without modifying its evidence. */
 func (prior *Prior) Reading() PriorReading {
-	reading := PriorReading{Samples: prior.samples}
+	reading := PriorReading{Samples: prior.samples, Memory: prior.memory}
 
 	if prior.weight == 0 {
 		return reading

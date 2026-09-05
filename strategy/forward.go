@@ -1,0 +1,199 @@
+package strategy
+
+import (
+	"context"
+	"slices"
+	"time"
+
+	"github.com/theapemachine/symm/hindsight"
+)
+
+/*
+exposureSpans bounds the retained exposure history per symbol. Reviews arrive
+behind the tape, so only recent spans can still be judged; an older episode is
+reviewed against evidence that has already rolled off and is reported as
+unknown rather than as a miss.
+*/
+const exposureSpans = 64
+
+/* exposureSpan is one stretch during which the policy lane held inventory. */
+type exposureSpan struct {
+	from, to time.Time
+	open     bool
+}
+
+/*
+MissedOpportunity is one confirmed price excursion on the tape, judged against
+what the policy lane was actually holding while it happened.
+
+Exposed reports that the lane held inventory at some point inside the episode.
+It is not a claim that the lane captured the excursion, or that entering would
+have been correct: an excursion is only visible once it has completed, and the
+decision had to be made before that. Unreviewable marks an episode older than
+the retained exposure history, where the honest answer is that we no longer
+know.
+*/
+type MissedOpportunity struct {
+	Symbol       string    `json:"symbol"`
+	Kind         string    `json:"kind"`
+	FromAt       time.Time `json:"fromAt"`
+	ToAt         time.Time `json:"toAt"`
+	Excursion    float64   `json:"excursion"`
+	Observations int       `json:"observations"`
+	Exposed      bool      `json:"exposed"`
+	Unreviewable bool      `json:"unreviewable"`
+}
+
+/*
+ForwardReview is the standing account of what the tape offered against what the
+policy lane held. It is the forward-testing counterpart to a backtest: rather
+than replaying history against the current model, it lets the market run
+slightly ahead of the reviewer and asks what actually happened.
+
+Captured and Missed count confirmed excursions the lane was and was not holding
+through. Neither is a score — an excursion nobody could have known about in
+advance is not a mistake — but a policy that is never exposed to any of them
+has no path to an edge, and that is visible here and nowhere else.
+*/
+type ForwardReview struct {
+	Reviewed     uint64              `json:"reviewed"`
+	Captured     uint64              `json:"captured"`
+	Missed       uint64              `json:"missed"`
+	Unreviewable uint64              `json:"unreviewable"`
+	At           time.Time           `json:"at"`
+	Recent       []MissedOpportunity `json:"recent"`
+}
+
+/* recentReviewed bounds the episode list retained for operator inspection. */
+const recentReviewed = 40
+
+/*
+markExposure records the policy lane's inventory transitions for this symbol.
+Only transitions are stored: a lane holding through a thousand book updates is
+one span, not a thousand.
+*/
+func (market *learningMarket) markExposure(exposed bool, at time.Time) {
+	last := len(market.exposure) - 1
+
+	if exposed {
+		if last >= 0 && market.exposure[last].open {
+			market.exposure[last].to = at
+			return
+		}
+
+		market.exposure = append(market.exposure, exposureSpan{from: at, to: at, open: true})
+
+		if len(market.exposure) > exposureSpans {
+			market.exposure = append(market.exposure[:0], market.exposure[1:]...)
+		}
+
+		return
+	}
+
+	if last >= 0 && market.exposure[last].open {
+		market.exposure[last].to, market.exposure[last].open = at, false
+	}
+}
+
+/* heldDuring reports whether the policy lane held inventory inside a window. */
+func (market *learningMarket) heldDuring(from, to time.Time) (held, known bool) {
+	if len(market.exposure) == 0 {
+		return false, false
+	}
+
+	// An episode that ended before the retained history began cannot be judged
+	// from it, and saying "not exposed" there would invent a miss.
+	if to.Before(market.exposure[0].from) {
+		return false, false
+	}
+
+	for _, span := range market.exposure {
+		end := span.to
+
+		if span.open {
+			end = to
+		}
+
+		if !span.from.After(to) && !end.Before(from) {
+			return true, true
+		}
+	}
+
+	return false, true
+}
+
+/*
+Review folds one batch of confirmed episodes into the standing account. The
+caller supplies episodes the market has already resolved; this compares them
+against what the policy lane was holding and never re-judges an episode twice.
+*/
+func (agent *Agent) Review(ctx context.Context, episodes []hindsight.Episode) error {
+	if len(episodes) == 0 {
+		return nil
+	}
+
+	select {
+	case agent.reviews <- episodes:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-agent.ctx.Done():
+		return agent.ctx.Err()
+	}
+}
+
+/* review runs exclusively on the workspace owner, off the ordinary hot path. */
+func (agent *Agent) review(episodes []hindsight.Episode) {
+	agent.forward.At = agent.now()
+
+	for _, episode := range episodes {
+		if !episode.Confirmed || episode.ID == "" {
+			continue
+		}
+
+		if _, seen := agent.reviewed[episode.ID]; seen {
+			continue
+		}
+
+		if agent.reviewed == nil {
+			agent.reviewed = make(map[string]struct{})
+		}
+
+		agent.reviewed[episode.ID] = struct{}{}
+		opportunity := MissedOpportunity{
+			Symbol: episode.Symbol, Kind: string(episode.Kind),
+			FromAt: episode.FromAt, ToAt: episode.ToAt,
+			Excursion: episode.ObservedExcursion, Observations: episode.Observations,
+		}
+
+		market := agent.markets[episode.Symbol]
+
+		if market == nil {
+			opportunity.Unreviewable = true
+		} else {
+			held, known := market.heldDuring(episode.FromAt, episode.ToAt)
+			opportunity.Exposed, opportunity.Unreviewable = held, !known
+		}
+
+		agent.forward.Reviewed++
+
+		switch {
+		case opportunity.Unreviewable:
+			agent.forward.Unreviewable++
+		case opportunity.Exposed:
+			agent.forward.Captured++
+		default:
+			agent.forward.Missed++
+		}
+
+		agent.forward.Recent = append(agent.forward.Recent, opportunity)
+	}
+
+	slices.SortFunc(agent.forward.Recent, func(left, right MissedOpportunity) int {
+		return right.ToAt.Compare(left.ToAt)
+	})
+
+	if len(agent.forward.Recent) > recentReviewed {
+		agent.forward.Recent = agent.forward.Recent[:recentReviewed]
+	}
+}

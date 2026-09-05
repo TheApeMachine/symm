@@ -31,13 +31,44 @@ type ExecutionIntent struct {
 }
 
 /*
-ExecutionDesk is the account a promoted policy lane reaches. It is deliberately
+ExecutionDesk is the account the policy lane reaches. It is deliberately
 narrow: the agent decides what to do and how much, and the desk owns venue
 mechanics. The agent never constructs venue orders itself, and a learning-only
 run leaves this nil so no code path can produce one.
+
+Submit must not talk to the venue. It is called from the workspace consumer
+that also feeds the terminal, so a round-trip taken inside it stops the whole
+pipeline for its duration. Implementations queue the intent and place it
+elsewhere.
 */
 type ExecutionDesk interface {
 	Submit(ExecutionIntent) error
+}
+
+/*
+ExecutionStatus is what the account did with the agent's intents. Because
+placement happens off the deciding path, an outcome is a report rather than a
+return value, and every category here is a distinct fact: Diverged means the
+account disagreed with the simulated wallet, Dropped means the venue was slower
+than the agent was deciding, and Failed means an order was actually refused.
+*/
+type ExecutionStatus struct {
+	Submitted   uint64 `json:"submitted"`
+	Unsupported uint64 `json:"unsupported"`
+	Diverged    uint64 `json:"diverged"`
+	Dropped     uint64 `json:"dropped"`
+	Failed      uint64 `json:"failed"`
+	Queued      int    `json:"queued"`
+	LastFailure string `json:"lastFailure,omitempty"`
+}
+
+/*
+ExecutionReporter is an account that can describe its own outcomes. It is
+optional: an agent whose desk cannot report simply shows nothing rather than
+inventing a status.
+*/
+type ExecutionReporter interface {
+	Execution() ExecutionStatus
 }
 
 /*
@@ -57,6 +88,10 @@ func (agent *Agent) dispatch(
 	marketAt time.Time,
 ) error {
 	if agent.Desk == nil || agent.Mode() == ModeLearning {
+		return nil
+	}
+
+	if agent.Realization != nil && !agent.Realization.AllowsTrading() {
 		return nil
 	}
 
@@ -89,6 +124,11 @@ func (agent *Agent) dispatch(
 	*/
 	if err := agent.Desk.Submit(intent); err != nil {
 		agent.rejected++
+
+		if agent.Realization != nil {
+			agent.Realization.ObserveSubmission(err)
+		}
+
 		agent.lastRejection = errnie.Error(errnie.Err(
 			errnie.IO,
 			"[agent] policy intent was not accepted by the account",
@@ -96,6 +136,10 @@ func (agent *Agent) dispatch(
 		))
 
 		return nil
+	}
+
+	if agent.Realization != nil {
+		agent.Realization.ObserveSubmission(nil)
 	}
 
 	agent.dispatched++

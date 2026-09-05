@@ -55,6 +55,7 @@ type learningLane struct {
 	pending                 uint64
 	action                  LearningAction
 	requested               *big.Rat
+	ladder                  depthLadder
 	trace                   []learningExperience
 	equity                  float64
 	complete                bool
@@ -86,7 +87,7 @@ func (agent *Agent) transition(
 		hadPending := lane.pending != 0
 
 		if hadPending {
-			quantity, gross, fee := lane.wallet.fill(book, lane.action, lane.requested)
+			quantity, gross, fee := lane.wallet.fill(book, lane.action, lane.requested, &lane.ladder)
 			event := lane.event(market, index, "filled", lane.pending, marketAt)
 			event.Complete = false
 			event.Quantity, event.Gross, event.Fee = quantity.FloatString(lane.wallet.pair.QtyPrecision), gross.FloatString(lane.wallet.scale), fee.FloatString(lane.wallet.scale)
@@ -117,6 +118,10 @@ func (agent *Agent) transition(
 
 		lane.equity, _ = mark.Float64()
 		lane.version++
+
+		if lane.paper {
+			market.markExposure(lane.wallet.quantity.Sign() > 0, market.at)
+		}
 
 		outcome, err := lane.ledger.Measure(EquityMark{
 			At: market.at, Version: lane.version, Equity: lane.equity, HasFunding: true,
@@ -217,6 +222,7 @@ func (agent *Agent) resolve(
 	for _, experience := range due {
 		elapsed := market.at.Sub(experience.at).Seconds()
 		target := (lane.equity - experience.value - experience.rate*elapsed) / capital
+		skillTarget := (lane.equity - experience.value) / capital
 		prior, err := agent.Model.Resolve(experience.id, target)
 
 		if err != nil {
@@ -241,17 +247,20 @@ func (agent *Agent) resolve(
 			Competence is measured over disjoint forward windows. A decision
 			only enters the estimate when its window began at or after the end
 			of the last admitted one, so no two accepted observations share
-			tape. Truncated windows never enter it at all: their return covers
-			less forward tape than the horizon and is not comparable to one
-			that ran its course. The other decisions still train their own
-			action priors — this gate governs the competence estimate that
-			grants execution authority, not what the agent learns.
+			tape across any market. Truncated windows never enter it at all:
+			their return covers less forward tape than the horizon and is not
+			comparable to one that ran its course. The other decisions still
+			train their own action priors — this gate governs the competence
+			estimate that grants execution authority, not what the agent learns.
+
+			The model learns advantage (differential return); the skill meter
+			measures absolute economic profitability (skillTarget).
 		*/
 		if lane.paper && agent.Skill != nil && !truncated &&
-			!experience.at.Before(market.skillWindow) {
+			!experience.at.Before(agent.skillWindow) {
 
-			market.skillWindow = market.at
-			agent.Skill.Observe(target, experience.authority, market.at)
+			agent.skillWindow = market.at
+			agent.Skill.Observe(skillTarget, experience.authority, market.at)
 		}
 
 		lane.lastPrior = prior
@@ -338,14 +347,10 @@ func (agent *Agent) issue(market *learningMarket, index int, book *spotbook.Book
 	market.actions = lane.wallet.actions(book, market.actions)
 	key := [2]string{market.symbol, "virtual"}
 
-	if lane.paper {
-		key[1] = "paper"
-	}
-
 	// The policy lane reads the exploration lanes' evidence: that is the whole
 	// point of exploring. It must also record its own outcomes under the same
 	// identity, or its experience is written where nothing ever reads it.
-	action, prior, err := agent.Model.Select([2]string{market.symbol, "virtual"}, market.context, market.actions, !lane.paper)
+	action, prior, err := agent.Model.Select(key, market.context, market.actions, !lane.paper)
 
 	if err != nil {
 		return errnie.Error(errnie.Err(
@@ -374,7 +379,7 @@ func (agent *Agent) issue(market *learningMarket, index int, book *spotbook.Book
 		}
 	}
 
-	requested := lane.wallet.request(book, action, influence)
+	requested := lane.wallet.request(book, action, influence, &lane.ladder)
 	price := book.Asks.Low.Price
 
 	if action.Reduce {

@@ -125,6 +125,14 @@ export const SkillPanel = ({ view }: { view: LearningView | null }) => {
 					value={view.dispatched.toLocaleString()}
 					note="Zero while calibrating. The policy lane's own wallet is a simulation running alongside, not this account"
 				/>
+				<Reading
+					label="Intents the account did not accept"
+					value={view.rejected.toLocaleString()}
+					note={
+						view.rejection ||
+						"The agent decides from its simulated wallet, so its intent and the account's actual position can disagree. That is reported, never fatal"
+					}
+				/>
 			</Flex.Column>
 		</Section>
 	);

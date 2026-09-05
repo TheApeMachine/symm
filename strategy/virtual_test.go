@@ -37,7 +37,7 @@ func TestVirtualWalletSweep(t *testing.T) {
 		wallet, book := virtualFixture()
 		wallet.cash.SetFrac64(10201, 100)
 		requested := big.NewRat(3, 1)
-		quantity, gross := wallet.sweep(book, requested, true)
+		quantity, gross := wallet.sweep(book, requested, true, nil, nil)
 		So(quantity.RatString(), ShouldEqual, "1")
 		So(gross.RatString(), ShouldEqual, "101")
 
@@ -49,11 +49,11 @@ func TestVirtualWalletSweep(t *testing.T) {
 					ID: fmt.Sprint(depth), Price: decimal.NewFromInt64(int64(103 + depth)),
 					Quantity: decimal.NewFromInt64(1), Silent: true})
 			}
-			quantity, gross = wallet.sweep(book, requested, true)
+			quantity, gross = wallet.sweep(book, requested, true, nil, nil)
 			So(quantity.RatString(), ShouldEqual, "1")
 			So(gross.RatString(), ShouldEqual, "101")
 			deepAllocations := testing.AllocsPerRun(1, func() {
-				wallet.sweep(book, requested, true)
+				wallet.sweep(book, requested, true, nil, nil)
 			})
 			// Converting each price allocates a Rat. Fewer allocations than
 			// inaccessible levels rules out that walk without exact pool counts,
@@ -68,7 +68,7 @@ func TestVirtualWalletFill(t *testing.T) {
 		wallet, book := virtualFixture()
 		other, _ := virtualFixture()
 		enter := LearningAction{Kind: types.ActionEnter}
-		quantity, gross, fee := wallet.fill(book, enter, big.NewRat(5, 1))
+		quantity, gross, fee := wallet.fill(book, enter, big.NewRat(5, 1), nil)
 		So(quantity.FloatString(2), ShouldEqual, "5.00")
 		So(gross.FloatString(2), ShouldEqual, "507.00")
 		So(fee.FloatString(2), ShouldEqual, "5.07")
@@ -81,7 +81,7 @@ func TestVirtualWalletFill(t *testing.T) {
 			So(complete, ShouldBeTrue)
 			So(mark.FloatString(2), ShouldEqual, "982.93")
 			book.Update(&spotbook.UpdateOptions{Direction: spotbook.Bid, ID: "lift", Price: decimal.NewFromInt64(110), Quantity: decimal.NewFromInt64(5), Silent: true})
-			quantity, gross, fee = wallet.fill(book, LearningAction{Kind: types.ActionExit, Reduce: true}, &wallet.quantity)
+			quantity, gross, fee = wallet.fill(book, LearningAction{Kind: types.ActionExit, Reduce: true}, &wallet.quantity, nil)
 			So(quantity.FloatString(2), ShouldEqual, "5.00")
 			So(gross.FloatString(2), ShouldEqual, "550.00")
 			So(fee.FloatString(2), ShouldEqual, "5.50")
@@ -94,14 +94,14 @@ func TestVirtualWalletFill(t *testing.T) {
 			book.Update(&spotbook.UpdateOptions{Direction: spotbook.Bid, ID: "bid", Price: decimal.NewFromInt64(100), Quantity: decimal.NewFromInt64(2), Silent: true})
 			_, complete := wallet.mark(book)
 			So(complete, ShouldBeFalse)
-			quantity, _, _ = wallet.fill(book, LearningAction{Kind: types.ActionExit, Reduce: true}, &wallet.quantity)
+			quantity, _, _ = wallet.fill(book, LearningAction{Kind: types.ActionExit, Reduce: true}, &wallet.quantity, nil)
 			So(quantity.FloatString(2), ShouldEqual, "2.00")
 			So(wallet.quantity.FloatString(2), ShouldEqual, "3.00")
 		})
 
 		Convey("A wait changes neither the account nor its fees", func() {
 			before := wallet.cash.String()
-			quantity, _, fee = wallet.fill(book, LearningAction{Kind: types.ActionHold}, new(big.Rat))
+			quantity, _, fee = wallet.fill(book, LearningAction{Kind: types.ActionHold}, new(big.Rat), nil)
 			So(quantity.Sign(), ShouldEqual, 0)
 			So(fee.Sign(), ShouldEqual, 0)
 			So(wallet.cash.String(), ShouldEqual, before)
@@ -127,7 +127,7 @@ func TestVirtualWalletActions(t *testing.T) {
 		Convey("Sizing and fills preserve the exact price, gross and fee", func() {
 			So(wallet.maximum(book, true).FloatString(0), ShouldEqual, "1000000")
 			So(wallet.actions(book, nil), ShouldNotBeEmpty)
-			quantity, gross, fee := wallet.fill(book, LearningAction{Kind: types.ActionEnter}, big.NewRat(1000, 1))
+			quantity, gross, fee := wallet.fill(book, LearningAction{Kind: types.ActionEnter}, big.NewRat(1000, 1), nil)
 			So(quantity.FloatString(0), ShouldEqual, "1000")
 			So(gross.FloatString(10), ShouldEqual, "0.0000011000")
 			So(fee.FloatString(10), ShouldEqual, "0.0000000011")
@@ -148,8 +148,8 @@ func TestVirtualWalletActions(t *testing.T) {
 		Convey("Each selected refinement is feasible and cannot borrow cash", func() {
 			for _, action := range actions {
 				independent, _ := virtualFixture()
-				requested := independent.request(book, action, 1)
-				quantity, _, _ := independent.fill(book, action, requested)
+				requested := independent.request(book, action, 1, nil)
+				quantity, _, _ := independent.fill(book, action, requested, nil)
 				So(quantity.Cmp(requested), ShouldBeLessThanOrEqualTo, 0)
 				So(independent.cash.Sign(), ShouldBeGreaterThanOrEqualTo, 0)
 			}
@@ -180,4 +180,54 @@ func BenchmarkVirtualWalletActions(b *testing.B) {
 			}
 		})
 	}
+}
+
+func TestFillCannotTakeLiquidityItNeverRaced(t *testing.T) {
+	Convey("Given a decision sized against the depth displayed at the time", t, func() {
+		wallet, book := virtualFixture()
+		action := LearningAction{Kind: types.ActionEnter}
+		ladder := &depthLadder{}
+		requested := wallet.request(book, action, 1, ladder)
+
+		So(requested.Sign(), ShouldBeGreaterThan, 0)
+		So(ladder.count, ShouldBeGreaterThan, 0)
+
+		Convey("Depth that appeared after the decision cannot be filled against", func() {
+			// The observed ladder is emptied of every price the fill will walk,
+			// so nothing on the current book was standing when the decision was
+			// made. An order racing a book like that gets nothing.
+			vanished := &depthLadder{}
+			for index := range ladder.count {
+				vanished.record(&ladder.prices[index], new(big.Rat))
+			}
+
+			quantity, gross, fee := wallet.fill(book, action, requested, vanished)
+			So(quantity.Sign(), ShouldEqual, 0)
+			So(gross.Sign(), ShouldEqual, 0)
+			So(fee.Sign(), ShouldEqual, 0)
+			So(wallet.quantity.Sign(), ShouldEqual, 0)
+		})
+
+		Convey("Only the surviving share of each level is filled", func() {
+			// Half of every level was cancelled between decision and execution.
+			thinned := &depthLadder{}
+			for index := range ladder.count {
+				half := new(big.Rat).Quo(&ladder.quantities[index], big.NewRat(2, 1))
+				thinned.record(&ladder.prices[index], half)
+			}
+
+			partial, _, _ := wallet.fill(book, action, requested, thinned)
+			So(partial.Sign(), ShouldBeGreaterThan, 0)
+			So(partial.Cmp(requested), ShouldBeLessThan, 0)
+		})
+
+		Convey("An unchanged book fills exactly what an unrestricted sweep would", func() {
+			restricted, _ := virtualFixture()
+			unrestricted, _ := virtualFixture()
+
+			capped, _, _ := restricted.fill(book, action, requested, ladder)
+			open, _, _ := unrestricted.fill(book, action, requested, nil)
+			So(capped.Cmp(open), ShouldEqual, 0)
+		})
+	})
 }

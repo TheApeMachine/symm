@@ -83,6 +83,15 @@ decision changed the context it would next be recalled under, so no prior ever
 accumulated a second observation, exploration could never leave its
 unestimable-variance branch, and the policy lane recalled nothing.
 
+An outcome trains its action at every prefix of that context, and Recall reads
+the longest prefix that can state a dispersion of its own, backing off towards
+the unconditioned estimate as needed. Ordered region identities jitter, so a
+long context still almost never repeats exactly; every prefix carries the same
+evidence at a coarser resolution, and precision is used where it has been
+earned rather than assumed. This is exact prefix matching at a coarser
+resolution, not approximate matching: a returned reading was measured under a
+context this one genuinely begins with. `PriorReading.Depth` reports which.
+
 `nomagique.learning.Model` accepts an opaque key, numeric context, comparable
 action and an explicit authority in [0,1]. Issue captures those facts before
 execution. Resolve updates all completed exact matches with weighted Welford
@@ -114,9 +123,14 @@ actually ended with and begins a new episode on a fresh clone of the same
 known balance. Episodes are separate accounts in sequence; the retained total
 is a record of what a lane realized, never a balance anyone holds.
 
-An action fixes its requested quantity before its next book notification. Fills
-model taker IOC execution on the subsequently available displayed depth, with
-partial fills, unfilled-remainder cancellation and the supplied account fee.
+An action fixes its requested quantity before its next book notification, and
+records the depth it was sized against. Fills model taker IOC execution on the
+subsequently available displayed depth, capped at each price by what stood
+there when the decision was made: liquidity that arrived afterwards was never
+available to that decision, and liquidity since cancelled is a race the order
+loses. An unrestricted sweep of the current book wins that race every time and
+drifts the lanes optimistic. Partial fills, unfilled-remainder cancellation and
+the supplied account fee apply as before.
 Exact rational arithmetic preserves mixed price, quantity and cash precisions.
 Sizing stops when remaining cash cannot buy one venue lot at the current ask;
 all later asks are more expensive and cannot add executable quantity.
@@ -223,6 +237,39 @@ outcomes of decisions issued while that quantity was hot. That is the discovery
 question — which measurements should determine which actions — answered from
 resolved evidence rather than declared by hand. It is association under the
 agent's own exploration, not a controlled comparison.
+
+## Forward testing
+
+There is no back test. Replaying history against the current model lets it see
+what came next; `cmd.forwardReviewer` instead runs behind the live tape,
+discovers the confirmed price excursions on the captured run, and reports them
+to `Agent.Review`. The agent compares each against the exposure its policy lane
+actually had at the time.
+
+Reviewing is measurement, never training: an outcome discovered after the fact
+is never fed back into a decision, because a policy trained on episodes it could
+not have seen is a policy leaking the future. An excursion is only confirmed
+once price has turned back from its extremum, so the reviewer necessarily lags,
+and an unconfirmed episode is not judged at all. "Sat it out" is not a mistake —
+the excursion was not visible when the decision was made — but a policy exposed
+to none of them has no path to an edge, and that is what the reading is for. An
+episode older than the retained exposure history is reported as not reviewable
+rather than counted as a miss.
+
+## Account reconciliation
+
+The agent decides from its own simulated wallet, which is not the account. The
+two can disagree: an entry on a symbol the account already holds, or an exit on
+one it never opened. `cmd.learningDesk` reconciles against the desk's actual
+position and counts the disagreement rather than acting on it, and a submission
+the account refuses is counted and reported, never fatal. Halting the workload
+on one refused order would stop every symbol from learning because a single
+venue could not take a single order.
+
+Reductions are executed, not approximated. `broker.Position.Reduce` sells part
+of an open lot without claiming the exit, because "hold less of this" is not
+"stop holding this", and a reduction that closed the whole lot would record an
+account state the agent never decided on.
 
 ## Inspection and persistence
 

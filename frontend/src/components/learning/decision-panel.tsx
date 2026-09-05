@@ -2,8 +2,115 @@ import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
-import { action, amount, basis, duration, percent } from "./format";
+import { action, amount, basis, clock, duration, percent } from "./format";
 import type { LearningView } from "./state";
+
+/*
+ForwardPanel is the system's forward test. Instead of replaying history against
+the current model — which would let it see what came next — the reviewer runs
+behind the tape and asks what the market actually offered while the agent was
+deciding without that knowledge.
+
+"Missed" is not a mistake. An excursion is only an excursion once price has
+turned back, and the decision had to be made before that. A policy that is
+never exposed to any of them has no path to an edge, and that is what this
+panel is for.
+*/
+export const ForwardPanel = ({ view }: { view: LearningView | null }) => {
+	const forward = view?.forward;
+	const recent = forward?.recent ?? [];
+
+	return (
+		<Section fit="content">
+			<Section.Header
+				title="What the tape offered"
+				meta={
+					forward?.at && !forward.at.startsWith("0001-")
+						? `reviewed behind the tape · last pass ${clock(forward.at)}`
+						: "waiting for the first confirmed excursion"
+				}
+			/>
+			<Flex.Row className="flex-wrap gap-3 border-(--line) border-b p-3">
+				<Badge
+					label={`${forward?.captured ?? 0} held through`}
+					variant="success"
+					size="m"
+				/>
+				<Badge
+					label={`${forward?.missed ?? 0} sat out`}
+					variant="warning"
+					size="m"
+				/>
+				<Badge
+					label={`${forward?.unreviewable ?? 0} unknown`}
+					variant="disabled"
+					size="m"
+				/>
+			</Flex.Row>
+			<Section.Body className="overflow-x-auto">
+				<table className="w-full text-left font-mono text-xs">
+					<thead className="text-(--f4)">
+						<tr>
+							{["Symbol", "Excursion", "Move", "Window", "Policy lane"].map(
+								(label) => (
+									<th key={label} className="p-3 font-normal">
+										{label}
+									</th>
+								),
+							)}
+						</tr>
+					</thead>
+					<tbody>
+						{recent.map((entry) => (
+							<tr
+								key={`${entry.symbol}-${entry.fromAt}-${entry.kind}`}
+								className="border-(--line) border-t"
+							>
+								<td className="p-3 text-(--acc)">{entry.symbol}</td>
+								<td className="p-3">{percent(entry.excursion)}</td>
+								<td className="p-3">{entry.kind.replace("_", " ")}</td>
+								<td className="p-3">
+									{clock(entry.fromAt)} → {clock(entry.toAt)}
+								</td>
+								<td className="p-3">
+									{entry.unreviewable ? (
+										<Badge
+											label="not reviewable"
+											variant="disabled"
+											size="xs"
+										/>
+									) : entry.exposed ? (
+										<Badge
+											label="held through it"
+											variant="success"
+											size="xs"
+										/>
+									) : (
+										<Badge label="sat it out" variant="warning" size="xs" />
+									)}
+								</td>
+							</tr>
+						))}
+						{recent.length === 0 && (
+							<tr>
+								<td className="p-3 text-(--f3)" colSpan={5}>
+									No excursion has completed on the captured tape yet. An
+									excursion is only confirmed once price turns back from its
+									extremum.
+								</td>
+							</tr>
+						)}
+					</tbody>
+				</table>
+			</Section.Body>
+			<Typography.Mono className="px-3 pb-3 text-(--f4)">
+				An episode older than the retained exposure history is reported as not
+				reviewable rather than as a miss. Sitting one out is not evidence of a
+				mistake — the excursion was not visible when the decision was made.
+			</Typography.Mono>
+		</Section>
+	);
+};
 
 /*
 ImpulsePanel names the quantities that are hot right now, in the order the

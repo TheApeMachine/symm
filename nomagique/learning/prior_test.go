@@ -127,6 +127,27 @@ func TestPriorReading(t *testing.T) {
 		So(weak.Reading().Authority, ShouldAlmostEqual, steady.Reading().Authority*0.1)
 		So(*steady, ShouldResemble, before)
 	})
+
+	Convey("Given a prior with exponential memory", t, func() {
+		prior := NewPrior(50)
+
+		for range 100 {
+			So(prior.Observe(10.0, 1.0), ShouldBeNil)
+		}
+
+		So(prior.Reading().Mean, ShouldAlmostEqual, 10.0)
+		So(prior.Reading().Support, ShouldBeLessThan, 105)
+
+		Convey("observing a new regime shifts the mean toward new outcomes", func() {
+			for range 100 {
+				So(prior.Observe(-10.0, 1.0), ShouldBeNil)
+			}
+
+			reading := prior.Reading()
+			So(reading.Mean, ShouldBeLessThan, -5.0)
+			So(reading.Support, ShouldBeLessThan, 105)
+		})
+	})
 }
 
 func BenchmarkPriorObserve(b *testing.B) {

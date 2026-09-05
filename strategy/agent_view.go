@@ -42,6 +42,20 @@ type LearningView struct {
 	Rejection string `json:"rejection,omitempty"`
 
 	/*
+		Execution is the account's own account of what it did with those
+		intents. It is absent when the attached desk cannot report one, rather
+		than filled in with zeros that would read as "nothing went wrong".
+	*/
+	Execution    ExecutionStatus `json:"execution"`
+	HasExecution bool            `json:"hasExecution"`
+
+	/*
+		Forward is what the tape actually offered, reviewed behind real time,
+		against what the policy lane was holding while it happened.
+	*/
+	Forward ForwardReview `json:"forward"`
+
+	/*
 		Horizon is the forward window every decision in this market is scored
 		over, derived from Epochs observed impulse changes averaging EpochMean
 		seconds. Until an interval has been observed the horizon is zero and
@@ -189,6 +203,13 @@ func (agent *Agent) view(symbol string) LearningView {
 	if agent.Skill != nil {
 		view.Skill = agent.Skill.Reading()
 	}
+
+	if reporter, ok := agent.Desk.(ExecutionReporter); ok && reporter != nil {
+		view.Execution, view.HasExecution = reporter.Execution(), true
+	}
+
+	view.Forward = agent.forward
+	view.Forward.Recent = append([]MissedOpportunity(nil), agent.forward.Recent...)
 
 	if agent.lastRejection != nil {
 		view.Rejection = agent.lastRejection.Error()

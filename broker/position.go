@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -64,7 +65,18 @@ type Position struct {
 	ExitOrder        *spot.AddOrderRequest `json:"exit_order"`
 	EntryOrderResult *spot.AddOrderResult  `json:"entry_order_result"`
 	ExitOrderResult  *spot.AddOrderResult  `json:"exit_order_result"`
-	Holding          *types.Holding        `json:"holding"`
+
+	/*
+		ReduceOrder is a sell that shrinks the lot without closing it. It is
+		tracked apart from ExitOrder because a reduction is not an exit: the
+		position stays open, keeps its entry basis, and may be reduced again.
+		reduceSequence makes each reduction's client order id distinct, so a
+		retry of one cannot be mistaken for another.
+	*/
+	ReduceOrder    *spot.AddOrderRequest `json:"reduce_order,omitempty"`
+	reduceSequence uint64
+
+	Holding *types.Holding `json:"holding"`
 
 	/*
 		Priority transport: one dedicated LMAX Disruptor plus its contiguous
@@ -81,9 +93,9 @@ type Position struct {
 	exitClaim atomic.Bool
 
 	// DegradedRecovery is true when the position was reconstructed at boot
-	// without its exact persisted StopLoss (the row was missing), so protection
-	// had to be synthesized from entry economics. It is an explicit, inspectable
-	// marker that the recovered protection is NOT the lost historical StopLoss.
+	// without its stored row, so its basis was rebuilt from trade history
+	// rather than read back. It is an explicit, inspectable marker that the
+	// recovered basis is a reconstruction.
 	DegradedRecovery bool `json:"degraded_recovery,omitempty"`
 
 	// guardianWatermark counts the priority events the guardian has fully
@@ -684,6 +696,117 @@ func (position *Position) Enter() (*Position, error) {
 	}
 
 	return position, nil
+}
+
+/*
+Reduce sells part of an open lot without closing it. It is how a policy that
+sizes its own exposure gives some of it back: the position stays open, keeps
+its entry basis, and can be reduced again or exited later.
+
+A reduction never claims the exit. Claiming it would latch the lot as closing
+and block the real exit that follows, and the two orders answer different
+questions — "hold less of this" is not "stop holding this".
+*/
+func (position *Position) Reduce(volume *decimal.Decimal) error {
+	position.exitMu.Lock()
+	defer position.exitMu.Unlock()
+
+	if position.status() == types.CLOSED || position.Holding == nil {
+		return errnie.Err(
+			errnie.NotAcceptable,
+			"position: an open holding is required to reduce",
+			nil,
+		)
+	}
+
+	// A lot already selling everything it has cannot also sell part of it.
+	if position.ExitOrder != nil || position.ReduceOrder != nil {
+		return nil
+	}
+
+	sellable := position.Holding.SellableQty
+
+	if sellable == nil || sellable.Sign() <= 0 {
+		return errnie.Err(
+			errnie.NotAcceptable,
+			"position: no sellable inventory to reduce for "+position.pair.Symbol,
+			nil,
+		)
+	}
+
+	if volume == nil || volume.Sign() <= 0 || volume.Cmp(sellable) >= 0 {
+		return errnie.Err(
+			errnie.Validation,
+			"position: a reduction must be positive and smaller than the sellable lot",
+			nil,
+		)
+	}
+
+	position.reduceSequence++
+	order := &spot.AddOrderRequest{
+		ClOrdId: uuid.NewSHA1(
+			uuid.NameSpaceOID,
+			fmt.Appendf(nil, "symm:reduce:%s:%d", position.EntryOrder.ClOrdId, position.reduceSequence),
+		).String(),
+		Type:      "sell",
+		OrderType: "market",
+		Volume:    volume.String(),
+		Pair:      position.pair.Symbol,
+	}
+
+	if _, err := position.api.AddOrder(order); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.Internal,
+			"failed to place market reduce order",
+			err,
+		))
+	}
+
+	position.ReduceOrder = order
+
+	return nil
+}
+
+/*
+applyReduceFill settles one reduction against the lot it shrank. Sold inventory
+leaves Qty and SellableQty; the entry basis is untouched, because reducing does
+not change what the remaining inventory cost. A terminal status with nothing
+filled simply releases the order so the lot can be reduced again.
+*/
+func (position *Position) applyReduceFill(execution kraken.ExecutionData) {
+	status, err := types.StatusFromMarket(execution.OrderStatus)
+
+	if err != nil {
+		errnie.Error(err)
+		return
+	}
+
+	if status != types.FILLED && status != types.CANCELED &&
+		status != types.REJECTED && status != types.EXPIRED {
+		return
+	}
+
+	if execution.CumQty != nil && execution.CumQty.Sign() > 0 {
+		sold := execution.CumQty
+
+		if position.Holding.Qty != nil {
+			position.Holding.Qty = decimal.NewFromInt64(0).Add(position.Holding.Qty).Sub(sold)
+		}
+
+		if position.Holding.SellableQty != nil {
+			position.Holding.SellableQty = decimal.NewFromInt64(0).Add(position.Holding.SellableQty).Sub(sold)
+		}
+
+		if position.recordFill != nil {
+			position.recordFill("reduce_fill", execution)
+		}
+
+		if position.store != nil {
+			errnie.Error(position.store.Save(position.Holding))
+		}
+	}
+
+	position.ReduceOrder = nil
 }
 
 /*

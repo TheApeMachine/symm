@@ -221,3 +221,40 @@ func TestSkillNeedsAnAttachedAccount(t *testing.T) {
 		})
 	})
 }
+
+func TestSkillAbsoluteReturnVsDifferential(t *testing.T) {
+	at := time.Unix(1000, 0)
+
+	Convey("Given a policy with a stationary 1% economic edge", t, func() {
+		meter := NewSkillMeter(AccountReal, at)
+
+		// 64 observations of +1% net forward return.
+		for index := range 64 {
+			skillTarget := 0.010
+			meter.Observe(skillTarget, 1.0, at.Add(time.Duration(index)*time.Second))
+		}
+
+		reading := meter.Reading()
+
+		Convey("absolute skill target maintains measured competence and trading mode", func() {
+			So(reading.Qualified, ShouldBeTrue)
+			So(reading.Mean, ShouldAlmostEqual, 0.010)
+			So(reading.LowerBound, ShouldBeGreaterThan, 0)
+			So(meter.Mode(), ShouldEqual, ModeTrading)
+		})
+
+		Convey("differential signal converging to zero would have collapsed competence", func() {
+			diffMeter := NewSkillMeter(AccountReal, at)
+
+			// If differential target was used, +1% return minus +1% historical rate = 0.
+			for index := range 64 {
+				differentialTarget := 0.000
+				diffMeter.Observe(differentialTarget, 1.0, at.Add(time.Duration(index)*time.Second))
+			}
+
+			diffReading := diffMeter.Reading()
+			So(diffReading.Mean, ShouldEqual, 0.0)
+			So(diffMeter.Mode(), ShouldEqual, ModeLearning)
+		})
+	})
+}

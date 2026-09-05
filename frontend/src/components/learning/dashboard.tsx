@@ -6,6 +6,7 @@ import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
 import {
 	CandidatePanel,
+	ForwardPanel,
 	ImpulsePanel,
 	InfluencePanel,
 	LanePanel,
@@ -91,11 +92,12 @@ const JournalEntry = ({ event }: { event: LearningEvent }) => (
 	</Flex.Column>
 );
 
-type Tab = "decision" | "influence" | "wallets";
+type Tab = "decision" | "influence" | "forward" | "wallets";
 
 const TABS: Array<{ key: Tab; label: string }> = [
 	{ key: "decision", label: "Decision" },
 	{ key: "influence", label: "Discovery" },
+	{ key: "forward", label: "Forward test" },
 	{ key: "wallets", label: "Wallets" },
 ];
 
@@ -197,6 +199,7 @@ export const LearningDashboard = () => {
 						</>
 					)}
 					{tab === "influence" && <InfluencePanel view={view} />}
+					{tab === "forward" && <ForwardPanel view={view} />}
 					{tab === "wallets" && <LanePanel view={view} />}
 				</Flex.Column>
 

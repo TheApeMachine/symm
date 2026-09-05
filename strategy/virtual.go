@@ -56,8 +56,73 @@ func (wallet *virtualWallet) floor(output, quantity *big.Rat) *big.Rat {
 	return output.Mul(output, &wallet.lot)
 }
 
-/* sweep prices displayed depth without spending unavailable cash. */
-func (wallet *virtualWallet) sweep(book *spotbook.Book, requested *big.Rat, buy bool) (quantity, gross *big.Rat) {
+/*
+depthLadder is the displayed depth a decision was sized against, one entry per
+price level in sweep order. It is retained so a later fill can be limited to
+liquidity that was actually there when the decision was made and is still there
+when it executes.
+*/
+type depthLadder struct {
+	prices     [ladderLevels]big.Rat
+	quantities [ladderLevels]big.Rat
+	count      int
+}
+
+/*
+ladderLevels bounds the retained ladder. A sweep deeper than this is not
+capped: the levels beyond it were never observed at decision time, so there is
+nothing to compare against and no basis for pretending otherwise.
+*/
+const ladderLevels = 16
+
+/* record captures one displayed level in sweep order. */
+func (ladder *depthLadder) record(price, quantity *big.Rat) {
+	if ladder.count >= ladderLevels {
+		return
+	}
+
+	ladder.prices[ladder.count].Set(price)
+	ladder.quantities[ladder.count].Set(quantity)
+	ladder.count++
+}
+
+/*
+surviving returns how much of a level's displayed quantity may be taken, given
+what stood at that price when the decision was made. Liquidity that appeared
+after the decision was never available to it, and liquidity that has since been
+cancelled is gone: an unlimited sweep of the current book models neither, and
+credits the account with fills it would have raced and lost.
+*/
+func (ladder *depthLadder) surviving(price, quantity *big.Rat) *big.Rat {
+	if ladder == nil || ladder.count == 0 {
+		return quantity
+	}
+
+	for index := range ladder.count {
+		if ladder.prices[index].Cmp(price) != 0 {
+			continue
+		}
+
+		if ladder.quantities[index].Cmp(quantity) < 0 {
+			return &ladder.quantities[index]
+		}
+
+		return quantity
+	}
+
+	// This price was not displayed when the decision was sized, so none of it
+	// was available to that decision.
+	return new(big.Rat)
+}
+
+/*
+sweep prices displayed depth without spending unavailable cash. A non-nil
+ladder records the depth observed here; a non-nil limit caps each level by what
+that ladder saw, so an execution can only take liquidity that survived.
+*/
+func (wallet *virtualWallet) sweep(
+	book *spotbook.Book, requested *big.Rat, buy bool, ladder, limit *depthLadder,
+) (quantity, gross *big.Rat) {
 	quantity, gross = new(big.Rat), new(big.Rat)
 	level := book.Bids.High
 
@@ -72,6 +137,24 @@ func (wallet *virtualWallet) sweep(book *spotbook.Book, requested *big.Rat, buy 
 	for level != nil && remaining.Sign() > 0 {
 		price := level.Price.Rat()
 		fill.Set(level.Quantity.Rat())
+
+		if ladder != nil {
+			ladder.record(price, &fill)
+		}
+
+		if limit != nil {
+			fill.Set(limit.surviving(price, &fill))
+		}
+
+		if fill.Sign() <= 0 {
+			if buy {
+				level = level.Higher
+			} else {
+				level = level.Lower
+			}
+
+			continue
+		}
 
 		if remaining.Cmp(&fill) < 0 {
 			fill.Set(&remaining)
@@ -116,7 +199,7 @@ func (wallet *virtualWallet) mark(book *spotbook.Book) (*big.Rat, bool) {
 	if wallet.quantity.Sign() == 0 {
 		return new(big.Rat).Set(&wallet.cash), true
 	}
-	quantity, gross := wallet.sweep(book, &wallet.quantity, false)
+	quantity, gross := wallet.sweep(book, &wallet.quantity, false, nil, nil)
 
 	if quantity.Cmp(&wallet.quantity) != 0 {
 		return nil, false
@@ -135,7 +218,7 @@ func (wallet *virtualWallet) maximum(book *spotbook.Book, buy bool) *big.Rat {
 	}
 	requested := new(big.Rat).Quo(&wallet.cash, book.Asks.Low.Price.Rat())
 	wallet.floor(requested, requested)
-	quantity, _ := wallet.sweep(book, requested, true)
+	quantity, _ := wallet.sweep(book, requested, true, nil, nil)
 	return wallet.floor(quantity, quantity)
 }
 
@@ -183,8 +266,15 @@ func (wallet *virtualWallet) actions(book *spotbook.Book, output []LearningActio
 	return output
 }
 
-/* request fixes quantity before execution evidence, scaled by input authority. */
-func (wallet *virtualWallet) request(book *spotbook.Book, action LearningAction, authority float64) *big.Rat {
+/*
+request fixes quantity before execution evidence, scaled by input authority,
+and records the depth it was sized against. That ladder is what the later fill
+is measured against: an execution may only take liquidity that was displayed
+when the decision was made and is still displayed when it runs.
+*/
+func (wallet *virtualWallet) request(
+	book *spotbook.Book, action LearningAction, authority float64, observed *depthLadder,
+) *big.Rat {
 	if action.Kind == types.ActionHold {
 		return new(big.Rat)
 	}
@@ -202,11 +292,25 @@ func (wallet *virtualWallet) request(book *spotbook.Book, action LearningAction,
 		wallet.floor(quantity, quantity)
 	}
 
+	if observed != nil {
+		observed.count = 0
+		wallet.sweep(book, quantity, !action.Reduce, observed, nil)
+	}
+
 	return quantity
 }
 
-/* fill applies a pending IOC, cancels the unfilled remainder and charges fees. */
-func (wallet *virtualWallet) fill(book *spotbook.Book, action LearningAction, requested *big.Rat) (quantity, gross, fee *big.Rat) {
+/*
+fill applies a pending IOC against the next book, cancels the unfilled
+remainder and charges fees. The observed ladder is the depth the decision was
+sized against: each level is capped by what stood there then, so liquidity that
+arrived afterwards is not credited and liquidity that has since been cancelled
+is not taken. That is the race an order actually runs; an unrestricted sweep of
+the current book wins it every time and drifts the lanes optimistic.
+*/
+func (wallet *virtualWallet) fill(
+	book *spotbook.Book, action LearningAction, requested *big.Rat, observed *depthLadder,
+) (quantity, gross, fee *big.Rat) {
 	quantity, gross, fee = new(big.Rat), new(big.Rat), new(big.Rat)
 	price := book.Asks.Low.Price.Rat()
 
@@ -221,7 +325,7 @@ func (wallet *virtualWallet) fill(book *spotbook.Book, action LearningAction, re
 		return quantity, gross, fee
 	}
 
-	quantity, gross = wallet.sweep(book, requested, !action.Reduce)
+	quantity, gross = wallet.sweep(book, requested, !action.Reduce, nil, observed)
 	fee.Mul(gross, &wallet.fee)
 	wallet.fees.Add(&wallet.fees, fee)
 

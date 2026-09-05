@@ -377,7 +377,12 @@ var (
 			if err != nil {
 				return err
 			}
-			learner.SetExecution(newLearningDesk(desk, instrument), account)
+			learner.SetExecution(newLearningDesk(runtimeCtx, desk, instrument), account)
+
+			// Forward testing, not back testing: the reviewer runs behind the
+			// tape and reports what the market actually offered while the agent
+			// was deciding without that knowledge.
+			go newForwardReviewer(storageEngine, learner, runID).Run(runtimeCtx)
 			hub.SetLearner(learner, runID)
 			grid.learner = learner
 			grid.prepare = []nmruntime.Node[*types.Envelope]{

@@ -278,6 +278,43 @@ func (desk *Desk) Recovery() *Recovery {
 }
 
 /*
+Reduce sells part of an open lot without closing it, for a policy that sizes
+its own exposure. A symbol with no open position has nothing to reduce and
+says so rather than doing something else with the account.
+*/
+func (desk *Desk) Reduce(symbol string, volume *decimal.Decimal) error {
+	if desk == nil || desk.positions == nil || symbol == "" {
+		return errnie.Err(
+			errnie.Validation,
+			"desk: symbol required to reduce a position",
+			nil,
+		)
+	}
+
+	value, found := desk.positions.Load(symbol)
+
+	if !found || value == nil {
+		return errnie.Err(
+			errnie.NotFound,
+			"desk: no open position exists for "+symbol,
+			nil,
+		)
+	}
+
+	position, valid := value.(*Position)
+
+	if !valid || position == nil || position.status() == types.CLOSED {
+		return errnie.Err(
+			errnie.NotFound,
+			"desk: no open position exists for "+symbol,
+			nil,
+		)
+	}
+
+	return position.Reduce(volume)
+}
+
+/*
 ManualExit executes an operator override for one open symbol. The desk's
 execution lock serializes it against entry admission and repeated override
 clicks, while Position owns the regulator transition and market order.

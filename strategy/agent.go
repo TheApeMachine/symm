@@ -47,8 +47,19 @@ type Agent struct {
 	*/
 	Skill       *SkillMeter
 	Desk        ExecutionDesk
+	Realization *RealizationMeter
 	attribution attribution
 	dispatched  uint64
+
+	/*
+		skillWindow is the end of the last forward window admitted into the
+		skill estimate across all markets. Decisions issue far faster than a
+		window closes, and cross-market movements are highly correlated. A
+		global admission clock prevents counting overlapping windows as
+		independent evidence, which would collapse measured dispersion and
+		saturate confidence.
+	*/
+	skillWindow time.Time
 
 	/*
 		rejected counts policy intents the account did not accept, and
@@ -57,6 +68,15 @@ type Agent struct {
 	*/
 	rejected      uint64
 	lastRejection error
+
+	/*
+		reviews carries confirmed Hindsight episodes from the delay line to the
+		single workspace owner. forward is the standing account of what the
+		tape offered against what the policy lane actually held.
+	*/
+	reviews  chan []hindsight.Episode
+	reviewed map[string]struct{}
+	forward  ForwardReview
 }
 
 /* learningMarket owns persistent wallets and the latest ordered impulse. */
@@ -81,16 +101,9 @@ type learningMarket struct {
 	epochMean float64
 	epochs    uint64
 
-	/*
-		skillWindow is the end of the last forward window admitted into the
-		skill estimate for this market. Decisions issue far faster than a
-		window closes, so their return windows overlap almost completely and
-		a whole batch of them resolves against one account valuation. Feeding
-		every one of those to the estimator reports a cluster of near-identical
-		targets as independent evidence, collapsing the measured dispersion and
-		saturating confidence on what is really a single observation.
-	*/
-	skillWindow time.Time
+	// exposure is the policy lane's inventory history, used to judge episodes
+	// the delay line confirms after the fact.
+	exposure []exposureSpan
 }
 
 /* epoch folds one observed interval between impulse changes into the mean. */
@@ -135,16 +148,18 @@ func NewAgent(
 	}
 
 	return &Agent{
-		Grid:    grid,
-		Model:   learning.NewModel[[2]string, LearningAction](),
-		ctx:     ctx,
-		books:   books,
-		pair:    pair,
-		fee:     fee,
-		initial: initial.Copy(),
-		Record:  record,
-		markets: make(map[string]*learningMarket), requests: make(chan learningRequest), now: time.Now,
-		Skill:   NewSkillMeter(AccountNone, time.Now()),
+		Grid:        grid,
+		Model:       learning.NewModel[[2]string, LearningAction](2048.0),
+		ctx:         ctx,
+		books:       books,
+		pair:        pair,
+		fee:         fee,
+		initial:     initial.Copy(),
+		Record:      record,
+		markets:     make(map[string]*learningMarket), requests: make(chan learningRequest), now: time.Now,
+		reviews:     make(chan []hindsight.Episode, 1), reviewed: make(map[string]struct{}),
+		Skill:       NewSkillMeter(AccountNone, time.Now()),
+		Realization: NewRealizationMeter(),
 	}, nil
 }
 
@@ -159,6 +174,8 @@ func (agent *Agent) Step(envelope *types.Envelope) *types.Envelope {
 	select {
 	case request := <-agent.requests:
 		request.reply <- agent.view(request.symbol)
+	case episodes := <-agent.reviews:
+		agent.review(episodes)
 	default:
 	}
 
@@ -174,7 +191,13 @@ func (agent *Agent) Mode() Mode {
 		return ModeLearning
 	}
 
-	return agent.Skill.Mode()
+	mode := agent.Skill.Mode()
+
+	if mode == ModeTrading && agent.Realization != nil && !agent.Realization.AllowsTrading() {
+		return ModeLearning
+	}
+
+	return mode
 }
 
 /*
@@ -194,6 +217,7 @@ func (agent *Agent) SetExecution(desk ExecutionDesk, account Account) {
 	}
 
 	agent.Skill = NewSkillMeter(account, agent.now())
+	agent.Realization = NewRealizationMeter()
 }
 
 /* advance uses one coherent current book for all independent virtual wallets. */
