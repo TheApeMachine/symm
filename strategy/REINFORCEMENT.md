@@ -266,6 +266,18 @@ the account refuses is counted and reported, never fatal. Halting the workload
 on one refused order would stop every symbol from learning because a single
 venue could not take a single order.
 
+`ExecutionDesk.Submit` must never talk to the venue. The agent runs inside the
+workspace consumer that also feeds the terminal, so a REST round-trip taken
+there stops that consumer for its whole duration: the dashboard froze the
+instant a position opened, because `Desk.Execute` placed the entry order
+synchronously on the deciding path. `cmd.learningDesk` now reconciles inline —
+a `sync.Map` read — and queues; one worker goroutine places the orders, which
+also keeps a symbol's intents in the order the agent issued them. A full queue
+drops rather than blocks, because an intent that waited behind a backlog was
+priced against a book that no longer exists. `strategy.ExecutionStatus` reports
+submitted, diverged, dropped and refused separately, since they are different
+facts about the account and only one of them is an error.
+
 Reductions are executed, not approximated. `broker.Position.Reduce` sells part
 of an open lot without claiming the exit, because "hold less of this" is not
 "stop holding this", and a reduction that closed the whole lot would record an

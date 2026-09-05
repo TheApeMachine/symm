@@ -125,14 +125,38 @@ export const SkillPanel = ({ view }: { view: LearningView | null }) => {
 					value={view.dispatched.toLocaleString()}
 					note="Zero while calibrating. The policy lane's own wallet is a simulation running alongside, not this account"
 				/>
-				<Reading
-					label="Intents the account did not accept"
-					value={view.rejected.toLocaleString()}
-					note={
-						view.rejection ||
-						"The agent decides from its simulated wallet, so its intent and the account's actual position can disagree. That is reported, never fatal"
-					}
-				/>
+				{view.hasExecution ? (
+					<>
+						<Reading
+							label="Intents the account acted on"
+							value={view.execution.submitted.toLocaleString()}
+							note={`${view.execution.queued} waiting on the venue · orders are placed off the deciding path, so a slow venue cannot stall the pipeline`}
+						/>
+						<Reading
+							label="Disagreed with the account"
+							value={view.execution.diverged.toLocaleString()}
+							note="The agent decides from its simulated wallet. An entry on a symbol the account already holds, or an exit on one it never opened, is left alone rather than forced"
+						/>
+						<Reading
+							label="Dropped and refused"
+							value={`${view.execution.dropped.toLocaleString()} dropped · ${view.execution.failed.toLocaleString()} refused`}
+							note={
+								view.execution.lastFailure ||
+								"Dropped means the venue was slower than the agent was deciding, so an intent went stale before it could be placed. Refused means an order was actually rejected"
+							}
+							tone={view.execution.failed > 0 ? "f2" : "f1"}
+						/>
+					</>
+				) : (
+					<Reading
+						label="Intents the account did not accept"
+						value={view.rejected.toLocaleString()}
+						note={
+							view.rejection ||
+							"No account is attached, so nothing is being placed"
+						}
+					/>
+				)}
 			</Flex.Column>
 		</Section>
 	);

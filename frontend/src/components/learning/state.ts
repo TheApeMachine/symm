@@ -49,6 +49,15 @@ export type Influence = {
 	action: string;
 	prior: Prior;
 };
+export type ExecutionStatus = {
+	submitted: number;
+	unsupported: number;
+	diverged: number;
+	dropped: number;
+	failed: number;
+	queued: number;
+	lastFailure?: string;
+};
 export type Skill = {
 	mode: string;
 	account: string;
@@ -126,6 +135,8 @@ export type LearningView = {
 	dispatched: number;
 	rejected: number;
 	rejection?: string;
+	execution: ExecutionStatus;
+	hasExecution: boolean;
 	forward: ForwardReview;
 	horizonNs: number;
 	horizonEpochs: number;

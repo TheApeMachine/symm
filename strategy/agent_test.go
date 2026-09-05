@@ -148,6 +148,134 @@ func TestNewAgent(t *testing.T) {
 	})
 }
 
+func TestAgentGlobalSkillWindow(t *testing.T) {
+	Convey("Given an agent measuring global skill across multiple markets", t, func() {
+		agent, _ := agentFixture(t, func(hindsight.LearningEvent) error { return nil })
+		agent.Skill = NewSkillMeter(AccountReal, time.Unix(100, 0))
+
+		marketA := &learningMarket{symbol: "BTC/USD", lanes: make([]learningLane, 1)}
+		marketB := &learningMarket{symbol: "ETH/USD", lanes: make([]learningLane, 1)}
+		marketA.lanes[0].paper = true
+		marketB.lanes[0].paper = true
+		marketA.lanes[0].equity = 202.0
+		marketB.lanes[0].equity = 202.0
+
+		t0 := time.Unix(100, 0)
+		t1 := time.Unix(110, 0)
+		t0_5 := time.Unix(105, 0)
+		t1_5 := time.Unix(115, 0)
+		t2 := time.Unix(120, 0)
+
+		// Market A issues decision at t0, resolves at t1.
+		idA1, errIssue := agent.Model.Issue([2]string{"BTC/USD", "virtual"}, []uint64{1}, LearningAction{Kind: types.ActionHold}, 1.0)
+		So(errIssue, ShouldBeNil)
+		marketA.at = t1
+		expA1 := learningExperience{id: idA1, at: t0, value: 200.0, authority: 1.0}
+		err := agent.resolve(marketA, 0, t1, []learningExperience{expA1}, false)
+		So(err, ShouldBeNil)
+		So(agent.Skill.Reading().Samples, ShouldEqual, 1)
+		So(agent.skillWindow, ShouldEqual, t1)
+
+		Convey("Market B decision overlapping Market A's window is rejected globally", func() {
+			// Market B issues decision at t0_5 (before t1), resolves at t1_5.
+			idB1, errIssueB1 := agent.Model.Issue([2]string{"ETH/USD", "virtual"}, []uint64{1}, LearningAction{Kind: types.ActionHold}, 1.0)
+			So(errIssueB1, ShouldBeNil)
+			marketB.at = t1_5
+			expB1 := learningExperience{id: idB1, at: t0_5, value: 200.0, authority: 1.0}
+			err := agent.resolve(marketB, 0, t1_5, []learningExperience{expB1}, false)
+			So(err, ShouldBeNil)
+			// Samples should still be 1 because t0_5 is before agent.skillWindow (t1).
+			So(agent.Skill.Reading().Samples, ShouldEqual, 1)
+
+			Convey("Market B decision starting at or after t1 is admitted", func() {
+				// Market B issues decision at t1, resolves at t2.
+				idB2, errIssueB2 := agent.Model.Issue([2]string{"ETH/USD", "virtual"}, []uint64{1}, LearningAction{Kind: types.ActionHold}, 1.0)
+				So(errIssueB2, ShouldBeNil)
+				marketB.at = t2
+				expB2 := learningExperience{id: idB2, at: t1, value: 200.0, authority: 1.0}
+				err := agent.resolve(marketB, 0, t2, []learningExperience{expB2}, false)
+				So(err, ShouldBeNil)
+				So(agent.Skill.Reading().Samples, ShouldEqual, 2)
+				So(agent.skillWindow, ShouldEqual, t2)
+			})
+		})
+	})
+}
+
+func TestTwoKeyExecutionGating(t *testing.T) {
+	Convey("Given an agent promoted to ModeTrading on measured edge", t, func() {
+		agent, _ := agentFixture(t, func(hindsight.LearningEvent) error { return nil })
+		at := time.Unix(100, 0)
+		agent.Skill = NewSkillMeter(AccountReal, at)
+
+		for index := range 64 {
+			agent.Skill.Observe(0.010, 1.0, at.Add(time.Duration(index)*time.Second))
+		}
+
+		So(agent.Skill.Mode(), ShouldEqual, ModeTrading)
+		So(agent.Mode(), ShouldEqual, ModeTrading)
+
+		Convey("execution circuit breaker trips and vetoes live trading", func() {
+			errSample := errors.New("exchange rejected order")
+			agent.Realization.ObserveSubmission(errSample)
+			agent.Realization.ObserveSubmission(errSample)
+			So(agent.Mode(), ShouldEqual, ModeTrading)
+
+			agent.Realization.ObserveSubmission(errSample)
+			So(agent.Realization.AllowsTrading(), ShouldBeFalse)
+			So(agent.Mode(), ShouldEqual, ModeLearning)
+
+			Convey("re-enabling realization restores trading", func() {
+				agent.Realization.Reset()
+				So(agent.Realization.AllowsTrading(), ShouldBeTrue)
+				So(agent.Mode(), ShouldEqual, ModeTrading)
+			})
+		})
+	})
+}
+
+func TestPolicyLaneUpdatesVirtualModel(t *testing.T) {
+	Convey("Given an agent with a policy lane issuing decisions", t, func() {
+		agent, books := agentFixture(t, func(hindsight.LearningEvent) error { return nil })
+		wallet, _ := virtualFixture()
+		market := &learningMarket{
+			symbol:  "TEST/USD",
+			lanes:   make([]learningLane, 1),
+			regions: []learning.Region{{ID: 1, Strength: 1.0, Authority: 1.0}},
+		}
+		market.lanes[0].paper = true
+		market.lanes[0].equity = 200.0
+		market.lanes[0].wallet = wallet
+		market.context = []uint64{1, 2, 0, 0}
+		market.sequence = []uint64{1, 2}
+
+		at := time.Unix(100, 0)
+		market.at = at
+
+		err := agent.issue(market, 0, books.current, at)
+		So(err, ShouldBeNil)
+		So(market.lanes[0].pending, ShouldNotEqual, 0)
+
+		Convey("resolving policy decision directly trains the virtual model prior", func() {
+			pendingID := market.lanes[0].pending
+			So(market.lanes[0].trace, ShouldHaveLength, 1)
+			experience := market.lanes[0].trace[0]
+			So(experience.id, ShouldEqual, pendingID)
+
+			market.at = at.Add(10 * time.Second)
+			market.lanes[0].equity = 205.0
+
+			err = agent.resolve(market, 0, market.at, []learningExperience{experience}, false)
+			So(err, ShouldBeNil)
+
+			// Recall under [market.symbol, "virtual"] should now have recorded evidence!
+			recalled := agent.Model.Recall([2]string{"TEST/USD", "virtual"}, market.context, experience.action)
+			So(recalled.Defined, ShouldBeTrue)
+			So(recalled.Samples, ShouldEqual, 1)
+		})
+	})
+}
+
 func BenchmarkAgentStep(b *testing.B) {
 	agent, _ := agentFixture(b, func(hindsight.LearningEvent) error { return nil })
 	measurement := data.NewMeasurement[float64]("", "TEST/USD", "source", time.Time{}, time.Time{})
