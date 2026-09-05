@@ -10,6 +10,7 @@ type EnvelopePerspectivePredictionT struct {
 	Event string `json:"event"`
 	Effect string `json:"effect"`
 	Class string `json:"class"`
+	Move string `json:"move"`
 }
 
 func (t *EnvelopePerspectivePredictionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -19,10 +20,15 @@ func (t *EnvelopePerspectivePredictionT) Pack(builder *flatbuffers.Builder) flat
 	eventOffset := builder.CreateString(t.Event)
 	effectOffset := builder.CreateString(t.Effect)
 	classOffset := builder.CreateString(t.Class)
+	moveOffset := flatbuffers.UOffsetT(0)
+	if t.Move != "" {
+		moveOffset = builder.CreateString(t.Move)
+	}
 	EnvelopePerspectivePredictionStart(builder)
 	EnvelopePerspectivePredictionAddEvent(builder, eventOffset)
 	EnvelopePerspectivePredictionAddEffect(builder, effectOffset)
 	EnvelopePerspectivePredictionAddClass(builder, classOffset)
+	EnvelopePerspectivePredictionAddMove(builder, moveOffset)
 	return EnvelopePerspectivePredictionEnd(builder)
 }
 
@@ -30,6 +36,7 @@ func (rcv *EnvelopePerspectivePrediction) UnPackTo(t *EnvelopePerspectivePredict
 	t.Event = string(rcv.Event())
 	t.Effect = string(rcv.Effect())
 	t.Class = string(rcv.Class())
+	t.Move = string(rcv.Move())
 }
 
 func (rcv *EnvelopePerspectivePrediction) UnPack() *EnvelopePerspectivePredictionT {
@@ -100,8 +107,16 @@ func (rcv *EnvelopePerspectivePrediction) Class() []byte {
 	return nil
 }
 
+func (rcv *EnvelopePerspectivePrediction) Move() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(10))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
 func EnvelopePerspectivePredictionStart(builder *flatbuffers.Builder) {
-	builder.StartObject(3)
+	builder.StartObject(4)
 }
 func EnvelopePerspectivePredictionAddEvent(builder *flatbuffers.Builder, event flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(event), 0)
@@ -111,6 +126,9 @@ func EnvelopePerspectivePredictionAddEffect(builder *flatbuffers.Builder, effect
 }
 func EnvelopePerspectivePredictionAddClass(builder *flatbuffers.Builder, class flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(class), 0)
+}
+func EnvelopePerspectivePredictionAddMove(builder *flatbuffers.Builder, move flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(move), 0)
 }
 func EnvelopePerspectivePredictionEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -91,7 +91,8 @@ CREATE TABLE IF NOT EXISTS lifecycle (
     kind        TEXT    NOT NULL,
     action      TEXT    NOT NULL DEFAULT '',
     at          TEXT    NOT NULL,
-    execution   TEXT    NOT NULL DEFAULT ''
+    execution   TEXT    NOT NULL DEFAULT '',
+    capture_seq INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 CREATE INDEX IF NOT EXISTS idx_lifecycle_run ON lifecycle(run_id);
 CREATE INDEX IF NOT EXISTS idx_lifecycle_decision ON lifecycle(decision_id);
@@ -99,6 +100,10 @@ CREATE INDEX IF NOT EXISTS idx_lifecycle_decision ON lifecycle(decision_id);
 
 const lifecycleExecutionMigration = `
 ALTER TABLE lifecycle ADD COLUMN execution TEXT NOT NULL DEFAULT '';
+`
+
+const lifecycleCaptureSeqMigration = `
+ALTER TABLE lifecycle ADD COLUMN capture_seq INTEGER NOT NULL DEFAULT 0;
 `
 
 const endpointMigration = `
@@ -195,7 +200,7 @@ func NewSQLite(path string) (*SQLite, error) {
 		))
 	}
 
-	database, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=5000")
+	database, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL")
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
@@ -215,7 +220,7 @@ func NewSQLite(path string) (*SQLite, error) {
 	// inspection pool writable and the separation unenforced.
 	reader, err := sql.Open(
 		"sqlite3",
-		"file:"+path+"?_journal_mode=WAL&_busy_timeout=5000&mode=ro",
+		"file:"+path+"?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL&mode=ro",
 	)
 
 	if err != nil {
@@ -327,6 +332,10 @@ func (store *SQLite) EnsureSchema() error {
 		))
 	}
 
+	if err := store.migrateLifecycleCaptureSeq(); err != nil {
+		return err
+	}
+
 	if err := store.migrateLifecycleExecution(); err != nil {
 		return err
 	}
@@ -337,6 +346,12 @@ func (store *SQLite) EnsureSchema() error {
 
 	if err := store.migrateIdentity(); err != nil {
 		return err
+	}
+
+	// The learning journal shares this database and writer, with its own small
+	// index. Creating a partial index on raw captures would scan the entire tape.
+	if _, err := store.database.Exec(learningSchema); err != nil {
+		return errnie.Err(errnie.IO, "store: ensure learning journal", err)
 	}
 
 	if err := store.migrateEventEncoding(); err != nil {
@@ -442,6 +457,26 @@ func (store *SQLite) migrateIdentity() error {
 migrateLifecycleExecution adds the execution column to lifecycle databases
 created before fill facts were recorded. Pre-existing rows default to an empty
 execution payload, marking them as transition-only events.
+*/
+func (store *SQLite) migrateLifecycleCaptureSeq() error {
+	if store.hasColumn("lifecycle", "capture_seq") {
+		return nil
+	}
+
+	if _, err := store.database.Exec(lifecycleCaptureSeqMigration); err != nil {
+		return errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: add capture_seq column to lifecycle",
+			err,
+		))
+	}
+
+	return nil
+}
+
+/*
+migrateLifecycleExecution adds the venue execution column to a lifecycle table
+written before it existed.
 */
 func (store *SQLite) migrateLifecycleExecution() error {
 	if store.hasColumn("lifecycle", "execution") {
@@ -621,6 +656,10 @@ func (store *SQLite) WriteFrame(endpoint, kind string, payload []byte, at time.T
 }
 
 func (store *SQLite) encodePayload(payload []byte) ([]byte, string) {
+	if len(payload) < 1024 {
+		return payload, "identity"
+	}
+
 	compressed := store.encoder.EncodeAll(payload, nil)
 
 	if len(compressed) >= len(payload) {

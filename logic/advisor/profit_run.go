@@ -40,7 +40,7 @@ func NewProfitRun() *ProfitRun {
 		"cvd/midpoint_response_per_net_notional",
 		"toxicity/retreat_fraction:ask",
 		"pumpdump/midpoint_return_zscore",
-		"derivatives/liquidation_share",
+		"pumpdump/notional_rate_velocity",
 	}
 
 	givingBackKeys := []string{
@@ -48,7 +48,7 @@ func NewProfitRun() *ProfitRun {
 		"pumpdump/negative_midpoint_return",
 		"toxicity/net_withdrawal_fraction:bid",
 		"cvd/net_notional_rate",
-		"derivatives/open_interest_growth_rate",
+		"cvd/signed_net_fraction",
 	}
 
 	return &ProfitRun{

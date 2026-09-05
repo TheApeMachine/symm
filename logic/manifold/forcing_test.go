@@ -7,9 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/types"
@@ -81,29 +79,12 @@ sides at the unit baseline.
 func TestForcingSideCorrectness(t *testing.T) {
 	Convey("Given the dataset order-state projection", t, func() {
 		dataset := NewDataset()
-		message := kraken.Level3Data{
-			Symbol: "SYM/USD",
-			Bids: []kraken.Level3Order{
-				{
-					Event:      "add",
-					OrderID:    "bid",
-					LimitPrice: decimal.NewFromFloat64(10),
-					OrderQty:   decimal.NewFromFloat64(1),
-				},
-			},
-			Asks: []kraken.Level3Order{
-				{
-					Event:      "add",
-					OrderID:    "ask",
-					LimitPrice: decimal.NewFromFloat64(10.1),
-					OrderQty:   decimal.NewFromFloat64(1),
-				},
-			},
-		}
+		bids := []restingOrder{{id: "bid", price: 10, size: 1}}
+		asks := []restingOrder{{id: "ask", price: 10.1, size: 1}}
 		project := func(forcing forcingState) (
 			askEnergy, askAmplitude, bidEnergy float32,
 		) {
-			for state := range dataset.Step(message, forcing) {
+			for state := range dataset.Step("SYM/USD", bids, asks, forcing) {
 				if state.TokenIDs[0]&1 == 1 {
 					askEnergy = state.Energy[0]
 					askAmplitude = state.Amp[0]
@@ -171,17 +152,6 @@ func TestForcingAdvanceConcurrent(t *testing.T) {
 		solver := testSolver()
 		defer solver.Close()
 
-		level3Data := kraken.Level3Data{
-			Symbol:    "SYM/USD",
-			Timestamp: time.Now(),
-			Bids: []kraken.Level3Order{
-				{Event: "add", OrderID: "b1", LimitPrice: decimal.NewFromFloat64(10.0), OrderQty: decimal.NewFromFloat64(1.0), Timestamp: time.Now()},
-			},
-			Asks: []kraken.Level3Order{
-				{Event: "add", OrderID: "a1", LimitPrice: decimal.NewFromFloat64(10.1), OrderQty: decimal.NewFromFloat64(1.5), Timestamp: time.Now()},
-			},
-		}
-
 		trade := testForcingEnvelope("SYM/USD", 0.3, 0.1)
 
 		var wait sync.WaitGroup
@@ -197,9 +167,7 @@ func TestForcingAdvanceConcurrent(t *testing.T) {
 					return
 				}
 
-				level3 := types.NewEnvelope(types.EnvelopeLevel3)
-				level3.Level3Data = level3Data
-				solver.Step(level3)
+				solver.Step(semaphore("SYM/USD"))
 			}(index)
 		}
 

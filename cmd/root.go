@@ -17,20 +17,21 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/grafana/pyroscope-go"
+	pyroscopepprof "github.com/grafana/pyroscope-go/http/pprof"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/logic/advisor"
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/cognition"
+	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
+	"github.com/theapemachine/symm/nomagique/learning"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
@@ -75,7 +76,7 @@ var (
 			_, err := pyroscope.Start(pyroscope.Config{
 				ApplicationName: "symm.theapemachine.app",
 				ServerAddress:   "http://localhost:4040",
-				Logger:          pyroscope.StandardLogger,
+				Logger:          nil,
 			})
 
 			if err != nil {
@@ -92,10 +93,19 @@ var (
 			runtimeCtx, runtimeCancel := context.WithCancel(cmd.Context())
 			defer runtimeCancel()
 
-			// startPprof()
+			startPprof()
 
 			hub := ui.NewHub(runtimeCtx)
 			defer hub.Close()
+
+			// The hub reads the ring rather than running on it: a publisher
+			// mounted as a stage would encode every frame on the ring's own
+			// goroutine at ingress rate. The sink's only obligation is one
+			// channel send, and the hub owns its work on a goroutine of its
+			// own. A full buffer drops, which for a live view is the right
+			// answer — it shows the present, not a backlog.
+			uiSink := nmruntime.NewSink[*types.Envelope](128)
+			hub.Consume(uiSink.Out())
 
 			// Phase 1 — the brokers' transport and account objects, which the
 			// logic stages and the decision path both consume. The workload
@@ -292,342 +302,50 @@ var (
 			resonanceSolver := resonance.NewSolver(runtimeCtx, 0)
 			resonanceSolver.SetObserver(hub.PublishResonance)
 
-			momentum := advisor.NewMomentum()
-			momentumSolver := advisor.NewSolver(
-				runtimeCtx,
-				advisor.MomentumName,
-				momentum.Features,
-			)
-
-			if err := momentumSolver.Error(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Validation,
-					"symm: construct momentum Advisor",
-					err,
-				))
-			}
-
-			defer momentumSolver.Close()
-
-			auction := advisor.NewAuction()
-			auctionSolver := advisor.NewSolver(
-				runtimeCtx,
-				advisor.AuctionName,
-				auction.Features,
-			)
-
-			if err := auctionSolver.Error(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Validation,
-					"symm: construct auction Advisor",
-					err,
-				))
-			}
-
-			defer auctionSolver.Close()
-
-			participation := advisor.NewParticipation()
-			participationSolver := advisor.NewSolver(
-				runtimeCtx,
-				advisor.ParticipationName,
-				participation.Features,
-			)
-
-			if err := participationSolver.Error(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Validation,
-					"symm: construct participation Advisor",
-					err,
-				))
-			}
-
-			defer participationSolver.Close()
-
-			pullback := advisor.NewPullback()
-			pullbackSolver := advisor.NewSolver(
-				runtimeCtx,
-				advisor.PullbackName,
-				pullback.Features,
-			)
-
-			if err := pullbackSolver.Error(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Validation,
-					"symm: construct pullback Advisor",
-					err,
-				))
-			}
-
-			defer pullbackSolver.Close()
-
-			profitRun := advisor.NewProfitRun()
-			profitRunSolver := advisor.NewSolver(
-				runtimeCtx,
-				advisor.ProfitRunName,
-				profitRun.Features,
-			)
-
-			if err := profitRunSolver.Error(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Validation,
-					"symm: construct profit run Advisor",
-					err,
-				))
-			}
-
-			defer profitRunSolver.Close()
-
-			liquidityAdvisor := advisor.NewLiquidity()
-			liquiditySolver := advisor.NewSolver(
-				runtimeCtx,
-				advisor.LiquidityName,
-				liquidityAdvisor.Features,
-			)
-
-			if err := liquiditySolver.Error(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Validation,
-					"symm: construct liquidity Advisor",
-					err,
-				))
-			}
-
-			defer liquiditySolver.Close()
-
-			basisAdvisor := advisor.NewBasis()
-			basisSolver := advisor.NewSolver(
-				runtimeCtx,
-				advisor.BasisName,
-				basisAdvisor.Features,
-			)
-
-			if err := basisSolver.Error(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Validation,
-					"symm: construct basis Advisor",
-					err,
-				))
-			}
-
-			defer basisSolver.Close()
-
-			// Manifold is intentionally disabled while its runtime issue is
-			// investigated independently. No physics implementation is changed.
-			// manifoldSolver := manifold.NewSolver(runtimeCtx)
-			// hub.SetManifoldSnapshot(manifoldSolver.Snapshot)
+			manifoldSolver := manifold.NewSolver(runtimeCtx)
+			// The Level3 stream carries a semaphore, not orders: the venue's
+			// book is the population, and the advance reads it directly.
+			manifoldSolver.SetBooks(api)
+			defer manifoldSolver.Close()
+			manifoldSolver.SetViewer(hub)
+			manifoldSolver.Start()
 			pumpdumpSolver := pumpdump.NewSignal(runtimeCtx, cvdQuoteProvider(price))
 			toxicitySolver := toxicity.NewSignal(runtimeCtx)
 			derivativesSolver := derivatives.NewSignal(runtimeCtx)
-
-			// The broker desk owns positions and execution. Recovery adopts the
-			// exchange's open inventory before the decision path engages. The
-			// position store persists stoploss state across restarts.
-			positionStore, err := broker.NewPositionStore(filepath.Join(
-				dataPath,
-				"positions.sqlite",
-			),
-				viper.GetInt("trading.persistence.queue_depth"),
-				viper.GetInt("trading.persistence.batch_size"),
-			)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: open position store",
-					err,
-				))
+			privateSession.Level3Observers = func() []nmruntime.Node[*types.Envelope] {
+				return []nmruntime.Node[*types.Envelope]{
+					depthflow.NewSignal(runtimeCtx), morphology.NewSignal(runtimeCtx),
+					pumpdumpSolver, toxicitySolver,
+				}
 			}
 
-			defer func() {
-				errnie.Error(positionStore.Close())
-			}()
-
-			// The hub serves the trade journal from the position store's
-			// persisted position_trades table, so closed trades survive restarts
-			// independently of the live ring buffer.
-			hub.SetTradeStore(positionStore)
-
+			if viper.GetString("trading.model") != "paper" {
+				return errnie.Err(errnie.Validation, "symm learning run requires trading.model: paper", nil)
+			}
 			balance := broker.NewBalance(api)
-			positions := &sync.Map{}
-
-			recovery := broker.NewRecovery(
-				runtimeCtx, api, instrument, price, balance,
-				positionStore, positions,
+			grid := &gridNode{Grid: learning.NewGrid(), cognition: cognitionSolver}
+			learner, err := strategy.NewAgent(runtimeCtx, grid.Grid, api,
+				instrument.Pair, price.FeeIfAvailable, balance.Cash(),
+				func(event hindsight.LearningEvent) error { return rawCapture.WriteLearning(runID, event) },
 			)
-
-			desk, err := broker.NewDesk(
-				runtimeCtx, api, instrument, price, balance,
-				recovery, positionStore, positions,
-			)
-
 			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: construct broker desk",
-					err,
-				))
+				return err
 			}
-
-			defer desk.Close()
-
-			// Wire the Hindsight trading-lifecycle recorder so real entry/exit
-			// transitions persist as first-class, decision-correlated artifacts.
-			// It observes transitions after they occur and persists away from the
-			// guardian through the shared storage writer.
-			desk.SetLifecycleRecorder(hindsightLifecycleRecorder{writer: rawCapture, runID: runID})
-
-			planner, err := strategy.NewPlanner(runtimeCtx, desk)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: construct planner",
-					err,
-				))
+			hub.SetLearner(learner, runID)
+			grid.learner = learner
+			grid.prepare = []nmruntime.Node[*types.Envelope]{
+				pumpdumpSolver, toxicitySolver, derivativesSolver, categorySolver,
 			}
+			grid.publish = []nmruntime.Node[*types.Envelope]{witness, uiSink}
 
-			defer planner.Close()
-
-			basisArena, err := advisor.NewArena(
-				advisor.BasisName,
-				basisAdvisor.Features,
-				planner,
-				len(instrument.Symbols()),
-			)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: construct basis Arena",
-					err,
-				))
-			}
-
-			liquidityArena, err := advisor.NewArena(
-				advisor.LiquidityName,
-				liquidityAdvisor.Features,
-				basisArena,
-				len(instrument.Symbols()),
-			)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: construct liquidity Arena",
-					err,
-				))
-			}
-
-			pullbackArena, err := advisor.NewArena(
-				advisor.PullbackName,
-				pullback.Features,
-				liquidityArena,
-				len(instrument.Symbols()),
-			)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: construct pullback Arena",
-					err,
-				))
-			}
-
-			profitRunArena, err := advisor.NewArena(
-				advisor.ProfitRunName,
-				profitRun.Features,
-				pullbackArena,
-				len(instrument.Symbols()),
-			)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: construct profit run Arena",
-					err,
-				))
-			}
-
-			participationArena, err := advisor.NewArena(
-				advisor.ParticipationName,
-				participation.Features,
-				profitRunArena,
-				len(instrument.Symbols()),
-			)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: construct participation Arena",
-					err,
-				))
-			}
-
-			auctionArena, err := advisor.NewArena(
-				advisor.AuctionName,
-				auction.Features,
-				participationArena,
-				len(instrument.Symbols()),
-			)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: construct auction Arena",
-					err,
-				))
-			}
-
-			momentumArena, err := advisor.NewArena(
-				advisor.MomentumName,
-				momentum.Features,
-				auctionArena,
-				len(instrument.Symbols()),
-			)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: construct momentum Arena",
-					err,
-				))
-			}
-
-			// Every Arena reports its resolved predictions into the Planner's
-			// credibility ledger. This is the Court of Causal Accountability
-			// (MCTS.md §6): the Arena is the only stage that observes whether a
-			// falsifiable claim was borne out, so without this link the ledger
-			// was written once at construction and never again — every advisor
-			// held credibility 1.0 forever and being wrong cost nothing.
-			court := planner.Court()
-
-			// No Arena decides anything until the system is fully booted.
-			// instrument.Subscribe walks the symbol universe in paced batches,
-			// so the first batch streams live while later batches are still
-			// connecting. Classifiers fed that partial universe are cold, their
-			// distributions are uniform, and a uniform distribution has no
-			// winner to act on. Gating on instrument READY means the advisors
-			// stay silent until the whole universe is subscribed.
-			booted := func() bool {
-				return instrument.Status() == nmruntime.READY
-			}
-
-			for _, arena := range []*advisor.Arena{
-				momentumArena, auctionArena, participationArena, profitRunArena,
-				pullbackArena, liquidityArena, basisArena,
-			} {
-				arena.Court(court).Booted(booted)
-			}
-
-			// Phase 2 — declare the complete streaming topology as Workloads.
-			// The Desk receives priority market/execution updates first. Analytical
-			// state then enriches the same envelope before Strategy sees it once.
+			// The workspace owns the complete forward-learning loop. Signal and
+			// logic producers finish before the shared grid and action owner run.
 			publicTicker := nmruntime.NewWorkload(
 				runtimeCtx,
 				"ticker",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("ticker.ingress")},
-					{&tickNode{desk: desk}},
+					{&learningTickNode{price: price}},
 					{
 						system.NewTraced("ticker.correlation", correlation.NewSignal(runtimeCtx)),
 						system.NewTraced("ticker.leadlag", leadlag.NewSignal(runtimeCtx)),
@@ -647,6 +365,9 @@ var (
 						system.NewTraced("trade.cvd", cvd.NewSignal(runtimeCtx, cvdQuoteProvider(price))),
 						system.NewTraced("trade.hawkes", hawkes.NewSignal(runtimeCtx)),
 					},
+					{
+						system.NewTraced("trade.manifold", manifoldSolver),
+					},
 				},
 			)
 
@@ -655,24 +376,19 @@ var (
 				"level3",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("level3.ingress")},
-					{level3Node{desk: desk}},
 					{
-						system.NewTraced("level3.depthflow", depthflow.NewSignal(runtimeCtx)),
-						system.NewTraced("level3.morphology", morphology.NewSignal(runtimeCtx)),
+						system.NewTraced("level3.manifold", manifoldSolver),
 					},
 				},
 			)
 
-			// The private execution stream delivers confirmed fills to the
-			// desk. It carries no signal workload: each execution record is
-			// routed straight to the matching position's guardian ring, so the
-			// workload is a thin dispatch stage plus observability boundaries.
+			// Account execution notifications remain observable. The learning
+			// wallets execute independently against the shared displayed book.
 			privateExecutions := nmruntime.NewWorkload(
 				runtimeCtx,
 				"executions",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("executions.ingress")},
-					{executionNode{desk: desk}},
 				},
 			)
 
@@ -692,80 +408,6 @@ var (
 				},
 			)
 
-			pumpdumpWorkload := nmruntime.NewWorkload(
-				runtimeCtx,
-				"pumpdump",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewTraced("pumpdump.signal", pumpdumpSolver)},
-				},
-			)
-
-			toxicityWorkload := nmruntime.NewWorkload(
-				runtimeCtx,
-				"toxicity",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewTraced("toxicity.signal", toxicitySolver)},
-				},
-			)
-
-			derivativesWorkload := nmruntime.NewWorkload(
-				runtimeCtx,
-				"derivatives",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewTraced("derivatives.signal", derivativesSolver)},
-				},
-			)
-
-			// manifoldWorkload := nmruntime.NewWorkload(
-			// 	runtimeCtx,
-			// 	"manifold",
-			// 	[][]nmruntime.Node[*types.Envelope]{
-			// 		{system.NewTraced("manifold.advance", manifoldSolver)},
-			// 	},
-			// )
-
-			advisorWorkload := nmruntime.NewWorkload(
-				runtimeCtx,
-				"advisor",
-				[][]nmruntime.Node[*types.Envelope]{
-					{
-						system.NewTraced("advisor.momentum", momentumSolver),
-						system.NewTraced("advisor.auction", auctionSolver),
-						system.NewTraced("advisor.participation", participationSolver),
-						system.NewTraced("advisor.pullback", pullbackSolver),
-						system.NewTraced("advisor.profit_run", profitRunSolver),
-						system.NewTraced("advisor.liquidity", liquiditySolver),
-						system.NewTraced("advisor.basis", basisSolver),
-					},
-				},
-			)
-
-			logicWorkload := nmruntime.NewWorkload(
-				runtimeCtx,
-				"logic",
-				[][]nmruntime.Node[*types.Envelope]{
-					{
-						system.NewTraced("logic.category", categorySolver),
-					},
-					{
-						system.NewTraced("logic.cognition", cognitionSolver),
-					},
-					{system.NewDiagnostic("logic.complete")},
-				},
-			)
-
-			strategyWorkload := nmruntime.NewWorkload(
-				runtimeCtx,
-				"strategy",
-				[][]nmruntime.Node[*types.Envelope]{
-					{momentumArena},
-					{&deskContextNode{desk: desk}},
-					{system.NewDiagnostic("strategy.planned")},
-					{witness},
-					{hub},
-					{system.NewDiagnostic("strategy.published")},
-				},
-			)
 			workspace := nmruntime.NewWorkspace(
 				runtimeCtx,
 				"workspace",
@@ -778,9 +420,10 @@ var (
 						futuresTicker,
 						futuresTrade,
 					},
-					{pumpdumpWorkload, toxicityWorkload, derivativesWorkload},
-					{advisorWorkload, logicWorkload},
-					{strategyWorkload},
+					// These dependent numerical steps share one event turn. Separate
+					// polling barriers otherwise spend more time scheduling these
+					// short steps than processing them under sustained backpressure.
+					{system.NewTraced("logic.cognition.learning", grid)},
 				},
 			)
 
@@ -834,9 +477,8 @@ var (
 				))
 			}
 
-			// Subscription snapshots are authoritative initial state, especially
-			// for Level3 order lifecycles. Subscribe only after READY so the first
-			// snapshot and every following delta traverse the same live pipeline.
+			// Subscribe after READY so every accepted book update can publish its
+			// measurements and lightweight notification to the running workspace.
 			if err := instrument.Subscribe(); err != nil {
 				return errnie.Error(errnie.Err(
 					errnie.Internal,
@@ -857,12 +499,6 @@ var (
 					errnie.IO,
 					"symm: capture storage failed",
 					rawCapture.Error(),
-				))
-			case <-positionStore.Failed():
-				return errnie.Error(errnie.Err(
-					errnie.IO,
-					"symm: position storage failed",
-					positionStore.Error(),
 				))
 			case err := <-transportErrors:
 				if api.Error() == nil && cmd.Context().Err() != nil {
@@ -921,8 +557,13 @@ func startPprof() {
 		addr = "127.0.0.1:6060"
 	}
 
+	mux := http.NewServeMux()
+	mux.Handle("/debug/pprof/", http.DefaultServeMux)
+	// Pyroscope owns CPU sampling; its handler coordinates a foreground capture.
+	mux.HandleFunc("/debug/pprof/cpu", pyroscopepprof.Profile)
+
 	go func() {
-		errnie.Error(http.ListenAndServe(addr, nil))
+		errnie.Error(http.ListenAndServe(addr, mux))
 	}()
 }
 
@@ -1081,6 +722,10 @@ func initConfig() {
 			os.Exit(1)
 		}
 	}
+
+	// Package initialization ran before Viper loaded the selected file. Build
+	// the typed startup generation now, before constructing any live owners.
+	system.Cfg = system.NewConfig()
 
 	// Live watching is disabled until an atomic config generation swap exists.
 }

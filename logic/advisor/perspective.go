@@ -94,6 +94,7 @@ func (issuer *Issuer) Issue(
 		classes[index] = types.PerspectiveClass{
 			State:       types.PerspectiveState(group.Label),
 			Probability: distribution.Probabilities[group.Label],
+			Evidence:    slices.Clone(group.Keys),
 		}
 	}
 
@@ -101,7 +102,7 @@ func (issuer *Issuer) Issue(
 	symbol := envelopeSymbol(envelope)
 	issuer.rounds[symbol]++
 	issuer.sequence++
-	envelope.Perspectives = append(envelope.Perspectives, &types.Perspective{
+	envelope.AppendPerspective(&types.Perspective{
 		Symbol:      symbol,
 		Advisor:     issuer.name,
 		Question:    types.PerspectiveQuestion(issuer.Name()),
@@ -109,6 +110,7 @@ func (issuer *Issuer) Issue(
 		Sequence:    issuer.sequence,
 		Round:       issuer.rounds[symbol],
 		Classes:     classes,
+		Unscored:    append([]string(nil), distribution.Unscored...),
 		Predictions: predictions,
 		Lease: types.PerspectiveLease{
 			Clock: issuer.clock,
@@ -138,11 +140,13 @@ func (issuer *Issuer) predictions() []types.PerspectivePrediction {
 					Class:  class,
 					Event:  types.PerspectiveEvent(prediction.Support.Label),
 					Effect: types.PredictionSupports,
+					Move:   string(formatMove(prediction.Support.Move)),
 				},
 				types.PerspectivePrediction{
 					Class:  class,
 					Event:  types.PerspectiveEvent(prediction.Contradict.Label),
 					Effect: types.PredictionFalsifies,
+					Move:   string(formatMove(prediction.Contradict.Move)),
 				},
 			)
 		}

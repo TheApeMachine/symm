@@ -4,113 +4,45 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/kraken"
 )
 
-func TestApply(t *testing.T) {
-	Convey("Given an empty resident order lifecycle", t, func() {
-		lifecycle := newOrderLifecycle()
-		add := kraken.Level3Data{
-			Symbol: "BTC/USD",
-			Bids: []kraken.Level3Order{{
-				Event:      "add",
-				OrderID:    "bid-1",
-				LimitPrice: decimalPtr(100),
-				OrderQty:   decimalPtr(2),
-			}},
-		}
-		departures, err := lifecycle.Apply(add)
-		So(err, ShouldBeNil)
-		So(departures, ShouldBeEmpty)
-		contentID := orderContentID(orderIdentity{symbol: "BTC/USD", orderID: "bid-1"})
-
-		Convey("A named delete returns the exact resident ContentID", func() {
-			departures, err := lifecycle.Apply(kraken.Level3Data{
-				Symbol: "BTC/USD",
-				Bids: []kraken.Level3Order{{
-					Event:   "delete",
-					OrderID: "bid-1",
-				}},
-			})
-
-			So(err, ShouldBeNil)
-			So(departures, ShouldResemble, []int64{contentID})
-			So(lifecycle.byContent, ShouldBeEmpty)
-		})
-
-		Convey("A replacement snapshot departs the prior symbol population", func() {
-			departures, err := lifecycle.Apply(kraken.Level3Data{
-				Symbol: "BTC/USD",
-				Type:   "snapshot",
-				Asks: []kraken.Level3Order{{
-					OrderID:    "ask-1",
-					LimitPrice: decimalPtr(101),
-					OrderQty:   decimalPtr(3),
-				}},
-			})
-
-			So(err, ShouldBeNil)
-			So(departures, ShouldResemble, []int64{contentID})
-			So(lifecycle.byContent, ShouldHaveLength, 1)
-		})
-	})
-
-	Convey("Given a delete for an identity never made resident", t, func() {
-		lifecycle := newOrderLifecycle()
-		departures, err := lifecycle.Apply(kraken.Level3Data{
-			Symbol: "BTC/USD",
-			Bids: []kraken.Level3Order{{
-				Event:   "delete",
-				OrderID: "missing",
-			}},
-		})
-
-		So(err, ShouldNotBeNil)
-		So(departures, ShouldBeNil)
-	})
-}
-
+/*
+TestOrderContentID pins the identity the physics domain merges and evicts on.
+Two different orders must never fold to one particle, and one order must keep
+the same particle for as long as it rests.
+*/
 func TestOrderContentID(t *testing.T) {
-	Convey("Content identity includes both symbol and venue order ID", t, func() {
-		first := orderContentID(orderIdentity{symbol: "BTC/USD", orderID: "same"})
-		second := orderContentID(orderIdentity{symbol: "ETH/USD", orderID: "same"})
+	Convey("Given order identities", t, func() {
+		order := orderIdentity{symbol: "BTC/USD", orderID: "abc"}
 
-		So(first, ShouldNotEqual, second)
-		So(first, ShouldEqual, orderContentID(orderIdentity{
-			symbol:  "BTC/USD",
-			orderID: "same",
-		}))
+		Convey("The same identity always resolves to the same content id", func() {
+			So(orderContentID(order), ShouldEqual, orderContentID(order))
+		})
+
+		Convey("A different order on the same symbol is a different particle", func() {
+			other := orderIdentity{symbol: "BTC/USD", orderID: "abd"}
+			So(orderContentID(order), ShouldNotEqual, orderContentID(other))
+		})
+
+		Convey("The same order id on a different symbol is a different particle", func() {
+			other := orderIdentity{symbol: "ETH/USD", orderID: "abc"}
+			So(orderContentID(order), ShouldNotEqual, orderContentID(other))
+		})
+
+		Convey("A content id is never negative", func() {
+			// It is stored as an int64 on the wire and used as a map key on
+			// both sides, so the sign bit must never be part of the hash.
+			So(orderContentID(order), ShouldBeGreaterThanOrEqualTo, 0)
+			So(orderContentID(orderIdentity{symbol: "", orderID: ""}),
+				ShouldBeGreaterThanOrEqualTo, 0)
+		})
+
+		Convey("A symbol/order split cannot be forged by concatenation", func() {
+			// Folding length with content keeps "AB"+"C" from colliding with
+			// "A"+"BC", which a naive concatenating hash would let happen.
+			left := orderIdentity{symbol: "AB", orderID: "C"}
+			right := orderIdentity{symbol: "A", orderID: "BC"}
+			So(orderContentID(left), ShouldNotEqual, orderContentID(right))
+		})
 	})
-}
-
-func BenchmarkApply(b *testing.B) {
-	lifecycle := newOrderLifecycle()
-	add := kraken.Level3Data{
-		Symbol: "BTC/USD",
-		Bids: []kraken.Level3Order{{
-			Event:      "add",
-			OrderID:    "bid-1",
-			LimitPrice: decimalPtr(100),
-			OrderQty:   decimalPtr(2),
-		}},
-	}
-	remove := kraken.Level3Data{
-		Symbol: "BTC/USD",
-		Bids: []kraken.Level3Order{{
-			Event:   "delete",
-			OrderID: "bid-1",
-		}},
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	for b.Loop() {
-		if _, err := lifecycle.Apply(add); err != nil {
-			b.Fatal(err)
-		}
-
-		if _, err := lifecycle.Apply(remove); err != nil {
-			b.Fatal(err)
-		}
-	}
 }

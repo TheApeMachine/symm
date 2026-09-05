@@ -13,6 +13,12 @@ export type HindsightRun = {
 	configDigest: string;
 	schemaVersions?: Record<string, string>;
 	integrity: "COMPLETE" | "GAPPED" | "CORRUPT" | "UNKNOWN";
+	/*
+		How many positions the desk held during this run, counted from the
+		lifecycle tape. Lets a reader pick a run that actually traded instead of
+		opening each one to find out.
+	*/
+	positions?: number;
 };
 
 /*
@@ -108,6 +114,13 @@ export type HindsightLifecycleEvent = {
 	at: string;
 	/* Present only on transitions that carried a fill. */
 	execution?: HindsightExecutionFact | null;
+	/*
+		Capture sequence of the envelope the causing decision was made on,
+		resolved by the store from the decision witness. Absent (or 0) when no
+		decision witness recorded that identity, in which case the position can
+		still be listed but not seeked to.
+	*/
+	captureSeq?: number;
 };
 
 export type HindsightEnvelope = {

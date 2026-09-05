@@ -30,12 +30,16 @@ func NewParticipation() *Participation {
 		"correlation/relative_return_energy",
 		"sentiment/largest_move_share",
 		"correlation/cohort_signed_correlation",
+		"leadlag/lag_peak_prominence",
+		"leadlag/lag_peak_curvature",
+		"leadlag/lag_fraction",
 	}
 
 	followerMoveKeys := []string{
 		"leadlag/best_lag_seconds",
+		"leadlag/best_lag_correlation",
+		"leadlag/absolute_correlation_gain",
 		"leadlag/contemporaneous_correlation",
-		"leadlag/lag_fraction",
 	}
 
 	isolatedMoveKeys := []string{

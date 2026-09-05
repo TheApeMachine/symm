@@ -21,6 +21,14 @@ const (
 	// detected by sharp precursor volume acceleration (e.g. 3100x volume surge)
 	// before visible price ignition.
 	ArchetypeVolumeSurgePrecursor OpportunityArchetype = "volume_surge_precursor"
+
+	// ArchetypeSustainedTrend positions for a directional move the council
+	// reads as continuing rather than igniting: the up-case is carried by
+	// steady trend rather than by explosive pump. It is a weaker claim than
+	// ignition and must not be reported as one — an entry labelled for a
+	// vertical break that was taken on a steady drift misdescribes both the
+	// evidence and the exit that suits it.
+	ArchetypeSustainedTrend OpportunityArchetype = "sustained_trend"
 )
 
 /*

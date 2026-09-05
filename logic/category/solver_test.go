@@ -8,7 +8,6 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 
 	"github.com/theapemachine/symm/nomagique/data"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -18,24 +17,26 @@ var categoryBenchmark []types.Category
 categoryMeasurement builds one measurement carrying a single cvd metric with the
 given normalized affinity, so the schema leg for aggressive_drive resolves.
 */
-func categoryMeasurement(symbol string, normalized bool, value float64) *nmtypes.Measurement {
-	metric := nmtypes.NewMetric("signed_net_fraction_zscore", value,
-		nmtypes.Descriptor{Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
-	)
+func categoryMeasurement(symbol string, normalized bool, value float64) *data.Measurement[float64] {
+	var normalizedVal *float64
 
 	if normalized {
-		metric = nmtypes.NewNormalizedMetric("signed_net_fraction_zscore", value, value,
-			nmtypes.Descriptor{Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
-		)
+		normalizedVal = &value
 	}
 
-	return &nmtypes.Measurement{
+	metric := data.Metric[float64]{
+		Label:      "signed_net_fraction_zscore",
+		Raw:        value,
+		Normalized: normalizedVal,
+	}
+
+	return &data.Measurement[float64]{
 		ID:       "test",
 		Source:   "cvd",
-		Symbol:   symbol,
+		Label:    symbol,
 		At:       time.Unix(0, 1),
 		Maturity: 0.9,
-		Metrics: map[string]*nmtypes.Metric[float64]{
+		Metrics: map[string]data.Metric[float64]{
 			"signed_net_fraction_zscore": metric,
 		},
 	}
@@ -132,17 +133,19 @@ func TestCategorySolverCorroboration(t *testing.T) {
 			state, categoryMeasurement("BTC/USD", true, 0.64),
 		), ShouldBeNil)
 		// signed_net_fraction_divergence also maps to aggressive_drive.
-		So(solver.accumulate(state, &nmtypes.Measurement{
+		divergenceVal := 0.16
+		So(solver.accumulate(state, &data.Measurement[float64]{
 			ID:       "test2",
 			Source:   "cvd",
-			Symbol:   "BTC/USD",
+			Label:    "BTC/USD",
 			At:       time.Unix(0, 1),
 			Maturity: 0.8,
-			Metrics: map[string]*nmtypes.Metric[float64]{
-				"signed_net_fraction_divergence": nmtypes.NewNormalizedMetric(
-					"signed_net_fraction_divergence", 0.16, 0.16,
-					nmtypes.Descriptor{Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescaleInstantaneous},
-				),
+			Metrics: map[string]data.Metric[float64]{
+				"signed_net_fraction_divergence": {
+					Label:      "signed_net_fraction_divergence",
+					Raw:        divergenceVal,
+					Normalized: &divergenceVal,
+				},
 			},
 		}), ShouldBeNil)
 
@@ -277,9 +280,9 @@ func TestSolverStepMeasurement(t *testing.T) {
 		})
 
 		Convey("wall-clock distance does not invent a generic expiry", func() {
-			trigger := &nmtypes.Measurement{
-				ID: "trigger", Source: "unmapped", Symbol: "BTC/USD",
-				At: time.Unix(86_400, 0), Metrics: map[string]*nmtypes.Metric[float64]{},
+			trigger := &data.Measurement[float64]{
+				ID: "trigger", Source: "unmapped", Label: "BTC/USD",
+				At: time.Unix(86_400, 0), Metrics: map[string]data.Metric[float64]{},
 			}
 			categories := solver.StepMeasurement(trigger)
 
@@ -300,6 +303,32 @@ func TestSolverStepMeasurement(t *testing.T) {
 		So(solver.Error().Error(), ShouldContainSubstring, "signal measurement failed")
 	})
 
+	Convey("Given multiple measurements where one failed but another succeeded", t, func() {
+		solver := NewSolver(t.Context())
+		failed := categoryMeasurement("BTC/USD", true, 0.8)
+		failed.Err = context.Canceled
+
+		divergenceVal := 0.5
+		valid := &data.Measurement[float64]{
+			ID:       "valid-test",
+			Source:   "cvd",
+			Label:    "BTC/USD",
+			At:       time.Unix(0, 1),
+			Maturity: 0.9,
+			Metrics: map[string]data.Metric[float64]{
+				"signed_net_fraction_divergence": {
+					Label:      "signed_net_fraction_divergence",
+					Raw:        divergenceVal,
+					Normalized: &divergenceVal,
+				},
+			},
+		}
+
+		categories := solver.stepMeasurements([]*data.Measurement[float64]{failed, valid})
+		So(solver.Error(), ShouldBeNil)
+		So(categories, ShouldNotBeNil)
+	})
+
 	Convey("Given the delayed MLN ticker observed in Hindsight", t, func() {
 		solver := NewSolver(t.Context())
 		newerTradeAt := time.Date(
@@ -308,18 +337,18 @@ func TestSolverStepMeasurement(t *testing.T) {
 		olderTickerAt := time.Date(
 			2026, time.September, 1, 22, 27, 48, 113_331_000, time.UTC,
 		)
-		trade := &nmtypes.Measurement{
-			ID: "hawkes", Source: "hawkes", Symbol: "MLN/USD", At: newerTradeAt,
-			Metrics: map[string]*nmtypes.Metric[float64]{
-				"arrival_rate": nmtypes.NewMetric(
-					"arrival_rate", 9_208_790.233371342,
-					nmtypes.Descriptor{Unit: nmtypes.UnitPerSecond},
-				),
+		trade := &data.Measurement[float64]{
+			ID: "hawkes", Source: "hawkes", Label: "MLN/USD", At: newerTradeAt,
+			Metrics: map[string]data.Metric[float64]{
+				"arrival_rate": {
+					Label: "arrival_rate",
+					Raw:   9_208_790.233371342,
+				},
 			},
 		}
-		delayedTicker := &nmtypes.Measurement{
-			ID: "correlation", Source: "correlation", Symbol: "MLN/USD",
-			At: olderTickerAt, Metrics: map[string]*nmtypes.Metric[float64]{},
+		delayedTicker := &data.Measurement[float64]{
+			ID: "correlation", Source: "correlation", Label: "MLN/USD",
+			At: olderTickerAt, Metrics: map[string]data.Metric[float64]{},
 		}
 
 		So(solver.StepMeasurement(trade), ShouldNotBeNil)

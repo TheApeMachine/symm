@@ -137,13 +137,15 @@ func TestTickerStep(t *testing.T) {
 			So(last.SNR, ShouldBeGreaterThanOrEqualTo, 0.0)
 		})
 
-		Convey("time regression surfaces as measurement.Err", func() {
+		Convey("time regression surfaces as zero support without error", func() {
 			entity.Step(ticker("BTC/USD", 100.0, timestamp(2)))
 
 			measurement := entity.Step(ticker("BTC/USD", 101.0, timestamp(1)))
 
 			So(measurement, ShouldNotBeNil)
-			So(measurement.Err, ShouldNotBeNil)
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.Metadata[data.MetadataSupport], ShouldEqual, 0)
+			So(measurement.Provenance["event_time_state"], ShouldEqual, "regressed")
 		})
 	})
 }

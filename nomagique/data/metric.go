@@ -11,6 +11,9 @@ type Metric[Value any] struct {
 	Standardized *Value    `json:"standardized,omitempty"`
 	Unit         Unit      `json:"unit,omitempty"`
 	Timescale    Timescale `json:"timescale,omitempty"`
+	// Coordinates is the live position owned by the numerical grid. A nil
+	// pointer means this metric has not been admitted to a grid.
+	Coordinates *[2]float64 `json:"-"`
 }
 
 /*

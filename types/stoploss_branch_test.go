@@ -52,11 +52,12 @@ func TestBranchResolve(t *testing.T) {
 			So(stoploss.TriggerReason, ShouldEqual, TriggerTrailingFloor)
 		})
 
-		Convey("an invalid previously observed book resolves to regime invalidation", func() {
+		Convey("an invalid previously observed book resolves to regime invalidation when in profit", func() {
 			stoploss := &Stoploss{
 				Status:       ARMED,
 				BookObserved: true,
 				Mark:         decimal.NewFromInt64(101),
+				ProfitLine:   decimal.NewFromInt64(100),
 			}
 			surface := &ExecutionSurface{BookComplete: false}
 
@@ -67,8 +68,28 @@ func TestBranchResolve(t *testing.T) {
 			So(stoploss.TriggerMark.Cmp(stoploss.Mark), ShouldEqual, 0)
 		})
 
-		Convey("a locked floor without quantity coverage resolves to regime invalidation", func() {
-			stoploss := &Stoploss{Status: ARMED, Locked: true}
+		Convey("an invalid book while underwater does not invalidate regime and lets position breathe", func() {
+			stoploss := &Stoploss{
+				Status:       ARMED,
+				BookObserved: true,
+				Mark:         decimal.NewFromInt64(99),
+				ProfitLine:   decimal.NewFromInt64(100),
+				Floor:        decimal.NewFromInt64(90),
+			}
+			surface := &ExecutionSurface{BookComplete: false}
+
+			resolved := stoplossBranches.Resolve(stoploss, surface, nil)
+
+			So(resolved, ShouldBeFalse)
+			So(stoploss.Status, ShouldEqual, ARMED)
+		})
+
+		Convey("a locked floor without quantity coverage resolves to regime invalidation when in profit", func() {
+			stoploss := &Stoploss{
+				Status:     ARMED,
+				Locked:     true,
+				ProfitLine: decimal.NewFromInt64(100),
+			}
 			surface := &ExecutionSurface{
 				SellableQty:      decimal.NewFromInt64(10),
 				ExecutableVWAP:   decimal.NewFromInt64(101),
@@ -84,13 +105,14 @@ func TestBranchResolve(t *testing.T) {
 			So(stoploss.TriggerMark.Cmp(surface.ExecutableVWAP), ShouldEqual, 0)
 		})
 
-		Convey("an armed surge unwinding through its line resolves to momentum exit", func() {
+		Convey("an armed surge unwinding through its line resolves to momentum exit when in profit", func() {
 			stoploss := &Stoploss{
 				Status:        ARMED,
 				SurgeArmed:    true,
 				Peak:          decimal.NewFromInt64(105),
 				MomentumFloor: decimal.NewFromInt64(2),
 				TickSize:      decimal.NewFromFloat64(0.01),
+				ProfitLine:    decimal.NewFromInt64(100),
 			}
 			mark := decimal.NewFromInt64(103)
 
@@ -175,9 +197,10 @@ func TestBranchResolve(t *testing.T) {
 			So(stoploss.Status, ShouldEqual, ARMED)
 		})
 
-		Convey("a fast vertical ignition pump exit triggers when momentum stalls", func() {
+		Convey("a fast vertical ignition pump exit triggers when momentum stalls in profit", func() {
 			stoploss := &Stoploss{
-				Status: ARMED,
+				Status:     ARMED,
+				ProfitLine: decimal.NewFromInt64(100),
 				Causative: CausativeContext{
 					ActivePerspectives: map[string]string{
 						"momentum": "Stalling",
@@ -190,6 +213,45 @@ func TestBranchResolve(t *testing.T) {
 
 			So(resolved, ShouldBeTrue)
 			So(stoploss.TriggerReason, ShouldEqual, TriggerPumpMomentumLost)
+		})
+
+		Convey("stalling or reversing momentum while underwater does not exit and lets position breathe", func() {
+			stoploss := &Stoploss{
+				Status:     ARMED,
+				ProfitLine: decimal.NewFromInt64(100),
+				Floor:      decimal.NewFromInt64(90),
+				Causative: CausativeContext{
+					ActivePerspectives: map[string]string{
+						"momentum":   "Reversing",
+						"profit_run": "Exhausting",
+					},
+				},
+			}
+			mark := decimal.NewFromInt64(95)
+
+			resolved := stoplossBranches.Resolve(stoploss, nil, mark)
+
+			So(resolved, ShouldBeFalse)
+			So(stoploss.Status, ShouldEqual, ARMED)
+		})
+
+		Convey("breaching the hard floor while underwater always triggers hard floor exit", func() {
+			stoploss := &Stoploss{
+				Status:     ARMED,
+				ProfitLine: decimal.NewFromInt64(100),
+				Floor:      decimal.NewFromInt64(90),
+				Causative: CausativeContext{
+					ActivePerspectives: map[string]string{
+						"momentum": "Reversing",
+					},
+				},
+			}
+			mark := decimal.NewFromInt64(89)
+
+			resolved := stoplossBranches.Resolve(stoploss, nil, mark)
+
+			So(resolved, ShouldBeTrue)
+			So(stoploss.TriggerReason, ShouldEqual, TriggerHardFloor)
 		})
 	})
 }

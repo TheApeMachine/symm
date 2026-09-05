@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -391,6 +392,32 @@ func TestDeskLevel3DrivesExecutableMark(t *testing.T) {
 			})
 
 			So(position.Holding.Stoploss.Status, ShouldEqual, types.TRIGGERED)
+		})
+	})
+}
+
+func TestDeskPositionQuantity(t *testing.T) {
+	Convey("Given a desk with open positions", t, func() {
+		desk := &Desk{positions: &sync.Map{}}
+
+		Convey("with no positions, position quantity is zero", func() {
+			So(desk.PositionQuantity("TEST/USD"), ShouldEqual, 0)
+		})
+
+		Convey("with open positions, position quantity aggregates held base units", func() {
+			pos := &Position{
+				pair: kraken.InstrumentPair{Symbol: "TEST/USD"},
+				Holding: &types.Holding{
+					Qty: mustDecimal("15"),
+				},
+			}
+			pos.setStatus(types.OPEN)
+			desk.positions.Store("TEST/USD", pos)
+
+			So(desk.PositionQuantity("TEST/USD"), ShouldEqual, 15.0)
+
+			pos.setStatus(types.CLOSED)
+			So(desk.PositionQuantity("TEST/USD"), ShouldEqual, 0.0)
 		})
 	})
 }

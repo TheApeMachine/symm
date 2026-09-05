@@ -227,6 +227,56 @@ func TestSpatialSigma(t *testing.T) {
 	})
 }
 
+func TestGatherParticles(t *testing.T) {
+	Convey("Given particles sampled through the production gather kernel", t, func() {
+		fluid, err := newWorkspace(8, 8, 8)
+		So(err, ShouldBeNil)
+		Reset(func() { fluid.Close() })
+		fluid.allocateParticles(2)
+		fluid.particles = 2
+
+		for particle := range fluid.particles {
+			fluid.mass.Float32Slice()[particle] = 1
+			fluid.pos.Float32Slice()[particle*3] = 0.5
+		}
+
+		Convey("Exact vacuum and a populated field can alternate without rejection", func() {
+			for _, density := range []float32{0, 1, 0, 2} {
+				for cell := range fluid.rho.Float32Slice() {
+					fluid.rho.Float32Slice()[cell] = density
+					fluid.energy.Float32Slice()[cell] = density
+				}
+
+				So(fluid.gatherParticles(), ShouldBeNil)
+
+				for particle := range fluid.particles {
+					expectedHeat := float32(0)
+
+					if density > 0 {
+						expectedHeat = 1 // Unit mass and unit specific internal energy.
+					}
+
+					So(fluid.heat.Float32Slice()[particle], ShouldEqual, expectedHeat)
+					So(fluid.vel.Float32Slice()[particle*3], ShouldEqual, 0)
+					So(fluid.pos.Float32Slice()[particle*3], ShouldEqual, 0.5)
+				}
+			}
+		})
+
+		Convey("A populated field with negative internal energy still fails visibly", func() {
+			for cell := range fluid.rho.Float32Slice() {
+				fluid.rho.Float32Slice()[cell] = 1
+				fluid.energy.Float32Slice()[cell] = -1
+			}
+
+			err := fluid.gatherParticles()
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "negative internal energy gathered")
+			So(fluid.dbgHead.UInt32Slice()[0], ShouldEqual, 0)
+		})
+	})
+}
+
 func BenchmarkWaveStep(b *testing.B) {
 	fluid, err := newWorkspace(64, 64, 64)
 
@@ -268,6 +318,37 @@ func BenchmarkGasRK2(b *testing.B) {
 
 	for b.Loop() {
 		if err := fluid.gasRK2(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkGatherParticles(b *testing.B) {
+	fluid, err := newWorkspace(8, 8, 8)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer fluid.Close()
+	// One particle per grid cell exercises both vacuum and populated gathers.
+	fluid.particles = fluid.domain.CellCount()
+	fluid.allocateParticles(fluid.particles)
+
+	for cell := range fluid.particles {
+		fluid.mass.Float32Slice()[cell] = 1
+		fluid.pos.Float32Slice()[cell*3] = float32(cell%8) / 8
+		fluid.pos.Float32Slice()[cell*3+1] = float32(cell/8%8) / 8
+		fluid.pos.Float32Slice()[cell*3+2] = float32(cell/64) / 8
+		fluid.rho.Float32Slice()[cell] = float32(cell % 2)
+		fluid.energy.Float32Slice()[cell] = float32(cell % 2)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		if err := fluid.gatherParticles(); err != nil {
 			b.Fatal(err)
 		}
 	}

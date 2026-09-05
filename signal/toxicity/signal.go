@@ -56,6 +56,10 @@ func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
 
 	switch envelope.TypeID {
 	case types.EnvelopeLevel3:
+		if envelope.Level3Data.Bids == nil && envelope.Level3Data.Asks == nil {
+			return envelope
+		}
+
 		envelope.Toxicity = signal.StepLevel3(envelope.Level3Data)
 	case types.EnvelopeTrade:
 		envelope.Toxicity = signal.StepTrade(envelope.TradeData)

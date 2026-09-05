@@ -1,8 +1,10 @@
 package data
 
+import "strings"
+
 /*
 Lift flattens a set of measurements into one observation keyed by
-source-qualified metric name, resolving metric values through their Readout
+source-qualified metric name, resolving metric values through their authority
 so no naked unconditioned numbers escape into the system.
 
 A metric's identity is its source and its own label — "hawkes/arrival_rate" —
@@ -15,7 +17,15 @@ The error is returned alongside so a caller can report it, but the metrics
 that were successfully measured still reach the observation.
 */
 func Lift(measurements []*Measurement[float64]) (map[string]float64, error) {
-	observation := make(map[string]float64)
+	totalMetrics := 0
+
+	for _, measurement := range measurements {
+		if measurement != nil && measurement.Err == nil {
+			totalMetrics += len(measurement.Metrics)
+		}
+	}
+
+	observation := make(map[string]float64, totalMetrics)
 
 	var failure error
 
@@ -32,15 +42,15 @@ func Lift(measurements []*Measurement[float64]) (map[string]float64, error) {
 			continue
 		}
 
-		for label, metric := range measurement.Metrics {
-			readout := measurement.Readout(label)
+		authority := measurement.Authority()
 
-			if readout != nil {
-				observation[measurement.Source+"/"+label] = readout.Value()
+		for label, metric := range measurement.Metrics {
+			if metric.Unit == UnitCount || strings.Contains(label, "ordinal") {
+				observation[measurement.Source+"/"+label] = metric.Raw
 				continue
 			}
 
-			observation[measurement.Source+"/"+label] = metric.Raw
+			observation[measurement.Source+"/"+label] = metric.Raw * authority
 		}
 	}
 

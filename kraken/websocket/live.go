@@ -18,6 +18,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	gorillawebsocket "github.com/gorilla/websocket"
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	sdkkraken "github.com/krakenfx/api-go/v2/pkg/kraken"
@@ -65,6 +66,7 @@ type Live struct {
 	ingress      map[string]runtime.Ingress[*types.Envelope]
 	simulator    *Simulator
 	normalizer   *spot.Normalizer
+	book         *Book
 	level3       *sync.Map
 	symbols      []string
 	publicMu     sync.RWMutex
@@ -104,6 +106,11 @@ type Live struct {
 	// Push on the shared ring concurrently. The parent/private/ticker/trade
 	// sessions leave it nil and push directly.
 	l3forward *level3Sequencer
+
+	// Level3Observers constructs numeric producers at each child book owner.
+	// Only their measurements cross the ingress ring; order arrays do not.
+	Level3Observers func() []runtime.Node[*types.Envelope]
+	level3Observers []runtime.Node[*types.Envelope]
 
 	// pingReqID is echoed back on the pong reply, so a response can be tied to
 	// the request that produced it.
@@ -393,8 +400,69 @@ func NewWithClient(
 		live.Client().REST.Nonce = live.nonce.Next
 	}
 
+	// The socket's receive callback and Book.Update notifications are synchronous.
+	// Carry only the current frame's identity into the lightweight notification;
+	// order arrays remain inside the transport and its resident book.
+	var bookFrame *kraken.Level3
+	var bookStream hindsight.StreamRef
+	var bookCapture hindsight.CaptureIdentity
+
 	if endpoint == system.Cfg.WebSocket.Endpoints.Level3 {
 		live.level3 = &sync.Map{}
+		live.book = NewBook(ctx, live.normalizer)
+		live.book.SetResync(func(symbol string) {
+			_ = live.Client().SubL3([]string{symbol}, viper.GetInt("market.l3_depth"))
+		})
+		live.book.SetNotify(func(symbol string, at time.Time) {
+			if live.Status() != runtime.READY {
+				return
+			}
+
+			envelope := types.NewEnvelope(types.EnvelopeLevel3)
+			envelope.Level3Data = kraken.Level3Data{Symbol: symbol, Timestamp: at}
+			envelope.Stream, envelope.CaptureID = bookStream, bookCapture
+			envelope.CaptureOrdinal = uint64(slices.IndexFunc(bookFrame.Data, func(data kraken.Level3Data) bool {
+				return data.Symbol == symbol
+			}))
+
+			// Observe the accepted delta synchronously at its transport owner.
+			// Strip orders before either the sequencer or workload sees the value.
+			envelope.Level3Data = bookFrame.Data[envelope.CaptureOrdinal]
+
+			for _, observer := range live.level3Observers {
+				observer.Step(envelope)
+
+				if failure, ok := observer.(runtime.ErrorNode); ok && failure.Error() != nil {
+					live.fail(failure.Error())
+					return
+				}
+			}
+
+			envelope.Level3Data = kraken.Level3Data{Symbol: symbol, Timestamp: at}
+
+			if live.manifestSink != nil {
+				if err := live.manifestSink.WriteManifest(manifestFor(
+					envelope, bookCapture, envelope.CaptureOrdinal, "level3", symbol,
+				)); err != nil {
+					live.fail(errnie.Err(errnie.IO, "websocket: persist book notification manifest", err))
+					return
+				}
+			}
+
+			if live.l3forward != nil {
+				live.l3forward.Push(envelope)
+				return
+			}
+
+			workload := live.ingress["level3"]
+
+			if workload == nil || workload.Status() == nil || workload.Status().Current() != runtime.READY {
+				live.fail(errnie.Err(errnie.NotAcceptable, "websocket: book notification ingress is not ready", nil))
+				return
+			}
+
+			workload.Push(envelope)
+		})
 	}
 
 	client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
@@ -487,6 +555,29 @@ func NewWithClient(
 			}
 		}
 
+		if channel == "level3" && live.book != nil {
+			level3, ok := out.(*kraken.Level3)
+
+			if !ok {
+				errnie.Error(errnie.Err(
+					errnie.Validation,
+					"websocket: unexpected level3 payload type",
+					nil,
+				))
+
+				return
+			}
+
+			bookFrame, bookStream, bookCapture = level3, streamRef, captureID
+
+			if err := live.book.Update(event, level3); err != nil {
+				errnie.Error(err)
+			}
+
+			bookFrame = nil
+			return
+		}
+
 		switch channel {
 		case "pong":
 			if errMsg := utils.GetString(raw, "error"); errMsg != "" {
@@ -500,7 +591,7 @@ func NewWithClient(
 			}
 
 			return
-		case "ticker", "trade", "level3", "executions":
+		case "ticker", "trade", "executions":
 			// Connected sessions capture but do not feed the pipeline until the
 			// complete consumer graph has crossed its READY boundary.
 			if live.Status() != runtime.READY {
@@ -546,11 +637,6 @@ func NewWithClient(
 					))
 
 					return
-				}
-
-				if channel == "level3" && live.l3forward != nil {
-					live.l3forward.Push(envelope)
-					continue
 				}
 
 				workload.Push(envelope)
@@ -1250,6 +1336,11 @@ func (live *Live) SubL3(symbols []string) {
 		}
 
 		conn.l3forward = live.l3forward
+
+		if live.Level3Observers != nil {
+			conn.level3Observers = live.Level3Observers()
+		}
+
 		conn.symbols = append([]string{}, groups...)
 		live.AttachLevel3(groupKey, conn)
 
@@ -1337,6 +1428,50 @@ func (live *Live) level3ClientFor() *spot.WebSocket {
 	client.URL = system.Cfg.WebSocket.Endpoints.Level3
 
 	return client
+}
+
+func (live *Live) Books() *sync.Map {
+	out := &sync.Map{}
+
+	if live.level3 == nil {
+		return out
+	}
+
+	live.level3.Range(func(key, value any) bool {
+		if conn, ok := value.(*Live); ok && conn.book != nil {
+			conn.book.SnapshotInto(out)
+		}
+
+		return true
+	})
+
+	return out
+}
+
+func (live *Live) Book(symbol string, read func(*book.Book)) {
+	if live.level3 == nil {
+		read(nil)
+		return
+	}
+
+	found := false
+	live.level3.Range(func(_, value any) bool {
+		conn, ok := value.(*Live)
+
+		if !ok || conn.book == nil {
+			return true
+		}
+
+		conn.book.Get(symbol, func(managed *book.Book) {
+			found = true
+			read(managed)
+		})
+		return !found
+	})
+
+	if !found {
+		read(nil)
+	}
 }
 
 func (live *Live) Balance() (map[string]*decimal.Decimal, error) {

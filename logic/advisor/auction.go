@@ -52,6 +52,7 @@ func NewAuction() *Auction {
 
 	balancedKeys := []string{
 		"cvd/signed_net_fraction",
+		"cvd/signed_net_fraction_mean",
 		"liquidity/touch_notional_imbalance",
 		"liquidity/relative_spread",
 	}

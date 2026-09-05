@@ -6,7 +6,7 @@ Count reads the open-lot tally off the positions store.
 */
 export const Count = () => {
 	const last = useSelector(positionStore, (state) =>
-		state.findLast((f) => f.rowsLength() > 0),
+		state.findLast(() => true),
 	);
 
 	return (

@@ -15,6 +15,7 @@ type PerspectiveState string
 type PerspectiveClass struct {
 	State       PerspectiveState
 	Probability float64
+	Evidence    []string
 }
 
 /* PerspectiveEvent names one causally observable, possibly compound, event. */
@@ -50,6 +51,7 @@ type PerspectivePrediction struct {
 	Class  PerspectiveState
 	Event  PerspectiveEvent
 	Effect PerspectivePredictionEffect
+	Move   string
 }
 
 /*
@@ -124,7 +126,11 @@ type Perspective struct {
 	Round              uint64
 	Support            uint64
 
-	Classes     []PerspectiveClass
+	Classes []PerspectiveClass
+	// Unscored names the classes this advisor declares but could not measure
+	// on this observation, because their own evidence was incomplete. They took
+	// no part in the distribution above.
+	Unscored    []string
 	Predictions []PerspectivePrediction
 	Lease       PerspectiveLease
 	Lifecycle   PerspectiveLifecycle
@@ -162,6 +168,12 @@ func (perspective *Perspective) Key() PerspectiveKey {
 /* Clone returns an independently owned Perspective for Arena admission. */
 func (perspective Perspective) Clone() Perspective {
 	perspective.Classes = slices.Clone(perspective.Classes)
+
+	for index := range perspective.Classes {
+		perspective.Classes[index].Evidence = slices.Clone(
+			perspective.Classes[index].Evidence,
+		)
+	}
 	perspective.Predictions = slices.Clone(perspective.Predictions)
 
 	return perspective

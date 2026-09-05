@@ -22,6 +22,8 @@ type EnvelopeManifoldStateT struct {
 	EnergyScale float32 `json:"energyScale"`
 	WaveScale float32 `json:"waveScale"`
 	Modes []*EnvelopeWaveModeT `json:"modes"`
+	AtNs int64 `json:"atNs"`
+	Version uint64 `json:"version"`
 }
 
 func (t *EnvelopeManifoldStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -95,6 +97,8 @@ func (t *EnvelopeManifoldStateT) Pack(builder *flatbuffers.Builder) flatbuffers.
 	EnvelopeManifoldStateAddEnergyScale(builder, t.EnergyScale)
 	EnvelopeManifoldStateAddWaveScale(builder, t.WaveScale)
 	EnvelopeManifoldStateAddModes(builder, modesOffset)
+	EnvelopeManifoldStateAddAtNs(builder, t.AtNs)
+	EnvelopeManifoldStateAddVersion(builder, t.Version)
 	return EnvelopeManifoldStateEnd(builder)
 }
 
@@ -136,6 +140,8 @@ func (rcv *EnvelopeManifoldState) UnPackTo(t *EnvelopeManifoldStateT) {
 		rcv.Modes(&x, j)
 		t.Modes[j] = x.UnPack()
 	}
+	t.AtNs = rcv.AtNs()
+	t.Version = rcv.Version()
 }
 
 func (rcv *EnvelopeManifoldState) UnPack() *EnvelopeManifoldStateT {
@@ -428,8 +434,32 @@ func (rcv *EnvelopeManifoldState) ModesLength() int {
 	return 0
 }
 
+func (rcv *EnvelopeManifoldState) AtNs() int64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	if o != 0 {
+		return rcv._tab.GetInt64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EnvelopeManifoldState) MutateAtNs(n int64) bool {
+	return rcv._tab.MutateInt64Slot(34, n)
+}
+
+func (rcv *EnvelopeManifoldState) Version() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *EnvelopeManifoldState) MutateVersion(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(36, n)
+}
+
 func EnvelopeManifoldStateStart(builder *flatbuffers.Builder) {
-	builder.StartObject(15)
+	builder.StartObject(17)
 }
 func EnvelopeManifoldStateAddState(builder *flatbuffers.Builder, state flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(state), 0)
@@ -490,6 +520,12 @@ func EnvelopeManifoldStateAddModes(builder *flatbuffers.Builder, modes flatbuffe
 }
 func EnvelopeManifoldStateStartModesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
+}
+func EnvelopeManifoldStateAddAtNs(builder *flatbuffers.Builder, atNs int64) {
+	builder.PrependInt64Slot(15, atNs, 0)
+}
+func EnvelopeManifoldStateAddVersion(builder *flatbuffers.Builder, version uint64) {
+	builder.PrependUint64Slot(16, version, 0)
 }
 func EnvelopeManifoldStateEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

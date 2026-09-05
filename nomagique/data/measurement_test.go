@@ -7,7 +7,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 )
 
-func TestMeasurement(t *testing.T) {
+func TestMeasurementFinalize(t *testing.T) {
 	Convey("Given a measurement without historical support", t, func() {
 		measurement := NewMeasurement[float64]("id-1", "label", "source", time.Now(), time.Now())
 		measurement.Finalize()
@@ -30,6 +30,21 @@ func TestMeasurement(t *testing.T) {
 		Convey("It should derive maturity 1 - 1/N and scalar SNR d^2 / sigma^2", func() {
 			So(measurement.Maturity, ShouldAlmostEqual, 0.9, 1e-6)
 			So(measurement.SNR, ShouldAlmostEqual, 8.0, 1e-6)
+		})
+
+		Convey("Reusing the measurement with missing noise clears its old SNR", func() {
+			delete(measurement.Metadata, MetadataNoiseVariance)
+			measurement.Finalize()
+			So(measurement.Estimated, ShouldBeTrue)
+			So(measurement.SNRDefined, ShouldBeFalse)
+			So(measurement.SNR, ShouldEqual, 0)
+
+			Convey("Fresh noise evidence restores a newly calculated ratio", func() {
+				measurement.Metadata[MetadataNoiseVariance] = 4
+				measurement.Finalize()
+				So(measurement.SNRDefined, ShouldBeTrue)
+				So(measurement.SNR, ShouldEqual, 4)
+			})
 		})
 	})
 

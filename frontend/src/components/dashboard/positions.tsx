@@ -34,40 +34,40 @@ type PositionCardData = {
 
 export const Positions = () => {
 	const positions = useSelector(positionStore, (state) => {
-		const mergedPositions = new Map<string, PositionCardData>();
+		const latestFrame = state.findLast(() => true);
+		if (!latestFrame) return [];
 
-		for (const frame of state.toArray()) {
-			for (let rowIndex = 0; rowIndex < frame.rowsLength(); rowIndex++) {
-				const currentPosition = frame.rows(rowIndex, positionObject);
-				if (!currentPosition) continue;
+		const currentPositions: PositionCardData[] = [];
 
-				const currentHolding = currentPosition.holding(holdingObject);
-				if (!currentHolding) continue;
+		for (let rowIndex = 0; rowIndex < latestFrame.rowsLength(); rowIndex++) {
+			const currentPosition = latestFrame.rows(rowIndex, positionObject);
+			if (!currentPosition) continue;
 
-				const currentSymbol = currentHolding.symbol() ?? "";
-				if (!currentSymbol) continue;
+			const currentHolding = currentPosition.holding(holdingObject);
+			if (!currentHolding) continue;
 
-				const positionStatus = currentHolding.status() ?? currentPosition.status() ?? "—";
-				if (positionStatus === "closed") {
-					mergedPositions.delete(currentSymbol);
-					continue;
-				}
+			const currentSymbol = currentHolding.symbol() ?? "";
+			if (!currentSymbol) continue;
 
-				const currentStoploss = currentHolding.stoploss(stoplossObject);
-
-				mergedPositions.set(currentSymbol, {
-					symbol: currentSymbol,
-					status: positionStatus,
-					stoploss: currentStoploss?.status() ?? "—",
-					pnl: `${formatValue(currentHolding.pnl(), 4)} USD`,
-					entryPrice: formatValue(currentHolding.entryPrice(), 6),
-					mark: formatValue(currentHolding.mark(), 6),
-					returnPct: `${formatValue(currentHolding.returnPct(), 2)}%`,
-				});
+			const positionStatus = currentHolding.status() ?? currentPosition.status() ?? "—";
+			if (positionStatus === "closed") {
+				continue;
 			}
+
+			const currentStoploss = currentHolding.stoploss(stoplossObject);
+
+			currentPositions.push({
+				symbol: currentSymbol,
+				status: positionStatus,
+				stoploss: currentStoploss?.status() ?? "—",
+				pnl: `${formatValue(currentHolding.pnl(), 4)} USD`,
+				entryPrice: formatValue(currentHolding.entryPrice(), 6),
+				mark: formatValue(currentHolding.mark(), 6),
+				returnPct: `${formatValue(currentHolding.returnPct(), 2)}%`,
+			});
 		}
 
-		return [...mergedPositions.values()].sort((leftPosition, rightPosition) =>
+		return currentPositions.sort((leftPosition, rightPosition) =>
 			leftPosition.symbol.localeCompare(rightPosition.symbol),
 		);
 	});

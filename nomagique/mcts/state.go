@@ -240,7 +240,7 @@ func (state *EconomicState) GetPossibleActions() []Action {
 	}
 
 	if state.Portfolio.Position == 0 {
-		if state.affordable(state.UnitQuantity) {
+		if state.Step == 0 && state.affordable(state.UnitQuantity) {
 			return []Action{Wait, Enter}
 		}
 

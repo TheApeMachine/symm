@@ -2263,8 +2263,7 @@ kernel void pic_gather_update_particles(
         rho_safe = rho_eps; // may be 0; safe because e_used=0
         u = float3(0.0f);
         e_used = 0.0f;
-        // TAG 0x02: vacuum gather (exact vacuum only)
-        dbg_log(dbg_head, dbg_words, dbg_cap, 0x02u, gid, rho, e_int_density, 0.0f, 0.0f);
+        // Exact vacuum is admissible; the debug buffer records rejections only.
     } else if (fabs(rho) <= rho_eps) {
         // Low-density: require bounded momentum and bounded internal energy density.
         float mom2 = dot(mom, mom);
@@ -2323,11 +2322,6 @@ kernel void pic_gather_update_particles(
         rho_safe = rho;
         u = mom / rho_safe;
         e_used = e_int_density;
-    }
-
-    // TAG 0x01: baseline sample (first particle only)
-    if (gid == 0u) {
-        dbg_log(dbg_head, dbg_words, dbg_cap, 0x01u, gid, rho, e_int_density, u.x, u.y);
     }
 
     // Temperature (diagnostic only; cancels out in heat computation).

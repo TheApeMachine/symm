@@ -6,6 +6,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -14,10 +15,11 @@ Table owns observational rows used for interventional and counterfactual fits.
 Rows are copied at the boundary so search simulations cannot mutate evidence.
 */
 type Table struct {
-	rows    [][]float64
-	target  int
-	minimum int
-	linear  bool
+	rows       [][]float64
+	target     int
+	minimum    int
+	linear     bool
+	predictors map[string]predictor
 }
 
 /*
@@ -30,44 +32,62 @@ func NewTable(
 	linear bool,
 ) (*Table, error) {
 	if target < 0 {
-		return nil, fmt.Errorf("causal: target column must be non-negative")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal: target column must be non-negative",
+			nil,
+		))
 	}
 
 	if minimum < 1 {
-		return nil, fmt.Errorf("causal: minimum rows must be positive")
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"causal: minimum rows must be positive",
+			nil,
+		))
 	}
 
 	if len(rows) < minimum {
-		return nil, fmt.Errorf(
-			"causal: %d observational rows available; need %d",
-			len(rows), minimum,
-		)
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("causal: %d observational rows available; need %d", len(rows), minimum),
+			nil,
+		))
 	}
 
 	columnCount := len(rows[0])
 
 	if columnCount == 0 || target >= columnCount {
-		return nil, fmt.Errorf("causal: target column %d is outside row width %d", target, columnCount)
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf("causal: target column %d is outside row width %d", target, columnCount),
+			nil,
+		))
 	}
 
 	observations := make([][]float64, len(rows))
 
 	for rowIndex, row := range rows {
 		if len(row) != columnCount {
-			return nil, fmt.Errorf(
-				"causal: row %d has width %d; expected %d",
-				rowIndex, len(row), columnCount,
-			)
+			return nil, errnie.Error(errnie.Err(
+				errnie.Validation,
+				fmt.Sprintf(
+					"causal: row %d has width %d; expected %d",
+					rowIndex, len(row), columnCount,
+				),
+				nil,
+			))
 		}
 
 		observations[rowIndex] = slices.Clone(row)
 	}
 
 	return &Table{
-		rows:    observations,
-		target:  target,
-		minimum: minimum,
-		linear:  linear,
+		rows:       observations,
+		target:     target,
+		minimum:    minimum,
+		linear:     linear,
+		predictors: make(map[string]predictor),
 	}, nil
 }
 
@@ -101,18 +121,24 @@ func (table *Table) DoExpectation(
 		return 0, err
 	}
 
-	predictor, err := fitPredictor(table.rows, table.target, features, table.linear)
+	featuresKey := fmt.Sprint(features)
+	predictor, found := table.predictors[featuresKey]
 
-	if err != nil {
-		return 0, err
+	if !found {
+		fitted, fitErr := fitPredictor(table.rows, table.target, features, table.linear)
+
+		if fitErr != nil {
+			return 0, fitErr
+		}
+
+		predictor = fitted
+		table.predictors[featuresKey] = predictor
 	}
 
 	expectation := 0.0
 
 	for _, observation := range table.rows {
-		intervention := slices.Clone(observation)
-		intervention[treatment] = level
-		expectation += predictor.Predict(intervention)
+		expectation += predictor.PredictWithIntervention(observation, treatment, level)
 	}
 
 	return expectation / float64(len(table.rows)), nil
@@ -140,20 +166,33 @@ func (table *Table) AbductiveCounterfactual(
 	)
 
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			fmt.Sprintf(
+				"causal: actual row has width %d; expected %d",
+				len(actual), len(table.rows[0]),
+			),
+			nil,
+		))
 	}
 
-	predictor, err := fitPredictor(table.rows, table.target, validated, table.linear)
+	featuresKey := fmt.Sprint(validated)
+	predictor, found := table.predictors[featuresKey]
 
-	if err != nil {
-		return 0, 0, 0, err
+	if !found {
+		fitted, fitErr := fitPredictor(table.rows, table.target, validated, table.linear)
+
+		if fitErr != nil {
+			return 0, 0, 0, fitErr
+		}
+
+		predictor = fitted
+		table.predictors[featuresKey] = predictor
 	}
 
 	factualPrediction := predictor.Predict(actual)
 	noise = actual[table.target] - factualPrediction
-	intervention := slices.Clone(actual)
-	intervention[treatment] = level
-	counterfactual = predictor.Predict(intervention) + noise
+	counterfactual = predictor.PredictWithIntervention(actual, treatment, level) + noise
 	precision = 1 / (1 + math.Abs(noise))
 
 	return counterfactual, noise, precision, nil
@@ -173,7 +212,11 @@ func DoExpectation(
 	table, err := NewTable(rows, target, minimum, true)
 
 	if err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.PreconditionFailed,
+			"causal: table construction failed",
+			err,
+		))
 	}
 
 	return table.DoExpectation(treatment, level, controls...)
@@ -195,7 +238,11 @@ func AbductiveCounterfactual(
 	table, err := NewTable(rows, target, minimum, linear)
 
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, errnie.Error(errnie.Err(
+			errnie.PreconditionFailed,
+			"causal: table construction failed",
+			err,
+		))
 	}
 
 	counterfactual, noise, _, err = table.AbductiveCounterfactual(
@@ -245,6 +292,7 @@ func validatedFeatures(
 
 type predictor interface {
 	Predict([]float64) float64
+	PredictWithIntervention([]float64, int, float64) float64
 }
 
 type linearPredictor struct {
@@ -258,6 +306,22 @@ func (predictor *linearPredictor) Predict(row []float64) float64 {
 
 	for featureIndex, column := range predictor.features {
 		prediction += predictor.coefficients[featureIndex] * row[column]
+	}
+
+	return prediction
+}
+
+func (predictor *linearPredictor) PredictWithIntervention(row []float64, treatment int, level float64) float64 {
+	prediction := predictor.intercept
+
+	for featureIndex, column := range predictor.features {
+		value := row[column]
+
+		if column == treatment {
+			value = level
+		}
+
+		prediction += predictor.coefficients[featureIndex] * value
 	}
 
 	return prediction
@@ -280,6 +344,27 @@ func (predictor *stumpPredictor) Predict(row []float64) float64 {
 
 	for _, decision := range predictor.stumps {
 		if row[decision.column] <= decision.threshold {
+			prediction += decision.below
+			continue
+		}
+
+		prediction += decision.above
+	}
+
+	return prediction
+}
+
+func (predictor *stumpPredictor) PredictWithIntervention(row []float64, treatment int, level float64) float64 {
+	prediction := predictor.baseline
+
+	for _, decision := range predictor.stumps {
+		value := row[decision.column]
+
+		if decision.column == treatment {
+			value = level
+		}
+
+		if value <= decision.threshold {
 			prediction += decision.below
 			continue
 		}

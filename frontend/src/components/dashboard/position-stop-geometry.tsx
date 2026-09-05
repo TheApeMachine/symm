@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import { positionStore } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
-import type { PositionsFrame } from "#/providers/telemetry/telemetry/positions-frame";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { Position } from "#/providers/telemetry/telemetry/position";
 import { Stoploss } from "#/providers/telemetry/telemetry/stoploss";
@@ -39,16 +38,7 @@ export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
 		matching the merge Positions.tsx already does across the full buffer.
 		*/
 		const findHoldingForSymbol = (): Holding | null => {
-			const frame = positionStore.state.findLast((candidate: PositionsFrame) => {
-				for (let index = 0; index < candidate.rowsLength(); index++) {
-					const currentPosition = candidate.rows(index, positionInstance);
-					const currentHolding = currentPosition?.holding(holdingInstance);
-					
-					if (currentHolding && currentHolding.symbol() === symbol) return true;
-				}
-				return false;
-			});
-
+			const frame = positionStore.state.findLast(() => true);
 			if (!frame) return null;
 
 			for (let index = 0; index < frame.rowsLength(); index++) {
@@ -57,6 +47,8 @@ export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
 
 				const currentHolding = currentPosition.holding(holdingInstance);
 				if (currentHolding && currentHolding.symbol() === symbol) {
+					const positionStatus = currentHolding.status() ?? currentPosition.status() ?? "—";
+					if (positionStatus === "closed") return null;
 					return currentHolding;
 				}
 			}
@@ -242,5 +234,4 @@ export const PositionStopGeometry = ({ symbol }: { symbol: string }) => {
 		</div>
 	);
 };
-
 

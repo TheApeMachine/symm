@@ -26,6 +26,13 @@ type LifecycleEvent struct {
 	// is an entry_fill or exit_fill. It is nil for transitions that carry no
 	// fill (order submission, position open, position close).
 	Execution *ExecutionFact `json:"execution,omitempty"`
+
+	// CaptureSeq is the capture sequence of the envelope whose decision caused
+	// this transition, resolved on read by joining DecisionID to the decision
+	// witness. It is what lets a reader seek the tape to the exact frame a
+	// position was opened or closed on, rather than searching by wall time.
+	// Zero when no decision witness recorded that identity.
+	CaptureSeq uint64 `json:"captureSeq,omitempty"`
 }
 
 /*

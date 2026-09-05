@@ -2,7 +2,9 @@ package broker
 
 import (
 	"sync"
+	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
@@ -18,11 +20,17 @@ const (
 	SELL Direction = "sell"
 )
 
+var (
+	decimalZero    = decimal.NewFromInt64(0)
+	decimalOne     = decimal.NewFromInt64(1)
+	decimalTwo     = decimal.NewFromInt64(2)
+	decimalHundred = decimal.NewFromInt64(100)
+)
+
 /*
-Price is the broker price surface for symm. It owns fee tiers, ticker cache, and
-all money math so the rest of the broker never drifts from Kraken's precision
-and executable boundaries. Executable L3 liquidation state no longer lives here:
-each open Position owns the bounded execution state for its own symbol.
+Price is the broker price surface for symm. It owns fee tiers, ticker cache,
+and all money math so the rest of the broker never drifts from Kraken's
+precision and executable boundaries.
 */
 type Price struct {
 	status     types.Status
@@ -33,7 +41,7 @@ type Price struct {
 }
 
 /*
-NewPrice wires the price surface to the Kraken API.
+NewPrice wires the price surface to the shared Kraken API.
 */
 func NewPrice(api *websocket.API) *Price {
 	if api == nil {
@@ -135,7 +143,7 @@ func (price *Price) PnL(
 	}
 
 	return exitValue.Sub(
-		decimal.NewFromInt64(0).Add(holding.EntryPrice).Mul(holding.Qty),
+		decimalZero.Add(holding.EntryPrice).Mul(holding.Qty),
 	).Sub(holding.EntryFee)
 }
 
@@ -176,7 +184,7 @@ func (price *Price) ExitValue(
 
 	return price.WithFee(
 		pair.Symbol,
-		decimal.NewFromInt64(0).Add(holding.Mark).Mul(holding.Qty),
+		decimalZero.Add(holding.Mark).Mul(holding.Qty),
 		SELL,
 	)
 }
@@ -220,14 +228,177 @@ func (price *Price) WithFriction(
 		return nil, err
 	}
 
-	// This signal has no access to a full-depth book to walk for exit
-	// friction, so it always reports unavailable rather than fabricating an
-	// adjustment from ticker-level data alone.
-	return nil, errnie.Error(errnie.Err(
-		errnie.NotFound,
-		"price: visible bid book required for exit friction",
-		nil,
-	))
+	var adjusted *decimal.Decimal
+	var err error
+	bookFound := false
+	price.api.Book(price.api.Normalizer().Name(pair.Symbol), func(managed *spotbook.Book) {
+		bookFound = true
+		if managed == nil || managed.Bids == nil || managed.Bids.High == nil {
+			err = errnie.Err(
+				errnie.NotFound,
+				"price: visible bid book required for exit friction",
+				nil,
+			)
+			return
+		}
+
+		zero := decimalZero
+		remaining := decimalZero.Add(holding.Qty)
+		bookGross := zero
+
+		for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
+			if remaining.Cmp(zero) <= 0 {
+				break
+			}
+
+			fillQty := bid.Quantity
+
+			if fillQty.Cmp(remaining) > 0 {
+				fillQty = remaining
+			}
+
+			bookGross = bookGross.Add(
+				decimalZero.Add(bid.Price).Mul(fillQty),
+			)
+
+			remaining = remaining.Sub(fillQty)
+		}
+
+		if remaining.Cmp(zero) > 0 {
+			err = errnie.Err(
+				errnie.UnprocessableContent,
+				"insufficient bid liquidity to exit holding",
+				nil,
+			)
+
+			return
+		}
+
+		bestBidNet := price.WithFee(
+			pair.Symbol,
+			decimalZero.Add(tick.Bid).Mul(holding.Qty),
+			SELL,
+		)
+
+		bookNet := price.WithFee(
+			pair.Symbol,
+			bookGross,
+			SELL,
+		)
+
+		adjusted = decimalZero.Add(value).Sub(
+			bestBidNet.Sub(bookNet),
+		)
+	})
+
+	if !bookFound {
+		return nil, errnie.Error(errnie.Err(
+			errnie.NotFound,
+			"price: visible bid book required for exit friction",
+			nil,
+		))
+	}
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	if adjusted == nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Internal,
+			"price: exit friction calculation did not complete",
+			nil,
+		))
+	}
+
+	return adjusted, nil
+}
+
+/*
+Surface derives the exact executable-liquidation surface for the held
+SellableQty from the resident BookManager bids under RLock. It returns a
+surface with BookComplete and FullyExecutable set truthfully; it never
+synthesizes a VWAP for insufficient depth and never falls back to ticker.
+*/
+func (price *Price) Surface(
+	symbol string,
+	sellableQty *decimal.Decimal,
+	floor *decimal.Decimal,
+	fee *kraken.TradeVolumeFee,
+	at time.Time,
+) *types.ExecutionSurface {
+	surface := &types.ExecutionSurface{
+		Symbol:      symbol,
+		At:          at,
+		SellableQty: sellableQty,
+	}
+
+	if price == nil || price.api == nil || sellableQty == nil || sellableQty.Sign() <= 0 ||
+		fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 ||
+		fee.Fee.Cmp(decimalHundred) >= 0 {
+		return surface
+	}
+
+	price.api.Book(price.api.Normalizer().Name(symbol), func(managed *spotbook.Book) {
+		if managed == nil || managed.Bids == nil || managed.Bids.High == nil {
+			return
+		}
+
+		if managed.Asks != nil && managed.Asks.Low != nil &&
+			managed.Bids.High.Price != nil && managed.Asks.Low.Price != nil &&
+			managed.Bids.High.Price.Cmp(managed.Asks.Low.Price) >= 0 {
+			return
+		}
+
+		surface.BookComplete = true
+		if managed.Bids.High.Price != nil {
+			surface.BestBid = managed.Bids.High.Price.Copy()
+		}
+
+		executableQty := decimalZero.Copy()
+		floorCoverageQty := decimalZero.Copy()
+		grossProceeds := decimalZero.Copy()
+		remaining := sellableQty.Copy()
+
+		for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
+			if bid.Price == nil || bid.Quantity == nil ||
+				bid.Price.Sign() <= 0 || bid.Quantity.Sign() <= 0 {
+				continue
+			}
+
+			executableQty = executableQty.Add(bid.Quantity)
+
+			if floor != nil && bid.Price.Cmp(floor) >= 0 {
+				floorCoverageQty = floorCoverageQty.Add(bid.Quantity)
+			}
+
+			if remaining.Sign() <= 0 {
+				continue
+			}
+
+			fill := bid.Quantity
+			if remaining.Cmp(fill) < 0 {
+				fill = remaining
+			}
+
+			grossProceeds = grossProceeds.Add(decimalZero.Add(bid.Price).Mul(fill))
+			remaining = remaining.Sub(fill)
+		}
+
+		surface.ExecutableQty = executableQty
+		surface.FloorCoverageQty = floorCoverageQty
+
+		if remaining.Sign() > 0 || executableQty.Cmp(sellableQty) < 0 {
+			return
+		}
+
+		feeRate := decimalZero.Add(fee.Fee).Div(decimalHundred)
+		surface.FullyExecutable = true
+		surface.ExecutableVWAP = grossProceeds.Div(sellableQty)
+		surface.ExecutableValue = grossProceeds.Sub(grossProceeds.Mul(feeRate))
+	})
+
+	return surface
 }
 
 /* ReturnPct returns the holding's fee-inclusive percentage return at the authoritative economic mark. */
@@ -250,14 +421,12 @@ func (price *Price) ReturnPct(
 		return 0
 	}
 
-	entryGross := decimal.NewFromInt64(0).Add(holding.EntryPrice).Mul(
-		holding.Qty,
-	)
+	entryGross := decimalZero.Add(holding.EntryPrice).Mul(holding.Qty)
 	entryValue := entryGross.Add(holding.EntryFee)
 
-	zero := decimal.NewFromInt64(0)
+	entryValueFloat := entryValue.Float64()
 
-	if entryValue.Cmp(zero) <= 0 {
+	if entryValueFloat <= 0 {
 		errnie.Error(errnie.Err(
 			errnie.UnprocessableContent,
 			"entry value must be greater than zero",
@@ -267,9 +436,7 @@ func (price *Price) ReturnPct(
 		return 0
 	}
 
-	return decimal.NewFromInt64(0).Add(pnl).Div(entryValue).Mul(
-		decimal.NewFromInt64(100),
-	).Float64()
+	return decimalZero.Add(pnl).Div(entryValue).Mul(decimalHundred).Float64()
 }
 
 /*
@@ -319,7 +486,7 @@ func (price *Price) Quantity(
 
 	out, err := price.normalizer.FormatSize(
 		symbol,
-		decimal.NewFromInt64(0).Add(notional).Div(askWithFee),
+		decimalZero.Add(notional).Div(askWithFee),
 	)
 
 	if err != nil {

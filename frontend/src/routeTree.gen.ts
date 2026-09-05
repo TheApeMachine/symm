@@ -13,6 +13,7 @@ import { Route as XrayRouteImport } from './routes/xray'
 import { Route as SignalsRouteImport } from './routes/signals'
 import { Route as RegulatorRouteImport } from './routes/regulator'
 import { Route as LineageRouteImport } from './routes/lineage'
+import { Route as LearningRouteImport } from './routes/learning'
 import { Route as JournalRouteImport } from './routes/journal'
 import { Route as InfluenceRouteImport } from './routes/influence'
 import { Route as HindsightRouteImport } from './routes/hindsight'
@@ -42,6 +43,11 @@ const RegulatorRoute = RegulatorRouteImport.update({
 const LineageRoute = LineageRouteImport.update({
   id: '/lineage',
   path: '/lineage',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LearningRoute = LearningRouteImport.update({
+  id: '/learning',
+  path: '/learning',
   getParentRoute: () => rootRouteImport,
 } as any)
 const JournalRoute = JournalRouteImport.update({
@@ -106,6 +112,7 @@ export interface FileRoutesByFullPath {
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
   '/journal': typeof JournalRoute
+  '/learning': typeof LearningRoute
   '/lineage': typeof LineageRoute
   '/regulator': typeof RegulatorRoute
   '/signals': typeof SignalsRoute
@@ -122,6 +129,7 @@ export interface FileRoutesByTo {
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
   '/journal': typeof JournalRoute
+  '/learning': typeof LearningRoute
   '/lineage': typeof LineageRoute
   '/regulator': typeof RegulatorRoute
   '/signals': typeof SignalsRoute
@@ -139,6 +147,7 @@ export interface FileRoutesById {
   '/hindsight': typeof HindsightRoute
   '/influence': typeof InfluenceRoute
   '/journal': typeof JournalRoute
+  '/learning': typeof LearningRoute
   '/lineage': typeof LineageRoute
   '/regulator': typeof RegulatorRoute
   '/signals': typeof SignalsRoute
@@ -157,6 +166,7 @@ export interface FileRouteTypes {
     | '/hindsight'
     | '/influence'
     | '/journal'
+    | '/learning'
     | '/lineage'
     | '/regulator'
     | '/signals'
@@ -173,6 +183,7 @@ export interface FileRouteTypes {
     | '/hindsight'
     | '/influence'
     | '/journal'
+    | '/learning'
     | '/lineage'
     | '/regulator'
     | '/signals'
@@ -189,6 +200,7 @@ export interface FileRouteTypes {
     | '/hindsight'
     | '/influence'
     | '/journal'
+    | '/learning'
     | '/lineage'
     | '/regulator'
     | '/signals'
@@ -206,6 +218,7 @@ export interface RootRouteChildren {
   HindsightRoute: typeof HindsightRoute
   InfluenceRoute: typeof InfluenceRoute
   JournalRoute: typeof JournalRoute
+  LearningRoute: typeof LearningRoute
   LineageRoute: typeof LineageRoute
   RegulatorRoute: typeof RegulatorRoute
   SignalsRoute: typeof SignalsRoute
@@ -240,6 +253,13 @@ declare module '@tanstack/react-router' {
       path: '/lineage'
       fullPath: '/lineage'
       preLoaderRoute: typeof LineageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/learning': {
+      id: '/learning'
+      path: '/learning'
+      fullPath: '/learning'
+      preLoaderRoute: typeof LearningRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/journal': {
@@ -326,6 +346,7 @@ const rootRouteChildren: RootRouteChildren = {
   HindsightRoute: HindsightRoute,
   InfluenceRoute: InfluenceRoute,
   JournalRoute: JournalRoute,
+  LearningRoute: LearningRoute,
   LineageRoute: LineageRoute,
   RegulatorRoute: RegulatorRoute,
   SignalsRoute: SignalsRoute,

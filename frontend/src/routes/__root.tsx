@@ -23,6 +23,7 @@ import appCss from "../app.css?url";
 
 const SURFACE_VALUES = new Set<TerminalSurface>([
 	"dashboard",
+	"learning",
 	"graph",
 	"influence",
 	"lineage",
@@ -50,6 +51,7 @@ const SURFACE_ALIASES: Record<string, TerminalSurface> = {
 
 const SURFACE_PATHS: Record<TerminalSurface, string> = {
 	dashboard: "/",
+	learning: "/learning",
 	graph: "/graph",
 	influence: "/influence",
 	lineage: "/lineage",

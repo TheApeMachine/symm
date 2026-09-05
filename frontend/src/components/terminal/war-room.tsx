@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { decisionStore, positionStore } from "#/collections/app";
 import {
 	type AdvisorOpinion,
+	type AdvisorSilence,
 	type DecisionTraceModel,
 	readDecisionTrace,
 } from "#/components/terminal/decision-trace-model";
@@ -34,6 +35,218 @@ const fmt = (value: number, digits = 4): string =>
 
 const pct = (value: number): string =>
 	Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "—";
+
+/*
+An advisor's whole reading, not only the class that led it.
+
+A single top probability cannot distinguish an advisor that is decisive from
+one that is nearly split between two incompatible readings, and those are
+different states to act on. The leading class is omitted here because the card
+already names it above.
+*/
+const Distribution = ({ opinion }: { opinion: AdvisorOpinion }) => {
+	const rest = opinion.classes
+		.filter((entry) => entry.state !== opinion.state)
+		.sort((left, right) => right.probability - left.probability);
+
+	if (rest.length === 0 && opinion.unscored.length === 0) return null;
+
+	return (
+		<div className="mt-1 flex flex-col gap-0.5 border-(--line) border-t pt-1">
+			{opinion.unscored.map((state) => (
+				<div
+					key={state}
+					className="flex items-center justify-between gap-1 font-mono text-[7px] text-(--f4) italic opacity-70"
+					title={`This advisor declares ${state} but could not measure it here: the evidence that class itself names was incomplete, so it took no part in the reading above.`}
+				>
+					<span className="truncate">{state}</span>
+					<span className="shrink-0">unmeasured</span>
+				</div>
+			))}
+
+			{rest.map((entry) => (
+				<div
+					key={entry.state}
+					className="flex items-center justify-between gap-1 font-mono text-[7px] text-(--f4)"
+					title={`This advisor also gave ${entry.state} a probability of ${pct(entry.probability)}.`}
+				>
+					<span className="truncate">{entry.state}</span>
+					<span className="shrink-0">{pct(entry.probability)}</span>
+				</div>
+			))}
+		</div>
+	);
+};
+
+/*
+The move mass this advisor alone placed.
+
+The council's output is a sum, and without this the sum has no visible terms:
+an advisor can appear confident while contributing almost nothing, or push mass
+onto a move its headline class does not obviously imply.
+*/
+const Contribution = ({ opinion }: { opinion: AdvisorOpinion }) => {
+	if (opinion.contribution.length === 0 && opinion.unmapped.length === 0) {
+		return null;
+	}
+
+	const total = opinion.contribution.reduce(
+		(sum, entry) => sum + entry.mass,
+		0,
+	);
+
+	return (
+		<div className="mt-1 flex flex-col gap-0.5 border-(--line) border-t pt-1">
+			{opinion.contribution.map((entry) => (
+				<div
+					key={entry.move}
+					className="flex items-center justify-between gap-1 font-mono text-[7px]"
+					title={`This advisor placed ${fmt(entry.mass, 3)} of mass on ${entry.move.replace(/_/g, " ")}, ${pct(total > 0 ? entry.mass / total : 0)} of everything it contributed.`}
+				>
+					<span className="truncate text-(--f3)">
+						→ {entry.move.replace(/_/g, " ")}
+					</span>
+					<span className="shrink-0 text-(--f2)">{fmt(entry.mass, 2)}</span>
+				</div>
+			))}
+
+			{opinion.unmapped.map((state) => (
+				<div
+					key={state}
+					className="flex items-center justify-between gap-1 font-mono text-[7px] text-(--down)"
+					title={`No projection rule accepts the class ${state}, so the weight this advisor put behind it never reached the consensus.`}
+				>
+					<span className="truncate">! {state}</span>
+					<span className="shrink-0">dropped</span>
+				</div>
+			))}
+		</div>
+	);
+};
+
+/*
+How much of this reading's lease is left.
+
+A perspective is valid for a fixed span of its market clock. One about to
+expire and one just issued are weighted identically by the council, so the
+distinction has to be visible here or nowhere.
+*/
+const Freshness = ({ opinion }: { opinion: AdvisorOpinion }) => {
+	if (opinion.clock === "" || opinion.leaseUntil <= opinion.leaseFrom) {
+		return null;
+	}
+
+	const span = opinion.leaseUntil - opinion.leaseFrom;
+	const elapsed = Math.min(
+		Math.max(opinion.clockNow - opinion.leaseFrom, 0),
+		span,
+	);
+	const left = span - elapsed;
+
+	return (
+		<div
+			className="mt-1 flex items-center justify-between gap-1 border-(--line) border-t pt-1 font-mono text-[7px] text-(--f4)"
+			title={`Issued at ${opinion.clock} ${opinion.leaseFrom}, valid through ${opinion.leaseUntil}. The clock now stands at ${opinion.clockNow}.`}
+		>
+			<span className="truncate">
+				bar {opinion.leaseFrom}–{opinion.leaseUntil}
+			</span>
+			<span className={`shrink-0 ${left === 0 ? "text-(--warn)" : ""}`}>
+				{left === 0 ? "expiring" : `${left} left`}
+			</span>
+		</div>
+	);
+};
+
+/*
+An empty seat, and what is keeping it empty.
+
+Silence had one rendering and two entirely different causes. An advisor whose
+declared evidence never completes is mute for the life of the process and
+nothing says so; an advisor whose reading expired is simply waiting for a slow
+instrument's next bar. Only the first is a fault, and telling them apart is the
+whole point of this card.
+*/
+const Silent = ({
+	name,
+	silence,
+}: {
+	name: string;
+	silence: AdvisorSilence | null;
+}) => {
+	const expired = silence?.reason === "expired";
+	const missing = silence?.missing ?? [];
+
+	return (
+		<div className="flex flex-col justify-between rounded-[3px] border border-(--line) bg-(--sunken)/40 px-2 py-1.5 opacity-70">
+			<div className="flex items-center justify-between gap-1">
+				<span className="font-mono text-[9px] text-(--f4) uppercase tracking-tight">
+					{name}
+				</span>
+				<span
+					className={`font-mono text-[8px] ${expired ? "text-(--f4)" : "text-(--warn)"}`}
+				>
+					{expired ? "expired" : "no evidence"}
+				</span>
+			</div>
+
+			{expired ? (
+				<div
+					className="mt-1 font-mono text-[8px] text-(--f4) italic"
+					title={`This advisor published a reading valid through bar ${silence?.leaseUntil}. The clock now stands at ${silence?.clockNow}, so it is waiting for this instrument's next bar.`}
+				>
+					lapsed at bar {silence?.leaseUntil} · now {silence?.clockNow}
+				</div>
+			) : (
+				<div className="mt-1 flex flex-col gap-0.5">
+					<span
+						className="font-mono text-[8px] text-(--f4)"
+						title={
+							silence === null
+								? "This advisor has never published for this instrument, and nothing has yet recorded which of its declared metrics were absent."
+								: `This advisor declares ${silence.declared} metrics and cannot publish until every one of them is present. It is waiting on ${missing.length}.`
+						}
+					>
+						{silence === null
+							? "never published"
+							: `waiting on ${missing.length}/${silence.declared} metrics`}
+					</span>
+
+					{missing.slice(0, 3).map((key) => (
+						<span
+							key={key}
+							className="truncate font-mono text-[7px] text-(--warn)"
+							title={`${key} is declared by this advisor but absent from the observation for this instrument.`}
+						>
+							{key}
+						</span>
+					))}
+
+					{missing.length > 3 ? (
+						<span
+							className="font-mono text-[7px] text-(--f4)"
+							title={missing.slice(3).join("\n")}
+						>
+							+{missing.length - 3} more
+						</span>
+					) : null}
+				</div>
+			)}
+		</div>
+	);
+};
+
+/*
+silenceOf finds the recorded explanation for one empty seat. A missing entry is
+itself meaningful: nothing has been recorded about that advisor at all.
+*/
+const silenceOf = (
+	silences: AdvisorSilence[],
+	name: string,
+): AdvisorSilence | null =>
+	silences.find(
+		(entry) => entry.advisor.toLowerCase() === name.toLowerCase(),
+	) ?? null;
 
 export type WarRoomTraceResult = {
 	trace: DecisionTraceModel | null;
@@ -144,14 +357,7 @@ const SearchCanvas = ({ trace }: { trace: DecisionTraceModel }) => {
 		const tree = warRoomTreeFrom(trace.tree);
 		const layout = layoutWarRoomTree(tree, box.width, box.height);
 
-		drawWarRoomTree(
-			context,
-			tree,
-			layout,
-			box.width,
-			box.height,
-			styles,
-		);
+		drawWarRoomTree(context, tree, layout, box.width, box.height, styles);
 	}, [trace, box]);
 
 	return (
@@ -241,35 +447,36 @@ const CouncilStrip = ({ trace }: { trace: DecisionTraceModel }) => {
 									</span>
 								</div>
 								<div className="mt-1 flex items-center justify-between font-mono text-[8px] text-(--f3)">
-									<span title="Predicted probability">
+									<span title="Probability this advisor assigned to its leading class.">
 										P: {pct(opinion.probability)}
 									</span>
-									<span title="Historical credibility" className="text-(--f4)">
+									<span
+										title="Historical credibility: how often this advisor's calls have been borne out."
+										className="text-(--f4)"
+									>
 										C: {fmt(opinion.credibility, 2)}
 									</span>
-									<span title="Consensus weight" className="text-(--f2)">
+									<span
+										title={`Consensus weight: credibility ${fmt(opinion.credibility, 2)} x maturity ${fmt(opinion.maturity, 2)} x source discount.`}
+										className="text-(--f2)"
+									>
 										W: {fmt(opinion.weight, 2)}
 									</span>
 								</div>
+
+								<Distribution opinion={opinion} />
+								<Contribution opinion={opinion} />
+								<Freshness opinion={opinion} />
 							</div>
 						);
 					}
 
 					return (
-						<div
+						<Silent
 							key={name}
-							className="flex flex-col justify-between rounded-[3px] border border-(--line) bg-(--sunken)/40 px-2 py-1.5 opacity-45"
-						>
-							<div className="flex items-center justify-between gap-1">
-								<span className="font-mono text-[9px] text-(--f4) uppercase tracking-tight">
-									{name}
-								</span>
-								<span className="font-mono text-[8px] text-(--f4)">silent</span>
-							</div>
-							<div className="mt-1 font-mono text-[8px] text-(--f4) italic">
-								awaiting bar
-							</div>
-						</div>
+							name={name}
+							silence={silenceOf(trace.council.silent, name)}
+						/>
 					);
 				})}
 			</div>
@@ -434,8 +641,8 @@ export const WarRoom = ({
 				className={`flex min-h-0 items-center justify-center px-4 py-8 ${className ?? ""}`}
 			>
 				<span className="font-mono text-[10px] text-(--f4) leading-relaxed">
-					No search ran for {symbol} — the council was silent, or no
-					transition model was available.
+					No search ran for {symbol} — the council was silent, or no transition
+					model was available.
 				</span>
 			</div>
 		);

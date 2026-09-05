@@ -68,6 +68,10 @@ func (signal *Signal) Step(envelope *types.Envelope) *types.Envelope {
 	case types.EnvelopeTrade:
 		envelope.PumpDump = signal.StepTrade(envelope.TradeData)
 	case types.EnvelopeLevel3:
+		if envelope.Level3Data.Bids == nil && envelope.Level3Data.Asks == nil {
+			return envelope
+		}
+
 		envelope.PumpDump = signal.StepLevel3(envelope.Level3Data)
 	}
 

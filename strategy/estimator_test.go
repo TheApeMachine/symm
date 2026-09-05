@@ -9,11 +9,25 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
+/*
+A consensus is its distribution over the move space. DominantMove is only the
+argmax of that distribution, so a fixture that states a move without stating
+the mass behind it does not describe a council the planner can read.
+*/
 func bullishConsensus() *advisor.DeliberationOutcome {
 	return &advisor.DeliberationOutcome{
 		DominantMove: advisor.MoveExplosivePump,
 		Confidence:   0.8,
 		Participants: 3,
+		Probabilities: map[advisor.MarketMove]float64{
+			advisor.MoveExplosivePump:      0.55,
+			advisor.MoveSteadyTrend:        0.25,
+			advisor.MoveWeakDrift:          0.05,
+			advisor.MoveStagnant:           0.05,
+			advisor.MoveWeakBleed:          0.04,
+			advisor.MoveStructuralPullback: 0.03,
+			advisor.MoveFlashDump:          0.03,
+		},
 	}
 }
 
@@ -22,6 +36,15 @@ func bearishConsensus() *advisor.DeliberationOutcome {
 		DominantMove: advisor.MoveFlashDump,
 		Confidence:   0.8,
 		Participants: 3,
+		Probabilities: map[advisor.MarketMove]float64{
+			advisor.MoveExplosivePump:      0.03,
+			advisor.MoveSteadyTrend:        0.03,
+			advisor.MoveWeakDrift:          0.04,
+			advisor.MoveStagnant:           0.05,
+			advisor.MoveWeakBleed:          0.05,
+			advisor.MoveStructuralPullback: 0.25,
+			advisor.MoveFlashDump:          0.55,
+		},
 	}
 }
 

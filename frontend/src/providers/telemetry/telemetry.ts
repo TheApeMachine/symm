@@ -3,7 +3,10 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
+export { AdvisorClass, AdvisorClassT } from './telemetry/advisor-class.js';
+export { AdvisorMoveMass, AdvisorMoveMassT } from './telemetry/advisor-move-mass.js';
 export { AdvisorOpinion, AdvisorOpinionT } from './telemetry/advisor-opinion.js';
+export { AdvisorSilence, AdvisorSilenceT } from './telemetry/advisor-silence.js';
 export { Balance, BalanceT } from './telemetry/balance.js';
 export { BalancesFrame, BalancesFrameT } from './telemetry/balances-frame.js';
 export { Batch, BatchT } from './telemetry/batch.js';

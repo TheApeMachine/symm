@@ -9,6 +9,7 @@ import (
 type EnvelopePerspectiveClassT struct {
 	State string `json:"state"`
 	Probability float64 `json:"probability"`
+	Evidence []string `json:"evidence"`
 }
 
 func (t *EnvelopePerspectiveClassT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -16,15 +17,34 @@ func (t *EnvelopePerspectiveClassT) Pack(builder *flatbuffers.Builder) flatbuffe
 		return 0
 	}
 	stateOffset := builder.CreateString(t.State)
+	evidenceOffset := flatbuffers.UOffsetT(0)
+	if t.Evidence != nil {
+		evidenceLength := len(t.Evidence)
+		evidenceOffsets := make([]flatbuffers.UOffsetT, evidenceLength)
+		for j := 0; j < evidenceLength; j++ {
+			evidenceOffsets[j] = builder.CreateString(t.Evidence[j])
+		}
+		EnvelopePerspectiveClassStartEvidenceVector(builder, evidenceLength)
+		for j := evidenceLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(evidenceOffsets[j])
+		}
+		evidenceOffset = builder.EndVector(evidenceLength)
+	}
 	EnvelopePerspectiveClassStart(builder)
 	EnvelopePerspectiveClassAddState(builder, stateOffset)
 	EnvelopePerspectiveClassAddProbability(builder, t.Probability)
+	EnvelopePerspectiveClassAddEvidence(builder, evidenceOffset)
 	return EnvelopePerspectiveClassEnd(builder)
 }
 
 func (rcv *EnvelopePerspectiveClass) UnPackTo(t *EnvelopePerspectiveClassT) {
 	t.State = string(rcv.State())
 	t.Probability = rcv.Probability()
+	evidenceLength := rcv.EvidenceLength()
+	t.Evidence = make([]string, evidenceLength)
+	for j := 0; j < evidenceLength; j++ {
+		t.Evidence[j] = string(rcv.Evidence(j))
+	}
 }
 
 func (rcv *EnvelopePerspectiveClass) UnPack() *EnvelopePerspectiveClassT {
@@ -91,14 +111,37 @@ func (rcv *EnvelopePerspectiveClass) MutateProbability(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(6, n)
 }
 
+func (rcv *EnvelopePerspectiveClass) Evidence(j int) []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.ByteVector(a + flatbuffers.UOffsetT(j*4))
+	}
+	return nil
+}
+
+func (rcv *EnvelopePerspectiveClass) EvidenceLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(8))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
 func EnvelopePerspectiveClassStart(builder *flatbuffers.Builder) {
-	builder.StartObject(2)
+	builder.StartObject(3)
 }
 func EnvelopePerspectiveClassAddState(builder *flatbuffers.Builder, state flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(state), 0)
 }
 func EnvelopePerspectiveClassAddProbability(builder *flatbuffers.Builder, probability float64) {
 	builder.PrependFloat64Slot(1, probability, 0.0)
+}
+func EnvelopePerspectiveClassAddEvidence(builder *flatbuffers.Builder, evidence flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(2, flatbuffers.UOffsetT(evidence), 0)
+}
+func EnvelopePerspectiveClassStartEvidenceVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
 func EnvelopePerspectiveClassEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

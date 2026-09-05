@@ -265,7 +265,69 @@ func (store *SQLite) ListRuns() ([]hindsight.Run, error) {
 		runs = append(runs, run)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: iterate run rows",
+			err,
+		))
+	}
+
+	held, err := store.positionCounts()
+
+	if err != nil {
+		return nil, err
+	}
+
+	for index := range runs {
+		runs[index].Positions = held[string(runs[index].ID)]
+	}
+
 	return runs, nil
+}
+
+/*
+positionCounts returns how many positions the desk held in each run, counted
+as distinct decisions on the lifecycle tape. The lifecycle table holds one row
+per transition and is small, so this is a single grouped read rather than a
+count per run.
+*/
+func (store *SQLite) positionCounts() (map[string]int, error) {
+	rows, err := store.reader.Query(
+		`SELECT run_id, COUNT(DISTINCT decision_id) FROM lifecycle
+		 WHERE decision_id <> '' GROUP BY run_id`,
+	)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: count run positions failed",
+			err,
+		))
+	}
+
+	defer rows.Close()
+
+	counts := make(map[string]int)
+
+	for rows.Next() {
+		var (
+			runID string
+			held  int
+		)
+
+		if err := rows.Scan(&runID, &held); err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO,
+				"store: scan run position count",
+				err,
+			))
+		}
+
+		counts[runID] = held
+	}
+
+	return counts, rows.Err()
 }
 
 /*
@@ -722,7 +784,7 @@ func (store *SQLite) ListLifecycleEvents(runID string) ([]hindsight.LifecycleEve
 	}
 
 	rows, err := store.reader.Query(
-		`SELECT decision_id, symbol, kind, action, at, execution
+		`SELECT decision_id, symbol, kind, action, at, execution, capture_seq
 		 FROM lifecycle WHERE run_id = ? ORDER BY id ASC`,
 		runID,
 	)
@@ -753,6 +815,7 @@ func (store *SQLite) ListLifecycleEvents(runID string) ([]hindsight.LifecycleEve
 			&event.Action,
 			&atValue,
 			&execution,
+			&event.CaptureSeq,
 		); err != nil {
 			return nil, errnie.Error(errnie.Err(
 				errnie.IO,
@@ -783,7 +846,120 @@ func (store *SQLite) ListLifecycleEvents(runID string) ([]hindsight.LifecycleEve
 		events = append(events, event)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: iterate lifecycle event rows",
+			err,
+		))
+	}
+
+	// Rows written before the recorder stamped a sequence carry zero. Those are
+	// recovered from the decision witness — but only for the transitions that
+	// OPEN a position.
+	//
+	// Every lifecycle row of a position carries the entry decision's identity,
+	// because an exit is executed by the desk's Stoploss, which commits no
+	// decision of its own. Joining an exit row therefore returns the frame the
+	// position was entered on. Filling it in would put the buy's frame behind
+	// an exit's name, so an unstamped exit is left at zero and reported as
+	// having no frame rather than being given the wrong one.
+	needsJoin := false
+
+	for index := range events {
+		if events[index].CaptureSeq == 0 && opensPosition(events[index].Kind) {
+			needsJoin = true
+
+			break
+		}
+	}
+
+	if !needsJoin {
+		return events, nil
+	}
+
+	sequences, err := store.decisionSequences(runID)
+
+	if err != nil {
+		return nil, err
+	}
+
+	for index := range events {
+		if events[index].CaptureSeq == 0 && opensPosition(events[index].Kind) {
+			events[index].CaptureSeq = sequences[events[index].DecisionID]
+		}
+	}
+
 	return events, nil
+}
+
+/*
+opensPosition reports whether a lifecycle transition is one the entry decision
+directly caused, and whose frame the decision witness therefore names.
+*/
+func opensPosition(kind string) bool {
+	return kind == "entry_fill" || kind == "position_open"
+}
+
+/*
+decisionSequences maps every decision identity recorded in one run to the
+capture sequence of the envelope it was decided on.
+
+A lifecycle transition is decision-correlated rather than envelope-correlated,
+because it happens inside the broker after the planner committed. The decision
+witness is what holds the envelope reference, so this is the join that lets a
+recorded fill be placed back on the tape it came from.
+
+It is read as one pass over the run's decision witnesses rather than as a
+correlated subquery per event: the witness index is (origin_run, origin_seq),
+so a per-event lookup on artifact_id would rescan the run's whole witness set
+every time, on a database the live capture is still writing to.
+*/
+func (store *SQLite) decisionSequences(runID string) (map[string]uint64, error) {
+	rows, err := store.reader.Query(
+		`SELECT artifact_id, origin_seq FROM witnesses
+		 WHERE origin_run = ? AND artifact_kind = 'decision'`,
+		runID,
+	)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.IO,
+			"store: list decision witness sequences failed",
+			err,
+		))
+	}
+
+	defer rows.Close()
+
+	sequences := make(map[string]uint64)
+
+	for rows.Next() {
+		var (
+			identity string
+			sequence uint64
+		)
+
+		if err := rows.Scan(&identity, &sequence); err != nil {
+			return nil, errnie.Error(errnie.Err(
+				errnie.IO,
+				"store: scan decision witness sequence",
+				err,
+			))
+		}
+
+		if identity == "" {
+			continue
+		}
+
+		// A decision can be witnessed more than once across the boundaries it
+		// crosses. The first sighting is the frame it was decided on.
+		if _, seen := sequences[identity]; !seen {
+			sequences[identity] = sequence
+		}
+	}
+
+	return sequences, rows.Err()
 }
 
 /*

@@ -163,9 +163,11 @@ func (ticker *Ticker) Step(tickerData kraken.TickerData) *data.Measurement[float
 	focal := ticker.pathFor(tickerData.Symbol)
 
 	if !focal.Observe(tickerData.Timestamp.UnixNano(), nmtypes.Number(last)) {
-		measurement.Err = fmt.Errorf(
-			"leadlag: ticker event time regressed for %s", tickerData.Symbol,
-		)
+		measurement.Metadata = map[string]float64{data.MetadataSupport: 0}
+		measurement.Provenance = map[string]string{
+			"event_time_state": "regressed",
+		}
+		measurement.Finalize()
 
 		return measurement
 	}

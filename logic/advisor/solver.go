@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/nomagique/vector"
 	"github.com/theapemachine/symm/types"
@@ -23,8 +23,26 @@ type Solver struct {
 	groupSpec     []vector.Group
 	classifiers   map[string]*vector.Classifier
 	clocks        map[string]float64
+	lastIssued    map[string]uint64
 	observations  map[string]map[string]float64
 	ObserveModule func(string, time.Duration)
+}
+
+/*
+declaredKeys is how many distinct metrics this advisor's whole evidence
+contract names. It gives a missing-key report its denominator: one key short of
+a full set and a set that never arrives are different failures.
+*/
+func (solver *Solver) declaredKeys() int {
+	declared := make(map[string]bool)
+
+	for _, group := range solver.groupSpec {
+		for _, key := range group.Keys {
+			declared[key] = true
+		}
+	}
+
+	return len(declared)
 }
 
 /* NewSolver compiles one class-bearing Feature into each classifier group. */
@@ -35,6 +53,7 @@ func NewSolver(ctx context.Context, name string, features []*Feature) *Solver {
 		cancel:       cancel,
 		status:       runtime.NewStatus(),
 		clocks:       make(map[string]float64),
+		lastIssued:   make(map[string]uint64),
 		observations: make(map[string]map[string]float64),
 		classifiers:  make(map[string]*vector.Classifier),
 	}
@@ -86,8 +105,7 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 		}
 	}()
 
-	measurements := envelope.SignalMeasurements()
-	input, liftErr := data.Lift(measurements[:])
+	input, liftErr := envelope.LiftedObservation()
 
 	if liftErr != nil {
 		if len(input) == 0 {
@@ -127,7 +145,7 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 
 	observation := solver.observe(symbol, input)
 
-	advanced, err := solver.clockAdvanced(symbol, clock)
+	_, err := solver.clockAdvanced(symbol, clock)
 
 	if err != nil {
 		solver.fail(errnie.Conflict, "advisor market clock failed", err)
@@ -135,7 +153,15 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 		return nil
 	}
 
-	if !advanced {
+	clockOrdinal := uint64(clock)
+
+	if clockOrdinal == 0 {
+		return envelope
+	}
+
+	lastIssuedOrdinal, hasIssued := solver.lastIssued[symbol]
+
+	if hasIssued && lastIssuedOrdinal >= clockOrdinal {
 		return envelope
 	}
 
@@ -143,7 +169,22 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 
 	classifier := solver.classifierFor(symbol)
 
+	if classifier == nil {
+		return envelope
+	}
+
 	if !classifier.Complete(observation) {
+		// An advisor that cannot complete its evidence publishes nothing, and
+		// nothing else in the system notices. Recording WHICH declared keys are
+		// absent is the difference between "this instrument is quiet" and "this
+		// advisor has been structurally mute since the process started".
+		envelope.AppendAdvisorSilence(types.AdvisorSilence{
+			Advisor:  solver.name,
+			Reason:   "incomplete",
+			Missing:  classifier.Missing(observation),
+			Declared: solver.declaredKeys(),
+		})
+
 		return envelope
 	}
 
@@ -155,11 +196,13 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 		return nil
 	}
 
-	if err := solver.Issue(envelope, classifier.Read(), uint64(clock)); err != nil {
+	if err := solver.Issue(envelope, classifier.Read(), clockOrdinal); err != nil {
 		solver.halt(err)
 
 		return nil
 	}
+
+	solver.lastIssued[symbol] = clockOrdinal
 
 	return envelope
 }
@@ -344,7 +387,15 @@ func (solver *Solver) classifierFor(symbol string) *vector.Classifier {
 	classifier, found := solver.classifiers[symbol]
 
 	if !found {
-		classifier, _ = vector.NewClassifier(solver.groupSpec...)
+		var err error
+		classifier, err = vector.NewClassifier(solver.groupSpec...)
+
+		if err != nil {
+			solver.fail(errnie.Internal, "advisor failed to compile classifier", err)
+
+			return nil
+		}
+
 		solver.classifiers[symbol] = classifier
 	}
 
@@ -422,6 +473,20 @@ func (solver *Solver) halt(err error) {
 	solver.cancel()
 }
 
+/*
+underlyingSymbol resolves a futures product to the spot market it derives from,
+falling back to the product identity when the venue's naming does not cover it.
+The fallback keeps such an instrument observable under its own name rather than
+discarding it.
+*/
+func underlyingSymbol(product string) string {
+	if spot, ok := kraken.SpotSymbol(product); ok {
+		return spot
+	}
+
+	return product
+}
+
 func envelopeSymbol(envelope *types.Envelope) string {
 	switch envelope.TypeID {
 	case types.EnvelopeTicker:
@@ -430,10 +495,16 @@ func envelopeSymbol(envelope *types.Envelope) string {
 		return envelope.TradeData.Symbol
 	case types.EnvelopeLevel3:
 		return envelope.Level3Data.Symbol
+	// A futures envelope carries the derivative's own product identity, and an
+	// advisor accumulates its evidence per symbol. Filed under "PF_SOLUSD" the
+	// derivative facts never meet the spot facts filed under "SOL/USD", so an
+	// advisor mixing the two — Basis declares nothing but derivatives metrics
+	// and the spot volume-bar clock — can never assemble a complete set for any
+	// instrument. Resolving to the underlying is what lets the two meet.
 	case types.EnvelopeFuturesTicker:
-		return envelope.FuturesTickerData.Symbol
+		return underlyingSymbol(envelope.FuturesTickerData.Symbol)
 	case types.EnvelopeFuturesTrade:
-		return envelope.FuturesTradeData.Symbol
+		return underlyingSymbol(envelope.FuturesTradeData.Symbol)
 	default:
 		return ""
 	}

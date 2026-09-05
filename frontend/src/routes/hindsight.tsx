@@ -46,6 +46,7 @@ import {
 	buildPositions,
 	type Position,
 } from "#/components/hindsight/positions";
+import { PositionIndex } from "#/components/hindsight/position-index";
 import { Guide } from "#/components/hindsight/guide";
 import { EpisodeTargets, SymbolTargets } from "#/components/hindsight/targets";
 import { Overview, Timeline } from "#/components/hindsight/timeline";
@@ -511,9 +512,29 @@ const HindsightRoute = () => {
 		first envelope of the selected capture frame — never a previous
 		inspection's ordinal silently carried onto a new sequence.
 	*/
+	/*
+		focusPosition parks the tape on the position's own opening frame.
+
+		The store resolves that frame exactly, by joining the lifecycle record
+		to the decision witness that caused it, so the seek lands on the capture
+		the desk actually decided on. The nearest-bucket search below is the
+		fallback for records written before that correlation existed: it lands
+		on whichever bucket started closest in wall time, which is an
+		approximation and is only used when there is no recorded frame.
+	*/
 	const focusPosition = useCallback(
 		(selected: Position) => {
 			setPosition(selected.decisionId);
+
+			if (selected.symbol !== "") setSymbol(selected.symbol);
+
+			if (selected.entrySeq !== null) {
+				setViewport(null);
+				setEpisode(null);
+				setPlayhead({ sequence: selected.entrySeq, ordinal: 0 });
+
+				return;
+			}
 
 			const source = detail ?? overview;
 			const at = new Date(selected.entry?.at ?? "").getTime();
@@ -541,6 +562,29 @@ const HindsightRoute = () => {
 			if (nearest !== null) setPlayhead({ sequence: nearest, ordinal: 0 });
 		},
 		[detail, overview],
+	);
+
+	/*
+		seekPosition parks the tape on one edge of a position. Only an edge the
+		record actually named is offered, so this never has to guess which frame
+		an unstamped exit belonged to.
+	*/
+	const seekPosition = useCallback(
+		(selected: Position, edge: "entry" | "exit") => {
+			const sequence =
+				edge === "entry" ? selected.entrySeq : selected.exitSeq;
+
+			if (sequence === null) return;
+
+			setPosition(selected.decisionId);
+
+			if (selected.symbol !== "") setSymbol(selected.symbol);
+
+			setViewport(null);
+			setEpisode(null);
+			setPlayhead({ sequence, ordinal: 0 });
+		},
+		[],
 	);
 
 	const focusEpisode = useCallback((selected: HindsightEpisode) => {
@@ -649,6 +693,13 @@ const HindsightRoute = () => {
 				<div
 					className={`${focus ? "hidden" : "flex"} w-56 shrink-0 flex-col border-(--line) border-r`}
 				>
+					<PositionIndex
+						positions={positions}
+						selected={position}
+						onSelect={focusPosition}
+						onSeek={seekPosition}
+					/>
+
 					<SymbolTargets
 						summaries={overview?.symbols ?? []}
 						selected={symbol}
@@ -932,7 +983,7 @@ const RunBar = ({
 					<Button
 						key={entry.id}
 						variant="bare"
-						title={`${entry.id}\ncommit ${entry.codeCommit || "—"} · build ${entry.buildId || "—"} · config ${entry.configDigest || "—"}`}
+						title={`${entry.id}\ncommit ${entry.codeCommit || "—"} · build ${entry.buildId || "—"} · config ${entry.configDigest || "—"}\npositions held: ${entry.positions ?? 0}`}
 						className={`shrink-0 rounded-[3px] border px-2 py-1 font-mono text-[9px] ${
 							active
 								? "border-(--acc) bg-(--raised) text-(--f1)"
@@ -946,6 +997,9 @@ const RunBar = ({
 							hour: "2-digit",
 							minute: "2-digit",
 						})}
+						{entry.positions ? (
+							<span className="ml-1.5 text-(--acc)">{entry.positions}▲</span>
+						) : null}
 						<span
 							className={`ml-1.5 ${entry.integrity === "COMPLETE" ? "text-(--up)" : "text-(--warn)"}`}
 						>

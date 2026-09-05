@@ -1,0 +1,581 @@
+{
+  "advisors": {
+    "auction": {
+      "clock": "pumpdump/completed_volume_bar_ordinal",
+      "features": [
+        {
+          "class": "BuyersBreakingThrough",
+          "within": 2,
+          "keys": [
+            "toxicity/touch_quantity:bid",
+            "toxicity/retreated_quantity:bid",
+            "sentiment/median_absolute_return_baseline",
+            "cvd/trade_count:sell"
+          ],
+          "predictions": [
+            {
+              "metric": "liquidity/touch_notional_baseline:bid",
+              "support": "STAGNATE",
+              "contradict": "EXPAND"
+            }
+          ]
+        },
+        {
+          "class": "SellersAbsorbing",
+          "within": 2,
+          "keys": [
+            "toxicity/net_withdrawn_quantity:ask",
+            "toxicity/withdrawal_fraction_baseline:ask",
+            "toxicity/retreat_fraction:bid",
+            "depthflow/observed_notional_rate_baseline",
+            "toxicity/fill_fraction_velocity:bid",
+            "sentiment/largest_move_share_zscore"
+          ],
+          "predictions": [
+            {
+              "metric": "toxicity/previous_best_price:bid",
+              "support": "EXPAND",
+              "contradict": "STAGNATE"
+            }
+          ]
+        },
+        {
+          "class": "SellersBreakingThrough",
+          "within": 1,
+          "keys": [
+            "toxicity/touch_fill_fraction:bid",
+            "pumpdump/best_ask",
+            "hawkes/excitation_intensity:buy",
+            "leadlag/correlation_gain_velocity"
+          ],
+          "predictions": [
+            {
+              "metric": "hawkes/count_innovation:sell",
+              "support": "DECREASE",
+              "contradict": "INCREASE"
+            }
+          ]
+        },
+        {
+          "class": "BuyersAbsorbing",
+          "within": 3,
+          "keys": [
+            "sentiment/median_return_velocity",
+            "derivatives/return_gap",
+            "leadlag/lag_divergence_seconds"
+          ],
+          "predictions": [
+            {
+              "metric": "toxicity/best_price:ask",
+              "support": "INCREASE",
+              "contradict": "DECREASE"
+            }
+          ]
+        },
+        {
+          "class": "Balanced",
+          "within": 1,
+          "keys": [
+            "derivatives/liquidation_share_velocity",
+            "cvd/midpoint_return_rate_zscore",
+            "correlation/shared_time"
+          ],
+          "predictions": [
+            {
+              "metric": "depthflow/mutation_activity_imbalance",
+              "support": "DISSOLVE",
+              "contradict": "EXPAND"
+            }
+          ]
+        }
+      ]
+    },
+    "basis": {
+      "clock": "pumpdump/completed_volume_bar_ordinal",
+      "features": [
+        {
+          "class": "LeverageSqueeze",
+          "within": 3,
+          "keys": [
+            "toxicity/fill_fraction_velocity:bid",
+            "leadlag/best_lag_correlation_zscore",
+            "depthflow/modify_remaining_notional:bid",
+            "hawkes/arrival_rate"
+          ],
+          "predictions": [
+            {
+              "metric": "pumpdump/trade_quantity",
+              "support": "EXPAND",
+              "contradict": "STAGNATE"
+            }
+          ]
+        },
+        {
+          "class": "PremiumExpanding",
+          "within": 3,
+          "keys": [
+            "cvd/gross_notional_rate",
+            "derivatives/index_spot_log_basis",
+            "derivatives/derivative_price",
+            "cvd/gross_notional_rate_baseline",
+            "correlation/shared_time"
+          ],
+          "predictions": [
+            {
+              "metric": "liquidity/touch_notional_imbalance",
+              "support": "DISSOLVE",
+              "contradict": "EXPAND"
+            }
+          ]
+        },
+        {
+          "class": "DiscountExpanding",
+          "within": 1,
+          "keys": [
+            "hawkes/excitation_timescale:sell_from_buy",
+            "pumpdump/midpoint:at",
+            "toxicity/net_replenished_quantity:ask",
+            "cvd/net_notional_rate",
+            "hawkes/excitation_share"
+          ],
+          "predictions": [
+            {
+              "metric": "pumpdump/midpoint:from",
+              "support": "DECREASE",
+              "contradict": "INCREASE"
+            }
+          ]
+        },
+        {
+          "class": "LiquidationsCascading",
+          "within": 2,
+          "keys": [
+            "hawkes/excitation_share:sell",
+            "pumpdump/volume_bar_target_quantity",
+            "derivatives/index_spot_log_basis",
+            "cvd/gross_executed_quantity"
+          ],
+          "predictions": [
+            {
+              "metric": "liquidity/spread_ratio",
+              "support": "EXPAND",
+              "contradict": "STAGNATE"
+            }
+          ]
+        },
+        {
+          "class": "NeutralBasis",
+          "within": 1,
+          "keys": [
+            "derivatives/reference_price",
+            "hawkes/excitation_timescale:buy_from_sell",
+            "hawkes/log_likelihood:hawkes",
+            "sentiment/return",
+            "correlation/correlation_zscore"
+          ],
+          "predictions": [
+            {
+              "metric": "derivatives/open_interest_growth_rate",
+              "support": "DISSOLVE",
+              "contradict": "EXPAND"
+            }
+          ]
+        }
+      ]
+    },
+    "liquidity": {
+      "clock": "pumpdump/completed_volume_bar_ordinal",
+      "features": [
+        {
+          "class": "WallBuilding",
+          "within": 1,
+          "keys": [
+            "pumpdump/spread_zscore",
+            "sentiment/largest_move_ratio_baseline",
+            "correlation/correlation_baseline",
+            "pumpdump/best_bid",
+            "liquidity/touch_quantity:bid",
+            "derivatives/return_gap_zscore"
+          ],
+          "predictions": [
+            {
+              "metric": "morphology/entropy:ask",
+              "support": "EXPAND",
+              "contradict": "STAGNATE"
+            }
+          ]
+        },
+        {
+          "class": "VacuumForming",
+          "within": 3,
+          "keys": [
+            "cvd/net_notional",
+            "sentiment/median_from_age_seconds",
+            "hawkes/excitation_decay:buy_from_buy",
+            "cvd/signed_net_fraction_baseline",
+            "sentiment/peer_median_absolute_return",
+            "derivatives/reference_log_return"
+          ],
+          "predictions": [
+            {
+              "metric": "pumpdump/notional_rate_zscore",
+              "support": "DISSOLVE",
+              "contradict": "EXPAND"
+            }
+          ]
+        },
+        {
+          "class": "Replenishing",
+          "within": 2,
+          "keys": [
+            "morphology/concentration:bid",
+            "leadlag/best_lag_correlation_zscore",
+            "cvd/gross_notional_rate",
+            "cvd/cvd_epoch_from",
+            "toxicity/net_withdrawal_fraction:ask",
+            "toxicity/touch_quantity:ask"
+          ],
+          "predictions": [
+            {
+              "metric": "derivatives/basis_zscore",
+              "support": "DISSOLVE",
+              "contradict": "EXPAND"
+            }
+          ]
+        },
+        {
+          "class": "Depleting",
+          "within": 2,
+          "keys": [
+            "liquidity/two_sided_touch_notional",
+            "sentiment/median_absolute_return_zscore",
+            "derivatives/gross_derivative_trade_notional"
+          ],
+          "predictions": [
+            {
+              "metric": "hawkes/excitation_timescale:buy_from_sell",
+              "support": "DECREASE",
+              "contradict": "INCREASE"
+            }
+          ]
+        },
+        {
+          "class": "Balanced",
+          "within": 3,
+          "keys": [
+            "toxicity/retreated_quantity:ask",
+            "hawkes/conditional_intensity:sell",
+            "morphology/morphology_change"
+          ],
+          "predictions": [
+            {
+              "metric": "sentiment/directional_agreement",
+              "support": "EXPAND",
+              "contradict": "DISSOLVE"
+            }
+          ]
+        }
+      ]
+    },
+    "momentum": {
+      "clock": "pumpdump/completed_volume_bar_ordinal",
+      "features": [
+        {
+          "class": "Building",
+          "within": 2,
+          "keys": [
+            "pumpdump/trade_notional",
+            "derivatives/liquidation_notional_rate",
+            "derivatives/basis",
+            "leadlag/lag_peak_prominence"
+          ],
+          "predictions": [
+            {
+              "metric": "sentiment/advance_fraction",
+              "support": "EXPAND",
+              "contradict": "STAGNATE"
+            }
+          ]
+        },
+        {
+          "class": "Sustaining",
+          "within": 1,
+          "keys": [
+            "pumpdump/spread_zscore",
+            "morphology/book_shape_ks",
+            "correlation/overlap_density",
+            "toxicity/bracket_trade_quantity",
+            "hawkes/offspring:buy_from_buy",
+            "correlation/relative_return_energy"
+          ],
+          "predictions": [
+            {
+              "metric": "toxicity/touch_price_log_change:ask",
+              "support": "INCREASE",
+              "contradict": "DECREASE"
+            }
+          ]
+        },
+        {
+          "class": "Stalling",
+          "within": 3,
+          "keys": [
+            "hawkes/offspring:buy_from_buy",
+            "pumpdump/midpoint:from",
+            "sentiment/median_return_velocity",
+            "derivatives/open_interest_growth_zscore",
+            "sentiment/largest_move_excess"
+          ],
+          "predictions": [
+            {
+              "metric": "derivatives/liquidation_signed_fraction",
+              "support": "STAGNATE",
+              "contradict": "EXPAND"
+            }
+          ]
+        },
+        {
+          "class": "Reversing",
+          "within": 2,
+          "keys": [
+            "derivatives/reference_log_return",
+            "morphology/concentration:ask",
+            "pumpdump/volume_bar_trade_count",
+            "toxicity/fill_fraction_zscore:ask",
+            "toxicity/touch_fill_quantity:bid",
+            "sentiment/largest_move_excess"
+          ],
+          "predictions": [
+            {
+              "metric": "liquidity/spread",
+              "support": "EXPAND",
+              "contradict": "STAGNATE"
+            }
+          ]
+        }
+      ]
+    },
+    "participation": {
+      "clock": "pumpdump/completed_volume_bar_ordinal",
+      "features": [
+        {
+          "class": "BroadLift",
+          "within": 3,
+          "keys": [
+            "correlation/relative_return_energy",
+            "cvd/midpoint_return_rate_divergence",
+            "toxicity/retreat_fraction_zscore:bid"
+          ],
+          "predictions": [
+            {
+              "metric": "pumpdump/trade_quantity",
+              "support": "DECREASE",
+              "contradict": "INCREASE"
+            }
+          ]
+        },
+        {
+          "class": "LocalLeader",
+          "within": 1,
+          "keys": [
+            "morphology/morphology_change_zscore",
+            "leadlag/contemporaneous_correlation",
+            "depthflow/observed_notional_imbalance_baseline",
+            "toxicity/retreat_fraction_baseline:ask",
+            "toxicity/withdrawal_fraction_velocity:ask",
+            "leadlag/observation_count"
+          ],
+          "predictions": [
+            {
+              "metric": "correlation/overlap_density",
+              "support": "DISSOLVE",
+              "contradict": "EXPAND"
+            }
+          ]
+        },
+        {
+          "class": "FollowerMove",
+          "within": 2,
+          "keys": [
+            "liquidity/touch_notional_imbalance",
+            "leadlag/correlation_gain_zscore",
+            "cvd/gross_notional",
+            "liquidity/spread_noise_scale"
+          ],
+          "predictions": [
+            {
+              "metric": "toxicity/touch_fill_quantity:bid",
+              "support": "EXPAND",
+              "contradict": "DISSOLVE"
+            }
+          ]
+        },
+        {
+          "class": "IsolatedMove",
+          "within": 3,
+          "keys": [
+            "leadlag/best_lag_seconds",
+            "liquidity/spread_divergence_velocity_snr",
+            "derivatives/index_spot_log_basis",
+            "toxicity/fill_fraction_divergence:bid"
+          ],
+          "predictions": [
+            {
+              "metric": "sentiment/zero_return_peer_fraction",
+              "support": "DECREASE",
+              "contradict": "INCREASE"
+            }
+          ]
+        }
+      ]
+    },
+    "profit_run": {
+      "clock": "pumpdump/completed_volume_bar_ordinal",
+      "features": [
+        {
+          "class": "Extending",
+          "within": 2,
+          "keys": [
+            "morphology/entropy:bid",
+            "liquidity/divergence_velocity:bid",
+            "pumpdump/midpoint",
+            "depthflow/add_notional:bid"
+          ],
+          "predictions": [
+            {
+              "metric": "toxicity/net_withdrawal_fraction:ask",
+              "support": "INCREASE",
+              "contradict": "DECREASE"
+            }
+          ]
+        },
+        {
+          "class": "Consolidating",
+          "within": 2,
+          "keys": [
+            "derivatives/liquidation_signed_fraction",
+            "hawkes/log_likelihood_gain_vs_self_only",
+            "toxicity/net_replenished_quantity:ask",
+            "derivatives/return_gap",
+            "hawkes/arrival_rate",
+            "toxicity/withdrawal_fraction_divergence:bid"
+          ],
+          "predictions": [
+            {
+              "metric": "pumpdump/midpoint:from",
+              "support": "STAGNATE",
+              "contradict": "EXPAND"
+            }
+          ]
+        },
+        {
+          "class": "Exhausting",
+          "within": 2,
+          "keys": [
+            "toxicity/withdrawal_fraction_velocity:bid",
+            "cvd/aggressive_notional:sell",
+            "sentiment/median_absolute_return_zscore"
+          ],
+          "predictions": [
+            {
+              "metric": "sentiment/median_absolute_return_zscore",
+              "support": "DISSOLVE",
+              "contradict": "EXPAND"
+            }
+          ]
+        },
+        {
+          "class": "GivingBack",
+          "within": 3,
+          "keys": [
+            "derivatives/reference_price",
+            "depthflow/observed_notional_rate_divergence",
+            "hawkes/log_likelihood:hawkes",
+            "sentiment/largest_move_mad_excess"
+          ],
+          "predictions": [
+            {
+              "metric": "morphology/entropy:ask",
+              "support": "DISSOLVE",
+              "contradict": "EXPAND"
+            }
+          ]
+        }
+      ]
+    },
+    "pullback": {
+      "clock": "pumpdump/completed_volume_bar_ordinal",
+      "features": [
+        {
+          "class": "OrderlyPullback",
+          "within": 3,
+          "keys": [
+            "sentiment/peer_magnitude_mad",
+            "pumpdump/best_bid"
+          ],
+          "predictions": [
+            {
+              "metric": "sentiment/zero_return_peer_fraction",
+              "support": "DISSOLVE",
+              "contradict": "EXPAND"
+            }
+          ]
+        },
+        {
+          "class": "LiquiditySweep",
+          "within": 3,
+          "keys": [
+            "pumpdump/volume_bar_trade_count",
+            "liquidity/touch_notional:ask",
+            "hawkes/background_rate:buy",
+            "hawkes/excitation_decay:sell_from_sell"
+          ],
+          "predictions": [
+            {
+              "metric": "sentiment/from_age_seconds",
+              "support": "STAGNATE",
+              "contradict": "EXPAND"
+            }
+          ]
+        },
+        {
+          "class": "StructuralBreakdown",
+          "within": 1,
+          "keys": [
+            "derivatives/gross_liquidation_notional",
+            "cvd/response_midpoint:at",
+            "sentiment/asof_age_seconds",
+            "correlation/cohort_peer_count",
+            "hawkes/excitation_share:sell",
+            "depthflow/observed_notional"
+          ],
+          "predictions": [
+            {
+              "metric": "leadlag/lag_divergence_seconds",
+              "support": "DECREASE",
+              "contradict": "INCREASE"
+            }
+          ]
+        },
+        {
+          "class": "Unresolved",
+          "within": 3,
+          "keys": [
+            "correlation/return_energy:measured",
+            "toxicity/retreat_fraction:ask",
+            "liquidity/touch_notional_baseline:bid",
+            "correlation/focal_return_energy_rate",
+            "sentiment/rms_return"
+          ],
+          "predictions": [
+            {
+              "metric": "correlation/overlap_density",
+              "support": "INCREASE",
+              "contradict": "DECREASE"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

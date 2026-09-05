@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	neturl "net/url"
 	"strconv"
@@ -12,7 +13,6 @@ import (
 	"github.com/gofiber/contrib/v3/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
-	"github.com/google/uuid"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
@@ -38,81 +38,17 @@ arrive over the same socket and are handled directly by the connection's
 handler goroutine, so there are no per-client writer or reader goroutines.
 */
 type Hub struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	err              error
-	app              *fiber.App
-	listenAddr       string
-	clients          *sync.Map
-	store            *store.SQLite
-	tradeStore       TradeJournalSource
-	timelines        *timelineCache
-	fluid            *FluidRTC
-	manifoldSnapshot func() *types.ManifoldState
-}
-
-type Client struct {
-	conn *websocket.Conn
-	mu   sync.Mutex
-	// queue is the bounded publication boundary for one dashboard socket:
-	// capacity one, latest-wins. Step never blocks on it; the per-client
-	// sender both drains the freshest replaceable snapshot and applies the
-	// disconnect policy when the socket dies.
-	queue  chan []byte
-	closed chan struct{}
-}
-
-/*
-enqueue replaces any pending dashboard snapshot and wakes the sender without
-blocking. A slow consumer therefore receives a fresher replaceable state when
-it catches up, never a backlog of stale frames, and Hub.Step is never stalled
-by an external browser.
-*/
-func (client *Client) enqueue(payload []byte) {
-	if client == nil || client.queue == nil {
-		return
-	}
-
-	select {
-	case <-client.closed:
-		return
-	default:
-	}
-
-	select {
-	case client.queue <- payload:
-	default:
-		// Latest-wins: drop the stale pending snapshot.
-		select {
-		case <-client.queue:
-		default:
-		}
-		select {
-		case client.queue <- payload:
-		default:
-		}
-	}
-}
-
-/*
-runSender drains the freshest pending snapshot and writes it under the client
-mutex. It exits when the client closes, never leaking a goroutine.
-*/
-func (client *Client) runSender() {
-	for {
-		select {
-		case <-client.closed:
-			return
-		case payload := <-client.queue:
-			client.mu.Lock()
-			err := client.conn.WriteMessage(websocket.BinaryMessage, payload)
-			client.mu.Unlock()
-
-			if err != nil {
-				return
-			}
-		}
-	}
+	ctx        context.Context
+	cancel     context.CancelFunc
+	err        error
+	app        *fiber.App
+	listenAddr string
+	frontend   *websocket.Conn
+	frontendMu sync.Mutex
+	store      *store.SQLite
+	tradeStore TradeJournalSource
+	timelines  *timelineCache
+	fluid      *FluidRTC
 }
 
 /*
@@ -135,7 +71,6 @@ func NewHub(ctx context.Context) *Hub {
 			ReadBufferSize:  4194304,
 			WriteBufferSize: 4194304,
 		}),
-		clients:   &sync.Map{},
 		timelines: newTimelineCache(),
 		fluid:     NewFluidRTC(ctx, "hub"),
 	}
@@ -175,13 +110,9 @@ func NewHub(ctx context.Context) *Hub {
 			return c.JSON([]*wire.PositionT{})
 		}
 
-		limit := parseUintQuery(c.Query("limit"))
-
-		if limit > 2000 {
-			limit = 2000
-		}
-
-		trades, err := hub.tradeStore.RecentTrades(int(limit))
+		trades, err := hub.tradeStore.RecentTrades(int(
+			min(parseUintQuery(c.Query("limit")), 2000),
+		))
 
 		if err != nil {
 			return err
@@ -364,19 +295,19 @@ func NewHub(ctx context.Context) *Hub {
 	hub.registerTimeline()
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
-		key := uuid.NewString()
-		client := &Client{
-			conn:   conn,
-			queue:  make(chan []byte, 1),
-			closed: make(chan struct{}),
-		}
-		hub.clients.Store(key, client)
-
-		go client.runSender()
+		hub.frontendMu.Lock()
+		hub.frontend = conn
+		hub.frontendMu.Unlock()
 
 		defer func() {
-			close(client.closed)
-			hub.clients.Delete(key)
+			hub.frontendMu.Lock()
+
+			if hub.frontend == conn {
+				hub.frontend = nil
+			}
+
+			hub.frontendMu.Unlock()
+
 			conn.Conn.Close()
 		}()
 
@@ -408,59 +339,49 @@ func NewHub(ctx context.Context) *Hub {
 }
 
 /*
-Step is the Ticker/Trade/Level3 Observe boundary's UI publisher (README §12,
-§18): it witnesses the Envelope committed by the previous barrier and
-broadcasts it as-is — the same exported state the backend is carrying,
-converted to FlatBuffers and never reshaped into a curated per-consumer
-frame. It never mutates the Envelope and its return value is discarded by the
-Observe HandlerGroup, so a disconnected or slow UI cannot change what the
-system believes.
+Consume attaches the hub to a runtime Sink's channel and starts the goroutine
+that serves it.
+
+The hub is not a ring stage. Everything it does with an envelope — encoding the
+websocket frame, publishing the boundary trace — is publication work, and a
+publisher mounted as a Node runs that work on the ring's own goroutine at
+ingress rate. It reads from the ring instead, on one goroutine that owns the
+frontend connection and every publication decision outright.
 */
-func (hub *Hub) Step(envelope *types.Envelope) *types.Envelope {
-	if envelope == nil {
-		return envelope
-	}
+func (hub *Hub) Consume(envelopes <-chan *types.Envelope) {
+	go hub.publish(envelopes)
+}
 
-	if hub.clientReady() {
-		payload := envelope.EncodeWebsocket()
+/*
+publish serves the ring's envelopes: the websocket frame first, then the
+boundary trace if a viewer's diagnostics channel is ready for another one.
 
-		hub.clients.Range(func(key, value any) bool {
-			client, valid := value.(*Client)
+One goroutine does both because both are the same kind of work — encoding a
+replaceable observation for whoever is watching — and serializing them here is
+what keeps either from being paid on the ring. Envelopes the sink dropped were
+dropped because this goroutine was busy, which is the correct answer for a live
+view: it shows the present, not a backlog.
+*/
+func (hub *Hub) publish(envelopes <-chan *types.Envelope) {
+	for {
+		var envelope *types.Envelope
 
-			if !valid || client == nil {
-				return true
-			}
-
-			client.enqueue(payload)
-
-			return true
-		})
-	}
-
-	// The three high-volume, loss-tolerant payloads leave the websocket and
-	// ride their own WebRTC channels instead. Each is encoded only when a
-	// connected viewer actually owns that channel: observer serialization
-	// work is demand-driven, so a run with no resonance/diagnostics/manifold
-	// viewer spends none of it. Observer snapshots are replaceable; durable
-	// historical truth lives in Hindsight/raw capture; external viewers can
-	// never backpressure trading computation.
-	if envelope.Manifold != nil && hub.fluid.HasChannel(types.ManifoldChannel) {
-		state := envelope.Manifold
-
-		if hub.manifoldSnapshot != nil {
-			state = hub.manifoldSnapshot()
+		select {
+		case <-hub.ctx.Done():
+			return
+		case envelope = <-envelopes:
 		}
 
-		if err := hub.fluid.Publish(state); err != nil {
-			errnie.Error(errnie.Err(
-				errnie.IO,
-				"hub: publish manifold frame",
-				err,
-			))
+		if envelope == nil {
+			continue
 		}
-	}
 
-	if len(envelope.Boundaries) > 0 && hub.fluid.HasChannel(types.DiagnosticsChannel) {
+		hub.writeFrontend(envelope)
+
+		if !hub.fluid.Wants(types.DiagnosticsChannel) {
+			continue
+		}
+
 		if err := hub.fluid.PublishDiagnostics(envelope); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.IO,
@@ -469,8 +390,66 @@ func (hub *Hub) Step(envelope *types.Envelope) *types.Envelope {
 			))
 		}
 	}
+}
 
-	return envelope
+/*
+writeFrontend encodes one envelope and writes it to the dashboard socket.
+
+The connection is resolved and written under the same lock the /ws handler uses
+to install and detach clients — the one thing here that genuinely has two
+goroutines: this publisher and a connecting or vanishing browser. A failed
+write on a vanishing client is benign; the hub drains the disconnect in the
+detached handler and keeps operating.
+*/
+func (hub *Hub) writeFrontend(envelope *types.Envelope) {
+	hub.frontendMu.Lock()
+	defer hub.frontendMu.Unlock()
+
+	if hub.frontend == nil {
+		return
+	}
+
+	payload := envelope.EncodeWebsocket()
+
+	if len(payload) == 0 {
+		return
+	}
+
+	if err := hub.frontend.WriteMessage(
+		websocket.BinaryMessage, payload,
+	); err != nil {
+		errnie.Warn(fmt.Sprintf(
+			"hub: websocket write message failed: %v", err,
+		))
+	}
+}
+
+/*
+WantsManifold reports that a viewer is watching the resident field and its
+channel is ready for another frame. The manifold advance asks before it
+materializes a snapshot, so an unwatched run never pays for a field readout.
+*/
+func (hub *Hub) WantsManifold() bool {
+	return hub.fluid.Wants(types.ManifoldChannel)
+}
+
+/*
+PublishManifold fans one advance's resident particles and fields to the manifold
+viewers. It is called from the manifold solver's own advance goroutine, never
+from the ingress path.
+*/
+func (hub *Hub) PublishManifold(envelope *types.Envelope) {
+	if envelope == nil || envelope.Manifold == nil {
+		return
+	}
+
+	if err := hub.fluid.Publish(envelope.Manifold); err != nil {
+		errnie.Error(errnie.Err(
+			errnie.IO,
+			"hub: publish manifold frame",
+			err,
+		))
+	}
 }
 
 /*
@@ -479,7 +458,7 @@ the resonance Workload advances its coder to the next ticker.
 */
 func (hub *Hub) PublishResonance(envelope *types.Envelope) {
 	if envelope == nil || envelope.Resonance == nil ||
-		!hub.fluid.HasChannel(types.ResonanceChannel) {
+		!hub.fluid.Wants(types.ResonanceChannel) {
 		return
 	}
 
@@ -490,36 +469,6 @@ func (hub *Hub) PublishResonance(envelope *types.Envelope) {
 			err,
 		))
 	}
-}
-
-/*
-clientReady reports whether at least one dashboard has consumed its prior
-replaceable frame. FlatBuffer construction is skipped while no viewer exists or
-every viewer already has a pending frame, so market ingress never allocates
-snapshots merely to discard them.
-*/
-func (hub *Hub) clientReady() bool {
-	if hub == nil || hub.clients == nil {
-		return false
-	}
-
-	ready := false
-	hub.clients.Range(func(key, value any) bool {
-		client, valid := value.(*Client)
-
-		if !valid || client == nil || client.queue == nil {
-			return true
-		}
-
-		if len(client.queue) == 0 {
-			ready = true
-			return false
-		}
-
-		return true
-	})
-
-	return ready
 }
 
 func (hub *Hub) Name() string { return "hub" }
@@ -549,18 +498,6 @@ func (hub *Hub) SetTradeStore(source TradeJournalSource) {
 	}
 
 	hub.tradeStore = source
-}
-
-/*
-SetManifoldSnapshot supplies the demand-only materializer used when a manifold
-viewer is connected. Ordinary market envelopes carry only the scalar reading.
-*/
-func (hub *Hub) SetManifoldSnapshot(snapshot func() *types.ManifoldState) {
-	if hub == nil {
-		return
-	}
-
-	hub.manifoldSnapshot = snapshot
 }
 
 /*

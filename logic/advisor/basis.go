@@ -46,12 +46,14 @@ func NewBasis() *Basis {
 		"derivatives/liquidation_notional:buy",
 		"derivatives/liquidation_notional:sell",
 		"derivatives/liquidation_signed_fraction",
+		"derivatives/gross_derivative_trade_notional",
 	}
 
 	neutralBasisKeys := []string{
 		"derivatives/basis_change",
 		"derivatives/basis_baseline",
 		"derivatives/derivative_index_log_basis",
+		"derivatives/spot_price",
 	}
 
 	return &Basis{

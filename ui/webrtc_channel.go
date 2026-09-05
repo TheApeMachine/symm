@@ -46,18 +46,12 @@ func newFluidPeer(
 	}
 }
 
-func (peer *fluidPeer) ready() bool {
+func (peer *fluidPeer) idle(label string) bool {
 	peer.mutex.RLock()
-	defer peer.mutex.RUnlock()
+	channel := peer.channels[label]
+	peer.mutex.RUnlock()
 
-	return peer.channels[types.ManifoldChannel] != nil
-}
-
-func (peer *fluidPeer) has(label string) bool {
-	peer.mutex.RLock()
-	defer peer.mutex.RUnlock()
-
-	return peer.channels[label] != nil
+	return channel != nil && channel.idle()
 }
 
 func (peer *fluidPeer) attach(dataChannel *webrtc.DataChannel) {
@@ -146,6 +140,35 @@ type fluidChannel struct {
 	latestReady chan struct{}
 	frameID     uint32
 	sendGen     atomic.Uint64
+
+	// sending is true while the sender is transmitting a frame's chunks. It is
+	// what idle() reports on, so a publisher can decline to encode a record
+	// this channel could only supersede mid-flight.
+	sending atomic.Bool
+}
+
+/*
+idle reports that the channel has finished its last frame and holds nothing
+pending, so a fresh record encoded now will be transmitted whole.
+
+A large record is many SCTP chunks; the publisher that hands one over faster
+than the channel can drain it does not merely waste the encode, it supersedes
+every frame mid-flight and the viewer never reassembles a complete one. Asking
+first is what keeps latest-wins from becoming never-wins.
+*/
+func (channel *fluidChannel) idle() bool {
+	if channel.ctx.Err() != nil {
+		return false
+	}
+
+	if channel.sending.Load() {
+		return false
+	}
+
+	channel.latestMu.Lock()
+	defer channel.latestMu.Unlock()
+
+	return channel.latest == nil
 }
 
 /*
@@ -184,7 +207,7 @@ func newFluidChannel(
 	ctx, cancel := context.WithCancel(ctx)
 	channel := &fluidChannel{
 		ctx: ctx, cancel: cancel, transport: dataChannelTransport{channel: dataChannel},
-		drained: make(chan struct{}, 1),
+		drained:       make(chan struct{}, 1),
 		bufferedLimit: bufferedLimit, fail: fail,
 		latestReady: make(chan struct{}, 1),
 	}
@@ -257,7 +280,11 @@ func (channel *fluidChannel) run() {
 			continue
 		}
 
-		if err := channel.send(payload); err != nil {
+		channel.sending.Store(true)
+		err := channel.send(payload)
+		channel.sending.Store(false)
+
+		if err != nil {
 			if errors.Is(err, errFrameSuperseded) {
 				// A fresher record is already resident in latest: loop back
 				// and take it immediately, without waiting for another token.

@@ -211,15 +211,51 @@ func (fluid *workspace) scatterParticles() {
 	engine.Synchronize()
 }
 
+/*
+gasRK2 advances the Eulerian grid one RK2 step with adaptive Δt halving.
+
+This mirrors the Python reference (thermodynamics.py _run_gas_rk2): when the
+Metal shader detects inadmissible cells (tag 0x13, 0x12, etc.) it poisons the
+output with NaN and logs the event. The host detects the rejection by checking
+the debug event counter, halves dt, and retries — standard RK2 step rejection,
+not a clamp or fallback. The input buffers (rho, mom, energy) are read-only in
+both stages, so retrying is safe.
+
+Rejection attempts are silent: drainDebug is only called on the final failure
+path so the error log contains the actual fatal event rather than a wall of
+expected transient rejections.
+*/
 func (fluid *workspace) gasRK2() error {
 	delta := float32(fluid.rates.deltaT)
+	maxHalvings := 10
 
-	if err := fluid.gasStageOne(delta); err != nil {
-		return err
-	}
+	for halvings := 0; ; halvings++ {
+		// Clear the debug event buffer before each attempt so a retry does
+		// not re-read stale rejection events from a prior attempt.
+		fluid.dbgHead.UInt32Slice()[0] = 0
 
-	if err := fluid.gasStageTwo(delta); err != nil {
-		return err
+		fluid.dispatchGasStageOne(delta)
+		fluid.dispatchGasStageTwo(delta)
+
+		// Check the debug counter directly — if zero, no inadmissible cells
+		// were logged and the step is accepted. This avoids calling drainDebug
+		// (which logs via errnie.Error) on every transient retry.
+		if fluid.dbgHead.UInt32Slice()[0] == 0 {
+			break
+		}
+
+		if halvings >= maxHalvings {
+			// Drain the final failure's debug buffer so the error message
+			// contains the actual cell and tag that failed.
+			_ = fluid.drainDebug()
+
+			return fmt.Errorf(
+				"gas RK2 failed after %d dt halvings (dt=%.6g)", maxHalvings, delta,
+			)
+		}
+
+		// Reset the counter (already done at loop top) and retry with half dt.
+		delta *= 0.5
 	}
 
 	fluid.acceptGasStep()
@@ -227,7 +263,7 @@ func (fluid *workspace) gasRK2() error {
 	return nil
 }
 
-func (fluid *workspace) gasStageOne(delta float32) error {
+func (fluid *workspace) dispatchGasStageOne(delta float32) {
 	fluid.engine.GasRK2Stage1(
 		fluid.rho,
 		fluid.mom,
@@ -244,11 +280,9 @@ func (fluid *workspace) gasStageOne(delta float32) error {
 		float32(fluid.domain.KThermal),
 	)
 	fluid.engine.Synchronize()
-
-	return fluid.drainDebug()
 }
 
-func (fluid *workspace) gasStageTwo(delta float32) error {
+func (fluid *workspace) dispatchGasStageTwo(delta float32) {
 	fluid.engine.GasRK2Stage2(
 		fluid.rho, fluid.mom, fluid.energy,
 		fluid.rho1, fluid.mom1, fluid.energy1,
@@ -264,12 +298,6 @@ func (fluid *workspace) gasStageTwo(delta float32) error {
 		float32(fluid.domain.KThermal),
 	)
 	fluid.engine.Synchronize()
-
-	if err := fluid.drainDebug(); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func (fluid *workspace) acceptGasStep() {

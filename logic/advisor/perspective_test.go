@@ -24,8 +24,11 @@ func TestIssuerIssue(t *testing.T) {
 			So(perspective.Lifecycle, ShouldEqual, types.PerspectiveIssued)
 			So(perspective.Lease.From, ShouldEqual, uint64(3))
 			So(perspective.Lease.Until, ShouldEqual, uint64(5))
+			So(perspective.Classes[0].Evidence, ShouldResemble,
+				predictiveMidpointFeatures()[0].Keys)
 			So(perspective.Predictions, ShouldHaveLength, 4)
 			So(perspective.Predictions[0].Class, ShouldEqual, types.PerspectiveState("recovery"))
+			So(perspective.Predictions[0].Move, ShouldEqual, "INCREASE")
 			So(perspective.Predictions[2].Class, ShouldEqual, types.PerspectiveState("breakdown"))
 		})
 	})

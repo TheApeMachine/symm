@@ -79,6 +79,8 @@ func (store *SQLite) writeOperation(executor sqliteExecutor, operation writerOpe
 		)
 	case writerFence:
 		return nil
+	case writerLearning:
+		return store.writeLearningOperation(executor, operation)
 	default:
 		return errnie.Error(errnie.Err(
 			errnie.Validation,
@@ -118,8 +120,9 @@ func (store *SQLite) writeLifecycleOperation(
 	}
 
 	if _, err := executor.Exec(
-		`INSERT INTO lifecycle (run_id, decision_id, symbol, kind, action, at, execution)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO lifecycle
+		 (run_id, decision_id, symbol, kind, action, at, execution, capture_seq)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		string(runID),
 		event.DecisionID,
 		event.Symbol,
@@ -127,6 +130,7 @@ func (store *SQLite) writeLifecycleOperation(
 		event.Action,
 		event.At.UTC().Format(time.RFC3339Nano),
 		executionJSON,
+		event.CaptureSeq,
 	); err != nil {
 		return errnie.Error(errnie.Err(
 			errnie.IO,

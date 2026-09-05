@@ -347,12 +347,49 @@ table MCTSNode {
   state:[NamedNumber];
   children:[MCTSNode];
 }
+table AdvisorClass {
+  state:string;
+  probability:double;
+}
+table AdvisorMoveMass {
+  move:string;
+  mass:double;
+}
 table AdvisorOpinion {
   advisor:string;
   state:string;
   probability:double;
   credibility:double;
   weight:double;
+  // The advisor's whole reading. A single top probability cannot say whether
+  // it was decisive or nearly split between two incompatible classes.
+  classes:[AdvisorClass];
+  maturity:double;
+  // The move mass this advisor alone placed, before normalization.
+  contribution:[AdvisorMoveMass];
+  // Classes of this advisor that no projection rule accepted, whose weight
+  // therefore never reached the consensus.
+  unmapped:[string];
+  // Classes this advisor declares but could not measure, whose evidence was
+  // incomplete. They took no part in the distribution.
+  unscored:[string];
+  // The clock window this reading is valid over, against the coordinate the
+  // council currently stands at.
+  clock:string;
+  leaseFrom:ulong;
+  leaseUntil:ulong;
+  clockNow:ulong;
+}
+// Why an advisor contributed nothing to a round. Silence had one rendering and
+// two entirely different causes: evidence that never completed, and a reading
+// that has since expired. Only the first is a fault.
+table AdvisorSilence {
+  advisor:string;
+  reason:string;
+  missing:[string];
+  declared:int;
+  leaseUntil:ulong;
+  clockNow:ulong;
 }
 table DecisionTrace {
   identificationStatus:string;
@@ -381,6 +418,8 @@ table DecisionTrace {
   maxDepth:long;
   totalNodes:long;
   advisors:[AdvisorOpinion];
+  advisorSilences:[AdvisorSilence];
+  consensusUnmappedClasses:[string];
 }
 table EntryCost {
   entryPrice:string;
@@ -497,12 +536,14 @@ table PerspectiveFrame {
 table EnvelopePerspectiveClass {
   state:string (required);
   probability:double;
+  evidence:[string];
 }
 
 table EnvelopePerspectivePrediction {
   event:string (required);
   effect:string (required);
   class:string (required);
+  move:string;
 }
 
 table EnvelopePerspectiveLease {
@@ -1008,6 +1049,8 @@ table EnvelopeManifoldState {
   energyScale:float;
   waveScale:float;
   modes:[EnvelopeWaveMode];
+  atNs:long;
+  version:ulong;
 }
 
 table EnvelopeExcursion { low:double; mid:double; high:double; }

@@ -120,12 +120,26 @@ type completionConsumer[T any] struct {
 }
 
 func (consumer *completionConsumer[T]) Handle(lower, upper int64) {
-	if consumer.workload.output != nil {
+	if consumer.workload.output == nil {
+		consumer.workload.completed.Store(upper)
+		return
+	}
+
+	if ingress, ok := consumer.workload.output.(Ingress[T]); ok {
 		for sequence := lower; sequence <= upper; sequence++ {
-			consumer.workload.output.Step(
+			ingress.Push(
 				consumer.workload.buffer[sequence&system.Cfg.Runtime.Workspace.Mask],
 			)
 		}
+
+		consumer.workload.completed.Store(upper)
+		return
+	}
+
+	for sequence := lower; sequence <= upper; sequence++ {
+		consumer.workload.output.Step(
+			consumer.workload.buffer[sequence&system.Cfg.Runtime.Workspace.Mask],
+		)
 	}
 
 	consumer.workload.completed.Store(upper)

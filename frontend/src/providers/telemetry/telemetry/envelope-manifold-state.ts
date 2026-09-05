@@ -148,8 +148,18 @@ modesLength():number {
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
+atNs():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 34);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
+
+version():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 36);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
 static startEnvelopeManifoldState(builder:flatbuffers.Builder) {
-  builder.startObject(15);
+  builder.startObject(17);
 }
 
 static addState(builder:flatbuffers.Builder, stateOffset:flatbuffers.Offset) {
@@ -292,6 +302,14 @@ static startModesVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
+static addAtNs(builder:flatbuffers.Builder, atNs:bigint) {
+  builder.addFieldInt64(15, atNs, BigInt('0'));
+}
+
+static addVersion(builder:flatbuffers.Builder, version:bigint) {
+  builder.addFieldInt64(16, version, BigInt('0'));
+}
+
 static endEnvelopeManifoldState(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   builder.requiredField(offset, 4) // state
@@ -316,7 +334,9 @@ unpack(): EnvelopeManifoldStateT {
     this.momentumScale(),
     this.energyScale(),
     this.waveScale(),
-    this.bb!.createObjList<EnvelopeWaveMode, EnvelopeWaveModeT>(this.modes.bind(this), this.modesLength())
+    this.bb!.createObjList<EnvelopeWaveMode, EnvelopeWaveModeT>(this.modes.bind(this), this.modesLength()),
+    this.atNs(),
+    this.version()
   );
 }
 
@@ -337,6 +357,8 @@ unpackTo(_o: EnvelopeManifoldStateT): void {
   _o.energyScale = this.energyScale();
   _o.waveScale = this.waveScale();
   _o.modes = this.bb!.createObjList<EnvelopeWaveMode, EnvelopeWaveModeT>(this.modes.bind(this), this.modesLength());
+  _o.atNs = this.atNs();
+  _o.version = this.version();
 }
 }
 
@@ -356,7 +378,9 @@ constructor(
   public momentumScale: number = 0.0,
   public energyScale: number = 0.0,
   public waveScale: number = 0.0,
-  public modes: (EnvelopeWaveModeT)[] = []
+  public modes: (EnvelopeWaveModeT)[] = [],
+  public atNs: bigint = BigInt('0'),
+  public version: bigint = BigInt('0')
 ){}
 
 
@@ -385,6 +409,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   EnvelopeManifoldState.addEnergyScale(builder, this.energyScale);
   EnvelopeManifoldState.addWaveScale(builder, this.waveScale);
   EnvelopeManifoldState.addModes(builder, modes);
+  EnvelopeManifoldState.addAtNs(builder, this.atNs);
+  EnvelopeManifoldState.addVersion(builder, this.version);
 
   return EnvelopeManifoldState.endEnvelopeManifoldState(builder);
 }

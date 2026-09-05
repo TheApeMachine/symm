@@ -91,3 +91,77 @@ describe("buildPositions", () => {
 		expect(positionsFor(positions, "VVV/USD")[0].decisionId).toBe("d2");
 	});
 });
+
+const event = (
+	decisionId: string,
+	symbol: string,
+	kind: string,
+): HindsightLifecycleEvent => ({
+	decisionId,
+	symbol,
+	kind,
+	action: "",
+	at: "2026-09-04T07:50:37.265417Z",
+	execution: null,
+});
+
+describe("seeking a position back to its frame", () => {
+	it("carries the frame the causing decision was recorded on", () => {
+		const positions = buildPositions([
+			{
+				...event("d1", "SOL/USD", "entry_fill"),
+				captureSeq: 1140986,
+				execution: {
+					orderId: "P1",
+					clientOrderId: "d1",
+					execId: "E1",
+					side: "buy",
+					orderStatus: "filled",
+					avgPrice: "103.72",
+					cumQty: "0.19",
+					feeUsdEquiv: "0.1585",
+					fillAt: "2026-09-04T07:50:37.265417Z",
+				},
+			},
+		]);
+
+		expect(positions).toHaveLength(1);
+		expect(positions[0].entrySeq).toBe(1140986);
+	});
+
+	it("stays unseekable rather than guessing when no frame was recorded", () => {
+		const positions = buildPositions([event("d2", "MON/USD", "position_open")]);
+
+		expect(positions[0].entrySeq).toBeNull();
+	});
+
+	it("ignores a zero frame, which means the join found nothing", () => {
+		const positions = buildPositions([
+			{ ...event("d3", "AVA/USD", "position_open"), captureSeq: 0 },
+		]);
+
+		expect(positions[0].entrySeq).toBeNull();
+	});
+});
+
+describe("the exit edge", () => {
+	it("takes a stamped exit frame from the record", () => {
+		const positions = buildPositions([
+			{ ...event("d4", "SOL/USD", "position_open"), captureSeq: 100 },
+			{ ...event("d4", "SOL/USD", "position_close"), captureSeq: 460 },
+		]);
+
+		expect(positions[0].entrySeq).toBe(100);
+		expect(positions[0].exitSeq).toBe(460);
+	});
+
+	it("never borrows the entry frame for an unstamped exit", () => {
+		const positions = buildPositions([
+			{ ...event("d5", "SOL/USD", "position_open"), captureSeq: 100 },
+			{ ...event("d5", "SOL/USD", "position_close"), captureSeq: 0 },
+		]);
+
+		expect(positions[0].entrySeq).toBe(100);
+		expect(positions[0].exitSeq).toBeNull();
+	});
+});

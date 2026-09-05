@@ -271,10 +271,19 @@ func NewRiskPlan(inputs RiskInputs) RiskPlan {
 		)
 	}
 
+	feeHurdle := decimal.NewFromInt64(0)
+	totalFeeRate := sum(scaled(inputs.EntryFeeRate), scaled(inputs.ExitFeeRate))
+
+	if totalFeeRate != nil && totalFeeRate.Sign() > 0 {
+		feeBand := reference.Mul(totalFeeRate)
+		feeHurdle = feeBand.Add(noiseBand)
+	}
+
 	riskDistance := largest(
 		volatilityBand,
 		multiply(noiseBand, multiples.Risk),
 		minimumBand,
+		feeHurdle,
 	)
 
 	/*

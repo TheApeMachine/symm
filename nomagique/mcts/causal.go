@@ -1,6 +1,9 @@
 package mcts
 
 import (
+	"sync"
+
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/causal"
 )
 
@@ -68,10 +71,75 @@ type CausalEngine interface {
 	) (counterfactual float64, noise float64, precision float64, err error)
 }
 
+type tableCacheEntry struct {
+	table   *causal.Table
+	rowsPtr *float64
+	rowsLen int
+	target  int
+	minRows int
+	linear  bool
+}
+
+var causalTableCache struct {
+	sync.Mutex
+	entry tableCacheEntry
+}
+
+func getOrNewTable(
+	rows [][]float64,
+	target int,
+	minimumRows int,
+	linear bool,
+) (*causal.Table, error) {
+	if len(rows) > 0 && len(rows[0]) > 0 {
+		causalTableCache.Lock()
+		firstElem := &rows[0][0]
+
+		if causalTableCache.entry.table != nil &&
+			causalTableCache.entry.rowsPtr == firstElem &&
+			causalTableCache.entry.rowsLen == len(rows) &&
+			causalTableCache.entry.target == target &&
+			causalTableCache.entry.minRows == minimumRows &&
+			causalTableCache.entry.linear == linear {
+			table := causalTableCache.entry.table
+			causalTableCache.Unlock()
+
+			return table, nil
+		}
+
+		causalTableCache.Unlock()
+	}
+
+	table, err := causal.NewTable(rows, target, minimumRows, linear)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.PreconditionFailed,
+			"[mcts] causal table construction failed",
+			err,
+		))
+	}
+
+	if len(rows) > 0 && len(rows[0]) > 0 {
+		causalTableCache.Lock()
+		causalTableCache.entry = tableCacheEntry{
+			table:   table,
+			rowsPtr: &rows[0][0],
+			rowsLen: len(rows),
+			target:  target,
+			minRows: minimumRows,
+			linear:  linear,
+		}
+		causalTableCache.Unlock()
+	}
+
+	return table, nil
+}
+
 /*
 DefaultCausalEngine evaluates search history with the nomagique causal Table.
-It is stateless: every query fits its model from the rows it is handed, so the
-search can grow its evidence with rollout trajectories between queries.
+It reuses a cached table across queries when the history slice is identical,
+avoiding repetitive deep-cloning and linear matrix inversions during search.
 */
 type DefaultCausalEngine struct {
 	// Linear selects the linear structural fit over regression stumps for the
@@ -91,10 +159,14 @@ func (engine DefaultCausalEngine) DoExpectation(
 	level float64,
 	controls []int,
 ) (float64, error) {
-	table, err := causal.NewTable(rows, target, minimumRows, engine.Linear)
+	table, err := getOrNewTable(rows, target, minimumRows, engine.Linear)
 
 	if err != nil {
-		return 0, err
+		return 0, errnie.Error(errnie.Err(
+			errnie.PreconditionFailed,
+			"[mcts] causal table construction failed",
+			err,
+		))
 	}
 
 	return table.DoExpectation(treatment, level, controls...)
@@ -115,10 +187,14 @@ func (engine DefaultCausalEngine) AbductiveCounterfactual(
 	treatment int,
 	level float64,
 ) (float64, float64, float64, error) {
-	table, err := causal.NewTable(rows, target, minimumRows, linear)
+	table, err := getOrNewTable(rows, target, minimumRows, linear)
 
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, errnie.Error(errnie.Err(
+			errnie.PreconditionFailed,
+			"[mcts] causal table construction failed",
+			err,
+		))
 	}
 
 	return table.AbductiveCounterfactual(features, actual, treatment, level)

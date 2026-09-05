@@ -5,6 +5,8 @@
 
 import * as flatbuffers from 'flatbuffers';
 
+import { AdvisorClass, AdvisorClassT } from '../telemetry/advisor-class.js';
+import { AdvisorMoveMass, AdvisorMoveMassT } from '../telemetry/advisor-move-mass.js';
 
 
 export class AdvisorOpinion implements flatbuffers.IUnpackableObject<AdvisorOpinionT> {
@@ -54,8 +56,79 @@ weight():number {
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
+classes(index: number, obj?:AdvisorClass):AdvisorClass|null {
+  const offset = this.bb!.__offset(this.bb_pos, 14);
+  return offset ? (obj || new AdvisorClass()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+classesLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 14);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+maturity():number {
+  const offset = this.bb!.__offset(this.bb_pos, 16);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
+
+contribution(index: number, obj?:AdvisorMoveMass):AdvisorMoveMass|null {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? (obj || new AdvisorMoveMass()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+contributionLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+unmapped(index: number):string
+unmapped(index: number,optionalEncoding:flatbuffers.Encoding):string|Uint8Array
+unmapped(index: number,optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.__string(this.bb!.__vector(this.bb_pos + offset) + index * 4, optionalEncoding) : null;
+}
+
+unmappedLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+unscored(index: number):string
+unscored(index: number,optionalEncoding:flatbuffers.Encoding):string|Uint8Array
+unscored(index: number,optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? this.bb!.__string(this.bb!.__vector(this.bb_pos + offset) + index * 4, optionalEncoding) : null;
+}
+
+unscoredLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+clock():string|null
+clock(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+clock(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 24);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+leaseFrom():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 26);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
+leaseUntil():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 28);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
+clockNow():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 30);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
 static startAdvisorOpinion(builder:flatbuffers.Builder) {
-  builder.startObject(5);
+  builder.startObject(14);
 }
 
 static addAdvisor(builder:flatbuffers.Builder, advisorOffset:flatbuffers.Offset) {
@@ -78,18 +151,111 @@ static addWeight(builder:flatbuffers.Builder, weight:number) {
   builder.addFieldFloat64(4, weight, 0.0);
 }
 
+static addClasses(builder:flatbuffers.Builder, classesOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(5, classesOffset, 0);
+}
+
+static createClassesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startClassesVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
+static addMaturity(builder:flatbuffers.Builder, maturity:number) {
+  builder.addFieldFloat64(6, maturity, 0.0);
+}
+
+static addContribution(builder:flatbuffers.Builder, contributionOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(7, contributionOffset, 0);
+}
+
+static createContributionVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startContributionVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
+static addUnmapped(builder:flatbuffers.Builder, unmappedOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(8, unmappedOffset, 0);
+}
+
+static createUnmappedVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startUnmappedVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
+static addUnscored(builder:flatbuffers.Builder, unscoredOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(9, unscoredOffset, 0);
+}
+
+static createUnscoredVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startUnscoredVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
+static addClock(builder:flatbuffers.Builder, clockOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(10, clockOffset, 0);
+}
+
+static addLeaseFrom(builder:flatbuffers.Builder, leaseFrom:bigint) {
+  builder.addFieldInt64(11, leaseFrom, BigInt('0'));
+}
+
+static addLeaseUntil(builder:flatbuffers.Builder, leaseUntil:bigint) {
+  builder.addFieldInt64(12, leaseUntil, BigInt('0'));
+}
+
+static addClockNow(builder:flatbuffers.Builder, clockNow:bigint) {
+  builder.addFieldInt64(13, clockNow, BigInt('0'));
+}
+
 static endAdvisorOpinion(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createAdvisorOpinion(builder:flatbuffers.Builder, advisorOffset:flatbuffers.Offset, stateOffset:flatbuffers.Offset, probability:number, credibility:number, weight:number):flatbuffers.Offset {
+static createAdvisorOpinion(builder:flatbuffers.Builder, advisorOffset:flatbuffers.Offset, stateOffset:flatbuffers.Offset, probability:number, credibility:number, weight:number, classesOffset:flatbuffers.Offset, maturity:number, contributionOffset:flatbuffers.Offset, unmappedOffset:flatbuffers.Offset, unscoredOffset:flatbuffers.Offset, clockOffset:flatbuffers.Offset, leaseFrom:bigint, leaseUntil:bigint, clockNow:bigint):flatbuffers.Offset {
   AdvisorOpinion.startAdvisorOpinion(builder);
   AdvisorOpinion.addAdvisor(builder, advisorOffset);
   AdvisorOpinion.addState(builder, stateOffset);
   AdvisorOpinion.addProbability(builder, probability);
   AdvisorOpinion.addCredibility(builder, credibility);
   AdvisorOpinion.addWeight(builder, weight);
+  AdvisorOpinion.addClasses(builder, classesOffset);
+  AdvisorOpinion.addMaturity(builder, maturity);
+  AdvisorOpinion.addContribution(builder, contributionOffset);
+  AdvisorOpinion.addUnmapped(builder, unmappedOffset);
+  AdvisorOpinion.addUnscored(builder, unscoredOffset);
+  AdvisorOpinion.addClock(builder, clockOffset);
+  AdvisorOpinion.addLeaseFrom(builder, leaseFrom);
+  AdvisorOpinion.addLeaseUntil(builder, leaseUntil);
+  AdvisorOpinion.addClockNow(builder, clockNow);
   return AdvisorOpinion.endAdvisorOpinion(builder);
 }
 
@@ -99,7 +265,16 @@ unpack(): AdvisorOpinionT {
     this.state(),
     this.probability(),
     this.credibility(),
-    this.weight()
+    this.weight(),
+    this.bb!.createObjList<AdvisorClass, AdvisorClassT>(this.classes.bind(this), this.classesLength()),
+    this.maturity(),
+    this.bb!.createObjList<AdvisorMoveMass, AdvisorMoveMassT>(this.contribution.bind(this), this.contributionLength()),
+    this.bb!.createScalarList<string>(this.unmapped.bind(this), this.unmappedLength()),
+    this.bb!.createScalarList<string>(this.unscored.bind(this), this.unscoredLength()),
+    this.clock(),
+    this.leaseFrom(),
+    this.leaseUntil(),
+    this.clockNow()
   );
 }
 
@@ -110,6 +285,15 @@ unpackTo(_o: AdvisorOpinionT): void {
   _o.probability = this.probability();
   _o.credibility = this.credibility();
   _o.weight = this.weight();
+  _o.classes = this.bb!.createObjList<AdvisorClass, AdvisorClassT>(this.classes.bind(this), this.classesLength());
+  _o.maturity = this.maturity();
+  _o.contribution = this.bb!.createObjList<AdvisorMoveMass, AdvisorMoveMassT>(this.contribution.bind(this), this.contributionLength());
+  _o.unmapped = this.bb!.createScalarList<string>(this.unmapped.bind(this), this.unmappedLength());
+  _o.unscored = this.bb!.createScalarList<string>(this.unscored.bind(this), this.unscoredLength());
+  _o.clock = this.clock();
+  _o.leaseFrom = this.leaseFrom();
+  _o.leaseUntil = this.leaseUntil();
+  _o.clockNow = this.clockNow();
 }
 }
 
@@ -119,20 +303,43 @@ constructor(
   public state: string|Uint8Array|null = null,
   public probability: number = 0.0,
   public credibility: number = 0.0,
-  public weight: number = 0.0
+  public weight: number = 0.0,
+  public classes: (AdvisorClassT)[] = [],
+  public maturity: number = 0.0,
+  public contribution: (AdvisorMoveMassT)[] = [],
+  public unmapped: (string)[] = [],
+  public unscored: (string)[] = [],
+  public clock: string|Uint8Array|null = null,
+  public leaseFrom: bigint = BigInt('0'),
+  public leaseUntil: bigint = BigInt('0'),
+  public clockNow: bigint = BigInt('0')
 ){}
 
 
 pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const advisor = (this.advisor !== null ? builder.createString(this.advisor!) : 0);
   const state = (this.state !== null ? builder.createString(this.state!) : 0);
+  const classes = AdvisorOpinion.createClassesVector(builder, builder.createObjectOffsetList(this.classes));
+  const contribution = AdvisorOpinion.createContributionVector(builder, builder.createObjectOffsetList(this.contribution));
+  const unmapped = AdvisorOpinion.createUnmappedVector(builder, builder.createObjectOffsetList(this.unmapped));
+  const unscored = AdvisorOpinion.createUnscoredVector(builder, builder.createObjectOffsetList(this.unscored));
+  const clock = (this.clock !== null ? builder.createString(this.clock!) : 0);
 
   return AdvisorOpinion.createAdvisorOpinion(builder,
     advisor,
     state,
     this.probability,
     this.credibility,
-    this.weight
+    this.weight,
+    classes,
+    this.maturity,
+    contribution,
+    unmapped,
+    unscored,
+    clock,
+    this.leaseFrom,
+    this.leaseUntil,
+    this.clockNow
   );
 }
 }

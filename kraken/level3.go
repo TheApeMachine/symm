@@ -3,6 +3,7 @@ package kraken
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
 	"strconv"
 	"strings"
@@ -179,7 +180,14 @@ including through the opposite side's last known touch — it can also
 manufacture a crossed book out of a healthy one.
 */
 func (order Level3Order) Resting() bool {
-	return order.Event != "delete" && order.LimitPrice != nil && order.OrderQty != nil
+	if order.Event == "delete" || order.LimitPrice == nil || order.OrderQty == nil {
+		return false
+	}
+
+	price := order.LimitPrice.Float64()
+	qty := order.OrderQty.Float64()
+
+	return price > 0 && qty > 0 && !math.IsNaN(price) && !math.IsNaN(qty) && !math.IsInf(price, 0) && !math.IsInf(qty, 0)
 }
 
 /*

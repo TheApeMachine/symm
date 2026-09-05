@@ -589,7 +589,7 @@ func withdrawsPrice(orders []kraken.Level3Order, price float64, hasPrice bool) b
 	}
 
 	for _, order := range orders {
-		if order.Event == "delete" && order.LimitPrice.Float64() == price {
+		if order.Event == "delete" && order.LimitPrice != nil && order.LimitPrice.Float64() == price {
 			return true
 		}
 	}

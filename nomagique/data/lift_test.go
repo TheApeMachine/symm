@@ -57,3 +57,33 @@ func TestLift(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkLift(b *testing.B) {
+	currentTime := time.Now()
+
+	measurementOne := NewMeasurement[float64]("id-1", "test", "hawkes", currentTime, currentTime)
+	measurementOne.PutMetric(Metric[float64]{
+		Label: "arrival_rate",
+		Raw:   100.0,
+	})
+	measurementOne.Metadata = map[string]float64{
+		MetadataSupport: 10,
+	}
+	measurementOne.Finalize()
+
+	measurementTwo := NewMeasurement[float64]("id-2", "test", "depthflow", currentTime, currentTime)
+	measurementTwo.PutMetric(Metric[float64]{
+		Label: "imbalance",
+		Raw:   50.0,
+	})
+	measurementTwo.Finalize()
+
+	measurements := []*Measurement[float64]{measurementOne, measurementTwo}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		_, _ = Lift(measurements)
+	}
+}

@@ -66,7 +66,8 @@ ALLOWED_SUFFIXES: tuple[str, ...] = (
     ".metal",
     ".mm",
     ".m",
-    ".h"
+    ".h",
+    ".py"
 )
 
 

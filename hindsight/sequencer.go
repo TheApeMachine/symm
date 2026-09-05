@@ -94,3 +94,23 @@ func (sequencer *Sequencer) Reconnect(stream Stream) {
 	state.sequence = 0
 	sequencer.streams[stream] = state
 }
+
+/*
+Latest returns the capture sequence most recently assigned in this run: the
+frame the system had observed up to at the moment of the call.
+
+It exists for facts that happen between frames rather than on one. A position
+exit is the case: the desk's Stoploss acts on the market it has seen, but it
+commits no decision of its own, so the exit has no envelope of its own to be
+correlated to. Stamping the latest assigned sequence records the tape position
+the exit was taken at, which is the honest answer to "where on the tape did
+this happen" — it is not a claim that the exit was caused by that frame.
+
+Zero before the first frame of a run has been assigned.
+*/
+func (sequencer *Sequencer) Latest() CaptureSequence {
+	sequencer.mu.Lock()
+	defer sequencer.mu.Unlock()
+
+	return sequencer.next
+}

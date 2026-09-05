@@ -24,6 +24,8 @@ Conn is the internal websocket and REST transport.
 type Conn interface {
 	Status() runtime.Stage
 	MarkReady()
+	Books() *sync.Map
+	Book(string, func(*book.Book))
 	SubInstrument(chan any)
 	SubTicker([]string)
 	SubTrades([]string)
@@ -298,6 +300,9 @@ func (api *API) MarkReady() {
 	api.private.MarkReady()
 }
 
+func (api *API) Private() Conn                                    { return api.private }
+func (api *API) Books() *sync.Map                                 { return api.private.Books() }
+func (api *API) Book(symbol string, read func(*book.Book))        { api.private.Book(symbol, read) }
 func (api *API) SubInstrument(callback chan any)                  { api.public.SubInstrument(callback) }
 func (api *API) SubTicker(symbols []string)                       { api.public.SubTicker(symbols) }
 func (api *API) SubL3(symbols []string)                           { api.private.SubL3(symbols) }

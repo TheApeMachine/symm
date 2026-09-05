@@ -150,13 +150,18 @@ func TestEnvelopeEncode(t *testing.T) {
 			Advisor:  "momentum",
 			Question: "momentum",
 			Classes: []PerspectiveClass{
-				{State: "building", Probability: 0.7},
+				{
+					State:       "building",
+					Probability: 0.7,
+					Evidence:    []string{"cvd/rate"},
+				},
 				{State: "reversing", Probability: 0.3},
 			},
 			Predictions: []PerspectivePrediction{{
 				Class:  "reversing",
 				Event:  "price rejection",
 				Effect: PredictionSupports,
+				Move:   "DECREASE",
 			}},
 			Lease: PerspectiveLease{
 				Clock: "pumpdump/completed_volume_bar_ordinal",
@@ -171,11 +176,15 @@ func TestEnvelopeEncode(t *testing.T) {
 			So(decoded.PerspectivesLength(), ShouldEqual, 1)
 			perspective := &telemetry.EnvelopePerspective{}
 			So(decoded.Perspectives(perspective, 0), ShouldBeTrue)
+			class := &telemetry.EnvelopePerspectiveClass{}
+			So(perspective.Classes(class, 0), ShouldBeTrue)
+			So(string(class.Evidence(0)), ShouldEqual, "cvd/rate")
 			So(perspective.PredictionsLength(), ShouldEqual, 1)
 			prediction := &telemetry.EnvelopePerspectivePrediction{}
 			So(perspective.Predictions(prediction, 0), ShouldBeTrue)
 			So(string(prediction.Class()), ShouldEqual, "reversing")
 			So(string(prediction.Event()), ShouldEqual, "price rejection")
+			So(string(prediction.Move()), ShouldEqual, "DECREASE")
 		})
 	})
 
@@ -377,6 +386,25 @@ func TestEnvelopeMeasurementFocusGate(t *testing.T) {
 			So(decoded, ShouldNotBeNil)
 			So(decoded.Hawkes(nil), ShouldNotBeNil)
 			So(decoded.Toxicity(nil), ShouldNotBeNil)
+		})
+	})
+}
+
+func TestEncodeManifoldState(t *testing.T) {
+	Convey("Given a manifold reading with its producer identity", t, func() {
+		produced := time.Unix(12, 34)
+		envelope := &Envelope{Manifold: &ManifoldState{At: produced, Version: 7}}
+		decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeBytes(), 0).Manifold(nil)
+		So(decoded, ShouldNotBeNil)
+		So(decoded.AtNs(), ShouldEqual, produced.UnixNano())
+		So(decoded.Version(), ShouldEqual, 7)
+
+		Convey("unknown production identity stays explicitly absent", func() {
+			envelope.Manifold.At = time.Time{}
+			envelope.Manifold.Version = 0
+			decoded = telemetry.GetRootAsEnvelopeState(envelope.EncodeBytes(), 0).Manifold(nil)
+			So(decoded.AtNs(), ShouldEqual, 0)
+			So(decoded.Version(), ShouldEqual, 0)
 		})
 	})
 }

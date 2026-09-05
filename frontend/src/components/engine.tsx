@@ -25,7 +25,7 @@ export const Engine = () => {
 		(state) => state.length,
 	);
 	const lastPositions = useSelector(positionStore, (state) =>
-		state.findLast((f) => f.rowsLength() > 0),
+		state.findLast(() => true),
 	);
 
 	return (

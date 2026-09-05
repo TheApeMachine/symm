@@ -537,3 +537,85 @@ func isNoSuchTable(err error) bool {
 
 	return strings.Contains(err.Error(), "no such table")
 }
+
+/*
+AdoptLegacyStore imports position state left behind in a separate database
+file.
+
+Position state used to live in its own SQLite file alongside the capture. It
+belongs with the capture: a position is part of the record of what a run did,
+and keeping it apart meant the trade journal and the stoploss recovery state
+could not be read in the same transaction as the lifecycle tape that explains
+them. This carries the old file's rows into the current store once, so
+consolidating does not discard the history that was already recorded.
+
+The import is idempotent. Trades are unique by decision, stoploss state by
+symbol and entry instant, so a row already present is left exactly as it is
+rather than being overwritten by an older copy of itself. A missing legacy
+file is not an error: it is the ordinary state after the first consolidation.
+*/
+func (store *PositionStore) AdoptLegacyStore(path string) (int64, error) {
+	if store == nil || store.database == nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"position store: database required",
+			nil,
+		))
+	}
+
+	if path == "" {
+		return 0, nil
+	}
+
+	if _, err := os.Stat(path); err != nil {
+		return 0, nil
+	}
+
+	if _, err := store.database.Exec(`ATTACH DATABASE ? AS legacy`, path); err != nil {
+		return 0, errnie.Error(errnie.Err(
+			errnie.IO,
+			fmt.Sprintf("position store: attach legacy store %s [%s]", path, err.Error()),
+			err,
+		))
+	}
+
+	defer func() {
+		_, _ = store.database.Exec(`DETACH DATABASE legacy`)
+	}()
+
+	adopted := int64(0)
+
+	for _, statement := range []string{
+		`INSERT OR IGNORE INTO main.position_stoplosses
+		 SELECT * FROM legacy.position_stoplosses`,
+		`INSERT OR IGNORE INTO main.position_trades (
+		     symbol, status, decision_id, entry_at, entry_price, entry_fee, qty,
+		     exit_at, exit_price, exit_fee, pnl, return_pct, trigger_reason,
+		     trigger_mark, floor, peak, profit_line, locked, cause,
+		     raw_position, created_at, updated_at
+		 )
+		 SELECT symbol, status, decision_id, entry_at, entry_price, entry_fee, qty,
+		        exit_at, exit_price, exit_fee, pnl, return_pct, trigger_reason,
+		        trigger_mark, floor, peak, profit_line, locked, cause,
+		        raw_position, created_at, updated_at
+		 FROM legacy.position_trades`,
+	} {
+		result, err := store.database.Exec(statement)
+
+		if err != nil {
+			return adopted, errnie.Error(errnie.Err(
+				errnie.IO,
+				"position store: adopt legacy rows",
+				err,
+			))
+		}
+
+		affected, err := result.RowsAffected()
+
+		if err == nil {
+			adopted += affected
+		}
+	}
+
+	return adopted, nil
+}

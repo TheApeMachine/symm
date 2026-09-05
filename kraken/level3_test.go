@@ -74,5 +74,14 @@ func TestLevel3OrderResting(t *testing.T) {
 			So(Level3Order{Event: "add", OrderQty: quantity}.Resting(), ShouldBeFalse)
 			So(Level3Order{Event: "add", LimitPrice: price}.Resting(), ShouldBeFalse)
 		})
+
+		Convey("An order with zero or negative price or quantity is not resting", func() {
+			zero := decimal.NewFromFloat64(0)
+			negative := decimal.NewFromFloat64(-1)
+			So(Level3Order{Event: "add", LimitPrice: zero, OrderQty: quantity}.Resting(), ShouldBeFalse)
+			So(Level3Order{Event: "add", LimitPrice: negative, OrderQty: quantity}.Resting(), ShouldBeFalse)
+			So(Level3Order{Event: "add", LimitPrice: price, OrderQty: zero}.Resting(), ShouldBeFalse)
+			So(Level3Order{Event: "add", LimitPrice: price, OrderQty: negative}.Resting(), ShouldBeFalse)
+		})
 	})
 }

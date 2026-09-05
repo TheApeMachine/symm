@@ -9,6 +9,7 @@ import { Nav } from "@/components/ui/nav";
 
 type TerminalRoutePath =
 	| "/"
+	| "/learning"
 	| "/influence"
 	| "/lineage"
 	| "/fluid"
@@ -28,6 +29,7 @@ export const SURFACE_ITEMS: Array<{
 	to: TerminalRoutePath;
 }> = [
 	{ key: "dashboard", label: "Dashboard", icon: "dashboard", to: "/" },
+	{ key: "learning", label: "Forward learning", icon: "grid", to: "/learning" },
 	{
 		key: "diagnostics",
 		label: "System diagnostics",

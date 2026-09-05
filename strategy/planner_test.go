@@ -6,6 +6,7 @@ import (
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/advisor"
 	"github.com/theapemachine/symm/nomagique/learning"
@@ -33,7 +34,12 @@ plannerForTest builds a planner with a live War Room but no desk, so plan can
 be exercised without a broker.
 */
 func plannerForTest() *Planner {
-	return &Planner{warRoom: advisor.NewWarRoom()}
+	return &Planner{
+		warRoom:        advisor.NewWarRoom(),
+		lastEpochs:     make(map[string]hindsight.StreamEpoch),
+		lastSequences:  make(map[string]uint64),
+		lastTimestamps: make(map[string]time.Time),
+	}
 }
 
 func TestPlannerRejectsMalformedTicker(t *testing.T) {
@@ -271,3 +277,64 @@ func TestPlannerStreamingTopologyCases(t *testing.T) {
 		So(out.StrategyRound.Decisions[0].Action, ShouldEqual, types.ActionNothing)
 	})
 }
+
+func TestPlannerEpochAndSequenceValidation(t *testing.T) {
+	Convey("Given a planner receiving stream envelopes", t, func() {
+		planner := plannerForTest()
+
+		Convey("sequence progression within the same epoch succeeds", func() {
+			first := tickerEnvelope("TEST/USD", 100, 101)
+			first.Stream = hindsight.StreamRef{Epoch: 1, Sequence: 100}
+			first.TickerData.Timestamp = time.Unix(10, 0)
+			So(planner.Step(first), ShouldNotBeNil)
+
+			second := tickerEnvelope("TEST/USD", 100, 101)
+			second.Stream = hindsight.StreamRef{Epoch: 1, Sequence: 101}
+			second.TickerData.Timestamp = time.Unix(11, 0)
+			So(planner.Step(second), ShouldNotBeNil)
+
+			Convey("sequence regression within the same epoch halts the planner", func() {
+				regressed := tickerEnvelope("TEST/USD", 100, 101)
+				regressed.Stream = hindsight.StreamRef{Epoch: 1, Sequence: 50}
+				regressed.TickerData.Timestamp = time.Unix(12, 0)
+				So(planner.Step(regressed), ShouldBeNil)
+				So(planner.Error(), ShouldNotBeNil)
+				So(planner.Error().Error(), ShouldContainSubstring, "sequence regression")
+			})
+		})
+
+		Convey("reconnect advancing StreamEpoch resets sequence baseline cleanly", func() {
+			first := tickerEnvelope("TEST/USD", 100, 101)
+			first.Stream = hindsight.StreamRef{Epoch: 1, Sequence: 17436}
+			first.TickerData.Timestamp = time.Unix(100, 0)
+			So(planner.Step(first), ShouldNotBeNil)
+
+			reconnect := tickerEnvelope("TEST/USD", 100, 101)
+			reconnect.Stream = hindsight.StreamRef{Epoch: 2, Sequence: 1}
+			reconnect.TickerData.Timestamp = time.Unix(101, 0)
+			So(planner.Step(reconnect), ShouldNotBeNil)
+			So(planner.Error(), ShouldBeNil)
+
+			second := tickerEnvelope("TEST/USD", 100, 101)
+			second.Stream = hindsight.StreamRef{Epoch: 2, Sequence: 2}
+			second.TickerData.Timestamp = time.Unix(102, 0)
+			So(planner.Step(second), ShouldNotBeNil)
+			So(planner.Error(), ShouldBeNil)
+		})
+
+		Convey("epoch regression halts the planner", func() {
+			first := tickerEnvelope("TEST/USD", 100, 101)
+			first.Stream = hindsight.StreamRef{Epoch: 2, Sequence: 10}
+			first.TickerData.Timestamp = time.Unix(10, 0)
+			So(planner.Step(first), ShouldNotBeNil)
+
+			staleEpoch := tickerEnvelope("TEST/USD", 100, 101)
+			staleEpoch.Stream = hindsight.StreamRef{Epoch: 1, Sequence: 100}
+			staleEpoch.TickerData.Timestamp = time.Unix(11, 0)
+			So(planner.Step(staleEpoch), ShouldBeNil)
+			So(planner.Error(), ShouldNotBeNil)
+			So(planner.Error().Error(), ShouldContainSubstring, "epoch regression")
+		})
+	})
+}
+

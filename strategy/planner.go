@@ -3,11 +3,14 @@ package strategy
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/logic/advisor"
 	"github.com/theapemachine/symm/nomagique/mcts"
 	"github.com/theapemachine/symm/nomagique/runtime"
@@ -75,6 +78,9 @@ type Planner struct {
 	search                *mcts.Search
 	maxAllocationFraction float64
 	observations          map[string][][]float64
+	lastPrices            map[string]float64
+	lastEquities          map[string]float64
+	lastEpochs            map[string]hindsight.StreamEpoch
 	lastSequences         map[string]uint64
 	lastTimestamps        map[string]time.Time
 }
@@ -120,6 +126,9 @@ func NewPlanner(
 		search:                search,
 		maxAllocationFraction: config.MaxAllocationFraction,
 		observations:          make(map[string][][]float64),
+		lastPrices:            make(map[string]float64),
+		lastEquities:          make(map[string]float64),
+		lastEpochs:            make(map[string]hindsight.StreamEpoch),
 		lastSequences:         make(map[string]uint64),
 		lastTimestamps:        make(map[string]time.Time),
 	}, nil
@@ -160,6 +169,10 @@ func (planner *Planner) Step(envelope *types.Envelope) *types.Envelope {
 
 	if len(envelope.Perspectives) > 0 {
 		planner.warRoom.Admit(envelope.Perspectives, envelopeSymbol(envelope))
+	}
+
+	if len(envelope.AdvisorSilences) > 0 {
+		planner.warRoom.Note(envelopeSymbol(envelope), envelope.AdvisorSilences)
 	}
 
 	if envelope.TypeID != types.EnvelopeTicker {
@@ -386,6 +399,7 @@ func (planner *Planner) plan(envelope *types.Envelope) *types.StrategyRound {
 		Consensus:        consensus,
 		Resonance:        envelope.Resonance,
 		Cognition:        envelope.Cognition,
+		Categories:       envelope.Categories,
 		LiquidationShare: liquidationShare,
 		Desk:             planner.desk,
 		At:               ticker.Timestamp,
@@ -425,6 +439,29 @@ func (planner *Planner) plan(envelope *types.Envelope) *types.StrategyRound {
 	if opportunity == nil {
 		decision.PredictiveStatus = "unattractive"
 		decision.Reason = "planner: no qualified opportunity precursor to enter"
+
+		return round
+	}
+
+	// Entering must beat staying flat, and staying flat is worth exactly zero:
+	// no position, no action, no cost. The search cannot make that comparison
+	// itself. Its wait branch is not "stay flat" but "enter later" — once flat
+	// and affordable the only actions are Wait and Enter, and a rollout that
+	// waits at the root almost always enters at some later step and is then
+	// held to the horizon, paying the full round trip from a worse starting
+	// point. So on a tape where nothing clears friction every branch is
+	// negative, and the argmax still returns Enter as the least bad loss.
+	//
+	// Ranking stays comparative inside the search, where currency outcomes are
+	// legitimately negative on a declining tape. This is an admission test, and
+	// admission has an absolute floor: the system must not spend to open a
+	// position it has itself modelled as a loss.
+	if result.ExpectedEconomicOutcome <= 0 {
+		decision.PredictiveStatus = "unattractive"
+		decision.Reason = fmt.Sprintf(
+			"planner: entry expects %.6f, which does not beat staying flat",
+			result.ExpectedEconomicOutcome,
+		)
 
 		return round
 	}
@@ -516,26 +553,64 @@ func (planner *Planner) recordObservation(envelope *types.Envelope) {
 		planner.observations = make(map[string][][]float64)
 	}
 
+	if planner.lastPrices == nil {
+		planner.lastPrices = make(map[string]float64)
+	}
+
+	if planner.lastEquities == nil {
+		planner.lastEquities = make(map[string]float64)
+	}
+
+	symbol := envelope.TickerData.Symbol
+	currentPrice := envelope.TickerData.Bid.Float64()
 	currentExposure := 0.0
 
 	if planner.desk != nil {
-		currentExposure = float64(planner.desk.Holding(envelope.TickerData.Symbol))
+		currentExposure = planner.desk.PositionQuantity(symbol)
+
+		if currentExposure == 0 {
+			currentExposure = float64(planner.desk.Holding(symbol))
+		}
 	}
+
+	history := planner.observations[symbol]
+	step := float64(len(history) % searchHorizon)
+	wealthChange := 0.0
+
+	if lastPrice, hadPrice := planner.lastPrices[symbol]; hadPrice && currentExposure > 0 {
+		wealthChange = currentExposure * (currentPrice - lastPrice)
+	}
+
+	if planner.desk != nil {
+		if reading := planner.desk.Equity(); reading != nil && reading.Equity != "" {
+			if equity, parseErr := strconv.ParseFloat(reading.Equity, 64); parseErr == nil {
+				if lastEquity, hadEquity := planner.lastEquities[symbol]; hadEquity {
+					deltaEquity := equity - lastEquity
+
+					if deltaEquity != 0 {
+						wealthChange = deltaEquity
+					}
+				}
+
+				planner.lastEquities[symbol] = equity
+			}
+		}
+	}
+
+	planner.lastPrices[symbol] = currentPrice
 
 	row := []float64{
-		envelope.TickerData.Bid.Float64(),
-		0,
+		currentPrice,
+		step,
 		currentExposure,
-		0,
+		wealthChange,
 	}
-
-	history := planner.observations[envelope.TickerData.Symbol]
 
 	if len(history) >= 64 {
 		history = history[1:]
 	}
 
-	planner.observations[envelope.TickerData.Symbol] = append(history, row)
+	planner.observations[symbol] = append(history, row)
 }
 
 /*
@@ -671,20 +746,45 @@ func (planner *Planner) validateTicker(envelope *types.Envelope) error {
 		return fmt.Errorf("symbol mismatch between ticker (%s) and resonance (%s)", ticker.Symbol, envelope.Resonance.Symbol)
 	}
 
+	if planner.lastEpochs == nil {
+		planner.lastEpochs = make(map[string]hindsight.StreamEpoch)
+	}
+
+	epoch := envelope.Stream.Epoch
+	lastEpoch := planner.lastEpochs[ticker.Symbol]
+	sequence := envelope.Stream.Sequence
+
+	if sequence == 0 && envelope.Tick > 0 {
+		sequence = uint64(envelope.Tick)
+	}
+
+	if epoch > lastEpoch {
+		planner.lastEpochs[ticker.Symbol] = epoch
+
+		if planner.lastSequences != nil {
+			planner.lastSequences[ticker.Symbol] = sequence
+		}
+
+		if planner.lastTimestamps != nil {
+			planner.lastTimestamps[ticker.Symbol] = ticker.Timestamp
+		}
+
+		return nil
+	}
+
+	if lastEpoch > 0 && epoch < lastEpoch {
+		return fmt.Errorf("envelope epoch regression for %s: %d < %d", ticker.Symbol, epoch, lastEpoch)
+	}
+
 	if planner.lastSequences != nil {
-		lastSeq := planner.lastSequences[ticker.Symbol]
-		seq := envelope.Stream.Sequence
+		lastSequence := planner.lastSequences[ticker.Symbol]
 
-		if seq == 0 && envelope.Tick > 0 {
-			seq = uint64(envelope.Tick)
+		if sequence > 0 && lastSequence > 0 && sequence < lastSequence {
+			return fmt.Errorf("envelope sequence regression for %s: %d < %d", ticker.Symbol, sequence, lastSequence)
 		}
 
-		if seq > 0 && lastSeq > 0 && seq < lastSeq {
-			return fmt.Errorf("envelope sequence regression for %s: %d < %d", ticker.Symbol, seq, lastSeq)
-		}
-
-		if seq > 0 {
-			planner.lastSequences[ticker.Symbol] = seq
+		if sequence > 0 {
+			planner.lastSequences[ticker.Symbol] = sequence
 		}
 	}
 
@@ -852,6 +952,14 @@ func (planner *Planner) Close() error {
 	return nil
 }
 
+func underlyingSymbol(product string) string {
+	if spot, ok := kraken.SpotSymbol(product); ok {
+		return spot
+	}
+
+	return product
+}
+
 func envelopeSymbol(envelope *types.Envelope) string {
 	if envelope == nil {
 		return ""
@@ -865,9 +973,9 @@ func envelopeSymbol(envelope *types.Envelope) string {
 	case types.EnvelopeLevel3:
 		return envelope.Level3Data.Symbol
 	case types.EnvelopeFuturesTicker:
-		return envelope.FuturesTickerData.Symbol
+		return underlyingSymbol(envelope.FuturesTickerData.Symbol)
 	case types.EnvelopeFuturesTrade:
-		return envelope.FuturesTradeData.Symbol
+		return underlyingSymbol(envelope.FuturesTradeData.Symbol)
 	default:
 		return ""
 	}

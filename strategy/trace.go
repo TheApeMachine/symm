@@ -78,6 +78,10 @@ func deliberationTrace(consensus *advisor.DeliberationOutcome) types.Deliberatio
 		Vetoes:        append([]string(nil), consensus.Vetoes...),
 		Synergies:     append([]string(nil), consensus.Synergies...),
 		Advisors:      append([]types.AdvisorOpinion(nil), consensus.Advisors...),
+		Silent:        append([]types.AdvisorSilence(nil), consensus.Silent...),
+		UnmappedClasses: append(
+			[]string(nil), consensus.UnmappedClasses...,
+		),
 	}
 }
 

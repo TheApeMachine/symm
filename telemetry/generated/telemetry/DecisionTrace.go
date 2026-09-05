@@ -28,6 +28,8 @@ type DecisionTraceT struct {
 	MaxDepth int64 `json:"maxDepth"`
 	TotalNodes int64 `json:"totalNodes"`
 	Advisors []*AdvisorOpinionT `json:"advisors"`
+	AdvisorSilences []*AdvisorSilenceT `json:"advisorSilences"`
+	ConsensusUnmappedClasses []string `json:"consensusUnmappedClasses"`
 }
 
 func (t *DecisionTraceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -116,6 +118,32 @@ func (t *DecisionTraceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 		}
 		advisorsOffset = builder.EndVector(advisorsLength)
 	}
+	advisorSilencesOffset := flatbuffers.UOffsetT(0)
+	if t.AdvisorSilences != nil {
+		advisorSilencesLength := len(t.AdvisorSilences)
+		advisorSilencesOffsets := make([]flatbuffers.UOffsetT, advisorSilencesLength)
+		for j := 0; j < advisorSilencesLength; j++ {
+			advisorSilencesOffsets[j] = t.AdvisorSilences[j].Pack(builder)
+		}
+		DecisionTraceStartAdvisorSilencesVector(builder, advisorSilencesLength)
+		for j := advisorSilencesLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(advisorSilencesOffsets[j])
+		}
+		advisorSilencesOffset = builder.EndVector(advisorSilencesLength)
+	}
+	consensusUnmappedClassesOffset := flatbuffers.UOffsetT(0)
+	if t.ConsensusUnmappedClasses != nil {
+		consensusUnmappedClassesLength := len(t.ConsensusUnmappedClasses)
+		consensusUnmappedClassesOffsets := make([]flatbuffers.UOffsetT, consensusUnmappedClassesLength)
+		for j := 0; j < consensusUnmappedClassesLength; j++ {
+			consensusUnmappedClassesOffsets[j] = builder.CreateString(t.ConsensusUnmappedClasses[j])
+		}
+		DecisionTraceStartConsensusUnmappedClassesVector(builder, consensusUnmappedClassesLength)
+		for j := consensusUnmappedClassesLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(consensusUnmappedClassesOffsets[j])
+		}
+		consensusUnmappedClassesOffset = builder.EndVector(consensusUnmappedClassesLength)
+	}
 	DecisionTraceStart(builder)
 	DecisionTraceAddIdentificationStatus(builder, identificationStatusOffset)
 	DecisionTraceAddDecisionUnavailable(builder, t.DecisionUnavailable)
@@ -138,6 +166,8 @@ func (t *DecisionTraceT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	DecisionTraceAddMaxDepth(builder, t.MaxDepth)
 	DecisionTraceAddTotalNodes(builder, t.TotalNodes)
 	DecisionTraceAddAdvisors(builder, advisorsOffset)
+	DecisionTraceAddAdvisorSilences(builder, advisorSilencesOffset)
+	DecisionTraceAddConsensusUnmappedClasses(builder, consensusUnmappedClassesOffset)
 	return DecisionTraceEnd(builder)
 }
 
@@ -188,6 +218,18 @@ func (rcv *DecisionTrace) UnPackTo(t *DecisionTraceT) {
 		x := AdvisorOpinion{}
 		rcv.Advisors(&x, j)
 		t.Advisors[j] = x.UnPack()
+	}
+	advisorSilencesLength := rcv.AdvisorSilencesLength()
+	t.AdvisorSilences = make([]*AdvisorSilenceT, advisorSilencesLength)
+	for j := 0; j < advisorSilencesLength; j++ {
+		x := AdvisorSilence{}
+		rcv.AdvisorSilences(&x, j)
+		t.AdvisorSilences[j] = x.UnPack()
+	}
+	consensusUnmappedClassesLength := rcv.ConsensusUnmappedClassesLength()
+	t.ConsensusUnmappedClasses = make([]string, consensusUnmappedClassesLength)
+	for j := 0; j < consensusUnmappedClassesLength; j++ {
+		t.ConsensusUnmappedClasses[j] = string(rcv.ConsensusUnmappedClasses(j))
 	}
 }
 
@@ -506,8 +548,45 @@ func (rcv *DecisionTrace) AdvisorsLength() int {
 	return 0
 }
 
+func (rcv *DecisionTrace) AdvisorSilences(obj *AdvisorSilence, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *DecisionTrace) AdvisorSilencesLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *DecisionTrace) ConsensusUnmappedClasses(j int) []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.ByteVector(a + flatbuffers.UOffsetT(j*4))
+	}
+	return nil
+}
+
+func (rcv *DecisionTrace) ConsensusUnmappedClassesLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
 func DecisionTraceStart(builder *flatbuffers.Builder) {
-	builder.StartObject(21)
+	builder.StartObject(23)
 }
 func DecisionTraceAddIdentificationStatus(builder *flatbuffers.Builder, identificationStatus flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(identificationStatus), 0)
@@ -585,6 +664,18 @@ func DecisionTraceAddAdvisors(builder *flatbuffers.Builder, advisors flatbuffers
 	builder.PrependUOffsetTSlot(20, flatbuffers.UOffsetT(advisors), 0)
 }
 func DecisionTraceStartAdvisorsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func DecisionTraceAddAdvisorSilences(builder *flatbuffers.Builder, advisorSilences flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(21, flatbuffers.UOffsetT(advisorSilences), 0)
+}
+func DecisionTraceStartAdvisorSilencesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func DecisionTraceAddConsensusUnmappedClasses(builder *flatbuffers.Builder, consensusUnmappedClasses flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(22, flatbuffers.UOffsetT(consensusUnmappedClasses), 0)
+}
+func DecisionTraceStartConsensusUnmappedClassesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func DecisionTraceEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

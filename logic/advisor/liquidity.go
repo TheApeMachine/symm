@@ -25,6 +25,8 @@ func NewLiquidity() *Liquidity {
 		"liquidity/two_sided_touch_notional",
 		"liquidity/depth_ratio:bid",
 		"liquidity/touch_quantity:bid",
+		"depthflow/observed_notional_diff",
+		"depthflow/observed_notional_rate_mean",
 		"morphology/morphology_change_zscore",
 	}
 
@@ -34,24 +36,34 @@ func NewLiquidity() *Liquidity {
 		"liquidity/spread_zscore",
 		"liquidity/spread_baseline",
 		"toxicity/withdrawal_fraction_zscore:bid",
+		"toxicity/withdrawal_fraction_zscore:ask",
+		"toxicity/withdrawal_fraction_baseline",
+		"toxicity/retreat_fraction_divergence",
+		"toxicity/retreat_fraction_baseline",
 	}
 
 	replenishingKeys := []string{
 		"toxicity/net_replenished_quantity:bid",
 		"toxicity/net_replenishment_rate:bid",
 		"toxicity/net_replenishment_fraction:bid",
+		"depthflow/modify_remaining_notional:bid",
+		"depthflow/modify_remaining_notional:ask",
 	}
 
 	depletingKeys := []string{
 		"toxicity/touch_fill_rate:bid",
 		"toxicity/touch_fill_fraction:bid",
 		"toxicity/touch_fill_quantity:bid",
+		"toxicity/fill_fraction_mean",
+		"depthflow/mutation_count",
+		"depthflow/mutation_count_diff",
 	}
 
 	balancedKeys := []string{
 		"liquidity/touch_notional_imbalance",
 		"liquidity/relative_spread",
 		"liquidity/spread_ratio",
+		"depthflow/observed_notional_imbalance_mean",
 	}
 
 	return &Liquidity{

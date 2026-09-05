@@ -246,6 +246,53 @@ export const JournalSurface = () => {
 		const activeMap = new Map<string, ActiveLotEntry>();
 		const closedMap = new Map<string, JournalTradeEntry>();
 
+		const latestFrame = state.findLast(() => true);
+		if (latestFrame) {
+			for (let rowIndex = 0; rowIndex < latestFrame.rowsLength(); rowIndex++) {
+				const currentPosition = latestFrame.rows(rowIndex, positionHolder);
+				if (!currentPosition) continue;
+
+				const currentHolding = currentPosition.holding(holdingHolder);
+				if (!currentHolding) continue;
+
+				const currentSymbol = currentHolding.symbol() ?? "";
+				if (!currentSymbol) continue;
+
+				const positionStatus =
+					currentHolding.status() ?? currentPosition.status() ?? "—";
+				if (positionStatus === "closed" || currentHolding.exitPrice()) continue;
+
+				const currentStoploss = currentHolding.stoploss(stoplossHolder);
+				const currentDecision = currentPosition.decision(decisionHolder);
+				const currentRisk = currentDecision?.risk(riskHolder);
+
+				const entryNano = currentHolding.entryAt();
+				const entryTimestamp = entryNano > 0n ? timeOf(entryNano) : "—";
+
+				activeMap.set(currentSymbol, {
+					symbol: currentSymbol,
+					status: positionStatus,
+					stopStatus: currentStoploss?.status() ?? "—",
+					pnl: `${formatNumber(currentHolding.pnl(), 4)} USD`,
+					pnlValue: numberOf(currentHolding.pnl()),
+					mark: formatNumber(currentHolding.mark(), 6),
+					returnPct: formatPct(currentHolding.returnPct(), 2),
+					entryPrice: formatNumber(currentHolding.entryPrice(), 6),
+					entryAt: entryTimestamp,
+					opportunityType: currentDecision?.opportunityType() || "—",
+					opportunityPhase: currentDecision?.opportunityPhase() || "—",
+					predictiveStatus: currentDecision?.predictiveStatus() || "—",
+					confidence: formatPct((currentDecision?.confidence() ?? 0) * 100, 1),
+					floor: formatNumber(currentStoploss?.floor(), 6),
+					peak: formatNumber(currentStoploss?.peak(), 6),
+					locked: currentStoploss?.locked() ?? false,
+					surgeArmed: currentStoploss?.surgeArmed() ?? false,
+					riskDistance: formatNumber(currentRisk?.riskDistance(), 6),
+					trailDistance: formatNumber(currentRisk?.trailDistance(), 6),
+				});
+			}
+		}
+
 		for (const frame of state.toArray()) {
 			for (let rowIndex = 0; rowIndex < frame.rowsLength(); rowIndex++) {
 				const currentPosition = frame.rows(rowIndex, positionHolder);
@@ -269,8 +316,6 @@ export const JournalSurface = () => {
 				const entryTimestamp = entryNano > 0n ? timeOf(entryNano) : "—";
 
 				if (positionStatus === "closed" || currentHolding.exitPrice()) {
-					activeMap.delete(currentSymbol);
-
 					const exitNano = currentHolding.exitAt();
 					const tradeId = `${currentSymbol}-${String(exitNano)}`;
 					closedMap.set(tradeId, {
@@ -317,30 +362,7 @@ export const JournalSurface = () => {
 						),
 						source: "live",
 					});
-					continue;
 				}
-
-				activeMap.set(currentSymbol, {
-					symbol: currentSymbol,
-					status: positionStatus,
-					stopStatus: currentStoploss?.status() ?? "—",
-					pnl: `${formatNumber(currentHolding.pnl(), 4)} USD`,
-					pnlValue: numberOf(currentHolding.pnl()),
-					mark: formatNumber(currentHolding.mark(), 6),
-					returnPct: formatPct(currentHolding.returnPct(), 2),
-					entryPrice: formatNumber(currentHolding.entryPrice(), 6),
-					entryAt: entryTimestamp,
-					opportunityType: currentDecision?.opportunityType() || "—",
-					opportunityPhase: currentDecision?.opportunityPhase() || "—",
-					predictiveStatus: currentDecision?.predictiveStatus() || "—",
-					confidence: formatPct((currentDecision?.confidence() ?? 0) * 100, 1),
-					floor: formatNumber(currentStoploss?.floor(), 6),
-					peak: formatNumber(currentStoploss?.peak(), 6),
-					locked: currentStoploss?.locked() ?? false,
-					surgeArmed: currentStoploss?.surgeArmed() ?? false,
-					riskDistance: formatNumber(currentRisk?.riskDistance(), 6),
-					trailDistance: formatNumber(currentRisk?.trailDistance(), 6),
-				});
 			}
 		}
 

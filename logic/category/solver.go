@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/data"
 	nomagique_probability "github.com/theapemachine/symm/nomagique/probability"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -120,19 +121,8 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 		return nil
 	}
 
-	var measurements [11]*nmtypes.Measurement
-	measurementCount := 0
-
-	for _, measurement := range envelope.SignalMeasurements() {
-		if measurement == nil {
-			continue
-		}
-
-		measurements[measurementCount] = measurement.ToTypesMeasurement()
-		measurementCount++
-	}
-
-	envelope.Categories = solver.stepMeasurements(measurements[:measurementCount])
+	measurements := envelope.SignalMeasurements()
+	envelope.Categories = solver.stepMeasurements(measurements[:])
 
 	if solver.err != nil {
 		return nil
@@ -149,8 +139,8 @@ votes: each measurement is an observation of current state that sets or
 updates the value of any coordinate it carries; it never appends another
 independent vote.
 */
-func (solver *Solver) StepMeasurement(measurement *nmtypes.Measurement) []types.Category {
-	measurements := [1]*nmtypes.Measurement{measurement}
+func (solver *Solver) StepMeasurement(measurement *data.Measurement[float64]) []types.Category {
+	measurements := [1]*data.Measurement[float64]{measurement}
 
 	return solver.stepMeasurements(measurements[:])
 }
@@ -161,7 +151,7 @@ clock at this fan-in; measurement timestamps remain provenance and are only
 compared inside the observation that produced them.
 */
 func (solver *Solver) stepMeasurements(
-	measurements []*nmtypes.Measurement,
+	measurements []*data.Measurement[float64],
 ) []types.Category {
 	if solver.err != nil {
 		solver.cancel()
@@ -183,6 +173,8 @@ func (solver *Solver) stepMeasurements(
 	var symbol string
 	var at time.Time
 	var state *categoryState
+	var failure error
+	var validCount int
 
 	for _, measurement := range measurements {
 		if measurement == nil {
@@ -190,28 +182,44 @@ func (solver *Solver) stepMeasurements(
 		}
 
 		if measurement.Err != nil {
-			solver.fail("category: signal measurement failed", measurement.Err)
+			if failure == nil {
+				failure = measurement.Err
+			}
 
-			return nil
+			continue
 		}
 
-		if measurement.Symbol == "" || measurement.At.IsZero() {
+		validCount++
+
+		if measurement.Symbol() == "" || measurement.At.IsZero() {
 			solver.fail("category: measurement symbol and event time required", nil)
 
 			return nil
 		}
 
 		if symbol == "" {
-			symbol = measurement.Symbol
+			symbol = measurement.Symbol()
 			at = measurement.At
 			state = solver.symbolState(symbol)
 		}
 
-		if measurement.Symbol != symbol || !measurement.At.Equal(at) {
+		if measurement.Symbol() != symbol || !measurement.At.Equal(at) {
 			solver.fail("category: envelope requires one symbol and event time", nil)
 
 			return nil
 		}
+	}
+
+	if validCount == 0 && failure != nil {
+		solver.fail("category: signal measurement failed", failure)
+
+		return nil
+	}
+
+	if failure != nil {
+		errnie.Warn(fmt.Sprintf(
+			"[category] skipped failed signal measurement: %v", failure,
+		))
 	}
 
 	if state == nil {
@@ -221,7 +229,7 @@ func (solver *Solver) stepMeasurements(
 	state.mu.Lock()
 
 	for _, measurement := range measurements {
-		if measurement == nil {
+		if measurement == nil || measurement.Err != nil {
 			continue
 		}
 
@@ -281,7 +289,7 @@ evidence.
 */
 func (solver *Solver) accumulate(
 	state *categoryState,
-	measurement *nmtypes.Measurement,
+	measurement *data.Measurement[float64],
 ) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -291,19 +299,19 @@ func (solver *Solver) accumulate(
 
 func (solver *Solver) accumulateLocked(
 	state *categoryState,
-	measurement *nmtypes.Measurement,
+	measurement *data.Measurement[float64],
 ) error {
 	if measurement == nil {
 		return fmt.Errorf("measurement is required")
 	}
 
-	if !measurement.ObservedFrom.IsZero() && measurement.ObservedFrom.After(measurement.At) {
+	if !measurement.From.IsZero() && measurement.From.After(measurement.At) {
 		return fmt.Errorf(
 			"%s %s/%s interval begins at %s after event time %s",
 			measurement.ID,
 			measurement.Source,
-			measurement.Symbol,
-			measurement.ObservedFrom.Format(time.RFC3339Nano),
+			measurement.Symbol(),
+			measurement.From.Format(time.RFC3339Nano),
 			measurement.At.Format(time.RFC3339Nano),
 		)
 	}
@@ -317,14 +325,6 @@ func (solver *Solver) accumulateLocked(
 
 		if !exists {
 			continue
-		}
-
-		if sample == nil {
-			return fmt.Errorf(
-				"coordinate %s:%s has no metric value",
-				measurement.Source,
-				schema.Metric,
-			)
 		}
 
 		key := coordinate{Source: measurement.Source, Metric: schema.Metric}
@@ -639,16 +639,29 @@ supportingIdentities returns the sorted, de-duplicated evidence coordinates that
 supported the category.
 */
 func supportingIdentities(items []evidenceItem) []string {
-	seen := make(map[string]bool)
+	if len(items) == 0 {
+		return nil
+	}
+
+	if len(items) == 1 {
+		return []string{items[0].Supporting}
+	}
+
 	result := make([]string, 0, len(items))
 
 	for _, item := range items {
-		if seen[item.Supporting] {
-			continue
+		found := false
+
+		for _, existing := range result {
+			if existing == item.Supporting {
+				found = true
+				break
+			}
 		}
 
-		seen[item.Supporting] = true
-		result = append(result, item.Supporting)
+		if !found {
+			result = append(result, item.Supporting)
+		}
 	}
 
 	sort.Strings(result)

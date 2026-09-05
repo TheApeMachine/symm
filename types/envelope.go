@@ -43,6 +43,11 @@ type ManifoldState struct {
 	sensorium.State
 	sensorium.Reading
 
+	// At and Version identify the producer's advance, including when this
+	// immutable reading is carried by later Level3 envelopes.
+	At      time.Time
+	Version uint64
+
 	GridX, GridY, GridZ int
 	GridSpacing         float64
 
@@ -220,6 +225,12 @@ type Envelope struct {
 	// and one semantic question, preserving the envelope's lock-free ownership.
 	Perspectives []*Perspective
 
+	// AdvisorSilences records the advisors that could not publish on this
+	// envelope and the declared evidence they were missing. It is written on
+	// the same envelopes Perspectives are, so a round can report why a seat was
+	// empty rather than only that it was.
+	AdvisorSilences []AdvisorSilence
+
 	// StrategyRound is the strategy stage's last decision round, produced by
 	// the planner once per engine tick and stamped by tickNode so the same
 	// envelope that carried the logic inputs carries the decisions it produced.
@@ -250,6 +261,12 @@ type Envelope struct {
 	// guarding only the append itself.
 	boundariesMu sync.Mutex
 	Boundaries   []BoundaryStamp
+
+	advisorsMu sync.Mutex
+
+	liftMu            sync.Mutex
+	liftedObservation map[string]float64
+	liftErr           error
 }
 
 /*
@@ -266,10 +283,85 @@ func (envelope *Envelope) AppendBoundary(stamp BoundaryStamp) {
 	envelope.boundariesMu.Unlock()
 }
 
+/*
+BoundarySnapshot copies the trace stamped so far under boundariesMu, for a
+reader that is not the envelope's own pipeline goroutine.
+
+An observer publishing this trace runs concurrently with the stages still
+appending to it, so it must never read the slice header directly. What it gets
+back is the trace as of this moment — possibly short of the envelope's final
+one, which is what a live diagnostic observation is.
+*/
+func (envelope *Envelope) BoundarySnapshot() []BoundaryStamp {
+	if envelope == nil {
+		return nil
+	}
+
+	envelope.boundariesMu.Lock()
+	defer envelope.boundariesMu.Unlock()
+
+	if len(envelope.Boundaries) == 0 {
+		return nil
+	}
+
+	return append([]BoundaryStamp(nil), envelope.Boundaries...)
+}
+
+/*
+AppendPerspective adds one Perspective to Perspectives under advisorsMu.
+*/
+func (envelope *Envelope) AppendPerspective(perspective *Perspective) {
+	if envelope == nil || perspective == nil {
+		return
+	}
+
+	envelope.advisorsMu.Lock()
+	envelope.Perspectives = append(envelope.Perspectives, perspective)
+	envelope.advisorsMu.Unlock()
+}
+
+/*
+AppendAdvisorSilence adds one AdvisorSilence to AdvisorSilences under advisorsMu.
+*/
+func (envelope *Envelope) AppendAdvisorSilence(silence AdvisorSilence) {
+	if envelope == nil {
+		return
+	}
+
+	envelope.advisorsMu.Lock()
+	envelope.AdvisorSilences = append(envelope.AdvisorSilences, silence)
+	envelope.advisorsMu.Unlock()
+}
+
 func NewEnvelope(typeID TypeID) *Envelope {
 	return &Envelope{
-		TypeID: typeID,
+		TypeID:     typeID,
+		Boundaries: make([]BoundaryStamp, 0, 8),
 	}
+}
+
+/*
+LiftedObservation returns the flattened signal observation for this envelope,
+computing it lazily on first access and caching it so multiple consumers
+(such as concurrent advisor seats) share the exact same lifted map without
+redundantly re-computing or re-allocating.
+*/
+func (envelope *Envelope) LiftedObservation() (map[string]float64, error) {
+	if envelope == nil {
+		return nil, nil
+	}
+
+	envelope.liftMu.Lock()
+	defer envelope.liftMu.Unlock()
+
+	if envelope.liftedObservation != nil || envelope.liftErr != nil {
+		return envelope.liftedObservation, envelope.liftErr
+	}
+
+	measurements := envelope.SignalMeasurements()
+	envelope.liftedObservation, envelope.liftErr = data.Lift(measurements[:])
+
+	return envelope.liftedObservation, envelope.liftErr
 }
 
 /*
@@ -695,6 +787,8 @@ func encodeManifoldState(manifold *ManifoldState) *telemetry.EnvelopeManifoldSta
 		EnergyScale:   manifold.EnergyScale,
 		WaveScale:     manifold.WaveScale,
 		Modes:         modes,
+		AtNs:          timeNs(manifold.At),
+		Version:       manifold.Version,
 	}
 }
 
@@ -949,12 +1043,12 @@ func encodeEquity(reading *EquityReading) *telemetry.EquityFrameT {
 }
 
 /*
-encodePositions wraps the desk's open-lot rows in a PositionsFrame. A nil or
-empty slice stays absent, so an envelope produced before any position exists
-carries no frame rather than an empty one.
+encodePositions wraps the desk's open-lot rows in a PositionsFrame. A nil slice
+stays absent, so an envelope produced before the desk is queried carries no frame.
+An empty (non-nil) slice represents an authoritative zero-position state.
 */
 func encodePositions(positions []*telemetry.PositionT) *telemetry.PositionsFrameT {
-	if len(positions) == 0 {
+	if positions == nil {
 		return nil
 	}
 
@@ -973,6 +1067,7 @@ func encodePerspective(perspective *Perspective) *telemetry.EnvelopePerspectiveT
 		classes = append(classes, &telemetry.EnvelopePerspectiveClassT{
 			State:       string(class.State),
 			Probability: class.Probability,
+			Evidence:    class.Evidence,
 		})
 	}
 
@@ -983,6 +1078,7 @@ func encodePerspective(perspective *Perspective) *telemetry.EnvelopePerspectiveT
 			Class:  string(prediction.Class),
 			Event:  string(prediction.Event),
 			Effect: prediction.Effect.String(),
+			Move:   prediction.Move,
 		})
 	}
 
@@ -1226,17 +1322,31 @@ func DecisionWire(decision *Decision) *telemetry.DecisionT {
 	}
 }
 
+var envelopeBuilders = sync.Pool{
+	New: func() any { return flatbuffers.NewBuilder(16384) },
+}
+
 /*
 EncodeBytes packs Encode's result into a standalone FlatBuffers buffer rooted
 at EnvelopeState — no Frame/Envelope transport wrapper — for callers that send
 or store the full mirror directly, such as the Hindsight persistence writer.
 */
 func (envelope *Envelope) EncodeBytes() []byte {
-	builder := flatbuffers.NewBuilder(0)
+	builder := envelopeBuilders.Get().(*flatbuffers.Builder)
+
+	defer func() {
+		builder.Reset()
+		envelopeBuilders.Put(builder)
+	}()
+
 	offset := envelope.Encode().Pack(builder)
 	telemetry.FinishEnvelopeStateBuffer(builder, offset)
 
-	return builder.FinishedBytes()
+	encoded := builder.FinishedBytes()
+	frameBytes := make([]byte, len(encoded))
+	copy(frameBytes, encoded)
+
+	return frameBytes
 }
 
 /*
@@ -1251,11 +1361,21 @@ func (envelope *Envelope) EncodeWebsocket() []byte {
 		return nil
 	}
 
-	builder := flatbuffers.NewBuilder(0)
+	builder := envelopeBuilders.Get().(*flatbuffers.Builder)
+
+	defer func() {
+		builder.Reset()
+		envelopeBuilders.Put(builder)
+	}()
+
 	offset := envelope.encodeBase(measurementForFocus).Pack(builder)
 	telemetry.FinishEnvelopeStateBuffer(builder, offset)
 
-	return builder.FinishedBytes()
+	encoded := builder.FinishedBytes()
+	frameBytes := make([]byte, len(encoded))
+	copy(frameBytes, encoded)
+
+	return frameBytes
 }
 
 /*
@@ -1280,5 +1400,5 @@ EncodeBoundariesWire projects only the ordered boundary trace into its wire
 mirror, for the WebRTC diagnostics channel.
 */
 func (envelope *Envelope) EncodeBoundariesWire() []*telemetry.EnvelopeBoundaryStampT {
-	return encodeBoundaries(envelope.Boundaries)
+	return encodeBoundaries(envelope.BoundarySnapshot())
 }

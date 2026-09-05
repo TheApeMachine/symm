@@ -58,37 +58,79 @@ func decisionTraceWire(trace *DecisionTrace) *telemetry.DecisionTraceT {
 	advisors := make([]*telemetry.AdvisorOpinionT, 0, len(council.Advisors))
 
 	for _, opinion := range council.Advisors {
+		classes := make([]*telemetry.AdvisorClassT, 0, len(opinion.Classes))
+
+		for _, class := range opinion.Classes {
+			classes = append(classes, &telemetry.AdvisorClassT{
+				State:       class.State,
+				Probability: class.Probability,
+			})
+		}
+
+		contribution := make([]*telemetry.AdvisorMoveMassT, 0, len(opinion.Contribution))
+
+		for _, mass := range opinion.Contribution {
+			contribution = append(contribution, &telemetry.AdvisorMoveMassT{
+				Move: mass.Move,
+				Mass: mass.Mass,
+			})
+		}
+
 		advisors = append(advisors, &telemetry.AdvisorOpinionT{
-			Advisor:     opinion.Advisor,
-			State:       opinion.State,
-			Probability: opinion.Probability,
-			Credibility: opinion.Credibility,
-			Weight:      opinion.Weight,
+			Advisor:      opinion.Advisor,
+			State:        opinion.State,
+			Probability:  opinion.Probability,
+			Credibility:  opinion.Credibility,
+			Weight:       opinion.Weight,
+			Classes:      classes,
+			Maturity:     opinion.Maturity,
+			Contribution: contribution,
+			Unmapped:     append([]string(nil), opinion.Unmapped...),
+			Unscored:     append([]string(nil), opinion.Unscored...),
+			Clock:        opinion.Clock,
+			LeaseFrom:    opinion.LeaseFrom,
+			LeaseUntil:   opinion.LeaseUntil,
+			ClockNow:     opinion.ClockNow,
+		})
+	}
+
+	silences := make([]*telemetry.AdvisorSilenceT, 0, len(council.Silent))
+
+	for _, silence := range council.Silent {
+		silences = append(silences, &telemetry.AdvisorSilenceT{
+			Advisor:    silence.Advisor,
+			Reason:     silence.Reason,
+			Missing:    append([]string(nil), silence.Missing...),
+			Declared:   int32(silence.Declared),
+			LeaseUntil: silence.LeaseUntil,
+			ClockNow:   silence.ClockNow,
 		})
 	}
 
 	return &telemetry.DecisionTraceT{
-		Iterations:             int64(search.Iterations),
-		Horizon:                int64(search.Horizon),
-		ExplorationConstant:    search.ExplorationConstant,
-		UncertaintyWeight:      search.UncertaintyWeight,
-		RecommendedAction:      search.RecommendedAction,
-		ExpectedOutcome:        search.ExpectedOutcome,
-		OutcomeUncertainty:     search.OutcomeUncertainty,
-		IdentificationStatus:   search.IdentificationStatus,
-		DecisionUnavailable:    search.DecisionUnavailable,
-		TransitionSource:       search.TransitionSource,
-		Branches:               branches,
-		Tree:                   mctsNodeWire(search.Tree),
-		MaxDepth:               int64(search.MaxDepth),
-		TotalNodes:             int64(search.TotalNodes),
-		ConsensusDominantMove:  council.DominantMove,
-		ConsensusConfidence:    council.Confidence,
-		ConsensusParticipants:  int64(council.Participants),
-		ConsensusProbabilities: probabilities,
-		Vetoes:                 append([]string(nil), council.Vetoes...),
-		Synergies:              append([]string(nil), council.Synergies...),
-		Advisors:               advisors,
+		Iterations:               int64(search.Iterations),
+		Horizon:                  int64(search.Horizon),
+		ExplorationConstant:      search.ExplorationConstant,
+		UncertaintyWeight:        search.UncertaintyWeight,
+		RecommendedAction:        search.RecommendedAction,
+		ExpectedOutcome:          search.ExpectedOutcome,
+		OutcomeUncertainty:       search.OutcomeUncertainty,
+		IdentificationStatus:     search.IdentificationStatus,
+		DecisionUnavailable:      search.DecisionUnavailable,
+		TransitionSource:         search.TransitionSource,
+		Branches:                 branches,
+		Tree:                     mctsNodeWire(search.Tree),
+		MaxDepth:                 int64(search.MaxDepth),
+		TotalNodes:               int64(search.TotalNodes),
+		ConsensusDominantMove:    council.DominantMove,
+		ConsensusConfidence:      council.Confidence,
+		ConsensusParticipants:    int64(council.Participants),
+		ConsensusProbabilities:   probabilities,
+		Vetoes:                   append([]string(nil), council.Vetoes...),
+		Synergies:                append([]string(nil), council.Synergies...),
+		Advisors:                 advisors,
+		AdvisorSilences:          silences,
+		ConsensusUnmappedClasses: append([]string(nil), council.UnmappedClasses...),
 	}
 }
 

@@ -144,3 +144,82 @@ func TestAdvisorPipelineTest(t *testing.T) {
 		})
 	})
 }
+
+/*
+The two venues Kraken names the same market on.
+
+Basis declares nothing but derivatives metrics plus the spot volume-bar clock.
+Derivatives are produced only on futures envelopes, whose identity is the
+product ("PF_SOLUSD"); the clock is produced only on spot trades, whose
+identity is the pair ("SOL/USD"). A solver accumulates evidence per symbol, so
+the two halves of Basis's contract were filed under two different keys and
+never met — which is why it was mute on every one of 627 instruments rather
+than merely on the ones without a futures market.
+*/
+func futuresTickerEnvelope(at time.Time, product string) *types.Envelope {
+	return &types.Envelope{
+		TypeID: types.EnvelopeFuturesTicker,
+		FuturesTickerData: kraken.FuturesTickerData{
+			ProductID: product,
+			Symbol:    product,
+			Timestamp: at,
+		},
+	}
+}
+
+func TestFuturesEvidenceReachesTheSpotSymbol(t *testing.T) {
+	Convey("Given a futures envelope and the spot pair it derives from", t, func() {
+		at := time.Unix(1_700_000_000, 0).UTC()
+
+		Convey("the solver files the derivative under the spot symbol", func() {
+			So(
+				envelopeSymbol(futuresTickerEnvelope(at, "PF_SOLUSD")),
+				ShouldEqual,
+				"SOL/USD",
+			)
+		})
+
+		Convey("a spot trade on that pair files under the same symbol", func() {
+			envelope := &types.Envelope{
+				TypeID: types.EnvelopeTrade,
+				TradeData: kraken.TradeData{
+					Symbol:    "SOL/USD",
+					Timestamp: at,
+					Side:      "buy",
+					Price:     *decimal.NewFromFloat64(100),
+					Qty:       5,
+				},
+			}
+
+			So(envelopeSymbol(envelope), ShouldEqual, "SOL/USD")
+		})
+
+		Convey("so both venues accumulate into one observation", func() {
+			solver := NewSolver(t.Context(), BasisName, NewBasis().Features)
+
+			solver.observe("SOL/USD", map[string]float64{
+				"derivatives/basis": 0.0012,
+			})
+			solver.observe(
+				envelopeSymbol(futuresTickerEnvelope(at, "PF_SOLUSD")),
+				map[string]float64{"derivatives/open_interest": 4200},
+			)
+
+			observation := solver.observe("SOL/USD", map[string]float64{
+				"pumpdump/completed_volume_bar_ordinal": 7,
+			})
+
+			So(observation, ShouldContainKey, "derivatives/basis")
+			So(observation, ShouldContainKey, "derivatives/open_interest")
+			So(observation, ShouldContainKey, "pumpdump/completed_volume_bar_ordinal")
+		})
+
+		Convey("a product this venue does not name stays under its own identity", func() {
+			So(
+				envelopeSymbol(futuresTickerEnvelope(at, "WEIRD-THING")),
+				ShouldEqual,
+				"WEIRD-THING",
+			)
+		})
+	})
+}

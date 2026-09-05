@@ -4,7 +4,6 @@ import (
 	"iter"
 	"math"
 
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 )
 
@@ -81,17 +80,32 @@ func NewDataset() *Dataset {
 func (dataset *Dataset) Name() string { return "book" }
 
 /*
-Step projects this one Level3 message's resting orders into States and yields
-them unclamped: every particle is free to evolve under the resident field. A
-delete removes its order from the book, so it describes no resting particle
-and is skipped; bids and asks are consumed directly without a flattened
-intermediary representation.
+restingOrder is one order resting on the book, in the only terms the projection
+needs: its identity, its price and its size.
+
+The venue's book is the authority on what is resting, and its orders are read
+under its own lock. Copying those three values out is what lets the projection
+run outside that lock — the math below is not something to hold a book writer
+behind.
+*/
+type restingOrder struct {
+	id    string
+	price float64
+	size  float64
+}
+
+/*
+Step projects one symbol's resting orders into States and yields them unclamped:
+every particle is free to evolve under the resident field. Bids and asks are
+consumed directly without a flattened intermediary representation.
 */
 func (dataset *Dataset) Step(
-	message kraken.Level3Data,
+	symbol string,
+	bids []restingOrder,
+	asks []restingOrder,
 	forcing forcingState,
 ) iter.Seq[*sensorium.State] {
-	return dataset.step(message, forcing, false)
+	return dataset.step(symbol, bids, asks, forcing, false)
 }
 
 /*
@@ -100,27 +114,29 @@ as clamped boundary particles so a relaxation pass can hold them fixed while
 injected dark probe particles crystallize around them.
 */
 func (dataset *Dataset) StepClamped(
-	message kraken.Level3Data,
+	symbol string,
+	bids []restingOrder,
+	asks []restingOrder,
 	forcing forcingState,
 ) iter.Seq[*sensorium.State] {
-	return dataset.step(message, forcing, true)
+	return dataset.step(symbol, bids, asks, forcing, true)
 }
 
 func (dataset *Dataset) step(
-	message kraken.Level3Data,
+	symbol string,
+	bids []restingOrder,
+	asks []restingOrder,
 	forcing forcingState,
 	clamped bool,
 ) iter.Seq[*sensorium.State] {
 	return func(yield func(*sensorium.State) bool) {
-		if dataset == nil || message.Symbol == "" {
+		if dataset == nil || symbol == "" {
 			return
 		}
 
-		symbolIndex := symbolToken(message.Symbol)
+		symbolIndex := symbolToken(symbol)
 
-		for sidePositive, orders := range [][]kraken.Level3Order{
-			message.Bids, message.Asks,
-		} {
+		for sidePositive, orders := range [][]restingOrder{bids, asks} {
 			total := 0
 
 			for _, order := range orders {
@@ -139,13 +155,13 @@ func (dataset *Dataset) step(
 				token := packToken(symbolIndex, sidePositive)
 				positionX, positionY, priceDeviation, quantityDeviation :=
 					dataset.frames.place(
-						message.Symbol,
-						math.Log(order.LimitPrice.Float64()),
-						math.Log(order.OrderQty.Float64()),
+						symbol,
+						math.Log(order.price),
+						math.Log(order.size),
 					)
 				contentID := orderContentID(orderIdentity{
-					symbol:  message.Symbol,
-					orderID: order.OrderID,
+					symbol:  symbol,
+					orderID: order.id,
 				})
 
 				state, _ := sensorium.StatePool.Get().(*sensorium.State)
@@ -179,11 +195,11 @@ func (dataset *Dataset) step(
 				// made the field a map of order COUNT and steered every order
 				// identically regardless of size.
 				state.Mass[0] = energy
-				// Heat is the metabolic budget that pays for coupling to the
-				// coherence field. It is earned from the gas in planckExchange,
-				// never invented here: seeding it from the order's identity
-				// handed each order an arbitrary work allowance.
-				state.Heat[0] = 0
+				// Initialize with cold but non-zero heat (1e-4 of oscillator energy).
+				// heat=1.0 caused "Gas state invalid" and "Infinite Velocity" shocks,
+				// while exact zero leaves the gas cell at absolute zero where numerical
+				// flux advection produces negative internal energy.
+				state.Heat[0] = energy * 1e-4
 				state.Amp[0] = float32(math.Sqrt(float64(energy)))
 				state.Pos[0] = float32(positionX)
 				state.Pos[1] = float32(positionY)
@@ -237,13 +253,14 @@ func orderEnergy(quantityDeviation float64, excitation float32) float32 {
 }
 
 /*
-usableOrder reports whether an order describes a resting particle: it must
-still be on the book after this message, and it must carry a finite positive
-price and size for the log-space projection to be defined.
+usableOrder reports whether an order describes a resting particle: it must be
+identified, and carry a finite positive price and size for the log-space
+projection to be defined.
 */
-func usableOrder(order kraken.Level3Order) bool {
-	return order.Resting() && validPositive(order.LimitPrice.Float64()) &&
-		validPositive(order.OrderQty.Float64())
+func usableOrder(order restingOrder) bool {
+	return order.id != "" &&
+		validPositive(order.price) &&
+		validPositive(order.size)
 }
 
 /*

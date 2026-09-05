@@ -101,3 +101,5 @@ require (
 )
 
 replace github.com/theapemachine/nomagique => ../nomagique
+
+replace github.com/theapemachine/datura => ../datura

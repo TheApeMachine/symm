@@ -11,7 +11,7 @@ import (
 
 var sequence atomic.Uint64
 var builders = sync.Pool{
-	New: func() any { return flatbuffers.NewBuilder(0) },
+	New: func() any { return flatbuffers.NewBuilder(16384) },
 }
 var entryOffsets = sync.Pool{
 	New: func() any { return make([]flatbuffers.UOffsetT, 0) },

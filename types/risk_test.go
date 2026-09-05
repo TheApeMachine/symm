@@ -92,6 +92,21 @@ func TestNewRiskPlan(t *testing.T) {
 			So(plan.Present, ShouldBeFalse)
 		})
 	})
+
+	Convey("Given positive transaction fees that exceed minimum noise", t, func() {
+		plan := NewRiskPlan(RiskInputs{
+			ReferencePrice: riskDecimal(t, "100"),
+			Spread:         riskDecimal(t, "0.01"),
+			TickSize:       riskDecimal(t, "0.01"),
+			EntryFeeRate:   riskDecimal(t, "0.008"),
+			ExitFeeRate:    riskDecimal(t, "0.008"),
+		})
+
+		Convey("It should scale risk distance to clear the fee hurdle and spread", func() {
+			So(plan.Present, ShouldBeTrue)
+			So(plan.RiskDistance.Cmp(riskDecimal(t, "1.64")), ShouldEqual, 0)
+		})
+	})
 }
 
 func TestRiskPlanLossPerUnit(t *testing.T) {

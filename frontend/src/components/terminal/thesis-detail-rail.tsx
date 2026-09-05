@@ -82,7 +82,7 @@ const currentPosition = (state: PositionState, symbol: string) => {
 				mark: value(rowHolding.mark()),
 				pnl: value(rowHolding.pnl()),
 				returnPct: Number.isFinite(returnPct)
-					? `${(returnPct * 100).toFixed(2)}%`
+					? `${returnPct.toFixed(2)}%`
 					: "—",
 				stopFloor: value(rowStoploss?.floor() ?? null),
 				peak: value(rowStoploss?.peak() ?? null),

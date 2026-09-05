@@ -5,31 +5,56 @@ import (
 	"testing"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/tests/market"
 )
 
-func datasetOrder(event string, price, quantity float64, at time.Time, id string) kraken.Level3Order {
-	return kraken.Level3Order{
-		Event:      event,
-		OrderID:    id,
-		LimitPrice: decimal.NewFromFloat64(price),
-		OrderQty:   decimal.NewFromFloat64(quantity),
-		Timestamp:  at,
+func datasetOrder(price, quantity float64, id string) restingOrder {
+	return restingOrder{id: id, price: price, size: quantity}
+}
+
+/*
+tapeOrders converts one tape message into the resting orders a venue book would
+hold after it. The book never lists a withdrawn order, so a delete contributes
+nothing — which is what the projection now sees.
+*/
+func tapeOrders(message kraken.Level3Data) (bids, asks []restingOrder) {
+	convert := func(orders []kraken.Level3Order) []restingOrder {
+		resting := make([]restingOrder, 0, len(orders))
+
+		for _, order := range orders {
+			if !order.Resting() {
+				continue
+			}
+
+			resting = append(resting, restingOrder{
+				id:    order.OrderID,
+				price: order.LimitPrice.Float64(),
+				size:  order.OrderQty.Float64(),
+			})
+		}
+
+		return resting
 	}
+
+	return convert(message.Bids), convert(message.Asks)
 }
 
 /*
 collect drains a projection into a slice, returning the particles to the pool
 the way the solver does so the pool contract is exercised too.
 */
-func collect(dataset *Dataset, message kraken.Level3Data) []sensorium.State {
+func collect(
+	dataset *Dataset,
+	symbol string,
+	bids []restingOrder,
+	asks []restingOrder,
+) []sensorium.State {
 	states := []sensorium.State{}
 
-	for state := range dataset.Step(message, forcingState{}) {
+	for state := range dataset.Step(symbol, bids, asks, forcingState{}) {
 		copied := *state
 		copied.Bytes = append([]int64(nil), state.Bytes...)
 		copied.Seqs = append([]int64(nil), state.Seqs...)
@@ -155,17 +180,12 @@ func TestValidParticle(t *testing.T) {
 func TestDatasetStep(t *testing.T) {
 	Convey("Given one one-sided Level-3 message", t, func() {
 		dataset := NewDataset()
-		at := time.Unix(1_700_000_000, 0)
 
 		Convey("Its resting orders each become a particle", func() {
-			states := collect(dataset, kraken.Level3Data{
-				Symbol:    "BTC/USD",
-				Timestamp: at,
-				Bids: []kraken.Level3Order{
-					datasetOrder("add", 99.0, 10, at, "b1"),
-					datasetOrder("add", 98.5, 5, at, "b2"),
-				},
-			})
+			states := collect(dataset, "BTC/USD", []restingOrder{
+				datasetOrder(99.0, 10, "b1"),
+				datasetOrder(98.5, 5, "b2"),
+			}, nil)
 
 			So(len(states), ShouldEqual, 2)
 
@@ -180,11 +200,10 @@ func TestDatasetStep(t *testing.T) {
 				}
 			})
 
-			// Heat is earned from the gas in planckExchange; a projected order
-			// arrives with none rather than an invented allowance.
-			Convey("and no heat of its own", func() {
+			// Initialize with cold but non-zero heat (1e-4 of oscillator energy).
+			Convey("and cold but non-zero heat proportional to energy", func() {
 				for _, state := range states {
-					So(state.Heat[0], ShouldEqual, 0)
+					So(state.Heat[0], ShouldAlmostEqual, state.Energy[0]*1e-4, 1e-7)
 				}
 			})
 
@@ -207,35 +226,30 @@ func TestDatasetStep(t *testing.T) {
 			})
 		})
 
-		Convey("A withdrawn order rests nowhere and projects no particle", func() {
-			states := collect(dataset, kraken.Level3Data{
-				Symbol:    "BTC/USD",
-				Timestamp: at,
-				Bids: []kraken.Level3Order{
-					datasetOrder("add", 99.0, 10, at, "b1"),
-					datasetOrder("delete", 98.5, 5, at, "b2"),
-				},
-			})
+		// A withdrawn order is simply absent from the book, so the projection
+		// never sees one. What it can still be handed is an order the book is
+		// retiring — quantity zero — and that must project nothing.
+		Convey("A zero-size order rests nowhere and projects no particle", func() {
+			states := collect(dataset, "BTC/USD", []restingOrder{
+				datasetOrder(99.0, 10, "b1"),
+				datasetOrder(98.5, 0, "b2"),
+			}, nil)
 
 			So(len(states), ShouldEqual, 1)
 		})
 
-		Convey("A message of only withdrawals projects nothing", func() {
-			states := collect(dataset, kraken.Level3Data{
-				Symbol:    "BTC/USD",
-				Timestamp: at,
-				Bids:      []kraken.Level3Order{datasetOrder("delete", 99.0, 10, at, "b1")},
-			})
+		Convey("A side of only zero-size orders projects nothing", func() {
+			states := collect(dataset, "BTC/USD", []restingOrder{
+				datasetOrder(99.0, 0, "b1"),
+			}, nil)
 
 			So(states, ShouldBeEmpty)
 		})
 
 		Convey("A lone resting order still projects, inside the domain", func() {
-			states := collect(dataset, kraken.Level3Data{
-				Symbol:    "BTC/USD",
-				Timestamp: at,
-				Bids:      []kraken.Level3Order{datasetOrder("add", 99.0, 10, at, "b1")},
-			})
+			states := collect(dataset, "BTC/USD", []restingOrder{
+				datasetOrder(99.0, 10, "b1"),
+			}, nil)
 
 			So(len(states), ShouldEqual, 1)
 
@@ -250,17 +264,12 @@ func TestDatasetStep(t *testing.T) {
 
 	Convey("Given orders spread across prices", t, func() {
 		dataset := NewDataset()
-		at := time.Unix(1_700_000_000, 0)
 
-		states := collect(dataset, kraken.Level3Data{
-			Symbol:    "BTC/USD",
-			Timestamp: at,
-			Bids: []kraken.Level3Order{
-				datasetOrder("add", 100.0, 1, at, "b1"),
-				datasetOrder("add", 99.0, 1, at, "b2"),
-				datasetOrder("add", 98.0, 1, at, "b3"),
-			},
-		})
+		states := collect(dataset, "BTC/USD", []restingOrder{
+			datasetOrder(100.0, 1, "b1"),
+			datasetOrder(99.0, 1, "b2"),
+			datasetOrder(98.0, 1, "b3"),
+		}, nil)
 
 		So(len(states), ShouldEqual, 3)
 
@@ -292,14 +301,11 @@ func TestDatasetStep(t *testing.T) {
 
 	Convey("Given bids and asks in one message", t, func() {
 		dataset := NewDataset()
-		at := time.Unix(1_700_000_000, 0)
 
-		states := collect(dataset, kraken.Level3Data{
-			Symbol:    "BTC/USD",
-			Timestamp: at,
-			Bids:      []kraken.Level3Order{datasetOrder("add", 99.0, 1, at, "b1")},
-			Asks:      []kraken.Level3Order{datasetOrder("add", 101.0, 1, at, "a1")},
-		})
+		states := collect(dataset, "BTC/USD",
+			[]restingOrder{datasetOrder(99.0, 1, "b1")},
+			[]restingOrder{datasetOrder(101.0, 1, "a1")},
+		)
 
 		So(len(states), ShouldEqual, 2)
 
@@ -327,7 +333,8 @@ func TestDatasetStep(t *testing.T) {
 		total := 0
 
 		for _, message := range tape.Messages {
-			total += len(collect(dataset, message))
+			bids, asks := tapeOrders(message)
+			total += len(collect(dataset, message.Symbol, bids, asks))
 		}
 
 		Convey("A one-sided feed produces particles rather than silence", func() {
@@ -344,7 +351,9 @@ func TestDatasetStep(t *testing.T) {
 		total := 0
 
 		for _, message := range tape.Messages {
-			for _, state := range collect(dataset, message) {
+			bids, asks := tapeOrders(message)
+
+			for _, state := range collect(dataset, message.Symbol, bids, asks) {
 				total++
 
 				for axis := 0; axis < 3; axis++ {
@@ -390,8 +399,9 @@ func BenchmarkDatasetStep(b *testing.B) {
 
 	for iteration := 0; iteration < b.N; iteration++ {
 		message := tape.Messages[iteration%len(tape.Messages)]
+		bids, asks := tapeOrders(message)
 
-		for state := range dataset.Step(message, forcingState{}) {
+		for state := range dataset.Step(message.Symbol, bids, asks, forcingState{}) {
 			sensorium.StatePool.Put(state)
 		}
 	}

@@ -13,6 +13,11 @@ type Reading struct {
 	Sharpness     float64
 	Maturity      float64
 	Probabilities map[string]float64
+	// Unscored names the declared classes this observation carried incomplete
+	// evidence for, which therefore took no part in the comparison. A reading
+	// drawn from two of five classes is a different statement from one drawn
+	// from all five, and the probabilities alone cannot say which it is.
+	Unscored []string
 }
 
 /*
@@ -29,7 +34,31 @@ func (classifier *Classifier) Read() Reading {
 
 	groups := classifier.Groups()
 
+	// Only the classes that were scored appear in the distribution, so a
+	// position in it is not a position in the declared class list. This is the
+	// mapping back.
+	indices := classifier.logits.ReadyIndices()
+
+	unscored := make([]string, 0)
+
+	for index, group := range groups {
+		scored := false
+
+		for _, ready := range indices {
+			if ready == index {
+				scored = true
+
+				break
+			}
+		}
+
+		if !scored {
+			unscored = append(unscored, group.Label)
+		}
+	}
+
 	reading := Reading{
+		Unscored:      unscored,
 		Ready:         true,
 		WinnerIndex:   distribution.Winner(),
 		Confidence:    float64(distribution.Confidence()),
@@ -39,12 +68,22 @@ func (classifier *Classifier) Read() Reading {
 		Probabilities: make(map[string]float64, len(groups)),
 	}
 
+	if reading.WinnerIndex >= 0 && reading.WinnerIndex < len(indices) {
+		reading.WinnerIndex = indices[reading.WinnerIndex]
+	}
+
 	if reading.WinnerIndex >= 0 && reading.WinnerIndex < len(groups) {
 		reading.WinnerLabel = groups[reading.WinnerIndex].Label
 	}
 
-	for index, group := range groups {
-		reading.Probabilities[group.Label] = float64(distribution.Probability(index))
+	for position, index := range indices {
+		if index < 0 || index >= len(groups) {
+			continue
+		}
+
+		reading.Probabilities[groups[index].Label] = float64(
+			distribution.Probability(position),
+		)
 	}
 
 	return reading

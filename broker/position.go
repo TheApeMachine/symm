@@ -68,13 +68,6 @@ type Position struct {
 	ExitOrderResult  *spot.AddOrderResult  `json:"exit_order_result"`
 	Holding          *types.Holding        `json:"holding"`
 
-	// liquidation is this symbol's continuously-resident execution reducer,
-	// owned by the Desk and injected at creation. It is advanced by the
-	// authoritative L3 stream from the genuine snapshot onward regardless of
-	// when this position opened, so the position never bootstraps book state
-	// from an arbitrary mid-stream update. The position only reads from it.
-	liquidation *liquidationReducer
-
 	/*
 		Priority transport: one dedicated LMAX Disruptor plus its contiguous
 		slot storage and a single guardian consumer handler. The guardian
@@ -405,7 +398,7 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 		mark = position.Holding.Mark
 	}
 
-	previousRevision := position.Holding.Stoploss.RegulatorRevision()
+	previousRevision := position.Holding.Stoploss.Revision
 
 	stoploss := position.Holding.Stoploss
 	stoploss.Update(mark)
@@ -428,7 +421,7 @@ func (position *Position) onTicker(ticker kraken.TickerData) {
 		position.initiateProtectiveExit()
 	}
 
-	if stoploss.RegulatorRevision() != previousRevision && position.store != nil {
+	if stoploss.Revision != previousRevision && position.store != nil {
 		if err := position.store.Save(stoploss); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.IO,
@@ -488,7 +481,7 @@ func (position *Position) evaluateExecutable(symbol string, at time.Time) {
 		return
 	}
 
-	if position.liquidation == nil {
+	if position.price == nil {
 		return
 	}
 
@@ -498,14 +491,15 @@ func (position *Position) evaluateExecutable(symbol string, at time.Time) {
 		return
 	}
 
-	surface := position.liquidation.Surface(
+	surface := position.price.Surface(
+		symbol,
 		position.Holding.SellableQty,
 		stoploss.Floor,
 		fee,
 		at,
 	)
 
-	previousRevision := stoploss.RegulatorRevision()
+	previousRevision := stoploss.Revision
 
 	stoploss.ObserveExecutable(surface)
 
@@ -526,7 +520,7 @@ func (position *Position) evaluateExecutable(symbol string, at time.Time) {
 		position.initiateProtectiveExit()
 	}
 
-	if stoploss.RegulatorRevision() != previousRevision && position.store != nil {
+	if stoploss.Revision != previousRevision && position.store != nil {
 		if err := position.store.Save(stoploss); err != nil {
 			errnie.Error(errnie.Err(
 				errnie.IO,
@@ -1067,13 +1061,6 @@ func (position *Position) Close() (err error) {
 	}
 
 	position.setStatus(types.CLOSED)
-
-	// Drop the reference to the shared execution reducer: the position's
-	// lifecycle is over. The reducer itself is owned by the Desk and keeps
-	// advancing for the symbol, so a later position on the same symbol starts
-	// from the same continuous resident state, never from stale or lazily
-	// reconstructed book state.
-	position.liquidation = nil
 
 	if position.onClose != nil {
 		position.onClose()

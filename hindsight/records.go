@@ -16,6 +16,13 @@ type Run struct {
 	ConfigDigest   string            `json:"configDigest"`
 	SchemaVersions map[string]string `json:"schemaVersions,omitempty"`
 	Integrity      Integrity         `json:"integrity"`
+
+	// Positions is how many positions the desk actually held during this run,
+	// counted from the recorded lifecycle tape. A reader choosing a run to
+	// inspect needs to know which runs traded at all: without it, a run that
+	// held nothing and a run whose positions are simply hard to find look
+	// identical.
+	Positions int `json:"positions"`
 }
 
 /*

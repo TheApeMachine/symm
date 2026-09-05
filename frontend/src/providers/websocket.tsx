@@ -110,7 +110,7 @@ function dispatchEnvelopeState(state: EnvelopeState) {
 	// Open positions ride the envelope exactly like equity, so the positions
 	// panel recovers on the next market event.
 	const positions = state.positions(new PositionsFrame());
-	if (positions && positions.rowsLength() > 0) positionStore.actions.add(positions);
+	if (positions) positionStore.actions.add(positions);
 
 	const cognition = state.cognition();
 	const cognitionSymbol = cognition?.symbol();

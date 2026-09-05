@@ -6,6 +6,7 @@
 import * as flatbuffers from 'flatbuffers';
 
 import { AdvisorOpinion, AdvisorOpinionT } from '../telemetry/advisor-opinion.js';
+import { AdvisorSilence, AdvisorSilenceT } from '../telemetry/advisor-silence.js';
 import { MCTSBranch, MCTSBranchT } from '../telemetry/mctsbranch.js';
 import { MCTSNode, MCTSNodeT } from '../telemetry/mctsnode.js';
 import { NamedNumber, NamedNumberT } from '../telemetry/named-number.js';
@@ -171,8 +172,30 @@ advisorsLength():number {
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
+advisorSilences(index: number, obj?:AdvisorSilence):AdvisorSilence|null {
+  const offset = this.bb!.__offset(this.bb_pos, 46);
+  return offset ? (obj || new AdvisorSilence()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+advisorSilencesLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 46);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
+consensusUnmappedClasses(index: number):string
+consensusUnmappedClasses(index: number,optionalEncoding:flatbuffers.Encoding):string|Uint8Array
+consensusUnmappedClasses(index: number,optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 48);
+  return offset ? this.bb!.__string(this.bb!.__vector(this.bb_pos + offset) + index * 4, optionalEncoding) : null;
+}
+
+consensusUnmappedClassesLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 48);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
 static startDecisionTrace(builder:flatbuffers.Builder) {
-  builder.startObject(21);
+  builder.startObject(23);
 }
 
 static addIdentificationStatus(builder:flatbuffers.Builder, identificationStatusOffset:flatbuffers.Offset) {
@@ -319,6 +342,38 @@ static startAdvisorsVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
+static addAdvisorSilences(builder:flatbuffers.Builder, advisorSilencesOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(21, advisorSilencesOffset, 0);
+}
+
+static createAdvisorSilencesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startAdvisorSilencesVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
+static addConsensusUnmappedClasses(builder:flatbuffers.Builder, consensusUnmappedClassesOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(22, consensusUnmappedClassesOffset, 0);
+}
+
+static createConsensusUnmappedClassesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startConsensusUnmappedClassesVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
 static endDecisionTrace(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
@@ -347,7 +402,9 @@ unpack(): DecisionTraceT {
     (this.tree() !== null ? this.tree()!.unpack() : null),
     this.maxDepth(),
     this.totalNodes(),
-    this.bb!.createObjList<AdvisorOpinion, AdvisorOpinionT>(this.advisors.bind(this), this.advisorsLength())
+    this.bb!.createObjList<AdvisorOpinion, AdvisorOpinionT>(this.advisors.bind(this), this.advisorsLength()),
+    this.bb!.createObjList<AdvisorSilence, AdvisorSilenceT>(this.advisorSilences.bind(this), this.advisorSilencesLength()),
+    this.bb!.createScalarList<string>(this.consensusUnmappedClasses.bind(this), this.consensusUnmappedClassesLength())
   );
 }
 
@@ -374,6 +431,8 @@ unpackTo(_o: DecisionTraceT): void {
   _o.maxDepth = this.maxDepth();
   _o.totalNodes = this.totalNodes();
   _o.advisors = this.bb!.createObjList<AdvisorOpinion, AdvisorOpinionT>(this.advisors.bind(this), this.advisorsLength());
+  _o.advisorSilences = this.bb!.createObjList<AdvisorSilence, AdvisorSilenceT>(this.advisorSilences.bind(this), this.advisorSilencesLength());
+  _o.consensusUnmappedClasses = this.bb!.createScalarList<string>(this.consensusUnmappedClasses.bind(this), this.consensusUnmappedClassesLength());
 }
 }
 
@@ -399,7 +458,9 @@ constructor(
   public tree: MCTSNodeT|null = null,
   public maxDepth: bigint = BigInt('0'),
   public totalNodes: bigint = BigInt('0'),
-  public advisors: (AdvisorOpinionT)[] = []
+  public advisors: (AdvisorOpinionT)[] = [],
+  public advisorSilences: (AdvisorSilenceT)[] = [],
+  public consensusUnmappedClasses: (string)[] = []
 ){}
 
 
@@ -414,6 +475,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const recommendedAction = (this.recommendedAction !== null ? builder.createString(this.recommendedAction!) : 0);
   const tree = (this.tree !== null ? this.tree!.pack(builder) : 0);
   const advisors = DecisionTrace.createAdvisorsVector(builder, builder.createObjectOffsetList(this.advisors));
+  const advisorSilences = DecisionTrace.createAdvisorSilencesVector(builder, builder.createObjectOffsetList(this.advisorSilences));
+  const consensusUnmappedClasses = DecisionTrace.createConsensusUnmappedClassesVector(builder, builder.createObjectOffsetList(this.consensusUnmappedClasses));
 
   DecisionTrace.startDecisionTrace(builder);
   DecisionTrace.addIdentificationStatus(builder, identificationStatus);
@@ -437,6 +500,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   DecisionTrace.addMaxDepth(builder, this.maxDepth);
   DecisionTrace.addTotalNodes(builder, this.totalNodes);
   DecisionTrace.addAdvisors(builder, advisors);
+  DecisionTrace.addAdvisorSilences(builder, advisorSilences);
+  DecisionTrace.addConsensusUnmappedClasses(builder, consensusUnmappedClasses);
 
   return DecisionTrace.endDecisionTrace(builder);
 }

@@ -1,6 +1,7 @@
 package broker
 
 import (
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/types"
@@ -58,7 +59,7 @@ func (price *Price) ExecutableQuantity(
 	visible = decimal.NewFromFloat64(tick.AskQty)
 
 	if requested.Cmp(visible) <= 0 {
-		return decimal.NewFromInt64(0).Add(requested), nil
+		return requested.Copy(), nil
 	}
 
 	return visible, nil
@@ -88,7 +89,7 @@ func (price *Price) EntryCost(
 	if tick == nil || tick.Ask == nil || tick.Ask.Sign() <= 0 ||
 		tick.Bid == nil || tick.Bid.Sign() <= 0 || fee == nil ||
 		fee.Fee == nil || fee.Fee.Sign() < 0 ||
-		fee.Fee.Cmp(decimal.NewFromInt64(100)) >= 0 {
+		fee.Fee.Cmp(decimalHundred) >= 0 {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation,
 			"entry cost: executable quotes and valid taker fee required",
@@ -104,9 +105,9 @@ func (price *Price) EntryCost(
 		))
 	}
 
-	ask := decimal.NewFromInt64(0).Add(tick.Ask)
-	bid := decimal.NewFromInt64(0).Add(tick.Bid)
-	entryPrice := decimal.NewFromInt64(0).Add(ask)
+	ask := tick.Ask.Copy()
+	bid := tick.Bid.Copy()
+	entryPrice := ask.Copy()
 	depthEntry, depthAsk, depthBid := price.entryDepthVWAP(symbol, quantity)
 
 	if depthAsk != nil {
@@ -143,13 +144,9 @@ func (price *Price) EntryCost(
 		}
 	}
 
-	midpoint := decimal.NewFromInt64(0).Add(ask).Add(bid).Div(
-		decimal.NewFromInt64(2),
-	)
-	feeRate := decimal.NewFromInt64(0).Add(fee.Fee).Div(
-		decimal.NewFromInt64(100),
-	)
-	exitFactor := decimal.NewFromInt64(1).Sub(feeRate)
+	midpoint := decimalZero.Add(ask).Add(bid).Div(decimalTwo)
+	feeRate := decimalZero.Add(fee.Fee).Div(decimalHundred)
+	exitFactor := decimalOne.Sub(feeRate)
 
 	if exitFactor.Sign() <= 0 {
 		return nil, errnie.Error(errnie.Err(
@@ -159,25 +156,25 @@ func (price *Price) EntryCost(
 		))
 	}
 
-	grossNotional := decimal.NewFromInt64(0).Add(entryPrice).Mul(quantity)
-	entryFee := decimal.NewFromInt64(0).Add(grossNotional).Mul(feeRate)
-	totalEntryCost := decimal.NewFromInt64(0).Add(grossNotional).Add(entryFee)
-	breakEvenGross := decimal.NewFromInt64(0).Add(totalEntryCost).Div(exitFactor)
-	breakEven := decimal.NewFromInt64(0).Add(breakEvenGross).Div(quantity)
-	exitFeeAtBreakEven := decimal.NewFromInt64(0).Add(breakEvenGross).Mul(feeRate)
-	roundTripFees := decimal.NewFromInt64(0).Add(entryFee).Add(exitFeeAtBreakEven)
-	spread := decimal.NewFromInt64(0).Add(ask).Sub(midpoint)
-	impact := decimal.NewFromInt64(0).Add(entryPrice).Sub(ask)
+	grossNotional := decimalZero.Add(entryPrice).Mul(quantity)
+	entryFee := decimalZero.Add(grossNotional).Mul(feeRate)
+	totalEntryCost := decimalZero.Add(grossNotional).Add(entryFee)
+	breakEvenGross := decimalZero.Add(totalEntryCost).Div(exitFactor)
+	breakEven := decimalZero.Add(breakEvenGross).Div(quantity)
+	exitFeeAtBreakEven := decimalZero.Add(breakEvenGross).Mul(feeRate)
+	roundTripFees := decimalZero.Add(entryFee).Add(exitFeeAtBreakEven)
+	spread := decimalZero.Add(ask).Sub(midpoint)
+	impact := decimalZero.Add(entryPrice).Sub(ask)
 
 	if impact.Sign() < 0 {
-		impact = decimal.NewFromInt64(0)
+		impact = decimalZero.Copy()
 	}
 
 	return &types.EntryCost{
-		EntryPrice:         decimal.NewFromInt64(0).Add(entryPrice),
-		BestAsk:            decimal.NewFromInt64(0).Add(ask),
-		BestBid:            decimal.NewFromInt64(0).Add(bid),
-		Midpoint:           decimal.NewFromInt64(0).Add(midpoint),
+		EntryPrice:         decimalZero.Add(entryPrice),
+		BestAsk:            decimalZero.Add(ask),
+		BestBid:            decimalZero.Add(bid),
+		Midpoint:           decimalZero.Add(midpoint),
 		GrossNotional:      grossNotional,
 		EntryFee:           entryFee,
 		ExitFeeAtBreakEven: exitFeeAtBreakEven,
@@ -189,151 +186,59 @@ func (price *Price) EntryCost(
 }
 
 /*
-EntryCostWithReducer prices a long entry from the continuously-resident L3
-execution reducer instead of the top-of-book ticker. The reducer supplies the
-true multi-level ask-side VWAP and best touch, so impact reflects walked depth
-rather than collapsing to zero above level one. When the reducer has no
-complete executable ask surface the standard ticker EntryCost is the fallback.
-*/
-func (price *Price) EntryCostWithReducer(
-	symbol string,
-	quantity *decimal.Decimal,
-	reducer *liquidationReducer,
-) (*types.EntryCost, error) {
-	if price == nil || symbol == "" || quantity == nil || quantity.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"entry cost: price surface, symbol, and positive quantity required",
-			nil,
-		))
-	}
-
-	fee := price.Fee(symbol)
-
-	if fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 ||
-		fee.Fee.Cmp(decimal.NewFromInt64(100)) >= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"entry cost: executable quotes and valid taker fee required",
-			nil,
-		))
-	}
-
-	entryPrice, ask, bid := reducer.entrySurface(quantity)
-
-	if entryPrice == nil || ask == nil || bid == nil {
-		return price.EntryCost(symbol, quantity)
-	}
-
-	midpoint := decimal.NewFromInt64(0).Add(ask).Add(bid).Div(
-		decimal.NewFromInt64(2),
-	)
-	feeRate := decimal.NewFromInt64(0).Add(fee.Fee).Div(
-		decimal.NewFromInt64(100),
-	)
-	exitFactor := decimal.NewFromInt64(1).Sub(feeRate)
-
-	if exitFactor.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"entry cost: exit fee leaves no realizable proceeds",
-			nil,
-		))
-	}
-
-	grossNotional := decimal.NewFromInt64(0).Add(entryPrice).Mul(quantity)
-	entryFee := decimal.NewFromInt64(0).Add(grossNotional).Mul(feeRate)
-	totalEntryCost := decimal.NewFromInt64(0).Add(grossNotional).Add(entryFee)
-	breakEvenGross := decimal.NewFromInt64(0).Add(totalEntryCost).Div(exitFactor)
-	breakEven := decimal.NewFromInt64(0).Add(breakEvenGross).Div(quantity)
-	exitFeeAtBreakEven := decimal.NewFromInt64(0).Add(breakEvenGross).Mul(feeRate)
-	roundTripFees := decimal.NewFromInt64(0).Add(entryFee).Add(exitFeeAtBreakEven)
-	spread := decimal.NewFromInt64(0).Add(ask).Sub(midpoint)
-	impact := decimal.NewFromInt64(0).Add(entryPrice).Sub(ask)
-
-	if impact.Sign() < 0 {
-		impact = decimal.NewFromInt64(0)
-	}
-
-	return &types.EntryCost{
-		EntryPrice:         decimal.NewFromInt64(0).Add(entryPrice),
-		BestAsk:            decimal.NewFromInt64(0).Add(ask),
-		BestBid:            decimal.NewFromInt64(0).Add(bid),
-		Midpoint:           decimal.NewFromInt64(0).Add(midpoint),
-		GrossNotional:      grossNotional,
-		EntryFee:           entryFee,
-		ExitFeeAtBreakEven: exitFeeAtBreakEven,
-		RoundTripFees:      roundTripFees,
-		Spread:             spread,
-		Impact:             impact,
-		BreakEven:          breakEven,
-	}, nil
-}
-
-/*
-entrySurface walks the reducer's resident ask chain best-first and returns the
+entryDepthVWAP walks the resident book's ask chain best-first and returns the
 multi-level entry VWAP, best ask, and best bid for a complete long fill. It
-returns nil for every result when the resident book is not seeded, valid, or
-deep enough, so callers take their documented fallback instead of fabricating
-impact from partial state.
-*/
-func (reducer *liquidationReducer) entrySurface(
-	quantity *decimal.Decimal,
-) (*decimal.Decimal, *decimal.Decimal, *decimal.Decimal) {
-	if reducer == nil || quantity == nil || quantity.Sign() <= 0 {
-		return nil, nil, nil
-	}
-
-	reducer.mu.RLock()
-	defer reducer.mu.RUnlock()
-
-	if !reducer.seeded || !reducer.valid || reducer.bidLen == 0 || reducer.askLen == 0 {
-		return nil, nil, nil
-	}
-
-	bestAsk := cloneDecimal(reducer.asks[0].limitPrice)
-	bestBid := cloneDecimal(reducer.bids[0].limitPrice)
-
-	if bestAsk == nil || bestBid == nil || bestAsk.Cmp(bestBid) < 0 {
-		return nil, nil, nil
-	}
-
-	remaining := decimal.NewFromInt64(0).Add(quantity)
-	grossNotional := decimal.NewFromInt64(0)
-
-	for index := 0; index < reducer.askLen && remaining.Sign() > 0; index++ {
-		order := reducer.asks[index]
-
-		if order.limitPrice == nil || order.orderQty == nil ||
-			order.limitPrice.Sign() <= 0 || order.orderQty.Sign() <= 0 {
-			continue
-		}
-
-		fill := order.orderQty
-
-		if remaining.Cmp(fill) < 0 {
-			fill = remaining
-		}
-
-		grossNotional = grossNotional.Add(order.limitPrice.Mul(fill))
-		remaining = remaining.Sub(fill)
-	}
-
-	if remaining.Sign() > 0 {
-		return nil, nil, nil
-	}
-
-	return grossNotional.Div(quantity), bestAsk, bestBid
-}
-
-/*
-entryDepthVWAP always reports unavailable: this signal has no access to a
-full-depth book to walk for a multi-level VWAP, so EntryCost's caller always
-takes its ticker-level fallback path instead.
+returns nil for every result when the resident book is not seeded or deep
+enough, so callers take their documented ticker-level fallback.
 */
 func (price *Price) entryDepthVWAP(
 	symbol string,
 	quantity *decimal.Decimal,
 ) (*decimal.Decimal, *decimal.Decimal, *decimal.Decimal) {
-	return nil, nil, nil
+	if price == nil || price.api == nil || symbol == "" || quantity == nil || quantity.Sign() <= 0 {
+		return nil, nil, nil
+	}
+
+	var entryVWAP, bestAsk, bestBid *decimal.Decimal
+	price.api.Book(price.api.Normalizer().Name(symbol), func(managed *spotbook.Book) {
+		if managed == nil || managed.Asks == nil || managed.Asks.Low == nil ||
+			managed.Bids == nil || managed.Bids.High == nil {
+			return
+		}
+
+		if managed.Asks.Low.Price == nil || managed.Bids.High.Price == nil ||
+			managed.Asks.Low.Price.Cmp(managed.Bids.High.Price) < 0 {
+			return
+		}
+
+		bestAsk = managed.Asks.Low.Price.Copy()
+		bestBid = managed.Bids.High.Price.Copy()
+
+		remaining := decimalZero.Add(quantity)
+		grossNotional := decimalZero.Copy()
+
+		for ask := managed.Asks.Low; ask != nil && remaining.Sign() > 0; ask = ask.Higher {
+			if ask.Price == nil || ask.Quantity == nil ||
+				ask.Price.Sign() <= 0 || ask.Quantity.Sign() <= 0 {
+				continue
+			}
+
+			fill := ask.Quantity
+			if remaining.Cmp(fill) < 0 {
+				fill = remaining
+			}
+
+			grossNotional = grossNotional.Add(decimalZero.Add(ask.Price).Mul(fill))
+			remaining = remaining.Sub(fill)
+		}
+
+		if remaining.Sign() > 0 {
+			bestAsk, bestBid = nil, nil
+			return
+		}
+
+		entryVWAP = grossNotional.Div(quantity)
+	})
+
+	return entryVWAP, bestAsk, bestBid
 }

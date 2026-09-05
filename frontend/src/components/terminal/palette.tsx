@@ -17,6 +17,11 @@ const SURFACES: Array<{ id: TerminalSurface; label: string; hint: string }> = [
 		hint: "Pilot-wave field · live decisions",
 	},
 	{
+		id: "learning",
+		label: "Forward learning",
+		hint: "Impulse map · independent wallets · learned actions",
+	},
+	{
 		id: "graph",
 		label: "Market graph",
 		hint: "Relational topology · node inspection",

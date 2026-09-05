@@ -15,6 +15,7 @@ const (
 	writerManifest
 	writerLifecycle
 	writerFence
+	writerLearning
 )
 
 type writerOperation struct {
@@ -26,6 +27,7 @@ type writerOperation struct {
 	at          time.Time
 	manifest    hindsight.EnvelopeManifest
 	runID       hindsight.RunID
+	symbol      string
 	lifecycle   hindsight.LifecycleEvent
 	fence       chan error
 }
@@ -127,12 +129,20 @@ func (writer *Writer) run() {
 	defer close(writer.done)
 
 	batch := make([]writerOperation, 0, writer.batchSize)
+	batchTimer := time.NewTimer(0)
+
+	if !batchTimer.Stop() {
+		select {
+		case <-batchTimer.C:
+		default:
+		}
+	}
 
 	for operation := range writer.queue {
 		batch = append(batch[:0], operation)
-		draining := true
+		accumulating := true
 
-		for draining && len(batch) < writer.batchSize && batch[len(batch)-1].kind != writerFence {
+		for accumulating && len(batch) < writer.batchSize && batch[len(batch)-1].kind != writerFence {
 			select {
 			case next, open := <-writer.queue:
 				if !open {
@@ -144,8 +154,32 @@ func (writer *Writer) run() {
 				}
 
 				batch = append(batch, next)
+
 			default:
-				draining = false
+				batchTimer.Reset(2 * time.Millisecond)
+
+				select {
+				case next, open := <-writer.queue:
+					if !batchTimer.Stop() {
+						select {
+						case <-batchTimer.C:
+						default:
+						}
+					}
+
+					if !open {
+						if err := writer.persist(batch); err != nil {
+							writer.fail(err, batch)
+						}
+
+						return
+					}
+
+					batch = append(batch, next)
+
+				case <-batchTimer.C:
+					accumulating = false
+				}
 			}
 		}
 
@@ -210,6 +244,12 @@ func (writer *Writer) persistOne(operation writerOperation) error {
 		return repository.WriteLifecycleEvent(operation.runID, operation.lifecycle)
 	case writerFence:
 		return nil
+	case writerLearning:
+		repository, ok := writer.repository.(*SQLite)
+		if !ok {
+			return errnie.Err(errnie.Validation, "store: repository does not support learning events", nil)
+		}
+		return repository.writeLearningOperation(repository.database, operation)
 	default:
 		return fmt.Errorf("store: unknown writer operation %d", operation.kind)
 	}

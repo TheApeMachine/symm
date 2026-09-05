@@ -44,6 +44,7 @@ type round struct {
 	Ordinal  uint64 `json:"ordinal"`
 	Tick     int64  `json:"tick"`
 	Symbol   string `json:"symbol"`
+	At       int64  `json:"at"`
 
 	// Where the round ended up.
 	Action           string `json:"action"`
@@ -64,6 +65,9 @@ type round struct {
 
 	// What entering would have cost at that moment.
 	Execution map[string]float64 `json:"execution,omitempty"`
+
+	// Signal metric measurements when requested with -metrics.
+	Metrics map[string]float64 `json:"metrics,omitempty"`
 
 	ForecastSource   string  `json:"forecastSource,omitempty"`
 	ForecastModel    string  `json:"forecastModel,omitempty"`
@@ -109,14 +113,56 @@ type searchBranch struct {
 	Pruned             bool    `json:"pruned"`
 }
 
+/*
+perspectiveRecord is one falsifiable perspective evaluation emitted by an advisor,
+correlated directly with the signal metric measurements present on that envelope.
+*/
+type perspectiveRecord struct {
+	Kind               string              `json:"kind"`
+	Run                string              `json:"run"`
+	Sequence           uint64              `json:"sequence"`
+	Ordinal            uint64              `json:"ordinal"`
+	Tick               int64               `json:"tick"`
+	Symbol             string              `json:"symbol"`
+	Advisor            string              `json:"advisor"`
+	Class              string              `json:"class"`
+	ClaimSequence      uint64              `json:"claimSequence"`
+	Classes            map[string]float64  `json:"classes,omitempty"`
+	Evidence           map[string][]string `json:"evidence,omitempty"`
+	Metrics            map[string]float64  `json:"metrics,omitempty"`
+	IssuedAt           int64               `json:"issuedAt"`
+	ResolvedAt         int64               `json:"resolvedAt,omitempty"`
+	ResolvedCoordinate uint64              `json:"resolvedCoordinate,omitempty"`
+	Round              uint64              `json:"round"`
+	Lifecycle          string              `json:"lifecycle"`
+	ResolvedBy         string              `json:"resolvedBy,omitempty"`
+	Clock              string              `json:"clock"`
+	LeaseFrom          uint64              `json:"leaseFrom"`
+	LeaseUntil         uint64              `json:"leaseUntil"`
+	Predictions        []predictionRecord  `json:"predictions"`
+}
+
+/* predictionRecord preserves one class's observable future event contract. */
+type predictionRecord struct {
+	Class  string `json:"class"`
+	Event  string `json:"event"`
+	Effect string `json:"effect"`
+	Move   string `json:"move"`
+}
+
 func main() {
 	runID := flag.String("run", "", "run id (default: most recent)")
 	out := flag.String("out", "", "output file (default: stdout)")
 	symbol := flag.String("symbol", "", "only this symbol")
 	status := flag.String("status", "", "only these predictiveStatus values (comma-separated)")
 	acted := flag.Bool("acted", false, `only rounds whose action is not "nothing"`)
-	limit := flag.Int("limit", 0, "stop after N rounds (0 = no limit)")
+	limit := flag.Int("limit", 0, "stop after N exported records (0 = no limit)")
+	metrics := flag.Bool("metrics", false, "include signal metric measurements on each round")
 	summarize := flag.Bool("summary", false, "emit one aggregate object instead of per-round lines")
+	perspectives := flag.Bool("perspectives", false, "export advisor perspective records instead of decision rounds")
+	advisor := flag.String("advisor", "", "only this advisor name (when -perspectives is set)")
+	trainingClock := flag.String("training-clock", "", "also export retained metric observations when this clock advances")
+	opportunities := flag.Bool("opportunities", false, "also export canonical Hindsight price episodes")
 	// Go's flag package stops at the first positional argument, so parse the
 	// database path out of the arguments first and let flags appear on either
 	// side of it. Without this, `hindsight_export db.sqlite -limit 3` silently
@@ -184,6 +230,122 @@ func main() {
 	symbols := make(map[string]bool)
 	confidences := make([]float64, 0, len(states))
 
+	if *perspectives || *trainingClock != "" {
+		observationStream := newTrainingObservationStream(*trainingClock)
+
+		for _, entry := range states {
+			if len(entry.Payload) == 0 {
+				continue
+			}
+
+			state := telemetry.GetRootAsEnvelopeState(entry.Payload, 0)
+
+			if state == nil {
+				continue
+			}
+
+			var metricsMap map[string]float64
+
+			if *metrics || *trainingClock != "" {
+				metricsMap = extractAllMetrics(state)
+			}
+
+			if *trainingClock != "" {
+				observation, observed, err := observationStream.Observe(
+					selected,
+					uint64(entry.Envelope.Origin.Sequence),
+					entry.Envelope.Ordinal,
+					state,
+					metricsMap,
+				)
+
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "export training observation:", err)
+					os.Exit(1)
+				}
+
+				if observed {
+					written++
+
+					if err := encoder.Encode(observation); err != nil {
+						fmt.Fprintln(os.Stderr, "encode training observation:", err)
+						os.Exit(1)
+					}
+
+					if *limit > 0 && written >= *limit {
+						buffered.Flush()
+						fmt.Fprintf(os.Stderr, "exported %d records from run %s\n", written, selected)
+
+						return
+					}
+				}
+			}
+
+			if !*perspectives || state.PerspectivesLength() == 0 {
+				continue
+			}
+
+			for perspectiveIndex := 0; perspectiveIndex < state.PerspectivesLength(); perspectiveIndex++ {
+				perspective := new(telemetry.EnvelopePerspective)
+
+				if !state.Perspectives(perspective, perspectiveIndex) {
+					continue
+				}
+
+				advisorName := string(perspective.Advisor())
+
+				if *advisor != "" && advisorName != *advisor {
+					continue
+				}
+
+				symbolName := string(perspective.Symbol())
+
+				if *symbol != "" && symbolName != *symbol {
+					continue
+				}
+
+				record := buildPerspectiveRecord(
+					selected,
+					uint64(entry.Envelope.Origin.Sequence),
+					entry.Envelope.Ordinal,
+					state.Tick(),
+					perspective,
+					metricsMap,
+				)
+
+				written++
+
+				if err := encoder.Encode(record); err != nil {
+					fmt.Fprintln(os.Stderr, "encode perspective:", err)
+					os.Exit(1)
+				}
+
+				if *limit > 0 && written >= *limit {
+					buffered.Flush()
+					fmt.Fprintf(os.Stderr, "exported %d records from run %s\n", written, selected)
+
+					return
+				}
+			}
+		}
+
+		if *opportunities {
+			episodes, err := writeOpportunityRecords(engine, selected, encoder)
+
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "export opportunities:", err)
+				os.Exit(1)
+			}
+
+			written += episodes
+		}
+
+		buffered.Flush()
+		fmt.Fprintf(os.Stderr, "exported %d records from run %s\n", written, selected)
+
+		return
+	}
+
 	for _, entry := range states {
 		if len(entry.Payload) == 0 {
 			continue
@@ -209,7 +371,7 @@ func main() {
 			}
 
 			record := buildRound(selected, uint64(entry.Envelope.Origin.Sequence),
-				entry.Envelope.Ordinal, state, decision)
+				entry.Envelope.Ordinal, state, decision, *metrics)
 
 			if !keep(record, *symbol, wanted, *acted) {
 				continue

@@ -48,7 +48,7 @@ func (l3 *Level3) Step(msg kraken.Level3Data) *data.Measurement[float64] {
 	var newBid, newAsk float64
 
 	for _, order := range msg.Bids {
-		if order.Event == "delete" {
+		if !order.Resting() {
 			continue
 		}
 
@@ -61,7 +61,7 @@ func (l3 *Level3) Step(msg kraken.Level3Data) *data.Measurement[float64] {
 	}
 
 	for _, order := range msg.Asks {
-		if order.Event == "delete" {
+		if !order.Resting() {
 			continue
 		}
 

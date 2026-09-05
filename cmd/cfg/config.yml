@@ -4,7 +4,7 @@ experimental:
 
 runtime:
   workspace:
-    buffer: 4096
+    buffer: 64
 
 system:
   data_path: ~/.symm/data

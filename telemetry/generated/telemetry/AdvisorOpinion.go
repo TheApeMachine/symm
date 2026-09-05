@@ -12,6 +12,15 @@ type AdvisorOpinionT struct {
 	Probability float64 `json:"probability"`
 	Credibility float64 `json:"credibility"`
 	Weight float64 `json:"weight"`
+	Classes []*AdvisorClassT `json:"classes"`
+	Maturity float64 `json:"maturity"`
+	Contribution []*AdvisorMoveMassT `json:"contribution"`
+	Unmapped []string `json:"unmapped"`
+	Unscored []string `json:"unscored"`
+	Clock string `json:"clock"`
+	LeaseFrom uint64 `json:"leaseFrom"`
+	LeaseUntil uint64 `json:"leaseUntil"`
+	ClockNow uint64 `json:"clockNow"`
 }
 
 func (t *AdvisorOpinionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -26,12 +35,77 @@ func (t *AdvisorOpinionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffset
 	if t.State != "" {
 		stateOffset = builder.CreateString(t.State)
 	}
+	classesOffset := flatbuffers.UOffsetT(0)
+	if t.Classes != nil {
+		classesLength := len(t.Classes)
+		classesOffsets := make([]flatbuffers.UOffsetT, classesLength)
+		for j := 0; j < classesLength; j++ {
+			classesOffsets[j] = t.Classes[j].Pack(builder)
+		}
+		AdvisorOpinionStartClassesVector(builder, classesLength)
+		for j := classesLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(classesOffsets[j])
+		}
+		classesOffset = builder.EndVector(classesLength)
+	}
+	contributionOffset := flatbuffers.UOffsetT(0)
+	if t.Contribution != nil {
+		contributionLength := len(t.Contribution)
+		contributionOffsets := make([]flatbuffers.UOffsetT, contributionLength)
+		for j := 0; j < contributionLength; j++ {
+			contributionOffsets[j] = t.Contribution[j].Pack(builder)
+		}
+		AdvisorOpinionStartContributionVector(builder, contributionLength)
+		for j := contributionLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(contributionOffsets[j])
+		}
+		contributionOffset = builder.EndVector(contributionLength)
+	}
+	unmappedOffset := flatbuffers.UOffsetT(0)
+	if t.Unmapped != nil {
+		unmappedLength := len(t.Unmapped)
+		unmappedOffsets := make([]flatbuffers.UOffsetT, unmappedLength)
+		for j := 0; j < unmappedLength; j++ {
+			unmappedOffsets[j] = builder.CreateString(t.Unmapped[j])
+		}
+		AdvisorOpinionStartUnmappedVector(builder, unmappedLength)
+		for j := unmappedLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(unmappedOffsets[j])
+		}
+		unmappedOffset = builder.EndVector(unmappedLength)
+	}
+	unscoredOffset := flatbuffers.UOffsetT(0)
+	if t.Unscored != nil {
+		unscoredLength := len(t.Unscored)
+		unscoredOffsets := make([]flatbuffers.UOffsetT, unscoredLength)
+		for j := 0; j < unscoredLength; j++ {
+			unscoredOffsets[j] = builder.CreateString(t.Unscored[j])
+		}
+		AdvisorOpinionStartUnscoredVector(builder, unscoredLength)
+		for j := unscoredLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(unscoredOffsets[j])
+		}
+		unscoredOffset = builder.EndVector(unscoredLength)
+	}
+	clockOffset := flatbuffers.UOffsetT(0)
+	if t.Clock != "" {
+		clockOffset = builder.CreateString(t.Clock)
+	}
 	AdvisorOpinionStart(builder)
 	AdvisorOpinionAddAdvisor(builder, advisorOffset)
 	AdvisorOpinionAddState(builder, stateOffset)
 	AdvisorOpinionAddProbability(builder, t.Probability)
 	AdvisorOpinionAddCredibility(builder, t.Credibility)
 	AdvisorOpinionAddWeight(builder, t.Weight)
+	AdvisorOpinionAddClasses(builder, classesOffset)
+	AdvisorOpinionAddMaturity(builder, t.Maturity)
+	AdvisorOpinionAddContribution(builder, contributionOffset)
+	AdvisorOpinionAddUnmapped(builder, unmappedOffset)
+	AdvisorOpinionAddUnscored(builder, unscoredOffset)
+	AdvisorOpinionAddClock(builder, clockOffset)
+	AdvisorOpinionAddLeaseFrom(builder, t.LeaseFrom)
+	AdvisorOpinionAddLeaseUntil(builder, t.LeaseUntil)
+	AdvisorOpinionAddClockNow(builder, t.ClockNow)
 	return AdvisorOpinionEnd(builder)
 }
 
@@ -41,6 +115,35 @@ func (rcv *AdvisorOpinion) UnPackTo(t *AdvisorOpinionT) {
 	t.Probability = rcv.Probability()
 	t.Credibility = rcv.Credibility()
 	t.Weight = rcv.Weight()
+	classesLength := rcv.ClassesLength()
+	t.Classes = make([]*AdvisorClassT, classesLength)
+	for j := 0; j < classesLength; j++ {
+		x := AdvisorClass{}
+		rcv.Classes(&x, j)
+		t.Classes[j] = x.UnPack()
+	}
+	t.Maturity = rcv.Maturity()
+	contributionLength := rcv.ContributionLength()
+	t.Contribution = make([]*AdvisorMoveMassT, contributionLength)
+	for j := 0; j < contributionLength; j++ {
+		x := AdvisorMoveMass{}
+		rcv.Contribution(&x, j)
+		t.Contribution[j] = x.UnPack()
+	}
+	unmappedLength := rcv.UnmappedLength()
+	t.Unmapped = make([]string, unmappedLength)
+	for j := 0; j < unmappedLength; j++ {
+		t.Unmapped[j] = string(rcv.Unmapped(j))
+	}
+	unscoredLength := rcv.UnscoredLength()
+	t.Unscored = make([]string, unscoredLength)
+	for j := 0; j < unscoredLength; j++ {
+		t.Unscored[j] = string(rcv.Unscored(j))
+	}
+	t.Clock = string(rcv.Clock())
+	t.LeaseFrom = rcv.LeaseFrom()
+	t.LeaseUntil = rcv.LeaseUntil()
+	t.ClockNow = rcv.ClockNow()
 }
 
 func (rcv *AdvisorOpinion) UnPack() *AdvisorOpinionT {
@@ -139,8 +242,138 @@ func (rcv *AdvisorOpinion) MutateWeight(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(12, n)
 }
 
+func (rcv *AdvisorOpinion) Classes(obj *AdvisorClass, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *AdvisorOpinion) ClassesLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(14))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *AdvisorOpinion) Maturity() float64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(16))
+	if o != 0 {
+		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
+	}
+	return 0.0
+}
+
+func (rcv *AdvisorOpinion) MutateMaturity(n float64) bool {
+	return rcv._tab.MutateFloat64Slot(16, n)
+}
+
+func (rcv *AdvisorOpinion) Contribution(obj *AdvisorMoveMass, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *AdvisorOpinion) ContributionLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *AdvisorOpinion) Unmapped(j int) []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.ByteVector(a + flatbuffers.UOffsetT(j*4))
+	}
+	return nil
+}
+
+func (rcv *AdvisorOpinion) UnmappedLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *AdvisorOpinion) Unscored(j int) []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	if o != 0 {
+		a := rcv._tab.Vector(o)
+		return rcv._tab.ByteVector(a + flatbuffers.UOffsetT(j*4))
+	}
+	return nil
+}
+
+func (rcv *AdvisorOpinion) UnscoredLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
+func (rcv *AdvisorOpinion) Clock() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *AdvisorOpinion) LeaseFrom() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *AdvisorOpinion) MutateLeaseFrom(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(26, n)
+}
+
+func (rcv *AdvisorOpinion) LeaseUntil() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *AdvisorOpinion) MutateLeaseUntil(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(28, n)
+}
+
+func (rcv *AdvisorOpinion) ClockNow() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *AdvisorOpinion) MutateClockNow(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(30, n)
+}
+
 func AdvisorOpinionStart(builder *flatbuffers.Builder) {
-	builder.StartObject(5)
+	builder.StartObject(14)
 }
 func AdvisorOpinionAddAdvisor(builder *flatbuffers.Builder, advisor flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(advisor), 0)
@@ -156,6 +389,45 @@ func AdvisorOpinionAddCredibility(builder *flatbuffers.Builder, credibility floa
 }
 func AdvisorOpinionAddWeight(builder *flatbuffers.Builder, weight float64) {
 	builder.PrependFloat64Slot(4, weight, 0.0)
+}
+func AdvisorOpinionAddClasses(builder *flatbuffers.Builder, classes flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(5, flatbuffers.UOffsetT(classes), 0)
+}
+func AdvisorOpinionStartClassesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func AdvisorOpinionAddMaturity(builder *flatbuffers.Builder, maturity float64) {
+	builder.PrependFloat64Slot(6, maturity, 0.0)
+}
+func AdvisorOpinionAddContribution(builder *flatbuffers.Builder, contribution flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(contribution), 0)
+}
+func AdvisorOpinionStartContributionVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func AdvisorOpinionAddUnmapped(builder *flatbuffers.Builder, unmapped flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(unmapped), 0)
+}
+func AdvisorOpinionStartUnmappedVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func AdvisorOpinionAddUnscored(builder *flatbuffers.Builder, unscored flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(unscored), 0)
+}
+func AdvisorOpinionStartUnscoredVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func AdvisorOpinionAddClock(builder *flatbuffers.Builder, clock flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(clock), 0)
+}
+func AdvisorOpinionAddLeaseFrom(builder *flatbuffers.Builder, leaseFrom uint64) {
+	builder.PrependUint64Slot(11, leaseFrom, 0)
+}
+func AdvisorOpinionAddLeaseUntil(builder *flatbuffers.Builder, leaseUntil uint64) {
+	builder.PrependUint64Slot(12, leaseUntil, 0)
+}
+func AdvisorOpinionAddClockNow(builder *flatbuffers.Builder, clockNow uint64) {
+	builder.PrependUint64Slot(13, clockNow, 0)
 }
 func AdvisorOpinionEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -45,6 +45,9 @@ func NewPullback() *Pullback {
 
 	unresolvedKeys := []string{
 		"hawkes/branching_spectral_radius",
+		"hawkes/excitation_decay",
+		"hawkes/excitation_timescale",
+		"hawkes/snr",
 		"liquidity/touch_notional_imbalance",
 		"pumpdump/spread_divergence",
 	}

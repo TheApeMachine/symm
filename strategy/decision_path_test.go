@@ -352,3 +352,72 @@ func TestTraceEncodesToTelemetry(t *testing.T) {
 		})
 	})
 }
+
+/*
+TestAttractiveSetupClearsTheAdmissionFloor guards the entry admission floor
+from both sides.
+
+The Planner refuses an entry whose expected economic outcome does not beat
+staying flat, and staying flat is worth exactly zero. That floor is absolute
+rather than comparative because the search cannot express "stay flat" as an
+outcome: once flat and affordable, the only actions are Wait and Enter, so a
+rollout that waits at the root almost always enters later and is then held to
+the horizon. On a tape where nothing clears friction every branch is negative
+and the argmax still returns Enter as the least bad loss.
+
+This test pins that a genuinely attractive setup clears the floor comfortably,
+so the guard cannot be mistaken for a blanket refusal to trade.
+*/
+func TestAttractiveSetupClearsTheAdmissionFloor(t *testing.T) {
+	Convey("Given a coiled council on an ordinary fee schedule", t, func() {
+		consensus := coiledCouncil()
+		model, ready := newConsensusMarketModel(consensus, tickerCadence)
+		So(ready, ShouldBeTrue)
+
+		state := mcts.NewEconomicState(
+			mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: 100},
+			mcts.MarketState{At: time.Unix(2, 0)},
+			model,
+			mcts.CostModel{FeeRate: 0.0026, SpreadFraction: 0.0005},
+			20, 20, searchHorizon,
+		).WithHistory(sampleObservationalHistory(16))
+
+		result := plannerSearch(7).Run(state, &consensusEstimator{consensus: consensus})
+
+		Convey("entry is selected and expects to beat staying flat", func() {
+			So(result.SelectedAction, ShouldEqual, mcts.Enter)
+			So(result.ExpectedEconomicOutcome, ShouldBeGreaterThan, 0)
+		})
+	})
+}
+
+/*
+TestFrictionDominatedSetupIsRefused is the other side: the same council, priced
+against a fee schedule its forecast cannot clear, must not produce an admitted
+entry. Either the search declines to select Enter, or its expected outcome
+fails the admission floor — both are refusals, and the test accepts either
+rather than asserting which mechanism catches it.
+*/
+func TestFrictionDominatedSetupIsRefused(t *testing.T) {
+	Convey("Given a council whose move cannot clear its own friction", t, func() {
+		consensus := coiledCouncil()
+		model, _ := newConsensusMarketModel(consensus, tickerCadence)
+
+		state := mcts.NewEconomicState(
+			mcts.PortfolioState{Cash: 10000, Position: 0, MarkPrice: 100},
+			mcts.MarketState{At: time.Unix(2, 0)},
+			model,
+			mcts.CostModel{FeeRate: 0.07, SpreadFraction: 0.0005},
+			20, 20, searchHorizon,
+		).WithHistory(sampleObservationalHistory(16))
+
+		result := plannerSearch(7).Run(state, &consensusEstimator{consensus: consensus})
+
+		Convey("no entry survives both the selection and the floor", func() {
+			admitted := result.SelectedAction == mcts.Enter &&
+				result.ExpectedEconomicOutcome > 0
+
+			So(admitted, ShouldBeFalse)
+		})
+	})
+}

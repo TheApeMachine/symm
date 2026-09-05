@@ -198,17 +198,15 @@ func (price *Price) WithFee(
 		return nil
 	}
 
-	amount = decimal.NewFromInt64(0).Add(amount)
-	feeRate := decimal.NewFromInt64(0).Add(fee.Fee).Div(
-		decimal.NewFromInt64(100),
-	)
+	amount = decimalZero.Add(amount)
+	feeRate := decimalZero.Add(fee.Fee).Div(decimalHundred)
 	feeAmount := amount.Mul(feeRate)
 
 	switch direction {
 	case BUY:
-		amount = amount.Add(feeAmount)
+		return amount.Add(feeAmount)
 	case SELL:
-		amount = amount.Sub(feeAmount)
+		return amount.Sub(feeAmount)
 	}
 
 	return amount

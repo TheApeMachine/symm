@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
@@ -36,13 +35,7 @@ type Desk struct {
 	equity     atomic.Pointer[types.EquityReading]
 	recovery   *Recovery
 	positions  *sync.Map
-	// execution holds the continuously-advanced bounded execution state per
-	// subscribed symbol. It is advanced by the authoritative L3 stream from
-	// the genuine snapshot onward regardless of whether a Position exists, so
-	// a position opened midway through a stream consumes truthful current
-	// state instead of promoting the next update to a snapshot.
-	execution      *sync.Map
-	passage        *types.PassageModel
+	passage    *types.PassageModel
 	balanceRefresh atomic.Bool
 	// lifecycleRecorder is the optional Hindsight trading-lifecycle sink. It
 	// records entry/fill/position-open/exit/close transitions observationally;
@@ -102,7 +95,6 @@ func NewDesk(
 		recovery:      recovery,
 		PositionStore: store,
 		positions:     positions,
-		execution:     &sync.Map{},
 		passage:       types.NewPassageModel(),
 	}
 
@@ -235,13 +227,11 @@ func (desk *Desk) stepLevel3(level3 kraken.Level3Data, epoch uint64) error {
 		return nil
 	}
 
-	reducer, err := desk.executionReducer(level3.Symbol)
-
-	if err != nil {
-		return err
+	if desk.api != nil && desk.api.Private() != nil {
+		if applier, ok := desk.api.Private().(interface{ ApplyLevel3(kraken.Level3Data) }); ok {
+			applier.ApplyLevel3(level3)
+		}
 	}
-
-	reducer.Apply(level3, epoch)
 
 	found, ok := desk.positions.Load(level3.Symbol)
 
@@ -253,13 +243,6 @@ func (desk *Desk) stepLevel3(level3 kraken.Level3Data, epoch uint64) error {
 
 	if !ok || position == nil {
 		return nil
-	}
-
-	// A recovered position is adopted before the desk has seen any L3 frame;
-	// bind it to the continuously-resident reducer on first L3 ingress so it
-	// reads the same current state every freshly-created position does.
-	if position.liquidation == nil {
-		position.liquidation = reducer
 	}
 
 	if err := position.publishGuardian(level3); err != nil {
@@ -319,51 +302,7 @@ func (desk *Desk) StepPerspective(perspective *types.Perspective) error {
 	return position.publishGuardian(perspective)
 }
 
-/*
-executionReducer returns the symbol's continuously-resident execution reducer,
-constructed atomically so exactly one resident reducer per symbol exists for the
-process lifetime. A Position and the L3 ingress path always bind to the same
-instance: the first LoadOrStore wins and every later caller (including a
-concurrent position construction racing the first L3 frame) receives that exact
-pointer. The reducer's price-level bound is the same configured/subscribed L3
-depth the websocket transport subscribes with; a missing/invalid depth is a
-clear construction error, never a guessed fallback depth.
-*/
-func (desk *Desk) executionReducer(symbol string) (*liquidationReducer, error) {
-	if desk.execution == nil {
-		desk.execution = &sync.Map{}
-	}
 
-	depth := viper.GetInt("market.l3_depth")
-
-	if depth <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"desk: market.l3_depth missing or invalid; cannot construct execution reducer",
-			nil,
-		))
-	}
-
-	if loaded, ok := desk.execution.Load(symbol); ok {
-		if reducer, valid := loaded.(*liquidationReducer); valid && reducer != nil {
-			return reducer, nil
-		}
-	}
-
-	reducer := newLiquidationReducer(symbol, depth)
-
-	actual, _ := desk.execution.LoadOrStore(symbol, reducer)
-
-	if winner, valid := actual.(*liquidationReducer); valid && winner != nil {
-		return winner, nil
-	}
-
-	return nil, errnie.Error(errnie.Err(
-		errnie.Internal,
-		"desk: execution reducer store corrupted for "+symbol,
-		nil,
-	))
-}
 
 /*
 Price exposes the desk's price surface so the market data path can keep it
@@ -470,6 +409,29 @@ func (desk *Desk) Holding(symbol string) int {
 	}
 
 	return held
+}
+
+/*
+PositionQuantity reports the net base units held in open positions for symbol.
+*/
+func (desk *Desk) PositionQuantity(symbol string) float64 {
+	if desk == nil || desk.positions == nil || symbol == "" {
+		return 0
+	}
+
+	total := 0.0
+
+	for position := range desk.Positions() {
+		if position.pair.Symbol != symbol || position.status() == types.CLOSED {
+			continue
+		}
+
+		if position.Holding != nil && position.Holding.Qty != nil {
+			total += position.Holding.Qty.Float64()
+		}
+	}
+
+	return total
 }
 
 /*
@@ -729,16 +691,6 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			decision,
 		)
 
-		// The position consumes the symbol's continuously-resident execution
-		// reducer rather than reconstructing book state from the next update
-		// it happens to see.
-		liquidation, liquidationErr := desk.executionReducer(decision.Symbol)
-
-		if liquidationErr != nil {
-			return liquidationErr
-		}
-
-		position.liquidation = liquidation
 
 		position.onClose = func() {
 			desk.positions.CompareAndDelete(decision.Symbol, position)

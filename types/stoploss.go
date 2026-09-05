@@ -104,6 +104,7 @@ type Stoploss struct {
 	MomentumFloor *decimal.Decimal `json:"momentum_floor,omitempty"`
 	Plan          *RiskPlan        `json:"plan,omitempty"`
 	Causative     CausativeContext `json:"causative,omitempty"`
+	Revision      uint64           `json:"revision,omitempty"`
 }
 
 /*
@@ -154,6 +155,7 @@ func NewStoplossWithPlan(
 		Horizon:      horizon,
 		ConfirmMarks: 3,
 		MinEdge:      tickSize,
+		Revision:     1,
 	}
 
 	if plan != nil && plan.Present {
@@ -220,6 +222,28 @@ func (stoploss *Stoploss) HardFloor() *decimal.Decimal {
 	}
 
 	return stoploss.Floor
+}
+
+/*
+InProfit reports whether the provided mark (or the regulator's recorded mark)
+is strictly at or above the lot's break-even profit line.
+*/
+func (stoploss *Stoploss) InProfit(mark *decimal.Decimal) bool {
+	if stoploss == nil || stoploss.ProfitLine == nil {
+		return false
+	}
+
+	target := mark
+
+	if target == nil || target.Sign() <= 0 {
+		target = stoploss.Mark
+	}
+
+	if target == nil || target.Sign() <= 0 {
+		return false
+	}
+
+	return target.Cmp(stoploss.ProfitLine) > 0
 }
 
 /*
@@ -339,7 +363,14 @@ func (stoploss *Stoploss) ObserveExecutable(surface *ExecutionSurface) {
 		return
 	}
 
+	previousStatus := stoploss.Status
+	previousRevision := stoploss.Revision
+
 	if stoplossBranches.Resolve(stoploss, surface, nil) {
+		if stoploss.Status != previousStatus && stoploss.Revision == previousRevision {
+			stoploss.Revision++
+		}
+
 		return
 	}
 
@@ -380,6 +411,10 @@ func (stoploss *Stoploss) observeMark(mark *decimal.Decimal) {
 	}
 
 	previousMark := scaled(stoploss.Mark)
+	previousFloor := stoploss.Floor
+	previousLocked := stoploss.Locked
+	previousProfitLatched := stoploss.ProfitLatched
+	previousStatus := stoploss.Status
 	stoploss.Mark = mark
 
 	if stoploss.Status == TRIGGERED {
@@ -460,6 +495,14 @@ func (stoploss *Stoploss) observeMark(mark *decimal.Decimal) {
 	}
 
 	stoplossBranches.Resolve(stoploss, nil, mark)
+
+	if stoploss.Status != previousStatus ||
+		stoploss.Locked != previousLocked ||
+		stoploss.ProfitLatched != previousProfitLatched ||
+		raisedPeak ||
+		(stoploss.Floor != nil && (previousFloor == nil || stoploss.Floor.Cmp(previousFloor) != 0)) {
+		stoploss.Revision++
+	}
 }
 
 func (stoploss *Stoploss) markMove(
@@ -813,6 +856,7 @@ func (stoploss *Stoploss) Reconsider(_ float64, _ float64) {
 	stoploss.Status = TRIGGERED
 	stoploss.TriggerReason = TriggerHorizonExpired
 	stoploss.TriggerMark = stoploss.Mark
+	stoploss.Revision++
 }
 
 /*
@@ -845,6 +889,7 @@ func (stoploss *Stoploss) TriggerManualOverride() error {
 	stoploss.Status = TRIGGERED
 	stoploss.TriggerReason = TriggerManualOverride
 	stoploss.TriggerMark = scaled(stoploss.Mark)
+	stoploss.Revision++
 	return nil
 }
 

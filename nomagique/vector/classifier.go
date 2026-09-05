@@ -46,8 +46,20 @@ type Logits struct {
 	standardizers map[string]*equation.AdaptiveZScore
 	standardized  map[string]types.Number
 	scores        []types.Number
-	complete      bool
+	// readyIndices names the groups scored by the last observation, in the
+	// order their scores appear in the returned values. A consumer maps a
+	// distribution position back to its declared class through it.
+	readyIndices []int
+	complete     bool
 }
+
+/*
+MinimumComparableClasses is the number of classes an observation must be able
+to score before it states anything. A distribution over a single class always
+returns that class at probability one, which reads as certainty and carries no
+evidence at all.
+*/
+const MinimumComparableClasses = 2
 
 /*
 Values returns the current class scores, or nothing when the last observation
@@ -62,6 +74,47 @@ func (logits *Logits) Values() []types.Number {
 }
 
 /*
+ReadyIndices names the declared classes the last observation scored, in the
+order their scores were returned. It is how a caller recovers which class a
+distribution position belongs to once unscored classes have been left out.
+*/
+func (logits *Logits) ReadyIndices() []int {
+	if !logits.complete {
+		return nil
+	}
+
+	return logits.readyIndices
+}
+
+/*
+ready reports which declared classes an observation carries complete evidence
+for. A class is ready only when every metric it declares is present: the
+comparison this collection produces is between classes that were all measured,
+never between one that was and one that was not.
+*/
+func (logits *Logits) ready(observation map[string]float64) []int {
+	indices := make([]int, 0, len(logits.groups))
+
+	for index, group := range logits.groups {
+		complete := true
+
+		for _, key := range group.Keys {
+			if _, present := observation[key]; !present {
+				complete = false
+
+				break
+			}
+		}
+
+		if complete {
+			indices = append(indices, index)
+		}
+	}
+
+	return indices
+}
+
+/*
 Observe standardizes a complete observation and folds it into class scores.
 
 An incomplete observation is refused without advancing any standardizer: one
@@ -71,27 +124,49 @@ next complete one is measured against.
 */
 func (logits *Logits) Observe(observation map[string]float64) bool {
 	logits.complete = false
+	logits.readyIndices = nil
 
-	for key := range logits.standardizers {
-		if _, present := observation[key]; !present {
-			return false
+	indices := logits.ready(observation)
+
+	if len(indices) < MinimumComparableClasses {
+		return false
+	}
+
+	// Only the metrics that will be scored advance their causal history, so a
+	// class's standardizers see exactly the frames that class was measured on.
+	scored := make(map[string]bool, len(logits.standardizers))
+
+	for _, index := range indices {
+		for _, key := range logits.groups[index].Keys {
+			scored[key] = true
 		}
 	}
 
-	for key, standardizer := range logits.standardizers {
-		logits.standardized[key] = standardizer.Step(types.Number(observation[key]))
+	for key := range scored {
+		logits.standardized[key] = logits.standardizers[key].Step(
+			types.Number(observation[key]),
+		)
 	}
 
-	for index, group := range logits.groups {
+	scores := make([]types.Number, 0, len(indices))
+
+	for _, index := range indices {
+		group := logits.groups[index]
+
 		var score types.Number
 
 		for _, key := range group.Keys {
 			score += logits.standardized[key]
 		}
 
-		logits.scores[index] = score / types.Number(len(group.Keys))
+		scores = append(scores, score/types.Number(len(group.Keys)))
 	}
 
+	// The distribution normalizes exactly what it is handed, so it is handed
+	// the scored classes and nothing else. readyIndices carries the mapping
+	// back to the declared class each position belongs to.
+	logits.scores = scores
+	logits.readyIndices = indices
 	logits.complete = true
 
 	return true
@@ -251,15 +326,49 @@ func (classifier *Classifier) Observe(observation map[string]float64) bool {
 // Groups exposes the declared classes in score order.
 func (classifier *Classifier) Groups() []Group { return classifier.logits.groups }
 
-// Complete reports whether an observation carries every declared metric.
+/*
+Complete reports whether an observation can state anything: whether at least
+MinimumComparableClasses declared classes carry every metric they themselves
+declare.
+
+It does NOT require every declared metric of every class. An advisor mixing
+evidence from several venues and clocks can wait forever for one metric that
+this instrument will never produce, and a class whose own evidence is complete
+has no reason to be silenced by a sibling's missing input. What must never
+happen is a class scored on present evidence being compared against one scored
+on absent evidence, and restricting the comparison to complete classes is what
+holds that.
+*/
 func (classifier *Classifier) Complete(observation map[string]float64) bool {
-	for key := range classifier.logits.standardizers {
-		if _, present := observation[key]; !present {
-			return false
-		}
+	return len(classifier.logits.ready(observation)) >= MinimumComparableClasses
+}
+
+/*
+ReadyClasses names the declared classes an observation carries complete
+evidence for, and Unscored names the rest. A reader is owed both: a reading
+drawn from two of five classes is a different statement from one drawn from
+all five, and nothing else in the output distinguishes them.
+*/
+func (classifier *Classifier) ReadyClasses(
+	observation map[string]float64,
+) (ready, unscored []string) {
+	scored := map[int]bool{}
+
+	for _, index := range classifier.logits.ready(observation) {
+		scored[index] = true
 	}
 
-	return true
+	for index, group := range classifier.logits.groups {
+		if scored[index] {
+			ready = append(ready, group.Label)
+
+			continue
+		}
+
+		unscored = append(unscored, group.Label)
+	}
+
+	return ready, unscored
 }
 
 // Missing names the declared metrics absent from an observation.

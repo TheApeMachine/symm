@@ -76,18 +76,42 @@ func (branch *Branch) Resolve(
 		return false
 	}
 
+	currentMark := mark
+
+	if (currentMark == nil || currentMark.Sign() <= 0) && surface != nil {
+		if surface.ExecutableVWAP != nil && surface.ExecutableVWAP.Sign() > 0 {
+			currentMark = surface.ExecutableVWAP
+		} else if surface.BestBid != nil && surface.BestBid.Sign() > 0 {
+			currentMark = surface.BestBid
+		}
+	}
+
+	if currentMark == nil || currentMark.Sign() <= 0 {
+		currentMark = stoploss.Mark
+	}
+
 	matches := false
 
 	switch branch.When {
 	case StopAlways:
 		matches = true
 	case StopBookInvalid:
+		if !stoploss.InProfit(currentMark) {
+			matches = false
+			break
+		}
+
 		if stoploss.isReflexiveCascade() {
 			matches = false
 		} else {
 			matches = surface != nil && !surface.BookComplete && stoploss.BookObserved
 		}
 	case StopFloorUncovered:
+		if !stoploss.InProfit(currentMark) {
+			matches = false
+			break
+		}
+
 		if stoploss.isReflexiveCascade() {
 			matches = false
 		} else {
@@ -98,19 +122,24 @@ func (branch *Branch) Resolve(
 				surface.FloorCoverageQty.Cmp(surface.SellableQty) < 0
 		}
 	case StopFloorBreached:
-		if stoploss.isSweepProtected(mark) {
+		if stoploss.isSweepProtected(currentMark) {
 			matches = false
 		} else {
-			matches = mark != nil && stoploss.Floor != nil &&
-				mark.Cmp(stoploss.Floor) <= 0
+			matches = currentMark != nil && stoploss.Floor != nil &&
+				currentMark.Cmp(stoploss.Floor) <= 0
 		}
 	case StopTrailingFloor:
 		matches = stoploss.Locked && stoploss.LockFloor != nil &&
 			stoploss.Floor != nil && stoploss.Floor.Cmp(stoploss.LockFloor) > 0 &&
-			mark != nil && mark.Cmp(stoploss.LockFloor) > 0
+			currentMark != nil && currentMark.Cmp(stoploss.LockFloor) > 0
 	case StopProtectedFloor:
 		matches = stoploss.Locked
 	case StopMomentumLost:
+		if !stoploss.InProfit(currentMark) {
+			matches = false
+			break
+		}
+
 		// The advisors speak for every position, not only for entries the old
 		// precursor layer tagged. That layer is gone, and gating this exit on
 		// its flag left the momentum-decay path unreachable: a stalling or
@@ -127,17 +156,17 @@ func (branch *Branch) Resolve(
 			}
 		}
 
-		if !matches && mark != nil && stoploss.SurgeArmed && stoploss.MomentumFloor != nil &&
+		if !matches && currentMark != nil && stoploss.SurgeArmed && stoploss.MomentumFloor != nil &&
 			stoploss.MomentumFloor.Sign() > 0 && stoploss.Peak != nil {
 			momentumLine := floorToTick(
 				scaled(stoploss.Peak).Sub(stoploss.MomentumFloor),
 				stoploss.TickSize,
 			)
 
-			matches = momentumLine != nil && mark.Cmp(momentumLine) <= 0
+			matches = momentumLine != nil && currentMark.Cmp(momentumLine) <= 0
 		}
 	case StopClimaxExhaustion:
-		matches = stoploss.isClimaxExhausted(mark)
+		matches = stoploss.isClimaxExhausted(currentMark)
 	case StopProfitStagnated:
 		confirmMarks := stoploss.ConfirmMarks
 
@@ -145,11 +174,11 @@ func (branch *Branch) Resolve(
 			confirmMarks = 3
 		}
 
-		if mark != nil && stoploss.ProfitLatched && stoploss.ProfitLine != nil &&
-			stoploss.Peak != nil && mark.Cmp(stoploss.ProfitLine) > 0 &&
+		if currentMark != nil && stoploss.ProfitLatched && stoploss.ProfitLine != nil &&
+			stoploss.Peak != nil && currentMark.Cmp(stoploss.ProfitLine) > 0 &&
 			!stoploss.isParabolicRun() &&
 			stoploss.DistinctNonPeakMarks >= confirmMarks {
-			giveback := scaled(stoploss.Peak).Sub(scaled(mark))
+			giveback := scaled(stoploss.Peak).Sub(scaled(currentMark))
 			matches = giveback.Cmp(stoploss.stagnationTolerance()) >= 0
 
 			if !matches {
@@ -169,7 +198,7 @@ func (branch *Branch) Resolve(
 	}
 
 	for _, child := range branch.Branches {
-		if child.Resolve(stoploss, surface, mark) {
+		if child.Resolve(stoploss, surface, currentMark) {
 			return true
 		}
 	}
@@ -180,37 +209,31 @@ func (branch *Branch) Resolve(
 	case StopInvalidateRegime:
 		stoploss.Status = TRIGGERED
 		stoploss.TriggerReason = TriggerRegimeInvalidated
-
-		if surface.ExecutableVWAP != nil && surface.ExecutableVWAP.Sign() > 0 {
-			stoploss.TriggerMark = scaled(surface.ExecutableVWAP)
-			return true
-		}
-
-		stoploss.TriggerMark = scaled(stoploss.Mark)
+		stoploss.TriggerMark = currentMark
 	case StopExitHardFloor:
 		stoploss.Status = TRIGGERED
 		stoploss.TriggerReason = TriggerHardFloor
-		stoploss.TriggerMark = mark
+		stoploss.TriggerMark = currentMark
 	case StopExitProtectedFloor:
 		stoploss.Status = TRIGGERED
 		stoploss.TriggerReason = TriggerProtectedFloor
-		stoploss.TriggerMark = mark
+		stoploss.TriggerMark = currentMark
 	case StopExitTrailingFloor:
 		stoploss.Status = TRIGGERED
 		stoploss.TriggerReason = TriggerTrailingFloor
-		stoploss.TriggerMark = mark
+		stoploss.TriggerMark = currentMark
 	case StopExitClimax:
 		stoploss.Status = TRIGGERED
 		stoploss.TriggerReason = TriggerClimaxExhaustion
-		stoploss.TriggerMark = mark
+		stoploss.TriggerMark = currentMark
 	case StopExitMomentum:
 		stoploss.Status = TRIGGERED
 		stoploss.TriggerReason = TriggerPumpMomentumLost
-		stoploss.TriggerMark = mark
+		stoploss.TriggerMark = currentMark
 	case StopExitStagnation:
 		stoploss.Status = TRIGGERED
 		stoploss.TriggerReason = TriggerProfitStagnation
-		stoploss.TriggerMark = mark
+		stoploss.TriggerMark = currentMark
 	default:
 		panic("stoploss: unknown branch action")
 	}

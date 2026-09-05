@@ -311,3 +311,133 @@ func TestMoveForReturn(t *testing.T) {
 		So(MoveForReturn(-0.035), ShouldEqual, MoveFlashDump)
 	})
 }
+
+/*
+TestProjectClassCoversEveryAdvisorClass holds the class vocabulary closed.
+
+projectClass is the only place an advisor's opinion becomes consensus mass. A
+label with no rule there contributes nothing while the advisor still counts as
+a participant, so the council deliberates on less evidence than it was handed
+and nothing in the output says so. This test enumerates every Class an Advisor
+can actually construct and asserts each one projects.
+*/
+func TestProjectClassCoversEveryAdvisorClass(t *testing.T) {
+	Convey("Given every class the advisors can emit", t, func() {
+		labels := map[string]bool{}
+
+		for _, feature := range NewMomentum().Features {
+			labels[feature.Class.Label] = true
+		}
+		for _, feature := range NewAuction().Features {
+			labels[feature.Class.Label] = true
+		}
+		for _, feature := range NewParticipation().Features {
+			labels[feature.Class.Label] = true
+		}
+		for _, feature := range NewPullback().Features {
+			labels[feature.Class.Label] = true
+		}
+		for _, feature := range NewProfitRun().Features {
+			labels[feature.Class.Label] = true
+		}
+		for _, feature := range NewLiquidity().Features {
+			labels[feature.Class.Label] = true
+		}
+		for _, feature := range NewBasis().Features {
+			labels[feature.Class.Label] = true
+		}
+
+		So(labels, ShouldNotBeEmpty)
+
+		Convey("every one projects onto the move space", func() {
+			for label := range labels {
+				mass := map[MarketMove]float64{}
+
+				So(projectClass(mass, label, 1.0), ShouldBeTrue)
+				So(len(mass), ShouldBeGreaterThan, 0)
+			}
+		})
+
+		Convey("every one also states the move it argued for", func() {
+			// MoveForState defaults to Stagnant, so it cannot report an
+			// unmapped label; assert instead that the two agree on direction
+			// wherever projectClass expresses a clear one.
+			for label := range labels {
+				mass := map[MarketMove]float64{}
+				projectClass(mass, label, 1.0)
+
+				heaviest := MoveStagnant
+				best := 0.0
+
+				for move, weight := range mass {
+					if weight > best {
+						best, heaviest = weight, move
+					}
+				}
+
+				stated := MoveForState(label)
+
+				So(
+					(stated > MoveStagnant) == (heaviest > MoveStagnant) ||
+						stated == MoveStagnant || heaviest == MoveStagnant,
+					ShouldBeTrue,
+				)
+			}
+		})
+	})
+}
+
+/*
+TestSilenceExplainsItself pins the distinction the War Room could not previously
+report: an advisor whose declared evidence never arrived, versus one that spoke
+and whose reading the clock has since passed.
+
+Both rendered as "awaiting bar", so four advisors sat mute for the life of the
+process on two misspelled metric names and nothing in the system said so. The
+two states have different causes and different fixes, and a round that cannot
+name which one applies cannot surface either.
+*/
+func TestSilenceExplainsItself(t *testing.T) {
+	Convey("Given a council where no advisor has ever published", t, func() {
+		room := NewWarRoom()
+
+		outcome := room.Deliberate(nil, "TEST/USD", time.Now())
+
+		Convey("every seat is reported, not just the ones that spoke", func() {
+			So(len(outcome.Silent), ShouldEqual, len(KnownAdvisors))
+		})
+
+		Convey("each is reported as having no evidence", func() {
+			for _, silence := range outcome.Silent {
+				So(silence.Reason, ShouldEqual, "incomplete")
+			}
+		})
+	})
+
+	Convey("Given an advisor that reported which metrics it lacks", t, func() {
+		room := NewWarRoom()
+
+		room.Note("TEST/USD", []types.AdvisorSilence{{
+			Advisor:  MomentumName,
+			Reason:   "incomplete",
+			Missing:  []string{"pumpdump/notional_rate_velocity"},
+			Declared: 29,
+		}})
+
+		outcome := room.Deliberate(nil, "TEST/USD", time.Now())
+
+		Convey("the round names the blocking metric", func() {
+			var momentum *types.AdvisorSilence
+
+			for index := range outcome.Silent {
+				if outcome.Silent[index].Advisor == MomentumName {
+					momentum = &outcome.Silent[index]
+				}
+			}
+
+			So(momentum, ShouldNotBeNil)
+			So(momentum.Missing, ShouldResemble, []string{"pumpdump/notional_rate_velocity"})
+			So(momentum.Declared, ShouldEqual, 29)
+		})
+	})
+}

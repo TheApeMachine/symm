@@ -13,19 +13,29 @@ import (
 	"time"
 
 	gorillawebsocket "github.com/gorilla/websocket"
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	sdk "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/signal/depthflow"
+	"github.com/theapemachine/symm/signal/morphology"
+	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
 
 /* testIngress exposes the runtime status a transport release must honor. */
 type testIngress struct {
 	status *runtime.Status
+	frames chan *types.Envelope
 }
 
-func (ingress *testIngress) Push(*types.Envelope) {}
+func (ingress *testIngress) Push(envelope *types.Envelope) {
+	if ingress.frames != nil {
+		ingress.frames <- envelope
+	}
+}
 
 func (ingress *testIngress) Status() *runtime.Status { return ingress.status }
 
@@ -348,6 +358,86 @@ func TestLiveMarkReady(t *testing.T) {
 
 			So(live.Error(), ShouldNotBeNil)
 			So(live.Status(), ShouldEqual, runtime.ERROR)
+		})
+	})
+}
+
+func TestNewWithClient(t *testing.T) {
+	Convey("Given a live Level3 transport with a resident book", t, func() {
+		upgrader := gorillawebsocket.Upgrader{}
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			connection, err := upgrader.Upgrade(writer, request, nil)
+
+			if err != nil {
+				return
+			}
+
+			defer connection.Close()
+
+			for {
+				if _, _, err := connection.ReadMessage(); err != nil {
+					return
+				}
+			}
+		}))
+		defer server.Close()
+		client := spot.NewWebSocket()
+		client.URL = "ws" + strings.TrimPrefix(server.URL, "http")
+		client.REST.Executor = func(request *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{"error":[],"result":{}}`)), Request: request}, nil
+		}
+		ingress := &testIngress{status: runtime.NewStatus().Transition(runtime.READY), frames: make(chan *types.Envelope, 1)}
+		live := NewWithClient(t.Context(), map[string]runtime.Ingress[*types.Envelope]{"level3": ingress},
+			nil, false, system.Cfg.WebSocket.Endpoints.Level3, client)
+		defer live.Close()
+		So(live.Error(), ShouldBeNil)
+		live.MarkReady()
+		live.level3Observers = []runtime.Node[*types.Envelope]{depthflow.NewSignal(t.Context()), morphology.NewSignal(t.Context())}
+
+		Convey("Snapshots, modifications and deletions should publish only book notifications", func() {
+			for index, operation := range []string{"add", "modify", "delete"} {
+				payload := fmt.Sprintf(`{"channel":"level3","type":"update","data":[{"symbol":"TEST/USD","timestamp":"2026-09-05T10:00:0%dZ","bids":[{"event":"%s","order_id":"bid","limit_price":100,"order_qty":3,"timestamp":"2026-09-05T10:00:0%dZ"}],"asks":[{"event":"add","order_id":"ask","limit_price":101,"order_qty":4,"timestamp":"2026-09-05T10:00:0%dZ"}]}]}`,
+					index, operation, index, index)
+				client.OnReceived.Call(sdk.NewWebSocketMessage([]byte(payload)))
+				So(live.Error(), ShouldBeNil)
+
+				select {
+				case envelope := <-ingress.frames:
+					So(envelope.TypeID, ShouldEqual, types.EnvelopeLevel3)
+					So(envelope.Level3Data.Symbol, ShouldEqual, "TEST/USD")
+					So(envelope.Level3Data.Timestamp.IsZero(), ShouldBeFalse)
+					So(envelope.Level3Data.Bids, ShouldBeNil)
+					So(envelope.Level3Data.Asks, ShouldBeNil)
+					So(envelope.DepthFlow, ShouldNotBeNil)
+
+					if operation != "delete" {
+						So(envelope.Morphology, ShouldNotBeNil)
+					}
+
+					So(envelope.Stream.Sequence, ShouldEqual, index+1)
+				case <-time.After(time.Second):
+					t.Fatal("book update did not publish its notification")
+				}
+
+				live.book.Get("TEST/USD", func(book *spotbook.Book) {
+					So(book.Asks.Low.Price.String(), ShouldEqual, "101")
+
+					if operation == "delete" {
+						So(book.Bids.High, ShouldBeNil)
+						return
+					}
+
+					So(book.Bids.High.Price.String(), ShouldEqual, "100")
+					So(book.Bids.High.Quantity.String(), ShouldEqual, "3")
+				})
+
+				select {
+				case <-ingress.frames:
+					t.Fatal("book update published a duplicate envelope")
+				default:
+				}
+			}
 		})
 	})
 }

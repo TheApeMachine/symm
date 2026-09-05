@@ -1,9 +1,15 @@
 package broker
 
 import (
+	"context"
 	"encoding/json"
+	"sync"
+	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/callback"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	sdk "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
@@ -29,12 +35,18 @@ type mockConn struct {
 	// history, e.g. for account-recovery-on-boot scenarios.
 	BalanceResult       map[string]*decimal.Decimal
 	TradesHistoryResult spot.TradesHistoryResult
+	book                *spotbook.Book
+	books               *sync.Map
+	wsBook              *websocket.Book
 }
 
 func (conn *mockConn) MarkReady() {}
 
 func newMockConn() *mockConn {
-	return &mockConn{status: runtime.READY}
+	return &mockConn{
+		status: runtime.READY,
+		wsBook: websocket.NewBook(context.Background(), spot.NewNormalizer()),
+	}
 }
 
 func (conn *mockConn) Close() {}
@@ -100,3 +112,54 @@ func (conn *mockConn) CancelOrder(*spot.CancelOrderRequest) (spot.CancelResult, 
 func (conn *mockConn) Write(json.Marshaler, ...websocket.Callback[any]) error { return nil }
 
 func (conn *mockConn) Post(string, json.Marshaler) ([]byte, error) { return nil, nil }
+
+func (conn *mockConn) ApplyLevel3(data kraken.Level3Data) {
+	if conn.wsBook == nil {
+		return
+	}
+
+	payload := &kraken.Level3{
+		Type: data.Type,
+		Data: []kraken.Level3Data{data},
+	}
+	event := &callback.Event[*sdk.WebSocketMessage]{
+		Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
+	}
+	_ = conn.wsBook.Update(event, payload)
+}
+
+func (conn *mockConn) Book(symbol string, read func(*spotbook.Book)) {
+	if conn.wsBook != nil {
+		found := false
+		conn.wsBook.Get(symbol, func(managed *spotbook.Book) {
+			found = true
+			read(managed)
+		})
+		if found {
+			return
+		}
+	}
+
+	read(conn.book)
+}
+
+func (conn *mockConn) Books() *sync.Map {
+	if conn.wsBook != nil {
+		return conn.wsBook.All()
+	}
+
+	if conn.books != nil {
+		return conn.books
+	}
+
+	return &sync.Map{}
+}
+
+func mustDecimalOrder(id, price, qty string) kraken.Level3Order {
+	return kraken.Level3Order{
+		OrderID:    id,
+		LimitPrice: mustDecimal(price),
+		OrderQty:   mustDecimal(qty),
+		Timestamp:  time.Now().UTC(),
+	}
+}

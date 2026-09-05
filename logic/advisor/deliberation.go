@@ -102,7 +102,14 @@ type DeliberationOutcome struct {
 	Participants       int                    `json:"participants"`
 	IndependentSources int                    `json:"independentSources,omitempty"`
 	Advisors           []types.AdvisorOpinion `json:"advisors,omitempty"`
-	At                 time.Time              `json:"at"`
+	// Silent explains every advisor that contributed nothing to this round.
+	Silent []types.AdvisorSilence `json:"silent,omitempty"`
+	// UnmappedClasses names advisor classes ("advisor:class") whose weight no
+	// projection rule accepted, so it never reached the consensus mass. Empty
+	// in a correct build; non-empty means this outcome under-counts its own
+	// evidence.
+	UnmappedClasses []string  `json:"unmappedClasses,omitempty"`
+	At              time.Time `json:"at"`
 }
 
 func advisorSourceGroup(advisor string) string {
@@ -148,21 +155,126 @@ type WarRoom struct {
 	resident map[string]map[string]*types.Perspective
 	clocks   map[string]map[string]uint64
 
-	// unmapped collects advisor classes this round that projectClass did not
-	// recognise. Their weight never reached the consensus, so a non-empty
-	// slice means the council deliberated on less evidence than it was given.
-	unmapped []string
+	// silences holds why each advisor last failed to publish, by symbol then
+	// advisor. It is retained for the same reason perspectives are: advisors
+	// speak on trade envelopes and decisions are taken on ticker envelopes, so
+	// a round that did not retain this would have nothing to report.
+	silences map[string]map[string]types.AdvisorSilence
 }
 
 /*
-Unmapped returns the advisor classes the last deliberation could not project
-onto the move space, as "advisor:class". It is empty in a correct build.
+KnownAdvisors is the full council. A round reports against this roster rather
+than against whoever happened to speak, so an advisor that has never once
+published is visible as an empty seat instead of simply being absent from the
+output.
 */
-func (room *WarRoom) Unmapped() []string {
-	room.mu.RLock()
-	defer room.mu.RUnlock()
+var KnownAdvisors = []string{
+	MomentumName,
+	AuctionName,
+	ParticipationName,
+	PullbackName,
+	ProfitRunName,
+	LiquidityName,
+	BasisName,
+}
 
-	return append([]string(nil), room.unmapped...)
+/*
+clockNow is the coordinate a symbol's market clock currently stands at, which
+is what dates a lease. Zero when the clock has not been observed.
+
+The caller already holds the read lock.
+*/
+func (room *WarRoom) clockNow(symbol, clock string) uint64 {
+	if clock == "" {
+		return 0
+	}
+
+	return room.clocks[symbol][clock]
+}
+
+/*
+silentAdvisors explains every advisor that is not in the active set.
+
+An advisor whose reading has expired is reported against the clock that expired
+it; one that never published is reported with the declared evidence it is still
+missing. An advisor this room has never heard from at all is reported as
+incomplete with nothing named, which is itself the finding.
+
+The caller already holds the read lock.
+*/
+func (room *WarRoom) silentAdvisors(
+	symbol string,
+	active map[string]*types.Perspective,
+) []types.AdvisorSilence {
+	silent := make([]types.AdvisorSilence, 0)
+
+	for _, name := range KnownAdvisors {
+		if _, speaking := active[name]; speaking {
+			continue
+		}
+
+		if perspective, resident := room.resident[symbol][name]; resident {
+			now := room.clockNow(symbol, perspective.Lease.Clock)
+
+			if perspective.Lease.Until > 0 && now > perspective.Lease.Until {
+				silent = append(silent, types.AdvisorSilence{
+					Advisor:    name,
+					Reason:     "expired",
+					LeaseUntil: perspective.Lease.Until,
+					ClockNow:   now,
+				})
+
+				continue
+			}
+		}
+
+		recorded, found := room.silences[symbol][name]
+
+		if !found {
+			silent = append(silent, types.AdvisorSilence{
+				Advisor: name,
+				Reason:  "incomplete",
+			})
+
+			continue
+		}
+
+		silent = append(silent, recorded)
+	}
+
+	return silent
+}
+
+/*
+Note records why advisors could not publish on one envelope, so a later round
+can say what a silent seat was waiting for.
+*/
+func (room *WarRoom) Note(symbol string, silences []types.AdvisorSilence) {
+	if room == nil || symbol == "" || len(silences) == 0 {
+		return
+	}
+
+	room.mu.Lock()
+	defer room.mu.Unlock()
+
+	if room.silences == nil {
+		room.silences = make(map[string]map[string]types.AdvisorSilence)
+	}
+
+	bySymbol, found := room.silences[symbol]
+
+	if !found {
+		bySymbol = make(map[string]types.AdvisorSilence)
+		room.silences[symbol] = bySymbol
+	}
+
+	for _, silence := range silences {
+		if silence.Advisor == "" {
+			continue
+		}
+
+		bySymbol[silence.Advisor] = silence
+	}
 }
 
 /*
@@ -290,7 +402,12 @@ func (room *WarRoom) Deliberate(
 	active := room.Admit(perspectives, symbol)
 
 	if len(active) == 0 {
+		room.mu.RLock()
+		silent := room.silentAdvisors(symbol, active)
+		room.mu.RUnlock()
+
 		return &DeliberationOutcome{
+			Silent:        silent,
 			Participants:  0,
 			At:            at,
 			Probabilities: priorMass(),
@@ -303,6 +420,10 @@ func (room *WarRoom) Deliberate(
 	defer room.mu.RUnlock()
 
 	mass := priorMass()
+
+	// Classes no projection rule recognises. Their weight never reaches the
+	// mass, so the round must say so rather than quietly under-counting.
+	var unmapped []string
 
 	uniqueSources := make(map[string]int)
 
@@ -322,7 +443,15 @@ func (room *WarRoom) Deliberate(
 			discount = 1.0 / math.Sqrt(float64(groupCount))
 		}
 
-		room.project(mass, name, perspective, discount)
+		// The advisor's own mass is projected twice: once into the shared
+		// consensus, and once into a scratch map that is this advisor's
+		// contribution alone. Reading a single advisor's effect back out of the
+		// shared total afterwards is not possible once several have added to it.
+		own := make(map[MarketMove]float64, len(AllMarketMoves))
+		var ownUnmapped []string
+
+		room.project(mass, name, perspective, discount, &unmapped)
+		room.project(own, name, perspective, discount, &ownUnmapped)
 
 		topState := string(perspective.TopClass())
 		probability, _ := perspective.Probability(types.PerspectiveState(topState))
@@ -335,12 +464,43 @@ func (room *WarRoom) Deliberate(
 
 		factor := credibility * maturity * discount
 
+		classes := make([]types.AdvisorClass, 0, len(perspective.Classes))
+
+		for _, class := range perspective.Classes {
+			classes = append(classes, types.AdvisorClass{
+				State:       string(class.State),
+				Probability: class.Probability,
+			})
+		}
+
+		contribution := make([]types.AdvisorMoveMass, 0, len(own))
+
+		for _, move := range AllMarketMoves {
+			if own[move] <= 0 {
+				continue
+			}
+
+			contribution = append(contribution, types.AdvisorMoveMass{
+				Move: move.String(),
+				Mass: own[move],
+			})
+		}
+
 		advisors = append(advisors, types.AdvisorOpinion{
-			Advisor:     name,
-			State:       topState,
-			Probability: probability,
-			Credibility: credibility,
-			Weight:      factor,
+			Advisor:      name,
+			State:        topState,
+			Probability:  probability,
+			Credibility:  credibility,
+			Weight:       factor,
+			Classes:      classes,
+			Maturity:     maturity,
+			Contribution: contribution,
+			Unmapped:     ownUnmapped,
+			Unscored:     append([]string(nil), perspective.Unscored...),
+			Clock:        perspective.Lease.Clock,
+			LeaseFrom:    perspective.Lease.From,
+			LeaseUntil:   perspective.Lease.Until,
+			ClockNow:     room.clockNow(symbol, perspective.Lease.Clock),
 		})
 	}
 
@@ -356,6 +516,8 @@ func (room *WarRoom) Deliberate(
 		Participants:       len(active),
 		IndependentSources: len(uniqueSources),
 		Advisors:           advisors,
+		Silent:             room.silentAdvisors(symbol, active),
+		UnmappedClasses:    unmapped,
 		At:                 at,
 	}
 
@@ -512,6 +674,7 @@ func (room *WarRoom) project(
 	name string,
 	perspective *types.Perspective,
 	discount float64,
+	unmapped *[]string,
 ) {
 	if perspective == nil {
 		return
@@ -544,7 +707,7 @@ func (room *WarRoom) project(
 		}
 
 		if !projectClass(mass, topClass, probability*factor) {
-			room.unmapped = append(room.unmapped, name+":"+topClass)
+			*unmapped = append(*unmapped, name+":"+topClass)
 		}
 
 		return
@@ -556,7 +719,7 @@ func (room *WarRoom) project(
 		}
 
 		if !projectClass(mass, string(pc.State), pc.Probability*factor) {
-			room.unmapped = append(room.unmapped, name+":"+string(pc.State))
+			*unmapped = append(*unmapped, name+":"+string(pc.State))
 		}
 	}
 }

@@ -44,7 +44,7 @@ type FluidRTC struct {
 	peers         map[*webrtc.PeerConnection]*fluidPeer
 	consumerID    string
 	bufferedLimit uint64
-	sequence      uint64
+	sequence      atomic.Uint64
 	ObserveModule func(string, time.Duration)
 }
 
@@ -112,7 +112,7 @@ func (fluidTransport *FluidRTC) Publish(state *types.ManifoldState) error {
 		return nil
 	}
 
-	sequence := atomic.AddUint64(&fluidTransport.sequence, 1)
+	sequence := fluidTransport.sequence.Add(1)
 	payload := encodeManifold(state, sequence)
 
 	return fluidTransport.publishBytes(types.ManifoldChannel, payload)
@@ -142,12 +142,18 @@ owning the diagnostics channel, wrapped in a lean EnvelopeState carrying only
 the boundaries the topology page ingests.
 */
 func (fluidTransport *FluidRTC) PublishDiagnostics(envelope *types.Envelope) error {
-	if envelope == nil || len(envelope.Boundaries) == 0 {
+	if envelope == nil {
+		return nil
+	}
+
+	boundaries := envelope.EncodeBoundariesWire()
+
+	if len(boundaries) == 0 {
 		return nil
 	}
 
 	state := &telemetry.EnvelopeStateT{
-		Boundaries: envelope.EncodeBoundariesWire(),
+		Boundaries: boundaries,
 	}
 	payload := wrapStateFrame(state)
 
@@ -178,13 +184,22 @@ func (fluidTransport *FluidRTC) publishBytes(channelName string, payload []byte)
 	return nil
 }
 
+var webrtcBuilders = sync.Pool{
+	New: func() any { return flatbuffers.NewBuilder(16384) },
+}
+
 /*
 wrapStateFrame wraps a lean EnvelopeState mirror in the SYMM-identified Envelope
 envelope the browser uses for every WebRTC channel, so resonance and diagnostics
 share the manifold transport's framing and identifier.
 */
 func wrapStateFrame(state *telemetry.EnvelopeStateT) []byte {
-	builder := flatbuffers.NewBuilder(0)
+	builder := webrtcBuilders.Get().(*flatbuffers.Builder)
+
+	defer func() {
+		builder.Reset()
+		webrtcBuilders.Put(builder)
+	}()
 
 	frame := &telemetry.EnvelopeStateFrameT{State: state}
 	envelope := &telemetry.EnvelopeT{
@@ -197,7 +212,11 @@ func wrapStateFrame(state *telemetry.EnvelopeStateT) []byte {
 	offset := envelope.Pack(builder)
 	telemetry.FinishEnvelopeBuffer(builder, offset)
 
-	return builder.FinishedBytes()
+	encoded := builder.FinishedBytes()
+	frameBytes := make([]byte, len(encoded))
+	copy(frameBytes, encoded)
+
+	return frameBytes
 }
 
 /*
@@ -207,7 +226,12 @@ decodeManifold expects: the resident sensorium State and Reading, the packed
 Eulerian grid fields, and the spectral mode lattice, field for field.
 */
 func encodeManifold(state *types.ManifoldState, sequence uint64) []byte {
-	builder := flatbuffers.NewBuilder(0)
+	builder := webrtcBuilders.Get().(*flatbuffers.Builder)
+
+	defer func() {
+		builder.Reset()
+		webrtcBuilders.Put(builder)
+	}()
 
 	reading := &telemetry.ManifoldReadingT{
 		Divergence:       state.Reading.Divergence,
@@ -273,35 +297,26 @@ func encodeManifold(state *types.ManifoldState, sequence uint64) []byte {
 	offset := envelope.Pack(builder)
 	telemetry.FinishEnvelopeBuffer(builder, offset)
 
-	return builder.FinishedBytes()
+	encoded := builder.FinishedBytes()
+	frameBytes := make([]byte, len(encoded))
+	copy(frameBytes, encoded)
+
+	return frameBytes
 }
 
 /*
-HasChannel reports whether any connected viewer owns the frame's named data
-channel. Diagnostics and manifold viewers use separate peer connections.
+Wants reports whether any connected viewer owns the named channel AND is ready
+for another frame. Every publisher asks this before encoding: the encode is the
+expensive half of a publication, and a record handed to a channel still
+draining the previous one is both wasted work and — for a multi-chunk record —
+a frame the viewer can never reassemble.
 */
-func (fluidTransport *FluidRTC) HasChannel(channel string) bool {
+func (fluidTransport *FluidRTC) Wants(channel string) bool {
 	fluidTransport.peersMutex.RLock()
 	defer fluidTransport.peersMutex.RUnlock()
 
 	for _, peer := range fluidTransport.peers {
-		if peer.has(channel) {
-			return true
-		}
-	}
-
-	return false
-}
-
-/*
-HasPeers reports whether a peer has registered every required domain channel.
-*/
-func (fluidTransport *FluidRTC) HasPeers() bool {
-	fluidTransport.peersMutex.RLock()
-	defer fluidTransport.peersMutex.RUnlock()
-
-	for _, peer := range fluidTransport.peers {
-		if peer.ready() {
+		if peer.idle(channel) {
 			return true
 		}
 	}

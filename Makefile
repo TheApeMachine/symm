@@ -14,21 +14,20 @@ LDFLAGS := $(GOFLAGS)
 GO_TEST_FLAGS := -p 1 -timeout 30m
 
 SYMM_BIN := bin/symm
-# Leave CONFIG empty to use the binary's own default loading (cmd/cfg/infra.yml +
-# strategy.yml — the documented source of truth). Set CONFIG=path to override.
-# The previous default silently loaded the legacy merged config.yml instead.
+# Leave CONFIG empty to use the binary's default configuration search.
+# Set CONFIG=path to select an explicit config file.
 CONFIG ?=
 CONFIG_FLAG = $(if $(CONFIG),--config $(CONFIG),)
 LOG_DIR ?= runs
-OPTIMIZE_REPLAY ?= runs/replay.jsonl
-OPTIMIZE_TREE ?= logic/rules/tree.yml
-OPTIMIZE_LOOKBACK ?= 6h
-OPTIMIZE_SYMBOLS ?=
-OPTIMIZE_FLAGS ?=
+ADVISOR_DB ?= $(HOME)/.symm/data/events.sqlite
+ADVISOR_CONFIG ?= $(if $(wildcard $(HOME)/.symm/data/advisors.json),$(HOME)/.symm/data/advisors.json,config/advisors.json)
+ADVISOR_OUT ?= runs/advisors.candidate.json
+ADVISOR_RUN ?=
+ADVISOR_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map goodindahood
 
 generate-telemetry:
 	flatc --no-warnings --go --gen-object-api -o telemetry/generated telemetry/telemetry.fbs
@@ -64,9 +63,7 @@ metric-map:
 	go run ./tools/metricmap signal/metric_map.csv signal/metric_map.json
 
 run: metric-lineage
-	@echo "symm running (Ctrl+C to stop)"
-	@echo "UI ws://127.0.0.1:8765/ws · fluid http://127.0.0.1:8765/webrtc/manifold — dashboard: cd frontend && pnpm dev"
-	go run $(LDFLAGS) main.go
+	python3 scripts/run.py $(CONFIG_FLAG)
 
 experimental:
 	@echo "symm running (Ctrl+C to stop)"
@@ -115,3 +112,13 @@ physics-manifold-metallib:
 build: physics-metallib
 	@mkdir -p bin
 	go build $(LDFLAGS) -race -o $(SYMM_BIN) .
+
+optimize: goodindahood
+
+goodindahood:
+	.venv/bin/python3 scripts/optimize_advisor_features.py \
+		--db $(ADVISOR_DB) \
+		--config $(ADVISOR_CONFIG) \
+		--out $(ADVISOR_OUT) \
+		$(if $(ADVISOR_RUN),--run $(ADVISOR_RUN),) \
+		$(ADVISOR_FLAGS)

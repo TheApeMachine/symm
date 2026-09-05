@@ -251,7 +251,6 @@ func main() {
 		}
 	}
 
-
 	rep := buildReport(producers, consumers, unresolved)
 
 	data, err := json.MarshalIndent(rep, "", "  ")
@@ -334,80 +333,158 @@ func fatal(err error) {
 }
 
 /*
-scanProducers finds every projector.Project(label, "source", at, from, frame)
-call and every data.NewProjector(bindings...) call in the file, and pairs the
-Project call's literal source argument with the enclosing package's Binding
-Name literals to build the package's producer set.
+scanProducers finds every metric a package projects onto the wire.
 
-Both calls are matched structurally: any selector call whose method is named
-"Project" for the source string, and any call named "NewProjector" for the
-binding names — this tolerates the receiver var name differing per kernel
-(projector, ticker.projector, level3.projector, ...) without needing type
-information beyond what go/packages already resolved.
+A metric reaches the wire through one of four shapes, and this scanner has to
+know all of them because the pipeline offers no single choke point:
+
+  - a declared reporting node, nmtypes.Report{Label: "..."}, in a composed
+    signal pipeline;
+  - an imperative put, measurement.PutMetric(data.NewMetric("...", ...)) or one
+    of the per-kernel put helpers that wrap it;
+  - a renaming wrapper, nmtypes.Labelled, which republishes the readings of the
+    node beneath it under a Prefix or an explicit Names mapping;
+  - a local emit closure, addMetric("...", ...), used where a kernel builds its
+    metric set in a loop.
+
+The source a package publishes under comes from the terminal data.Projection's
+Source field or from the NewMeasurement call's source argument. Anything this
+scanner cannot resolve is reported as unresolved rather than dropped, so a
+producer set that shrinks is visible instead of silent.
 */
 func scanProducers(pkg *packages.Package, file *ast.File, relFile string) ([]producer, []unresolvedOut) {
 	var (
 		sources    []string
-		bindings   []producer
+		emitted    []producer
 		unresolved []unresolvedOut
 	)
 
-	ast.Inspect(file, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
+	lineOf := func(node ast.Node) int {
+		return pkg.Fset.Position(node.Pos()).Line
+	}
 
-		switch fn := call.Fun.(type) {
-		case *ast.SelectorExpr:
-			if fn.Sel.Name == "Project" && len(call.Args) >= 2 {
-				if lit := stringLiteral(call.Args[1]); lit != "" {
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch typed := node.(type) {
+		case *ast.CallExpr:
+			name := callName(typed)
+
+			switch {
+			// data.NewMeasurement[T](id, label, source, at, from)
+			case name == "NewMeasurement" && len(typed.Args) >= 3:
+				if lit := stringLiteral(typed.Args[2]); lit != "" {
 					sources = append(sources, lit)
-				} else {
-					pos := pkg.Fset.Position(call.Pos())
-					unresolved = append(unresolved, unresolvedOut{
-						Package: pkg.PkgPath, File: relFile, Line: pos.Line,
-						Reason: "Project() source argument is not a string literal",
-					})
+				}
+
+			// The pumpdump standardized-reading helper publishes both forms.
+			case name == "putResidualReadings" && len(typed.Args) >= 2:
+				if lit := stringLiteral(typed.Args[1]); lit != "" {
+					for _, suffix := range []string{"_divergence", "_zscore"} {
+						emitted = append(emitted, newProducer(lit+suffix, "", relFile, lineOf(typed)))
+					}
+				}
+
+			// NewMetric / PutMetric / addMetric / putXMetric / putRatio and
+			// any other per-kernel wrapper all take the metric's own name as
+			// their first string argument.
+			case isMetricPutter(pkg, typed, name):
+				for index, arg := range typed.Args {
+					if lit := stringLiteral(arg); lit != "" {
+						unit := ""
+
+						if index+2 < len(typed.Args) {
+							unit = exprString(typed.Args[len(typed.Args)-1])
+						}
+
+						emitted = append(emitted, newProducer(lit, unit, relFile, lineOf(typed)))
+
+						break
+					}
 				}
 			}
-		case *ast.Ident:
-			// unqualified NewProjector shouldn't happen (always data.NewProjector),
-			// but handle it defensively.
-			if fn.Name == "NewProjector" {
-				bindings = append(bindings, extractBindings(pkg, call, relFile)...)
-			}
-		}
 
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "NewProjector" {
-			bindings = append(bindings, extractBindings(pkg, call, relFile)...)
+		case *ast.CompositeLit:
+			fields := literalFields(typed)
+
+			if source := stringLiteral(fields["Source"]); source != "" {
+				sources = append(sources, source)
+			}
+
+			// A Labelled node republishes the readings beneath it; resolving
+			// it needs the whole subtree, so it is handled as a unit.
+			if _, isLabelled := fields["Prefix"]; isLabelled {
+				labels, ok := labelledReadings(pkg, typed)
+
+				if !ok {
+					unresolved = append(unresolved, unresolvedOut{
+						Package: pkg.PkgPath, File: relFile, Line: lineOf(typed),
+						Reason: "Labelled node wraps a reporter whose readings are not statically known",
+					})
+
+					return true
+				}
+
+				for _, label := range labels {
+					emitted = append(emitted, newProducer(label, "", relFile, lineOf(typed)))
+				}
+
+				// The node beneath was just accounted for under its published
+				// names; descending would count it again under its own.
+				return false
+			}
+
+			if _, isNames := fields["Names"]; isNames {
+				// A Names map with no Prefix above it renames in place.
+				for _, label := range namesValues(fields["Names"]) {
+					emitted = append(emitted, newProducer(label, "", relFile, lineOf(typed)))
+				}
+
+				return true
+			}
+
+			if label := stringLiteral(fields["Label"]); label != "" {
+				emitted = append(emitted, newProducer(
+					label, stringLiteral(fields["Unit"]), relFile, lineOf(typed),
+				))
+			}
+
+			// A reporter placed straight into a pipeline slot, with no
+			// Labelled above it, publishes its readings under their own names.
+			// Only reporting nodes count: the same estimator held as an
+			// ordinary struct field is state, not a published reading.
+			if !isReportingNode(pkg, typed) {
+				return true
+			}
+
+			for key, value := range fields {
+				if key == "Label" || key == "Unit" || key == "Source" {
+					continue
+				}
+
+				for _, label := range bareReadings(pkg, value) {
+					emitted = append(emitted, newProducer(label, "", relFile, lineOf(typed)))
+				}
+			}
 		}
 
 		return true
 	})
 
-	if len(sources) == 0 || len(bindings) == 0 {
+	if len(sources) == 0 || len(emitted) == 0 {
 		return nil, unresolved
 	}
 
-	// A package emits under one source name in the overwhelming majority of
-	// cases (confirmed by direct reading of every signal/* kernel). If a file
-	// contains more than one distinct literal source, attribute every binding
-	// in that file to all of them rather than silently guessing — downstream
-	// dedup on (source, metric) still produces a correct dead/used verdict as
-	// long as at least one attribution is right, and readers can see the
-	// ambiguity in the package field.
 	uniqueSources := dedupeStrings(sources)
 
-	out := make([]producer, 0, len(bindings)*len(uniqueSources))
-	for _, b := range bindings {
-		for _, src := range uniqueSources {
+	out := make([]producer, 0, len(emitted)*len(uniqueSources))
+
+	for _, metric := range emitted {
+		for _, source := range uniqueSources {
 			out = append(out, producer{
-				ID:       metricID{Source: src, Metric: b.ID.Metric, Side: b.ID.Side},
+				ID:       metricID{Source: source, Metric: metric.ID.Metric, Side: metric.ID.Side},
 				Package:  pkg.PkgPath,
 				File:     relFile,
-				Line:     b.Line,
-				Unit:     b.Unit,
+				Line:     metric.Line,
+				Unit:     metric.Unit,
 				Resolved: true,
 			})
 		}
@@ -417,56 +494,413 @@ func scanProducers(pkg *packages.Package, file *ast.File, relFile string) ([]pro
 }
 
 /*
-extractBindings walks one NewProjector(...) call's arguments for
-data.Binding{Name: "..."} composite literals and splits "metric:side" into
-its two parts, matching the convention confirmed against strategy/defaults.go.
+metricPutters caches, per package, whether a helper function ultimately writes
+a metric. Kernels wrap PutMetric in their own small helpers (putMetric,
+putDerivMetric, putRatio, ...), and naming them is not a contract, so the
+scanner reads each candidate's body rather than trusting its name.
 */
-func extractBindings(pkg *packages.Package, call *ast.CallExpr, relFile string) []producer {
-	var out []producer
+var metricPutters = map[*types.Func]bool{}
 
-	for _, arg := range call.Args {
-		lit, ok := arg.(*ast.CompositeLit)
+/*
+isMetricPutter reports whether a call publishes a metric under a name given as
+a string literal. A local emit closure is recognised by name, since it has no
+declaration to read; a package-level helper is recognised by whether its body
+reaches a metric write.
+*/
+func isMetricPutter(pkg *packages.Package, call *ast.CallExpr, name string) bool {
+	if name == "" {
+		return false
+	}
+
+	// The metric constructors themselves, and the local addMetric closures
+	// that kernels build their metric sets with.
+	if strings.HasSuffix(name, "Metric") || strings.HasSuffix(name, "metric") {
+		return true
+	}
+
+	if pkg.TypesInfo == nil {
+		return false
+	}
+
+	ident := calleeIdent(call)
+
+	if ident == nil {
+		return false
+	}
+
+	object, _ := pkg.TypesInfo.Uses[ident].(*types.Func)
+
+	if object == nil {
+		return false
+	}
+
+	if known, found := metricPutters[object]; found {
+		return known
+	}
+
+	// Guard against a helper that calls itself while its verdict is pending.
+	metricPutters[object] = false
+
+	declaration := findFuncDecl(pkg, object)
+
+	if declaration == nil || declaration.Body == nil {
+		return false
+	}
+
+	writes := false
+
+	ast.Inspect(declaration.Body, func(node ast.Node) bool {
+		inner, ok := node.(*ast.CallExpr)
+
+		if !ok {
+			return true
+		}
+
+		if isMetricPutter(pkg, inner, callName(inner)) {
+			writes = true
+
+			return false
+		}
+
+		return true
+	})
+
+	metricPutters[object] = writes
+
+	return writes
+}
+
+/*
+calleeIdent returns the identifier naming the called function, seeing through
+selectors and generic instantiation.
+*/
+func calleeIdent(call *ast.CallExpr) *ast.Ident {
+	fun := call.Fun
+
+	for {
+		switch typed := fun.(type) {
+		case *ast.IndexExpr:
+			fun = typed.X
+		case *ast.IndexListExpr:
+			fun = typed.X
+		case *ast.ParenExpr:
+			fun = typed.X
+		case *ast.SelectorExpr:
+			return typed.Sel
+		case *ast.Ident:
+			return typed
+		default:
+			return nil
+		}
+	}
+}
+
+/*
+findFuncDecl locates a function's declaration within its own package.
+*/
+func findFuncDecl(pkg *packages.Package, object *types.Func) *ast.FuncDecl {
+	for _, file := range pkg.Syntax {
+		for _, decl := range file.Decls {
+			function, ok := decl.(*ast.FuncDecl)
+
+			if !ok || function.Name == nil {
+				continue
+			}
+
+			if pkg.TypesInfo.Defs[function.Name] == object {
+				return function
+			}
+		}
+	}
+
+	return nil
+}
+
+/*
+reportingPackage is the package whose composite nodes form a reporting
+pipeline. A reporter reached through one of these publishes; a reporter held
+anywhere else is just state the kernel keeps.
+*/
+const reportingPackage = "github.com/theapemachine/symm/nomagique/types"
+
+/*
+isReportingNode reports whether a composite literal is one of the pipeline
+node types whose slots are walked for readings.
+*/
+func isReportingNode(pkg *packages.Package, lit *ast.CompositeLit) bool {
+	if pkg.TypesInfo == nil {
+		return false
+	}
+
+	litType := pkg.TypesInfo.TypeOf(lit)
+
+	if litType == nil {
+		return false
+	}
+
+	if pointer, ok := litType.(*types.Pointer); ok {
+		litType = pointer.Elem()
+	}
+
+	named, ok := litType.(*types.Named)
+
+	if !ok || named.Obj() == nil || named.Obj().Pkg() == nil {
+		return false
+	}
+
+	return named.Obj().Pkg().Path() == reportingPackage
+}
+
+/*
+bareReadings returns the readings of a reporter used directly as a pipeline
+value. A reporter under a Labelled is excluded: that wrapper renames what it
+publishes, and labelledReadings has already accounted for it.
+*/
+func bareReadings(pkg *packages.Package, expr ast.Expr) []string {
+	switch expr.(type) {
+	case *ast.Ident, *ast.SelectorExpr:
+	default:
+		return nil
+	}
+
+	labels, ok := innerReadings(pkg, expr)
+
+	if !ok {
+		return nil
+	}
+
+	return labels
+}
+
+/*
+newProducer splits a wire name into its metric and side halves.
+*/
+func newProducer(name, unit, relFile string, line int) producer {
+	metric, side := name, ""
+
+	if index := strings.IndexByte(name, ':'); index >= 0 {
+		metric, side = name[:index], name[index+1:]
+	}
+
+	return producer{
+		ID:   metricID{Metric: metric, Side: side},
+		File: relFile,
+		Line: line,
+		Unit: unit,
+	}
+}
+
+/*
+callName returns the called function's own identifier, seeing through a
+selector (data.NewMetric) and through generic instantiation
+(data.NewMeasurement[float64]).
+*/
+func callName(call *ast.CallExpr) string {
+	fun := call.Fun
+
+	for {
+		switch typed := fun.(type) {
+		case *ast.IndexExpr:
+			fun = typed.X
+		case *ast.IndexListExpr:
+			fun = typed.X
+		case *ast.ParenExpr:
+			fun = typed.X
+		case *ast.SelectorExpr:
+			return typed.Sel.Name
+		case *ast.Ident:
+			return typed.Name
+		default:
+			return ""
+		}
+	}
+}
+
+/*
+literalFields indexes one composite literal's keyed fields by name.
+*/
+func literalFields(lit *ast.CompositeLit) map[string]ast.Expr {
+	fields := make(map[string]ast.Expr, len(lit.Elts))
+
+	for _, elt := range lit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+
 		if !ok {
 			continue
 		}
 
-		var name, unit string
-		for _, elt := range lit.Elts {
-			kv, ok := elt.(*ast.KeyValueExpr)
-			if !ok {
-				continue
-			}
-			key, ok := kv.Key.(*ast.Ident)
-			if !ok {
-				continue
-			}
-			switch key.Name {
-			case "Name":
-				name = stringLiteral(kv.Value)
-			case "Unit":
-				unit = exprString(kv.Value)
-			}
+		if key, ok := kv.Key.(*ast.Ident); ok {
+			fields[key.Name] = kv.Value
 		}
+	}
 
-		if name == "" {
+	return fields
+}
+
+/*
+namesValues returns the published names a Names map assigns. An empty value
+drops that reading rather than renaming it, so it publishes nothing.
+*/
+func namesValues(expr ast.Expr) []string {
+	lit, ok := expr.(*ast.CompositeLit)
+
+	if !ok {
+		return nil
+	}
+
+	var out []string
+
+	for _, elt := range lit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+
+		if !ok {
 			continue
 		}
 
-		metric, side := name, ""
-		if idx := strings.IndexByte(name, ':'); idx >= 0 {
-			metric, side = name[:idx], name[idx+1:]
+		if value := stringLiteral(kv.Value); value != "" {
+			out = append(out, value)
 		}
-
-		pos := pkg.Fset.Position(lit.Pos())
-		out = append(out, producer{
-			ID:   metricID{Metric: metric, Side: side},
-			File: relFile,
-			Line: pos.Line,
-			Unit: unit,
-		})
 	}
 
 	return out
+}
+
+/*
+readingsByType names the readings each reporter publishes, for the reporters a
+Labelled node is placed over. These sets are declared by the reporter's own
+Readings method; a type absent here makes the Labelled unresolvable, which the
+scanner reports rather than guessing at.
+*/
+var readingsByType = map[string][]string{
+	"github.com/theapemachine/symm/nomagique/equation.CausalResidual": {
+		"baseline", "mean", "divergence", "zscore",
+	},
+	"github.com/theapemachine/symm/nomagique/equation.MultivariateDivergence": {
+		"touch_notional_baseline:bid",
+		"touch_notional_baseline:ask",
+		"spread_baseline",
+		"depth_ratio:bid",
+		"depth_ratio:ask",
+		"spread_ratio",
+		"depth_divergence:bid",
+		"depth_divergence:ask",
+		"spread_divergence",
+		"depth_noise_scale:bid",
+		"depth_noise_scale:ask",
+		"spread_noise_scale",
+		"depth_zscore:bid",
+		"depth_zscore:ask",
+		"spread_zscore",
+		"divergence_velocity:bid",
+		"divergence_velocity_snr:bid",
+		"divergence_velocity:ask",
+		"divergence_velocity_snr:ask",
+		"spread_divergence_velocity",
+		"spread_divergence_velocity_snr",
+	},
+}
+
+/*
+labelledReadings resolves the names one nmtypes.Labelled node publishes, by
+applying its Names mapping and Prefix to the readings of the node beneath it.
+Labelled nodes nest, so the inner mapping is resolved first and the outer
+Prefix then applies to the already-renamed labels, exactly as Labelled.Readings
+does at runtime.
+*/
+func labelledReadings(pkg *packages.Package, lit *ast.CompositeLit) ([]string, bool) {
+	fields := literalFields(lit)
+	prefix := stringLiteral(fields["Prefix"])
+
+	node, hasNode := fields["Node"]
+
+	if !hasNode {
+		return nil, false
+	}
+
+	inner, ok := innerReadings(pkg, node)
+
+	if !ok {
+		return nil, false
+	}
+
+	names := map[string]string{}
+	mapped := map[string]bool{}
+
+	if namesLit, ok := fields["Names"].(*ast.CompositeLit); ok {
+		for _, elt := range namesLit.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+
+			if !ok {
+				continue
+			}
+
+			key := stringLiteral(kv.Key)
+			names[key] = stringLiteral(kv.Value)
+			mapped[key] = true
+		}
+	}
+
+	out := make([]string, 0, len(inner))
+
+	for _, label := range inner {
+		name := prefix + label
+
+		if renamed, found := names[label]; found {
+			if renamed == "" {
+				// An explicit empty name drops the reading.
+				continue
+			}
+
+			name = prefix + renamed
+		}
+
+		out = append(out, name)
+	}
+
+	return out, true
+}
+
+/*
+innerReadings returns the labels the node beneath a Labelled publishes, either
+by recursing into a nested Labelled literal or by resolving the node's declared
+type against readingsByType.
+*/
+func innerReadings(pkg *packages.Package, node ast.Expr) ([]string, bool) {
+	expr := node
+
+	if unary, ok := expr.(*ast.UnaryExpr); ok {
+		expr = unary.X
+	}
+
+	if lit, ok := expr.(*ast.CompositeLit); ok {
+		if fields := literalFields(lit); fields["Node"] != nil {
+			return labelledReadings(pkg, lit)
+		}
+	}
+
+	if pkg.TypesInfo == nil {
+		return nil, false
+	}
+
+	nodeType := pkg.TypesInfo.TypeOf(node)
+
+	if nodeType == nil {
+		return nil, false
+	}
+
+	if pointer, ok := nodeType.(*types.Pointer); ok {
+		nodeType = pointer.Elem()
+	}
+
+	named, ok := nodeType.(*types.Named)
+
+	if !ok || named.Obj() == nil || named.Obj().Pkg() == nil {
+		return nil, false
+	}
+
+	labels, found := readingsByType[named.Obj().Pkg().Path()+"."+named.Obj().Name()]
+
+	return labels, found
 }
 
 /*
@@ -870,10 +1304,8 @@ func scanAdvisorConsumers(
 		return true
 	})
 
-
 	return out
 }
-
 
 func calleeName(fn ast.Expr) string {
 	switch f := fn.(type) {

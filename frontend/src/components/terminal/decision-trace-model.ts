@@ -36,12 +36,50 @@ export type TraceBranch = {
 	pruned: boolean;
 };
 
+export type AdvisorClass = {
+	state: string;
+	probability: number;
+};
+
+export type AdvisorMoveMass = {
+	move: string;
+	mass: number;
+};
+
 export type AdvisorOpinion = {
 	advisor: string;
 	state: string;
 	probability: number;
 	credibility: number;
 	weight: number;
+	/* The whole reading, not only the class that led it. */
+	classes: AdvisorClass[];
+	maturity: number;
+	/* The move mass this advisor alone placed, before normalization. */
+	contribution: AdvisorMoveMass[];
+	/* Its classes no projection rule accepted, whose weight was discarded. */
+	unmapped: string[];
+	/* Classes it declares but could not measure; they took no part in the reading. */
+	unscored: string[];
+	clock: string;
+	leaseFrom: number;
+	leaseUntil: number;
+	clockNow: number;
+};
+
+/*
+Why an advisor contributed nothing. "incomplete" means its declared evidence
+has never all arrived for this symbol, which is a wiring fault that persists
+silently; "expired" means it published and the clock has passed its lease,
+which is the ordinary rhythm of a slow instrument.
+*/
+export type AdvisorSilence = {
+	advisor: string;
+	reason: string;
+	missing: string[];
+	declared: number;
+	leaseUntil: number;
+	clockNow: number;
 };
 
 export type CouncilTrace = {
@@ -51,6 +89,8 @@ export type CouncilTrace = {
 	vetoes: string[];
 	synergies: string[];
 	advisors: AdvisorOpinion[];
+	silent: AdvisorSilence[];
+	unmappedClasses: string[];
 };
 
 export type DecisionTraceModel = {
@@ -191,13 +231,98 @@ export const readDecisionTrace = (
 			continue;
 		}
 
+		const classes: AdvisorClass[] = [];
+
+		for (let entry = 0; entry < (opinion.classesLength?.() ?? 0); entry += 1) {
+			const reading = opinion.classes(entry);
+
+			if (!reading) continue;
+
+			classes.push({
+				state: reading.state() ?? "",
+				probability: reading.probability(),
+			});
+		}
+
+		const contribution: AdvisorMoveMass[] = [];
+
+		for (
+			let entry = 0;
+			entry < (opinion.contributionLength?.() ?? 0);
+			entry += 1
+		) {
+			const mass = opinion.contribution(entry);
+
+			if (!mass) continue;
+
+			contribution.push({ move: mass.move() ?? "", mass: mass.mass() });
+		}
+
+		const unmapped: string[] = [];
+
+		for (let entry = 0; entry < (opinion.unmappedLength?.() ?? 0); entry += 1) {
+			unmapped.push(opinion.unmapped(entry));
+		}
+
+		const unscored: string[] = [];
+
+		for (let entry = 0; entry < (opinion.unscoredLength?.() ?? 0); entry += 1) {
+			unscored.push(opinion.unscored(entry));
+		}
+
 		advisors.push({
 			advisor: opinion.advisor() ?? "",
 			state: opinion.state() ?? "",
 			probability: opinion.probability(),
 			credibility: opinion.credibility(),
 			weight: opinion.weight(),
+			classes,
+			maturity: opinion.maturity(),
+			contribution,
+			unmapped,
+			unscored,
+			clock: opinion.clock() ?? "",
+			leaseFrom: Number(opinion.leaseFrom()),
+			leaseUntil: Number(opinion.leaseUntil()),
+			clockNow: Number(opinion.clockNow()),
 		});
+	}
+
+	const silent: AdvisorSilence[] = [];
+
+	for (
+		let index = 0;
+		index < (trace.advisorSilencesLength?.() ?? 0);
+		index += 1
+	) {
+		const entry = trace.advisorSilences(index);
+
+		if (!entry) continue;
+
+		const missing: string[] = [];
+
+		for (let key = 0; key < (entry.missingLength?.() ?? 0); key += 1) {
+			missing.push(entry.missing(key));
+		}
+
+		silent.push({
+			advisor: entry.advisor() ?? "",
+			reason: entry.reason() ?? "",
+			missing,
+			declared: entry.declared(),
+			leaseUntil: Number(entry.leaseUntil()),
+			clockNow: Number(entry.clockNow()),
+		});
+	}
+
+	const unmappedClasses: string[] = [];
+
+	for (
+		let index = 0;
+		index < (trace.consensusUnmappedClassesLength?.() ?? 0);
+		index += 1
+	) {
+		unmappedClasses.push(trace.consensusUnmappedClasses(index));
 	}
 
 	return {
@@ -208,6 +333,8 @@ export const readDecisionTrace = (
 			vetoes,
 			synergies,
 			advisors,
+			silent,
+			unmappedClasses,
 		},
 		iterations: Number(trace.iterations()),
 		horizon: Number(trace.horizon()),

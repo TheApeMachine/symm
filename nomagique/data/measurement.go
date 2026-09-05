@@ -160,6 +160,11 @@ func (measurement *Measurement[Value]) Finalize() {
 		return
 	}
 
+	// A reused measurement derives quality from this update's facts. Missing
+	// noise evidence cannot retain a previously defined signal-to-noise ratio.
+	measurement.SNR = 0
+	measurement.SNRDefined = false
+
 	if measurement.Metadata == nil {
 		measurement.Metadata = map[string]float64{}
 	}
@@ -199,6 +204,42 @@ func (measurement *Measurement[Value]) Finalize() {
 		measurement.SNR = mahalanobisSNR
 		measurement.SNRDefined = true
 	}
+}
+
+/*
+Authority computes the continuous statistical authority in [0, 1] this measurement
+commands, derived from its maturity, estimator facts, and SNR.
+*/
+func (measurement *Measurement[Value]) Authority() float64 {
+	if measurement == nil {
+		return 0.0
+	}
+
+	if measurement.Maturity == 0 && !measurement.SNRDefined && !measurement.Estimated {
+		measurement.Finalize()
+	}
+
+	maturity := clamp(measurement.Maturity, 0.0, 1.0)
+
+	if maturity <= 0.0 {
+		return 0.0
+	}
+
+	snrFactor := 1.0
+
+	if measurement.Estimated {
+		snrFactor = 0.5
+
+		if measurement.SNRDefined {
+			if measurement.SNR <= 0.0 {
+				snrFactor = 0.1
+			} else {
+				snrFactor = measurement.SNR / (1.0 + measurement.SNR)
+			}
+		}
+	}
+
+	return clamp(maturity*snrFactor, 0.0, 1.0)
 }
 
 /*
@@ -273,4 +314,3 @@ func (measurement *Measurement[Value]) Readouts() map[string]*Readout {
 
 	return readouts
 }
-

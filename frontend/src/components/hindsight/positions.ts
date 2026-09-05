@@ -44,6 +44,20 @@ export type Position = {
 	realisedPriceChange: number | null;
 	/* Fees the venue actually charged across both fills, where reported. */
 	fees: number | null;
+	/*
+		Capture sequences of the frames the position was opened and closed on,
+		so a reader can seek the tape to either edge rather than hunting for it
+		by wall time. Null when the record does not name one.
+
+		The two are recorded differently, and only one of them can be
+		reconstructed. An entry is caused by a planner decision, so its frame
+		survives in the decision witness. An exit is executed by the desk's
+		Stoploss, which commits no decision, so its frame exists only if the
+		recorder stamped it as it happened. Positions closed before that
+		stamping existed report no exit frame instead of borrowing the entry's.
+	*/
+	entrySeq: number | null;
+	exitSeq: number | null;
 };
 
 const numberOrNull = (raw?: string | null): number | null => {
@@ -52,6 +66,20 @@ const numberOrNull = (raw?: string | null): number | null => {
 	const value = Number(raw);
 
 	return Number.isFinite(value) ? value : null;
+};
+
+/*
+sequenceOf reads the capture sequence the store resolved for this transition.
+A zero or absent sequence means the decision witness could not be joined, so
+the position stays listed but is not seekable — the record says where it
+cannot take you rather than guessing a nearby frame.
+*/
+const sequenceOf = (event: HindsightLifecycleEvent): number | null => {
+	const sequence = event.captureSeq;
+
+	if (sequence === undefined || sequence === null || sequence <= 0) return null;
+
+	return sequence;
 };
 
 const fillOf = (event: HindsightLifecycleEvent): PositionFill | null => {
@@ -94,21 +122,27 @@ export const buildPositions = (
 			open: true,
 			realisedPriceChange: null,
 			fees: null,
+			entrySeq: null,
+			exitSeq: null,
 		};
 
 		switch (event.kind) {
 			case "entry_fill":
 				existing.entry = fillOf(event) ?? existing.entry;
+				existing.entrySeq = sequenceOf(event) ?? existing.entrySeq;
 				break;
 			case "exit_fill":
 				existing.exit = fillOf(event) ?? existing.exit;
+				existing.exitSeq = sequenceOf(event) ?? existing.exitSeq;
 				break;
 			case "position_open":
 				existing.openedAt = event.at;
+				existing.entrySeq = sequenceOf(event) ?? existing.entrySeq;
 				break;
 			case "position_close":
 				existing.closedAt = event.at;
 				existing.open = false;
+				existing.exitSeq = sequenceOf(event) ?? existing.exitSeq;
 				break;
 			default:
 				break;
