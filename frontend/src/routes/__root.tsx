@@ -154,13 +154,13 @@ const RootDocument = ({ children }: { children: React.ReactNode }) => {
 				<ClientOnly fallback={null}>
 					<WsFeed />
 					<RtcFeed />
-					<Flex.Column className="fixed inset-0 z-50 min-h-0 overflow-hidden bg-[#0e0c0a] text-[13px] text-[#cbc2b4]">
+					<Flex.Column className="fixed inset-0 z-50 min-h-0 overflow-hidden bg-(--bg) text-[13px] text-(--f2)">
 						{scanlines ? <Scanlines variant="screen" className="z-60" /> : null}
 						<SymbolFocusLayer>
 							<TerminalTopBar />
 							<Flex.Row className="min-h-0 flex-1">
 								<TerminalNav active={surface} />
-								<main className="min-w-0 flex-1 overflow-auto bg-[#0e0c0a]">
+								<main className="min-w-0 flex-1 overflow-auto bg-(--bg)">
 									<div className="h-full min-h-180">{children}</div>
 								</main>
 							</Flex.Row>

@@ -56,6 +56,7 @@ the venue connection, authenticate a fresh network session, and restore its
 subscriptions; protocol and ingestion failures remain terminal.
 */
 type Live struct {
+	funding      FundingLedger
 	ctx          context.Context
 	cancel       context.CancelFunc
 	status       *runtime.Status
@@ -265,6 +266,7 @@ func (live *Live) operationalError() error {
 
 	select {
 	case <-live.ctx.Done():
+
 		if err := live.Error(); err != nil {
 			return err
 		}
@@ -580,6 +582,7 @@ func NewWithClient(
 
 		switch channel {
 		case "pong":
+
 			if errMsg := utils.GetString(raw, "error"); errMsg != "" {
 				live.fail(errnie.Err(
 					errnie.IO,
@@ -1565,12 +1568,50 @@ func (live *Live) CancelOrder(
 
 func (live *Live) TradeBalance() (kraken.TradeBalanceResult, error) {
 	if live.model == "real" {
+		before, _, err := live.funding.Observe(live.Post, live.normalizer.Name, live.quote, time.Now().UTC())
+
+		if err != nil {
+			errnie.Error(err)
+		}
 		response, err := live.Post(
 			TradeBalanceEndpoint,
 			kraken.NewTradeBalanceRequest(live.quote),
 		)
 
-		return kraken.NewTradeBalance(response), errnie.Error(err)
+		if err != nil {
+			return kraken.TradeBalanceResult{}, errnie.Error(err)
+		}
+		result := kraken.NewTradeBalance(response)
+		complete := result.EquivalentBalance != nil
+		result.ValuationComplete = &complete
+		balances, err := live.Post("/0/private/BalanceEx", json.RawMessage(`{}`))
+
+		if err != nil {
+			return result, errnie.Error(err)
+		}
+
+		extended, err := kraken.NewExtendedBalance(balances)
+
+		if err != nil {
+			return result, errnie.Error(err)
+		}
+
+		result.AvailableCash, err = extended.Available(live.quote, live.normalizer.Name)
+
+		if err != nil {
+			return result, errnie.Error(err)
+		}
+		result.NetFunding, result.FundingReason, err = live.funding.Observe(live.Post, live.normalizer.Name, live.quote, time.Now().UTC())
+
+		if err != nil {
+			errnie.Error(err)
+		}
+
+		if before == nil || (result.NetFunding != nil && before.Cmp(result.NetFunding) != 0) {
+			result.NetFunding = nil
+			result.FundingReason = "funding changed or was unavailable during valuation"
+		}
+		return result, nil
 	}
 
 	return live.paper.TradeBalance()

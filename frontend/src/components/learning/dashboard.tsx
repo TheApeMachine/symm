@@ -1,9 +1,13 @@
 import { useState } from "react";
+import { Alert } from "#/components/ui/alert";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
+import { Tabs } from "#/components/ui/tabs";
 import { Typography } from "#/components/ui/typography";
+import { CandidateReview } from "./candidate-review";
+import { CapitalPanel } from "./capital-panel";
 import {
 	CandidatePanel,
 	ForwardPanel,
@@ -12,6 +16,7 @@ import {
 	LanePanel,
 } from "./decision-panel";
 import { action, amount, basis, clock, duration, percent } from "./format";
+import { KnowledgePanel } from "./knowledge-panel";
 import { ImpulseMap } from "./map";
 import { SkillPanel } from "./skill-panel";
 import { type LearningEvent, useLearning } from "./state";
@@ -71,13 +76,29 @@ const JournalEntry = ({ event }: { event: LearningEvent }) => (
 				size="s"
 				tone={(event.target ?? 0) >= 0 ? "accent" : "f2"}
 			>
-				Return {basis(event.target ?? 0)}{" "}
+				Advantage {basis(event.target ?? 0)}
+				{event.targetUnit === "return_per_second" ? "/s" : ""}{" "}
 				{event.truncated
 					? "over a window cut short by a spent account"
 					: `over ${duration(event.horizonNs)}`}{" "}
 				· prior now{" "}
 				{event.prior?.Defined ? basis(event.prior.Mean) : "undefined"} on{" "}
 				{event.prior?.Samples ?? 0}
+			</Typography.Mono>
+		)}
+		{event.candidateId && (
+			<Typography.Mono size="s">
+				Candidate {event.candidateId} ·{" "}
+				{event.candidateResult?.state || event.scope}
+			</Typography.Mono>
+		)}
+		{event.portfolioId && (
+			<Typography.Mono size="s">Allocation {event.portfolioId}</Typography.Mono>
+		)}
+		{event.kind === "resolved" && (
+			<Typography.Mono size="s">
+				Absolute Skill return {basis(event.absoluteSkillTarget ?? 0)} · issue
+				baseline {event.baselineRate}/s
 			</Typography.Mono>
 		)}
 		{event.kind === "recycled" && (
@@ -93,10 +114,11 @@ const JournalEntry = ({ event }: { event: LearningEvent }) => (
 	</Flex.Column>
 );
 
-type Tab = "decision" | "influence" | "forward" | "wallets";
+type Tab = "decision" | "capital" | "influence" | "forward" | "wallets";
 
 const TABS: Array<{ key: Tab; label: string }> = [
 	{ key: "decision", label: "Decision" },
+	{ key: "capital", label: "Shared capital" },
 	{ key: "influence", label: "Discovery" },
 	{ key: "forward", label: "Forward test" },
 	{ key: "wallets", label: "Wallets" },
@@ -117,11 +139,7 @@ export const LearningDashboard = () => {
 						: "Connecting to the workspace"
 				}
 			/>
-			{error && (
-				<Typography.Mono role="alert" className="p-3 text-error">
-					{error} · Last successful state remains visible.
-				</Typography.Mono>
-			)}
+			{error && <Alert>{error} · Last successful state remains visible.</Alert>}
 			<Flex className="min-h-0 flex-1 max-lg:flex-col">
 				<Section className="w-52 shrink-0 border-(--line) border-r max-lg:h-36 max-lg:w-full">
 					<Section.Header
@@ -147,11 +165,17 @@ export const LearningDashboard = () => {
 				</Section>
 
 				<Flex.Column className="min-h-0 min-w-0 flex-1 overflow-auto">
+					{/*
+						The mode badge and the horizon line sit in the header rather than
+						in a strip beneath it: they qualify the title — which symbol, in
+						what state, measured over what — and a second full-width band to
+						carry three facts cost more vertical space than the panels below
+						could spare.
+					*/}
 					<Section.Header
 						title={view?.symbol || "Waiting for market observations"}
 						meta={view?.status}
-					/>
-					<Flex.Row align="center" gap={6} className="flex-wrap px-3 pb-2">
+					>
 						<Badge
 							label={
 								view?.skill?.mode === "trading"
@@ -167,12 +191,12 @@ export const LearningDashboard = () => {
 							}
 							dot
 						/>
-						<Typography.Mono size="s" tone="f3">
+						<Typography.Mono size="s" tone="f3" className="truncate">
 							Horizon {duration(view?.horizonNs ?? 0)} ·{" "}
 							{view?.epochs?.toLocaleString() ?? 0} impulse epochs observed ·
 							grid v{view?.gridVersion ?? 0}
 						</Typography.Mono>
-					</Flex.Row>
+					</Section.Header>
 					<div className="flex min-h-[340px] border-(--line) border-b max-xl:flex-col">
 						<div className="w-[380px] shrink-0 border-(--line) border-r max-xl:w-full max-xl:border-r-0 max-xl:border-b">
 							<ImpulseMap
@@ -191,29 +215,36 @@ export const LearningDashboard = () => {
 					</div>
 
 					<Flex.Row gap={2} className="border-(--line) border-b px-3 py-2">
-						{TABS.map((entry) => (
-							<Button
-								key={entry.key}
-								size="m"
-								variant={tab === entry.key ? "solid" : "quiet"}
-								tone="accent"
-								onClick={() => setTab(entry.key)}
-								aria-pressed={tab === entry.key}
-							>
-								{entry.label}
-							</Button>
-						))}
+						<Tabs size="m">
+							{TABS.map((entry) => (
+								<Tabs.Tab
+									key={entry.key}
+									size="m"
+									active={tab === entry.key}
+									onClick={() => setTab(entry.key)}
+								>
+									{entry.label}
+								</Tabs.Tab>
+							))}
+						</Tabs>
 					</Flex.Row>
 
 					{tab === "decision" && (
 						<>
 							<ImpulsePanel view={view} />
 							<CandidatePanel view={view} />
+							<KnowledgePanel view={view} />
 						</>
 					)}
 					{tab === "influence" && <InfluencePanel view={view} />}
-					{tab === "forward" && <ForwardPanel view={view} />}
+					{tab === "forward" && (
+						<>
+							<ForwardPanel view={view} />
+							<CandidateReview view={view} />
+						</>
+					)}
 					{tab === "wallets" && <LanePanel view={view} />}
+					{tab === "capital" && <CapitalPanel view={view} />}
 				</Flex.Column>
 
 				<Flex.Column className="w-96 shrink-0 overflow-auto border-(--line) border-l max-lg:w-full">

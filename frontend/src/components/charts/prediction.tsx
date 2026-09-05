@@ -107,7 +107,7 @@ const ScalarDiagnostics = () => {
 
 	return (
 		<div className="grid grid-cols-5 gap-px overflow-hidden border border-(--line) bg-(--line)">
-			<div className="bg-[#0a0907] px-2 py-1.5">
+			<div className="bg-(--sunken) px-2 py-1.5">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 					relative precision
 				</div>
@@ -115,7 +115,7 @@ const ScalarDiagnostics = () => {
 					{res ? fmt(res.taskRelativePrecision(), 3) : "—"}
 				</div>
 			</div>
-			<div className="bg-[#0a0907] px-2 py-1.5">
+			<div className="bg-(--sunken) px-2 py-1.5">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 					task skill
 				</div>
@@ -126,7 +126,7 @@ const ScalarDiagnostics = () => {
 					{res ? fmt(res.taskSkill(), 3) : "—"}
 				</div>
 			</div>
-			<div className="bg-[#0a0907] px-2 py-1.5">
+			<div className="bg-(--sunken) px-2 py-1.5">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 					issued t
 				</div>
@@ -137,7 +137,7 @@ const ScalarDiagnostics = () => {
 					{res ? dir(res.lastResolutionPrediction()) : "—"}
 				</div>
 			</div>
-			<div className="bg-[#0a0907] px-2 py-1.5">
+			<div className="bg-(--sunken) px-2 py-1.5">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 					realized t+1
 				</div>
@@ -148,7 +148,7 @@ const ScalarDiagnostics = () => {
 					{res ? dir(res.lastResolutionTarget()) : "—"}
 				</div>
 			</div>
-			<div className="bg-[#0a0907] px-2 py-1.5">
+			<div className="bg-(--sunken) px-2 py-1.5">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 					forecast error
 				</div>
@@ -159,7 +159,7 @@ const ScalarDiagnostics = () => {
 					{res ? fmt(res.lastResolutionError(), 0) : "—"}
 				</div>
 			</div>
-			<div className="bg-[#0a0907] px-2 py-1.5">
+			<div className="bg-(--sunken) px-2 py-1.5">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 					horizon / reach
 				</div>
@@ -173,7 +173,7 @@ const ScalarDiagnostics = () => {
 					</span>
 				</div>
 			</div>
-			<div className="bg-[#0a0907] px-2 py-1.5">
+			<div className="bg-(--sunken) px-2 py-1.5">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 					resolved samples
 				</div>
@@ -184,7 +184,7 @@ const ScalarDiagnostics = () => {
 					{res ? String(res.resolvedSteps()) : "—"}
 				</div>
 			</div>
-			<div className="bg-[#0a0907] px-2 py-1.5">
+			<div className="bg-(--sunken) px-2 py-1.5">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 					surprise
 				</div>
@@ -195,7 +195,7 @@ const ScalarDiagnostics = () => {
 					{res ? fmt(res.surprise(), 2) : "—"}
 				</div>
 			</div>
-			<div className="bg-[#0a0907] px-2 py-1.5">
+			<div className="bg-(--sunken) px-2 py-1.5">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 					energy
 				</div>
@@ -206,7 +206,7 @@ const ScalarDiagnostics = () => {
 					{res ? fmt(res.energy(), 2) : "—"}
 				</div>
 			</div>
-			<div className="bg-[#0a0907] px-2 py-1.5">
+			<div className="bg-(--sunken) px-2 py-1.5">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 					confidence
 				</div>
@@ -226,7 +226,7 @@ const VerdictRow = () => {
 
 	return (
 		<div className="grid grid-cols-3 gap-px border border-(--line) bg-(--line)">
-			<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
+			<div className="flex flex-col justify-between gap-1.5 bg-(--sunken) px-3 py-2">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 					residual model
 				</div>
@@ -240,7 +240,7 @@ const VerdictRow = () => {
 					</span>
 				</div>
 			</div>
-			<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
+			<div className="flex flex-col justify-between gap-1.5 bg-(--sunken) px-3 py-2">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 					direction skill
 				</div>
@@ -254,7 +254,7 @@ const VerdictRow = () => {
 					</span>
 				</div>
 			</div>
-			<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
+			<div className="flex flex-col justify-between gap-1.5 bg-(--sunken) px-3 py-2">
 				<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 					forecast
 				</div>

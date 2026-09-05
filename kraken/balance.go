@@ -195,8 +195,20 @@ func NewTradeBalanceFromMap(model datura.Map[any]) TradeBalanceResult {
 	unrealizedPnL := decimal.NewFromFloat64(model["unrealized_pnl"].(float64))
 	tradeBalance := currentValue.Sub(unrealizedPnL)
 	zero := decimal.NewFromInt64(0)
+	var funding *decimal.Decimal
+
+	if amount, found := model["starting_balance"].(float64); found {
+		funding = decimal.NewFromFloat64(amount)
+	}
+	complete, known := model["valuation_complete"].(bool)
+	var valuation *bool
+
+	if known {
+		valuation = &complete
+	}
 
 	return TradeBalanceResult{
+		NetFunding: funding, ValuationComplete: valuation,
 		EquivalentBalance: currentValue,
 		TradeBalance:      tradeBalance,
 		MarginAmount:      zero,

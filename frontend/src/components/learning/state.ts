@@ -18,6 +18,10 @@ export type Point = {
 	present: boolean;
 };
 export type Prior = {
+	Depth?: number;
+	Pending?: number;
+	EvidenceAuthority?: number;
+	Memory?: number;
 	Samples: number;
 	Defined: boolean;
 	Mean: number;
@@ -36,6 +40,7 @@ export type Token = {
 	members: number;
 };
 export type Candidate = {
+	knowledge?: Knowledge;
 	kind: string;
 	power: number;
 	reduce: boolean;
@@ -50,6 +55,8 @@ export type Influence = {
 	prior: Prior;
 };
 export type ExecutionStatus = {
+	refused?: number;
+	lastRefusal?: string;
 	submitted: number;
 	unsupported: number;
 	diverged: number;
@@ -124,6 +131,13 @@ export type ForwardReview = {
 	recent: MissedOpportunity[] | null;
 };
 export type LearningView = {
+	capital?: CapitalView;
+	warmup?: {
+		resolved: number;
+		unconditioned: number;
+		unpaired: number;
+		portfolioUnavailable: number;
+	};
 	at: string;
 	symbol: string;
 	status: string;
@@ -156,6 +170,13 @@ export type LearningView = {
 	influence: Influence[] | null;
 };
 export type LearningEvent = {
+	targetUnit?: string;
+	absoluteSkillTarget?: number;
+	baselineRate?: number;
+	scope?: string;
+	candidateId?: string;
+	portfolioId?: string;
+	candidateResult?: CandidateOutcome;
 	id: number;
 	lane: number;
 	mode: string;
@@ -180,7 +201,7 @@ export type LearningEvent = {
 	prior: Prior;
 };
 
-const baseUrl = () => {
+export const baseUrl = () => {
 	if (import.meta.env.VITE_SYMM_WS_URL) {
 		return import.meta.env.VITE_SYMM_WS_URL.replace(/^ws/, "http").replace(
 			/\/ws$/,
@@ -241,6 +262,9 @@ export const useLearning = (symbol: string) => {
 };
 
 export type AgentSkill = {
+	authorizedMode?: string;
+	realizationAllowed?: boolean;
+	realizationReason?: string;
 	skill: Skill;
 	dispatched: number;
 	decisions: number;
@@ -281,4 +305,80 @@ export const useAgentSkill = () => {
 		};
 	}, []);
 	return { state, error };
+};
+
+export type Knowledge = {
+	scope: string;
+	global: Prior;
+	symbol: Prior;
+	selected: Prior;
+};
+export type AccountMark = {
+	at: string;
+	version: number;
+	equity: number;
+	netFunding: number;
+	hasFunding: boolean;
+};
+export type AccountLearning = {
+	state: {
+		mark: AccountMark;
+		cash: string;
+		actualCash: string;
+		committed: string;
+		positions: Record<string, string> | null;
+		complete: boolean;
+		reason?: string;
+	};
+	outcome: { totalReward: number; rate: number; hasRate: boolean };
+	target: number;
+	resolved: number;
+	mfe: number;
+	mae: number;
+	timeToPositiveNs: number;
+	timeToBreakevenNs: number;
+	holdingNs: number;
+	trajectory: AccountMark[] | null;
+	pending: string;
+};
+export type EntryClaim = {
+	id: string;
+	decision: number;
+	symbol: string;
+	action: string;
+	power: number;
+	at: string;
+	marketAt: string;
+	gridVersion: number;
+	context: number[];
+	scope: string;
+	global: Prior;
+	symbolPrior: Prior;
+	prior: Prior;
+	authority: number;
+	quantity: string;
+	notional: string;
+	reference: string;
+	horizonNs: number;
+	feeRate: string;
+	state: string;
+	current: boolean;
+	ageNs: number;
+};
+export type CandidateOutcome = {
+	id: string;
+	state: string;
+	at: string;
+	portfolioId?: string;
+	detail?: string;
+};
+export type CapitalView = {
+	choice: { symbol: string; kind: string; power: number };
+	prior: Prior;
+	decisions: number;
+	actual: AccountLearning;
+	exploration: AccountLearning;
+	candidates: EntryClaim[] | null;
+	outcomes: CandidateOutcome[] | null;
+	demand: string;
 };

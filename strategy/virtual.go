@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"math"
 	"math/big"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
@@ -234,6 +235,7 @@ func (wallet *virtualWallet) actions(book *spotbook.Book, output []LearningActio
 		if wallet.quantity.Sign() == 0 {
 			kind = types.ActionEnter
 		}
+
 		if !buy {
 			price = book.Bids.High.Price.Rat()
 		}
@@ -252,6 +254,7 @@ func (wallet *virtualWallet) actions(book *spotbook.Book, output []LearningActio
 			if !buy && power == 0 {
 				action.Kind = types.ActionExit
 			}
+
 			if quantity.Cmp(&previous) != 0 {
 				output = append(output, action)
 			}
@@ -355,4 +358,20 @@ func (wallet *virtualWallet) restart(initial *decimal.Decimal) *big.Rat {
 	wallet.quantity.SetInt64(0)
 	wallet.fees.SetInt64(0)
 	return spent
+}
+
+/* context conditions market structure on this wallet's own executable exposure. */
+func (wallet *virtualWallet) context(sequence []uint64, book *spotbook.Book, equity float64, output []uint64) []uint64 {
+	output = append(output[:0], sequence...)
+	exposure := uint64(0)
+
+	if wallet.quantity.Sign() > 0 && equity > 0 {
+		gross, _ := new(big.Rat).Mul(&wallet.quantity, book.Bids.High.Price.Rat()).Float64()
+		fraction := gross / equity
+
+		if fraction > 0 {
+			exposure = uint64(max(0, -math.Floor(math.Log2(fraction)))) + 1
+		}
+	}
+	return append(output, 0, exposure)
 }

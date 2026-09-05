@@ -383,12 +383,17 @@ kraken paper status --verbose --output json
 */
 func (paper *Paper) TradeBalance() (kraken.TradeBalanceResult, error) {
 	var (
-		model datura.Map[any]
-		err   error
+		model  datura.Map[any]
+		wallet datura.Map[any]
+		err    error
 	)
 
 	paper.simulator.Do(REST, func() {
 		model, err = paper.execute("status", "status", "--verbose")
+
+		if err == nil {
+			wallet, err = paper.execute("balances", "balance", "--verbose")
+		}
 	})
 
 	if err != nil {
@@ -399,7 +404,36 @@ func (paper *Paper) TradeBalance() (kraken.TradeBalanceResult, error) {
 		))
 	}
 
-	return kraken.NewTradeBalanceFromMap(model), nil
+	result := kraken.NewTradeBalanceFromMap(model)
+	quote, valid := model["starting_currency"].(string)
+
+	if !valid || quote == "" {
+		return result, errnie.Err(errnie.Validation, "paper valuation: quote currency required", nil)
+	}
+
+	raw, err := sonic.Marshal(wallet)
+
+	if err != nil {
+		return result, err
+	}
+
+	var balance kraken.PaperBalance
+
+	if err := sonic.Unmarshal(raw, &balance); err != nil {
+		return result, err
+	}
+
+	if balance.Balances == nil {
+		return result, errnie.Err(errnie.Validation, "paper valuation: complete wallet required", nil)
+	}
+
+	result.AvailableCash = decimal.NewFromInt64(0)
+
+	if row, found := balance.Balances[quote]; found {
+		result.AvailableCash = row.Available
+	}
+
+	return result, nil
 }
 
 /*

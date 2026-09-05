@@ -956,9 +956,17 @@ account balance through a binary float to save three string fields is not a
 trade worth making.
 */
 type EquityReading struct {
-	Cash       string
-	Unrealized string
-	Equity     string
+	AvailableCash string
+	At            time.Time
+	From          time.Time
+	Version       uint64
+	NetFunding    string
+	FundingReason string
+	Complete      bool
+	Positions     map[string]string
+	Cash          string
+	Unrealized    string
+	Equity        string
 }
 
 /*
@@ -969,18 +977,27 @@ a balance without one yields no reading rather than a reading of zeros — the
 dashboard's "—" is the honest rendering of "not yet known", and a fabricated
 0.00 would be indistinguishable from a genuinely empty account.
 
-Cash is the trade balance (the account's own funds) and Unrealized is the
-open-position profit/loss, matching how Desk.PublishEquity documents the three.
+The spot account uses equivalent balance across all currencies (eb), not margin
+collateral equity (e). Available quote cash comes from Desk's balance observation.
+Kraken: https://docs.kraken.com/api-reference/account-data/get-trade-balance
 */
 func NewEquityReading(balance kraken.TradeBalanceResult) *EquityReading {
-	if balance.Equity == nil {
+	if balance.EquivalentBalance == nil {
 		return nil
 	}
 
-	reading := &EquityReading{Equity: balance.Equity.String()}
+	reading := &EquityReading{Equity: balance.EquivalentBalance.String(), Complete: balance.ValuationComplete != nil && *balance.ValuationComplete, FundingReason: balance.FundingReason}
 
-	if balance.TradeBalance != nil {
-		reading.Cash = balance.TradeBalance.String()
+	if balance.AvailableCash != nil {
+		reading.AvailableCash = balance.AvailableCash.String()
+	}
+
+	if balance.NetFunding != nil {
+		reading.NetFunding = balance.NetFunding.String()
+	}
+
+	if balance.ValuationComplete != nil {
+		reading.Complete = *balance.ValuationComplete
 	}
 
 	if balance.UnrealizedPnL != nil {

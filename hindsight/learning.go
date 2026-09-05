@@ -23,6 +23,26 @@ execution authority the agent held: a decision issued under one authority
 cannot be reinterpreted later under another.
 */
 type LearningEvent struct {
+	TargetUnit       string                  `json:"targetUnit,omitempty"`
+	CapitalSymbol    string                  `json:"capitalSymbol,omitempty"`
+	Alternatives     []AllocationAlternative `json:"alternatives,omitempty"`
+	Account          *AccountMark            `json:"account,omitempty"`
+	AccountPositions map[string]string       `json:"accountPositions,omitempty"`
+
+	Candidate       *CandidateRecord `json:"candidate,omitempty"`
+	CandidateResult *CandidateResult `json:"candidateResult,omitempty"`
+
+	Run                 RunID                 `json:"run,omitempty"`
+	Capture             CaptureIdentity       `json:"capture"`
+	Quantities          [][2]string           `json:"quantities,omitempty"`
+	Scope               string                `json:"scope,omitempty"`
+	GlobalPrior         learning.PriorReading `json:"globalPrior"`
+	SymbolPrior         learning.PriorReading `json:"symbolPrior"`
+	AbsoluteSkillTarget float64               `json:"absoluteSkillTarget"`
+	BaselineRate        float64               `json:"baselineRate"`
+	CandidateID         string                `json:"candidateId,omitempty"`
+	PortfolioID         string                `json:"portfolioId,omitempty"`
+
 	ID          uint64                `json:"id"`
 	Symbol      string                `json:"symbol"`
 	Lane        int                   `json:"lane"`

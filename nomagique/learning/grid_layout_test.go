@@ -35,7 +35,7 @@ func TestGridRestructure(t *testing.T) {
 				width := len(example.rows[0])
 
 				for column := range width {
-					grid.column("source", strconv.Itoa(column))
+					grid.Column("source", strconv.Itoa(column))
 				}
 
 				grid.activations = [][]float64{make([]float64, width)}

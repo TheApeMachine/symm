@@ -18,13 +18,19 @@ temperature or selected warmup count. Without exploration it selects the
 authority-weighted mean. The caller supplies a zero-effect action if feasible.
 */
 func (model *Model[Key, Action]) Select(
-	key Key, context []uint64, actions []Action, explore bool,
+	key Key, context []uint64, actions []Action, explore bool, recall ...func(Key, []uint64, Action) PriorReading,
 ) (Action, PriorReading, error) {
 	var selected Action
 	var selectedPrior PriorReading
 
 	if len(actions) == 0 {
 		return selected, selectedPrior, errnie.Err(errnie.Validation, "model: feasible actions are required", nil)
+	}
+
+	read := model.Recall
+
+	if len(recall) > 0 {
+		read = recall[0]
 	}
 
 	best := math.Inf(-1)
@@ -38,7 +44,7 @@ func (model *Model[Key, Action]) Select(
 
 	for offset := range actions {
 		action := actions[(start+offset)%len(actions)]
-		prior := model.Recall(key, context, action)
+		prior := read(key, context, action)
 		score := prior.Mean * prior.Authority
 
 		if explore && !prior.VarianceDefined {

@@ -16,6 +16,7 @@ func (hub *Hub) SetLearner(learner *strategy.Agent, runID hindsight.RunID) {
 		ctx, cancel := context.WithTimeout(hub.ctx, 5*time.Second)
 		defer cancel()
 		view, err := learner.Snapshot(ctx, request.Query("symbol"))
+
 		if err != nil {
 			return err
 		}
@@ -31,20 +32,25 @@ func (hub *Hub) SetLearner(learner *strategy.Agent, runID hindsight.RunID) {
 		ctx, cancel := context.WithTimeout(hub.ctx, 5*time.Second)
 		defer cancel()
 		view, err := learner.Snapshot(ctx, "")
+
 		if err != nil {
 			return err
 		}
 		return request.JSON(fiber.Map{
-			"skill":      view.Skill,
-			"dispatched": view.Dispatched,
-			"decisions":  view.Decisions,
-			"resolved":   view.Resolved,
-			"symbols":    len(view.Universe),
+			"skill":              view.Skill,
+			"authorizedMode":     view.AuthorizedMode,
+			"realizationAllowed": view.RealizationAllowed,
+			"realizationReason":  view.RealizationReason,
+			"dispatched":         view.Dispatched,
+			"decisions":          view.Decisions,
+			"resolved":           view.Resolved,
+			"symbols":            len(view.Universe),
 		})
 	})
 	hub.app.Get("/learning/events", func(request fiber.Ctx) error {
 		// One operator inspection page. Learning itself has no history limit.
-		events, err := hub.store.LearningEvents(runID, request.Query("symbol"), 200)
+		events, err := hub.store.LearningEvents(runID, request.Query("symbol"), request.Query("candidate"), 200)
+
 		if err != nil {
 			return err
 		}

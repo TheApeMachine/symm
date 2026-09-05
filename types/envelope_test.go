@@ -15,16 +15,17 @@ import (
 func TestNewEquityReading(t *testing.T) {
 	Convey("Given a complete broker trade balance", t, func() {
 		balance := kraken.TradeBalanceResult{
-			TradeBalance:  decimal.NewFromFloat64(1000),
-			UnrealizedPnL: decimal.NewFromFloat64(-25.5),
-			Equity:        decimal.NewFromFloat64(974.5),
+			TradeBalance:      decimal.NewFromFloat64(1000),
+			UnrealizedPnL:     decimal.NewFromFloat64(-25.5),
+			EquivalentBalance: decimal.NewFromFloat64(974.5),
+			Equity:            decimal.NewFromFloat64(50),
 		}
 
-		Convey("It should carry cash, unrealized, and equity as decimal strings", func() {
+		Convey("It should carry spot value and leave spendable cash for the balance owner", func() {
 			reading := NewEquityReading(balance)
 
 			So(reading, ShouldNotBeNil)
-			So(reading.Cash, ShouldEqual, "1000")
+			So(reading.Cash, ShouldEqual, "")
 			So(reading.Unrealized, ShouldEqual, "-25.5")
 			So(reading.Equity, ShouldEqual, "974.5")
 		})
@@ -42,8 +43,8 @@ func TestNewEquityReading(t *testing.T) {
 
 	Convey("Given a valued account with no open positions", t, func() {
 		balance := kraken.TradeBalanceResult{
-			TradeBalance: decimal.NewFromFloat64(1000),
-			Equity:       decimal.NewFromFloat64(1000),
+			TradeBalance:      decimal.NewFromFloat64(1000),
+			EquivalentBalance: decimal.NewFromFloat64(1000),
 		}
 
 		Convey("It should report the valuation with an absent unrealized", func() {

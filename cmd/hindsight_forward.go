@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -62,6 +63,7 @@ func (reviewer *forwardReviewer) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+
 			if err := reviewer.pass(ctx); err != nil {
 				errnie.Error(errnie.Err(
 					errnie.Internal,
@@ -90,6 +92,7 @@ func (reviewer *forwardReviewer) pass(ctx context.Context) error {
 		return nil
 	}
 
+	observations = slices.DeleteFunc(observations, func(observation hindsight.Observation) bool { return observation.Domain != "spot" })
 	index := hindsight.NewRunIndex(reviewer.runID, observations)
 	confirmed := make([]hindsight.Episode, 0, len(observations)/64+1)
 

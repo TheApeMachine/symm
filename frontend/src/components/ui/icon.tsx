@@ -109,6 +109,27 @@ const GLYPHS = {
 	chevronDown: <path d="M6 9l6 6 6-6" />,
 	chevronRight: <path d="M9 6l6 6-6 6" />,
 	check: <path d="M4 12.5l5 5 11-11" />,
+	/*
+		The failure mark is this set's own signal trace, cut.
+
+		A triangle-bang would be the obvious choice and is the wrong one here: it
+		is borrowed from road signage, it says nothing about this system, and it is
+		the one glyph a reader has already learned to skip. Every other glyph in
+		this family describes the thing it names — signal is a waveform, bars is a
+		chart, tree is a tree — so the failure mark describes a failure: the trace
+		climbs, stops mid-rise, and the far side is flat and never joins it.
+
+		It is deliberately two strokes, not three. The signal path cut into
+		fragments reads as three unrelated marks once it is 13px tall; a single
+		interrupted rise against a single flat line still reads as one instrument
+		that stopped, which is the whole message.
+	*/
+	broken: (
+		<>
+			<path d="M3 12h4l2 7 2.4-9.6" />
+			<path d="M15.5 12H21" />
+		</>
+	),
 	spark: (
 		<>
 			<circle cx="12" cy="12" r="2.2" />

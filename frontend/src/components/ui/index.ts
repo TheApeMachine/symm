@@ -10,6 +10,7 @@ else is this folder, `theme.css`, and the three packages in package.json:
 class-variance-authority, motion, and tailwind-merge/clsx.
 */
 
+export { Alert, type AlertProps, alertVariants } from "./alert";
 export { Badge, type BadgeProps, badgeVariants } from "./badge";
 export { Button, type ButtonProps, buttonVariants } from "./button";
 export { Canvas, type CanvasProps } from "./canvas";
@@ -86,6 +87,13 @@ export {
 } from "./sparkline";
 export { Spinner, type SpinnerProps } from "./spinner";
 export { Stat, type StatProps, statVariants } from "./stat";
+export {
+	type TabProps,
+	Tabs,
+	type TabsProps,
+	tabsVariants,
+	tabVariants,
+} from "./tabs";
 export { Toolbar, type ToolbarProps, toolbarVariants } from "./toolbar";
 export {
 	SIZE_ORDER,

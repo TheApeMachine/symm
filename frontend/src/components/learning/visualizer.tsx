@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { Badge } from "#/components/ui/badge";
-import { Button } from "#/components/ui/button";
 import { Canvas } from "#/components/ui/canvas";
 import { Flex } from "#/components/ui/flex";
+import { Tabs } from "#/components/ui/tabs";
 import { Typography } from "#/components/ui/typography";
 import { action, basis, percent } from "./format";
 import type { Candidate, LearningEvent, LearningView, Skill } from "./state";
@@ -83,7 +83,7 @@ export const EdgeDistributionPlot = ({ skill }: { skill?: Skill }) => {
 	const winRate = totalOutcomes > 0 ? (wins / totalOutcomes) * 100 : 50;
 
 	return (
-		<Flex.Column className="h-full w-full justify-between gap-2 p-3">
+		<Flex.Column className="h-full w-full justify-between gap-2 px-3">
 			<div className="relative h-44 w-full overflow-hidden rounded bg-(--sunken) border border-(--line)">
 				<svg
 					viewBox={`0 0 ${viewWidth} ${viewHeight}`}
@@ -314,7 +314,7 @@ export const ActionSpectrumPlot = ({
 	const domain = Math.max(maxAbs * 1.25, 8);
 
 	return (
-		<Flex.Column className="h-full w-full justify-between gap-2 p-3 overflow-auto">
+		<Flex.Column className="h-full w-full justify-between gap-2 overflow-auto px-3">
 			<Typography.Label size="s" tone="f4" weight="normal">
 				Feasible actions at current impulse ({list.length} candidates)
 			</Typography.Label>
@@ -415,7 +415,7 @@ export const ActionSpectrumPlot = ({
 				)}
 			</Flex.Column>
 
-			<div className="flex justify-between font-mono text-[9px] text-(--f4) px-1 border-t border-(--line) pt-1">
+			<div className="flex justify-between border-(--line) border-t pt-1 font-mono text-[9px] text-(--f4)">
 				<span>← Negative return expectation</span>
 				<span>0.0 bp</span>
 				<span>Positive return expectation →</span>
@@ -489,7 +489,7 @@ export const LearningTrajectoryPlot = ({
 	const trendingUp = lastValue >= 0;
 
 	return (
-		<Flex.Column className="h-full w-full justify-between gap-2 p-3">
+		<Flex.Column className="h-full w-full justify-between gap-2 px-3">
 			<Flex.Row align="center" className="justify-between text-xs font-mono">
 				<span className="text-(--f3)">
 					Cumulative outcome trajectory ({resolvedEvents.length} resolved
@@ -572,7 +572,7 @@ export const LearningTrajectoryPlot = ({
 				</svg>
 			</div>
 
-			<div className="flex justify-between font-mono text-[9px] text-(--f4) px-1">
+			<div className="flex justify-between font-mono text-[9px] text-(--f4)">
 				<span>Window 1</span>
 				<span>Window {resolvedEvents.length}</span>
 			</div>
@@ -607,36 +607,29 @@ export const LearningVisualizer = ({
 			meta="intuitive diagnostics · statistical edge · action divergence"
 			className={`h-full w-full min-h-80 ${className ?? ""}`}
 			topRight={
-				<Flex.Row
-					gap={1}
-					align="center"
-					className="pointer-events-auto relative z-10"
-				>
-					<Button
+				<Tabs size="xs" className="pointer-events-auto relative z-10">
+					<Tabs.Tab
 						size="xs"
-						variant={mode === "edge" ? "solid" : "quiet"}
-						tone="accent"
+						active={mode === "edge"}
 						onClick={() => setMode("edge")}
 					>
 						Edge distribution
-					</Button>
-					<Button
+					</Tabs.Tab>
+					<Tabs.Tab
 						size="xs"
-						variant={mode === "actions" ? "solid" : "quiet"}
-						tone="accent"
+						active={mode === "actions"}
 						onClick={() => setMode("actions")}
 					>
 						Action spectrum
-					</Button>
-					<Button
+					</Tabs.Tab>
+					<Tabs.Tab
 						size="xs"
-						variant={mode === "trajectory" ? "solid" : "quiet"}
-						tone="accent"
+						active={mode === "trajectory"}
 						onClick={() => setMode("trajectory")}
 					>
 						Trajectory
-					</Button>
-				</Flex.Row>
+					</Tabs.Tab>
+				</Tabs>
 			}
 			footer={
 				<Flex.Row gap={4} align="center">
@@ -665,7 +658,7 @@ export const LearningVisualizer = ({
 				</Flex.Row>
 			}
 		>
-			<div className="h-full w-full pt-10 pb-6">
+			<div className="h-full w-full pt-12 pb-7">
 				{mode === "edge" && <EdgeDistributionPlot skill={skill} />}
 				{mode === "actions" && (
 					<ActionSpectrumPlot candidates={view?.candidates} />

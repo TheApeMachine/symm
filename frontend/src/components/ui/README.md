@@ -74,6 +74,11 @@ the title. That is the whole difference, and it is worth keeping.
 - `Badge` (what a thing *is*, semantic tone) vs `Chip` (what a thing
   *measures*, neutral). Reaching for a `Badge` where a `Chip` belongs is how
   status colour stops meaning anything.
+- `Alert` — a full-width band saying the surface below it is not telling the
+  whole truth. It shares Badge's tint recipe, so a failure is the same colour of
+  event wherever it is reported. A Badge labels a thing inside a layout; an
+  Alert interrupts the layout. Error and warning bands carry the `broken` glyph
+  by default, so the state does not rest on colour alone.
 - `Stat`, `Meter`, `Dot`, `Sparkline`, `Spinner`, `Key`.
 
 ## Controls

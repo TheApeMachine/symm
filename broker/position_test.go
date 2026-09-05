@@ -355,7 +355,7 @@ func TestPositionHandleGuardianActionCorrelation(t *testing.T) {
 		position.api = websocket.NewAPI(t.Context(), conn, conn)
 		position.EntryOrder = &spot.AddOrderRequest{ClOrdId: uuid.NewString()}
 		reduceID, exitID := uuid.NewString(), uuid.NewString()
-		position.handleGuardian(types.Decision{ID: reduceID, Action: types.ActionScale, ProposedQuantity: mustDecimal("2")})
+		position.handleGuardian(types.Decision{ID: reduceID, Action: types.ActionScale, Reduce: true, ProposedQuantity: mustDecimal("2")})
 		So(position.ReduceOrder.ClOrdId, ShouldEqual, reduceID)
 		position.applyReduceFill(kraken.ExecutionData{OrderStatus: "canceled"})
 		position.handleGuardian(types.Decision{ID: exitID, Action: types.ActionExit})
@@ -363,7 +363,7 @@ func TestPositionHandleGuardianActionCorrelation(t *testing.T) {
 		Convey("a competing command is rejected with its own identity", func() {
 			var failedID string
 			position.recordFill = func(kind string, execution kraken.ExecutionData) {
-				if kind == "execution_failed" {
+				if kind == "execution_refused" {
 					failedID = execution.ClientOrderID
 				}
 			}

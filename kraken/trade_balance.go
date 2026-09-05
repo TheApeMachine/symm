@@ -13,6 +13,10 @@ import (
 TradeBalanceResult mirrors Kraken's private `/0/private/TradeBalance` result.
 */
 type TradeBalanceResult struct {
+	AvailableCash     *decimal.Decimal `json:"-"`
+	NetFunding        *decimal.Decimal `json:"-"`
+	FundingReason     string           `json:"-"`
+	ValuationComplete *bool            `json:"-"`
 	EquivalentBalance *decimal.Decimal `json:"eb"`
 	TradeBalance      *decimal.Decimal `json:"tb"`
 	MarginAmount      *decimal.Decimal `json:"m"`

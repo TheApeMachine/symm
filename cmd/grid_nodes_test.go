@@ -1,6 +1,12 @@
 package cmd
 
 import (
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/signal/derivatives"
+	"github.com/theapemachine/symm/strategy"
 	"reflect"
 	"strconv"
 	"testing"
@@ -18,6 +24,23 @@ import (
 )
 
 func TestGridNodeStep(t *testing.T) {
+	Convey("Given derivative facts mapped by the transport onto an executable spot instrument", t, func() {
+		signal := derivatives.NewSignal(t.Context())
+		grid := learning.NewGrid()
+		learner, err := strategy.NewAgent(t.Context(), grid, &gridBoundaryBook{}, func(string) kraken.InstrumentPair { return kraken.InstrumentPair{Symbol: "TEST/USD"} }, func(string) *kraken.TradeVolumeFee { return nil }, decimal.NewFromInt64(200), func(hindsight.LearningEvent) error { return nil })
+		So(err, ShouldBeNil)
+		node := &gridNode{Grid: grid, learner: learner, prepare: []runtime.Node[*types.Envelope]{signal}}
+		Reset(func() { So(signal.Close(), ShouldBeNil) })
+		for index, price := range []int64{100, 103, 101, 105, 98} {
+			envelope := types.NewEnvelope(types.EnvelopeFuturesTicker)
+			envelope.FuturesTickerData = kraken.FuturesTickerData{Symbol: "TEST/USD", Timestamp: time.Unix(100+int64(index), 0), Last: decimal.NewFromInt64(price), IndexPrice: decimal.NewFromInt64(100), MarkPrice: decimal.NewFromInt64(100), OpenInterest: float64(20 + index)}
+			So(node.Step(envelope), ShouldEqual, envelope)
+			So(node.Error(), ShouldBeNil)
+			So(envelope.Derivatives, ShouldNotBeNil)
+		}
+		So(grid.Rows, ShouldResemble, []string{"TEST/USD"})
+		So(grid.Column("derivatives", "basis"), ShouldBeGreaterThanOrEqualTo, 0)
+	})
 	Convey("Given cognition and numerical learning sharing one event owner", t, func() {
 		node := &gridNode{Grid: learning.NewGrid(), cognition: cognition.NewSolver(t.Context())}
 		for index, regime := range []types.CategoryType{
@@ -194,4 +217,11 @@ func BenchmarkGridNodeStepCognition(b *testing.B) {
 
 		index++
 	}
+}
+
+/* gridBoundaryBook fails loudly if information-only envelopes request execution depth. */
+type gridBoundaryBook struct{}
+
+func (*gridBoundaryBook) Book(string, func(*spotbook.Book)) {
+	panic("futures cannot enter the executable spot loop")
 }

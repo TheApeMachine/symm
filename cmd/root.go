@@ -374,16 +374,35 @@ var (
 				instrument.Pair, price.FeeIfAvailable, balance.Cash(),
 				func(event hindsight.LearningEvent) error { return rawCapture.WriteLearning(runID, event) },
 			)
+
 			if err != nil {
 				return err
 			}
-			learner.SetExecution(newLearningDesk(runtimeCtx, desk, instrument), account)
+			learner.SetExecution(newLearningDesk(runtimeCtx, desk, instrument, api, price.FeeIfAvailable, learner.Record), account)
 
 			if storageEngine != nil {
-				if pastEvents, err := storageEngine.RecentLearningEvents(5000); err == nil && len(pastEvents) > 0 {
-					warmed := learner.Warmup(pastEvents)
-					errnie.Info(fmt.Sprintf("agent: warmed up %d priors from %d historical events", warmed, len(pastEvents)))
+				pastEvents, err := storageEngine.LearningExperiences("resolved", learner.RetainedExperiences())
+
+				if err != nil {
+					return errnie.Err(errnie.IO, "agent: read complete warmup experiences", err)
 				}
+				warmed, err := learner.Warmup(pastEvents)
+
+				if err != nil {
+					return err
+				}
+				errnie.Info(fmt.Sprintf("agent: warmup complete=%d unconditioned=%d unpaired=%d portfolio-unavailable=%d", warmed.Resolved, warmed.Unconditioned, warmed.Unpaired, warmed.PortfolioUnavailable))
+				capitalEvents, err := storageEngine.LearningExperiences("portfolio_resolved", learner.RetainedExperiences())
+
+				if err != nil {
+					return err
+				}
+				capitalWarmed, err := learner.Capital.History.Warmup(capitalEvents)
+
+				if err != nil {
+					return err
+				}
+				errnie.Info(fmt.Sprintf("capital: warmed %d complete allocation experiences; account authority remains cold", capitalWarmed))
 			}
 
 			// Forward testing, not back testing: the reviewer runs behind the
@@ -562,6 +581,7 @@ var (
 					rawCapture.Error(),
 				))
 			case err := <-transportErrors:
+
 				if api.Error() == nil && cmd.Context().Err() != nil {
 					return cmd.Context().Err()
 				}
@@ -578,6 +598,7 @@ var (
 					err,
 				))
 			case <-runtimeCtx.Done():
+
 				if err := api.Error(); err != nil {
 					return err
 				}

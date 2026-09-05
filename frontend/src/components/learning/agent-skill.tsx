@@ -5,16 +5,18 @@ import { type Skill, useAgentSkill } from "./state";
 
 /*
 Tone encodes what the agent is doing and which account is exposed, not whether
-that is good. Learning is the resting state and is neutral: an agent that has
-not earned an edge is behaving correctly. Trading a real account is the one
-state an operator must never mistake for any other.
+that is good. Learning is the resting state and reads blue: an agent that has
+not earned an edge is behaving correctly, and a distinct hue keeps it from being
+read on the same red/orange/green scale the transports use. Trading is green,
+and a real account additionally pulses — the one state an operator must never
+mistake for any other.
 */
-const tone = (mode: string, account: string) => {
+const tone = (mode: string) => {
 	if (mode !== "trading") {
 		return "info" as const;
 	}
 
-	return account === "real" ? ("error" as const) : ("success" as const);
+	return "success" as const;
 };
 
 const percent = (value: number) => `${(100 * value).toFixed(1)}%`;
@@ -39,7 +41,7 @@ const skillTitle = (skill: Skill) => {
 		dispersion,
 		`${skill.samples} disjoint windows admitted · ${skill.support.toFixed(1)} effective · ${skill.memory} window memory`,
 		`${skill.wins} positive / ${skill.losses} negative`,
-		`${skill.mode === "trading" ? `Trading the ${skill.account} account` : `Calibrating — would trade the ${skill.account} account`} · went live ${skill.promotions} times, fell back ${skill.demotions}`,
+		`${skill.mode === "trading" ? `Skill permits increases on the ${skill.account} account` : `Calibrating — would trade the ${skill.account} account`} · went live ${skill.promotions} times, fell back ${skill.demotions}`,
 		skill.reason,
 	].join("\n");
 };
@@ -61,19 +63,13 @@ export const AgentSkill = () => {
 	return (
 		<Flex.Row align="center" gap={6}>
 			<Badge
-				label={
-					skill
-						? skill.mode === "trading"
-							? `agent · trading · ${skill.account}`
-							: "agent · learning"
-						: "agent · offline"
-				}
-				variant={skill ? tone(skill.mode, skill.account) : "error"}
+				label="Agent"
+				variant={skill ? tone(state?.authorizedMode ?? "learning") : "error"}
 				dot
-				pulse={skill?.mode === "trading" && skill.account === "real"}
+				pulse={state?.authorizedMode === "trading" && skill?.account === "real"}
 				title={
 					skill
-						? skillTitle(skill)
+						? `${skillTitle(skill)}\nEffective mode: ${state?.authorizedMode ?? "unavailable"} · Realization: ${state?.realizationReason ?? "unavailable"}`
 						: error || "Waiting for the learning workspace"
 				}
 			/>

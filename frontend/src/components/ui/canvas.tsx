@@ -48,19 +48,25 @@ export const Canvas = ({
 
 		{scanlines ? <Scanlines variant="plate" /> : null}
 
-		<div className="pointer-events-none absolute top-2.75 left-3">
+		{/*
+			The title block is positioned, not laid out in a row with the controls:
+			sharing a flex row made it shrinkable, and a long meta line then wrapped
+			down into the plot. It keeps its natural width and simply stops short of
+			the right-hand chrome.
+		*/}
+		<div className="pointer-events-none absolute top-2.5 left-3 max-w-[calc(100%-1.5rem)]">
 			<Typography.Label size="m" tone="f2">
 				{title}
 			</Typography.Label>
 			{meta === undefined ? null : (
-				<Typography.Mono size="xs" tone="f4" className="mt-0.5 block">
+				<Typography.Mono size="xs" tone="f4" className="mt-0.5 block truncate">
 					{meta}
 				</Typography.Mono>
 			)}
 		</div>
 
 		{topRight === undefined ? null : (
-			<div className="pointer-events-none absolute top-2.75 right-3 text-right font-mono text-[9.5px] text-(--f3) leading-[1.6]">
+			<div className="pointer-events-none absolute top-2.5 right-3 text-right font-mono text-[9.5px] text-(--f3) leading-[1.6]">
 				<div className="pointer-events-auto inline-block">{topRight}</div>
 			</div>
 		)}
@@ -68,7 +74,7 @@ export const Canvas = ({
 		{legend}
 
 		{footer === undefined ? null : (
-			<div className="pointer-events-none absolute right-3 bottom-2 font-mono text-[9.5px] text-(--f3)">
+			<div className="pointer-events-none absolute right-3 bottom-2.5 font-mono text-[9.5px] text-(--f3)">
 				{footer}
 			</div>
 		)}

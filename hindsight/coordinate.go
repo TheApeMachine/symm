@@ -50,6 +50,7 @@ Each quantity carries an explicit Has* presence flag, so an absent bid stays
 absent instead of collapsing into a convenient zero (§43).
 */
 type Observation struct {
+	Domain     string          `json:"domain"`
 	Capture    CaptureIdentity `json:"capture"`
 	Ordinal    uint64          `json:"ordinal"`
 	Symbol     string          `json:"symbol"`
@@ -95,6 +96,7 @@ coordinate needs is undefined — not zero (§43).
 func (observation Observation) Value(coordinate MarketCoordinate) (float64, bool) {
 	switch coordinate {
 	case CoordinateMidpoint:
+
 		if !observation.HasBid || !observation.HasAsk {
 			return 0, false
 		}

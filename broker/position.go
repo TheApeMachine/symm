@@ -35,6 +35,7 @@ the decision UUID; each exit derives its own stable Kraken-valid UUID so both
 open orders remain independently identifiable through retries and recovery.
 */
 type Position struct {
+	Increase       *LotIncrease `json:"-"`
 	ctx            context.Context
 	cancel         context.CancelFunc
 	api            *websocket.API
@@ -175,6 +176,7 @@ func NewPosition(
 			IsOpportunity: decision.Opportunity,
 		},
 	}
+	position.Increase = &LotIncrease{position: position}
 	guardian := &guardianHandler{position: position}
 	disruptorInstance, err := disruptor.New(
 		disruptor.Options.BufferCapacity(guardianCapacity),
@@ -266,7 +268,14 @@ func (position *Position) handleGuardian(value any) {
 
 		switch payload.Action {
 		case types.ActionScale:
-			err = position.Reduce(payload.ProposedQuantity, payload.ID)
+
+			if payload.Reduce {
+				err = position.Reduce(payload.ProposedQuantity, payload.ID)
+			}
+
+			if !payload.Reduce {
+				err = position.Increase.Place(payload)
+			}
 		case types.ActionExit:
 			err = position.executeManualExit(payload.ID)
 		default:
@@ -275,12 +284,28 @@ func (position *Position) handleGuardian(value any) {
 
 		if err != nil {
 			errnie.Error(err)
+			var refusal *types.ExecutionRefusal
+
+			if errors.As(err, &refusal) {
+				if payload.OnRefusal != nil {
+					payload.OnRefusal(refusal)
+				}
+
+				if position.recordFill != nil {
+					position.recordFill("execution_refused", kraken.ExecutionData{ClientOrderID: payload.ID, Timestamp: time.Now().UTC()})
+				}
+				return
+			}
 
 			if position.recordFill != nil {
 				position.recordFill("execution_failed", kraken.ExecutionData{
 					ClientOrderID: payload.ID, OrderStatus: "rejected", Timestamp: time.Now().UTC(),
 				})
 			}
+			return
+		}
+
+		if position.Increase != nil && position.Increase.exitID == payload.ID && payload.ID != "" {
 			return
 		}
 
@@ -434,6 +459,14 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 			position.seenExecutions[execution.ExecID] = struct{}{}
 		}
 
+		if handled, err := position.Increase.Apply(execution); handled {
+			if err != nil {
+				position.setStatus(types.ERROR)
+				errnie.Error(err)
+				return false
+			}
+			continue
+		}
 		knownOrder := position.EntryOrder != nil && execution.ClientOrderID == position.EntryOrder.ClOrdId ||
 			position.ExitOrder != nil && execution.ClientOrderID == position.ExitOrder.ClOrdId ||
 			position.ReduceOrder != nil && execution.ClientOrderID == position.ReduceOrder.ClOrdId
@@ -747,34 +780,26 @@ func (position *Position) Reduce(volume *decimal.Decimal, correlationID ...strin
 	defer position.exitMu.Unlock()
 
 	if position.status() == types.CLOSED || position.Holding == nil {
-		return errnie.Err(
-			errnie.NotAcceptable,
-			"position: an open holding is required to reduce",
-			nil,
-		)
+		return &types.ExecutionRefusal{State: "no longer executable", Detail: "position: an open holding is required to reduce"}
+	}
+
+	if position.Increase != nil && position.Increase.order != nil {
+		return &types.ExecutionRefusal{State: "adjustment pending", Detail: "position: reconcile outstanding increase before partial reduction"}
 	}
 
 	// A lot already selling everything it has cannot also sell part of it.
 	if position.ExitOrder != nil || position.ReduceOrder != nil {
-		return errnie.Err(errnie.Conflict, "position: sell order already in flight", nil)
+		return &types.ExecutionRefusal{State: "reduction pending", Detail: "position: sell order already in flight"}
 	}
 
 	sellable := position.Holding.SellableQty
 
 	if sellable == nil || sellable.Sign() <= 0 {
-		return errnie.Err(
-			errnie.NotAcceptable,
-			"position: no sellable inventory to reduce for "+position.pair.Symbol,
-			nil,
-		)
+		return &types.ExecutionRefusal{State: "no longer executable", Detail: "position: no sellable inventory to reduce for " + position.pair.Symbol}
 	}
 
 	if volume == nil || volume.Sign() <= 0 || volume.Cmp(sellable) >= 0 {
-		return errnie.Err(
-			errnie.Validation,
-			"position: a reduction must be positive and smaller than the sellable lot",
-			nil,
-		)
+		return &types.ExecutionRefusal{State: "no longer executable", Detail: "position: a reduction must be positive and smaller than the sellable lot"}
 	}
 
 	position.reduceSequence++
@@ -828,6 +853,11 @@ func (position *Position) applyReduceFill(execution kraken.ExecutionData) {
 	if execution.CumQty != nil && execution.CumQty.Sign() > 0 {
 		sold := execution.CumQty
 
+		if position.Holding.EntryFee != nil && position.Holding.Qty != nil && position.Holding.Qty.Sign() > 0 {
+			remaining := position.Holding.Qty.Copy().Sub(sold)
+			position.Holding.EntryFee = position.Holding.EntryFee.SetScale(max(int64(decimal.DefaultScale), position.Holding.EntryFee.GetScale()+remaining.GetScale())).Mul(remaining).Div(position.Holding.Qty)
+		}
+
 		if position.Holding.Qty != nil {
 			position.Holding.Qty = decimal.NewFromInt64(0).Add(position.Holding.Qty).Sub(sold)
 		}
@@ -865,25 +895,25 @@ func (position *Position) ManualExit(correlationID ...string) error {
 func (position *Position) executeManualExit(correlationID ...string) error {
 	if position == nil || position.Holding == nil ||
 		position.Holding.Qty == nil || position.Holding.Qty.Sign() <= 0 {
-		return errnie.Err(
-			errnie.NotAcceptable,
-			"position: filled inventory is required for a manual exit",
-			nil,
-		)
+		return &types.ExecutionRefusal{State: "no longer executable", Detail: "position: filled inventory is required for a manual exit"}
 	}
 
 	if position.status() == types.CLOSED {
-		return errnie.Err(
-			errnie.NotFound,
-			"position: lot is already closed",
-			nil,
-		)
+		return &types.ExecutionRefusal{State: "no longer executable", Detail: "position: lot is already closed"}
 	}
 
 	if position.ExitOrder != nil || position.ReduceOrder != nil {
-		return errnie.Err(errnie.Conflict, "position: sell order already in flight", nil)
+		return &types.ExecutionRefusal{State: "reduction pending", Detail: "position: sell order already in flight"}
 	}
 
+	if position.Increase != nil && position.Increase.order != nil {
+		identity := uuid.NewString()
+
+		if len(correlationID) > 0 && correlationID[0] != "" {
+			identity = correlationID[0]
+		}
+		return position.Increase.Cancel(identity)
+	}
 	_, err := position.Exit(correlationID...)
 	return err
 }

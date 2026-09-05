@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,6 +97,10 @@ func TestAgentStep(t *testing.T) {
 			fills := 0
 
 			for _, event := range events {
+				if event.Mode == "candidate" || strings.HasPrefix(event.Mode, "capital_") {
+					continue
+				}
+
 				if event.Kind == "issued" {
 					issued[event.ID] = event
 					continue
@@ -178,10 +183,10 @@ func TestAgentGlobalSkillWindow(t *testing.T) {
 		So(errIssue, ShouldBeNil)
 		marketA.at = t1
 		expA1 := learningExperience{id: idA1, at: t0, value: 200.0, authority: 1.0}
-		err := agent.resolve(marketA, 0, t1, []learningExperience{expA1}, false)
+		err := marketA.lanes[0].resolve(agent.LocalLearning, marketA, 0, t1, []learningExperience{expA1}, false)
 		So(err, ShouldBeNil)
 		So(agent.Skill.Reading().Samples, ShouldEqual, 1)
-		So(agent.skillWindow, ShouldEqual, t1)
+		So(agent.Skill.window, ShouldEqual, t1)
 
 		Convey("Market B decision overlapping Market A's window is rejected globally", func() {
 			// Market B issues decision at t0_5 (before t1), resolves at t1_5.
@@ -189,9 +194,9 @@ func TestAgentGlobalSkillWindow(t *testing.T) {
 			So(errIssueB1, ShouldBeNil)
 			marketB.at = t1_5
 			expB1 := learningExperience{id: idB1, at: t0_5, value: 200.0, authority: 1.0}
-			err := agent.resolve(marketB, 0, t1_5, []learningExperience{expB1}, false)
+			err := marketB.lanes[0].resolve(agent.LocalLearning, marketB, 0, t1_5, []learningExperience{expB1}, false)
 			So(err, ShouldBeNil)
-			// Samples should still be 1 because t0_5 is before agent.skillWindow (t1).
+			// Samples should still be 1 because t0_5 is before agent.Skill.window (t1).
 			So(agent.Skill.Reading().Samples, ShouldEqual, 1)
 
 			Convey("Market B decision starting at or after t1 is admitted", func() {
@@ -200,10 +205,10 @@ func TestAgentGlobalSkillWindow(t *testing.T) {
 				So(errIssueB2, ShouldBeNil)
 				marketB.at = t2
 				expB2 := learningExperience{id: idB2, at: t1, value: 200.0, authority: 1.0}
-				err := agent.resolve(marketB, 0, t2, []learningExperience{expB2}, false)
+				err := marketB.lanes[0].resolve(agent.LocalLearning, marketB, 0, t2, []learningExperience{expB2}, false)
 				So(err, ShouldBeNil)
 				So(agent.Skill.Reading().Samples, ShouldEqual, 2)
-				So(agent.skillWindow, ShouldEqual, t2)
+				So(agent.Skill.window, ShouldEqual, t2)
 			})
 		})
 	})
@@ -255,11 +260,13 @@ func TestPolicyLaneUpdatesVirtualModel(t *testing.T) {
 		market.lanes[0].wallet = wallet
 		market.context = []uint64{1, 2, 0, 0}
 		market.sequence = []uint64{1, 2}
+		agent.Grid.Column("fixture", "first")
+		agent.Grid.Column("fixture", "second")
 
 		at := time.Unix(100, 0)
 		market.at = at
 
-		err := agent.issue(market, 0, books.current, at)
+		err := market.lanes[0].issue(agent.LocalLearning, market, 0, books.current, at)
 		So(err, ShouldBeNil)
 		So(market.lanes[0].pending, ShouldNotEqual, 0)
 
@@ -272,7 +279,7 @@ func TestPolicyLaneUpdatesVirtualModel(t *testing.T) {
 			market.at = at.Add(10 * time.Second)
 			market.lanes[0].equity = 205.0
 
-			err = agent.resolve(market, 0, market.at, []learningExperience{experience}, false)
+			err = market.lanes[0].resolve(agent.LocalLearning, market, 0, market.at, []learningExperience{experience}, false)
 			So(err, ShouldBeNil)
 
 			// Recall under [market.symbol, "virtual"] should now have recorded evidence!
@@ -299,7 +306,7 @@ func TestLearningViewRealizationObservability(t *testing.T) {
 			v := agent.view("TEST/USD")
 			So(v.RealizationAllowed, ShouldBeTrue)
 			So(v.RealizationReason, ShouldBeEmpty)
-			So(v.AuthorizedMode, ShouldEqual, ModeLearning)
+			So(v.AuthorizedMode, ShouldEqual, ModeLearning.String())
 		})
 
 		Convey("When realization circuit breaker trips, view reflects veto while preserving skill reading", func() {
@@ -320,7 +327,7 @@ func TestLearningViewRealizationObservability(t *testing.T) {
 			// View exposes the separation transparently
 			v := agent.view("TEST/USD")
 			So(v.Skill.Mode, ShouldEqual, "trading")
-			So(v.AuthorizedMode, ShouldEqual, ModeLearning)
+			So(v.AuthorizedMode, ShouldEqual, ModeLearning.String())
 			So(v.RealizationAllowed, ShouldBeFalse)
 			So(v.RealizationReason, ShouldContainSubstring, "catastrophic single-fill slippage exceeded bound")
 		})
@@ -342,17 +349,19 @@ func TestAgentWarmup(t *testing.T) {
 				ID:        1,
 				Symbol:    "TEST/USD",
 				Kind:      "issued",
+				Action:    string(action.Kind),
+				Power:     action.Power,
 				Context:   context,
 				Authority: 0.75,
 			},
 			{
-				ID:        1,
-				Symbol:    "TEST/USD",
-				Kind:      "resolved",
-				Action:    string(action.Kind),
-				Power:     action.Power,
-				Reduce:    action.Reduce,
-				Target:    0.05,
+				ID:     1,
+				Symbol: "TEST/USD",
+				Kind:   "resolved",
+				Action: string(action.Kind),
+				Power:  action.Power,
+				Reduce: action.Reduce,
+				Target: 0.05, TargetUnit: "return_per_second",
 			},
 			{
 				ID:        2,
@@ -367,13 +376,15 @@ func TestAgentWarmup(t *testing.T) {
 			},
 		}
 
-		warmed := agent.Warmup(history)
-		So(warmed, ShouldEqual, 2)
+		warmed, err := agent.Warmup(history)
+		So(err, ShouldBeNil)
+		So(warmed.Resolved, ShouldEqual, 1)
+		So(warmed.Unpaired, ShouldEqual, 1)
 
 		reading := agent.Model.Recall(key, context, action)
 		So(reading.Defined, ShouldBeTrue)
-		So(reading.Samples, ShouldEqual, 2)
-		So(reading.Mean, ShouldBeGreaterThan, 0.05)
+		So(reading.Samples, ShouldEqual, 1)
+		So(reading.Mean, ShouldEqual, 0.05)
 
 		// Live skill meter must remain in learning mode: stored model provides prior boost
 		// but does not grant execution authority without live forward verification.

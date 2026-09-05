@@ -165,44 +165,53 @@ func (market *learningMarket) heldDuring(
 	return false, true
 }
 
+/* PolicyReview owns retrospective exposure comparisons and no model dependency. */
+type PolicyReview struct {
+	ctx      context.Context
+	reviews  chan []hindsight.Episode
+	reviewed map[string]struct{}
+	forward  ForwardReview
+	local    *LocalLearning
+}
+
 /*
 Review folds one batch of confirmed episodes into the standing account. The
 caller supplies episodes the market has already resolved; this compares them
 against what the policy lane was holding and never re-judges an episode twice.
 */
-func (agent *Agent) Review(ctx context.Context, episodes []hindsight.Episode) error {
+func (reviewer *PolicyReview) Review(ctx context.Context, episodes []hindsight.Episode) error {
 	if len(episodes) == 0 {
 		return nil
 	}
 
 	select {
-	case agent.reviews <- episodes:
+	case reviewer.reviews <- episodes:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-agent.ctx.Done():
-		return agent.ctx.Err()
+	case <-reviewer.ctx.Done():
+		return reviewer.ctx.Err()
 	}
 }
 
 /* review runs exclusively on the workspace owner, off the ordinary hot path. */
-func (agent *Agent) review(episodes []hindsight.Episode) {
-	agent.forward.At = agent.now()
+func (reviewer *PolicyReview) review(episodes []hindsight.Episode) {
+	reviewer.forward.At = reviewer.local.now()
 
 	for _, episode := range episodes {
-		if !episode.Confirmed || episode.ID == "" {
+		if !episode.Confirmed || episode.ID == "" || reviewer.local.markets[episode.Symbol] == nil {
 			continue
 		}
 
-		if _, seen := agent.reviewed[episode.ID]; seen {
+		if _, seen := reviewer.reviewed[episode.ID]; seen {
 			continue
 		}
 
-		if agent.reviewed == nil {
-			agent.reviewed = make(map[string]struct{})
+		if reviewer.reviewed == nil {
+			reviewer.reviewed = make(map[string]struct{})
 		}
 
-		agent.reviewed[episode.ID] = struct{}{}
+		reviewer.reviewed[episode.ID] = struct{}{}
 		opportunity := MissedOpportunity{
 			Symbol: episode.Symbol, Kind: string(episode.Kind),
 			FromSequence: episode.FromSequence, ToSequence: episode.ToSequence,
@@ -210,7 +219,7 @@ func (agent *Agent) review(episodes []hindsight.Episode) {
 			Excursion: episode.ObservedExcursion, Observations: episode.Observations,
 		}
 
-		market := agent.markets[episode.Symbol]
+		market := reviewer.local.markets[episode.Symbol]
 
 		if market == nil {
 			opportunity.Unreviewable = true
@@ -221,23 +230,23 @@ func (agent *Agent) review(episodes []hindsight.Episode) {
 			opportunity.Exposed, opportunity.Unreviewable = held, !known
 		}
 
-		agent.forward.Reviewed++
+		reviewer.forward.Reviewed++
 
 		switch {
 		case opportunity.Unreviewable:
-			agent.forward.Unreviewable++
+			reviewer.forward.Unreviewable++
 		case opportunity.Exposed:
-			agent.forward.Exposed++
-			agent.forward.Captured++
+			reviewer.forward.Exposed++
+			reviewer.forward.Captured++
 		default:
-			agent.forward.Unexposed++
-			agent.forward.Missed++
+			reviewer.forward.Unexposed++
+			reviewer.forward.Missed++
 		}
 
-		agent.forward.Recent = append(agent.forward.Recent, opportunity)
+		reviewer.forward.Recent = append(reviewer.forward.Recent, opportunity)
 	}
 
-	slices.SortFunc(agent.forward.Recent, func(left, right MissedOpportunity) int {
+	slices.SortFunc(reviewer.forward.Recent, func(left, right MissedOpportunity) int {
 		if right.ToSequence != left.ToSequence {
 			if right.ToSequence > left.ToSequence {
 				return 1
@@ -247,7 +256,7 @@ func (agent *Agent) review(episodes []hindsight.Episode) {
 		return right.ToAt.Compare(left.ToAt)
 	})
 
-	if len(agent.forward.Recent) > recentReviewed {
-		agent.forward.Recent = agent.forward.Recent[:recentReviewed]
+	if len(reviewer.forward.Recent) > recentReviewed {
+		reviewer.forward.Recent = reviewer.forward.Recent[:recentReviewed]
 	}
 }

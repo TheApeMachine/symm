@@ -2,6 +2,7 @@ package learning
 
 import (
 	"github.com/theapemachine/errnie"
+	"slices"
 )
 
 /*
@@ -36,6 +37,7 @@ every prefix of the context it was taken under, not only the longest one.
 type pendingAction struct {
 	priors    []*Prior
 	authority float64
+	depth     int
 }
 
 /* NewModel constructs a keyed prior model with an optional exponential memory window. */
@@ -67,12 +69,38 @@ deepest usable reading with competitive retained authority, so precision
 yields when broader evidence is stronger or fresher.
 */
 func (model *Model[Key, Action]) Issue(
-	key Key, context []uint64, action Action, authority float64,
+	key Key, context []uint64, action Action, authority float64, related ...Key,
 ) (uint64, error) {
 	if authority < 0 || authority > 1 {
 		return 0, errnie.Err(errnie.Validation, "model: authority must be in [0, 1]", nil)
 	}
 
+	priors := make([]*Prior, 0, (len(context)+1)*(len(related)+1))
+	for index, scope := range related {
+		if scope == key || slices.Contains(related[:index], scope) {
+			return 0, errnie.Err(errnie.Validation, "model: related scope must differ from primary scope", nil)
+		}
+	}
+	for _, scope := range related {
+		priors = model.bind(scope, context, action, priors)
+	}
+	priors = model.bind(key, context, action, priors)
+
+	model.sequence++
+
+	for _, prior := range priors {
+		prior.pending++
+	}
+
+	model.pending[model.sequence] = pendingAction{
+		priors: priors, authority: authority, depth: len(context),
+	}
+
+	return model.sequence, nil
+}
+
+/* bind interns one scope's ordered prefixes into the supplied evidence path. */
+func (model *Model[Key, Action]) bind(key Key, context []uint64, action Action, priors []*Prior) []*Prior {
 	node := model.contexts[key]
 
 	if node == nil {
@@ -80,7 +108,6 @@ func (model *Model[Key, Action]) Issue(
 		model.contexts[key] = node
 	}
 
-	priors := make([]*Prior, 0, len(context)+1)
 	priors = append(priors, node.prior(action, model.memory))
 
 	for _, token := range context {
@@ -99,17 +126,7 @@ func (model *Model[Key, Action]) Issue(
 		priors = append(priors, node.prior(action, model.memory))
 	}
 
-	model.sequence++
-
-	for _, prior := range priors {
-		prior.pending++
-	}
-
-	model.pending[model.sequence] = pendingAction{
-		priors: priors, authority: authority,
-	}
-
-	return model.sequence, nil
+	return priors
 }
 
 /* prior returns this context's record for an action, creating it on first use. */
@@ -160,7 +177,7 @@ func (model *Model[Key, Action]) Resolve(identity uint64, outcome float64) (Prio
 	// caller asked about. Shorter prefixes were trained too, and Recall uses
 	// them while this one is still too sparse to say anything.
 	reading := pending.priors[len(pending.priors)-1].Reading(model.epoch)
-	reading.Depth = len(pending.priors) - 1
+	reading.Depth = pending.depth
 
 	return reading, nil
 }
@@ -259,38 +276,23 @@ without requiring an inflight pending ticket. This enables historical warmup
 across process restarts while preserving prefix-tree evidence structure.
 */
 func (model *Model[Key, Action]) Observe(
-	key Key, context []uint64, action Action, outcome, authority float64,
+	key Key, context []uint64, action Action, outcome, authority float64, related ...Key,
 ) error {
-	if authority <= 0 || authority > 1 {
-		return errnie.Err(errnie.Validation, "model: authority must be in (0, 1]", nil)
+	if authority < 0 || authority > 1 {
+		return errnie.Err(errnie.Validation, "model: authority must be in [0, 1]", nil)
 	}
 
-	node := model.contexts[key]
-
-	if node == nil {
-		node = &modelContext[Action]{}
-		model.contexts[key] = node
+	priors := make([]*Prior, 0, (len(context)+1)*(len(related)+1))
+	for index, scope := range related {
+		if scope == key || slices.Contains(related[:index], scope) {
+			return errnie.Err(errnie.Validation, "model: related scope must differ from primary scope", nil)
+		}
 	}
-
+	for _, scope := range related {
+		priors = model.bind(scope, context, action, priors)
+	}
+	priors = model.bind(key, context, action, priors)
 	model.epoch++
-	priors := make([]*Prior, 0, len(context)+1)
-	priors = append(priors, node.prior(action, model.memory))
-
-	for _, token := range context {
-		if node.children == nil {
-			node.children = make(map[uint64]*modelContext[Action])
-		}
-
-		next := node.children[token]
-
-		if next == nil {
-			next = &modelContext[Action]{}
-			node.children[token] = next
-		}
-
-		node = next
-		priors = append(priors, node.prior(action, model.memory))
-	}
 
 	for _, prior := range priors {
 		if err := prior.Observe(outcome, authority, model.epoch); err != nil {

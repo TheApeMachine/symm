@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { cognitionStore } from "#/collections/app";
 import { Badge } from "#/components/ui/badge";
+import { Chip } from "#/components/ui/chip";
 import { meterTrackVariants } from "#/components/ui/meter";
 import { Panel } from "#/components/ui/panel";
 import { Stat } from "#/components/ui/stat";
@@ -63,15 +64,11 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => {
 	return (
 		<div ref={root} className="flex flex-col gap-3.5">
 			<Panel>
-				<div className="flex items-center justify-between">
-					<span className="font-semibold text-[12px] text-(--f1)">
-						Attractor basin · classify
-					</span>
-					<Badge label="classify" variant="warning" />
-				</div>
-				<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
-					softmax posterior · b/[class]/[sequence]
-				</div>
+				<Panel.Header
+					title="Attractor basin · classify"
+					meta={<Badge label="classify" variant="warning" />}
+				/>
+				<Panel.Caption>softmax posterior · b/[class]/[sequence]</Panel.Caption>
 				<div className="flex flex-col gap-2">
 					<div className="flex items-center justify-between font-mono text-[10px]">
 						<Typography.Span data-f="winner" className="text-(--f3)" />
@@ -88,12 +85,8 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => {
 			</Panel>
 
 			<Panel>
-				<div className="font-semibold text-[12px] text-(--f1)">
-					Contrastive evidence
-				</div>
-				<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
-					routing margin · winner vs runner-up
-				</div>
+				<Panel.Header title="Contrastive evidence" />
+				<Panel.Caption>routing margin · winner vs runner-up</Panel.Caption>
 				<div className="grid grid-cols-2 gap-2.5 text-center">
 					<Stat
 						layout="feature"
@@ -111,18 +104,11 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => {
 			</Panel>
 
 			<Panel>
-				<div className="flex items-center justify-between">
-					<span className="font-semibold text-[12px] text-(--f1)">
-						Branch entropy gate
-					</span>
-					<Typography.Span
-						data-f="ambiguous"
-						className="font-semibold text-[9px] uppercase tracking-wide"
-					/>
-				</div>
-				<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
-					shannon H vs uniform threshold
-				</div>
+				<Panel.Header
+					title="Branch entropy gate"
+					meta={<Typography.Label size="xs" tone="f3" data-f="ambiguous" />}
+				/>
+				<Panel.Caption>shannon H vs uniform threshold</Panel.Caption>
 				<div>
 					<div
 						className={meterTrackVariants({ variant: "success", size: "m" })}
@@ -137,20 +123,15 @@ export const CortexPanelsShell = ({ symbol }: { symbol: string }) => {
 			</Panel>
 
 			<Panel>
-				<div className="flex items-center justify-between">
-					<span className="font-semibold text-[12px] text-(--f1)">
-						REM consolidation
-					</span>
-					<span
-						data-consolidating
-						className="group rounded-full border border-(--line2) px-2.25 py-px font-mono text-[9px]"
-					>
-						<span data-replays className="text-(--f3)" />
-					</span>
-				</div>
-				<div className="mt-1 mb-3 font-mono text-[9.5px] text-(--f4)">
+				<Panel.Header
+					title="REM consolidation"
+					meta={
+						<Chip data-consolidating label={<Typography.Span data-replays />} />
+					}
+				/>
+				<Panel.Caption>
 					episodic replay · decay · retroactive inhibition
-				</div>
+				</Panel.Caption>
 				<div className="grid grid-cols-3 gap-2">
 					<Stat
 						layout="feature"

@@ -1,15 +1,14 @@
 package strategy
 
 import (
-	"context"
-	"slices"
-	"time"
-
 	"github.com/theapemachine/symm/nomagique/learning"
+	"time"
 )
 
 /* LearningView is an on-demand, immutable copy for the operator dashboard. */
 type LearningView struct {
+	Capital        CapitalView       `json:"capital"`
+	Warmup         WarmupReading     `json:"warmup"`
 	At             time.Time         `json:"at"`
 	Symbol         string            `json:"symbol"`
 	Status         string            `json:"status"`
@@ -30,7 +29,7 @@ type LearningView struct {
 		account: it is zero in a learning-only run by construction.
 	*/
 	Skill              SkillReading `json:"skill"`
-	AuthorizedMode     Mode         `json:"authorizedMode"`
+	AuthorizedMode     string       `json:"authorizedMode"`
 	RealizationAllowed bool         `json:"realizationAllowed"`
 	RealizationReason  string       `json:"realizationReason,omitempty"`
 	Dispatched         uint64       `json:"dispatched"`
@@ -103,11 +102,12 @@ take now; an undefined prior means this action has never completed here, which
 is why exploration would reach for it.
 */
 type LearningCandidate struct {
-	Kind     string                `json:"kind"`
-	Power    uint16                `json:"power"`
-	Reduce   bool                  `json:"reduce"`
-	Selected bool                  `json:"selected"`
-	Prior    learning.PriorReading `json:"prior"`
+	Knowledge KnowledgeReading      `json:"knowledge"`
+	Kind      string                `json:"kind"`
+	Power     uint16                `json:"power"`
+	Reduce    bool                  `json:"reduce"`
+	Selected  bool                  `json:"selected"`
+	Prior     learning.PriorReading `json:"prior"`
 }
 
 /* LearningSummary locates active independent contexts without combining capital. */
@@ -161,162 +161,4 @@ type LearningWallet struct {
 	Realized  float64 `json:"realized"`
 	Spent     float64 `json:"spent"`
 	Exhausted bool    `json:"exhausted"`
-}
-
-/* learningRequest crosses into the workspace owner; it never reads live maps. */
-type learningRequest struct {
-	symbol string
-	reply  chan LearningView
-}
-
-/* Snapshot asks the single writer for a coherent copy, only on operator demand. */
-func (agent *Agent) Snapshot(ctx context.Context, symbol string) (LearningView, error) {
-	if err := ctx.Err(); err != nil {
-		return LearningView{}, err
-	}
-
-	request := learningRequest{symbol: symbol, reply: make(chan LearningView, 1)}
-
-	select {
-	case agent.requests <- request:
-	case <-ctx.Done():
-		return LearningView{}, ctx.Err()
-	case <-agent.ctx.Done():
-		return LearningView{}, agent.ctx.Err()
-	}
-
-	select {
-	case view := <-request.reply:
-		return view, nil
-	case <-ctx.Done():
-		return LearningView{}, ctx.Err()
-	case <-agent.ctx.Done():
-		return LearningView{}, agent.ctx.Err()
-	}
-}
-
-/* view runs exclusively on the workspace owner, off the ordinary hot path. */
-func (agent *Agent) view(symbol string) LearningView {
-	view := LearningView{At: agent.now(), Symbol: symbol, Status: "waiting for market observations",
-		Steps: agent.steps, Decisions: agent.decisions, Resolved: agent.resolved,
-		GridVersion: agent.Grid.Version, Columns: len(agent.Grid.Columns), InitialCapital: agent.initial.String(),
-		Dispatched: agent.dispatched, Rejected: agent.rejected, HorizonEpochs: horizonEpochs,
-		Influence: agent.attribution.report(agent.Grid.Columns)}
-
-	if agent.Skill != nil {
-		view.Skill = agent.Skill.Reading()
-	}
-
-	view.AuthorizedMode = agent.Mode()
-	if agent.Realization != nil {
-		view.RealizationAllowed = agent.Realization.AllowsTrading()
-		view.RealizationReason = agent.Realization.Reason()
-	} else {
-		view.RealizationAllowed = true
-	}
-
-	if reporter, ok := agent.Desk.(ExecutionReporter); ok && reporter != nil {
-		view.Execution, view.HasExecution = reporter.Execution(), true
-	}
-
-	view.Forward = agent.forward
-	view.Forward.Recent = append([]MissedOpportunity(nil), agent.forward.Recent...)
-
-	if agent.lastRejection != nil {
-		view.Rejection = agent.lastRejection.Error()
-	}
-
-	for key, market := range agent.markets {
-		summary := LearningSummary{Symbol: key, Status: market.status}
-		for _, lane := range market.lanes {
-			summary.Decisions += lane.issued
-		}
-		view.Universe = append(view.Universe, summary)
-	}
-
-	slices.SortFunc(view.Universe, func(left, right LearningSummary) int {
-		if left.Decisions > right.Decisions {
-			return -1
-		}
-		if left.Decisions < right.Decisions {
-			return 1
-		}
-		if left.Symbol < right.Symbol {
-			return -1
-		}
-		if left.Symbol > right.Symbol {
-			return 1
-		}
-		return 0
-	})
-
-	if symbol == "" && len(view.Universe) > 0 {
-		symbol = view.Universe[0].Symbol
-	}
-	market := agent.markets[symbol]
-	if market == nil {
-		return view
-	}
-	view.Symbol, view.Status = symbol, market.status
-	view.Regions = append([]learning.Region(nil), market.regions...)
-	view.Horizon, view.EpochMean, view.Epochs = market.horizon(), market.epochMean, market.epochs
-
-	for _, region := range market.regions {
-		token := LearningToken{Token: region.ID, Strength: region.Strength,
-			Authority: region.Authority, Members: region.Members}
-
-		if index := int(region.ID) - 1; index >= 0 && index < len(agent.Grid.Columns) {
-			token.Source, token.Label = agent.Grid.Columns[index][0], agent.Grid.Columns[index][1]
-		}
-
-		view.Impulse = append(view.Impulse, token)
-	}
-
-	// The last context and feasible set belong to the policy lane, which runs
-	// last. Recall never creates evidence, so inspecting it cannot train.
-	if len(market.context) > 0 {
-		selected, _, err := agent.Model.Select(
-			[2]string{symbol, "virtual"}, market.context, market.actions, false,
-		)
-
-		for _, candidate := range market.actions {
-			view.Candidates = append(view.Candidates, LearningCandidate{
-				Kind: string(candidate.Kind), Power: candidate.Power, Reduce: candidate.Reduce,
-				Selected: err == nil && candidate == selected,
-				Prior:    agent.Model.Recall([2]string{symbol, "virtual"}, market.context, candidate),
-			})
-		}
-	}
-
-	for index, lane := range market.lanes {
-		mode := "virtual"
-		if lane.paper {
-			mode = "policy"
-		}
-		view.Lanes = append(view.Lanes, LearningWallet{Lane: index, Mode: mode,
-			Cash: lane.wallet.cash.FloatString(lane.wallet.scale), Quantity: lane.wallet.quantity.FloatString(lane.wallet.pair.QtyPrecision), Fees: lane.wallet.fees.FloatString(lane.wallet.scale),
-			Equity: lane.equity, Profit: lane.outcome.TotalReward, Rate: lane.outcome.Rate, Complete: lane.complete,
-			At: lane.outcome.Through.At, Action: lane.action, Pending: lane.pending != 0,
-			Issued: lane.issued, Fills: lane.fills, Resolved: lane.resolved, Unresolved: len(lane.trace), Prior: lane.lastPrior,
-			Episodes: lane.episodes, Realized: lane.realized, Spent: lane.spent, Exhausted: lane.exhausted})
-	}
-
-	for row, key := range agent.Grid.Rows {
-		if key != symbol {
-			continue
-		}
-		activity, quality, err := agent.Grid.Activity(symbol)
-		if err != nil {
-			view.Status = err.Error()
-			return view
-		}
-		for column, identity := range agent.Grid.Columns {
-			point := agent.Grid.Coordinates[column]
-			view.Points = append(view.Points, LearningPoint{ID: uint64(column + 1), Source: identity[0], Label: identity[1],
-				X: point[0], Y: point[1], Value: agent.Grid.Values[row][column], Energy: activity[column] * activity[column],
-				Authority: quality[column], Present: agent.Grid.Present[row][column]})
-		}
-	}
-
-	return view
 }

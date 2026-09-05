@@ -20,12 +20,13 @@ Present distinguishes readings in the current update from missing readings,
 including previously observed values still retained in Values.
 */
 type Grid struct {
-	Rows        []string
-	Columns     [][2]string
-	Values      [][]float64
-	Present     [][]bool
-	Coordinates []*[2]float64
-	Version     uint64
+	Rows         []string
+	Columns      [][2]string
+	Values       [][]float64
+	Present      [][]bool
+	Coordinates  []*[2]float64
+	Version      uint64
+	UpdatedLabel string
 
 	rowIndex    map[string]int
 	versions    []uint64
@@ -124,6 +125,7 @@ func (grid *Grid) Step(measurements []*data.Measurement[float64]) error {
 	}
 
 	grid.Version++
+	grid.UpdatedLabel = label
 	grid.versions[row] = grid.Version
 
 	for column := range grid.Columns {
@@ -140,7 +142,7 @@ func (grid *Grid) update(row int, measurement *data.Measurement[float64]) {
 	measurement.Finalize()
 
 	for key, metric := range measurement.Metrics {
-		column := grid.column(measurement.Source, key)
+		column := grid.Column(measurement.Source, key)
 		previous := grid.Values[row][column]
 		grid.Values[row][column] = metric.Raw
 		grid.Present[row][column] = true
@@ -180,8 +182,8 @@ func (grid *Grid) update(row int, measurement *data.Measurement[float64]) {
 	}
 }
 
-/* column admits one quantity and extends storage only when the grid grows. */
-func (grid *Grid) column(source, key string) int {
+/* Column admits one quantity and extends storage only when the grid grows. */
+func (grid *Grid) Column(source, key string) int {
 	identity := [2]string{source, key}
 	column, exists := grid.columnIndex[identity]
 

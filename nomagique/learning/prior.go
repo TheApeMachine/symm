@@ -12,14 +12,14 @@ Weight is observation authority, not reward magnitude: a large outcome cannot
 give itself extra influence. No individual historical outcomes are retained.
 */
 type Prior struct {
-	memory        float64
-	samples       uint64
-	pending       uint64
-	mean          float64
-	weight        float64
-	squaredWeight float64
-	deviation     float64
-	lastEpoch     uint64
+	memory    float64
+	samples   uint64
+	pending   uint64
+	mean      float64
+	weight    float64
+	support   float64
+	moment    float64
+	lastEpoch uint64
 }
 
 /*
@@ -50,8 +50,6 @@ func (prior *Prior) age(currentEpoch uint64) {
 	gap := float64(currentEpoch - prior.lastEpoch)
 	decay := math.Pow(1.0-1.0/prior.memory, gap)
 	prior.weight *= decay
-	prior.squaredWeight *= decay * decay
-	prior.deviation *= decay
 	prior.lastEpoch = currentEpoch
 }
 
@@ -112,23 +110,27 @@ func (prior *Prior) Observe(value, authority float64, epoch ...uint64) error {
 	if len(epoch) == 0 && prior.memory > 1 {
 		decay := 1.0 - 1.0/prior.memory
 		prior.weight *= decay
-		prior.squaredWeight *= decay * decay
-		prior.deviation *= decay
 	}
 
 	if prior.weight == 0 {
 		prior.mean = value
 		prior.weight = authority
-		prior.squaredWeight = authority * authority
+		prior.support = 1
+		prior.moment = 0
 
 		return nil
 	}
 
-	prior.weight += authority
-	prior.squaredWeight += authority * authority
+	total := prior.weight + authority
+	retained, incoming := prior.weight/total, authority/total
 	difference := value - prior.mean
-	prior.mean += authority / prior.weight * difference
-	prior.deviation += authority * difference * (value - prior.mean)
+	// Normalize before multiplying weights. Kish support and M2/sum(w) are
+	// invariant to uniform aging; retaining them directly avoids squared-weight
+	// underflow for dormant leaves on a busy global resolution clock.
+	prior.support = 1 / (retained*retained/prior.support + incoming*incoming)
+	prior.moment = retained*prior.moment + retained*incoming*difference*difference
+	prior.mean += incoming * difference
+	prior.weight = total
 
 	return nil
 }
@@ -147,27 +149,16 @@ func (prior *Prior) Reading(epoch ...uint64) PriorReading {
 
 	reading.Defined = true
 	reading.Mean = prior.mean
-	reading.EvidenceAuthority = prior.squaredWeight / prior.weight
-	reading.Support = prior.weight * prior.weight / prior.squaredWeight
+	reading.EvidenceAuthority = prior.weight / prior.support
+	reading.Support = prior.support
 
 	if reading.Support <= 1 {
 		return reading
 	}
 
-	degrees := prior.weight - prior.squaredWeight/prior.weight
-
-	if degrees <= 0 {
-		return reading
-	}
-
 	reading.VarianceDefined = true
-	// Reliability-weighted sample variance: M2 / (sum(w) - sum(w*w)/sum(w)).
-	// https://numpy.org/doc/stable/reference/generated/numpy.cov.html#notes
-	reading.Variance = prior.deviation / degrees
-
-	if reading.Variance < 0 {
-		reading.Variance = 0
-	}
+	// Reliability-weighted sample variance is (M2/sum(w))/(1-1/support).
+	reading.Variance = prior.moment * (reading.Support / (reading.Support - 1))
 
 	reading.Maturity = (reading.Support - 1) / reading.Support
 	power := reading.Mean * reading.Mean

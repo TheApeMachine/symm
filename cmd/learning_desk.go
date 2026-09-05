@@ -2,16 +2,17 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"math/big"
-	"strconv"
-	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
@@ -41,13 +42,17 @@ on each book update and issues its own EXIT, so nothing else holds protective
 geometry: the desk carries the lot and executes what it is told.
 */
 type learningDesk struct {
-	desk        *broker.Desk
-	instrument  *broker.Instrument
-	intents     chan strategy.ExecutionIntent
-	realization *strategy.RealizationMeter
-	inFlight    sync.Map
+	*executionFeedback
+	funds        accountFunds
+	books        strategy.LearningBook
+	fee          func(string) *kraken.TradeVolumeFee
+	record       func(hindsight.LearningEvent) error
+	refusedCount atomic.Uint64
+	lastRefusal  atomic.Pointer[string]
+	desk         *broker.Desk
+	instrument   *broker.Instrument
+	intents      chan strategy.ExecutionIntent
 
-	submitted   atomic.Uint64
 	unsupported atomic.Uint64
 	diverged    atomic.Uint64
 	dropped     atomic.Uint64
@@ -55,27 +60,20 @@ type learningDesk struct {
 	lastFailure atomic.Pointer[string]
 }
 
-/* AttachRealization connects the agent's circuit breaker to authoritative venue feedback. */
-func (bridge *learningDesk) AttachRealization(meter *strategy.RealizationMeter) {
-	if bridge == nil {
-		return
-	}
-
-	bridge.realization = meter
-}
-
 /* newLearningDesk attaches the account; a nil desk attaches nothing. */
 func newLearningDesk(
 	ctx context.Context, desk *broker.Desk, instrument *broker.Instrument,
+	books strategy.LearningBook, fee func(string) *kraken.TradeVolumeFee, record func(hindsight.LearningEvent) error,
 ) strategy.ExecutionDesk {
 	if desk == nil || instrument == nil {
 		return nil
 	}
 
 	bridge := &learningDesk{
-		desk: desk, instrument: instrument,
+		desk: desk, instrument: instrument, books: books, fee: fee, record: record,
 		intents: make(chan strategy.ExecutionIntent, executionQueue),
 	}
+	bridge.executionFeedback = &executionFeedback{funds: &bridge.funds}
 	desk.AddLifecycleRecorder(bridge)
 	go bridge.run(ctx)
 
@@ -100,12 +98,12 @@ func (bridge *learningDesk) Submit(intent strategy.ExecutionIntent) error {
 	// A reduction or exit needs inventory to give back; an entry needs the
 	// account not to hold the symbol already, since the desk owns one lot per
 	// symbol. Both are the same comparison from opposite sides.
-	if intent.Reduce != (bridge.desk.Holding(intent.Symbol) > 0) {
+	if (intent.Reduce || intent.Kind == types.ActionScale) != (bridge.desk.Holding(intent.Symbol) > 0) {
 		bridge.diverged.Add(1)
 		return nil
 	}
 
-	if !intent.Reduce && intent.Kind != types.ActionEnter {
+	if !intent.Reduce && intent.Kind != types.ActionEnter && intent.Kind != types.ActionScale {
 		bridge.unsupported.Add(1)
 		return nil
 	}
@@ -136,6 +134,7 @@ func (bridge *learningDesk) Submit(intent strategy.ExecutionIntent) error {
 func (bridge *learningDesk) Execution() strategy.ExecutionStatus {
 	status := strategy.ExecutionStatus{
 		Submitted:   bridge.submitted.Load(),
+		Refused:     bridge.refusedCount.Load(),
 		Unsupported: bridge.unsupported.Load(),
 		Diverged:    bridge.diverged.Load(),
 		Dropped:     bridge.dropped.Load(),
@@ -147,6 +146,9 @@ func (bridge *learningDesk) Execution() strategy.ExecutionStatus {
 		status.LastFailure = *failure
 	}
 
+	if reason := bridge.lastRefusal.Load(); reason != nil {
+		status.LastRefusal = *reason
+	}
 	return status
 }
 
@@ -157,7 +159,17 @@ func (bridge *learningDesk) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case intent := <-bridge.intents:
+
 			if err := bridge.place(intent); err != nil {
+				var refusal *types.ExecutionRefusal
+
+				if errors.As(err, &refusal) {
+					if err := bridge.refused(intent, refusal); err != nil {
+						errnie.Error(err)
+					}
+					continue
+				}
+				bridge.funds.Release(intent.CorrelationID, time.Now().UTC())
 				bridge.failed.Add(1)
 				reason := err.Error()
 				bridge.lastFailure.Store(&reason)
@@ -188,7 +200,7 @@ func (bridge *learningDesk) place(intent strategy.ExecutionIntent) error {
 	// The account can move while an intent waits for the venue, so the
 	// reconciliation that admitted it is re-checked against the state that
 	// actually applies at placement time.
-	if intent.Reduce != (bridge.desk.Holding(intent.Symbol) > 0) {
+	if (intent.Reduce || intent.Kind == types.ActionScale) != (bridge.desk.Holding(intent.Symbol) > 0) {
 		bridge.diverged.Add(1)
 		return nil
 	}
@@ -197,7 +209,6 @@ func (bridge *learningDesk) place(intent strategy.ExecutionIntent) error {
 		return errnie.Err(errnie.Validation, "symm: execution correlation must be a UUID", err)
 	}
 
-	bridge.submitted.Add(1)
 	bridge.inFlight.Store(intent.CorrelationID, intent)
 	accepted := false
 	defer func() {
@@ -245,12 +256,21 @@ func (bridge *learningDesk) place(intent strategy.ExecutionIntent) error {
 		return nil
 	}
 
-	decision := types.NewDecision(types.ActionEnter, intent.Symbol)
+	decision := types.NewDecision(intent.Kind, intent.Symbol)
 
 	if intent.CorrelationID != "" {
 		decision.ID = intent.CorrelationID
 	}
 
+	decision.Admit = func(cost *types.EntryCost) error { return bridge.admit(intent, cost) }
+	decision.OnRefusal = func(refusal *types.ExecutionRefusal) {
+		if err := bridge.refused(intent, refusal); err != nil {
+			errnie.Error(err)
+		}
+	}
+	decision.Permit = func() bool {
+		return intent.Candidate != nil && intent.Candidate.Current(time.Now().UTC()) && intent.Allowed != nil && intent.Allowed.Load() && (bridge.realization == nil || bridge.realization.AllowsTrading())
+	}
 	decision.At = intent.At
 	decision.AllocationClass = "capital"
 	decision.Cause = "policy_edge"
@@ -271,95 +291,15 @@ func (bridge *learningDesk) place(intent strategy.ExecutionIntent) error {
 
 	accepted = true
 
-	if bridge.realization != nil {
+	if intent.Kind == types.ActionEnter {
+		bridge.submitted.Add(1)
+	}
+
+	if bridge.realization != nil && intent.Kind == types.ActionEnter {
 		bridge.realization.ObserveSubmission(nil)
 	}
 
 	return nil
-}
-
-/*
-RecordLifecycle receives authoritative broker execution facts (fills, closes) and
-reports realized execution slippage to RealizationMeter.
-*/
-func (bridge *learningDesk) RecordLifecycle(event hindsight.LifecycleEvent) {
-	if bridge == nil || event.ActionCorrelationID == "" || event.Execution == nil {
-		return
-	}
-
-	value, found := bridge.inFlight.Load(event.ActionCorrelationID)
-
-	if event.Kind == "execution_submitted" {
-		if found && bridge.realization != nil {
-			bridge.realization.ObserveSubmission(nil)
-		}
-
-		return
-	}
-
-	switch event.Kind {
-	case "execution_terminal", "execution_failed":
-		value, found = bridge.inFlight.LoadAndDelete(event.ActionCorrelationID)
-	case "entry_fill", "reduce_fill", "exit_fill":
-	default:
-		return
-	}
-
-	if !found || bridge.realization == nil {
-		return
-	}
-
-	intent := value.(strategy.ExecutionIntent)
-
-	if event.Kind == "execution_failed" || event.Execution.OrderStatus == "rejected" {
-		bridge.realization.ObserveSubmission(errnie.Err(
-			errnie.IO, "symm: execution failed for "+intent.Symbol, nil,
-		))
-	}
-
-	if event.Execution.CumQty == "" || event.Execution.CumQty == "0" {
-		return
-	}
-
-	if intent.Reference == nil {
-		errnie.Error(errnie.Err(errnie.Validation, "symm: fill intent missing reference", nil))
-		return
-	}
-
-	refPrice, _ := intent.Reference.Float64()
-
-	if refPrice <= 0 {
-		errnie.Error(errnie.Err(errnie.Validation, "symm: fill reference must be positive", nil))
-		return
-	}
-
-	// Whole-order cumulative economics are equivalent to the venue's average.
-	// LastPrice alone is not the average of a multi-fill order.
-	fillPriceStr := event.Execution.AvgPrice
-
-	if fillPriceStr == "" {
-		cost, costOK := new(big.Rat).SetString(event.Execution.CumCost)
-		quantity, quantityOK := new(big.Rat).SetString(event.Execution.CumQty)
-
-		if !costOK || !quantityOK || quantity.Sign() <= 0 {
-			errnie.Error(errnie.Err(errnie.Validation, "symm: fill missing cumulative economics", nil))
-			return
-		}
-
-		fillPrice, _ := cost.Quo(cost, quantity).Float64()
-		bridge.realization.ObserveFill(refPrice, fillPrice, intent.Reduce)
-		return
-	}
-
-	fillPrice, err := strconv.ParseFloat(fillPriceStr, 64)
-
-	if err != nil || fillPrice <= 0 {
-		errnie.Error(errnie.Err(errnie.Validation, "symm: invalid average fill price", err))
-		return
-	}
-
-	reduce := intent.Reduce
-	bridge.realization.ObserveFill(refPrice, fillPrice, reduce)
 }
 
 /*

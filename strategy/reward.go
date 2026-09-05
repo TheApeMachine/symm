@@ -1,15 +1,16 @@
 package strategy
 
 import (
-	"time"
+	"github.com/theapemachine/symm/hindsight"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/learning"
 )
 
 /*
-EquityMark is an account valuation after execution costs and including open
-inventory at executable prices. Equity and NetFunding use the same currency.
+EquityMark is an account valuation after paid execution costs. Actual marks use
+the broker's authoritative valuation; virtual marks require displayed liquidation
+depth and fees. Equity and NetFunding use the same currency.
 NetFunding is cumulative signed external funding in the producer session;
 trading cash movements and fees are not funding. HasFunding distinguishes a
 known zero from unavailable funding information.
@@ -17,13 +18,7 @@ known zero from unavailable funding information.
 At and Version identify the valuation at its producer. They must not be
 substituted with the time or version of a later delivery carrying this mark.
 */
-type EquityMark struct {
-	At         time.Time `json:"at"`
-	Version    uint64    `json:"version"`
-	Equity     float64   `json:"equity"`
-	NetFunding float64   `json:"netFunding"`
-	HasFunding bool      `json:"hasFunding"`
-}
+type EquityMark = hindsight.AccountMark
 
 /*
 AccountReward projects one account's valuations into a numerical objective.

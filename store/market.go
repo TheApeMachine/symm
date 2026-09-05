@@ -212,10 +212,10 @@ func spotTickerObservations(
 		}
 
 		observation := hindsight.Observation{
-			Capture:    identity,
-			Ordinal:    uint64(ordinal),
-			Symbol:     data.Symbol,
-			Kind:       "ticker",
+			Capture: identity,
+			Ordinal: uint64(ordinal),
+			Symbol:  data.Symbol,
+			Kind:    "ticker", Domain: "spot",
 			ReceivedAt: receivedAt,
 			VenueAt:    data.Timestamp,
 		}
@@ -268,10 +268,10 @@ func spotTradeObservations(
 		price := data.Price.Float64()
 
 		observations = append(observations, hindsight.Observation{
-			Capture:    identity,
-			Ordinal:    uint64(ordinal),
-			Symbol:     data.Symbol,
-			Kind:       "trade",
+			Capture: identity,
+			Ordinal: uint64(ordinal),
+			Symbol:  data.Symbol,
+			Kind:    "trade", Domain: "spot",
 			ReceivedAt: receivedAt,
 			VenueAt:    data.Timestamp,
 			HasTrade:   true,
@@ -309,10 +309,10 @@ func futuresTickerObservations(
 	data := ticker.Data
 
 	observation := hindsight.Observation{
-		Capture:    identity,
-		Ordinal:    0,
-		Symbol:     symbol,
-		Kind:       "ticker",
+		Capture: identity,
+		Ordinal: 0,
+		Symbol:  symbol,
+		Kind:    "ticker", Domain: "futures",
 		ReceivedAt: receivedAt,
 		VenueAt:    data.Timestamp,
 	}
@@ -374,10 +374,10 @@ func futuresTradeObservations(
 	}
 
 	return []hindsight.Observation{{
-		Capture:    identity,
-		Ordinal:    0,
-		Symbol:     symbol,
-		Kind:       "trade",
+		Capture: identity,
+		Ordinal: 0,
+		Symbol:  symbol,
+		Kind:    "trade", Domain: "futures",
 		ReceivedAt: receivedAt,
 		VenueAt:    venueAt,
 		HasTrade:   true,

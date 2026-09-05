@@ -88,10 +88,10 @@ func TestForwardReviewJudgesAgainstActualExposure(t *testing.T) {
 
 		Convey("A symbol the agent never observed cannot be judged", func() {
 			foreign := episode("e", base.Add(11*time.Minute), base.Add(14*time.Minute))
-			foreign.Symbol = "OTHER/USD"
+			foreign.Symbol = "PF_TESTUSD"
 			agent.review([]hindsight.Episode{foreign})
 
-			So(agent.forward.Unreviewable, ShouldEqual, 1)
+			So(agent.forward.Reviewed, ShouldEqual, 0)
 		})
 	})
 }

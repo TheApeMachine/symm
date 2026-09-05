@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"encoding/json"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -126,6 +127,26 @@ func TestPriorReading(t *testing.T) {
 		So(weak.Reading().Support, ShouldAlmostEqual, steady.Reading().Support)
 		So(weak.Reading().Authority, ShouldAlmostEqual, steady.Reading().Authority*0.1)
 		So(*steady, ShouldResemble, before)
+	})
+
+	Convey("Given a dormant symbol after a million global resolutions", t, func() {
+		prior := NewPrior(2048)
+		for index, value := range []float64{1, 2, 3} {
+			So(prior.Observe(value, 0.5, uint64(index+1)), ShouldBeNil)
+		}
+		before := prior.Reading(3)
+		aged := prior.Reading(1_000_003)
+		So(aged.Support, ShouldAlmostEqual, before.Support)
+		So(aged.Variance, ShouldAlmostEqual, before.Variance)
+		So(aged.EvidenceAuthority, ShouldBeGreaterThan, 0)
+		So(aged.EvidenceAuthority, ShouldBeLessThan, before.EvidenceAuthority)
+		_, err := json.Marshal(aged)
+		So(err, ShouldBeNil)
+		// Complete representational decay is absent evidence, not an invalid ratio.
+		So(prior.Reading(2_000_003).Defined, ShouldBeFalse)
+		So(prior.Observe(-2, 1, 2_000_004), ShouldBeNil)
+		So(prior.Reading().Mean, ShouldEqual, -2)
+		So(prior.Reading().Support, ShouldEqual, 1)
 	})
 
 	Convey("Given a prior with exponential memory", t, func() {

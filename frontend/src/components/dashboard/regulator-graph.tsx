@@ -42,7 +42,7 @@ const ScalarMetric = ({
 	which: string;
 	tone?: string;
 }) => (
-	<div className="bg-[#0a0907] px-2 py-1.5">
+	<div className="bg-(--sunken) px-2 py-1.5">
 		<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 			{label}
 		</div>
@@ -217,7 +217,7 @@ export const RegulatorPredictiveCoding = () => {
 				Global Predictive-Coding Regulator
 			</div>
 			<Panel className="grid grid-cols-3 gap-px border border-(--line) bg-(--line)">
-				<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
+				<div className="flex flex-col justify-between gap-1.5 bg-(--sunken) px-3 py-2">
 					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 						residual model
 					</div>
@@ -231,7 +231,7 @@ export const RegulatorPredictiveCoding = () => {
 						</span>
 					</div>
 				</div>
-				<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
+				<div className="flex flex-col justify-between gap-1.5 bg-(--sunken) px-3 py-2">
 					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 						direction skill
 					</div>
@@ -245,7 +245,7 @@ export const RegulatorPredictiveCoding = () => {
 						</span>
 					</div>
 				</div>
-				<div className="flex flex-col justify-between gap-1.5 bg-[#0a0907] px-3 py-2">
+				<div className="flex flex-col justify-between gap-1.5 bg-(--sunken) px-3 py-2">
 					<div className="font-mono text-[8px] uppercase tracking-widest text-(--f4)">
 						entry gate
 					</div>

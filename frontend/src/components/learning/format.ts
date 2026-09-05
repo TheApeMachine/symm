@@ -51,3 +51,12 @@ export const action = (kind: string, power: number, reduce: boolean) => {
 
 	return `${kind}${reduce ? " ↓" : ""} ·1/${2 ** power}`;
 };
+
+/* rational formats exact account strings for display; the journal retains exact fractions. */
+export const rational = (value: string | undefined) => {
+	if (!value) return "unavailable";
+	const [numerator, denominator] = value.split("/");
+	return amount(
+		Number(numerator) / (denominator === undefined ? 1 : Number(denominator)),
+	);
+};

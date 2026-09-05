@@ -149,15 +149,16 @@ stopping, because the cost of trading without an edge is not the cost of
 waiting. It falls back to learning only; it never stops learning.
 */
 type SkillMeter struct {
-	account                  Account
-	mode                     Mode
-	since                    time.Time
-	reason                   string
-	weight, squaredWeight    float64
-	mean, deviation          float64
-	samples                  uint64
-	wins, losses             uint64
-	promotions, demotions    uint64
+	window                time.Time
+	account               Account
+	mode                  Mode
+	since                 time.Time
+	reason                string
+	weight, squaredWeight float64
+	mean, deviation       float64
+	samples               uint64
+	wins, losses          uint64
+	promotions, demotions uint64
 }
 
 /* NewSkillMeter starts calibrating against a configured account. */
@@ -285,6 +286,7 @@ func (meter *SkillMeter) evaluate(at time.Time) {
 		and read as certainty. The floor is derived from the declared confidence
 		multiple, not chosen separately from it.
 	*/
+
 	if !reading.Qualified {
 		meter.reason = "effective evidence is thinner than the confidence bound assumes"
 

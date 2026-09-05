@@ -11,8 +11,8 @@ import (
 func TestGridRelax(t *testing.T) {
 	Convey("Given two profiles and evidence in a 9:1 ratio", t, func() {
 		grid := NewGrid()
-		grid.column("source", "first")
-		grid.column("source", "second")
+		grid.Column("source", "first")
+		grid.Column("source", "second")
 		grid.Version = 1
 		grid.Present = [][]bool{{true, true}}
 		copy(grid.weights, []float64{9, 1})
@@ -67,7 +67,7 @@ func TestGridRelax(t *testing.T) {
 		grid := NewGrid()
 
 		for column := range 3 {
-			grid.column("source", strconv.Itoa(column))
+			grid.Column("source", strconv.Itoa(column))
 		}
 
 		grid.Version = 1

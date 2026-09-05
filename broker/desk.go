@@ -33,6 +33,8 @@ type Desk struct {
 	price          *Price
 	balance        *Balance
 	equity         atomic.Pointer[types.EquityReading]
+	equityVersion  atomic.Uint64
+	accountMu      sync.Mutex
 	recovery       *Recovery
 	positions      *sync.Map
 	balanceRefresh atomic.Bool
@@ -114,7 +116,6 @@ func NewDesk(
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					desk.balance.Update()
 					_ = desk.PublishEquity()
 				}
 			}
@@ -312,7 +313,7 @@ func (desk *Desk) Reduce(symbol string, volume *decimal.Decimal, correlationID .
 		)
 	}
 
-	decision := types.Decision{Action: types.ActionScale, ProposedQuantity: volume}
+	decision := types.Decision{Action: types.ActionScale, ProposedQuantity: volume, Reduce: true}
 
 	if len(correlationID) > 0 {
 		decision.ID = correlationID[0]
@@ -435,6 +436,12 @@ func (desk *Desk) PublishEquity() error {
 		))
 	}
 
+	desk.accountMu.Lock()
+	defer desk.accountMu.Unlock()
+
+	if desk.balance != nil {
+		desk.balance.Update()
+	}
 	tradeBalance, err := desk.api.TradeBalance()
 
 	if err != nil {
@@ -455,6 +462,30 @@ func (desk *Desk) PublishEquity() error {
 		))
 	}
 
+	reading.At, reading.Version = time.Now().UTC(), desk.equityVersion.Add(1)
+	reading.Positions = make(map[string]string)
+
+	if desk.balance != nil {
+		snapshot := desk.balance.snapshot.Load()
+		reading.From = snapshot.from
+		reading.Complete = reading.Complete && snapshot.status == types.READY
+		// A complete total-balance map with no quote holding has zero quote cash.
+		reading.Cash = "0"
+
+		if cash := snapshot.assets[desk.balance.quote]; cash != nil {
+			reading.Cash = cash.String()
+		}
+		for asset, quantity := range snapshot.assets {
+			if asset == desk.balance.quote || quantity.Sign() <= 0 {
+				continue
+			}
+			symbol := asset + "/" + desk.balance.quote
+
+			if pair := desk.instrument.Pair(symbol); pair.Symbol == symbol {
+				reading.Positions[symbol] = quantity.String()
+			}
+		}
+	}
 	desk.equity.Store(reading)
 
 	return nil
@@ -523,6 +554,14 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 	}()
 
 	switch decision.Action {
+	case types.ActionScale:
+		value, found := desk.positions.Load(decision.Symbol)
+
+		if !found {
+			return &types.ExecutionRefusal{State: "no longer executable", Detail: "no lot exists to increase"}
+		}
+		position := value.(*Position)
+		return position.publishGuardian(decision)
 	case types.ActionEnter:
 		// The issuing agent owns the exit: it re-evaluates every open position
 		// on each book update and commands its own exit. The desk holds the
@@ -584,6 +623,9 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		)
 
 		if costErr != nil {
+			if decision.Admit != nil {
+				return &types.ExecutionRefusal{State: "no longer executable", Detail: costErr.Error()}
+			}
 			return errnie.Error(errnie.Err(
 				errnie.NotAcceptable,
 				"desk: current entry cannot execute",
@@ -591,6 +633,11 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			))
 		}
 
+		if decision.Admit != nil {
+			if err := decision.Admit(cost); err != nil {
+				return err
+			}
+		}
 		decision.EntryCost = cost
 		decision.ReferencePrice = decimal.NewFromInt64(0).Add(cost.BestAsk)
 		decision.EntryPrice = decimal.NewFromInt64(0).Add(cost.EntryPrice)
@@ -635,6 +682,10 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 		}
 		desk.positions.Store(decision.Symbol, position)
 
+		if decision.Permit != nil && !decision.Permit() {
+			desk.positions.CompareAndDelete(decision.Symbol, position)
+			return &types.ExecutionRefusal{State: "stale", Detail: "candidate or authority changed before submission"}
+		}
 		_, err = position.Enter()
 
 		if err != nil {

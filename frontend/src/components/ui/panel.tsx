@@ -48,3 +48,58 @@ export const Panel = ({
 		{children}
 	</Flex.Column>
 );
+
+/*
+Title and Caption name the two lines a panel opens with. Unlike Section.Header,
+which titles a whole region in a tracked-out uppercase Label, a Panel's title is
+mixed case and sits at reading weight: the panel is a card inside a rail, not a
+region of the surface, and shouting its name competes with the rail heading
+above it.
+
+They exist because this pair was hand-rolled as `font-semibold text-[12px]
+text-(--f1)` over `font-mono text-[9.5px] text-(--f4)` in every panel that has
+one — the kind of repetition that stays consistent right up until it does not.
+
+Header lays them out with whatever sits opposite the title, which is where a
+Badge or a live readout goes.
+*/
+Panel.Title = ({ ref, className, ...props }: ComponentProps<"span">) => (
+	<span
+		ref={ref}
+		className={cn("font-semibold text-[12px] text-(--f1)", className)}
+		{...props}
+	/>
+);
+
+Panel.Caption = ({ ref, className, ...props }: ComponentProps<"div">) => (
+	<div
+		ref={ref}
+		className={cn("mt-1 mb-3 font-mono text-[9.5px] text-(--f4)", className)}
+		{...props}
+	/>
+);
+
+export type PanelHeaderProps = Omit<ComponentProps<"div">, "title"> & {
+	title?: ReactNode;
+	/* The right-hand slot: a Badge, a status word, a painted readout. */
+	meta?: ReactNode;
+};
+
+Panel.Header = ({
+	ref,
+	title,
+	meta,
+	className,
+	children,
+	...props
+}: PanelHeaderProps) => (
+	<div
+		ref={ref}
+		className={cn("flex items-center justify-between", className)}
+		{...props}
+	>
+		{title === undefined ? null : <Panel.Title>{title}</Panel.Title>}
+		{children}
+		{meta === undefined ? null : meta}
+	</div>
+);
