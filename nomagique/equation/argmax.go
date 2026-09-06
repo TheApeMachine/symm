@@ -33,9 +33,9 @@ func NewArgmax() core.Primitive {
 			),
 		),
 		transport.NewSpread[core.Primitive](),
-		store.NewRecord(
+		transport.NewMap(store.NewRecord(
 			transport.NewPipe(collection.NewAt[core.Primitive](transport.NewIO(core.From(0.0))), store.NewKey("index")),
 			transport.NewPipe(collection.NewAt[core.Primitive](transport.NewIO(core.From(1.0))), store.NewKey("value")),
-		),
+		)),
 	)
 }

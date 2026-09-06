@@ -91,4 +91,3 @@ func LiftReadouts(measurements []*Measurement[float64]) (map[string]*Readout, er
 
 	return readouts, failure
 }
-

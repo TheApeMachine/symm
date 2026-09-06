@@ -1,6 +1,6 @@
 # Primitive subset: implementation notes
 
-This directory is a **partial conversion**, not the whole original nomagique package. Read `../../MIGRATION.md` for coverage, incompatible APIs and verification limits.
+This directory is a **partial conversion** to the Primitive protocol. The current constructor compositions and their tests define the migrated paths. The remaining Step-based consumers are not yet compatible with them.
 
 ```go
 type Primitive interface {
@@ -50,9 +50,9 @@ The implementation uses finite-run buffering and serialized graph ownership. It 
 
 The graph now includes adaptive causal baselines, weighted priors, reward
 measurement, square-root RLS, linear/causal fits, joint moments, Hawkes
-likelihood/gradients, and calibration/quality compositions. See
-`../../MIGRATION.md` for the exact boundary: Model/Grid/runtime and full Hawkes
-fitting are still not migrated.
+likelihood/gradients, and calibration/quality compositions. Model/Grid/runtime,
+legacy measurements, correlation consumers and full Hawkes fitting are still
+not migrated.
 
 For a separately updated retained source used in an input-evaluated expression,
 bind its nil-input query explicitly:
@@ -68,3 +68,46 @@ No type-specific interpretation of Retained is added to a caller.
 `go run ./examples/learning` from the module root shows the causal baseline and
 an RLS stream whose last row is prediction-only. Its coefficient state does not
 change merely because a forecast was requested.
+
+
+## Dependency direction during migration
+
+Equations compose arithmetic, calculus, logic, collections and transport.
+Algorithms compose equations. Adaptive policies configure algorithms and
+estimators. Lower layers must not import adaptive policies to choose defaults.
+
+The old equation-level baseline and joint implementations have been replaced by
+`adaptive.NewBaseline(window)`, `equation.NewCausalResidual(moments)` and
+`joint.NewEstimator(estimators)`. Their state and output records are exercised
+by the existing causal-residual and joint reference tests. Application callers
+still using the removed Step APIs require migration to these records.
+
+`joint.NewDivergence(estimators, regressions)` combines joint residuals and
+per-coordinate regressions. Both endpoint collections are supplied by the
+caller; there is no fixed channel count or implicit keyed state. Each input
+contains `values` in log space and an exact nanosecond `at`. The output contains
+`channels` and `velocities` in matching order. Regressing time is rejected before
+any estimator advances.
+
+`equation.NewRenewalRate(target)` receives records containing `increment`,
+`sample` and nanosecond `at`. Its target is a supplied quantity estimator, so it
+does not import an adaptive policy. Every observation yields a record with
+`closed`, `rate`, `change` and `maturity`. Missing fields and invalid domains
+are errors. A retained rate on an unfinished span is distinguished by `closed`.
+
+The covariance normalization and configured lag scan live in
+`equation.NewCorrelation` and `equation.NewLagProfile`. The named asynchronous
+estimator remains `algo.NewHayashiYoshida`. Formula/algorithm integration tests
+use external test packages, so they do not create reverse package dependencies.
+
+The unused Step-based vector classifier, volatility router and stability
+controller have been removed. The Hawkes forwarding type was also removed;
+its signal caller now uses the existing `statistic/hawkes.Bivariate` owner
+directly. This does not claim that Hawkes fitting or its measurement boundary
+has been migrated.
+
+An acyclic import graph does not establish that the entire application builds.
+Use `go list -test ./nomagique/...` to inspect dependencies, and run the package
+tests to expose the remaining API migration work. The new graph implementations
+still buffer delivery runs and allocate; they have no live Level3 throughput
+certification.
