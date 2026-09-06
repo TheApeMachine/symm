@@ -47,10 +47,10 @@ func TestCategorySolverSingleSource(t *testing.T) {
 		solver := NewSolver(context.Background())
 		state := solver.symbolState("BTC/USD")
 		measurement := categoryMeasurement("BTC/USD", true, 0.8)
-		So(solver.accumulate(state, measurement), ShouldBeNil)
+		So(solver.accumulateLocked(state, measurement), ShouldBeNil)
 
 		Convey("the dominant verdict is aggressive_drive", func() {
-			byCategory, measured := solver.aggregate(state)
+			byCategory, measured := solver.aggregateLocked(state)
 			So(measured, ShouldBeTrue)
 
 			batch, err := solver.classify("BTC/USD", measurement.At, byCategory)
@@ -110,7 +110,7 @@ func TestCategorySolverLatestStateReplacement(t *testing.T) {
 		state := solver.symbolState("BTC/USD")
 
 		for index := 0; index < 100; index++ {
-			So(solver.accumulate(
+			So(solver.accumulateLocked(
 				state, categoryMeasurement("BTC/USD", true, 0.8),
 			), ShouldBeNil)
 		}
@@ -119,7 +119,7 @@ func TestCategorySolverLatestStateReplacement(t *testing.T) {
 			items := state.coordinates[coordinate{Source: "cvd", Metric: "signed_net_fraction_zscore"}]
 			So(items.Affinity, ShouldEqual, 0.8)
 
-			byCategory, _ := solver.aggregate(state)
+			byCategory, _ := solver.aggregateLocked(state)
 			So(byCategory[types.AggressiveDrive], ShouldHaveLength, 1)
 		})
 	})
@@ -129,12 +129,12 @@ func TestCategorySolverCorroboration(t *testing.T) {
 	Convey("Given two distinct coordinates supporting aggressive_drive", t, func() {
 		solver := NewSolver(context.Background())
 		state := solver.symbolState("BTC/USD")
-		So(solver.accumulate(
+		So(solver.accumulateLocked(
 			state, categoryMeasurement("BTC/USD", true, 0.64),
 		), ShouldBeNil)
 		// signed_net_fraction_divergence also maps to aggressive_drive.
 		divergenceVal := 0.16
-		So(solver.accumulate(state, &data.Measurement[float64]{
+		So(solver.accumulateLocked(state, &data.Measurement[float64]{
 			ID:       "test2",
 			Source:   "cvd",
 			Label:    "BTC/USD",
@@ -150,7 +150,7 @@ func TestCategorySolverCorroboration(t *testing.T) {
 		}), ShouldBeNil)
 
 		Convey("strength is the geometric mean of the affinities", func() {
-			byCategory, _ := solver.aggregate(state)
+			byCategory, _ := solver.aggregateLocked(state)
 			strength, err := categoryStrength(byCategory[types.AggressiveDrive])
 			So(err, ShouldBeNil)
 			// geomean(0.64, 0.16) = 0.32
@@ -165,10 +165,10 @@ func TestCategorySolverPerSymbolIsolation(t *testing.T) {
 		stateA := solver.symbolState("A/USD")
 		stateB := solver.symbolState("B/USD")
 
-		So(solver.accumulate(
+		So(solver.accumulateLocked(
 			stateA, categoryMeasurement("A/USD", true, 0.8),
 		), ShouldBeNil)
-		So(solver.accumulate(
+		So(solver.accumulateLocked(
 			stateB, categoryMeasurement("B/USD", true, 0.9),
 		), ShouldBeNil)
 
@@ -190,7 +190,7 @@ func TestCategorySolverMissingEvidence(t *testing.T) {
 		state := solver.symbolState("BTC/USD")
 
 		Convey("classification is not measured", func() {
-			_, measured := solver.aggregate(state)
+			_, measured := solver.aggregateLocked(state)
 			So(measured, ShouldBeFalse)
 		})
 	})
@@ -229,9 +229,9 @@ func TestCategorySolverUncertaintyIsDistributionLevel(t *testing.T) {
 		solver := NewSolver(context.Background())
 		state := solver.symbolState("BTC/USD")
 		measurement := categoryMeasurement("BTC/USD", true, 0.8)
-		So(solver.accumulate(state, measurement), ShouldBeNil)
+		So(solver.accumulateLocked(state, measurement), ShouldBeNil)
 
-		byCategory, measured := solver.aggregate(state)
+		byCategory, measured := solver.aggregateLocked(state)
 		So(measured, ShouldBeTrue)
 
 		batch, err := solver.classify("BTC/USD", measurement.At, byCategory)

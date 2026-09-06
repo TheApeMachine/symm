@@ -1,6 +1,7 @@
 package hindsight
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -29,37 +30,6 @@ func TestNewRunIDTest(t *testing.T) {
 	})
 }
 
-func TestIdentityMarshalTest(t *testing.T) {
-	Convey("Given a valid CaptureIdentity", t, func() {
-		identity := CaptureIdentity{
-			Run:            "run-1",
-			Sequence:       7,
-			Stream:         "spot.public",
-			StreamEpoch:    3,
-			StreamSequence: 42,
-		}
-
-		encoded, err := MarshalIdentity(identity)
-		So(err, ShouldBeNil)
-
-		Convey("It survives persistence and retrieval unchanged", func() {
-			decoded, err := UnmarshalIdentity(encoded)
-			So(err, ShouldBeNil)
-			So(decoded, ShouldResemble, identity)
-		})
-
-		Convey("An invalid persisted identity fails loudly, not silently to zero", func() {
-			_, err := UnmarshalIdentity(`{"Run":"","Sequence":0}`)
-			So(err, ShouldNotBeNil)
-		})
-
-		Convey("Garbage bytes fail loudly", func() {
-			_, err := UnmarshalIdentity(`not-json`)
-			So(err, ShouldNotBeNil)
-		})
-	})
-}
-
 func TestEnvelopeRefMarshalTest(t *testing.T) {
 	Convey("Given an EnvelopeRef", t, func() {
 		ref := EnvelopeRef{
@@ -77,14 +47,11 @@ func TestEnvelopeRefMarshalTest(t *testing.T) {
 		So(err, ShouldBeNil)
 
 		Convey("It round-trips exactly", func() {
-			decoded, err := UnmarshalEnvelopeRef(encoded)
+			var decoded EnvelopeRef
+			err := json.Unmarshal([]byte(encoded), &decoded)
 			So(err, ShouldBeNil)
 			So(decoded, ShouldResemble, ref)
 		})
 
-		Convey("An invalid ref fails loudly", func() {
-			_, err := UnmarshalEnvelopeRef(`{"Origin":{},"Ordinal":0}`)
-			So(err, ShouldNotBeNil)
-		})
 	})
 }

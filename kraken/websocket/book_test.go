@@ -84,7 +84,7 @@ func TestBookAll(t *testing.T) {
 		Convey("All should expose the managed book", func() {
 			value, found := managed.All().Load("BTC/USD")
 			So(found, ShouldBeTrue)
-			managed.Get("BTC/USD", func(current *spotbook.Book) {
+			managed.Book("BTC/USD", func(current *spotbook.Book) {
 				So(value.(*spotbook.Book), ShouldEqual, current)
 			})
 		})
@@ -103,7 +103,7 @@ func TestBookUpdate(t *testing.T) {
 
 		Convey("It should validate the official Kraken Level 3 CRC32 checksum", func() {
 			So(managed.Update(event, payload), ShouldBeNil)
-			managed.Get("BTC/USD", func(book *spotbook.Book) {
+			managed.Book("BTC/USD", func(book *spotbook.Book) {
 				So(book.BestAsk().Price.String(), ShouldEqual, "44939.5")
 				So(book.BestBid().Price.String(), ShouldEqual, "44939.4")
 			})
@@ -131,7 +131,7 @@ func TestBookUpdate(t *testing.T) {
 		Convey("It should publish the symbol only after applying the update", func() {
 			So(err, ShouldBeNil)
 			So(<-updates, ShouldEqual, "BTC/USD")
-			managed.Get("BTC/USD", func(book *spotbook.Book) {
+			managed.Book("BTC/USD", func(book *spotbook.Book) {
 				So(book.BestBid(), ShouldNotBeNil)
 			})
 		})
@@ -167,7 +167,7 @@ func TestBookUpdate(t *testing.T) {
 		bestBidFound := false
 
 		go func() {
-			managed.Get("BTC/USD", func(book *spotbook.Book) {
+			managed.Book("BTC/USD", func(book *spotbook.Book) {
 				bestBidFound = book.BestBid() != nil
 			})
 			close(readDone)
@@ -229,13 +229,13 @@ func TestBookUpdate(t *testing.T) {
 			}
 
 			So(managed.Update(event, deletion("bid-one")), ShouldBeNil)
-			managed.Get("BTC/USD", func(book *spotbook.Book) {
+			managed.Book("BTC/USD", func(book *spotbook.Book) {
 				So(book.Bids.Levels, ShouldHaveLength, 1)
 				So(book.BestBid().Quantity.Float64(), ShouldEqual, 2.0)
 			})
 
 			So(managed.Update(event, deletion("bid-two")), ShouldBeNil)
-			managed.Get("BTC/USD", func(book *spotbook.Book) {
+			managed.Book("BTC/USD", func(book *spotbook.Book) {
 				So(book.Bids.Levels, ShouldBeEmpty)
 			})
 		})
@@ -326,7 +326,7 @@ func TestBookUpdate(t *testing.T) {
 
 			So(managed.Update(event, diverged), ShouldNotBeNil)
 			So(<-resynced, ShouldEqual, "CELR/USD")
-			managed.Get("CELR/USD", func(book *spotbook.Book) {
+			managed.Book("CELR/USD", func(book *spotbook.Book) {
 				So(book.Bids.Levels, ShouldBeEmpty)
 			})
 
@@ -340,13 +340,13 @@ func TestBookUpdate(t *testing.T) {
 			default:
 			}
 
-			managed.Get("CELR/USD", func(book *spotbook.Book) {
+			managed.Book("CELR/USD", func(book *spotbook.Book) {
 				So(book.Bids.Levels, ShouldBeEmpty)
 			})
 
 			// The resubscription snapshot is authoritative again.
 			So(managed.Update(event, knownGood), ShouldBeNil)
-			managed.Get("CELR/USD", func(book *spotbook.Book) {
+			managed.Book("CELR/USD", func(book *spotbook.Book) {
 				So(book.BestBid(), ShouldNotBeNil)
 				So(book.BestAsk(), ShouldNotBeNil)
 			})
@@ -361,7 +361,7 @@ func TestBookUpdate(t *testing.T) {
 			}}}
 
 			So(managed.Update(event, accepted), ShouldBeNil)
-			managed.Get("CELR/USD", func(book *spotbook.Book) {
+			managed.Book("CELR/USD", func(book *spotbook.Book) {
 				So(book.BestBid(), ShouldNotBeNil)
 			})
 		})
@@ -403,12 +403,56 @@ func TestBookUpdate(t *testing.T) {
 
 		Convey("It should retain the venue's final locked book for checksum validation", func() {
 			So(err, ShouldBeNil)
-			managed.Get("APR/USD", func(book *spotbook.Book) {
+			managed.Book("APR/USD", func(book *spotbook.Book) {
 				So(book.NoBookCrossing, ShouldBeFalse)
 				So(book.BestBid(), ShouldNotBeNil)
 				So(book.BestAsk(), ShouldNotBeNil)
 				So(book.BestBid().Price.Cmp(book.BestAsk().Price), ShouldEqual, 0)
 			})
+		})
+	})
+}
+
+func TestBookApply(t *testing.T) {
+	Convey("Given a depth-limited book and a multi-order venue update", t, func() {
+		managed := newBookFixture(t, "BTC/USD", 0, 0)
+		managed.Create("BTC/USD", 2)
+		order := func(event, id string, price, quantity int64) kraken.Level3Order {
+			return kraken.Level3Order{Event: event, OrderID: id, LimitPrice: decimal.NewFromInt64(price), OrderQty: decimal.NewFromInt64(quantity), Timestamp: time.Unix(price, 0)}
+		}
+		frame := func(orders ...kraken.Level3Order) *kraken.Level3 {
+			return &kraken.Level3{Type: "update", Data: []kraken.Level3Data{{Symbol: "BTC/USD", Bids: orders}}}
+		}
+		_, _, err := managed.apply(frame(order("add", "best", 100, 1), order("add", "worst", 99, 2)))
+		So(err, ShouldBeNil)
+
+		Convey("Truncation occurs after the whole frame, so later deletion can still address the old worst level", func() {
+			accepted, resynced, err := managed.apply(frame(order("add", "new", 101, 3), order("delete", "worst", 99, 0)))
+			So(err, ShouldBeNil)
+			So(resynced, ShouldBeEmpty)
+			So(accepted, ShouldHaveLength, 1)
+			managed.Book("BTC/USD", func(current *spotbook.Book) {
+				So(current.Bids.Levels, ShouldHaveLength, 2)
+				So(current.Bids.Low.Price.Float64(), ShouldEqual, 100)
+			})
+		})
+
+		Convey("An unknown deleted level fails explicitly and requests exactly one fresh snapshot", func() {
+			bad := frame(order("delete", "missing", 98, 0))
+			accepted, resynced, err := managed.apply(bad)
+			So(err, ShouldNotBeNil)
+			So(accepted, ShouldBeEmpty)
+			So(resynced, ShouldResemble, []string{"BTC/USD"})
+			accepted, resynced, err = managed.apply(bad)
+			So(err, ShouldBeNil)
+			So(accepted, ShouldBeEmpty)
+			So(resynced, ShouldBeEmpty)
+			snapshot := frame(order("add", "restored", 100, 1))
+			snapshot.Type = "snapshot"
+			_, _, err = managed.apply(snapshot)
+			So(err, ShouldBeNil)
+			_, _, err = managed.apply(frame(order("delete", "restored", 100, 0)))
+			So(err, ShouldBeNil)
 		})
 	})
 }
@@ -451,7 +495,7 @@ func BenchmarkBookGet(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		managed.Get("BTC/USD", read)
+		managed.Book("BTC/USD", read)
 	}
 }
 
@@ -468,19 +512,23 @@ func BenchmarkBookUpdate(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = managed.Update(event, &kraken.Level3{Data: []kraken.Level3Data{{
+		if err := managed.Update(event, &kraken.Level3{Data: []kraken.Level3Data{{
 			Symbol: "BTC/USD",
 			Bids: []kraken.Level3Order{{
 				Event: "add", OrderID: "bid-one", LimitPrice: price,
 				OrderQty: quantity, Timestamp: at,
 			}},
-		}}})
-		_ = managed.Update(event, &kraken.Level3{Data: []kraken.Level3Data{{
+		}}}); err != nil {
+			b.Fatal(err)
+		}
+		if err := managed.Update(event, &kraken.Level3{Data: []kraken.Level3Data{{
 			Symbol: "BTC/USD",
 			Bids: []kraken.Level3Order{{
 				Event: "delete", OrderID: "bid-one", LimitPrice: price,
 				Timestamp: at.Add(time.Second),
 			}},
-		}}})
+		}}}); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

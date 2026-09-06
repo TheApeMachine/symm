@@ -280,7 +280,7 @@ func (bridge *learningDesk) place(intent strategy.ExecutionIntent) error {
 	decision.TaskSkill, decision.TaskSkillReady = intent.Skill.Mean, intent.Skill.Qualified
 	decision.ProposedQuantity = quantity
 	decision.ReferencePrice = reference
-	decision.ProposedNotional = decimal.NewFromInt64(0).Add(quantity).Mul(reference)
+	decision.ProposedNotional = broker.Notional(reference, quantity)
 	decision.AvailableCapital = bridge.desk.Cash()
 	decision.OpenPositions = bridge.desk.OpenPositions()
 

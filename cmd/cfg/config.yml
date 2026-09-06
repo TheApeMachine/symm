@@ -64,9 +64,6 @@ regulator:
   # Number of model-surprise observations retained for the dashboard only.
   # Predictive learning retains its own sufficient statistics separately.
   history_capacity: 256
-  # Posterior quantile used by bounded candidate search. Higher values explore
-  # parameter settings whose wallet-return effect is still uncertain.
-  optimization_confidence: 0.95
 
 cognitive:
   # Keep the DMT radix tree fully in process. Empty persist_dir / in_memory
@@ -79,6 +76,35 @@ cognitive:
 
 market:
   quote_currency: USD
+  instrument:
+    excluded:
+      - USD 
+      - EUR
+      - GBP
+      - AUD
+      - CAD
+      - CHF
+      - JPY
+      - NZD
+      - USDT
+      - USDC
+      - DAI
+      - PYUSD
+      - FDUSD
+      - TUSD
+      - USDG
+      - USDE
+      - EURT
+      - EURC
+      - GUSD
+      - BUSD
+      - FRAX
+      - LUSD
+      - CUSD
+      - USD0
+      - USDS
+      - RLUSD
+      - UST
   book_depth_levels: 25
   baseline_halflife: 30s
   l3_enabled: true

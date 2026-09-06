@@ -84,46 +84,6 @@ func (order Level3Order) MarshalJSON() ([]byte, error) {
 }
 
 /*
-Level3Subscription is the authenticated Kraken Level3 subscription envelope.
-*/
-type Level3Subscription struct {
-	Method string                   `json:"method"`
-	Params Level3SubscriptionParams `json:"params"`
-}
-
-/*
-Level3SubscriptionParams identifies the symbols and depth requested from Kraken.
-*/
-type Level3SubscriptionParams struct {
-	Channel string   `json:"channel"`
-	Symbol  []string `json:"symbol"`
-	Depth   int      `json:"depth"`
-}
-
-/*
-NewLevel3Subscription creates the same request for live and injected Conns.
-*/
-func NewLevel3Subscription(symbols []string, depth int) Level3Subscription {
-	return Level3Subscription{
-		Method: "subscribe",
-		Params: Level3SubscriptionParams{
-			Channel: "level3",
-			Symbol:  symbols,
-			Depth:   depth,
-		},
-	}
-}
-
-/*
-MarshalJSON implements json.Marshaler for the Conn write boundary.
-*/
-func (subscription Level3Subscription) MarshalJSON() ([]byte, error) {
-	type wire Level3Subscription
-
-	return sonic.Marshal(wire(subscription))
-}
-
-/*
 UnmarshalJSON retains Kraken's exact fixed-point price and quantity for both
 book arithmetic and checksum construction. A float64 cannot represent every
 monetary value or retain the trailing zeroes Kraken includes in its L3 checksum.
@@ -314,37 +274,4 @@ func NewLevel3(buf []byte) *Level3 {
 
 func (level3 *Level3) Action() string {
 	return "level3"
-}
-
-type Level3DataSlice []Level3Data
-
-func NewLevel3DataSlice(buf []byte) Level3DataSlice {
-	isArray := false
-	for _, b := range buf {
-		if b == ' ' || b == '\t' || b == '\n' || b == '\r' {
-			continue
-		}
-		if b == '[' {
-			isArray = true
-		}
-		break
-	}
-
-	if isArray {
-		data := Level3DataSlice{}
-		if err := sonic.Unmarshal(buf, &data); err == nil && len(data) > 0 {
-			return data
-		}
-	}
-
-	frame := Level3{}
-	errnie.Error(sonic.Unmarshal(buf, &frame))
-
-	for index := range frame.Data {
-		if frame.Data[index].Type == "" {
-			frame.Data[index].Type = frame.Type
-		}
-	}
-
-	return frame.Data
 }

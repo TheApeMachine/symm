@@ -517,7 +517,15 @@ func collectStates(states []*sensorium.State) *sensorium.State {
 		Dark:       make([]bool, count),
 	}
 
+	if states[0].Sources != nil {
+		batch.Sources = make([]sensorium.Source, count)
+	}
+
 	for index, state := range states {
+		if batch.Sources != nil {
+			batch.Sources[index] = state.Sources[0]
+		}
+		state.Sources = nil
 		batch.Bytes[index] = state.Bytes[0]
 		batch.Seqs[index] = state.Seqs[0]
 		batch.TokenIDs[index] = state.TokenIDs[0]

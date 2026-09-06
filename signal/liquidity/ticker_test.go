@@ -23,10 +23,6 @@ func tickerAt(symbol string, bid, ask float64, bidQty, askQty float64, at time.T
 	}
 }
 
-func ticker(symbol string, bid, ask, bidQty, askQty float64) kraken.TickerData {
-	return tickerAt(symbol, bid, ask, bidQty, askQty, time.Unix(1_700_000_000, 0))
-}
-
 /*
 TestTickerStepPreObservationBaseline is the exact BLOCKER 1 fixture: with one
 prior observation, the only possible causal baseline is that observation, so

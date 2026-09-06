@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/types"
@@ -206,33 +205,4 @@ func (node *witnessNode) write(witness hindsight.ArtifactWitness) {
 	}
 
 	_ = node.writer.WriteWitness(witness)
-}
-
-/*
-hindsightLifecycleRecorder persists Desk lifecycle facts without influencing
-the lifecycle transition itself.
-*/
-type hindsightLifecycleRecorder struct {
-	writer    *store.Writer
-	runID     hindsight.RunID
-	sequencer *hindsight.Sequencer
-}
-
-func (recorder hindsightLifecycleRecorder) RecordLifecycle(event hindsight.LifecycleEvent) {
-	if recorder.writer == nil || event.DecisionID == "" || event.Kind == "" {
-		return
-	}
-
-	// Stamp the tape position this transition was taken at. An entry can be
-	// recovered later by joining its decision to the decision witness, but an
-	// exit cannot: the Stoploss commits no decision, so every lifecycle row of
-	// a position carries the ENTRY decision's identity. Without a sequence
-	// recorded here, an exit could only ever be located by wall time.
-	if recorder.sequencer != nil {
-		event.CaptureSeq = uint64(recorder.sequencer.Latest())
-	}
-
-	if err := recorder.writer.WriteLifecycle(recorder.runID, event); err != nil {
-		errnie.Error(errnie.Err(errnie.IO, "symm: record lifecycle event", err))
-	}
 }

@@ -5,42 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/datura"
 )
-
-type TradesHistory struct {
-	Error  []any               `json:"error"`
-	Result TradesHistoryResult `json:"result"`
-}
-
-type TradesHistoryResult struct {
-	Trades map[string]spot.Trade `json:"trades"`
-}
-
-func (history *TradesHistory) Action() string {
-	return "TradesHistory"
-}
-
-func (history *TradesHistory) IsSuccess() bool {
-	return len(history.Error) == 0
-}
-
-type TradesHistoryRequest struct {
-	Type             string `json:"type"`
-	Trades           bool   `json:"trades"`
-	ConsolidateTaker bool   `json:"consolidate_taker"`
-	WithoutCount     bool   `json:"without_count"`
-	Ledgers          bool   `json:"ledgers"`
-	RebaseMultiplier string `json:"rebase_multiplier"`
-}
-
-func (request *TradesHistoryRequest) MarshalJSON() ([]byte, error) {
-	type alias TradesHistoryRequest
-	return sonic.Marshal((*alias)(request))
-}
 
 func NewTradesHistoryFromMap(model datura.Map[any]) spot.TradesHistoryResult {
 	rawTrades, _ := model["trades"].([]any)

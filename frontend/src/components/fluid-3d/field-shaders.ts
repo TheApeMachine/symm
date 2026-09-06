@@ -50,10 +50,10 @@ const fieldSampling = /* wgsl */ `
 		field.waveGlow = vec3<f32>(0.0);
 
 		if (uniforms.showGas > 0.5) {
-			let momRho = textureSampleLevel(momRhoTexture, fieldSampler, coordinate, 0.0);
+			let momRho = textureSampleLevel(momRhoTexture, fieldSampler, coordinate.zyx, 0.0);
 			let density = abs(momRho.a) * uniforms.densityScale;
 			let momMag = length(momRho.rgb) * uniforms.momentumScale;
-			let energy = abs(textureSampleLevel(energyTexture, fieldSampler, coordinate, 0.0).r) * uniforms.energyScale;
+			let energy = abs(textureSampleLevel(energyTexture, fieldSampler, coordinate.zyx, 0.0).r) * uniforms.energyScale;
 
 			let rawSignal = max(density, momMag * 0.4);
 			
@@ -69,8 +69,8 @@ const fieldSampling = /* wgsl */ `
 		}
 
 		if (uniforms.showWave > 0.5) {
-			let waveReal = textureSampleLevel(waveRealTexture, fieldSampler, coordinate, 0.0).r;
-			let waveImag = textureSampleLevel(waveImagTexture, fieldSampler, coordinate, 0.0).r;
+			let waveReal = textureSampleLevel(waveRealTexture, fieldSampler, coordinate.zyx, 0.0).r;
+			let waveImag = textureSampleLevel(waveImagTexture, fieldSampler, coordinate.zyx, 0.0).r;
 			let mag = length(vec2<f32>(waveReal, waveImag)) * uniforms.waveScale;
 
 			if (mag > 0.001) {

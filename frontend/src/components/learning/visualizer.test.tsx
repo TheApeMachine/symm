@@ -94,12 +94,12 @@ describe("ActionSpectrumPlot", () => {
 });
 
 describe("LearningTrajectoryPlot", () => {
-	it("renders cumulative return trajectory from resolved events", () => {
+	it("renders recorded policy profit without summing overlapping rate targets", () => {
 		const events: LearningEvent[] = [
 			{
 				id: 1,
 				lane: 0,
-				mode: "learning",
+				mode: "policy",
 				kind: "resolved",
 				at: "2026-09-05T12:01:00Z",
 				action: "buy",
@@ -108,7 +108,7 @@ describe("LearningTrajectoryPlot", () => {
 				cash: "1000",
 				inventory: "1",
 				authority: 0.8,
-				profit: 2.5,
+				profit: -20,
 				target: 0.00025,
 				complete: true,
 				episode: 1,
@@ -127,12 +127,21 @@ describe("LearningTrajectoryPlot", () => {
 		];
 
 		const markup = renderToStaticMarkup(
-			<LearningTrajectoryPlot events={events} />,
+			<LearningTrajectoryPlot events={[{...events[0], id: 2, at: "2026-09-05T12:02:00Z", profit: -10}, ...events, {...events[0], mode: "virtual", profit: 100}]} initialCapital="200" />,
 		);
 
-		expect(markup).toContain("Cumulative outcome trajectory");
-		expect(markup).toContain("resolved windows");
-		expect(markup).toContain("+2.5 bp net");
+		expect(markup).toContain("Policy wallet profit");
+		expect(markup).toContain("2 valuations");
+		expect(markup).toContain("-500.0");
+		expect(markup).not.toContain("+5.0 bp net");
+	});
+});
+
+describe("LearningTrajectoryPlot unavailable inputs", () => {
+	it("does not invent a zero return when no valuations exist", () => {
+		const markup = renderToStaticMarkup(<LearningTrajectoryPlot events={[]} initialCapital="200" />);
+		expect(markup).toContain("trajectory unavailable");
+		expect(markup).not.toContain("bp net");
 	});
 });
 

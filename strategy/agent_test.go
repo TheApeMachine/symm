@@ -361,7 +361,7 @@ func TestAgentWarmup(t *testing.T) {
 				Action: string(action.Kind),
 				Power:  action.Power,
 				Reduce: action.Reduce,
-				Target: 0.05, TargetUnit: "return_per_second",
+				Target: 0.05, TargetUnit: "absolute_return_per_second",
 			},
 			{
 				ID:        2,

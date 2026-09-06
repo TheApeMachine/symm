@@ -20,9 +20,9 @@ export type PackedTexture3D = {
 };
 
 export const fluidTextureExtent = (grid: FluidGrid): FluidTextureExtent => ({
-	width: grid.x,
+	width: grid.z,
 	height: grid.y,
-	depth: grid.z,
+	depth: grid.x,
 });
 
 export const alignedBytesPerRow = (width: number, bytesPerTexel: number) => {
@@ -54,7 +54,7 @@ export const validateGrid = (grid: FluidGrid) => {
 };
 
 /*
-packTexture3D keeps Metal/Go X-fastest cell order (x + gx*(y + gy*z)) and only
+packTexture3D keeps Metal Z-fastest cell order (x*gy*gz + y*gz + z) and only
 inserts WebGPU row padding. Cubic 64³ uploads stay a view over the slab.
 */
 export const packTexture3D = (
@@ -107,14 +107,16 @@ export const packTexture3D = (
 	};
 };
 
+/* The wire carries component peaks; the shader multiplies by their reciprocals.
+An exactly empty field has zero normalization and remains empty. */
 export const packFluidFieldTextures = (fields: FluidFields) => ({
 	momRho: packTexture3D(fields.momRho, fields.grid, 4),
 	internalEnergy: packTexture3D(fields.internalEnergy, fields.grid, 1),
 	waveReal: packTexture3D(fields.waveReal, fields.grid, 1),
 	waveImaginary: packTexture3D(fields.waveImaginary, fields.grid, 1),
-	densityScale: fields.densityScale,
-	momentumScale: fields.momentumScale,
-	energyScale: fields.energyScale,
-	waveScale: fields.waveScale,
+	densityScale: fields.densityScale === 0 ? 0 : 1 / fields.densityScale,
+	momentumScale: fields.momentumScale === 0 ? 0 : 1 / fields.momentumScale,
+	energyScale: fields.energyScale === 0 ? 0 : 1 / fields.energyScale,
+	waveScale: fields.waveScale === 0 ? 0 : 1 / fields.waveScale,
 	grid: fields.grid,
 });

@@ -41,7 +41,7 @@ OpportunityPhase is the lifecycle stage of one opportunity hypothesis.
 	Invalidated → the precursor state dissolved without igniting
 
 Management and exit are not phases here: once a candidate ignites, the position
-lifecycle belongs to the desk and Passage, not to the opportunity tracker.
+lifecycle belongs to the execution desk, not to the opportunity tracker.
 */
 type OpportunityPhase string
 
@@ -96,7 +96,7 @@ type Excursion struct {
 /*
 OpportunityEconomics carries the economically meaningful estimates of one
 opportunity hypothesis. Calibrated is false until these are actually estimated
-from Passage/Resonance history: zero values are placeholders, never fabricated
+from observed outcome history: zero values are placeholders, never fabricated
 confidence. Not every archetype populates every field.
 */
 type OpportunityEconomics struct {

@@ -1,14 +1,16 @@
 package cmd
 
 import (
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/strategy"
 	"math/big"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/strategy"
 )
 
 /* executionFeedback owns action-correlated venue outcomes and realization evidence. */
@@ -109,7 +111,7 @@ func (feedback *executionFeedback) RecordLifecycle(event hindsight.LifecycleEven
 			return
 		}
 
-		fillPrice, _ := cost.Quo(cost, quantity).Float64()
+		fillPrice, _ := broker.UnitPriceRat(cost, quantity).Float64()
 		feedback.realization.ObserveFill(refPrice, fillPrice, intent.Reduce)
 		return
 	}

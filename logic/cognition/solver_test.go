@@ -68,7 +68,8 @@ func TestSolverStep(t *testing.T) {
 
 func TestSolverProcessBatch(t *testing.T) {
 	Convey("Given category transitions committed out of event-time order", t, func() {
-		solver := NewSolver(t.Context(), WithMaxSequenceLength(1))
+		solver := NewSolver(t.Context())
+		solver.maxSeqLen = 1
 		newer := []types.Category{{
 			At: time.Unix(2, 0), Symbol: "TEST/USD",
 			Type: types.OrganicTrend, Confidence: 1, Strength: 1,

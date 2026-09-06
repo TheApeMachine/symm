@@ -6,7 +6,7 @@
       "metric": "absolute_correlation",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 289,
+      "line": 291,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -26,7 +26,7 @@
       "metric": "cohort_absolute_correlation",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 293,
+      "line": 295,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -46,7 +46,7 @@
       "metric": "cohort_correlation_dispersion",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 334,
+      "line": 336,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -66,7 +66,7 @@
       "metric": "cohort_effective_peer_count",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 336,
+      "line": 338,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -86,7 +86,7 @@
       "metric": "cohort_peer_count",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 332,
+      "line": 334,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -106,7 +106,7 @@
       "metric": "cohort_signed_correlation",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 291,
+      "line": 293,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -126,7 +126,7 @@
       "metric": "correlation_baseline",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 346,
+      "line": 348,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -146,7 +146,7 @@
       "metric": "correlation_divergence",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 348,
+      "line": 350,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -166,7 +166,7 @@
       "metric": "correlation_p_value",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 325,
+      "line": 327,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -186,7 +186,7 @@
       "metric": "correlation_standard_error_fisher",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 327,
+      "line": 329,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -206,7 +206,7 @@
       "metric": "correlation_velocity",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 352,
+      "line": 354,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -226,7 +226,7 @@
       "metric": "correlation_zscore",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 350,
+      "line": 352,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -246,7 +246,7 @@
       "metric": "covariance",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 296,
+      "line": 298,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -266,7 +266,7 @@
       "metric": "effective_sample_count",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 321,
+      "line": 323,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -286,7 +286,7 @@
       "metric": "focal_return_energy_rate",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 308,
+      "line": 310,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -306,7 +306,7 @@
       "metric": "last_price",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 200,
+      "line": 201,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -326,7 +326,7 @@
       "metric": "observation_count",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 202,
+      "line": 203,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -346,7 +346,7 @@
       "metric": "overlap_density",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 317,
+      "line": 319,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -366,7 +366,7 @@
       "metric": "overlap_pair_count",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 319,
+      "line": 321,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -386,7 +386,7 @@
       "metric": "peer_return_energy_rate",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 306,
+      "line": 308,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -406,7 +406,7 @@
       "metric": "relative_cohort_return_energy",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 343,
+      "line": 345,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -426,7 +426,7 @@
       "metric": "relative_return_energy",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 341,
+      "line": 343,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [],
       "dead": true,
@@ -438,7 +438,7 @@
       "metric": "relative_return_energy_baseline",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 355,
+      "line": 357,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -458,7 +458,7 @@
       "metric": "relative_return_energy_divergence",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 358,
+      "line": 360,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -478,7 +478,7 @@
       "metric": "relative_return_energy_velocity",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 364,
+      "line": 366,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -498,7 +498,7 @@
       "metric": "relative_return_energy_zscore",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 361,
+      "line": 363,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -519,7 +519,7 @@
       "side": "measured",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 300,
+      "line": 302,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -540,7 +540,7 @@
       "side": "reference",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 298,
+      "line": 300,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -561,7 +561,7 @@
       "side": "measured",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 304,
+      "line": 306,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -582,7 +582,7 @@
       "side": "reference",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 302,
+      "line": 304,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -602,7 +602,7 @@
       "metric": "shared_time",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 315,
+      "line": 317,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -622,7 +622,7 @@
       "metric": "signed_correlation",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 287,
+      "line": 289,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -643,7 +643,7 @@
       "side": "measured",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 310,
+      "line": 312,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -664,7 +664,7 @@
       "side": "reference",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 312,
+      "line": 314,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {

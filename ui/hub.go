@@ -398,8 +398,8 @@ writeFrontend encodes one envelope and writes it to the dashboard socket.
 The connection is resolved and written under the same lock the /ws handler uses
 to install and detach clients — the one thing here that genuinely has two
 goroutines: this publisher and a connecting or vanishing browser. A failed
-write on a vanishing client is benign; the hub drains the disconnect in the
-detached handler and keeps operating.
+write detaches and closes that client immediately; the reader handler then
+exits without clearing any replacement connection.
 */
 func (hub *Hub) writeFrontend(envelope *types.Envelope) {
 	hub.frontendMu.Lock()
@@ -418,9 +418,12 @@ func (hub *Hub) writeFrontend(envelope *types.Envelope) {
 	if err := hub.frontend.WriteMessage(
 		websocket.BinaryMessage, payload,
 	); err != nil {
-		errnie.Warn(fmt.Sprintf(
-			"hub: websocket write message failed: %v", err,
-		))
+		failed := hub.frontend
+		hub.frontend = nil
+		errnie.Warn(fmt.Sprintf("hub: websocket write message failed; detaching client: %v", err))
+		if err := failed.Conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			errnie.Warn(fmt.Sprintf("hub: failed client close: %v", err))
+		}
 	}
 }
 

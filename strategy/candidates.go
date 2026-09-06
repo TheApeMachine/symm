@@ -5,6 +5,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/symm/broker"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 )
@@ -16,7 +18,7 @@ type EntryCandidate struct {
 	action         LearningAction
 	quantity, cost *big.Rat
 	bid            *big.Rat
-	ladder         depthLadder
+	ladder         broker.DepthLadder
 	valid          atomic.Bool
 	selected       bool
 	State          string

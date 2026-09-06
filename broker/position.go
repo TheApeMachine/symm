@@ -616,27 +616,6 @@ func (position *Position) onExecution(message kraken.Execution) bool {
 }
 
 /*
-executionVWAP resolves the authoritative whole-order realized VWAP for a
-Kraken ExecutionData. It prefers the explicit AvgPrice field (Kraken's own
-whole-order average) and falls back to the cumulative equivalent
-CumCost/CumQty only when AvgPrice is absent. It never uses the individual
-LastPrice, which is a single fill and not the whole-order economics a closed
-position's exit must be marked by.
-*/
-func executionVWAP(execution kraken.ExecutionData) *decimal.Decimal {
-	if execution.AvgPrice != nil && execution.AvgPrice.Sign() > 0 {
-		return decimal.NewFromInt64(0).Add(execution.AvgPrice)
-	}
-
-	if execution.CumCost == nil || execution.CumCost.Sign() <= 0 ||
-		execution.CumQty == nil || execution.CumQty.Sign() <= 0 {
-		return nil
-	}
-
-	return decimal.NewFromInt64(0).Add(execution.CumCost).Div(execution.CumQty)
-}
-
-/*
 closeFill records the exchange's realized exit economics before the lot leaves
 the desk and publishes the terminal state so retained UI positions can remove
 it by identity.
@@ -680,10 +659,8 @@ func (position *Position) closeFill(execution kraken.ExecutionData) error {
 		)
 	}
 
-	entryGross := decimal.NewFromInt64(0).Add(
-		position.Holding.EntryPrice,
-	).Mul(position.Holding.Qty)
-	entryValue := entryGross.Add(position.Holding.EntryFee)
+	entryGross := Notional(position.Holding.EntryPrice, position.Holding.Qty)
+	entryValue := addAmount(entryGross, position.Holding.EntryFee)
 	exitVWAP := executionVWAP(execution)
 
 	if exitVWAP == nil {
@@ -696,25 +673,19 @@ func (position *Position) closeFill(execution kraken.ExecutionData) error {
 
 	// Authoritative exit proceeds are CumCost (gross): realized PnL is
 	// proceeds − entry basis − entry fees − exit fees, all exchange-reported.
-	exitValue := decimal.NewFromInt64(0).Add(execution.CumCost).Sub(
-		execution.FeeUsdEquiv,
-	)
+	exitValue := subtractAmount(execution.CumCost, execution.FeeUsdEquiv)
 	position.Holding.ExitAt = &execution.Timestamp
 	position.Holding.ExitPrice = exitVWAP
 	position.Holding.ExitFee = execution.FeeUsdEquiv
-	position.Holding.PnL = exitValue.Sub(entryValue)
-	position.Holding.ReturnPct = decimal.NewFromInt64(0).Add(
-		position.Holding.PnL,
-	).Div(entryValue).Mul(decimal.NewFromInt64(100)).Float64()
+	position.Holding.PnL = subtractAmount(exitValue, entryValue)
+	position.Holding.ReturnPct = Notional(ReturnFraction(position.Holding.PnL, entryValue), decimalHundred).Float64()
 
 	// Separated realized economics for the persisted trade record.
 	position.Holding.ExitVWAP = exitVWAP
 	position.Holding.ExitQty = decimal.NewFromInt64(0).Add(execution.CumQty)
 	position.Holding.ExitFees = decimal.NewFromInt64(0).Add(execution.FeeUsdEquiv)
 	position.Holding.RealizedPnL = decimal.NewFromInt64(0).Add(position.Holding.PnL)
-	position.Holding.RealizedReturn = decimal.NewFromInt64(0).Add(
-		position.Holding.PnL,
-	).Div(entryValue)
+	position.Holding.RealizedReturn = ReturnFraction(position.Holding.PnL, entryValue)
 	position.Holding.SellableQty = decimal.NewFromInt64(0)
 
 	if position.recordFill != nil {
@@ -855,7 +826,7 @@ func (position *Position) applyReduceFill(execution kraken.ExecutionData) {
 
 		if position.Holding.EntryFee != nil && position.Holding.Qty != nil && position.Holding.Qty.Sign() > 0 {
 			remaining := position.Holding.Qty.Copy().Sub(sold)
-			position.Holding.EntryFee = position.Holding.EntryFee.SetScale(max(int64(decimal.DefaultScale), position.Holding.EntryFee.GetScale()+remaining.GetScale())).Mul(remaining).Div(position.Holding.Qty)
+			position.Holding.EntryFee = Prorate(position.Holding.EntryFee, remaining, position.Holding.Qty)
 		}
 
 		if position.Holding.Qty != nil {

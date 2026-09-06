@@ -57,7 +57,9 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 			return
 		}
 
-		managed.EnableMaxDepth = true
+		// Depth belongs to a complete venue frame. Per-order truncation can
+		// remove a level that a later order in the same frame still references.
+		managed.EnableMaxDepth = false
 		// Kraken's checksum is the authority for Level 3 state. Applying the
 		// SDK's per-order crossing heuristic inside one multi-order venue frame
 		// can delete a newly added order before the later orders in that same
@@ -91,7 +93,7 @@ func (book *Book) Status() runtime.Stage {
 	return book.status.Current()
 }
 
-func (book *Book) Get(symbol string, read func(*spotbook.Book)) {
+func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 	book.mu.RLock()
 	defer book.mu.RUnlock()
 
@@ -227,8 +229,6 @@ func (book *Book) apply(
 			continue
 		}
 
-		book.pruneNilLevels(symbolBook)
-
 		for sideIndex, level3data := range []*[]kraken.Level3Order{
 			&data.Bids, &data.Asks,
 		} {
@@ -293,6 +293,21 @@ func (book *Book) apply(
 					quantity = decimal.NewFromInt64(0)
 				}
 
+				// The SDK dereferences an absent level on zero-quantity updates.
+				// Absence is a lost-book precondition, not an empty order to insert.
+				if quantity.Sign() <= 0 && symbolSide.Levels[order.LimitPrice.String()] == nil {
+					book.manager.CreateBook(data.Symbol, depth)
+					book.diverging[data.Symbol] = struct{}{}
+					book.status.Transition(runtime.ERROR)
+
+					return nil, append(resynced, data.Symbol), errnie.Error(errnie.Err(
+						errnie.Validation,
+						fmt.Sprintf("level3 %s order %s references absent level %s for %s; awaiting snapshot",
+							order.Event, order.OrderID, order.LimitPrice.String(), data.Symbol),
+						nil,
+					))
+				}
+
 				symbolBook.Update(&spotbook.UpdateOptions{
 					Direction: direction,
 					ID:        order.OrderID,
@@ -315,6 +330,8 @@ func (book *Book) apply(
 		if data.Asks == nil {
 			data.Asks = []kraken.Level3Order{}
 		}
+
+		symbolBook.EnforceDepth()
 
 		payload.Data[index] = data
 		if data.Checksum != 0 {
@@ -353,24 +370,6 @@ func (book *Book) apply(
 	}
 
 	return accepted, resynced, nil
-}
-
-func (book *Book) pruneNilLevels(symbolBook *spotbook.Book) {
-	if symbolBook == nil {
-		return
-	}
-
-	for _, side := range []*spotbook.Side{symbolBook.Bids, symbolBook.Asks} {
-		if side == nil {
-			continue
-		}
-
-		for price, level := range side.Levels {
-			if level == nil {
-				delete(side.Levels, price)
-			}
-		}
-	}
 }
 
 func (book *Book) All() *sync.Map {

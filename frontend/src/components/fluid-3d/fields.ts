@@ -323,10 +323,10 @@ export class FluidFieldView {
 			packed.waveImaginary,
 		);
 		this.grid = fields.grid;
-		this.densityScale = fields.densityScale;
-		this.momentumScale = fields.momentumScale;
-		this.energyScale = fields.energyScale;
-		this.waveScale = fields.waveScale;
+		this.densityScale = packed.densityScale;
+		this.momentumScale = packed.momentumScale;
+		this.energyScale = packed.energyScale;
+		this.waveScale = packed.waveScale;
 	}
 
 	setOptions(options: FluidFieldOptions) {

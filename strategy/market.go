@@ -8,17 +8,20 @@ import (
 
 /* learningMarket owns persistent wallets and the latest ordered impulse. */
 type learningMarket struct {
-	symbol, status string
-	regions        []learning.Region
-	sequence       []uint64
-	lanes          []learningLane
-	context        []uint64
-	actions        []LearningAction
-	events         []hindsight.LearningEvent
-	at             time.Time
-	seq            hindsight.CaptureSequence
-	capture        hindsight.CaptureIdentity
-	gridVersion    uint64
+	symbol, status     string
+	regions            []learning.Region
+	sequence           []uint64
+	conditions         []uint64
+	authority          float64
+	opportunityHorizon time.Duration
+	lanes              []learningLane
+	context            []uint64
+	actions            []LearningAction
+	events             []hindsight.LearningEvent
+	at                 time.Time
+	seq                hindsight.CaptureSequence
+	capture            hindsight.CaptureIdentity
+	gridVersion        uint64
 
 	/*
 		epochs measures this instrument's own cadence of impulse change: the
@@ -51,6 +54,10 @@ over. It is unavailable until an interval has actually been observed; an
 unmeasured horizon resolves nothing rather than inventing a default one.
 */
 func (market *learningMarket) horizon() time.Duration {
+	if market.opportunityHorizon > 0 {
+		return market.opportunityHorizon
+	}
+
 	if market.epochs == 0 || market.epochMean <= 0 {
 		return 0
 	}

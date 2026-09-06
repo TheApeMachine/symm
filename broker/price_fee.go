@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
+	"math/big"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -198,16 +199,15 @@ func (price *Price) WithFee(
 		return nil
 	}
 
-	amount = decimalZero.Add(amount)
-	feeRate := decimalZero.Add(fee.Fee).Div(decimalHundred)
-	feeAmount := amount.Mul(feeRate)
+	var pricing Pricing
 
-	switch direction {
-	case BUY:
-		return amount.Add(feeAmount)
-	case SELL:
-		return amount.Sub(feeAmount)
+	if err := pricing.SetFee(fee.Fee); err != nil {
+		return nil
 	}
 
-	return amount
+	if direction != BUY && direction != SELL {
+		errnie.Error(errnie.Err(errnie.Validation, "price: buy or sell direction required", nil))
+		return nil
+	}
+	return PriceDecimal(pricing.Total(new(big.Rat), amount.Rat(), direction == BUY))
 }

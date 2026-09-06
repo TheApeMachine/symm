@@ -51,6 +51,10 @@ func TestKnowledgeReading(t *testing.T) {
 			So(reading.Scope, ShouldEqual, "symbol")
 			So(reading.Selected.Mean, ShouldAlmostEqual, -1)
 			So(reading.Selected.Samples, ShouldEqual, 20)
+			// Activity in B itself ages B's entry evidence; unrelated A cannot.
+			for range 80 {
+				So(knowledge.Model.Observe([2]string{"B/USD", "virtual"}, nil, LearningAction{Kind: types.ActionHold}, 0, 1), ShouldBeNil)
+			}
 			train("A/USD", 1, 80)
 			reading = knowledge.Reading("B/USD", context, action)
 			So(reading.Scope, ShouldEqual, "global")
@@ -80,8 +84,8 @@ func TestKnowledgeWarmup(t *testing.T) {
 		events := []hindsight.LearningEvent{
 			{Run: "one", ID: 1, Symbol: "A/USD", Kind: "issued", At: at, Context: []uint64{1, 0, 2}, Quantities: [][2]string{{"source", "impulse"}}, Action: "enter", Authority: 1},
 			{Run: "two", ID: 1, Symbol: "B/USD", Kind: "issued", At: at, Action: "hold", Authority: 1},
-			{Run: "one", ID: 1, Symbol: "A/USD", Kind: "resolved", At: at.Add(time.Second), Target: 0.1},
-			{Run: "two", ID: 1, Symbol: "B/USD", Kind: "resolved", At: at.Add(time.Second), Target: 0.2},
+			{Run: "one", ID: 1, Symbol: "A/USD", Kind: "resolved", At: at.Add(time.Second), Target: 0.1, TargetUnit: "absolute_return_per_second"},
+			{Run: "two", ID: 1, Symbol: "B/USD", Kind: "resolved", At: at.Add(time.Second), Target: 0.2, TargetUnit: "absolute_return_per_second"},
 			{Run: "one", ID: 2, Symbol: "A/USD", Kind: "issued", At: at, Action: "enter", Authority: 1},
 		}
 		report, err := knowledge.Warmup(events)
@@ -92,6 +96,26 @@ func TestKnowledgeWarmup(t *testing.T) {
 		So(reading.Selected.Depth, ShouldEqual, 3)
 		So(reading.Selected.Pending, ShouldEqual, 0)
 		So(knowledge.Reading("A/USD", nil, LearningAction{Kind: types.ActionEnter}).Symbol.Samples, ShouldEqual, 1)
+	})
+}
+
+func TestKnowledgeWarmupAbsoluteTargets(t *testing.T) {
+	Convey("Historical differential returns require a separately recorded absolute mark", t, func() {
+		at := time.Unix(100, 0)
+		zero := 0.0
+		events := []hindsight.LearningEvent{
+			{Run: "past", ID: 1, Symbol: "TEST/USD", Kind: "issued", At: at, Action: "hold", Authority: 1},
+			{Run: "past", ID: 1, Symbol: "TEST/USD", Kind: "resolved", At: at.Add(time.Second), TargetUnit: "return_per_second", Target: 0.03, AbsoluteSkillTarget: &zero, BaselineRate: -6},
+			{Run: "past", ID: 2, Symbol: "TEST/USD", Kind: "issued", At: at, Action: "enter", Authority: 1},
+			{Run: "past", ID: 2, Symbol: "TEST/USD", Kind: "resolved", At: at.Add(time.Second), Target: 0.2},
+		}
+		knowledge := NewKnowledge(learning.NewGrid())
+		report, err := knowledge.Warmup(events)
+		So(err, ShouldBeNil)
+		So(report.Resolved, ShouldEqual, 1)
+		So(report.TargetUnavailable, ShouldEqual, 1)
+		So(knowledge.Reading("TEST/USD", nil, LearningAction{Kind: types.ActionHold}).Selected.Mean, ShouldEqual, 0)
+		So(knowledge.Reading("TEST/USD", nil, LearningAction{Kind: types.ActionEnter}).Selected.Defined, ShouldBeFalse)
 	})
 }
 

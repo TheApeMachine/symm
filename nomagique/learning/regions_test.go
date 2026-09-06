@@ -31,14 +31,14 @@ func TestGridRegions(t *testing.T) {
 			So(err, ShouldBeNil)
 			So(version, ShouldEqual, 1)
 			So(regions, ShouldHaveLength, 1)
-			So(regions[0], ShouldResemble, Region{ID: 1, Strength: 18, Authority: 0.5, Members: 4})
+			So(regions[0], ShouldResemble, Region{ID: 1, Condition: ConditionToken(1, 0, 3), Change: 3, Strength: 18, Authority: 0.5, Members: 4})
 		})
 
 		Convey("Equal connected peaks form one deterministic plateau", func() {
 			copy(grid.activations[0], []float64{2, -2, 0, 0, 0, 0, 0, 0, 0})
 			regions, _, err := grid.Regions("first")
 			So(err, ShouldBeNil)
-			So(regions, ShouldResemble, []Region{{ID: 1, Strength: 8, Authority: 0.5, Members: 2}})
+			So(regions, ShouldResemble, []Region{{ID: 1, Condition: ConditionToken(1, 0, 2), Change: 2, Strength: 8, Authority: 0.5, Members: 2}})
 		})
 
 		Convey("Equally strong separated peaks remain separate", func() {

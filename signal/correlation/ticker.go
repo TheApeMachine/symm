@@ -22,7 +22,8 @@ the readings that pipeline produces. It holds no mathematics and no estimator
 state of its own.
 */
 type Ticker struct {
-	mutex sync.Mutex
+	mutex     sync.Mutex
+	Relations Relations
 
 	// paths is the retained observation store per symbol. Correlation is
 	// cross-sectional, so a focal symbol is measured against every other path.
@@ -263,6 +264,7 @@ func (ticker *Ticker) step(
 		// slot changes between steps.
 		built.hayashi.Right = peer
 		built.pairwise.Step(0)
+		ticker.Relations.observe(symbol, peerSymbol, &built.hayashi, &built.fisher)
 
 		folded = true
 	}

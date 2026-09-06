@@ -9,7 +9,10 @@ import (
 Model keeps priors for keyed, ordered contexts and comparable actions. Context
 tokens are stable numerical identities supplied by the caller, in order. They
 may identify regions or previous-action context; the model interprets neither.
-Action includes its parameters in its comparable identity.
+Action includes its parameters in its comparable identity. Retention counts
+resolutions within each key, including other actions and contexts in that key.
+Unrelated keys cannot erase one another's evidence. A shared related key still
+ages on every observation that trains it.
 
 The context trie interns each distinct prefix once. Repeated decisions reuse
 its prior records, and pending decisions retain a node reference rather than
@@ -19,12 +22,12 @@ type Model[Key comparable, Action comparable] struct {
 	contexts map[Key]*modelContext[Action]
 	pending  map[uint64]pendingAction
 	sequence uint64
-	epoch    uint64
 	memory   float64
 }
 
 /* modelContext owns the actions and continuations of one context prefix. */
 type modelContext[Action comparable] struct {
+	epoch    uint64
 	children map[uint64]*modelContext[Action]
 	priors   map[Action]*Prior
 }
@@ -35,9 +38,15 @@ retains one prior per context depth, because a decision is evidence about
 every prefix of the context it was taken under, not only the longest one.
 */
 type pendingAction struct {
-	priors    []*Prior
+	priors    []scopedPrior
 	authority float64
 	depth     int
+}
+
+/* scopedPrior binds a prefix's evidence to its root key's resolution clock. */
+type scopedPrior struct {
+	*Prior
+	epoch *uint64
 }
 
 /* NewModel constructs a keyed prior model with an optional exponential memory window. */
@@ -75,7 +84,7 @@ func (model *Model[Key, Action]) Issue(
 		return 0, errnie.Err(errnie.Validation, "model: authority must be in [0, 1]", nil)
 	}
 
-	priors := make([]*Prior, 0, (len(context)+1)*(len(related)+1))
+	priors := make([]scopedPrior, 0, (len(context)+1)*(len(related)+1))
 	for index, scope := range related {
 		if scope == key || slices.Contains(related[:index], scope) {
 			return 0, errnie.Err(errnie.Validation, "model: related scope must differ from primary scope", nil)
@@ -100,7 +109,7 @@ func (model *Model[Key, Action]) Issue(
 }
 
 /* bind interns one scope's ordered prefixes into the supplied evidence path. */
-func (model *Model[Key, Action]) bind(key Key, context []uint64, action Action, priors []*Prior) []*Prior {
+func (model *Model[Key, Action]) bind(key Key, context []uint64, action Action, priors []scopedPrior) []scopedPrior {
 	node := model.contexts[key]
 
 	if node == nil {
@@ -108,7 +117,8 @@ func (model *Model[Key, Action]) bind(key Key, context []uint64, action Action, 
 		model.contexts[key] = node
 	}
 
-	priors = append(priors, node.prior(action, model.memory))
+	epoch := &node.epoch
+	priors = append(priors, scopedPrior{node.prior(action, model.memory), epoch})
 
 	for _, token := range context {
 		if node.children == nil {
@@ -123,7 +133,7 @@ func (model *Model[Key, Action]) bind(key Key, context []uint64, action Action, 
 		}
 
 		node = next
-		priors = append(priors, node.prior(action, model.memory))
+		priors = append(priors, scopedPrior{node.prior(action, model.memory), epoch})
 	}
 
 	return priors
@@ -161,10 +171,13 @@ func (model *Model[Key, Action]) Resolve(identity uint64, outcome float64) (Prio
 		)
 	}
 
-	model.epoch++
+	for index, prior := range pending.priors {
+		// Each distinct scope occurs once and its prefixes are contiguous.
+		if index == 0 || prior.epoch != pending.priors[index-1].epoch {
+			*prior.epoch++
+		}
 
-	for _, prior := range pending.priors {
-		if err := prior.Observe(outcome, pending.authority, model.epoch); err != nil {
+		if err := prior.Observe(outcome, pending.authority, *prior.epoch); err != nil {
 			return PriorReading{}, err
 		}
 
@@ -176,7 +189,8 @@ func (model *Model[Key, Action]) Resolve(identity uint64, outcome float64) (Prio
 	// The reading reported back is the longest context's, which is the one the
 	// caller asked about. Shorter prefixes were trained too, and Recall uses
 	// them while this one is still too sparse to say anything.
-	reading := pending.priors[len(pending.priors)-1].Reading(model.epoch)
+	last := pending.priors[len(pending.priors)-1]
+	reading := last.Reading(*last.epoch)
 	reading.Depth = pending.depth
 	reading.ContextLength = pending.depth
 
@@ -221,10 +235,11 @@ func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action
 		return PriorReading{ContextLength: len(context)}
 	}
 
+	epoch := node.epoch
 	reading := PriorReading{}
 
 	if prior := node.priors[action]; prior != nil {
-		reading = prior.Reading(model.epoch)
+		reading = prior.Reading(epoch)
 	}
 	reading.ContextLength = len(context)
 
@@ -272,7 +287,7 @@ func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action
 		}
 
 		// Specificity wins ties in retained input authority.
-		deeper := prior.Reading(model.epoch)
+		deeper := prior.Reading(epoch)
 
 		if !deeper.Defined {
 			continue
@@ -301,7 +316,7 @@ func (model *Model[Key, Action]) Observe(
 		return errnie.Err(errnie.Validation, "model: authority must be in [0, 1]", nil)
 	}
 
-	priors := make([]*Prior, 0, (len(context)+1)*(len(related)+1))
+	priors := make([]scopedPrior, 0, (len(context)+1)*(len(related)+1))
 	for index, scope := range related {
 		if scope == key || slices.Contains(related[:index], scope) {
 			return errnie.Err(errnie.Validation, "model: related scope must differ from primary scope", nil)
@@ -311,10 +326,12 @@ func (model *Model[Key, Action]) Observe(
 		priors = model.bind(scope, context, action, priors)
 	}
 	priors = model.bind(key, context, action, priors)
-	model.epoch++
+	for index, prior := range priors {
+		if index == 0 || prior.epoch != priors[index-1].epoch {
+			*prior.epoch++
+		}
 
-	for _, prior := range priors {
-		if err := prior.Observe(outcome, authority, model.epoch); err != nil {
+		if err := prior.Observe(outcome, authority, *prior.epoch); err != nil {
 			return err
 		}
 	}

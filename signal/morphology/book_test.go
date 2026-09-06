@@ -48,14 +48,14 @@ func morphHasMetric(measurement *data.Measurement[float64], name string) bool {
 	return found
 }
 
-func TestProjectShape(t *testing.T) {
+func TestBookProjectShapeWithCache(t *testing.T) {
 	Convey("Given a crossed or degenerate message", t, func() {
 		message := morphMessage("BTC/USD", time.Now(),
 			[]kraken.Level3Order{morphOrder(101, 1, time.Now())},
 			[]kraken.Level3Order{morphOrder(99, 1, time.Now())},
 		)
 
-		_, _, _, ok := projectShape(message)
+		_, _, _, ok := NewBook().projectShapeWithCache(message)
 
 		Convey("projectShape reports not-ok, never fabricating a shape", func() {
 			So(ok, ShouldBeFalse)
@@ -69,7 +69,7 @@ func TestProjectShape(t *testing.T) {
 			[]kraken.Level3Order{morphOrder(101, 2, now)},
 		)
 
-		bidFolded, askFolded, whole, ok := projectShape(message)
+		bidFolded, askFolded, whole, ok := NewBook().projectShapeWithCache(message)
 
 		Convey("bilateral shapes are folded onto the positive distance axis", func() {
 			So(ok, ShouldBeTrue)
@@ -317,13 +317,13 @@ func BenchmarkStep(benchmark *testing.B) {
 }
 
 /*
-TestProjectShape_DeleteIsNotShape pins that a delete contributes no shape. A
+TestBookProjectShapeWithCache_DeleteIsNotShape pins that a delete contributes no shape. A
 delete reports liquidity being REMOVED, so weighting its notional would let
 withdrawn size stand as displayed depth in the concentration, entropy, and
 structural-change statistics -- and a delete priced past the touch would also
 move the very touch the shape is normalized against.
 */
-func TestProjectShape_DeleteIsNotShape(t *testing.T) {
+func TestBookProjectShapeWithCache_DeleteIsNotShape(t *testing.T) {
 	Convey("Given a two-level book on each side", t, func() {
 		at := time.Unix(1_700_000_000, 0)
 
@@ -332,7 +332,7 @@ func TestProjectShape_DeleteIsNotShape(t *testing.T) {
 			[]kraken.Level3Order{morphOrder(101, 10, at), morphOrder(102, 5, at)},
 		)
 
-		_, _, whole, ok := projectShape(resting)
+		_, _, whole, ok := NewBook().projectShapeWithCache(resting)
 
 		So(ok, ShouldBeTrue)
 		So(len(whole), ShouldEqual, 4)
@@ -341,7 +341,7 @@ func TestProjectShape_DeleteIsNotShape(t *testing.T) {
 			removed := morphOrder(98, 5, at)
 			removed.Event = "delete"
 
-			_, _, wholeAfter, okAfter := projectShape(morphMessage("BTC/USD", at,
+			_, _, wholeAfter, okAfter := NewBook().projectShapeWithCache(morphMessage("BTC/USD", at,
 				[]kraken.Level3Order{morphOrder(99, 10, at), removed},
 				[]kraken.Level3Order{morphOrder(101, 10, at), morphOrder(102, 5, at)},
 			))
@@ -356,7 +356,7 @@ func TestProjectShape_DeleteIsNotShape(t *testing.T) {
 			removed := morphOrder(100, 1, at)
 			removed.Event = "delete"
 
-			bidFolded, _, _, okAfter := projectShape(morphMessage("BTC/USD", at,
+			bidFolded, _, _, okAfter := NewBook().projectShapeWithCache(morphMessage("BTC/USD", at,
 				[]kraken.Level3Order{morphOrder(99, 10, at), morphOrder(98, 5, at)},
 				[]kraken.Level3Order{morphOrder(101, 10, at), morphOrder(102, 5, at), removed},
 			))
@@ -365,7 +365,7 @@ func TestProjectShape_DeleteIsNotShape(t *testing.T) {
 
 			// The touch is unchanged, so the folded bid coordinates match the
 			// all-resting projection exactly.
-			bidBaseline, _, _, _ := projectShape(resting)
+			bidBaseline, _, _, _ := NewBook().projectShapeWithCache(resting)
 
 			So(len(bidFolded), ShouldEqual, len(bidBaseline))
 			So(bidFolded[0].Position, ShouldEqual, bidBaseline[0].Position)

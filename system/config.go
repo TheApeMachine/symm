@@ -16,7 +16,6 @@ type Config struct {
 	Runtime   *Runtime
 	Resonance *Resonance
 	Risk      *Risk
-	Regulator *RegulatorConfig
 	Planner   *PlannerConfig
 	PumpDump  *PumpDump
 	CVD       *CVD
@@ -30,7 +29,6 @@ func NewConfig() *Config {
 		Runtime:   NewRuntime(),
 		Resonance: NewResonance(),
 		Risk:      NewRisk(),
-		Regulator: NewRegulatorConfig(),
 		Planner:   NewPlannerConfig(),
 		PumpDump:  NewPumpDump(),
 		CVD:       NewCVD(),
@@ -65,20 +63,4 @@ func (config *Config) CognitionSwitchConfidence() (float64, error) {
 	}
 
 	return policy.CognitionSwitchConfidence, nil
-}
-
-/* OptimizationConfidence returns the Passage quantile confidence without allocating. */
-func (config *Config) OptimizationConfidence() (float64, error) {
-	if config == nil {
-		return 0, errors.New("system: configuration required")
-	}
-
-	config.mu.RLock()
-	defer config.mu.RUnlock()
-
-	if config.Regulator == nil {
-		return 0, errors.New("system: regulator configuration required")
-	}
-
-	return config.Regulator.OptimizationConfidence, nil
 }

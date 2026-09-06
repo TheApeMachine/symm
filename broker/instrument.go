@@ -14,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
+	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -131,6 +132,19 @@ func NewInstrument(api *websocket.API, price *Price) *Instrument {
 	instrument.status.Transition(runtime.WAITING)
 
 	return instrument
+}
+
+func (instrument *Instrument) Cache(pairs []kraken.InstrumentPair) {
+	for _, pair := range pairs {
+		if pair.Quote != instrument.quote ||
+			pair.Status != "online" ||
+			slices.Contains(system.Cfg.Market.Instrument.Excluded, 	pair.Base) {
+			continue
+		}
+
+		instrument.symbols = append(instrument.symbols, pair.Symbol)
+		instrument.cache.Store(pair.Symbol, pair)
+	}
 }
 
 /*
@@ -484,17 +498,5 @@ func (instrument *Instrument) Close() {
 
 	if instrument.err == nil {
 		instrument.status.Transition(runtime.DONE)
-	}
-}
-
-func isExcludedBase(base string) bool {
-	switch strings.ToUpper(strings.TrimSpace(base)) {
-	case "USD", "EUR", "GBP", "AUD", "CAD", "CHF", "JPY", "NZD",
-		"USDT", "USDC", "DAI", "PYUSD", "FDUSD", "TUSD", "USDG",
-		"USDE", "EURT", "EURC", "GUSD", "BUSD", "FRAX", "LUSD",
-		"CUSD", "USD0", "USDS", "RLUSD", "UST":
-		return true
-	default:
-		return false
 	}
 }

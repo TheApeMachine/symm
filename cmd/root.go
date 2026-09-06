@@ -394,7 +394,7 @@ var (
 				if err != nil {
 					return err
 				}
-				errnie.Info(fmt.Sprintf("agent: warmup complete=%d unconditioned=%d unpaired=%d portfolio-unavailable=%d", warmed.Resolved, warmed.Unconditioned, warmed.Unpaired, warmed.PortfolioUnavailable))
+				errnie.Info(fmt.Sprintf("agent: warmup complete=%d unconditioned=%d unpaired=%d portfolio-unavailable=%d target-unavailable=%d", warmed.Resolved, warmed.Unconditioned, warmed.Unpaired, warmed.PortfolioUnavailable, warmed.TargetUnavailable))
 				capitalEvents, err := storageEngine.LearningExperiences("portfolio_resolved", learner.RetainedExperiences())
 
 				if err != nil {

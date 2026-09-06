@@ -47,25 +47,6 @@ func (trade *Trade) Action() string {
 	return "trade"
 }
 
-type TradeSubscription struct {
-	Pairs []string
-}
-
-func NewTradeSubscription(pairs []string) TradeSubscription {
-	return TradeSubscription{Pairs: pairs}
-}
-
-func (subscription TradeSubscription) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(map[string]any{
-		"method": "subscribe",
-		"params": map[string]any{
-			"channel":  "trade",
-			"symbol":   subscription.Pairs,
-			"snapshot": true,
-		},
-	})
-}
-
 type TradeVolumeInput struct {
 	DomainSpotVolume30D    string `json:"domain_spot_volume_30d"`
 	DomainAssetsOnPlatform string `json:"domain_assets_on_platform"`

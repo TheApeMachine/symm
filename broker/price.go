@@ -1,516 +1,289 @@
 package broker
 
 import (
-	"sync"
-	"time"
+	"math/big"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
-type Direction string
-
-const (
-	BUY  Direction = "buy"
-	SELL Direction = "sell"
-)
-
-var (
-	decimalZero    = decimal.NewFromInt64(0)
-	decimalOne     = decimal.NewFromInt64(1)
-	decimalTwo     = decimal.NewFromInt64(2)
-	decimalHundred = decimal.NewFromInt64(100)
-)
-
 /*
-Price is the broker price surface for symm. It owns fee tiers, ticker cache,
-and all money math so the rest of the broker never drifts from Kraken's
-precision and executable boundaries.
+Pricing owns exact taker economics and venue lot constraints for both live
+quotes and virtual execution. Percentages are converted once; rational
+arithmetic preserves all input precision until the presentation boundary.
 */
-type Price struct {
-	status     types.Status
-	api        *websocket.API
-	fees       *sync.Map
-	tickers    *sync.Map
-	normalizer *spot.Normalizer
+type Pricing struct {
+	Rate, Lot, Minimum, CostMinimum big.Rat
 }
 
-/*
-NewPrice wires the price surface to the shared Kraken API.
-*/
-func NewPrice(api *websocket.API) *Price {
-	if api == nil {
-		panic("broker: api required")
+/* Configure validates the supplied venue contract before an account uses it. */
+func (pricing *Pricing) Configure(pair kraken.InstrumentPair, percent *decimal.Decimal) error {
+	if pair.QtyIncrement == nil || pair.QtyMin == nil || pair.CostMin == nil ||
+		pair.QtyIncrement.Sign() <= 0 || pair.QtyMin.Sign() <= 0 || pair.CostMin.Sign() <= 0 {
+		return errnie.Error(errnie.Err(errnie.Validation, "pricing: positive venue lot and minimums required", nil))
 	}
 
-	return &Price{
-		status:     types.READY,
-		api:        api,
-		fees:       &sync.Map{},
-		tickers:    &sync.Map{},
-		normalizer: api.Normalizer(),
+	if err := pricing.SetFee(percent); err != nil {
+		return err
 	}
-}
-
-/*
-Status reports whether the fee surface is ready for executable calculations.
-*/
-func (price *Price) Status() types.Status {
-	return price.status
-}
-
-/*
-Update refreshes the cached ticker for a symbol and returns the new row.
-*/
-func (price *Price) Update(ticker *kraken.TickerData) {
-	price.tickers.Store(price.api.Normalizer().Name(ticker.Symbol), ticker)
-}
-
-/*
-Mark returns the unit price with the taker fee applied.
-*/
-func (price *Price) Mark(
-	symbol string,
-	direction Direction,
-) *decimal.Decimal {
-	tick := price.Tick(symbol)
-
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"symbol":    symbol,
-		"direction": direction,
-		"tick":      tick,
-	})); err != nil {
-		return nil
-	}
-
-	switch direction {
-	case BUY:
-		return price.WithFee(symbol, tick.Ask, BUY)
-	case SELL:
-		return price.WithFee(symbol, tick.Bid, SELL)
-	}
-
+	pricing.Lot.Set(pair.QtyIncrement.Rat())
+	pricing.Minimum.Set(pair.QtyMin.Rat())
+	pricing.CostMinimum.Set(pair.CostMin.Rat())
 	return nil
 }
 
-/* PnL returns holding profit or loss at the authoritative economic mark, including fees. */
-func (price *Price) PnL(
-	pair kraken.InstrumentPair,
-	holding *types.Holding,
-) *decimal.Decimal {
-	if holding == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"price: holding required for PnL",
-			nil,
-		))
-
-		return nil
+/* SetFee accepts Kraken percentage units, including a zero-fee schedule. */
+func (pricing *Pricing) SetFee(percent *decimal.Decimal) error {
+	if percent == nil || percent.Sign() < 0 || percent.Cmp(decimalHundred) >= 0 {
+		return errnie.Error(errnie.Err(errnie.Validation, "pricing: taker percentage must be in [0, 100)", nil))
 	}
-
-	fee := price.Fee(pair.Symbol)
-
-	if fee == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"price: fee required for PnL",
-			nil,
-		))
-
-		return nil
-	}
-
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"holding":    holding,
-		"qty":        holding.Qty,
-		"entryPrice": holding.EntryPrice,
-		"entryFee":   holding.EntryFee,
-		"mark":       holding.Mark,
-		"fee":        fee.Fee,
-	})); err != nil {
-		return nil
-	}
-
-	exitValue := price.ExitValue(pair, holding)
-
-	if exitValue == nil {
-		return nil
-	}
-
-	return exitValue.Sub(
-		decimalZero.Add(holding.EntryPrice).Mul(holding.Qty),
-	).Sub(holding.EntryFee)
+	pricing.Rate.Quo(percent.Rat(), big.NewRat(100, 1))
+	return nil
 }
 
-/* ExitValue returns holding value at the authoritative economic mark after the taker fee. */
-func (price *Price) ExitValue(
-	pair kraken.InstrumentPair,
-	holding *types.Holding,
-) *decimal.Decimal {
-	if holding == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"price: holding required for exit value",
-			nil,
-		))
+/* Fee calculates the exact quote-currency fee, allowing output to alias gross. */
+func (pricing *Pricing) Fee(output, gross *big.Rat) *big.Rat {
+	return output.Mul(gross, &pricing.Rate)
+}
 
-		return nil
+/* Total adds the entry fee or subtracts the exit fee, allowing input aliasing. */
+func (pricing *Pricing) Total(output, gross *big.Rat, buy bool) *big.Rat {
+	var fee big.Rat
+	pricing.Fee(&fee, gross)
+
+	if buy {
+		return output.Add(gross, &fee)
 	}
+	return output.Sub(gross, &fee)
+}
 
-	if holding.Mark == nil || holding.Mark.Sign() <= 0 {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"price: holding mark required for exit value",
-			nil,
-		))
-
-		return nil
-	}
-
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"holding":    holding,
-		"qty":        holding.Qty,
-		"entryPrice": holding.EntryPrice,
-		"entryFee":   holding.EntryFee,
-		"mark":       holding.Mark,
-	})); err != nil {
-		return nil
-	}
-
-	return price.WithFee(
-		pair.Symbol,
-		decimalZero.Add(holding.Mark).Mul(holding.Qty),
-		SELL,
-	)
+/* Floor rounds down to a venue lot without a binary floating-point conversion. */
+func (pricing *Pricing) Floor(output, quantity *big.Rat) *big.Rat {
+	output.Quo(quantity, &pricing.Lot)
+	output.Num().Quo(output.Num(), output.Denom())
+	output.SetInt(output.Num())
+	return output.Mul(output, &pricing.Lot)
 }
 
 /*
-WithFriction returns the value with the friction of exiting a holding applied.
-This can be used for strategy calculations to account for the difference between
-the best bid and the actual exit value when selling a holding.
+Sweep prices displayed depth in execution order. Cash is optional for an
+unbudgeted quote; a budgeted buy requires configured venue lots. Observed and
+limit retain and constrain causal depth for virtual IOC fills. Partial depth
+is returned explicitly as a quantity, never priced as a complete fill.
 */
-func (price *Price) WithFriction(
-	pair kraken.InstrumentPair,
-	holding *types.Holding,
-	value *decimal.Decimal,
-) (*decimal.Decimal, error) {
-	if holding == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"price: holding required for exit friction",
-			nil,
-		))
+func (pricing *Pricing) Sweep(
+	book *spotbook.Book, requested, cash *big.Rat, buy bool,
+	observed, limit *DepthLadder,
+) (quantity, gross *big.Rat) {
+	quantity, gross = new(big.Rat), new(big.Rat)
+	level := book.Bids.High
+
+	if buy {
+		level = book.Asks.Low
+	}
+	var remaining, available, fill, cost, affordable big.Rat
+	remaining.Set(requested)
+
+	if cash != nil {
+		available.Set(cash)
 	}
 
-	tick := price.Tick(pair.Symbol)
-	fee := price.Fee(pair.Symbol)
+	for level != nil && remaining.Sign() > 0 {
+		next := level.Lower
 
-	if tick == nil || fee == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"price: ticker and fee required for exit friction",
-			nil,
-		))
-	}
+		if buy {
+			next = level.Higher
+		}
+		unit := level.Price.Rat()
+		fill.Set(level.Quantity.Rat())
+		observed.Record(unit, &fill)
+		fill.Set(limit.Surviving(unit, &fill))
 
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"holding": holding,
-		"qty":     holding.Qty,
-		"value":   value,
-		"bid":     tick.Bid,
-		"fee":     fee.Fee,
-	})); err != nil {
-		return nil, err
-	}
-
-	var adjusted *decimal.Decimal
-	var err error
-	bookFound := false
-	price.api.Book(price.api.Normalizer().Name(pair.Symbol), func(managed *spotbook.Book) {
-		bookFound = true
-		if managed == nil || managed.Bids == nil || managed.Bids.High == nil {
-			err = errnie.Err(
-				errnie.NotFound,
-				"price: visible bid book required for exit friction",
-				nil,
-			)
-			return
+		if fill.Sign() <= 0 {
+			level = next
+			continue
 		}
 
-		zero := decimalZero
-		remaining := decimalZero.Add(holding.Qty)
-		bookGross := zero
+		if remaining.Cmp(&fill) < 0 {
+			fill.Set(&remaining)
+		}
 
-		for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
-			if remaining.Cmp(zero) <= 0 {
+		if buy && cash != nil {
+			pricing.Total(&cost, unit, true)
+			affordable.Quo(&available, &cost)
+			pricing.Floor(&affordable, &affordable)
+
+			if affordable.Sign() == 0 {
 				break
 			}
 
-			fillQty := bid.Quantity
-
-			if fillQty.Cmp(remaining) > 0 {
-				fillQty = remaining
+			if affordable.Cmp(&fill) < 0 {
+				fill.Set(&affordable)
 			}
-
-			bookGross = bookGross.Add(
-				decimalZero.Add(bid.Price).Mul(fillQty),
-			)
-
-			remaining = remaining.Sub(fillQty)
 		}
+		cost.Mul(unit, &fill)
+		quantity.Add(quantity, &fill)
+		gross.Add(gross, &cost)
+		remaining.Sub(&remaining, &fill)
 
-		if remaining.Cmp(zero) > 0 {
-			err = errnie.Err(
-				errnie.UnprocessableContent,
-				"insufficient bid liquidity to exit holding",
-				nil,
-			)
-
-			return
+		if buy && cash != nil {
+			pricing.Total(&cost, &cost, true)
+			available.Sub(&available, &cost)
 		}
-
-		bestBidNet := price.WithFee(
-			pair.Symbol,
-			decimalZero.Add(tick.Bid).Mul(holding.Qty),
-			SELL,
-		)
-
-		bookNet := price.WithFee(
-			pair.Symbol,
-			bookGross,
-			SELL,
-		)
-
-		adjusted = decimalZero.Add(value).Sub(
-			bestBidNet.Sub(bookNet),
-		)
-	})
-
-	if !bookFound {
-		return nil, errnie.Error(errnie.Err(
-			errnie.NotFound,
-			"price: visible bid book required for exit friction",
-			nil,
-		))
+		level = next
 	}
-
-	if err != nil {
-		return nil, errnie.Error(err)
-	}
-
-	if adjusted == nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"price: exit friction calculation did not complete",
-			nil,
-		))
-	}
-
-	return adjusted, nil
+	return quantity, gross
 }
 
 /*
-Surface derives the exact executable-liquidation surface for the held
-SellableQty from the resident BookManager bids under RLock. It returns a
-surface with BookComplete and FullyExecutable set truthfully; it never
-synthesizes a VWAP for insufficient depth and never falls back to ticker.
+EntryCost derives fees and break-even from the exact swept entry notional.
+It never uses a future price. Conversion to Decimal happens only for the
+existing published quote contract; account arithmetic remains rational.
 */
-func (price *Price) Surface(
-	symbol string,
-	sellableQty *decimal.Decimal,
-	floor *decimal.Decimal,
-	fee *kraken.TradeVolumeFee,
-	at time.Time,
-) *types.ExecutionSurface {
-	surface := &types.ExecutionSurface{
-		Symbol:      symbol,
-		At:          at,
-		SellableQty: sellableQty,
+func (pricing *Pricing) EntryCost(notional, ask, bid, quantity *decimal.Decimal) *types.EntryCost {
+	gross := notional.Rat()
+	entry := UnitPrice(notional, quantity)
+	entryFee := pricing.Fee(new(big.Rat), gross)
+	total := pricing.Total(new(big.Rat), gross, true)
+	exitFactor := new(big.Rat).Sub(big.NewRat(1, 1), &pricing.Rate)
+	breakEvenGross := new(big.Rat).Quo(total, exitFactor)
+	exitFee := pricing.Fee(new(big.Rat), breakEvenGross)
+	midpoint := PriceDecimal(new(big.Rat).Quo(new(big.Rat).Add(ask.Rat(), bid.Rat()), big.NewRat(2, 1)))
+	impact := subtractAmount(entry, ask)
+
+	if impact.Sign() < 0 {
+		impact = decimalZero.Copy()
 	}
-
-	if price == nil || price.api == nil || sellableQty == nil || sellableQty.Sign() <= 0 ||
-		fee == nil || fee.Fee == nil || fee.Fee.Sign() < 0 ||
-		fee.Fee.Cmp(decimalHundred) >= 0 {
-		return surface
+	return &types.EntryCost{
+		EntryPrice: entry.Copy(), BestAsk: ask.Copy(), BestBid: bid.Copy(), Midpoint: midpoint,
+		GrossNotional: PriceDecimal(gross), EntryFee: PriceDecimal(entryFee),
+		ExitFeeAtBreakEven: PriceDecimal(exitFee), RoundTripFees: PriceDecimal(new(big.Rat).Add(entryFee, exitFee)),
+		Spread: subtractAmount(ask, midpoint), Impact: impact,
+		BreakEven: PriceDecimal(new(big.Rat).Quo(breakEvenGross, quantity.Rat())),
 	}
-
-	price.api.Book(price.api.Normalizer().Name(symbol), func(managed *spotbook.Book) {
-		if managed == nil || managed.Bids == nil || managed.Bids.High == nil {
-			return
-		}
-
-		if managed.Asks != nil && managed.Asks.Low != nil &&
-			managed.Bids.High.Price != nil && managed.Asks.Low.Price != nil &&
-			managed.Bids.High.Price.Cmp(managed.Asks.Low.Price) >= 0 {
-			return
-		}
-
-		surface.BookComplete = true
-		if managed.Bids.High.Price != nil {
-			surface.BestBid = managed.Bids.High.Price.Copy()
-		}
-
-		executableQty := decimalZero.Copy()
-		floorCoverageQty := decimalZero.Copy()
-		grossProceeds := decimalZero.Copy()
-		remaining := sellableQty.Copy()
-
-		for bid := managed.Bids.High; bid != nil; bid = bid.Lower {
-			if bid.Price == nil || bid.Quantity == nil ||
-				bid.Price.Sign() <= 0 || bid.Quantity.Sign() <= 0 {
-				continue
-			}
-
-			executableQty = executableQty.Add(bid.Quantity)
-
-			if floor != nil && bid.Price.Cmp(floor) >= 0 {
-				floorCoverageQty = floorCoverageQty.Add(bid.Quantity)
-			}
-
-			if remaining.Sign() <= 0 {
-				continue
-			}
-
-			fill := bid.Quantity
-			if remaining.Cmp(fill) < 0 {
-				fill = remaining
-			}
-
-			grossProceeds = grossProceeds.Add(decimalZero.Add(bid.Price).Mul(fill))
-			remaining = remaining.Sub(fill)
-		}
-
-		surface.ExecutableQty = executableQty
-		surface.FloorCoverageQty = floorCoverageQty
-
-		if remaining.Sign() > 0 || executableQty.Cmp(sellableQty) < 0 {
-			return
-		}
-
-		feeRate := decimalZero.Add(fee.Fee).Div(decimalHundred)
-		surface.FullyExecutable = true
-		surface.ExecutableVWAP = grossProceeds.Div(sellableQty)
-		surface.ExecutableValue = grossProceeds.Sub(grossProceeds.Mul(feeRate))
-	})
-
-	return surface
-}
-
-/* ReturnPct returns the holding's fee-inclusive percentage return at the authoritative economic mark. */
-func (price *Price) ReturnPct(
-	pair kraken.InstrumentPair,
-	holding *types.Holding,
-) float64 {
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"holding":    holding,
-		"qty":        holding.Qty,
-		"entryPrice": holding.EntryPrice,
-		"entryFee":   holding.EntryFee,
-	})); err != nil {
-		return 0
-	}
-
-	pnl := price.PnL(pair, holding)
-
-	if pnl == nil {
-		return 0
-	}
-
-	entryGross := decimalZero.Add(holding.EntryPrice).Mul(holding.Qty)
-	entryValue := entryGross.Add(holding.EntryFee)
-
-	entryValueFloat := entryValue.Float64()
-
-	if entryValueFloat <= 0 {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"entry value must be greater than zero",
-			nil,
-		))
-
-		return 0
-	}
-
-	return decimalZero.Add(pnl).Div(entryValue).Mul(decimalHundred).Float64()
 }
 
 /*
-Quantity returns the quantity that can be purchased for a given notional amount
-at the current market price with taker fees applied.
+PriceDecimal preserves finite decimal results exactly. Repeating quotients use
+at least the SDK's published DefaultScale, with its bankers rounding. This is
+a quote/presentation boundary; execution budgets stay rational.
 */
-func (price *Price) Quantity(
-	symbol string,
-	notional *decimal.Decimal,
-) *decimal.Decimal {
-	tick := price.Tick(symbol)
+func PriceDecimal(value *big.Rat) *decimal.Decimal {
+	precision, _ := value.FloatPrec()
+	scale := int64(max(precision, decimal.DefaultScale))
+	return decimal.NewFromBigInt(value.Num()).SetScale(scale).Div(decimal.NewFromBigInt(value.Denom()).SetScale(scale))
+}
 
-	if tick == nil {
-		errnie.Error(errnie.Err(
-			errnie.Validation,
-			"price: ticker required for quantity",
-			nil,
-		))
+/* Notional multiplies full input precision before publishing a decimal amount. */
+func Notional(unit, quantity *decimal.Decimal) *decimal.Decimal {
+	return PriceDecimal(new(big.Rat).Mul(unit.Rat(), quantity.Rat()))
+}
 
-		return nil
+/* UnitPrice computes a whole-order VWAP without rounding the cumulative cost first. */
+func UnitPrice(cost, quantity *decimal.Decimal) *decimal.Decimal {
+	return PriceDecimal(UnitPriceRat(cost.Rat(), quantity.Rat()))
+}
+
+/* Prorate retains the share of an authoritative cost or fee after a partial sale. */
+func Prorate(amount, remaining, original *decimal.Decimal) *decimal.Decimal {
+	value := new(big.Rat).Mul(amount.Rat(), remaining.Rat())
+	return PriceDecimal(value.Quo(value, original.Rat()))
+}
+
+/* ReturnFraction compares net profit with fee-inclusive committed capital. */
+func ReturnFraction(profit, capital *decimal.Decimal) *decimal.Decimal {
+	return PriceDecimal(new(big.Rat).Quo(profit.Rat(), capital.Rat()))
+}
+
+/* NotionalRat calculates a rational quote notional, allowing output aliasing. */
+func NotionalRat(output, unit, quantity *big.Rat) *big.Rat {
+	return output.Mul(unit, quantity)
+}
+
+/* Affordable bounds requested units by cash before an ascending ask sweep. */
+func (pricing *Pricing) Affordable(cash, unit *big.Rat) *big.Rat {
+	total := pricing.Total(new(big.Rat), unit, true)
+	return new(big.Rat).Quo(cash, total)
+}
+
+func addAmount(left, right *decimal.Decimal) *decimal.Decimal {
+	return PriceDecimal(new(big.Rat).Add(left.Rat(), right.Rat()))
+}
+
+func subtractAmount(left, right *decimal.Decimal) *decimal.Decimal {
+	return PriceDecimal(new(big.Rat).Sub(left.Rat(), right.Rat()))
+}
+
+/* Surface reports total visible capacity and prices only a complete liquidation. */
+func (pricing *Pricing) Surface(
+	book *spotbook.Book, requested, floor *decimal.Decimal, surface *types.ExecutionSurface,
+) {
+	surface.FullyExecutable = false
+	surface.ExecutableValue, surface.ExecutableVWAP = nil, nil
+	var capacity, coverage big.Rat
+
+	for bid := book.Bids.High; bid != nil; bid = bid.Lower {
+		capacity.Add(&capacity, bid.Quantity.Rat())
+
+		if floor != nil && bid.Price.Cmp(floor) >= 0 {
+			coverage.Add(&coverage, bid.Quantity.Rat())
+		}
 	}
+	surface.ExecutableQty = PriceDecimal(&capacity)
+	surface.FloorCoverageQty = PriceDecimal(&coverage)
+	filled, gross := pricing.Sweep(book, requested.Rat(), nil, false, nil, nil)
 
-	if err := errnie.Error(errnie.Require(map[string]any{
-		"symbol":   symbol,
-		"notional": notional,
-		"tick":     tick,
-		"tick.ask": tick.Ask,
-	})); err != nil {
-		return nil
+	if filled.Cmp(requested.Rat()) < 0 {
+		return
 	}
-
-	askWithFee := price.WithFee(
-		symbol,
-		tick.Ask,
-		BUY,
-	)
-
-	if askWithFee == nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"could not apply fee to ask price",
-			nil,
-		))
-
-		return nil
-	}
-
-	out, err := price.normalizer.FormatSize(
-		symbol,
-		decimalZero.Add(notional).Div(askWithFee),
-	)
-
-	if err != nil {
-		errnie.Error(errnie.Err(
-			errnie.UnprocessableContent,
-			"invalid quantity",
-			err,
-		))
-
-		return nil
-	}
-
-	return out
+	surface.FullyExecutable = true
+	surface.ExecutableValue = PriceDecimal(pricing.Total(new(big.Rat), gross, false))
+	surface.ExecutableVWAP = PriceDecimal(gross.Quo(gross, filled))
 }
 
 /*
-Tick returns the latest cached ticker row for a symbol.
+executionVWAP resolves the authoritative whole-order realized VWAP for a
+Kraken ExecutionData. It prefers the explicit AvgPrice field (Kraken's own
+whole-order average) and falls back to the cumulative equivalent
+CumCost/CumQty only when AvgPrice is absent. It never uses the individual
+LastPrice, which is a single fill and not the whole-order economics a closed
+position's exit must be marked by.
 */
-func (price *Price) Tick(symbol string) *kraken.TickerData {
-	value, ok := price.tickers.Load(price.api.Normalizer().Name(symbol))
+func executionVWAP(execution kraken.ExecutionData) *decimal.Decimal {
+	if execution.AvgPrice != nil && execution.AvgPrice.Sign() > 0 {
+		return execution.AvgPrice.Copy()
+	}
 
-	if !ok {
+	if execution.CumCost == nil || execution.CumCost.Sign() <= 0 ||
+		execution.CumQty == nil || execution.CumQty.Sign() <= 0 {
 		return nil
 	}
 
-	return value.(*kraken.TickerData)
+	return UnitPrice(execution.CumCost, execution.CumQty)
+}
+
+/* UnitPriceRat retains the exact cumulative quotient for execution feedback. */
+func UnitPriceRat(cost, quantity *big.Rat) *big.Rat {
+	return new(big.Rat).Quo(cost, quantity)
+}
+
+/*
+OrderQuantity floors an exact cash/unit quotient to the REST pair's venue lot.
+The SDK FormatSize rounds to nearest; applying it before this floor can spend
+more than the supplied budget at a lot boundary. Unit includes the taker fee.
+*/
+func OrderQuantity(cash, unit *decimal.Decimal, pair *spot.AssetPair) (*decimal.Decimal, error) {
+	if pair.LotDecimals < 0 || pair.LotMultiplier <= 0 || unit.Sign() <= 0 || cash.Sign() < 0 {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "pricing: positive unit and venue lot, and nonnegative cash required", nil))
+	}
+	var pricing Pricing
+	denominator := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(pair.LotDecimals)), nil)
+	pricing.Lot.SetFrac(big.NewInt(int64(pair.LotMultiplier)), denominator)
+	quantity := UnitPriceRat(cash.Rat(), unit.Rat())
+	pricing.Floor(quantity, quantity)
+	return PriceDecimal(quantity).SetScale(int64(pair.LotDecimals)), nil
 }

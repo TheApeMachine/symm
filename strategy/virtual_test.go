@@ -5,6 +5,8 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/theapemachine/symm/broker"
+
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
@@ -14,8 +16,11 @@ import (
 
 func virtualFixture() (virtualWallet, *spotbook.Book) {
 	wallet := virtualWallet{}
-	wallet.initialize(decimal.NewFromInt64(1000), kraken.InstrumentPair{Symbol: "TEST/USD",
+	err := wallet.initialize(decimal.NewFromInt64(1000), kraken.InstrumentPair{Symbol: "TEST/USD",
 		QtyIncrement: decimal.NewFromInt64(1), QtyMin: decimal.NewFromInt64(1), CostMin: decimal.NewFromInt64(1)}, decimal.NewFromInt64(1))
+	if err != nil {
+		panic(err)
+	}
 	book := spotbook.New()
 	book.NoBookCrossing = false
 
@@ -37,7 +42,7 @@ func TestVirtualWalletSweep(t *testing.T) {
 		wallet, book := virtualFixture()
 		wallet.cash.SetFrac64(10201, 100)
 		requested := big.NewRat(3, 1)
-		quantity, gross := wallet.sweep(book, requested, true, nil, nil)
+		quantity, gross := wallet.pricing.Sweep(book, requested, &wallet.cash, true, nil, nil)
 		So(quantity.RatString(), ShouldEqual, "1")
 		So(gross.RatString(), ShouldEqual, "101")
 
@@ -49,11 +54,11 @@ func TestVirtualWalletSweep(t *testing.T) {
 					ID: fmt.Sprint(depth), Price: decimal.NewFromInt64(int64(103 + depth)),
 					Quantity: decimal.NewFromInt64(1), Silent: true})
 			}
-			quantity, gross = wallet.sweep(book, requested, true, nil, nil)
+			quantity, gross = wallet.pricing.Sweep(book, requested, &wallet.cash, true, nil, nil)
 			So(quantity.RatString(), ShouldEqual, "1")
 			So(gross.RatString(), ShouldEqual, "101")
 			deepAllocations := testing.AllocsPerRun(1, func() {
-				wallet.sweep(book, requested, true, nil, nil)
+				wallet.pricing.Sweep(book, requested, &wallet.cash, true, nil, nil)
 			})
 			// Converting each price allocates a Rat. Fewer allocations than
 			// inaccessible levels rules out that walk without exact pool counts,
@@ -117,9 +122,10 @@ func TestVirtualWalletActions(t *testing.T) {
 			return parsed
 		}
 		wallet := virtualWallet{}
-		wallet.initialize(parse("1"), kraken.InstrumentPair{Symbol: "SMALL/USD",
+		err := wallet.initialize(parse("1"), kraken.InstrumentPair{Symbol: "SMALL/USD",
 			QtyIncrement: parse("1"), QtyMin: parse("1"), CostMin: parse("0.0000001"),
 			PricePrecision: 10}, parse("0.1"))
+		So(err, ShouldBeNil)
 		book := spotbook.New()
 		book.Update(&spotbook.UpdateOptions{Direction: spotbook.Bid, ID: "bid", Price: parse("0.0000000010"), Quantity: parse("1000000"), Silent: true})
 		book.Update(&spotbook.UpdateOptions{Direction: spotbook.Ask, ID: "ask", Price: parse("0.0000000011"), Quantity: parse("1000000"), Silent: true})
@@ -156,7 +162,7 @@ func TestVirtualWalletActions(t *testing.T) {
 		})
 
 		Convey("An unaffordable minimum leaves only wait", func() {
-			wallet.costMinimum.SetInt64(2000)
+			wallet.pricing.CostMinimum.SetInt64(2000)
 			So(wallet.actions(book, nil), ShouldResemble, []LearningAction{{Kind: types.ActionHold}})
 		})
 	})
@@ -186,19 +192,19 @@ func TestFillCannotTakeLiquidityItNeverRaced(t *testing.T) {
 	Convey("Given a decision sized against the depth displayed at the time", t, func() {
 		wallet, book := virtualFixture()
 		action := LearningAction{Kind: types.ActionEnter}
-		ladder := &depthLadder{}
+		ladder := &broker.DepthLadder{}
 		requested := wallet.request(book, action, 1, ladder)
 
 		So(requested.Sign(), ShouldBeGreaterThan, 0)
-		So(ladder.count, ShouldBeGreaterThan, 0)
+		So(ladder.Count, ShouldBeGreaterThan, 0)
 
 		Convey("Depth that appeared after the decision cannot be filled against", func() {
 			// The observed ladder is emptied of every price the fill will walk,
 			// so nothing on the current book was standing when the decision was
 			// made. An order racing a book like that gets nothing.
-			vanished := &depthLadder{}
-			for index := range ladder.count {
-				vanished.record(&ladder.prices[index], new(big.Rat))
+			vanished := &broker.DepthLadder{}
+			for level := book.Asks.Low; level != nil; level = level.Higher {
+				vanished.Record(level.Price.Rat(), new(big.Rat))
 			}
 
 			quantity, gross, fee := wallet.fill(book, action, requested, vanished)
@@ -210,10 +216,10 @@ func TestFillCannotTakeLiquidityItNeverRaced(t *testing.T) {
 
 		Convey("Only the surviving share of each level is filled", func() {
 			// Half of every level was cancelled between decision and execution.
-			thinned := &depthLadder{}
-			for index := range ladder.count {
-				half := new(big.Rat).Quo(&ladder.quantities[index], big.NewRat(2, 1))
-				thinned.record(&ladder.prices[index], half)
+			thinned := &broker.DepthLadder{}
+			for level := book.Asks.Low; level != nil; level = level.Higher {
+				half := new(big.Rat).Quo(level.Quantity.Rat(), big.NewRat(2, 1))
+				thinned.Record(level.Price.Rat(), half)
 			}
 
 			partial, _, _ := wallet.fill(book, action, requested, thinned)

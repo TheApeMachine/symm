@@ -27,10 +27,7 @@ func TestPriceEntryCost(t *testing.T) {
 	})
 
 	Convey("Given a request exactly at the visible ask quantity", t, func() {
-		// entryDepthVWAP always returns unavailable now (no full-depth book to
-		// walk), so EntryCost always takes its ticker-level fallback path,
-		// pricing entirely off tick.Ask/tick.AskQty rather than a walked depth
-		// chain.
+		// This fixture has no resident book, so only ticker quantity is executable.
 		price := entryEconomicsFixture(t, 101, 100, 5)
 		cost, err := price.EntryCost("EDGE/USD", decimal.NewFromFloat64(5))
 
@@ -62,6 +59,21 @@ func TestPriceEntryCost(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(cost.GrossNotional.Sign(), ShouldEqual, 1)
 	})
+	Convey("Given a resident book and a larger ticker quantity", t, func() {
+		_, price, conn := pricingFixture(t)
+		_, err := price.EntryCost("EDGE/USD", mustDecimal("14"))
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "visible ask depth")
+
+		Convey("Removing all asks cannot substitute ticker liquidity", func() {
+			conn.ApplyLevel3(kraken.Level3Data{Symbol: "EDGE/USD", Type: "snapshot",
+				Bids: []kraken.Level3Order{mustDecimalOrder("bid", "100", "10")},
+			})
+			_, err := price.EntryCost("EDGE/USD", mustDecimal("1"))
+			So(err, ShouldNotBeNil)
+		})
+	})
+
 }
 
 func TestPriceExecutableQuantity(t *testing.T) {

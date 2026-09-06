@@ -115,17 +115,6 @@ func Semantics() MetricMap {
 	return metricMapLoaded
 }
 
-/*
-Lookup returns the declared semantics of one (source, metric) pair. A metric
-with no declared entry is reported as undeclared rather than given a plausible
-description — an inspection surface may not invent the meaning of a number.
-*/
-func Lookup(source, metric string) (MetricSemantics, bool) {
-	semantics, found := Semantics().Metrics[source+"/"+metric]
-
-	return semantics, found
-}
-
 //go:embed */README.md
 var signalSpecSource embed.FS
 

@@ -1,8 +1,11 @@
 package broker
 
 import (
+	"math/big"
 	"testing"
+	"time"
 
+	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
@@ -11,481 +14,186 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-/*
-newPriceSurface creates a price surface with the symbol's executable fee row.
-*/
-func newPriceSurface(t testing.TB, symbol string) (*Price, *websocket.API) {
+/* pricingFixture shares the actual resident L3 book across quote and execution tests. */
+func pricingFixture(t testing.TB) (*Pricing, *Price, *mockConn) {
 	t.Helper()
-	api := websocket.NewAPI(t.Context(), newMockConn(), newMockConn())
-	price := newTestPrice(t, api)
-	price.fees.Store(symbol, kraken.TradeVolumeFee{
-		Fee: decimal.NewFromFloat64(0.25),
+	conn := newMockConn()
+	price := newTestPrice(t, websocket.NewAPI(t.Context(), conn, conn))
+	price.fees.Store("EDGE/USD", kraken.TradeVolumeFee{Fee: mustDecimal("1")})
+	price.Update(&kraken.TickerData{Symbol: "EDGE/USD", Ask: mustDecimal("101"), Bid: mustDecimal("100"), AskQty: 100})
+	conn.ApplyLevel3(kraken.Level3Data{Symbol: "EDGE/USD", Type: "snapshot",
+		Bids: []kraken.Level3Order{mustDecimalOrder("bid", "100", "10")},
+		Asks: []kraken.Level3Order{mustDecimalOrder("ask", "101", "3"), mustDecimalOrder("deep", "102", "10")},
 	})
+	pricing := &Pricing{}
 
-	return price, api
+	if err := pricing.Configure(kraken.InstrumentPair{QtyIncrement: mustDecimal("1"), QtyMin: mustDecimal("1"), CostMin: mustDecimal("1")}, mustDecimal("1")); err != nil {
+		t.Fatal(err)
+	}
+	return pricing, price, conn
 }
 
-/*
-newTestPrice builds a Price directly from an api.
-*/
-func newTestPrice(t testing.TB, api *websocket.API) *Price {
-	t.Helper()
+func TestPricingSetFee(t *testing.T) {
+	Convey("Given an explicit percentage schedule", t, func() {
+		var pricing Pricing
 
-	return NewPrice(api)
+		for _, invalid := range []*decimal.Decimal{nil, mustDecimal("-0.1"), mustDecimal("100")} {
+			So(pricing.SetFee(invalid), ShouldNotBeNil)
+		}
+		So(pricing.SetFee(mustDecimal("0")), ShouldBeNil)
+		So(pricing.Rate.Sign(), ShouldEqual, 0)
+		So(pricing.SetFee(mustDecimal("0.8")), ShouldBeNil)
+		So(pricing.Rate.RatString(), ShouldEqual, "1/125")
+	})
 }
 
-/*
-newQuantityPrice creates the executable BTC/USD quantity fixture.
-*/
-func newQuantityPrice(t testing.TB) *Price {
-	t.Helper()
-	price, api := newPriceSurface(t, "BTC/USD")
-	api.Normalizer().Update(&spot.AssetsManagerUpdate{
-		NewAssets: map[string]spot.AssetInfo{
-			"BTC": {AltName: "BTC", Decimals: 8, DisplayDecimals: 8},
-			"USD": {AltName: "USD", Decimals: 2, DisplayDecimals: 2},
-		},
-		NewPairs: map[string]spot.AssetPair{
-			"BTCUSD": {
-				WSName: "BTC/USD", Base: "BTC", Quote: "USD",
-				PairDecimals: 2, LotDecimals: 8, LotMultiplier: 1,
-			},
-		},
-	})
-	price.Update(&kraken.TickerData{
-		Symbol: "BTC/USD",
-		Ask:    decimal.NewFromFloat64(100000),
-		Bid:    decimal.NewFromFloat64(99900),
-	})
+func TestPricingTotal(t *testing.T) {
+	Convey("Given exact fees on a tiny notional", t, func() {
+		var pricing Pricing
+		So(pricing.SetFee(mustDecimal("0.8")), ShouldBeNil)
+		gross := mustDecimal("0.000000000000011").Rat()
+		entry := pricing.Total(new(big.Rat), gross, true)
+		exit := pricing.Total(new(big.Rat), gross, false)
+		So(entry.Cmp(mustDecimal("0.000000000000011088").Rat()), ShouldEqual, 0)
+		So(exit.Cmp(mustDecimal("0.000000000000010912").Rat()), ShouldEqual, 0)
 
-	return price
+		Convey("Aliased input and output retain the same result", func() {
+			pricing.Total(gross, gross, false)
+			So(gross.Cmp(exit), ShouldEqual, 0)
+		})
+
+		Convey("The live surface uses identical arithmetic", func() {
+			price, _ := newPriceSurface(t, "EDGE/USD")
+			price.fees.Store("EDGE/USD", kraken.TradeVolumeFee{Fee: mustDecimal("0.8")})
+			So(price.WithFee("EDGE/USD", PriceDecimal(gross), BUY).Rat().Cmp(entry), ShouldEqual, 0)
+			So(price.WithFee("EDGE/USD", PriceDecimal(gross), SELL).Rat().Cmp(exit), ShouldEqual, 0)
+			So(price.WithFee("EDGE/USD", PriceDecimal(gross), Direction("invalid")), ShouldBeNil)
+		})
+	})
 }
 
-func TestPriceUpdate(t *testing.T) {
-	Convey("Setup", t, func() {
-		price, _ := newPriceSurface(t, "TEST1")
+func TestPricingSweep(t *testing.T) {
+	Convey("Given shared live depth and fee-inclusive budget", t, func() {
+		pricing, price, conn := pricingFixture(t)
+		conn.Book("EDGE/USD", func(book *spotbook.Book) {
+			requested := big.NewRat(5, 1)
+			quantity, gross := pricing.Sweep(book, requested, big.NewRat(1000, 1), true, nil, nil)
+			So(quantity.Cmp(requested), ShouldEqual, 0)
+			So(gross.RatString(), ShouldEqual, "507")
+			cost, err := price.EntryCost("EDGE/USD", mustDecimal("5"))
+			So(err, ShouldBeNil)
+			So(cost.GrossNotional.Rat().Cmp(gross), ShouldEqual, 0)
+			So(cost.EntryFee.Rat().Cmp(pricing.Fee(new(big.Rat), gross)), ShouldEqual, 0)
 
-		Convey("Given some ticker data", func() {
-			ticker := &kraken.TickerData{
-				Symbol: "TEST1",
-				Ask:    decimal.NewFromFloat64(30000.00),
-				Bid:    decimal.NewFromFloat64(29950.00),
-			}
+			Convey("A repeating VWAP cannot change the underlying notional or fee", func() {
+				cost, err := price.EntryCost("EDGE/USD", mustDecimal("13"))
+				So(err, ShouldBeNil)
+				So(cost.GrossNotional.Rat().RatString(), ShouldEqual, "1323")
+				So(cost.EntryFee.Rat().RatString(), ShouldEqual, "1323/100")
+			})
 
-			Convey("When the price surface is updated", func() {
-				price.Update(ticker)
+			Convey("Exactly one fee-inclusive lot can be purchased", func() {
+				quantity, gross = pricing.Sweep(book, requested, big.NewRat(10201, 100), true, nil, nil)
+				So(quantity.RatString(), ShouldEqual, "1")
+				So(gross.RatString(), ShouldEqual, "101")
+				quantity, _ = pricing.Sweep(book, requested, big.NewRat(102009, 1000), true, nil, nil)
+				So(quantity.Sign(), ShouldEqual, 0)
+			})
 
-				Convey("It should store the new ticker data in the cache", func() {
-					So(price.Tick("TEST1"), ShouldResemble, ticker)
-				})
+			Convey("A sale reports partial depth and a complete surface refuses it", func() {
+				quantity, gross = pricing.Sweep(book, big.NewRat(11, 1), nil, false, nil, nil)
+				So(quantity.RatString(), ShouldEqual, "10")
+				So(gross.RatString(), ShouldEqual, "1000")
+				surface := &types.ExecutionSurface{}
+				pricing.Surface(book, mustDecimal("11"), mustDecimal("99"), surface)
+				So(surface.FullyExecutable, ShouldBeFalse)
+				So(surface.ExecutableVWAP, ShouldBeNil)
+				pricing.Surface(book, mustDecimal("5"), mustDecimal("99"), surface)
+				So(surface.ExecutableValue.Rat().RatString(), ShouldEqual, "495")
 			})
 		})
 	})
 }
 
-func TestPriceMark(t *testing.T) {
-	Convey("Setup", t, func() {
-		price, _ := newPriceSurface(t, "TEST2")
+func TestPriceDecimal(t *testing.T) {
+	Convey("Given finite amounts beyond the SDK default scale", t, func() {
+		for _, amount := range []string{"0.000000000000000125", "-0.000000000000000125", "123456789.000000000000000125"} {
+			original := mustDecimal(amount)
+			So(PriceDecimal(original.Rat()).Rat().Cmp(original.Rat()), ShouldEqual, 0)
+		}
 
-		Convey("Given some ticker data", func() {
-			ticker := &kraken.TickerData{
-				Symbol: "TEST2",
-				Ask:    decimal.NewFromFloat64(40000.00),
-				Bid:    decimal.NewFromFloat64(39950.00),
-			}
-
-			price.Update(ticker)
-
-			Convey("When the mark price is requested for buying", func() {
-				markPrice := price.Mark("TEST2", BUY)
-
-				Convey("It should return the ask with the taker fee", func() {
-					So(markPrice.Float64(), ShouldAlmostEqual, 40100, 1e-12)
-				})
-			})
-
-			Convey("When the mark price is requested for selling", func() {
-				markPrice := price.Mark("TEST2", SELL)
-
-				Convey("It should return the bid after the taker fee", func() {
-					So(markPrice.Float64(), ShouldAlmostEqual, 39850.125, 1e-12)
-				})
-			})
+		Convey("Repeating quotients use documented SDK bankers rounding", func() {
+			So(PriceDecimal(big.NewRat(1, 3)).Cmp(mustDecimal("0.333333333333")), ShouldEqual, 0)
 		})
 	})
 }
 
-func TestPricePnL(t *testing.T) {
-	Convey("Setup", t, func() {
-		price, _ := newPriceSurface(t, "TEST3")
-		pair := kraken.InstrumentPair{Symbol: "TEST3", Base: "BTC", Quote: "USD"}
-		holding := &types.Holding{
-			Symbol:     "TEST3",
-			Qty:        decimal.NewFromFloat64(1.0),
-			EntryPrice: decimal.NewFromFloat64(45000.00),
-			EntryFee:   decimal.NewFromInt64(0),
-		}
-
-		Convey("Given an authoritative economic mark", func() {
-			mark := decimal.NewFromFloat64(49950.00)
-			holding.Mark = mark
-
-			Convey("When the PnL is calculated for a holding", func() {
-				pnl := price.PnL(pair, holding)
-
-				Convey("It should return the profit or loss based on the authoritative mark, including fees", func() {
-					// mark * qty * (1 - exitFee) - entryPrice * qty - entryFee
-					So(pnl.Float64(), ShouldAlmostEqual, 4825.125, 1e-12)
-				})
-			})
-		})
-	})
-
-	Convey("Given a holding before its mark is set", t, func() {
-		price, _ := newPriceSurface(t, "COLD/USD")
-		holding := &types.Holding{
-			Qty:        decimal.NewFromFloat64(1),
-			EntryPrice: decimal.NewFromFloat64(100),
-			EntryFee:   decimal.NewFromInt64(0),
-		}
-
-		Convey("It should reject the incomplete valuation without dereferencing it", func() {
-			So(func() {
-				So(price.PnL(kraken.InstrumentPair{Symbol: "COLD/USD"}, holding),
-					ShouldBeNil)
-			}, ShouldNotPanic)
-		})
-	})
-
-	Convey("Given a tiny quantity of a high-priced asset", t, func() {
-		price, _ := newPriceSurface(t, "PAXG/USD")
-		entryPrice := 4339.01
-		mark := 4338.33
-		quantity := 0.00765083
-		entryFee := entryPrice * quantity * 0.0025
-		pair := kraken.InstrumentPair{
-			Symbol: "PAXG/USD",
-			Base:   "PAXG",
-			Quote:  "USD",
-		}
-		holding := &types.Holding{
-			Symbol:     "PAXG/USD",
-			Qty:        decimal.NewFromFloat64(quantity),
-			EntryPrice: decimal.NewFromFloat64(entryPrice),
-			EntryFee:   decimal.NewFromFloat64(entryFee),
-			Mark:       decimal.NewFromFloat64(mark),
-		}
-
-		Convey("It should multiply price and quantity without rounding quantity to a cent", func() {
-			pnl := price.PnL(pair, holding)
-			expected := mark*quantity*(1-0.0025) -
-				entryPrice*quantity - entryFee
-
-			So(pnl.Sign(), ShouldEqual, -1)
-			So(pnl.Float64(), ShouldAlmostEqual, expected, 1e-10)
-			So(pnl.Float64(), ShouldBeGreaterThan, -1)
-		})
+func TestProrate(t *testing.T) {
+	Convey("Given a tiny authoritative fee reduced across several sales", t, func() {
+		fee := mustDecimal("0.000000000000000125")
+		remaining := Prorate(fee, mustDecimal("3"), mustDecimal("5"))
+		So(remaining.Rat().Cmp(mustDecimal("0.000000000000000075").Rat()), ShouldEqual, 0)
+		remaining = Prorate(remaining, mustDecimal("1"), mustDecimal("3"))
+		So(remaining.Rat().Cmp(mustDecimal("0.000000000000000025").Rat()), ShouldEqual, 0)
 	})
 }
 
-func TestExitValue(t *testing.T) {
-	Convey("Setup", t, func() {
-		price, _ := newPriceSurface(t, "TEST4")
-		pair := kraken.InstrumentPair{Symbol: "TEST4", Base: "BTC", Quote: "USD"}
-		holding := &types.Holding{
-			Symbol:     "TEST4",
-			Qty:        decimal.NewFromFloat64(2.0),
-			EntryPrice: decimal.NewFromFloat64(60000.00),
-			EntryFee:   decimal.NewFromInt64(0),
-		}
-
-		Convey("Given an authoritative economic mark", func() {
-			holding.Mark = decimal.NewFromFloat64(64950.00)
-
-			Convey("When the exit value is calculated for a holding", func() {
-				exitValue := price.ExitValue(pair, holding)
-
-				Convey("It should return the exit value based on the authoritative mark, fee-net", func() {
-					So(exitValue.Float64(), ShouldAlmostEqual, 129575.25, 1e-12)
-				})
-			})
-		})
-	})
-
-	Convey("Given no holding or mark", t, func() {
-		price, _ := newPriceSurface(t, "COLD/USD")
-
-		Convey("It should reject both incomplete domains without dereferencing them", func() {
-			So(func() {
-				So(price.ExitValue(kraken.InstrumentPair{Symbol: "COLD/USD"}, nil),
-					ShouldBeNil)
-			}, ShouldNotPanic)
-		})
+func TestUnitPrice(t *testing.T) {
+	Convey("Given different price and quantity scales", t, func() {
+		unit, quantity := mustDecimal("0.0000000000000011"), mustDecimal("0.00001")
+		cost := Notional(unit, quantity)
+		So(cost.Sign(), ShouldEqual, 1)
+		So(UnitPrice(cost, quantity).Rat().Cmp(unit.Rat()), ShouldEqual, 0)
 	})
 }
 
-func TestPriceWithFriction(t *testing.T) {
-	Convey("Given no authoritative exit book", t, func() {
-		price := entryEconomicsFixture(t, 101, 100, 3)
-		holding := &types.Holding{Qty: decimal.NewFromFloat64(1)}
+func TestOrderQuantity(t *testing.T) {
+	Convey("Given the REST pair lot multiplier and precision", t, func() {
+		pair := &spot.AssetPair{LotDecimals: 8, LotMultiplier: 5}
+		quantity, err := OrderQuantity(mustDecimal("0.999999999999999999"), mustDecimal("1"), pair)
+		So(err, ShouldBeNil)
+		So(quantity.String(), ShouldEqual, "0.99999995")
 
-		Convey("It should return an explicit error instead of an unexplained nil value, since no full-depth book is ever available", func() {
-			adjusted, err := price.WithFriction(
-				kraken.InstrumentPair{Symbol: "EDGE/USD"},
-				holding,
-				decimal.NewFromFloat64(10),
-			)
-
+		Convey("A missing lot rule fails instead of guessing a unit lot", func() {
+			pair.LotMultiplier = 0
+			_, err := OrderQuantity(mustDecimal("1"), mustDecimal("1"), pair)
 			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "visible bid book required")
-			So(adjusted, ShouldBeNil)
-		})
-	})
-
-	Convey("Given a well-formed holding, ticker, and fee row", t, func() {
-		price := entryEconomicsFixture(t, 101, 100, 3)
-		holding := &types.Holding{Qty: decimal.NewFromFloat64(2)}
-
-		Convey("It should still error, since ExecutableSurface/WithFriction never fabricate a book-derived adjustment", func() {
-			adjusted, err := price.WithFriction(
-				kraken.InstrumentPair{Symbol: "EDGE/USD"},
-				holding,
-				decimal.NewFromFloat64(10),
-			)
-
-			So(err, ShouldNotBeNil)
-			So(adjusted, ShouldBeNil)
-		})
-	})
-
-	Convey("Given a nil holding", t, func() {
-		price := entryEconomicsFixture(t, 101, 100, 3)
-
-		Convey("It should reject the incomplete request before ever reaching the book question", func() {
-			adjusted, err := price.WithFriction(
-				kraken.InstrumentPair{Symbol: "EDGE/USD"},
-				nil,
-				decimal.NewFromFloat64(10),
-			)
-
-			So(err, ShouldNotBeNil)
-			So(adjusted, ShouldBeNil)
 		})
 	})
 }
 
-func TestPriceTick(t *testing.T) {
-	Convey("Setup", t, func() {
-		price, _ := newPriceSurface(t, "TEST7")
+func BenchmarkPricingSweep(b *testing.B) {
+	pricing, _, conn := pricingFixture(b)
+	requested, cash := big.NewRat(5, 1), big.NewRat(1000, 1)
+	conn.Book("EDGE/USD", func(book *spotbook.Book) {
+		b.ReportAllocs()
+		b.ResetTimer()
 
-		Convey("Given some ticker data", func() {
-			ticker := &kraken.TickerData{
-				Symbol: "TEST7",
-				Ask:    decimal.NewFromFloat64(80000.00),
-				Bid:    decimal.NewFromFloat64(79950.00),
-			}
-
-			price.Update(ticker)
-
-			Convey("When the tick is requested for a symbol", func() {
-				tick := price.Tick("TEST7")
-
-				Convey("It should return the latest ticker data for that symbol", func() {
-					So(tick, ShouldResemble, ticker)
-				})
-			})
-		})
-	})
-}
-
-func TestPriceQuantity(t *testing.T) {
-	Convey("Given an integer cash balance and a fractional allocation", t, func() {
-		price := newQuantityPrice(t)
-		fraction := decimal.NewFromFloat64(0.20)
-		notional := decimal.NewFromInt64(100).Mul(fraction)
-
-		Convey("When the allocated cash is converted at the fee-adjusted ask", func() {
-			quantity := price.Quantity("BTC/USD", notional)
-
-			Convey("Then receiver precision should not erase the order quantity", func() {
-				So(quantity, ShouldNotBeNil)
-				So(quantity.Sign(), ShouldEqual, 1)
-				So(quantity.String(), ShouldEqual, "0.00019950")
-			})
-		})
-	})
-
-	Convey("Given a notional before its first ticker arrives", t, func() {
-		price, _ := newPriceSurface(t, "COLD/USD")
-
-		Convey("It should reject the incomplete quote without dereferencing it", func() {
-			So(func() {
-				So(price.Quantity("COLD/USD", decimal.NewFromInt64(10)), ShouldBeNil)
-			}, ShouldNotPanic)
-		})
-	})
-}
-
-func TestPriceReturnPct(t *testing.T) {
-	Convey("Given the high-price tiny-quantity precision boundary", t, func() {
-		price, _ := newPriceSurface(t, "BTC/USD")
-		entryPrice := 64951.1
-		bid := 64951.0
-		quantity := 0.00051057
-		entryFee := entryPrice * quantity * 0.0025
-		pair := kraken.InstrumentPair{
-			Symbol: "BTC/USD",
-			Base:   "BTC",
-			Quote:  "USD",
+		for b.Loop() {
+			pricing.Sweep(book, requested, cash, true, nil, nil)
 		}
-		holding := &types.Holding{
-			Symbol:     "BTC/USD",
-			Qty:        decimal.NewFromFloat64(quantity),
-			EntryPrice: decimal.NewFromFloat64(entryPrice),
-			EntryFee:   decimal.NewFromFloat64(entryFee),
-			Mark:       decimal.NewFromFloat64(bid),
-		}
-
-		Convey("It should report percent once instead of erasing the exit value", func() {
-			entryValue := entryPrice*quantity + entryFee
-			expectedPnL := bid*quantity*(1-0.0025) - entryValue
-			expectedReturn := expectedPnL / entryValue * 100
-			actual := price.ReturnPct(pair, holding)
-
-			So(actual, ShouldAlmostEqual, expectedReturn, 1e-10)
-			So(actual, ShouldBeGreaterThan, -1)
-			So(actual, ShouldBeLessThan, 0)
-		})
 	})
 }
 
-func BenchmarkPriceUpdate(b *testing.B) {
-	price, _ := newPriceSurface(b, "TEST8")
-	ticker := &kraken.TickerData{
-		Symbol: "TEST8",
-		Ask:    decimal.NewFromFloat64(90000.00),
-		Bid:    decimal.NewFromFloat64(89950.00),
-	}
-
-	b.ResetTimer()
-
-	for b.Loop() {
-		price.Update(ticker)
-	}
-}
-
-func BenchmarkPriceMark(b *testing.B) {
-	price, _ := newPriceSurface(b, "TEST9")
-
-	ticker := &kraken.TickerData{
-		Symbol: "TEST9",
-		Ask:    decimal.NewFromFloat64(100000.00),
-		Bid:    decimal.NewFromFloat64(99950.00),
-	}
-
-	price.Update(ticker)
-
-	b.ResetTimer()
-
-	for b.Loop() {
-		price.Mark("TEST9", BUY)
-	}
-}
-
-func BenchmarkPricePnL(b *testing.B) {
-	price, _ := newPriceSurface(b, "TEST10")
-	pair := kraken.InstrumentPair{Symbol: "TEST10", Base: "BTC", Quote: "USD"}
-	holding := &types.Holding{
-		Symbol:     "TEST10",
-		Qty:        decimal.NewFromFloat64(1.0),
-		EntryPrice: decimal.NewFromFloat64(110000.00),
-		EntryFee:   decimal.NewFromInt64(0),
-	}
-
-	ticker := &kraken.TickerData{
-		Symbol: "TEST10",
-		Ask:    decimal.NewFromFloat64(115000.00),
-		Bid:    decimal.NewFromFloat64(114950.00),
-	}
-
-	price.Update(ticker)
-
-	b.ResetTimer()
-
-	for b.Loop() {
-		price.PnL(pair, holding)
-	}
-}
-
-func BenchmarkPriceExitValue(b *testing.B) {
-	price, _ := newPriceSurface(b, "TEST11")
-	pair := kraken.InstrumentPair{Symbol: "TEST11", Base: "BTC", Quote: "USD"}
-	holding := &types.Holding{
-		Symbol:     "TEST11",
-		Qty:        decimal.NewFromFloat64(2.0),
-		EntryPrice: decimal.NewFromFloat64(120000.00),
-		EntryFee:   decimal.NewFromInt64(0),
-	}
-
-	ticker := &kraken.TickerData{
-		Symbol: "TEST11",
-		Ask:    decimal.NewFromFloat64(125000.00),
-		Bid:    decimal.NewFromFloat64(124950.00),
-	}
-
-	price.Update(ticker)
-
-	b.ResetTimer()
-
-	for b.Loop() {
-		price.ExitValue(pair, holding)
-	}
-}
-
-func BenchmarkPriceWithFriction(b *testing.B) {
-	price := entryEconomicsFixture(b, 101, 100, 3)
-	pair := kraken.InstrumentPair{Symbol: "EDGE/USD"}
-	holding := &types.Holding{Qty: decimal.NewFromFloat64(2)}
-	value := decimal.NewFromFloat64(10)
+func BenchmarkProrate(b *testing.B) {
+	amount, remaining, original := mustDecimal("0.000000000000000125"), mustDecimal("3"), mustDecimal("5")
 	b.ReportAllocs()
 
 	for b.Loop() {
-		// WithFriction always errors (no full-depth book is ever available);
-		// this benchmark measures the cost of that fast-reject path.
-		if _, err := price.WithFriction(pair, holding, value); err == nil {
-			b.Fatal("expected WithFriction to error without a full-depth book")
+		Prorate(amount, remaining, original)
+	}
+}
+
+func BenchmarkPricingSurface(b *testing.B) {
+	pricing, _, conn := pricingFixture(b)
+	quantity, floor := mustDecimal("5"), mustDecimal("99")
+	surface := &types.ExecutionSurface{At: time.Now()}
+	conn.Book("EDGE/USD", func(book *spotbook.Book) {
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		for b.Loop() {
+			pricing.Surface(book, quantity, floor, surface)
 		}
-	}
-}
-
-func BenchmarkPriceTick(b *testing.B) {
-	price, _ := newPriceSurface(b, "TEST14")
-
-	ticker := &kraken.TickerData{
-		Symbol: "TEST14",
-		Ask:    decimal.NewFromFloat64(140000.00),
-		Bid:    decimal.NewFromFloat64(139950.00),
-	}
-	price.Update(ticker)
-
-	b.ResetTimer()
-
-	for b.Loop() {
-		price.Tick("TEST14")
-	}
-}
-
-func BenchmarkPriceQuantity(b *testing.B) {
-	price := newQuantityPrice(b)
-	notional, err := decimal.NewFromString("20.00")
-
-	if err != nil {
-		b.Fatalf("notional: %v", err)
-	}
-
-	b.ResetTimer()
-
-	for b.Loop() {
-		price.Quantity("BTC/USD", notional)
-	}
+	})
 }

@@ -281,22 +281,6 @@ func (solver *Solver) symbolState(symbol string) *categoryState {
 	return loaded.(*categoryState)
 }
 
-/*
-accumulate replaces the current affinity of every coordinate the measurement
-carries. Latest-state replacement means a repeated publication of the same
-coordinate overwrites rather than accumulates, so arrival cadence is not
-evidence.
-*/
-func (solver *Solver) accumulate(
-	state *categoryState,
-	measurement *data.Measurement[float64],
-) error {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	return solver.accumulateLocked(state, measurement)
-}
-
 func (solver *Solver) accumulateLocked(
 	state *categoryState,
 	measurement *data.Measurement[float64],
@@ -419,19 +403,6 @@ func lift(strengths []float64) []nmtypes.Scalar {
 	return values
 }
 
-/*
-aggregate groups current evidence items by category, in a deterministic order
-that mirrors the declared vocabulary.
-*/
-func (solver *Solver) aggregate(
-	state *categoryState,
-) (map[types.CategoryType][]evidenceItem, bool) {
-	state.mu.Lock()
-	defer state.mu.Unlock()
-
-	return solver.aggregateLocked(state)
-}
-
 func (solver *Solver) aggregateLocked(
 	state *categoryState,
 ) (map[types.CategoryType][]evidenceItem, bool) {
@@ -520,47 +491,6 @@ func (solver *Solver) fail(message string, err error) {
 	solver.err = errnie.Error(errnie.Err(errnie.Validation, message, err))
 	solver.status.Transition(runtime.FATAL)
 	solver.cancel()
-}
-
-/*
-shannonAmbiguity returns the normalized Shannon entropy U = H / log2(K) over the
-category evidence-share distribution, bounded to [0,1]. Low U means evidence
-concentrates on few regimes; high U means the measurements do not distinguish
-competing regimes. It is a distribution-level quantity, identical for every
-category in one batch, and is not 1 - Confidence.
-*/
-func shannonAmbiguity(confidences []float64) float64 {
-	if len(confidences) <= 1 {
-		return 0
-	}
-
-	entropy := 0.0
-
-	for _, probability := range confidences {
-		if probability <= 0 {
-			continue
-		}
-
-		entropy -= probability * math.Log2(probability)
-	}
-
-	maximum := math.Log2(float64(len(confidences)))
-
-	if maximum <= 0 {
-		return 0
-	}
-
-	ambiguity := entropy / maximum
-
-	if ambiguity < 0 {
-		return 0
-	}
-
-	if ambiguity > 1 {
-		return 1
-	}
-
-	return ambiguity
 }
 
 func (solver *Solver) Close() error {

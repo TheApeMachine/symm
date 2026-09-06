@@ -9,6 +9,9 @@ import (
 
 /* Region is one uphill basin of simultaneous activity in the numeric plane. */
 type Region struct {
+	Condition uint64  `json:"condition"`
+	Level     float64 `json:"level"`
+	Change    float64 `json:"change"`
 	ID        uint64  `json:"id"`
 	Strength  float64 `json:"strength"`
 	Authority float64 `json:"authority"`
@@ -54,7 +57,15 @@ func (grid *Grid) Regions(label string) ([]Region, uint64, error) {
 		grid.regions = append(grid.regions, regions{})
 	}
 
-	return grid.regions[row].step(grid, row), grid.versions[row], nil
+	regions := grid.regions[row].step(grid, row)
+	for index := range regions {
+		region := &regions[index]
+		column := int(region.ID) - 1
+		region.Level = float64(grid.baselines[row][column].ZScore())
+		region.Change = grid.activations[row][column]
+		region.Condition = ConditionToken(region.ID, region.Level, region.Change)
+	}
+	return regions, grid.versions[row], nil
 }
 
 /* step rasterizes current evidenced movement, then follows its uphill basins. */

@@ -69,16 +69,3 @@ func (subscription InstrumentSubscription) MarshalJSON() ([]byte, error) {
 	type alias InstrumentSubscription
 	return sonic.Marshal((*alias)(&subscription))
 }
-
-func NewInstrumentData(buf []byte) InstrumentData {
-	data := InstrumentData{}
-
-	if err := sonic.Unmarshal(buf, &data); err == nil && len(data.Pairs) > 0 {
-		return data
-	}
-
-	frame := Instrument{}
-	errnie.Error(sonic.Unmarshal(buf, &frame))
-
-	return frame.Data
-}

@@ -216,12 +216,12 @@ export const CandidatePanel = ({ view }: { view: LearningView | null }) => (
 							</td>
 							<td className="p-3">
 								{candidate.prior.Defined
-									? basis(candidate.prior.Mean)
+									? `${basis(candidate.prior.Mean)}/s`
 									: "no evidence"}
 							</td>
 							<td className="p-3">
 								{candidate.prior.VarianceDefined
-									? basis(Math.sqrt(candidate.prior.Variance))
+									? `${basis(Math.sqrt(candidate.prior.Variance))}/s`
 									: "unestimable"}
 							</td>
 							<td className="p-3">{amount(candidate.prior.Support)}</td>
@@ -308,7 +308,7 @@ export const InfluencePanel = ({ view }: { view: LearningView | null }) => {
 									<Typography.Mono tone="f3"> / {entry.label}</Typography.Mono>
 								</td>
 								<td className="p-3 text-(--acc)">{entry.action}</td>
-								<td className="p-3">{basis(entry.prior.Mean)}</td>
+								<td className="p-3">{basis(entry.prior.Mean)}/s</td>
 								<td className="p-3">{amount(entry.prior.Support)}</td>
 								<td className="p-3">{percent(entry.prior.Authority)}</td>
 								<td className="p-3">{entry.prior.Samples}</td>

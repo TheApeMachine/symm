@@ -4,6 +4,8 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/theapemachine/symm/broker"
+
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
@@ -55,7 +57,7 @@ type learningLane struct {
 	pending                 uint64
 	action                  LearningAction
 	requested               *big.Rat
-	ladder                  depthLadder
+	ladder                  broker.DepthLadder
 	trace                   []learningExperience
 	equity                  float64
 	complete                bool
@@ -69,12 +71,11 @@ type learningLane struct {
 /*
 settle resolves every decision whose measurement window has closed, using the
 account's current executable valuation. Waiting and trading are scored over
-the same window: the target is the account's change since the decision issued,
-less the elapsed-time cost at the rate known then, over its starting capital.
+the same window: the target is net equity change per second, divided by starting capital.
+Flat cash earns zero regardless of the wallet's previous losses.
 
-Overlapping windows are correlated, and the account ledger still counts each
-economic change once. This assigns each decision a forward return; it does not
-claim each decision independently caused the whole of it.
+A lane holds its intervention fixed until this window closes. Different lanes
+can still overlap; the skill meter independently admits disjoint policy windows.
 */
 func (lane *learningLane) settle(
 	local *LocalLearning, market *learningMarket, index int, marketAt time.Time, horizon time.Duration,
@@ -126,8 +127,8 @@ func (lane *learningLane) resolve(
 		if elapsed <= 0 {
 			return errnie.Err(errnie.Validation, "local reward: positive issue-to-resolution time required", nil)
 		}
-		target := ((lane.equity-experience.value)/elapsed - experience.rate) / capital
 		skillTarget := (lane.equity - experience.value) / capital
+		target := skillTarget / elapsed
 		prior, err := local.Knowledge.Resolve(experience, target)
 
 		if err != nil {
@@ -148,8 +149,8 @@ func (lane *learningLane) resolve(
 			train their own action priors — this gate governs the competence
 			estimate that grants execution authority, not what the agent learns.
 
-			The model learns advantage (differential return); the skill meter
-			measures absolute economic profitability (skillTarget).
+			Both estimates measure net economic returns. The action prior uses
+			return per second; the skill meter uses the whole-window return.
 		*/
 
 		if lane.paper && local.execution.Skill != nil && !truncated &&
@@ -170,11 +171,11 @@ func (lane *learningLane) resolve(
 		event := lane.event(market, index, "resolved", experience.id, marketAt)
 		event.CandidateID = experience.candidateID
 		event.Context = append([]uint64(nil), experience.context...)
-		event.AbsoluteSkillTarget, event.BaselineRate = skillTarget, experience.rate
+		event.AbsoluteSkillTarget, event.BaselineRate = &skillTarget, experience.rate
 		event.Scope, event.GlobalPrior, event.SymbolPrior = experience.reading.Scope, experience.reading.Global, experience.reading.Symbol
 		event.Authority = experience.authority
 		event.Action, event.Power, event.Reduce = string(experience.action.Kind), experience.action.Power, experience.action.Reduce
-		event.TargetUnit = "return_per_second"
+		event.TargetUnit = "absolute_return_per_second"
 		event.Target, event.Prior, event.Profit = target, prior, lane.outcome.TotalReward
 		event.Horizon, event.Authorized, event.Truncated = experience.horizon, local.execution.Mode().String(), truncated
 		market.events = append(market.events, event)
@@ -186,7 +187,7 @@ func (lane *learningLane) resolve(
 /*
 recycle restarts a lane that can no longer act. An exploration wallet that has
 spent its capital on execution costs is not evidence of anything further: it
-is flat, cannot afford one venue lot, and every later decision it appears to
+is flat, cannot meet the venue's quantity or cost minimum, and every later decision it appears to
 make is a forced wait. Its outstanding decisions resolve against the equity it
 actually ended with — the truncated window is the outcome — and it starts a
 new episode on a fresh clone of the same known capital.
@@ -204,7 +205,10 @@ func (lane *learningLane) recycle(
 		return nil
 	}
 
-	if lane.wallet.maximum(book, true).Sign() != 0 {
+	maximum := lane.wallet.maximum(book, true)
+	cost := broker.NotionalRat(new(big.Rat), book.Asks.Low.Price.Rat(), maximum)
+
+	if maximum.Cmp(&lane.wallet.pricing.Minimum) >= 0 && cost.Cmp(&lane.wallet.pricing.CostMinimum) >= 0 {
 		lane.exhausted = false
 		return nil
 	}
@@ -221,7 +225,16 @@ func (lane *learningLane) recycle(
 	lane.spent += spent
 	lane.episodes++
 	lane.ledger = AccountReward{}
-	lane.outcome = learning.RewardOutcome{}
+	lane.equity = local.initial.Float64()
+	outcome, err := lane.ledger.Measure(EquityMark{
+		At: market.at, Version: lane.version, Equity: lane.equity, HasFunding: true,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	lane.outcome = outcome
 	lane.action = LearningAction{}
 
 	event := lane.event(market, index, "recycled", lane.episodes, marketAt)
@@ -237,7 +250,7 @@ it, every decision changed the context it would be recalled under, so priors
 never accumulated a second observation and exploration could never end.
 */
 func (lane *learningLane) issue(local *LocalLearning, market *learningMarket, index int, book *spotbook.Book, marketAt time.Time) error {
-	market.context = lane.wallet.context(market.sequence, book, lane.equity, market.context)
+	market.context = lane.wallet.context(market.conditions, book, lane.equity, market.context)
 	market.actions = lane.wallet.actions(book, market.actions)
 
 	// The policy lane reads the exploration lanes' evidence: that is the whole
@@ -255,16 +268,7 @@ func (lane *learningLane) issue(local *LocalLearning, market *learningMarket, in
 		))
 	}
 
-	influence, authority, strength := 1.0, 0.0, 0.0
-
-	for _, region := range market.regions {
-		authority += region.Strength * region.Authority
-		strength += region.Strength
-	}
-
-	if strength > 0 {
-		authority /= strength
-	}
+	influence, authority := 1.0, market.authority
 
 	if lane.paper {
 		influence = prior.Authority
@@ -274,6 +278,10 @@ func (lane *learningLane) issue(local *LocalLearning, market *learningMarket, in
 		}
 	}
 
+	if len(lane.trace) != 0 && action == lane.action {
+		return nil
+	}
+
 	requested := lane.wallet.request(book, action, influence, &lane.ladder)
 	price := book.Asks.Low.Price
 
@@ -281,7 +289,7 @@ func (lane *learningLane) issue(local *LocalLearning, market *learningMarket, in
 		price = book.Bids.High.Price
 	}
 
-	if action.Kind != types.ActionHold && (requested.Cmp(&lane.wallet.minimum) < 0 || new(big.Rat).Mul(requested, price.Rat()).Cmp(&lane.wallet.costMinimum) < 0) {
+	if action.Kind != types.ActionHold && (requested.Cmp(&lane.wallet.pricing.Minimum) < 0 || broker.NotionalRat(new(big.Rat), price.Rat(), requested).Cmp(&lane.wallet.pricing.CostMinimum) < 0) {
 		action = LearningAction{Kind: types.ActionHold}
 		requested = new(big.Rat)
 	}

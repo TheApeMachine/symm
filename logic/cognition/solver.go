@@ -19,53 +19,6 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-/*
-Option configures the Cognition solver.
-*/
-type Option func(*Solver)
-
-/*
-WithMaxSequenceLength sets the maximum token depth before a sequence naturally terminates.
-*/
-func WithMaxSequenceLength(length int) Option {
-	return func(s *Solver) {
-		s.maxSeqLen = length
-	}
-}
-
-/*
-WithSurprisalLimit sets the information-theoretic threshold (in bits) that triggers
-a sequence break when an unexpected category transition occurs.
-*/
-func WithSurprisalLimit(limitBits float64) Option {
-	return func(s *Solver) {
-		s.surprisalLimit = limitBits
-	}
-}
-
-/*
-WithBeamShape sets the lookahead beam width and hop count.
-*/
-func WithBeamShape(width, hops int) Option {
-	return func(s *Solver) {
-		s.beamWidth = width
-		s.maxHops = hops
-	}
-}
-
-/*
-WithPrefixTreeShape bounds the sensory prefix tree exported for display: how many
-continuations are drawn per node, how deep the drawing walks, and the hard node
-ceiling that keeps a wide trie from flooding a reading.
-*/
-func WithPrefixTreeShape(width, depth, maxNodes int) Option {
-	return func(s *Solver) {
-		s.branchWidth = width
-		s.branchDepth = depth
-		s.maxBranchNodes = maxNodes
-	}
-}
-
 type symbolCognitionState struct {
 	activeTokens  []string
 	activeRegime  types.Category
@@ -148,7 +101,6 @@ NewSolver returns a new cognition solver bound to a radix tree.
 */
 func NewSolver(
 	ctx context.Context,
-	opts ...Option,
 ) *Solver {
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -166,10 +118,6 @@ func NewSolver(
 		branchWidth:    4,
 		branchDepth:    5,
 		maxBranchNodes: 192,
-	}
-
-	for _, opt := range opts {
-		opt(solver)
 	}
 
 	return solver

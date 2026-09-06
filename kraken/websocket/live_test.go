@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -420,7 +421,7 @@ func TestNewWithClient(t *testing.T) {
 					t.Fatal("book update did not publish its notification")
 				}
 
-				live.book.Get("TEST/USD", func(book *spotbook.Book) {
+				live.book.Book("TEST/USD", func(book *spotbook.Book) {
 					So(book.Asks.Low.Price.String(), ShouldEqual, "101")
 
 					if operation == "delete" {
@@ -439,5 +440,69 @@ func TestNewWithClient(t *testing.T) {
 				}
 			}
 		})
+	})
+}
+
+func TestLiveResyncLevel3(t *testing.T) {
+	Convey("Given a divergent symbol on an authenticated Level3 socket", t, func() {
+		frames := make(chan map[string]any, 2)
+		serverErrors := make(chan error, 1)
+		upgrader := gorillawebsocket.Upgrader{}
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			connection, err := upgrader.Upgrade(writer, request, nil)
+			if err != nil {
+				serverErrors <- err
+				return
+			}
+			defer connection.Close()
+			for {
+				_, raw, err := connection.ReadMessage()
+				if err != nil {
+					serverErrors <- err
+					return
+				}
+				var frame map[string]any
+				if err := json.Unmarshal(raw, &frame); err != nil {
+					serverErrors <- err
+					return
+				}
+				frames <- frame
+			}
+		}))
+		defer server.Close()
+		client := spot.NewWebSocket()
+		client.URL = "ws" + strings.TrimPrefix(server.URL, "http")
+		client.Token = "test-token"
+		client.Reconnect = nil
+		So(client.Connect(), ShouldBeNil)
+		defer func() { So(client.Disconnect(), ShouldBeNil) }()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		live := &Live{ctx: ctx, cancel: cancel, status: runtime.NewStatus()}
+		live.client.Store(client)
+		oldDepth := viper.GetInt("market.l3_depth")
+		viper.Set("market.l3_depth", 100)
+		defer viper.Set("market.l3_depth", oldDepth)
+		live.resyncLevel3("FIL/USD")
+
+		for _, method := range []string{"unsubscribe", "subscribe"} {
+			select {
+			case frame := <-frames:
+				So(frame["method"], ShouldEqual, method)
+				params := frame["params"].(map[string]any)
+				So(params["symbol"], ShouldResemble, []any{"FIL/USD"})
+				So(params["channel"], ShouldEqual, "level3")
+				if method == "subscribe" {
+					So(params["snapshot"], ShouldEqual, true)
+					So(params["depth"], ShouldEqual, 100)
+					So(params["token"], ShouldEqual, "test-token")
+				}
+			case err := <-serverErrors:
+				So(err, ShouldBeNil)
+			case <-time.After(5 * time.Second):
+				So("recovery request", ShouldEqual, "timed out")
+			}
+		}
+		So(live.Error(), ShouldBeNil)
 	})
 }

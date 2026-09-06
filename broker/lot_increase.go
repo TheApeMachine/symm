@@ -54,9 +54,8 @@ func (increase *LotIncrease) Place(decision types.Decision) error {
 	if decision.Permit != nil && !decision.Permit() {
 		return &types.ExecutionRefusal{State: "stale", Detail: "increase authority or candidate changed before submission"}
 	}
-	precision := max(int64(decimal.DefaultScale), holding.EntryPrice.GetScale()+holding.Qty.GetScale(), holding.EntryVWAP.GetScale()+holding.EntryQty.GetScale())
-	increase.basis = holding.EntryPrice.SetScale(precision).Mul(holding.Qty)
-	increase.totalBasis = holding.EntryVWAP.SetScale(precision).Mul(holding.EntryQty)
+	increase.basis = Notional(holding.EntryPrice, holding.Qty)
+	increase.totalBasis = Notional(holding.EntryVWAP, holding.EntryQty)
 	increase.order = &spot.AddOrderRequest{ClOrdId: decision.ID, Type: "buy", OrderType: "market", Volume: decision.ProposedQuantity.String(), Pair: position.pair.Symbol}
 	increase.quantity, increase.cost, increase.fee = decimal.NewFromInt64(0), decimal.NewFromInt64(0), decimal.NewFromInt64(0)
 	result, err := position.api.AddOrder(increase.order)
@@ -108,11 +107,11 @@ func (increase *LotIncrease) Apply(execution kraken.ExecutionData) (bool, error)
 		basis := increase.basis.SetScale(precision).Add(execution.CumCost)
 		holding.Qty = holding.Qty.SetScale(max(holding.Qty.GetScale(), quantity.GetScale())).Add(quantity)
 		holding.SellableQty = holding.SellableQty.SetScale(max(holding.SellableQty.GetScale(), quantity.GetScale())).Add(quantity)
-		holding.EntryPrice = basis.Div(holding.Qty).SetScale(max(int64(decimal.DefaultScale), int64(position.pair.PricePrecision)))
+		holding.EntryPrice = UnitPrice(basis, holding.Qty).SetScale(max(int64(decimal.DefaultScale), int64(position.pair.PricePrecision)))
 		holding.EntryFee = holding.EntryFee.SetScale(max(holding.EntryFee.GetScale(), fee.GetScale())).Add(fee)
 		totalBasis := increase.totalBasis.SetScale(precision).Add(execution.CumCost)
 		holding.EntryQty = holding.EntryQty.SetScale(max(holding.EntryQty.GetScale(), quantity.GetScale())).Add(quantity)
-		holding.EntryVWAP = totalBasis.Div(holding.EntryQty).SetScale(max(int64(decimal.DefaultScale), int64(position.pair.PricePrecision)))
+		holding.EntryVWAP = UnitPrice(totalBasis, holding.EntryQty).SetScale(max(int64(decimal.DefaultScale), int64(position.pair.PricePrecision)))
 		holding.EntryFees = holding.EntryFees.SetScale(max(holding.EntryFees.GetScale(), fee.GetScale())).Add(fee)
 		increase.quantity, increase.cost, increase.fee = execution.CumQty.Copy(), execution.CumCost.Copy(), execution.FeeUsdEquiv.Copy()
 

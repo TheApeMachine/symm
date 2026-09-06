@@ -14,12 +14,12 @@ import (
 func candidateFixture(symbol string, at time.Time) *EntryCandidate {
 	wallet, book := virtualFixture()
 	quantity := big.NewRat(1, 1)
-	_, gross := wallet.sweep(book, quantity, true, nil, nil)
-	cost := new(big.Rat).Mul(gross, &wallet.factor)
+	_, gross := wallet.pricing.Sweep(book, quantity, &wallet.cash, true, nil, nil)
+	cost := wallet.pricing.Total(new(big.Rat), gross, true)
 	candidate := &EntryCandidate{Record: hindsight.CandidateRecord{ID: uuid.NewString(), Decision: 1, Symbol: symbol, Action: "enter", At: at, Horizon: time.Minute, GridVersion: 1, Authority: 1,
-		Quantity: quantity.RatString(), Notional: cost.RatString(), QtyMinimum: wallet.minimum.RatString(), QtyIncrement: wallet.lot.RatString(), CostMinimum: wallet.costMinimum.RatString(), FeeRate: wallet.fee.RatString()},
+		Quantity: quantity.RatString(), Notional: cost.RatString(), QtyMinimum: wallet.pricing.Minimum.RatString(), QtyIncrement: wallet.pricing.Lot.RatString(), CostMinimum: wallet.pricing.CostMinimum.RatString(), FeeRate: wallet.pricing.Rate.RatString()},
 		action: LearningAction{Kind: types.ActionEnter}, quantity: quantity, cost: cost, bid: book.Bids.High.Price.Rat()}
-	wallet.sweep(book, quantity, true, &candidate.ladder, nil)
+	wallet.pricing.Sweep(book, quantity, &wallet.cash, true, &candidate.ladder, nil)
 	candidate.Intent = ExecutionIntent{Candidate: candidate, Symbol: symbol, Quantity: quantity, MaximumCost: cost, Kind: types.ActionEnter, CorrelationID: candidate.Record.ID}
 	return candidate
 }

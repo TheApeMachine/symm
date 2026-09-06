@@ -412,9 +412,7 @@ func NewWithClient(
 	if endpoint == system.Cfg.WebSocket.Endpoints.Level3 {
 		live.level3 = &sync.Map{}
 		live.book = NewBook(ctx, live.normalizer)
-		live.book.SetResync(func(symbol string) {
-			_ = live.Client().SubL3([]string{symbol}, viper.GetInt("market.l3_depth"))
-		})
+		live.book.SetResync(live.resyncLevel3)
 		live.book.SetNotify(func(symbol string, at time.Time) {
 			if live.Status() != runtime.READY {
 				return
@@ -520,6 +518,10 @@ func NewWithClient(
 		// recovery of a checksum-diverged symbol; there is nothing to
 		// dispatch for it.
 		if channel == "unsubscribe" {
+			if message := utils.GetString(raw, "error"); message != "" {
+				live.fail(errnie.Err(errnie.IO, "websocket: unsubscribe rejected: "+message, nil))
+			}
+
 			return
 		}
 
@@ -1355,6 +1357,24 @@ func (live *Live) SubL3(symbols []string) {
 }
 
 /*
+resyncLevel3 replaces one divergent subscription on its owning socket. The
+ordered writes withdraw the old stream before requesting an authoritative
+snapshot. A failed write is a visible transport failure; it is never ignored.
+*/
+func (live *Live) resyncLevel3(symbol string) {
+	if err := live.Write(kraken.NewChannelUnsubscription("level3", []string{symbol})); err != nil {
+		live.fail(errnie.Err(errnie.IO, "websocket: level3 recovery unsubscribe failed", err))
+		return
+	}
+
+	if err := live.Client().SubPrivate("level3", map[string]any{
+		"params": map[string]any{"symbol": []string{symbol}, "depth": viper.GetInt("market.l3_depth"), "snapshot": true},
+	}); err != nil {
+		live.fail(errnie.Err(errnie.IO, "websocket: level3 recovery snapshot request failed", err))
+	}
+}
+
+/*
 subscribeLevel3Group re-runs the exact paced level3 subscription batch the
 startup path uses for one child connection. Boot and fresh-session reconnects
 therefore apply the same venue pacing and request the same symbol group.
@@ -1373,7 +1393,9 @@ func (live *Live) subscribeLevel3Group(conn *Live) error {
 	}
 
 	for group := range slices.Chunk(conn.symbols, 40) {
-		if err := conn.Client().SubL3(group, viper.GetInt("market.l3_depth")); err != nil {
+		if err := conn.Client().SubPrivate("level3", map[string]any{
+			"params": map[string]any{"symbol": group, "depth": viper.GetInt("market.l3_depth"), "snapshot": true},
+		}); err != nil {
 			err = errnie.Err(
 				errnie.IO,
 				"websocket: failed to subscribe to level3",
@@ -1465,7 +1487,7 @@ func (live *Live) Book(symbol string, read func(*book.Book)) {
 			return true
 		}
 
-		conn.book.Get(symbol, func(managed *book.Book) {
+		conn.book.Book(symbol, func(managed *book.Book) {
 			found = true
 			read(managed)
 		})

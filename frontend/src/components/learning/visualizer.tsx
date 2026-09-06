@@ -4,7 +4,7 @@ import { Canvas } from "#/components/ui/canvas";
 import { Flex } from "#/components/ui/flex";
 import { Tabs } from "#/components/ui/tabs";
 import { Typography } from "#/components/ui/typography";
-import { action, basis, percent } from "./format";
+import { action, clock, basis, percent } from "./format";
 import type { Candidate, LearningEvent, LearningView, Skill } from "./state";
 
 /*
@@ -398,7 +398,7 @@ export const ActionSpectrumPlot = ({
 											: "text-(--f4)"
 									}
 								>
-									{defined ? basis(candidate.prior.Mean) : "—"}
+									{defined ? `${basis(candidate.prior.Mean)}/s` : "—"}
 								</span>
 								<span className="text-[10px] text-(--f4)">
 									{candidate.prior.Samples} obs
@@ -417,38 +417,35 @@ export const ActionSpectrumPlot = ({
 
 			<div className="flex justify-between border-(--line) border-t pt-1 font-mono text-[9px] text-(--f4)">
 				<span>← Negative return expectation</span>
-				<span>0.0 bp</span>
+				<span>0.0 bp/s</span>
 				<span>Positive return expectation →</span>
 			</div>
 		</Flex.Column>
 	);
 };
 
-/*
-LearningTrajectoryPlot visualizes rolling return accumulation from resolved decision windows,
-giving operators immediate clarity on whether the policy is compounding edge or decaying.
-*/
+/* LearningTrajectoryPlot shows one policy wallet's recorded episode profit. */
 export const LearningTrajectoryPlot = ({
 	events,
+	initialCapital,
 }: {
 	events: LearningEvent[];
+	initialCapital?: string;
 }) => {
-	const resolvedEvents = useMemo(
-		() => events.filter((event) => event.kind === "resolved"),
-		[events],
-	);
+	const marks = useMemo(() => {
+		const policy = events
+			.filter((event) => event.mode === "policy" && event.complete && event.kind !== "recycled")
+			.sort((left, right) => Date.parse(left.at) - Date.parse(right.at) || left.id - right.id);
+		const latest = policy.at(-1);
+		return policy.filter((event, index) => event.episode === latest?.episode &&
+			(index === 0 || event.at !== policy[index - 1].at));
+	}, [events]);
+	const capital = Number(initialCapital);
+	const profitPoints = capital > 0 ? marks.map((event) => event.profit / capital * 10000) : [];
 
-	// Compute cumulative return points
-	const cumulativePoints = useMemo(() => {
-		let totalBp = 0;
-		const points: number[] = [0];
-		for (const event of resolvedEvents) {
-			const returnBp = (event.target ?? 0) * 10000;
-			totalBp += returnBp;
-			points.push(totalBp);
-		}
-		return points;
-	}, [resolvedEvents]);
+	if (profitPoints.length === 0) {
+		return <Typography.Mono className="p-3 text-(--f3)">Policy wallet trajectory unavailable: recorded valuations and starting capital are required.</Typography.Mono>;
+	}
 
 	const viewWidth = 520;
 	const viewHeight = 160;
@@ -456,18 +453,18 @@ export const LearningTrajectoryPlot = ({
 	const plotWidth = viewWidth - padding.left - padding.right;
 	const plotHeight = viewHeight - padding.top - padding.bottom;
 
-	const minVal = Math.min(...cumulativePoints, 0);
-	const maxVal = Math.max(...cumulativePoints, 5);
+	const minVal = Math.min(...profitPoints, 0);
+	const maxVal = Math.max(...profitPoints, 0);
 	const rangeVal = maxVal - minVal || 1;
 
 	const toSvgY = (value: number) =>
 		padding.top + plotHeight - ((value - minVal) / rangeVal) * plotHeight;
 	const zeroY = toSvgY(0);
 
-	const pathPoints = cumulativePoints.map((value, index) => {
+	const pathPoints = profitPoints.map((value, index) => {
 		const svgX =
 			padding.left +
-			(index / Math.max(cumulativePoints.length - 1, 1)) * plotWidth;
+			(index / Math.max(profitPoints.length - 1, 1)) * plotWidth;
 		const svgY = toSvgY(value);
 		return { x: svgX, y: svgY, val: value };
 	});
@@ -485,15 +482,14 @@ export const LearningTrajectoryPlot = ({
 			? `${lineD} L ${pathPoints[pathPoints.length - 1].x.toFixed(1)} ${zeroY.toFixed(1)} L ${pathPoints[0].x.toFixed(1)} ${zeroY.toFixed(1)} Z`
 			: "";
 
-	const lastValue = cumulativePoints[cumulativePoints.length - 1] ?? 0;
+	const lastValue = profitPoints[profitPoints.length - 1] ?? 0;
 	const trendingUp = lastValue >= 0;
 
 	return (
 		<Flex.Column className="h-full w-full justify-between gap-2 px-3">
 			<Flex.Row align="center" className="justify-between text-xs font-mono">
 				<span className="text-(--f3)">
-					Cumulative outcome trajectory ({resolvedEvents.length} resolved
-					windows)
+					Policy wallet profit · episode {marks.at(-1)?.episode} ({marks.length} valuations)
 				</span>
 				<span
 					className={`font-bold ${trendingUp ? "text-(--up)" : "text-(--warn)"}`}
@@ -509,9 +505,9 @@ export const LearningTrajectoryPlot = ({
 					className="h-full w-full select-none"
 					preserveAspectRatio="none"
 					role="img"
-					aria-label="Learning Trajectory Cumulative Returns"
+					aria-label="Policy wallet recorded net profit"
 				>
-					<title>Learning Trajectory Cumulative Returns</title>
+					<title>Policy wallet recorded net profit</title>
 					<defs>
 						<linearGradient id="trajectoryGradient" x1="0" y1="0" x2="0" y2="1">
 							<stop
@@ -573,8 +569,8 @@ export const LearningTrajectoryPlot = ({
 			</div>
 
 			<div className="flex justify-between font-mono text-[9px] text-(--f4)">
-				<span>Window 1</span>
-				<span>Window {resolvedEvents.length}</span>
+				<span>{clock(marks[0].at)}</span>
+				<span>{clock(marks[marks.length - 1].at)}</span>
 			</div>
 		</Flex.Column>
 	);
@@ -663,7 +659,7 @@ export const LearningVisualizer = ({
 				{mode === "actions" && (
 					<ActionSpectrumPlot candidates={view?.candidates} />
 				)}
-				{mode === "trajectory" && <LearningTrajectoryPlot events={events} />}
+				{mode === "trajectory" && <LearningTrajectoryPlot events={events} initialCapital={view?.initialCapital} />}
 			</div>
 		</Canvas>
 	);

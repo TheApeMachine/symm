@@ -5,7 +5,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/datura"
 	"github.com/theapemachine/errnie"
 )
 
@@ -84,29 +83,4 @@ MarshalJSON serializes the trade-balance request payload for Kraken REST.
 func (request *TradeBalanceRequest) MarshalJSON() ([]byte, error) {
 	type alias TradeBalanceRequest
 	return sonic.Marshal((*alias)(request))
-}
-
-/*
-NewPaperTradeBalanceFromMap reshapes `kraken paper status --verbose` into the
-Kraken trade-balance response shape. The liquidation value lives in `e`.
-*/
-func NewPaperTradeBalanceFromMap(model datura.Map[any]) *TradeBalanceResult {
-	currentValue, _ := model["current_value"].(float64)
-	unrealizedPnL, _ := model["unrealized_pnl"].(float64)
-	equity := decimal.NewFromFloat64(currentValue)
-	unrealized := decimal.NewFromFloat64(unrealizedPnL)
-	tradeBalance := equity.Sub(unrealized)
-
-	return &TradeBalanceResult{
-		EquivalentBalance: equity,
-		TradeBalance:      tradeBalance,
-		MarginAmount:      decimal.NewFromInt64(0),
-		UnrealizedPnL:     unrealized,
-		CostBasis:         decimal.NewFromInt64(0),
-		Valuation:         decimal.NewFromInt64(0),
-		Equity:            equity,
-		FreeMargin:        equity,
-		MarginFreeOrders:  equity,
-		UnexecutedValue:   decimal.NewFromInt64(0),
-	}
 }

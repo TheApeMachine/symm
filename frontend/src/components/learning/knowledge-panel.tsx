@@ -36,7 +36,7 @@ export const KnowledgePanel = ({ view }: { view: LearningView | null }) => (
 				),
 		)}
 		<Typography.Mono className="p-3" size="s">
-			Warmup: {view?.warmup?.resolved ?? "unavailable"} complete experiences ·{" "}
+			Warmup: {view?.warmup?.targetUnavailable ?? 0} without a recoverable absolute return · {view?.warmup?.resolved ?? "unavailable"} complete experiences ·{" "}
 			{view?.warmup?.unconditioned ?? "unavailable"} without historical quantity
 			identities · {view?.warmup?.portfolioUnavailable ?? "unavailable"} without
 			portfolio inputs. Historical knowledge grants no live entry authority.

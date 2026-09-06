@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"math"
+	"time"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
@@ -25,6 +26,7 @@ type Knowledge struct {
 	Model       *learning.Model[[2]string, LearningAction]
 	grid        *learning.Grid
 	attribution attribution
+	Horizons    map[string]time.Duration
 	Warmed      WarmupReading
 }
 
@@ -34,11 +36,12 @@ type WarmupReading struct {
 	Unconditioned        int `json:"unconditioned"`
 	Unpaired             int `json:"unpaired"`
 	PortfolioUnavailable int `json:"portfolioUnavailable"`
+	TargetUnavailable    int `json:"targetUnavailable"`
 }
 
-/* NewKnowledge shares one resolution clock across both levels of evidence. */
+/* NewKnowledge shares outcomes across global and symbol evidence. */
 func NewKnowledge(grid *learning.Grid) *Knowledge {
-	return &Knowledge{Model: learning.NewModel[[2]string, LearningAction](knowledgeMemory), grid: grid}
+	return &Knowledge{Model: learning.NewModel[[2]string, LearningAction](knowledgeMemory), grid: grid, Horizons: make(map[string]time.Duration)}
 }
 
 /*
@@ -46,7 +49,8 @@ Reading backs off across scopes using the same evidence semantics as context dep
 A symbol must define dispersion when global evidence does and retain at least the
 broader reading's maturity-weighted retained input authority. Specificity wins ties. A single local sample
 cannot override variance-defined global evidence; dormant local evidence ages on
-the shared resolution clock. Outcome sign does not decide specificity.
+symbol's resolution clock. The global scope ages across all symbols.
+Outcome sign does not decide specificity.
 */
 func (knowledge *Knowledge) Reading(symbol string, context []uint64, action LearningAction) KnowledgeReading {
 	reading := KnowledgeReading{
@@ -104,6 +108,8 @@ Warmup replays complete run-scoped issue/resolve pairs. Issue-time context and
 quality are authoritative. Named quantities are interned into the current Grid;
 legacy records without that mapping train only the unconditioned action prior.
 No historical numeric column is silently interpreted as a current quantity.
+Legacy targets without an explicit absolute return remain in Hindsight and are
+counted as TargetUnavailable; they cannot be reinterpreted as profit.
 Legacy evidence cannot train portfolio allocation because its account inputs
 were never recorded. Neither pending actions nor execution authority is restored.
 */
@@ -155,7 +161,7 @@ func (knowledge *Knowledge) Warmup(events []hindsight.LearningEvent) (WarmupRead
 				break
 			}
 			quantity := origin.Quantities[index]
-			context[index] = uint64(knowledge.grid.Column(quantity[0], quantity[1]) + 1)
+			context[index] = learning.RemapCondition(context[index], uint64(knowledge.grid.Column(quantity[0], quantity[1])+1))
 		}
 		action := LearningAction{Kind: types.Action(origin.Action), Power: origin.Power, Reduce: origin.Reduce}
 
@@ -163,19 +169,26 @@ func (knowledge *Knowledge) Warmup(events []hindsight.LearningEvent) (WarmupRead
 			return report, errnie.Err(errnie.Validation, "knowledge: historical issue action is missing", nil)
 		}
 
-		if event.TargetUnit != "" && event.TargetUnit != "return_per_second" {
+		if event.TargetUnit != "" && event.TargetUnit != "return_per_second" && event.TargetUnit != "absolute_return_per_second" {
 			return report, errnie.Err(errnie.Validation, "knowledge: unsupported historical target unit", nil)
 		}
 
 		target := event.Target
 
-		if event.TargetUnit == "" {
+		if event.TargetUnit != "absolute_return_per_second" {
+			// Old differential rewards are not economic returns. Only the
+			// separately recorded absolute mark can migrate them exactly.
+			if event.AbsoluteSkillTarget == nil {
+				report.TargetUnavailable++
+				continue
+			}
+
 			elapsed := event.At.Sub(origin.At).Seconds()
 
 			if elapsed <= 0 {
 				return report, errnie.Err(errnie.Validation, "knowledge: legacy interval target requires positive issue-to-resolution time", nil)
 			}
-			target /= elapsed
+			target = *event.AbsoluteSkillTarget / elapsed
 		}
 
 		if err := knowledge.Model.Observe([2]string{event.Symbol, "virtual"}, context, action, target, origin.Authority, [2]string{"", "virtual"}); err != nil {
@@ -183,7 +196,11 @@ func (knowledge *Knowledge) Warmup(events []hindsight.LearningEvent) (WarmupRead
 		}
 
 		if len(context) > 0 {
-			if err := knowledge.attribution.observe(context[:regionCount], action.Kind, target, origin.Authority); err != nil {
+			tokens := make([]uint64, regionCount)
+			for index, quantity := range origin.Quantities {
+				tokens[index] = uint64(knowledge.grid.Column(quantity[0], quantity[1]) + 1)
+			}
+			if err := knowledge.attribution.observe(tokens, action.Kind, target, origin.Authority); err != nil {
 				return report, err
 			}
 		}

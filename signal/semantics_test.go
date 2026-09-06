@@ -24,14 +24,14 @@ func TestSemanticsTest(t *testing.T) {
 		})
 
 		Convey("A declared metric answers with its own statements", func() {
-			entry, found := Lookup("derivatives", "basis")
+			entry, found := Semantics().Metrics["derivatives/basis"]
 			So(found, ShouldBeTrue)
 			So(entry.Purpose, ShouldNotBeEmpty)
 			So(entry.Forbidden, ShouldNotBeEmpty)
 		})
 
 		Convey("An undeclared metric is reported undeclared, never described", func() {
-			entry, found := Lookup("derivatives", "not_a_real_metric")
+			entry, found := Semantics().Metrics["derivatives/not_a_real_metric"]
 			So(found, ShouldBeFalse)
 			So(entry.Purpose, ShouldBeEmpty)
 			So(entry.Forbidden, ShouldBeEmpty)

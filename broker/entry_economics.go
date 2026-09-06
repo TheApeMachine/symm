@@ -107,8 +107,12 @@ func (price *Price) EntryCost(
 
 	ask := tick.Ask.Copy()
 	bid := tick.Bid.Copy()
-	entryPrice := ask.Copy()
-	depthEntry, depthAsk, depthBid := price.entryDepthVWAP(symbol, quantity)
+	grossNotional := Notional(ask, quantity)
+	depthGross, depthAsk, depthBid, depthKnown := price.entryDepthCost(symbol, quantity)
+
+	if depthKnown && (depthAsk == nil || depthBid == nil) {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "entry cost: resident book requires both executable sides", nil))
+	}
 
 	if depthAsk != nil {
 		if depthBid == nil {
@@ -123,7 +127,7 @@ func (price *Price) EntryCost(
 			))
 		}
 
-		if depthEntry == nil {
+		if depthGross == nil {
 			return nil, errnie.Error(errnie.Err(
 				errnie.Validation,
 				"entry cost: visible ask depth cannot execute complete quantity",
@@ -133,7 +137,7 @@ func (price *Price) EntryCost(
 
 		ask = depthAsk
 		bid = depthBid
-		entryPrice = depthEntry
+		grossNotional = depthGross
 	} else {
 		if tick.AskQty <= 0 || quantity.Cmp(decimal.NewFromFloat64(tick.AskQty)) > 0 {
 			return nil, errnie.Error(errnie.Err(
@@ -144,101 +148,52 @@ func (price *Price) EntryCost(
 		}
 	}
 
-	midpoint := decimalZero.Add(ask).Add(bid).Div(decimalTwo)
-	feeRate := decimalZero.Add(fee.Fee).Div(decimalHundred)
-	exitFactor := decimalOne.Sub(feeRate)
+	var pricing Pricing
 
-	if exitFactor.Sign() <= 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"entry cost: exit fee leaves no realizable proceeds",
-			nil,
-		))
+	if err := pricing.SetFee(fee.Fee); err != nil {
+		return nil, err
 	}
-
-	grossNotional := decimalZero.Add(entryPrice).Mul(quantity)
-	entryFee := decimalZero.Add(grossNotional).Mul(feeRate)
-	totalEntryCost := decimalZero.Add(grossNotional).Add(entryFee)
-	breakEvenGross := decimalZero.Add(totalEntryCost).Div(exitFactor)
-	breakEven := decimalZero.Add(breakEvenGross).Div(quantity)
-	exitFeeAtBreakEven := decimalZero.Add(breakEvenGross).Mul(feeRate)
-	roundTripFees := decimalZero.Add(entryFee).Add(exitFeeAtBreakEven)
-	spread := decimalZero.Add(ask).Sub(midpoint)
-	impact := decimalZero.Add(entryPrice).Sub(ask)
-
-	if impact.Sign() < 0 {
-		impact = decimalZero.Copy()
-	}
-
-	return &types.EntryCost{
-		EntryPrice:         decimalZero.Add(entryPrice),
-		BestAsk:            decimalZero.Add(ask),
-		BestBid:            decimalZero.Add(bid),
-		Midpoint:           decimalZero.Add(midpoint),
-		GrossNotional:      grossNotional,
-		EntryFee:           entryFee,
-		ExitFeeAtBreakEven: exitFeeAtBreakEven,
-		RoundTripFees:      roundTripFees,
-		Spread:             spread,
-		Impact:             impact,
-		BreakEven:          breakEven,
-	}, nil
+	return pricing.EntryCost(grossNotional, ask, bid, quantity), nil
 }
 
 /*
-entryDepthVWAP walks the resident book's ask chain best-first and returns the
-multi-level entry VWAP, best ask, and best bid for a complete long fill. It
-returns nil for every result when the resident book is not seeded or deep
-enough, so callers take their documented ticker-level fallback.
+entryDepthCost walks the resident book's ask chain best-first and returns the
+exact swept notional, best ask, and best bid for a complete long fill. It
+preserves best quotes when depth is insufficient or crossed, so callers
+reject that book instead of silently substituting ticker liquidity.
 */
-func (price *Price) entryDepthVWAP(
+func (price *Price) entryDepthCost(
 	symbol string,
 	quantity *decimal.Decimal,
-) (*decimal.Decimal, *decimal.Decimal, *decimal.Decimal) {
+) (*decimal.Decimal, *decimal.Decimal, *decimal.Decimal, bool) {
 	if price == nil || price.api == nil || symbol == "" || quantity == nil || quantity.Sign() <= 0 {
-		return nil, nil, nil
+		return nil, nil, nil, false
 	}
 
-	var entryVWAP, bestAsk, bestBid *decimal.Decimal
+	var entryGross, bestAsk, bestBid *decimal.Decimal
+	depthKnown := false
 	price.api.Book(price.api.Normalizer().Name(symbol), func(managed *spotbook.Book) {
+		depthKnown = managed != nil
 		if managed == nil || managed.Asks == nil || managed.Asks.Low == nil ||
 			managed.Bids == nil || managed.Bids.High == nil {
 			return
 		}
 
-		if managed.Asks.Low.Price == nil || managed.Bids.High.Price == nil ||
-			managed.Asks.Low.Price.Cmp(managed.Bids.High.Price) < 0 {
+		if managed.Asks.Low.Price == nil || managed.Bids.High.Price == nil {
 			return
 		}
 
 		bestAsk = managed.Asks.Low.Price.Copy()
 		bestBid = managed.Bids.High.Price.Copy()
 
-		remaining := decimalZero.Add(quantity)
-		grossNotional := decimalZero.Copy()
+		var pricing Pricing
+		filled, gross := pricing.Sweep(managed, quantity.Rat(), nil, true, nil, nil)
 
-		for ask := managed.Asks.Low; ask != nil && remaining.Sign() > 0; ask = ask.Higher {
-			if ask.Price == nil || ask.Quantity == nil ||
-				ask.Price.Sign() <= 0 || ask.Quantity.Sign() <= 0 {
-				continue
-			}
-
-			fill := ask.Quantity
-			if remaining.Cmp(fill) < 0 {
-				fill = remaining
-			}
-
-			grossNotional = grossNotional.Add(decimalZero.Add(ask.Price).Mul(fill))
-			remaining = remaining.Sub(fill)
-		}
-
-		if remaining.Sign() > 0 {
-			bestAsk, bestBid = nil, nil
+		if filled.Cmp(quantity.Rat()) != 0 {
 			return
 		}
-
-		entryVWAP = grossNotional.Div(quantity)
+		entryGross = PriceDecimal(gross)
 	})
 
-	return entryVWAP, bestAsk, bestBid
+	return entryGross, bestAsk, bestBid, depthKnown
 }

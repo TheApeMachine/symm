@@ -381,14 +381,14 @@ func (recovery *Recovery) recoverBasis(
 			}
 
 			remaining := subtractAmount(quantity, trade.Volume)
-			cost = cost.Mul(remaining).Div(quantity)
-			fee = fee.Mul(remaining).Div(quantity)
+			cost = Prorate(cost, remaining, quantity)
+			fee = Prorate(fee, remaining, quantity)
 			quantity = remaining
 		}
 	}
 
 	if quantity.Sign() > 0 && cost.Sign() > 0 {
-		return cost.Div(quantity), fee, entryAt, hasFullClose
+		return UnitPrice(cost, quantity), fee, entryAt, hasFullClose
 	}
 
 	return nil, decimal.NewFromInt64(0), time.Time{}, hasFullClose
@@ -468,12 +468,4 @@ func (recovery *Recovery) recoveredSell(
 	}
 
 	return orderID, recovered, nil
-}
-
-func addAmount(left, right *decimal.Decimal) *decimal.Decimal {
-	return decimal.NewFromInt64(0).Add(left).Add(right)
-}
-
-func subtractAmount(left, right *decimal.Decimal) *decimal.Decimal {
-	return decimal.NewFromInt64(0).Add(left).Sub(right)
 }

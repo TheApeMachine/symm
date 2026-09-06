@@ -16,11 +16,12 @@ nomagique/runtime.Node[*types.Envelope], reading the envelope's TickerData and
 writing its projected Measurement into the envelope's Correlation field.
 */
 type Signal struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	err    error
-	status *runtime.Status
-	ticker *Ticker
+	ctx       context.Context
+	cancel    context.CancelFunc
+	err       error
+	status    *runtime.Status
+	ticker    *Ticker
+	Relations *Relations
 }
 
 /*
@@ -29,11 +30,14 @@ NewSignal composes the Ticker entity.
 func NewSignal(ctx context.Context) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
 
+	ticker := NewTicker()
+
 	return &Signal{
-		ctx:    ctx,
-		cancel: cancel,
-		status: runtime.NewStatus(),
-		ticker: NewTicker(),
+		ctx:       ctx,
+		cancel:    cancel,
+		status:    runtime.NewStatus(),
+		ticker:    ticker,
+		Relations: &ticker.Relations,
 	}
 }
 

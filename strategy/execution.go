@@ -4,13 +4,14 @@ import (
 	"math/big"
 	"time"
 
+	"sync/atomic"
+
 	"github.com/google/uuid"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/types"
-	"sync/atomic"
 )
 
 /*
@@ -163,30 +164,21 @@ func (execution *Execution) Propose(local *LocalLearning, market *learningMarket
 		return nil
 	}
 	lane := &market.lanes[len(market.lanes)-1]
-	quantity, gross := lane.wallet.sweep(book, requested, true, nil, nil)
+	quantity, gross := lane.wallet.pricing.Sweep(book, requested, &lane.wallet.cash, true, nil, nil)
 
 	if quantity.Cmp(requested) != 0 {
 		return nil
 	}
-	cost := new(big.Rat).Mul(gross, &lane.wallet.factor)
+	cost := lane.wallet.pricing.Total(new(big.Rat), gross, true)
 	record := hindsight.CandidateRecord{ID: uuid.NewString(), Decision: identity, Symbol: market.symbol,
 		Action: string(action.Kind), Power: action.Power, At: market.at, MarketAt: marketAt, Capture: market.capture,
 		GridVersion: market.gridVersion, Context: append([]uint64(nil), market.context...),
 		Scope: reading.Scope, Global: reading.Global, SymbolPrior: reading.Symbol, Prior: reading.Selected,
 		Quantity: requested.RatString(), Notional: cost.RatString(), Reference: book.Asks.Low.Price.Rat().RatString(),
-		Horizon: market.horizon(), QtyMinimum: lane.wallet.minimum.RatString(), QtyIncrement: lane.wallet.lot.RatString(),
-		CostMinimum: lane.wallet.costMinimum.RatString(), FeeRate: lane.wallet.fee.RatString()}
-	for _, region := range market.regions {
-		record.Authority += region.Strength * region.Authority
-	}
-	strength := 0.0
-	for _, region := range market.regions {
-		strength += region.Strength
-	}
+		Horizon: market.horizon(), QtyMinimum: lane.wallet.pricing.Minimum.RatString(), QtyIncrement: lane.wallet.pricing.Lot.RatString(),
+		CostMinimum: lane.wallet.pricing.CostMinimum.RatString(), FeeRate: lane.wallet.pricing.Rate.RatString()}
+	record.Authority = market.authority
 
-	if strength > 0 {
-		record.Authority /= strength
-	}
 	for _, token := range market.sequence {
 		record.Quantities = append(record.Quantities, local.Grid.Columns[token-1])
 	}
@@ -197,7 +189,7 @@ func (execution *Execution) Propose(local *LocalLearning, market *learningMarket
 		record.AccountEquity = decimal.NewFromFloat64(state.Mark.Equity).String()
 	}
 	candidate := &EntryCandidate{Record: record, action: action, quantity: new(big.Rat).Set(requested), cost: cost, bid: book.Bids.High.Price.Rat()}
-	lane.wallet.sweep(book, requested, true, &candidate.ladder, nil)
+	lane.wallet.pricing.Sweep(book, requested, &lane.wallet.cash, true, &candidate.ladder, nil)
 	candidate.Intent = ExecutionIntent{CorrelationID: record.ID, Symbol: market.symbol, At: market.at, MarketAt: marketAt,
 		Kind: action.Kind, Quantity: new(big.Rat).Set(requested), Reference: book.Asks.Low.Price.Rat(),
 		Mode: execution.Mode(), Skill: execution.Skill.Reading(), Candidate: candidate, MaximumCost: cost, Allowed: &execution.allowed}
@@ -251,7 +243,9 @@ func (execution *Execution) Reduce(local *LocalLearning, market *learningMarket,
 		return nil
 	}
 	wallet := virtualWallet{}
-	wallet.initialize(local.initial, local.pair(market.symbol), local.fee(market.symbol).Fee)
+	if err := wallet.initialize(local.initial, local.pair(market.symbol), local.fee(market.symbol).Fee); err != nil {
+		return err
+	}
 	wallet.cash.SetInt64(0)
 	wallet.quantity.Set(quantity)
 	context := wallet.context(market.sequence, book, state.Mark.Equity, nil)

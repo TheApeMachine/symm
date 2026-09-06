@@ -5,6 +5,8 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/theapemachine/symm/broker"
+
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/hindsight"
@@ -17,7 +19,7 @@ type portfolioPosition struct {
 	complete  bool
 	pending   LearningAction
 	requested *big.Rat
-	ladder    depthLadder
+	ladder    broker.DepthLadder
 }
 
 /* VirtualPortfolio is one finite shared wallet; its symbols never own separate cash. */
@@ -62,7 +64,9 @@ func (portfolio *VirtualPortfolio) Step(local *LocalLearning, market *learningMa
 		if position == nil {
 			position = &portfolioPosition{}
 			portfolio.incomplete++
-			position.wallet.initialize(portfolio.initial, local.pair(market.symbol), local.fee(market.symbol).Fee)
+			if err := position.wallet.initialize(portfolio.initial, local.pair(market.symbol), local.fee(market.symbol).Fee); err != nil {
+				return err
+			}
 			portfolio.positions[market.symbol] = position
 		}
 		position.wallet.cash.Set(&portfolio.cash)

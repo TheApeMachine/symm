@@ -40,7 +40,7 @@ type LearningEvent struct {
 	Scope               string                `json:"scope,omitempty"`
 	GlobalPrior         learning.PriorReading `json:"globalPrior"`
 	SymbolPrior         learning.PriorReading `json:"symbolPrior"`
-	AbsoluteSkillTarget float64               `json:"absoluteSkillTarget"`
+	AbsoluteSkillTarget *float64              `json:"absoluteSkillTarget,omitempty"`
 	BaselineRate        float64               `json:"baselineRate"`
 	CandidateID         string                `json:"candidateId,omitempty"`
 	PortfolioID         string                `json:"portfolioId,omitempty"`

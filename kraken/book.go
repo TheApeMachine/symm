@@ -5,7 +5,6 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 )
 
@@ -56,55 +55,6 @@ func (book *Book) IsSuccess() bool {
 
 func (book *Book) Action() string {
 	return "book"
-}
-
-type BookSubscription struct {
-	Channel string   `json:"channel"`
-	Type    string   `json:"type"`
-	Pairs   []string `json:"pairs"`
-}
-
-func NewBookSubscription(pairs []string) BookSubscription {
-	return BookSubscription{
-		Channel: "book",
-		Type:    "subscribe",
-		Pairs:   pairs,
-	}
-}
-
-func (bs BookSubscription) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(map[string]any{
-		"method": "subscribe",
-		"params": map[string]any{
-			"channel": bs.Channel,
-			"symbol":  bs.Pairs,
-			"depth":   viper.GetInt("market.book.depth"),
-		},
-	})
-}
-
-/*
-BookUnsubscription requests Kraken stop streaming the book channel for the
-given pairs. Combined with re-subscribing, this forces a fresh snapshot,
-which is how a locally reconstructed book recovers from a failed checksum.
-*/
-type BookUnsubscription struct {
-	Pairs []string
-}
-
-func NewBookUnsubscription(pairs []string) BookUnsubscription {
-	return BookUnsubscription{Pairs: pairs}
-}
-
-func (bs BookUnsubscription) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(map[string]any{
-		"method": "unsubscribe",
-		"params": map[string]any{
-			"channel": "book",
-			"symbol":  bs.Pairs,
-			"depth":   viper.GetInt("market.book.depth"),
-		},
-	})
 }
 
 /*

@@ -219,11 +219,9 @@ func TestSkillAdmitsOnlyDisjointWindows(t *testing.T) {
 			So(resolved, ShouldBeGreaterThan, 0)
 			So(policy.resolved, ShouldEqual, resolved)
 
-			// Decisions issue far faster than a window closes, so a batch of
-			// them resolves against one account valuation. Only the disjoint
-			// ones may reach the estimator, or near-identical targets collapse
-			// the dispersion and saturate confidence on a single observation.
-			So(reading.Samples, ShouldBeLessThan, resolved)
+			// A single lane now issues disjoint windows. Zero-authority marks
+			// and other markets can still prevent admission to global skill.
+			So(reading.Samples, ShouldBeLessThanOrEqualTo, resolved)
 		})
 
 		Convey("Every admitted observation covers its own stretch of tape", func() {

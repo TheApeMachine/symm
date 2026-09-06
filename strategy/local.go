@@ -1,6 +1,9 @@
 package strategy
 
 import (
+	"strings"
+	"time"
+
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -8,8 +11,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/types"
-	"strings"
-	"time"
 )
 
 /* LocalLearning owns independent per-symbol virtual experiments on spot Level3. */
@@ -52,9 +53,21 @@ func (local *LocalLearning) advance(message kraken.Level3Data, capture hindsight
 	}
 
 	market.regions = append(market.regions[:0], regions...)
+	market.authority = 0
+	strength := 0.0
+	for _, region := range regions {
+		market.authority += region.Strength * region.Authority
+		strength += region.Strength
+	}
+	if strength > 0 {
+		market.authority /= strength
+	}
+	market.opportunityHorizon = local.Knowledge.Horizons[message.Symbol]
 	market.context = market.context[:0]
+	market.conditions = market.conditions[:0]
 	for _, region := range regions {
 		market.context = append(market.context, region.ID)
+		market.conditions = append(market.conditions, region.Condition)
 	}
 	changed := market.gridVersion != version
 	market.gridVersion = version
@@ -121,7 +134,9 @@ func (local *LocalLearning) initialize(market *learningMarket) error {
 	for index := range market.lanes {
 		lane := &market.lanes[index]
 		lane.paper = index == len(vocabulary)
-		lane.wallet.initialize(local.initial, pair, fee.Fee)
+		if err := lane.wallet.initialize(local.initial, pair, fee.Fee); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -211,7 +226,9 @@ func (local *LocalLearning) transition(
 			return err
 		}
 
-		if !changed && lane.issued != 0 {
+		// Keep the intervention fixed while its outcome is being measured.
+		// Market valuation and fills still run on every book update.
+		if (len(lane.trace) != 0 && !lane.paper) || (!changed && lane.issued != 0) {
 			continue
 		}
 

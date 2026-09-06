@@ -138,6 +138,7 @@ export type LearningView = {
 		unconditioned: number;
 		unpaired: number;
 		portfolioUnavailable: number;
+		targetUnavailable?: number;
 	};
 	at: string;
 	symbol: string;

@@ -265,10 +265,38 @@ func TestModelAbort(t *testing.T) {
 			So(reading.Samples, ShouldEqual, 0)
 			So(reading.Defined, ShouldBeFalse)
 		}
-		So(model.epoch, ShouldEqual, 0)
+		So(model.contexts["symbol"].epoch, ShouldEqual, 0)
+		So(model.contexts["global"].epoch, ShouldEqual, 0)
 		So(model.Abort(ticket), ShouldNotBeNil)
 		_, err = model.Resolve(ticket, 99)
 		So(err, ShouldNotBeNil)
+	})
+}
+
+func TestModelResolveScopeRetention(t *testing.T) {
+	Convey("A busy unrelated key does not erase a quiet market's evidence", t, func() {
+		model := NewModel[string, string](8) // Eight local observations per memory span.
+		context := []uint64{1, 2, 3}
+		for _, outcome := range []float64{-1, 1} {
+			So(model.Observe("quiet", context, "enter", outcome, 1, "global"), ShouldBeNil)
+		}
+		before := model.Recall("quiet", context, "enter")
+		for range 80 { // Ten memory spans in a different market.
+			ticket, err := model.Issue("busy", context, "wait", 1, "global")
+			So(err, ShouldBeNil)
+			_, err = model.Resolve(ticket, 0)
+			So(err, ShouldBeNil)
+		}
+		So(model.Recall("quiet", context, "enter"), ShouldResemble, before)
+		So(model.Recall("global", context, "enter").EvidenceAuthority, ShouldBeLessThan, before.EvidenceAuthority)
+		So(model.contexts["global"].epoch, ShouldEqual, 82)
+		So(model.contexts["busy"].epoch, ShouldEqual, 80)
+		Convey("Other actions in the same market still age its evidence", func() {
+			for range 80 {
+				So(model.Observe("quiet", nil, "wait", 0, 1, "global"), ShouldBeNil)
+			}
+			So(model.Recall("quiet", context, "enter").EvidenceAuthority, ShouldBeLessThan, before.EvidenceAuthority)
+		})
 	})
 }
 
