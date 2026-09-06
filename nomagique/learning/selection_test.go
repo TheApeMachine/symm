@@ -61,6 +61,21 @@ func TestModelSelect(t *testing.T) {
 			So(err, ShouldNotBeNil)
 		})
 
+		Convey("Custom recall owns the effective path used for sampling", func() {
+			reading := PriorReading{Depth: 2, ContextLength: 5, Defined: true,
+				VarianceDefined: true, Variance: 12, Support: 12, Mean: 1, Authority: 1}
+			recall := func(string, []uint64, int) PriorReading { return reading }
+			_, selected, err := model.Select("first", nil, []int{1}, true, recall)
+			So(err, ShouldBeNil)
+			So(selected, ShouldResemble, reading)
+			So(selected.SamplingVariance(), ShouldEqual, 4)
+
+			Convey("Sampling refuses inconsistent metadata from a custom recall", func() {
+				reading.ContextLength = 1
+				So(func() { _, _, _ = model.Select("first", context, []int{1}, true, recall) }, ShouldPanic)
+			})
+		})
+
 		Convey("Recovered evidence and inflight work use the same prior", func() {
 			model := NewModel[string, int]()
 			for _, action := range []int{0, 1} {

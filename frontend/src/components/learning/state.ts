@@ -19,6 +19,7 @@ export type Point = {
 };
 export type Prior = {
 	Depth?: number;
+	ContextLength?: number;
 	Pending?: number;
 	EvidenceAuthority?: number;
 	Memory?: number;
@@ -169,7 +170,14 @@ export type LearningView = {
 	candidates: Candidate[] | null;
 	influence: Influence[] | null;
 };
+export type AllocationResult = {
+	state: "submitted" | "filled" | "aborted";
+	at: string;
+	detail?: string;
+};
 export type LearningEvent = {
+	allocation?: AllocationResult;
+	horizonSource?: string;
 	targetUnit?: string;
 	absoluteSkillTarget?: number;
 	baselineRate?: number;
@@ -321,6 +329,11 @@ export type AccountMark = {
 	hasFunding: boolean;
 };
 export type AccountLearning = {
+	aborted: number;
+	execution?: AllocationResult;
+	pendingState?: string;
+	horizonNs?: number;
+	horizonSource?: string;
 	state: {
 		mark: AccountMark;
 		cash: string;
@@ -373,6 +386,14 @@ export type CandidateOutcome = {
 	detail?: string;
 };
 export type CapitalView = {
+	warmupUnverified: number;
+	evidence: {
+		source: string;
+		scope: string;
+		virtual: Knowledge;
+		actual: Knowledge;
+		selected: Prior;
+	};
 	choice: { symbol: string; kind: string; power: number };
 	prior: Prior;
 	decisions: number;

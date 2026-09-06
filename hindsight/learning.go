@@ -23,6 +23,8 @@ execution authority the agent held: a decision issued under one authority
 cannot be reinterpreted later under another.
 */
 type LearningEvent struct {
+	Allocation       *AllocationResult       `json:"allocation,omitempty"`
+	HorizonSource    string                  `json:"horizonSource,omitempty"`
 	TargetUnit       string                  `json:"targetUnit,omitempty"`
 	CapitalSymbol    string                  `json:"capitalSymbol,omitempty"`
 	Alternatives     []AllocationAlternative `json:"alternatives,omitempty"`

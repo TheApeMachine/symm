@@ -6,6 +6,7 @@ import (
 	"github.com/theapemachine/symm/strategy"
 	"math/big"
 	"testing"
+	"time"
 )
 
 func TestRecordLifecycle(t *testing.T) {
@@ -73,14 +74,50 @@ func TestRecordLifecycle(t *testing.T) {
 	})
 }
 
+func TestExecutionFeedbackRecordLifecycle(t *testing.T) {
+	Convey("Only the correlated allocation receives execution evidence", t, func() {
+		bridge := stalledBridge(1)
+		receipt := &strategy.AllocationReceipt{}
+		intent := entryIntent("TEST/USD")
+		intent.Allocation = receipt
+		bridge.inFlight.Store("buy", intent)
+		event := hindsight.LifecycleEvent{At: time.Unix(100, 0), ActionCorrelationID: "other", Kind: "execution_terminal", Execution: &hindsight.ExecutionFact{}}
+		bridge.RecordLifecycle(event)
+		So(receipt.Result.Load(), ShouldBeNil)
+		event.ActionCorrelationID, event.Kind = "buy", "execution_submitted"
+		bridge.RecordLifecycle(event)
+		So(receipt.Result.Load().State, ShouldEqual, "submitted")
+		Convey("A final refusal aborts without requiring a realization meter", func() {
+			event.Kind = "execution_refused"
+			bridge.RecordLifecycle(event)
+			So(receipt.Result.Load().State, ShouldEqual, "aborted")
+			_, found := bridge.inFlight.Load("buy")
+			So(found, ShouldBeFalse)
+		})
+		Convey("Zero-fill cancellation cannot train the buy action", func() {
+			event.Kind = "execution_terminal"
+			event.Execution.CumQty = "0"
+			bridge.RecordLifecycle(event)
+			So(receipt.Result.Load().State, ShouldEqual, "aborted")
+		})
+		Convey("A terminal partial fill remains a realized allocation", func() {
+			event.Kind = "execution_terminal"
+			event.Execution.CumQty = "0.5"
+			bridge.RecordLifecycle(event)
+			So(receipt.Result.Load().State, ShouldEqual, "filled")
+		})
+	})
+}
+
 func BenchmarkRecordLifecycle(b *testing.B) {
 	bridge := stalledBridge(1)
 	bridge.AttachRealization(strategy.NewRealizationMeter())
 	intent := entryIntent("TEST/USD")
-	event := hindsight.LifecycleEvent{ActionCorrelationID: "action", Kind: "execution_terminal",
+	event := hindsight.LifecycleEvent{At: time.Unix(100, 0), ActionCorrelationID: "action", Kind: "execution_terminal",
 		Execution: &hindsight.ExecutionFact{AvgPrice: "2", CumQty: "1", OrderStatus: "filled"}}
 	b.ReportAllocs()
 	for b.Loop() {
+		intent.Allocation = &strategy.AllocationReceipt{}
 		bridge.inFlight.Store("action", intent)
 		bridge.RecordLifecycle(event)
 	}

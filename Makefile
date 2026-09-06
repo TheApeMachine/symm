@@ -63,7 +63,7 @@ metric-map:
 	go run ./tools/metricmap signal/metric_map.csv signal/metric_map.json
 
 run: metric-lineage
-	python3 scripts/run.py $(CONFIG_FLAG)
+	go run main.go
 
 experimental:
 	@echo "symm running (Ctrl+C to stop)"

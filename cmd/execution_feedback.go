@@ -39,6 +39,10 @@ func (feedback *executionFeedback) RecordLifecycle(event hindsight.LifecycleEven
 
 	value, found := feedback.inFlight.Load(event.ActionCorrelationID)
 
+	if found {
+		value.(strategy.ExecutionIntent).Allocation.Observe(event)
+	}
+
 	if event.Kind == "execution_submitted" {
 		if found {
 			feedback.submitted.Add(1)

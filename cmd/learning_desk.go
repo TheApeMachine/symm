@@ -92,7 +92,7 @@ failure: the intent is counted as diverged and the account is left alone.
 */
 func (bridge *learningDesk) Submit(intent strategy.ExecutionIntent) error {
 	if intent.Quantity == nil || intent.Quantity.Sign() <= 0 {
-		return nil
+		return bridge.refused(intent, &types.ExecutionRefusal{State: "no longer executable", Detail: "positive requested quantity required"})
 	}
 
 	// A reduction or exit needs inventory to give back; an entry needs the
@@ -100,12 +100,12 @@ func (bridge *learningDesk) Submit(intent strategy.ExecutionIntent) error {
 	// symbol. Both are the same comparison from opposite sides.
 	if (intent.Reduce || intent.Kind == types.ActionScale) != (bridge.desk.Holding(intent.Symbol) > 0) {
 		bridge.diverged.Add(1)
-		return nil
+		return bridge.refused(intent, &types.ExecutionRefusal{State: "account changed", Detail: "account inventory differs from selected allocation"})
 	}
 
 	if !intent.Reduce && intent.Kind != types.ActionEnter && intent.Kind != types.ActionScale {
 		bridge.unsupported.Add(1)
-		return nil
+		return bridge.refused(intent, &types.ExecutionRefusal{State: "no longer executable", Detail: "unsupported allocation action"})
 	}
 
 	select {
@@ -126,7 +126,7 @@ func (bridge *learningDesk) Submit(intent strategy.ExecutionIntent) error {
 			))
 		}
 
-		return nil
+		return bridge.refused(intent, &types.ExecutionRefusal{State: "execution queue full", Detail: "selected allocation was not queued"})
 	}
 }
 
@@ -169,6 +169,7 @@ func (bridge *learningDesk) run(ctx context.Context) {
 					}
 					continue
 				}
+				intent.Allocation.Report(hindsight.AllocationResult{State: "aborted", At: time.Now().UTC(), Detail: err.Error()})
 				bridge.funds.Release(intent.CorrelationID, time.Now().UTC())
 				bridge.failed.Add(1)
 				reason := err.Error()
@@ -194,7 +195,7 @@ func (bridge *learningDesk) place(intent strategy.ExecutionIntent) error {
 
 	if pair.Symbol == "" {
 		bridge.unsupported.Add(1)
-		return nil
+		return &types.ExecutionRefusal{State: "no longer executable", Detail: "venue instrument or executable quantity unavailable"}
 	}
 
 	// The account can move while an intent waits for the venue, so the
@@ -202,7 +203,7 @@ func (bridge *learningDesk) place(intent strategy.ExecutionIntent) error {
 	// actually applies at placement time.
 	if (intent.Reduce || intent.Kind == types.ActionScale) != (bridge.desk.Holding(intent.Symbol) > 0) {
 		bridge.diverged.Add(1)
-		return nil
+		return &types.ExecutionRefusal{State: "account changed", Detail: "account inventory differs from selected allocation"}
 	}
 
 	if _, err := uuid.Parse(intent.CorrelationID); err != nil {
@@ -253,7 +254,7 @@ func (bridge *learningDesk) place(intent strategy.ExecutionIntent) error {
 
 	if quantity == nil || reference == nil {
 		bridge.unsupported.Add(1)
-		return nil
+		return &types.ExecutionRefusal{State: "no longer executable", Detail: "venue instrument or executable quantity unavailable"}
 	}
 
 	decision := types.NewDecision(intent.Kind, intent.Symbol)
@@ -292,6 +293,7 @@ func (bridge *learningDesk) place(intent strategy.ExecutionIntent) error {
 	accepted = true
 
 	if intent.Kind == types.ActionEnter {
+		intent.Allocation.Report(hindsight.AllocationResult{State: "submitted", At: time.Now().UTC()})
 		bridge.submitted.Add(1)
 	}
 

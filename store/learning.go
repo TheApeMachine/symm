@@ -17,12 +17,51 @@ CREATE TABLE IF NOT EXISTS learning_events (
     at TEXT NOT NULL,
     data BLOB NOT NULL
 ) STRICT;
-CREATE INDEX IF NOT EXISTS learning_events_candidate ON learning_events(run_id, json_extract(data, '$.candidateId'));
-CREATE INDEX IF NOT EXISTS learning_events_identity ON learning_events(run_id, json_extract(data, '$.id'), json_extract(data, '$.kind'));
-CREATE INDEX IF NOT EXISTS learning_events_kind ON learning_events(json_extract(data, '$.kind'), id);
-CREATE INDEX IF NOT EXISTS learning_events_run ON learning_events(run_id, id);
-CREATE INDEX IF NOT EXISTS learning_events_symbol ON learning_events(run_id, symbol, id);
 `
+
+/*
+EnsureLearningSchema creates the journal and announces each missing index before
+SQLite scans retained rows. Completed indexes are reused on subsequent starts.
+*/
+func (store *SQLite) EnsureLearningSchema() error {
+	if _, err := store.database.Exec(learningSchema); err != nil {
+		return errnie.Err(errnie.IO, "store: ensure learning journal", err)
+	}
+
+	for _, index := range []struct{ name, columns string }{
+		{"learning_events_candidate", "run_id, json_extract(data, '$.candidateId')"},
+		{"learning_events_identity", "run_id, json_extract(data, '$.id'), json_extract(data, '$.kind')"},
+		{"learning_events_kind", "json_extract(data, '$.kind'), id"},
+		{"learning_events_run", "run_id, id"},
+		{"learning_events_symbol", "run_id, symbol, id"},
+	} {
+		var exists bool
+
+		if err := store.database.QueryRow(
+			`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name=?)`,
+			index.name,
+		).Scan(&exists); err != nil {
+			return errnie.Err(errnie.IO, "store: inspect learning index "+index.name, err)
+		}
+
+		if exists {
+			continue
+		}
+
+		started := time.Now()
+		errnie.Info("store: building learning index " + index.name +
+			"; scanning retained learning journal (one-time migration)")
+
+		if _, err := store.database.Exec("CREATE INDEX IF NOT EXISTS " + index.name +
+			" ON learning_events(" + index.columns + ")"); err != nil {
+			return errnie.Err(errnie.IO, "store: build learning index "+index.name, err)
+		}
+
+		errnie.Info(fmt.Sprintf("store: learning index %s ready after %s", index.name, time.Since(started)))
+	}
+
+	return nil
+}
 
 /*
 WriteLearning records an internal learning event in the existing event journal.

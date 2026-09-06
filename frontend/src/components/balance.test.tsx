@@ -68,6 +68,45 @@ describe("Balance", () => {
 		expect(markup).toContain("974.50");
 	});
 
+	/*
+	The ride is gated on unrealized rather than equity. Equity is above zero the
+	moment the wallet is funded, so gating on it would leave the lambo on
+	permanently and it would stop meaning anything.
+	*/
+	it("hides the lambo while the book is down", () => {
+		equityStore.actions.add(
+			encodeStateWithEquity("1000", "-25.5", "974.5").equity(
+				new EquityFrame(),
+			) as EquityFrame,
+		);
+
+		expect(renderToStaticMarkup(<Balance />)).not.toContain("lambo.png");
+	});
+
+	it("rides the lambo behind equity while the book is up", () => {
+		equityStore.actions.add(
+			encodeStateWithEquity("1000", "25.5", "1025.5").equity(
+				new EquityFrame(),
+			) as EquityFrame,
+		);
+
+		const markup = renderToStaticMarkup(<Balance />);
+
+		expect(markup).toContain("lambo.png");
+		/* Decoration only: it never enters the accessibility tree. */
+		expect(markup).toContain('aria-hidden="true"');
+	});
+
+	it("hides the lambo at exactly flat", () => {
+		equityStore.actions.add(
+			encodeStateWithEquity("1000", "0", "1000").equity(
+				new EquityFrame(),
+			) as EquityFrame,
+		);
+
+		expect(renderToStaticMarkup(<Balance />)).not.toContain("lambo.png");
+	});
+
 	it("keeps the last known valuation when a later frame omits it", () => {
 		equityStore.actions.add(
 			encodeStateWithEquity("1000", "-25.5", "974.5").equity(

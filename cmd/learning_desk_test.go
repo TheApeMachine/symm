@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
@@ -98,5 +99,25 @@ func TestSubmitNeverWaitsOnTheVenue(t *testing.T) {
 			So(meter.Reason(), ShouldContainSubstring, "consecutive execution submission failures exceeded threshold")
 		})
 
+	})
+}
+
+func TestLearningDeskSubmit(t *testing.T) {
+	Convey("Every unqueued allocation reports a terminal fact to its capital owner", t, func() {
+		bridge := stalledBridge(1)
+		intent := entryIntent("TEST/USD")
+		intent.Allocation = &strategy.AllocationReceipt{}
+		Convey("A full worker queue aborts the selected allocation", func() {
+			So(bridge.Submit(entryIntent("OTHER/USD")), ShouldBeNil)
+			So(bridge.Submit(intent), ShouldBeNil)
+			So(intent.Allocation.Result.Load().State, ShouldEqual, "aborted")
+		})
+		Convey("A pre-venue repricing refusal preserves Realization", func() {
+			bridge.record = func(hindsight.LearningEvent) error { return nil }
+			bridge.AttachRealization(strategy.NewRealizationMeter())
+			So(bridge.refused(intent, &types.ExecutionRefusal{State: "repricing failed", Detail: "book moved"}), ShouldBeNil)
+			So(intent.Allocation.Result.Load().State, ShouldEqual, "aborted")
+			So(bridge.realization.AllowsTrading(), ShouldBeTrue)
+		})
 	})
 }

@@ -6,7 +6,7 @@ import type { LearningView, Prior } from "./state";
 export const PriorFacts = ({ prior }: { prior: Prior }) => (
 	<Typography.Mono size="s">
 		{prior.Defined
-			? `${basis(prior.Mean)}/s · variance ${prior.VarianceDefined ? prior.Variance.toExponential(3) : "unestimable"} · support ${amount(prior.Support)} · retained evidence ${prior.EvidenceAuthority === undefined ? "unavailable" : percent(prior.EvidenceAuthority)} · authority ${percent(prior.Authority)} · depth ${prior.Depth ?? "unavailable"} · samples ${prior.Samples} · pending ${prior.Pending ?? "unavailable"}`
+			? `${basis(prior.Mean)}/s · variance ${prior.VarianceDefined ? prior.Variance.toExponential(3) : "unestimable"} · support ${amount(prior.Support)} · retained evidence ${prior.EvidenceAuthority === undefined ? "unavailable" : percent(prior.EvidenceAuthority)} · authority ${percent(prior.Authority)} · depth ${prior.Depth ?? "unavailable"}/${prior.ContextLength ?? "unavailable"} · samples ${prior.Samples} · pending ${prior.Pending ?? "unavailable"}`
 			: "No completed evidence"}
 	</Typography.Mono>
 );

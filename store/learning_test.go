@@ -196,3 +196,24 @@ func BenchmarkSQLiteLearningExperiences(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkSQLiteEnsureLearningSchema(b *testing.B) {
+	repository, err := NewSQLite(b.TempDir() + "/events.sqlite")
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.Cleanup(func() {
+		if err := repository.Close(); err != nil {
+			b.Error(err)
+		}
+	})
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if err := repository.EnsureLearningSchema(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

@@ -50,6 +50,7 @@ func (bridge *learningDesk) admit(intent strategy.ExecutionIntent, cost *types.E
 
 /* refused journals a pre-venue outcome independently from Realization. */
 func (bridge *learningDesk) refused(intent strategy.ExecutionIntent, refusal *types.ExecutionRefusal) error {
+	intent.Allocation.Report(hindsight.AllocationResult{State: "aborted", At: time.Now().UTC(), Detail: refusal.Error()})
 	bridge.refusedCount.Add(1)
 	reason := refusal.Error()
 	bridge.lastRefusal.Store(&reason)

@@ -67,8 +67,13 @@ export const CandidateReview = ({ view }: { view: LearningView | null }) => {
 				>
 					<Typography.Mono>
 						{clock(event.at)} · {event.kind} ·{" "}
-						{event.candidateResult?.state || event.mode}
+						{event.allocation?.state ||
+							event.candidateResult?.state ||
+							event.mode}
 					</Typography.Mono>
+					{event.allocation?.detail && (
+						<Typography.Mono>{event.allocation.detail}</Typography.Mono>
+					)}
 					{event.candidateResult?.detail && (
 						<Typography.Mono>{event.candidateResult.detail}</Typography.Mono>
 					)}

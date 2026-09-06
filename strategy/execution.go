@@ -25,6 +25,7 @@ order can never be attributed to a lower authority than the one that made it.
 type ExecutionIntent struct {
 	Candidate   *EntryCandidate
 	PortfolioID string
+	Allocation  *AllocationReceipt
 	MaximumCost *big.Rat
 	Allowed     *atomic.Bool
 
@@ -213,10 +214,12 @@ func (execution *Execution) Propose(local *LocalLearning, market *learningMarket
 /* Submit hands an already selected intent to the asynchronous account boundary. */
 func (execution *Execution) Submit(intent ExecutionIntent) error {
 	if execution.Desk == nil || (!intent.Reduce && execution.Mode() != ModeTrading) {
+		intent.Allocation.Report(hindsight.AllocationResult{State: "aborted", At: time.Now().UTC(), Detail: "execution authority or account unavailable at dispatch"})
 		return nil
 	}
 
 	if err := execution.Desk.Submit(intent); err != nil {
+		intent.Allocation.Report(hindsight.AllocationResult{State: "aborted", At: time.Now().UTC(), Detail: err.Error()})
 		execution.rejected++
 		execution.lastRejection = errnie.Error(errnie.Err(errnie.IO, "policy intent was not accepted by the account", err))
 		return nil

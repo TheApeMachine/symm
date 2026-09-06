@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/phuslu/log"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight"
 )
@@ -112,6 +113,46 @@ func TestNewSQLite(t *testing.T) {
 					)
 					So(err, ShouldNotBeNil)
 				})
+			})
+		})
+	})
+}
+
+func TestSQLiteEnsureSchema(t *testing.T) {
+	Convey("Given a retained learning journal awaiting its new kind index", t, func() {
+		engine, err := NewSQLite(t.TempDir() + "/events.sqlite")
+		So(err, ShouldBeNil)
+		Reset(func() { So(engine.Close(), ShouldBeNil) })
+		_, err = engine.database.Exec(`INSERT INTO learning_events(run_id,symbol,at,data)
+			VALUES ('retained','TEST/USD','2026-09-06T00:00:00Z',
+			CAST('{"id":1,"kind":"issued","symbol":"TEST/USD"}' AS BLOB))`)
+		So(err, ShouldBeNil)
+		_, err = engine.database.Exec(`DROP INDEX learning_events_kind`)
+		So(err, ShouldBeNil)
+
+		var output bytes.Buffer
+		previous := log.DefaultLogger
+		log.DefaultLogger = log.Logger{Level: log.InfoLevel, Writer: log.IOWriter{Writer: &output}}
+		Reset(func() { log.DefaultLogger = previous })
+
+		Convey("Migration announces the scan and completion while preserving the journal", func() {
+			So(engine.EnsureSchema(), ShouldBeNil)
+			So(output.String(), ShouldContainSubstring, "building learning index learning_events_kind")
+			So(output.String(), ShouldContainSubstring, "learning index learning_events_kind ready")
+			So(output.String(), ShouldNotContainSubstring, "building learning index learning_events_candidate")
+			var payload []byte
+			So(engine.database.QueryRow(`SELECT data FROM learning_events`).Scan(&payload), ShouldBeNil)
+			So(string(payload), ShouldEqual, `{"id":1,"kind":"issued","symbol":"TEST/USD"}`)
+
+			Convey("The next startup reuses the completed index without another scan", func() {
+				output.Reset()
+				So(engine.EnsureSchema(), ShouldBeNil)
+				So(output.String(), ShouldEqual, "")
+				var plan string
+				So(engine.database.QueryRow(`EXPLAIN QUERY PLAN SELECT id FROM learning_events
+					WHERE json_extract(data,'$.kind')='portfolio_resolved' ORDER BY id DESC LIMIT 1`).
+					Scan(new(int), new(int), new(int), &plan), ShouldBeNil)
+				So(plan, ShouldContainSubstring, "learning_events_kind")
 			})
 		})
 	})

@@ -15,7 +15,7 @@ func TestModelIssue(t *testing.T) {
 		identity, err := model.Issue("first", context, action, authority)
 		So(err, ShouldBeNil)
 		So(identity, ShouldNotEqual, 0)
-		So(model.Recall("first", context, action), ShouldResemble, PriorReading{Pending: 1})
+		So(model.Recall("first", context, action), ShouldResemble, PriorReading{Pending: 1, ContextLength: 3})
 
 		Convey("input reuse cannot rewrite an issued context or its authority", func() {
 			context[0] = 9
@@ -247,6 +247,28 @@ func TestModelObserve(t *testing.T) {
 
 		So(model.Observe("test", context, action, 0, -0.1), ShouldNotBeNil)
 		So(model.Observe("test", context, action, 0, 1.5), ShouldNotBeNil)
+	})
+}
+
+func TestModelAbort(t *testing.T) {
+	Convey("An unrealized ticket releases every scope and prefix without manufacturing observations", t, func() {
+		model := NewModel[string, string](32)
+		context := []uint64{1, 2, 3}
+		ticket, err := model.Issue("symbol", context, "buy", 1, "global")
+		So(err, ShouldBeNil)
+		So(model.Recall("global", context, "buy").Pending, ShouldEqual, 1)
+		So(model.Abort(ticket), ShouldBeNil)
+
+		for _, scope := range []string{"global", "symbol"} {
+			reading := model.Recall(scope, context, "buy")
+			So(reading.Pending, ShouldEqual, 0)
+			So(reading.Samples, ShouldEqual, 0)
+			So(reading.Defined, ShouldBeFalse)
+		}
+		So(model.epoch, ShouldEqual, 0)
+		So(model.Abort(ticket), ShouldNotBeNil)
+		_, err = model.Resolve(ticket, 99)
+		So(err, ShouldNotBeNil)
 	})
 }
 

@@ -65,7 +65,21 @@ const AccountPanel = ({
 				breakeven {duration(account.timeToBreakevenNs)}
 			</Typography.Mono>
 			<Typography.Mono size="s">
-				Pending allocation {account.pending || "none"}
+				Pending allocation {account.pending || "none"} · {account.pendingState}
+			</Typography.Mono>
+			{account.pending && (
+				<Typography.Mono size="s">
+					Evaluation{" "}
+					{account.horizonNs === undefined
+						? "unavailable"
+						: duration(account.horizonNs)}{" "}
+					· {account.horizonSource}
+				</Typography.Mono>
+			)}
+			<Typography.Mono size="s">
+				Aborted allocations {account.aborted ?? "unavailable"} · execution{" "}
+				{account.execution?.state || "no confirmation"}
+				{account.execution?.detail && ` · ${account.execution.detail}`}
 			</Typography.Mono>
 			<Sparkline
 				points={(account.trajectory || []).map((mark) => mark.equity)}
@@ -126,6 +140,27 @@ export const CapitalPanel = ({ view }: { view: LearningView | null }) => {
 					demand {rational(capital.demand)}
 				</Typography.Mono>
 				<PriorFacts prior={capital.prior} />
+				{capital.evidence && (
+					<Flex.Column className="gap-2">
+						<Typography.Mono>
+							Selected evidence: {capital.evidence.source || "none"} ·{" "}
+							{capital.evidence.scope || "no scope"}
+						</Typography.Mono>
+						<Typography.Label>
+							Virtual allocation evidence · {capital.evidence.virtual.scope}
+						</Typography.Label>
+						<PriorFacts prior={capital.evidence.virtual.selected} />
+						<Typography.Label>
+							Actual allocation evidence · {capital.evidence.actual.scope}
+						</Typography.Label>
+						<PriorFacts prior={capital.evidence.actual.selected} />
+						<Typography.Mono size="s">
+							Sources retain separate support. Selection uses one evidence
+							level. Historical allocations excluded without confirmed
+							execution: {capital.warmupUnverified}.
+						</Typography.Mono>
+					</Flex.Column>
+				)}
 				<Typography.Mono>
 					Pre-submission refusals {view.execution.refused ?? 0} ·{" "}
 					{view.execution.lastRefusal || "none reported"}

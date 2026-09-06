@@ -61,8 +61,9 @@ func (inspector *LearningInspector) view(symbol string) LearningView {
 		Influence: inspector.attribution.report(inspector.Grid.Columns)}
 
 	view.Warmup = inspector.Warmed
-	view.Capital = CapitalView{Choice: inspector.Capital.LastChoice, Prior: inspector.Capital.LastPrior, Decisions: inspector.Capital.Decisions,
-		Outcomes: append([]hindsight.CandidateResult(nil), inspector.Capital.Candidates.recent...)}
+	view.Capital = CapitalView{Choice: inspector.Capital.LastChoice, Prior: inspector.Capital.LastReading.Selected, Evidence: inspector.Capital.LastReading, Decisions: inspector.Capital.Decisions,
+		WarmupUnverified: inspector.Capital.History.Unverified,
+		Outcomes:         append([]hindsight.CandidateResult(nil), inspector.Capital.Candidates.recent...)}
 	demand := new(big.Rat)
 	for _, candidate := range inspector.Capital.Candidates.current {
 		view.Capital.Candidates = append(view.Capital.Candidates, CandidateView{CandidateRecord: candidate.Record, State: candidate.State, Current: candidate.Current(view.At), Age: view.At.Sub(candidate.Record.At)})
@@ -74,12 +75,22 @@ func (inspector *LearningInspector) view(symbol string) LearningView {
 	view.Capital.Demand = demand.RatString()
 	slices.SortFunc(view.Capital.Candidates, func(left, right CandidateView) int { return strings.Compare(left.Symbol, right.Symbol) })
 	for teacher, output := range map[*AccountTeacher]*AccountLearningView{inspector.Capital.Actual: &view.Capital.Actual, inspector.Capital.Exploration: &view.Capital.Exploration} {
-		*output = AccountLearningView{State: teacher.State, Outcome: teacher.Outcome, Target: teacher.Target, Resolved: teacher.Resolved, MFE: teacher.MFE, MAE: teacher.MAE,
+		*output = AccountLearningView{State: teacher.State, Outcome: teacher.Outcome, Target: teacher.Target, Resolved: teacher.Resolved, Aborted: teacher.Aborted, Execution: teacher.LastExecution, MFE: teacher.MFE, MAE: teacher.MAE,
 			TimeToPositive: teacher.TimeToPositive, TimeToBreakeven: teacher.TimeToBreakeven, Holding: teacher.Holding, Trajectory: append([]EquityMark(nil), teacher.Trajectory...)}
 		output.State.Positions = maps.Clone(teacher.State.Positions)
 
 		if teacher.pending != nil {
 			output.Pending = teacher.pending.ID
+			output.Horizon, output.HorizonSource = teacher.pending.horizon, teacher.pending.horizonSource
+			output.PendingState = "observing WAIT"
+
+			if teacher.pending.receipt != nil {
+				output.PendingState = "awaiting execution"
+			}
+
+			if teacher.pending.execution != nil {
+				output.PendingState = teacher.pending.execution.State
+			}
 		}
 	}
 

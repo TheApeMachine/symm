@@ -12,12 +12,13 @@ import (
 pending allocation or execution authority. It shares the current quantity registry.
 */
 type CapitalHistory struct {
-	knowledge *Knowledge
-	model     *RewardModel
+	knowledge  *Knowledge
+	capital    *CapitalKnowledge
+	Unverified int
 }
 
 /* Warmup uses prospective inputs and separately attached funding-adjusted labels. */
-func (history CapitalHistory) Warmup(events []hindsight.LearningEvent) (int, error) {
+func (history *CapitalHistory) Warmup(events []hindsight.LearningEvent) (int, error) {
 	type identity struct {
 		run hindsight.RunID
 		id  uint64
@@ -32,6 +33,11 @@ func (history CapitalHistory) Warmup(events []hindsight.LearningEvent) (int, err
 			continue
 		}
 
+		if event.Kind == "portfolio_aborted" {
+			delete(pending, key)
+			continue
+		}
+
 		if event.Kind != "portfolio_resolved" {
 			continue
 		}
@@ -42,8 +48,25 @@ func (history CapitalHistory) Warmup(events []hindsight.LearningEvent) (int, err
 			return count, errnie.Err(errnie.Validation, "capital warmup: incomplete allocation experience", nil)
 		}
 
+		if issue.Mode != event.Mode || (issue.Mode != "capital_virtual" && issue.Mode != "capital_account") {
+			return count, errnie.Err(errnie.Validation, "capital warmup: teacher source differs from issue", nil)
+		}
+
 		if issue.PortfolioID == "" || issue.PortfolioID != event.PortfolioID || event.TargetUnit != "return_per_second" || issue.Account == nil || !issue.Account.HasFunding || event.Account == nil || !event.Account.HasFunding {
 			return count, errnie.Err(errnie.Validation, "capital warmup: causal identity, funding and target units required", nil)
+		}
+
+		if issue.At.IsZero() || !event.At.After(issue.At) {
+			return count, errnie.Err(errnie.Validation, "capital warmup: ordered producer times required", nil)
+		}
+
+		if issue.Action != string(types.ActionHold) && (event.Allocation == nil || event.Allocation.State != "filled") {
+			history.Unverified++
+			continue
+		}
+
+		if event.Allocation != nil && (event.Allocation.At.IsZero() || event.Allocation.At.After(event.At)) {
+			return count, errnie.Err(errnie.Validation, "capital warmup: fill confirmation must precede its account outcome", nil)
 		}
 		context := append([]uint64(nil), issue.Context...)
 		regions := 0
@@ -59,7 +82,7 @@ func (history CapitalHistory) Warmup(events []hindsight.LearningEvent) (int, err
 		}
 		action := CapitalAction{Symbol: issue.CapitalSymbol, Kind: types.Action(issue.Action), Power: issue.Power}
 
-		if err := history.model.Observe("capital", context, action, event.Target, issue.Authority); err != nil {
+		if err := history.capital.Observe(issue.Mode, context, action, event.Target, issue.Authority); err != nil {
 			return count, err
 		}
 		count++

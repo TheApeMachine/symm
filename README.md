@@ -65,14 +65,14 @@ Earlier versions of this system decided by committee: advisors deliberated, a pl
 scored candidates, an opportunity layer gated entries, allocation sized them, and a
 stoploss regulator closed them. That whole stack is **gone** — deleted, not unmounted.
 
-| Removed | Replaced by |
-|---|---|
-| `strategy` advisors, planner, opportunity, allocation | one reinforcement `strategy.Agent` |
-| stoploss engine and momentum exits | the agent commands its own exits |
-| `regulator/` online control optimizer | measured skill gates authority instead |
-| `logic.Analyzer`, evidence graph, causal solver | the impulse map and its regions |
-| `types.Thesis` shared coordination object | `types.Envelope` on a streaming workspace |
-| `backtest/` replay driver | forward review — the reviewer runs *behind* the tape |
+| Removed                                               | Replaced by                                          |
+|-------------------------------------------------------|------------------------------------------------------|
+| `strategy` advisors, planner, opportunity, allocation | one reinforcement `strategy.Agent`                   |
+| stoploss engine and momentum exits                    | the agent commands its own exits                     |
+| `regulator/` online control optimizer                 | measured skill gates authority instead               |
+| `logic.Analyzer`, evidence graph, causal solver       | the impulse map and its regions                      |
+| `types.Thesis` shared coordination object             | `types.Envelope` on a streaming workspace            |
+| `backtest/` replay driver                             | forward review — the reviewer runs *behind* the tape |
 
 The reason is singular: a second mechanism that could open or close a position is a
 second policy, learning nothing and contradicting the one whose outcomes are being
@@ -174,19 +174,19 @@ The governing test, from [`signal/README.md`](signal/README.md):
 Eleven signals fill the canonical measurement slots the grid consumes. Their estimators
 derive windows and scales from observed data rather than sharing fixed horizons.
 
-| Signal | Inputs | Measures |
-|---|---|---|
-| `correlation` | ticker | Asynchronous signed return correlation, dependence magnitude, covariance and temporal overlap between supplied price paths. |
-| `cvd` | trade, ticker | Executed aggressive flow — quantity, notional, one-sidedness, execution rate — against contemporaneous midpoint response. |
-| `depthflow` | L3 | How displayed depth is distributed bid/ask and how it is added, removed and redistributed through time. |
-| `derivatives` | futures | Open interest and its change, derivative/reference basis, basis drift, and aligned derivative vs reference returns. |
-| `hawkes` | trade | Arrival counts and rates, conditional buy/sell intensities, background rates, self- and cross-excitation, stability. |
-| `leadlag` | ticker | Temporal alignment of two return paths: dependence at zero lag, at explicit shifts, and the best shift found. |
-| `liquidity` | ticker, book | Displayed executable capacity at touch, the cost separating those prices, and divergence from the symbol's own causal baseline. |
-| `morphology` | L3 | Book shape as geometry — Wasserstein distance and worst local disagreement between sides, concentration, entropy. |
-| `pumpdump` | trade, L3 | Volume-clocked tape activity, spread structure and midpoint response. (The package name is legacy; "pump" and "dump" are interpretations, not measurements.) |
-| `sentiment` | ticker | Cross-sectional cohort state: per-member returns, advance/decline participation, signed breadth, directional agreement. |
-| `toxicity` | ticker, trade, L3 | What happened to previously displayed touch liquidity — executed, price-moved-away, withdrawn or replenished beyond what fills explain. |
+| Signal        | Inputs            | Measures                                                                                                                                                     |
+|---------------|-------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `correlation` | ticker            | Asynchronous signed return correlation, dependence magnitude, covariance and temporal overlap between supplied price paths.                                  |
+| `cvd`         | trade, ticker     | Executed aggressive flow — quantity, notional, one-sidedness, execution rate — against contemporaneous midpoint response.                                    |
+| `depthflow`   | L3                | How displayed depth is distributed bid/ask and how it is added, removed and redistributed through time.                                                      |
+| `derivatives` | futures           | Open interest and its change, derivative/reference basis, basis drift, and aligned derivative vs reference returns.                                          |
+| `hawkes`      | trade             | Arrival counts and rates, conditional buy/sell intensities, background rates, self- and cross-excitation, stability.                                         |
+| `leadlag`     | ticker            | Temporal alignment of two return paths: dependence at zero lag, at explicit shifts, and the best shift found.                                                |
+| `liquidity`   | ticker, book      | Displayed executable capacity at touch, the cost separating those prices, and divergence from the symbol's own causal baseline.                              |
+| `morphology`  | L3                | Book shape as geometry — Wasserstein distance and worst local disagreement between sides, concentration, entropy.                                            |
+| `pumpdump`    | trade, L3         | Volume-clocked tape activity, spread structure and midpoint response. (The package name is legacy; "pump" and "dump" are interpretations, not measurements.) |
+| `sentiment`   | ticker            | Cross-sectional cohort state: per-member returns, advance/decline participation, signed breadth, directional agreement.                                      |
+| `toxicity`    | ticker, trade, L3 | What happened to previously displayed touch liquidity — executed, price-moved-away, withdrawn or replenished beyond what fills explain.                      |
 
 Mathematical specifications live beside each implementation in `signal/<name>/README.md`.
 The measurement contract itself is [`signal/README.md`](signal/README.md), and the
@@ -196,12 +196,12 @@ metric→category mapping is generated into `signal/metric_map.json` by `make me
 
 Four stateful solvers are mounted directly in the workloads that produce their inputs.
 
-| Solver | Output |
-|---|---|
-| [`category`](logic/category/) | Cross-signal hypotheses from metric support, opposition, and missing evidence — a dimensionality reduction over the measurement set. |
-| [`cognition`](logic/cognition/) | DMT-backed episodic sequences, prefix-tree activations and cognitive paths. |
-| [`resonance`](logic/resonance/) | Per-symbol predictive-coding state and an online forward-return forecast with a Student-t predictive distribution. |
-| [`manifold`](logic/manifold/) | A GPU (Metal) fluid readout of the visible L3 order population, with Hawkes excitation injected into the oscillators. |
+| Solver                          | Output                                                                                                                               |
+|---------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
+| [`category`](logic/category/)   | Cross-signal hypotheses from metric support, opposition, and missing evidence — a dimensionality reduction over the measurement set. |
+| [`cognition`](logic/cognition/) | DMT-backed episodic sequences, prefix-tree activations and cognitive paths.                                                          |
+| [`resonance`](logic/resonance/) | Per-symbol predictive-coding state and an online forward-return forecast with a Student-t predictive distribution.                   |
+| [`manifold`](logic/manifold/)   | A GPU (Metal) fluid readout of the visible L3 order population, with Hawkes excitation injected into the oscillators.                |
 
 The manifold steps on its own goroutine and publishes itself to the dashboard through a
 viewer; it is never published from the workspace's own step.
@@ -384,12 +384,12 @@ ledger is external to this process; it is not an in-memory fake exchange.
 
 `trading.model: real` routes account operations and orders to Kraken.
 
-| Environment variable | Purpose |
-|---|---|
-| `KRAKEN_API_KEY` | Kraken API public key. |
-| `KRAKEN_API_SECRET` | Kraken API secret consumed by the SDK. |
-| `SYMM_PPROF` | Enables the pprof listener even when config disables it. |
-| `DATURA_INSPECT` | Enables DMT/datura inspection output. |
+| Environment variable | Purpose                                                  |
+|----------------------|----------------------------------------------------------|
+| `KRAKEN_API_KEY`     | Kraken API public key.                                   |
+| `KRAKEN_API_SECRET`  | Kraken API secret consumed by the SDK.                   |
+| `SYMM_PPROF`         | Enables the pprof listener even when config disables it. |
+| `DATURA_INSPECT`     | Enables DMT/datura inspection output.                    |
 
 There is no automatic `SYMM_*` mapping for Viper configuration; use a YAML file for
 everything else.
@@ -488,31 +488,31 @@ lower-frequency state.
 
 [`ui.Hub`](ui/hub.go) serves on `127.0.0.1:8765`:
 
-| Endpoint | Purpose |
-|---|---|
-| `ws://…/ws` | JSON state and telemetry stream, plus focus-symbol commands. |
-| `POST …/webrtc/manifold` | Non-trickle WebRTC signaling for binary manifold frames. |
-| `GET …/learning` | Coherent on-demand agent state for the selected symbol. |
-| `GET …/learning/skill` | Current skill reading and mode. |
-| `GET …/learning/events` | The run's durable decision journal. |
-| `GET …/trades` | Completed round trips. |
-| `GET …/hindsight/*` | Runs, captures, states, gaps, envelopes, lifecycle, timeline, resident state, metric map. |
+| Endpoint                 | Purpose                                                                                   |
+|--------------------------|-------------------------------------------------------------------------------------------|
+| `ws://…/ws`              | JSON state and telemetry stream, plus focus-symbol commands.                              |
+| `POST …/webrtc/manifold` | Non-trickle WebRTC signaling for binary manifold frames.                                  |
+| `GET …/learning`         | Coherent on-demand agent state for the selected symbol.                                   |
+| `GET …/learning/skill`   | Current skill reading and mode.                                                           |
+| `GET …/learning/events`  | The run's durable decision journal.                                                       |
+| `GET …/trades`           | Completed round trips.                                                                    |
+| `GET …/hindsight/*`      | Runs, captures, states, gaps, envelopes, lifecycle, timeline, resident state, metric map. |
 
 The frontend is a React 19 / TanStack Start terminal on port 3000.
 
-| Surface | What it shows |
-|---|---|
-| `/` Dashboard | Equity, balances, positions, queue depths, system telemetry. |
-| `/learning` | The agent: impulse map, regions, candidates, per-lane wallets, skill panel, forward review, metric influence, and the live decision journal. |
-| `/hindsight` | Run and capture browser, episode timeline, state inspector, position index, comparison view. |
-| `/fluid` | Live L3 manifold: particle fields and pressure maps over WebRTC. |
-| `/signals` | Per-signal metric timeseries and estimator state. |
-| `/xray` | Resonance hidden state and prequential skill history. |
-| `/cortex` | DMT prefix-tree activations and episodic paths. |
-| `/graph`, `/influence`, `/lineage` | Relationship, influence and metric-lineage views. |
-| `/journal` | Completed round trips and realized PnL. |
-| `/allocation` | Sizing and exposure. |
-| `/diagnostics` | Live pipeline topology, per-stage and per-queue health and latency. |
+| Surface                            | What it shows                                                                                                                                |
+|------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| `/` Dashboard                      | Equity, balances, positions, queue depths, system telemetry.                                                                                 |
+| `/learning`                        | The agent: impulse map, regions, candidates, per-lane wallets, skill panel, forward review, metric influence, and the live decision journal. |
+| `/hindsight`                       | Run and capture browser, episode timeline, state inspector, position index, comparison view.                                                 |
+| `/fluid`                           | Live L3 manifold: particle fields and pressure maps over WebRTC.                                                                             |
+| `/signals`                         | Per-signal metric timeseries and estimator state.                                                                                            |
+| `/xray`                            | Resonance hidden state and prequential skill history.                                                                                        |
+| `/cortex`                          | DMT prefix-tree activations and episodic paths.                                                                                              |
+| `/graph`, `/influence`, `/lineage` | Relationship, influence and metric-lineage views.                                                                                            |
+| `/journal`                         | Completed round trips and realized PnL.                                                                                                      |
+| `/allocation`                      | Sizing and exposure.                                                                                                                         |
+| `/diagnostics`                     | Live pipeline topology, per-stage and per-queue health and latency.                                                                          |
 
 The browser sends the selected focus symbol back to the backend, so detailed telemetry is
 gated to the active market rather than broadcast for every pair.
@@ -540,11 +540,11 @@ per-entry quote-notional ceiling; and pprof disabled. See
 
 Runtime files under `system.data_path`:
 
-| File | Purpose |
-|---|---|
-| `events.sqlite` | Raw captures, manifests, witnesses, lifecycle and `learning_events`. |
-| `positions.sqlite` | Persisted position and completed-trade state. |
-| nonce state | Monotonic Kraken nonce continuity across restarts. |
+| File               | Purpose                                                              |
+|--------------------|----------------------------------------------------------------------|
+| `events.sqlite`    | Raw captures, manifests, witnesses, lifecycle and `learning_events`. |
+| `positions.sqlite` | Persisted position and completed-trade state.                        |
+| nonce state        | Monotonic Kraken nonce continuity across restarts.                   |
 
 ### What survives a restart
 
@@ -632,26 +632,26 @@ pnpm bench            # Vitest benchmarks
 
 ## Repository map
 
-| Path | Responsibility |
-|---|---|
-| `main.go`, `cmd/` | Cobra entrypoint, config loading, system assembly, grid/workload nodes, learning desk, forward reviewer, Hindsight CLI tools. |
-| `kraken/` | Kraken wire models and normalized exchange payloads. |
-| `kraken/websocket/` | Public/private/futures/L3 transport, subscriptions, nonce management, paper routing, raw capture hooks. |
-| `types/` | Envelope, measurement, action, decision, cognition, holding, phase and UI types. |
-| `signal/` | The eleven numerical conditioners, their specs and the metric map. |
-| `logic/` | Category, cognition, resonance and manifold solvers. |
-| `strategy/` | The learning agent: impulse consumption, virtual lanes, reward, skill meter, realization veto, execution intents, forward review, attribution. |
-| `broker/` | Instruments, price and fee economics, wallet, desk, positions, persistence, recovery. |
-| `hindsight/` | Capture identity, sequencing, manifests, witnesses, episodes, replay, integrity, validation. |
-| `store/` | SQLite engine, ordered capture writer, async witness writer, learning journal, repositories. |
-| `nomagique/` | Embedded numeric library (composed primitives, learning grid, physics, estimators). |
-| `telemetry/` | FlatBuffers schema and generated Go bindings. |
-| `ui/` | Dashboard WebSocket, HTTP inspection routes, WebRTC manifold transport. |
-| `frontend/` | React/TanStack terminal and its stores. |
-| `tests/` | Deterministic Level 3 market model and fixtures. |
-| `system/` | Runtime configuration and pipeline diagnostics. |
-| `tools/` | Metric lineage and metric map generators. |
-| `specs/` | Design contracts, research notes and reviews (some historical). |
+| Path                | Responsibility                                                                                                                                 |
+|---------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
+| `main.go`, `cmd/`   | Cobra entrypoint, config loading, system assembly, grid/workload nodes, learning desk, forward reviewer, Hindsight CLI tools.                  |
+| `kraken/`           | Kraken wire models and normalized exchange payloads.                                                                                           |
+| `kraken/websocket/` | Public/private/futures/L3 transport, subscriptions, nonce management, paper routing, raw capture hooks.                                        |
+| `types/`            | Envelope, measurement, action, decision, cognition, holding, phase and UI types.                                                               |
+| `signal/`           | The eleven numerical conditioners, their specs and the metric map.                                                                             |
+| `logic/`            | Category, cognition, resonance and manifold solvers.                                                                                           |
+| `strategy/`         | The learning agent: impulse consumption, virtual lanes, reward, skill meter, realization veto, execution intents, forward review, attribution. |
+| `broker/`           | Instruments, price and fee economics, wallet, desk, positions, persistence, recovery.                                                          |
+| `hindsight/`        | Capture identity, sequencing, manifests, witnesses, episodes, replay, integrity, validation.                                                   |
+| `store/`            | SQLite engine, ordered capture writer, async witness writer, learning journal, repositories.                                                   |
+| `nomagique/`        | Embedded numeric library (composed primitives, learning grid, physics, estimators).                                                            |
+| `telemetry/`        | FlatBuffers schema and generated Go bindings.                                                                                                  |
+| `ui/`               | Dashboard WebSocket, HTTP inspection routes, WebRTC manifold transport.                                                                        |
+| `frontend/`         | React/TanStack terminal and its stores.                                                                                                        |
+| `tests/`            | Deterministic Level 3 market model and fixtures.                                                                                               |
+| `system/`           | Runtime configuration and pipeline diagnostics.                                                                                                |
+| `tools/`            | Metric lineage and metric map generators.                                                                                                      |
+| `specs/`            | Design contracts, research notes and reviews (some historical).                                                                                |
 
 ### Adding or changing a signal
 
@@ -689,6 +689,8 @@ pnpm bench            # Vitest benchmarks
 ![Image of S.Y.M.M. Terminal](terminal5.png)
 
 ![Image of S.Y.M.M. Terminal](terminal6.png)
+
+![Image of S.Y.M.M. Terminal](terminal8.png)
 
 ---
 

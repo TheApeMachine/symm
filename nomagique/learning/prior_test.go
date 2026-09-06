@@ -190,6 +190,26 @@ func TestPriorReading(t *testing.T) {
 	})
 }
 
+func TestPriorReadingSamplingVariance(t *testing.T) {
+	Convey("Specificity debt belongs to the context that supplied the reading", t, func() {
+		reading := PriorReading{Variance: 12, Support: 12, Depth: 2, ContextLength: 2}
+		So(reading.SamplingVariance(), ShouldEqual, 1)
+
+		Convey("A candidate with four additional unmatched tokens has fivefold sampling variance", func() {
+			reading.ContextLength = 6
+			So(reading.SamplingVariance(), ShouldAlmostEqual, 5)
+		})
+		Convey("A recovered full path has no specificity debt", func() {
+			reading.ContextLength, reading.Depth = 6, 6
+			So(reading.SamplingVariance(), ShouldEqual, 1)
+		})
+		Convey("The denominator does not assert less than one observation", func() {
+			reading.ContextLength = 20
+			So(reading.SamplingVariance(), ShouldEqual, 12)
+		})
+	})
+}
+
 func BenchmarkPriorObserve(b *testing.B) {
 	prior := &Prior{}
 	values := [...]float64{-2, 4, 10, -8}

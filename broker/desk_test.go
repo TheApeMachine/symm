@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"errors"
 	"sync"
 	"testing"
 
@@ -9,6 +10,19 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/types"
 )
+
+func TestDeskExecute(t *testing.T) {
+	Convey("An entry racing an existing lot is explicitly refused", t, func() {
+		desk, position := saturatedPosition(t)
+		err := desk.Execute(position.Decision)
+		var refusal *types.ExecutionRefusal
+		So(errors.As(err, &refusal), ShouldBeTrue)
+		So(refusal.State, ShouldEqual, "account changed")
+		stored, found := desk.positions.Load("TEST/USD")
+		So(found, ShouldBeTrue)
+		So(stored, ShouldEqual, position)
+	})
+}
 
 /*
 saturatedPosition builds a Position whose guardian transport is unavailable —

@@ -348,10 +348,10 @@ func (store *SQLite) EnsureSchema() error {
 		return err
 	}
 
-	// The learning journal shares this database and writer, with its own small
-	// index. Creating a partial index on raw captures would scan the entire tape.
-	if _, err := store.database.Exec(learningSchema); err != nil {
-		return errnie.Err(errnie.IO, "store: ensure learning journal", err)
+	// Missing learning indexes scan retained journal rows. Announce each build
+	// before it starts so a large migration cannot look like a dead startup.
+	if err := store.EnsureLearningSchema(); err != nil {
+		return err
 	}
 
 	if err := store.migrateEventEncoding(); err != nil {

@@ -7,7 +7,7 @@ import (
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/hindsight"
 )
 
 /* portfolioPosition retains one lot, its last executable mark and its next local reduction. */
@@ -26,6 +26,7 @@ type VirtualPortfolio struct {
 	positions  map[string]*portfolioPosition
 	initial    *decimal.Decimal
 	pending    *EntryCandidate
+	receipt    *AllocationReceipt
 	version    uint64
 	marked     big.Rat
 	scratch    big.Rat
@@ -41,11 +42,11 @@ func NewVirtualPortfolio(initial *decimal.Decimal) *VirtualPortfolio {
 }
 
 /* Allocate commits an executable candidate only once against this account's finite cash. */
-func (portfolio *VirtualPortfolio) Allocate(candidate *EntryCandidate) bool {
+func (portfolio *VirtualPortfolio) Allocate(candidate *EntryCandidate, receipt *AllocationReceipt) bool {
 	if portfolio.pending != nil || candidate.cost.Cmp(&portfolio.cash) > 0 {
 		return false
 	}
-	portfolio.pending = candidate
+	portfolio.pending, portfolio.receipt = candidate, receipt
 	return true
 }
 
@@ -65,10 +66,17 @@ func (portfolio *VirtualPortfolio) Step(local *LocalLearning, market *learningMa
 			portfolio.positions[market.symbol] = position
 		}
 		position.wallet.cash.Set(&portfolio.cash)
+		portfolio.scratch.Set(&position.wallet.quantity)
 		position.wallet.fill(book, candidate.action, candidate.quantity, &candidate.ladder)
+		result := hindsight.AllocationResult{State: "aborted", At: market.at, Detail: "no surviving executable depth filled the virtual allocation"}
+
+		if position.wallet.quantity.Cmp(&portfolio.scratch) > 0 {
+			result.State, result.Detail = "filled", ""
+		}
+		portfolio.receipt.Report(result)
 		portfolio.cash.Set(&position.wallet.cash)
 		position.wallet.cash.SetInt64(0)
-		portfolio.pending = nil
+		portfolio.pending, portfolio.receipt = nil, nil
 		portfolio.inventory = maps.Clone(portfolio.inventory)
 		portfolio.inventory[market.symbol] = position.wallet.quantity.RatString()
 	}
@@ -148,6 +156,3 @@ func (portfolio *VirtualPortfolio) Snapshot(at time.Time) AccountState {
 
 	return state
 }
-
-/* RewardModel is shared only by finite-capital experiments and actual allocation decisions. */
-type RewardModel = learning.Model[string, CapitalAction]

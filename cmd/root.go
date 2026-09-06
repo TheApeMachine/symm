@@ -129,6 +129,8 @@ var (
 			// origin kind (channel/feed) and endpoint. Nothing else is recorded
 			// here — raw capture is the irreducible stream, not a re-serialized
 			// copy of pipeline state.
+			storageStarted := time.Now()
+			errnie.Info("store: opening retained database " + filepath.Join(dataPath, "events.sqlite"))
 			storageEngine, err := store.NewSQLite(filepath.Join(
 				dataPath,
 				"events.sqlite",
@@ -142,6 +144,7 @@ var (
 				))
 			}
 
+			errnie.Info(fmt.Sprintf("store: database ready after %s", time.Since(storageStarted)))
 			defer storageEngine.Close()
 
 			// The Hindsight inspection reads (runs / captures / persisted states)
@@ -402,7 +405,7 @@ var (
 				if err != nil {
 					return err
 				}
-				errnie.Info(fmt.Sprintf("capital: warmed %d complete allocation experiences; account authority remains cold", capitalWarmed))
+				errnie.Info(fmt.Sprintf("capital: warmed %d complete allocation experiences; skipped %d without confirmed execution; account authority remains cold", capitalWarmed, learner.Capital.History.Unverified))
 			}
 
 			// Forward testing, not back testing: the reviewer runs behind the

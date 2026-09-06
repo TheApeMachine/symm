@@ -178,8 +178,25 @@ func (model *Model[Key, Action]) Resolve(identity uint64, outcome float64) (Prio
 	// them while this one is still too sparse to say anything.
 	reading := pending.priors[len(pending.priors)-1].Reading(model.epoch)
 	reading.Depth = pending.depth
+	reading.ContextLength = pending.depth
 
 	return reading, nil
+}
+
+/* Abort releases an unrealized action without creating samples or advancing evidence age. */
+func (model *Model[Key, Action]) Abort(identity uint64) error {
+	pending, exists := model.pending[identity]
+
+	if !exists {
+		return errnie.Err(errnie.Validation, "model: action was not issued or is already finished", nil)
+	}
+
+	for _, prior := range pending.priors {
+		prior.pending--
+	}
+
+	delete(model.pending, identity)
+	return nil
 }
 
 /*
@@ -201,7 +218,7 @@ func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action
 	node := model.contexts[key]
 
 	if node == nil {
-		return PriorReading{}
+		return PriorReading{ContextLength: len(context)}
 	}
 
 	reading := PriorReading{}
@@ -209,6 +226,7 @@ func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action
 	if prior := node.priors[action]; prior != nil {
 		reading = prior.Reading(model.epoch)
 	}
+	reading.ContextLength = len(context)
 
 	used := make([]bool, len(context))
 	depth := 0
@@ -263,6 +281,7 @@ func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action
 		if (deeper.VarianceDefined || !reading.VarianceDefined) &&
 			deeper.EvidenceAuthority >= reading.EvidenceAuthority {
 			deeper.Depth = depth
+			deeper.ContextLength = len(context)
 			reading = deeper
 		}
 	}

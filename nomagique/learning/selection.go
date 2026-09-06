@@ -63,24 +63,7 @@ func (model *Model[Key, Action]) Select(
 		}
 
 		if explore {
-			effectiveSupport := prior.Support
-
-			if len(context) > 0 && prior.Depth < len(context) {
-				depthGap := float64(len(context) - prior.Depth)
-				effectiveSupport = prior.Support / (1.0 + depthGap)
-			}
-
-			if effectiveSupport < 1.0 {
-				effectiveSupport = 1.0
-			}
-
-			variance := prior.Variance
-
-			if variance < 0 {
-				variance = 0
-			}
-
-			score += rand.NormFloat64() * math.Sqrt(variance/effectiveSupport)
+			score += rand.NormFloat64() * math.Sqrt(prior.SamplingVariance())
 		}
 
 		if score > best {

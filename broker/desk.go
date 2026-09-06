@@ -582,7 +582,7 @@ func (desk *Desk) Execute(decision types.Decision) (err error) {
 			position, valid := found.(*Position)
 
 			if valid && position != nil && position.status() != types.CLOSED {
-				return nil
+				return &types.ExecutionRefusal{State: "account changed", Detail: "an active lot already exists for entry"}
 			}
 		}
 

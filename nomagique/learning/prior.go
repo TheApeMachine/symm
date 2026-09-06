@@ -70,6 +70,8 @@ type PriorReading struct {
 	// is the key's unconditioned evidence; the caller's full context length is
 	// the most specific answer available.
 	Depth int
+	// ContextLength is the full path requested by the recall that supplied Depth.
+	ContextLength int
 	// Pending belongs to the same interned prior as Samples and Depth.
 	// Exploration must not count tickets from a different lookup path.
 	Pending           uint64
@@ -83,6 +85,21 @@ type PriorReading struct {
 	EvidenceAuthority float64 // Retained authority-weighted input authority, independent of reward.
 	Authority         float64
 	Memory            float64
+}
+
+/*
+SamplingVariance applies the existing specificity debt to this reading's own
+lookup path. Each unmatched context token dilutes effective support; one
+observation is the existing lower bound on the sampling denominator.
+*/
+func (reading PriorReading) SamplingVariance() float64 {
+	if reading.Depth > reading.ContextLength {
+		panic("prior: matched depth exceeds requested context length")
+	}
+
+	gap := float64(reading.ContextLength - reading.Depth)
+	support := max(1, reading.Support/(1+gap))
+	return reading.Variance / support
 }
 
 /*
