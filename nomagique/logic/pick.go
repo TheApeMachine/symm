@@ -1,32 +1,45 @@
 package logic
 
 import (
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-Pick routes all weight (1.0) to a chosen branch index, setting all other branch weights to 0.0.
-*/
+// Pick selects between the held candidate and each arriving candidate through
+// a configured predicate. An empty run yields an empty selection, not stale data.
+// The result is a collection of zero or one Primitive; Spread delivers it.
 type Pick struct {
-	Index int
+	core.PrimitiveError
+	predicate, seed, current core.Primitive
 }
 
-func (pick Pick) Route(number types.Number) (types.Number, types.Number, types.Number, types.Number) {
-	if pick.Index == 0 {
-		return 1, 0, 0, 0
-	}
-
-	if pick.Index == 1 {
-		return 0, 1, 0, 0
-	}
-
-	if pick.Index == 2 {
-		return 0, 0, 1, 0
-	}
-
-	if pick.Index == 3 {
-		return 0, 0, 0, 1
-	}
-
-	return 0, 0, 0, 0
+func NewPick(predicate core.Primitive) *Pick {
+	return &Pick{current: store.NewRetained(nil), predicate: predicate, seed: transport.NewIO(core.From([]core.Primitive{}))}
 }
+func (pick *Pick) Next(in core.Primitive) core.Primitive {
+	result := core.Yield(
+		pick.seed,
+		in,
+		func(held []core.Primitive, value core.Primitive) []core.Primitive {
+			if len(held) == 0 {
+				return []core.Primitive{value}
+			}
+			selected := false
+			core.Yield(
+				transport.NewIO(core.From(false)),
+				transport.NewApply(pick.predicate, transport.NewIO(core.From([]core.Primitive{held[0], value}))),
+				func(_, v bool) bool { selected = v; return v },
+				pick,
+			)
+			if selected {
+				return []core.Primitive{value}
+			}
+			return held
+		},
+		pick,
+	)
+	transport.NewDiscard().Next(transport.NewApply(pick.current, transport.NewIO(result)))
+	return result
+}
+func (pick *Pick) Read() any { return core.To[any](pick.current) }

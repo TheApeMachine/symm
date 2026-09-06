@@ -2,49 +2,23 @@ package arithmetic
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-Add is the first of the two operations that make arithmetic a field, and it
-accumulates: the constructor configures a register, and every step folds
-whatever the incoming Primitive yields into it. A single Add stepped
-repeatedly is therefore a running sum, which is why the system needs no
-separate summing Primitive.
-
-Subtract is its inverse, and zero is its identity.
-*/
-type Add struct {
+// Add owns one field operation. Configuration supplies the seed stream;
+// recurrence and delivery remain separate Primitives.
+type Add[T core.Numeric] struct {
 	core.PrimitiveError
-	current core.Primitive
+	left, current core.Primitive
 }
 
-/*
-NewAdd configures the register's starting value.
-*/
-func NewAdd(state core.Primitive) *Add {
-	return &Add{
-		current: state,
-	}
+func NewAdd[T core.Numeric](left core.Primitive) *Add[T] {
+	return &Add[T]{current: store.NewRetained(nil), left: left}
 }
-
-/*
-Next folds everything the incoming Primitive yields into the register and
-hands back the result. Offered nothing, Yield answers with the register
-untouched, so a composition can begin here.
-*/
-func (add *Add) Next(in core.Primitive) core.Primitive {
-	add.current = core.Yield(
-		add.current, in, func(held, value float64) float64 {
-			return held + value
-		},
-	)
-
-	return add.current
+func (operation *Add[T]) Next(in core.Primitive) core.Primitive {
+	result := core.Yield(operation.left, in, func(held, value T) T { return held + value }, operation)
+	transport.NewDiscard().Next(transport.NewApply(operation.current, transport.NewIO(result)))
+	return result
 }
-
-/*
-Read surfaces the register for the boundary.
-*/
-func (add *Add) Read() any {
-	return add.current.Read()
-}
+func (operation *Add[T]) Read() any { return core.To[any](operation.current) }

@@ -1,17 +1,12 @@
 package calculus
 
 import (
-	"testing"
-
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"testing"
 )
 
 func TestMaximumNext(t *testing.T) {
-	tests.NewTestTable(
-		tests.NewTestCase(
-			"float64", "maximum", NewMaximum(core.From(-100.0)),
-			tests.WithGenerator[float64](-100, -10, 10, true),
-		),
-	).Run(t)
+	tests.Check(t, tests.Case{Name: "maximum", Seed: -100, Operation: NewMaximum(transport.NewIO(core.From(float64(-100))))})
 }

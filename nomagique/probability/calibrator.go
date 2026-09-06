@@ -1,135 +1,94 @@
 package probability
 
-/*
-CalibratorConfig configures an empirical error calibrator.
-*/
-type CalibratorConfig struct {
-	Window int
-}
+import (
+	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"github.com/theapemachine/symm/nomagique/collection"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/logic"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
+)
 
-/*
-CalibratorOutput reports the empirical percentile rank against retained history.
-*/
-type CalibratorOutput struct {
-	Value float64
-	Ready bool
-	Count int
-}
-
-/*
-Calibrator reports where an incoming error reading falls within a rolling empirical
-distribution of recent observations, expressed as the fraction of retained history
-the reading beats (where smaller error is better). Scoring against the prior window
-ensures an observation cannot inflate its own rank.
-*/
-type Calibrator struct {
-	config  CalibratorConfig
-	samples []float64
-	next    int
-	filled  bool
-}
-
-/*
-NewCalibrator returns an empirical error calibrator.
-If no explicit window is configured, it grows dynamically with observations
-without arbitrary static capacity clamps.
-*/
-func NewCalibrator(configs ...CalibratorConfig) *Calibrator {
-	config := CalibratorConfig{}
-
-	if len(configs) > 0 && configs[0].Window > 0 {
-		config.Window = configs[0].Window
-	}
-
-	var initialCapacity int
-
-	if config.Window > 0 {
-		initialCapacity = config.Window
-	}
-
-	return &Calibrator{
-		config:  config,
-		samples: make([]float64, 0, initialCapacity),
-	}
-}
-
-/*
-Measure scores one reading against the prior window and folds it into the empirical distribution.
-*/
-func (calibrator *Calibrator) Measure(sample float64) (CalibratorOutput, error) {
-	if err := finiteProbability("calibrator", sample); err != nil {
-		return CalibratorOutput{}, err
-	}
-
-	count := calibrator.Count()
-	beaten := 0
-
-	for index := range count {
-		if sample < calibrator.samples[index] {
-			beaten++
-		}
-	}
-
-	if calibrator.config.Window > 0 {
-		if len(calibrator.samples) < calibrator.config.Window {
-			calibrator.samples = append(calibrator.samples, sample)
-		} else {
-			calibrator.samples[calibrator.next] = sample
-		}
-
-		calibrator.next = (calibrator.next + 1) % calibrator.config.Window
-
-		if calibrator.next == 0 {
-			calibrator.filled = true
-		}
-	} else {
-		calibrator.samples = append(calibrator.samples, sample)
-	}
-
-	if count == 0 {
-		return CalibratorOutput{
-			Value: 0,
-			Ready: false,
-			Count: 1,
-		}, nil
-	}
-
-	return CalibratorOutput{
-		Value: float64(beaten) / float64(count),
-		Ready: true,
-		Count: count + 1,
-	}, nil
-}
-
-/*
-Quantile scores one reading against the prior window and returns its empirical percentile.
-*/
-func (calibrator *Calibrator) Quantile(sample float64) float64 {
-	out, err := calibrator.Measure(sample)
-
-	if err != nil {
-		return 0
-	}
-
-	return out.Value
-}
-
-/*
-Reset clears all retained samples.
-*/
-func (calibrator *Calibrator) Reset() {
-	calibrator.samples = calibrator.samples[:0]
-	calibrator.next = 0
-	calibrator.filled = false
-}
-
-/*
-Count reports the number of committed samples currently retained.
-*/
-func (calibrator *Calibrator) Count() int {
-	if calibrator.config.Window > 0 && calibrator.filled {
-		return calibrator.config.Window
-	}
-
-	return len(calibrator.samples)
+// NewCalibrator scores against retained prior errors before appending a sample.
+// Retention is a configured collection transform: identity for all history,
+// Tail for a bounded history, or another composed selection policy.
+func NewCalibrator(retention core.Primitive) core.Primitive {
+	history := store.NewRetained(core.From([]float64{}))
+	sample := store.NewRetained(core.From(0.0))
+	prior := transport.NewApply(transport.NewPipe(
+		transport.NewSpread[float64]()), history,
+	)
+	score := logic.NewGate(
+		transport.NewPipe(
+			transport.NewFan(
+				transport.NewPipe(),
+				transport.NewIO(
+					transport.NewApply(transport.NewPipe(
+						transport.NewSpread[float64](), 
+						equation.NewCount(),
+					), history),
+					store.NewConstant(core.From(0.0)),
+				),
+			),
+			transport.NewCollect[float64](),
+			logic.NewGreater[float64](),
+		),
+		store.NewRecord(
+			transport.NewPipe(
+				equation.NewRatio[float64](
+					transport.NewPipe(
+						prior,
+						transport.NewMap(
+							logic.NewGate(
+								transport.NewPipe(
+									transport.NewFan(
+										transport.NewPipe(),
+										transport.NewIO(
+											transport.NewPipe(),
+											transport.NewApply(sample, nil),
+										),
+									),
+									transport.NewCollect[float64](),
+									logic.NewGreater[float64](),
+								),
+								store.NewConstant(core.From(1.0)),
+								store.NewConstant(core.From(0.0)),
+							),
+						),
+						arithmetic.NewAdd[float64](transport.NewIO(core.From(0.0))),
+					),
+					transport.NewApply(transport.NewPipe(
+						transport.NewSpread[float64](), equation.NewCount(),
+					), history),
+				),
+				store.NewKey("value"),
+			),
+			transport.NewPipe(store.NewConstant(core.From(true)), store.NewKey("ready")),
+			transport.NewPipe(
+				transport.NewApply(transport.NewPipe(
+					transport.NewSpread[float64](), equation.NewCount(),
+				), history),
+				store.NewKey("prior_count"),
+			),
+		),
+		store.NewRecord(
+			transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("value")),
+			transport.NewPipe(store.NewConstant(core.From(false)), store.NewKey("ready")),
+			transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("prior_count")),
+		),
+	)
+	return transport.NewMap(
+		transport.NewPipe(
+			logic.NewGate(logic.NewFinite(), transport.NewPipe(), logic.NewReject(core.ErrShape)),
+			sample,
+			transport.NewFan(
+				transport.NewPipe(),
+				transport.NewIO(score, transport.NewPipe(
+					collection.NewAppend[float64](history),
+					retention, history, transport.NewDiscard(),
+				)),
+			),
+		),
+	)
 }

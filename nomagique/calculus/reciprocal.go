@@ -2,50 +2,24 @@ package calculus
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-Reciprocal is the multiplicative inverse. It is the operation that turns a
-quantity into the thing that cancels it under multiplication, so a
-composition can divide by multiplying.
-*/
+// Reciprocal owns only its numeric operation. The configured left source remains
+// connected; neither a yielded result nor an exhausted run can replace it.
 type Reciprocal struct {
 	core.PrimitiveError
+	left    core.Primitive
 	current core.Primitive
 }
 
-/*
-NewReciprocal configures the register's starting value.
-*/
-func NewReciprocal(state core.Primitive) *Reciprocal {
-	return &Reciprocal{
-		current: state,
-	}
+func NewReciprocal(left core.Primitive) *Reciprocal {
+	return &Reciprocal{current: store.NewRetained(nil), left: left}
 }
-
-/*
-Next transforms the incoming value and holds the result. Offered nothing,
-Yield answers with the register untouched, so a composition can begin here.
-
-Zero has no inverse, and the register stands rather than taking an infinity.
-*/
-func (reciprocal *Reciprocal) Next(in core.Primitive) core.Primitive {
-	reciprocal.current = core.Yield(
-		reciprocal.current, in, func(held, value float64) float64 {
-			if value == 0 {
-				return held
-			}
-
-			return 1 / value
-		},
-	)
-
-	return reciprocal.current
+func (operation *Reciprocal) Next(in core.Primitive) core.Primitive {
+	result := core.Yield(operation.left, in, func(held, value float64) float64 { return 1 / value }, operation)
+	transport.NewDiscard().Next(transport.NewApply(operation.current, transport.NewIO(result)))
+	return result
 }
-
-/*
-Read surfaces the register for the boundary.
-*/
-func (reciprocal *Reciprocal) Read() any {
-	return reciprocal.current.Read()
-}
+func (operation *Reciprocal) Read() any { return core.To[any](operation.current) }

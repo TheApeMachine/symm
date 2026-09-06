@@ -2,44 +2,24 @@ package calculus
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-Negate is the additive inverse. It is the operation that turns a quantity
-into the thing that cancels it, so a composition can subtract by adding.
-*/
+// Negate owns only its numeric operation. The configured left source remains
+// connected; neither a yielded result nor an exhausted run can replace it.
 type Negate struct {
 	core.PrimitiveError
+	left    core.Primitive
 	current core.Primitive
 }
 
-/*
-NewNegate configures the register's starting value.
-*/
-func NewNegate(state core.Primitive) *Negate {
-	return &Negate{
-		current: state,
-	}
+func NewNegate(left core.Primitive) *Negate {
+	return &Negate{current: store.NewRetained(nil), left: left}
 }
-
-/*
-Next transforms the incoming value and holds the result. Offered
-nothing, Yield answers with the register untouched, so a composition can
-begin here.
-*/
-func (negate *Negate) Next(in core.Primitive) core.Primitive {
-	negate.current = core.Yield(
-		negate.current, in, func(held, value float64) float64 {
-			return -value
-		},
-	)
-
-	return negate.current
+func (operation *Negate) Next(in core.Primitive) core.Primitive {
+	result := core.Yield(operation.left, in, func(held, value float64) float64 { return -value }, operation)
+	transport.NewDiscard().Next(transport.NewApply(operation.current, transport.NewIO(result)))
+	return result
 }
-
-/*
-Read surfaces the register for the boundary.
-*/
-func (negate *Negate) Read() any {
-	return negate.current.Read()
-}
+func (operation *Negate) Read() any { return core.To[any](operation.current) }

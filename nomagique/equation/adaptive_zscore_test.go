@@ -1,38 +1,22 @@
-package equation
+package equation_test
 
 import (
+	"github.com/theapemachine/symm/nomagique/algo"
+	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/tests"
 	"math"
 	"testing"
-
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
-func TestAdaptiveZScore(t *testing.T) {
-	Convey("Given an AdaptiveZScore equation", t, func() {
-		eq := &AdaptiveZScore{}
-
-		Convey("On the opening sample, it seeds the baseline and reports zero divergence", func() {
-			z := eq.Step(types.Scalar(0.02))
-
-			So(z, ShouldEqual, 0.0)
-			So(eq.HasPrior(), ShouldBeFalse)
-			So(float64(eq.Baseline()), ShouldEqual, 0.02)
-			So(float64(eq.Ratio()), ShouldEqual, 1.0)
-			So(float64(eq.Divergence()), ShouldEqual, 0.0)
-			So(float64(eq.Maturity()), ShouldEqual, 0.0)
-		})
-
-		Convey("On subsequent samples, it derives divergence and z-score causally from prior moments", func() {
-			eq.Step(types.Scalar(0.02)) // log(0.02)
-			z := eq.Step(types.Scalar(0.01))
-
-			So(eq.HasPrior(), ShouldBeTrue)
-			So(float64(eq.Baseline()), ShouldAlmostEqual, 0.02, 1e-9)
-			So(float64(eq.Ratio()), ShouldAlmostEqual, 0.5, 1e-9)
-			So(float64(eq.Divergence()), ShouldAlmostEqual, math.Log(0.5), 1e-9)
-			So(float64(z), ShouldAlmostEqual, -1.0, 1e-9)
-			So(float64(eq.Maturity()), ShouldAlmostEqual, 0.5, 1e-9)
-		})
-	})
+func TestAdaptiveZScoreNext(t *testing.T) {
+	node := equation.NewAdaptiveZScore(algo.NewWelford())
+	results := tests.Drain(t, node, tests.Values(0.02, 0.01))
+	tests.Sound(t, node)
+	first, second := tests.Fields(t, results[0]), tests.Fields(t, results[1])
+	tests.EqualNumber(t, tests.Number(t, first, "baseline"), 0.02)
+	tests.EqualNumber(t, tests.Number(t, first, "zscore"), 0)
+	tests.EqualNumber(t, tests.Number(t, second, "baseline"), 0.02)
+	tests.EqualNumber(t, tests.Number(t, second, "ratio"), 0.5)
+	tests.EqualNumber(t, tests.Number(t, second, "divergence"), math.Log(0.5))
+	tests.EqualNumber(t, tests.Number(t, second, "zscore"), -1)
 }

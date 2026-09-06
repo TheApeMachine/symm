@@ -2,53 +2,35 @@ package calculus
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"math"
 )
 
-/*
-Sign is the direction transfer, discarding magnitude. It is the complement of
-Absolute: where that answers how far, this answers which way, and composing
-the two recovers the original value.
-*/
+// Sign discards magnitude. NaN remains undefined; infinities have defined signs.
 type Sign struct {
 	core.PrimitiveError
+	left    core.Primitive
 	current core.Primitive
 }
 
-/*
-NewSign configures the register's starting value.
-*/
-func NewSign(state core.Primitive) *Sign {
-	return &Sign{
-		current: state,
-	}
-}
-
-/*
-Next transforms the incoming value and holds the result. Offered
-nothing, Yield answers with the register untouched, so a composition can
-begin here.
-*/
-func (sign *Sign) Next(in core.Primitive) core.Primitive {
-	sign.current = core.Yield(
-		sign.current, in, func(held, value float64) float64 {
-			if value > 0 {
-				return 1
+func NewSign(left core.Primitive) *Sign { return &Sign{current: store.NewRetained(nil), left: left} }
+func (operation *Sign) Next(in core.Primitive) core.Primitive {
+	result := core.Yield(
+		operation.left,
+		in,
+		func(_, value float64) float64 {
+			if math.IsNaN(value) {
+				return value
 			}
-
-			if value < 0 {
-				return -1
+			if value == 0 {
+				return value
 			}
-
-			return 0
+			return math.Copysign(1, value)
 		},
+		operation,
 	)
-
-	return sign.current
+	transport.NewDiscard().Next(transport.NewApply(operation.current, transport.NewIO(result)))
+	return result
 }
-
-/*
-Read surfaces the register for the boundary.
-*/
-func (sign *Sign) Read() any {
-	return sign.current.Read()
-}
+func (operation *Sign) Read() any { return core.To[any](operation.current) }

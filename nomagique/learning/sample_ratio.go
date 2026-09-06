@@ -1,118 +1,101 @@
 package learning
 
 import (
-	"math"
-
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/logic"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-SampleRatioOutput reports calibration ratio state.
-*/
-type SampleRatioOutput struct {
-	Value     float64
-	Predicted float64
-	Actual    float64
-	PeakRatio float64
-	Count     int
-}
-
-/*
-Calibrator tracks calibration sample ratio from predicted-vs-actual pairs.
-*/
-type Calibrator struct {
-	prev      float64
-	minimum   float64
-	maximum   float64
-	peakRatio float64
-	count     int
-}
-
-/*
-SampleRatio returns a typed calibration learner.
-*/
-func SampleRatio() *Calibrator {
-	return &Calibrator{}
-}
-
-/*
-Measure updates calibration ratio from one prediction outcome.
-*/
-func (calibrator *Calibrator) Measure(pair LearningPair) (SampleRatioOutput, error) {
-	predicted, actual, err := validatePair(pair, "sample-ratio")
-
-	if err != nil {
-		return SampleRatioOutput{}, err
-	}
-
-	residual := actual - predicted
-
-	if calibrator.count == 0 {
-		calibrator.minimum = residual
-		calibrator.maximum = residual
-		calibrator.prev = predicted
-		calibrator.count = 1
-	}
-
-	if calibrator.count > 1 {
-		calibrator.minimum = math.Min(calibrator.minimum, residual)
-		calibrator.maximum = math.Max(calibrator.maximum, residual)
-		calibrator.count++
-	}
-
-	if calibrator.count == 1 && residual != calibrator.minimum {
-		calibrator.minimum = math.Min(calibrator.minimum, residual)
-		calibrator.maximum = math.Max(calibrator.maximum, residual)
-		calibrator.count = 2
-	}
-
-	span := calibrator.maximum - calibrator.minimum
-	ratio := actual / predicted
-
-	if actual < predicted {
-		ratio = 1 + actual/predicted
-
-		if ratio < 0 {
-			return SampleRatioOutput{}, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"sample-ratio: loss ratio is negative",
-				nil,
-			))
-		}
-	}
-
-	ceiling := 1.0
-
-	if span > 0 {
-		ceiling = 1 + 1/span
-	}
-
-	if span == 0 && absExact(calibrator.prev) > 0 {
-		ceiling = 1 + 1/absExact(calibrator.prev)
-	}
-
-	if ratio > ceiling {
-		ratio = ceiling
-	}
-
-	if ratio > calibrator.peakRatio {
-		calibrator.peakRatio = ratio
-	}
-
-	calibrator.prev = predicted
-
-	return SampleRatioOutput{
-		Value:     ratio,
-		Predicted: predicted,
-		Actual:    actual,
-		PeakRatio: calibrator.peakRatio,
-		Count:     calibrator.count,
-	}, nil
-}
-
-/*
-Reset clears calibration state.
-*/
-func (calibrator *Calibrator) Reset() {
-	*calibrator = Calibrator{}
+// NewSampleRatio preserves the supplied calibration ratio and observed-range
+// ceiling. Those are model policies, not statistical identities. They are
+// explicit compositions over the shared residual-span update.
+func NewSampleRatio() core.Primitive {
+	memory := store.NewRetained(
+		core.From(
+			map[string]core.Primitive{
+				"count": core.From(0.0), "minimum": core.From(0.0), "maximum": core.From(0.0), "prev": core.From(0.0), "peak_ratio": core.From(0.0),
+			},
+		),
+	)
+	state := transport.NewPipe(store.NewKV[string](memory), memory)
+	return transport.NewMap(
+		logic.NewGate(
+			equation.NewValidPair(),
+			transport.NewPipe(
+				store.NewRecord(
+					transport.NewPipe(),
+					transport.NewPipe(equation.NewDifference[float64](store.NewGet("actual"), store.NewGet("predicted")), store.NewKey("residual")),
+				),
+				state,
+				equation.NewResidualSpan(),
+				store.NewRecord(
+					transport.NewPipe(),
+					transport.NewPipe(
+						logic.NewGate(
+							equation.NewLess[float64](store.NewGet("actual"), store.NewGet("predicted")),
+							equation.NewSum[float64](
+								store.NewConstant(core.From(1.0)),
+								equation.NewRatio[float64](store.NewGet("actual"), store.NewGet("predicted")),
+							),
+							equation.NewRatio[float64](store.NewGet("actual"), store.NewGet("predicted")),
+						),
+						store.NewKey("ratio"),
+					),
+					transport.NewPipe(
+						logic.NewGate(
+							equation.NewGreater[float64](store.NewGet("span"), store.NewConstant(core.From(0.0))),
+							equation.NewSum[float64](
+								store.NewConstant(core.From(1.0)),
+								equation.NewRatio[float64](store.NewConstant(core.From(1.0)), store.NewGet("span")),
+							),
+							equation.NewSum[float64](
+								store.NewConstant(core.From(1.0)),
+								equation.NewRatio[float64](
+									store.NewConstant(core.From(1.0)),
+									transport.NewPipe(store.NewGet("prev"), calculus.NewAbsolute(transport.NewIO(core.From(0.0)))),
+								),
+							),
+						),
+						store.NewKey("ceiling"),
+					),
+				),
+				logic.NewGate(
+					equation.NewAny(
+						equation.NewLessEqual[float64](store.NewGet("predicted"), store.NewGet("actual")),
+						equation.NewLessEqual[float64](store.NewConstant(core.From(0.0)), store.NewGet("ratio")),
+					),
+					transport.NewPipe(
+						store.NewRecord(
+							transport.NewPipe(),
+							transport.NewPipe(
+								logic.NewGate(
+									equation.NewGreater[float64](store.NewGet("ratio"), store.NewGet("ceiling")),
+									store.NewGet("ceiling"),
+									store.NewGet("ratio"),
+								),
+								store.NewKey("value"),
+							),
+						),
+						store.NewRecord(
+							transport.NewPipe(),
+							transport.NewPipe(
+								transport.NewPipe(
+									transport.NewFan(transport.NewPipe(), transport.NewIO(store.NewGet("peak_ratio"), store.NewGet("value"))),
+									calculus.NewMaximum(transport.NewIO(core.From(0.0))),
+								),
+								store.NewKey("peak_ratio"),
+							),
+							transport.NewPipe(store.NewGet("predicted"), store.NewKey("prev")),
+						),
+						state,
+					),
+					logic.NewReject(core.ErrDomain),
+				),
+			),
+			logic.NewReject(core.ErrDomain),
+		),
+	)
 }

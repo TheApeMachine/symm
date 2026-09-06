@@ -1,25 +1,17 @@
-package nomagique
+package nomagique_test
 
 import (
-	"testing"
-
+	"github.com/theapemachine/symm/nomagique"
 	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"testing"
 )
 
-/*
-A nil input means "I have nothing to give you": the first stage answers with
-its own seed, which becomes the fold's base. No special case is needed.
-*/
-func TestNumberFoldsFromTheFirstSeed(t *testing.T) {
-	out := Number(
-		arithmetic.NewAdd(core.From(1.0)),
-		arithmetic.NewAdd(core.From(2.0)),
-		arithmetic.NewAdd(core.From(3.0)),
-		arithmetic.NewAdd(core.From(4.0)),
-	)
-
-	if actual := core.To[float64](out); actual != 10 {
-		t.Fatalf("got %v want 10", actual)
-	}
+func TestNumberIsPrimitive(t *testing.T) {
+	graph := nomagique.Number(arithmetic.NewAdd[float64](transport.NewIO(core.From(2.0))))
+	outer := arithmetic.NewMultiply[float64](transport.NewIO(core.From(3.0)))
+	got := tests.Drain(t, outer, transport.NewApply(graph, transport.NewIO(core.From(5.0))))
+	tests.EqualNumber(t, got[0], 21)
 }

@@ -1,49 +1,26 @@
 package calculus
 
 import (
-	"math"
-
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"math"
 )
 
-/*
-Absolute is the magnitude transfer, discarding direction. It answers how
-far a value sits from zero without saying which way, which is what a
-composition asks for whenever the size of a deviation matters and its sign
-does not.
-*/
+// Absolute owns only its numeric operation. The configured left source remains
+// connected; neither a yielded result nor an exhausted run can replace it.
 type Absolute struct {
 	core.PrimitiveError
+	left    core.Primitive
 	current core.Primitive
 }
 
-/*
-NewAbsolute configures the register's starting value.
-*/
-func NewAbsolute(state core.Primitive) *Absolute {
-	return &Absolute{
-		current: state,
-	}
+func NewAbsolute(left core.Primitive) *Absolute {
+	return &Absolute{current: store.NewRetained(nil), left: left}
 }
-
-/*
-Next transforms the incoming value and holds the result. Offered
-nothing, Yield answers with the register untouched, so a composition can
-begin here.
-*/
-func (absolute *Absolute) Next(in core.Primitive) core.Primitive {
-	absolute.current = core.Yield(
-		absolute.current, in, func(held, value float64) float64 {
-			return math.Abs(value)
-		},
-	)
-
-	return absolute.current
+func (operation *Absolute) Next(in core.Primitive) core.Primitive {
+	result := core.Yield(operation.left, in, func(held, value float64) float64 { return math.Abs(value) }, operation)
+	transport.NewDiscard().Next(transport.NewApply(operation.current, transport.NewIO(result)))
+	return result
 }
-
-/*
-Read surfaces the register for the boundary.
-*/
-func (absolute *Absolute) Read() any {
-	return absolute.current.Read()
-}
+func (operation *Absolute) Read() any { return core.To[any](operation.current) }

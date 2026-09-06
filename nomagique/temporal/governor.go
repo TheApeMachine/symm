@@ -1,48 +1,47 @@
 package temporal
 
 import (
-	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/collection"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// MinimumSampleSizeForDispersion is the universal degrees of freedom limit (n - 1 >= 1).
-const MinimumSampleSizeForDispersion = 2
-
-/*
-Governor manages unbounded adaptive memory expansion and contraction
-from online information stability feedback.
-Fulfills the zero-magic mandate: zero fixed clamps (MaxSamples = 128 eliminated).
-*/
-type Governor struct {
-	Store      store.Store
-	Controller *adaptive.StabilityController
-	Reduce     types.Reduction
-}
-
-func (governor *Governor) Step(number types.Number) types.Number {
-	capacity := 0
-
-	if governor.Controller != nil {
-		capacity = governor.Controller.Step(float64(number))
-	} else {
-		capacity = governor.Store.Adaptive.Step(float64(number))
-	}
-
-	if capacity < MinimumSampleSizeForDispersion {
-		capacity = MinimumSampleSizeForDispersion
-	}
-
-	governor.Store.Buffer = append(governor.Store.Buffer, number)
-
-	if len(governor.Store.Buffer) > capacity {
-		overflow := len(governor.Store.Buffer) - capacity
-		governor.Store.Buffer = governor.Store.Buffer[overflow:]
-	}
-
-	if governor.Reduce != nil && len(governor.Store.Buffer) >= MinimumSampleSizeForDispersion {
-		return governor.Reduce(governor.Store.Buffer)
-	}
-
-	return 0
+// NewGovernor composes an observation-driven capacity, retained tail and
+// reduction. The controller yields a record containing capacity (float64).
+// Neither the store nor reduction knows which policy selected the capacity.
+func NewGovernor(controller, reduction core.Primitive) core.Primitive {
+	history := store.NewRetained(core.From([]float64{}))
+	capacity := store.NewRetained(core.From(2))
+	return transport.NewMap(
+		transport.NewFan(
+			transport.NewPipe(),
+			transport.NewIO(
+				transport.NewPipe(
+					controller,
+					store.NewGet("capacity"),
+					calculus.NewMaximum(transport.NewIO(core.From(2.0))),
+					calculus.NewConvert[float64, int](),
+					capacity,
+					transport.NewDiscard(),
+				),
+				transport.NewPipe(
+					collection.NewAppend[float64](history),
+					collection.NewTail[float64](capacity),
+					history,
+					logic.NewGate(
+						equation.NewGreater[float64](
+							transport.NewPipe(transport.NewSpread[float64](), equation.NewCount()),
+							store.NewConstant(core.From(1.0)),
+						),
+						transport.NewPipe(transport.NewSpread[float64](), reduction),
+						store.NewConstant(core.From(0.0)),
+					),
+				),
+			),
+		),
+	)
 }

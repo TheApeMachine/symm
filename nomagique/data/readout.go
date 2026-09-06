@@ -1,226 +1,70 @@
 package data
 
 import (
-	"math"
-	"strings"
-	"time"
+	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/logic"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-Readout is the common mechanism that protects observations from escaping into
-the rest of the system as naked numbers that merely look meaningful.
-
-Reading a metric means resolving it through the information that determines how
-much authority it deserves: its maturity, its SNR, its validity, and any
-supporting or contradicting evidence. Supports and contradictions are themselves
-Readouts, so their influence is subject to their own quality. A weak corroborating
-observation provides weak corroboration; a mature, high-quality contradiction
-matters substantially more.
-*/
-type Readout struct {
-	Source string    `json:"source"`
-	Label  string    `json:"label"`
-	At     time.Time `json:"at"`
-
-	Raw          float64   `json:"raw"`
-	Normalized   *float64  `json:"normalized,omitempty"`
-	Standardized *float64  `json:"standardized,omitempty"`
-	Unit         Unit      `json:"unit,omitempty"`
-	Timescale    Timescale `json:"timescale,omitempty"`
-
-	Maturity   float64 `json:"maturity"`
-	SNR        float64 `json:"snr"`
-	SNRDefined bool    `json:"snrDefined"`
-	Estimated  bool    `json:"estimated"`
-	Defined    bool    `json:"defined"`
-
-	Supports       []*Readout `json:"supports,omitempty"`
-	Contradictions []*Readout `json:"contradictions,omitempty"`
-
-	Credibility float64 `json:"credibility"`
-}
-
-/*
-NewReadout constructs an initial Readout for a metric with default credibility 1.0.
-*/
-func NewReadout(
-	source string,
-	label string,
-	raw float64,
-	maturity float64,
-	snr float64,
-	snrDefined bool,
-	estimated bool,
-	at time.Time,
-) *Readout {
-	return &Readout{
-		Source:      source,
-		Label:       label,
-		At:          at,
-		Raw:         raw,
-		Maturity:    clamp(maturity, 0.0, 1.0),
-		SNR:         snr,
-		SNRDefined:  snrDefined,
-		Estimated:   estimated,
-		Defined:     true,
-		Credibility: 1.0,
-	}
-}
-
-/*
-WithSupport attaches a corroborating Readout.
-*/
-func (readout *Readout) WithSupport(support *Readout) *Readout {
-	if readout == nil || support == nil {
-		return readout
-	}
-
-	readout.Supports = append(readout.Supports, support)
-
-	return readout
-}
-
-/*
-WithContradiction attaches an opposing Readout.
-*/
-func (readout *Readout) WithContradiction(contradiction *Readout) *Readout {
-	if readout == nil || contradiction == nil {
-		return readout
-	}
-
-	readout.Contradictions = append(readout.Contradictions, contradiction)
-
-	return readout
-}
-
-/*
-CorroborateWith attaches multiple supporting and contradicting Readouts.
-*/
-func (readout *Readout) CorroborateWith(supports []*Readout, contradictions []*Readout) *Readout {
-	if readout == nil {
-		return nil
-	}
-
-	for _, support := range supports {
-		readout.WithSupport(support)
-	}
-
-	for _, contradiction := range contradictions {
-		readout.WithContradiction(contradiction)
-	}
-
-	return readout
-}
-
-/*
-WithCredibility adjusts the context-level credibility factor in [0, 1].
-*/
-func (readout *Readout) WithCredibility(credibility float64) *Readout {
-	if readout == nil {
-		return readout
-	}
-
-	readout.Credibility = clamp(credibility, 0.0, 1.0)
-
-	return readout
-}
-
-/*
-Authority computes the continuous statistical authority in [0, 1] this observation
-commands.
-
-An immature metric carries little authority; poor SNR reduces authority; and
-contradictions from high-quality observations strongly penalize authority.
-*/
-func (readout *Readout) Authority() float64 {
-	if readout == nil || !readout.Defined {
-		return 0.0
-	}
-
-	credibility := readout.Credibility
-
-	if credibility <= 0.0 {
-		return 0.0
-	}
-
-	maturity := clamp(readout.Maturity, 0.0, 1.0)
-
-	if maturity <= 0.0 {
-		return 0.0
-	}
-
-	snrFactor := 1.0
-
-	if readout.Estimated {
-		snrFactor = 0.5
-
-		if readout.SNRDefined {
-			if readout.SNR <= 0.0 {
-				snrFactor = 0.1
-			} else {
-				snrFactor = readout.SNR / (1.0 + readout.SNR)
-			}
-		}
-	}
-
-	baseQuality := maturity * snrFactor * credibility
-
-	supportWeight := 0.0
-
-	for _, support := range readout.Supports {
-		if support != nil {
-			supportWeight += support.Authority()
-		}
-	}
-
-	contradictionWeight := 0.0
-
-	for _, contradiction := range readout.Contradictions {
-		if contradiction != nil {
-			contradictionWeight += contradiction.Authority()
-		}
-	}
-
-	numerator := 1.0 + supportWeight
-	denominator := 1.0 + 2.0*contradictionWeight
-
-	combined := baseQuality * (numerator / denominator)
-
-	return clamp(combined, 0.0, 1.0)
-}
-
-/*
-Value returns the usable float64 value resolved through its authority.
-If authority is near zero, the effective value attenuates toward zero,
-preventing unearned influence. Coordinate counters and ordinals retain their
-exact discrete coordinate so market clocks advance accurately.
-*/
-func (readout *Readout) Value() float64 {
-	if readout == nil {
-		return 0.0
-	}
-
-	if readout.Unit == UnitCount || strings.Contains(readout.Label, "ordinal") {
-		return readout.Raw
-	}
-
-	authority := readout.Authority()
-
-	return readout.Raw * authority
-}
-
-func clamp(v, min, max float64) float64 {
-	if math.IsNaN(v) {
-		return min
-	}
-
-	if v < min {
-		return min
-	}
-
-	if v > max {
-		return max
-	}
-
-	return v
+// NewReadout composes credibility, corroboration and the usable raw value.
+// supports/contradictions yield authority values already resolved by their own
+// configured graphs. discrete supplies the caller's coordinate/ordinal policy.
+// No receiver introspection, child type assertion or recursive raw-value helper
+// is needed; a child may be another configured Readout composition.
+func NewReadout(authority, supports, contradictions, credibility, discrete core.Primitive) core.Primitive {
+	prepare := store.NewRecord(
+		transport.NewPipe(),
+		transport.NewPipe(authority, store.NewKey("base_authority")),
+		transport.NewPipe(supports, arithmetic.NewAdd[float64](transport.NewIO(core.From(0.0))), store.NewKey("support_weight")),
+		transport.NewPipe(
+			contradictions,
+			arithmetic.NewAdd[float64](transport.NewIO(core.From(0.0))),
+			store.NewKey("contradiction_weight"),
+		),
+		transport.NewPipe(
+			equation.NewBound(credibility, store.NewConstant(core.From(0.0)), store.NewConstant(core.From(1.0))),
+			store.NewKey("credibility"),
+		),
+		transport.NewPipe(discrete, store.NewKey("discrete")),
+		transport.NewPipe(
+			logic.NewGate(store.NewHas("defined"), store.NewGet("defined"), store.NewConstant(core.From(true))),
+			store.NewKey("defined"),
+		),
+	)
+	resolved := logic.NewGate(
+		store.NewGet("defined"),
+		equation.NewBound(
+			equation.NewProduct[float64](
+				equation.NewProduct[float64](store.NewGet("base_authority"), store.NewGet("credibility")),
+				equation.NewRatio[float64](
+					equation.NewSum[float64](store.NewConstant(core.From(1.0)), store.NewGet("support_weight")),
+					equation.NewSum[float64](
+						store.NewConstant(core.From(1.0)),
+						equation.NewProduct[float64](store.NewConstant(core.From(2.0)), store.NewGet("contradiction_weight")),
+					),
+				),
+			),
+			store.NewConstant(core.From(0.0)),
+			store.NewConstant(core.From(1.0)),
+		),
+		store.NewConstant(core.From(0.0)),
+	)
+	return transport.NewPipe(
+		prepare,
+		store.NewRecord(transport.NewPipe(), transport.NewPipe(resolved, store.NewKey("authority"))),
+		store.NewRecord(
+			transport.NewPipe(),
+			transport.NewPipe(
+				logic.NewGate(
+					store.NewGet("discrete"),
+					store.NewGet("raw"),
+					equation.NewProduct[float64](store.NewGet("raw"), store.NewGet("authority")),
+				),
+				store.NewKey("value"),
+			),
+		),
+	)
 }

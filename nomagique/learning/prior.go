@@ -1,190 +1,79 @@
 package learning
 
 import (
-	"math"
-
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/logic"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-Prior summarizes completed outcomes with weighted, online Welford moments.
-Weight is observation authority, not reward magnitude: a large outcome cannot
-give itself extra influence. No individual historical outcomes are retained.
-*/
-type Prior struct {
-	memory    float64
-	samples   uint64
-	pending   uint64
-	mean      float64
-	weight    float64
-	support   float64
-	moment    float64
-	lastEpoch uint64
-}
-
-/*
-NewPrior constructs an online Welford prior with an optional exponential
-retention memory window. When memory is greater than 1, older evidence decays
-with every observation. When memory is not provided or <= 1, cumulative
-un-decayed Welford is preserved.
-*/
-func NewPrior(memory ...float64) *Prior {
-	prior := &Prior{}
-
-	if len(memory) > 0 && memory[0] > 1 {
-		prior.memory = memory[0]
-	}
-
-	return prior
-}
-
-func (prior *Prior) age(currentEpoch uint64) {
-	if prior.memory <= 1 || prior.weight == 0 || currentEpoch <= prior.lastEpoch {
-		if currentEpoch > prior.lastEpoch {
-			prior.lastEpoch = currentEpoch
-		}
-
-		return
-	}
-
-	gap := float64(currentEpoch - prior.lastEpoch)
-	decay := math.Pow(1.0-1.0/prior.memory, gap)
-	prior.weight *= decay
-	prior.lastEpoch = currentEpoch
-}
-
-/*
-PriorReading distinguishes absent evidence and unestimable dispersion from
-observed zeros. Support is Kish effective sample size, not a claim that input
-experiences are statistically independent. Variance is the reliability-weighted
-sample variance; Maturity uses the Measurement contract's 1 - 1/support.
-
-Authority combines maturity, the authority-weighted mean input authority, and
-mean-square signal power relative to observed outcome dispersion. Uniformly
-weak inputs cannot acquire full authority just by accumulating. It measures
-support for the mean's departure from zero;
-it is not a probability of success or a substitute for Mean in accounting.
-*/
-type PriorReading struct {
-	// Depth is how many context tokens this reading was conditioned on. Zero
-	// is the key's unconditioned evidence; the caller's full context length is
-	// the most specific answer available.
-	Depth int
-	// ContextLength is the full path requested by the recall that supplied Depth.
-	ContextLength int
-	// Pending belongs to the same interned prior as Samples and Depth.
-	// Exploration must not count tickets from a different lookup path.
-	Pending           uint64
-	Samples           uint64
-	Defined           bool
-	Mean              float64
-	Variance          float64
-	VarianceDefined   bool
-	Support           float64
-	Maturity          float64
-	EvidenceAuthority float64 // Retained authority-weighted input authority, independent of reward.
-	Authority         float64
-	Memory            float64
-}
-
-/*
-SamplingVariance applies the existing specificity debt to this reading's own
-lookup path. Each unmatched context token dilutes effective support; one
-observation is the existing lower bound on the sampling denominator.
-*/
-func (reading PriorReading) SamplingVariance() float64 {
-	if reading.Depth > reading.ContextLength {
-		panic("prior: matched depth exceeds requested context length")
-	}
-
-	gap := float64(reading.ContextLength - reading.Depth)
-	support := max(1, reading.Support/(1+gap))
-	return reading.Variance / support
-}
-
-/*
-Observe incorporates one completed outcome with authority in [0, 1], derived
-at issue time. Zero authority records completion without
-inventing trusted evidence. A measured zero with positive authority is evidence.
-When an epoch is supplied, decay accounts for the resolution gap since this prior's
-last update, ensuring dormant leaves age with the model.
-*/
-func (prior *Prior) Observe(value, authority float64, epoch ...uint64) error {
-	if authority < 0 || authority > 1 {
-		return errnie.Err(errnie.Validation, "prior: authority must be in [0, 1]", nil)
-	}
-
-	prior.samples++
-
-	if authority == 0 {
-		return nil
-	}
-
-	if len(epoch) > 0 {
-		prior.age(epoch[0])
-	}
-
-	if len(epoch) == 0 && prior.memory > 1 {
-		decay := 1.0 - 1.0/prior.memory
-		prior.weight *= decay
-	}
-
-	if prior.weight == 0 {
-		prior.mean = value
-		prior.weight = authority
-		prior.support = 1
-		prior.moment = 0
-
-		return nil
-	}
-
-	total := prior.weight + authority
-	retained, incoming := prior.weight/total, authority/total
-	difference := value - prior.mean
-	// Normalize before multiplying weights. Kish support and M2/sum(w) are
-	// invariant to uniform aging; retaining them directly avoids squared-weight
-	// underflow for dormant leaves on a busy global resolution clock.
-	prior.support = 1 / (retained*retained/prior.support + incoming*incoming)
-	prior.moment = retained*prior.moment + retained*incoming*difference*difference
-	prior.mean += incoming * difference
-	prior.weight = total
-
-	return nil
-}
-
-/* Reading ages retained evidence to the supplied epoch and returns its estimate. */
-func (prior *Prior) Reading(epoch ...uint64) PriorReading {
-	if len(epoch) > 0 {
-		prior.age(epoch[0])
-	}
-
-	reading := PriorReading{Samples: prior.samples, Pending: prior.pending, Memory: prior.memory}
-
-	if prior.weight == 0 {
-		return reading
-	}
-
-	reading.Defined = true
-	reading.Mean = prior.mean
-	reading.EvidenceAuthority = prior.weight / prior.support
-	reading.Support = prior.support
-
-	if reading.Support <= 1 {
-		return reading
-	}
-
-	reading.VarianceDefined = true
-	// Reliability-weighted sample variance is (M2/sum(w))/(1-1/support).
-	reading.Variance = prior.moment * (reading.Support / (reading.Support - 1))
-
-	reading.Maturity = (reading.Support - 1) / reading.Support
-	power := reading.Mean * reading.Mean
-	totalPower := power + reading.Variance
-
-	if totalPower > 0 {
-		inputAuthority := reading.EvidenceAuthority
-		reading.Authority = reading.Maturity * inputAuthority * power / totalPower
-	}
-
-	return reading
+// NewPrior composes storage, aging, weighted moments and readout. An observation
+// is a KV record with value and authority; an optional uint64 epoch selects its
+// causal clock. An epoch-only record queries/ages without inventing a sample.
+// No epoch means one aging step per positive-authority observation. Zero
+// authority increments samples, but does not create evidence or age it.
+func NewPrior(memorySize core.Primitive) core.Primitive {
+	memory := store.NewRetained(
+		core.From(
+			map[string]core.Primitive{
+				"samples": core.From(uint64(0)), "pending": core.From(uint64(0)),
+				"weight": core.From(0.0), "support": core.From(0.0), "moment": core.From(0.0),
+				"mean": core.From(0.0), "last_epoch": core.From(uint64(0)),
+			},
+		),
+	)
+	state := transport.NewPipe(store.NewKV[string](memory), memory)
+	age := logic.NewGate(
+		store.NewGet("epoch_supplied"),
+		equation.NewPriorAge(),
+		transport.NewPipe(
+			store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewConstant(core.From(1.0)), store.NewKey("gap"))),
+			store.NewRecord(
+				transport.NewPipe(),
+				transport.NewPipe(equation.NewProduct[float64](store.NewGet("weight"), equation.NewRetentionFactor()), store.NewKey("weight")),
+			),
+		),
+	)
+	observe := logic.NewGate(
+		equation.NewAll(
+			transport.NewPipe(store.NewGet("authority"), logic.NewFinite()),
+			equation.NewLessEqual[float64](store.NewConstant(core.From(0.0)), store.NewGet("authority")),
+			equation.NewLessEqual[float64](store.NewGet("authority"), store.NewConstant(core.From(1.0))),
+		),
+		transport.NewPipe(
+			state,
+			store.NewRecord(
+				transport.NewPipe(),
+				transport.NewPipe(
+					equation.NewSum[uint64](store.NewGet("samples"), store.NewConstant(core.From(uint64(1)))),
+					store.NewKey("samples"),
+				),
+			),
+			logic.NewGate(
+				equation.NewGreater[float64](store.NewGet("authority"), store.NewConstant(core.From(0.0))),
+				transport.NewPipe(age, equation.NewPriorUpdate()),
+				transport.NewPipe(),
+			),
+			state,
+			equation.NewPriorSummary(),
+		),
+		logic.NewReject(core.ErrDomain),
+	)
+	query := transport.NewPipe(
+		state,
+		logic.NewGate(store.NewGet("epoch_supplied"), equation.NewPriorAge(), transport.NewPipe()),
+		state,
+		equation.NewPriorSummary(),
+	)
+	return transport.NewMap(
+		transport.NewPipe(
+			store.NewRecord(
+				transport.NewPipe(),
+				transport.NewPipe(memorySize, store.NewKey("memory")),
+				transport.NewPipe(store.NewHas("epoch"), store.NewKey("epoch_supplied")),
+			),
+			logic.NewGate(store.NewHas("value"), observe, query),
+		),
+	)
 }

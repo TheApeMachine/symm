@@ -1,34 +1,18 @@
-package equation
+package equation_test
 
 import (
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/tests"
 	"testing"
-
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
-func TestPolarize(t *testing.T) {
-	Convey("Given a Polarize equation", t, func() {
-		p := &Polarize{}
-
-		Convey("A positive value populates Alpha and zeroes Beta", func() {
-			out := p.StepScaled(types.Scalar(10.0), types.Scalar(10.0))
-
-			So(float64(p.Alpha()), ShouldEqual, 10.0)
-			So(float64(p.Beta()), ShouldEqual, 0.0)
-			So(float64(p.AlphaNormalized()), ShouldEqual, 0.5)
-			So(float64(p.BetaNormalized()), ShouldEqual, 0.0)
-			So(float64(out), ShouldEqual, 0.5)
-		})
-
-		Convey("A negative value populates Beta and zeroes Alpha", func() {
-			out := p.StepScaled(types.Scalar(-10.0), types.Scalar(10.0))
-
-			So(float64(p.Alpha()), ShouldEqual, 0.0)
-			So(float64(p.Beta()), ShouldEqual, 10.0)
-			So(float64(p.AlphaNormalized()), ShouldEqual, 0.0)
-			So(float64(p.BetaNormalized()), ShouldEqual, 0.5)
-			So(float64(out), ShouldEqual, -0.5)
-		})
-	})
+func TestPolarizeNext(t *testing.T) {
+	node := equation.NewPolarize(store.NewConstant(core.From(10.0)))
+	results := tests.Drain(t, node, tests.Values(10.0, -10.0, 0.0))
+	tests.Sound(t, node)
+	for index, expected := range []float64{0.5, -0.5, 0} {
+		tests.EqualNumber(t, tests.Number(t, tests.Fields(t, results[index]), "value"), expected)
+	}
 }

@@ -1,123 +1,81 @@
 package learning
 
 import (
-	"math"
-
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/logic"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-LearningPair carries a predicted-vs-actual outcome.
-*/
-type LearningPair struct {
-	Predicted float64
-	Actual    float64
-}
-
-/*
-TrustWeightOutput reports the current trust state.
-*/
-type TrustWeightOutput struct {
-	Value     float64
-	Predicted float64
-	Actual    float64
-	Trust     float64
-	Rate      float64
-	Count     int
-}
-
-/*
-TrustWeight is a self-adapting rate from prediction error.
-*/
-type TrustWeight struct {
-	trust   float64
-	prev    float64
-	minimum float64
-	maximum float64
-	rate    float64
-	count   int
-}
-
-/*
-NewTrustWeight returns a typed trust-weight learner.
-*/
-func NewTrustWeight() *TrustWeight {
-	return &TrustWeight{}
-}
-
-/*
-Weight returns a typed trust-weight learner.
-*/
-func Weight() *TrustWeight {
-	return NewTrustWeight()
-}
-
-/*
-Measure updates trust from one prediction outcome.
-*/
-func (trustWeight *TrustWeight) Measure(pair LearningPair) (TrustWeightOutput, error) {
-	predicted, actual, err := validatePair(pair, "trust-weight")
-
-	if err != nil {
-		return TrustWeightOutput{}, err
-	}
-
-	residual := actual - predicted
-	derived := trustWeight.trust
-
-	if trustWeight.count == 0 {
-		trustWeight.prev = predicted
-		trustWeight.minimum = residual
-		trustWeight.maximum = residual
-		trustWeight.trust = 1
-		trustWeight.count = 1
-		derived = trustWeight.trust
-	}
-
-	if trustWeight.count > 1 {
-		trustWeight.minimum = math.Min(trustWeight.minimum, residual)
-		trustWeight.maximum = math.Max(trustWeight.maximum, residual)
-		trustWeight.count++
-	}
-
-	if trustWeight.count == 1 && residual != trustWeight.minimum {
-		trustWeight.minimum = math.Min(trustWeight.minimum, residual)
-		trustWeight.maximum = math.Max(trustWeight.maximum, residual)
-		trustWeight.count = 2
-	}
-
-	span := trustWeight.maximum - trustWeight.minimum
-
-	if trustWeight.count > 1 {
-		if span == 0 {
-			return TrustWeightOutput{}, errnie.Error(errnie.Err(
-				errnie.Validation,
-				"trust-weight: residual span is zero",
-				nil,
-			))
-		}
-
-		surprise := absExact(residual) / span
-		trustWeight.rate = surprise
-		targetTrust := math.Max(0, 1-surprise)
-		trustWeight.trust += surprise * (targetTrust - trustWeight.trust)
-		trustWeight.prev = predicted
-		derived = trustWeight.trust
-	}
-
-	return TrustWeightOutput{
-		Value:     derived,
-		Predicted: predicted,
-		Actual:    actual,
-		Trust:     trustWeight.trust,
-		Rate:      trustWeight.rate,
-		Count:     trustWeight.count,
-	}, nil
-}
-
-/*
-Reset clears learned trust state.
-*/
-func (trustWeight *TrustWeight) Reset() {
-	*trustWeight = TrustWeight{}
+// NewTrustWeight composes the source's residual-range trust update. No clipping
+// is added to the trust recurrence; rate greater than one retains the original
+// extrapolating behavior. Invalid inputs fail before entering retained state.
+func NewTrustWeight() core.Primitive {
+	memory := store.NewRetained(
+		core.From(
+			map[string]core.Primitive{
+				"count": core.From(0.0), "minimum": core.From(0.0), "maximum": core.From(0.0), "prev": core.From(0.0), "trust": core.From(1.0), "rate": core.From(0.0),
+			},
+		),
+	)
+	state := transport.NewPipe(store.NewKV[string](memory), memory)
+	return transport.NewMap(
+		logic.NewGate(
+			equation.NewValidPair(),
+			transport.NewPipe(
+				store.NewRecord(
+					transport.NewPipe(),
+					transport.NewPipe(equation.NewDifference[float64](store.NewGet("actual"), store.NewGet("predicted")), store.NewKey("residual")),
+				),
+				state,
+				equation.NewResidualSpan(),
+				logic.NewGate(
+					equation.NewGreater[float64](store.NewGet("count"), store.NewConstant(core.From(1.0))),
+					logic.NewGate(
+						equation.NewGreater[float64](store.NewGet("span"), store.NewConstant(core.From(0.0))),
+						transport.NewPipe(
+							store.NewRecord(
+								transport.NewPipe(),
+								transport.NewPipe(
+									equation.NewRatio[float64](
+										transport.NewPipe(store.NewGet("residual"), calculus.NewAbsolute(transport.NewIO(core.From(0.0)))),
+										store.NewGet("span"),
+									),
+									store.NewKey("rate"),
+								),
+							),
+							store.NewRecord(
+								transport.NewPipe(),
+								transport.NewPipe(
+									transport.NewPipe(
+										store.NewRecord(
+											transport.NewPipe(store.NewGet("trust"), store.NewKey("left")),
+											transport.NewPipe(
+												transport.NewPipe(
+													equation.NewDifference[float64](store.NewConstant(core.From(1.0)), store.NewGet("rate")),
+													calculus.NewMaximum(transport.NewIO(core.From(0.0))),
+												),
+												store.NewKey("right"),
+											),
+											transport.NewPipe(store.NewGet("rate"), store.NewKey("weight")),
+										),
+										equation.NewMix(),
+									),
+									store.NewKey("trust"),
+								),
+								transport.NewPipe(store.NewGet("predicted"), store.NewKey("prev")),
+							),
+						),
+						logic.NewReject(core.ErrDomain),
+					),
+					transport.NewPipe(),
+				),
+				store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewGet("trust"), store.NewKey("value"))),
+				state,
+			),
+			logic.NewReject(core.ErrDomain),
+		),
+	)
 }

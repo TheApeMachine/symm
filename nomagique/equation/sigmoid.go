@@ -1,17 +1,20 @@
 package equation
 
 import (
-	"math"
-
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/arithmetic"
+	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-Sigmoid is the canonical logistic function σ(x) = 1/(1+e^{-x}).
-Tier 4 Equation: pure transfer node, zero allocations, zero magic constants.
-*/
-type Sigmoid struct{}
-
-func (Sigmoid) Step(x types.Scalar) types.Scalar {
-	return types.Scalar(1.0 / (1.0 + math.Exp(-float64(x))))
+// NewSigmoid is a composition, including mapping over multiple inputs.
+func NewSigmoid() core.Primitive {
+	return transport.NewMap(
+		transport.NewPipe(
+			calculus.NewNegate(transport.NewIO(core.From(0.0))),
+			calculus.NewExp(transport.NewIO(core.From(0.0))),
+			arithmetic.NewAdd[float64](transport.NewIO(core.From(1.0))),
+			calculus.NewReciprocal(transport.NewIO(core.From(0.0))),
+		),
+	)
 }

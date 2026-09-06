@@ -1,48 +1,24 @@
 package calculus
 
 import (
-	"math"
-
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"math"
 )
 
-/*
-Tanh maps the whole real line into the open interval between minus one and
-one. It is how a composition bounds an unbounded quantity without clamping
-it, since values keep their order however far out they came from.
-*/
+// Tanh owns only its numeric operation. The configured left source remains
+// connected; neither a yielded result nor an exhausted run can replace it.
 type Tanh struct {
 	core.PrimitiveError
+	left    core.Primitive
 	current core.Primitive
 }
 
-/*
-NewTanh configures the register's starting value.
-*/
-func NewTanh(state core.Primitive) *Tanh {
-	return &Tanh{
-		current: state,
-	}
+func NewTanh(left core.Primitive) *Tanh { return &Tanh{current: store.NewRetained(nil), left: left} }
+func (operation *Tanh) Next(in core.Primitive) core.Primitive {
+	result := core.Yield(operation.left, in, func(held, value float64) float64 { return math.Tanh(value) }, operation)
+	transport.NewDiscard().Next(transport.NewApply(operation.current, transport.NewIO(result)))
+	return result
 }
-
-/*
-Next transforms the incoming value and holds the result. Offered
-nothing, Yield answers with the register untouched, so a composition can
-begin here.
-*/
-func (tanh *Tanh) Next(in core.Primitive) core.Primitive {
-	tanh.current = core.Yield(
-		tanh.current, in, func(held, value float64) float64 {
-			return math.Tanh(value)
-		},
-	)
-
-	return tanh.current
-}
-
-/*
-Read surfaces the register for the boundary.
-*/
-func (tanh *Tanh) Read() any {
-	return tanh.current.Read()
-}
+func (operation *Tanh) Read() any { return core.To[any](operation.current) }

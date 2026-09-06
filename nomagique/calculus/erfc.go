@@ -1,48 +1,24 @@
 package calculus
 
 import (
-	"math"
-
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"math"
 )
 
-/*
-Erfc is the complementary error function: the Gaussian tail mass beyond a
-value. It converts a standardised deviation into how surprising that
-deviation is, which is what turns a measurement into evidence.
-*/
+// Erfc owns only its numeric operation. The configured left source remains
+// connected; neither a yielded result nor an exhausted run can replace it.
 type Erfc struct {
 	core.PrimitiveError
+	left    core.Primitive
 	current core.Primitive
 }
 
-/*
-NewErfc configures the register's starting value.
-*/
-func NewErfc(state core.Primitive) *Erfc {
-	return &Erfc{
-		current: state,
-	}
+func NewErfc(left core.Primitive) *Erfc { return &Erfc{current: store.NewRetained(nil), left: left} }
+func (operation *Erfc) Next(in core.Primitive) core.Primitive {
+	result := core.Yield(operation.left, in, func(held, value float64) float64 { return math.Erfc(value) }, operation)
+	transport.NewDiscard().Next(transport.NewApply(operation.current, transport.NewIO(result)))
+	return result
 }
-
-/*
-Next transforms the incoming value and holds the result. Offered
-nothing, Yield answers with the register untouched, so a composition can
-begin here.
-*/
-func (erfc *Erfc) Next(in core.Primitive) core.Primitive {
-	erfc.current = core.Yield(
-		erfc.current, in, func(held, value float64) float64 {
-			return math.Erfc(value)
-		},
-	)
-
-	return erfc.current
-}
-
-/*
-Read surfaces the register for the boundary.
-*/
-func (erfc *Erfc) Read() any {
-	return erfc.current.Read()
-}
+func (operation *Erfc) Read() any { return core.To[any](operation.current) }

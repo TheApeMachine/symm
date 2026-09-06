@@ -1,54 +1,24 @@
 package calculus
 
 import (
-	"math"
-
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"math"
 )
 
-/*
-Log is the natural logarithm, and the inverse of Exp. It turns a
-multiplicative quantity into an additive one, so a composition can add
-where the underlying process compounds.
-*/
+// Log owns only its numeric operation. The configured left source remains
+// connected; neither a yielded result nor an exhausted run can replace it.
 type Log struct {
 	core.PrimitiveError
+	left    core.Primitive
 	current core.Primitive
 }
 
-/*
-NewLog configures the register's starting value.
-*/
-func NewLog(state core.Primitive) *Log {
-	return &Log{
-		current: state,
-	}
+func NewLog(left core.Primitive) *Log { return &Log{current: store.NewRetained(nil), left: left} }
+func (operation *Log) Next(in core.Primitive) core.Primitive {
+	result := core.Yield(operation.left, in, func(held, value float64) float64 { return math.Log(value) }, operation)
+	transport.NewDiscard().Next(transport.NewApply(operation.current, transport.NewIO(result)))
+	return result
 }
-
-/*
-Next transforms the incoming value and holds the result. Offered nothing,
-Yield answers with the register untouched, so a composition can begin here.
-
-The logarithm is undefined at and below zero, and the register stands
-rather than taking an infinity or a NaN.
-*/
-func (log *Log) Next(in core.Primitive) core.Primitive {
-	log.current = core.Yield(
-		log.current, in, func(held, value float64) float64 {
-			if value <= 0 {
-				return held
-			}
-
-			return math.Log(value)
-		},
-	)
-
-	return log.current
-}
-
-/*
-Read surfaces the register for the boundary.
-*/
-func (log *Log) Read() any {
-	return log.current.Read()
-}
+func (operation *Log) Read() any { return core.To[any](operation.current) }

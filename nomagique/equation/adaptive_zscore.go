@@ -1,114 +1,26 @@
 package equation
 
 import (
-	"math"
-
-	"github.com/theapemachine/symm/nomagique/adaptive"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-AdaptiveZScore (Tier 4 Equation):
-Composes Welford moments with causal centering, scaling, and maturity.
-Exposes zero-cost accessors for multi-metric projection.
-Zero heap allocations, zero magic numbers.
-*/
-type AdaptiveZScore struct {
-	welford adaptive.WelfordEngine
-
-	hasPrior       bool
-	lastZ          types.Scalar
-	lastDivergence types.Scalar
-	lastBaseline   types.Scalar
-	lastRatio      types.Scalar
-	lastMaturity   types.Scalar
-}
-
-func (eq *AdaptiveZScore) Step(x types.Scalar) types.Scalar {
-	priorCount := eq.welford.Count()
-	priorMean := eq.welford.Mean()
-	priorDisp := eq.welford.Dispersion()
-
-	// 1. Advance the underlying Welford primitive with log-observation for log-scale processes
-	val := float64(x)
-	var logVal float64
-
-	if val > 0 {
-		logVal = math.Log(val)
-	}
-
-	eq.welford.Update(logVal)
-
-	// 2. Compute emergent dynamics relative to prior moments
-	if priorCount == 0 {
-		eq.lastBaseline = x
-		eq.lastRatio = 1.0
-		eq.lastDivergence = 0.0
-		eq.lastZ = 0.0
-		eq.lastMaturity = 0.0
-		eq.hasPrior = false
-
-		return 0.0
-	}
-
-	eq.hasPrior = true
-	eq.lastBaseline = types.Scalar(math.Exp(priorMean))
-
-	if eq.lastBaseline > 0 {
-		eq.lastRatio = x / eq.lastBaseline
-	} else {
-		eq.lastRatio = 1.0
-	}
-
-	eq.lastDivergence = types.Scalar(logVal - priorMean)
-
-	disp := priorDisp
-
-	if disp <= 0 {
-		disp = math.Abs(float64(eq.lastDivergence))
-	}
-
-	if disp > 0 {
-		eq.lastZ = eq.lastDivergence / types.Scalar(disp)
-	} else {
-		eq.lastZ = 0.0
-	}
-
-	// 3. Exact Kish / Bayesian maturity: 1 - 1/(N + 1)
-	eq.lastMaturity = types.Scalar(1.0 - 1.0/(priorCount+1.0))
-
-	return eq.lastZ
-}
-
-// Accessors for multi-metric projection (0 allocs)
-func (eq *AdaptiveZScore) HasPrior() bool           { return eq.hasPrior }
-func (eq *AdaptiveZScore) ZScore() types.Scalar     { return eq.lastZ }
-func (eq *AdaptiveZScore) Baseline() types.Scalar   { return eq.lastBaseline }
-func (eq *AdaptiveZScore) Ratio() types.Scalar      { return eq.lastRatio }
-func (eq *AdaptiveZScore) Divergence() types.Scalar { return eq.lastDivergence }
-func (eq *AdaptiveZScore) Maturity() types.Scalar   { return eq.lastMaturity }
-
-/*
-PriorDispersion returns the scale the last score was measured against: the
-dispersion of the moments held BEFORE that observation. A consumer declaring
-a measurement's noise power declares this, since it is the same scale the
-z-score normalized by.
-*/
-func (eq *AdaptiveZScore) PriorDispersion() types.Scalar {
-	if !eq.hasPrior || eq.lastZ == 0 {
-		return 0
-	}
-
-	return eq.lastDivergence / eq.lastZ
-}
-
-/*
-PriorCount returns how many observations the estimator held BEFORE the one it
-last scored. The z-score is measured against those moments, so this is the
-evidence actually standing behind the reading — a consumer declaring support
-for a published z-score declares this, not the retained count that includes
-the sample being scored.
-*/
-func (eq *AdaptiveZScore) PriorCount() float64 {
-	return eq.welford.Count() - 1
+// NewAdaptiveZScore uses log-space moments. The configured estimator determines
+// whether its horizon is cumulative or adaptive. Non-positive logarithms keep
+// the underlying real-domain result; they are not replaced by log(1).
+func NewAdaptiveZScore(moments core.Primitive) core.Primitive {
+	return transport.NewPipe(
+		transport.NewMap(calculus.NewLog(transport.NewIO(core.From(0.0)))),
+		NewCausalResidual(moments),
+		transport.NewMap(
+			store.NewRecord(
+				transport.NewPipe(),
+				transport.NewPipe(store.NewGet("baseline"), calculus.NewExp(transport.NewIO(core.From(0.0))), store.NewKey("baseline")),
+				transport.NewPipe(store.NewGet("residual"), calculus.NewExp(transport.NewIO(core.From(0.0))), store.NewKey("ratio")),
+				transport.NewPipe(store.NewGet("residual"), store.NewKey("divergence")),
+			),
+		),
+	)
 }

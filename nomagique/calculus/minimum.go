@@ -1,51 +1,26 @@
 package calculus
 
 import (
-	"math"
-
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"math"
 )
 
-/*
-Minimum holds the smallest value it has been shown. Where a reduction over a
-slice needs the whole slice in hand, this keeps the running extreme instead,
-so a composition never has to retain what it has already seen.
-*/
+// Minimum owns only its numeric operation. The configured left source remains
+// connected; neither a yielded result nor an exhausted run can replace it.
 type Minimum struct {
 	core.PrimitiveError
+	left    core.Primitive
 	current core.Primitive
 }
 
-/*
-NewMinimum configures the register's starting value.
-*/
-func NewMinimum(state core.Primitive) *Minimum {
-	return &Minimum{
-		current: state,
-	}
+func NewMinimum(left core.Primitive) *Minimum {
+	return &Minimum{current: store.NewRetained(nil), left: left}
 }
-
-/*
-Next folds the incoming value into the register and holds the result. Offered
-nothing, Yield answers with the register untouched, so a composition can
-begin here.
-
-A comparison against a NaN is false whichever way it is written, so comparing
-directly would leave the register standing and swallow the reading. The
-extreme is taken through math, which propagates it instead.
-*/
-func (minimum *Minimum) Next(in core.Primitive) core.Primitive {
-	minimum.current = core.Yield(
-		minimum.current, in, func(held, value float64) float64 {
-			return math.Min(held, value)
-		},
-	)
-	return minimum.current
+func (operation *Minimum) Next(in core.Primitive) core.Primitive {
+	result := core.Yield(operation.left, in, func(held, value float64) float64 { return math.Min(held, value) }, operation)
+	transport.NewDiscard().Next(transport.NewApply(operation.current, transport.NewIO(result)))
+	return result
 }
-
-/*
-Read surfaces the register for the boundary.
-*/
-func (minimum *Minimum) Read() any {
-	return minimum.current.Read()
-}
+func (operation *Minimum) Read() any { return core.To[any](operation.current) }

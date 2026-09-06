@@ -1,86 +1,43 @@
 package transport
 
 import (
-	"context"
+	"github.com/theapemachine/symm/nomagique/core"
 	"iter"
 )
 
-/*
-Generator adapts an iterator to a cancellable channel. Ordered hot paths should
-prefer RingBuffer; Generator remains useful at asynchronous system boundaries.
-*/
-type Generator[Value any] struct {
-	context context.Context
-	cancel  context.CancelFunc
-	source  iter.Seq[Value]
+// Generator is the boundary from a Go iterator into Primitive delivery. It is
+// one-shot: exhaustion never restarts a stateful external source.
+type Generator[T any] struct {
+	core.PrimitiveError
+	source  iter.Seq[T]
+	pull    func() (T, bool)
+	stop    func()
+	current core.Primitive
+	done    bool
 }
 
-/*
-NewGenerator creates a cancellable iterator adapter.
-*/
-func NewGenerator[Value any](
-	parent context.Context,
-	source iter.Seq[Value],
-) *Generator[Value] {
-	generatorContext, cancel := context.WithCancel(parent)
-
-	return &Generator[Value]{
-		context: generatorContext,
-		cancel:  cancel,
-		source:  source,
+func NewGenerator[T any](source iter.Seq[T]) *Generator[T] {
+	generator := &Generator[T]{source: source}
+	if source == nil {
+		generator.Error(core.ErrNotHeld)
+		generator.done = true
 	}
+	return generator
 }
-
-/*
-Generate emits source values until exhaustion, cancellation, or a stopped
-consumer.
-*/
-func (generator *Generator[Value]) Generate(
-	iterators ...*iter.Seq[Value],
-) <-chan Value {
-	output := make(chan Value)
-	source := iter.Seq[Value](nil)
-
-	if generator != nil {
-		source = generator.source
+func (generator *Generator[T]) Next(core.Primitive) core.Primitive {
+	if generator.done {
+		return nil
 	}
-
-	if len(iterators) > 0 && iterators[0] != nil {
-		source = *iterators[0]
+	if generator.pull == nil {
+		generator.pull, generator.stop = iter.Pull(generator.source)
 	}
-
-	go func() {
-		defer close(output)
-
-		if generator == nil || source == nil {
-			return
-		}
-
-		for value := range source {
-			select {
-			case <-generator.context.Done():
-				return
-			case output <- value:
-			}
-		}
-	}()
-
-	return output
-}
-
-/*
-Close cancels generation.
-*/
-func (generator *Generator[Value]) Close() {
-	if generator != nil && generator.cancel != nil {
-		generator.cancel()
+	value, ok := generator.pull()
+	if !ok {
+		generator.stop()
+		generator.done = true
+		return nil
 	}
+	generator.current = core.From(value)
+	return generator.current
 }
-
-/*
-Error retains the former generator error-reporting surface. Iteration and
-cancellation are not failures, so the adapter currently reports no error.
-*/
-func (generator *Generator[Value]) Error() string {
-	return ""
-}
+func (generator *Generator[T]) Read() any { return core.To[any](generator.current) }

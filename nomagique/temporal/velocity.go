@@ -1,275 +1,81 @@
 package temporal
 
 import (
-	"time"
-
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/collection"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/logic"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NanosPerSecond is the nanosecond/second unit conversion.
-const NanosPerSecond = 1e9
-
-/*
-Velocity is the rate of change of its Source per unit of event time.
-
-Source supplies the observed value and Clock the instant it was observed, so
-the node retains the previous reading and its timestamp privately. A consumer
-never tracks a previous value itself.
-
-It returns 0 from Step, so it records inside a Split without disturbing the
-parallel sum (Law of Sinks); the rate is read from Rate().
-
-Degenerate behavior: an omitted Source or Clock cannot establish a rate. The
-first observation has no predecessor, so its rate is 0.
-*/
-type velocityState struct {
-	previous types.Number
-	at       types.Number
-	hasPrior bool
-	rate     types.Number
-}
-
-type Velocity struct {
-	Source types.Node
-	Clock  types.Node
-	Key    func() string
-
-	types.Guard
-
-	previous types.Number
-	at       types.Number
-	hasPrior bool
-	rate     types.Number
-
-	states map[string]*velocityState
-	active *velocityState
-}
-
-func (velocity *Velocity) key() string {
-	if velocity.Key != nil {
-		return velocity.Key()
-	}
-
-	return ""
-}
-
-func (velocity *Velocity) resolveState() *velocityState {
-	activeKey := velocity.key()
-
-	if activeKey != "" {
-		if velocity.states == nil {
-			velocity.states = make(map[string]*velocityState)
-		}
-
-		st, found := velocity.states[activeKey]
-
-		if !found {
-			st = &velocityState{}
-			velocity.states[activeKey] = st
-		}
-
-		return st
-	}
-
-	return nil
-}
-
-func (velocity *Velocity) Step(x types.Number) types.Number {
-	state := velocity.resolveState()
-	velocity.active = state
-
-	if state != nil {
-		if !velocity.Fresh() {
-			return 0
-		}
-
-		state.rate = 0
-
-		if velocity.Source == nil || velocity.Clock == nil {
-			return 0
-		}
-
-		value := velocity.Source.Step(x)
-		at := velocity.Clock.Step(x)
-
-		if state.hasPrior {
-			if elapsed := at - state.at; elapsed > 0 {
-				state.rate = (value - state.previous) / elapsed
-			}
-		}
-
-		state.previous = value
-		state.at = at
-		state.hasPrior = true
-
-		return 0
-	}
-
-	if !velocity.Fresh() {
-		return 0
-	}
-
-	velocity.rate = 0
-
-	if velocity.Source == nil || velocity.Clock == nil {
-		return 0
-	}
-
-	value := velocity.Source.Step(x)
-	at := velocity.Clock.Step(x)
-
-	if velocity.hasPrior {
-		if elapsed := at - velocity.at; elapsed > 0 {
-			velocity.rate = (value - velocity.previous) / elapsed
-		}
-	}
-
-	velocity.previous = value
-	velocity.at = at
-	velocity.hasPrior = true
-
-	return 0
-}
-
-// Rate returns the most recent rate of change per unit of event time.
-func (velocity *Velocity) Rate() types.Number {
-	if velocity.active != nil {
-		return velocity.active.rate
-	}
-
-	return velocity.rate
-}
-
-/*
-Readings publishes the rate of change. It is undefined on the first
-observation, which has no predecessor to have changed from.
-*/
-func (velocity *Velocity) Readings() []types.Reading {
-	return []types.Reading{{
-		Label:     "velocity",
-		Unit:      "per_second",
-		Timescale: "per_second",
-		Value:     velocity.Rate(),
-		Defined:   velocity.HasPrior(),
-	}}
-}
-
-// Value returns the most recent observed source reading.
-func (velocity *Velocity) Value() types.Number {
-	if velocity.active != nil {
-		return velocity.active.previous
-	}
-
-	return velocity.previous
-}
-
-// HasPrior reports whether a predecessor was observed.
-func (velocity *Velocity) HasPrior() bool {
-	if velocity.active != nil {
-		return velocity.active.hasPrior
-	}
-
-	return velocity.hasPrior
-}
-
-type clockState struct {
-	seconds types.Number
-	at      time.Time
-}
-
-/*
-Clock holds the current event time as a slot, so a composition reads elapsed
-time from the graph rather than the caller converting instants itself.
-*/
-type Clock struct {
-	Key func() string
-
-	seconds types.Number
-	at      time.Time
-
-	states map[string]*clockState
-	active *clockState
-}
-
-func (clock *Clock) key() string {
-	if clock.Key != nil {
-		return clock.Key()
-	}
-
-	return ""
-}
-
-func (clock *Clock) resolveState() *clockState {
-	activeKey := clock.key()
-
-	if activeKey != "" {
-		if clock.states == nil {
-			clock.states = make(map[string]*clockState)
-		}
-
-		st, found := clock.states[activeKey]
-
-		if !found {
-			st = &clockState{}
-			clock.states[activeKey] = st
-		}
-
-		return st
-	}
-
-	return nil
-}
-
-// Observe sets the clock to one instant, in seconds of event time.
-func (clock *Clock) Observe(at time.Time) {
-	state := clock.resolveState()
-	clock.active = state
-
-	secs := types.Number(at.UnixNano()) / NanosPerSecond
-
-	if state != nil {
-		state.at = at
-		state.seconds = secs
-
-		return
-	}
-
-	clock.at = at
-	clock.seconds = secs
-}
-
-// Seconds returns the current event time in seconds.
-func (clock *Clock) Seconds() types.Number {
-	state := clock.resolveState()
-
-	if state != nil {
-		return state.seconds
-	}
-
-	return clock.seconds
-}
-
-// Time returns the current event time as time.Time.
-func (clock *Clock) Time() time.Time {
-	state := clock.resolveState()
-
-	if state != nil {
-		return state.at
-	}
-
-	return clock.at
-}
-
-func (clock *Clock) Step(types.Number) types.Number {
-	return clock.Seconds()
-}
-
-var (
-	_ types.Node = (*Velocity)(nil)
-	_ types.Node = (*Clock)(nil)
-)
-
-// Slots exposes the nodes this velocity is composed of.
-func (velocity *Velocity) Slots() []types.Node {
-	return []types.Node{velocity.Source, velocity.Clock}
+// NewVelocity retains two observed records and composes a finite difference.
+// Source yields float64 and clock yields int64 nanoseconds. Each is evaluated
+// once per input. The first observation and non-advancing time have zero rate,
+// with explicit definedness; the latest observation is still retained.
+func NewVelocity(source, clock core.Primitive) core.Primitive {
+	history := store.NewRetained(core.From([]core.Primitive{}))
+	previous := collection.NewAt[core.Primitive](transport.NewIO(core.From(0.0)))
+	current := collection.NewAt[core.Primitive](transport.NewIO(core.From(1.0)))
+	pair := transport.NewPipe(
+		store.NewRecord(
+			transport.NewPipe(previous, store.NewKey("from")), transport.NewPipe(current, store.NewKey("through"))),
+		store.NewRecord(
+			transport.NewPipe(),
+			transport.NewPipe(
+				equation.NewElapsed(
+					transport.NewPipe(store.NewGet("from"), store.NewGet("at")),
+					transport.NewPipe(store.NewGet("through"), store.NewGet("at")),
+				),
+				store.NewKey("elapsed"),
+			),
+			transport.NewPipe(
+				equation.NewDifference[float64](
+					transport.NewPipe(store.NewGet("through"), store.NewGet("value")),
+					transport.NewPipe(store.NewGet("from"), store.NewGet("value")),
+				),
+				store.NewKey("difference"),
+			),
+			transport.NewPipe(store.NewConstant(core.From(true)), store.NewKey("has_prior")),
+		),
+		store.NewRecord(
+			transport.NewPipe(),
+			transport.NewPipe(
+				equation.NewGreater[float64](store.NewGet("elapsed"), store.NewConstant(core.From(0.0))),
+				store.NewKey("defined"),
+			),
+			transport.NewPipe(
+				logic.NewGate(
+					equation.NewGreater[float64](store.NewGet("elapsed"), store.NewConstant(core.From(0.0))),
+					equation.NewRatio[float64](store.NewGet("difference"), store.NewGet("elapsed")),
+					store.NewConstant(core.From(0.0)),
+				),
+				store.NewKey("rate"),
+			),
+		),
+	)
+	first := store.NewRecord(
+		transport.NewPipe(collection.NewAt[core.Primitive](transport.NewIO(core.From(0.0))), store.NewKey("through")),
+		transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("elapsed")),
+		transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("difference")),
+		transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("rate")),
+		transport.NewPipe(store.NewConstant(core.From(false)), store.NewKey("has_prior")),
+		transport.NewPipe(store.NewConstant(core.From(false)), store.NewKey("defined")),
+	)
+	return transport.NewMap(
+		transport.NewPipe(
+			store.NewRecord(transport.NewPipe(source, store.NewKey("value")), transport.NewPipe(clock, store.NewKey("at"))),
+			collection.NewAppend[core.Primitive](history),
+			collection.NewTail[core.Primitive](transport.NewIO(core.From(2))),
+			history,
+			logic.NewGate(
+				equation.NewGreater[float64](
+					transport.NewPipe(transport.NewSpread[core.Primitive](), equation.NewCount()),
+					store.NewConstant(core.From(1.0)),
+				),
+				pair,
+				first,
+			),
+		),
+	)
 }

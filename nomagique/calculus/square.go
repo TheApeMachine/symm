@@ -2,45 +2,24 @@ package calculus
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-/*
-Square is the second power. It is how a composition weighs large deviations
-far more heavily than small ones, which is what makes it the basis of every
-variance and every least-squares fit in the system.
-*/
+// Square owns only its numeric operation. The configured left source remains
+// connected; neither a yielded result nor an exhausted run can replace it.
 type Square struct {
 	core.PrimitiveError
+	left    core.Primitive
 	current core.Primitive
 }
 
-/*
-NewSquare configures the register's starting value.
-*/
-func NewSquare(state core.Primitive) *Square {
-	return &Square{
-		current: state,
-	}
+func NewSquare(left core.Primitive) *Square {
+	return &Square{current: store.NewRetained(nil), left: left}
 }
-
-/*
-Next transforms the incoming value and holds the result. Offered
-nothing, Yield answers with the register untouched, so a composition can
-begin here.
-*/
-func (square *Square) Next(in core.Primitive) core.Primitive {
-	square.current = core.Yield(
-		square.current, in, func(held, value float64) float64 {
-			return value * value
-		},
-	)
-
-	return square.current
+func (operation *Square) Next(in core.Primitive) core.Primitive {
+	result := core.Yield(operation.left, in, func(held, value float64) float64 { return value * value }, operation)
+	transport.NewDiscard().Next(transport.NewApply(operation.current, transport.NewIO(result)))
+	return result
 }
-
-/*
-Read surfaces the register for the boundary.
-*/
-func (square *Square) Read() any {
-	return square.current.Read()
-}
+func (operation *Square) Read() any { return core.To[any](operation.current) }

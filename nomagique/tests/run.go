@@ -2,61 +2,19 @@ package tests
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"testing"
 )
 
-/*
-Run hands over several Primitives in one delivery run, and is how a case
-puts a Primitive under the obligation the contract actually imposes: a
-neighbour may yield once or many times, and a Primitive that quietly assumes
-the first is only correct by accident.
+// NewRun uses production delivery; tests do not maintain a second iterator.
+func NewRun(values ...core.Primitive) core.Primitive { return transport.NewIO(values...) }
 
-It is here rather than in each package because every Primitive that consumes
-input needs it, and a test fixture that is written out again in each file is
-the same duplication the algebra refuses everywhere else.
-
-The run belongs to the caller, so a different caller is handed the values
-from the beginning rather than the remains of somebody else's pass.
-*/
-type Run struct {
-	core.PrimitiveError
-	values []core.Primitive
-	index  int
-	caller core.Primitive
-	open   bool
-}
-
-/*
-NewRun configures the Primitives handed over, in order.
-*/
-func NewRun(values ...core.Primitive) *Run {
-	return &Run{
-		values: values,
-	}
-}
-
-/*
-Next hands over the next Primitive of the current run, and nil once the run
-is spent.
-*/
-func (run *Run) Next(in core.Primitive) core.Primitive {
-	if !run.open || in != run.caller {
-		run.index, run.caller, run.open = 0, in, true
-	}
-
-	if run.index >= len(run.values) {
-		run.open = false
-
-		return nil
-	}
-
-	run.index++
-
-	return run.values[run.index-1]
-}
-
-/*
-Read surfaces the run being handed over for the boundary.
-*/
-func (run *Run) Read() any {
-	return run.values
+// Drain is the test boundary. Results are observed during delivery, before a
+// later update can change a retained reference.
+func Drain(t *testing.T, operation, input core.Primitive) []any {
+	t.Helper()
+	values := []any{}
+	core.Yield(transport.NewIO(core.From(0)), transport.NewApply(operation, input),
+		func(held int, value core.Primitive) int { values = append(values, core.To[any](value)); return held })
+	return values
 }

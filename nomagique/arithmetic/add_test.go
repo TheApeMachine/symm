@@ -1,21 +1,12 @@
 package arithmetic
 
 import (
-	"testing"
-
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"testing"
 )
 
 func TestAddNext(t *testing.T) {
-	tests.NewTestTable(
-		tests.NewTestCase(
-			"float64", "add", NewAdd(core.From(0.0)),
-			tests.WithGenerator[float64](0, 0, 10, true),
-		),
-		tests.NewTestCase(
-			"float64", "add", NewAdd(core.From(0.0)),
-			tests.WithGenerator[float64](0, -10, 0, true),
-		),
-	).Run(t)
+	tests.Check(t, tests.Case{Name: "add", Seed: 0, Operation: NewAdd[float64](transport.NewIO(core.From(float64(0))))})
 }

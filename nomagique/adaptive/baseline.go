@@ -1,16 +1,27 @@
 package adaptive
 
-/*
-Baseline tracks an adaptive statistical baseline reference level.
-Outputs the shock/residual relative to baseline, or the running baseline center.
-Zero magic numbers: center derived online via Welford moments.
-*/
-type Baseline struct {
-	Engine WelfordEngine
-}
+import (
+	"github.com/theapemachine/symm/nomagique/algo"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
+)
 
-func (baseline *Baseline) Step(number Number) Number {
-	mean, _ := baseline.Engine.Update(float64(number))
-
-	return Number(float64(number) - mean)
+// NewBaseline scores against prior moments, then applies the configured
+// observation-driven window's shedding factor to its retained moments.
+// A different window is substituted by configuration, not an estimator mode.
+func NewBaseline(window core.Primitive) core.Primitive {
+	return equation.NewCausalResidual(
+		algo.NewWelford(
+			transport.NewPipe(
+				store.NewRecord(
+					transport.NewPipe(),
+					transport.NewPipe(store.NewGet("value"), window,
+						store.NewGet("shed_ratio"), store.NewKey("retain")),
+				),
+				equation.NewShedMoments(),
+			),
+		),
+	)
 }

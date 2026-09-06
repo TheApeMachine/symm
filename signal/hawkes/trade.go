@@ -7,8 +7,8 @@ import (
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/data"
+	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/temporal"
 	nmtypes "github.com/theapemachine/symm/nomagique/types"
@@ -26,7 +26,7 @@ data.Measurement outputs.
 type Trade struct {
 	mu     sync.Mutex
 	number *nomagique.Pipeline
-	hawkes *algo.Hawkes
+	hawkes *nmhawkes.Bivariate
 
 	in     input
 	symbol string
@@ -41,11 +41,10 @@ func NewTrade() *Trade {
 
 	keyStore := store.NewKeyStore(func() string { return trade.symbol })
 
-	trade.hawkes = algo.NewHawkes(algo.HawkesConfig{
-		Clock: &trade.in.clock,
-		Store: keyStore,
-		Key:   func() string { return trade.symbol },
-	})
+	trade.hawkes = nmhawkes.NewBivariateWithKey(
+		&trade.in.clock, nil, keyStore,
+		func() string { return trade.symbol },
+	)
 
 	trade.number = nomagique.Number(trade.hawkes)
 

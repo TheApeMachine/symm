@@ -1,56 +1,24 @@
 package calculus
 
 import (
-	"math"
-
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"math"
 )
 
-/*
-Atanh is the inverse of Tanh, mapping the open interval between minus one
-and one back onto the whole real line. It is how a bounded quantity such as
-a correlation is moved somewhere its dispersion stops depending on where it
-sat, which is what makes it comparable.
-*/
+// Atanh owns only its numeric operation. The configured left source remains
+// connected; neither a yielded result nor an exhausted run can replace it.
 type Atanh struct {
 	core.PrimitiveError
+	left    core.Primitive
 	current core.Primitive
 }
 
-/*
-NewAtanh configures the register's starting value.
-*/
-func NewAtanh(state core.Primitive) *Atanh {
-	return &Atanh{
-		current: state,
-	}
+func NewAtanh(left core.Primitive) *Atanh { return &Atanh{current: store.NewRetained(nil), left: left} }
+func (operation *Atanh) Next(in core.Primitive) core.Primitive {
+	result := core.Yield(operation.left, in, func(held, value float64) float64 { return math.Atanh(value) }, operation)
+	transport.NewDiscard().Next(transport.NewApply(operation.current, transport.NewIO(result)))
+	return result
 }
-
-/*
-Next transforms the incoming value and holds the result. Offered nothing,
-Yield answers with the register untouched, so a composition can begin here.
-
-The transform is undefined at and beyond the boundary, where a saturated
-value carries no information about how saturated it is, and the register
-stands rather than taking an infinity.
-*/
-func (atanh *Atanh) Next(in core.Primitive) core.Primitive {
-	atanh.current = core.Yield(
-		atanh.current, in, func(held, value float64) float64 {
-			if value <= -1 || value >= 1 {
-				return held
-			}
-
-			return math.Atanh(value)
-		},
-	)
-
-	return atanh.current
-}
-
-/*
-Read surfaces the register for the boundary.
-*/
-func (atanh *Atanh) Read() any {
-	return atanh.current.Read()
-}
+func (operation *Atanh) Read() any { return core.To[any](operation.current) }
