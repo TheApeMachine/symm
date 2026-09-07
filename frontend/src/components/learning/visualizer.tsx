@@ -8,18 +8,27 @@ import { action, clock, basis, percent } from "./format";
 import type { Candidate, LearningEvent, LearningView, Skill } from "./state";
 
 /*
-EdgeDistributionPlot renders a continuous probability density curve of the agent's
-forward return. A visual operator can instantly see whether the distribution has
+EdgeDistributionPlot renders the normal approximation for the policy's mean
+forward return when measured uncertainty is available. A visual operator can instantly see whether the distribution has
 shifted past the zero breakeven line into the positive profit zone and whether the
-conservative 3-sigma lower bound has cleared the promotion threshold.
+configured sigma lower bound has cleared the promotion threshold.
 */
 export const EdgeDistributionPlot = ({ skill }: { skill?: Skill }) => {
 	const defined = skill?.defined ?? false;
 	const meanBp = defined ? (skill?.mean ?? 0) * 10000 : 0;
-	const seBp =
-		defined && (skill?.standardError ?? 0) > 0
-			? (skill?.standardError ?? 0) * 10000
-			: 2.0;
+	if (!defined || !skill?.varianceDefined) {
+		return <Typography.Mono className="p-4 text-(--f3)">Policy edge: waiting for resolved windows with measurable variance.</Typography.Mono>;
+	}
+	if (skill.standardError === 0) {
+		return (
+			<Typography.Mono className="p-4 text-(--f3)">
+				Policy edge: {meanBp.toFixed(1)} bp across {skill.samples} resolved windows.
+				All measured window returns are equal; no spread is available to draw.
+				Challenger estimates are shown in Action spectrum.
+			</Typography.Mono>
+		);
+	}
+	const seBp = skill.standardError * 10000;
 	const lbBp = defined ? (skill?.lowerBound ?? 0) * 10000 : 0;
 	const sigma = skill?.sigma ?? 3.0;
 	const confidence = skill?.confidence ?? 0;

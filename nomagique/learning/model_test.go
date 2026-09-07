@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"runtime"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -301,6 +302,9 @@ func TestModelResolveScopeRetention(t *testing.T) {
 }
 
 func BenchmarkModelResolve(b *testing.B) {
+	runtime.GC()
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
 	model := NewModel[int, [2]int]()
 	authority := 9.0 / 16
 	// Match the 640 independent input contexts in the host's current workload.
@@ -324,6 +328,11 @@ func BenchmarkModelResolve(b *testing.B) {
 		}
 	}
 
+	runtime.GC()
+	var retained runtime.MemStats
+	runtime.ReadMemStats(&retained)
+	b.ReportMetric(float64(retained.HeapAlloc-before.HeapAlloc), "retained-B")
+
 	index := 0
 	b.ReportAllocs()
 
@@ -344,6 +353,7 @@ func BenchmarkModelResolve(b *testing.B) {
 		model.Recall(key, context, action)
 		index++
 	}
+	runtime.KeepAlive(model)
 }
 
 func BenchmarkModelRecall(b *testing.B) {

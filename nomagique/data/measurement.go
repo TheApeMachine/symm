@@ -1,10 +1,11 @@
 package data
 
 import (
-	"fmt"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"strings"
 )
 
 /*
@@ -50,54 +51,6 @@ func (measurement *Measurement[Value]) Symbol() string {
 	}
 
 	return measurement.Label
-}
-
-/*
-ToTypesMeasurement converts a projected data.Measurement[float64] into a *types.Measurement.
-*/
-func (measurement *Measurement[Value]) ToTypesMeasurement() *types.Measurement {
-	if measurement == nil {
-		return nil
-	}
-
-	metrics := make(map[string]*types.Metric[float64], len(measurement.Metrics))
-
-	for name, m := range measurement.Metrics {
-		if floatVal, ok := any(m.Raw).(float64); ok {
-			metric := types.NewMetric(name, floatVal, types.Descriptor{
-				Unit:      types.ParseUnit(string(m.Unit)),
-				Timescale: types.ParseTimescale(string(m.Timescale)),
-			})
-
-			if m.Normalized != nil {
-				if normVal, normOk := any(*m.Normalized).(float64); normOk {
-					metric.Normalized = &normVal
-				}
-			}
-
-			metrics[name] = metric
-		}
-	}
-
-	id := measurement.ID
-
-	if id == "" {
-		id = fmt.Sprintf("%s:%s:%d", measurement.Source, measurement.Label, measurement.At.UnixNano())
-	}
-
-	return &types.Measurement{
-		ID:           id,
-		Source:       measurement.Source,
-		Symbol:       measurement.Label,
-		At:           measurement.At,
-		ObservedFrom: measurement.From,
-		Maturity:     measurement.Maturity,
-		SNR:          measurement.SNR,
-		SNRDefined:   measurement.SNRDefined,
-		Metrics:      metrics,
-		Metadata:     measurement.Metadata,
-		Err:          measurement.Err,
-	}
 }
 
 /*
@@ -156,161 +109,111 @@ zero and left distinguishable from a genuine zero departure by the absence of th
 noise or covariance fact).
 */
 func (measurement *Measurement[Value]) Finalize() {
-	if measurement == nil {
+	if measurement == nil || measurement.Err != nil {
 		return
 	}
-
-	// A reused measurement derives quality from this update's facts. Missing
-	// noise evidence cannot retain a previously defined signal-to-noise ratio.
-	measurement.SNR = 0
-	measurement.SNRDefined = false
-
-	if measurement.Metadata == nil {
-		measurement.Metadata = map[string]float64{}
+	facts := make(map[string]core.Primitive, len(measurement.Metadata))
+	for name, value := range measurement.Metadata {
+		facts[name] = core.From(value)
 	}
-
-	_, hasSupport := measurement.Metadata[MetadataSupport]
-	_, hasDivergence := measurement.Metadata[MetadataDivergence]
-	_, hasMahalanobis := measurement.Metadata[MetadataMahalanobisSNR]
-
-	measurement.Estimated = hasSupport || hasDivergence || hasMahalanobis
-
-	// Derive the scalar SNR first so even a stateless measurement with the
-	// estimator facts still reports it, then fall back to Maturity handling.
-	divergence, hasDivergenceVal := measurement.Metadata[MetadataDivergence]
-	noiseVariance, hasNoise := measurement.Metadata[MetadataNoiseVariance]
-
-	if hasDivergenceVal && hasNoise && noiseVariance > 0 {
-		measurement.SNR = divergence * divergence / noiseVariance
-		measurement.SNRDefined = true
-	}
-
-	support, hasSupportVal := measurement.Metadata[MetadataSupport]
-
-	if !hasSupportVal {
-		// Stateless direct measurement: whole.
-		measurement.Maturity = 1
+	graphs := projectionPool.Get().(*projectionGraphs)
+	fields, err := transport.Evaluate[map[string]core.Primitive](graphs.quality, core.From(facts))
+	if err != nil {
+		measurement.Err = err
 		return
 	}
-
-	if support <= 1 {
-		measurement.Maturity = 0
-		return
-	}
-
-	measurement.Maturity = 1 - 1/support
-
-	if mahalanobisSNR, hasMahalanobisVal := measurement.Metadata[MetadataMahalanobisSNR]; hasMahalanobisVal && mahalanobisSNR >= 0 {
-		measurement.SNR = mahalanobisSNR
-		measurement.SNRDefined = true
+	decoder := core.NewDecoder(fields)
+	measurement.Maturity = core.Decode[float64](decoder, "maturity")
+	measurement.SNR = core.Decode[float64](decoder, "snr")
+	measurement.SNRDefined = core.Decode[bool](decoder, "snr_defined")
+	measurement.Estimated = core.Decode[bool](decoder, "estimated")
+	measurement.Err = decoder.Error()
+	if measurement.Err == nil {
+		projectionPool.Put(graphs)
 	}
 }
 
-/*
-Authority computes the continuous statistical authority in [0, 1] this measurement
-commands, derived from its maturity, estimator facts, and SNR.
-*/
+/* Authority reads the canonical Primitive authority equation, never a duplicate formula. */
 func (measurement *Measurement[Value]) Authority() float64 {
 	if measurement == nil {
-		return 0.0
+		return 0
 	}
-
 	if measurement.Maturity == 0 && !measurement.SNRDefined && !measurement.Estimated {
 		measurement.Finalize()
 	}
-
-	maturity := clamp(measurement.Maturity, 0.0, 1.0)
-
-	if maturity <= 0.0 {
-		return 0.0
+	if measurement.Err != nil {
+		return 0
 	}
-
-	snrFactor := 1.0
-
-	if measurement.Estimated {
-		snrFactor = 0.5
-
-		if measurement.SNRDefined {
-			if measurement.SNR <= 0.0 {
-				snrFactor = 0.1
-			} else {
-				snrFactor = measurement.SNR / (1.0 + measurement.SNR)
-			}
-		}
+	graphs := projectionPool.Get().(*projectionGraphs)
+	authority, err := transport.Evaluate[float64](graphs.authority, core.Record(map[string]any{
+		"maturity": measurement.Maturity, "snr": measurement.SNR,
+		"snr_defined": measurement.SNRDefined, "estimated": measurement.Estimated,
+	}))
+	if err != nil {
+		measurement.Err = err
+		return 0
 	}
-
-	return clamp(maturity*snrFactor, 0.0, 1.0)
+	projectionPool.Put(graphs)
+	return authority
 }
 
 /*
-Readout returns one metric from the measurement wrapped as a Readout with the
-measurement's own maturity, SNR, and event timestamp.
+Readout projects one metric into the Primitive record used by NewReadout.
+Unit, timestamps and optional normalized/standardized values remain provenance;
+no former Readout receiver or hidden graph traversal is recreated.
 */
-func (measurement *Measurement[Value]) Readout(label string) *Readout {
-	if measurement == nil || measurement.Metrics == nil {
+func (measurement *Measurement[Value]) Readout(label string) core.Primitive {
+	if measurement == nil || measurement.Err != nil {
 		return nil
 	}
-
-	if measurement.Maturity == 0 && !measurement.SNRDefined && !measurement.Estimated {
-		measurement.Finalize()
-	}
-
 	metric, found := measurement.Metrics[label]
-
 	if !found {
 		return nil
 	}
-
-	var raw float64
-
-	if floatVal, ok := any(metric.Raw).(float64); ok {
-		raw = floatVal
+	if measurement.Maturity == 0 && !measurement.SNRDefined && !measurement.Estimated {
+		measurement.Finalize()
 	}
-
-	readout := NewReadout(
-		measurement.Source,
-		label,
-		raw,
-		measurement.Maturity,
-		measurement.SNR,
-		measurement.SNRDefined,
-		measurement.Estimated,
-		measurement.At,
-	)
-
-	if metric.Normalized != nil {
-		if normVal, ok := any(*metric.Normalized).(float64); ok {
-			readout.Normalized = &normVal
-		}
-	}
-
-	if metric.Standardized != nil {
-		if stdVal, ok := any(*metric.Standardized).(float64); ok {
-			readout.Standardized = &stdVal
-		}
-	}
-
-	readout.Unit = metric.Unit
-	readout.Timescale = metric.Timescale
-
-	return readout
-}
-
-/*
-Readouts returns all metrics of this measurement converted to Readouts.
-*/
-func (measurement *Measurement[Value]) Readouts() map[string]*Readout {
-	if measurement == nil || measurement.Metrics == nil {
+	if measurement.Err != nil {
 		return nil
 	}
+	raw, valid := any(metric.Raw).(float64)
+	if !valid {
+		measurement.Err = core.ErrWrongType
+		return nil
+	}
+	record := core.Record(map[string]any{
+		"source": measurement.Source, "label": label, "raw": raw,
+		"maturity": measurement.Maturity, "snr": measurement.SNR,
+		"snr_defined": measurement.SNRDefined, "estimated": measurement.Estimated,
+		"at": measurement.At.UnixNano(), "unit": string(metric.Unit), "timescale": string(metric.Timescale),
+		"discrete": metric.Unit == UnitCount || strings.Contains(label, "ordinal"),
+	})
+	graphs := projectionPool.Get().(*projectionGraphs)
+	fields, err := transport.Evaluate[map[string]core.Primitive](graphs.readout, record)
+	if err != nil {
+		measurement.Err = err
+		return nil
+	}
+	if metric.Normalized != nil {
+		fields["normalized"] = core.From(*metric.Normalized)
+	}
+	if metric.Standardized != nil {
+		fields["standardized"] = core.From(*metric.Standardized)
+	}
+	projectionPool.Put(graphs)
+	return core.From(fields)
+}
 
-	readouts := make(map[string]*Readout, len(measurement.Metrics))
-
+/* Readouts retains each metric's explicit Primitive result record. */
+func (measurement *Measurement[Value]) Readouts() map[string]core.Primitive {
+	if measurement == nil {
+		return nil
+	}
+	readouts := make(map[string]core.Primitive, len(measurement.Metrics))
 	for label := range measurement.Metrics {
-		if r := measurement.Readout(label); r != nil {
-			readouts[label] = r
+		if readout := measurement.Readout(label); readout != nil {
+			readouts[label] = readout
 		}
 	}
-
 	return readouts
 }

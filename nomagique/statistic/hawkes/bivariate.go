@@ -6,10 +6,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 const MaxArrivalSamples = 64
@@ -34,7 +33,6 @@ type State struct {
 	eventsSinceFit int
 	modelSupport   float64
 
-	readings    []types.Reading
 	rejected    bool
 	from        time.Time
 	snr         float64
@@ -42,94 +40,49 @@ type State struct {
 	measurement *data.Measurement[float64]
 }
 
-/*
-Bivariate is the causal, online bivariate Hawkes arrival process model node.
-It maintains bounded arrival history and refits MLE parameters as data warrants.
-When configured with a Key or KeyStore slot, state is isolated per key without
-duplicating the pipeline graph.
-*/
+// Bivariate owns bounded arrival histories and the fitted MLE state. Its input
+// is an explicit {key string, at int64 nanoseconds, mark float64} record; the
+// output is the measurement of the event against the previously fitted model.
+// Shape failures follow Primitive.Error. Rejected market events instead return
+// an error-bearing measurement without poisoning subsequent delivery runs.
 type Bivariate struct {
-	Mark  types.Node
-	Clock types.Node
-	Store *store.KeyStore
-	Key   func() string
-
-	states map[string]*State
-	single State
-	active *State
+	core.PrimitiveError
+	seed    core.Primitive
+	states  map[string]*State
+	single  State
+	active  *State
+	current *data.Measurement[float64]
 }
 
-/*
-NewBivariate constructs a new Bivariate Hawkes process model node.
-*/
-func NewBivariate(clock types.Node) *Bivariate {
-	return &Bivariate{
-		Clock:  clock,
-		states: make(map[string]*State),
-	}
+func NewBivariate() *Bivariate {
+	return &Bivariate{seed: transport.NewIO(core.From((*data.Measurement[float64])(nil))), states: make(map[string]*State)}
 }
 
-/*
-NewBivariateWithKey constructs a Bivariate Hawkes node configured with a KeyStore or Key selector.
-*/
-func NewBivariateWithKey(
-	clock types.Node,
-	mark types.Node,
-	keyStore *store.KeyStore,
-	key func() string,
-) *Bivariate {
-	return &Bivariate{
-		Clock:  clock,
-		Mark:   mark,
-		Store:  keyStore,
-		Key:    key,
-		states: make(map[string]*State),
-	}
+func (bivariate *Bivariate) Next(in core.Primitive) core.Primitive {
+	return core.Yield(bivariate.seed, in, func(_ *data.Measurement[float64], fields map[string]core.Primitive) *data.Measurement[float64] {
+		decoder := core.NewDecoder(fields)
+		key := core.Decode[string](decoder, "key")
+		nanos := core.Decode[int64](decoder, "at")
+		mark := core.Decode[float64](decoder, "mark")
+		if err := decoder.Error(); err != nil {
+			bivariate.Error(err)
+			return nil
+		}
+		bivariate.current = bivariate.observe(key, time.Unix(0, nanos), mark)
+		return bivariate.current
+	}, bivariate)
 }
+func (bivariate *Bivariate) Read() any { return bivariate.current }
 
-/*
-Step advances the Hawkes arrival process with one observation.
-*/
-func (bivariate *Bivariate) Step(carrier types.Scalar) types.Scalar {
-	state := bivariate.resolveState()
+func (bivariate *Bivariate) observe(key string, at time.Time, mark float64) *data.Measurement[float64] {
+	state := bivariate.resolveState(key)
 	bivariate.active = state
-
 	state.rejected = false
 	state.hasSNR = false
-	state.readings = nil
-
-	mark := float64(carrier)
-
-	if bivariate.Mark != nil {
-		mark = float64(bivariate.Mark.Step(carrier))
-	}
-
-	key := bivariate.activeKey()
-
-	if mark == 0 {
+	if mark == 0 || math.IsNaN(mark) || math.IsInf(mark, 0) {
 		state.rejected = true
-
-		err := errors.New("hawkes: a finite non-zero mark is required")
-		errnie.Error(errnie.Err(errnie.Validation, "hawkes: invalid mark", err))
-
-		state.measurement = &data.Measurement[float64]{
-			ID:     fmt.Sprintf("%s:hawkes:%s", key, time.Now().Format(time.RFC3339Nano)),
-			Label:  key,
-			Source: "hawkes",
-			Err:    err,
-		}
-
-		return carrier
-	}
-
-	var at time.Time
-
-	if timeSource, ok := bivariate.Clock.(interface{ Time() time.Time }); ok {
-		at = timeSource.Time()
-	}
-
-	if at.IsZero() {
-		at = time.Now()
+		state.measurement = &data.Measurement[float64]{ID: fmt.Sprintf("%s:hawkes:%s", key, at.Format(time.RFC3339Nano)), Label: key, Source: "hawkes", At: at, Err: errors.New("hawkes: a finite non-zero mark is required")}
+		return state.measurement
 	}
 
 	if state.hasLast {
@@ -137,7 +90,6 @@ func (bivariate *Bivariate) Step(carrier types.Scalar) types.Scalar {
 			state.rejected = true
 
 			err := errors.New("hawkes: regressing event time")
-			errnie.Error(errnie.Err(errnie.Validation, "hawkes: regressing event time", err))
 
 			state.measurement = &data.Measurement[float64]{
 				ID:     fmt.Sprintf("%s:hawkes:%s", key, at.Format(time.RFC3339Nano)),
@@ -147,7 +99,7 @@ func (bivariate *Bivariate) Step(carrier types.Scalar) types.Scalar {
 				Err:    err,
 			}
 
-			return carrier
+			return state.measurement
 		}
 	}
 
@@ -194,22 +146,12 @@ func (bivariate *Bivariate) Step(carrier types.Scalar) types.Scalar {
 	id := fmt.Sprintf("%s:hawkes:%s", key, at.Format(time.RFC3339Nano))
 	measurement := data.NewMeasurement[float64](id, key, "hawkes", at, from)
 
-	readings := make([]types.Reading, 0, 48)
-
 	addMetric := func(label string, val float64, unit data.Unit, timescale data.Timescale) {
 		measurement.PutMetric(data.Metric[float64]{
 			Label:     label,
 			Raw:       val,
 			Unit:      unit,
 			Timescale: timescale,
-		})
-
-		readings = append(readings, types.Reading{
-			Label:     label,
-			Value:     types.Scalar(val),
-			Unit:      string(unit),
-			Timescale: string(timescale),
-			Defined:   true,
 		})
 	}
 
@@ -229,10 +171,8 @@ func (bivariate *Bivariate) Step(carrier types.Scalar) types.Scalar {
 	}
 
 	if state.modelReady {
-		state.evaluateModel(measurement, &readings, buyArrivals, sellArrivals, atSec, span, mark)
+		state.evaluateModel(measurement, buyArrivals, sellArrivals, atSec, span, mark)
 	}
-
-	state.readings = readings
 
 	metadata := map[string]float64{
 		data.MetadataSupport: state.Support(),
@@ -262,11 +202,10 @@ func (bivariate *Bivariate) Step(carrier types.Scalar) types.Scalar {
 
 	state.tryRefit(at, atSec)
 
-	return carrier
+	return state.measurement
 }
 
-func (bivariate *Bivariate) resolveState() *State {
-	key := bivariate.activeKey()
+func (bivariate *Bivariate) resolveState(key string) *State {
 
 	if key != "" {
 		if bivariate.states == nil {
@@ -292,21 +231,8 @@ func (bivariate *Bivariate) resolveState() *State {
 	return &bivariate.single
 }
 
-func (bivariate *Bivariate) activeKey() string {
-	if bivariate.Key != nil {
-		return bivariate.Key()
-	}
-
-	if bivariate.Store != nil && bivariate.Store.Key != nil {
-		return bivariate.Store.Key()
-	}
-
-	return ""
-}
-
 func (state *State) evaluateModel(
 	measurement *data.Measurement[float64],
-	readings *[]types.Reading,
 	buyArrivals []float64,
 	sellArrivals []float64,
 	atSec float64,
@@ -333,14 +259,6 @@ func (state *State) evaluateModel(
 			Raw:       val,
 			Unit:      unit,
 			Timescale: timescale,
-		})
-
-		*readings = append(*readings, types.Reading{
-			Label:     label,
-			Value:     types.Scalar(val),
-			Unit:      string(unit),
-			Timescale: string(timescale),
-			Defined:   true,
 		})
 	}
 
@@ -566,69 +484,6 @@ func currentWindowStream(buy, sell []float64, horizonSec, mark float64) arrivalS
 	return newArrivalStream(sortedCopy(buy), append(sortedCopy(sell), horizonSec))
 }
 
-// Measurement returns the Measurement published by the most recent Step.
-func (bivariate *Bivariate) Measurement() *data.Measurement[float64] {
-	if bivariate.active == nil {
-		return nil
-	}
-
-	return bivariate.active.measurement
-}
-
-// Readings returns the set of readings published by the most recent Step.
-func (bivariate *Bivariate) Readings() []types.Reading {
-	if bivariate.active == nil {
-		return nil
-	}
-
-	return bivariate.active.readings
-}
-
-// Rejected reports whether the most recent Step was invalid.
-func (bivariate *Bivariate) Rejected() bool {
-	if bivariate.active == nil {
-		return false
-	}
-
-	return bivariate.active.rejected
-}
-
-// From returns the origin timestamp of the current observation window.
-func (bivariate *Bivariate) From() time.Time {
-	if bivariate.active == nil {
-		return time.Time{}
-	}
-
-	return bivariate.active.from
-}
-
-// Support reports effective model support for maturity derivation.
-func (bivariate *Bivariate) Support() float64 {
-	if bivariate.active == nil {
-		return 0
-	}
-
-	return bivariate.active.Support()
-}
-
-// Divergence returns the signal departure for SNR derivation.
-func (bivariate *Bivariate) Divergence() types.Scalar {
-	if bivariate.active == nil {
-		return 0
-	}
-
-	return bivariate.active.Divergence()
-}
-
-// NoiseVariance returns the noise power for SNR derivation.
-func (bivariate *Bivariate) NoiseVariance() types.Scalar {
-	if bivariate.active == nil {
-		return 0
-	}
-
-	return bivariate.active.NoiseVariance()
-}
-
 // Support on State reports effective model support.
 func (state *State) Support() float64 {
 	if !state.modelReady {
@@ -639,16 +494,16 @@ func (state *State) Support() float64 {
 }
 
 // Divergence on State returns the signal departure.
-func (state *State) Divergence() types.Scalar {
+func (state *State) Divergence() float64 {
 	if !state.hasSNR {
 		return 0
 	}
 
-	return types.Scalar(math.Sqrt(state.snr))
+	return float64(math.Sqrt(state.snr))
 }
 
 // NoiseVariance on State returns the noise power.
-func (state *State) NoiseVariance() types.Scalar {
+func (state *State) NoiseVariance() float64 {
 	if !state.hasSNR {
 		return 0
 	}
@@ -656,9 +511,4 @@ func (state *State) NoiseVariance() types.Scalar {
 	return 1.0
 }
 
-var (
-	_ types.Node     = (*Bivariate)(nil)
-	_ types.Reporter = (*Bivariate)(nil)
-	_ types.Evidence = (*Bivariate)(nil)
-	_ types.Rejector = (*Bivariate)(nil)
-)
+var _ core.Primitive = (*Bivariate)(nil)

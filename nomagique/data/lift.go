@@ -1,6 +1,10 @@
 package data
 
-import "strings"
+import (
+	"errors"
+	"github.com/theapemachine/symm/nomagique/core"
+	"strings"
+)
 
 /*
 Lift flattens a set of measurements into one observation keyed by
@@ -43,6 +47,10 @@ func Lift(measurements []*Measurement[float64]) (map[string]float64, error) {
 		}
 
 		authority := measurement.Authority()
+		if measurement.Err != nil {
+			failure = errors.Join(failure, measurement.Err)
+			continue
+		}
 
 		for label, metric := range measurement.Metrics {
 			if metric.Unit == UnitCount || strings.Contains(label, "ordinal") {
@@ -62,8 +70,8 @@ LiftReadouts flattens a set of measurements into Readouts keyed by
 source-qualified metric name, preserving the full quality context (maturity,
 SNR, credibility, and corroborations) for downstream logic layers.
 */
-func LiftReadouts(measurements []*Measurement[float64]) (map[string]*Readout, error) {
-	readouts := make(map[string]*Readout)
+func LiftReadouts(measurements []*Measurement[float64]) (map[string]core.Primitive, error) {
+	readouts := make(map[string]core.Primitive)
 
 	var failure error
 
@@ -82,6 +90,10 @@ func LiftReadouts(measurements []*Measurement[float64]) (map[string]*Readout, er
 
 		for label := range measurement.Metrics {
 			readout := measurement.Readout(label)
+			if measurement.Err != nil {
+				failure = errors.Join(failure, measurement.Err)
+				break
+			}
 
 			if readout != nil {
 				readouts[measurement.Source+"/"+label] = readout

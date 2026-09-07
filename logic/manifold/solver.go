@@ -2,6 +2,7 @@ package manifold
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"sync"
@@ -408,6 +409,13 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 		return true
 	})
 
+	if solver.dataset.Error() != nil {
+		for _, state := range states {
+			sensorium.StatePool.Put(state)
+		}
+		return nil, nil
+	}
+
 	for contentID := range solver.loaded {
 		if _, resting := seen[contentID]; !resting {
 			departures = append(departures, contentID)
@@ -517,15 +525,7 @@ func collectStates(states []*sensorium.State) *sensorium.State {
 		Dark:       make([]bool, count),
 	}
 
-	if states[0].Sources != nil {
-		batch.Sources = make([]sensorium.Source, count)
-	}
-
 	for index, state := range states {
-		if batch.Sources != nil {
-			batch.Sources[index] = state.Sources[0]
-		}
-		state.Sources = nil
 		batch.Bytes[index] = state.Bytes[0]
 		batch.Seqs[index] = state.Seqs[0]
 		batch.TokenIDs[index] = state.TokenIDs[0]
@@ -563,6 +563,10 @@ func (solver *Solver) Advance() *State {
 	}
 
 	departures, batch := solver.project()
+	if err := solver.dataset.Error(); err != nil {
+		solver.halt(err)
+		return nil
+	}
 
 	if len(departures) == 0 && batch == nil {
 		return nil
@@ -679,6 +683,13 @@ func (solver *Solver) Crystallize(
 		states = append(states, state)
 	}
 
+	if err := solver.dataset.Error(); err != nil {
+		for _, state := range states {
+			sensorium.StatePool.Put(state)
+		}
+		solver.halt(err)
+		return nil, nil
+	}
 	batch := collectStates(states)
 
 	if batch == nil || batch.N == 0 {
@@ -693,7 +704,10 @@ func (solver *Solver) Crystallize(
 			continue
 		}
 
-		solver.injectProbeParticle(batch, price, symbol)
+		if err := solver.injectProbeParticle(batch, price, symbol); err != nil {
+			solver.halt(err)
+			return nil, nil
+		}
 	}
 
 	if relaxationSteps <= 0 {
@@ -743,24 +757,22 @@ func (solver *Solver) injectProbeParticle(
 	batch *sensorium.State,
 	price float64,
 	symbol string,
-) {
-	if batch == nil || symbol == "" || price <= 0 {
-		return
-	}
-
-	state, _ := sensorium.StatePool.Get().(*sensorium.State)
-
-	if state == nil {
-		return
+) error {
+	if batch == nil || symbol == "" || !validPositive(price) {
+		return fmt.Errorf("manifold: batch, symbol and finite positive probe price required")
 	}
 
 	// A probe must be placed by the same resident frame the observed orders
 	// were, or it crystallizes in a different coordinate system than the book
 	// it is probing.
-	positionX, priceDeviation := solver.dataset.frames.placePrice(
+	positionX, priceDeviation, err := solver.dataset.frames.placePrice(
 		symbol,
 		math.Log(price),
 	)
+	if err != nil {
+		return err
+	}
+	state := sensorium.StatePool.Get().(*sensorium.State)
 	symbolIndex := symbolToken(symbol)
 	token := packToken(symbolIndex, 0)
 
@@ -804,6 +816,7 @@ func (solver *Solver) injectProbeParticle(
 	batch.N++
 
 	sensorium.StatePool.Put(state)
+	return nil
 }
 
 /*

@@ -1,145 +1,79 @@
-package data
+package data_test
 
 import (
 	"errors"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"testing"
 	"time"
-
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/nomagique/types"
 )
 
-/* reporting publishes one declared reading about itself. */
-type reporting struct {
-	label   string
-	value   types.Scalar
-	defined bool
+func TestProjectionNext(t *testing.T) {
+	at := time.Unix(1700000000, 0).UTC()
+	projection := &data.Projection{Source: "test",
+		Identity: func() (string, string, time.Time, time.Time) { return "id", "BTC/USD", at, at },
+		Metrics: []data.MetricProjection{
+			{Path: []string{"alpha"}, Label: "alpha", Unit: data.UnitRate},
+			{Path: []string{"beta"}, Label: "beta", Defined: []string{"beta_defined"}},
+		},
+		Facts: []data.FactProjection{
+			{Name: data.MetadataSupport, Path: []string{"support"}},
+			{Name: data.MetadataDivergence, Path: []string{"residual"}},
+			{Name: data.MetadataNoiseVariance, Path: []string{"variance"}},
+		},
+	}
+	for _, value := range []float64{2.5, 0, -1} {
+		measurement, err := transport.Evaluate[*data.Measurement[float64]](projection, core.Record(map[string]any{
+			"alpha": value, "beta_defined": false, "support": 4.0, "residual": 2.0, "variance": 1.0,
+		}))
+		if err != nil || measurement.Err != nil {
+			t.Fatalf("projection: %v / %v", err, measurement.Err)
+		}
+		if measurement.ID != "id" || measurement.Metrics["alpha"].Raw != value || measurement.Maturity != 0.75 || measurement.SNR != 4 {
+			t.Fatalf("incorrect projection: %+v", measurement)
+		}
+		if _, exists := measurement.Metrics["beta"]; exists {
+			t.Fatal("undefined metric became zero")
+		}
+	}
 }
 
-func (node *reporting) Step(x types.Scalar) types.Scalar { return x }
+func TestProjectionRejectsMissingFields(t *testing.T) {
+	projection := &data.Projection{Metrics: []data.MetricProjection{{Path: []string{"absent"}, Label: "missing"}}}
+	measurement := projection.Project(nil)
+	if measurement.Err == nil {
+		t.Fatal("missing required metric was hidden")
+	}
+	refusal := errors.New("unmeasurable")
+	projection = &data.Projection{Accepted: []string{"accepted"}, Rejection: refusal}
+	measurement = projection.Project(core.To[map[string]core.Primitive](core.Record(map[string]any{"accepted": false})))
+	if !errors.Is(measurement.Err, refusal) {
+		t.Fatal(measurement.Err)
+	}
+}
 
-func (node *reporting) Readings() []types.Reading {
-	return []types.Reading{{
-		Label:     node.label,
-		Unit:      "rate",
-		Timescale: "instantaneous",
-		Value:     node.value,
-		Defined:   node.defined,
+// A first moment has undefined sample variance. It must be absent, not zero,
+// in the evidence record. Nested record paths keep this declaration explicit.
+func TestProjectionColdStartFacts(t *testing.T) {
+	p := &data.Projection{Facts: []data.FactProjection{
+		{Name: data.MetadataSupport, Path: []string{"moments", "count"}},
+		{Name: data.MetadataNoiseVariance, Path: []string{"moments", "variance"}, Defined: []string{"moments", "variance_defined"}},
 	}}
-}
-
-/* evidencing declares the confidence its estimate carries. */
-type evidencing struct{ reporting }
-
-func (node *evidencing) Support() float64            { return 4 }
-func (node *evidencing) Divergence() types.Scalar    { return 2 }
-func (node *evidencing) NoiseVariance() types.Scalar { return 1 }
-
-/* rejecting declares an observation the composition could not measure. */
-type rejecting struct{ reject bool }
-
-func (node *rejecting) Step(x types.Scalar) types.Scalar { return x }
-func (node *rejecting) Rejected() bool                   { return node.reject }
-
-var errUnmeasurable = errors.New("unmeasurable")
-
-func TestProjection(t *testing.T) {
-	at := time.Unix(1_700_000_000, 0).UTC()
-
-	Convey("Given a projection terminating a composition", t, func() {
-		projection := &Projection{
-			Source: "test",
-			Identity: func() (string, string, time.Time, time.Time) {
-				return "BTC/USD:test:1", "BTC/USD", at, at
-			},
-		}
-
-		root := &types.Chain{
-			A: &reporting{label: "alpha", value: 2.5, defined: true},
-			B: &reporting{label: "beta", value: -1, defined: true},
-			C: projection,
-		}
-
-		types.Bind(root, &types.Tick{})
-
-		Convey("it harvests every upstream reading without being handed one", func() {
-			root.Step(0)
-
-			measurement := projection.Measurement()
-			So(measurement, ShouldNotBeNil)
-			So(measurement.ID, ShouldEqual, "BTC/USD:test:1")
-			So(measurement.Metrics["alpha"].Raw, ShouldEqual, 2.5)
-			So(measurement.Metrics["beta"].Raw, ShouldEqual, -1.0)
-			So(measurement.Metrics["alpha"].Unit, ShouldEqual, UnitRate)
-		})
-	})
-
-	Convey("Given an undefined upstream reading", t, func() {
-		projection := &Projection{Source: "test"}
-		root := &types.Chain{
-			A: &reporting{label: "undefined", value: 5, defined: false},
-			B: &reporting{label: "defined", value: 5, defined: true},
-			C: projection,
-		}
-
-		types.Bind(root, &types.Tick{})
-
-		Convey("it is absent rather than published as a zero", func() {
-			root.Step(0)
-
-			measurement := projection.Measurement()
-			_, present := measurement.Metrics["undefined"]
-			So(present, ShouldBeFalse)
-			So(measurement.Metrics["defined"].Raw, ShouldEqual, 5.0)
-		})
-	})
-
-	Convey("Given an upstream stage declaring its evidence", t, func() {
-		projection := &Projection{Source: "test"}
-		root := &types.Chain{
-			A: &evidencing{reporting{label: "alpha", value: 1, defined: true}},
-			B: projection,
-		}
-
-		types.Bind(root, &types.Tick{})
-
-		Convey("Finalize derives maturity and SNR from the declared facts", func() {
-			root.Step(0)
-
-			measurement := projection.Measurement()
-			So(measurement.Metadata[MetadataSupport], ShouldEqual, 4.0)
-			So(measurement.Maturity, ShouldEqual, 0.75)
-			So(measurement.SNRDefined, ShouldBeTrue)
-			So(measurement.SNR, ShouldEqual, 4.0)
-		})
-	})
-
-	Convey("Given an upstream stage rejecting the observation", t, func() {
-		projection := &Projection{Source: "test", Rejection: errUnmeasurable}
-		root := &types.Chain{
-			A: &rejecting{reject: true},
-			B: &reporting{label: "alpha", value: 1, defined: true},
-			C: projection,
-		}
-
-		types.Bind(root, &types.Tick{})
-
-		Convey("the measurement carries the failure, not readings", func() {
-			root.Step(0)
-
-			measurement := projection.Measurement()
-			So(measurement.Err, ShouldEqual, errUnmeasurable)
-			So(measurement.Metrics, ShouldBeEmpty)
-		})
-	})
-
-	Convey("Given a projection bound to nothing", t, func() {
-		projection := &Projection{Source: "test"}
-
-		Convey("it publishes an empty measurement rather than failing", func() {
-			projection.Step(0)
-			So(projection.Measurement(), ShouldNotBeNil)
-			So(projection.Measurement().Metrics, ShouldBeEmpty)
-		})
-	})
+	fields := map[string]core.Primitive{"moments": core.Record(map[string]any{"count": 1.0, "variance_defined": false})}
+	m := p.Project(fields)
+	if m.Err != nil || m.Maturity != 0 {
+		t.Fatalf("cold start: %+v", m)
+	}
+	if _, exists := m.Metadata[data.MetadataNoiseVariance]; exists {
+		t.Fatal("undefined variance projected")
+	}
+	fields["moments"] = core.Record(map[string]any{"count": 2.0, "variance_defined": true, "variance": 0.0})
+	m = p.Project(fields)
+	if m.Err != nil {
+		t.Fatal(m.Err)
+	}
+	if value, exists := m.Metadata[data.MetadataNoiseVariance]; !exists || value != 0 {
+		t.Fatal("observed zero variance lost")
+	}
 }

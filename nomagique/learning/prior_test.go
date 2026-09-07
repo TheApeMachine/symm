@@ -10,6 +10,6 @@ import (
 
 func TestPriorNext(t *testing.T) {
 	for _, memory := range []float64{0, 10} {
-		tests.CheckPrior(t, learning.NewPrior(store.NewConstant(core.From(memory))), memory)
+		tests.CheckPrior(t, learning.NewPrior(store.NewConstant(core.From(memory)), learning.NewPriorMemory()), memory)
 	}
 }

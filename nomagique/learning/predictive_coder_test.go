@@ -16,7 +16,6 @@ func coderFixture(horizon int) *PredictiveCoder {
 		CustomArch: []int{3, 6, 3},
 		MaxHorizon: horizon,
 		Target:     DirectionalTarget(0),
-		Pace:       NewPaceController(),
 		Learn:      true,
 	})
 }

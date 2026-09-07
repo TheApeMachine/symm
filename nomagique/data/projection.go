@@ -1,130 +1,92 @@
 package data
 
 import (
+	"errors"
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
+/* MetricProjection names an explicit graph field; Defined gates optional evidence. */
+type MetricProjection struct {
+	Label         string
+	Path, Defined []string
+	Unit          Unit
+	Timescale     Timescale
+}
+
+/* FactProjection declares estimator metadata and its optional evidence gate. */
+type FactProjection struct {
+	Name          string
+	Path, Defined []string
+}
+
 /*
-Projection is the terminal stage of a composition: it names what the pipeline
-measured as a Measurement.
-
-It is passive. It holds no readings of its own and is handed no pointers to
-the stages above it. At construction the builder binds it to the composition
-it terminates, and on each Step it harvests the readings every upstream node
-publishes about itself.
-
-That is what makes the composition the definition: a stage states what it
-measured, and nothing outside the graph has to know how to ask.
-
-Identity names the observation being published. It is a function because
-identity is a name, not a quantity, and the carrier only carries quantities.
+Projection is a serialization boundary over an explicit Primitive result record.
+It never inspects upstream receivers. Metrics and estimator facts are declared
+by the graph's composition root, not inferred from legacy Reporter interfaces.
 */
 type Projection struct {
-	Source   string
-	Identity func() (id string, label string, at time.Time, from time.Time)
-
-	// Rejection is the failure this projection reports when an upstream stage
-	// declares the observation unmeasurable.
-	Rejection error
-
-	upstream    []types.Node
+	core.PrimitiveError
+	Source      string
+	Identity    func() (id string, label string, at time.Time, from time.Time)
+	Metrics     []MetricProjection
+	Facts       []FactProjection
+	Accepted    []string
+	Rejection   error
+	seed        core.Primitive
 	measurement *Measurement[float64]
 }
 
-/*
-Bind attaches the composition this projection terminates. The builder calls it;
-a consumer never does.
-*/
-func (projection *Projection) Bind(root types.Node) {
-	projection.upstream = nil
-
-	types.Walk(root, func(node types.Node) {
-		if node == projection {
-			return
-		}
-
-		projection.upstream = append(projection.upstream, node)
-	})
+func (projection *Projection) Next(input core.Primitive) core.Primitive {
+	if projection.seed == nil {
+		projection.seed = transport.NewIO(core.From((*Measurement[float64])(nil)))
+	}
+	return core.Yield(projection.seed, input,
+		func(_ *Measurement[float64], fields map[string]core.Primitive) *Measurement[float64] {
+			projection.measurement = projection.Project(fields)
+			return projection.measurement
+		}, projection)
 }
 
-/*
-Step harvests every upstream reading and publishes the Measurement. It passes
-the carrier through unchanged, so terminating a Chain with a Projection does
-not alter what the composition computes.
-*/
-func (projection *Projection) Step(x types.Scalar) types.Scalar {
-	var (
-		id    string
-		label string
-		at    time.Time
-		from  time.Time
-	)
+func (projection *Projection) Read() any { return projection.measurement }
 
+/* Project translates the declared record into the domain-facing measurement. */
+func (projection *Projection) Project(fields map[string]core.Primitive) *Measurement[float64] {
+	var id, label string
+	var at, from time.Time
 	if projection.Identity != nil {
 		id, label, at, from = projection.Identity()
 	}
-
 	measurement := NewMeasurement[float64](id, label, projection.Source, at, from)
-
-	for _, node := range projection.upstream {
-		if rejector, ok := node.(types.Rejector); ok && rejector.Rejected() {
-			measurement.Err = projection.Rejection
-			projection.measurement = measurement
-
-			return x
+	decoder := core.NewDecoder(fields)
+	if len(projection.Accepted) != 0 && !core.Decode[bool](decoder, projection.Accepted...) {
+		measurement.Err = errors.Join(projection.Rejection, decoder.Error())
+		if measurement.Err == nil {
+			measurement.Err = errors.New("projection: observation not accepted")
 		}
+		return measurement
 	}
-
-	metadata := map[string]float64{}
-
-	for _, node := range projection.upstream {
-		reporter, ok := node.(types.Reporter)
-
-		if !ok {
+	for _, metric := range projection.Metrics {
+		if len(metric.Defined) != 0 && !core.Decode[bool](decoder, metric.Defined...) {
 			continue
 		}
-
-		for _, reading := range reporter.Readings() {
-			if !reading.Defined || reading.Label == "" {
+		measurement.PutMetric(Metric[float64]{Label: metric.Label,
+			Raw: core.Decode[float64](decoder, metric.Path...), Unit: metric.Unit, Timescale: metric.Timescale})
+	}
+	if len(projection.Facts) != 0 {
+		measurement.Metadata = make(map[string]float64, len(projection.Facts))
+		for _, fact := range projection.Facts {
+			if len(fact.Defined) != 0 && !core.Decode[bool](decoder, fact.Defined...) {
 				continue
 			}
-
-			measurement.PutMetric(Metric[float64]{
-				Label:     reading.Label,
-				Raw:       float64(reading.Value),
-				Unit:      Unit(reading.Unit),
-				Timescale: Timescale(reading.Timescale),
-			})
-		}
-
-		// A wrapper that renames a stage's readings forwards its evidence but
-		// is not itself an estimator; asking it first would record a zero.
-		if reporter, ok := node.(interface{ Evidently() bool }); ok && !reporter.Evidently() {
-			continue
-		}
-
-		if evidence, ok := node.(types.Evidence); ok {
-			metadata[MetadataSupport] = evidence.Support()
-			metadata[MetadataDivergence] = float64(evidence.Divergence())
-			metadata[MetadataNoiseVariance] = float64(evidence.NoiseVariance())
+			measurement.Metadata[fact.Name] = core.Decode[float64](decoder, fact.Path...)
 		}
 	}
-
-	if len(metadata) > 0 {
-		measurement.Metadata = metadata
-	}
-
+	measurement.Err = decoder.Error()
 	measurement.Finalize()
-	projection.measurement = measurement
-
-	return x
+	return measurement
 }
 
-// Measurement returns the Measurement the most recent Step published.
-func (projection *Projection) Measurement() *Measurement[float64] {
-	return projection.measurement
-}
-
-var _ types.Node = (*Projection)(nil)
+var _ core.Primitive = (*Projection)(nil)

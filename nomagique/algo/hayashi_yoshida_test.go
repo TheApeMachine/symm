@@ -1,21 +1,31 @@
-package algo_test
+package algo
 
 import (
-	"github.com/theapemachine/symm/nomagique/algo"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/tests"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"math"
 	"math/rand"
 	"testing"
 )
 
+func path(at []int64, prices []float64) []core.Primitive {
+	out := []core.Primitive{}
+	for i, x := range prices {
+		out = append(out, core.From(map[string]core.Primitive{"at": core.From(at[i]), "value": core.From(x)}))
+	}
+	return out
+}
+func observation(left, right []core.Primitive) core.Primitive {
+	return transport.NewIO(core.From(map[string]core.Primitive{"left": core.From(left), "right": core.From(right)}))
+}
 func TestHayashiYoshida(t *testing.T) {
 	// Deliberately asynchronous: one left increment overlaps two right increments.
-	left := tests.Path([]int64{0, 2}, []float64{1, math.Exp(1)})
-	right := tests.Path([]int64{0, 1, 2}, []float64{1, math.Exp(1), math.Exp(2)})
-	node := algo.NewHayashiYoshida()
+	left := path([]int64{0, 2}, []float64{1, math.Exp(1)})
+	right := path([]int64{0, 1, 2}, []float64{1, math.Exp(1), math.Exp(2)})
+	node := NewHayashiYoshida()
 	for range 3 {
-		out := tests.Drain(t, node, tests.Observation(left, right))
+		out := tests.Drain(t, node, observation(left, right))
 		if node.Error() != nil {
 			t.Fatal(node.Error())
 		}
@@ -31,14 +41,14 @@ func TestHayashiYoshida(t *testing.T) {
 	}
 }
 func TestHayashiEmptyAndTouch(t *testing.T) {
-	left := tests.Path([]int64{0, 1}, []float64{1, 2})
-	right := tests.Path([]int64{1, 2}, []float64{1, 2})
-	node := algo.NewHayashiYoshida()
-	fields := tests.Drain(t, node, tests.Observation(left, right))[0].(map[string]core.Primitive)
+	left := path([]int64{0, 1}, []float64{1, 2})
+	right := path([]int64{1, 2}, []float64{1, 2})
+	node := NewHayashiYoshida()
+	fields := tests.Drain(t, node, observation(left, right))[0].(map[string]core.Primitive)
 	tests.EqualNumber(t, core.To[float64](fields["support"]), 0)
 	tests.EqualNumber(t, core.To[float64](fields["correlation"]), 0)
-	node = algo.NewHayashiYoshida()
-	fields = tests.Drain(t, node, tests.Observation(nil, nil))[0].(map[string]core.Primitive)
+	node = NewHayashiYoshida()
+	fields = tests.Drain(t, node, observation(nil, nil))[0].(map[string]core.Primitive)
 	tests.EqualNumber(t, core.To[float64](fields["correlation"]), math.NaN())
 }
 func TestHayashiReference(t *testing.T) {
@@ -67,8 +77,8 @@ func TestHayashiReference(t *testing.T) {
 			b := math.Log(rp[j]) - math.Log(rp[j-1])
 			rv += b * b
 		}
-		node := algo.NewHayashiYoshida()
-		out := tests.Drain(t, node, tests.Observation(tests.Path(lt, lp), tests.Path(rt, rp)))[0].(map[string]core.Primitive)
+		node := NewHayashiYoshida()
+		out := tests.Drain(t, node, observation(path(lt, lp), path(rt, rp)))[0].(map[string]core.Primitive)
 		if node.Error() != nil {
 			t.Fatal(node.Error())
 		}

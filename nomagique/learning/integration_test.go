@@ -1,30 +1,23 @@
 package learning_test
 
 import (
-	"testing"
-
-	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"testing"
 )
 
-func TestLearningTypedIntegration(testingTB *testing.T) {
-	Convey("Given typed learning stages", testingTB, func() {
-		trust := learning.Weight()
-		calibrator := learning.SampleRatio()
-		forecaster := learning.Forecast()
-
-		pair := learning.LearningPair{Predicted: 10, Actual: 10}
-		trustOutput, trustErr := trust.Measure(pair)
-		ratioOutput, ratioErr := calibrator.Measure(pair)
-		forecastOutput, forecastErr := forecaster.Measure(pair)
-
-		Convey("It should compose prediction outcomes without wire transport", func() {
-			So(trustErr, ShouldBeNil)
-			So(ratioErr, ShouldBeNil)
-			So(forecastErr, ShouldBeNil)
-			So(trustOutput.Value, ShouldEqual, 1)
-			So(ratioOutput.Value, ShouldEqual, 1)
-			So(forecastOutput.Value, ShouldEqual, 1)
-		})
-	})
+func TestLearningPrimitiveIntegration(t *testing.T) {
+	for name, graph := range map[string]core.Primitive{
+		"trust": learning.NewTrustWeight(), "ratio": learning.NewSampleRatio(), "forecast": learning.NewForecast(),
+	} {
+		fields, err := transport.Evaluate[map[string]core.Primitive](graph, core.Record(map[string]any{"predicted": 10.0, "actual": 10.0}))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		value, err := core.Field[float64](fields, "value")
+		if err != nil || value != 1 {
+			t.Fatalf("%s: %g, %v", name, value, err)
+		}
+	}
 }

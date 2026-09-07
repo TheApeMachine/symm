@@ -4,8 +4,10 @@ import (
 	"math"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -30,7 +32,7 @@ type Grid struct {
 	rowIndex    map[string]int
 	versions    []uint64
 	columnIndex map[[2]string]int
-	baselines   [][]equation.CausalResidual
+	baselines   [][]core.Primitive
 	activations [][]float64
 	qualities   [][]float64
 	weights     []float64
@@ -104,7 +106,7 @@ func (grid *Grid) Step(measurements []*data.Measurement[float64]) error {
 		grid.versions = append(grid.versions, 0)
 		grid.Values = append(grid.Values, make([]float64, len(grid.Columns)))
 		grid.Present = append(grid.Present, make([]bool, len(grid.Columns)))
-		grid.baselines = append(grid.baselines, make([]equation.CausalResidual, len(grid.Columns)))
+		grid.baselines = append(grid.baselines, make([]core.Primitive, len(grid.Columns)))
 		grid.activations = append(grid.activations, make([]float64, len(grid.Columns)))
 		grid.qualities = append(grid.qualities, make([]float64, len(grid.Columns)))
 	}
@@ -115,7 +117,9 @@ func (grid *Grid) Step(measurements []*data.Measurement[float64]) error {
 
 	for _, measurement := range measurements {
 		if measurement != nil {
-			grid.update(row, measurement)
+			if err := grid.update(row, measurement); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -137,8 +141,11 @@ func (grid *Grid) Step(measurements []*data.Measurement[float64]) error {
 }
 
 /* update replaces one source's current readings without clearing its layout. */
-func (grid *Grid) update(row int, measurement *data.Measurement[float64]) {
+func (grid *Grid) update(row int, measurement *data.Measurement[float64]) error {
 	measurement.Finalize()
+	if measurement.Err != nil {
+		return measurement.Err
+	}
 
 	for key, metric := range measurement.Metrics {
 		column := grid.Column(measurement.Source, key)
@@ -147,11 +154,24 @@ func (grid *Grid) update(row int, measurement *data.Measurement[float64]) {
 		grid.Present[row][column] = true
 		metric.Coordinates = grid.Coordinates[column]
 		measurement.Metrics[key] = metric
-		baseline := &grid.baselines[row][column]
-		baseline.Step(types.Scalar(metric.Raw))
-		dispersion := float64(baseline.Dispersion())
+		baseline := grid.baselines[row][column]
+		if baseline == nil {
+			baseline = adaptive.NewBaseline(adaptive.NewWindow())
+			grid.baselines[row][column] = baseline
+		}
+		fields, err := transport.Evaluate[map[string]core.Primitive](baseline, core.From(metric.Raw))
+		if err != nil {
+			return err
+		}
+		decoder := core.NewDecoder(fields)
+		dispersion := core.Decode[float64](decoder, "dispersion")
+		hasPrior := core.Decode[bool](decoder, "has_prior")
+		maturity := core.Decode[float64](decoder, "maturity")
+		if err := decoder.Error(); err != nil {
+			return err
+		}
 
-		if !baseline.HasPrior() || dispersion <= 0 {
+		if !hasPrior || dispersion <= 0 {
 			continue
 		}
 
@@ -172,13 +192,14 @@ func (grid *Grid) update(row int, measurement *data.Measurement[float64]) {
 			}
 		}
 
-		quality := float64(baseline.Maturity()) *
+		quality := maturity *
 			measurement.Maturity * snrFactor
 		// Square-root weighting makes each squared activation carry quality
 		// once in the accumulated second moment, rather than squaring it.
 		grid.activations[row][column] = movement * math.Sqrt(quality)
 		grid.qualities[row][column] = quality
 	}
+	return nil
 }
 
 /* Column admits one quantity and extends storage only when the grid grows. */
@@ -199,7 +220,7 @@ func (grid *Grid) Column(source, key string) int {
 	for row := range grid.Rows {
 		grid.Values[row] = append(grid.Values[row], 0)
 		grid.Present[row] = append(grid.Present[row], false)
-		grid.baselines[row] = append(grid.baselines[row], equation.CausalResidual{})
+		grid.baselines[row] = append(grid.baselines[row], nil)
 		grid.activations[row] = append(grid.activations[row], 0)
 		grid.qualities[row] = append(grid.qualities[row], 0)
 	}

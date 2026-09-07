@@ -51,9 +51,9 @@ func NewPeak() core.Primitive {
 			),
 		),
 		transport.NewSpread[core.Primitive](),
-		transport.NewMap(store.NewRecord(
+		store.NewRecord(
 			transport.NewPipe(collection.NewAt[core.Primitive](transport.NewIO(core.From(0.0))), store.NewKey("index")),
 			transport.NewPipe(collection.NewAt[core.Primitive](transport.NewIO(core.From(1.0))), store.NewKey("point")),
-		)),
+		),
 	)
 }

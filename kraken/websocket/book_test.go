@@ -266,7 +266,7 @@ func TestBookUpdate(t *testing.T) {
 				}},
 			}}}
 			So(delManaged.Update(event, deletePayload), ShouldBeNil)
-			delManaged.Get("BTC/USD", func(book *spotbook.Book) {
+			delManaged.Book("BTC/USD", func(book *spotbook.Book) {
 				So(book.BestBid().Price.String(), ShouldEqual, "2.5")
 			})
 		})

@@ -1,55 +1,39 @@
 package store_test
 
 import (
-	"testing"
-
-	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/nomagique/collection"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"reflect"
+	"testing"
 )
 
-func TestPairsNext(t *testing.T) {
-	Convey("Given Pairs as a Primitive", t, func() {
-		Convey("When a run is paired", func() {
-			pairs := store.NewPairs[float64](
-				store.NewSpread[float64](core.From([]float64{1, 2, 3, 4})),
-			)
-
-			caller := core.From(0.0)
-
-			So(core.To[[2]float64](pairs.Next(caller)), ShouldResemble, [2]float64{1, 2})
-			So(core.To[[2]float64](pairs.Next(caller)), ShouldResemble, [2]float64{2, 3})
-			So(core.To[[2]float64](pairs.Next(caller)), ShouldResemble, [2]float64{3, 4})
-			So(pairs.Next(caller), ShouldBeNil)
-		})
-
-		Convey("When a second caller pairs the same run", func() {
-			pairs := store.NewPairs[float64](
-				store.NewSpread[float64](core.From([]float64{1, 2, 3})),
-			)
-
-			first, second := core.From(0.0), core.From(1.0)
-
-			pairs.Next(first)
-
-			So(core.To[[2]float64](pairs.Next(second)), ShouldResemble, [2]float64{1, 2})
-		})
-
-		Convey("When the run holds one value", func() {
-			pairs := store.NewPairs[float64](
-				store.NewSpread[float64](core.From([]float64{1})),
-			)
-
-			So(pairs.Next(core.From(0.0)), ShouldBeNil)
-		})
-
-		Convey("When the run holds nothing", func() {
-			pairs := store.NewPairs[float64](
-				store.NewSpread[float64](core.From([]float64(nil))),
-			)
-
-			So(pairs.Next(core.From(0.0)), ShouldBeNil)
-			So(pairs.Read(), ShouldBeNil)
-		})
-	})
+func TestPairComposition(t *testing.T) {
+	graph := transport.NewPipe(transport.NewSpread[float64](), transport.NewWindow(2, 1))
+	for _, test := range []struct {
+		values []float64
+		want   [][2]float64
+	}{{[]float64{1, 2, 3, 4}, [][2]float64{{1, 2}, {2, 3}, {3, 4}}}, {[]float64{1, 2, 3}, [][2]float64{{1, 2}, {2, 3}}}, {[]float64{1}, nil}, {nil, nil}} {
+		input := transport.NewIO(core.From(test.values))
+		var actual [][2]float64
+		for out := graph.Next(input); out != nil; out = graph.Next(input) {
+			pair := core.To[[]core.Primitive](out)
+			if len(pair) != 2 {
+				t.Fatal("invalid pair")
+			}
+			actual = append(actual, [2]float64{core.To[float64](pair[0]), core.To[float64](pair[1])})
+		}
+		if graph.Error() != nil || !reflect.DeepEqual(actual, test.want) {
+			t.Fatalf("got %v, %v; want %v", actual, graph.Error(), test.want)
+		}
+	}
+	// First/Second are ordinary indexed projections, with no alternate pair type.
+	for index, want := range []float64{3, 7} {
+		node := collection.NewAt[core.Primitive](store.NewConstant(core.From(float64(index))))
+		value, err := transport.Evaluate[float64](node, core.From([]core.Primitive{core.From(3.0), core.From(7.0)}))
+		if err != nil || value != want {
+			t.Fatalf("member %v %v", value, err)
+		}
+	}
 }

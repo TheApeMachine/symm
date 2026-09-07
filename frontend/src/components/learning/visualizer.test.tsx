@@ -42,6 +42,23 @@ describe("EdgeDistributionPlot", () => {
 		expect(markup).toContain("550L");
 		expect(markup).toContain("CALIBRATING");
 	});
+ it("does not invent a distribution before uncertainty is measured", () => {
+  const markup = renderToStaticMarkup(<EdgeDistributionPlot />);
+  expect(markup).toContain("waiting for resolved windows");
+  expect(markup).not.toContain("<svg");
+ });
+ it("explains identical policy outcomes without a fixed-width bell curve", () => {
+  const skill: Skill = {
+   mode: "learning", account: "paper", since: "2026-09-07T12:00:00Z", reason: "no measured edge",
+   samples: 8, support: 7.2, defined: true, varianceDefined: true, qualified: true,
+   mean: 0, variance: 0, standardError: 0, lowerBound: 0, confidence: 0,
+   sigma: 2, memory: 512, promotions: 0, demotions: 0, wins: 0, losses: 0,
+  };
+  const markup = renderToStaticMarkup(<EdgeDistributionPlot skill={skill} />);
+  expect(markup).toContain("All measured window returns are equal");
+  expect(markup).toContain("Challenger estimates");
+  expect(markup).not.toContain("<svg");
+ });
 });
 
 describe("ActionSpectrumPlot", () => {

@@ -13,6 +13,7 @@ func NewMomentSummary() core.Primitive {
 	return transport.NewPipe(
 		store.NewRecord(
 			transport.NewPipe(),
+			transport.NewPipe(NewGreater[float64](store.NewGet("count"), store.NewConstant(core.From(1.0))), store.NewKey("variance_defined")),
 			transport.NewPipe(
 				NewRatio[float64](
 					store.NewGet("m2"), NewDifference[float64](store.NewGet("count"), store.NewConstant(core.From(1.0)))),

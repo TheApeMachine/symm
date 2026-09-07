@@ -4,8 +4,8 @@ import (
 	"github.com/theapemachine/symm/nomagique/arithmetic"
 	"github.com/theapemachine/symm/nomagique/collection"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
@@ -51,11 +51,7 @@ func NewHayashiYoshida() core.Primitive {
 				store.NewKey("right_energy"),
 			),
 			transport.NewPipe(
-				transport.NewCross(
-					transport.NewPipe(store.NewGet("left"), transport.NewSpread[core.Primitive]()),
-					transport.NewPipe(store.NewGet("right"), transport.NewSpread[core.Primitive]()),
-				),
-				transport.NewMap(logic.NewGate(equation.NewIntervalOverlap(), transport.NewPipe(), transport.NewDiscard())),
+				equation.NewIntervalJoin(),
 				store.NewRecord(
 					transport.NewPipe(
 						transport.NewMapReduce(
@@ -71,6 +67,6 @@ func NewHayashiYoshida() core.Primitive {
 				),
 			),
 		),
-		store.NewRecord(transport.NewPipe(), transport.NewPipe(equation.NewCorrelation(), store.NewKey("correlation"))),
+		store.NewRecord(transport.NewPipe(), transport.NewPipe(correlation.NewCorrelation(), store.NewKey("correlation"))),
 	)
 }

@@ -3,22 +3,21 @@ package resonance
 import (
 	"context"
 	"fmt"
+	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
-
 	"github.com/theapemachine/errnie"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
+
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
@@ -218,11 +217,11 @@ func (solver *Solver) Update(
 	detector, found := solver.detectors.Load(symbolName)
 	if !found {
 		detector = learning.NewPredictiveCoder(learning.PredictiveCoderConfig{
-			CustomArch: []int{len(features), len(features) * 4, len(features) * 2, len(features)},  // Overcomplete dictionary with latent space
-			MaxHorizon: 10,                                                                         // Forward rollouts to t+300: a next-tick call is not actionable
-			Target:     solver.directionalTarget(symbolName),                                       // Noise-scaled directional call
-			Pace:       learning.NewPaceController(learning.PaceConfig{InitialAlpha: solver.pace}), // Adaptive learning pace
-			Learn:      true,
+			CustomArch:   []int{len(features), len(features) * 4, len(features) * 2, len(features)}, // Overcomplete dictionary with latent space
+			MaxHorizon:   10,                                                                        // Forward rollouts to t+300: a next-tick call is not actionable
+			Target:       solver.directionalTarget(symbolName),                                      // Noise-scaled directional call
+			InitialAlpha: solver.pace,                                                               // Adaptive learning pace
+			Learn:        true,
 		})
 		solver.detectors.Store(symbolName, detector)
 	}
@@ -367,7 +366,10 @@ func (solver *Solver) standardize(
 	width := len(features)
 	key := symbolName + "\x00" + strconv.Itoa(width)
 
-	loaded, _ := solver.standardizers.LoadOrStore(key, newFeatureScorer(width))
+	loaded, found := solver.standardizers.Load(key)
+	if !found {
+		loaded, _ = solver.standardizers.LoadOrStore(key, newFeatureScorer(width))
+	}
 	scorer, valid := loaded.(*featureScorer)
 
 	if !valid || scorer == nil {
@@ -375,7 +377,7 @@ func (solver *Solver) standardize(
 		solver.standardizers.Store(key, scorer)
 	}
 
-	return scorer.Score(features), nil
+	return scorer.Score(features)
 }
 
 /*
@@ -387,43 +389,35 @@ the moments its slot showed BEFORE it, so a burst of near-identical values
 cannot collapse its own scale and blow the score up.
 */
 type featureScorer struct {
-	slots        []equation.CausalResidual
-	pipelines    []nomagique.Pipeline
+	pipelines    []core.Primitive
 	standardized []float64
 }
 
 func newFeatureScorer(width int) *featureScorer {
-	scorer := &featureScorer{
-		slots:        make([]equation.CausalResidual, width),
-		pipelines:    make([]nomagique.Pipeline, width),
-		standardized: make([]float64, width),
+	scorer := &featureScorer{pipelines: make([]core.Primitive, width), standardized: make([]float64, width)}
+	for index := range scorer.pipelines {
+		scorer.pipelines[index] = adaptive.NewBaseline(adaptive.NewWindow())
 	}
-
-	for index := range scorer.slots {
-		scorer.pipelines[index] = *nomagique.Number(&nomagique.Chain{
-			A: &scorer.slots[index],
-			B: calculus.Finite{},
-		})
-	}
-
 	return scorer
 }
 
-/*
-Score steps every slot's pipeline once and returns the standardized vector.
-The retained slice is reused, so a steady-state score does not allocate.
-*/
-func (scorer *featureScorer) Score(features []float64) []float64 {
-	for index, value := range features {
-		if index >= len(scorer.pipelines) {
-			break
-		}
-
-		scorer.pipelines[index].Step(nmtypes.Number(value))
-		scorer.standardized[index] = float64(scorer.slots[index].ZScore())
+/* Score drains one causal observation per independently owned feature graph. */
+func (scorer *featureScorer) Score(features []float64) ([]float64, error) {
+	if len(features) != len(scorer.pipelines) {
+		return nil, fmt.Errorf("resonance: feature width changed")
 	}
-
-	return scorer.standardized
+	for index, value := range features {
+		fields, err := transport.Evaluate[map[string]core.Primitive](scorer.pipelines[index], core.From(value))
+		if err != nil {
+			return nil, err
+		}
+		score, err := core.Field[float64](fields, "zscore")
+		if err != nil {
+			return nil, err
+		}
+		scorer.standardized[index] = score
+	}
+	return scorer.standardized, nil
 }
 
 /*

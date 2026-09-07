@@ -131,7 +131,7 @@ func (conn *mockConn) ApplyLevel3(data kraken.Level3Data) {
 func (conn *mockConn) Book(symbol string, read func(*spotbook.Book)) {
 	if conn.wsBook != nil {
 		found := false
-		conn.wsBook.Get(symbol, func(managed *spotbook.Book) {
+		conn.wsBook.Book(symbol, func(managed *spotbook.Book) {
 			found = true
 			read(managed)
 		})

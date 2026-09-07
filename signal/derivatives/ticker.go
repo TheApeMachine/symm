@@ -7,17 +7,16 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type tickerState struct {
-	basisPipeline  *nomagique.Pipeline
-	basisDynamics  *equation.AdaptiveZScore
-	growthPipeline *nomagique.Pipeline
-	growthDynamics *equation.CausalResidual
+	basisGraph  core.Primitive
+	growthGraph core.Primitive
 
 	hasPrev   bool
 	prevTime  time.Time
@@ -56,6 +55,9 @@ func (ticker *Ticker) Close() error {
 }
 
 func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[float64] {
+	if point.Last == nil || point.IndexPrice == nil || point.MarkPrice == nil {
+		return &data.Measurement[float64]{Err: fmt.Errorf("derivatives: last, index, and mark prices required")}
+	}
 	stamped, advanced := ticker.clock.stamp(
 		point.Symbol, point.Timestamp, point.SyntheticTimestamp,
 	)
@@ -78,21 +80,20 @@ func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[flo
 	state, found := ticker.states[point.Symbol]
 
 	if !found {
-		basisDyn := &equation.AdaptiveZScore{}
-		growthDyn := &equation.CausalResidual{}
 		state = &tickerState{
-			basisDynamics:  basisDyn,
-			basisPipeline:  nomagique.Number(basisDyn),
-			growthDynamics: growthDyn,
-			growthPipeline: nomagique.Number(growthDyn),
+			basisGraph:  equation.NewCausalResidual(adaptive.NewBaseline(adaptive.NewWindow())),
+			growthGraph: equation.NewCausalResidual(adaptive.NewBaseline(adaptive.NewWindow())),
 		}
 		ticker.states[point.Symbol] = state
 	}
 
 	basis := (last - index) / index
 
-	state.basisPipeline.Step(types.Scalar(basis))
-	basisDyn := state.basisDynamics
+	fields, err := transport.Evaluate[map[string]core.Primitive](state.basisGraph, core.From(basis))
+	if err != nil {
+		return &data.Measurement[float64]{Err: err}
+	}
+	basisDyn := core.NewDecoder(fields)
 
 	id := fmt.Sprintf("derivatives:%s:%d", point.Symbol, point.Timestamp.UnixNano())
 	measurement := data.NewMeasurement[float64](id, point.Symbol, "derivatives", point.Timestamp, point.Timestamp)
@@ -104,10 +105,10 @@ func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[flo
 	putDerivMetric(measurement, "open_interest", oi, data.UnitCount)
 	putDerivMetric(measurement, "basis", basis, data.UnitDimensionless)
 
-	putDerivMetric(measurement, "basis_baseline", float64(basisDyn.Baseline()), data.UnitDimensionless)
+	putDerivMetric(measurement, "basis_baseline", core.Decode[float64](basisDyn, "baseline"), data.UnitDimensionless)
 
-	if basisDyn.HasPrior() {
-		putDerivMetric(measurement, "basis_zscore", float64(basisDyn.ZScore()), data.UnitDimensionless)
+	if core.Decode[bool](basisDyn, "has_prior") {
+		putDerivMetric(measurement, "basis_zscore", core.Decode[float64](basisDyn, "zscore"), data.UnitDimensionless)
 	}
 
 	if last > 0 && index > 0 {
@@ -140,8 +141,17 @@ func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[flo
 				oiGrowthRate := oiLogChange / dt
 				putDerivMetric(measurement, "open_interest_growth_rate", oiGrowthRate, data.UnitPerSecond)
 
-				state.growthPipeline.Step(types.Scalar(oiGrowthRate))
-				putDerivMetric(measurement, "open_interest_growth_baseline", float64(state.growthDynamics.Baseline()), data.UnitPerSecond)
+				growth, err := transport.Evaluate[map[string]core.Primitive](state.growthGraph, core.From(oiGrowthRate))
+				if err != nil {
+					measurement.Err = err
+					return measurement
+				}
+				baseline, err := core.Field[float64](growth, "baseline")
+				if err != nil {
+					measurement.Err = err
+					return measurement
+				}
+				putDerivMetric(measurement, "open_interest_growth_baseline", baseline, data.UnitPerSecond)
 			}
 		}
 
@@ -212,22 +222,23 @@ func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[flo
 	// one prior sample carries no dispersion of its own and is immature.
 	// A measurement with no estimator behind it is a whole direct reading and
 	// declares no support at all.
-	if basisDyn.HasPrior() {
-		measurement.Metadata[data.MetadataSupport] = basisDyn.PriorCount()
+	if core.Decode[bool](basisDyn, "has_prior") {
+		measurement.Metadata[data.MetadataSupport] = core.Decode[float64](basisDyn, "prior_count")
 
 		// basis_zscore is this entity's headline reading, so its estimator
 		// supplies the departure and the noise power Finalize turns into SNR.
 		// Without them the measurement projected its metrics but reported no
 		// SNR at all, which reads downstream as a kernel that never measured.
-		dispersion := float64(basisDyn.PriorDispersion())
+		variance := core.Decode[float64](basisDyn, "prior_variance")
 
-		if dispersion > 0 {
+		if variance > 0 {
 			measurement.Metadata[data.MetadataDivergence] =
-				float64(basisDyn.Divergence())
-			measurement.Metadata[data.MetadataNoiseVariance] = dispersion * dispersion
+				core.Decode[float64](basisDyn, "residual")
+			measurement.Metadata[data.MetadataNoiseVariance] = variance
 		}
 	}
 
+	measurement.Err = basisDyn.Error()
 	measurement.Finalize()
 
 	return measurement

@@ -2,6 +2,7 @@ package data
 
 import (
 	"errors"
+	"github.com/theapemachine/symm/nomagique/core"
 	"testing"
 	"time"
 
@@ -51,9 +52,9 @@ func TestLift(t *testing.T) {
 
 			So(err, ShouldNotBeNil)
 			So(readouts["hawkes/arrival_rate"], ShouldNotBeNil)
-			So(readouts["hawkes/arrival_rate"].Authority(), ShouldAlmostEqual, 0.45, 1e-6)
+			So(core.To[float64](core.To[map[string]core.Primitive](readouts["hawkes/arrival_rate"])["authority"]), ShouldAlmostEqual, 0.45, 1e-6)
 			So(readouts["depthflow/imbalance"], ShouldNotBeNil)
-			So(readouts["depthflow/imbalance"].Authority(), ShouldEqual, 1.0)
+			So(core.To[float64](core.To[map[string]core.Primitive](readouts["depthflow/imbalance"])["authority"]), ShouldEqual, 1.0)
 		})
 	})
 }

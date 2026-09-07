@@ -13,9 +13,15 @@ import "fmt"
 func Yield[A, B any](left, right Primitive, fold func(A, B) A, owners ...Primitive) Primitive {
 	var failures PrimitiveError
 	defer func() {
+		err := failures.Error()
+
+		if err == nil {
+			return
+		}
+
 		for _, owner := range owners {
 			if owner != nil {
-				owner.Error(failures.Error())
+				owner.Error(err)
 			}
 		}
 	}()
@@ -31,7 +37,7 @@ func Yield[A, B any](left, right Primitive, fold func(A, B) A, owners ...Primiti
 	failures.Error(seed.Error())
 	if right == nil {
 		out := From(held)
-		if out != nil {
+		if out != nil && failures.Error() != nil {
 			out.Error(failures.Error())
 		}
 		return out
@@ -62,7 +68,7 @@ func Yield[A, B any](left, right Primitive, fold func(A, B) A, owners ...Primiti
 		}
 	}
 	out := From(held)
-	if out != nil {
+	if out != nil && failures.Error() != nil {
 		out.Error(failures.Error())
 	}
 	return out

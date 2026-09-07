@@ -3,6 +3,9 @@ package learning
 import (
 	"errors"
 	"fmt"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"math"
 	"math/rand"
 
@@ -147,7 +150,7 @@ type ResonanceManifold struct {
 	temporalOperators      []*mat.Dense
 	taskWeights            *mat.Dense
 	taskBias               *mat.VecDense
-	taskLearners           []*RLS
+	taskLearners           []core.Primitive
 	latentStates           []*mat.VecDense
 	errorVar               []*mat.VecDense
 	precision              []*mat.VecDense
@@ -347,7 +350,7 @@ func newResonanceManifoldReadout(
 
 	var taskWeights *mat.Dense
 	var taskBias *mat.VecDense
-	var taskLearners []*RLS
+	var taskLearners []core.Primitive
 	var taskVar *mat.VecDense
 	var taskScale *mat.VecDense
 	var taskScaleReady []bool
@@ -360,7 +363,7 @@ func newResonanceManifoldReadout(
 	if targetDim > 0 && taskRows > 0 {
 		taskWeights = mat.NewDense(taskRows, readoutDim, nil)
 		taskBias = mat.NewVecDense(taskRows, nil)
-		taskLearners = make([]*RLS, taskRows)
+		taskLearners = make([]core.Primitive, taskRows)
 		taskVar = mat.NewVecDense(taskRows, nil)
 		taskScale = mat.NewVecDense(taskRows, nil)
 		taskScaleReady = make([]bool, taskRows)
@@ -374,17 +377,8 @@ func newResonanceManifoldReadout(
 		denseFill(taskSkill, 1.0)
 
 		for rowIndex := range taskRows {
-			learner, err := NewRLS(RLSConfig{
-				Dimension:       readoutDim,
-				InitialVariance: 1,
-			})
-			if err != nil {
-				errnie.Error(errnie.Err(
-					errnie.Validation,
-					"resonance: task RLS learner construction failed: "+err.Error(),
-					err,
-				))
-			}
+			learner := NewRLS(store.NewConstant(core.From(float64(readoutDim))),
+				store.NewConstant(core.From(1.0)), store.NewConstant(core.From(1.0)))
 			taskLearners[rowIndex] = learner
 		}
 	}
@@ -775,14 +769,14 @@ func (rm *ResonanceManifold) Learn(target []float64) error {
 		for rowIndex := range trainedRows {
 			learner := rm.taskLearners[rowIndex]
 
-			if _, err := learner.Observe(RLSSample{
-				Features: readoutData,
-				Target:   targetData[rowIndex],
-			}); err != nil {
+			fields, err := transport.Evaluate[map[string]core.Primitive](learner, core.Record(map[string]any{
+				"features": readoutData, "target": targetData[rowIndex],
+			}))
+			if err != nil {
 				return fmt.Errorf("resonance: task learner update: %w", err)
 			}
 
-			intercept, err := learner.copyCoefficients(rm.taskWeights.RawRowView(rowIndex))
+			intercept, err := taskCoefficients(fields, rm.taskWeights.RawRowView(rowIndex))
 			if err != nil {
 				return fmt.Errorf("resonance: task learner coefficients: %w", err)
 			}
@@ -932,14 +926,14 @@ func (rm *ResonanceManifold) ObserveTask(
 	rowIndex := horizon - 1
 	learner := rm.taskLearners[rowIndex]
 
-	if _, err := learner.Observe(RLSSample{
-		Features: features,
-		Target:   target,
-	}); err != nil {
+	fields, err := transport.Evaluate[map[string]core.Primitive](learner, core.Record(map[string]any{
+		"features": features, "target": target,
+	}))
+	if err != nil {
 		return fmt.Errorf("resonance: task learner update: %w", err)
 	}
 
-	intercept, err := learner.copyCoefficients(rm.taskWeights.RawRowView(rowIndex))
+	intercept, err := taskCoefficients(fields, rm.taskWeights.RawRowView(rowIndex))
 
 	if err != nil {
 		return fmt.Errorf("resonance: task learner coefficients: %w", err)
@@ -1558,7 +1552,7 @@ func (rm *ResonanceManifold) RolloutTaskForecast(steps int) ([]RLSOutput, error)
 		forecast := make([]RLSOutput, steps)
 
 		for horizonIndex := range steps {
-			output, err := rm.taskLearners[horizonIndex].Predict(readoutData)
+			output, err := taskForecast(rm.taskLearners[horizonIndex], readoutData)
 
 			if err != nil {
 				return nil, fmt.Errorf("resonance: task forecast: %w", err)
@@ -1574,7 +1568,7 @@ func (rm *ResonanceManifold) RolloutTaskForecast(steps int) ([]RLSOutput, error)
 
 	for step := range steps {
 		for rowIndex, learner := range rm.taskLearners {
-			output, err := learner.Predict(readoutData)
+			output, err := taskForecast(learner, readoutData)
 
 			if err != nil {
 				return nil, fmt.Errorf("resonance: task forecast: %w", err)

@@ -7,14 +7,13 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/equation"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type tradeState struct {
+	graph              core.Primitive
 	bracketQty         float64
 	matchedBidQty      float64
 	matchedAskQty      float64
@@ -28,129 +27,25 @@ type tradeState struct {
 	askFractionSamples int
 }
 
-type tradeInput struct {
-	bracketQty       calculus.Constant
-	matchedBidQty    calculus.Constant
-	matchedAskQty    calculus.Constant
-	touchFillBidQty  calculus.Constant
-	touchFillAskQty  calculus.Constant
-	touchFillBidFrac calculus.Constant
-	touchFillAskFrac calculus.Constant
-	touchFillBidRate calculus.Constant
-	touchFillAskRate calculus.Constant
-	hasRate          calculus.Constant
-}
-
 /*
 Trade matches incoming trades against the symbol's retained book touch.
-It maintains a single inlined nomagique.Number composition.
+It owns one Primitive graph per symbol.
 */
 type Trade struct {
-	mu     sync.Mutex
-	number *nomagique.Pipeline
-
-	states map[string]*tradeState
-	symbol string
-	at     time.Time
-
-	bidStd *equation.CausalResidual
-	askStd *equation.CausalResidual
-
-	in tradeInput
+	mu         sync.Mutex
+	states     map[string]*tradeState
+	symbol     string
+	at         time.Time
+	projection *data.Projection
 }
 
 /*
-NewTrade constructs the Trade entity with a single inlined Number composition.
+NewTrade constructs the Trade entity with per-symbol Primitive compositions.
 */
 func NewTrade() *Trade {
-	trade := &Trade{
-		states: make(map[string]*tradeState),
-	}
-
-	keyFn := func() string { return trade.symbol }
-	trade.bidStd = &equation.CausalResidual{Key: keyFn}
-	trade.askStd = &equation.CausalResidual{Key: keyFn}
-
-	in := &trade.in
-
-	trade.number = nomagique.Number(&nmtypes.Chain{
-		A: &nmtypes.Split{
-			A: &nmtypes.Report{
-				Label: "bracket_trade_quantity", Unit: "count", Timescale: "instantaneous",
-				Value: &in.bracketQty,
-			},
-			B: &nmtypes.Report{
-				Label: "matched_touch_trade_quantity:bid", Unit: "count", Timescale: "instantaneous",
-				Value: &in.matchedBidQty,
-			},
-			C: &nmtypes.Report{
-				Label: "matched_touch_trade_quantity:ask", Unit: "count", Timescale: "instantaneous",
-				Value: &in.matchedAskQty,
-			},
-			D: &nmtypes.Report{
-				Label: "touch_fill_quantity:bid", Unit: "count", Timescale: "instantaneous",
-				Value: &in.touchFillBidQty,
-			},
-		},
-		B: &nmtypes.Split{
-			A: &nmtypes.Report{
-				Label: "touch_fill_quantity:ask", Unit: "count", Timescale: "instantaneous",
-				Value: &in.touchFillAskQty,
-			},
-			B: &nmtypes.Report{
-				Label: "touch_fill_fraction:bid", Unit: "dimensionless", Timescale: "instantaneous",
-				Value: &in.touchFillBidFrac,
-			},
-			C: &nmtypes.Report{
-				Label: "touch_fill_fraction:ask", Unit: "dimensionless", Timescale: "instantaneous",
-				Value: &in.touchFillAskFrac,
-			},
-		},
-		C: &nmtypes.Split{
-			A: &nmtypes.Report{
-				Label: "touch_fill_rate:bid", Unit: "per_second", Timescale: "per_second",
-				Value: &in.touchFillBidRate, Defined: &in.hasRate,
-			},
-			B: &nmtypes.Report{
-				Label: "touch_fill_rate:ask", Unit: "per_second", Timescale: "per_second",
-				Value: &in.touchFillAskRate, Defined: &in.hasRate,
-			},
-			C: &nmtypes.Chain{
-				A: &in.touchFillBidFrac,
-				B: &nmtypes.Labelled{
-					Prefix: "fill_fraction_",
-					Node: &nmtypes.Labelled{
-						Names: map[string]string{
-							"baseline":   "baseline:bid",
-							"divergence": "divergence:bid",
-							"zscore":     "zscore:bid",
-						},
-						Node: trade.bidStd,
-					},
-				},
-			},
-			D: &nmtypes.Chain{
-				A: &in.touchFillAskFrac,
-				B: &nmtypes.Labelled{
-					Prefix: "fill_fraction_",
-					Node: &nmtypes.Labelled{
-						Names: map[string]string{
-							"baseline":   "baseline:ask",
-							"divergence": "divergence:ask",
-							"zscore":     "zscore:ask",
-						},
-						Node: trade.askStd,
-					},
-				},
-			},
-		},
-		D: &data.Projection{
-			Source:   "toxicity",
-			Identity: trade.identity,
-		},
-	})
-
-	return trade
+	entity := &Trade{states: make(map[string]*tradeState), projection: tradeProjection()}
+	entity.projection.Identity = entity.identity
+	return entity
 }
 
 func (trade *Trade) Close() error { return nil }
@@ -163,6 +58,14 @@ func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQ
 		return nil
 	}
 
+	for _, value := range []float64{tick.Price.Float64(), tick.Qty, bidPrice, askPrice, bidQty, askQty} {
+		if value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: finite non-negative trade and touch values required")}
+		}
+	}
+	if tick.Qty <= 0 || tick.Price.Sign() <= 0 || (tick.Side != "buy" && tick.Side != "sell") {
+		return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: positive execution and known aggressor side required")}
+	}
 	sec := float64(tick.Timestamp.Unix())
 	nsec := float64(tick.Timestamp.Nanosecond())
 
@@ -172,7 +75,7 @@ func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQ
 	state, found := trade.states[tick.Symbol]
 
 	if !found {
-		state = &tradeState{}
+		state = &tradeState{graph: newTradeGraph()}
 		trade.states[tick.Symbol] = state
 	}
 
@@ -227,23 +130,23 @@ func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQ
 	trade.symbol = tick.Symbol
 	trade.at = tick.Timestamp
 
-	in := &trade.in
-	in.bracketQty.Value = nmtypes.Number(state.bracketQty)
-	in.matchedBidQty.Value = nmtypes.Number(state.matchedBidQty)
-	in.matchedAskQty.Value = nmtypes.Number(state.matchedAskQty)
-	in.touchFillBidQty.Value = nmtypes.Number(bidFillQty)
-	in.touchFillAskQty.Value = nmtypes.Number(askFillQty)
-	in.touchFillBidFrac.Value = nmtypes.Number(bidFillFraction)
-	in.touchFillAskFrac.Value = nmtypes.Number(askFillFraction)
+	input := make(map[string]any)
+	input["bracketQty"] = state.bracketQty
+	input["matchedBidQty"] = state.matchedBidQty
+	input["matchedAskQty"] = state.matchedAskQty
+	input["touchFillBidQty"] = bidFillQty
+	input["touchFillAskQty"] = askFillQty
+	input["touchFillBidFrac"] = bidFillFraction
+	input["touchFillAskFrac"] = askFillFraction
 
 	deltaT := (sec - state.prevSec) + (nsec-state.prevNsec)*1e-9
 
 	if state.hasPrevTime && deltaT > 0 {
-		in.touchFillBidRate.Value = nmtypes.Number(bidFillQty / deltaT)
-		in.touchFillAskRate.Value = nmtypes.Number(askFillQty / deltaT)
-		in.hasRate.Value = 1
+		input["touchFillBidRate"] = bidFillQty / deltaT
+		input["touchFillAskRate"] = askFillQty / deltaT
+		input["hasRate"] = true
 	} else {
-		in.hasRate.Value = 0
+		input["hasRate"] = false
 	}
 
 	if bidFillFraction > 0 {
@@ -254,21 +157,13 @@ func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQ
 		state.askFractionSamples++
 	}
 
-	trade.number.Step(1.0)
-	measurement := trade.number.Measurement()
-
-	if measurement != nil {
-		if state.bidFractionSamples >= 3 {
-			measurement.SNRDefined = true
-			measurement.SNR = math.Abs(float64(trade.bidStd.ZScore()))
-		} else if state.askFractionSamples >= 3 {
-			measurement.SNRDefined = true
-			measurement.SNR = math.Abs(float64(trade.askStd.ZScore()))
-		} else {
-			measurement.SNRDefined = false
-			measurement.SNR = 0
-		}
+	input["bidSupported"] = state.bidFractionSamples >= 3
+	input["askSupported"] = state.askFractionSamples >= 3
+	fields, err := transport.Evaluate[map[string]core.Primitive](state.graph, core.Record(input))
+	if err != nil {
+		return &data.Measurement[float64]{Err: err}
 	}
+	measurement := trade.projection.Project(fields)
 
 	return measurement
 }

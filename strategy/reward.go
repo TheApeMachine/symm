@@ -2,6 +2,9 @@ package strategy
 
 import (
 	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/transport"
+	"math"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/learning"
@@ -33,7 +36,7 @@ session requires its own AccountReward; the caller serializes Measure.
 type AccountReward struct {
 	initial EquityMark
 	last    EquityMark
-	ledger  learning.RewardLedger
+	ledger  core.Primitive
 }
 
 /*
@@ -66,10 +69,22 @@ func (reward *AccountReward) Measure(mark EquityMark) (learning.RewardOutcome, e
 		initial = mark
 	}
 
-	outcome, err := reward.ledger.Measure(learning.RewardMark{
-		At: mark.At, Version: mark.Version,
-		Value: (mark.Equity - initial.Equity) - (mark.NetFunding - initial.NetFunding),
-	})
+	if mark.At.IsZero() || mark.Version == 0 ||
+		(reward.last.Version != 0 && (mark.Version < reward.last.Version || mark.At.Before(reward.last.At))) ||
+		math.IsNaN(mark.Equity) || math.IsInf(mark.Equity, 0) || math.IsNaN(mark.NetFunding) || math.IsInf(mark.NetFunding, 0) {
+		return learning.RewardOutcome{}, errnie.Error(errnie.Err(errnie.Validation, "account reward: finite, chronologically ordered, identified valuation required", nil))
+	}
+	value := (mark.Equity - initial.Equity) - (mark.NetFunding - initial.NetFunding)
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return learning.RewardOutcome{}, errnie.Error(errnie.Err(errnie.Validation, "account reward: objective is not representable", nil))
+	}
+	graph := reward.ledger
+	if graph == nil {
+		graph = learning.NewReward()
+	}
+	fields, err := transport.Evaluate[map[string]core.Primitive](graph, core.Record(map[string]any{
+		"at": mark.At.UnixNano(), "version": mark.Version, "value": value,
+	}))
 
 	if err != nil {
 		return learning.RewardOutcome{}, errnie.Error(errnie.Err(
@@ -79,6 +94,12 @@ func (reward *AccountReward) Measure(mark EquityMark) (learning.RewardOutcome, e
 		))
 	}
 
+	outcome, err := learning.ProjectReward(fields)
+	if err != nil {
+		return learning.RewardOutcome{}, errnie.Error(err)
+	}
+	outcome.TotalElapsed = mark.At.Sub(initial.At)
+	reward.ledger = graph
 	reward.initial, reward.last = initial, mark
 
 	return outcome, nil

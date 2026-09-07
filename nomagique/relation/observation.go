@@ -3,7 +3,7 @@ package relation
 import (
 	"time"
 
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
@@ -37,13 +37,13 @@ type Observation struct {
 }
 
 /*
-AppendMeasurement splits one shared types.Measurement into per-coordinate
+AppendMeasurement splits one data.Measurement into per-coordinate
 Observations. Every valid metric becomes an independent observational fact;
 nothing is collapsed into a signal-level scalar. A measurement carrying an
 error is rejected as a whole.
 */
 func AppendMeasurement(
-	measurement *nmtypes.Measurement,
+	measurement *data.Measurement[float64],
 	epoch uint64,
 ) []Observation {
 	if measurement == nil || measurement.Err != nil {
@@ -53,10 +53,6 @@ func AppendMeasurement(
 	observations := make([]Observation, 0, len(measurement.Metrics))
 
 	for label, metric := range measurement.Metrics {
-		if metric == nil {
-			continue
-		}
-
 		metricName, side := ParseMetricSide(label)
 
 		var snr *float64
@@ -68,8 +64,8 @@ func AppendMeasurement(
 
 		observations = append(observations, Observation{
 			Coordinate: Coordinate{
-				Symbol:    measurement.Symbol,
-				Peer:      measurement.Peer,
+				Symbol:    measurement.Label,
+				Peer:      measurement.Provenance["peer"],
 				Source:    measurement.Source,
 				Metric:    metricName,
 				Side:      side,
@@ -78,7 +74,7 @@ func AppendMeasurement(
 				Epoch:     epoch,
 			},
 			Raw:           metric.Raw,
-			From:          measurement.ObservedFrom,
+			From:          measurement.From,
 			At:            measurement.At,
 			Maturity:      measurement.Maturity,
 			SNR:           snr,

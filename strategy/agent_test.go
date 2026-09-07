@@ -251,9 +251,11 @@ func TestPolicyLaneUpdatesVirtualModel(t *testing.T) {
 		agent, books := agentFixture(t, func(hindsight.LearningEvent) error { return nil })
 		wallet, _ := virtualFixture()
 		market := &learningMarket{
-			symbol:  "TEST/USD",
-			lanes:   make([]learningLane, 1),
-			regions: []learning.Region{{ID: 1, Strength: 1.0, Authority: 1.0}},
+			// This fixture supplies a fully authoritative observation to train the prior.
+			authority: 1,
+			symbol:    "TEST/USD",
+			lanes:     make([]learningLane, 1),
+			regions:   []learning.Region{{ID: 1, Strength: 1.0, Authority: 1.0}},
 		}
 		market.lanes[0].paper = true
 		market.lanes[0].equity = 200.0

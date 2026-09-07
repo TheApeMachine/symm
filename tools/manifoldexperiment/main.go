@@ -1,7 +1,8 @@
+// manifoldexperiment replays explicit resident-state batches through the current
+// Sensorium. It does not recreate the removed market-coordinate A/B experiment.
 package main
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,48 +13,51 @@ import (
 	"math"
 	"os"
 	"reflect"
-	"strings"
-	"time"
 
-	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/logic/manifold"
+	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 )
 
-/* ExperimentCommand owns the reproducible input/output and compute budget. */
+const replaySchema = "sensorium-state-replay/v1"
+
+// ExperimentCommand owns input/output and an explicit per-replay compute budget.
+// The old geometry/denomination flags are intentionally not accepted: their
+// deleted A/B projection model is not equivalent to the current resident field.
 type ExperimentCommand struct {
-	Input, Output, Symbols      string
-	Grid, Depth, Steps, Repeats int
-	Alpha                       float64
-	MaxAge                      time.Duration
-	SecondsPerUnit              float64
-	PriceUnit                   float64
+	Input, Output        string
+	Grid, Steps, Repeats int
 }
 
+type ReplayFrame struct {
+	Schema     string           `json:"schema"`
+	State      *sensorium.State `json:"state"`
+	Departures []int64          `json:"departures,omitempty"`
+}
+type ReplaySample struct {
+	Frame, Population int
+	Reading           sensorium.Reading
+}
+type ReplayRun struct {
+	Steps      int
+	Trajectory []ReplaySample
+	Failure    string
+}
 type ExperimentReport struct {
-	InputSHA256              string
-	PriceUnit                float64
-	Runs                     int
-	ExactReplayEquality      bool
-	ReplayExercised          bool
-	MaximumReadingDifference float64
-	Comparison               *manifold.Comparison
+	Schema                               string
+	InputSHA256                          string
+	Grid, Budget, Runs                   int
+	ReplayExercised, ExactReplayEquality bool
+	MaximumReadingDifference             float64
+	Replays                              []ReplayRun
 }
 
 func main() {
 	command := &ExperimentCommand{}
-	flag.StringVar(&command.Input, "input", "", "public-market JSONL capture export")
-	flag.StringVar(&command.Output, "output", "", "research report JSON path")
-	flag.StringVar(&command.Symbols, "symbols", "", "comma-separated experimental universe")
-	flag.IntVar(&command.Grid, "grid", 32, "spatial cells per axis (research resolution)")
-	flag.IntVar(&command.Depth, "depth", 10, "captured subscription depth")
-	flag.IntVar(&command.Steps, "steps", 0, "required maximum physics advances per variant")
+	flag.StringVar(&command.Input, "input", "", "sensorium-state-replay/v1 JSONL input (not raw market capture)")
+	flag.StringVar(&command.Output, "output", "", "replay report JSON path")
+	flag.IntVar(&command.Grid, "grid", 32, "spatial cells per axis")
+	flag.IntVar(&command.Steps, "steps", 0, "required maximum field advances per replay")
 	flag.IntVar(&command.Repeats, "repeats", 2, "identical-input repeat count")
-	flag.Float64Var(&command.Alpha, "alpha", 0.01, "family-wise Fisher approximation error budget")
-	flag.DurationVar(&command.MaxAge, "max-pair-age", time.Minute, "explicit maximum pair-evidence age")
-	flag.Float64Var(&command.SecondsPerUnit, "seconds-per-unit", 0.000001, "seconds per solver time unit")
-	flag.Float64Var(&command.PriceUnit, "price-unit", 1, "denomination sensitivity multiplier applied after checksum validation")
 	flag.Parse()
-
 	if err := command.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -61,121 +65,173 @@ func main() {
 }
 
 func (command *ExperimentCommand) Run() (err error) {
-	if command.Input == "" || command.Output == "" || command.Symbols == "" || command.Steps <= 0 || command.Repeats < 1 || command.Grid < 2 || command.Depth <= 0 || !(command.PriceUnit > 0) || !(command.SecondsPerUnit > 0) || !(command.Alpha > 0 && command.Alpha < 1) || command.MaxAge <= 0 {
-		return fmt.Errorf("input, output, symbols and positive steps/repeats/grid/depth are required")
+	if command.Input == "" || command.Output == "" || command.Grid < 2 || command.Steps < 1 || command.Repeats < 1 {
+		return errors.New("input, output, grid >= 2 and positive steps/repeats are required")
 	}
 	input, err := os.Open(command.Input)
-
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, input.Close()) }()
+	// Never overwrite the capture being checked, even through a hard link.
+	if outputInfo, statErr := os.Stat(command.Output); statErr == nil {
+		inputInfo, statErr := input.Stat()
+		if statErr != nil {
+			return statErr
+		}
+		if os.SameFile(inputInfo, outputInfo) {
+			return errors.New("replay output must differ from input")
+		}
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
 	digest := sha256.New()
-
-	if _, err := io.Copy(digest, input); err != nil {
+	if _, err = io.Copy(digest, input); err != nil {
 		return err
 	}
-	report := &ExperimentReport{InputSHA256: hex.EncodeToString(digest.Sum(nil)), Runs: command.Repeats, PriceUnit: command.PriceUnit, ExactReplayEquality: true}
-	viper.Set("market.l3_depth", command.Depth)
-	symbols := strings.Split(command.Symbols, ",")
-	seen := make(map[string]bool)
-	for _, symbol := range symbols {
-		if symbol == "" || seen[symbol] {
-			return fmt.Errorf("symbols must be nonempty and unique")
-		}
-		seen[symbol] = true
-	}
-
-	if len(symbols) < 2 {
-		return fmt.Errorf("geometry requires at least two symbols")
-	}
-	// Every supported shortest path has at most n-1 edges, each <= sqrt(2).
-	// This graph-derived bound supplies a fixed length conversion for this universe.
-	extent := 1 - 1/float64(command.Grid)
-	config := manifold.ProjectionConfig{Extent: [3]float64{extent, extent, extent}, GeometryUnit: extent / (2 * math.Sqrt2 * float64(max(1, len(symbols)-1))), DepthUnit: extent / float64(2*command.Depth), MassUnit: 1, SecondsPerUnit: command.SecondsPerUnit, Temperature: 0}
+	report := ExperimentReport{Schema: replaySchema, InputSHA256: hex.EncodeToString(digest.Sum(nil)), Grid: command.Grid, Budget: command.Steps, Runs: command.Repeats, ExactReplayEquality: true}
+	var failures error
 	for repeat := 0; repeat < command.Repeats; repeat++ {
-		if _, err := input.Seek(0, io.SeekStart); err != nil {
+		if _, err = input.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
-		comparison, err := command.compare(input, symbols, config)
-
-		if err != nil {
-			return err
+		run, runErr := command.replay(input)
+		report.Replays = append(report.Replays, run)
+		if runErr != nil {
+			failures = errors.Join(failures, fmt.Errorf("replay %d: %w", repeat+1, runErr))
+			report.ExactReplayEquality = false
 		}
-
 		if repeat == 0 {
-			report.Comparison = comparison
 			continue
 		}
-		report.ExactReplayEquality = report.ExactReplayEquality && reflect.DeepEqual(report.Comparison.Runs, comparison.Runs)
-		for index, run := range comparison.Runs {
-			original := report.Comparison.Runs[index]
-			for step, sample := range run.Trajectory {
-				if step >= len(original.Trajectory) {
-					report.ExactReplayEquality = false
-					break
-				}
-				left, right := sample.Reading, original.Trajectory[step].Reading
-				for _, delta := range []float64{left.Divergence - right.Divergence, left.GuidanceSpeed - right.GuidanceSpeed, left.CoherenceMag2 - right.CoherenceMag2, left.PressureGradNorm - right.PressureGradNorm, left.ViscosityProxy - right.ViscosityProxy, left.KuramotoR - right.KuramotoR} {
-					report.MaximumReadingDifference = math.Max(report.MaximumReadingDifference, math.Abs(delta))
-				}
+		original := report.Replays[0]
+		report.ExactReplayEquality = report.ExactReplayEquality && reflect.DeepEqual(original.Trajectory, run.Trajectory)
+		for index, sample := range run.Trajectory {
+			if index >= len(original.Trajectory) {
+				break
+			}
+			left, right := sample.Reading, original.Trajectory[index].Reading
+			for _, difference := range []float64{left.Divergence - right.Divergence, left.GuidanceSpeed - right.GuidanceSpeed, left.CoherenceMag2 - right.CoherenceMag2, left.PressureGradNorm - right.PressureGradNorm, left.ViscosityProxy - right.ViscosityProxy, left.KuramotoR - right.KuramotoR} {
+				report.MaximumReadingDifference = math.Max(report.MaximumReadingDifference, math.Abs(difference))
 			}
 		}
 	}
-	report.ReplayExercised = report.Comparison.Steps > 0 && command.Repeats > 1
+	report.ReplayExercised = command.Repeats > 1 && failures == nil && report.Replays[0].Steps > 0
 	report.ExactReplayEquality = report.ExactReplayEquality && report.ReplayExercised
 	output, err := os.Create(command.Output)
-
 	if err != nil {
 		return err
 	}
 	encoder := json.NewEncoder(output)
 	encoder.SetIndent("", "  ")
-
-	if err := encoder.Encode(report); err != nil {
+	if err = encoder.Encode(report); err != nil {
 		return errors.Join(err, output.Close())
 	}
-
-	if err := output.Close(); err != nil {
+	if err = output.Close(); err != nil {
 		return err
 	}
-	fmt.Printf("Compared %d shared advances across baseline/A/B; exact replay equality=%t; report=%s\n", report.Comparison.Steps, report.ExactReplayEquality, command.Output)
-	fmt.Printf("input failure=%q; waiting reasons=%v\n", report.Comparison.InputFailure, report.Comparison.Waiting)
-	for _, run := range report.Comparison.Runs {
-		fmt.Printf("%s: steps=%d failure=%q\n", run.Name, run.Steps, run.Failure)
-	}
-	return nil
+	fmt.Printf("Resident-state replay: runs=%d exercised=%t exact_equal=%t report=%s\n", report.Runs, report.ReplayExercised, report.ExactReplayEquality, command.Output)
+	return failures
 }
 
-func (command *ExperimentCommand) compare(input io.Reader, symbols []string, config manifold.ProjectionConfig) (*manifold.Comparison, error) {
-	comparison, err := manifold.NewComparison(context.Background(), symbols, command.Grid, config, command.Alpha, command.MaxAge)
-
-	if err != nil {
-		return nil, err
-	}
-	defer comparison.Close()
-	comparison.Tape.PriceUnit = command.PriceUnit
-	decoder := json.NewDecoder(input)
-	for comparison.Steps < command.Steps {
-		var frame manifold.MarketFrame
-		err := decoder.Decode(&frame)
-
-		if err == io.EOF {
-			break
-		}
-
+func (command *ExperimentCommand) replay(input io.Reader) (run ReplayRun, err error) {
+	defer func() {
 		if err != nil {
-			return nil, err
+			run.Failure = err.Error()
 		}
-
-		if err := comparison.Step(frame); err != nil {
+	}()
+	decoder := json.NewDecoder(input)
+	decoder.DisallowUnknownFields()
+	var physics *sensorium.Manifold
+	defer func() {
+		if physics != nil {
+			physics.Close()
+		}
+	}()
+	for frameIndex := 0; run.Steps < command.Steps; frameIndex++ {
+		var frame ReplayFrame
+		if err = decoder.Decode(&frame); err == io.EOF {
+			err = nil
 			break
-		} // retained in InputFailure; this is a failed experiment, not omitted input
+		} else if err != nil {
+			return run, err
+		}
+		if err = frame.validate(); err != nil {
+			return run, fmt.Errorf("frame %d: %w", frameIndex+1, err)
+		}
+		if physics == nil {
+			physics = sensorium.NewManifold(command.Grid, command.Grid, command.Grid)
+			if physics == nil {
+				return run, errors.New("Sensorium initialization failed; Metal runtime and compiled kernels are required")
+			}
+		}
+		remaining, removeErr := physics.Remove(frame.Departures)
+		if removeErr != nil {
+			return run, removeErr
+		}
+		if remaining == 0 && (frame.State == nil || frame.State.N == 0) {
+			continue
+		}
+		state, stepErr := physics.Step(frame.State)
+		if stepErr != nil {
+			return run, stepErr
+		}
+		if state == nil || state.N == 0 {
+			return run, errors.New("field returned no resident population")
+		}
+		reading := physics.Reading()
+		if !reading.IsFinite() {
+			return run, errors.New("field returned a non-finite reading")
+		}
+		run.Steps++
+		run.Trajectory = append(run.Trajectory, ReplaySample{Frame: frameIndex + 1, Population: state.N, Reading: reading})
 	}
-	comparison.Close()
-	// Runtime pointers and projector maps are not part of replay equality.
-	for _, run := range comparison.Runs {
-		run.Physics, run.Baseline, run.Candidate = nil, nil, nil
+	if run.Steps == 0 {
+		return run, errors.New("input exercised no physics advances")
 	}
-	return comparison, nil
+	return run, nil
+}
+
+// validate rejects malformed batches before GPU code indexes their tensors.
+func (frame ReplayFrame) validate() error {
+	if frame.Schema != replaySchema {
+		return fmt.Errorf("schema must be %q; raw market captures require an explicit projection export", replaySchema)
+	}
+	s := frame.State
+	if s == nil {
+		if len(frame.Departures) == 0 {
+			return errors.New("state or departures required")
+		}
+		return nil
+	}
+	n := s.N
+	if n < 0 {
+		return errors.New("negative population")
+	}
+	for _, length := range []int{len(s.Bytes), len(s.Seqs), len(s.TokenIDs), len(s.ContentIDs), len(s.Phase), len(s.Omega), len(s.Energy), len(s.Mass), len(s.Heat), len(s.Amp), len(s.Clamped), len(s.Dark)} {
+		if length != n {
+			return errors.New("tensor length does not match N")
+		}
+	}
+	if len(s.Pos) != 3*n || len(s.Vel) != 3*n {
+		return errors.New("position and velocity must have 3*N values")
+	}
+	seen := make(map[int64]bool, n)
+	for i, id := range s.ContentIDs {
+		if seen[id] {
+			return errors.New("duplicate content identity")
+		}
+		seen[id] = true
+		if s.Mass[i] <= 0 || s.Energy[i] <= 0 || s.Amp[i] <= 0 || s.Heat[i] < 0 {
+			return errors.New("positive mass/energy/amplitude and non-negative heat required")
+		}
+	}
+	for _, values := range [][]float32{s.Phase, s.Omega, s.Energy, s.Mass, s.Heat, s.Amp, s.Pos, s.Vel} {
+		for _, value := range values {
+			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+				return errors.New("non-finite tensor value")
+			}
+		}
+	}
+	return nil
 }

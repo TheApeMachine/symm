@@ -10,25 +10,25 @@ import (
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewCalibrator scores against retained prior errors before appending a sample.
-// Retention is a configured collection transform: identity for all history,
-// Tail for a bounded history, or another composed selection policy. Admission
-// gates the entire state transition: an empty rejected run must not query the
-// retention owner and replay the preceding sample.
+/*
+NewCalibrator scores against retained prior errors before appending a sample.
+Retention is a configured collection transform: identity for all history,
+Tail for a bounded history, or another composed selection policy.
+*/
 func NewCalibrator(retention core.Primitive) core.Primitive {
 	history := store.NewRetained(core.From([]float64{}))
 	sample := store.NewRetained(core.From(0.0))
 	prior := transport.NewApply(transport.NewPipe(
-		transport.NewSpread[float64]()), history,
-	)
+		transport.NewSpread[float64](),
+	), history)
+
 	score := logic.NewGate(
 		transport.NewPipe(
 			transport.NewFan(
 				transport.NewPipe(),
 				transport.NewIO(
 					transport.NewApply(transport.NewPipe(
-						transport.NewSpread[float64](),
-						equation.NewCount(),
+						transport.NewSpread[float64](), equation.NewCount(),
 					), history),
 					store.NewConstant(core.From(0.0)),
 				),
@@ -61,7 +61,8 @@ func NewCalibrator(retention core.Primitive) core.Primitive {
 						arithmetic.NewAdd[float64](transport.NewIO(core.From(0.0))),
 					),
 					transport.NewApply(transport.NewPipe(
-						transport.NewSpread[float64](), equation.NewCount(),
+						transport.NewSpread[float64](),
+						equation.NewCount(),
 					), history),
 				),
 				store.NewKey("value"),
@@ -69,7 +70,8 @@ func NewCalibrator(retention core.Primitive) core.Primitive {
 			transport.NewPipe(store.NewConstant(core.From(true)), store.NewKey("ready")),
 			transport.NewPipe(
 				transport.NewApply(transport.NewPipe(
-					transport.NewSpread[float64](), equation.NewCount(),
+					transport.NewSpread[float64](),
+					equation.NewCount(),
 				), history),
 				store.NewKey("prior_count"),
 			),
@@ -80,20 +82,19 @@ func NewCalibrator(retention core.Primitive) core.Primitive {
 			transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("prior_count")),
 		),
 	)
+
 	return transport.NewMap(
-		logic.NewGate(
-			logic.NewFinite(),
-			transport.NewPipe(
-				sample,
-				transport.NewFan(
-					transport.NewPipe(),
-					transport.NewIO(score, transport.NewPipe(
-						collection.NewAppend[float64](history),
-						retention, history, transport.NewDiscard(),
-					)),
-				),
+		logic.NewGate(logic.NewFinite(), transport.NewPipe(
+			sample,
+			transport.NewFan(
+				transport.NewPipe(),
+				transport.NewIO(score, transport.NewPipe(
+					collection.NewAppend[float64](history),
+					retention,
+					history,
+					transport.NewDiscard(),
+				)),
 			),
-			logic.NewReject(core.ErrShape),
-		),
+		), logic.NewReject(core.ErrShape)),
 	)
 }

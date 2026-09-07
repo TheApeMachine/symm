@@ -7,14 +7,13 @@ import (
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/equation"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type level3State struct {
+	graph          core.Primitive
 	retainedBid    float64
 	retainedAsk    float64
 	retainedBidQty float64
@@ -35,280 +34,25 @@ type level3State struct {
 	hasTime  bool
 }
 
-type level3Input struct {
-	curBid         calculus.Constant
-	curAsk         calculus.Constant
-	prevBid        calculus.Constant
-	prevAsk        calculus.Constant
-	curBidQty      calculus.Constant
-	curAskQty      calculus.Constant
-	prevBidQty     calculus.Constant
-	prevAskQty     calculus.Constant
-	unfilledBid    calculus.Constant
-	unfilledAsk    calculus.Constant
-	logChangeBid   calculus.Constant
-	logChangeAsk   calculus.Constant
-	retreatedBid   calculus.Constant
-	retreatedAsk   calculus.Constant
-	withdrawnBid   calculus.Constant
-	withdrawnAsk   calculus.Constant
-	replenishedBid calculus.Constant
-	replenishedAsk calculus.Constant
-	retreatFracBid calculus.Constant
-	retreatFracAsk calculus.Constant
-	withFracBid    calculus.Constant
-	withFracAsk    calculus.Constant
-	repFracBid     calculus.Constant
-	repFracAsk     calculus.Constant
-	retreatRateBid calculus.Constant
-	retreatRateAsk calculus.Constant
-	withRateBid    calculus.Constant
-	withRateAsk    calculus.Constant
-	repRateBid     calculus.Constant
-	repRateAsk     calculus.Constant
-	hasRate        calculus.Constant
-}
-
 /*
 Level3 is the book-touch market entity. It maintains an online toxicity model
-per symbol via a single nomagique.Number composition and projects data.Measurement outputs.
+per symbol through explicit Primitive records and projects data.Measurement outputs.
 */
 type Level3 struct {
-	mu     sync.RWMutex
-	number *nomagique.Pipeline
-
-	states map[string]*level3State
-	symbol string
-	at     time.Time
-
-	withBidStd *equation.CausalResidual
-	withAskStd *equation.CausalResidual
-	retBidStd  *equation.CausalResidual
-	retAskStd  *equation.CausalResidual
-
-	in level3Input
+	mu         sync.RWMutex
+	states     map[string]*level3State
+	symbol     string
+	at         time.Time
+	projection *data.Projection
 }
 
 /*
-NewLevel3 constructs the Level3 entity with a single inlined Number composition.
+NewLevel3 constructs the Level3 entity with per-symbol Primitive compositions.
 */
 func NewLevel3() *Level3 {
-	level3 := &Level3{
-		states: make(map[string]*level3State),
-	}
-
-	keyFn := func() string { return level3.symbol }
-	level3.withBidStd = &equation.CausalResidual{Key: keyFn}
-	level3.withAskStd = &equation.CausalResidual{Key: keyFn}
-	level3.retBidStd = &equation.CausalResidual{Key: keyFn}
-	level3.retAskStd = &equation.CausalResidual{Key: keyFn}
-
-	in := &level3.in
-
-	level3.number = nomagique.Number(&nmtypes.Chain{
-		A: &nmtypes.Split{
-			A: &nmtypes.Split{
-				A: &nmtypes.Report{
-					Label: "best_price:bid", Unit: "rate", Timescale: "instantaneous",
-					Value: &in.curBid,
-				},
-				B: &nmtypes.Report{
-					Label: "best_price:ask", Unit: "rate", Timescale: "instantaneous",
-					Value: &in.curAsk,
-				},
-				C: &nmtypes.Report{
-					Label: "previous_best_price:bid", Unit: "rate", Timescale: "instantaneous",
-					Value: &in.prevBid,
-				},
-				D: &nmtypes.Report{
-					Label: "previous_best_price:ask", Unit: "rate", Timescale: "instantaneous",
-					Value: &in.prevAsk,
-				},
-			},
-			B: &nmtypes.Split{
-				A: &nmtypes.Report{
-					Label: "touch_quantity:bid", Unit: "count", Timescale: "instantaneous",
-					Value: &in.curBidQty,
-				},
-				B: &nmtypes.Report{
-					Label: "touch_quantity:ask", Unit: "count", Timescale: "instantaneous",
-					Value: &in.curAskQty,
-				},
-				C: &nmtypes.Report{
-					Label: "previous_touch_quantity:bid", Unit: "count", Timescale: "instantaneous",
-					Value: &in.prevBidQty,
-				},
-				D: &nmtypes.Report{
-					Label: "previous_touch_quantity:ask", Unit: "count", Timescale: "instantaneous",
-					Value: &in.prevAskQty,
-				},
-			},
-			C: &nmtypes.Split{
-				A: &nmtypes.Report{
-					Label: "unfilled_residual_quantity:bid", Unit: "count", Timescale: "instantaneous",
-					Value: &in.unfilledBid,
-				},
-				B: &nmtypes.Report{
-					Label: "unfilled_residual_quantity:ask", Unit: "count", Timescale: "instantaneous",
-					Value: &in.unfilledAsk,
-				},
-				C: &nmtypes.Report{
-					Label: "touch_price_log_change:bid", Unit: "dimensionless", Timescale: "instantaneous",
-					Value: &in.logChangeBid,
-				},
-				D: &nmtypes.Report{
-					Label: "touch_price_log_change:ask", Unit: "dimensionless", Timescale: "instantaneous",
-					Value: &in.logChangeAsk,
-				},
-			},
-			D: &nmtypes.Split{
-				A: &nmtypes.Report{
-					Label: "retreated_quantity:bid", Unit: "count", Timescale: "instantaneous",
-					Value: &in.retreatedBid,
-				},
-				B: &nmtypes.Report{
-					Label: "retreated_quantity:ask", Unit: "count", Timescale: "instantaneous",
-					Value: &in.retreatedAsk,
-				},
-				C: &nmtypes.Report{
-					Label: "net_withdrawn_quantity:bid", Unit: "count", Timescale: "instantaneous",
-					Value: &in.withdrawnBid,
-				},
-				D: &nmtypes.Report{
-					Label: "net_withdrawn_quantity:ask", Unit: "count", Timescale: "instantaneous",
-					Value: &in.withdrawnAsk,
-				},
-			},
-		},
-		B: &nmtypes.Split{
-			A: &nmtypes.Split{
-				A: &nmtypes.Report{
-					Label: "net_replenished_quantity:bid", Unit: "count", Timescale: "instantaneous",
-					Value: &in.replenishedBid,
-				},
-				B: &nmtypes.Report{
-					Label: "net_replenished_quantity:ask", Unit: "count", Timescale: "instantaneous",
-					Value: &in.replenishedAsk,
-				},
-				C: &nmtypes.Report{
-					Label: "retreat_fraction:bid", Unit: "dimensionless", Timescale: "instantaneous",
-					Value: &in.retreatFracBid,
-				},
-				D: &nmtypes.Report{
-					Label: "retreat_fraction:ask", Unit: "dimensionless", Timescale: "instantaneous",
-					Value: &in.retreatFracAsk,
-				},
-			},
-			B: &nmtypes.Split{
-				A: &nmtypes.Report{
-					Label: "net_withdrawal_fraction:bid", Unit: "dimensionless", Timescale: "instantaneous",
-					Value: &in.withFracBid,
-				},
-				B: &nmtypes.Report{
-					Label: "net_withdrawal_fraction:ask", Unit: "dimensionless", Timescale: "instantaneous",
-					Value: &in.withFracAsk,
-				},
-				C: &nmtypes.Report{
-					Label: "net_replenishment_fraction:bid", Unit: "dimensionless", Timescale: "instantaneous",
-					Value: &in.repFracBid,
-				},
-				D: &nmtypes.Report{
-					Label: "net_replenishment_fraction:ask", Unit: "dimensionless", Timescale: "instantaneous",
-					Value: &in.repFracAsk,
-				},
-			},
-			C: &nmtypes.Split{
-				A: &nmtypes.Report{
-					Label: "retreat_rate:bid", Unit: "per_second", Timescale: "per_second",
-					Value: &in.retreatRateBid, Defined: &in.hasRate,
-				},
-				B: &nmtypes.Report{
-					Label: "net_withdrawal_rate:bid", Unit: "per_second", Timescale: "per_second",
-					Value: &in.withRateBid, Defined: &in.hasRate,
-				},
-				C: &nmtypes.Report{
-					Label: "net_replenishment_rate:bid", Unit: "per_second", Timescale: "per_second",
-					Value: &in.repRateBid, Defined: &in.hasRate,
-				},
-			},
-			D: &nmtypes.Split{
-				A: &nmtypes.Report{
-					Label: "retreat_rate:ask", Unit: "per_second", Timescale: "per_second",
-					Value: &in.retreatRateAsk, Defined: &in.hasRate,
-				},
-				B: &nmtypes.Report{
-					Label: "net_withdrawal_rate:ask", Unit: "per_second", Timescale: "per_second",
-					Value: &in.withRateAsk, Defined: &in.hasRate,
-				},
-				C: &nmtypes.Report{
-					Label: "net_replenishment_rate:ask", Unit: "per_second", Timescale: "per_second",
-					Value: &in.repRateAsk, Defined: &in.hasRate,
-				},
-			},
-		},
-		C: &nmtypes.Split{
-			A: &nmtypes.Chain{
-				A: &in.withFracBid,
-				B: &nmtypes.Labelled{
-					Prefix: "withdrawal_fraction_",
-					Node: &nmtypes.Labelled{
-						Names: map[string]string{
-							"mean":       "baseline:bid",
-							"divergence": "divergence:bid",
-							"zscore":     "zscore:bid",
-						},
-						Node: level3.withBidStd,
-					},
-				},
-			},
-			B: &nmtypes.Chain{
-				A: &in.withFracAsk,
-				B: &nmtypes.Labelled{
-					Prefix: "withdrawal_fraction_",
-					Node: &nmtypes.Labelled{
-						Names: map[string]string{
-							"mean":       "baseline:ask",
-							"divergence": "divergence:ask",
-							"zscore":     "zscore:ask",
-						},
-						Node: level3.withAskStd,
-					},
-				},
-			},
-			C: &nmtypes.Chain{
-				A: &in.retreatFracBid,
-				B: &nmtypes.Labelled{
-					Prefix: "retreat_fraction_",
-					Node: &nmtypes.Labelled{
-						Names: map[string]string{
-							"mean":   "baseline:bid",
-							"zscore": "zscore:bid",
-						},
-						Node: level3.retBidStd,
-					},
-				},
-			},
-			D: &nmtypes.Chain{
-				A: &in.retreatFracAsk,
-				B: &nmtypes.Labelled{
-					Prefix: "retreat_fraction_",
-					Node: &nmtypes.Labelled{
-						Names: map[string]string{
-							"mean":   "baseline:ask",
-							"zscore": "zscore:ask",
-						},
-						Node: level3.retAskStd,
-					},
-				},
-			},
-		},
-		D: &data.Projection{
-			Source:   "toxicity",
-			Identity: level3.identity,
-		},
-	})
-
-	return level3
+	entity := &Level3{states: make(map[string]*level3State), projection: level3Projection()}
+	entity.projection.Identity = entity.identity
+	return entity
 }
 
 func (level3 *Level3) Close() error { return nil }
@@ -346,7 +90,7 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 	state, found := level3.states[symbol]
 
 	if !found {
-		state = &level3State{}
+		state = &level3State{graph: newLevel3Graph()}
 		level3.states[symbol] = state
 	}
 
@@ -490,44 +234,44 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 	level3.symbol = symbol
 	level3.at = at
 
-	in := &level3.in
-	in.curBid.Value = nmtypes.Number(curBid)
-	in.curAsk.Value = nmtypes.Number(curAsk)
-	in.prevBid.Value = nmtypes.Number(prevBid)
-	in.prevAsk.Value = nmtypes.Number(prevAsk)
-	in.curBidQty.Value = nmtypes.Number(curBidQty)
-	in.curAskQty.Value = nmtypes.Number(curAskQty)
-	in.prevBidQty.Value = nmtypes.Number(prevBidQty)
-	in.prevAskQty.Value = nmtypes.Number(prevAskQty)
-	in.unfilledBid.Value = nmtypes.Number(prevBidQty)
-	in.unfilledAsk.Value = nmtypes.Number(prevAskQty)
-	in.logChangeBid.Value = nmtypes.Number(logChangeBid)
-	in.logChangeAsk.Value = nmtypes.Number(logChangeAsk)
+	input := make(map[string]any)
+	input["curBid"] = curBid
+	input["curAsk"] = curAsk
+	input["prevBid"] = prevBid
+	input["prevAsk"] = prevAsk
+	input["curBidQty"] = curBidQty
+	input["curAskQty"] = curAskQty
+	input["prevBidQty"] = prevBidQty
+	input["prevAskQty"] = prevAskQty
+	input["unfilledBid"] = prevBidQty
+	input["unfilledAsk"] = prevAskQty
+	input["logChangeBid"] = logChangeBid
+	input["logChangeAsk"] = logChangeAsk
 
-	in.retreatedBid.Value = nmtypes.Number(retreatedBidQty)
-	in.retreatedAsk.Value = nmtypes.Number(retreatedAskQty)
-	in.withdrawnBid.Value = nmtypes.Number(withdrawnBidQty)
-	in.withdrawnAsk.Value = nmtypes.Number(withdrawnAskQty)
-	in.replenishedBid.Value = nmtypes.Number(replenishedBidQty)
-	in.replenishedAsk.Value = nmtypes.Number(replenishedAskQty)
+	input["retreatedBid"] = retreatedBidQty
+	input["retreatedAsk"] = retreatedAskQty
+	input["withdrawnBid"] = withdrawnBidQty
+	input["withdrawnAsk"] = withdrawnAskQty
+	input["replenishedBid"] = replenishedBidQty
+	input["replenishedAsk"] = replenishedAskQty
 
-	in.retreatFracBid.Value = nmtypes.Number(retreatFractionBid)
-	in.retreatFracAsk.Value = nmtypes.Number(retreatFractionAsk)
-	in.withFracBid.Value = nmtypes.Number(withdrawalFractionBid)
-	in.withFracAsk.Value = nmtypes.Number(withdrawalFractionAsk)
-	in.repFracBid.Value = nmtypes.Number(replenishmentFractionBid)
-	in.repFracAsk.Value = nmtypes.Number(replenishmentFractionAsk)
+	input["retreatFracBid"] = retreatFractionBid
+	input["retreatFracAsk"] = retreatFractionAsk
+	input["withFracBid"] = withdrawalFractionBid
+	input["withFracAsk"] = withdrawalFractionAsk
+	input["repFracBid"] = replenishmentFractionBid
+	input["repFracAsk"] = replenishmentFractionAsk
 
 	if deltaT > 0 {
-		in.retreatRateBid.Value = nmtypes.Number(retreatedBidQty / deltaT)
-		in.retreatRateAsk.Value = nmtypes.Number(retreatedAskQty / deltaT)
-		in.withRateBid.Value = nmtypes.Number(withdrawnBidQty / deltaT)
-		in.withRateAsk.Value = nmtypes.Number(withdrawnAskQty / deltaT)
-		in.repRateBid.Value = nmtypes.Number(replenishedBidQty / deltaT)
-		in.repRateAsk.Value = nmtypes.Number(replenishedAskQty / deltaT)
-		in.hasRate.Value = 1
+		input["retreatRateBid"] = retreatedBidQty / deltaT
+		input["retreatRateAsk"] = retreatedAskQty / deltaT
+		input["withRateBid"] = withdrawnBidQty / deltaT
+		input["withRateAsk"] = withdrawnAskQty / deltaT
+		input["repRateBid"] = replenishedBidQty / deltaT
+		input["repRateAsk"] = replenishedAskQty / deltaT
+		input["hasRate"] = true
 	} else {
-		in.hasRate.Value = 0
+		input["hasRate"] = false
 	}
 
 	state.prevBid = curBid
@@ -537,13 +281,11 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 	state.prevSec = sec
 	state.prevNsec = nsec
 
-	level3.number.Step(1.0)
-	measurement := level3.number.Measurement()
-
-	if measurement != nil {
-		measurement.Maturity = 1.0
-		measurement.SNR = 0.0
+	fields, err := transport.Evaluate[map[string]core.Primitive](state.graph, core.Record(input))
+	if err != nil {
+		return &data.Measurement[float64]{Err: err}
 	}
+	measurement := level3.projection.Project(fields)
 
 	return measurement
 }

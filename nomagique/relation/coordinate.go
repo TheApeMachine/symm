@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"strings"
 
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
@@ -47,9 +47,9 @@ type Coordinate struct {
 	// Side is the side suffix when the metric is side-keyed, e.g. "buy".
 	Side string
 	// Unit is the physical unit of the measurement.
-	Unit nmtypes.Unit
+	Unit data.Unit
 	// Timescale is the measurement timescale.
-	Timescale nmtypes.Timescale
+	Timescale data.Timescale
 	// Epoch is the model epoch. Incompatible epochs are never mixed.
 	Epoch uint64
 }
@@ -128,8 +128,8 @@ func (coordinate Coordinate) ID() string {
 	}
 
 	parts = append(parts,
-		coordinate.Unit.String(),
-		coordinate.Timescale.String(),
+		string(coordinate.Unit),
+		string(coordinate.Timescale),
 		fmt.Sprintf("epoch=%d", coordinate.Epoch),
 	)
 
@@ -187,34 +187,34 @@ func ParseCoordinate(id string) (Coordinate, error) {
 			}
 		default:
 			switch part {
-			case nmtypes.UnitDimensionless.String():
-				coordinate.Unit = nmtypes.UnitDimensionless
-			case nmtypes.UnitCount.String():
-				coordinate.Unit = nmtypes.UnitCount
-			case nmtypes.UnitRate.String():
-				coordinate.Unit = nmtypes.UnitRate
-			case nmtypes.UnitDuration.String():
-				coordinate.Unit = nmtypes.UnitDuration
-			case nmtypes.UnitPrice.String():
-				coordinate.Unit = nmtypes.UnitPrice
-			case nmtypes.UnitPercent.String():
-				coordinate.Unit = nmtypes.UnitPercent
-			case nmtypes.UnitQuoteCurrency.String():
-				coordinate.Unit = nmtypes.UnitQuoteCurrency
-			case nmtypes.UnitBaseCurrency.String():
-				coordinate.Unit = nmtypes.UnitBaseCurrency
-			case nmtypes.UnitEventsPerSecond.String():
-				coordinate.Unit = nmtypes.UnitEventsPerSecond
-			case nmtypes.UnitPerSecond.String():
-				coordinate.Unit = nmtypes.UnitPerSecond
-			case nmtypes.UnitInverseSecond.String():
-				coordinate.Unit = nmtypes.UnitInverseSecond
-			case nmtypes.UnitNat.String():
-				coordinate.Unit = nmtypes.UnitNat
-			case nmtypes.UnitSecond.String():
-				coordinate.Unit = nmtypes.UnitSecond
+			case string(data.UnitDimensionless):
+				coordinate.Unit = data.UnitDimensionless
+			case string(data.UnitCount):
+				coordinate.Unit = data.UnitCount
+			case string(data.UnitRate):
+				coordinate.Unit = data.UnitRate
+			case string(data.UnitDuration):
+				coordinate.Unit = data.UnitDuration
+			case string(data.Unit("price")):
+				coordinate.Unit = data.Unit("price")
+			case string(data.UnitPercent):
+				coordinate.Unit = data.UnitPercent
+			case string(data.Unit("quote_currency")):
+				coordinate.Unit = data.Unit("quote_currency")
+			case string(data.Unit("base_currency")):
+				coordinate.Unit = data.Unit("base_currency")
+			case string(data.Unit("events_per_second")):
+				coordinate.Unit = data.Unit("events_per_second")
+			case string(data.UnitPerSecond):
+				coordinate.Unit = data.UnitPerSecond
+			case string(data.Unit("inverse_second")):
+				coordinate.Unit = data.Unit("inverse_second")
+			case string(data.UnitNat):
+				coordinate.Unit = data.UnitNat
+			case string(data.UnitSecond):
+				coordinate.Unit = data.UnitSecond
 			default:
-				coordinate.Timescale = nmtypes.ParseTimescale(part)
+				coordinate.Timescale = data.Timescale(part)
 			}
 		}
 	}

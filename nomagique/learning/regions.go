@@ -1,6 +1,7 @@
 package learning
 
 import (
+	"github.com/theapemachine/symm/nomagique/core"
 	"math"
 	"slices"
 
@@ -61,7 +62,12 @@ func (grid *Grid) Regions(label string) ([]Region, uint64, error) {
 	for index := range regions {
 		region := &regions[index]
 		column := int(region.ID) - 1
-		region.Level = float64(grid.baselines[row][column].ZScore())
+		fields := core.To[map[string]core.Primitive](grid.baselines[row][column])
+		level, err := core.Field[float64](fields, "zscore")
+		if err != nil {
+			return nil, 0, err
+		}
+		region.Level = level
 		region.Change = grid.activations[row][column]
 		region.Condition = ConditionToken(region.ID, region.Level, region.Change)
 	}

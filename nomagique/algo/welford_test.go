@@ -1,12 +1,11 @@
 package algo
 
 import (
-	"math"
-	"testing"
-
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"math"
+	"testing"
 )
 
 func TestWelfordRecurrence(t *testing.T) {

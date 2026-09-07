@@ -6,18 +6,18 @@ import (
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/data"
 )
 
 func TestCompareCoordinate(t *testing.T) {
 	Convey("Given a set of coordinates spanning every identity field", t, func() {
 		coordinates := []Coordinate{
-			{Symbol: "TEST/USD", Source: "cvd", Metric: "signed_net_fraction", Side: "buy", Unit: nmtypes.UnitCount, Timescale: nmtypes.TimescalePerSecond, Epoch: 1},
-			{Symbol: "TEST/USD", Source: "cvd", Metric: "signed_net_fraction", Side: "buy", Unit: nmtypes.UnitCount, Timescale: nmtypes.TimescalePerSecond, Epoch: 2},
-			{Symbol: "TEST/USD", Source: "cvd", Metric: "signed_net_fraction", Side: "sell", Unit: nmtypes.UnitCount, Timescale: nmtypes.TimescalePerSecond, Epoch: 1},
-			{Symbol: "TEST/USD", Source: "cvd", Metric: "signed_net_fraction", Side: "buy", Peer: "ALT/USD", Unit: nmtypes.UnitCount, Timescale: nmtypes.TimescalePerSecond, Epoch: 1},
-			{Symbol: "TEST/USD", Source: "hawkes", Metric: "arrival_rate", Unit: nmtypes.UnitEventsPerSecond, Timescale: nmtypes.TimescalePerMillisecond, Epoch: 1},
-			{Symbol: "ALT/USD", Source: "cvd", Metric: "midpoint_log_return", Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescalePerSecond, Epoch: 1},
+			{Symbol: "TEST/USD", Source: "cvd", Metric: "signed_net_fraction", Side: "buy", Unit: data.UnitCount, Timescale: data.TimescalePerSecond, Epoch: 1},
+			{Symbol: "TEST/USD", Source: "cvd", Metric: "signed_net_fraction", Side: "buy", Unit: data.UnitCount, Timescale: data.TimescalePerSecond, Epoch: 2},
+			{Symbol: "TEST/USD", Source: "cvd", Metric: "signed_net_fraction", Side: "sell", Unit: data.UnitCount, Timescale: data.TimescalePerSecond, Epoch: 1},
+			{Symbol: "TEST/USD", Source: "cvd", Metric: "signed_net_fraction", Side: "buy", Peer: "ALT/USD", Unit: data.UnitCount, Timescale: data.TimescalePerSecond, Epoch: 1},
+			{Symbol: "TEST/USD", Source: "hawkes", Metric: "arrival_rate", Unit: data.Unit("events_per_second"), Timescale: data.Timescale("per_millisecond"), Epoch: 1},
+			{Symbol: "ALT/USD", Source: "cvd", Metric: "midpoint_log_return", Unit: data.UnitDimensionless, Timescale: data.TimescalePerSecond, Epoch: 1},
 		}
 
 		Convey("every coordinate equals itself", func() {
@@ -55,12 +55,12 @@ func TestCompareCoordinate(t *testing.T) {
 		// CompareCoordinate walks: lexicographic identity order must then
 		// agree with the field-wise order.
 		coordinates := []Coordinate{
-			{Symbol: "A", Source: "cvd", Metric: "metric", Side: "buy", Unit: nmtypes.UnitCount, Timescale: nmtypes.TimescalePerSecond, Epoch: 1},
-			{Symbol: "A", Source: "cvd", Metric: "metric", Side: "buy", Unit: nmtypes.UnitCount, Timescale: nmtypes.TimescalePerSecond, Epoch: 2},
-			{Symbol: "A", Source: "cvd", Metric: "metric", Side: "buy", Peer: "B", Unit: nmtypes.UnitCount, Timescale: nmtypes.TimescalePerSecond, Epoch: 1},
-			{Symbol: "A", Source: "cvd", Metric: "metric", Side: "sell", Unit: nmtypes.UnitCount, Timescale: nmtypes.TimescalePerSecond, Epoch: 1},
-			{Symbol: "A", Source: "hawkes", Metric: "other", Unit: nmtypes.UnitRate, Timescale: nmtypes.TimescalePerMillisecond, Epoch: 1},
-			{Symbol: "B", Source: "cvd", Metric: "metric", Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescalePerSecond, Epoch: 1},
+			{Symbol: "A", Source: "cvd", Metric: "metric", Side: "buy", Unit: data.UnitCount, Timescale: data.TimescalePerSecond, Epoch: 1},
+			{Symbol: "A", Source: "cvd", Metric: "metric", Side: "buy", Unit: data.UnitCount, Timescale: data.TimescalePerSecond, Epoch: 2},
+			{Symbol: "A", Source: "cvd", Metric: "metric", Side: "buy", Peer: "B", Unit: data.UnitCount, Timescale: data.TimescalePerSecond, Epoch: 1},
+			{Symbol: "A", Source: "cvd", Metric: "metric", Side: "sell", Unit: data.UnitCount, Timescale: data.TimescalePerSecond, Epoch: 1},
+			{Symbol: "A", Source: "hawkes", Metric: "other", Unit: data.UnitRate, Timescale: data.Timescale("per_millisecond"), Epoch: 1},
+			{Symbol: "B", Source: "cvd", Metric: "metric", Unit: data.UnitDimensionless, Timescale: data.TimescalePerSecond, Epoch: 1},
 		}
 
 		Convey("the field-wise sign agrees with the rendered identity order", func() {
@@ -92,9 +92,9 @@ var benchmarkCompareSink int
 
 func BenchmarkCompareCoordinate(b *testing.B) {
 	coordinates := []Coordinate{
-		{Symbol: "TEST/USD", Source: "cvd", Metric: "signed_net_fraction", Side: "buy", Unit: nmtypes.UnitCount, Timescale: nmtypes.TimescalePerSecond, Epoch: 1},
-		{Symbol: "TEST/USD", Source: "hawkes", Metric: "arrival_rate", Unit: nmtypes.UnitEventsPerSecond, Timescale: nmtypes.TimescalePerMillisecond, Epoch: 1},
-		{Symbol: "ALT/USD", Source: "cvd", Metric: "midpoint_log_return", Unit: nmtypes.UnitDimensionless, Timescale: nmtypes.TimescalePerSecond, Epoch: 2},
+		{Symbol: "TEST/USD", Source: "cvd", Metric: "signed_net_fraction", Side: "buy", Unit: data.UnitCount, Timescale: data.TimescalePerSecond, Epoch: 1},
+		{Symbol: "TEST/USD", Source: "hawkes", Metric: "arrival_rate", Unit: data.Unit("events_per_second"), Timescale: data.Timescale("per_millisecond"), Epoch: 1},
+		{Symbol: "ALT/USD", Source: "cvd", Metric: "midpoint_log_return", Unit: data.UnitDimensionless, Timescale: data.TimescalePerSecond, Epoch: 2},
 	}
 
 	b.ReportAllocs()
@@ -115,8 +115,8 @@ func BenchmarkSortCoordinates(b *testing.B) {
 			Source:    "cvd",
 			Metric:    "metric",
 			Side:      "buy",
-			Unit:      nmtypes.UnitCount,
-			Timescale: nmtypes.TimescalePerSecond,
+			Unit:      data.UnitCount,
+			Timescale: data.TimescalePerSecond,
 			Epoch:     uint64(index % 4),
 		}
 	}

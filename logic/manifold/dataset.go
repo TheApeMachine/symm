@@ -42,6 +42,7 @@ against everything that symbol has shown so far:
 */
 type Dataset struct {
 	frames *frames
+	err    error
 }
 
 const (
@@ -70,14 +71,15 @@ const (
 )
 
 /*
-NewDataset constructs a streaming projector. It retains nothing: every message
-is projected forward exactly once from its own contents.
+NewDataset constructs a streaming projector with resident per-symbol coordinate
+frames. It retains moments, not a second copy of the venue order book.
 */
 func NewDataset() *Dataset {
-	return &Dataset{frames: newFrames()}
+	return &Dataset{frames: newFrames(frameAxisSpan)}
 }
 
 func (dataset *Dataset) Name() string { return "book" }
+func (dataset *Dataset) Error() error { return dataset.err }
 
 /*
 restingOrder is one order resting on the book, in the only terms the projection
@@ -130,7 +132,7 @@ func (dataset *Dataset) step(
 	clamped bool,
 ) iter.Seq[*sensorium.State] {
 	return func(yield func(*sensorium.State) bool) {
-		if dataset == nil || symbol == "" {
+		if dataset == nil || dataset.err != nil || symbol == "" {
 			return
 		}
 
@@ -153,12 +155,16 @@ func (dataset *Dataset) step(
 				}
 
 				token := packToken(symbolIndex, sidePositive)
-				positionX, positionY, priceDeviation, quantityDeviation :=
+				positionX, positionY, priceDeviation, quantityDeviation, err :=
 					dataset.frames.place(
 						symbol,
 						math.Log(order.price),
 						math.Log(order.size),
 					)
+				if err != nil {
+					dataset.err = err
+					return
+				}
 				contentID := orderContentID(orderIdentity{
 					symbol:  symbol,
 					orderID: order.id,

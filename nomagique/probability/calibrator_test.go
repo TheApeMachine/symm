@@ -19,7 +19,7 @@ func TestCalibratorRetention(t *testing.T) {
 func BenchmarkCalibrator(b *testing.B) {
 	node := probability.NewCalibrator(collection.NewTail[float64](transport.NewIO(core.From(4))))
 	b.ReportAllocs()
-	for iteration := 0; iteration < b.N; iteration++ {
+	for b.Loop() {
 		input := transport.NewIO(core.From(1.234))
 		if node.Next(input) == nil || node.Next(input) != nil {
 			b.Fatal("expected one calibrator record")

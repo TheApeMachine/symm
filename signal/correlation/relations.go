@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
@@ -36,28 +36,33 @@ type Relations struct {
 	pairs map[[2]string]Relation
 }
 
-func (relations *Relations) observe(left, right string, pair *nmcorrelation.Hayashi, fisher *nmcorrelation.Fisher) {
+// observe projects a checked pair record. Undefined Fisher fields remain
+// explicitly unavailable; NaN is not serialized as though it were a p-value.
+func (relations *Relations) observe(left, right string, pair map[string]core.Primitive, leftAt, rightAt int64) error {
 	if right < left {
 		left, right = right, left
 	}
-
-	_, leftAt, _ := pair.Left.Span()
-	_, rightAt, _ := pair.Right.Span()
-	value := Relation{
-		Left: left, Right: right,
-		Signed: float64(pair.Correlation()), Absolute: math.Abs(float64(pair.Correlation())),
-		Support: float64(pair.Support()), Defined: pair.Ready(),
-		FisherDefined: fisher.Ready(), PValue: float64(fisher.PValue()),
-		StandardError: float64(fisher.StandardError()), At: time.Unix(0, min(leftAt, rightAt)),
+	d := core.NewDecoder(pair)
+	value := Relation{Left: left, Right: right, Support: core.Decode[float64](d, "support"), Defined: core.Decode[bool](d, "defined"), At: time.Unix(0, min(leftAt, rightAt))}
+	if value.Defined {
+		value.Signed = core.Decode[float64](d, "correlation")
+		value.Absolute = math.Abs(value.Signed)
+	}
+	value.FisherDefined = core.Decode[bool](d, "fisher", "defined")
+	if value.FisherDefined {
+		value.PValue = core.Decode[float64](d, "fisher", "p_value")
+		value.StandardError = core.Decode[float64](d, "fisher", "standard_error")
+	}
+	if d.Error() != nil {
+		return d.Error()
 	}
 	relations.mutex.Lock()
 	defer relations.mutex.Unlock()
-
 	if relations.pairs == nil {
 		relations.pairs = make(map[[2]string]Relation)
 	}
-
 	relations.pairs[[2]string{left, right}] = value
+	return nil
 }
 
 func (relations *Relations) All() iter.Seq[Relation] {

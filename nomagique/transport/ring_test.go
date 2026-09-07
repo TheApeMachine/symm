@@ -71,7 +71,7 @@ func BenchmarkRingBufferRoundTrip(b *testing.B) {
 
 	b.ReportAllocs()
 
-	for iteration := 0; iteration < b.N; iteration++ {
+	for b.Loop() {
 		if !ring.Push(1) {
 			b.Fatal("push failed")
 		}

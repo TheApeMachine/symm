@@ -1,6 +1,9 @@
 package strategy
 
 import (
+	"github.com/theapemachine/symm/nomagique/core"
+	nmstore "github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"slices"
 
 	"github.com/theapemachine/symm/nomagique/learning"
@@ -45,7 +48,7 @@ quantity cannot gain influence from the size of an outcome — only from the
 observation authority fixed when the decision issued.
 */
 type attribution struct {
-	priors map[attributionKey]*learning.Prior
+	priors map[attributionKey]core.Primitive
 }
 
 /* observe credits every quantity that was hot when this decision was issued. */
@@ -53,7 +56,7 @@ func (store *attribution) observe(
 	tokens []uint64, kind types.Action, target, authority float64,
 ) error {
 	if store.priors == nil {
-		store.priors = make(map[attributionKey]*learning.Prior)
+		store.priors = make(map[attributionKey]core.Primitive)
 	}
 
 	for _, token := range tokens {
@@ -61,11 +64,11 @@ func (store *attribution) observe(
 		prior := store.priors[key]
 
 		if prior == nil {
-			prior = &learning.Prior{}
+			prior = learning.NewPrior(nmstore.NewConstant(core.From(0.0)), learning.NewPriorMemory())
 			store.priors[key] = prior
 		}
 
-		if err := prior.Observe(target, authority); err != nil {
+		if _, err := transport.Evaluate[map[string]core.Primitive](prior, core.Record(map[string]any{"value": target, "authority": authority})); err != nil {
 			return err
 		}
 	}
@@ -84,8 +87,16 @@ func (store *attribution) report(columns [][2]string) []MetricInfluence {
 	report := make([]MetricInfluence, 0, len(store.priors))
 
 	for key, prior := range store.priors {
+		fields, err := transport.Evaluate[map[string]core.Primitive](prior, core.Record(nil))
+		if err != nil {
+			panic(err)
+		}
+		reading, err := learning.ProjectPrior(fields)
+		if err != nil {
+			panic(err)
+		}
 		influence := MetricInfluence{
-			Token: key.token, Action: string(key.kind), Prior: prior.Reading(),
+			Token: key.token, Action: string(key.kind), Prior: reading,
 		}
 
 		if index := int(key.token) - 1; index >= 0 && index < len(columns) {

@@ -12,41 +12,40 @@ type Fan struct {
 	outputs  core.Primitive
 	delivery core.Primitive
 	current  core.Primitive
+	captured IO
+	branch   IO
+	buffer   IO
 }
 
 func NewFan(inputs, outputs core.Primitive) *Fan { return &Fan{inputs: inputs, outputs: outputs} }
 func (fan *Fan) Next(in core.Primitive) core.Primitive {
 	if fan.delivery == nil {
-		captured := []core.Primitive{}
-		core.Yield(
-			NewIO(core.From(0)),
-			NewApply(fan.inputs, in),
-			func(held int, value core.Primitive) int { captured = append(captured, value); return held },
-			fan,
-		)
-		values := []core.Primitive{}
-		core.Yield(
-			NewIO(core.From(0)),
-			fan.outputs,
-			func(held int, target core.Primitive) int {
-				core.Yield(
-					NewIO(core.From(0)),
-					NewApply(target, NewIO(captured...)),
-					func(held int, value core.Primitive) int { values = append(values, value); return held },
-					fan,
-				)
-				return held
-			},
-			fan,
-		)
-		fan.delivery = NewIO(values...)
+		fan.Error(fan.captured.appendRun(fan.inputs, in))
+
+		if fan.outputs != nil {
+			fan.Error(fan.outputs.Error())
+
+			for target := fan.outputs.Next(nil); target != nil; target = fan.outputs.Next(nil) {
+				fan.branch = IO{values: fan.captured.values}
+				fan.Error(fan.buffer.appendRun(target, &fan.branch))
+			}
+
+			fan.Error(fan.outputs.Error())
+		}
+		fan.delivery = &fan.buffer
 	}
 	value := fan.delivery.Next(nil)
+
 	if value == nil {
 		fan.delivery = nil
-	} else {
-		fan.current = value
+		fan.captured.reset()
+		fan.buffer.reset()
+		fan.branch = IO{}
+
+		return nil
 	}
+
+	fan.current = value
 	return value
 }
 func (fan *Fan) Read() any { return core.To[any](fan.current) }

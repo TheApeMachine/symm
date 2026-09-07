@@ -1,312 +1,12 @@
 {
   "producers": [
     {
-      "id": "correlation/absolute_correlation",
-      "source": "correlation",
-      "metric": "absolute_correlation",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 291,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:SystemicHerd (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 248
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/cohort_absolute_correlation",
-      "source": "correlation",
-      "metric": "cohort_absolute_correlation",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 295,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:SystemicHerd (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 247
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/cohort_correlation_dispersion",
-      "source": "correlation",
-      "metric": "cohort_correlation_dispersion",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 336,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DivergentStress (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 264
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/cohort_effective_peer_count",
-      "source": "correlation",
-      "metric": "cohort_effective_peer_count",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 338,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:SystemicHerd (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 251
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/cohort_peer_count",
-      "source": "correlation",
-      "metric": "cohort_peer_count",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 334,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:SystemicHerd (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 250
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/cohort_signed_correlation",
-      "source": "correlation",
-      "metric": "cohort_signed_correlation",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 293,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:SystemicHerd (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 246
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/correlation_baseline",
-      "source": "correlation",
-      "metric": "correlation_baseline",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 348,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 262
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/correlation_divergence",
-      "source": "correlation",
-      "metric": "correlation_divergence",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 350,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DivergentStress (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 263
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/correlation_p_value",
-      "source": "correlation",
-      "metric": "correlation_p_value",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 327,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 260
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/correlation_standard_error_fisher",
-      "source": "correlation",
-      "metric": "correlation_standard_error_fisher",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 329,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 261
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/correlation_velocity",
-      "source": "correlation",
-      "metric": "correlation_velocity",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 354,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DivergentStress (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 265
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/correlation_zscore",
-      "source": "correlation",
-      "metric": "correlation_zscore",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 352,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 259
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/covariance",
-      "source": "correlation",
-      "metric": "covariance",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 298,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:SystemicHerd (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 249
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/effective_sample_count",
-      "source": "correlation",
-      "metric": "effective_sample_count",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 323,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 275
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/focal_return_energy_rate",
-      "source": "correlation",
-      "metric": "focal_return_energy_rate",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 310,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DecoupledAlpha (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 257
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
       "id": "correlation/last_price",
       "source": "correlation",
       "metric": "last_price",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 201,
+      "line": 81,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -326,7 +26,7 @@
       "metric": "observation_count",
       "package": "github.com/theapemachine/symm/signal/correlation",
       "file": "signal/correlation/ticker.go",
-      "line": 203,
+      "line": 82,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -341,443 +41,12 @@
       "kernelOnly": false
     },
     {
-      "id": "correlation/overlap_density",
-      "source": "correlation",
-      "metric": "overlap_density",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 319,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 270
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/overlap_pair_count",
-      "source": "correlation",
-      "metric": "overlap_pair_count",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 321,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 271
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/peer_return_energy_rate",
-      "source": "correlation",
-      "metric": "peer_return_energy_rate",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 308,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DecoupledAlpha (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 258
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/relative_cohort_return_energy",
-      "source": "correlation",
-      "metric": "relative_cohort_return_energy",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 345,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DecoupledAlpha (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 254
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/relative_return_energy",
-      "source": "correlation",
-      "metric": "relative_return_energy",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 343,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/relative_return_energy_baseline",
-      "source": "correlation",
-      "metric": "relative_return_energy_baseline",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 357,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DecoupledAlpha (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 255
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/relative_return_energy_divergence",
-      "source": "correlation",
-      "metric": "relative_return_energy_divergence",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 360,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DecoupledAlpha (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 253
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/relative_return_energy_velocity",
-      "source": "correlation",
-      "metric": "relative_return_energy_velocity",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 366,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DecoupledAlpha (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 256
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/relative_return_energy_zscore",
-      "source": "correlation",
-      "metric": "relative_return_energy_zscore",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 363,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DecoupledAlpha (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 252
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/return_energy:measured",
-      "source": "correlation",
-      "metric": "return_energy",
-      "side": "measured",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 302,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:PhysicalField (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 268
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/return_energy:reference",
-      "source": "correlation",
-      "metric": "return_energy",
-      "side": "reference",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 300,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:PhysicalField (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 269
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/return_energy_rate:measured",
-      "source": "correlation",
-      "metric": "return_energy_rate",
-      "side": "measured",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 306,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DivergentStress (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 266
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/return_energy_rate:reference",
-      "source": "correlation",
-      "metric": "return_energy_rate",
-      "side": "reference",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 304,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DivergentStress (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 267
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/shared_time",
-      "source": "correlation",
-      "metric": "shared_time",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 317,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 272
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/signed_correlation",
-      "source": "correlation",
-      "metric": "signed_correlation",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 289,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:SystemicHerd (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 245
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/supported_return_count:measured",
-      "source": "correlation",
-      "metric": "supported_return_count",
-      "side": "measured",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 312,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 273
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "correlation/supported_return_count:reference",
-      "source": "correlation",
-      "metric": "supported_return_count",
-      "side": "reference",
-      "package": "github.com/theapemachine/symm/signal/correlation",
-      "file": "signal/correlation/ticker.go",
-      "line": 314,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 274
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/aggressive_notional:buy",
-      "source": "cvd",
-      "metric": "aggressive_notional",
-      "side": "buy",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 158,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 313
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/aggressive_notional:sell",
-      "source": "cvd",
-      "metric": "aggressive_notional",
-      "side": "sell",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 162,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 314
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/buy_notional_rate",
-      "source": "cvd",
-      "metric": "buy_notional_rate",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 237,
-      "unit": "per_second",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/cumulative_notional_delta",
-      "source": "cvd",
-      "metric": "cumulative_notional_delta",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 202,
-      "unit": "rate",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 311
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/cumulative_volume_delta",
-      "source": "cvd",
-      "metric": "cumulative_volume_delta",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 198,
-      "unit": "count",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 312
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
       "id": "cvd/cvd_epoch_from",
       "source": "cvd",
       "metric": "cvd_epoch_from",
       "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 249,
-      "unit": "second",
+      "file": "signal/cvd/flow.go",
+      "line": 87,
       "consumers": [
         {
           "kind": "bound",
@@ -791,217 +60,12 @@
       "kernelOnly": false
     },
     {
-      "id": "cvd/executed_quantity:buy",
-      "source": "cvd",
-      "metric": "executed_quantity",
-      "side": "buy",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 138,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 328
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/executed_quantity:sell",
-      "source": "cvd",
-      "metric": "executed_quantity",
-      "side": "sell",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 142,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 329
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/flow_aligned_midpoint_return",
-      "source": "cvd",
-      "metric": "flow_aligned_midpoint_return",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 263,
-      "unit": "dimensionless",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 323
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/gross_executed_quantity",
-      "source": "cvd",
-      "metric": "gross_executed_quantity",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 185,
-      "unit": "count",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:VolumeStarvation (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 320
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/gross_notional",
-      "source": "cvd",
-      "metric": "gross_notional",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 175,
-      "unit": "rate",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:VolumeStarvation (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 319
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/gross_notional_rate",
-      "source": "cvd",
-      "metric": "gross_notional_rate",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 227,
-      "unit": "per_second",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/mean_trade_notional",
-      "source": "cvd",
-      "metric": "mean_trade_notional",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 210,
-      "unit": "rate",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:VolumeStarvation (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 321
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/midpoint_log_return",
-      "source": "cvd",
-      "metric": "midpoint_log_return",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 257,
-      "unit": "dimensionless",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 330
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
       "id": "cvd/midpoint_response_per_net_notional",
       "source": "cvd",
       "metric": "midpoint_response_per_net_notional",
       "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 268,
-      "unit": "dimensionless",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/net_executed_quantity",
-      "source": "cvd",
-      "metric": "net_executed_quantity",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 190,
-      "unit": "count",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 315
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/net_notional",
-      "source": "cvd",
-      "metric": "net_notional",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 181,
-      "unit": "rate",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 316
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/net_notional_rate",
-      "source": "cvd",
-      "metric": "net_notional_rate",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 231,
-      "unit": "per_second",
+      "file": "signal/cvd/flow.go",
+      "line": 95,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1011,309 +75,8 @@
       "source": "cvd",
       "metric": "net_notional_rate_velocity",
       "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 274,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/sell_notional_rate",
-      "source": "cvd",
-      "metric": "sell_notional_rate",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 241,
-      "unit": "per_second",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/signed_count_fraction",
-      "source": "cvd",
-      "metric": "signed_count_fraction",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 206,
-      "unit": "dimensionless",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 324
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/signed_net_fraction",
-      "source": "cvd",
-      "metric": "signed_net_fraction",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 216,
-      "unit": "dimensionless",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/signed_net_fraction_baseline",
-      "source": "cvd",
-      "metric": "signed_net_fraction_baseline",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 220,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/signed_net_fraction_divergence",
-      "source": "cvd",
-      "metric": "signed_net_fraction_divergence",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 220,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 310
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/signed_net_fraction_mean",
-      "source": "cvd",
-      "metric": "signed_net_fraction_mean",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 220,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/signed_net_fraction_zscore",
-      "source": "cvd",
-      "metric": "signed_net_fraction_zscore",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 220,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:AggressiveDrive (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 309
-        },
-        {
-          "kind": "bound",
-          "consumer": "category:VerticalIgnition (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 578
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/trade_count",
-      "source": "cvd",
-      "metric": "trade_count",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 171,
-      "unit": "count",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 325
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/trade_count:buy",
-      "source": "cvd",
-      "metric": "trade_count",
-      "side": "buy",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 148,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 326
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/trade_count:sell",
-      "source": "cvd",
-      "metric": "trade_count",
-      "side": "sell",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 152,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticBalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 327
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "cvd/trade_rate",
-      "source": "cvd",
-      "metric": "trade_rate",
-      "package": "github.com/theapemachine/symm/signal/cvd",
-      "file": "signal/cvd/trade.go",
-      "line": 245,
-      "unit": "per_second",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:VolumeStarvation (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 318
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/add_notional:ask",
-      "source": "depthflow",
-      "metric": "add_notional",
-      "side": "ask",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 95,
-      "unit": "rate",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:LoadedImbalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 385
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/add_notional:bid",
-      "source": "depthflow",
-      "metric": "add_notional",
-      "side": "bid",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 91,
-      "unit": "rate",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:LoadedImbalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 384
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/delete_count:ask",
-      "source": "depthflow",
-      "metric": "delete_count",
-      "side": "ask",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 115,
-      "unit": "dimensionless",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:BookThinning (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 391
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/delete_count:bid",
-      "source": "depthflow",
-      "metric": "delete_count",
-      "side": "bid",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 111,
-      "unit": "dimensionless",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:BookThinning (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 390
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/modify_remaining_notional:ask",
-      "source": "depthflow",
-      "metric": "modify_remaining_notional",
-      "side": "ask",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 105,
-      "unit": "rate",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/modify_remaining_notional:bid",
-      "source": "depthflow",
-      "metric": "modify_remaining_notional",
-      "side": "bid",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 101,
-      "unit": "rate",
+      "file": "signal/cvd/flow.go",
+      "line": 96,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -1323,9 +86,8 @@
       "source": "depthflow",
       "metric": "mutation_activity_imbalance",
       "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 140,
-      "unit": "dimensionless",
+      "file": "signal/depthflow/flow.go",
+      "line": 51,
       "consumers": [
         {
           "kind": "bound",
@@ -1339,153 +101,12 @@
       "kernelOnly": false
     },
     {
-      "id": "depthflow/mutation_count",
-      "source": "depthflow",
-      "metric": "mutation_count",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 129,
-      "unit": "dimensionless",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/mutation_count:ask",
-      "source": "depthflow",
-      "metric": "mutation_count",
-      "side": "ask",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 125,
-      "unit": "dimensionless",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:BookThinning (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 393
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/mutation_count:bid",
-      "source": "depthflow",
-      "metric": "mutation_count",
-      "side": "bid",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 121,
-      "unit": "dimensionless",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:BookThinning (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 392
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/mutation_count_diff",
-      "source": "depthflow",
-      "metric": "mutation_count_diff",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 133,
-      "unit": "dimensionless",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/observed_notional",
-      "source": "depthflow",
-      "metric": "observed_notional",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 80,
-      "unit": "rate",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:RobustLiquidity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 395
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/observed_notional:ask",
-      "source": "depthflow",
-      "metric": "observed_notional",
-      "side": "ask",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 76,
-      "unit": "rate",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 397
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/observed_notional:bid",
-      "source": "depthflow",
-      "metric": "observed_notional",
-      "side": "bid",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 72,
-      "unit": "rate",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 396
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/observed_notional_diff",
-      "source": "depthflow",
-      "metric": "observed_notional_diff",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 84,
-      "unit": "rate",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
       "id": "depthflow/observed_notional_imbalance",
       "source": "depthflow",
       "metric": "observed_notional_imbalance",
       "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 145,
-      "unit": "dimensionless",
+      "file": "signal/depthflow/flow.go",
+      "line": 52,
       "consumers": [
         {
           "kind": "bound",
@@ -1499,88 +120,12 @@
       "kernelOnly": false
     },
     {
-      "id": "depthflow/observed_notional_imbalance_baseline",
-      "source": "depthflow",
-      "metric": "observed_notional_imbalance_baseline",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 149,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:LoadedImbalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 383
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/observed_notional_imbalance_divergence",
-      "source": "depthflow",
-      "metric": "observed_notional_imbalance_divergence",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 149,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:LoadedImbalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 381
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/observed_notional_imbalance_mean",
-      "source": "depthflow",
-      "metric": "observed_notional_imbalance_mean",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 149,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/observed_notional_imbalance_zscore",
-      "source": "depthflow",
-      "metric": "observed_notional_imbalance_zscore",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 149,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:LoadedImbalance (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 380
-        },
-        {
-          "kind": "bound",
-          "consumer": "category:VerticalIgnition (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 581
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
       "id": "depthflow/observed_notional_rate",
       "source": "depthflow",
       "metric": "observed_notional_rate",
       "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 155,
-      "unit": "per_second",
+      "file": "signal/depthflow/flow.go",
+      "line": 53,
       "consumers": [
         {
           "kind": "bound",
@@ -1594,80 +139,12 @@
       "kernelOnly": false
     },
     {
-      "id": "depthflow/observed_notional_rate_baseline",
-      "source": "depthflow",
-      "metric": "observed_notional_rate_baseline",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 159,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DenseNeutrality (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 388
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/observed_notional_rate_divergence",
-      "source": "depthflow",
-      "metric": "observed_notional_rate_divergence",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 159,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:BookThinning (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 394
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/observed_notional_rate_mean",
-      "source": "depthflow",
-      "metric": "observed_notional_rate_mean",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 159,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "depthflow/observed_notional_rate_zscore",
-      "source": "depthflow",
-      "metric": "observed_notional_rate_zscore",
-      "package": "github.com/theapemachine/symm/signal/depthflow",
-      "file": "signal/depthflow/level3.go",
-      "line": 159,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DenseNeutrality (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 386
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
       "id": "derivatives/basis",
       "source": "derivatives",
       "metric": "basis",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 105,
+      "line": 106,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -1679,7 +156,7 @@
       "metric": "basis_baseline",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 107,
+      "line": 108,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -1691,7 +168,7 @@
       "metric": "basis_change",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 151,
+      "line": 161,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -1703,7 +180,7 @@
       "metric": "basis_closure_error",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 125,
+      "line": 126,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -1723,7 +200,7 @@
       "metric": "basis_rate",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 152,
+      "line": 162,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -1743,7 +220,7 @@
       "metric": "basis_velocity",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 158,
+      "line": 168,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -1755,7 +232,7 @@
       "metric": "basis_zscore",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 110,
+      "line": 111,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -1775,7 +252,7 @@
       "metric": "derivative_index_log_basis",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 122,
+      "line": 123,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -1787,7 +264,7 @@
       "metric": "derivative_log_return",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 173,
+      "line": 183,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -1799,7 +276,7 @@
       "metric": "derivative_price",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 101,
+      "line": 102,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -1819,7 +296,7 @@
       "metric": "derivative_spot_log_basis",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 124,
+      "line": 125,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -1855,7 +332,7 @@
       "metric": "index_spot_log_basis",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 123,
+      "line": 124,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -1965,7 +442,7 @@
       "metric": "log_basis",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 115,
+      "line": 116,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -1997,7 +474,7 @@
       "metric": "open_interest",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 104,
+      "line": 105,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -2009,7 +486,7 @@
       "metric": "open_interest_change",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 133,
+      "line": 134,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -2029,7 +506,7 @@
       "metric": "open_interest_growth_baseline",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 144,
+      "line": 154,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -2049,7 +526,7 @@
       "metric": "open_interest_growth_rate",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 141,
+      "line": 142,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -2069,7 +546,7 @@
       "metric": "open_interest_log_change",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 137,
+      "line": 138,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -2089,7 +566,7 @@
       "metric": "reference_log_return",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 179,
+      "line": 189,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -2101,7 +578,7 @@
       "metric": "reference_price",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 102,
+      "line": 103,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -2121,7 +598,7 @@
       "metric": "return_gap",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 185,
+      "line": 195,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -2133,7 +610,7 @@
       "metric": "return_gap_velocity",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 188,
+      "line": 198,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -2145,7 +622,7 @@
       "metric": "spot_price",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/ticker.go",
-      "line": 103,
+      "line": 104,
       "unit": "data.UnitRate",
       "consumers": [],
       "dead": true,
@@ -2157,7 +634,7 @@
       "metric": "arrival_rate",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 228,
+      "line": 170,
       "unit": "data.TimescalePerSecond",
       "consumers": [
         {
@@ -2178,7 +655,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 226,
+      "line": 168,
       "unit": "data.TimescalePerSecond",
       "consumers": [
         {
@@ -2199,7 +676,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 227,
+      "line": 169,
       "unit": "data.TimescalePerSecond",
       "consumers": [
         {
@@ -2219,7 +696,7 @@
       "metric": "background_rate",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 352,
+      "line": 270,
       "unit": "data.TimescalePerSecond",
       "consumers": [
         {
@@ -2240,7 +717,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 350,
+      "line": 268,
       "unit": "data.TimescalePerSecond",
       "consumers": [
         {
@@ -2261,7 +738,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 351,
+      "line": 269,
       "unit": "data.TimescalePerSecond",
       "consumers": [
         {
@@ -2281,7 +758,7 @@
       "metric": "branching_spectral_radius",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 390,
+      "line": 308,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2309,7 +786,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 435,
+      "line": 353,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2330,7 +807,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 436,
+      "line": 354,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2350,7 +827,7 @@
       "metric": "conditional_intensity",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 349,
+      "line": 267,
       "unit": "data.TimescalePerSecond",
       "consumers": [],
       "dead": true,
@@ -2363,7 +840,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 347,
+      "line": 265,
       "unit": "data.TimescalePerSecond",
       "consumers": [
         {
@@ -2384,7 +861,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 348,
+      "line": 266,
       "unit": "data.TimescalePerSecond",
       "consumers": [
         {
@@ -2405,7 +882,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 437,
+      "line": 355,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2426,7 +903,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 438,
+      "line": 356,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2446,7 +923,7 @@
       "metric": "event_count",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 216,
+      "line": 158,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2467,7 +944,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 217,
+      "line": 159,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2488,7 +965,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 218,
+      "line": 160,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2509,7 +986,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 219,
+      "line": 161,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [],
       "dead": true,
@@ -2522,7 +999,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 220,
+      "line": 162,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [],
       "dead": true,
@@ -2535,7 +1012,7 @@
       "side": "buy_from_buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 364,
+      "line": 282,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2556,7 +1033,7 @@
       "side": "buy_from_sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 365,
+      "line": 283,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [],
       "dead": true,
@@ -2569,7 +1046,7 @@
       "side": "sell_from_buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 366,
+      "line": 284,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [],
       "dead": true,
@@ -2582,7 +1059,7 @@
       "side": "sell_from_sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 367,
+      "line": 285,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2602,7 +1079,7 @@
       "metric": "excitation_decay",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 372,
+      "line": 290,
       "unit": "data.TimescalePerSecond",
       "consumers": [],
       "dead": true,
@@ -2615,7 +1092,7 @@
       "side": "buy_from_buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 373,
+      "line": 291,
       "unit": "data.TimescalePerSecond",
       "consumers": [
         {
@@ -2636,7 +1113,7 @@
       "side": "buy_from_sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 374,
+      "line": 292,
       "unit": "data.TimescalePerSecond",
       "consumers": [
         {
@@ -2657,7 +1134,7 @@
       "side": "sell_from_buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 375,
+      "line": 293,
       "unit": "data.TimescalePerSecond",
       "consumers": [
         {
@@ -2678,7 +1155,7 @@
       "side": "sell_from_sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 376,
+      "line": 294,
       "unit": "data.TimescalePerSecond",
       "consumers": [
         {
@@ -2699,7 +1176,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 357,
+      "line": 275,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2707,7 +1184,7 @@
           "consumer": "manifold.forcingInputs (github.com/theapemachine/symm/logic/manifold)",
           "package": "github.com/theapemachine/symm/logic/manifold",
           "file": "logic/manifold/solver.go",
-          "line": 132
+          "line": 133
         }
       ],
       "dead": false,
@@ -2720,7 +1197,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 361,
+      "line": 279,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2728,7 +1205,7 @@
           "consumer": "manifold.forcingInputs (github.com/theapemachine/symm/logic/manifold)",
           "package": "github.com/theapemachine/symm/logic/manifold",
           "file": "logic/manifold/solver.go",
-          "line": 137
+          "line": 138
         }
       ],
       "dead": false,
@@ -2741,7 +1218,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 353,
+      "line": 271,
       "unit": "data.TimescalePerSecond",
       "consumers": [
         {
@@ -2762,7 +1239,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 354,
+      "line": 272,
       "unit": "data.TimescalePerSecond",
       "consumers": [
         {
@@ -2783,7 +1260,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 460,
+      "line": 378,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2804,7 +1281,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 461,
+      "line": 379,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2824,7 +1301,7 @@
       "metric": "excitation_share",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 472,
+      "line": 390,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2845,7 +1322,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 464,
+      "line": 382,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2866,7 +1343,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 468,
+      "line": 386,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2886,7 +1363,7 @@
       "metric": "excitation_timescale",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 377,
+      "line": 295,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [],
       "dead": true,
@@ -2899,7 +1376,7 @@
       "side": "buy_from_buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 378,
+      "line": 296,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2920,7 +1397,7 @@
       "side": "buy_from_sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 379,
+      "line": 297,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2941,7 +1418,7 @@
       "side": "sell_from_buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 380,
+      "line": 298,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2962,7 +1439,7 @@
       "side": "sell_from_sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 381,
+      "line": 299,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -2982,7 +1459,7 @@
       "metric": "expected_descendants_from_buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 395,
+      "line": 313,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [],
       "dead": true,
@@ -2994,7 +1471,7 @@
       "metric": "expected_descendants_from_sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 396,
+      "line": 314,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [],
       "dead": true,
@@ -3007,7 +1484,7 @@
       "side": "hawkes",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 407,
+      "line": 325,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -3028,7 +1505,7 @@
       "side": "poisson",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 408,
+      "line": 326,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -3049,7 +1526,7 @@
       "side": "self_only",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 416,
+      "line": 334,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -3069,7 +1546,7 @@
       "metric": "log_likelihood_gain_per_event_vs_poisson",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 411,
+      "line": 329,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -3089,7 +1566,7 @@
       "metric": "log_likelihood_gain_per_event_vs_self_only",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 418,
+      "line": 336,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -3109,7 +1586,7 @@
       "metric": "log_likelihood_gain_vs_poisson",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 410,
+      "line": 328,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -3129,7 +1606,7 @@
       "metric": "log_likelihood_gain_vs_self_only",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 417,
+      "line": 335,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -3150,7 +1627,7 @@
       "side": "hawkes",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 409,
+      "line": 327,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -3171,7 +1648,7 @@
       "side": "buy_from_buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 386,
+      "line": 304,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -3192,7 +1669,7 @@
       "side": "buy_from_sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 387,
+      "line": 305,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -3213,7 +1690,7 @@
       "side": "sell_from_buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 388,
+      "line": 306,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -3234,7 +1711,7 @@
       "side": "sell_from_sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 389,
+      "line": 307,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -3254,7 +1731,7 @@
       "metric": "snr",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 498,
+      "line": 416,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [],
       "dead": true,
@@ -3267,7 +1744,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 441,
+      "line": 359,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [],
       "dead": true,
@@ -3280,433 +1757,10 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/nomagique/statistic/hawkes",
       "file": "nomagique/statistic/hawkes/bivariate.go",
-      "line": 445,
+      "line": 363,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [],
       "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/absolute_correlation_gain",
-      "source": "leadlag",
-      "metric": "absolute_correlation_gain",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 280,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:InefficientLag (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 281
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/best_lag_correlation",
-      "source": "leadlag",
-      "metric": "best_lag_correlation",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 274,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:SynchronizedDrift (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 288
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/best_lag_correlation_baseline",
-      "source": "leadlag",
-      "metric": "best_lag_correlation_baseline",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 339,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:SynchronizedDrift (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 289
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/best_lag_correlation_zscore",
-      "source": "leadlag",
-      "metric": "best_lag_correlation_zscore",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 342,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:AnchorStall (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 293
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/best_lag_index",
-      "source": "leadlag",
-      "metric": "best_lag_index",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 276,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DecoupledMove (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 292
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/best_lag_seconds",
-      "source": "leadlag",
-      "metric": "best_lag_seconds",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 278,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/contemporaneous_correlation",
-      "source": "leadlag",
-      "metric": "contemporaneous_correlation",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 272,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:SynchronizedDrift (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 287
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/correlation_gain_baseline",
-      "source": "leadlag",
-      "metric": "correlation_gain_baseline",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 332,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:InefficientLag (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 283
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/correlation_gain_velocity",
-      "source": "leadlag",
-      "metric": "correlation_gain_velocity",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 336,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Turbulent (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 296
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/correlation_gain_zscore",
-      "source": "leadlag",
-      "metric": "correlation_gain_zscore",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 334,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:InefficientLag (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 280
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/correlation_p_value",
-      "source": "leadlag",
-      "metric": "correlation_p_value",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 312,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:InefficientLag (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 286
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/effective_sample_count",
-      "source": "leadlag",
-      "metric": "effective_sample_count",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 296,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 298
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/lag_baseline_seconds",
-      "source": "leadlag",
-      "metric": "lag_baseline_seconds",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 321,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:InefficientLag (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 284
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/lag_divergence_seconds",
-      "source": "leadlag",
-      "metric": "lag_divergence_seconds",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 323,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DecoupledMove (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 291
-        },
-        {
-          "kind": "bound",
-          "consumer": "category:DivergentMove (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 295
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/lag_fraction",
-      "source": "leadlag",
-      "metric": "lag_fraction",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 282,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/lag_noise_scale_seconds",
-      "source": "leadlag",
-      "metric": "lag_noise_scale_seconds",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 325,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 297
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/lag_peak_curvature",
-      "source": "leadlag",
-      "metric": "lag_peak_curvature",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 307,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/lag_peak_prominence",
-      "source": "leadlag",
-      "metric": "lag_peak_prominence",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 302,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:InefficientLag (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 282
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/lag_search_resolution_seconds",
-      "source": "leadlag",
-      "metric": "lag_search_resolution_seconds",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 284,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 304
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/lag_search_span",
-      "source": "leadlag",
-      "metric": "lag_search_span",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 287,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 305
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/lag_velocity",
-      "source": "leadlag",
-      "metric": "lag_velocity",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 329,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:AnchorStall (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 294
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/lag_zscore",
-      "source": "leadlag",
-      "metric": "lag_zscore",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 327,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:DecoupledMove (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 290
-        }
-      ],
-      "dead": false,
       "kernelOnly": false
     },
     {
@@ -3715,7 +1769,7 @@
       "metric": "last_price",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 175,
+      "line": 81,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -3730,32 +1784,12 @@
       "kernelOnly": false
     },
     {
-      "id": "leadlag/measured_return_count",
-      "source": "leadlag",
-      "metric": "measured_return_count",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 292,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 301
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
       "id": "leadlag/observation_count",
       "source": "leadlag",
       "metric": "observation_count",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 177,
+      "line": 82,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -3770,665 +1804,12 @@
       "kernelOnly": false
     },
     {
-      "id": "leadlag/overlap_pair_count",
-      "source": "leadlag",
-      "metric": "overlap_pair_count",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 294,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 300
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/reference_return_count",
-      "source": "leadlag",
-      "metric": "reference_return_count",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 290,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 302
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/search_adjusted_p_value",
-      "source": "leadlag",
-      "metric": "search_adjusted_p_value",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 316,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:InefficientLag (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 285
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "leadlag/search_count",
-      "source": "leadlag",
-      "metric": "search_count",
-      "package": "github.com/theapemachine/symm/signal/leadlag",
-      "file": "signal/leadlag/ticker.go",
-      "line": 298,
-      "unit": "data.TimescaleInstantaneous",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:CausalNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 303
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/best_ask_price",
-      "source": "liquidity",
-      "metric": "best_ask_price",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 61,
-      "unit": "rate",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 451
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/best_bid_price",
-      "source": "liquidity",
-      "metric": "best_bid_price",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 57,
-      "unit": "rate",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 452
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/depth_divergence:ask",
-      "source": "liquidity",
-      "metric": "depth_divergence",
-      "side": "ask",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 432
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/depth_divergence:bid",
-      "source": "liquidity",
-      "metric": "depth_divergence",
-      "side": "bid",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 433
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/depth_noise_scale:ask",
-      "source": "liquidity",
-      "metric": "depth_noise_scale",
-      "side": "ask",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 445
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/depth_noise_scale:bid",
-      "source": "liquidity",
-      "metric": "depth_noise_scale",
-      "side": "bid",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 444
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/depth_ratio:ask",
-      "source": "liquidity",
-      "metric": "depth_ratio",
-      "side": "ask",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:RobustLiquidity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 439
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/depth_ratio:bid",
-      "source": "liquidity",
-      "metric": "depth_ratio",
-      "side": "bid",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/depth_zscore:ask",
-      "source": "liquidity",
-      "metric": "depth_zscore",
-      "side": "ask",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 430
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/depth_zscore:bid",
-      "source": "liquidity",
-      "metric": "depth_zscore",
-      "side": "bid",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 431
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/divergence_velocity:ask",
-      "source": "liquidity",
-      "metric": "divergence_velocity",
-      "side": "ask",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:BookThinning (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 442
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/divergence_velocity:bid",
-      "source": "liquidity",
-      "metric": "divergence_velocity",
-      "side": "bid",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:BookThinning (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 441
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/divergence_velocity_snr:ask",
-      "source": "liquidity",
-      "metric": "divergence_velocity_snr",
-      "side": "ask",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 447
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/divergence_velocity_snr:bid",
-      "source": "liquidity",
-      "metric": "divergence_velocity_snr",
-      "side": "bid",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 446
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/midpoint",
-      "source": "liquidity",
-      "metric": "midpoint",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 83,
-      "unit": "rate",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 450
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/relative_spread",
-      "source": "liquidity",
-      "metric": "relative_spread",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 93,
-      "unit": "dimensionless",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 429
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/spread",
-      "source": "liquidity",
-      "metric": "spread",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 87,
-      "unit": "rate",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:Equilibrium (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 449
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/spread_baseline",
-      "source": "liquidity",
-      "metric": "spread_baseline",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/spread_divergence",
-      "source": "liquidity",
-      "metric": "spread_divergence",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/spread_divergence_velocity",
-      "source": "liquidity",
-      "metric": "spread_divergence_velocity",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:BookThinning (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 443
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/spread_divergence_velocity_snr",
-      "source": "liquidity",
-      "metric": "spread_divergence_velocity_snr",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:StochasticNoise (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 448
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/spread_noise_scale",
-      "source": "liquidity",
-      "metric": "spread_noise_scale",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:ExtremeScarcity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 434
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/spread_ratio",
-      "source": "liquidity",
-      "metric": "spread_ratio",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/spread_zscore",
-      "source": "liquidity",
-      "metric": "spread_zscore",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/touch_notional:ask",
-      "source": "liquidity",
-      "metric": "touch_notional",
-      "side": "ask",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 79,
-      "unit": "rate",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:RobustLiquidity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 436
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/touch_notional:bid",
-      "source": "liquidity",
-      "metric": "touch_notional",
-      "side": "bid",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 75,
-      "unit": "rate",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/touch_notional_baseline:ask",
-      "source": "liquidity",
-      "metric": "touch_notional_baseline",
-      "side": "ask",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:RobustLiquidity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 438
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/touch_notional_baseline:bid",
-      "source": "liquidity",
-      "metric": "touch_notional_baseline",
-      "side": "bid",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 92,
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:RobustLiquidity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 437
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/touch_notional_imbalance",
-      "source": "liquidity",
-      "metric": "touch_notional_imbalance",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 101,
-      "unit": "dimensionless",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/touch_quantity:ask",
-      "source": "liquidity",
-      "metric": "touch_quantity",
-      "side": "ask",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 69,
-      "unit": "count",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:RobustLiquidity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 440
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/touch_quantity:bid",
-      "source": "liquidity",
-      "metric": "touch_quantity",
-      "side": "bid",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 65,
-      "unit": "count",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "liquidity/two_sided_touch_notional",
-      "source": "liquidity",
-      "metric": "two_sided_touch_notional",
-      "package": "github.com/theapemachine/symm/signal/liquidity",
-      "file": "signal/liquidity/ticker.go",
-      "line": 97,
-      "unit": "rate",
-      "consumers": [
-        {
-          "kind": "bound",
-          "consumer": "category:RobustLiquidity (github.com/theapemachine/symm/types)",
-          "package": "github.com/theapemachine/symm/types",
-          "file": "types/category.go",
-          "line": 435
-        }
-      ],
-      "dead": false,
-      "kernelOnly": false
-    },
-    {
       "id": "morphology/book_shape_distance",
       "source": "morphology",
       "metric": "book_shape_distance",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 87,
+      "line": 89,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -4448,7 +1829,7 @@
       "metric": "book_shape_ks",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 88,
+      "line": 90,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -4469,7 +1850,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 90,
+      "line": 92,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -4490,7 +1871,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 89,
+      "line": 91,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -4511,7 +1892,7 @@
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 92,
+      "line": 94,
       "unit": "data.UnitNat",
       "consumers": [
         {
@@ -4532,7 +1913,7 @@
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 91,
+      "line": 93,
       "unit": "data.UnitNat",
       "consumers": [
         {
@@ -4552,7 +1933,7 @@
       "metric": "morphology_change",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 127,
+      "line": 129,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -4579,7 +1960,7 @@
       "metric": "morphology_change_baseline",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 135,
+      "line": 139,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -4599,7 +1980,7 @@
       "metric": "morphology_change_zscore",
       "package": "github.com/theapemachine/symm/signal/morphology",
       "file": "signal/morphology/book.go",
-      "line": 139,
+      "line": 142,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4651,7 +2032,7 @@
       "metric": "completed_volume_bar_ordinal",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 136,
+      "line": 142,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -4684,7 +2065,7 @@
       "side": "at",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 210,
+      "line": 216,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -4705,7 +2086,7 @@
       "side": "from",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 213,
+      "line": 219,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -4725,7 +2106,7 @@
       "metric": "midpoint_log_return",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 217,
+      "line": 223,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4737,7 +2118,7 @@
       "metric": "midpoint_return_baseline",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 226,
+      "line": 244,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4749,7 +2130,7 @@
       "metric": "midpoint_return_divergence",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 230,
+      "line": 245,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -4760,7 +2141,7 @@
       "metric": "midpoint_return_rate",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 218,
+      "line": 224,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -4772,7 +2153,7 @@
       "metric": "midpoint_return_rate_divergence",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 234,
+      "line": 246,
       "consumers": [
         {
           "kind": "bound",
@@ -4791,7 +2172,7 @@
       "metric": "midpoint_return_rate_zscore",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 234,
+      "line": 246,
       "consumers": [
         {
           "kind": "bound",
@@ -4810,7 +2191,7 @@
       "metric": "midpoint_return_velocity",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 253,
+      "line": 262,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -4822,7 +2203,7 @@
       "metric": "midpoint_return_zscore",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 230,
+      "line": 245,
       "consumers": [
         {
           "kind": "bound",
@@ -4848,7 +2229,7 @@
       "metric": "negative_midpoint_return",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 249,
+      "line": 258,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4860,7 +2241,7 @@
       "metric": "notional_rate",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 171,
+      "line": 177,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -4872,7 +2253,7 @@
       "metric": "notional_rate_baseline",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 180,
+      "line": 190,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -4892,7 +2273,7 @@
       "metric": "notional_rate_divergence",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 191,
+      "line": 197,
       "consumers": [
         {
           "kind": "bound",
@@ -4911,7 +2292,7 @@
       "metric": "notional_rate_ratio",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 181,
+      "line": 191,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4923,7 +2304,7 @@
       "metric": "notional_rate_velocity",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 199,
+      "line": 205,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -4935,7 +2316,7 @@
       "metric": "notional_rate_zscore",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 191,
+      "line": 197,
       "consumers": [
         {
           "kind": "bound",
@@ -4954,7 +2335,7 @@
       "metric": "positive_midpoint_return",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 248,
+      "line": 257,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -4986,7 +2367,7 @@
       "metric": "relative_spread_baseline",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/ticker.go",
-      "line": 81,
+      "line": 79,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -5026,7 +2407,7 @@
       "metric": "spread_divergence",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/ticker.go",
-      "line": 94,
+      "line": 92,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -5038,7 +2419,7 @@
       "metric": "spread_ratio",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/ticker.go",
-      "line": 82,
+      "line": 80,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -5050,7 +2431,7 @@
       "metric": "spread_zscore",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/ticker.go",
-      "line": 95,
+      "line": 93,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -5070,7 +2451,7 @@
       "metric": "trade_interval_seconds",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 133,
+      "line": 139,
       "unit": "data.UnitSecond",
       "consumers": [
         {
@@ -5090,7 +2471,7 @@
       "metric": "trade_notional",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 125,
+      "line": 131,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -5110,7 +2491,7 @@
       "metric": "trade_price",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 123,
+      "line": 129,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -5130,7 +2511,7 @@
       "metric": "trade_quantity",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 124,
+      "line": 130,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -5150,7 +2531,7 @@
       "metric": "trade_rate",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 172,
+      "line": 178,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -5162,7 +2543,7 @@
       "metric": "volume_bar_duration",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 130,
+      "line": 136,
       "unit": "data.UnitSecond",
       "consumers": [
         {
@@ -5182,7 +2563,7 @@
       "metric": "volume_bar_notional",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 128,
+      "line": 134,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -5202,7 +2583,7 @@
       "metric": "volume_bar_quantity",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 127,
+      "line": 133,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -5236,7 +2617,7 @@
       "metric": "volume_bar_target_quantity",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 126,
+      "line": 132,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -5256,7 +2637,7 @@
       "metric": "volume_bar_trade_count",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 129,
+      "line": 135,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -5276,7 +2657,7 @@
       "metric": "volume_rate",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 170,
+      "line": 176,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -6287,9 +3668,8 @@
       "metric": "best_price",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 115,
-      "unit": "rate",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 20,
       "consumers": [
         {
           "kind": "bound",
@@ -6308,9 +3688,8 @@
       "metric": "best_price",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 111,
-      "unit": "rate",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 19,
       "consumers": [
         {
           "kind": "bound",
@@ -6328,9 +3707,8 @@
       "source": "toxicity",
       "metric": "bracket_trade_quantity",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 78,
-      "unit": "count",
+      "file": "signal/toxicity/trade_graph.go",
+      "line": 22,
       "consumers": [
         {
           "kind": "bound",
@@ -6349,8 +3727,8 @@
       "metric": "fill_fraction_baseline",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 134,
+      "file": "signal/toxicity/trade_graph.go",
+      "line": 34,
       "consumers": [
         {
           "kind": "bound",
@@ -6369,8 +3747,8 @@
       "metric": "fill_fraction_baseline",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 120,
+      "file": "signal/toxicity/trade_graph.go",
+      "line": 31,
       "consumers": [
         {
           "kind": "bound",
@@ -6389,8 +3767,8 @@
       "metric": "fill_fraction_divergence",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 134,
+      "file": "signal/toxicity/trade_graph.go",
+      "line": 35,
       "consumers": [
         {
           "kind": "bound",
@@ -6409,8 +3787,8 @@
       "metric": "fill_fraction_divergence",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 120,
+      "file": "signal/toxicity/trade_graph.go",
+      "line": 32,
       "consumers": [
         {
           "kind": "bound",
@@ -6424,24 +3802,13 @@
       "kernelOnly": false
     },
     {
-      "id": "toxicity/fill_fraction_mean",
-      "source": "toxicity",
-      "metric": "fill_fraction_mean",
-      "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 120,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
       "id": "toxicity/fill_fraction_zscore:ask",
       "source": "toxicity",
       "metric": "fill_fraction_zscore",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 134,
+      "file": "signal/toxicity/trade_graph.go",
+      "line": 36,
       "consumers": [
         {
           "kind": "bound",
@@ -6460,8 +3827,8 @@
       "metric": "fill_fraction_zscore",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 120,
+      "file": "signal/toxicity/trade_graph.go",
+      "line": 33,
       "consumers": [
         {
           "kind": "bound",
@@ -6480,9 +3847,8 @@
       "metric": "matched_touch_trade_quantity",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 86,
-      "unit": "count",
+      "file": "signal/toxicity/trade_graph.go",
+      "line": 24,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6493,9 +3859,8 @@
       "metric": "matched_touch_trade_quantity",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 82,
-      "unit": "count",
+      "file": "signal/toxicity/trade_graph.go",
+      "line": 23,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6506,9 +3871,8 @@
       "metric": "net_replenished_quantity",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 189,
-      "unit": "count",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 36,
       "consumers": [
         {
           "kind": "bound",
@@ -6527,9 +3891,8 @@
       "metric": "net_replenished_quantity",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 185,
-      "unit": "count",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 35,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6540,9 +3903,8 @@
       "metric": "net_replenishment_fraction",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 215,
-      "unit": "dimensionless",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 42,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6553,9 +3915,8 @@
       "metric": "net_replenishment_fraction",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 211,
-      "unit": "dimensionless",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 41,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6566,9 +3927,8 @@
       "metric": "net_replenishment_rate",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 243,
-      "unit": "per_second",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 48,
       "consumers": [
         {
           "kind": "bound",
@@ -6587,9 +3947,8 @@
       "metric": "net_replenishment_rate",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 229,
-      "unit": "per_second",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 45,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6600,9 +3959,8 @@
       "metric": "net_withdrawal_fraction",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 207,
-      "unit": "dimensionless",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 40,
       "consumers": [
         {
           "kind": "bound",
@@ -6621,9 +3979,8 @@
       "metric": "net_withdrawal_fraction",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 203,
-      "unit": "dimensionless",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 39,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6634,9 +3991,8 @@
       "metric": "net_withdrawal_rate",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 239,
-      "unit": "per_second",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 47,
       "consumers": [
         {
           "kind": "bound",
@@ -6655,9 +4011,8 @@
       "metric": "net_withdrawal_rate",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 225,
-      "unit": "per_second",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 44,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6668,9 +4023,8 @@
       "metric": "net_withdrawn_quantity",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 177,
-      "unit": "count",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 34,
       "consumers": [
         {
           "kind": "bound",
@@ -6689,9 +4043,8 @@
       "metric": "net_withdrawn_quantity",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 173,
-      "unit": "count",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 33,
       "consumers": [
         {
           "kind": "bound",
@@ -6710,9 +4063,8 @@
       "metric": "previous_best_price",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 123,
-      "unit": "rate",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 22,
       "consumers": [
         {
           "kind": "bound",
@@ -6731,9 +4083,8 @@
       "metric": "previous_best_price",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 119,
-      "unit": "rate",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 21,
       "consumers": [
         {
           "kind": "bound",
@@ -6752,9 +4103,8 @@
       "metric": "previous_touch_quantity",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 141,
-      "unit": "count",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 26,
       "consumers": [
         {
           "kind": "bound",
@@ -6773,9 +4123,8 @@
       "metric": "previous_touch_quantity",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 137,
-      "unit": "count",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 25,
       "consumers": [
         {
           "kind": "bound",
@@ -6794,9 +4143,8 @@
       "metric": "retreat_fraction",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 197,
-      "unit": "dimensionless",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 38,
       "consumers": [
         {
           "kind": "bound",
@@ -6815,9 +4163,8 @@
       "metric": "retreat_fraction",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 193,
-      "unit": "dimensionless",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 37,
       "consumers": [
         {
           "kind": "bound",
@@ -6831,24 +4178,13 @@
       "kernelOnly": false
     },
     {
-      "id": "toxicity/retreat_fraction_baseline",
-      "source": "toxicity",
-      "metric": "retreat_fraction_baseline",
-      "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 280,
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
       "id": "toxicity/retreat_fraction_baseline:ask",
       "source": "toxicity",
       "metric": "retreat_fraction_baseline",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 293,
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 58,
       "consumers": [
         {
           "kind": "bound",
@@ -6867,8 +4203,8 @@
       "metric": "retreat_fraction_baseline",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 280,
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 55,
       "consumers": [
         {
           "kind": "bound",
@@ -6882,12 +4218,25 @@
       "kernelOnly": false
     },
     {
-      "id": "toxicity/retreat_fraction_divergence",
+      "id": "toxicity/retreat_fraction_divergence:ask",
       "source": "toxicity",
       "metric": "retreat_fraction_divergence",
+      "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 280,
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 59,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "toxicity/retreat_fraction_divergence:bid",
+      "source": "toxicity",
+      "metric": "retreat_fraction_divergence",
+      "side": "bid",
+      "package": "github.com/theapemachine/symm/signal/toxicity",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 56,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -6898,8 +4247,8 @@
       "metric": "retreat_fraction_zscore",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 293,
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 60,
       "consumers": [
         {
           "kind": "bound",
@@ -6918,8 +4267,8 @@
       "metric": "retreat_fraction_zscore",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 280,
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 57,
       "consumers": [
         {
           "kind": "bound",
@@ -6938,9 +4287,8 @@
       "metric": "retreat_rate",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 235,
-      "unit": "per_second",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 46,
       "consumers": [
         {
           "kind": "bound",
@@ -6959,9 +4307,8 @@
       "metric": "retreat_rate",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 221,
-      "unit": "per_second",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 43,
       "consumers": [
         {
           "kind": "bound",
@@ -6980,9 +4327,8 @@
       "metric": "retreated_quantity",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 169,
-      "unit": "count",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 32,
       "consumers": [
         {
           "kind": "bound",
@@ -7001,9 +4347,8 @@
       "metric": "retreated_quantity",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 165,
-      "unit": "count",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 31,
       "consumers": [
         {
           "kind": "bound",
@@ -7022,9 +4367,8 @@
       "metric": "touch_fill_fraction",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 104,
-      "unit": "dimensionless",
+      "file": "signal/toxicity/trade_graph.go",
+      "line": 28,
       "consumers": [
         {
           "kind": "bound",
@@ -7043,9 +4387,8 @@
       "metric": "touch_fill_fraction",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 100,
-      "unit": "dimensionless",
+      "file": "signal/toxicity/trade_graph.go",
+      "line": 27,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -7056,9 +4399,8 @@
       "metric": "touch_fill_quantity",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 96,
-      "unit": "count",
+      "file": "signal/toxicity/trade_graph.go",
+      "line": 26,
       "consumers": [
         {
           "kind": "bound",
@@ -7077,9 +4419,8 @@
       "metric": "touch_fill_quantity",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 90,
-      "unit": "count",
+      "file": "signal/toxicity/trade_graph.go",
+      "line": 25,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -7090,9 +4431,8 @@
       "metric": "touch_fill_rate",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 114,
-      "unit": "per_second",
+      "file": "signal/toxicity/trade_graph.go",
+      "line": 30,
       "consumers": [
         {
           "kind": "bound",
@@ -7111,9 +4451,8 @@
       "metric": "touch_fill_rate",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/trade.go",
-      "line": 110,
-      "unit": "per_second",
+      "file": "signal/toxicity/trade_graph.go",
+      "line": 29,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -7124,9 +4463,8 @@
       "metric": "touch_price_log_change",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 159,
-      "unit": "dimensionless",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 30,
       "consumers": [
         {
           "kind": "bound",
@@ -7145,9 +4483,8 @@
       "metric": "touch_price_log_change",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 155,
-      "unit": "dimensionless",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 29,
       "consumers": [
         {
           "kind": "bound",
@@ -7166,9 +4503,8 @@
       "metric": "touch_quantity",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 133,
-      "unit": "count",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 24,
       "consumers": [
         {
           "kind": "bound",
@@ -7187,9 +4523,8 @@
       "metric": "touch_quantity",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 129,
-      "unit": "count",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 23,
       "consumers": [
         {
           "kind": "bound",
@@ -7208,9 +4543,8 @@
       "metric": "unfilled_residual_quantity",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 151,
-      "unit": "count",
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 28,
       "consumers": [
         {
           "kind": "bound",
@@ -7229,20 +4563,8 @@
       "metric": "unfilled_residual_quantity",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 147,
-      "unit": "count",
-      "consumers": [],
-      "dead": true,
-      "kernelOnly": false
-    },
-    {
-      "id": "toxicity/withdrawal_fraction_baseline",
-      "source": "toxicity",
-      "metric": "withdrawal_fraction_baseline",
-      "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 252,
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 27,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -7253,8 +4575,8 @@
       "metric": "withdrawal_fraction_baseline",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 266,
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 52,
       "consumers": [
         {
           "kind": "bound",
@@ -7273,8 +4595,8 @@
       "metric": "withdrawal_fraction_baseline",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 252,
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 49,
       "consumers": [
         {
           "kind": "bound",
@@ -7293,8 +4615,8 @@
       "metric": "withdrawal_fraction_divergence",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 266,
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 53,
       "consumers": [
         {
           "kind": "bound",
@@ -7313,8 +4635,8 @@
       "metric": "withdrawal_fraction_divergence",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 252,
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 50,
       "consumers": [
         {
           "kind": "bound",
@@ -7333,8 +4655,8 @@
       "metric": "withdrawal_fraction_zscore",
       "side": "ask",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 266,
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 54,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -7345,8 +4667,8 @@
       "metric": "withdrawal_fraction_zscore",
       "side": "bid",
       "package": "github.com/theapemachine/symm/signal/toxicity",
-      "file": "signal/toxicity/level3.go",
-      "line": 252,
+      "file": "signal/toxicity/level3_graph.go",
+      "line": 51,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -8057,7 +5379,7 @@
       "kind": "catalog",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 132,
+      "line": 133,
       "targets": [
         "hawkes/excitation_fraction:buy",
         "hawkes/excitation_fraction:sell"
@@ -8067,14 +5389,8 @@
   "unresolved": [
     {
       "package": "github.com/theapemachine/symm/logic/cognition",
-      "file": "logic/cognition/wire.go",
-      "line": 17,
-      "reason": "Labelled node wraps a reporter whose readings are not statically known"
-    },
-    {
-      "package": "github.com/theapemachine/symm/logic/cognition",
       "file": "logic/cognition/solver.go",
-      "line": 922,
+      "line": 870,
       "reason": "Labelled node wraps a reporter whose readings are not statically known"
     },
     {
@@ -8085,15 +5401,15 @@
     }
   ],
   "summary": {
-    "totalProducers": 400,
-    "deadProducers": 98,
-    "referencedProducers": 302,
+    "totalProducers": 258,
+    "deadProducers": 70,
+    "referencedProducers": 188,
     "kernelOnlyProducers": 0,
     "boundConsumerEdges": 313,
     "catalogConsumerEdges": 2,
     "learnedConsumerEdges": 0,
     "kernelConsumerEdges": 0,
     "genericConsumerEdges": 0,
-    "unresolved": 3
+    "unresolved": 2
   }
 }

@@ -2,6 +2,9 @@ package learning
 
 import (
 	"errors"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
 	"math"
 )
 
@@ -14,11 +17,12 @@ a reference series into the quantity the head learns. Pace supplies the
 adaptive learning rate; when absent the coder runs at the manifold's own.
 */
 type PredictiveCoderConfig struct {
-	CustomArch []int
-	MaxHorizon int
-	Target     TargetTransform
-	Pace       *PaceController
-	Learn      bool
+	CustomArch   []int
+	MaxHorizon   int
+	Target       TargetTransform
+	Pace         core.Primitive
+	InitialAlpha float64
+	Learn        bool
 
 	// Readout selects what the task head harvests as its features. Every
 	// horizon holds a covariance matrix quadratic in this width, so at high
@@ -131,7 +135,8 @@ it was allowed to see.
 type PredictiveCoder struct {
 	manifold *ResonanceManifold
 	target   TargetTransform
-	pace     *PaceController
+	pace     core.Primitive
+	alpha    float64
 	learn    bool
 
 	horizon  int
@@ -149,7 +154,7 @@ The supervised head forecasts a single scalar per horizon, so the target
 dimension is one, and MaxHorizon becomes the number of independent horizon
 models the head holds.
 
-The learning rate is never invented here: it comes from the PaceController,
+The learning rate is never invented here: it comes from the configured Primitive pace graph,
 which derives it from how badly the manifold is reconstructing its own input.
 A config supplying none gets a default controller rather than a fabricated
 constant.
@@ -158,6 +163,7 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 	coder := &PredictiveCoder{
 		target:  config.Target,
 		pace:    config.Pace,
+		alpha:   config.InitialAlpha,
 		learn:   config.Learn,
 		horizon: config.MaxHorizon,
 	}
@@ -166,8 +172,15 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 		coder.horizon = 1
 	}
 
+	if coder.alpha == 0 {
+		coder.alpha = 0.03
+	}
 	if coder.pace == nil {
-		coder.pace = NewPaceController()
+		// Preserve the established coder policy; NewPace itself chooses no defaults.
+		coder.pace = NewPace(store.NewConstant(core.Record(map[string]any{
+			"rest": coder.alpha, "lower": 0.005, "upper": 0.150,
+			"gain": 0.1, "band": 0.2, "window": 256.0,
+		})))
 	}
 
 	if len(config.CustomArch) == 0 {
@@ -178,7 +191,7 @@ func NewPredictiveCoder(config PredictiveCoderConfig) *PredictiveCoder {
 		config.CustomArch,
 		1,
 		coder.horizon,
-		coder.pace.Alpha(),
+		coder.alpha,
 		config.Readout,
 	)
 
@@ -215,7 +228,15 @@ func (coder *PredictiveCoder) Step(input PredictiveInput) (PredictiveOutput, err
 	// own input and sets the learning rate from it, so the rate is derived
 	// rather than configured.
 	if coder.pace != nil {
-		alpha := coder.pace.Update(coder.manifold.ReconstructionError())
+		fields, err := transport.Evaluate[map[string]core.Primitive](coder.pace, core.From(coder.manifold.ReconstructionError()))
+		if err != nil {
+			return PredictiveOutput{}, err
+		}
+		alpha, err := core.Field[float64](fields, "alpha")
+		if err != nil {
+			return PredictiveOutput{}, err
+		}
+		coder.alpha = alpha
 
 		if err := coder.manifold.SetAlpha(alpha); err != nil {
 			return PredictiveOutput{}, err
@@ -447,7 +468,7 @@ func (coder *PredictiveCoder) read() PredictiveOutput {
 	}
 
 	if coder.pace != nil {
-		output.Dynamics.Alpha = coder.pace.Alpha()
+		output.Dynamics.Alpha = coder.alpha
 	}
 
 	if math.IsNaN(output.Confidence) || math.IsInf(output.Confidence, 0) {

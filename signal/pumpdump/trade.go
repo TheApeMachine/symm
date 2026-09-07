@@ -1,6 +1,7 @@
 package pumpdump
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sync"
@@ -9,18 +10,18 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/adaptive"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/statistic"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type tradeState struct {
-	spanStore           store.Store
-	rateResidual        equation.CausalResidual
-	returnResidual      equation.CausalResidual
-	returnRateResidual  equation.CausalResidual
+	quantityTarget      core.Primitive
+	rateReading         map[string]core.Primitive
+	rateResidual        core.Primitive
+	returnResidual      core.Primitive
+	returnRateResidual  core.Primitive
 	accumulatedQty      float64
 	accumulatedNotional float64
 	barTradeCount       float64
@@ -69,7 +70,7 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 	price := tick.Price.Float64()
 	qty := tick.Qty
 
-	if price <= 0 || qty <= 0 {
+	if price <= 0 || qty <= 0 || math.IsNaN(price) || math.IsInf(price, 0) || math.IsNaN(qty) || math.IsInf(qty, 0) || math.IsInf(price*qty, 0) {
 		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: non-positive trade (price=%f, qty=%f)", price, qty)}
 	}
 
@@ -80,20 +81,25 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 
 	if !found {
 		state = &tradeState{
-			spanStore: store.Store{
-				Type:     store.DynamicRing,
-				Adaptive: adaptive.Window{Type: adaptive.ADWIN},
-				Reduce:   statistic.MedianReduction,
-			},
+			quantityTarget:     newQuantityTarget(),
+			rateResidual:       equation.NewCausalResidual(adaptive.NewBaseline(adaptive.NewWindow())),
+			returnResidual:     equation.NewCausalResidual(adaptive.NewBaseline(adaptive.NewWindow())),
+			returnRateResidual: equation.NewCausalResidual(adaptive.NewBaseline(adaptive.NewWindow())),
+			rateReading:        core.To[map[string]core.Primitive](core.Record(map[string]any{"count": 0.0, "has_prior": false, "variance_defined": false})),
 		}
 		trade.states[tick.Symbol] = state
 	}
 
+	if state.hasPrevTradeTime && tick.Timestamp.Before(state.prevTradeTime) {
+		return nil
+	}
 	notional := price * qty
-	targetQty := float64(state.spanStore.Step(types.Scalar(qty)))
-
-	if targetQty <= 0 {
-		targetQty = qty
+	targetQty, err := transport.Evaluate[float64](state.quantityTarget, core.From(qty))
+	if err != nil {
+		return &data.Measurement[float64]{Err: err}
+	}
+	if targetQty <= 0 || math.IsNaN(targetQty) || math.IsInf(targetQty, 0) {
+		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: invalid observed quantity target %g", targetQty)}
 	}
 
 	if !state.hasBarStart {
@@ -171,25 +177,25 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 		putPumpDumpMetric(measurement, "notional_rate", notionalRate, data.UnitPerSecond)
 		putPumpDumpMetric(measurement, "trade_rate", tradeRate, data.UnitPerSecond)
 
-		priorRateCount := state.rateResidual.Count()
-		priorRateMean := float64(state.rateResidual.Mean())
-
-		state.rateResidual.Step(types.Scalar(notionalRate))
-
-		if priorRateCount == 0 {
-			putPumpDumpMetric(measurement, "notional_rate_baseline", notionalRate, data.UnitPerSecond)
-			putPumpDumpMetric(measurement, "notional_rate_ratio", 1.0, data.UnitDimensionless)
-		} else {
-			putPumpDumpMetric(measurement, "notional_rate_baseline", priorRateMean, data.UnitPerSecond)
-			putPumpDumpMetric(measurement, "notional_rate_ratio", notionalRate/priorRateMean, data.UnitDimensionless)
+		state.rateReading, err = transport.Evaluate[map[string]core.Primitive](state.rateResidual, core.From(notionalRate))
+		if err != nil {
+			measurement.Err = err
+			return measurement
 		}
+		baseline, err := core.Field[float64](state.rateReading, "baseline")
+		if err != nil {
+			measurement.Err = err
+			return measurement
+		}
+		putPumpDumpMetric(measurement, "notional_rate_baseline", baseline, data.UnitPerSecond)
+		putPumpDumpMetric(measurement, "notional_rate_ratio", notionalRate/baseline, data.UnitDimensionless)
 
 		// notional_rate_zscore is this entity's headline throughput reading and
 		// the evidence VerticalIgnition reads. The ratio above says how many
 		// times the baseline this bar ran at; the z-score says whether that
 		// distance is large against the estimator's own noise.
 		putResidualReadings(
-			measurement, "notional_rate", &state.rateResidual, data.UnitPerSecond,
+			measurement, "notional_rate", state.rateReading, data.UnitPerSecond,
 		)
 
 		// notional_rate says how fast capital is moving through this bar;
@@ -220,21 +226,24 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 				// OrganicTrend and FadedExhaustion read these two standardized
 				// forms: a bar's move, and that move per second, each against
 				// the run of bars this symbol has already produced.
-				state.returnResidual.Step(types.Scalar(logReturn))
-				state.returnRateResidual.Step(types.Scalar(returnRate))
-
-				putPumpDumpMetric(
-					measurement, "midpoint_return_baseline",
-					float64(state.returnResidual.Baseline()), data.UnitDimensionless,
-				)
-				putResidualReadings(
-					measurement, "midpoint_return", &state.returnResidual,
-					data.UnitDimensionless,
-				)
-				putResidualReadings(
-					measurement, "midpoint_return_rate", &state.returnRateResidual,
-					data.UnitPerSecond,
-				)
+				returns, err := transport.Evaluate[map[string]core.Primitive](state.returnResidual, core.From(logReturn))
+				if err != nil {
+					measurement.Err = err
+					return measurement
+				}
+				returnRates, err := transport.Evaluate[map[string]core.Primitive](state.returnRateResidual, core.From(returnRate))
+				if err != nil {
+					measurement.Err = err
+					return measurement
+				}
+				baseline, err := core.Field[float64](returns, "baseline")
+				if err != nil {
+					measurement.Err = err
+					return measurement
+				}
+				putPumpDumpMetric(measurement, "midpoint_return_baseline", baseline, data.UnitDimensionless)
+				putResidualReadings(measurement, "midpoint_return", returns, data.UnitDimensionless)
+				putResidualReadings(measurement, "midpoint_return_rate", returnRates, data.UnitPerSecond)
 
 				posReturn := 0.0
 				negReturn := 0.0
@@ -271,14 +280,16 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 	// entity always carries a throughput estimator, so it always declares its
 	// support: an absent support slot would tell Finalize this is a stateless
 	// direct reading and mark it whole, when in truth it may still be immature.
-	measurement.Metadata[data.MetadataSupport] = state.rateResidual.Support()
-
-	if state.rateResidual.HasPrior() {
-		if noiseVariance := float64(state.rateResidual.NoiseVariance()); noiseVariance > 0 {
-			measurement.Metadata[data.MetadataDivergence] = float64(state.rateResidual.Divergence())
+	rate := core.NewDecoder(state.rateReading)
+	measurement.Metadata[data.MetadataSupport] = core.Decode[float64](rate, "count")
+	if core.Decode[bool](rate, "has_prior") && core.Decode[bool](rate, "variance_defined") {
+		noiseVariance := core.Decode[float64](rate, "variance")
+		if noiseVariance > 0 {
+			measurement.Metadata[data.MetadataDivergence] = core.Decode[float64](rate, "residual")
 			measurement.Metadata[data.MetadataNoiseVariance] = noiseVariance
 		}
 	}
+	measurement.Err = errors.Join(measurement.Err, rate.Error())
 
 	measurement.Finalize()
 
@@ -291,24 +302,15 @@ divergence from the estimator's prior mean, and that divergence in units of
 the estimator's own dispersion. Both are undefined until a prior exists, so
 nothing is emitted on the first observation rather than a fabricated zero.
 
-The estimator must already have observed this sample; the caller Steps it, so
+The estimator must already have observed this sample; the caller drains its delivery run, so
 that a metric whose raw form is emitted conditionally cannot silently skip the
 update and leave the baseline behind the tape.
 */
-func putResidualReadings(
-	measurement *data.Measurement[float64],
-	name string,
-	estimator *equation.CausalResidual,
-	unit data.Unit,
-) {
-	if !estimator.HasPrior() {
-		return
+func putResidualReadings(measurement *data.Measurement[float64], name string, fields map[string]core.Primitive, unit data.Unit) {
+	decoder := core.NewDecoder(fields)
+	if core.Decode[bool](decoder, "has_prior") {
+		putPumpDumpMetric(measurement, name+"_divergence", core.Decode[float64](decoder, "residual"), unit)
+		putPumpDumpMetric(measurement, name+"_zscore", core.Decode[float64](decoder, "zscore"), data.UnitDimensionless)
 	}
-
-	putPumpDumpMetric(
-		measurement, name+"_divergence", float64(estimator.Divergence()), unit,
-	)
-	putPumpDumpMetric(
-		measurement, name+"_zscore", float64(estimator.ZScore()), data.UnitDimensionless,
-	)
+	measurement.Err = errors.Join(measurement.Err, decoder.Error())
 }

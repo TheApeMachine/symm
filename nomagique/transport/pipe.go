@@ -10,6 +10,7 @@ type Pipe struct {
 	stages  []core.Primitive
 	output  core.Primitive
 	current core.Primitive
+	buffers [2]IO
 }
 
 func NewPipe(stages ...core.Primitive) *Pipe {
@@ -18,30 +19,31 @@ func NewPipe(stages ...core.Primitive) *Pipe {
 func (pipe *Pipe) Next(in core.Primitive) core.Primitive {
 	if pipe.output == nil {
 		pipe.output = in
-		for _, stage := range pipe.stages {
-			values := []core.Primitive{}
-			core.Yield(
-				NewIO(core.From(0)),
-				NewApply(stage, pipe.output),
-				func(held int, value core.Primitive) int {
-					values = append(values, value)
-					return held
-				},
-				pipe,
-			)
-			pipe.output = NewIO(values...)
+		for index, stage := range pipe.stages {
+			// Adjacent stages need separate buffers until the input is drained.
+			buffer := &pipe.buffers[index%len(pipe.buffers)]
+			buffer.reset()
+			pipe.Error(buffer.appendRun(stage, pipe.output))
+			pipe.output = buffer
 		}
 	}
+
 	if pipe.output == nil {
 		return nil
 	}
 	value := pipe.output.Next(nil)
 	pipe.Error(pipe.output.Error())
+
 	if value == nil {
 		pipe.output = nil
-	} else {
-		pipe.current = value
+		for index := range pipe.buffers {
+			pipe.buffers[index].reset()
+		}
+
+		return nil
 	}
+
+	pipe.current = value
 	return value
 }
 func (pipe *Pipe) Read() any { return core.To[any](pipe.current) }

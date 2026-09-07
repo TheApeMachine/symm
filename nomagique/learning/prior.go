@@ -8,13 +8,9 @@ import (
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewPrior composes storage, aging, weighted moments and readout. An observation
-// is a KV record with value and authority; an optional uint64 epoch selects its
-// causal clock. An epoch-only record queries/ages without inventing a sample.
-// No epoch means one aging step per positive-authority observation. Zero
-// authority increments samples, but does not create evidence or age it.
-func NewPrior(memorySize core.Primitive) core.Primitive {
-	memory := store.NewRetained(
+// NewPriorMemory constructs the initial sufficient statistics for an independent prior.
+func NewPriorMemory() *store.Retained {
+	return store.NewRetained(
 		core.From(
 			map[string]core.Primitive{
 				"samples": core.From(uint64(0)), "pending": core.From(uint64(0)),
@@ -23,6 +19,15 @@ func NewPrior(memorySize core.Primitive) core.Primitive {
 			},
 		),
 	)
+}
+
+// NewPrior composes storage, aging, weighted moments and readout. An observation
+// is a KV record with value and authority; an optional uint64 epoch selects its
+// causal clock. An epoch-only record queries/ages without inventing a sample.
+// No epoch means one aging step per positive-authority observation. Zero
+// authority increments samples, but does not create evidence or age it.
+// Storage belongs to the caller so a serialized evaluator can switch prior states.
+func NewPrior(memorySize, memory core.Primitive) core.Primitive {
 	state := transport.NewPipe(store.NewKV[string](memory), memory)
 	age := logic.NewGate(
 		store.NewGet("epoch_supplied"),

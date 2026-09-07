@@ -14,7 +14,6 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/system"
 )
 
 /*
@@ -109,7 +108,7 @@ func NewInstrument(api *websocket.API, price *Price) *Instrument {
 	}
 
 	for _, pair := range snapshot.Data.Pairs {
-		if pair.Quote != instrument.quote || pair.Status != "online" || isExcludedBase(pair.Base) {
+		if pair.Quote != instrument.quote || pair.Status != "online" || slices.Contains(viper.GetStringSlice("market.instrument.excluded"), pair.Base) {
 			continue
 		}
 
@@ -138,7 +137,7 @@ func (instrument *Instrument) Cache(pairs []kraken.InstrumentPair) {
 	for _, pair := range pairs {
 		if pair.Quote != instrument.quote ||
 			pair.Status != "online" ||
-			slices.Contains(system.Cfg.Market.Instrument.Excluded, 	pair.Base) {
+			slices.Contains(viper.GetStringSlice("market.instrument.excluded"), pair.Base) {
 			continue
 		}
 
@@ -412,6 +411,10 @@ no credentials, and it is read once here alongside the spot instrument snapshot
 so one construction settles the whole universe.
 */
 func (instrument *Instrument) loadFuturesProducts() error {
+	// No derivative feed consumes this mapping when Futures is absent.
+	if instrument.api.Futures() == nil {
+		return nil
+	}
 	response, err := derivatives.NewREST().Instruments()
 
 	if err != nil {

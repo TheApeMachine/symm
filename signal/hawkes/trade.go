@@ -3,93 +3,38 @@ package hawkes
 import (
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	nmhawkes "github.com/theapemachine/symm/nomagique/statistic/hawkes"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/temporal"
-	nmtypes "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-type input struct {
-	clock temporal.Clock
-}
-
-/*
-Trade is the arrival-dynamics market entity. It maintains an online bivariate
-Hawkes process model via a single nomagique.Number composition and projects
-data.Measurement outputs.
-*/
+// Trade presents complete, event-timed arrivals to one keyed Primitive owner.
+// No clock or symbol side-channel can change during an observation.
 type Trade struct {
-	mu     sync.Mutex
-	number *nomagique.Pipeline
-	hawkes *nmhawkes.Bivariate
-
-	in     input
-	symbol string
-	at     time.Time
+	mu      sync.Mutex
+	process core.Primitive
 }
 
-/*
-NewTrade constructs the Trade entity with a single inlined Number composition.
-*/
-func NewTrade() *Trade {
-	trade := &Trade{}
-
-	keyStore := store.NewKeyStore(func() string { return trade.symbol })
-
-	trade.hawkes = nmhawkes.NewBivariateWithKey(
-		&trade.in.clock, nil, keyStore,
-		func() string { return trade.symbol },
-	)
-
-	trade.number = nomagique.Number(trade.hawkes)
-
-	return trade
-}
-
-/*
-Step receives one trade, advances the bivariate Hawkes arrival pipeline,
-and projects exactly one Measurement.
-*/
+func NewTrade() *Trade { return &Trade{process: nmhawkes.NewBivariate()} }
 func (trade *Trade) Step(observation kraken.TradeData) *data.Measurement[float64] {
 	if observation.Side != "buy" && observation.Side != "sell" {
-		return &data.Measurement[float64]{Err: fmt.Errorf(
-			"hawkes: unsupported trade side %q", observation.Side,
-		)}
+		return &data.Measurement[float64]{Err: fmt.Errorf("hawkes: unsupported trade side %q", observation.Side)}
 	}
-
 	trade.mu.Lock()
 	defer trade.mu.Unlock()
-
-	trade.symbol = observation.Symbol
-	trade.at = observation.Timestamp
-	trade.in.clock.Observe(observation.Timestamp)
-
-	mark := markForSide(observation.Side)
-	trade.number.Step(nmtypes.Scalar(mark))
-
-	return trade.number.Measurement()
+	measurement, err := transport.Evaluate[*data.Measurement[float64]](trade.process, core.Record(map[string]any{"key": observation.Symbol, "at": observation.Timestamp.UnixNano(), "mark": markForSide(observation.Side)}))
+	if err != nil {
+		return &data.Measurement[float64]{Err: err}
+	}
+	return measurement
 }
-
-/*
-Close releases resources held by the Trade entity.
-*/
-func (trade *Trade) Close() error {
-	return nil
-}
-
-/*
-markForSide encodes one trade's aggressor side into the process mark: buys
-are the positive mark (+1), sells are the negative mark (-1).
-*/
+func (trade *Trade) Close() error { return nil }
 func markForSide(side string) float64 {
 	if side == "buy" {
 		return 1
 	}
-
 	return -1
 }

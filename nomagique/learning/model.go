@@ -3,6 +3,8 @@ package learning
 import (
 	"github.com/theapemachine/errnie"
 	"slices"
+
+	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
@@ -19,17 +21,18 @@ its prior records, and pending decisions retain a node reference rather than
 mutable grid coordinates or a copied input vector. One owner serializes access.
 */
 type Model[Key comparable, Action comparable] struct {
-	contexts map[Key]*modelContext[Action]
-	pending  map[uint64]pendingAction
-	sequence uint64
-	memory   float64
+	contexts  map[Key]*modelContext[Action]
+	pending   map[uint64]pendingAction
+	sequence  uint64
+	memory    float64
+	evaluator *priorEvaluator
 }
 
 /* modelContext owns the actions and continuations of one context prefix. */
 type modelContext[Action comparable] struct {
 	epoch    uint64
 	children map[uint64]*modelContext[Action]
-	priors   map[Action]*Prior
+	priors   map[Action]*modelPrior
 }
 
 /*
@@ -45,7 +48,7 @@ type pendingAction struct {
 
 /* scopedPrior binds a prefix's evidence to its root key's resolution clock. */
 type scopedPrior struct {
-	*Prior
+	*modelPrior
 	epoch *uint64
 }
 
@@ -60,6 +63,7 @@ func NewModel[Key comparable, Action comparable](memory ...float64) *Model[Key, 
 		model.memory = memory[0]
 	}
 
+	model.evaluator = newPriorEvaluator(model.memory)
 	return model
 }
 
@@ -80,7 +84,7 @@ yields when broader evidence is stronger or fresher.
 func (model *Model[Key, Action]) Issue(
 	key Key, context []uint64, action Action, authority float64, related ...Key,
 ) (uint64, error) {
-	if authority < 0 || authority > 1 {
+	if !finite(authority) || authority < 0 || authority > 1 {
 		return 0, errnie.Err(errnie.Validation, "model: authority must be in [0, 1]", nil)
 	}
 
@@ -118,7 +122,7 @@ func (model *Model[Key, Action]) bind(key Key, context []uint64, action Action, 
 	}
 
 	epoch := &node.epoch
-	priors = append(priors, scopedPrior{node.prior(action, model.memory), epoch})
+	priors = append(priors, scopedPrior{node.prior(action, model.evaluator), epoch})
 
 	for _, token := range context {
 		if node.children == nil {
@@ -133,22 +137,22 @@ func (model *Model[Key, Action]) bind(key Key, context []uint64, action Action, 
 		}
 
 		node = next
-		priors = append(priors, scopedPrior{node.prior(action, model.memory), epoch})
+		priors = append(priors, scopedPrior{node.prior(action, model.evaluator), epoch})
 	}
 
 	return priors
 }
 
 /* prior returns this context's record for an action, creating it on first use. */
-func (node *modelContext[Action]) prior(action Action, memory float64) *Prior {
+func (node *modelContext[Action]) prior(action Action, evaluator *priorEvaluator) *modelPrior {
 	if node.priors == nil {
-		node.priors = make(map[Action]*Prior)
+		node.priors = make(map[Action]*modelPrior)
 	}
 
 	prior := node.priors[action]
 
 	if prior == nil {
-		prior = NewPrior(memory)
+		prior = &modelPrior{evaluator: evaluator, state: NewPriorMemory()}
 		node.priors[action] = prior
 	}
 
@@ -163,6 +167,9 @@ returns are correlated targets, not independent evidence of each action's
 causal effect. This method estimates assigned targets, not causality.
 */
 func (model *Model[Key, Action]) Resolve(identity uint64, outcome float64) (PriorReading, error) {
+	if !finite(outcome) {
+		return PriorReading{}, errnie.Err(errnie.Validation, "model: finite outcome required", nil)
+	}
 	pending, exists := model.pending[identity]
 
 	if !exists {
@@ -177,7 +184,9 @@ func (model *Model[Key, Action]) Resolve(identity uint64, outcome float64) (Prio
 			*prior.epoch++
 		}
 
-		if err := prior.Observe(outcome, pending.authority, *prior.epoch); err != nil {
+		if _, err := prior.evaluator.evaluate(prior.modelPrior, core.Record(map[string]any{
+			"value": outcome, "authority": pending.authority, "epoch": *prior.epoch,
+		})); err != nil {
 			return PriorReading{}, err
 		}
 
@@ -190,7 +199,7 @@ func (model *Model[Key, Action]) Resolve(identity uint64, outcome float64) (Prio
 	// caller asked about. Shorter prefixes were trained too, and Recall uses
 	// them while this one is still too sparse to say anything.
 	last := pending.priors[len(pending.priors)-1]
-	reading := last.Reading(*last.epoch)
+	reading := last.reading(*last.epoch)
 	reading.Depth = pending.depth
 	reading.ContextLength = pending.depth
 
@@ -239,7 +248,7 @@ func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action
 	reading := PriorReading{}
 
 	if prior := node.priors[action]; prior != nil {
-		reading = prior.Reading(epoch)
+		reading = prior.reading(epoch)
 	}
 	reading.ContextLength = len(context)
 
@@ -287,7 +296,7 @@ func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action
 		}
 
 		// Specificity wins ties in retained input authority.
-		deeper := prior.Reading(epoch)
+		deeper := prior.reading(epoch)
 
 		if !deeper.Defined {
 			continue
@@ -312,7 +321,10 @@ across process restarts while preserving prefix-tree evidence structure.
 func (model *Model[Key, Action]) Observe(
 	key Key, context []uint64, action Action, outcome, authority float64, related ...Key,
 ) error {
-	if authority < 0 || authority > 1 {
+	if !finite(outcome) {
+		return errnie.Err(errnie.Validation, "model: finite outcome required", nil)
+	}
+	if !finite(authority) || authority < 0 || authority > 1 {
 		return errnie.Err(errnie.Validation, "model: authority must be in [0, 1]", nil)
 	}
 
@@ -331,7 +343,9 @@ func (model *Model[Key, Action]) Observe(
 			*prior.epoch++
 		}
 
-		if err := prior.Observe(outcome, authority, *prior.epoch); err != nil {
+		if _, err := prior.evaluator.evaluate(prior.modelPrior, core.Record(map[string]any{
+			"value": outcome, "authority": authority, "epoch": *prior.epoch,
+		})); err != nil {
 			return err
 		}
 	}

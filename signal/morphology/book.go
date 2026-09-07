@@ -12,16 +12,18 @@ import (
 	"sync"
 
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/algo"
+	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/distribution"
 	"github.com/theapemachine/symm/nomagique/equation"
-	types "github.com/theapemachine/symm/nomagique/types"
+	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 type symbolState struct {
 	previousSec  float64
 	previousNsec float64
-	standardizer equation.Standardizer
+	standardizer core.Primitive
 	count        int
 	hasTime      bool
 }
@@ -104,7 +106,7 @@ func (morphology *Book) Step(message kraken.Level3Data) *data.Measurement[float6
 	state, found := morphology.states[message.Symbol]
 
 	if !found {
-		state = &symbolState{}
+		state = &symbolState{standardizer: equation.NewCausalResidual(algo.NewWelford())}
 		morphology.states[message.Symbol] = state
 	}
 
@@ -126,24 +128,23 @@ func (morphology *Book) Step(message kraken.Level3Data) *data.Measurement[float6
 
 	putMetric(measurement, "morphology_change", morphologyChange, data.UnitDimensionless)
 
-	// Causal pre-observation baseline & z-score:
-	if state.count > 1 {
-		baseline := state.standardizer.Mean()
-		dispersion := state.standardizer.Dispersion()
-		variance := state.standardizer.Variance()
-
-		putMetric(measurement, "morphology_change_baseline", baseline, data.UnitDimensionless)
-
-		if dispersion > 0 {
-			zScore := (morphologyChange - baseline) / dispersion
-			putMetric(measurement, "morphology_change_zscore", zScore, data.UnitDimensionless)
-			measurement.Metadata[data.MetadataDivergence] = morphologyChange - baseline
+	fields, err := transport.Evaluate[map[string]core.Primitive](state.standardizer, core.From(morphologyChange))
+	if err != nil {
+		morphology.mu.Unlock()
+		measurement.Err = err
+		return measurement
+	}
+	moments := core.NewDecoder(fields)
+	if core.Decode[bool](moments, "has_prior") {
+		putMetric(measurement, "morphology_change_baseline", core.Decode[float64](moments, "baseline"), data.UnitDimensionless)
+		variance := core.Decode[float64](moments, "prior_variance")
+		if variance > 0 {
+			putMetric(measurement, "morphology_change_zscore", core.Decode[float64](moments, "zscore"), data.UnitDimensionless)
+			measurement.Metadata[data.MetadataDivergence] = core.Decode[float64](moments, "residual")
 			measurement.Metadata[data.MetadataNoiseVariance] = variance
 		}
 	}
-
-	// Update standardizer with current observation
-	state.standardizer.Step(types.Scalar(morphologyChange))
+	measurement.Err = moments.Error()
 	morphology.mu.Unlock()
 
 	measurement.Metadata[data.MetadataSupport] = float64(state.count)
