@@ -112,3 +112,42 @@ func TestVirtualWalletRestart(t *testing.T) {
 		})
 	})
 }
+
+func TestVirtualWalletFiniteDepth(t *testing.T) {
+	Convey("Given a book with limited visible depth", t, func() {
+		wallet, book := virtualFixture()
+		// Cash = 1000. Book has 10 bids @ 100, 3 asks @ 101, 10 asks @ 102. Total asks = 13.
+		// Set wallet cash large so requested > available book depth (13).
+		wallet.cash = decimal.NewFromInt64(100000)
+
+		Convey("Maximum feasible buy is bounded by available ask depth without error", func() {
+			maxQty, maxErr := wallet.maximum(book, true)
+			So(maxErr, ShouldBeNil)
+			So(maxQty.Cmp(decimal.NewFromInt64(13)), ShouldEqual, 0)
+
+			actions, actErr := wallet.actions(book, nil)
+			So(actErr, ShouldBeNil)
+			So(len(actions), ShouldBeGreaterThan, 1)
+		})
+
+		Convey("Liquidation mark returns incomplete when inventory exceeds bid depth", func() {
+			// Total bids = 10. Give wallet 20 inventory.
+			wallet.quantity = decimal.NewFromInt64(20)
+			mark, complete, markErr := wallet.mark(book)
+			So(markErr, ShouldBeNil)
+			So(complete, ShouldBeFalse)
+			So(mark, ShouldBeNil)
+		})
+
+		Convey("IOC fill takes surviving depth and cancels the remainder without error", func() {
+			// Request 20 when only 13 asks exist.
+			qty, gross, fee, fillErr := wallet.fill(book, LearningAction{Kind: types.ActionEnter}, decimal.NewFromInt64(20))
+			So(fillErr, ShouldBeNil)
+			So(qty.Cmp(decimal.NewFromInt64(13)), ShouldEqual, 0)
+			So(gross.Sign(), ShouldBeGreaterThan, 0)
+			So(fee.Sign(), ShouldBeGreaterThan, 0)
+			So(wallet.quantity.Cmp(decimal.NewFromInt64(13)), ShouldEqual, 0)
+		})
+	})
+}
+

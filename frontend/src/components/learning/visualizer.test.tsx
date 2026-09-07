@@ -42,7 +42,6 @@ describe("EdgeDistributionPlot", () => {
 		expect(markup).toContain("550L");
 		expect(markup).toContain("CALIBRATING");
 	});
-
 });
 
 describe("ActionSpectrumPlot", () => {
@@ -128,7 +127,14 @@ describe("LearningTrajectoryPlot", () => {
 		];
 
 		const markup = renderToStaticMarkup(
-			<LearningTrajectoryPlot events={[{...events[0], id: 2, at: "2026-09-05T12:02:00Z", profit: -10}, ...events, {...events[0], mode: "virtual", profit: 100}]} initialCapital="200" />,
+			<LearningTrajectoryPlot
+				events={[
+					{ ...events[0], id: 2, at: "2026-09-05T12:02:00Z", profit: -10 },
+					...events,
+					{ ...events[0], mode: "virtual", profit: 100 },
+				]}
+				initialCapital="200"
+			/>,
 		);
 
 		expect(markup).toContain("Policy wallet profit");
@@ -140,7 +146,9 @@ describe("LearningTrajectoryPlot", () => {
 
 describe("LearningTrajectoryPlot unavailable inputs", () => {
 	it("does not invent a zero return when no valuations exist", () => {
-		const markup = renderToStaticMarkup(<LearningTrajectoryPlot events={[]} initialCapital="200" />);
+		const markup = renderToStaticMarkup(
+			<LearningTrajectoryPlot events={[]} initialCapital="200" />,
+		);
 		expect(markup).toContain("trajectory unavailable");
 		expect(markup).not.toContain("bp net");
 	});

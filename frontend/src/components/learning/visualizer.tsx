@@ -4,6 +4,7 @@ import { Canvas } from "#/components/ui/canvas";
 import { Flex } from "#/components/ui/flex";
 import { Tabs } from "#/components/ui/tabs";
 import { Typography } from "#/components/ui/typography";
+import { EventRhythm, PipelineFunnel } from "./charts";
 import { action, basis, clock, percent } from "./format";
 import type { Candidate, LearningEvent, LearningView, Skill } from "./state";
 
@@ -80,7 +81,12 @@ export const EdgeDistributionPlot = ({ skill }: { skill?: Skill }) => {
 	const wins = skill?.wins ?? 0;
 	const losses = skill?.losses ?? 0;
 	const totalOutcomes = wins + losses;
-	const winRate = totalOutcomes > 0 ? (wins / totalOutcomes) * 100 : 50;
+	/*
+		An empty tally has no rate. Drawing it as an even split renders a bar
+		that says the agent wins half the time, which is a claim nothing has
+		measured — and the one thing this panel exists to avoid.
+	*/
+	const winRate = totalOutcomes > 0 ? (wins / totalOutcomes) * 100 : null;
 
 	return (
 		<Flex.Column className="h-full w-full justify-between gap-2 px-3">
@@ -275,20 +281,31 @@ export const EdgeDistributionPlot = ({ skill }: { skill?: Skill }) => {
 				>
 					<span>Outcomes ({totalOutcomes.toLocaleString()} total)</span>
 					<span className="text-(--f2)">
-						<span className="text-(--up)">{wins}W</span> ({winRate.toFixed(1)}%)
-						· <span className="text-(--error)">{losses}L</span>
+						{winRate === null ? (
+							"nothing resolved either way yet"
+						) : (
+							<>
+								<span className="text-(--up)">{wins}W</span> (
+								{winRate.toFixed(1)}%) ·{" "}
+								<span className="text-(--error)">{losses}L</span>
+							</>
+						)}
 					</span>
 				</Flex.Row>
-				<div className="h-2 w-full overflow-hidden rounded-[3px] bg-(--line) flex">
-					<div
-						className="h-full bg-(--up) transition-all duration-300"
-						style={{ width: `${winRate}%` }}
-					/>
-					<div
-						className="h-full bg-(--error) transition-all duration-300"
-						style={{ width: `${100 - winRate}%` }}
-					/>
-				</div>
+				{winRate === null ? (
+					<div className="h-2 w-full rounded-[3px] border border-(--line) border-dashed" />
+				) : (
+					<div className="h-2 w-full overflow-hidden rounded-[3px] bg-(--line) flex">
+						<div
+							className="h-full bg-(--up) transition-all duration-300"
+							style={{ width: `${winRate}%` }}
+						/>
+						<div
+							className="h-full bg-(--error) transition-all duration-300"
+							style={{ width: `${100 - winRate}%` }}
+						/>
+					</div>
+				)}
 			</Flex.Column>
 		</Flex.Column>
 	);
@@ -593,7 +610,12 @@ export const LearningTrajectoryPlot = ({
 	);
 };
 
-type VisualInsightMode = "edge" | "actions" | "trajectory";
+type VisualInsightMode =
+	| "edge"
+	| "actions"
+	| "trajectory"
+	| "pipeline"
+	| "rhythm";
 
 /*
 LearningVisualizer hosts the rich visual diagnostics suite next to the impulse map,
@@ -617,7 +639,7 @@ export const LearningVisualizer = ({
 	return (
 		<Canvas
 			title="Learning visualizer"
-			meta="intuitive diagnostics · statistical edge · action divergence"
+			meta="intuitive diagnostics · statistical edge · action divergence · pipeline flow"
 			className={`h-full w-full min-h-80 ${className ?? ""}`}
 			topRight={
 				<Tabs size="xs" className="pointer-events-auto relative z-10">
@@ -641,6 +663,20 @@ export const LearningVisualizer = ({
 						onClick={() => setMode("trajectory")}
 					>
 						Trajectory
+					</Tabs.Tab>
+					<Tabs.Tab
+						size="xs"
+						active={mode === "pipeline"}
+						onClick={() => setMode("pipeline")}
+					>
+						Where it stops
+					</Tabs.Tab>
+					<Tabs.Tab
+						size="xs"
+						active={mode === "rhythm"}
+						onClick={() => setMode("rhythm")}
+					>
+						Rhythm
 					</Tabs.Tab>
 				</Tabs>
 			}
@@ -681,6 +717,16 @@ export const LearningVisualizer = ({
 						events={events}
 						initialCapital={view?.initialCapital}
 					/>
+				)}
+				{mode === "pipeline" && (
+					<div className="h-full w-full overflow-auto">
+						<PipelineFunnel view={view} />
+					</div>
+				)}
+				{mode === "rhythm" && (
+					<div className="h-full w-full overflow-auto">
+						<EventRhythm events={events} />
+					</div>
 				)}
 			</div>
 		</Canvas>

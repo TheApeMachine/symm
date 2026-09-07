@@ -20,6 +20,14 @@ var (
 	two  = decimal.NewFromInt64(2)
 )
 
+/*
+fillAffordabilityPasses bounds how many times a buy is re-sized against the
+cost it actually walked to. Each pass scales by the measured shortfall and the
+walked cost is monotone in size, so it converges quickly; the bound exists so a
+pathological book cannot spin here rather than because convergence is in doubt.
+*/
+const fillAffordabilityPasses = 8
+
 /* virtualWallet accounts for one independent taker IOC experiment in Decimal. */
 type virtualWallet struct {
 	cash, quantity, fees *decimal.Decimal
@@ -43,7 +51,11 @@ func (wallet *virtualWallet) mark(book *spotbook.Book) (*decimal.Decimal, bool, 
 	}
 	quantity, gross, err := wallet.price.Walk(book, wallet.quantity, broker.SELL)
 
-	if err != nil || quantity.Cmp(wallet.quantity) != 0 {
+	if quantity == nil || quantity.Cmp(wallet.quantity) != 0 {
+		return nil, false, nil
+	}
+
+	if err != nil {
 		return nil, false, err
 	}
 	return wallet.cash.Add(wallet.price.WithFee(wallet.symbol, gross, broker.SELL)), true, nil
@@ -64,7 +76,12 @@ func (wallet *virtualWallet) maximum(book *spotbook.Book, buy bool) (*decimal.De
 	}
 
 	quantity, _, err := wallet.price.Walk(book, requested, broker.BUY)
-	return quantity, err
+
+	if quantity != nil {
+		return quantity, nil
+	}
+
+	return nil, err
 }
 
 /* actions enumerates feasible quantity bisections down to the actual venue minimum. */
@@ -130,7 +147,18 @@ func (wallet *virtualWallet) request(
 	return quantity, nil
 }
 
-/* fill cancels unfilled IOC quantity and accounts only for surviving depth. */
+/*
+fill cancels unfilled IOC quantity and accounts only for surviving depth.
+
+A request is sized when the decision issues and reaches the book at least one
+update later, so the price it is filled at is not the price it was sized
+against. A buy is therefore re-capped against the cash actually held at the
+touch it is filling on: the wallet spends what it has and the remainder is
+cancelled, which is what the venue would do with the unaffordable part. Without
+that cap a request sized on a cheaper book overdraws the wallet, and every
+figure derived from its equity afterwards is measuring an account that could
+not have existed.
+*/
 func (wallet *virtualWallet) fill(
 	book *spotbook.Book, action LearningAction, requested *decimal.Decimal,
 ) (quantity, gross, fee *decimal.Decimal, err error) {
@@ -140,15 +168,68 @@ func (wallet *virtualWallet) fill(
 		unit, side = book.BestBid().Price, broker.SELL
 	}
 
-	if action.Kind == types.ActionHold || !wallet.price.Tradable(wallet.symbol, requested, unit) {
+	if action.Kind == types.ActionHold {
+		return zero, zero, zero, nil
+	}
+
+	if !action.Reduce {
+		affordable, err := wallet.price.Affordable(wallet.symbol, wallet.cash, unit)
+
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		if requested.Cmp(affordable) > 0 {
+			requested = affordable
+		}
+	}
+
+	if !wallet.price.Tradable(wallet.symbol, requested, unit) {
 		return zero, zero, zero, nil
 	}
 	quantity, gross, err = wallet.price.Walk(book, requested, side)
 
-	if err != nil {
+	if quantity == nil {
 		return nil, nil, nil, err
 	}
+
+	if quantity.Sign() == 0 {
+		return zero, zero, zero, nil
+	}
 	total := wallet.price.WithFee(wallet.symbol, gross, side)
+
+	/*
+		The touch price only bounds the first level. A quantity that is
+		affordable against the touch can still cost more once it has walked
+		into the levels behind it, so the walked total — the number the wallet
+		actually pays — is what has to fit the cash.
+
+		Each pass scales the request by the shortfall it just measured and
+		walks again, which converges because the walked cost rises with size.
+		A request that still does not fit is cancelled outright rather than
+		part-filled at a price the wallet could not have paid.
+	*/
+	for attempt := 0; !action.Reduce && total.Cmp(wallet.cash) > 0; attempt++ {
+		if attempt == fillAffordabilityPasses {
+			return zero, zero, zero, nil
+		}
+		pair := wallet.price.Instrument.Pair(wallet.symbol)
+		requested = requested.Mul(wallet.cash).Div(total).SetSize(pair.QtyIncrement)
+
+		if !wallet.price.Tradable(wallet.symbol, requested, unit) {
+			return zero, zero, zero, nil
+		}
+		quantity, gross, err = wallet.price.Walk(book, requested, side)
+
+		if quantity == nil {
+			return nil, nil, nil, err
+		}
+
+		if quantity.Sign() == 0 {
+			return zero, zero, zero, nil
+		}
+		total = wallet.price.WithFee(wallet.symbol, gross, side)
+	}
 	fee = total.Sub(gross).Abs()
 	wallet.fees = wallet.fees.Add(fee)
 

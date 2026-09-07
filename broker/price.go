@@ -245,10 +245,22 @@ func (price *Price) Walk(
 		level = next
 	}
 
+	/*
+		A book thinner than the request is an answer, not a failure. Walk is
+		how a caller asks what the displayed book would actually fill, and the
+		usual caller is sizing an order against its own cash — so a request
+		that runs past the far side is the routine case, not the exceptional
+		one. The filled quantity and its cost are returned either way.
+
+		It is reported rather than logged for that reason. Logging it made a
+		normal reading about book shape indistinguishable from a fault, at a
+		rate of hundreds a second across the instrument universe, which buries
+		the faults that do matter.
+	*/
 	if quantity.Cmp(requested) < 0 {
-		return quantity, gross, errnie.Error(errnie.Err(
+		return quantity, gross, errnie.Err(
 			errnie.UnprocessableContent, "price: insufficient book depth", nil,
-		))
+		)
 	}
 
 	return quantity, gross, nil

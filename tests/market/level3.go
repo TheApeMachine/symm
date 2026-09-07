@@ -211,6 +211,86 @@ func NewLevel3DeleteOnlyTape(symbol string, start time.Time) *Level3Tape {
 }
 
 /*
+NewLevel3WalkTape is a churning book whose price actually moves: the touch
+random-walks, and each frame withdraws the previous touch before posting the
+new one, so the best bid and best ask travel together without ever crossing.
+
+A consumer that measures how far a market moves cannot be exercised by a tape
+whose touch is pinned — its dispersion is exactly zero, and every window
+derived from it is undefined. This is that tape. The walk is seeded, so it is
+identical on every run.
+*/
+func NewLevel3WalkTape(symbol string, start time.Time, messages int) *Level3Tape {
+	const levels = 3
+
+	tape := &Level3Tape{Symbol: symbol}
+	book := newLevel3Book()
+	rng := rand.New(rand.NewSource(42))
+	at := start
+	mid, half, tick := 100.0, 0.2, 0.3
+	next := 0
+	resting := []string{}
+
+	/*
+		step replaces the whole ladder in a single frame: every resting order is
+		withdrawn and a new ladder is posted around the new midpoint, announced
+		together.
+
+		The ladder has to move as one. An order left behind at a price the
+		midpoint has since walked past becomes the touch on the wrong side and
+		crosses the book, and a consumer that requires an executable book skips
+		every crossed frame — so a tape that leaves orders behind is measured as
+		a market that never moved at all.
+	*/
+	step := func() {
+		bids := make([]kraken.Level3Order, 0, 2*levels)
+		asks := make([]kraken.Level3Order, 0, 2*levels)
+
+		for _, id := range resting {
+			if price, isBid := book.bids[id]; isBid {
+				bids = append(bids, order("delete", id, price, book.qty[id], at))
+				delete(book.bids, id)
+
+				continue
+			}
+			asks = append(asks, order("delete", id, book.asks[id], book.qty[id], at))
+			delete(book.asks, id)
+		}
+		resting = resting[:0]
+
+		for level := range levels {
+			next++
+			bidID, askID := "b"+itoa(next), "a"+itoa(next)
+			bidPrice := mid - half - float64(level)*tick
+			askPrice := mid + half + float64(level)*tick
+			bidQty, askQty := 5+rng.Float64()*5, 5+rng.Float64()*5
+
+			book.bids[bidID], book.qty[bidID] = bidPrice, bidQty
+			book.asks[askID], book.qty[askID] = askPrice, askQty
+			resting = append(resting, bidID, askID)
+
+			bids = append(bids, order("add", bidID, bidPrice, bidQty, at))
+			asks = append(asks, order("add", askID, askPrice, askQty, at))
+		}
+
+		tape.append(book, at, bids, asks)
+	}
+
+	step()
+
+	for range messages {
+		at = at.Add(time.Duration(1+rng.Intn(50)) * time.Millisecond)
+
+		// One percent per step, which is a dispersion a measuring consumer can
+		// resolve well inside a short tape.
+		mid *= 1 + (rng.Float64()-0.5)*0.02
+		step()
+	}
+
+	return tape
+}
+
+/*
 NewLevel3ChurnTape is a longer deterministic tape mixing adds and deletes
 across many price levels, for consumers whose estimators need depth before
 they report. The sequence is seeded, so it is identical on every run.

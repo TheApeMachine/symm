@@ -31,9 +31,10 @@ func (books *agentBooks) Book(_ string, read func(*spotbook.Book)) { read(books.
 func (books *agentBooks) update(message kraken.Level3Data) {
 	for side, orders := range [][]kraken.Level3Order{message.Bids, message.Asks} {
 		direction := spotbook.BookDirection(spotbook.Bid)
+		levels := books.current.Bids
 
 		if side == 1 {
-			direction = spotbook.Ask
+			direction, levels = spotbook.Ask, books.current.Asks
 		}
 
 		for _, order := range orders {
@@ -41,6 +42,13 @@ func (books *agentBooks) update(message kraken.Level3Data) {
 
 			if order.Event == "delete" {
 				quantity = decimal.NewFromInt64(0)
+			}
+
+			// The SDK dereferences an absent level on zero-quantity updates,
+			// which the production book guards for the same reason. A withdrawal
+			// of a level this book never held is nothing to apply, not a panic.
+			if quantity.Sign() <= 0 && levels.Levels[order.LimitPrice.String()] == nil {
+				continue
 			}
 
 			books.current.Update(&spotbook.UpdateOptions{Direction: direction, ID: order.OrderID,
@@ -51,8 +59,13 @@ func (books *agentBooks) update(message kraken.Level3Data) {
 
 func agentFixture(testingTB testing.TB, record func(hindsight.LearningEvent) error) (*Agent, *agentBooks) {
 	testingTB.Helper()
+
 	book := spotbook.New()
-	book.NoBookCrossing = false
+
+	// A real venue never leaves its book crossed, and advance skips any frame
+	// that is. Prevention on keeps the fixture on the side of books the agent
+	// would actually trade.
+	book.NoBookCrossing = true
 
 	for _, level := range []struct {
 		direction       spotbook.BookDirection
@@ -111,8 +124,8 @@ func TestAgentStep(t *testing.T) {
 			return nil
 		})
 		books.current = spotbook.New()
-		books.current.NoBookCrossing = false
-		tape := markettest.NewLevel3ChurnTape("TEST/USD", time.Unix(100, 0), 64)
+		books.current.NoBookCrossing = true
+		tape := markettest.NewLevel3WalkTape("TEST/USD", time.Unix(100, 0), 64)
 		measurement := data.NewMeasurement[float64]("", "TEST/USD", "source", time.Time{}, time.Time{})
 
 		for index, message := range tape.Messages {
@@ -398,7 +411,7 @@ func TestAgentWarmup(t *testing.T) {
 				Power:  action.Power,
 				Reduce: action.Reduce,
 				Target: 0.05, TargetUnit: "absolute_return_per_second",
-				At:     time.Unix(101, 0),
+				At: time.Unix(101, 0),
 			},
 			{
 				ID:        2,

@@ -65,6 +65,31 @@ type LearningView struct {
 	PrecursorHistory [][]LearningToken `json:"precursorHistory,omitempty"`
 
 	/*
+		Horizon is the forward window each decision in this market is measured
+		over. It is derived, not declared: RoundTrip is what opening and closing
+		a position here costs as a fraction of price, Movement is this
+		instrument's own dispersion of log midpoint return per observation, and
+		the window is how long that movement needs to cover that cost.
+
+		HorizonObservations is that same window in this instrument's own
+		observations, and HorizonCapped reports that the derivation exceeded the
+		attribution ceiling — the instrument cannot cover its own friction
+		inside any window an outcome could still be attributed to.
+
+		Horizon is zero until both have actually been measured: an unmeasured
+		window resolves nothing rather than reporting a default one as if it
+		had been measured.
+	*/
+	Horizon             time.Duration `json:"horizonNs"`
+	HorizonObservations float64       `json:"horizonObservations"`
+	HorizonCapped       bool          `json:"horizonCapped"`
+	RoundTrip           float64       `json:"roundTrip"`
+	Movement            float64       `json:"movement"`
+	HasMovement         bool          `json:"hasMovement"`
+	EpochMean           float64       `json:"epochMean"`
+	Epochs              uint64        `json:"epochs"`
+
+	/*
 		Impulse is the ordered context the next decision is conditioned on,
 		with each token resolved back to the quantity it names. Candidates are
 		the feasible actions at that context with the evidence recalled for

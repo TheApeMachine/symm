@@ -162,12 +162,12 @@ func (execution *Execution) Propose(local *LocalLearning, market *learningMarket
 	_ = lane
 	quantity, gross, err := local.price.Walk(book, requested, broker.BUY)
 
-	if err != nil {
-		return err
+	if quantity == nil || quantity.Cmp(requested) != 0 {
+		return nil
 	}
 
-	if quantity.Cmp(requested) != 0 {
-		return nil
+	if err != nil {
+		return err
 	}
 	cost := local.price.WithFee(market.symbol, gross, broker.BUY)
 	record := hindsight.CandidateRecord{ID: uuid.NewString(), Decision: identity, Symbol: market.symbol,

@@ -140,6 +140,8 @@ export type MissedOpportunity = {
 	observations: number;
 	exposed: boolean;
 	unreviewable: boolean;
+	trained?: boolean;
+	untrainable?: string;
 };
 export type ForwardReview = {
 	reviewed: number;
@@ -148,6 +150,9 @@ export type ForwardReview = {
 	captured: number;
 	missed: number;
 	unreviewable: number;
+	trained?: number;
+	untrained?: number;
+	lastUntrainable?: string;
 	at: string;
 	recent: MissedOpportunity[] | null;
 };
@@ -182,7 +187,11 @@ export type LearningView = {
 	precursorDepth?: number;
 	precursorHistory?: Token[][] | null;
 	horizonNs?: number;
-	horizonEpochs?: number;
+	horizonObservations?: number;
+	horizonCapped?: boolean;
+	roundTrip?: number;
+	movement?: number;
+	hasMovement?: boolean;
 	epochMean?: number;
 	epochs?: number;
 	universe: { symbol: string; status: string; decisions: number }[] | null;

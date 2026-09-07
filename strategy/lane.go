@@ -26,6 +26,7 @@ type learningExperience struct {
 	at           time.Time
 	tokens       []uint64
 	context      []uint64
+	horizon      time.Duration
 	reading      KnowledgeReading
 	count        int
 }
@@ -51,22 +52,48 @@ type learningLane struct {
 }
 
 /*
-settle resolves decisions upon causal lifecycle transitions: when a new Impulse
-state arrives (changed == true), the position exits, or the account recycles.
-Decisions are never scored over an arbitrary fixed time window.
+settle resolves every decision whose measurement window has closed. The window
+is this instrument's own measured horizon, not an arbitrary fixed one, and it
+is the same window for every decision including waiting.
+
+Resolving on the next impulse change instead measures only the spread the
+decision just paid: no price move can occur inside one book update, so every
+action that costs anything scores as a loss while waiting scores as exactly
+zero, and the policy has no reachable action left. The window has to cover
+enough forward tape for the decision to be answerable.
+
+A lane holds its intervention fixed until its window closes. Different lanes
+still overlap; the skill meter independently admits disjoint policy windows.
 */
 func (lane *learningLane) settle(
-	local *LocalLearning, market *learningMarket, index int, marketAt time.Time, changed bool,
+	local *LocalLearning, market *learningMarket, index int, marketAt time.Time, horizon time.Duration,
 ) error {
-	if !changed || len(lane.trace) == 0 {
+	if horizon <= 0 || len(lane.trace) == 0 {
 		return nil
 	}
 
-	if err := lane.resolve(local, market, index, marketAt, lane.trace, false); err != nil {
+	// Decisions issued before the first measured interval bind to that first
+	// available measurement; later changes cannot rewrite their horizon.
+	for index := range lane.trace {
+		if lane.trace[index].horizon <= 0 {
+			lane.trace[index].horizon = horizon
+		}
+	}
+	due := 0
+
+	for due < len(lane.trace) && market.at.Sub(lane.trace[due].at) >= lane.trace[due].horizon {
+		due++
+	}
+
+	if due == 0 {
+		return nil
+	}
+
+	if err := lane.resolve(local, market, index, marketAt, lane.trace[:due], false); err != nil {
 		return err
 	}
 
-	lane.trace = lane.trace[:0]
+	lane.trace = append(lane.trace[:0], lane.trace[due:]...)
 	return nil
 }
 
@@ -141,6 +168,7 @@ func (lane *learningLane) resolve(
 		event.Target = reading.Rate
 		event.Prior = prior
 		event.Profit = lane.outcome.TotalReward
+		event.Horizon = experience.horizon
 		event.Authorized, event.Truncated = local.execution.Mode().String(), truncated
 		market.events = append(market.events, event)
 	}
@@ -202,6 +230,56 @@ func (lane *learningLane) recycle(
 }
 
 /*
+admit is the policy lane's final check on a selected action. It refuses one
+only when the evidence for it is missing, or when the evidence says holding
+does better in this same context.
+
+It deliberately does not test the rate against zero. Waiting earns exactly
+zero by construction, so a sign test is a comparison against waiting on a tape
+where every action pays a spread before it can earn anything — it vetoes every
+action permanently, and the lane has no way back out: it stops acting, its
+equity stops changing, and the competence estimate it feeds reads exactly zero
+for the rest of the run. Comparing like with like admits an action the
+evidence actually prefers to holding, and still refuses one that is merely
+less bad than nothing.
+
+An action with no completed evidence is held rather than guessed. That is not
+a deadlock: the exploratory lanes cover the feasible set on their own capital,
+so the evidence this lane waits for is being produced alongside it.
+*/
+func (lane *learningLane) admit(
+	local *LocalLearning,
+	market *learningMarket,
+	accountState string,
+	action LearningAction,
+	reading KnowledgeReading,
+) LearningAction {
+	hold := LearningAction{Kind: types.ActionHold}
+
+	if action.Kind == types.ActionHold {
+		return action
+	}
+
+	// A genuine reduction is always permitted: refusing to close a position is
+	// not a neutral act, and the evidence for entering does not govern it.
+	if action.Reduce {
+		return action
+	}
+
+	if !reading.Economic.Defined {
+		return hold
+	}
+
+	holding := local.Knowledge.Reading(market.symbol, accountState, market.context, hold)
+
+	if holding.Economic.Defined && reading.Economic.Rate <= holding.Economic.Rate {
+		return hold
+	}
+
+	return action
+}
+
+/*
 issue conditions the next decision on the temporal precursor context and the
 account's own state (flat vs holding). Independent exploratory lanes explore
 counterfactual actions; the policy lane selects the best supported action.
@@ -211,6 +289,14 @@ func (lane *learningLane) issue(
 ) error {
 	accountState := lane.wallet.state()
 	market.context = market.PrecursorContext()
+
+	// Retain what the policy lane is conditioning on, so an episode the tape
+	// confirms later can be trained against the state that actually preceded
+	// it. Only the policy lane's view is kept: the exploratory lanes are in
+	// deliberately counterfactual account states.
+	if lane.paper {
+		market.observeContext(market.context, accountState)
+	}
 
 	var err error
 	market.actions, err = lane.wallet.actions(book, market.actions)
@@ -245,10 +331,7 @@ func (lane *learningLane) issue(
 
 	if lane.paper {
 		influence = prior.Authority
-
-		if action.Kind != types.ActionHold && !action.Reduce && reading.Economic.Rate <= 0 {
-			action = LearningAction{Kind: types.ActionHold}
-		}
+		action = lane.admit(local, market, accountState, action, reading)
 	}
 
 	if len(lane.trace) != 0 && action == lane.action {
@@ -293,6 +376,7 @@ func (lane *learningLane) issue(
 		wealthBefore: lane.equity,
 		accountState: accountState,
 		authority:    authority,
+		horizon:      market.horizon(),
 		reading:      reading,
 	}
 	experience.tokens = append([]uint64(nil), market.currentConditions...)
@@ -316,7 +400,7 @@ func (lane *learningLane) issue(
 	}
 
 	event.GridVersion, event.Authority, event.Quantity, event.Prior = market.gridVersion, authority, requested.String(), prior
-	event.Authorized = local.execution.Mode().String()
+	event.Horizon, event.Authorized = experience.horizon, local.execution.Mode().String()
 	market.events = append(market.events, event)
 
 	if lane.paper {

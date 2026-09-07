@@ -20,12 +20,19 @@ func runTape(testingTB testing.TB, laps int) (*Agent, []hindsight.LearningEvent)
 		return nil
 	})
 	books.current = spotbook.New()
-	books.current.NoBookCrossing = false
+
+	/*
+		A real venue never leaves its book crossed, and advance skips any frame
+		that is — so a fixture that permits crossing measures the agent on a
+		market it would refuse to trade. Prevention on is both the more faithful
+		book and the only one this tape can walk across.
+	*/
+	books.current.NoBookCrossing = true
 	measurement := data.NewMeasurement[float64]("", "TEST/USD", "source", time.Time{}, time.Time{})
 	ordinal := 0
 
 	for range laps {
-		tape := markettest.NewLevel3ChurnTape("TEST/USD", time.Unix(100, 0), 64)
+		tape := markettest.NewLevel3WalkTape("TEST/USD", time.Unix(100, 0), 64)
 
 		for _, message := range tape.Messages {
 			books.update(message)

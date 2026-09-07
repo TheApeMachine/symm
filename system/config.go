@@ -22,6 +22,7 @@ type Config struct {
 	Manifold  *ManifoldConfig
 	WebSocket *WebSocket
 	Market    *Market
+	Learning  *Learning
 }
 
 func NewConfig() *Config {
@@ -35,6 +36,7 @@ func NewConfig() *Config {
 		Manifold:  NewManifoldConfig(),
 		WebSocket: NewWebSocket(),
 		Market:    NewMarket(),
+		Learning:  NewLearning(),
 	}
 }
 

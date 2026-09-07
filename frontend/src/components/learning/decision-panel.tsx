@@ -2,6 +2,13 @@ import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
+import {
+	ExposureRing,
+	ImpulseBars,
+	InfluenceGrid,
+	MeasurementWindow,
+	WalletBars,
+} from "./charts";
 import { action, amount, basis, clock, duration, percent } from "./format";
 import type { LearningView } from "./state";
 
@@ -30,6 +37,31 @@ export const ForwardPanel = ({ view }: { view: LearningView | null }) => {
 						: "waiting for the first confirmed excursion"
 				}
 			/>
+			<ExposureRing forward={forward} />
+			<Flex.Column className="gap-1 border-(--line) border-b p-3">
+				<Flex.Row align="center" className="justify-between">
+					<Typography.Label size="s" tone="f4" weight="normal">
+						Learned from the tape
+					</Typography.Label>
+					<Typography.Mono
+						size="s"
+						tone={(forward?.trained ?? 0) > 0 ? "accent" : "f3"}
+					>
+						{(forward?.trained ?? 0).toLocaleString()} of{" "}
+						{(
+							(forward?.trained ?? 0) + (forward?.untrained ?? 0)
+						).toLocaleString()}{" "}
+						became evidence
+					</Typography.Mono>
+				</Flex.Row>
+				<Typography.Mono size="s" tone="f4">
+					{(forward?.trained ?? 0) > 0
+						? "Each confirmed move teaches what followed the state the agent was holding when it began — entering where it started, leaving where it exhausted. The tape labels itself, so this needs nobody to mark it up."
+						: forward?.lastUntrainable
+							? `Nothing has been learned from these yet: ${forward.lastUntrainable}.`
+							: "No confirmed move has been learned from yet."}
+				</Typography.Mono>
+			</Flex.Column>
 			<Flex.Row className="flex-wrap gap-3 border-(--line) border-b p-3">
 				<Badge
 					label={`${forward?.exposed ?? forward?.captured ?? 0} exposed`}
@@ -51,13 +83,18 @@ export const ForwardPanel = ({ view }: { view: LearningView | null }) => {
 				<table className="w-full text-left font-mono text-xs">
 					<thead className="text-(--f4)">
 						<tr>
-							{["Symbol", "Excursion", "Move", "Window", "Policy lane"].map(
-								(label) => (
-									<th key={label} className="p-3 font-normal">
-										{label}
-									</th>
-								),
-							)}
+							{[
+								"Symbol",
+								"Excursion",
+								"Move",
+								"Window",
+								"Policy lane",
+								"Learned",
+							].map((label) => (
+								<th key={label} className="p-3 font-normal">
+									{label}
+								</th>
+							))}
 						</tr>
 					</thead>
 					<tbody>
@@ -89,11 +126,20 @@ export const ForwardPanel = ({ view }: { view: LearningView | null }) => {
 										<Badge label="sat it out" variant="warning" size="xs" />
 									)}
 								</td>
+								<td className="p-3">
+									{entry.trained ? (
+										<Badge label="trained on" variant="info" size="xs" />
+									) : (
+										<Typography.Mono size="s" tone="f4">
+											{entry.untrainable || "—"}
+										</Typography.Mono>
+									)}
+								</td>
 							</tr>
 						))}
 						{recent.length === 0 && (
 							<tr>
-								<td className="p-3 text-(--f3)" colSpan={5}>
+								<td className="p-3 text-(--f3)" colSpan={6}>
 									No excursion has completed on the captured tape yet. An
 									excursion is only confirmed once price turns back from its
 									extremum.
@@ -126,10 +172,12 @@ export const ImpulsePanel = ({ view }: { view: LearningView | null }) => (
 				view?.precursorDepth !== undefined && view.precursorDepth > 0
 					? `precursor depth ${view.precursorDepth} · ${(view.precursorHistory?.length ?? 0) + 1} states`
 					: view?.horizonNs
-					? `scored over ${duration(view.horizonNs)}`
-					: "causal precursor active"
+						? `scored over ${duration(view.horizonNs)}`
+						: "causal precursor active"
 			}
 		/>
+		<MeasurementWindow view={view} />
+		<ImpulseBars impulse={view?.impulse ?? null} />
 		<Section.Body className="overflow-x-auto">
 			<table className="w-full text-left font-mono text-xs">
 				<thead className="text-(--f4)">
@@ -210,12 +258,14 @@ export const CandidatePanel = ({ view }: { view: LearningView | null }) => (
 				</thead>
 				<tbody>
 					{view?.candidates?.map((candidate) => {
-						const hasRate = candidate.economic?.defined || candidate.prior?.Defined;
-						const rateVal = candidate.economic?.rate ?? candidate.prior?.Mean ?? 0;
+						const hasRate =
+							candidate.economic?.defined || candidate.prior?.Defined;
+						const rateVal =
+							candidate.economic?.rate ?? candidate.prior?.Mean ?? 0;
 						return (
 							<tr
 								key={`${candidate.kind}-${candidate.power}-${candidate.reduce}`}
-								className={`border-(--line) border-t ${candidate.selected ? "bg-[color:color-mix(in_srgb,var(--acc)_8%,transparent)]" : ""}`}
+								className={`border-(--line) border-t ${candidate.selected ? "bg-[color-mix(in_srgb,var(--acc)_8%,transparent)]" : ""}`}
 							>
 								<td className="p-3 text-(--acc)">
 									{action(candidate.kind, candidate.power, candidate.reduce)}
@@ -229,17 +279,29 @@ export const CandidatePanel = ({ view }: { view: LearningView | null }) => (
 										: "—"}
 								</td>
 								<td className="p-3">
-									{candidate.economic?.varianceDefined || candidate.prior?.VarianceDefined
+									{candidate.economic?.varianceDefined ||
+									candidate.prior?.VarianceDefined
 										? `${basis(Math.sqrt(candidate.economic?.growthVariance ?? candidate.prior.Variance))}`
 										: "unestimable"}
 								</td>
-								<td className="p-3">{amount(candidate.economic?.support ?? candidate.prior.Support)}</td>
-								<td className="p-3">{percent(candidate.economic?.authority ?? candidate.prior.Authority)}</td>
-								<td className="p-3">{candidate.economic?.samples ?? candidate.prior.Samples}</td>
+								<td className="p-3">
+									{amount(
+										candidate.economic?.support ?? candidate.prior.Support,
+									)}
+								</td>
+								<td className="p-3">
+									{percent(
+										candidate.economic?.authority ?? candidate.prior.Authority,
+									)}
+								</td>
+								<td className="p-3">
+									{candidate.economic?.samples ?? candidate.prior.Samples}
+								</td>
 								<td className="p-3">
 									{candidate.selected ? (
 										<Badge label="policy choice" variant="success" size="xs" />
-									) : (candidate.economic?.varianceDefined ?? candidate.prior.VarianceDefined) ? (
+									) : (candidate.economic?.varianceDefined ??
+										candidate.prior.VarianceDefined) ? (
 										<Badge label="estimated" variant="info" size="xs" />
 									) : (
 										<Badge
@@ -287,6 +349,7 @@ export const InfluencePanel = ({ view }: { view: LearningView | null }) => {
 				title="What is driving which action"
 				meta={`${view?.influence?.length ?? 0} measured associations`}
 			/>
+			<InfluenceGrid influence={view?.influence ?? null} />
 			<Section.Body className="overflow-x-auto">
 				<table className="w-full text-left font-mono text-xs">
 					<thead className="text-(--f4)">
@@ -356,6 +419,7 @@ export const LanePanel = ({ view }: { view: LearningView | null }) => (
 					: "Awaiting account economics"
 			}
 		/>
+		<WalletBars lanes={view?.lanes ?? null} />
 		<Section.Body className="overflow-x-auto">
 			<table className="w-full text-left font-mono text-xs">
 				<thead className="text-(--f4)">

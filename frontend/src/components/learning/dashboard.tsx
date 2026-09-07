@@ -192,7 +192,8 @@ export const LearningDashboard = () => {
 							dot
 						/>
 						<Typography.Mono size="s" tone="f3" className="truncate">
-							Horizon {duration(view?.horizonNs ?? 0)} ·{" "}
+							Window {duration(view?.horizonNs ?? 0)}
+							{view?.horizonCapped ? " (at ceiling)" : ""} ·{" "}
 							{view?.epochs?.toLocaleString() ?? 0} impulse epochs observed ·
 							grid v{view?.gridVersion ?? 0}
 						</Typography.Mono>

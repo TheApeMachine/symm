@@ -2,6 +2,7 @@ import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
+import { PromotionLadder } from "./charts";
 import { basis, clock, percent } from "./format";
 import type { LearningView } from "./state";
 
@@ -95,6 +96,7 @@ export const SkillPanel = ({ view }: { view: LearningView | null }) => {
 						: `${skill.reason} · since ${clock(skill.since)}`}
 				</Typography.Mono>
 			</Flex.Column>
+			<PromotionLadder skill={skill} />
 			<Flex.Column>
 				<Reading
 					label="Mean forward return per decision"

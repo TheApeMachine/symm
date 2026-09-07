@@ -137,3 +137,22 @@ func (agent *Agent) Step(envelope *types.Envelope) *types.Envelope {
 Error reports a failed learning or recording operation to the workspace.
 */
 func (agent *Agent) Error() error { return errnie.Error(agent.err) }
+
+/*
+RoundTripFees is what the venue charges to open and close a position in one
+symbol, on both legs, as a fraction of notional.
+
+It is the part of a round trip that is knowable without a book. A historical
+episode has no retained spread, so this is what its evidence can honestly be
+stated net of — an understatement of the true cost by whatever the spread was,
+which is better than stating it net of nothing.
+*/
+func (agent *Agent) RoundTripFees(symbol string) float64 {
+	fee := agent.LocalLearning.price.FeeIfAvailable(symbol)
+
+	if fee == nil || fee.Fee == nil {
+		return 0
+	}
+
+	return 2 * fee.Fee.Float64() / 100
+}

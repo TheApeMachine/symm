@@ -75,6 +75,7 @@ func (local *LocalLearning) advance(message kraken.Level3Data, capture hindsight
 			return
 		}
 		market.status = "learning"
+		local.measure(market, book)
 		err = local.transition(market, book, message.Timestamp, changed)
 
 		if err == nil {
@@ -93,6 +94,33 @@ func (local *LocalLearning) advance(message kraken.Level3Data, capture hindsight
 	}
 
 	return local.flush()
+}
+
+/*
+measure folds this book into the instrument's own movement and its own cost.
+
+The round trip is what the venue would actually charge to open and close here:
+the taker fee on both legs plus the spread that has to be crossed. Both come
+from the same displayed book and fee schedule the wallets execute against, so
+the window a decision is measured over is derived from the same economics the
+decision itself pays.
+*/
+func (local *LocalLearning) measure(market *learningMarket, book *spotbook.Book) {
+	fee := local.price.FeeIfAvailable(market.symbol)
+
+	if fee == nil || fee.Fee == nil {
+		return
+	}
+	bid, ask := book.BestBid().Price.Float64(), book.BestAsk().Price.Float64()
+	mid := (bid + ask) / 2
+
+	if !(mid > 0) {
+		return
+	}
+
+	// Kraken states the fee as a percentage of notional; both legs pay it.
+	roundTrip := 2*fee.Fee.Float64()/100 + (ask-bid)/mid
+	market.observe(mid, roundTrip, market.at)
 }
 
 /* initialize clones known capital and venue economics, without external flows. */
@@ -136,6 +164,13 @@ func (local *LocalLearning) transition(
 	marketAt time.Time,
 	changed bool,
 ) error {
+	// The instrument's own clock only advances on a real impulse change, so the
+	// measured epoch is the cadence of state change rather than of book updates.
+	if changed {
+		market.epoch(market.at)
+	}
+	horizon := market.horizon()
+
 	for index := range market.lanes {
 		lane := &market.lanes[index]
 		hadPending := lane.pending != 0
@@ -204,7 +239,7 @@ func (local *LocalLearning) transition(
 			event.Profit, event.Complete, event.ValuedAt = outcome.TotalReward, true, market.at
 		}
 
-		if err := lane.settle(local, market, index, marketAt, changed); err != nil {
+		if err := lane.settle(local, market, index, marketAt, horizon); err != nil {
 			return err
 		}
 

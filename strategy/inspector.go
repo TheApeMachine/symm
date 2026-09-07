@@ -2,11 +2,14 @@ package strategy
 
 import (
 	"context"
-	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/nomagique/learning"
 	"maps"
+	"math"
 	"slices"
 	"strings"
+
+	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/system"
 )
 
 /* LearningInspector serves coherent on-demand operator views on the workspace owner. */
@@ -155,6 +158,13 @@ func (inspector *LearningInspector) view(symbol string) LearningView {
 	view.Symbol, view.Status = symbol, market.status
 	view.Regions = append([]learning.Region(nil), market.regions...)
 	view.PrecursorDepth = len(market.history)
+	view.Horizon, view.Epochs, view.EpochMean = market.horizon(), market.epochs, market.epochMean
+	view.RoundTrip, view.Movement, view.HasMovement = market.cost, market.sigma, market.hasSigma
+	view.HorizonCapped = view.Horizon > 0 && view.Horizon == system.Cfg.Learning.MaximumHorizon
+
+	if market.hasSigma && market.sigma > 0 && market.cost > 0 {
+		view.HorizonObservations = math.Pow(market.cost/market.sigma, 2)
+	}
 
 	for _, pastState := range market.history {
 		var pastTokens []LearningToken

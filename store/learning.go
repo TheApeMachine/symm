@@ -181,3 +181,103 @@ func (store *SQLite) LearningExperiences(kind string, limit int) ([]hindsight.Le
 	}
 	return events, rows.Err()
 }
+
+/*
+RetainedContexts loads the contexts the policy lane actually conditioned on
+during one retained run, in capture order.
+
+An episode discovered on the captured tape can only teach anything if the state
+the agent held when that move began is recoverable. Grid regions are read from
+running estimators and cannot be recomputed at a past coordinate, so the issued
+journal is the only record of what the agent saw — which is exactly why it
+persists its context.
+
+Only the policy lane is loaded. The exploratory lanes are deliberately in
+counterfactual account states, so their contexts describe a desk that was not
+the one the episode happened to.
+*/
+func (store *SQLite) RetainedContexts(
+	runID hindsight.RunID, limit int,
+) ([]hindsight.LearningEvent, error) {
+	if limit <= 0 {
+		return nil, errnie.Err(errnie.Validation, "learning journal: positive context budget required", nil)
+	}
+
+	rows, err := store.reader.Query(
+		`SELECT data FROM learning_events
+		 WHERE run_id=?
+		   AND json_extract(data,'$.kind')='issued'
+		   AND json_extract(data,'$.mode')='policy'
+		   AND json_extract(data,'$.context') IS NOT NULL
+		 ORDER BY id ASC LIMIT ?`,
+		string(runID), limit,
+	)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(errnie.IO, "learning journal: read retained contexts", err))
+	}
+
+	defer rows.Close()
+	events := make([]hindsight.LearningEvent, 0)
+
+	for rows.Next() {
+		var payload []byte
+
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		var event hindsight.LearningEvent
+
+		if err := json.Unmarshal(payload, &event); err != nil {
+			return nil, err
+		}
+		event.Run = runID
+		events = append(events, event)
+	}
+
+	return events, rows.Err()
+}
+
+/*
+ContextfulRuns names the retained runs with the most journalled policy contexts,
+richest first.
+
+The boot-time episode warmup has to spend a bounded budget on the runs most
+likely to repay it, and recency is the wrong ranking: a string of short restarts
+is the newest thing on the record and holds nothing worth learning from, while
+the run that captured a real move may be days old. Journalled context count is
+the cheap, indexed proxy for both — a run with many contexts ran long enough for
+excursions to complete, and is the same record the join needs to reach back into.
+*/
+func (store *SQLite) ContextfulRuns(limit int) ([]hindsight.RunID, error) {
+	if limit <= 0 {
+		return nil, errnie.Err(errnie.Validation, "learning journal: positive run budget required", nil)
+	}
+
+	rows, err := store.reader.Query(
+		`SELECT run_id, count(*) AS contexts FROM learning_events
+		 WHERE json_extract(data,'$.kind')='issued'
+		   AND json_extract(data,'$.mode')='policy'
+		 GROUP BY run_id ORDER BY contexts DESC LIMIT ?`,
+		limit,
+	)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(errnie.IO, "learning journal: rank retained runs", err))
+	}
+
+	defer rows.Close()
+	runs := make([]hindsight.RunID, 0, limit)
+
+	for rows.Next() {
+		var run hindsight.RunID
+		var contexts int
+
+		if err := rows.Scan(&run, &contexts); err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+
+	return runs, rows.Err()
+}

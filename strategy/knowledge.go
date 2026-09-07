@@ -171,6 +171,47 @@ func (knowledge *Knowledge) Resolve(
 }
 
 /*
+historicalGrowth recovers the log wealth growth one retained resolution
+records. The journal outlives the build that wrote it, so each record states
+the unit its own target was measured in:
+
+  - compounded_growth separates growth from elapsed time: AbsoluteSkillTarget
+    carries the log wealth ratio directly and Target is that growth per second.
+  - return_per_second and absolute_return_per_second predate that separation
+    and carry a simple fractional return over the window. Across the windows
+    these were measured on, that return is read as the growth it approximates
+    rather than converted with a precision the record does not have.
+
+A record this build cannot read is reported as unreadable rather than guessed
+at, and — deliberately — rather than treated as fatal. A unit that is merely
+unrecognised is unusable evidence, exactly like a record with no recoverable
+return; refusing to boot on one would mean any change to how outcomes are
+measured could only be recovered from by discarding the retained journal.
+*/
+func historicalGrowth(event hindsight.LearningEvent, elapsed float64) (float64, bool) {
+	switch event.TargetUnit {
+	case "compounded_growth":
+		if event.AbsoluteSkillTarget == nil {
+			return 0, false
+		}
+
+		return *event.AbsoluteSkillTarget, true
+	case "", "return_per_second", "absolute_return_per_second":
+		if event.AbsoluteSkillTarget != nil {
+			return *event.AbsoluteSkillTarget, true
+		}
+
+		if event.TargetUnit == "absolute_return_per_second" {
+			return event.Target * elapsed, true
+		}
+
+		return 0, false
+	default:
+		return 0, false
+	}
+}
+
+/*
 Warmup replays complete run-scoped issue/resolve pairs. Issue-time context and
 quality are authoritative. Historical records without recorded precursor history
 cannot fabricate it; they train only the unconditioned action prior.
@@ -241,15 +282,6 @@ func (knowledge *Knowledge) Warmup(events []hindsight.LearningEvent) (WarmupRead
 			return report, errnie.Err(errnie.Validation, "knowledge: historical issue action is missing", nil)
 		}
 
-		if event.TargetUnit != "" && event.TargetUnit != "return_per_second" && event.TargetUnit != "absolute_return_per_second" {
-			return report, errnie.Err(errnie.Validation, "knowledge: unsupported historical target unit", nil)
-		}
-
-		if event.TargetUnit != "absolute_return_per_second" && event.AbsoluteSkillTarget == nil {
-			report.TargetUnavailable++
-			continue
-		}
-
 		elapsed := event.At.Sub(origin.At).Seconds()
 
 		if elapsed <= 0 {
@@ -262,10 +294,11 @@ func (knowledge *Knowledge) Warmup(events []hindsight.LearningEvent) (WarmupRead
 			return report, errnie.Err(errnie.Validation, "knowledge: legacy target requires positive issue-to-resolution time", nil)
 		}
 
-		growth := event.Target * elapsed
+		growth, readable := historicalGrowth(event, elapsed)
 
-		if event.AbsoluteSkillTarget != nil {
-			growth = *event.AbsoluteSkillTarget
+		if !readable {
+			report.TargetUnavailable++
+			continue
 		}
 
 		accountState := "flat"

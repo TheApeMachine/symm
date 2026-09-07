@@ -329,10 +329,16 @@ var (
 			toxicitySolver := toxicity.NewSignal(runtimeCtx)
 			derivativesSolver := derivatives.NewSignal(runtimeCtx)
 
+			// These producers run synchronously at their transport owner rather
+			// than as workload stages, so they are traced explicitly: an
+			// untraced node stamps no boundary and is invisible in the
+			// diagnostics topology even while it is producing measurements.
 			privateSession.Level3Observers = func() []nmruntime.Node[*types.Envelope] {
 				return []nmruntime.Node[*types.Envelope]{
-					depthflow.NewSignal(runtimeCtx), morphology.NewSignal(runtimeCtx),
-					pumpdumpSolver, toxicitySolver,
+					system.NewTraced("level3.depthflow", depthflow.NewSignal(runtimeCtx)),
+					system.NewTraced("level3.morphology", morphology.NewSignal(runtimeCtx)),
+					system.NewTraced("level3.pumpdump", pumpdumpSolver),
+					system.NewTraced("level3.toxicity", toxicitySolver),
 				}
 			}
 
@@ -413,6 +419,14 @@ var (
 					"capital: warmed %d complete allocation experiences; skipped %d without confirmed execution; account authority remains cold",
 					capitalWarmed, learner.Capital.History.Unverified,
 				))
+
+				episodes := warmupEpisodes(storageEngine, learner)
+
+				errnie.Info(fmt.Sprintf(
+					"agent: episode warmup runs=%d episodes=%d trained=%d uncontexted=%d unusable=%d %s",
+					episodes.Runs, episodes.Episodes, episodes.Trained,
+					episodes.Uncontexted, episodes.Unusable, episodes.LastReason,
+				))
 			}
 
 			// Forward testing, not back testing: the reviewer runs behind the
@@ -421,8 +435,14 @@ var (
 			go newForwardReviewer(storageEngine, learner, runID).Run(runtimeCtx)
 			hub.SetLearner(learner, runID)
 			grid.learner = learner
+			// Same reason as the Level3 observers: these run inside the grid
+			// node's own turn rather than as declared stages, and would
+			// otherwise never appear on the topology graph.
 			grid.prepare = []nmruntime.Node[*types.Envelope]{
-				pumpdumpSolver, toxicitySolver, derivativesSolver, categorySolver,
+				system.NewTraced("logic.pumpdump", pumpdumpSolver),
+				system.NewTraced("logic.toxicity", toxicitySolver),
+				system.NewTraced("logic.derivatives", derivativesSolver),
+				system.NewTraced("logic.category", categorySolver),
 			}
 			grid.publish = []nmruntime.Node[*types.Envelope]{witness, uiSink}
 

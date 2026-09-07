@@ -3,6 +3,7 @@ import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import { Sparkline } from "#/components/ui/sparkline";
 import { Typography } from "#/components/ui/typography";
+import { ExcursionBar } from "./charts";
 import {
 	action,
 	amount,
@@ -56,6 +57,7 @@ const AccountPanel = ({
 				/s · allocation target{" "}
 				{account.resolved ? `${basis(account.target)}/s` : "unresolved"}
 			</Typography.Mono>
+			<ExcursionBar account={account} />
 			<Typography.Mono>
 				MFE {amount(account.mfe)} · MAE {amount(account.mae)} · allocation
 				duration {duration(account.holdingNs)}
