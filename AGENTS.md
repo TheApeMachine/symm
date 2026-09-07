@@ -1,256 +1,364 @@
 # AGENTS.md
 
-## 🚨 CRITICAL SCOPE LOCK & CIRCUIT BREAKER
-
-1. **STRICT SCOPE BOUNDARY:** Touch ONLY the files explicitly requested or strictly required to solve the task. Do NOT perform unprompted cleanups, renames, or refactorings in neighboring files. Architectural changes that are strictly required to preserve clear ownership/composition are part of solving the task; never use the scope lock as an excuse to pile unrelated behavior onto an existing receiver.
-
-2. **THE "STOP WORK" RULE:** Once the requested task is solved and tests pass, **STOP IMMEDIATELY**. Do not look for "extra work", do not sharpen unrelated logic, and do not reorganize project architecture unless explicitly ordered to do so in the prompt.
-
-3. **ZERO UNOWNED ABSTRACTIONS:** If a task is genuinely one cohesive behavior and can be solved in 10 lines of flat Go, write 10 lines of flat Go. But "flat" does **not** mean "put every new method on the nearest large receiver". Create a small type when the behavior has its own state, lifecycle, invariants, vocabulary, or reason to change. Every abstraction must own something real; speculative wrappers, empty interfaces, and namespace-only types are prohibited.
-
----
-
-## Project Objective
+## Objective
 
 **Maximize the wallet. Minimize the time to do so.**
 
-A best-effort, highly principled market system. Detect real opportunity types—pumps, coils, exhaustion, liquidity vacuums, sector lifts, thin-book traps—and act on them with dynamically derived thresholds only.
+Build a principled market system from honest market data. Statistical thresholds, horizons, baselines, confidence, retention, and regime decisions must come from the data and its measured uncertainty—not arbitrary constants.
 
-* **No shortcuts or magic numbers:** No static time horizons, hardcoded multipliers (`*2`), or un-statistic denominators.
+## Scope & Completion
 
-* **No fakery or performative math:** Implement real, solid, rigorous signal math using honest market data streams.
+- Touch only files required by the task.
+- If required work exposes obsolete code, fields, methods, files, schemas, or compatibility paths in that ownership chain, **delete them**.
+- Do not preserve old code “just in case.” Git is the history.
+- Do not add a second implementation beside the old one. Replace the old path completely.
+- Do not roam into unrelated cleanup. Mention unrelated throughput hazards rather than expanding scope.
+- Once the requested work is correct and tests pass, **stop**.
 
----
-
-## Anti-Patterns (Zero Tolerance)
-
-- **Fixed Time Windows:** Hardcoded windows (e.g. 60s) copied from external repos.
-- **Ticker Summaries as Microstructure:** Scoring aggregate summary fields and calling it microstructure.
-- **Positive-Only Returns for Dump Detection:** Exhaustion requires lift decline AND price rejection context.
-- **Single-Spike Test Fixtures:** Tests must use multi-leg replay via the `tests/market` system.
-- **Merged Category Masses:** e.g., combining `trendMass + flatMass` under a single wire key.
-- **Bare Multipliers:** Expressions like `*2` or `(1-x)` without a proper statistical denominator.
+“Pre-existing” does not excuse a violation encountered inside the code you must change.
 
 ---
 
-## Code Style & Architecture (Go)
+## Ownership & Composition
 
-### Composition & Simplicity**
+### Refactors must be subtractive
 
-* **Composition Means Ownership:** A type should own one cohesive concept: its state, lifecycle, invariants, and operations. If a behavior can be named independently and has a reason to change independently, prefer a small composed owner for it.
+A refactor succeeds only when the system has fewer ownership paths and less
+caller knowledge. Creating more files, types, constructors, wrappers, or fields
+is not composition by itself.
 
+Before implementation, inspect the ownership graph and make an internal deletion
+plan. For every proposed owner, identify:
+
+1. The state it will exclusively own.
+2. The exact fields, methods, types, constructors, and files that disappear.
+3. The callers that become shorter.
+4. The dependencies those callers no longer need to know.
+
+If nothing disappears or no caller becomes shorter, do not add the abstraction.
+Extraction without deletion is prohibited. A new owner must immediately replace
+the old path, including its state, behavior, wrappers, tests, and comments.
+
+Do not create package-name containers such as `broker.Broker`,
+`strategy.Strategy`, `runtime.Runtime`, or `store.Store`. Application composition
+roots belong at the application wiring boundary (`cmd`, `system`, etc.), not
+inside the domain package they assemble. Do not collect every dependency into a
+new bag and pass that bag around.
+
+There is no arbitrary target number of files or types. Public API surface must
+not grow unless unavoidable; constructor fan-out must shrink; callers must become
+shorter; duplicate ownership paths and obsolete files must disappear; total
+implementation ceremony must decrease. If a diff mostly adds owners while
+retaining the old behavior, stop and redesign before continuing.
+
+Increasing, reducing, and exiting are operations of one position regulator, not
+separate objects. One pending order and one cumulative reconciliation path own
+their common state. The agent owns its positions directly; do not recreate Desk
+as a Collection, Broker, or another forwarding facade.
+
+A good abstraction hides a decision. A bad abstraction merely moves code.
+
+### One concept, one owner
+
+A type owns one cohesive concept: its state, lifecycle, invariants, and operations.
+
+If behavior can be named independently and can change independently, give it a real owner and compose it.
+
+**Bad**
 ```go
 type Position struct {
-    StopLoss *StopLoss
-}
-
-type StopLoss struct {
-    // Stop-loss state belongs here.
+    increaseOrder *Order
+    reduceOrder   *Order
+    exitOrder     *Order
+    guardianRing  Ring
+    guardianSlot  []Event
+    // dozens of unrelated responsibilities...
 }
 ```
 
-`Position` coordinates/owns `StopLoss`; stop-loss behavior belongs to `StopLoss`. Do not put stop-loss methods on `Position` merely because `Position` already exists.
+Use `broker/position/regulator.go`, `guardian.go`, `store.go`, and `recovery.go`
+for actual package boundaries. Underscores do not create namespaces. The type
+is `position.Regulator`, not `position.Position`.
 
-* **God Receivers Are Prohibited:** Splitting one giant receiver across `foo.go`, `foo_bar.go`, `foo_baz.go`, etc. is **not composition**. It is one god object with a file-system namespace. If unrelated method families accumulate on the same receiver, extract real owners and compose them.
-* **Root Types Wire; Owners Work:** High-level types such as `Agent`, `Solver`, `Execution`, `BookManager`, etc. should primarily wire composed owners and coordinate lifecycle. They must not become dumping grounds for every behavior in their subsystem.
-* **State Lives With the Behavior That Owns It:** Do not keep a field on a parent receiver while implementing all of its behavior elsewhere through helper functions. Move the state and the methods together into the owning type.
-* **One Owner for Shared Behavior:** If the same domain behavior, calculation, construction rule, protocol setup, normalization, fee/price logic, or other invariant is needed in multiple places, give it one canonical owner and make every caller use that owner. Do not copy the behavior into each consumer. This rule applies equally to production code and tests. `price.go` being the only place that owns price/fee behavior is one example of the principle; the rule is broader than price.
-* **Change Amplification Is an Architecture Smell:** A local implementation detail should not force mechanical edits across dozens of unrelated files. If changing a constructor such as `kraken/websocket/conn.go` means updating 126 call sites, the construction boundary is wrong. Fix the fan-out by introducing or repairing the appropriate composition root, constructor owner, fixture, builder, or other single responsibility boundary. Do not spend hours propagating the same mechanical change through consumers when one owner can absorb it.
-* **Construction Has an Owner Too:** Shared dependencies should be assembled in one appropriate place. Callers should request/use the composed dependency rather than each independently knowing every concrete constructor argument. Do not hide meaningful domain choices, but centralize incidental wiring and defaults so constructor churn stops at the composition boundary. Prefer a concrete constructor owner or small builder over speculative interfaces.
-* **Tests Must Reuse Shared Test Infrastructure:** Do not let every test invent its own mock API, fake websocket, fixture graph, or dependency constructor. Repeated test setup is shared behavior and needs one canonical test owner. Build reusable fixtures/builders/mocks in the appropriate test-support boundary and let individual tests specify only what is semantically different for that case. A production constructor signature change should normally require updating the shared fixture once, not every test file that consumes it. Test duplication is architectural duplication.
-* **File Size Is a Design Signal, Not a Permission Slip:** Around **200 LOC** in one implementation file is suspicious and should trigger an ownership/composition review. Do not wait for 400+ lines before considering composition, and do not mechanically split files just to satisfy a number. The question is whether the file/type still represents one cohesive concept.
-* **Receiver Sprawl Is a Design Smell:** Before adding another method to a large receiver, ask whether the method operates on that receiver's core invariant or whether it belongs to a composed owner. If the only reason is "this is the object I already have", that is not sufficient ownership.
-* **Zero Proxy/Passthrough Methods:** Never write a wrapper method on a struct that merely calls a method on an embedded field or another object. Expose embedded types or call them directly. Composition should reduce receiver surface area, not recreate it through forwarding methods.
-* **Flatter Is Better Inside an Owner, Not Across the Entire Architecture:** If a method exists solely to pass data through a 1-line chain, delete it and call the real owner directly. This does **not** mean flattening several independent responsibilities onto one receiver.
-* **Methods Over Loose Functions:** Group logic into cohesive domain types. Keep implementations direct and simple. Use package-level functions for genuinely stateless transformations; do not use loose helpers to disguise behavior that should have an owner.
-* **Interfaces Must Describe a Real Boundary:** Do not introduce an interface merely to make the architecture look abstract. Use one when there are genuinely multiple implementations, a meaningful substitution boundary, or an existing protocol that requires it. Prefer concrete composition otherwise.
-* **No Pseudo-Namespaces:** A filename, method prefix, or comment section is not an architectural boundary. `capitalFoo`, `capitalBar`, and `capitalBaz` methods on the same unrelated receiver are not a `Capital` component. Make the component real.
-* **Delete the Old Path When Replacing Ownership:** When behavior moves into a composed owner, remove obsolete fields, methods, helpers, and compatibility shims from the previous owner. Do not leave two paths that can drift apart.
+State moves with the behavior that owns it. Do not leave fields on a parent while moving only methods elsewhere.
 
-### Control Flow & Safety
+### Use existing dependency semantics
 
-* **Early Returns & Guard Clauses:** Keep primary logic at indentation level 1.
-* **No `else` Blocks:** Invert conditions and return/exit early.
-* **Nesting Ceiling:** Max 2 levels of `if` nesting. If logic requires deeper branching, simplify the state checks instead of scattering code into helper methods.
-* **No Silent Failures:** Return descriptive errors. Substituting default fallbacks or ignoring errors is prohibited. Let unexpected panics surface rather than hiding them. However, returning an error is often still silent, so use the `errnie.Error` method to wrap your returned error. `errnie.Error` is entirely transparent and will return your error, also when nil, but will log the error when not nil at the same time.
+Before implementing normalization, alias resolution, precision handling,
+formatting, parsing, retries, or protocol translation, inspect the dependency
+that owns the external protocol. Call its existing operation directly.
+
+Use Kraken's `Normalizer.Name`, `FormatPrice`, and `FormatSize`. Do not recreate
+them with alias lists, `QtyPrecision`, manual scales, or another Precision type.
+Use SDK Decimal operations and assign existing decimals directly. Do not add raw
+`big.Rat` pricing, zero-plus-value assignments, wire snapshots, or intermediate
+copies of state that already has an owner.
+
+Instrument owns venue facts without depending on Price. Price owns fees and
+economic calculations. Its callers must not configure another Pricing object,
+pass its own fees back to it, or fetch pair metadata just to supply a symbol.
+
+### Root objects wire; owners work
+
+`Agent`, `Solver`, `Desk`, `Broker`, `Execution`, `Workspace`, etc. are composition roots/coordinators. They must not become dumping grounds.
+
+A composition root at the application wiring boundary may collapse repeated construction:
 
 ```go
-func (someType *SomeType) SomeMethod() error {
-    return errnie.Error(errors.New("some error description"))
+type application struct {
+    Price      *Price
+    Instrument *Instrument
+    Positions  *Positions
 }
 ```
 
-* **No checks for NaN or Inf** Prefer to let the system crash, because this will give us the clearest signal possible that somewhere there is something wrong. By handling these cases and letting the system continue, we have silent death in the system. If for example we return 0 as the fallback and then use that in a multiplication, we instantly zero out the operations. Just let the system crash, then we can solve the cause and not the effect.
+Expose composed owners directly. Do not recreate them through forwarding methods.
 
-**A NOTE ON PERFORMANCE**
+### Zero proxy methods
 
-This hot path is quite extreme, we're dealing with over 640 symbol pairs in the universe, each one pushing the full Level3 stream into the system. Because of this, the system has been designed to be a **streaming iterator**. This means:
+**Bad**
+```go
+func (desk *Desk) Price() *Price {
+    return desk.price
+}
 
-1. Ideally we do not: allocate, accumulate, copy, clone, snapshot, etc.
-2. Every Step method gets one chance to observe the incoming value, perform its processing step, and return its output value.
-3. It is essential that everything **always** returns an output value when called upon. It is understood that there legitimately can be baselines, windows, etc. that would normally require a "warmup" period, but this should be handled differently in this system. First of all, all baselines, windows, or other temporal structures should be dynamic and adaptive in the first place. For example, if you need a baseline, you must make the first incoming value the "current" baseline, and keep growing the span of the baseline for as much as is needed to result in a true, stable and sharp baseline, which needs to be calculated. This **should** be handled by `nomagique`'s `baseline` implementation. If at any given moment the baseline loses its sharpness/stability, the span should either grow or shrink dynamically until it is stable again. This will allow you to always output a value when `Step` is called, and fields like `maturity` or `snr` will indicate to sub-systems downstream how much to rely on any given value.
+func (desk *Desk) Cash() *decimal.Decimal {
+    return desk.balance.Cash()
+}
+```
 
-4. When it comes to processing steps that genuinely need history, consider the following:
+Use the real owner directly.
+
+### Encapsulation must reduce code
+
+Encapsulation exists to remove knowledge from callers.
+
+If using an abstraction requires callers to fetch its dependencies, validate them, construct another helper, configure it, and then call the operation, ownership is incomplete.
+
+**Bad**
+```go
+fee := price.Fee(symbol)
+
+var pricing Pricing
+
+err := pricing.SetFee(fee.Fee)
+
+total := pricing.Total(new(big.Rat), amount.Rat(), true)
+```
+
+**Good**
+```go
+total, err := price.Total(symbol, amount, BUY)
+```
+
+A cohesive operation should normally be consumable in one call.
+
+Do not replace five lines of business logic with ten lines of abstraction ceremony.
+
+### Money is Decimal
+
+Money, price, quantity, fee, cost, basis, and PnL use SDK Decimal. Keep the
+venue's authoritative cumulative cost, quantity, and fee directly. Use its
+AvgPrice when supplied. Never recover authoritative cost by multiplying a
+rounded VWAP back into quantity.
+
+Allocate finite basis and fees on partial sales, then retain the remainder by
+subtraction: allocated + remaining must equal original exactly. Raw big.Rat is
+reserved for non-monetary mathematics whose intended domain is rational.
+
+### One canonical owner for shared invariants
+
+Price, fee, sizing, normalization, construction, protocol setup, persistence rules, and other shared invariants get one canonical owner.
+
+Consumers must not reproduce or partially reproduce them.
+
+An internal helper is fine. A second public owner is not.
+
+### Construction is ownership
+
+Do not propagate the same constructor dependencies through dozens of callers.
+
+If every caller needs `api`, `price`, `instrument`, `store`, `balance`, etc., create the concrete owner/factory that already knows them.
+
+### Interfaces require a real boundary
+
+No interface for architecture theatre. Use an interface only for genuine substitution, multiple implementations, or an existing protocol.
+
+Prefer concrete composition.
+
+### File splitting is not composition
+
+A receiver may span files when it is still one cohesive concept. Splitting unrelated method families across `foo.go`, `foo_x.go`, `foo_y.go` does not create ownership.
+
+Around 200 implementation LOC should trigger an ownership review, not a mechanical file split.
+
+---
+
+## Market Math: No Magic
+
+### No arbitrary statistical constants
+
+Do not hardcode:
+
+- market time horizons;
+- observation/sample windows;
+- baseline spans;
+- retention lengths;
+- sigma/confidence multipliers;
+- regime thresholds;
+- probability cutoffs;
+- unexplained ratios;
+- bare multipliers such as `*2`;
+- arbitrary denominators;
+- fixed polling intervals masquerading as market time.
+
+Putting a value in config or giving it a descriptive constant name does **not** make it derived.
+
+“Declared operating choice” is not an exemption.
+
+**Bad**
+```go
+const horizon = 32
+const sigma = 2.0
+const memory = 512.0
+const delay = 30 * time.Second
+```
+
+**Good**
+```go
+reading := baseline.Step(value)
+threshold := reading.Bound
+horizon := reading.StableSpan
+```
+
+Use the statistics already measured by the system: support, variance, SNR, event rate, stability, maturity, information content, or another mathematically justified observable.
+
+Structural constants are allowed only when imposed by an external protocol, representation, physical/resource boundary, or exact mathematical identity. They must not determine market belief.
+
+### No fallback fakery
+
+Missing, invalid, immature, or undefined evidence stays missing, invalid, immature, or undefined.
+
+**Bad**
+```go
+if threshold <= 0 {
+    threshold = 0.02
+}
+```
+
+**Good**
+```go
+if threshold <= 0 {
+    return errnie.Error(errnie.Err(
+        errnie.Validation,
+        "threshold is not defined",
+        nil,
+    ))
+}
+```
+
+Never silently substitute a convenient default.
+
+### Never check NaN or Inf
+
+Do not use `math.IsNaN`, `math.IsInf`, “finite” gates, clamping, zero substitution, or skipping to keep invalid numerical state alive.
+
+Let invalid mathematics surface so its cause gets fixed.
+
+Do not solve the symptom.
+
+---
+
+## Streaming & Hot Paths
+
+Market processing is streaming.
+
+- A `Step` gets one observation and one opportunity to process it.
+- Do not accumulate/snapshot/copy history when sufficient statistics can be updated.
+- Use adaptive `nomagique` state where appropriate.
+- `Step` must continue to produce its output contract from the first observation; maturity/support expresses uncertainty.
+- Protect throughput.
+
+Market/guardian execution paths must not wait on SQLite, disk, telemetry, snapshots, or a blocking persistence queue.
+
+Durable execution facts may be processed asynchronously, but:
+
+- they must never be silently dropped;
+- persistence failure must be explicit;
+- new-risk admission must stop when durability cannot keep up;
+- existing position protection must remain operational;
+- causal ordering must be preserved;
+- persistence consumers operate on immutable transition facts, not racing mutable state.
+
+A slow persistence consumer must not become a hidden gating consumer for the execution fast path.
+
+---
+
+## Control Flow
+
+- Guard clauses and early returns.
+- **No `else` blocks.**
+- Maximum two nested `if` levels.
+- Do not hide deep branching in meaningless helper functions.
+- Every non-leading `if` has an empty line above it.
+- No single-character variable names except `t *testing.T` and `b *testing.B`.
+
+---
+
+## Errors
+
+Errors are part of the system state.
+
+- Error variables are named `err`.
+- Never ignore an error.
+- Never discard an error with `_ =`.
+- Never `continue` after a failed scan/decode/persistence operation.
+- Do not turn unexpected failure into `nil`, zero, empty state, or a fallback.
+- Returned errors pass through `errnie.Error`.
+- Construct categorized errors with `errnie.Err`.
+- Log through `errnie`, not `log.Printf`, `log.Fatal`, ad-hoc printing, etc.
+- Cleanup errors (`Close`, `Rollback`, `Flush`, `Detach`, etc.) must be handled.
 
 ```go
-// If you would normally do something like this.
-accumulator := 0.0
-
-for _, bid := range book.Bids {
-    accumulator += bid.Price
+if err != nil {
+    return errnie.Error(errnie.Err(
+        errnie.IO,
+        "component: descriptive failure",
+        err,
+    ))
 }
 ```
 
-It is basically just a matter of removing the `for` and seeing the `Step` method itself as one iteration of the `for` loop.
+---
 
-The above is just an example of course. Also, given that most computation should be using `nomagique.Number` pipelines, there are already stateful features built into `nomagique` which you should be using versus keeping state on the type itself.
+## Tests
 
-> !NOTE
-> One of the more important takeaways here is that you should protect the throughput at all times. If you notice any issues, even if not related to your current tasks, you should at the very least mention it, so we can decide directly what to do about them.
+Tests are production architecture too.
 
-### Formatting & Naming
+- `<file>.go` → `<file>_test.go`.
+- Test functions mirror the production method/function being tested.
+- Use GoConvey with BDD nesting.
+- Shared fixtures/builders/mocks have one test owner.
+- Constructor changes should normally change one shared fixture, not dozens of tests.
+- Market behavior uses multi-leg replay through `tests/market`; never single-spike fixtures.
+- Test real ownership boundaries and failure behavior, not implementation trivia.
 
-* **No Single-Character Variable Names:** Variable receivers and variables must be descriptive (e.g., `signalCalculator`, not `s`). Exception: `t *testing.T` and `b *testing.B`.
-* **Line Formatting:** `if` statements MUST have an empty newline above them (unless at the very start of a block). Wrap long parameter lists cleanly across line breaks.
-* **Errors & Logging:** Error variables must be named `err`. Log errors strictly via `errnie`:
+---
 
-```go
-errnie.Error(errnie.Err(
-    errnie.Validation,
-    "[package] descriptive error message",
-    err,
-))
-```
+## Replacement Rule
 
-* **Test Structure Mirrors Code Structure** Only have test files that mirror the code files (<codefile>_test.go) and only have test methods that mirror the methods in the code file that is being tested (func <CodeMethod>Test(t *testing.T)). Benchmarks follow the same function naming rules and are always at the bottom of the test file. Always use Goconvey for tests, and use BDD-style nesting for your test cases. Treat tests code as you would implementation code, and keep things clean and DRY.
+When ownership moves:
 
-## GoConvey Best Practices Example
+1. move the state;
+2. move the behavior;
+3. update callers to use the new owner directly;
+4. delete old fields;
+5. delete old methods;
+6. delete forwarding wrappers;
+7. delete obsolete helpers/interfaces/files;
+8. delete stale tests/comments/schema fields;
+9. verify there is one path left.
 
-```go
-package main
+A refactor that leaves both old and new paths is incomplete.
 
-import (
-    "database/sql"
-    "testing"
-    _ "github.com/lib/pq"
-    . "github.com/smartystreets/goconvey/convey"
-)
-
-func WithTransaction(db *sql.DB, f func(tx *sql.Tx)) func() {
-    return func() {
-        tx, err := db.Begin()
-        So(err, ShouldBeNil)
-        Reset(func() {
-            _, err := tx.Exec("SELECT 1")
-            So(err, ShouldBeNil)
-            tx.Rollback()
-        })
-
-        f(tx)
-    }
-}
-
-func TestUsers(t *testing.T) {
-    db, err := sql.Open("postgres", "postgres://localhost?sslmode=disable")
-
-    if err != nil {
-        panic(err)
-    }
-
-    Convey("Given a user in the database", t, WithTransaction(db, func(tx *sql.Tx) {
-        _, err := tx.Exec(`INSERT INTO "Users" ("id", "name") VALUES (1, 'Test User')`)
-        So(err, ShouldBeNil)
-
-        Convey("Attempting to retrieve the user should return the user", func() {
-             var name string
-             data := tx.QueryRow(`SELECT "name" FROM "Users" WHERE "id" = 1`)
-
-            err = data.Scan(&name)
-            So(err, ShouldBeNil)
-
-            So(name, ShouldEqual, "Test User")
-        })
-    }))
-}
-
-Convey("Setup", func() {
-    foo := &Bar{}
-
-    Convey("This creates a new variable foo in this scope", func() {
-        foo := &Bar{}
-    }
-
-    Convey("This assigns a new value to the previous declared foo", func() {
-        foo = &Bar{}
-    }
-}
-
-Convey("Top-level", t, func() {
-    db.Open()
-    db.Initialize()
-
-    Convey("Test a query", t, func() {
-        db.Query()
-    })
-
-    Convey("Test inserts", t, func() {
-        db.Insert()
-    })
-
-    Reset(func() {
-        db.Close()
-    })
-})
-```
-
-## IMPORTANT
-
-PLEASE DO NOT TRY TO SOLVE EVERY ISSUE BY LOOKING AT GIT HISTORY.
-THERE IS A REASON IT IS CALLED HISTORY, AND IT IS RARELY THE WAY
-FORWARD, EVEN IF TECHNICALLY AN OLDER SOLUTION WOULD WORK AND "SOLVE"
-AN ISSUE, IT WAS OBVIOUSLY REJECTED FOR A REASON.
-
-`/**/` style comments only for top-level structures, inline comments use `//`.
-
-```go
-
-/*
-Sample represents a fully populated market ticker payload point.*
-*/
-
-type Sample struct {
-    Symbol        string  `json:"symbol"`
-    AggressorSide string  `json:"-"`
-    Bid           float64 `json:"bid"`
-    BidQty        float64 `json:"bid_qty"`
-    Ask           float64 `json:"ask"`
-    AskQty        float64 `json:"ask_qty"`
-    Last          float64 `json:"last"`
-    Volume        float64 `json:"volume"`
-
-    // StepVolume is the quantity executed in this step alone, as opposed to
-    // Volume, which is the cumulative traded quantity the ticker reports.
-    StepVolume float64   `json:"step_volume"`
-    VWAP       float64   `json:"vwap"`
-    Low        float64   `json:"low"`
-    High       float64   `json:"high"`
-    Change     float64   `json:"change"`
-    ChangePct  float64   `json:"change_pct"`
-    Timestamp  time.Time `json:"timestamp"`
-}
-
-```
-
-## FINALLY*
-
-The user is looking to you for help and/or solutions. Just because you have a "human-in-the-loop" tool, doesn't mean you should use it.
-
-The answer to almost every question you feel like asking, in most of the cases is the one that results in the most principled solution, and is often **not** the easiest, simplest, or quickest way.
-
-That being said, taking the effort to do the work once is still infinitely easier, simpler, and quicker, than trying to reward-hack it, and then having to do everything again, and again, until it is correct. So you may as well do it right the first time.
-
-Also, "pre-existing" really just means "bugs I left laying around in some previous session" so yes, you do own them, and yes, you should fix them if you encounter them. Otherwise they will never get fixed.
-
-> !NOTE
-> Things in this code-base might change, and very often some old implementation code, or legacy is left orphaned, and is not properly cleaned up. There are two things to consider here. First, you should not do this, if you move something around, always clean up any left over code that should no longer be there. This is to keep things maintainable, but also to avoid confusion later. Second, if you notice that there is some old, orphaned code, **never ever** decide you should add some weird backwards compatability shim, or hook into that in any way. Just clean up the old code, and implement things according to what is very obviously the new, latest, most recent path.
-> As an extension of the above, if you are replacing some current functionality **never ever** implement a secondary system, while leaving the old system around. Always prefer replacing the existing system outright, and reusing any existing structure where possible, versus introducing new structure.
+The expected result of good composition is usually **less caller code, fewer dependencies, fewer methods, and fewer ways to do the same thing**.

@@ -1,7 +1,7 @@
 package strategy
 
 import (
-	"math/big"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"sync/atomic"
 	"time"
 
@@ -16,8 +16,8 @@ type EntryCandidate struct {
 	Record         hindsight.CandidateRecord
 	Intent         ExecutionIntent
 	action         LearningAction
-	quantity, cost *big.Rat
-	bid            *big.Rat
+	quantity, cost *decimal.Decimal
+	bid            *decimal.Decimal
 	ladder         broker.DepthLadder
 	valid          atomic.Bool
 	selected       bool

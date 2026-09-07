@@ -18,7 +18,6 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/grafana/pyroscope-go"
@@ -92,7 +91,7 @@ var (
 			errnie.Info(fmt.Sprintf(
 				"symm started with %d CPUs", runtime.NumCPU(),
 			))
-			
+
 			runtimeCtx, runtimeCancel := context.WithCancel(cmd.Context())
 			defer runtimeCancel()
 
@@ -294,8 +293,11 @@ var (
 				))
 			}
 
-			price := broker.NewPrice(api)
-			instrument := broker.NewInstrument(api, price)
+			instrument := broker.NewInstrument(api)
+			price := broker.NewPrice(api, instrument)
+			balance := broker.NewBalance(api)
+			go balance.Run(runtimeCtx, instrument)
+
 			defer instrument.Close()
 
 			if err := instrument.Error(); err != nil {
@@ -345,48 +347,13 @@ var (
 					"symm: trading.model must name the account to trade — paper or real", nil)
 			}
 
-			balance := broker.NewBalance(api)
-			positionStore, err := broker.NewPositionStore(
-				filepath.Join(dataPath, "positions.sqlite"),
-				viper.GetInt("system.streaming.lane_capacity"),
-				viper.GetInt("system.streaming.drain_limit"),
-			)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: open position store",
-					err,
-				))
-			}
-
-			defer positionStore.Close()
-
 			// The account is live from the first tick, whether or not the agent
 			// has earned the right to trade it. An operator watching a
 			// calibrating agent is still watching a real balance, and a desk
 			// mounted only on promotion would show nothing until then.
-			openPositions := &sync.Map{}
-			desk, err := broker.NewDesk(
-				runtimeCtx, api, instrument, price, balance,
-				broker.NewRecovery(
-					runtimeCtx, api, instrument, price, balance, positionStore, openPositions,
-				),
-				positionStore, openPositions,
-			)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: construct trading desk",
-					err,
-				))
-			}
-
-			defer desk.Close()
 			grid := &gridNode{Grid: learning.NewGrid(), cognition: cognitionSolver}
 			learner, err := strategy.NewAgent(runtimeCtx, grid.Grid, api,
-				instrument.Pair, price.FeeIfAvailable, balance.Cash(),
+				price, balance.Cash(),
 				func(event hindsight.LearningEvent) error { return rawCapture.WriteLearning(runID, event) },
 			)
 
@@ -394,9 +361,23 @@ var (
 				return err
 			}
 
-			learner.SetExecution(newLearningDesk(
-				runtimeCtx, desk, instrument, api, price.FeeIfAvailable, learner.Record,
-			), account)
+			if err := price.GetFees(instrument.Symbols()); err != nil {
+				return err
+			}
+
+			if err := learner.SetExecution(api, price, balance, account,
+				func(event hindsight.LifecycleEvent) error {
+					return rawCapture.WriteLifecycle(runID, event)
+				},
+			); err != nil {
+				return err
+			}
+
+			defer func() {
+				if err := learner.Close(); err != nil {
+					errnie.Error(err)
+				}
+			}()
 
 			if storageEngine != nil {
 				pastEvents, err := storageEngine.LearningExperiences("resolved", learner.RetainedExperiences())
@@ -452,7 +433,7 @@ var (
 				"ticker",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("ticker.ingress")},
-					{&learningTickNode{price: price, desk: desk}},
+					{&learningTickNode{price: price, learner: learner}},
 					{
 						system.NewTraced("ticker.correlation", correlation.NewSignal(runtimeCtx)),
 						system.NewTraced("ticker.leadlag", leadlag.NewSignal(runtimeCtx)),
@@ -483,7 +464,7 @@ var (
 				"level3",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("level3.ingress")},
-					{level3Node{desk: desk}},
+					{level3Node{learner: learner}},
 					{
 						system.NewTraced("level3.manifold", manifoldSolver),
 					},
@@ -497,7 +478,7 @@ var (
 				"executions",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("executions.ingress")},
-					{executionNode{desk: desk}},
+					{executionNode{learner: learner}},
 				},
 			)
 

@@ -1,6 +1,7 @@
 package broker
 
 import (
+	venue "github.com/theapemachine/symm/tests/venue"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -14,7 +15,7 @@ import (
 
 /* instrumentConn records market subscriptions after serving the instrument snapshot. */
 type instrumentConn struct {
-	*mockConn
+	*venue.Conn
 	marketSubscriptions int
 }
 
@@ -62,7 +63,7 @@ func TestInstrumentNewInstrument(t *testing.T) {
 		viper.Set("market.quote_currency", "USD")
 		Reset(viper.Reset)
 
-		conn := &instrumentConn{mockConn: newMockConn()}
+		conn := &instrumentConn{Conn: venue.NewConn()}
 		api := websocket.NewAPI(t.Context(), conn, conn)
 		instrument := newTestInstrument(t, api)
 
@@ -82,7 +83,7 @@ func TestInstrumentSubscribe(t *testing.T) {
 		viper.Set("market.subscribe.pace", 0)
 		Reset(viper.Reset)
 
-		conn := &instrumentConn{mockConn: newMockConn()}
+		conn := &instrumentConn{Conn: venue.NewConn()}
 		api := websocket.NewAPI(t.Context(), conn, conn)
 		instrument := newTestInstrument(t, api)
 
@@ -101,8 +102,8 @@ func TestInstrumentSubscribe(t *testing.T) {
 }
 
 /*
-newTestInstrument builds an Instrument directly from an api and a Price,
-matching how boot wires the two dependencies.
+newTestInstrument builds an Instrument directly from an api,
+matching how boot wires the dependency.
 */
 func newTestInstrument(t testing.TB, api *websocket.API) *Instrument {
 	t.Helper()
@@ -121,7 +122,7 @@ func newTestInstrument(t testing.TB, api *websocket.API) *Instrument {
 		},
 	})
 
-	instrument := NewInstrument(api, newTestPrice(t, api))
+	instrument := NewInstrument(api)
 
 	if err := instrument.Error(); err != nil {
 		t.Fatalf("construct instrument: %v", err)

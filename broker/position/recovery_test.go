@@ -1,6 +1,7 @@
-package broker
+package position
 
 import (
+	venue "github.com/theapemachine/symm/tests/venue"
 	"sync"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ recoveryConn seeds the instrument snapshot with two pairs so recovery has a
 real InstrumentPair to resolve for each recovered asset.
 */
 type recoveryConn struct {
-	*mockConn
+	*venue.Conn
 }
 
 func (conn *recoveryConn) MarkReady() {}
@@ -64,7 +65,7 @@ func newTestRecoveryWithOptions(
 	viper.Set("market.quote_currency", "USD")
 	t.Cleanup(viper.Reset)
 
-	conn := &recoveryConn{mockConn: newMockConn()}
+	conn := &recoveryConn{venue.Conn: venue.NewConn()}
 	conn.BalanceResult = balances
 	conn.TradesHistoryResult = spot.TradesHistoryResult{Trades: trades}
 
@@ -87,8 +88,13 @@ func newTestRecoveryWithOptions(
 		},
 	})
 
-	price := newTestPrice(t, api)
-	instrument := NewInstrument(api, price)
+	store := newTestPositionStore(t)
+	owner, err := NewBroker(t.Context(), api, store)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	price := owner.Price
 
 	for _, symbol := range []string{"AAA/USD", "BBB/USD"} {
 		price.fees.Store(symbol, kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.25)})
@@ -104,19 +110,8 @@ func newTestRecoveryWithOptions(
 		}
 	}
 
-	storePath := t.TempDir() + "/recovery.sqlite"
-	store, err := NewPositionStore(
-		storePath, testPositionStoreQueueDepth, testPositionStoreBatchSize,
-	)
-	if err != nil {
-		t.Fatalf("failed to open position store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-
-	positions := &sync.Map{}
-	recovery := NewRecovery(
-		t.Context(), api, instrument, price, nil, store, positions,
-	)
+	positions := &owner.Positions.Lots
+	recovery := owner.Recovery
 
 	return recovery, positions
 }
@@ -127,13 +122,13 @@ an entry basis from.
 */
 func tradeFixture(pair string, volume, price, cost string) spot.Trade {
 	return spot.Trade{
-		Pair:   pair,
-		Type:   "buy",
-		Time:   decimal.NewFromInt64(1),
-		Volume: mustDecimal(volume),
-		Price:  mustDecimal(price),
-		Cost:   mustDecimal(cost),
-		Fee:    mustDecimal("0"),
+		Pair:             pair,
+		Type:             "buy",
+		Time:             decimal.NewFromInt64(1),
+		Volume:           venue.Decimal(volume),
+		Price: venue.Decimal(price),
+		Cost:             venue.Decimal(cost),
+		Fee:              venue.Decimal("0"),
 	}
 }
 
@@ -142,13 +137,13 @@ sellTradeFixture builds one filled-sell spot.Trade closing out a prior buy.
 */
 func sellTradeFixture(pair string, volume, price, cost string, at int64) spot.Trade {
 	return spot.Trade{
-		Pair:   pair,
-		Type:   "sell",
-		Time:   decimal.NewFromInt64(at),
-		Volume: mustDecimal(volume),
-		Price:  mustDecimal(price),
-		Cost:   mustDecimal(cost),
-		Fee:    mustDecimal("0"),
+		Pair:             pair,
+		Type:             "sell",
+		Time:             decimal.NewFromInt64(at),
+		Volume:           venue.Decimal(volume),
+		Price: venue.Decimal(price),
+		Cost:             venue.Decimal(cost),
+		Fee:              venue.Decimal("0"),
 	}
 }
 
@@ -164,9 +159,9 @@ every asset regardless of an earlier failure.
 func TestRecoverContinuesPastOneAssetFailure(t *testing.T) {
 	Convey("Given two open assets where one has no tradeable instrument pair", t, func() {
 		balances := map[string]*decimal.Decimal{
-			"AAA": mustDecimal("10"),
-			"BBB": mustDecimal("20"),
-			"CCC": mustDecimal("30"),
+			"AAA": venue.Decimal("10"),
+			"BBB": venue.Decimal("20"),
+			"CCC": venue.Decimal("30"),
 		}
 		trades := map[string]spot.Trade{
 			"t-aaa": tradeFixture("AAA/USD", "10", "1.0", "10.0"),
@@ -180,12 +175,12 @@ func TestRecoverContinuesPastOneAssetFailure(t *testing.T) {
 		// fixture's Time (decimal 1) — time.Unix(1, 0).UTC() — since Load
 		// keys on (symbol, entry_at) rather than symbol alone.
 		bbbEntryAt := time.Unix(1, 0).UTC()
-		if err := recovery.store.Save(&types.Holding{
+		if err := recovery.Positions.Store.Save(&types.Holding{
 			Symbol:     "BBB/USD",
 			Status:     types.OPEN,
-			Qty:        mustDecimal("2"),
-			EntryPrice: mustDecimal("2.0"),
-			EntryFee:   mustDecimal("0.01"),
+			Qty:        venue.Decimal("2"),
+			EntryPrice: venue.Decimal("2.0"),
+			EntryFee:   venue.Decimal("0.01"),
 			EntryAt:    &bbbEntryAt,
 		}); err != nil {
 			t.Fatalf("failed to seed BBB open position: %v", err)
@@ -223,7 +218,7 @@ history and flagged degraded, never dropped and never left untracked.
 func TestRecoverAdoptsOpenLotWithoutStoredRow(t *testing.T) {
 	Convey("Given an open asset with no stored row in the position store", t, func() {
 		balances := map[string]*decimal.Decimal{
-			"AAA": mustDecimal("2"),
+			"AAA": venue.Decimal("2"),
 		}
 		trades := map[string]spot.Trade{
 			"t-aaa": tradeFixture("AAA/USD", "2", "1.0", "2.0"),
@@ -236,10 +231,10 @@ func TestRecoverAdoptsOpenLotWithoutStoredRow(t *testing.T) {
 			value, restored := positions.Load("AAA/USD")
 			So(restored, ShouldBeTrue)
 
-			position, ok := value.(*Position)
+			position, ok := value.(*Regulator)
 			So(ok, ShouldBeTrue)
 			So(position.DegradedRecovery, ShouldBeTrue)
-			So(position.Holding.Qty.Cmp(mustDecimal("2")), ShouldEqual, 0)
+			So(position.Holding.Qty.Cmp(venue.Decimal("2")), ShouldEqual, 0)
 			So(position.Holding.EntryPrice, ShouldNotBeNil)
 			So(position.Holding.EntryPrice.Sign(), ShouldBeGreaterThan, 0)
 		})
@@ -264,7 +259,7 @@ func TestRecoverSkipsConfirmedClosedDustWithoutError(t *testing.T) {
 		// rounding independent of what the trade rows sum to — that
 		// leftover is confirmed-closed dust, not an unexplained balance.
 		balances := map[string]*decimal.Decimal{
-			"AAA": mustDecimal("0.00000003"),
+			"AAA": venue.Decimal("0.00000003"),
 		}
 		trades := map[string]spot.Trade{
 			"t-aaa-buy":  tradeFixture("AAA/USD", "10", "1.0", "10.0"),
@@ -285,7 +280,7 @@ func TestRecoverSkipsConfirmedClosedDustWithoutError(t *testing.T) {
 
 	Convey("Given a real wallet balance with no trade history at all", t, func() {
 		balances := map[string]*decimal.Decimal{
-			"AAA": mustDecimal("10"),
+			"AAA": venue.Decimal("10"),
 		}
 		trades := map[string]spot.Trade{}
 

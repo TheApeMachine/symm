@@ -5,7 +5,6 @@ import (
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"maps"
-	"math/big"
 	"slices"
 	"strings"
 )
@@ -64,15 +63,15 @@ func (inspector *LearningInspector) view(symbol string) LearningView {
 	view.Capital = CapitalView{Choice: inspector.Capital.LastChoice, Prior: inspector.Capital.LastReading.Selected, Evidence: inspector.Capital.LastReading, Decisions: inspector.Capital.Decisions,
 		WarmupUnverified: inspector.Capital.History.Unverified,
 		Outcomes:         append([]hindsight.CandidateResult(nil), inspector.Capital.Candidates.recent...)}
-	demand := new(big.Rat)
+	demand := zero
 	for _, candidate := range inspector.Capital.Candidates.current {
 		view.Capital.Candidates = append(view.Capital.Candidates, CandidateView{CandidateRecord: candidate.Record, State: candidate.State, Current: candidate.Current(view.At), Age: view.At.Sub(candidate.Record.At)})
 
 		if candidate.Current(view.At) && !candidate.selected {
-			demand.Add(demand, candidate.cost)
+			demand = demand.Add(candidate.cost)
 		}
 	}
-	view.Capital.Demand = demand.RatString()
+	view.Capital.Demand = demand.String()
 	slices.SortFunc(view.Capital.Candidates, func(left, right CandidateView) int { return strings.Compare(left.Symbol, right.Symbol) })
 	for teacher, output := range map[*AccountTeacher]*AccountLearningView{inspector.Capital.Actual: &view.Capital.Actual, inspector.Capital.Exploration: &view.Capital.Exploration} {
 		*output = AccountLearningView{State: teacher.State, Outcome: teacher.Outcome, Target: teacher.Target, Resolved: teacher.Resolved, Aborted: teacher.Aborted, Execution: teacher.LastExecution, MFE: teacher.MFE, MAE: teacher.MAE,
@@ -107,8 +106,8 @@ func (inspector *LearningInspector) view(symbol string) LearningView {
 		view.RealizationAllowed = true
 	}
 
-	if reporter, ok := inspector.Desk.(ExecutionReporter); ok && reporter != nil {
-		view.Execution, view.HasExecution = reporter.Execution(), true
+	if inspector.Balance != nil {
+		view.Execution, view.HasExecution = inspector.Stats(), true
 	}
 
 	view.Forward = inspector.forward
@@ -190,7 +189,7 @@ func (inspector *LearningInspector) view(symbol string) LearningView {
 			mode = "policy"
 		}
 		view.Lanes = append(view.Lanes, LearningWallet{Lane: index, Mode: mode,
-			Cash: lane.wallet.cash.FloatString(lane.wallet.scale), Quantity: lane.wallet.quantity.FloatString(lane.wallet.pair.QtyPrecision), Fees: lane.wallet.fees.FloatString(lane.wallet.scale),
+			Cash: lane.wallet.cash.String(), Quantity: lane.wallet.quantity.String(), Fees: lane.wallet.fees.String(),
 			Equity: lane.equity, Profit: lane.outcome.TotalReward, Rate: lane.outcome.Rate, Complete: lane.complete,
 			At: lane.outcome.Through.At, Action: lane.action, Pending: lane.pending != 0,
 			Issued: lane.issued, Fills: lane.fills, Resolved: lane.resolved, Unresolved: len(lane.trace), Prior: lane.lastPrior,

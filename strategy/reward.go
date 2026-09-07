@@ -3,8 +3,6 @@ package strategy
 import (
 	"fmt"
 	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"math"
 
 	"github.com/theapemachine/errnie"
@@ -37,7 +35,7 @@ session requires its own AccountReward; the caller serializes Measure.
 type AccountReward struct {
 	initial EquityMark
 	last    EquityMark
-	ledger  core.Primitive
+	ledger  learning.RewardLedger
 }
 
 /*
@@ -79,13 +77,9 @@ func (reward *AccountReward) Measure(mark EquityMark) (learning.RewardOutcome, e
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return learning.RewardOutcome{}, errnie.Error(errnie.Err(errnie.Validation, "account reward: objective is not representable", nil))
 	}
-	graph := reward.ledger
-	if graph == nil {
-		graph = learning.NewReward()
-	}
-	fields, err := transport.Evaluate[map[string]core.Primitive](graph, core.Record(map[string]any{
-		"at": mark.At.UnixNano(), "version": mark.Version, "value": value,
-	}))
+	outcome, err := reward.ledger.Measure(learning.RewardMark{
+		At: mark.At, Version: mark.Version, Value: value,
+	})
 
 	if err != nil {
 		return learning.RewardOutcome{}, errnie.Error(errnie.Err(
@@ -95,12 +89,6 @@ func (reward *AccountReward) Measure(mark EquityMark) (learning.RewardOutcome, e
 		))
 	}
 
-	outcome, err := learning.ProjectReward(fields)
-	if err != nil {
-		return learning.RewardOutcome{}, errnie.Error(err)
-	}
-	outcome.TotalElapsed = mark.At.Sub(initial.At)
-	reward.ledger = graph
 	reward.initial, reward.last = initial, mark
 
 	return outcome, nil

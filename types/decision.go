@@ -15,6 +15,7 @@ crossing costs paid now, and the sale price that would recover both known fees.
 It deliberately contains no future price, future spread, or expected return.
 */
 type EntryCost struct {
+	Total              *decimal.Decimal `json:"total,omitempty"` // Gross notional plus the entry fee.
 	EntryPrice         *decimal.Decimal `json:"entryPrice,omitempty"`
 	BestAsk            *decimal.Decimal `json:"bestAsk,omitempty"`
 	BestBid            *decimal.Decimal `json:"bestBid,omitempty"`

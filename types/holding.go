@@ -9,11 +9,13 @@ import (
 )
 
 /*
-Holding is inventory qty and economics. Wallet lots live on Balance; Thesis
-stores only holdings it created (Admit). Live Stoploss is owned by Position;
-the Stoploss pointer here is the same regulator after Desk takes the lot.
+Holding retains authoritative inventory cost and fees. Basis and EntryFee are
+the unallocated entry amounts; realized amounts remain separate from marks.
 */
 type Holding struct {
+	EntryCost       *decimal.Decimal `json:"entry_cost"`
+	ExitCost        *decimal.Decimal `json:"exit_cost"`
+	Basis           *decimal.Decimal `json:"basis"`
 	ctx             context.Context
 	cancel          context.CancelFunc
 	Status          Status           `json:"status,omitempty"`
@@ -80,4 +82,26 @@ func (holding *Holding) Close() (err error) {
 	holding.Status = CLOSED
 
 	return err
+}
+
+/* NewHolding establishes the zero ledger without manufacturing an entry price. */
+func NewHolding(symbol string) *Holding {
+	zero := decimal.NewFromInt64(0)
+	return &Holding{
+		Symbol:      symbol,
+		Status:      INITIALIZING,
+		Qty:         zero,
+		SellableQty: zero,
+		Basis:       zero,
+		EntryCost:   zero,
+		ExitCost:    zero,
+		EntryFee:    zero,
+		EntryFees:   zero,
+		EntryQty:    zero,
+		ExitFee:     zero,
+		ExitFees:    zero,
+		ExitQty:     zero,
+		RealizedPnL: zero,
+		PnL:         zero,
+	}
 }

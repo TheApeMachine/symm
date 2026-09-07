@@ -1,7 +1,7 @@
 package strategy
 
 import (
-	"math/big"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"time"
 
 	"github.com/theapemachine/symm/broker"
@@ -56,7 +56,7 @@ type learningLane struct {
 	version                 uint64
 	pending                 uint64
 	action                  LearningAction
-	requested               *big.Rat
+	requested               *decimal.Decimal
 	ladder                  broker.DepthLadder
 	trace                   []learningExperience
 	equity                  float64
@@ -205,10 +205,13 @@ func (lane *learningLane) recycle(
 		return nil
 	}
 
-	maximum := lane.wallet.maximum(book, true)
-	cost := broker.NotionalRat(new(big.Rat), book.Asks.Low.Price.Rat(), maximum)
+	maximum, err := lane.wallet.maximum(book, true)
 
-	if maximum.Cmp(&lane.wallet.pricing.Minimum) >= 0 && cost.Cmp(&lane.wallet.pricing.CostMinimum) >= 0 {
+	if err != nil {
+		return err
+	}
+
+	if local.price.Tradable(market.symbol, maximum, book.BestAsk().Price) {
 		lane.exhausted = false
 		return nil
 	}
@@ -221,7 +224,7 @@ func (lane *learningLane) recycle(
 
 	lane.trace = lane.trace[:0]
 	lane.realized += lane.equity - local.initial.Float64()
-	spent, _ := lane.wallet.restart(local.initial).Float64()
+	spent := lane.wallet.restart(local.initial).Float64()
 	lane.spent += spent
 	lane.episodes++
 	lane.ledger = AccountReward{}
@@ -251,7 +254,12 @@ never accumulated a second observation and exploration could never end.
 */
 func (lane *learningLane) issue(local *LocalLearning, market *learningMarket, index int, book *spotbook.Book, marketAt time.Time) error {
 	market.context = lane.wallet.context(market.conditions, book, lane.equity, market.context)
-	market.actions = lane.wallet.actions(book, market.actions)
+	var err error
+	market.actions, err = lane.wallet.actions(book, market.actions)
+
+	if err != nil {
+		return err
+	}
 
 	// The policy lane reads the exploration lanes' evidence: that is the whole
 	// point of exploring. It must also record its own outcomes under the same
@@ -282,16 +290,20 @@ func (lane *learningLane) issue(local *LocalLearning, market *learningMarket, in
 		return nil
 	}
 
-	requested := lane.wallet.request(book, action, influence, &lane.ladder)
+	requested, err := lane.wallet.request(book, action, influence, &lane.ladder)
+
+	if err != nil {
+		return err
+	}
 	price := book.Asks.Low.Price
 
 	if action.Reduce {
 		price = book.Bids.High.Price
 	}
 
-	if action.Kind != types.ActionHold && (requested.Cmp(&lane.wallet.pricing.Minimum) < 0 || broker.NotionalRat(new(big.Rat), price.Rat(), requested).Cmp(&lane.wallet.pricing.CostMinimum) < 0) {
+	if action.Kind != types.ActionHold && !local.price.Tradable(market.symbol, requested, price) {
 		action = LearningAction{Kind: types.ActionHold}
-		requested = new(big.Rat)
+		requested = zero
 	}
 
 	if action != selectedAction {
@@ -325,7 +337,7 @@ func (lane *learningLane) issue(local *LocalLearning, market *learningMarket, in
 	for _, token := range market.sequence {
 		event.Quantities = append(event.Quantities, local.Grid.Columns[token-1])
 	}
-	event.GridVersion, event.Authority, event.Quantity, event.Prior = market.gridVersion, authority, requested.FloatString(lane.wallet.pair.QtyPrecision), prior
+	event.GridVersion, event.Authority, event.Quantity, event.Prior = market.gridVersion, authority, requested.String(), prior
 	event.Horizon, event.Authorized = market.horizon(), local.execution.Mode().String()
 	market.events = append(market.events, event)
 
@@ -362,8 +374,8 @@ func (lane *learningLane) event(
 		Action:    string(lane.action.Kind),
 		Power:     lane.action.Power,
 		Reduce:    lane.action.Reduce,
-		Cash:      lane.wallet.cash.FloatString(lane.wallet.scale),
-		Inventory: lane.wallet.quantity.FloatString(lane.wallet.pair.QtyPrecision),
+		Cash:      lane.wallet.cash.String(),
+		Inventory: lane.wallet.quantity.String(),
 		Profit:    lane.outcome.TotalReward,
 		Episode:   lane.episodes,
 		Complete:  lane.complete,

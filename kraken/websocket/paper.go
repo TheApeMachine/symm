@@ -439,8 +439,7 @@ func (paper *Paper) TradeBalance() (kraken.TradeBalanceResult, error) {
 /*
 TradeVolume returns the paper account's taker-fee schedule for the requested
 pairs. Paper charges one configured fee rate across every pair, so the schedule
-is the same fee reproduced under each compact pair key the fee resolver looks
-up. The simulator reports fee_rate as a fraction; TradeVolumeFee.Fee is a
+is the same fee under each requested canonical symbol. The simulator reports fee_rate as a fraction; TradeVolumeFee.Fee is a
 percentage, so the fraction is scaled into its percent form.
 */
 func (paper *Paper) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {
@@ -475,21 +474,13 @@ func (paper *Paper) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, er
 
 	for _, symbol := range symbols {
 		fee := kraken.TradeVolumeFee{
-			Fee:    decimal.NewFromInt64(0).Add(feePercent),
-			Minfee: decimal.NewFromInt64(0).Add(feePercent),
-			Maxfee: decimal.NewFromInt64(0).Add(feePercent),
+			Fee:    feePercent,
+			Minfee: feePercent,
+			Maxfee: feePercent,
 		}
 
-		// The fee resolver matches by the compact REST pair identifier
-		// (pair.AltName / base+quote), while callers hand in the websocket
-		// symbol (e.g. "UAI/USD"). Key the schedule under both forms so the
-		// resolver matches regardless of which identifier it probes.
-		compact := strings.ReplaceAll(symbol, "/", "")
-
 		fees[symbol] = fee
-		fees[compact] = fee
 		feesMaker[symbol] = fee
-		feesMaker[compact] = fee
 	}
 
 	return &kraken.TradeVolumeResult{Fees: fees, FeesMaker: feesMaker}, nil

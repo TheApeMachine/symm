@@ -1,6 +1,7 @@
-package broker
+package position
 
 import (
+	venue "github.com/theapemachine/symm/tests/venue"
 	"testing"
 	"time"
 
@@ -18,17 +19,17 @@ func openLot(symbol string, entryAt time.Time) *types.Holding {
 	return &types.Holding{
 		Symbol:     symbol,
 		Status:     types.OPEN,
-		Qty:        mustDecimal("3"),
-		EntryPrice: mustDecimal("2.00"),
-		EntryFee:   mustDecimal("0.01"),
+		Qty:        venue.Decimal("3"),
+		EntryPrice: venue.Decimal("2.00"),
+		EntryFee:   venue.Decimal("0.01"),
 		EntryAt:    &entryAt,
 	}
 }
 
-func newTestPositionStore(t *testing.T) *PositionStore {
+func newTestPositionStore(t testing.TB) *Store {
 	t.Helper()
 
-	store, err := NewPositionStore(
+	store, err := NewStore(
 		t.TempDir()+"/positions.sqlite",
 		testPositionStoreQueueDepth,
 		testPositionStoreBatchSize,
@@ -135,7 +136,7 @@ func TestPositionStoreSave(t *testing.T) {
 }
 
 func BenchmarkPositionStoreSave(b *testing.B) {
-	store, err := NewPositionStore(
+	store, err := NewStore(
 		b.TempDir()+"/positions.sqlite",
 		1024,
 		128,

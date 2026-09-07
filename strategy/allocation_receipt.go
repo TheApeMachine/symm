@@ -1,7 +1,6 @@
 package strategy
 
 import (
-	"math/big"
 	"sync/atomic"
 
 	"github.com/theapemachine/symm/hindsight"
@@ -51,13 +50,9 @@ func (receipt *AllocationReceipt) Observe(event hindsight.LifecycleEvent) {
 	case "execution_refused":
 		result.State, result.Detail = "aborted", event.Kind
 	case "entry_fill", "increase_fill", "execution_terminal", "execution_failed":
-		quantity, valid := new(big.Rat).SetString(event.Execution.CumQty)
+		quantity := event.Execution.CumQty
 
-		if event.Execution.CumQty != "" && (!valid || quantity.Sign() < 0) {
-			panic("allocation: invalid cumulative executed quantity")
-		}
-
-		if valid && quantity.Sign() > 0 {
+		if quantity != nil && quantity.Sign() > 0 {
 			result.State = "filled"
 		}
 

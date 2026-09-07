@@ -1,6 +1,9 @@
 package hindsight
 
-import "time"
+import (
+	"github.com/theapemachine/symm/kraken"
+	"time"
+)
 
 /*
 LifecycleEvent is one real trading-lifecycle transition: an entry submitted, a
@@ -25,7 +28,7 @@ type LifecycleEvent struct {
 	// Execution carries order identity for submission/failure and authoritative
 	// venue economics for terminal and fill events. Position open/close events
 	// have no execution fact.
-	Execution *ExecutionFact `json:"execution,omitempty"`
+	Execution *kraken.ExecutionData `json:"execution,omitempty"`
 
 	// CaptureSeq is the capture sequence of the envelope whose decision caused
 	// this transition, resolved on read by joining DecisionID to the decision
@@ -33,25 +36,4 @@ type LifecycleEvent struct {
 	// position was opened or closed on, rather than searching by wall time.
 	// Zero when no decision witness recorded that identity.
 	CaptureSeq uint64 `json:"captureSeq,omitempty"`
-}
-
-/*
-ExecutionFact is the authoritative fill record for one execution: the venue's
-reported order, quantity, price, cumulative economics, fee, and the resulting
-position transition. It is correlated to the decision that produced the order
-through the enclosing LifecycleEvent's ActionCorrelationID.
-*/
-type ExecutionFact struct {
-	OrderID       string    `json:"orderId"`
-	ClientOrderID string    `json:"clientOrderId"`
-	ExecID        string    `json:"execId"`
-	Side          string    `json:"side"`
-	OrderStatus   string    `json:"orderStatus"`
-	LastQty       string    `json:"lastQty,omitempty"`
-	LastPrice     string    `json:"lastPrice,omitempty"`
-	CumQty        string    `json:"cumQty,omitempty"`
-	CumCost       string    `json:"cumCost,omitempty"`
-	AvgPrice      string    `json:"avgPrice,omitempty"`
-	FeeUsdEquiv   string    `json:"feeUsdEquiv,omitempty"`
-	FillAt        time.Time `json:"fillAt"`
 }

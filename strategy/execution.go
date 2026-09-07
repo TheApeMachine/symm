@@ -1,7 +1,12 @@
 package strategy
 
 import (
-	"math/big"
+	"errors"
+	"github.com/theapemachine/symm/broker/position"
+	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"strconv"
+	"sync"
 	"time"
 
 	"sync/atomic"
@@ -10,6 +15,7 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/types"
 )
@@ -27,7 +33,7 @@ type ExecutionIntent struct {
 	Candidate   *EntryCandidate
 	PortfolioID string
 	Allocation  *AllocationReceipt
-	MaximumCost *big.Rat
+	MaximumCost *decimal.Decimal
 	Allowed     *atomic.Bool
 
 	CorrelationID string
@@ -36,33 +42,10 @@ type ExecutionIntent struct {
 	MarketAt      time.Time
 	Kind          types.Action
 	Reduce        bool
-	Quantity      *big.Rat
-	Reference     *big.Rat
+	Quantity      *decimal.Decimal
+	Reference     *decimal.Decimal
 	Mode          Mode
 	Skill         SkillReading
-}
-
-/*
-ExecutionDesk is the account the policy lane reaches. It is deliberately
-narrow: the agent decides what to do and how much, and the desk owns venue
-mechanics. The agent never constructs venue orders itself, and a learning-only
-run leaves this nil so no code path can produce one.
-
-Submit must not talk to the venue. It is called from the workspace consumer
-that also feeds the terminal, so a round-trip taken inside it stops the whole
-pipeline for its duration. Implementations queue the intent and place it
-elsewhere.
-*/
-type ExecutionDesk interface {
-	Submit(ExecutionIntent) error
-}
-
-/*
-RealizationFeedback connects an execution desk's asynchronous placement and fill
-feedback to the agent's realization circuit breaker.
-*/
-type RealizationFeedback interface {
-	AttachRealization(*RealizationMeter)
 }
 
 /*
@@ -84,22 +67,22 @@ type ExecutionStatus struct {
 	LastFailure string `json:"lastFailure,omitempty"`
 }
 
-/*
-ExecutionReporter is an account that can describe its own outcomes. It is
-optional: an agent whose desk cannot report simply shows nothing rather than
-inventing a status.
-*/
-type ExecutionReporter interface {
-	Execution() ExecutionStatus
-}
-
 /* Execution owns entry authority, account dispatch and its observed failures. */
 type Execution struct {
 	Candidates *CandidateBook
 	allowed    atomic.Bool
 
 	Skill         *SkillMeter
-	Desk          ExecutionDesk
+	API           *websocket.API
+	Balance       *broker.Balance
+	Positions     sync.Map
+	price         *broker.Price
+	record        func(hindsight.LifecycleEvent) error
+	inFlight      sync.Map
+	failures      atomic.Uint64
+	submissions   atomic.Uint64
+	refusals      atomic.Uint64
+	durability    atomic.Pointer[error]
 	Realization   *RealizationMeter
 	dispatched    uint64
 	rejected      uint64
@@ -130,23 +113,35 @@ func (execution *Execution) Refresh(at time.Time) error {
 }
 
 /* SetExecution attaches one account and starts live competence cold. */
-func (execution *Execution) SetExecution(desk ExecutionDesk, account Account) {
+func (execution *Execution) SetExecution(
+	api *websocket.API,
+	price *broker.Price,
+	balance *broker.Balance,
+	account Account,
+	record func(hindsight.LifecycleEvent) error,
+) error {
 	execution.allowed.Store(false)
-	execution.Desk = desk
-
-	if desk == nil {
-		account = AccountNone
-	}
+	execution.API = api
+	execution.price = price
+	execution.Balance = balance
+	execution.record = record
 	execution.Skill = NewSkillMeter(account, time.Now())
 	execution.Realization = NewRealizationMeter()
+	recovery := position.Recovery{API: api, Price: price}
+	positions, err := recovery.Recover(api.Context(), balance.Quote, execution.observe)
 
-	if feedback, ok := desk.(RealizationFeedback); ok {
-		feedback.AttachRealization(execution.Realization)
+	for symbol, regulator := range positions {
+		execution.Positions.Store(symbol, regulator)
 	}
+
+	if err != nil {
+		execution.durability.Store(&err)
+	}
+	return err
 }
 
 /* Propose records non-exploring local increases as candidates, independent of Skill. */
-func (execution *Execution) Propose(local *LocalLearning, market *learningMarket, action LearningAction, requested *big.Rat,
+func (execution *Execution) Propose(local *LocalLearning, market *learningMarket, action LearningAction, requested *decimal.Decimal,
 	book *spotbook.Book, marketAt time.Time, identity uint64, reading KnowledgeReading) error {
 	if action.Reduce {
 		return nil
@@ -164,34 +159,39 @@ func (execution *Execution) Propose(local *LocalLearning, market *learningMarket
 		return nil
 	}
 	lane := &market.lanes[len(market.lanes)-1]
-	quantity, gross := lane.wallet.pricing.Sweep(book, requested, &lane.wallet.cash, true, nil, nil)
+	quantity, gross, err := local.price.Sweep(book, requested, lane.wallet.cash, broker.BUY, nil, nil)
+
+	if err != nil {
+		return err
+	}
 
 	if quantity.Cmp(requested) != 0 {
 		return nil
 	}
-	cost := lane.wallet.pricing.Total(new(big.Rat), gross, true)
+	cost := local.price.WithFee(market.symbol, gross, broker.BUY)
 	record := hindsight.CandidateRecord{ID: uuid.NewString(), Decision: identity, Symbol: market.symbol,
 		Action: string(action.Kind), Power: action.Power, At: market.at, MarketAt: marketAt, Capture: market.capture,
 		GridVersion: market.gridVersion, Context: append([]uint64(nil), market.context...),
 		Scope: reading.Scope, Global: reading.Global, SymbolPrior: reading.Symbol, Prior: reading.Selected,
-		Quantity: requested.RatString(), Notional: cost.RatString(), Reference: book.Asks.Low.Price.Rat().RatString(),
-		Horizon: market.horizon(), QtyMinimum: lane.wallet.pricing.Minimum.RatString(), QtyIncrement: lane.wallet.pricing.Lot.RatString(),
-		CostMinimum: lane.wallet.pricing.CostMinimum.RatString(), FeeRate: lane.wallet.pricing.Rate.RatString()}
+		Quantity: requested.String(), Notional: cost.String(), Reference: book.Asks.Low.Price.String(),
+		Horizon: market.horizon()}
 	record.Authority = market.authority
 
 	for _, token := range market.sequence {
 		record.Quantities = append(record.Quantities, local.Grid.Columns[token-1])
 	}
 
-	if account, ok := execution.Desk.(ExecutionAccount); ok {
-		state := account.Account()
+	if execution.Balance != nil {
+		state := execution.Account()
 		record.AccountCash, record.AccountVersion = state.Cash, state.Mark.Version
 		record.AccountEquity = decimal.NewFromFloat64(state.Mark.Equity).String()
 	}
-	candidate := &EntryCandidate{Record: record, action: action, quantity: new(big.Rat).Set(requested), cost: cost, bid: book.Bids.High.Price.Rat()}
-	lane.wallet.pricing.Sweep(book, requested, &lane.wallet.cash, true, &candidate.ladder, nil)
+	candidate := &EntryCandidate{Record: record, action: action, quantity: requested, cost: cost, bid: book.Bids.High.Price}
+	if _, _, err := local.price.Sweep(book, requested, lane.wallet.cash, broker.BUY, &candidate.ladder, nil); err != nil {
+		return err
+	}
 	candidate.Intent = ExecutionIntent{CorrelationID: record.ID, Symbol: market.symbol, At: market.at, MarketAt: marketAt,
-		Kind: action.Kind, Quantity: new(big.Rat).Set(requested), Reference: book.Asks.Low.Price.Rat(),
+		Kind: action.Kind, Quantity: requested, Reference: book.Asks.Low.Price,
 		Mode: execution.Mode(), Skill: execution.Skill.Reading(), Candidate: candidate, MaximumCost: cost, Allowed: &execution.allowed}
 
 	if err := execution.Candidates.Publish(candidate); err != nil {
@@ -203,53 +203,230 @@ func (execution *Execution) Propose(local *LocalLearning, market *learningMarket
 	return nil
 }
 
-/* Submit hands an already selected intent to the asynchronous account boundary. */
+/* Submit queues the policy action directly on its position's guardian. */
 func (execution *Execution) Submit(intent ExecutionIntent) error {
-	if execution.Desk == nil || (!intent.Reduce && execution.Mode() != ModeTrading) {
-		intent.Allocation.Report(hindsight.AllocationResult{State: "aborted", At: time.Now().UTC(), Detail: "execution authority or account unavailable at dispatch"})
+	if execution.API == nil || (!intent.Reduce && execution.Mode() != ModeTrading) {
+		intent.Allocation.Report(hindsight.AllocationResult{
+			State:  "aborted",
+			At:     time.Now().UTC(),
+			Detail: "execution authority or account unavailable at dispatch",
+		})
 		return nil
 	}
+	value, found := execution.Positions.Load(intent.Symbol)
 
-	if err := execution.Desk.Submit(intent); err != nil {
-		intent.Allocation.Report(hindsight.AllocationResult{State: "aborted", At: time.Now().UTC(), Detail: err.Error()})
-		execution.rejected++
-		execution.lastRejection = errnie.Error(errnie.Err(errnie.IO, "policy intent was not accepted by the account", err))
+	if !found {
+		if intent.Reduce {
+			return errnie.Error(errnie.Err(
+				errnie.NotFound, "execution: no position for "+intent.Symbol, nil,
+			))
+		}
+		value = position.NewRegulator(
+			execution.API.Context(), execution.API, execution.price,
+			intent.Symbol, execution.observe,
+		)
+		execution.Positions.Store(intent.Symbol, value)
+	}
+	regulator := value.(*position.Regulator)
+	err := regulator.Guardian.Publish(func() error {
+		if err := execution.admit(intent); err != nil {
+			intent.Allocation.Report(hindsight.AllocationResult{
+				State: "aborted", At: time.Now().UTC(), Detail: err.Error(),
+			})
+			execution.refusals.Add(1)
+			return err
+		}
+		side := broker.BUY
+
+		if intent.Reduce {
+			side = broker.SELL
+		}
+		execution.inFlight.Store(intent.CorrelationID, intent)
+		err := regulator.Submit(intent.CorrelationID, side, intent.Quantity)
+		execution.Realization.ObserveSubmission(err)
+
+		if err != nil {
+			execution.failures.Add(1)
+			execution.Balance.Release(intent.CorrelationID, time.Time{})
+			execution.inFlight.Delete(intent.CorrelationID)
+			intent.Allocation.Report(hindsight.AllocationResult{
+				State: "aborted", At: time.Now().UTC(), Detail: err.Error(),
+			})
+			return err
+		}
+		execution.submissions.Add(1)
+		intent.Allocation.Report(hindsight.AllocationResult{
+			State: "submitted", At: time.Now().UTC(),
+		})
 		return nil
+	})
+
+	if err != nil {
+		execution.rejected++
+		execution.lastRejection = err
+		return err
 	}
 	execution.dispatched++
 	return nil
 }
 
-/* Reduce re-evaluates existing account inventory even when the virtual policy is flat or demoted. */
-func (execution *Execution) Reduce(local *LocalLearning, market *learningMarket, book *spotbook.Book) error {
-	account, ok := execution.Desk.(ExecutionAccount)
-
-	if !ok {
+/* admit checks current authority and economics immediately before submission. */
+func (execution *Execution) admit(intent ExecutionIntent) error {
+	if intent.Reduce {
 		return nil
 	}
-	state := account.Account()
+
+	if !execution.allowed.Load() || !execution.Realization.AllowsTrading() || execution.durability.Load() != nil {
+		return errnie.Error(&types.ExecutionRefusal{
+			State:  "authorization blocked",
+			Detail: "entry authority or persistence is unavailable",
+		})
+	}
+
+	if intent.Candidate == nil {
+		return errnie.Error(&types.ExecutionRefusal{
+			State: "no longer executable", Detail: "prospective candidate required",
+		})
+	}
+
+	if _, state := intent.Candidate.Reprice(
+		execution.API, execution.price, time.Now().UTC(),
+	); state != "" {
+		return errnie.Error(&types.ExecutionRefusal{
+			State: state, Detail: "candidate economics no longer hold",
+		})
+	}
+
+	if !execution.Balance.Reserve(intent.CorrelationID, intent.MaximumCost) {
+		return errnie.Error(&types.ExecutionRefusal{
+			State: "insufficient capital", Detail: "available quote cash cannot fund commitment",
+		})
+	}
+	return nil
+}
+
+/* observe delivers the original venue fact to learning and the shared journal. */
+func (execution *Execution) observe(fill kraken.ExecutionData) error {
+	kind := "execution_fill"
+	terminal := false
+
+	switch fill.OrderStatus {
+	case "filled", "iceberg_filled", "canceled", "expired", "rejected":
+		kind, terminal = "execution_terminal", true
+	}
+	event := hindsight.LifecycleEvent{
+		ActionCorrelationID: fill.ClientOrderID,
+		Symbol:              fill.Symbol,
+		Kind:                kind,
+		At:                  fill.Timestamp,
+		Execution:           &fill,
+	}
+	value, found := execution.inFlight.Load(fill.ClientOrderID)
+
+	if found {
+		intent := value.(ExecutionIntent)
+		intent.Allocation.Observe(event)
+
+		if terminal && fill.AvgPrice != nil && fill.CumQty != nil && fill.CumQty.Sign() > 0 {
+			execution.Realization.ObserveFill(
+				intent.Reference.Float64(), fill.AvgPrice.Float64(), intent.Reduce,
+			)
+		}
+	}
+
+	if terminal {
+		execution.Balance.Release(fill.ClientOrderID, fill.Timestamp)
+		execution.inFlight.Delete(fill.ClientOrderID)
+	}
+
+	if err := execution.record(event); err != nil {
+		execution.durability.Store(&err)
+		return err
+	}
+	return nil
+}
+
+/* Account projects the current balance into the capital learner's inputs. */
+func (execution *Execution) Account() AccountState {
+	reading := execution.Balance.Reading.Load()
+
+	if reading == nil {
+		return AccountState{Reason: "awaiting authoritative account mark"}
+	}
+	state := AccountState{
+		ActualCash: reading.Cash,
+		Positions:  reading.Positions,
+		Complete:   reading.Complete,
+		Reason:     reading.FundingReason,
+		Mark:       EquityMark{At: reading.At, Version: reading.Version},
+	}
+	cash, err := decimal.NewFromString(reading.AvailableCash)
+
+	if err != nil {
+		panic(errnie.Error(errnie.Err(errnie.Validation, "account: malformed cash", err)))
+	}
+	committed := execution.Balance.Committed()
+	state.Cash, state.Committed = cash.Sub(committed).String(), committed.String()
+	state.Mark.Equity, err = strconv.ParseFloat(reading.Equity, 64)
+
+	if err != nil {
+		panic(errnie.Error(errnie.Err(errnie.Validation, "account: malformed equity", err)))
+	}
+
+	if reading.NetFunding != "" {
+		state.Mark.NetFunding, err = strconv.ParseFloat(reading.NetFunding, 64)
+
+		if err != nil {
+			panic(errnie.Error(errnie.Err(errnie.Validation, "account: malformed funding", err)))
+		}
+		state.Mark.HasFunding = true
+	}
+	state.Complete = state.Complete && state.Mark.HasFunding
+	return state
+}
+
+/* Stats reports actual asynchronous submission outcomes. */
+func (execution *Execution) Stats() ExecutionStatus {
+	return ExecutionStatus{
+		Submitted: execution.submissions.Load(),
+		Failed:    execution.failures.Load(),
+		Refused:   execution.refusals.Load(),
+	}
+}
+
+/* Reduce re-evaluates existing account inventory even when the virtual policy is flat or demoted. */
+func (execution *Execution) Reduce(local *LocalLearning, market *learningMarket, book *spotbook.Book) error {
+	if execution.Balance == nil {
+		return nil
+	}
+	state := execution.Account()
 	amount, found := state.Positions[market.symbol]
 
 	if !found {
 		return nil
 	}
-	quantity, valid := new(big.Rat).SetString(amount)
+	quantity, err := decimal.NewFromString(amount)
 
-	if !valid {
-		panic("execution: malformed authoritative inventory")
+	if err != nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "execution: malformed inventory", err))
 	}
 
 	if quantity.Sign() <= 0 {
 		return nil
 	}
 	wallet := virtualWallet{}
-	if err := wallet.initialize(local.initial, local.pair(market.symbol), local.fee(market.symbol).Fee); err != nil {
+	if err := wallet.initialize(local.initial, local.price, market.symbol); err != nil {
 		return err
 	}
-	wallet.cash.SetInt64(0)
-	wallet.quantity.Set(quantity)
+	wallet.cash = zero
+	wallet.quantity = quantity
 	context := wallet.context(market.sequence, book, state.Mark.Equity, nil)
-	action, _, err := local.Knowledge.Select(market.symbol, context, wallet.actions(book, nil), false)
+	actions, err := wallet.actions(book, nil)
+
+	if err != nil {
+		return err
+	}
+	action, _, err := local.Knowledge.Select(market.symbol, context, actions, false)
 
 	if err != nil {
 		return err
@@ -258,7 +435,28 @@ func (execution *Execution) Reduce(local *LocalLearning, market *learningMarket,
 	if !action.Reduce {
 		return nil
 	}
-	requested := wallet.request(book, action, 1, nil)
+	requested, err := wallet.request(book, action, 1, nil)
+
+	if err != nil {
+		return err
+	}
 	return execution.Submit(ExecutionIntent{CorrelationID: uuid.NewString(), Symbol: market.symbol, At: market.at,
-		Kind: action.Kind, Reduce: true, Quantity: requested, Reference: book.Bids.High.Price.Rat(), Mode: execution.Mode(), Skill: execution.Skill.Reading()})
+		Kind: action.Kind, Reduce: true, Quantity: requested, Reference: book.Bids.High.Price, Mode: execution.Mode(), Skill: execution.Skill.Reading()})
+}
+
+/* Close stops publication and drains accepted position events before shutdown. */
+func (execution *Execution) Close() error {
+	var err error
+	guardians := make([]*position.Guardian, 0)
+	execution.Positions.Range(func(_, value any) bool {
+		guardian := value.(*position.Regulator).Guardian
+		err = errors.Join(err, guardian.Close())
+		guardians = append(guardians, guardian)
+		return true
+	})
+
+	for _, guardian := range guardians {
+		<-guardian.Done
+	}
+	return errnie.Error(err)
 }

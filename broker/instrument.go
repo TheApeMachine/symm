@@ -17,8 +17,8 @@ import (
 )
 
 /*
-Instrument owns validated immutable pair snapshots and the subscription universe.
-Remember and On deep-copy decimals so callers cannot mutate cached precision.
+Instrument owns venue pair facts and the subscription universe. Decimal values
+are shared as immutable SDK values; arithmetic returns a new Decimal.
 */
 type Instrument struct {
 	ctx     context.Context
@@ -26,7 +26,6 @@ type Instrument struct {
 	err     error
 	status  *runtime.Status
 	api     *websocket.API
-	price   *Price
 	cache   *sync.Map
 	quote   string
 	symbols []string
@@ -43,13 +42,9 @@ type Instrument struct {
 NewInstrument creates the market-instrument registry
 used by subscriptions and order validation.
 */
-func NewInstrument(api *websocket.API, price *Price) *Instrument {
+func NewInstrument(api *websocket.API) *Instrument {
 	if api == nil {
 		panic("broker: api required")
-	}
-
-	if price == nil {
-		panic("broker: price required")
 	}
 
 	ctx, cancel := context.WithCancel(api.Context())
@@ -59,7 +54,6 @@ func NewInstrument(api *websocket.API, price *Price) *Instrument {
 		cancel:           cancel,
 		status:           runtime.NewStatus(),
 		api:              api,
-		price:            price,
 		cache:            &sync.Map{},
 		symbols:          []string{},
 		quote:            viper.GetViper().GetString("market.quote_currency"),
@@ -188,7 +182,7 @@ func (instrument *Instrument) operationalError() error {
 }
 
 /*
-Pairs returns deep-copied instrument snapshots sorted by symbol.
+Pairs returns the cached instrument values.
 */
 func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
 	pairs := make([]kraken.InstrumentPair, 0)
@@ -208,7 +202,7 @@ func (instrument *Instrument) Pairs() []kraken.InstrumentPair {
 }
 
 /*
-Pair returns a deep-copied instrument snapshot for the symbol.
+Pair returns the cached instrument value for the symbol.
 */
 func (instrument *Instrument) Pair(symbol string) kraken.InstrumentPair {
 	value, ok := instrument.cache.Load(symbol)
@@ -251,16 +245,6 @@ func (instrument *Instrument) Subscribe() error {
 		instrument.symbols, viper.GetViper().GetInt("market.subscribe.batch"),
 	) {
 		errnie.Info(fmt.Sprintf("subscribing to %d symbols", len(batch)))
-
-		if err := instrument.price.GetFees(batch); err != nil {
-			instrument.fail(errnie.Err(
-				errnie.IO,
-				"instrument: failed to load fee tier batch",
-				err,
-			))
-
-			return instrument.err
-		}
 
 		for _, subscribe := range subscribers {
 			subscribe(batch)
@@ -486,7 +470,7 @@ func (instrument *Instrument) FuturesSymbol(productID string) (string, bool) {
 Symbols returns a copy of the subscribed market universe.
 */
 func (instrument *Instrument) Symbols() []string {
-	return instrument.symbols
+	return slices.Clone(instrument.symbols)
 }
 
 /*

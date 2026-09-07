@@ -12,7 +12,7 @@ type RewardMark struct {
 	Value   float64
 }
 
-/* RewardOutcome is a Go projection; NewReward exclusively owns numerical accounting. */
+/* RewardOutcome is a Go projection; RewardLedger exclusively owns numerical accounting. */
 type RewardOutcome struct {
 	From         RewardMark
 	Through      RewardMark

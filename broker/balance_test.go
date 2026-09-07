@@ -1,6 +1,7 @@
 package broker
 
 import (
+	venue "github.com/theapemachine/symm/tests/venue"
 	"testing"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -16,10 +17,10 @@ func TestBalanceUpdate(t *testing.T) {
 		viper.Set("market.quote_currency", "USD")
 		defer viper.Reset()
 
-		conn := newMockConn()
+		conn := venue.NewConn()
 		conn.BalanceResult = map[string]*decimal.Decimal{
-			"ZUSD": mustDecimal("200.00"),
-			"XXBT": mustDecimal("0.001"),
+			"ZUSD": venue.Decimal("200.00"),
+			"XXBT": venue.Decimal("0.001"),
 		}
 		api := websocket.NewAPI(t.Context(), conn, conn)
 		api.Normalizer().Update(&spot.AssetsManagerUpdate{
@@ -39,8 +40,8 @@ func TestBalanceUpdate(t *testing.T) {
 			assets := balance.Assets()
 
 			So(balance.Status(), ShouldEqual, types.READY)
-			So(balance.Cash().Cmp(mustDecimal("200.00")), ShouldEqual, 0)
-			So(assets["BTC"].Cmp(mustDecimal("0.001")), ShouldEqual, 0)
+			So(balance.Cash().Cmp(venue.Decimal("200.00")), ShouldEqual, 0)
+			So(assets["BTC"].Cmp(venue.Decimal("0.001")), ShouldEqual, 0)
 			So(assets, ShouldNotContainKey, "ZUSD")
 			So(assets, ShouldNotContainKey, "XXBT")
 		})
@@ -51,7 +52,7 @@ func BenchmarkBalanceUpdate(b *testing.B) {
 	viper.Set("market.quote_currency", "USD")
 	defer viper.Reset()
 
-	conn := newMockConn()
+	conn := venue.NewConn()
 	conn.BalanceResult = map[string]*decimal.Decimal{
 		"ZUSD": decimal.NewFromInt64(200),
 		"XXBT": decimal.NewFromFloat64(0.001),
@@ -68,8 +69,6 @@ func BenchmarkBalanceUpdate(b *testing.B) {
 		},
 	})
 	balance := NewBalance(api)
-
-	
 
 	for b.Loop() {
 		balance.Update()

@@ -1,4 +1,4 @@
-package broker
+package venue
 
 import (
 	"context"
@@ -17,11 +17,11 @@ import (
 )
 
 /*
-mockConn is the broker test suite's null websocket.Conn: every method returns
+Conn is the broker test suite's null websocket.Conn: every method returns
 an empty, successful default so a test only needs to embed it and override
 the one method its scenario cares about.
 */
-type mockConn struct {
+type Conn struct {
 	status runtime.Stage
 
 	// AddOrderErr, when set, is returned by AddOrder instead of a synthetic
@@ -35,41 +35,42 @@ type mockConn struct {
 	// history, e.g. for account-recovery-on-boot scenarios.
 	BalanceResult       map[string]*decimal.Decimal
 	TradesHistoryResult spot.TradesHistoryResult
+	TradeVolumeResult   *kraken.TradeVolumeResult
 	book                *spotbook.Book
 	books               *sync.Map
 	wsBook              *websocket.Book
 }
 
-func (conn *mockConn) MarkReady() {}
+func (conn *Conn) MarkReady() {}
 
-func newMockConn() *mockConn {
-	return &mockConn{
+func NewConn() *Conn {
+	return &Conn{
 		status: runtime.READY,
 		wsBook: websocket.NewBook(context.Background(), spot.NewNormalizer()),
 	}
 }
 
-func (conn *mockConn) Close() {}
+func (conn *Conn) Close() {}
 
-func (conn *mockConn) Client() *spot.WebSocket { return nil }
+func (conn *Conn) Client() *spot.WebSocket { return nil }
 
-func (conn *mockConn) Status() runtime.Stage { return conn.status }
+func (conn *Conn) Status() runtime.Stage { return conn.status }
 
-func (conn *mockConn) SubInstrument(callback chan any) {}
+func (conn *Conn) SubInstrument(callback chan any) {}
 
-func (conn *mockConn) SubTicker(symbols []string) {}
+func (conn *Conn) SubTicker(symbols []string) {}
 
-func (conn *mockConn) SubTrades(symbols []string) {}
+func (conn *Conn) SubTrades(symbols []string) {}
 
-func (conn *mockConn) SubL3(symbols []string) {}
+func (conn *Conn) SubL3(symbols []string) {}
 
-func (conn *mockConn) UnsubTicker(symbols []string) {}
+func (conn *Conn) UnsubTicker(symbols []string) {}
 
-func (conn *mockConn) UnsubTrades(symbols []string) {}
+func (conn *Conn) UnsubTrades(symbols []string) {}
 
-func (conn *mockConn) UnsubL3(symbols []string) {}
+func (conn *Conn) UnsubL3(symbols []string) {}
 
-func (conn *mockConn) Balance() (map[string]*decimal.Decimal, error) {
+func (conn *Conn) Balance() (map[string]*decimal.Decimal, error) {
 	if conn.BalanceResult != nil {
 		return conn.BalanceResult, nil
 	}
@@ -77,7 +78,7 @@ func (conn *mockConn) Balance() (map[string]*decimal.Decimal, error) {
 	return nil, nil
 }
 
-func (conn *mockConn) TradesHistory() (spot.TradesHistoryResult, error) {
+func (conn *Conn) TradesHistory() (spot.TradesHistoryResult, error) {
 	if conn.TradesHistoryResult.Trades != nil {
 		return conn.TradesHistoryResult, nil
 	}
@@ -85,15 +86,19 @@ func (conn *mockConn) TradesHistory() (spot.TradesHistoryResult, error) {
 	return spot.TradesHistoryResult{}, nil
 }
 
-func (conn *mockConn) TradeBalance() (kraken.TradeBalanceResult, error) {
+func (conn *Conn) TradeBalance() (kraken.TradeBalanceResult, error) {
 	return kraken.TradeBalanceResult{}, nil
 }
 
-func (conn *mockConn) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {
+func (conn *Conn) TradeVolume(symbols []string) (*kraken.TradeVolumeResult, error) {
+	if conn.TradeVolumeResult != nil {
+		return conn.TradeVolumeResult, nil
+	}
+
 	return &kraken.TradeVolumeResult{}, nil
 }
 
-func (conn *mockConn) AddOrder(*spot.AddOrderRequest) (spot.AddOrderResult, error) {
+func (conn *Conn) AddOrder(*spot.AddOrderRequest) (spot.AddOrderResult, error) {
 	if conn.AddOrderErr != nil {
 		return spot.AddOrderResult{}, conn.AddOrderErr
 	}
@@ -101,19 +106,19 @@ func (conn *mockConn) AddOrder(*spot.AddOrderRequest) (spot.AddOrderResult, erro
 	return spot.AddOrderResult{}, nil
 }
 
-func (conn *mockConn) OpenOrders() (spot.OpenOrdersResult, error) {
+func (conn *Conn) OpenOrders() (spot.OpenOrdersResult, error) {
 	return spot.OpenOrdersResult{}, nil
 }
 
-func (conn *mockConn) CancelOrder(*spot.CancelOrderRequest) (spot.CancelResult, error) {
+func (conn *Conn) CancelOrder(*spot.CancelOrderRequest) (spot.CancelResult, error) {
 	return spot.CancelResult{}, nil
 }
 
-func (conn *mockConn) Write(json.Marshaler, ...websocket.Callback[any]) error { return nil }
+func (conn *Conn) Write(json.Marshaler, ...websocket.Callback[any]) error { return nil }
 
-func (conn *mockConn) Post(string, json.Marshaler) ([]byte, error) { return nil, nil }
+func (conn *Conn) Post(string, json.Marshaler) ([]byte, error) { return nil, nil }
 
-func (conn *mockConn) ApplyLevel3(data kraken.Level3Data) {
+func (conn *Conn) ApplyLevel3(data kraken.Level3Data) {
 	if conn.wsBook == nil {
 		return
 	}
@@ -125,10 +130,12 @@ func (conn *mockConn) ApplyLevel3(data kraken.Level3Data) {
 	event := &callback.Event[*sdk.WebSocketMessage]{
 		Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`)),
 	}
-	_ = conn.wsBook.Update(event, payload)
+	if err := conn.wsBook.Update(event, payload); err != nil {
+		panic(err)
+	}
 }
 
-func (conn *mockConn) Book(symbol string, read func(*spotbook.Book)) {
+func (conn *Conn) Book(symbol string, read func(*spotbook.Book)) {
 	if conn.wsBook != nil {
 		found := false
 		conn.wsBook.Book(symbol, func(managed *spotbook.Book) {
@@ -143,7 +150,7 @@ func (conn *mockConn) Book(symbol string, read func(*spotbook.Book)) {
 	read(conn.book)
 }
 
-func (conn *mockConn) Books() *sync.Map {
+func (conn *Conn) Books() *sync.Map {
 	if conn.wsBook != nil {
 		return conn.wsBook.All()
 	}
@@ -155,11 +162,11 @@ func (conn *mockConn) Books() *sync.Map {
 	return &sync.Map{}
 }
 
-func mustDecimalOrder(id, price, qty string) kraken.Level3Order {
+func Order(id, price, qty string) kraken.Level3Order {
 	return kraken.Level3Order{
 		OrderID:    id,
-		LimitPrice: mustDecimal(price),
-		OrderQty:   mustDecimal(qty),
+		LimitPrice: Decimal(price),
+		OrderQty:   Decimal(qty),
 		Timestamp:  time.Now().UTC(),
 	}
 }

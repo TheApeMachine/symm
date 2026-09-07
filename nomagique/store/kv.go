@@ -17,14 +17,21 @@ func NewKV[K comparable](left core.Primitive) *KV[K] {
 	return &KV[K]{left: left}
 }
 func (kv *KV[K]) Next(in core.Primitive) core.Primitive {
+	owned := false
 	result := core.Yield(
 		kv.left,
 		in,
 		func(held, arriving map[K]core.Primitive) map[K]core.Primitive {
-			merged := make(map[K]core.Primitive, len(held)+len(arriving))
-			maps.Copy(merged, held)
-			maps.Copy(merged, arriving)
-			return merged
+			// Only the completed fold is published. Copy the configured source
+			// once; all further fields in this run belong to that private map.
+			if !owned {
+				merged := make(map[K]core.Primitive, len(held)+len(arriving))
+				maps.Copy(merged, held)
+				held, owned = merged, true
+			}
+
+			maps.Copy(held, arriving)
+			return held
 		},
 		kv,
 	)

@@ -1,8 +1,9 @@
 package cmd
 
 import (
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/broker/position"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -16,9 +17,9 @@ balance, unrealized and equity readings in the terminal come from here — a run
 that only stamped the quote cache left them with no producer at all.
 */
 type learningTickNode struct {
-	price *broker.Price
-	desk  *broker.Desk
-	tick  int64
+	price   *broker.Price
+	learner *strategy.Agent
+	tick    int64
 }
 
 /* Step updates the quote provider before dependent signal producers run. */
@@ -31,16 +32,19 @@ func (node *learningTickNode) Step(envelope *types.Envelope) *types.Envelope {
 	envelope.Tick = node.tick
 	node.price.Update(&envelope.TickerData)
 
-	if node.desk == nil {
+	if node.learner == nil {
 		return envelope
 	}
 
-	if err := node.desk.StepTicker(envelope.TickerData); err != nil {
-		errnie.Error(errnie.Err(errnie.Internal, "symm: desk ticker step", err))
-	}
+	envelope.Equity = node.learner.Balance.Reading.Load()
+	node.learner.Positions.Range(func(_, value any) bool {
+		published := value.(*position.Regulator).Wire()
 
-	envelope.Equity = node.desk.Equity()
-	envelope.Positions = node.desk.OpenPositionWire()
+		if published.Status != string(types.CLOSED) {
+			envelope.Positions = append(envelope.Positions, published)
+		}
+		return true
+	})
 
 	return envelope
 }

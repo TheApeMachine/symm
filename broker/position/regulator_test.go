@@ -1,6 +1,7 @@
-package broker
+package position
 
 import (
+	venue "github.com/theapemachine/symm/tests/venue"
 	"testing"
 	"time"
 
@@ -14,30 +15,16 @@ import (
 )
 
 /*
-mustDecimal parses an exact decimal string and panics on failure. Test fixtures
-use it so float64 representation error never leaks into accounting assertions.
-*/
-func mustDecimal(value string) *decimal.Decimal {
-	parsed, err := decimal.NewFromString(value)
-
-	if err != nil {
-		panic(err)
-	}
-
-	return parsed
-}
-
-/*
 closeFillPosition builds a minimal open lot whose realized exit economics can be
 asserted without a live exchange, desk, or database. sellable is the complete
 filled inventory; entryPrice and entryFee are the authoritative entry basis.
 */
-func closeFillPosition(sellable string, entryPrice string, entryFee string) *Position {
+func closeFillPosition(sellable string, entryPrice string, entryFee string) *Regulator {
 	quantity, _ := decimal.NewFromString(sellable)
 	price, _ := decimal.NewFromString(entryPrice)
 	fee, _ := decimal.NewFromString(entryFee)
 
-	position := &Position{
+	position := &Regulator{
 		pair: kraken.InstrumentPair{Symbol: "SHAPE/USD"},
 		Decision: types.Decision{
 			ID:     "shape-decision",
@@ -52,6 +39,10 @@ func closeFillPosition(sellable string, entryPrice string, entryFee string) *Pos
 		},
 	}
 
+	position.Increase = &Increase{position: position}
+	position.Reduction = &Reduction{position: position}
+	position.Exit = &Exit{position: position}
+	position.Guardian = NewGuardian(position)
 	position.setStatus(types.OPEN)
 
 	return position
@@ -93,12 +84,12 @@ func executionFixture(
 ) kraken.ExecutionData {
 	return kraken.ExecutionData{
 		ExecID:      "exit-1",
-		LastQty:     mustDecimal(cumQty),
-		LastPrice:   mustDecimal(lastPrice),
-		CumQty:      mustDecimal(cumQty),
-		CumCost:     mustDecimal(cumCost),
-		AvgPrice:    mustDecimal(avgPrice),
-		FeeUsdEquiv: mustDecimal(feeUsd),
+		LastQty:     venue.Decimal(cumQty),
+		LastPrice:   venue.Decimal(lastPrice),
+		CumQty:      venue.Decimal(cumQty),
+		CumCost:     venue.Decimal(cumCost),
+		AvgPrice:    venue.Decimal(avgPrice),
+		FeeUsdEquiv: venue.Decimal(feeUsd),
 		Timestamp:   time.Now(),
 		OrderStatus: "filled",
 	}
@@ -111,11 +102,11 @@ func TestCloseFillWholeOrderVWAP(t *testing.T) {
 		// profit the realized economics do not support.
 		position := closeFillPosition("100000", "0.000490", "0.04")
 		execution := executionFixture("0.000520", "0.000506", "100000", "50.6", "0.40")
-		sellable := mustDecimal("100000")
-		avgPrice := mustDecimal("0.000506")
+		sellable := venue.Decimal("100000")
+		avgPrice := venue.Decimal("0.000506")
 
 		Convey("the exit price is the whole-order realized VWAP, not the last fill", func() {
-			err := position.closeFill(execution)
+			err := position.Exit.Apply(execution)
 
 			So(err, ShouldBeNil)
 			So(position.Holding.ExitVWAP.Cmp(avgPrice), ShouldEqual, 0)
@@ -124,7 +115,7 @@ func TestCloseFillWholeOrderVWAP(t *testing.T) {
 		})
 
 		Convey("PnL and ReturnPct reconcile from the same realized economics", func() {
-			err := position.closeFill(execution)
+			err := position.Exit.Apply(execution)
 
 			So(err, ShouldBeNil)
 
@@ -145,11 +136,11 @@ func TestCloseFillWholeOrderVWAP(t *testing.T) {
 		})
 
 		Convey("exit fees are the exchange's authoritative total", func() {
-			err := position.closeFill(execution)
+			err := position.Exit.Apply(execution)
 
 			So(err, ShouldBeNil)
-			So(position.Holding.ExitFees.Cmp(mustDecimal("0.40")), ShouldEqual, 0)
-			So(position.Holding.ExitFee.Cmp(mustDecimal("0.40")), ShouldEqual, 0)
+			So(position.Holding.ExitFees.Cmp(venue.Decimal("0.40")), ShouldEqual, 0)
+			So(position.Holding.ExitFee.Cmp(venue.Decimal("0.40")), ShouldEqual, 0)
 		})
 	})
 }
@@ -161,10 +152,10 @@ func TestCloseFillAvgPriceFallback(t *testing.T) {
 		execution.AvgPrice = nil
 
 		Convey("the exit VWAP falls back to the cumulative CumCost/CumQty equivalent", func() {
-			err := position.closeFill(execution)
+			err := position.Exit.Apply(execution)
 
 			So(err, ShouldBeNil)
-			So(position.Holding.ExitVWAP.Cmp(mustDecimal("0.000506")), ShouldEqual, 0)
+			So(position.Holding.ExitVWAP.Cmp(venue.Decimal("0.000506")), ShouldEqual, 0)
 		})
 	})
 }
@@ -174,9 +165,9 @@ partialFillPosition builds a lot mid-exit: the ExitOrder is already submitted an
 the sellable inventory is complete, so onExecution routes exit executions to the
 close path.
 */
-func partialFillPosition(sellable string, entryPrice string, entryFee string) *Position {
+func partialFillPosition(sellable string, entryPrice string, entryFee string) *Regulator {
 	position := closeFillPosition(sellable, entryPrice, entryFee)
-	position.ExitOrder = &spot.AddOrderRequest{
+	position.Exit.Order = &spot.AddOrderRequest{
 		ClOrdId: "shape-entry-exit",
 		Type:    "sell",
 		Volume:  sellable,
@@ -218,8 +209,8 @@ func TestPartialFillExitAccumulatesWholeOrder(t *testing.T) {
 			})
 
 			So(finished, ShouldBeTrue)
-			So(position.Holding.ExitVWAP.Cmp(mustDecimal("0.000504")), ShouldEqual, 0)
-			So(position.Holding.ExitQty.Cmp(mustDecimal("100000")), ShouldEqual, 0)
+			So(position.Holding.ExitVWAP.Cmp(venue.Decimal("0.000504")), ShouldEqual, 0)
+			So(position.Holding.ExitQty.Cmp(venue.Decimal("100000")), ShouldEqual, 0)
 			So(position.Holding.SellableQty.Sign(), ShouldEqual, 0)
 
 			// 0.000490 × 100000 = 49, + 0.04 fee = 49.04 basis.
@@ -231,28 +222,26 @@ func TestPartialFillExitAccumulatesWholeOrder(t *testing.T) {
 
 func TestPositionOnExecutionTerminalPartialEntry(t *testing.T) {
 	Convey("Given a live entry that partially fills before Kraken cancels its remainder", t, func() {
-		conn := newExecutingConn(nil)
+		conn := venue.NewExecuting(nil)
 		desk, workload := newDeliveryDesk(t, conn)
-		conn.workload = workload
-		desk.price.fees.Store("TEST/USD", kraken.TradeVolumeFee{Fee: mustDecimal("0.25")})
+		conn.Workload = workload
+		desk.Collection.Price.fees.Store("TEST/USD", kraken.TradeVolumeFee{Fee: venue.Decimal("0.25")})
 		decision := types.Decision{
 			ID:               uuid.NewString(),
 			Action:           types.ActionEnter,
 			Symbol:           "TEST/USD",
 			At:               time.Now(),
-			ProposedQuantity: mustDecimal("100"),
-			ProposedNotional: mustDecimal("200.00"),
+			ProposedQuantity: venue.Decimal("100"),
+			ProposedNotional: venue.Decimal("200.00"),
 			ForecastHorizon:  1,
-			Mark:             mustDecimal("2.00"),
+			Mark:             venue.Decimal("2.00"),
 		}
-		position := NewPosition(
-			t.Context(), desk.api, desk.instrument, desk.price, desk.balance,
-			desk.PositionStore,
+		position := desk.Collection.New(
 			kraken.InstrumentPair{
 				Symbol:   "TEST/USD",
 				Base:     "TEST",
 				Quote:    "USD",
-				TickSize: *mustDecimal("0.01"),
+				TickSize: *venue.Decimal("0.01"),
 			},
 			decision,
 		)
@@ -264,12 +253,12 @@ func TestPositionOnExecutionTerminalPartialEntry(t *testing.T) {
 			ExecType:      "canceled",
 			Symbol:        "TEST/USD",
 			Side:          "buy",
-			LastQty:       mustDecimal("40"),
-			LastPrice:     mustDecimal("2.00"),
-			CumQty:        mustDecimal("40"),
-			CumCost:       mustDecimal("80.00"),
-			AvgPrice:      mustDecimal("2.00"),
-			FeeUsdEquiv:   mustDecimal("0.20"),
+			LastQty:       venue.Decimal("40"),
+			LastPrice:     venue.Decimal("2.00"),
+			CumQty:        venue.Decimal("40"),
+			CumCost:       venue.Decimal("80.00"),
+			AvgPrice:      venue.Decimal("2.00"),
+			FeeUsdEquiv:   venue.Decimal("0.20"),
 			Timestamp:     time.Now(),
 			OrderStatus:   "canceled",
 		}
@@ -284,10 +273,10 @@ func TestPositionOnExecutionTerminalPartialEntry(t *testing.T) {
 			So(finished, ShouldBeFalse)
 			So(position.status(), ShouldEqual, types.OPEN)
 			So(position.Holding.Status, ShouldEqual, types.OPEN)
-			So(position.Holding.Qty.Cmp(mustDecimal("40")), ShouldEqual, 0)
-			So(position.Holding.SellableQty.Cmp(mustDecimal("40")), ShouldEqual, 0)
-			So(position.Holding.EntryPrice.Cmp(mustDecimal("2.00")), ShouldEqual, 0)
-			So(position.Holding.EntryFee.Cmp(mustDecimal("0.20")), ShouldEqual, 0)
+			So(position.Holding.Qty.Cmp(venue.Decimal("40")), ShouldEqual, 0)
+			So(position.Holding.SellableQty.Cmp(venue.Decimal("40")), ShouldEqual, 0)
+			So(position.Holding.EntryPrice.Cmp(venue.Decimal("2.00")), ShouldEqual, 0)
+			So(position.Holding.EntryFee.Cmp(venue.Decimal("0.20")), ShouldEqual, 0)
 		})
 
 		Convey("a later terminal status without trade fields retains the prior partial fill", func() {
@@ -317,8 +306,8 @@ func TestPositionOnExecutionTerminalPartialEntry(t *testing.T) {
 			}), ShouldBeFalse)
 			So(position.status(), ShouldEqual, types.OPEN)
 			So(position.Holding.Status, ShouldEqual, types.OPEN)
-			So(position.Holding.Qty.Cmp(mustDecimal("40")), ShouldEqual, 0)
-			So(position.Holding.SellableQty.Cmp(mustDecimal("40")), ShouldEqual, 0)
+			So(position.Holding.Qty.Cmp(venue.Decimal("40")), ShouldEqual, 0)
+			So(position.Holding.SellableQty.Cmp(venue.Decimal("40")), ShouldEqual, 0)
 		})
 	})
 }
@@ -327,7 +316,7 @@ func TestPositionOnExecutionActionCorrelation(t *testing.T) {
 	Convey("Given a lot with distinct entry, reduction and exit orders", t, func() {
 		position := closeFillPosition("10", "100", "0")
 		position.EntryOrder = &spot.AddOrderRequest{ClOrdId: "entry"}
-		position.ReduceOrder = &spot.AddOrderRequest{ClOrdId: "reduce"}
+		position.Reduction.Order = &spot.AddOrderRequest{ClOrdId: "reduce"}
 		var terminalIDs []string
 		position.recordFill = func(kind string, execution kraken.ExecutionData) {
 			if kind == "execution_terminal" {
@@ -337,9 +326,9 @@ func TestPositionOnExecutionActionCorrelation(t *testing.T) {
 		execution := executionFixture("120", "120", "2", "240", "0")
 		execution.ClientOrderID, execution.ExecID, execution.OrderStatus = "reduce", "reduce-fill", "filled"
 		So(position.onExecution(kraken.Execution{Data: []kraken.ExecutionData{execution}}), ShouldBeFalse)
-		So(position.Holding.Qty.Cmp(mustDecimal("8")), ShouldEqual, 0)
-		So(position.ReduceOrder, ShouldBeNil)
-		position.ExitOrder = &spot.AddOrderRequest{ClOrdId: "exit"}
+		So(position.Holding.Qty.Cmp(venue.Decimal("8")), ShouldEqual, 0)
+		So(position.Reduction.Order, ShouldBeNil)
+		position.Exit.Order = &spot.AddOrderRequest{ClOrdId: "exit"}
 		execution = executionFixture("80", "80", "8", "640", "0")
 		execution.ClientOrderID, execution.ExecID, execution.OrderStatus = "exit", "exit-fill", "filled"
 		So(position.onExecution(kraken.Execution{Data: []kraken.ExecutionData{execution}}), ShouldBeTrue)
@@ -350,16 +339,16 @@ func TestPositionOnExecutionActionCorrelation(t *testing.T) {
 
 func TestPositionHandleGuardianActionCorrelation(t *testing.T) {
 	Convey("Given policy commands serialized with execution reports", t, func() {
-		conn := newMockConn()
+		conn := venue.NewConn()
 		position := closeFillPosition("10", "100", "0")
 		position.api = websocket.NewAPI(t.Context(), conn, conn)
 		position.EntryOrder = &spot.AddOrderRequest{ClOrdId: uuid.NewString()}
 		reduceID, exitID := uuid.NewString(), uuid.NewString()
-		position.handleGuardian(types.Decision{ID: reduceID, Action: types.ActionScale, Reduce: true, ProposedQuantity: mustDecimal("2")})
-		So(position.ReduceOrder.ClOrdId, ShouldEqual, reduceID)
-		position.applyReduceFill(kraken.ExecutionData{OrderStatus: "canceled"})
-		position.handleGuardian(types.Decision{ID: exitID, Action: types.ActionExit})
-		So(position.ExitOrder.ClOrdId, ShouldEqual, exitID)
+		position.Guardian.dispatch(types.Decision{ID: reduceID, Action: types.ActionScale, Reduce: true, ProposedQuantity: venue.Decimal("2")})
+		So(position.Reduction.Order.ClOrdId, ShouldEqual, reduceID)
+		position.Reduction.Apply(kraken.ExecutionData{OrderStatus: "canceled"})
+		position.Guardian.dispatch(types.Decision{ID: exitID, Action: types.ActionExit})
+		So(position.Exit.Order.ClOrdId, ShouldEqual, exitID)
 		Convey("a competing command is rejected with its own identity", func() {
 			var failedID string
 			position.recordFill = func(kind string, execution kraken.ExecutionData) {
@@ -367,9 +356,9 @@ func TestPositionHandleGuardianActionCorrelation(t *testing.T) {
 					failedID = execution.ClientOrderID
 				}
 			}
-			position.handleGuardian(types.Decision{ID: "competing", Action: types.ActionExit})
+			position.Guardian.dispatch(types.Decision{ID: "competing", Action: types.ActionExit})
 			So(failedID, ShouldEqual, "competing")
-			So(position.ExitOrder.ClOrdId, ShouldEqual, exitID)
+			So(position.Exit.Order.ClOrdId, ShouldEqual, exitID)
 		})
 	})
 }
@@ -381,7 +370,7 @@ func BenchmarkPositionOnExecution(b *testing.B) {
 	position.recordFill = func(string, kraken.ExecutionData) {}
 	b.ReportAllocs()
 	for b.Loop() {
-		position.ReduceOrder = order
+		position.Reduction.Order = order
 		position.onExecution(message)
 	}
 }
@@ -398,8 +387,6 @@ func BenchmarkPositionWire(b *testing.B) {
 		"return:expected_log":    0.018,
 	}
 	position.decisionWire = types.DecisionWire(&position.Decision)
-
-	
 
 	for b.Loop() {
 		_ = position.Wire()

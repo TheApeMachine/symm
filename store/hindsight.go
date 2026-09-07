@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/theapemachine/symm/kraken"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -830,7 +831,7 @@ func (store *SQLite) ListLifecycleEvents(runID string) ([]hindsight.LifecycleEve
 		// this transition. They were being written and then dropped on read,
 		// which left every recorded fill invisible to inspection.
 		if execution != "" {
-			var fact hindsight.ExecutionFact
+			var fact kraken.ExecutionData
 
 			if err := json.Unmarshal([]byte(execution), &fact); err != nil {
 				return nil, errnie.Error(errnie.Err(

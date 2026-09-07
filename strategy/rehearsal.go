@@ -7,8 +7,8 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/learning"
 )
 
@@ -25,11 +25,10 @@ type Rehearsal struct {
 }
 
 /* NewRehearsal uses supplied venue economics and a frozen, previously measured horizon. */
-func NewRehearsal(ctx context.Context, books LearningBook, pair func(string) kraken.InstrumentPair,
-	fee func(string) *kraken.TradeVolumeFee, initial *decimal.Decimal, horizons map[string]time.Duration,
+func NewRehearsal(ctx context.Context, books LearningBook, price *broker.Price, initial *decimal.Decimal, horizons map[string]time.Duration,
 	record func(hindsight.LearningEvent) error,
 ) (*Rehearsal, error) {
-	agent, err := NewAgent(ctx, learning.NewGrid(), books, pair, fee, initial, record)
+	agent, err := NewAgent(ctx, learning.NewGrid(), books, price, initial, record)
 	if err != nil {
 		return nil, err
 	}

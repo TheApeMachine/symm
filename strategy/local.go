@@ -7,6 +7,7 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/learning"
@@ -19,8 +20,7 @@ type LocalLearning struct {
 	*Knowledge
 	Grid                       *learning.Grid
 	books                      LearningBook
-	pair                       func(string) kraken.InstrumentPair
-	fee                        func(string) *kraken.TradeVolumeFee
+	price                      *broker.Price
 	initial                    *decimal.Decimal
 	Record                     func(hindsight.LearningEvent) error
 	markets                    map[string]*learningMarket
@@ -31,7 +31,7 @@ type LocalLearning struct {
 
 /* advance uses one coherent current book for all independent virtual wallets. */
 func (local *LocalLearning) advance(message kraken.Level3Data, capture hindsight.CaptureIdentity) error {
-	pair := local.pair(message.Symbol)
+	pair := local.price.Instrument.Pair(message.Symbol)
 
 	if pair.Symbol != message.Symbol || !strings.Contains(message.Symbol, "/") {
 		return nil
@@ -115,7 +115,7 @@ func (local *LocalLearning) advance(message kraken.Level3Data, capture hindsight
 
 /* initialize clones known capital and venue economics, without external flows. */
 func (local *LocalLearning) initialize(market *learningMarket) error {
-	pair, fee := local.pair(market.symbol), local.fee(market.symbol)
+	pair, fee := local.price.Instrument.Pair(market.symbol), local.price.FeeIfAvailable(market.symbol)
 
 	if fee == nil || pair.Symbol == "" || pair.Symbol != market.symbol || !strings.Contains(pair.Symbol, "/") {
 		market.status = "waiting for venue economics"
@@ -134,7 +134,7 @@ func (local *LocalLearning) initialize(market *learningMarket) error {
 	for index := range market.lanes {
 		lane := &market.lanes[index]
 		lane.paper = index == len(vocabulary)
-		if err := lane.wallet.initialize(local.initial, pair, fee.Fee); err != nil {
+		if err := lane.wallet.initialize(local.initial, local.price, market.symbol); err != nil {
 			return err
 		}
 	}
@@ -163,10 +163,14 @@ func (local *LocalLearning) transition(
 		hadPending := lane.pending != 0
 
 		if hadPending {
-			quantity, gross, fee := lane.wallet.fill(book, lane.action, lane.requested, &lane.ladder)
+			quantity, gross, fee, err := lane.wallet.fill(book, lane.action, lane.requested, &lane.ladder)
+
+			if err != nil {
+				return err
+			}
 			event := lane.event(market, index, "filled", lane.pending, marketAt)
 			event.Complete = false
-			event.Quantity, event.Gross, event.Fee = quantity.FloatString(lane.wallet.pair.QtyPrecision), gross.FloatString(lane.wallet.scale), fee.FloatString(lane.wallet.scale)
+			event.Quantity, event.Gross, event.Fee = quantity.String(), gross.String(), fee.String()
 
 			if lane.action.Kind == types.ActionHold {
 				event.Kind = "waited"
@@ -184,7 +188,11 @@ func (local *LocalLearning) transition(
 			lane.pending = 0
 		}
 
-		mark, complete := lane.wallet.mark(book)
+		mark, complete, err := lane.wallet.mark(book)
+
+		if err != nil {
+			return err
+		}
 		lane.complete = complete
 
 		if !complete {
@@ -192,7 +200,7 @@ func (local *LocalLearning) transition(
 			continue
 		}
 
-		lane.equity, _ = mark.Float64()
+		lane.equity = mark.Float64()
 		lane.version++
 
 		if lane.paper {

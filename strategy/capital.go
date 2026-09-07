@@ -1,7 +1,7 @@
 package strategy
 
 import (
-	"math/big"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"slices"
 	"strings"
 	"time"
@@ -12,9 +12,6 @@ import (
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/types"
 )
-
-/* ExecutionAccount supplies authoritative account observations without venue calls. */
-type ExecutionAccount interface{ Account() AccountState }
 
 /* CapitalLearner learns allocation in a finite wallet and listens to the actual account teacher. */
 type CapitalLearner struct {
@@ -72,12 +69,10 @@ func (capital *CapitalLearner) Step(local *LocalLearning, symbol string) error {
 			return err
 		}
 	}
-	account, ok := local.execution.Desk.(ExecutionAccount)
-
-	if !ok {
+	if local.execution.Balance == nil {
 		return nil
 	}
-	actual := account.Account()
+	actual := local.execution.Account()
 
 	if err := capital.Actual.Observe(actual); err != nil {
 		return err
@@ -102,9 +97,9 @@ ranked by arrival time, a manual symbol tier or an authored portfolio score.
 func (capital *CapitalLearner) allocate(local *LocalLearning, teacher *AccountTeacher, candidates []*EntryCandidate, explore bool) error {
 	state := teacher.State
 	at := local.now()
-	cash, valid := new(big.Rat).SetString(state.Cash)
+	cash, err := decimal.NewFromString(state.Cash)
 
-	if !valid {
+	if err != nil {
 		return errnie.Error(errnie.Err(errnie.Validation, "capital: malformed authoritative cash", nil))
 	}
 	slices.SortFunc(candidates, func(left, right *EntryCandidate) int { return strings.Compare(left.Record.Symbol, right.Record.Symbol) })

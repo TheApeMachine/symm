@@ -1,8 +1,8 @@
 package strategy
 
 import (
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"math"
-	"math/big"
 	"slices"
 	"time"
 
@@ -28,12 +28,12 @@ type AccountState struct {
 func (state AccountState) Context(regions []uint64) ([]uint64, error) {
 	context := append([]uint64(nil), regions...)
 	context = append(context, 0)
-	cash, valid := new(big.Rat).SetString(state.Cash)
+	cash, err := decimal.NewFromString(state.Cash)
 
-	if !valid {
+	if err != nil {
 		return nil, errnie.Error(errnie.Err(errnie.Validation, "account: invalid authoritative cash", nil))
 	}
-	amount, _ := cash.Float64()
+	amount := cash.Float64()
 	fraction := 0.0
 
 	if state.Mark.Equity > 0 {
