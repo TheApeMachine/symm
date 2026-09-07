@@ -56,7 +56,7 @@ func (inspector *LearningInspector) view(symbol string) LearningView {
 	view := LearningView{At: inspector.now(), Symbol: symbol, Status: "waiting for market observations",
 		Steps: inspector.steps, Decisions: inspector.decisions, Resolved: inspector.resolved,
 		GridVersion: inspector.Grid.Version, Columns: len(inspector.Grid.Columns), InitialCapital: inspector.initial.String(),
-		Dispatched: inspector.dispatched, Rejected: inspector.rejected, HorizonEpochs: horizonEpochs,
+		Dispatched: inspector.dispatched, Rejected: inspector.rejected,
 		Influence: inspector.attribution.report(inspector.Grid.Columns)}
 
 	view.Warmup = inspector.Warmed
@@ -154,7 +154,24 @@ func (inspector *LearningInspector) view(symbol string) LearningView {
 	}
 	view.Symbol, view.Status = symbol, market.status
 	view.Regions = append([]learning.Region(nil), market.regions...)
-	view.Horizon, view.EpochMean, view.Epochs = market.horizon(), market.epochMean, market.epochs
+	view.PrecursorDepth = len(market.history)
+
+	for _, pastState := range market.history {
+		var pastTokens []LearningToken
+
+		for _, conditionToken := range pastState {
+			rawID := int(conditionToken & 0xFFFF)
+			token := LearningToken{Token: conditionToken}
+
+			if rawID > 0 && rawID <= len(inspector.Grid.Columns) {
+				token.Source, token.Label = inspector.Grid.Columns[rawID-1][0], inspector.Grid.Columns[rawID-1][1]
+			}
+
+			pastTokens = append(pastTokens, token)
+		}
+
+		view.PrecursorHistory = append(view.PrecursorHistory, pastTokens)
+	}
 
 	for _, region := range market.regions {
 		token := LearningToken{Token: region.ID, Strength: region.Strength,
@@ -167,17 +184,26 @@ func (inspector *LearningInspector) view(symbol string) LearningView {
 		view.Impulse = append(view.Impulse, token)
 	}
 
-	// The last context and feasible set belong to the policy lane, which runs
-	// last. Recall never creates evidence, so inspecting it cannot train.
+	accountState := "flat"
+
+	if len(market.lanes) > 0 {
+		policyLane := &market.lanes[len(market.lanes)-1]
+		accountState = policyLane.wallet.state()
+	}
+
 	if len(market.context) > 0 {
-		selected, _, err := inspector.Knowledge.Select(symbol, market.context, market.actions, false)
+		selected, _, err := inspector.Knowledge.Select(symbol, accountState, market.context, market.actions, false)
 
 		for _, candidate := range market.actions {
+			reading := inspector.Knowledge.Reading(symbol, accountState, market.context, candidate)
 			view.Candidates = append(view.Candidates, LearningCandidate{
-				Kind: string(candidate.Kind), Power: candidate.Power, Reduce: candidate.Reduce,
+				Kind:      string(candidate.Kind),
+				Power:     candidate.Power,
+				Reduce:    candidate.Reduce,
 				Selected:  err == nil && candidate == selected,
-				Prior:     inspector.Knowledge.Reading(symbol, market.context, candidate).Selected,
-				Knowledge: inspector.Knowledge.Reading(symbol, market.context, candidate),
+				Prior:     reading.Selected,
+				Knowledge: reading,
+				Economic:  reading.Economic,
 			})
 		}
 	}

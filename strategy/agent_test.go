@@ -10,13 +10,16 @@ import (
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning"
 	markettest "github.com/theapemachine/symm/tests/market"
+	"github.com/theapemachine/symm/tests/venue"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -63,7 +66,30 @@ func agentFixture(testingTB testing.TB, record func(hindsight.LearningEvent) err
 	}
 	books := &agentBooks{current: book}
 	instrument := broker.NewInstrumentWithQuote("USD")
-	price := broker.NewPrice(nil, instrument)
+	instrument.Cache([]kraken.InstrumentPair{{
+		Symbol:       "TEST/USD",
+		Base:         "TEST",
+		Quote:        "USD",
+		Status:       "online",
+		QtyIncrement: decimal.NewFromInt64(1),
+		QtyMin:       decimal.NewFromInt64(1),
+		CostMin:      decimal.NewFromInt64(1),
+	}})
+	conn := venue.NewConn()
+	api := websocket.NewAPI(testingTB.Context(), conn, conn)
+	api.Normalizer().Update(&spot.AssetsManagerUpdate{
+		NewAssets: map[string]spot.AssetInfo{
+			"TEST": {AltName: "TEST", Decimals: 8, DisplayDecimals: 8},
+			"USD":  {AltName: "USD", Decimals: 2, DisplayDecimals: 2},
+		},
+		NewPairs: map[string]spot.AssetPair{
+			"TESTUSD": {
+				WSName: "TEST/USD", Base: "TEST", Quote: "USD",
+				PairDecimals: 2, LotDecimals: 8, LotMultiplier: 1,
+			},
+		},
+	})
+	price := broker.NewPrice(api, instrument)
 	price.SetFee("TEST/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromInt64(1)})
 	agent, err := NewAgent(testingTB.Context(), learning.NewGrid(), books,
 		price, decimal.NewFromInt64(200), record)
@@ -94,7 +120,7 @@ func TestAgentStep(t *testing.T) {
 			at := message.Timestamp
 			agent.now = func() time.Time { return at }
 			// Numeric arrival ordinal supplies a changing, directly observed input.
-			measurement.PutMetric(data.Metric[float64]{Label: "ordinal", Raw: float64(index)})
+			measurement.PutMetric(data.Metric[float64]{Label: "ordinal", Raw: float64(index % 7)})
 			So(agent.Grid.Step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
 			envelope := types.NewEnvelope(types.EnvelopeLevel3)
 			envelope.Level3Data = kraken.Level3Data{Symbol: message.Symbol, Timestamp: at}
@@ -193,10 +219,10 @@ func TestAgentGlobalSkillWindow(t *testing.T) {
 		t2 := time.Unix(120, 0)
 
 		// Market A issues decision at t0, resolves at t1.
-		idA1, errIssue := agent.Model.Issue([2]string{"BTC/USD", "virtual"}, []uint64{1}, LearningAction{Kind: types.ActionHold}, 1.0)
+		idA1, errIssue := agent.Model.Issue([2]string{"BTC/USD", "flat"}, []uint64{1}, LearningAction{Kind: types.ActionHold}, 1.0)
 		So(errIssue, ShouldBeNil)
 		marketA.at = t1
-		expA1 := learningExperience{id: idA1, at: t0, value: 200.0, authority: 1.0}
+		expA1 := learningExperience{id: idA1, at: t0, wealthBefore: 200.0, accountState: "flat", authority: 1.0}
 		err := marketA.lanes[0].resolve(agent.LocalLearning, marketA, 0, t1, []learningExperience{expA1}, false)
 		So(err, ShouldBeNil)
 		So(agent.Skill.Reading().Samples, ShouldEqual, 1)
@@ -204,10 +230,10 @@ func TestAgentGlobalSkillWindow(t *testing.T) {
 
 		Convey("Market B decision overlapping Market A's window is rejected globally", func() {
 			// Market B issues decision at t0_5 (before t1), resolves at t1_5.
-			idB1, errIssueB1 := agent.Model.Issue([2]string{"ETH/USD", "virtual"}, []uint64{1}, LearningAction{Kind: types.ActionHold}, 1.0)
+			idB1, errIssueB1 := agent.Model.Issue([2]string{"ETH/USD", "flat"}, []uint64{1}, LearningAction{Kind: types.ActionHold}, 1.0)
 			So(errIssueB1, ShouldBeNil)
 			marketB.at = t1_5
-			expB1 := learningExperience{id: idB1, at: t0_5, value: 200.0, authority: 1.0}
+			expB1 := learningExperience{id: idB1, at: t0_5, wealthBefore: 200.0, accountState: "flat", authority: 1.0}
 			err := marketB.lanes[0].resolve(agent.LocalLearning, marketB, 0, t1_5, []learningExperience{expB1}, false)
 			So(err, ShouldBeNil)
 			// Samples should still be 1 because t0_5 is before agent.Skill.window (t1).
@@ -215,10 +241,10 @@ func TestAgentGlobalSkillWindow(t *testing.T) {
 
 			Convey("Market B decision starting at or after t1 is admitted", func() {
 				// Market B issues decision at t1, resolves at t2.
-				idB2, errIssueB2 := agent.Model.Issue([2]string{"ETH/USD", "virtual"}, []uint64{1}, LearningAction{Kind: types.ActionHold}, 1.0)
+				idB2, errIssueB2 := agent.Model.Issue([2]string{"ETH/USD", "flat"}, []uint64{1}, LearningAction{Kind: types.ActionHold}, 1.0)
 				So(errIssueB2, ShouldBeNil)
 				marketB.at = t2
-				expB2 := learningExperience{id: idB2, at: t1, value: 200.0, authority: 1.0}
+				expB2 := learningExperience{id: idB2, at: t1, wealthBefore: 200.0, accountState: "flat", authority: 1.0}
 				err := marketB.lanes[0].resolve(agent.LocalLearning, marketB, 0, t2, []learningExperience{expB2}, false)
 				So(err, ShouldBeNil)
 				So(agent.Skill.Reading().Samples, ShouldEqual, 2)
@@ -275,7 +301,7 @@ func TestPolicyLaneUpdatesVirtualModel(t *testing.T) {
 		market.lanes[0].equity = 200.0
 		market.lanes[0].wallet = wallet
 		market.context = []uint64{1, 2, 0, 0}
-		market.sequence = []uint64{1, 2}
+		market.currentConditions = []uint64{1, 2}
 		agent.Grid.Column("fixture", "first")
 		agent.Grid.Column("fixture", "second")
 
@@ -298,8 +324,8 @@ func TestPolicyLaneUpdatesVirtualModel(t *testing.T) {
 			err = market.lanes[0].resolve(agent.LocalLearning, market, 0, market.at, []learningExperience{experience}, false)
 			So(err, ShouldBeNil)
 
-			// Recall under [market.symbol, "virtual"] should now have recorded evidence!
-			recalled := agent.Model.Recall([2]string{"TEST/USD", "virtual"}, market.context, experience.action)
+			// Recall under [market.symbol, "flat"] should now have recorded evidence!
+			recalled := agent.Model.Recall([2]string{"TEST/USD", "flat"}, market.context, experience.action)
 			So(recalled.Defined, ShouldBeTrue)
 			So(recalled.Samples, ShouldEqual, 1)
 		})
@@ -348,7 +374,7 @@ func TestAgentWarmup(t *testing.T) {
 		agent, _ := agentFixture(t, func(hindsight.LearningEvent) error { return nil })
 		context := []uint64{5, 12, 18}
 		action := LearningAction{Kind: types.ActionEnter, Power: 50, Reduce: false}
-		key := [2]string{"TEST/USD", "virtual"}
+		key := [2]string{"TEST/USD", "flat"}
 
 		So(agent.Model.Recall(key, context, action).Defined, ShouldBeFalse)
 		So(agent.Mode(), ShouldEqual, ModeLearning)
@@ -362,6 +388,7 @@ func TestAgentWarmup(t *testing.T) {
 				Power:     action.Power,
 				Context:   context,
 				Authority: 0.75,
+				At:        time.Unix(100, 0),
 			},
 			{
 				ID:     1,
@@ -371,6 +398,7 @@ func TestAgentWarmup(t *testing.T) {
 				Power:  action.Power,
 				Reduce: action.Reduce,
 				Target: 0.05, TargetUnit: "absolute_return_per_second",
+				At:     time.Unix(101, 0),
 			},
 			{
 				ID:        2,
@@ -393,7 +421,7 @@ func TestAgentWarmup(t *testing.T) {
 		reading := agent.Model.Recall(key, context, action)
 		So(reading.Defined, ShouldBeTrue)
 		So(reading.Samples, ShouldEqual, 1)
-		So(reading.Mean, ShouldEqual, 0.05)
+		So(reading.Rate, ShouldAlmostEqual, 0.05)
 
 		// Live skill meter must remain in learning mode: stored model provides prior boost
 		// but does not grant execution authority without live forward verification.

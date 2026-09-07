@@ -43,6 +43,10 @@ func NewAgent(
 	initial *decimal.Decimal,
 	record func(hindsight.LearningEvent) error,
 ) (*Agent, error) {
+	if grid == nil || books == nil || price == nil || initial == nil || record == nil {
+		return nil, errnie.Err(errnie.Validation, "agent: missing required dependencies", nil)
+	}
+
 	execution := &Execution{
 		Skill: NewSkillMeter(
 			AccountNone, time.Now(),

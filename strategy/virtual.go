@@ -1,8 +1,6 @@
 package strategy
 
 import (
-	"math"
-
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -60,6 +58,11 @@ func (wallet *virtualWallet) maximum(book *spotbook.Book, buy bool) (*decimal.De
 	if err != nil {
 		return nil, err
 	}
+
+	if requested.Sign() <= 0 {
+		return requested, nil
+	}
+
 	quantity, _, err := wallet.price.Walk(book, requested, broker.BUY)
 	return quantity, err
 }
@@ -166,17 +169,17 @@ func (wallet *virtualWallet) restart(initial *decimal.Decimal) *decimal.Decimal 
 	return spent
 }
 
-/* context represents exposure as a learning feature, without changing money. */
+/* state reports whether the wallet holds open inventory or flat cash. */
+func (wallet *virtualWallet) state() string {
+	if wallet.quantity.Sign() == 0 {
+		return "flat"
+	}
+
+	return "holding"
+}
+
+/* context passes through the precursor context tokens. */
 func (wallet *virtualWallet) context(sequence []uint64, book *spotbook.Book, equity float64, output []uint64) []uint64 {
 	output = append(output[:0], sequence...)
-	exposure := uint64(0)
-
-	if wallet.quantity.Sign() > 0 && equity > 0 {
-		fraction := wallet.quantity.Float64() * book.BestBid().Price.Float64() / equity
-
-		if fraction > 0 {
-			exposure = uint64(max(0, -math.Floor(math.Log2(fraction)))) + 1
-		}
-	}
-	return append(output, 0, exposure)
+	return output
 }

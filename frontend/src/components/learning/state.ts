@@ -40,6 +40,25 @@ export type Token = {
 	authority: number;
 	members: number;
 };
+export type EconomicReading = {
+	depth: number;
+	contextLength: number;
+	pending: number;
+	samples: number;
+	defined: boolean;
+	varianceDefined: boolean;
+	growthMean: number;
+	growthVariance: number;
+	timeMean: number;
+	totalGrowth: number;
+	totalTime: number;
+	rate: number;
+	support: number;
+	maturity: number;
+	evidenceAuthority: number;
+	authority: number;
+	memory: number;
+};
 export type Candidate = {
 	knowledge?: Knowledge;
 	kind: string;
@@ -47,6 +66,7 @@ export type Candidate = {
 	reduce: boolean;
 	selected: boolean;
 	prior: Prior;
+	economic?: EconomicReading;
 };
 export type Influence = {
 	token: number;
@@ -159,10 +179,12 @@ export type LearningView = {
 	execution: ExecutionStatus;
 	hasExecution: boolean;
 	forward: ForwardReview;
-	horizonNs: number;
-	horizonEpochs: number;
-	epochMean: number;
-	epochs: number;
+	precursorDepth?: number;
+	precursorHistory?: Token[][] | null;
+	horizonNs?: number;
+	horizonEpochs?: number;
+	epochMean?: number;
+	epochs?: number;
 	universe: { symbol: string; status: string; decisions: number }[] | null;
 	regions: Region[] | null;
 	points: Point[] | null;

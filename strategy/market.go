@@ -1,66 +1,105 @@
 package strategy
 
 import (
+	"slices"
+	"time"
+
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/nomagique/learning"
-	"time"
 )
 
-/* learningMarket owns persistent wallets and the latest ordered impulse. */
-type learningMarket struct {
-	symbol, status     string
-	regions            []learning.Region
-	sequence           []uint64
-	conditions         []uint64
-	authority          float64
-	opportunityHorizon time.Duration
-	lanes              []learningLane
-	context            []uint64
-	actions            []LearningAction
-	events             []hindsight.LearningEvent
-	at                 time.Time
-	seq                hindsight.CaptureSequence
-	capture            hindsight.CaptureIdentity
-	gridVersion        uint64
+/*
+FrameDelimiter is the reserved delimiter token marking temporal state transitions
+in precursor context paths. Bit 53 is distinct from ConditionToken (bit 52) and
+quantity identities (bits 4..51).
+*/
+const FrameDelimiter uint64 = 1 << 53
 
-	/*
-		epochs measures this instrument's own cadence of impulse change: the
-		mean interval between grid versions that actually moved. The decision
-		horizon is derived from it, so a fast instrument is scored over a fast
-		window and a slow one is not judged on noise.
-	*/
-	epochAt   time.Time
-	epochMean float64
-	epochs    uint64
+/*
+learningMarket owns independent per-symbol virtual wallets and the evolving
+temporal precursor history across distinct Impulse state changes.
+*/
+type learningMarket struct {
+	symbol            string
+	status            string
+	regions           []learning.Region
+	currentConditions []uint64
+	history           [][]uint64
+	authority         float64
+	lanes             []learningLane
+	context           []uint64
+	actions           []LearningAction
+	events            []hindsight.LearningEvent
+	at                time.Time
+	seq               hindsight.CaptureSequence
+	capture           hindsight.CaptureIdentity
+	gridVersion       uint64
 
 	// exposure is the policy lane's inventory history, used to judge episodes
 	// the delay line confirms after the fact.
 	exposure []exposureSpan
 }
 
-/* epoch folds one observed interval between impulse changes into the mean. */
-func (market *learningMarket) epoch(at time.Time) {
-	if !market.epochAt.IsZero() && at.After(market.epochAt) {
-		market.epochs++
-		market.epochMean += (at.Sub(market.epochAt).Seconds() - market.epochMean) / float64(market.epochs)
+/*
+AdvanceImpulse updates the market's observation state and advances the temporal
+precursor history only when the ordered active regions actually change.
+*/
+func (market *learningMarket) AdvanceImpulse(regions []learning.Region) bool {
+	conditions := make([]uint64, len(regions))
+
+	for index, region := range regions {
+		conditions[index] = region.Condition
 	}
 
-	market.epochAt = at
+	if slices.Equal(conditions, market.currentConditions) {
+		return false
+	}
+
+	if len(market.currentConditions) > 0 {
+		market.history = append(market.history, append([]uint64(nil), market.currentConditions...))
+	}
+
+	market.currentConditions = conditions
+	market.regions = append(market.regions[:0], regions...)
+
+	market.authority = 0
+	strength := 0.0
+
+	for _, region := range regions {
+		market.authority += region.Strength * region.Authority
+		strength += region.Strength
+	}
+
+	if strength > 0 {
+		market.authority /= strength
+	}
+
+	return true
 }
 
 /*
-horizon is the measured forward window every decision in this market is scored
-over. It is unavailable until an interval has actually been observed; an
-unmeasured horizon resolves nothing rather than inventing a default one.
+PrecursorContext arranges precursor history so that shorter prefixes correspond
+to shorter recent precursor histories: current impulse first (in strength order),
+followed by FRAME and previous impulses in reverse chronological order.
 */
-func (market *learningMarket) horizon() time.Duration {
-	if market.opportunityHorizon > 0 {
-		return market.opportunityHorizon
+func (market *learningMarket) PrecursorContext() []uint64 {
+	if len(market.currentConditions) == 0 {
+		return nil
 	}
 
-	if market.epochs == 0 || market.epochMean <= 0 {
-		return 0
+	size := len(market.currentConditions)
+
+	for _, past := range market.history {
+		size += 1 + len(past)
 	}
 
-	return time.Duration(market.epochMean * horizonEpochs * float64(time.Second))
+	context := make([]uint64, 0, size)
+	context = append(context, market.currentConditions...)
+
+	for index := len(market.history) - 1; index >= 0; index-- {
+		context = append(context, FrameDelimiter)
+		context = append(context, market.history[index]...)
+	}
+
+	return context
 }

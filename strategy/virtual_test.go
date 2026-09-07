@@ -1,19 +1,46 @@
 package strategy
 
 import (
+	"context"
 	"testing"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	spot "github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests/venue"
 	"github.com/theapemachine/symm/types"
 )
 
 func virtualFixture() (virtualWallet, *spotbook.Book) {
 	instrument := broker.NewInstrumentWithQuote("USD")
-	price := broker.NewPrice(nil, instrument)
+	instrument.Cache([]kraken.InstrumentPair{{
+		Symbol:       "TEST/USD",
+		Base:         "TEST",
+		Quote:        "USD",
+		Status:       "online",
+		QtyIncrement: decimal.NewFromInt64(1),
+		QtyMin:       decimal.NewFromInt64(1),
+		CostMin:      decimal.NewFromInt64(1),
+	}})
+	conn := venue.NewConn()
+	api := websocket.NewAPI(context.Background(), conn, conn)
+	api.Normalizer().Update(&spot.AssetsManagerUpdate{
+		NewAssets: map[string]spot.AssetInfo{
+			"TEST": {AltName: "TEST", Decimals: 8, DisplayDecimals: 8},
+			"USD":  {AltName: "USD", Decimals: 2, DisplayDecimals: 2},
+		},
+		NewPairs: map[string]spot.AssetPair{
+			"TESTUSD": {
+				WSName: "TEST/USD", Base: "TEST", Quote: "USD",
+				PairDecimals: 2, LotDecimals: 8, LotMultiplier: 1,
+			},
+		},
+	})
+	price := broker.NewPrice(api, instrument)
 	price.SetFee("TEST/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromInt64(1)})
 
 	wallet := virtualWallet{}

@@ -58,15 +58,11 @@ type LearningView struct {
 	Forward ForwardReview `json:"forward"`
 
 	/*
-		Horizon is the forward window every decision in this market is scored
-		over, derived from Epochs observed impulse changes averaging EpochMean
-		seconds. Until an interval has been observed the horizon is zero and
-		nothing resolves.
+		Precursor represents the temporal history of Impulse state changes
+		leading to the current decision.
 	*/
-	Horizon       time.Duration `json:"horizonNs"`
-	HorizonEpochs int           `json:"horizonEpochs"`
-	EpochMean     float64       `json:"epochMean"`
-	Epochs        uint64        `json:"epochs"`
+	PrecursorDepth   int               `json:"precursorDepth"`
+	PrecursorHistory [][]LearningToken `json:"precursorHistory,omitempty"`
 
 	/*
 		Impulse is the ordered context the next decision is conditioned on,
@@ -108,6 +104,7 @@ type LearningCandidate struct {
 	Reduce    bool                  `json:"reduce"`
 	Selected  bool                  `json:"selected"`
 	Prior     learning.PriorReading `json:"prior"`
+	Economic  EconomicReading       `json:"economic"`
 }
 
 /* LearningSummary locates active independent contexts without combining capital. */

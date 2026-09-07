@@ -26,7 +26,7 @@ func TestCapitalHistoryWarmup(t *testing.T) {
 		So(reading.Mean, ShouldEqual, 0.1)
 		So(reading.Depth, ShouldEqual, 3)
 		So(reading.Pending, ShouldEqual, 0)
-		So(knowledge.Reading("A/USD", nil, LearningAction{Kind: types.ActionEnter}).Selected.Defined, ShouldBeFalse)
+		So(knowledge.Reading("A/USD", "flat", nil, LearningAction{Kind: types.ActionEnter}).Selected.Defined, ShouldBeFalse)
 		Convey("Legacy buy labels without execution proof remain unverified", func() {
 			issued.Mode, resolved.Mode, resolved.Allocation = "capital_account", "capital_account", nil
 			count, err := history.Warmup([]hindsight.LearningEvent{issued, resolved})

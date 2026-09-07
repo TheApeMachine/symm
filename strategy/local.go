@@ -52,26 +52,8 @@ func (local *LocalLearning) advance(message kraken.Level3Data, capture hindsight
 		return nil
 	}
 
-	market.regions = append(market.regions[:0], regions...)
-	market.authority = 0
-	strength := 0.0
-	for _, region := range regions {
-		market.authority += region.Strength * region.Authority
-		strength += region.Strength
-	}
-	if strength > 0 {
-		market.authority /= strength
-	}
-	market.opportunityHorizon = local.Knowledge.Horizons[message.Symbol]
-	market.context = market.context[:0]
-	market.conditions = market.conditions[:0]
-	for _, region := range regions {
-		market.context = append(market.context, region.ID)
-		market.conditions = append(market.conditions, region.Condition)
-	}
-	changed := market.gridVersion != version
+	changed := market.AdvanceImpulse(regions)
 	market.gridVersion = version
-	market.sequence = append(market.sequence[:0], market.context...)
 	market.events = market.events[:0]
 	market.status = "waiting for executable book"
 
@@ -154,10 +136,6 @@ func (local *LocalLearning) transition(
 	marketAt time.Time,
 	changed bool,
 ) error {
-	if changed {
-		market.epoch(market.at)
-	}
-
 	for index := range market.lanes {
 		lane := &market.lanes[index]
 		hadPending := lane.pending != 0
@@ -226,7 +204,7 @@ func (local *LocalLearning) transition(
 			event.Profit, event.Complete, event.ValuedAt = outcome.TotalReward, true, market.at
 		}
 
-		if err := lane.settle(local, market, index, marketAt, market.horizon()); err != nil {
+		if err := lane.settle(local, market, index, marketAt, changed); err != nil {
 			return err
 		}
 
@@ -240,7 +218,7 @@ func (local *LocalLearning) transition(
 			continue
 		}
 
-		if len(market.sequence) == 0 && lane.wallet.quantity.Sign() == 0 {
+		if len(market.currentConditions) == 0 && lane.wallet.quantity.Sign() == 0 {
 			continue
 		}
 

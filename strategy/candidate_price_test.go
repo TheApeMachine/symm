@@ -34,6 +34,15 @@ func TestEntryCandidateReprice(t *testing.T) {
 		books := &agentBooks{current: book}
 
 		instrument := broker.NewInstrumentWithQuote("USD")
+		instrument.Cache([]kraken.InstrumentPair{{
+			Symbol:       "TEST/USD",
+			Base:         "TEST",
+			Quote:        "USD",
+			Status:       "online",
+			QtyIncrement: decimal.NewFromInt64(1),
+			QtyMin:       decimal.NewFromInt64(1),
+			CostMin:      decimal.NewFromInt64(1),
+		}})
 		price := broker.NewPrice(nil, instrument)
 		fee := kraken.TradeVolumeFee{Fee: decimal.NewFromInt64(1)}
 		price.SetFee("TEST/USD", fee)

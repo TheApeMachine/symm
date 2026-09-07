@@ -239,18 +239,6 @@ func (capital *CapitalLearner) horizon(local *LocalLearning, teacher *AccountTea
 			horizon, source = remaining, "earliest viable candidate expiry"
 		}
 	}
-	for symbol := range teacher.State.Positions {
-		market := local.markets[symbol]
-
-		if market == nil {
-			continue
-		}
-		measured := market.horizon()
-
-		if measured > 0 && (horizon == 0 || measured < horizon) {
-			horizon, source = measured, "held exposure horizon"
-		}
-	}
 
 	if horizon == 0 {
 		horizon = teacher.Outcome.Elapsed

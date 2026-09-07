@@ -133,13 +133,13 @@ func (portfolio *VirtualPortfolio) Step(local *LocalLearning, market *learningMa
 	position.value = mark
 	portfolio.marked = portfolio.marked.Add(position.value)
 	state := portfolio.Snapshot(market.at)
-	context := position.wallet.context(market.sequence, book, state.Mark.Equity, nil)
+	context := position.wallet.context(market.PrecursorContext(), book, state.Mark.Equity, nil)
 	actions, err := position.wallet.actions(book, nil)
 
 	if err != nil {
 		return err
 	}
-	action, _, err := local.Knowledge.Select(market.symbol, context, actions, false)
+	action, _, err := local.Knowledge.Select(market.symbol, position.wallet.state(), context, actions, false)
 
 	if err != nil {
 		return err

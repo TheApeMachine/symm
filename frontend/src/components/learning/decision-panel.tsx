@@ -121,11 +121,13 @@ the other members of that basin are not listed individually.
 export const ImpulsePanel = ({ view }: { view: LearningView | null }) => (
 	<Section fit="content">
 		<Section.Header
-			title="Current impulse"
+			title="Current impulse & precursor history"
 			meta={
-				view?.horizonNs
-					? `scored over ${duration(view.horizonNs)} · ${view.horizonEpochs} epochs of ${(view.epochMean ?? 0).toFixed(2)}s`
-					: "horizon not measured yet"
+				view?.precursorDepth !== undefined && view.precursorDepth > 0
+					? `precursor depth ${view.precursorDepth} · ${(view.precursorHistory?.length ?? 0) + 1} states`
+					: view?.horizonNs
+					? `scored over ${duration(view.horizonNs)}`
+					: "causal precursor active"
 			}
 		/>
 		<Section.Body className="overflow-x-auto">
@@ -192,7 +194,8 @@ export const CandidatePanel = ({ view }: { view: LearningView | null }) => (
 					<tr>
 						{[
 							"Action",
-							"Mean",
+							"Rate",
+							"Wealth / Time",
 							"Dispersion",
 							"Support",
 							"Authority",
@@ -206,45 +209,52 @@ export const CandidatePanel = ({ view }: { view: LearningView | null }) => (
 					</tr>
 				</thead>
 				<tbody>
-					{view?.candidates?.map((candidate) => (
-						<tr
-							key={`${candidate.kind}-${candidate.power}-${candidate.reduce}`}
-							className={`border-(--line) border-t ${candidate.selected ? "bg-[color:color-mix(in_srgb,var(--acc)_8%,transparent)]" : ""}`}
-						>
-							<td className="p-3 text-(--acc)">
-								{action(candidate.kind, candidate.power, candidate.reduce)}
-							</td>
-							<td className="p-3">
-								{candidate.prior.Defined
-									? `${basis(candidate.prior.Mean)}/s`
-									: "no evidence"}
-							</td>
-							<td className="p-3">
-								{candidate.prior.VarianceDefined
-									? `${basis(Math.sqrt(candidate.prior.Variance))}/s`
-									: "unestimable"}
-							</td>
-							<td className="p-3">{amount(candidate.prior.Support)}</td>
-							<td className="p-3">{percent(candidate.prior.Authority)}</td>
-							<td className="p-3">{candidate.prior.Samples}</td>
-							<td className="p-3">
-								{candidate.selected ? (
-									<Badge label="policy choice" variant="success" size="xs" />
-								) : candidate.prior.VarianceDefined ? (
-									<Badge label="estimated" variant="info" size="xs" />
-								) : (
-									<Badge
-										label="exploration target"
-										variant="warning"
-										size="xs"
-									/>
-								)}
-							</td>
-						</tr>
-					))}
+					{view?.candidates?.map((candidate) => {
+						const hasRate = candidate.economic?.defined || candidate.prior?.Defined;
+						const rateVal = candidate.economic?.rate ?? candidate.prior?.Mean ?? 0;
+						return (
+							<tr
+								key={`${candidate.kind}-${candidate.power}-${candidate.reduce}`}
+								className={`border-(--line) border-t ${candidate.selected ? "bg-[color:color-mix(in_srgb,var(--acc)_8%,transparent)]" : ""}`}
+							>
+								<td className="p-3 text-(--acc)">
+									{action(candidate.kind, candidate.power, candidate.reduce)}
+								</td>
+								<td className="p-3">
+									{hasRate ? `${basis(rateVal)}/s` : "no evidence"}
+								</td>
+								<td className="p-3 text-(--f3)">
+									{candidate.economic?.defined
+										? `${percent(candidate.economic.growthMean)} / ${(candidate.economic.timeMean).toFixed(1)}s`
+										: "—"}
+								</td>
+								<td className="p-3">
+									{candidate.economic?.varianceDefined || candidate.prior?.VarianceDefined
+										? `${basis(Math.sqrt(candidate.economic?.growthVariance ?? candidate.prior.Variance))}`
+										: "unestimable"}
+								</td>
+								<td className="p-3">{amount(candidate.economic?.support ?? candidate.prior.Support)}</td>
+								<td className="p-3">{percent(candidate.economic?.authority ?? candidate.prior.Authority)}</td>
+								<td className="p-3">{candidate.economic?.samples ?? candidate.prior.Samples}</td>
+								<td className="p-3">
+									{candidate.selected ? (
+										<Badge label="policy choice" variant="success" size="xs" />
+									) : (candidate.economic?.varianceDefined ?? candidate.prior.VarianceDefined) ? (
+										<Badge label="estimated" variant="info" size="xs" />
+									) : (
+										<Badge
+											label="exploration target"
+											variant="warning"
+											size="xs"
+										/>
+									)}
+								</td>
+							</tr>
+						);
+					})}
 					{!view?.candidates?.length && (
 						<tr>
-							<td className="p-3 text-(--f3)" colSpan={7}>
+							<td className="p-3 text-(--f3)" colSpan={8}>
 								No executable action set yet — the book has not offered a
 								feasible quantity.
 							</td>

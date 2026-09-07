@@ -155,7 +155,7 @@ func (execution *Execution) Propose(local *LocalLearning, market *learningMarket
 		return err
 	}
 
-	if action.Kind == types.ActionHold || requested == nil || requested.Sign() <= 0 || market.horizon() <= 0 {
+	if action.Kind == types.ActionHold || requested == nil || requested.Sign() <= 0 {
 		return nil
 	}
 	lane := &market.lanes[len(market.lanes)-1]
@@ -174,12 +174,15 @@ func (execution *Execution) Propose(local *LocalLearning, market *learningMarket
 		Action: string(action.Kind), Power: action.Power, At: market.at, MarketAt: marketAt, Capture: market.capture,
 		GridVersion: market.gridVersion, Context: append([]uint64(nil), market.context...),
 		Scope: reading.Scope, Global: reading.Global, SymbolPrior: reading.Symbol, Prior: reading.Selected,
-		Quantity: requested.String(), Notional: cost.String(), Reference: book.Asks.Low.Price.String(),
-		Horizon: market.horizon()}
+		Quantity: requested.String(), Notional: cost.String(), Reference: book.Asks.Low.Price.String()}
 	record.Authority = market.authority
 
-	for _, token := range market.sequence {
-		record.Quantities = append(record.Quantities, local.Grid.Columns[token-1])
+	for _, token := range market.currentConditions {
+		rawID := int(token & 0xFFFF)
+
+		if rawID > 0 && rawID <= len(local.Grid.Columns) {
+			record.Quantities = append(record.Quantities, local.Grid.Columns[rawID-1])
+		}
 	}
 
 	if execution.Balance != nil {
@@ -418,13 +421,13 @@ func (execution *Execution) Reduce(local *LocalLearning, market *learningMarket,
 	}
 	wallet.cash = zero
 	wallet.quantity = quantity
-	context := wallet.context(market.sequence, book, state.Mark.Equity, nil)
+	context := wallet.context(market.PrecursorContext(), book, state.Mark.Equity, nil)
 	actions, err := wallet.actions(book, nil)
 
 	if err != nil {
 		return err
 	}
-	action, _, err := local.Knowledge.Select(market.symbol, context, actions, false)
+	action, _, err := local.Knowledge.Select(market.symbol, wallet.state(), context, actions, false)
 
 	if err != nil {
 		return err

@@ -13,23 +13,23 @@ import (
 func TestKnowledgeReading(t *testing.T) {
 	Convey("Given continuously trained global and symbol-specific paths", t, func() {
 		knowledge := NewKnowledge(learning.NewGrid())
-		knowledge.Model = learning.NewModel[[2]string, LearningAction](8)
+		knowledge.Model = NewEconomicModel(8)
 		action := LearningAction{Kind: types.ActionEnter}
 		context := []uint64{438, 516, 91}
 		train := func(symbol string, outcome float64, count int) {
 			for range count {
-				ticket, err := knowledge.Issue(symbol, context, action, 1)
+				ticket, err := knowledge.Issue(symbol, "flat", context, action, 1)
 				So(err, ShouldBeNil)
-				_, err = knowledge.Model.Resolve(ticket, outcome)
+				_, err = knowledge.Model.Resolve(ticket, outcome, time.Second)
 				So(err, ShouldBeNil)
 			}
 		}
 		train("A/USD", 1, 30)
-		Convey("Another instrument consumes the global path, including reordered and subset contexts", func() {
-			for _, query := range [][]uint64{context, {516, 438, 91}, {438, 516}, {999}} {
-				reading := knowledge.Reading("B/USD", query, action)
+		Convey("Another instrument consumes the global path, including prefix backoff contexts", func() {
+			for _, query := range [][]uint64{context, {438, 516}, {438}, {999}} {
+				reading := knowledge.Reading("B/USD", "flat", query, action)
 				So(reading.Scope, ShouldEqual, "global")
-				So(reading.Selected.Mean, ShouldAlmostEqual, 1)
+				So(reading.Economic.Rate, ShouldAlmostEqual, 1)
 				So(reading.Selected.Samples, ShouldEqual, 30)
 				expected := min(3, len(query))
 
@@ -41,36 +41,36 @@ func TestKnowledgeReading(t *testing.T) {
 		})
 		Convey("Sparse local contradiction yields to mature shared evidence", func() {
 			train("B/USD", -1, 2)
-			reading := knowledge.Reading("B/USD", context, action)
+			reading := knowledge.Reading("B/USD", "flat", context, action)
 			So(reading.Scope, ShouldEqual, "global")
 			So(reading.Symbol.Samples, ShouldEqual, 2)
 		})
 		Convey("Current supported local evidence specializes, then yields when dormant", func() {
 			train("B/USD", -1, 20)
-			reading := knowledge.Reading("B/USD", context, action)
+			reading := knowledge.Reading("B/USD", "flat", context, action)
 			So(reading.Scope, ShouldEqual, "symbol")
-			So(reading.Selected.Mean, ShouldAlmostEqual, -1)
+			So(reading.Economic.Rate, ShouldAlmostEqual, -1)
 			So(reading.Selected.Samples, ShouldEqual, 20)
 			// Activity in B itself ages B's entry evidence; unrelated A cannot.
 			for range 80 {
-				So(knowledge.Model.Observe([2]string{"B/USD", "virtual"}, nil, LearningAction{Kind: types.ActionHold}, 0, 1), ShouldBeNil)
+				So(knowledge.Model.Observe([2]string{"B/USD", "flat"}, nil, LearningAction{Kind: types.ActionHold}, 0, 1, 1, [2]string{"", "flat"}), ShouldBeNil)
 			}
 			train("A/USD", 1, 80)
-			reading = knowledge.Reading("B/USD", context, action)
+			reading = knowledge.Reading("B/USD", "flat", context, action)
 			So(reading.Scope, ShouldEqual, "global")
 			So(reading.Symbol.EvidenceAuthority, ShouldBeLessThan, reading.Global.EvidenceAuthority)
 		})
 		Convey("One experience trains both scopes but never doubles its selected sample count", func() {
-			reading := knowledge.Reading("A/USD", context, action)
+			reading := knowledge.Reading("A/USD", "flat", context, action)
 			So(reading.Global.Samples, ShouldEqual, 30)
 			So(reading.Symbol.Samples, ShouldEqual, 30)
 			So(reading.Selected.Samples, ShouldEqual, 30)
-			ticket, err := knowledge.Issue("A/USD", context, action, 1)
+			ticket, err := knowledge.Issue("A/USD", "flat", context, action, 1)
 			So(err, ShouldBeNil)
-			So(knowledge.Reading("A/USD", context, action).Selected.Pending, ShouldEqual, 1)
-			_, err = knowledge.Model.Resolve(ticket, 1)
+			So(knowledge.Reading("A/USD", "flat", context, action).Selected.Pending, ShouldEqual, 1)
+			_, err = knowledge.Model.Resolve(ticket, 1, time.Second)
 			So(err, ShouldBeNil)
-			So(knowledge.Reading("A/USD", context, action).Selected.Pending, ShouldEqual, 0)
+			So(knowledge.Reading("A/USD", "flat", context, action).Selected.Pending, ShouldEqual, 0)
 		})
 	})
 }
@@ -91,11 +91,11 @@ func TestKnowledgeWarmup(t *testing.T) {
 		report, err := knowledge.Warmup(events)
 		So(err, ShouldBeNil)
 		So(report.Resolved, ShouldEqual, 2)
-		reading := knowledge.Reading("C/USD", []uint64{2, 0, 2}, LearningAction{Kind: types.ActionEnter})
-		So(reading.Selected.Mean, ShouldAlmostEqual, 0.1)
+		reading := knowledge.Reading("C/USD", "flat", []uint64{2, 0, 2}, LearningAction{Kind: types.ActionEnter})
+		So(reading.Economic.Rate, ShouldAlmostEqual, 0.1)
 		So(reading.Selected.Depth, ShouldEqual, 3)
 		So(reading.Selected.Pending, ShouldEqual, 0)
-		So(knowledge.Reading("A/USD", nil, LearningAction{Kind: types.ActionEnter}).Symbol.Samples, ShouldEqual, 1)
+		So(knowledge.Reading("A/USD", "flat", nil, LearningAction{Kind: types.ActionEnter}).Symbol.Samples, ShouldEqual, 1)
 	})
 }
 
@@ -114,8 +114,8 @@ func TestKnowledgeWarmupAbsoluteTargets(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(report.Resolved, ShouldEqual, 1)
 		So(report.TargetUnavailable, ShouldEqual, 1)
-		So(knowledge.Reading("TEST/USD", nil, LearningAction{Kind: types.ActionHold}).Selected.Mean, ShouldEqual, 0)
-		So(knowledge.Reading("TEST/USD", nil, LearningAction{Kind: types.ActionEnter}).Selected.Defined, ShouldBeFalse)
+		So(knowledge.Reading("TEST/USD", "flat", nil, LearningAction{Kind: types.ActionHold}).Economic.Rate, ShouldEqual, 0)
+		So(knowledge.Reading("TEST/USD", "flat", nil, LearningAction{Kind: types.ActionEnter}).Selected.Defined, ShouldBeFalse)
 	})
 }
 
@@ -124,14 +124,14 @@ func BenchmarkKnowledgeSelect(b *testing.B) {
 	actions := []LearningAction{{Kind: types.ActionHold}, {Kind: types.ActionEnter}}
 	for _, action := range actions {
 		for range 16 {
-			if err := knowledge.Model.Observe([2]string{"A/USD", "virtual"}, []uint64{1, 2, 3}, action, 0.01, 1, [2]string{"", "virtual"}); err != nil {
+			if err := knowledge.Model.Observe([2]string{"A/USD", "flat"}, []uint64{1, 2, 3}, action, 0.01, 1, 1, [2]string{"", "flat"}); err != nil {
 				b.Fatal(err)
 			}
 		}
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, _, err := knowledge.Select("B/USD", []uint64{2, 1, 3}, actions, false); err != nil {
+		if _, _, err := knowledge.Select("B/USD", "flat", []uint64{2, 1, 3}, actions, false); err != nil {
 			b.Fatal(err)
 		}
 	}
