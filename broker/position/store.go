@@ -279,15 +279,6 @@ func (store *Store) Sync() error {
 	return <-fence
 }
 
-/* Failed returns a notification channel closed when asynchronous persistence fails. */
-func (store *Store) Failed() <-chan struct{} {
-	if store == nil {
-		return nil
-	}
-
-	return store.failed
-}
-
 /* Error returns the persistent error causing store failure, if any. */
 func (store *Store) Error() error {
 	if store == nil {

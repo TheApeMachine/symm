@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
-	"time"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/callback"
@@ -160,13 +159,4 @@ func (conn *Conn) Books() *sync.Map {
 	}
 
 	return &sync.Map{}
-}
-
-func Order(id, price, qty string) kraken.Level3Order {
-	return kraken.Level3Order{
-		OrderID:    id,
-		LimitPrice: Decimal(price),
-		OrderQty:   Decimal(qty),
-		Timestamp:  time.Now().UTC(),
-	}
 }
