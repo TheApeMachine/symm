@@ -75,11 +75,9 @@ type Solver struct {
 	// one reader, it owns its state outright, and none of it needs a lock.
 	loaded map[int64]struct{}
 
-	// reading is the lean advance readout — resident population size and the
-	// scalar Reading — published onto every Level3 envelope. One goroutine
-	// publishes it and one reads it, so it is swapped as a pointer rather than
-	// guarded. The resident particles and grid fields are never retained:
-	// Snapshot materializes them fresh, and only for a connected viewer.
+	// reading publishes immutable particle and spectral state once per advance.
+	// Level3 envelopes share this pointer; the larger Eulerian grid fields are
+	// materialized only by Snapshot for a connected viewer.
 	reading atomic.Pointer[State]
 	version uint64 // Owned by advanceMu, together with the published reading.
 
@@ -605,11 +603,7 @@ func (solver *Solver) Advance() *State {
 		return nil
 	}
 
-	solver.version++
-	reading := State{At: time.Now(), Version: solver.version}
-	reading.State.N = state.N
-	reading.Reading = solver.physics.Reading()
-	solver.reading.Store(&reading)
+	reading := solver.publishReading(state)
 	solver.advanceMu.Unlock()
 
 	if solver.ObserveModule != nil {
@@ -618,13 +612,36 @@ func (solver *Solver) Advance() *State {
 
 	solver.publish()
 
+	return reading
+}
+
+/*
+publishReading freezes one completed advance for downstream consumers. The
+caller holds advanceMu; publication never includes the Eulerian grid arrays.
+*/
+func (solver *Solver) publishReading(state *sensorium.State) *State {
+	modeOmega, modeReal, modeImag, modeLinewidth := solver.physics.SpectralModes()
+	modes := make([]WaveMode, len(modeOmega))
+
+	for index := range modeOmega {
+		modes[index] = WaveMode{
+			Omega: modeOmega[index], Real: modeReal[index],
+			Imag: modeImag[index], Linewidth: modeLinewidth[index],
+		}
+	}
+
+	solver.version++
+	reading := State{
+		At: time.Now(), Version: solver.version,
+		State: cloneState(state), Reading: solver.physics.Reading(), Modes: modes,
+	}
+	solver.reading.Store(&reading)
 	return &reading
 }
 
 /*
-Reading returns the lean readout of the latest advance: the resident population
-size and the scalar Reading, with no particle or field arrays. It is what rides
-the envelope.
+Reading returns the immutable particle, spectral and scalar readout of the
+latest advance. Eulerian grid fields remain exclusive to Snapshot.
 */
 func (solver *Solver) Reading() *State {
 	return solver.reading.Load()
@@ -733,18 +750,13 @@ func (solver *Solver) Crystallize(
 		solver.enforceBoundaryConditions(batch, clampedSnapshot)
 	}
 
-	reading := State{}
+	var reading *State
 
 	if state != nil && state.N != 0 {
-		solver.version++
-		reading.At = time.Now()
-		reading.Version = solver.version
-		reading.State.N = state.N
-		reading.Reading = solver.physics.Reading()
-		solver.reading.Store(&reading)
+		reading = solver.publishReading(state)
 	}
 
-	return solver.extractCrystallizedProbes(batch), &reading
+	return solver.extractCrystallizedProbes(batch), reading
 }
 
 /*
@@ -910,9 +922,9 @@ func (solver *Solver) extractCrystallizedProbes(batch *sensorium.State) []float6
 
 /*
 Snapshot materializes the resident particles and fields for one published
-frame. Nothing here is retained: PackFields gathers straight into the slices
-this snapshot hands out, so the solver holds no field-sized state between
-frames and a run with no viewer allocates none of it.
+frame. It reuses the published immutable particles and modes; PackFields gathers
+the Eulerian grids only for this snapshot, so a run with no viewer allocates
+none of those grid arrays.
 */
 func (solver *Solver) Snapshot() *State {
 	if solver == nil || solver.physics == nil {
@@ -943,21 +955,10 @@ func (solver *Solver) Snapshot() *State {
 		waveReal,
 		waveImag,
 	)
-	modeOmega, modeReal, modeImag, modeLinewidth := solver.physics.SpectralModes()
-	modes := make([]WaveMode, len(modeOmega))
-
-	for index := range modeOmega {
-		modes[index] = WaveMode{
-			Omega:     modeOmega[index],
-			Real:      modeReal[index],
-			Imag:      modeImag[index],
-			Linewidth: modeLinewidth[index],
-		}
-	}
 
 	return &State{
-		State:         cloneState(state),
-		Reading:       solver.physics.Reading(),
+		State:         reading.State,
+		Reading:       reading.Reading,
 		At:            reading.At,
 		Version:       reading.Version,
 		GridX:         gridX,
@@ -972,7 +973,7 @@ func (solver *Solver) Snapshot() *State {
 		MomentumScale: momentumScale,
 		EnergyScale:   energyScale,
 		WaveScale:     waveScale,
-		Modes:         modes,
+		Modes:         reading.Modes,
 	}
 }
 

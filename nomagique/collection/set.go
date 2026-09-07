@@ -2,7 +2,6 @@ package collection
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"math"
 	"slices"
@@ -17,7 +16,7 @@ type Set[T any] struct {
 }
 
 func NewSet[T any](index, value core.Primitive) *Set[T] {
-	return &Set[T]{index: index, value: value, seed: transport.NewIO(core.From([]T{})), current: store.NewRetained(nil)}
+	return &Set[T]{index: index, value: value, seed: transport.NewIO(core.From([]T{}))}
 }
 func (set *Set[T]) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(
@@ -56,7 +55,9 @@ func (set *Set[T]) Next(in core.Primitive) core.Primitive {
 		},
 		set,
 	)
-	transport.NewDiscard().Next(transport.NewApply(set.current, transport.NewIO(result)))
+	if result != nil {
+		set.current = result
+	}
 	return result
 }
 func (set *Set[T]) Read() any { return core.To[any](set.current) }

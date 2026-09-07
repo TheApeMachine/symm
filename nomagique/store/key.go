@@ -15,7 +15,7 @@ type Key[K comparable] struct {
 }
 
 func NewKey[K comparable](key K) *Key[K] {
-	return &Key[K]{current: NewRetained(nil), key: key, seed: transport.NewIO(core.From(map[K]core.Primitive{}))}
+	return &Key[K]{key: key, seed: transport.NewIO(core.From(map[K]core.Primitive{}))}
 }
 func (key *Key[K]) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(
@@ -26,7 +26,9 @@ func (key *Key[K]) Next(in core.Primitive) core.Primitive {
 		},
 		key,
 	)
-	transport.NewDiscard().Next(transport.NewApply(key.current, transport.NewIO(result)))
+	if result != nil {
+		key.current = result
+	}
 	return result
 }
 func (key *Key[K]) Read() any { return core.To[any](key.current) }

@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -49,19 +48,6 @@ type PositionStore struct {
 	errorMu   sync.RWMutex
 	err       error
 	batchSize int
-	shedCount uint64
-}
-
-/*
-ShedCount reports how many position write operations were dropped because the
-queue was saturated.
-*/
-func (store *PositionStore) ShedCount() uint64 {
-	if store == nil {
-		return 0
-	}
-
-	return atomic.LoadUint64(&store.shedCount)
 }
 
 /*

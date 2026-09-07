@@ -18,7 +18,7 @@ type ErrorNode interface {
 /*
 BacklogStepper is a Node that also wants to know how many slots behind the
 Workload's producer this call is running — real ring pressure, read from the
-same sequence numbers the disruptor itself uses for backpressure, never
+same sequence numbers the ring itself uses for backpressure, never
 estimated. A node opts in by implementing StepBacklog in addition to Step;
 Consumer favors StepBacklog when present and falls back to Step otherwise, so
 every existing Node implementation is unaffected.

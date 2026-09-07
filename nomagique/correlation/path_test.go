@@ -1,6 +1,7 @@
 package correlation_test
 
 import (
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/collection"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/correlation"
@@ -8,6 +9,41 @@ import (
 	"github.com/theapemachine/symm/nomagique/tests"
 	"testing"
 )
+
+func TestPathUpdate(t *testing.T) {
+	Convey("Given an append-only timestamped path with previously emitted slices", t, func() {
+		path := &correlation.Path{}
+		retained := make([][]core.Primitive, 0, 32)
+
+		for at := int64(1); at <= 32; at++ {
+			fields, err := path.Update(map[string]core.Primitive{
+				"at": core.From(at), "value": core.From(float64(at)),
+			})
+			So(err, ShouldBeNil)
+			observations := core.To[[]core.Primitive](fields["observations"])
+			So(cap(observations), ShouldEqual, len(observations))
+			retained = append(retained, observations)
+		}
+
+		Convey("Restating and extending the path preserve every earlier observation", func() {
+			for _, at := range []int64{32, 33, 34} {
+				_, err := path.Update(map[string]core.Primitive{
+					"at": core.From(at), "value": core.From(-float64(at)),
+				})
+				So(err, ShouldBeNil)
+			}
+
+			for index, observations := range retained {
+				So(len(observations), ShouldEqual, index+1)
+
+				for offset, observation := range observations {
+					fields := core.To[map[string]core.Primitive](observation)
+					So(core.To[float64](fields["value"]), ShouldEqual, offset+1)
+				}
+			}
+		})
+	})
+}
 
 func TestPathNext(t *testing.T) {
 	path := correlation.NewPath()

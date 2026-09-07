@@ -16,6 +16,7 @@ type Book struct {
 }
 
 func NewMarket() *Market {
+	viper.SetDefault("market.quote_currency", "USD")
 	viper.SetDefault("market.instrument.excluded", []string{
 		"USD", "EUR", "GBP", "AUD", "CAD", "CHF", "JPY", "NZD",
 		"USDT", "USDC", "DAI", "PYUSD", "FDUSD", "TUSD", "USDG",

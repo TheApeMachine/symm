@@ -54,14 +54,11 @@ func NewLeadLag(estimator core.Primitive) core.Primitive {
 		store.NewRecord(transport.NewPipe(),
 			transport.NewPipe(equation.NewAll(
 				equation.NewGreater[float64](transport.NewPipe(store.NewGet("correlation"), calculus.NewAbsolute(transport.NewIO(core.From(0.0)))), store.NewGet("search_scale")),
-				equation.NewGreater[float64](store.NewGet("absolute_gain"), store.NewConstant(core.From(0.0)))), store.NewKey("leads")),
-			transport.NewPipe(equation.NewRatio[float64](store.NewGet("x"),
-				equation.NewProduct[float64](store.NewGet("spacing"), store.NewConstant(core.From(1e-9)))), store.NewKey("lag_index"))),
+				equation.NewGreater[float64](store.NewGet("absolute_gain"), store.NewConstant(core.From(0.0)))), store.NewKey("leads"))),
 		store.NewRecord(transport.NewPipe(),
 			transport.NewPipe(logic.NewGate(store.NewGet("leads"),
 				equation.NewRatio[float64](transport.NewPipe(store.NewGet("lag_index"), calculus.NewAbsolute(transport.NewIO(core.From(0.0)))), store.NewGet("span")),
-				store.NewConstant(core.From(0.0))), store.NewKey("lag_fraction")),
-			transport.NewPipe(equation.NewSum[float64](store.NewGet("lag_index"), store.NewGet("span")), store.NewKey("index"))),
+				store.NewConstant(core.From(0.0))), store.NewKey("lag_fraction"))),
 		peak,
 		NewLagShape(profile, peak),
 	)

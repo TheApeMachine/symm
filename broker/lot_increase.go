@@ -69,8 +69,7 @@ func (increase *LotIncrease) Place(decision types.Decision) error {
 }
 
 /*
-	Apply incorporates only new cumulative quantity/cost/fees, preserving the
-
+Apply incorporates only new cumulative quantity/cost/fees, preserving the
 remaining lot's basis through partial fills and repeated execution messages.
 */
 func (increase *LotIncrease) Apply(execution kraken.ExecutionData) (bool, error) {

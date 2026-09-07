@@ -3,44 +3,63 @@ package leadlag
 import (
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
-	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/temporal"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 // A pipeline belongs to an ordered symbol pair. Undefined searches do not
 // advance its histories; observations from another peer cannot train them.
 type pipeline struct {
-	progress   core.Primitive
-	projection *data.Projection
+	histories  [3]*adaptive.Baseline
+	velocities [2]temporal.Velocity
 }
 
+const (
+	lagHistory = iota
+	gainHistory
+	correlationHistory
+)
+
 func newPipeline() *pipeline {
-	path := func(names ...string) core.Primitive {
-		nodes := make([]core.Primitive, len(names))
-		for i, name := range names {
-			nodes[i] = store.NewGet(name)
-		}
-		return transport.NewPipe(nodes...)
+	return &pipeline{histories: [3]*adaptive.Baseline{
+		adaptive.NewBaseline(adaptive.NewWindow()),
+		adaptive.NewBaseline(adaptive.NewWindow()),
+		adaptive.NewBaseline(adaptive.NewWindow()),
+	}}
+}
+
+var historyPaths = [3][1]string{{"x"}, {"absolute_gain"}, {"correlation"}}
+
+/* Observe advances only the causal state owned by this ordered pair. */
+func (pipeline *pipeline) Observe(pair map[string]core.Primitive, at int64) error {
+	decoder := core.NewDecoder(pair)
+	values := [3]float64{
+		core.Decode[float64](decoder, historyPaths[lagHistory][:]...),
+		core.Decode[float64](decoder, historyPaths[gainHistory][:]...),
+		core.Decode[float64](decoder, historyPaths[correlationHistory][:]...),
 	}
-	field := func(name string, node core.Primitive) core.Primitive {
-		return transport.NewPipe(node, store.NewKey(name))
+
+	if err := decoder.Error(); err != nil {
+		return err
 	}
-	return &pipeline{
-		progress: transport.NewPipe(
-			store.NewRecord(transport.NewPipe(),
-				field("fisher", transport.NewPipe(path("pair"), nmcorrelation.NewFisher())),
-				field("lag_history", transport.NewPipe(path("pair", "x"), adaptive.NewBaseline(adaptive.NewWindow()))),
-				field("gain_history", transport.NewPipe(path("pair", "absolute_gain"), adaptive.NewBaseline(adaptive.NewWindow()))),
-				field("correlation_history", transport.NewPipe(path("pair", "correlation"), adaptive.NewBaseline(adaptive.NewWindow()))),
-				field("lag_velocity", temporal.NewVelocity(path("pair", "x"), path("at"))),
-				field("gain_velocity", temporal.NewVelocity(path("pair", "absolute_gain"), path("at"))),
-				field("resolution", equation.NewProduct[float64](path("pair", "spacing"), store.NewConstant(core.From(1e-9))))),
-			store.NewRecord(transport.NewPipe(), field("span_seconds", equation.NewProduct[float64](path("pair", "span"), path("resolution")))),
-		), projection: lagProjection(),
+
+	for index, value := range values {
+		pipeline.histories[index].Observe(value)
+	}
+	pipeline.velocities[lagHistory].Observe(values[lagHistory], at)
+	pipeline.velocities[gainHistory].Observe(values[gainHistory], at)
+	return nil
+}
+
+/* Fields exposes the selected pair's state once at the measurement boundary. */
+func (pipeline *pipeline) Fields(pair map[string]core.Primitive) map[string]core.Primitive {
+	return map[string]core.Primitive{
+		"pair":                core.From(pair),
+		"lag_history":         &pipeline.histories[lagHistory].Reading,
+		"gain_history":        &pipeline.histories[gainHistory].Reading,
+		"correlation_history": &pipeline.histories[correlationHistory].Reading,
+		"lag_velocity":        &pipeline.velocities[lagHistory].Reading,
+		"gain_velocity":       &pipeline.velocities[gainHistory].Reading,
 	}
 }
 

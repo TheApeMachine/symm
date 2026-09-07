@@ -2,7 +2,6 @@ package logic
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -15,7 +14,7 @@ type Pick struct {
 }
 
 func NewPick(predicate core.Primitive) *Pick {
-	return &Pick{current: store.NewRetained(nil), predicate: predicate, seed: transport.NewIO(core.From([]core.Primitive{}))}
+	return &Pick{predicate: predicate, seed: transport.NewIO(core.From([]core.Primitive{}))}
 }
 func (pick *Pick) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(
@@ -39,7 +38,9 @@ func (pick *Pick) Next(in core.Primitive) core.Primitive {
 		},
 		pick,
 	)
-	transport.NewDiscard().Next(transport.NewApply(pick.current, transport.NewIO(result)))
+	if result != nil {
+		pick.current = result
+	}
 	return result
 }
 func (pick *Pick) Read() any { return core.To[any](pick.current) }

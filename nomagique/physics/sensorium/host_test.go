@@ -105,6 +105,37 @@ func TestRemove(t *testing.T) {
 	})
 }
 
+func TestManifoldSpectralPeaks(t *testing.T) {
+	Convey("Given synchronized resident complex modes", t, func() {
+		fluid, err := newWorkspace(8, 8, 8)
+		So(err, ShouldBeNil)
+		Reset(func() { fluid.Close() })
+		manifold := &Manifold{work: fluid}
+		real := fluid.psiModeReal.Float32Slice()
+		imag := fluid.psiModeImag.Float32Slice()
+		clear(real)
+		clear(imag)
+		So(manifold.SpectralPeaks(), ShouldBeEmpty)
+		real[0], real[2], real[3], imag[5] = 10, 2, 2, 3
+		peaks := manifold.SpectralPeaks()
+		So(peaks, ShouldResemble, []SpectralPeak{
+			{Index: 2, Frequency: fluid.omegaLattice.Float32Slice()[2], Power: 4},
+			{Index: 5, Frequency: fluid.omegaLattice.Float32Slice()[5], Power: 9},
+		})
+
+		Convey("An evolving spectrum removes old peaks and retains weak local maxima", func() {
+			clear(real)
+			clear(imag)
+			imag[4] = 0.0001
+			updated := manifold.SpectralPeaks()
+			So(updated, ShouldHaveLength, 1)
+			So(updated[0].Index, ShouldEqual, 4)
+			So(updated[0].Power, ShouldBeGreaterThan, 0)
+			So(peaks[0].Power, ShouldEqual, 4)
+		})
+	})
+}
+
 func BenchmarkRemove(b *testing.B) {
 	contentIDs := make([]int64, 1024)
 
@@ -124,5 +155,22 @@ func BenchmarkRemove(b *testing.B) {
 		}
 
 		manifold.merge(returning)
+	}
+}
+
+func BenchmarkManifoldSpectralPeaks(b *testing.B) {
+	fluid, err := newWorkspace(8, 8, 8)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer fluid.Close()
+	manifold := &Manifold{work: fluid}
+	fluid.psiModeReal.Float32Slice()[2] = 1
+	b.ReportAllocs()
+
+	for b.Loop() {
+		manifold.SpectralPeaks()
 	}
 }

@@ -331,7 +331,6 @@ func BenchmarkModelResolve(b *testing.B) {
 	runtime.GC()
 	var retained runtime.MemStats
 	runtime.ReadMemStats(&retained)
-	b.ReportMetric(float64(retained.HeapAlloc-before.HeapAlloc), "retained-B")
 
 	index := 0
 	b.ReportAllocs()
@@ -353,6 +352,11 @@ func BenchmarkModelResolve(b *testing.B) {
 		model.Recall(key, context, action)
 		index++
 	}
+	runtime.GC()
+	var replayed runtime.MemStats
+	runtime.ReadMemStats(&replayed)
+	b.ReportMetric(float64(retained.HeapAlloc)-float64(before.HeapAlloc), "initial-retained-B")
+	b.ReportMetric(float64(replayed.HeapAlloc)-float64(before.HeapAlloc), "replay-retained-B")
 	runtime.KeepAlive(model)
 }
 

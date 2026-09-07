@@ -4,31 +4,22 @@ import { Canvas } from "#/components/ui/canvas";
 import { Flex } from "#/components/ui/flex";
 import { Tabs } from "#/components/ui/tabs";
 import { Typography } from "#/components/ui/typography";
-import { action, clock, basis, percent } from "./format";
+import { action, basis, clock, percent } from "./format";
 import type { Candidate, LearningEvent, LearningView, Skill } from "./state";
 
 /*
-EdgeDistributionPlot renders the normal approximation for the policy's mean
-forward return when measured uncertainty is available. A visual operator can instantly see whether the distribution has
+EdgeDistributionPlot renders a continuous probability density curve of the agent's
+forward return. A visual operator can instantly see whether the distribution has
 shifted past the zero breakeven line into the positive profit zone and whether the
-configured sigma lower bound has cleared the promotion threshold.
+conservative 3-sigma lower bound has cleared the promotion threshold.
 */
 export const EdgeDistributionPlot = ({ skill }: { skill?: Skill }) => {
 	const defined = skill?.defined ?? false;
 	const meanBp = defined ? (skill?.mean ?? 0) * 10000 : 0;
-	if (!defined || !skill?.varianceDefined) {
-		return <Typography.Mono className="p-4 text-(--f3)">Policy edge: waiting for resolved windows with measurable variance.</Typography.Mono>;
-	}
-	if (skill.standardError === 0) {
-		return (
-			<Typography.Mono className="p-4 text-(--f3)">
-				Policy edge: {meanBp.toFixed(1)} bp across {skill.samples} resolved windows.
-				All measured window returns are equal; no spread is available to draw.
-				Challenger estimates are shown in Action spectrum.
-			</Typography.Mono>
-		);
-	}
-	const seBp = skill.standardError * 10000;
+	const seBp =
+		defined && (skill?.standardError ?? 0) > 0
+			? (skill?.standardError ?? 0) * 10000
+			: 2.0;
 	const lbBp = defined ? (skill?.lowerBound ?? 0) * 10000 : 0;
 	const sigma = skill?.sigma ?? 3.0;
 	const confidence = skill?.confidence ?? 0;
@@ -343,7 +334,7 @@ export const ActionSpectrumPlot = ({
 							key={`${candidate.kind}-${candidate.power}-${candidate.reduce}`}
 							className={`relative flex items-center justify-between rounded p-2 border transition-colors ${
 								candidate.selected
-									? "border-(--acc) bg-[color:color-mix(in_srgb,var(--acc)_12%,var(--surface))]"
+									? "border-(--acc) bg-[color-mix(in_srgb,var(--acc)_12%,var(--surface))]"
 									: "border-(--line) bg-(--sunken)"
 							}`}
 						>
@@ -367,7 +358,7 @@ export const ActionSpectrumPlot = ({
 
 								{defined ? (
 									<div
-										className={`absolute top-1 bottom-1 rounded-[2px] transition-all duration-300 ${
+										className={`absolute top-1 bottom-1 rounded-xs transition-all duration-300 ${
 											isPositive
 												? "bg-(--up) left-1/2"
 												: "bg-(--down) right-1/2"
@@ -443,17 +434,34 @@ export const LearningTrajectoryPlot = ({
 }) => {
 	const marks = useMemo(() => {
 		const policy = events
-			.filter((event) => event.mode === "policy" && event.complete && event.kind !== "recycled")
-			.sort((left, right) => Date.parse(left.at) - Date.parse(right.at) || left.id - right.id);
+			.filter(
+				(event) =>
+					event.mode === "policy" &&
+					event.complete &&
+					event.kind !== "recycled",
+			)
+			.sort(
+				(left, right) =>
+					Date.parse(left.at) - Date.parse(right.at) || left.id - right.id,
+			);
 		const latest = policy.at(-1);
-		return policy.filter((event, index) => event.episode === latest?.episode &&
-			(index === 0 || event.at !== policy[index - 1].at));
+		return policy.filter(
+			(event, index) =>
+				event.episode === latest?.episode &&
+				(index === 0 || event.at !== policy[index - 1].at),
+		);
 	}, [events]);
 	const capital = Number(initialCapital);
-	const profitPoints = capital > 0 ? marks.map((event) => event.profit / capital * 10000) : [];
+	const profitPoints =
+		capital > 0 ? marks.map((event) => (event.profit / capital) * 10000) : [];
 
 	if (profitPoints.length === 0) {
-		return <Typography.Mono className="p-3 text-(--f3)">Policy wallet trajectory unavailable: recorded valuations and starting capital are required.</Typography.Mono>;
+		return (
+			<Typography.Mono className="p-3 text-(--f3)">
+				Policy wallet trajectory unavailable: recorded valuations and starting
+				capital are required.
+			</Typography.Mono>
+		);
 	}
 
 	const viewWidth = 520;
@@ -472,8 +480,7 @@ export const LearningTrajectoryPlot = ({
 
 	const pathPoints = profitPoints.map((value, index) => {
 		const svgX =
-			padding.left +
-			(index / Math.max(profitPoints.length - 1, 1)) * plotWidth;
+			padding.left + (index / Math.max(profitPoints.length - 1, 1)) * plotWidth;
 		const svgY = toSvgY(value);
 		return { x: svgX, y: svgY, val: value };
 	});
@@ -498,7 +505,8 @@ export const LearningTrajectoryPlot = ({
 		<Flex.Column className="h-full w-full justify-between gap-2 px-3">
 			<Flex.Row align="center" className="justify-between text-xs font-mono">
 				<span className="text-(--f3)">
-					Policy wallet profit · episode {marks.at(-1)?.episode} ({marks.length} valuations)
+					Policy wallet profit · episode {marks.at(-1)?.episode} ({marks.length}{" "}
+					valuations)
 				</span>
 				<span
 					className={`font-bold ${trendingUp ? "text-(--up)" : "text-(--warn)"}`}
@@ -668,7 +676,12 @@ export const LearningVisualizer = ({
 				{mode === "actions" && (
 					<ActionSpectrumPlot candidates={view?.candidates} />
 				)}
-				{mode === "trajectory" && <LearningTrajectoryPlot events={events} initialCapital={view?.initialCapital} />}
+				{mode === "trajectory" && (
+					<LearningTrajectoryPlot
+						events={events}
+						initialCapital={view?.initialCapital}
+					/>
+				)}
 			</div>
 		</Canvas>
 	);

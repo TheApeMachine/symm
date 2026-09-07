@@ -277,6 +277,102 @@ func TestGatherParticles(t *testing.T) {
 	})
 }
 
+func TestGatherPilotWave(t *testing.T) {
+	Convey("Given a periodic plane wave and particles of different masses", t, func() {
+		fluid, err := newWorkspace(8, 8, 8)
+		So(err, ShouldBeNil)
+		Reset(func() { fluid.Close() })
+		fluid.allocateParticles(3)
+		fluid.particles = 2
+		fluid.mass.Float32Slice()[0], fluid.mass.Float32Slice()[1] = 1, 2
+		positions := fluid.pos.Float32Slice()
+		copy(positions, []float32{0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 7, 7, 7})
+		real, imag := fluid.psiRe.Float32Slice(), fluid.psiIm.Float32Slice()
+		spacing := fluid.domain.GridSpacing()
+
+		for cell := range real {
+			phase := 2 * math.Pi * float64(cell/(8*8)) / 8
+			real[cell], imag[cell] = float32(math.Cos(phase)), float32(math.Sin(phase))
+		}
+
+		fluid.gatherPilotWave()
+		velocity := fluid.vel.Float32Slice()
+		expected := hbarEff * math.Sin(2*math.Pi/8) / spacing
+		So(float64(velocity[0]), ShouldAlmostEqual, expected, 1e-5)
+		So(float64(velocity[3]), ShouldAlmostEqual, expected/2, 1e-5)
+		So(velocity[1], ShouldAlmostEqual, 0)
+		So(velocity[2], ShouldAlmostEqual, 0)
+		So(float64(positions[0]), ShouldAlmostEqual, 0.5+expected*fluid.rates.deltaT, 1e-5)
+		So(positions[6:9], ShouldResemble, []float32{7, 7, 7})
+
+		Convey("Conjugating the wave reverses its current", func() {
+			for cell := range imag {
+				imag[cell] = -imag[cell]
+			}
+
+			fluid.gatherPilotWave()
+			So(velocity[0], ShouldBeLessThan, 0)
+			So(velocity[3], ShouldBeLessThan, 0)
+		})
+
+		Convey("A zero field gives zero current without changing position", func() {
+			before := append([]float32(nil), positions[:6]...)
+			clear(real)
+			clear(imag)
+			fluid.gatherPilotWave()
+			So(positions[:6], ShouldResemble, before)
+			So(velocity[:6], ShouldResemble, make([]float32, 6))
+		})
+	})
+}
+
+func TestPlanckExchange(t *testing.T) {
+	Convey("Given particles on opposite sides of thermal equilibrium", t, func() {
+		fluid, err := newWorkspace(8, 8, 8)
+		So(err, ShouldBeNil)
+		Reset(func() { fluid.Close() })
+		fluid.allocateParticles(2)
+		fluid.particles = 2
+		copy(fluid.mass.Float32Slice(), []float32{1, 2})
+		copy(fluid.omega.Float32Slice(), []float32{1, 2})
+		copy(fluid.heat.Float32Slice(), []float32{10, 0})
+		copy(fluid.oscEnergy.Float32Slice(), []float32{0, 10})
+
+		Convey("Repeated exchange conserves energy and evolves the oscillator amplitudes", func() {
+			for range 5 {
+				So(fluid.planckExchange(), ShouldBeNil)
+
+				for index := 0; index < fluid.particles; index++ {
+					energy := fluid.oscEnergy.Float32Slice()[index]
+					heat := fluid.heat.Float32Slice()[index]
+					amp := fluid.amp.Float32Slice()[index]
+					So(float64(energy+heat), ShouldAlmostEqual, 10, 1e-5)
+					So(energy, ShouldBeGreaterThanOrEqualTo, 0)
+					So(heat, ShouldBeGreaterThanOrEqualTo, 0)
+					So(float64(amp*amp), ShouldAlmostEqual, float64(energy), 1e-5)
+				}
+			}
+
+			So(fluid.oscEnergy.Float32Slice()[0], ShouldBeGreaterThan, 0)
+			So(fluid.heat.Float32Slice()[1], ShouldBeGreaterThan, 0)
+		})
+
+		Convey("Negative thermal energy returns a descriptive error", func() {
+			fluid.heat.Float32Slice()[0] = -1
+			err := fluid.planckExchange()
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "thermal energy")
+		})
+
+		Convey("Negative oscillator energy returns a descriptive error", func() {
+			fluid.oscEnergy.Float32Slice()[0] = -1
+			err := fluid.planckExchange()
+			So(err, ShouldNotBeNil)
+			So(err.Error(), ShouldContainSubstring, "oscillator energy")
+		})
+	})
+}
+
 func BenchmarkWaveStep(b *testing.B) {
 	fluid, err := newWorkspace(64, 64, 64)
 
@@ -349,6 +445,61 @@ func BenchmarkGatherParticles(b *testing.B) {
 
 	for b.Loop() {
 		if err := fluid.gatherParticles(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkGatherPilotWave(b *testing.B) {
+	fluid, err := newWorkspace(8, 8, 8)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer fluid.Close()
+	// A full 100-level book on each side.
+	fluid.allocateParticles(200)
+	fluid.particles = 200
+
+	for index := 0; index < fluid.particles; index++ {
+		fluid.mass.Float32Slice()[index] = 1
+	}
+
+	for cell := range fluid.psiRe.Float32Slice() {
+		phase := 2 * math.Pi * float64(cell/(8*8)) / 8
+		fluid.psiRe.Float32Slice()[cell] = float32(math.Cos(phase))
+		fluid.psiIm.Float32Slice()[cell] = float32(math.Sin(phase))
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		fluid.gatherPilotWave()
+	}
+}
+
+func BenchmarkPlanckExchange(b *testing.B) {
+	fluid, err := newWorkspace(8, 8, 8)
+
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	defer fluid.Close()
+	fluid.allocateParticles(200)
+	fluid.particles = 200
+
+	for index := 0; index < fluid.particles; index++ {
+		fluid.mass.Float32Slice()[index] = 1
+		fluid.omega.Float32Slice()[index] = 1
+		fluid.heat.Float32Slice()[index] = 10
+	}
+
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if err := fluid.planckExchange(); err != nil {
 			b.Fatal(err)
 		}
 	}

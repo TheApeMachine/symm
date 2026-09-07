@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"math"
 	"reflect"
 	"strconv"
 
@@ -12,8 +13,8 @@ import (
 /*
 project reuses three Measurement objects per key for scalar logic readouts.
 Scalars are reflected from the declared readout structs, so adding a numeric
-field cannot silently omit it. Resident tensor/particle state is not copied:
-the solvers' scalar readouts and numerical inference vectors are the outputs.
+field cannot silently omit it. Manifold spectral components and particle
+moments are projected once per producer version, without retaining grid fields.
 */
 func (node *gridNode) project(envelope *types.Envelope, output []*data.Measurement[float64]) error {
 	key := envelopeSymbol(envelope)
@@ -72,6 +73,7 @@ func (node *gridNode) project(envelope *types.Envelope, output []*data.Measureme
 		clear(measurement.Metrics)
 		measurement.At, measurement.SeqIdx = reading.At, int64(reading.Version)
 		node.scalars(measurement, "", &reading.Reading)
+		node.manifold(measurement, reading)
 		output[2] = measurement
 	}
 
@@ -145,5 +147,56 @@ func (node *gridNode) vector(measurement *data.Measurement[float64], prefix stri
 
 	for index, value := range values {
 		measurement.PutMetric(data.Metric[float64]{Label: labels[index], Raw: value})
+	}
+}
+
+/* manifold writes spectral power/phase and population moments into learning. */
+func (node *gridNode) manifold(measurement *data.Measurement[float64], reading *types.ManifoldState) {
+	components := 2 * len(reading.Modes)
+
+	if cap(node.waveComponents) < components {
+		node.waveComponents = make([]float64, components)
+	}
+
+	node.waveComponents = node.waveComponents[:components]
+	powers, phases := node.waveComponents[:len(reading.Modes)], node.waveComponents[len(reading.Modes):]
+
+	for index, mode := range reading.Modes {
+		real, imag := float64(mode.Real), float64(mode.Imag)
+		powers[index] = real*real + imag*imag
+		phases[index] = math.Atan2(imag, real)
+	}
+
+	node.vector(measurement, "wavespace.power.", powers)
+	node.vector(measurement, "wavespace.phase.", phases)
+	measurement.PutMetric(data.Metric[float64]{Label: "particles.count", Raw: float64(reading.N)})
+
+	if reading.N == 0 {
+		return
+	}
+
+	var energy, heat [2]float64
+	var velocity [3]float64
+
+	for index := 0; index < reading.N; index++ {
+		side := reading.TokenIDs[index] & 1
+		energy[side] += float64(reading.Energy[index])
+		heat[side] += float64(reading.Heat[index])
+
+		for axis := range velocity {
+			velocity[axis] += float64(reading.Vel[index*3+axis])
+		}
+	}
+
+	for _, metric := range [...]data.Metric[float64]{
+		{Label: "particles.energy.bid", Raw: energy[0]},
+		{Label: "particles.energy.ask", Raw: energy[1]},
+		{Label: "particles.heat.bid", Raw: heat[0]},
+		{Label: "particles.heat.ask", Raw: heat[1]},
+		{Label: "particles.vel.mean_x", Raw: velocity[0] / float64(reading.N)},
+		{Label: "particles.vel.mean_y", Raw: velocity[1] / float64(reading.N)},
+		{Label: "particles.vel.mean_z", Raw: velocity[2] / float64(reading.N)},
+	} {
+		measurement.PutMetric(metric)
 	}
 }

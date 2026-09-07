@@ -3,8 +3,6 @@ package learning
 import (
 	"github.com/theapemachine/errnie"
 	"slices"
-
-	"github.com/theapemachine/symm/nomagique/core"
 )
 
 /*
@@ -21,11 +19,10 @@ its prior records, and pending decisions retain a node reference rather than
 mutable grid coordinates or a copied input vector. One owner serializes access.
 */
 type Model[Key comparable, Action comparable] struct {
-	contexts  map[Key]*modelContext[Action]
-	pending   map[uint64]pendingAction
-	sequence  uint64
-	memory    float64
-	evaluator *priorEvaluator
+	contexts map[Key]*modelContext[Action]
+	pending  map[uint64]pendingAction
+	sequence uint64
+	memory   float64
 }
 
 /* modelContext owns the actions and continuations of one context prefix. */
@@ -63,7 +60,6 @@ func NewModel[Key comparable, Action comparable](memory ...float64) *Model[Key, 
 		model.memory = memory[0]
 	}
 
-	model.evaluator = newPriorEvaluator(model.memory)
 	return model
 }
 
@@ -122,7 +118,7 @@ func (model *Model[Key, Action]) bind(key Key, context []uint64, action Action, 
 	}
 
 	epoch := &node.epoch
-	priors = append(priors, scopedPrior{node.prior(action, model.evaluator), epoch})
+	priors = append(priors, scopedPrior{node.prior(action, model.memory), epoch})
 
 	for _, token := range context {
 		if node.children == nil {
@@ -137,14 +133,14 @@ func (model *Model[Key, Action]) bind(key Key, context []uint64, action Action, 
 		}
 
 		node = next
-		priors = append(priors, scopedPrior{node.prior(action, model.evaluator), epoch})
+		priors = append(priors, scopedPrior{node.prior(action, model.memory), epoch})
 	}
 
 	return priors
 }
 
 /* prior returns this context's record for an action, creating it on first use. */
-func (node *modelContext[Action]) prior(action Action, evaluator *priorEvaluator) *modelPrior {
+func (node *modelContext[Action]) prior(action Action, memory float64) *modelPrior {
 	if node.priors == nil {
 		node.priors = make(map[Action]*modelPrior)
 	}
@@ -152,7 +148,7 @@ func (node *modelContext[Action]) prior(action Action, evaluator *priorEvaluator
 	prior := node.priors[action]
 
 	if prior == nil {
-		prior = &modelPrior{evaluator: evaluator, state: NewPriorMemory()}
+		prior = &modelPrior{memory: memory}
 		node.priors[action] = prior
 	}
 
@@ -184,9 +180,7 @@ func (model *Model[Key, Action]) Resolve(identity uint64, outcome float64) (Prio
 			*prior.epoch++
 		}
 
-		if _, err := prior.evaluator.evaluate(prior.modelPrior, core.Record(map[string]any{
-			"value": outcome, "authority": pending.authority, "epoch": *prior.epoch,
-		})); err != nil {
+		if err := prior.state.Observe(outcome, pending.authority, prior.memory, *prior.epoch); err != nil {
 			return PriorReading{}, err
 		}
 
@@ -343,9 +337,7 @@ func (model *Model[Key, Action]) Observe(
 			*prior.epoch++
 		}
 
-		if _, err := prior.evaluator.evaluate(prior.modelPrior, core.Record(map[string]any{
-			"value": outcome, "authority": authority, "epoch": *prior.epoch,
-		})); err != nil {
+		if err := prior.state.Observe(outcome, authority, prior.memory, *prior.epoch); err != nil {
 			return err
 		}
 	}

@@ -15,7 +15,7 @@ type Ingress[T any] interface {
 /*
 Workspace is a ring whose staged Nodes may themselves be Workload rings.
 
-The outer disruptor supplies concurrency and stage barriers. A nested Workload
+The outer ring supplies concurrency and stage barriers. A nested Workload
 does not need an attachment, forwarding graph, or scheduler: it is simply a
 Node in the Workspace stage declaration.
 */

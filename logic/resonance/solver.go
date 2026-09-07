@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/theapemachine/symm/nomagique/adaptive"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"math"
 	"strconv"
 	"sync"
@@ -389,12 +387,12 @@ the moments its slot showed BEFORE it, so a burst of near-identical values
 cannot collapse its own scale and blow the score up.
 */
 type featureScorer struct {
-	pipelines    []core.Primitive
+	pipelines    []*adaptive.Baseline
 	standardized []float64
 }
 
 func newFeatureScorer(width int) *featureScorer {
-	scorer := &featureScorer{pipelines: make([]core.Primitive, width), standardized: make([]float64, width)}
+	scorer := &featureScorer{pipelines: make([]*adaptive.Baseline, width), standardized: make([]float64, width)}
 	for index := range scorer.pipelines {
 		scorer.pipelines[index] = adaptive.NewBaseline(adaptive.NewWindow())
 	}
@@ -407,15 +405,7 @@ func (scorer *featureScorer) Score(features []float64) ([]float64, error) {
 		return nil, fmt.Errorf("resonance: feature width changed")
 	}
 	for index, value := range features {
-		fields, err := transport.Evaluate[map[string]core.Primitive](scorer.pipelines[index], core.From(value))
-		if err != nil {
-			return nil, err
-		}
-		score, err := core.Field[float64](fields, "zscore")
-		if err != nil {
-			return nil, err
-		}
-		scorer.standardized[index] = score
+		scorer.standardized[index] = scorer.pipelines[index].Observe(value).ZScore
 	}
 	return scorer.standardized, nil
 }

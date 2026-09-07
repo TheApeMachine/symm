@@ -2,8 +2,6 @@ package calculus
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"math"
 )
 
@@ -16,11 +14,13 @@ type Minimum struct {
 }
 
 func NewMinimum(left core.Primitive) *Minimum {
-	return &Minimum{current: store.NewRetained(nil), left: left}
+	return &Minimum{left: left}
 }
 func (operation *Minimum) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(operation.left, in, func(held, value float64) float64 { return math.Min(held, value) }, operation)
-	transport.NewDiscard().Next(transport.NewApply(operation.current, transport.NewIO(result)))
+	if result != nil {
+		operation.current = result
+	}
 	return result
 }
 func (operation *Minimum) Read() any { return core.To[any](operation.current) }

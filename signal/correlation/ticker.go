@@ -3,8 +3,8 @@ package correlation
 import (
 	"fmt"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
-	nmcorrelation "github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"math"
@@ -51,7 +51,7 @@ func (ticker *Ticker) Step(event kraken.TickerData) *data.Measurement[float64] {
 	defer ticker.mutex.Unlock()
 	focal := ticker.paths[event.Symbol]
 	if focal == nil {
-		focal = &pricePath{graph: nmcorrelation.NewPath()}
+		focal = &pricePath{graph: adaptive.NewPath(adaptive.NewWindow())}
 		ticker.paths[event.Symbol] = focal
 	}
 	fields, err := transport.Evaluate[map[string]core.Primitive](focal.graph, core.Record(map[string]any{"at": event.Timestamp.UnixNano(), "value": last}))

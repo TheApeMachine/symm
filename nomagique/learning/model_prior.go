@@ -1,24 +1,24 @@
 package learning
 
 import (
-	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/equation"
 )
 
-/* modelPrior owns a context's retained state and unresolved tickets, never duplicate moments. */
+/* modelPrior owns a context's fixed numeric moments and unresolved tickets. */
 type modelPrior struct {
-	evaluator *priorEvaluator
-	state     core.Primitive
-	pending   uint64
+	state   equation.PriorMoments
+	memory  float64
+	pending uint64
 }
 
 func (prior *modelPrior) reading(epoch uint64) PriorReading {
-	fields, err := prior.evaluator.evaluate(prior, core.Record(map[string]any{"epoch": epoch}))
-	if err != nil {
-		panic(err)
-	}
-	reading, err := ProjectPrior(fields)
-	if err != nil {
-		panic(err)
+	prior.state.Age(epoch, prior.memory)
+	summary := prior.state.Summary(prior.memory)
+	reading := PriorReading{
+		Samples: summary.Samples, Defined: summary.Defined,
+		Mean: summary.Mean, Variance: summary.Variance, VarianceDefined: summary.VarianceDefined,
+		Support: summary.Support, Maturity: summary.Maturity,
+		EvidenceAuthority: summary.EvidenceAuthority, Authority: summary.Authority, Memory: summary.Memory,
 	}
 	reading.Pending = prior.pending
 	return reading

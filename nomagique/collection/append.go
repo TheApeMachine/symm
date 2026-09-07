@@ -2,8 +2,6 @@ package collection
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 // Append extends a collection supplied by the configured left connection.
@@ -14,11 +12,13 @@ type Append[T any] struct {
 }
 
 func NewAppend[T any](left core.Primitive) *Append[T] {
-	return &Append[T]{current: store.NewRetained(nil), left: left}
+	return &Append[T]{left: left}
 }
 func (a *Append[T]) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(a.left, in, func(held []T, value T) []T { return append(held, value) }, a)
-	transport.NewDiscard().Next(transport.NewApply(a.current, transport.NewIO(result)))
+	if result != nil {
+		a.current = result
+	}
 	return result
 }
 func (a *Append[T]) Read() any { return core.To[any](a.current) }

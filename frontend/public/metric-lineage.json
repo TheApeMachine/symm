@@ -1184,7 +1184,7 @@
           "consumer": "manifold.forcingInputs (github.com/theapemachine/symm/logic/manifold)",
           "package": "github.com/theapemachine/symm/logic/manifold",
           "file": "logic/manifold/solver.go",
-          "line": 133
+          "line": 131
         }
       ],
       "dead": false,
@@ -1205,7 +1205,7 @@
           "consumer": "manifold.forcingInputs (github.com/theapemachine/symm/logic/manifold)",
           "package": "github.com/theapemachine/symm/logic/manifold",
           "file": "logic/manifold/solver.go",
-          "line": 138
+          "line": 136
         }
       ],
       "dead": false,
@@ -1769,7 +1769,7 @@
       "metric": "last_price",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 81,
+      "line": 86,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -1789,7 +1789,7 @@
       "metric": "observation_count",
       "package": "github.com/theapemachine/symm/signal/leadlag",
       "file": "signal/leadlag/ticker.go",
-      "line": 82,
+      "line": 87,
       "unit": "data.TimescaleInstantaneous",
       "consumers": [
         {
@@ -5379,7 +5379,7 @@
       "kind": "catalog",
       "package": "github.com/theapemachine/symm/logic/manifold",
       "file": "logic/manifold/solver.go",
-      "line": 133,
+      "line": 131,
       "targets": [
         "hawkes/excitation_fraction:buy",
         "hawkes/excitation_fraction:sell"

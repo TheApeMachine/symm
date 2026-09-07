@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"fmt"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/transport"
@@ -89,7 +90,7 @@ func (reward *AccountReward) Measure(mark EquityMark) (learning.RewardOutcome, e
 	if err != nil {
 		return learning.RewardOutcome{}, errnie.Error(errnie.Err(
 			errnie.Internal,
-			"account reward: failed to measure valuation",
+			fmt.Sprintf("account reward: failed to measure valuation: mark=%+v last=%+v initial=%+v", mark, reward.last, initial),
 			err,
 		))
 	}

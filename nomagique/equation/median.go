@@ -1,49 +1,55 @@
 package equation
 
 import (
-	"github.com/theapemachine/symm/nomagique/arithmetic"
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/collection"
+	"math"
+	"slices"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
-// NewMedian orders a captured run and averages its two central order statistics.
-// NaN is explicit undefinedness; infinities remain ordered values. An empty run
-// has no central index and is reported by At, rather than returning stale data.
-func NewMedian() core.Primitive {
-	ordered := store.NewRetained(core.From([]float64{}))
-	lower := transport.NewApply(
-		transport.NewPipe(
-			transport.NewSpread[float64](),
-			NewCount(),
-			NewDifference[float64](transport.NewPipe(), store.NewConstant(core.From(1.0))),
-			arithmetic.NewMultiply[float64](transport.NewIO(core.From(0.5))),
-			calculus.NewFloor(transport.NewIO(core.From(0.0))),
-		),
-		ordered,
-	)
-	upper := transport.NewApply(
-		transport.NewPipe(
-			transport.NewSpread[float64](),
-			NewCount(),
-			arithmetic.NewMultiply[float64](transport.NewIO(core.From(0.5))),
-			calculus.NewFloor(transport.NewIO(core.From(0.0))),
-		),
-		ordered,
-	)
-	return logic.NewGate(
-		transport.NewMapReduce(logic.NewIsNaN(), logic.NewOr(transport.NewIO(core.From(false)))),
-		calculus.NewMinimum(transport.NewIO(core.From(0.0))),
-		transport.NewPipe(
-			transport.NewCollect[float64](),
-			collection.NewOrder[float64](),
-			ordered,
-			transport.NewFan(transport.NewPipe(), transport.NewIO(collection.NewAt[float64](lower), collection.NewAt[float64](upper))),
-			arithmetic.NewAdd[float64](transport.NewIO(core.From(0.0))),
-			arithmetic.NewMultiply[float64](transport.NewIO(core.From(0.5))),
-		),
-	)
+/* Median owns reusable sorting storage; callers receive only a scalar result. */
+type Median struct {
+	core.PrimitiveError
+	values  []float64
+	seed    *transport.IO
+	current core.Primitive
 }
+
+/*
+NewMedian averages the two central order statistics. Any NaN makes the result
+undefined; infinities remain ordered values. Empty runs report a shape error.
+*/
+func NewMedian() core.Primitive {
+	return &Median{seed: transport.NewIO(core.From(0.0))}
+}
+
+func (median *Median) Next(input core.Primitive) core.Primitive {
+	median.values = median.values[:0]
+	result := core.Yield(median.seed, input, func(_ float64, value float64) float64 {
+		median.values = append(median.values, value)
+		return value
+	}, median)
+
+	if result == nil || median.Error() != nil {
+		return result
+	}
+
+	if len(median.values) == 0 {
+		median.Error(core.ErrShape)
+		return nil
+	}
+	slices.Sort(median.values)
+	count := len(median.values)
+	value := (0.0 + median.values[(count-1)/2] + median.values[count/2]) * 0.5
+
+	// The previous IsNaN gate propagated any undefined member, even away
+	// from the central order statistics. Sorting places that member first.
+	if math.IsNaN(median.values[0]) {
+		value = median.values[0]
+	}
+	median.current = core.From(value)
+	return median.current
+}
+
+func (median *Median) Read() any { return core.To[any](median.current) }

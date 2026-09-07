@@ -91,6 +91,49 @@ func TestPositionStoreOpenLots(t *testing.T) {
 	})
 }
 
+func TestPositionStoreSave(t *testing.T) {
+	Convey("Given a saturated writer whose database connection is temporarily occupied", t, func() {
+		store := newTestPositionStore(t)
+		store.database.SetMaxOpenConns(1)
+		connection, err := store.database.Conn(t.Context())
+		So(err, ShouldBeNil)
+		defer connection.Close()
+		// More lots than the complete queue plus the writer's in-flight batch.
+		lots := testPositionStoreQueueDepth + testPositionStoreBatchSize + 1
+		entryAt := time.Unix(1700000000, 0)
+		completed := make(chan error, 1)
+		go func() {
+			for index := range lots {
+				if err := store.Save(openLot("SATURATED/USD", entryAt.Add(time.Duration(index)))); err != nil {
+					completed <- err
+					return
+				}
+			}
+			completed <- nil
+		}()
+		// This test deadline distinguishes durable backpressure from returning
+		// success while silently discarding the unpersisted tail of the queue.
+		select {
+		case err := <-completed:
+			t.Fatalf("full writer returned without a database connection: %v", err)
+		case <-time.After(time.Second):
+		}
+		So(connection.Close(), ShouldBeNil)
+		So(<-completed, ShouldBeNil)
+		So(store.Sync(), ShouldBeNil)
+		var retained int
+		So(store.database.QueryRow("SELECT count(*) FROM open_positions").Scan(&retained), ShouldBeNil)
+		So(retained, ShouldEqual, lots)
+
+		Convey("A later delete is ordered after every accepted save", func() {
+			So(store.Delete("SATURATED/USD"), ShouldBeNil)
+			So(store.Sync(), ShouldBeNil)
+			So(store.database.QueryRow("SELECT count(*) FROM open_positions").Scan(&retained), ShouldBeNil)
+			So(retained, ShouldEqual, 0)
+		})
+	})
+}
+
 func BenchmarkPositionStoreSave(b *testing.B) {
 	store, err := NewPositionStore(
 		b.TempDir()+"/positions.sqlite",

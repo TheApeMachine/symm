@@ -14,11 +14,13 @@ type Has[K comparable] struct {
 }
 
 func NewHas[K comparable](key K) *Has[K] {
-	return &Has[K]{key: key, seed: transport.NewIO(core.From(false)), current: NewRetained(nil)}
+	return &Has[K]{key: key, seed: transport.NewIO(core.From(false))}
 }
 func (has *Has[K]) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(has.seed, in, func(_ bool, values map[K]core.Primitive) bool { _, present := values[has.key]; return present }, has)
-	transport.NewDiscard().Next(transport.NewApply(has.current, transport.NewIO(result)))
+	if result != nil {
+		has.current = result
+	}
 	return result
 }
 func (has *Has[K]) Read() any { return core.To[any](has.current) }

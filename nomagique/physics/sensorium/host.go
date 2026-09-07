@@ -391,3 +391,31 @@ func (manifold *Manifold) Load() error {
 
 	return nil
 }
+
+/* SpectralPeak identifies an interior local maximum of resident mode power. */
+type SpectralPeak struct {
+	Index     int
+	Frequency float32
+	Power     float32
+}
+
+/*
+SpectralPeaks reads emergent peaks directly from the synchronized resident
+lattice. Strict rise and non-strict fall select the first bin of a plateau;
+endpoints have no two-sided neighbourhood and are not peaks.
+*/
+func (manifold *Manifold) SpectralPeaks() []SpectralPeak {
+	if manifold == nil {
+		return nil
+	}
+
+	manifold.mu.Lock()
+	defer manifold.mu.Unlock()
+
+	if manifold.work == nil {
+		return nil
+	}
+
+	manifold.work.engine.Synchronize()
+	return manifold.work.spectralPeaks()
+}

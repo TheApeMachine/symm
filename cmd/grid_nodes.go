@@ -19,14 +19,15 @@ policy must not read the grid from a later stage.
 */
 type gridNode struct {
 	*learning.Grid
-	prepare     []runtime.Node[*types.Envelope]
-	publish     []runtime.Node[*types.Envelope]
-	cognition   *cognition.Solver
-	learner     *strategy.Agent
-	err         error
-	projections map[string]*[3]data.Measurement[float64]
-	vectors     map[string][]string
-	fieldNames  map[reflect.Type]map[string][]string
+	prepare        []runtime.Node[*types.Envelope]
+	publish        []runtime.Node[*types.Envelope]
+	cognition      *cognition.Solver
+	learner        *strategy.Agent
+	err            error
+	projections    map[string]*[3]data.Measurement[float64]
+	vectors        map[string][]string
+	fieldNames     map[reflect.Type]map[string][]string
+	waveComponents []float64
 }
 
 /* Step writes the canonical signal fields directly into the numerical grid. */

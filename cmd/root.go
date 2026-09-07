@@ -92,6 +92,7 @@ var (
 			errnie.Info(fmt.Sprintf(
 				"symm started with %d CPUs", runtime.NumCPU(),
 			))
+			
 			runtimeCtx, runtimeCancel := context.WithCancel(cmd.Context())
 			defer runtimeCancel()
 
@@ -223,6 +224,7 @@ var (
 				viper.GetInt("hindsight.witness.queue_depth"),
 				viper.GetDuration("hindsight.witness.flush_interval"),
 			)
+
 			defer asyncWitness.Close()
 			witness := newWitnessNode(rawCapture, asyncWitness)
 
@@ -234,6 +236,7 @@ var (
 				system.Cfg.WebSocket.Endpoints.Public,
 				rawCapture,
 			)
+
 			defer publicSession.Close()
 
 			if err := publicSession.Error(); err != nil {
@@ -267,9 +270,13 @@ var (
 				publicSession,
 				privateSession,
 			)
+
 			defer api.Close()
 
-			futures := websocket.NewFutures(runtimeCtx, system.Cfg.WebSocket.Endpoints.Futures, futuresIngress, rawCapture)
+			futures := websocket.NewFutures(
+				runtimeCtx, system.Cfg.WebSocket.Endpoints.Futures, futuresIngress, rawCapture,
+			)
+
 			api.SetFutures(futures)
 
 			transportErrors := make(chan error, 1)
@@ -312,11 +319,14 @@ var (
 			// book is the population, and the advance reads it directly.
 			manifoldSolver.SetBooks(api)
 			defer manifoldSolver.Close()
+
 			manifoldSolver.SetViewer(hub)
 			manifoldSolver.Start()
+
 			pumpdumpSolver := pumpdump.NewSignal(runtimeCtx, cvdQuoteProvider(price))
 			toxicitySolver := toxicity.NewSignal(runtimeCtx)
 			derivativesSolver := derivatives.NewSignal(runtimeCtx)
+
 			privateSession.Level3Observers = func() []nmruntime.Node[*types.Envelope] {
 				return []nmruntime.Node[*types.Envelope]{
 					depthflow.NewSignal(runtimeCtx), morphology.NewSignal(runtimeCtx),
@@ -359,7 +369,9 @@ var (
 			openPositions := &sync.Map{}
 			desk, err := broker.NewDesk(
 				runtimeCtx, api, instrument, price, balance,
-				broker.NewRecovery(runtimeCtx, api, instrument, price, balance, positionStore, openPositions),
+				broker.NewRecovery(
+					runtimeCtx, api, instrument, price, balance, positionStore, openPositions,
+				),
 				positionStore, openPositions,
 			)
 
@@ -381,7 +393,10 @@ var (
 			if err != nil {
 				return err
 			}
-			learner.SetExecution(newLearningDesk(runtimeCtx, desk, instrument, api, price.FeeIfAvailable, learner.Record), account)
+
+			learner.SetExecution(newLearningDesk(
+				runtimeCtx, desk, instrument, api, price.FeeIfAvailable, learner.Record,
+			), account)
 
 			if storageEngine != nil {
 				pastEvents, err := storageEngine.LearningExperiences("resolved", learner.RetainedExperiences())
@@ -389,23 +404,34 @@ var (
 				if err != nil {
 					return errnie.Err(errnie.IO, "agent: read complete warmup experiences", err)
 				}
+
 				warmed, err := learner.Warmup(pastEvents)
 
 				if err != nil {
 					return err
 				}
-				errnie.Info(fmt.Sprintf("agent: warmup complete=%d unconditioned=%d unpaired=%d portfolio-unavailable=%d target-unavailable=%d", warmed.Resolved, warmed.Unconditioned, warmed.Unpaired, warmed.PortfolioUnavailable, warmed.TargetUnavailable))
+
+				errnie.Info(fmt.Sprintf(
+					"agent: warmup complete=%d unconditioned=%d unpaired=%d portfolio-unavailable=%d target-unavailable=%d",
+					warmed.Resolved, warmed.Unconditioned, warmed.Unpaired, warmed.PortfolioUnavailable, warmed.TargetUnavailable,
+				))
+
 				capitalEvents, err := storageEngine.LearningExperiences("portfolio_resolved", learner.RetainedExperiences())
 
 				if err != nil {
 					return err
 				}
+
 				capitalWarmed, err := learner.Capital.History.Warmup(capitalEvents)
 
 				if err != nil {
 					return err
 				}
-				errnie.Info(fmt.Sprintf("capital: warmed %d complete allocation experiences; skipped %d without confirmed execution; account authority remains cold", capitalWarmed, learner.Capital.History.Unverified))
+
+				errnie.Info(fmt.Sprintf(
+					"capital: warmed %d complete allocation experiences; skipped %d without confirmed execution; account authority remains cold",
+					capitalWarmed, learner.Capital.History.Unverified,
+				))
 			}
 
 			// Forward testing, not back testing: the reviewer runs behind the

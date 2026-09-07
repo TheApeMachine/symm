@@ -15,11 +15,13 @@ type Constant struct {
 }
 
 func NewConstant(value core.Primitive) *Constant {
-	return &Constant{current: NewRetained(nil), value: value, seed: transport.NewIO(value)}
+	return &Constant{value: value, seed: transport.NewIO(value)}
 }
 func (constant *Constant) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(constant.seed, in, func(held core.Primitive, _ core.Primitive) core.Primitive { return held }, constant)
-	transport.NewDiscard().Next(transport.NewApply(constant.current, transport.NewIO(result)))
+	if result != nil {
+		constant.current = result
+	}
 	return result
 }
 func (constant *Constant) Read() any { return core.To[any](constant.current) }

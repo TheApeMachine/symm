@@ -3,13 +3,11 @@ package learning
 import (
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
-PriorReading is a Go/wire projection of NewPrior's record, not an estimator.
-Pending and context depth belong to Model's issue/resolve lifecycle. All moment,
-aging, support and authority calculations remain in the Primitive graph.
+PriorReading projects the canonical PriorMoments summary. Pending and context
+depth belong to Model's issue/resolve lifecycle; projection does not estimate.
 */
 type PriorReading struct {
 	Depth             int
@@ -47,10 +45,10 @@ func ProjectPrior(fields map[string]core.Primitive) (PriorReading, error) {
 
 /* SamplingVariance evaluates the canonical specificity-debt equation. */
 func (reading PriorReading) SamplingVariance() float64 {
-	variance, err := transport.Evaluate[float64](equation.NewSamplingVariance(), core.Record(map[string]any{
-		"depth": float64(reading.Depth), "context_length": float64(reading.ContextLength),
-		"support": reading.Support, "variance": reading.Variance,
-	}))
+	variance, err := equation.SamplingVariance(
+		float64(reading.Depth), float64(reading.ContextLength), reading.Support, reading.Variance,
+	)
+
 	if err != nil {
 		panic(err)
 	}

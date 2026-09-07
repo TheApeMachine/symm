@@ -3,7 +3,6 @@ package logic
 import (
 	"cmp"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -14,7 +13,7 @@ type Equal[T cmp.Ordered] struct {
 }
 
 func NewEqual[T cmp.Ordered]() *Equal[T] {
-	return &Equal[T]{current: store.NewRetained(nil), seed: transport.NewIO(core.From(false))}
+	return &Equal[T]{seed: transport.NewIO(core.From(false))}
 }
 func (operation *Equal[T]) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(
@@ -29,7 +28,9 @@ func (operation *Equal[T]) Next(in core.Primitive) core.Primitive {
 		},
 		operation,
 	)
-	transport.NewDiscard().Next(transport.NewApply(operation.current, transport.NewIO(result)))
+	if result != nil {
+		operation.current = result
+	}
 	return result
 }
 func (operation *Equal[T]) Read() any { return core.To[any](operation.current) }

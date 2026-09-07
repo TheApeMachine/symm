@@ -3,7 +3,6 @@ package collection
 import (
 	"fmt"
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"math"
 )
@@ -19,7 +18,7 @@ type At[T any] struct {
 
 func NewAt[T any](index core.Primitive) *At[T] {
 	var zero T
-	return &At[T]{current: store.NewRetained(nil), index: index, seed: transport.NewIO(core.NewProto(zero))}
+	return &At[T]{index: index, seed: transport.NewIO(core.NewProto(zero))}
 }
 func (at *At[T]) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(
@@ -48,7 +47,9 @@ func (at *At[T]) Next(in core.Primitive) core.Primitive {
 		},
 		at,
 	)
-	transport.NewDiscard().Next(transport.NewApply(at.current, transport.NewIO(result)))
+	if result != nil {
+		at.current = result
+	}
 	return result
 }
 func (at *At[T]) Read() any { return core.To[any](at.current) }

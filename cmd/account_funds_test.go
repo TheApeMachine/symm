@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -64,6 +65,50 @@ func TestAccountFundsReserve(t *testing.T) {
 	})
 }
 
+func TestAccountFundsPublish(t *testing.T) {
+	Convey("Given an authoritative mark with malformed venue numbers", t, func() {
+		for _, field := range []string{"equity", "funding", "available", "cash"} {
+			Convey("Reject "+field+" and recover only on a later valid mark", func() {
+				funds := &accountFunds{}
+				reading := &types.EquityReading{Version: 1, Cash: "150", AvailableCash: "150",
+					Equity: "150", NetFunding: "0", Complete: true}
+
+				switch field {
+				case "equity":
+					reading.Equity = "invalid"
+				case "funding":
+					reading.NetFunding = "invalid"
+				case "available":
+					reading.AvailableCash = "invalid"
+				case "cash":
+					reading.Cash = "invalid"
+				}
+
+				state := funds.Observe(reading)
+				So(state.Complete, ShouldBeFalse)
+				So(state.Reason, ShouldNotBeEmpty)
+				So(funds.Reserve("blocked", big.NewRat(1, 1)), ShouldBeFalse)
+				reading = &types.EquityReading{Version: 2, Cash: "150", AvailableCash: "150",
+					Equity: "150", NetFunding: "0", Complete: true}
+				So(funds.Observe(reading).Complete, ShouldBeTrue)
+				So(funds.Reserve("valid", big.NewRat(1, 1)), ShouldBeTrue)
+			})
+		}
+	})
+}
+
+func TestAccountFundsReject(t *testing.T) {
+	Convey("Given a corrupted cash state held by an existing reader", t, func() {
+		funds := &accountFunds{}
+		previous := &strategy.AccountState{Complete: true, Cash: "invalid"}
+		funds.state.Store(previous)
+		So(funds.Reserve("blocked", big.NewRat(1, 1)), ShouldBeFalse)
+		So(previous.Complete, ShouldBeTrue)
+		So(funds.state.Load().Complete, ShouldBeFalse)
+		So(funds.state.Load().Reason, ShouldEqual, "funds: invalid authoritative cash")
+	})
+}
+
 func BenchmarkAccountFundsObserve(b *testing.B) {
 	funds := accountFunds{}
 	source := &types.EquityReading{At: time.Unix(100, 0), Version: 1, Cash: "150", AvailableCash: "150", Equity: "150", NetFunding: "0", Complete: true}
@@ -71,5 +116,18 @@ func BenchmarkAccountFundsObserve(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		funds.Observe(source)
+	}
+}
+
+func BenchmarkAccountFundsPublish(b *testing.B) {
+	funds := accountFunds{reservations: map[string]cashReservation{
+		"pending": {cost: big.NewRat(10, 1)},
+	}}
+	source := &types.EquityReading{At: time.Unix(100, 0), Version: 1,
+		Cash: "150", AvailableCash: "140", Equity: "150", NetFunding: "0", Complete: true}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		funds.publish(source)
 	}
 }

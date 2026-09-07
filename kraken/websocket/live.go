@@ -320,8 +320,6 @@ func NewWithClient(
 
 	ctx, cancel := context.WithCancel(ctx)
 
-	viper.SetDefault("market.quote_currency", "USD")
-
 	live := &Live{
 		ctx:         ctx,
 		cancel:      cancel,
@@ -402,9 +400,10 @@ func NewWithClient(
 		live.Client().REST.Nonce = live.nonce.Next
 	}
 
-	// The socket's receive callback and Book.Update notifications are synchronous.
-	// Carry only the current frame's identity into the lightweight notification;
-	// order arrays remain inside the transport and its resident book.
+	// Replacement and retiring SDK sessions share this callback. Serialize the
+	// complete receive turn so Book.Update notifications and numeric observers
+	// always consume the frame whose stream/capture identity they publish.
+	var receiveMu sync.Mutex
 	var bookFrame *kraken.Level3
 	var bookStream hindsight.StreamRef
 	var bookCapture hindsight.CaptureIdentity
@@ -466,6 +465,9 @@ func NewWithClient(
 	}
 
 	client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
+		receiveMu.Lock()
+		defer receiveMu.Unlock()
+
 		if live.operationalError() != nil {
 			return
 		}

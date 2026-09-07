@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -216,7 +217,7 @@ func TestLiveReconnect(t *testing.T) {
 			}
 
 			So(awaitChannels(3, "level3"), ShouldBeTrue)
-			So(live.Client(), ShouldNotEqual, client)
+			So(live.Client() != client, ShouldBeTrue)
 			So(tokenRequests.Load(), ShouldEqual, 3)
 			So(live.Client().Token, ShouldEqual, "token-3")
 			So(live.Error(), ShouldBeNil)
@@ -363,38 +364,97 @@ func TestLiveMarkReady(t *testing.T) {
 	})
 }
 
-func TestNewWithClient(t *testing.T) {
-	Convey("Given a live Level3 transport with a resident book", t, func() {
-		upgrader := gorillawebsocket.Upgrader{}
-		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			connection, err := upgrader.Upgrade(writer, request, nil)
+/* liveFixture owns the socket, resident book, numeric observers and notification sink. */
+type liveFixture struct {
+	live    *Live
+	client  *spot.WebSocket
+	ingress *testIngress
+}
 
-			if err != nil {
+func newLiveFixture(t testing.TB) liveFixture {
+	upgrader := gorillawebsocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		connection, err := upgrader.Upgrade(writer, request, nil)
+
+		if err != nil {
+			return
+		}
+
+		defer connection.Close()
+
+		for {
+			if _, _, err := connection.ReadMessage(); err != nil {
 				return
 			}
+		}
+	}))
+	t.Cleanup(server.Close)
+	client := spot.NewWebSocket()
+	client.URL = "ws" + strings.TrimPrefix(server.URL, "http")
+	client.REST.Executor = func(request *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
+			Body: io.NopCloser(strings.NewReader(`{"error":[],"result":{}}`)), Request: request}, nil
+	}
+	ingress := &testIngress{status: runtime.NewStatus().Transition(runtime.READY), frames: make(chan *types.Envelope, 1)}
+	live := NewWithClient(t.Context(), map[string]runtime.Ingress[*types.Envelope]{"level3": ingress},
+		nil, false, system.Cfg.WebSocket.Endpoints.Level3, client)
+	t.Cleanup(live.Close)
+	if err := live.Error(); err != nil {
+		t.Fatal(err)
+	}
+	live.MarkReady()
+	live.level3Observers = []runtime.Node[*types.Envelope]{depthflow.NewSignal(t.Context()), morphology.NewSignal(t.Context())}
+	return liveFixture{live: live, client: client, ingress: ingress}
+}
 
-			defer connection.Close()
+func TestNewWithClient(t *testing.T) {
+	Convey("Given a live Level3 transport with a resident book", t, func() {
+		fixture := newLiveFixture(t)
+		live, client, ingress := fixture.live, fixture.client, fixture.ingress
 
-			for {
-				if _, _, err := connection.ReadMessage(); err != nil {
-					return
+		Convey("Overlapping receive callbacks preserve whole-frame order and symbol identity", func() {
+			// A replaced SDK session shares callbacks with its predecessor. Model
+			// both receive goroutines delivering distinct, multi-symbol frames.
+			const framesPerSession = 64
+			var producers sync.WaitGroup
+			producers.Add(2)
+
+			for session := range 2 {
+				go func() {
+					defer producers.Done()
+
+					for frame := range framesPerSession {
+						payload := fmt.Sprintf(`{"channel":"level3","type":"update","data":[{"symbol":"SESSION%d-A/USD","timestamp":"2026-09-05T10:00:00Z","bids":[{"event":"add","order_id":"bid","limit_price":100,"order_qty":3}],"asks":[{"event":"add","order_id":"ask","limit_price":101,"order_qty":4}]},{"symbol":"SESSION%d-B/USD","timestamp":"2026-09-05T10:00:00Z","bids":[{"event":"add","order_id":"bid","limit_price":%d,"order_qty":3}],"asks":[{"event":"add","order_id":"ask","limit_price":201,"order_qty":4}]}]}`, session, session, 100+frame)
+						client.OnReceived.Call(sdk.NewWebSocketMessage([]byte(payload)))
+					}
+				}()
+			}
+
+			for sequence := uint64(1); sequence <= framesPerSession*2; sequence++ {
+				var firstSymbol string
+
+				for ordinal := uint64(0); ordinal < 2; ordinal++ {
+					select {
+					case envelope := <-ingress.frames:
+						So(envelope.Stream.Sequence, ShouldEqual, sequence)
+						So(envelope.CaptureOrdinal, ShouldEqual, ordinal)
+						So(envelope.DepthFlow, ShouldNotBeNil)
+						So(envelope.Level3Data.Bids, ShouldBeNil)
+						So(envelope.Level3Data.Asks, ShouldBeNil)
+
+						if ordinal == 0 {
+							firstSymbol = envelope.Level3Data.Symbol
+							continue
+						}
+						So(envelope.Level3Data.Symbol, ShouldEqual, strings.Replace(firstSymbol, "-A/", "-B/", 1))
+					case <-time.After(time.Second):
+						t.Fatal("overlapping session callbacks stopped publishing")
+					}
 				}
 			}
-		}))
-		defer server.Close()
-		client := spot.NewWebSocket()
-		client.URL = "ws" + strings.TrimPrefix(server.URL, "http")
-		client.REST.Executor = func(request *http.Request) (*http.Response, error) {
-			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
-				Body: io.NopCloser(strings.NewReader(`{"error":[],"result":{}}`)), Request: request}, nil
-		}
-		ingress := &testIngress{status: runtime.NewStatus().Transition(runtime.READY), frames: make(chan *types.Envelope, 1)}
-		live := NewWithClient(t.Context(), map[string]runtime.Ingress[*types.Envelope]{"level3": ingress},
-			nil, false, system.Cfg.WebSocket.Endpoints.Level3, client)
-		defer live.Close()
-		So(live.Error(), ShouldBeNil)
-		live.MarkReady()
-		live.level3Observers = []runtime.Node[*types.Envelope]{depthflow.NewSignal(t.Context()), morphology.NewSignal(t.Context())}
+			producers.Wait()
+			So(live.Error(), ShouldBeNil)
+		})
 
 		Convey("Snapshots, modifications and deletions should publish only book notifications", func() {
 			for index, operation := range []string{"add", "modify", "delete"} {
@@ -505,4 +565,19 @@ func TestLiveResyncLevel3(t *testing.T) {
 		}
 		So(live.Error(), ShouldBeNil)
 	})
+}
+
+func BenchmarkNewWithClient(b *testing.B) {
+	fixture := newLiveFixture(b)
+	payload := []byte(`{"channel":"level3","type":"update","data":[{"symbol":"TEST/USD","timestamp":"2026-09-05T10:00:00Z","bids":[{"event":"add","order_id":"bid","limit_price":100,"order_qty":3}],"asks":[{"event":"add","order_id":"ask","limit_price":101,"order_qty":4}]}]}`)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		fixture.client.OnReceived.Call(sdk.NewWebSocketMessage(payload))
+		<-fixture.ingress.frames
+	}
+
+	if err := fixture.live.Error(); err != nil {
+		b.Fatal(err)
+	}
 }

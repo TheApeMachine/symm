@@ -5,9 +5,7 @@ import (
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/adaptive"
-	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 /*
@@ -32,7 +30,7 @@ type Grid struct {
 	rowIndex    map[string]int
 	versions    []uint64
 	columnIndex map[[2]string]int
-	baselines   [][]core.Primitive
+	baselines   [][]*adaptive.Baseline
 	activations [][]float64
 	qualities   [][]float64
 	weights     []float64
@@ -106,7 +104,7 @@ func (grid *Grid) Step(measurements []*data.Measurement[float64]) error {
 		grid.versions = append(grid.versions, 0)
 		grid.Values = append(grid.Values, make([]float64, len(grid.Columns)))
 		grid.Present = append(grid.Present, make([]bool, len(grid.Columns)))
-		grid.baselines = append(grid.baselines, make([]core.Primitive, len(grid.Columns)))
+		grid.baselines = append(grid.baselines, make([]*adaptive.Baseline, len(grid.Columns)))
 		grid.activations = append(grid.activations, make([]float64, len(grid.Columns)))
 		grid.qualities = append(grid.qualities, make([]float64, len(grid.Columns)))
 	}
@@ -159,17 +157,8 @@ func (grid *Grid) update(row int, measurement *data.Measurement[float64]) error 
 			baseline = adaptive.NewBaseline(adaptive.NewWindow())
 			grid.baselines[row][column] = baseline
 		}
-		fields, err := transport.Evaluate[map[string]core.Primitive](baseline, core.From(metric.Raw))
-		if err != nil {
-			return err
-		}
-		decoder := core.NewDecoder(fields)
-		dispersion := core.Decode[float64](decoder, "dispersion")
-		hasPrior := core.Decode[bool](decoder, "has_prior")
-		maturity := core.Decode[float64](decoder, "maturity")
-		if err := decoder.Error(); err != nil {
-			return err
-		}
+		reading := baseline.Observe(metric.Raw)
+		dispersion, hasPrior, maturity := reading.Dispersion, reading.HasPrior, reading.Maturity
 
 		if !hasPrior || dispersion <= 0 {
 			continue

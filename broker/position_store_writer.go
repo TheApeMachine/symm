@@ -2,7 +2,6 @@ package broker
 
 import (
 	"fmt"
-	"sync/atomic"
 
 	"github.com/theapemachine/errnie"
 )
@@ -31,30 +30,15 @@ func (store *PositionStore) enqueue(operation positionStoreOperation) error {
 		return err
 	}
 
-	if operation.fence != nil {
-		select {
-		case store.queue <- operation:
-			return nil
-		case <-store.failed:
-			return store.Error()
-		}
-	}
-
+	// Durable execution facts cannot be shed as viewer telemetry can. A full
+	// bounded queue waits for the ordered writer or its explicit failure.
 	select {
 	case store.queue <- operation:
 		return nil
 	case <-store.failed:
 		return store.Error()
-	default:
-		atomic.AddUint64(&store.shedCount, 1)
-
-		errnie.Warn(fmt.Sprintf(
-			"position store: write queue full, shedding %s",
-			operation.description,
-		))
-
-		return nil
 	}
+
 }
 
 /*

@@ -399,9 +399,9 @@ func BenchmarkPositionWire(b *testing.B) {
 	}
 	position.decisionWire = types.DecisionWire(&position.Decision)
 
-	b.ResetTimer()
+	
 
-	for range b.N {
+	for b.Loop() {
 		_ = position.Wire()
 	}
 }

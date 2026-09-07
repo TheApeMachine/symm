@@ -87,3 +87,25 @@ func TestHayashiReference(t *testing.T) {
 		tests.EqualNumber(t, core.To[float64](out["correlation"]), covariance/math.Sqrt(lv*rv))
 	}
 }
+
+func BenchmarkNewHayashiYoshida(b *testing.B) {
+	// Two 128-observation asynchronous price paths with alternating returns.
+	times, shifted := make([]int64, 128), make([]int64, 128)
+	prices := make([]float64, 128)
+	for index := range times {
+		times[index] = int64(index * 2)
+		shifted[index] = times[index] + 1
+		prices[index] = 100 * math.Exp(0.01*math.Sin(float64(index)))
+	}
+	input := observation(path(times, prices), path(shifted, prices))
+	graph := NewHayashiYoshida()
+	b.ReportAllocs()
+	for b.Loop() {
+		if graph.Next(input) == nil || graph.Next(input) != nil {
+			b.Fatal("expected one covariance record")
+		}
+		if err := graph.Error(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

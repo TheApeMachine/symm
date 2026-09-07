@@ -53,6 +53,11 @@ func TestCapitalLearnerAllocate(t *testing.T) {
 				So(capital.Knowledge.Observe("capital_account", context, action, target, 1), ShouldBeNil)
 			}
 		}
+		Convey("Malformed cash rejects allocation before any submission", func() {
+			capital.Actual.State.Cash = "invalid"
+			So(capital.allocate(agent.LocalLearning, capital.Actual, candidates, false), ShouldNotBeNil)
+			So(desk.intents, ShouldBeEmpty)
+		})
 		train(CapitalAction{Symbol: "A/USD", Kind: types.ActionEnter}, 0.01)
 		train(CapitalAction{Symbol: "B/USD", Kind: types.ActionEnter}, 0.1)
 		Convey("Learned advantage beats arrival order and does not train local selected-position evidence", func() {

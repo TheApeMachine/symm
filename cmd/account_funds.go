@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/types"
 )
@@ -73,7 +74,8 @@ func (funds *accountFunds) Reserve(identity string, cost *big.Rat) bool {
 	cash, valid := new(big.Rat).SetString(state.Cash)
 
 	if !valid {
-		panic("funds: invalid authoritative cash")
+		funds.reject(*state, "funds: invalid authoritative cash", nil)
+		return false
 	}
 
 	if cost.Cmp(cash) > 0 {
@@ -117,7 +119,8 @@ func (funds *accountFunds) publish(reading *types.EquityReading) {
 	equity, err := strconv.ParseFloat(reading.Equity, 64)
 
 	if err != nil {
-		panic(err)
+		funds.reject(state, "funds: invalid authoritative equity", err)
+		return
 	}
 	state.Mark = strategy.EquityMark{At: reading.At, Version: reading.Version, Equity: equity}
 
@@ -125,7 +128,8 @@ func (funds *accountFunds) publish(reading *types.EquityReading) {
 		funding, err := strconv.ParseFloat(reading.NetFunding, 64)
 
 		if err != nil {
-			panic(err)
+			funds.reject(state, "funds: invalid authoritative net funding", err)
+			return
 		}
 		state.Mark.NetFunding, state.Mark.HasFunding = funding, true
 	}
@@ -140,9 +144,7 @@ func (funds *accountFunds) publish(reading *types.EquityReading) {
 	cash, valid := new(big.Rat).SetString(reading.AvailableCash)
 
 	if !valid {
-		state.Complete = false
-		state.Reason = "available quote balance unavailable"
-		funds.state.Store(&state)
+		funds.reject(state, "available quote balance unavailable", nil)
 		return
 	}
 	committed := new(big.Rat)
@@ -154,10 +156,19 @@ func (funds *accountFunds) publish(reading *types.EquityReading) {
 	total, valid := new(big.Rat).SetString(reading.Cash)
 
 	if !valid {
-		panic("funds: invalid authoritative total quote cash")
+		funds.reject(state, "funds: invalid authoritative total quote cash", nil)
+		return
 	}
 
 	state.Committed = new(big.Rat).Add(total.Sub(total, cash), committed).RatString()
 	state.Cash = cash.Sub(cash, committed).RatString()
 	funds.state.Store(&state)
+}
+
+/* reject publishes an immutable, non-executable account state and its cause. */
+func (funds *accountFunds) reject(state strategy.AccountState, reason string, err error) {
+	state.Complete = false
+	state.Reason = reason
+	funds.state.Store(&state)
+	errnie.Error(errnie.Err(errnie.Validation, reason, err))
 }

@@ -16,7 +16,7 @@ type Get[K comparable] struct {
 }
 
 func NewGet[K comparable](key K) *Get[K] {
-	return &Get[K]{current: NewRetained(nil), key: key, seed: transport.NewIO(core.NewProto(nil))}
+	return &Get[K]{key: key, seed: transport.NewIO(core.NewProto(nil))}
 }
 func (get *Get[K]) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(
@@ -32,7 +32,9 @@ func (get *Get[K]) Next(in core.Primitive) core.Primitive {
 		},
 		get,
 	)
-	transport.NewDiscard().Next(transport.NewApply(get.current, transport.NewIO(result)))
+	if result != nil {
+		get.current = result
+	}
 	return result
 }
 func (get *Get[K]) Read() any { return core.To[any](get.current) }

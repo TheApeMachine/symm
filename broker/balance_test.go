@@ -69,9 +69,9 @@ func BenchmarkBalanceUpdate(b *testing.B) {
 	})
 	balance := NewBalance(api)
 
-	b.ResetTimer()
+	
 
-	for range b.N {
+	for b.Loop() {
 		balance.Update()
 	}
 }

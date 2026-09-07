@@ -3,6 +3,7 @@ package learning
 import (
 	"errors"
 	"math"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -228,4 +229,60 @@ func BenchmarkGridStep(b *testing.B) {
 			}
 		})
 	}
+}
+
+/*
+BenchmarkGridStepUniverse exercises 640 symbol contexts and the 638 quantities
+shown in the incident screenshot. These are workload fixtures, not runtime caps.
+The same universe is replayed so heap growth cannot hide behind one-cell tests.
+*/
+func BenchmarkGridStepUniverse(b *testing.B) {
+	runtime.GC()
+	var initial runtime.MemStats
+	runtime.ReadMemStats(&initial)
+	grid := NewGrid()
+	measurement := data.NewMeasurement[float64]("", "", "fixture", time.Time{}, time.Time{})
+	labels := make([]string, 640)
+	for index := range labels {
+		labels[index] = strconv.Itoa(index)
+	}
+	for column := range 638 {
+		label := strconv.Itoa(column)
+		measurement.PutMetric(data.Metric[float64]{Label: label, Raw: float64(column)})
+	}
+	// Admit all cells, then give their baselines a second value and real movement.
+	for epoch := range 2 {
+		for _, label := range labels {
+			measurement.Label = label
+			for key, metric := range measurement.Metrics {
+				metric.Raw += float64(epoch)
+				measurement.Metrics[key] = metric
+			}
+			if err := grid.Step([]*data.Measurement[float64]{measurement}); err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
+	runtime.GC()
+	var warmed runtime.MemStats
+	runtime.ReadMemStats(&warmed)
+	index := 0
+	b.ReportAllocs()
+	for b.Loop() {
+		measurement.Label = labels[index%len(labels)]
+		for key, metric := range measurement.Metrics {
+			metric.Raw = -metric.Raw
+			measurement.Metrics[key] = metric
+		}
+		if err := grid.Step([]*data.Measurement[float64]{measurement}); err != nil {
+			b.Fatal(err)
+		}
+		index++
+	}
+	runtime.GC()
+	var replayed runtime.MemStats
+	runtime.ReadMemStats(&replayed)
+	b.ReportMetric(float64(warmed.HeapAlloc)-float64(initial.HeapAlloc), "initial-retained-B")
+	b.ReportMetric(float64(replayed.HeapAlloc)-float64(initial.HeapAlloc), "replay-retained-B")
+	runtime.KeepAlive(grid)
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/nomagique/learning"
 	"github.com/theapemachine/symm/types"
@@ -104,11 +105,17 @@ func (capital *CapitalLearner) allocate(local *LocalLearning, teacher *AccountTe
 	cash, valid := new(big.Rat).SetString(state.Cash)
 
 	if !valid {
-		panic("capital: malformed authoritative cash")
+		return errnie.Error(errnie.Err(errnie.Validation, "capital: malformed authoritative cash", nil))
 	}
 	slices.SortFunc(candidates, func(left, right *EntryCandidate) int { return strings.Compare(left.Record.Symbol, right.Record.Symbol) })
 	actions := []CapitalAction{{Kind: types.ActionHold}}
-	contexts := map[CapitalAction][]uint64{actions[0]: state.Context(nil)}
+	context, err := state.Context(nil)
+
+	if err != nil {
+		return err
+	}
+
+	contexts := map[CapitalAction][]uint64{actions[0]: context}
 	claims := make(map[CapitalAction]*EntryCandidate)
 	for _, candidate := range candidates {
 		if !explore && local.execution.Mode() != ModeTrading {

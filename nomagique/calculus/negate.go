@@ -2,8 +2,6 @@ package calculus
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 )
 
 // Negate owns only its numeric operation. The configured left source remains
@@ -15,11 +13,13 @@ type Negate struct {
 }
 
 func NewNegate(left core.Primitive) *Negate {
-	return &Negate{current: store.NewRetained(nil), left: left}
+	return &Negate{left: left}
 }
 func (operation *Negate) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(operation.left, in, func(held, value float64) float64 { return -value }, operation)
-	transport.NewDiscard().Next(transport.NewApply(operation.current, transport.NewIO(result)))
+	if result != nil {
+		operation.current = result
+	}
 	return result
 }
 func (operation *Negate) Read() any { return core.To[any](operation.current) }

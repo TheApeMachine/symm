@@ -1,76 +1,100 @@
 package rls
 
 import (
-	"github.com/theapemachine/symm/nomagique/calculus"
+	"fmt"
+	"math"
+
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/matrix"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"github.com/theapemachine/symm/nomagique/vector"
 )
 
-// NewPrediction evaluates the supplied square-root coefficient posterior.
-// observationCount supplies independent observation-noise multiplicity; use 1
-// for one forecast and N for a sum whose design vector is already aggregated.
-// Prediction is evaluated before update when placed before NewUpdate.
-func NewPrediction(observationCount core.Primitive) core.Primitive {
-	return transport.NewPipe(
-		store.NewRecord(
-			transport.NewPipe(),
-			transport.NewPipe(
-				vector.NewDot(
-					transport.NewPipe(store.NewGet("beta"), transport.NewSpread[float64]()),
-					transport.NewPipe(store.NewGet("design"), transport.NewSpread[float64]()),
-				),
-				store.NewKey("prediction"),
-			),
-			transport.NewPipe(
-				matrix.NewVector(transport.NewPipe(store.NewGet("root"), matrix.NewTranspose[float64]()), store.NewGet("design")),
-				store.NewKey("factor"),
-			),
-			transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("scale")),
-			transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("degrees_of_freedom")),
-			transport.NewPipe(store.NewConstant(core.From(false)), store.NewKey("ready")),
-		),
-		logic.NewGate(
-			equation.NewAll(
-				equation.NewGreater[float64](store.NewGet("noise_shape"), store.NewConstant(core.From(0.0))),
-				equation.NewGreater[float64](store.NewGet("noise_scale"), store.NewConstant(core.From(0.0))),
-			),
-			transport.NewPipe(
-				store.NewRecord(
-					transport.NewPipe(),
-					transport.NewPipe(
-						equation.NewProduct[float64](
-							equation.NewRatio[float64](store.NewGet("noise_scale"), store.NewGet("noise_shape")),
-							equation.NewSum[float64](
-								observationCount,
-								transport.NewPipe(store.NewGet("factor"), transport.NewSpread[float64](), equation.NewEnergy()),
-							),
-						),
-						store.NewKey("predictive_variance"),
-					),
-				),
-				logic.NewGate(
-					equation.NewAll(
-						equation.NewGreater[float64](store.NewGet("predictive_variance"), store.NewConstant(core.From(0.0))),
-						transport.NewPipe(store.NewGet("predictive_variance"), logic.NewFinite()),
-					),
-					store.NewRecord(
-						transport.NewPipe(),
-						transport.NewPipe(store.NewGet("predictive_variance"), calculus.NewSqrt(transport.NewIO(core.From(0.0))), store.NewKey("scale")),
-						transport.NewPipe(
-							equation.NewProduct[float64](store.NewConstant(core.From(2.0)), store.NewGet("noise_shape")),
-							store.NewKey("degrees_of_freedom"),
-						),
-						transport.NewPipe(store.NewConstant(core.From(true)), store.NewKey("ready")),
-					),
-					logic.NewReject(core.ErrDomain),
-				),
-			),
-			transport.NewPipe(),
-		),
-	)
+/* Prediction owns configured observation-noise multiplicity and typed projection. */
+type Prediction struct {
+	core.PrimitiveError
+	observations core.Primitive
+	seed         *transport.IO
+	current      core.Primitive
 }
+
+/* NewPrediction forecasts from the supplied posterior before any model update. */
+func NewPrediction(observationCount core.Primitive) core.Primitive {
+	return transport.NewMap(&Prediction{
+		observations: observationCount, seed: transport.NewIO(core.From(map[string]core.Primitive{})),
+	})
+}
+
+func (prediction *Prediction) Next(input core.Primitive) core.Primitive {
+	result := core.Yield(prediction.seed, input,
+		func(_ map[string]core.Primitive, fields map[string]core.Primitive) map[string]core.Primitive {
+			output, err := prediction.Project(fields)
+			prediction.Error(err)
+			return output
+		}, prediction)
+
+	if result != nil {
+		prediction.current = result
+	}
+	return result
+}
+
+/* Project multiplies the root's transpose implicitly, retaining only its factor. */
+func (prediction *Prediction) Project(fields map[string]core.Primitive) (map[string]core.Primitive, error) {
+	decoder := core.NewDecoder(fields)
+	beta := core.Decode[[]float64](decoder, "beta")
+	design := core.Decode[[]float64](decoder, "design")
+	root := core.Decode[[][]float64](decoder, "root")
+	shape := core.Decode[float64](decoder, "noise_shape")
+	noise := core.Decode[float64](decoder, "noise_scale")
+
+	if err := decoder.Error(); err != nil {
+		return nil, err
+	}
+
+	if len(beta) != len(design) || len(root) != len(design) {
+		return nil, fmt.Errorf("%w: RLS prediction coefficient, root and design dimensions differ", core.ErrShape)
+	}
+	factor := make([]float64, len(design))
+	value := 0.0
+
+	for row, feature := range design {
+		if len(root[row]) != len(design) {
+			return nil, fmt.Errorf("%w: RLS root must be square", core.ErrShape)
+		}
+		value += beta[row] * feature
+
+		for column, coefficient := range root[row] {
+			factor[column] += coefficient * feature
+		}
+	}
+	output := make(map[string]core.Primitive, len(fields)+6)
+
+	for name, field := range fields {
+		output[name] = field
+	}
+	output["prediction"], output["factor"] = core.From(value), core.From(factor)
+	output["scale"], output["degrees_of_freedom"], output["ready"] = core.From(0.0), core.From(0.0), core.From(false)
+
+	if !(shape > 0 && noise > 0) {
+		return output, nil
+	}
+	observations, err := transport.Evaluate[float64](prediction.observations, core.From(fields))
+
+	if err != nil {
+		return nil, err
+	}
+	energy := 0.0
+
+	for _, value := range factor {
+		energy += value * value
+	}
+	variance := (noise / shape) * (observations + energy)
+
+	if !(variance > 0) || math.IsNaN(variance) || math.IsInf(variance, 0) {
+		return nil, fmt.Errorf("%w: RLS predictive variance %g", core.ErrDomain, variance)
+	}
+	output["predictive_variance"] = core.From(variance)
+	output["scale"], output["degrees_of_freedom"], output["ready"] = core.From(math.Sqrt(variance)), core.From(2*shape), core.From(true)
+	return output, nil
+}
+
+func (prediction *Prediction) Read() any { return core.To[any](prediction.current) }

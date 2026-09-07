@@ -1,8 +1,10 @@
 package runtime
 
 import (
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -63,25 +65,6 @@ func TestWorkloadStep(t *testing.T) {
 	})
 }
 
-func BenchmarkWorkloadPush(b *testing.B) {
-	count := &atomic.Int64{}
-	done := make(chan struct{})
-	workload := NewWorkload(b.Context(), "push", [][]Node[int]{
-		{workloadCountNode{count: count, target: int64(b.N), done: done}},
-	})
-	defer workload.Close()
-	workload.admit()
-
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	for index := 0; index < b.N; index++ {
-		workload.Push(index)
-	}
-
-	<-done
-}
-
 /*
 composedProbe records what the ring told it about its own position. Only the
 ring knows both facts, so this is the whole contract: a node that asks gets
@@ -138,4 +121,50 @@ func TestWorkloadComposesItsNodes(t *testing.T) {
 			So(second.told.Load(), ShouldEqual, int64(1))
 		})
 	})
+}
+
+func TestWorkloadPush(t *testing.T) {
+	Convey("Given concurrent writers wrapping the ring repeatedly", t, func() {
+		const writers, events = 4, 1024
+		count, done := &atomic.Int64{}, make(chan struct{})
+		workload := newWorkload(t.Context(), "concurrent", [][]Node[int]{
+			{workloadCountNode{count: count, target: writers * events, done: done}},
+		}, writers)
+		workload.admit()
+		var producers sync.WaitGroup
+		for writer := range writers {
+			producers.Go(func() {
+				for event := range events {
+					workload.Push(writer*events + event)
+				}
+			})
+		}
+		producers.Wait()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("ring stopped making progress")
+		}
+		So(workload.Close(), ShouldBeNil)
+		So(count.Load(), ShouldEqual, writers*events)
+	})
+}
+
+func BenchmarkWorkloadPush(b *testing.B) {
+	count := &atomic.Int64{}
+	done := make(chan struct{})
+	workload := NewWorkload(b.Context(), "push", [][]Node[int]{
+		{workloadCountNode{count: count, target: int64(b.N), done: done}},
+	})
+	defer workload.Close()
+	workload.admit()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for index := 0; index < b.N; index++ {
+		workload.Push(index)
+	}
+
+	<-done
 }

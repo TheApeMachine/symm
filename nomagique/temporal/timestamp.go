@@ -2,7 +2,6 @@ package temporal
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"time"
 )
@@ -15,11 +14,13 @@ type Timestamp struct {
 }
 
 func NewTimestamp() *Timestamp {
-	return &Timestamp{seed: transport.NewIO(core.From(int64(0))), current: store.NewRetained(nil)}
+	return &Timestamp{seed: transport.NewIO(core.From(int64(0)))}
 }
 func (stamp *Timestamp) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(stamp.seed, in, func(_ int64, value time.Time) int64 { return value.UnixNano() }, stamp)
-	transport.NewDiscard().Next(transport.NewApply(stamp.current, transport.NewIO(result)))
+	if result != nil {
+		stamp.current = result
+	}
 	return result
 }
 func (stamp *Timestamp) Read() any { return core.To[any](stamp.current) }

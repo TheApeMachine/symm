@@ -131,3 +131,19 @@ func (compressor *Compressor) Seen() map[[2]int64]int {
 func (compressor *Compressor) Edges() map[[4]int64]int {
 	return compressor.edges
 }
+
+/*
+TransitionProbability returns the observed edge count per occurrence of its
+source token. Sequence arguments are positions within a segment, matching Seen
+and Edges keys. A terminal occurrence contributes to Seen but has no edge.
+Like Filter, this query belongs to the tokenizer's serialized owner.
+*/
+func (compressor *Compressor) TransitionProbability(fromByte, fromSeq, toByte, toSeq int64) float64 {
+	total := compressor.seen[[2]int64{fromByte, fromSeq}]
+
+	if total == 0 {
+		return 0
+	}
+
+	return float64(compressor.edges[[4]int64{fromByte, fromSeq, toByte, toSeq}]) / float64(total)
+}

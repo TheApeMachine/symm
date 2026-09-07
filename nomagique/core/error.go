@@ -11,11 +11,18 @@ var (
 )
 
 // PrimitiveError is the one failure accumulator. Reading errors has no side
-// effects; recording nil does not grow the error tree.
+// effects; recording nil does not grow the error tree. Joined branch failures
+// are admitted individually so overlapping propagation cannot duplicate their
+// entire subtrees. Single-error wrappers retain their descriptive context.
 type PrimitiveError struct{ err error }
 
 func (state *PrimitiveError) Error(errs ...error) error {
 	for _, err := range errs {
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			state.Error(joined.Unwrap()...)
+			continue
+		}
+
 		if err != nil && !errors.Is(state.err, err) {
 			state.err = errors.Join(state.err, err)
 		}

@@ -25,13 +25,13 @@ type AccountState struct {
 }
 
 /* Context appends measured free-capital and held-instrument facts to Region context. */
-func (state AccountState) Context(regions []uint64) []uint64 {
+func (state AccountState) Context(regions []uint64) ([]uint64, error) {
 	context := append([]uint64(nil), regions...)
 	context = append(context, 0)
 	cash, valid := new(big.Rat).SetString(state.Cash)
 
 	if !valid {
-		panic("account: invalid authoritative cash")
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "account: invalid authoritative cash", nil))
 	}
 	amount, _ := cash.Float64()
 	fraction := 0.0
@@ -58,7 +58,7 @@ func (state AccountState) Context(regions []uint64) []uint64 {
 		}
 		context = append(context, 0)
 	}
-	return context
+	return context, nil
 }
 
 /* CapitalAction names a current allocation or retaining cash. */

@@ -145,6 +145,29 @@ func TestAccountTeacherIssue(t *testing.T) {
 	})
 }
 
+func TestAccountStateContext(t *testing.T) {
+	Convey("Given authoritative free capital and a held instrument", t, func() {
+		state := AccountState{Cash: "50", Mark: EquityMark{Equity: 100}, Positions: map[string]string{"A": "1"}}
+		context, err := state.Context([]uint64{7})
+		So(err, ShouldBeNil)
+		So(context, ShouldResemble, []uint64{7, 0, 2, 66, 0})
+
+		Convey("Malformed cash returns an error without a fabricated context", func() {
+			state.Cash = "invalid"
+			context, err := state.Context([]uint64{7})
+			So(err, ShouldNotBeNil)
+			So(context, ShouldBeNil)
+		})
+
+		Convey("Zero available cash remains a valid observation", func() {
+			state.Cash = "0"
+			context, err := state.Context(nil)
+			So(err, ShouldBeNil)
+			So(context, ShouldResemble, []uint64{0, 0, 66, 0})
+		})
+	})
+}
+
 func BenchmarkAccountTeacherObserve(b *testing.B) {
 	teacher := NewAccountTeacher(NewCapitalKnowledge(), "capital_virtual", func(hindsight.LearningEvent) error { return nil })
 	state := AccountState{Mark: EquityMark{At: time.Unix(100, 0), Version: 1, Equity: 200, HasFunding: true}, Cash: "200", Complete: true}
@@ -154,6 +177,17 @@ func BenchmarkAccountTeacherObserve(b *testing.B) {
 		state.Mark.At = state.Mark.At.Add(time.Millisecond)
 
 		if err := teacher.Observe(state); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkAccountStateContext(b *testing.B) {
+	state := AccountState{Cash: "50", Mark: EquityMark{Equity: 100}, Positions: map[string]string{"BTC/USD": "1", "ETH/USD": "2"}}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if _, err := state.Context(nil); err != nil {
 			b.Fatal(err)
 		}
 	}

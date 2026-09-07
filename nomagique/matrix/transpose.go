@@ -2,7 +2,6 @@ package matrix
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
@@ -14,7 +13,7 @@ type Transpose[T any] struct {
 }
 
 func NewTranspose[T any]() *Transpose[T] {
-	return &Transpose[T]{seed: transport.NewIO(core.From([][]T{})), current: store.NewRetained(nil)}
+	return &Transpose[T]{seed: transport.NewIO(core.From([][]T{}))}
 }
 func (transpose *Transpose[T]) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(
@@ -42,7 +41,9 @@ func (transpose *Transpose[T]) Next(in core.Primitive) core.Primitive {
 		},
 		transpose,
 	)
-	transport.NewDiscard().Next(transport.NewApply(transpose.current, transport.NewIO(result)))
+	if result != nil {
+		transpose.current = result
+	}
 	return result
 }
 func (transpose *Transpose[T]) Read() any { return core.To[any](transpose.current) }

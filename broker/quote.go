@@ -22,8 +22,6 @@ const (
 
 var (
 	decimalZero    = decimal.NewFromInt64(0)
-	decimalOne     = decimal.NewFromInt64(1)
-	decimalTwo     = decimal.NewFromInt64(2)
 	decimalHundred = decimal.NewFromInt64(100)
 )
 

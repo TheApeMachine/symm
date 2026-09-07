@@ -2,8 +2,6 @@ package calculus
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"math"
 )
 
@@ -14,7 +12,7 @@ type Sign struct {
 	current core.Primitive
 }
 
-func NewSign(left core.Primitive) *Sign { return &Sign{current: store.NewRetained(nil), left: left} }
+func NewSign(left core.Primitive) *Sign { return &Sign{left: left} }
 func (operation *Sign) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(
 		operation.left,
@@ -30,7 +28,9 @@ func (operation *Sign) Next(in core.Primitive) core.Primitive {
 		},
 		operation,
 	)
-	transport.NewDiscard().Next(transport.NewApply(operation.current, transport.NewIO(result)))
+	if result != nil {
+		operation.current = result
+	}
 	return result
 }
 func (operation *Sign) Read() any { return core.To[any](operation.current) }

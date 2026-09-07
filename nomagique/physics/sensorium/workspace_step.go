@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"sort"
+
+	"github.com/theapemachine/errnie"
 )
 
 func (fluid *workspace) step() (Reading, error) {
@@ -23,7 +25,9 @@ func (fluid *workspace) step() (Reading, error) {
 		return Reading{}, err
 	}
 
-	fluid.planckExchange()
+	if err := fluid.planckExchange(); err != nil {
+		return Reading{}, err
+	}
 
 	// 1. Seed particle anchors into the ω-frequency lattice
 	fluid.seedModeAnchors()
@@ -34,8 +38,26 @@ func (fluid *workspace) step() (Reading, error) {
 
 	// 3. Project the coherent mode amplitudes Ψ_k into the 3D spatial field Ψ(x)
 	fluid.projectSpatialWave()
+	fluid.gatherPilotWave()
 
 	return fluid.observe(), nil
+}
+
+/*
+gatherPilotWave advects active particles with the projected probability current.
+The density and mass regularizers are the numerical floors specified in the
+Manifold Physics Inference & Integration directive, Task 2.1.
+*/
+func (fluid *workspace) gatherPilotWave() {
+	const densityFloor, massFloor = 1e-8, 1e-6
+	fluid.engine.PilotWaveGather(
+		fluid.pos, fluid.mass, fluid.posOut, fluid.velOut,
+		fluid.psiRe, fluid.psiIm, fluid.particles,
+		float32(fluid.rates.deltaT), float32(hbarEff), densityFloor, massFloor,
+	)
+	fluid.engine.Synchronize()
+	copy(fluid.pos.Float32Slice()[:fluid.particles*3], fluid.posOut.Float32Slice()[:fluid.particles*3])
+	copy(fluid.vel.Float32Slice()[:fluid.particles*3], fluid.velOut.Float32Slice()[:fluid.particles*3])
 }
 
 /*
@@ -333,7 +355,7 @@ func (fluid *workspace) gatherParticles() error {
 	return nil
 }
 
-func (fluid *workspace) planckExchange() {
+func (fluid *workspace) planckExchange() error {
 	dt := fluid.rates.deltaT
 	cv := fluid.domain.CV
 	kappa := fluid.domain.KThermal
@@ -351,11 +373,11 @@ func (fluid *workspace) planckExchange() {
 		freq := float64(omega[index])
 
 		if math.IsNaN(thermal) || thermal < 0 {
-			panic(fmt.Sprintf("sensorium: invalid thermal energy %v for particle %d", thermal, index))
+			return errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf("sensorium: invalid thermal energy %v for particle %d", thermal, index), nil))
 		}
 
 		if math.IsNaN(osc) || osc < 0 {
-			panic(fmt.Sprintf("sensorium: invalid oscillator energy %v for particle %d", osc, index))
+			return errnie.Error(errnie.Err(errnie.Validation, fmt.Sprintf("sensorium: invalid oscillator energy %v for particle %d", osc, index), nil))
 		}
 
 		denom := particleMass * cv
@@ -395,6 +417,8 @@ func (fluid *workspace) planckExchange() {
 		energy[index] = nextOsc
 		amp[index] = float32(math.Sqrt(float64(nextOsc)))
 	}
+
+	return nil
 }
 
 func planckEnergy(omega, temperature float64) float64 {

@@ -2,7 +2,6 @@ package store
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/transport"
 	"maps"
 )
 
@@ -15,7 +14,7 @@ type KV[K comparable] struct {
 }
 
 func NewKV[K comparable](left core.Primitive) *KV[K] {
-	return &KV[K]{left: left, current: NewRetained(nil)}
+	return &KV[K]{left: left}
 }
 func (kv *KV[K]) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(
@@ -29,7 +28,9 @@ func (kv *KV[K]) Next(in core.Primitive) core.Primitive {
 		},
 		kv,
 	)
-	transport.NewDiscard().Next(transport.NewApply(kv.current, transport.NewIO(result)))
+	if result != nil {
+		kv.current = result
+	}
 	return result
 }
 func (kv *KV[K]) Read() any { return core.To[any](kv.current) }

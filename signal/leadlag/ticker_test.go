@@ -9,6 +9,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
+	markettest "github.com/theapemachine/symm/tests/market"
 )
 
 func ticker(symbol string, price float64, at time.Time) kraken.TickerData {
@@ -36,6 +37,23 @@ func drive(entity *Ticker, symbol string, prices []float64) []*data.Measurement[
 }
 
 func TestTickerStep(t *testing.T) {
+	Convey("Given the captured CRV/DOT tape that stalled the spot workload", t, func() {
+		entity := NewTicker()
+		var measurement *data.Measurement[float64]
+
+		Convey("Every asynchronous observation completes, including the boundary lag", func() {
+			for _, tick := range markettest.LeadLagTape() {
+				measurement = entity.Step(tick)
+				So(measurement, ShouldNotBeNil)
+				So(measurement.Err, ShouldBeNil)
+			}
+
+			So(measurement.Metrics, ShouldContainKey, "best_lag_index")
+			So(measurement.Metrics["best_lag_index"].Raw, ShouldEqual, -5)
+			So(measurement.Metrics, ShouldNotContainKey, "lag_peak_curvature")
+		})
+	})
+
 	Convey("Given a lead-lag ticker-path instrument", t, func() {
 		entity := NewTicker()
 
@@ -150,6 +168,33 @@ func TestTickerStep(t *testing.T) {
 	})
 }
 
+func benchmarkSymbol(s int) string {
+	return fmt.Sprintf("S%02d/USD", s)
+}
+
+const (
+	benchmarkSymbols = 32
+	benchmarkWarmup  = 64
+)
+
+func BenchmarkTickerStep(b *testing.B) {
+	messages := markettest.LeadLagTape()
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		entity := NewTicker()
+
+		for _, tick := range messages {
+			measurement := entity.Step(tick)
+
+			if measurement.Err != nil {
+				b.Fatal(measurement.Err)
+			}
+		}
+	}
+}
+
 /*
 BenchmarkTickerCrossLagStep isolates the intrinsic cost of one leadlag Step on a
 focal symbol whose peers all hold full (64-sample) committed paths. It exercises
@@ -179,12 +224,3 @@ func BenchmarkTickerCrossLagStep(b *testing.B) {
 		i++
 	}
 }
-
-func benchmarkSymbol(s int) string {
-	return fmt.Sprintf("S%02d/USD", s)
-}
-
-const (
-	benchmarkSymbols = 32
-	benchmarkWarmup  = 64
-)

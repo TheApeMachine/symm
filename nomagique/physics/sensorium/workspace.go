@@ -378,7 +378,7 @@ func (fluid *workspace) packFields(momRho, energy, waveReal, waveImag []float32)
 	psiIm := fluid.psiIm.Float32Slice()
 	var scale fieldScale
 
-	for cell := 0; cell < cells; cell++ {
+	for cell := range cells {
 		mx := mom[cell*3+0]
 		my := mom[cell*3+1]
 		mz := mom[cell*3+2]
@@ -531,4 +531,24 @@ func maxAbs32(peak float32, values ...float32) float32 {
 	}
 
 	return peak
+}
+
+/* spectralPeaks scans synchronized modes without copying the lattice arrays. */
+func (fluid *workspace) spectralPeaks() []SpectralPeak {
+	omega := fluid.omegaLattice.Float32Slice()[:fluid.domain.MaxModes]
+	real := fluid.psiModeReal.Float32Slice()
+	imag := fluid.psiModeImag.Float32Slice()
+	var peaks []SpectralPeak
+
+	for index := 1; index+1 < len(omega); index++ {
+		power := real[index]*real[index] + imag[index]*imag[index]
+		left := real[index-1]*real[index-1] + imag[index-1]*imag[index-1]
+		right := real[index+1]*real[index+1] + imag[index+1]*imag[index+1]
+
+		if power > left && power >= right {
+			peaks = append(peaks, SpectralPeak{Index: index, Frequency: omega[index], Power: power})
+		}
+	}
+
+	return peaks
 }

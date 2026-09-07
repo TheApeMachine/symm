@@ -2,7 +2,6 @@ package collection
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/store"
 	"github.com/theapemachine/symm/nomagique/transport"
 	"slices"
 )
@@ -15,7 +14,7 @@ type Tail[T any] struct {
 }
 
 func NewTail[T any](capacity core.Primitive) *Tail[T] {
-	return &Tail[T]{current: store.NewRetained(nil), capacity: capacity, seed: transport.NewIO(core.From([]T{}))}
+	return &Tail[T]{capacity: capacity, seed: transport.NewIO(core.From([]T{}))}
 }
 func (t *Tail[T]) Next(in core.Primitive) core.Primitive {
 	result := core.Yield(
@@ -32,7 +31,9 @@ func (t *Tail[T]) Next(in core.Primitive) core.Primitive {
 		},
 		t,
 	)
-	transport.NewDiscard().Next(transport.NewApply(t.current, transport.NewIO(result)))
+	if result != nil {
+		t.current = result
+	}
 	return result
 }
 func (t *Tail[T]) Read() any { return core.To[any](t.current) }
