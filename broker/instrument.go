@@ -39,6 +39,21 @@ type Instrument struct {
 }
 
 /*
+NewInstrumentWithQuote creates an Instrument initialized with a specific quote
+currency without requiring an active websocket connection.
+*/
+func NewInstrumentWithQuote(quote string) *Instrument {
+	return &Instrument{
+		status:           runtime.NewStatus(),
+		cache:            &sync.Map{},
+		symbols:          []string{},
+		quote:            quote,
+		products:         make(map[string]string),
+		symbolsByProduct: make(map[string]string),
+	}
+}
+
+/*
 NewInstrument creates the market-instrument registry
 used by subscriptions and order validation.
 */

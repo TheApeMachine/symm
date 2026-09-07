@@ -1,12 +1,10 @@
 package strategy
 
 import (
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"time"
 
-	"github.com/theapemachine/symm/broker"
-
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/nomagique/learning"
@@ -57,7 +55,6 @@ type learningLane struct {
 	pending                 uint64
 	action                  LearningAction
 	requested               *decimal.Decimal
-	ladder                  broker.DepthLadder
 	trace                   []learningExperience
 	equity                  float64
 	complete                bool
@@ -290,7 +287,7 @@ func (lane *learningLane) issue(local *LocalLearning, market *learningMarket, in
 		return nil
 	}
 
-	requested, err := lane.wallet.request(book, action, influence, &lane.ladder)
+	requested, err := lane.wallet.request(book, action, influence)
 
 	if err != nil {
 		return err

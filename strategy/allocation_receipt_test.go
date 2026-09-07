@@ -5,8 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/kraken"
 )
 
 func TestAllocationReceiptReport(t *testing.T) {
@@ -40,7 +42,7 @@ func TestAllocationReceiptReport(t *testing.T) {
 func TestAllocationReceiptObserve(t *testing.T) {
 	Convey("Submission alone does not prove an allocation filled", t, func() {
 		receipt := &AllocationReceipt{}
-		event := hindsight.LifecycleEvent{At: time.Unix(100, 0), Kind: "execution_submitted", Execution: &hindsight.ExecutionFact{}}
+		event := hindsight.LifecycleEvent{At: time.Unix(100, 0), Kind: "execution_submitted", Execution: &kraken.ExecutionData{}}
 		receipt.Observe(event)
 		So(receipt.Result.Load().State, ShouldEqual, "submitted")
 		Convey("An unfilled terminal order aborts", func() {
@@ -51,18 +53,13 @@ func TestAllocationReceiptObserve(t *testing.T) {
 		})
 		Convey("A failed remainder still carries the confirmed cumulative fill", func() {
 			event.Kind = "execution_failed"
-			event.Execution.CumQty = "0.5"
+			event.Execution.CumQty = decimal.NewFromFloat64(0.5)
 			receipt.Observe(event)
 			So(receipt.Result.Load().State, ShouldEqual, "filled")
 		})
-		Convey("Malformed fill quantities fail visibly", func() {
-			event.Kind = "entry_fill"
-			event.Execution.CumQty = "invalid"
-			So(func() { receipt.Observe(event) }, ShouldPanic)
-		})
 		Convey("A cumulative partial fill establishes the allocation", func() {
 			event.Kind = "increase_fill"
-			event.Execution.CumQty = "0.5"
+			event.Execution.CumQty = decimal.NewFromFloat64(0.5)
 			receipt.Observe(event)
 			So(receipt.Result.Load().State, ShouldEqual, "filled")
 		})

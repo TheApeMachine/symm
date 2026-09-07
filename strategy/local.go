@@ -163,7 +163,7 @@ func (local *LocalLearning) transition(
 		hadPending := lane.pending != 0
 
 		if hadPending {
-			quantity, gross, fee, err := lane.wallet.fill(book, lane.action, lane.requested, &lane.ladder)
+			quantity, gross, fee, err := lane.wallet.fill(book, lane.action, lane.requested)
 
 			if err != nil {
 				return err

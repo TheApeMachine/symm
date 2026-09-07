@@ -1,26 +1,47 @@
 package strategy
 
 import (
-	"math/big"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/types"
 )
 
 func candidateFixture(symbol string, at time.Time) *EntryCandidate {
-	wallet, book := virtualFixture()
-	quantity := big.NewRat(1, 1)
-	_, gross := wallet.pricing.Sweep(book, quantity, &wallet.cash, true, nil, nil)
-	cost := wallet.pricing.Total(new(big.Rat), gross, true)
-	candidate := &EntryCandidate{Record: hindsight.CandidateRecord{ID: uuid.NewString(), Decision: 1, Symbol: symbol, Action: "enter", At: at, Horizon: time.Minute, GridVersion: 1, Authority: 1,
-		Quantity: quantity.RatString(), Notional: cost.RatString(), QtyMinimum: wallet.pricing.Minimum.RatString(), QtyIncrement: wallet.pricing.Lot.RatString(), CostMinimum: wallet.pricing.CostMinimum.RatString(), FeeRate: wallet.pricing.Rate.RatString()},
-		action: LearningAction{Kind: types.ActionEnter}, quantity: quantity, cost: cost, bid: book.Bids.High.Price.Rat()}
-	wallet.pricing.Sweep(book, quantity, &wallet.cash, true, &candidate.ladder, nil)
-	candidate.Intent = ExecutionIntent{Candidate: candidate, Symbol: symbol, Quantity: quantity, MaximumCost: cost, Kind: types.ActionEnter, CorrelationID: candidate.Record.ID}
+	quantity := decimal.NewFromInt64(1)
+	cost := decimal.NewFromInt64(102)
+	bid := decimal.NewFromInt64(100)
+
+	candidate := &EntryCandidate{
+		Record: hindsight.CandidateRecord{
+			ID:          uuid.NewString(),
+			Decision:    1,
+			Symbol:      symbol,
+			Action:      "enter",
+			At:          at,
+			Horizon:     time.Minute,
+			GridVersion: 1,
+			Authority:   1,
+			Quantity:    quantity.String(),
+			Notional:    cost.String(),
+		},
+		action:   LearningAction{Kind: types.ActionEnter},
+		quantity: quantity,
+		cost:     cost,
+		bid:      bid,
+	}
+	candidate.Intent = ExecutionIntent{
+		Candidate:     candidate,
+		Symbol:        symbol,
+		Quantity:      quantity,
+		MaximumCost:   cost,
+		Kind:          types.ActionEnter,
+		CorrelationID: candidate.Record.ID,
+	}
 	return candidate
 }
 

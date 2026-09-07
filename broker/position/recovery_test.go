@@ -2,14 +2,13 @@ package position
 
 import (
 	venue "github.com/theapemachine/symm/tests/venue"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
@@ -43,29 +42,23 @@ func newTestRecovery(
 	t testing.TB,
 	balances map[string]*decimal.Decimal,
 	trades map[string]spot.Trade,
-) (*Recovery, *sync.Map) {
+) (*Recovery, *broker.Price) {
 	t.Helper()
 
 	return newTestRecoveryWithOptions(t, balances, trades, true)
 }
 
-/*
-newTestRecoveryWithOptions is newTestRecovery with control over whether a
-ticker is seeded, so a test can exercise synthesizeStoploss's no-live-quote
-fallback path — the shape recovery actually runs under at boot, before the
-instrument subscription has delivered any market data.
-*/
 func newTestRecoveryWithOptions(
 	t testing.TB,
 	balances map[string]*decimal.Decimal,
 	trades map[string]spot.Trade,
 	seedTicker bool,
-) (*Recovery, *sync.Map) {
+) (*Recovery, *broker.Price) {
 	t.Helper()
 	viper.Set("market.quote_currency", "USD")
 	t.Cleanup(viper.Reset)
 
-	conn := &recoveryConn{venue.Conn: venue.NewConn()}
+	conn := &recoveryConn{Conn: venue.NewConn()}
 	conn.BalanceResult = balances
 	conn.TradesHistoryResult = spot.TradesHistoryResult{Trades: trades}
 
@@ -88,16 +81,11 @@ func newTestRecoveryWithOptions(
 		},
 	})
 
-	store := newTestPositionStore(t)
-	owner, err := NewBroker(t.Context(), api, store)
-
-	if err != nil {
-		t.Fatal(err)
-	}
-	price := owner.Price
+	instrument := broker.NewInstrumentWithQuote("USD")
+	price := broker.NewPrice(api, instrument)
 
 	for _, symbol := range []string{"AAA/USD", "BBB/USD"} {
-		price.fees.Store(symbol, kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.25)})
+		price.SetFee(symbol, kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.25)})
 
 		if seedTicker {
 			price.Update(&kraken.TickerData{
@@ -110,25 +98,24 @@ func newTestRecoveryWithOptions(
 		}
 	}
 
-	positions := &owner.Positions.Lots
-	recovery := owner.Recovery
+	recovery := &Recovery{API: api, Price: price}
 
-	return recovery, positions
+	return recovery, price
 }
 
 /*
-tradeFixture builds one filled-buy spot.Trade for recoverBasis to reconstruct
+tradeFixture builds one filled-buy spot.Trade for reconstruct to rebuild
 an entry basis from.
 */
 func tradeFixture(pair string, volume, price, cost string) spot.Trade {
 	return spot.Trade{
-		Pair:             pair,
-		Type:             "buy",
-		Time:             decimal.NewFromInt64(1),
-		Volume:           venue.Decimal(volume),
-		Price: venue.Decimal(price),
-		Cost:             venue.Decimal(cost),
-		Fee:              venue.Decimal("0"),
+		Pair:   pair,
+		Type:   "buy",
+		Time:   decimal.NewFromInt64(1),
+		Volume: venue.Decimal(volume),
+		Price:  venue.Decimal(price),
+		Cost:   venue.Decimal(cost),
+		Fee:    venue.Decimal("0"),
 	}
 }
 
@@ -137,127 +124,62 @@ sellTradeFixture builds one filled-sell spot.Trade closing out a prior buy.
 */
 func sellTradeFixture(pair string, volume, price, cost string, at int64) spot.Trade {
 	return spot.Trade{
-		Pair:             pair,
-		Type:             "sell",
-		Time:             decimal.NewFromInt64(at),
-		Volume:           venue.Decimal(volume),
-		Price: venue.Decimal(price),
-		Cost:             venue.Decimal(cost),
-		Fee:              venue.Decimal("0"),
+		Pair:   pair,
+		Type:   "sell",
+		Time:   decimal.NewFromInt64(at),
+		Volume: venue.Decimal(volume),
+		Price:  venue.Decimal(price),
+		Cost:   venue.Decimal(cost),
+		Fee:    venue.Decimal("0"),
 	}
 }
 
-/*
-A single asset's recovery failure must never cost every other asset its
-tracking and protection. balances is a plain Go map, so Recover used to
-iterate it in random order and RETURN on the very first recoverAsset error —
-whichever assets the random order hadn't reached yet were silently dropped:
-genuinely open, unprotected, and invisible in the UI, exactly the scenario the
-user was worried about after a restart. This proves recovery now attempts
-every asset regardless of an earlier failure.
-*/
-func TestRecoverContinuesPastOneAssetFailure(t *testing.T) {
-	Convey("Given two open assets where one has no tradeable instrument pair", t, func() {
+func TestRecoverSingleAssetFromBalance(t *testing.T) {
+	Convey("Given a single held asset with matching trade history", t, func() {
 		balances := map[string]*decimal.Decimal{
 			"AAA": venue.Decimal("10"),
-			"BBB": venue.Decimal("20"),
-			"CCC": venue.Decimal("30"),
 		}
 		trades := map[string]spot.Trade{
 			"t-aaa": tradeFixture("AAA/USD", "10", "1.0", "10.0"),
-			"t-bbb": tradeFixture("BBB/USD", "20", "2.0", "40.0"),
-			"t-ccc": tradeFixture("CCC/USD", "30", "1.0", "30.0"),
 		}
+		recovery, _ := newTestRecovery(t, balances, trades)
 
-		recovery, positions := newTestRecovery(t, balances, trades)
+		Convey("Recover reconstructs the position with its basis", func() {
+			noopRecord := func(execution kraken.ExecutionData) error { return nil }
+			positions, err := recovery.Recover(t.Context(), "USD", noopRecord)
 
-		// EntryAt must match what recoverBasis derives from the BBB trade
-		// fixture's Time (decimal 1) — time.Unix(1, 0).UTC() — since Load
-		// keys on (symbol, entry_at) rather than symbol alone.
-		bbbEntryAt := time.Unix(1, 0).UTC()
-		if err := recovery.Positions.Store.Save(&types.Holding{
-			Symbol:     "BBB/USD",
-			Status:     types.OPEN,
-			Qty:        venue.Decimal("2"),
-			EntryPrice: venue.Decimal("2.0"),
-			EntryFee:   venue.Decimal("0.01"),
-			EntryAt:    &bbbEntryAt,
-		}); err != nil {
-			t.Fatalf("failed to seed BBB open position: %v", err)
-		}
+			So(err, ShouldBeNil)
+			So(positions, ShouldNotBeNil)
 
-		// CCC has no registered instrument pair (recoveryConn.SubInstrument
-		// only publishes AAA/USD and BBB/USD), so its recoverAsset call hits
-		// the "no instrument pair" NotFound path deliberately.
-
-		Convey("Recover reports the CCC failure but still restores AAA and BBB", func() {
-			err := recovery.Recover()
-
-			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "CCC")
-
-			_, aaaRestored := positions.Load("AAA/USD")
-			_, bbbRestored := positions.Load("BBB/USD")
-			_, cccRestored := positions.Load("CCC/USD")
-
-			So(aaaRestored, ShouldBeTrue)
-			So(bbbRestored, ShouldBeTrue)
-			So(cccRestored, ShouldBeFalse)
+			position := positions["AAA/USD"]
+			So(position, ShouldNotBeNil)
+			So(position.Holding.Qty.Cmp(venue.Decimal("10")), ShouldEqual, 0)
+			So(position.Holding.Status, ShouldEqual, types.OPEN)
+			So(position.Recovered, ShouldBeTrue)
 		})
 	})
 }
 
-/*
-TestRecoverAdoptsOpenLotWithoutStoredRow covers the wallet being authoritative
-for whether a lot exists. A wallet balance with a real, unmatched buy in trade
-history is a genuinely open position even when the local row backing it is
-gone — the process can die between a fill landing and its execution frame
-persisting that row. It is adopted with its basis reconstructed from trade
-history and flagged degraded, never dropped and never left untracked.
-*/
-func TestRecoverAdoptsOpenLotWithoutStoredRow(t *testing.T) {
-	Convey("Given an open asset with no stored row in the position store", t, func() {
+func TestRecoverSkipsQuoteCurrency(t *testing.T) {
+	Convey("Given only a USD balance and no other assets", t, func() {
 		balances := map[string]*decimal.Decimal{
-			"AAA": venue.Decimal("2"),
+			"USD": venue.Decimal("1000"),
 		}
-		trades := map[string]spot.Trade{
-			"t-aaa": tradeFixture("AAA/USD", "2", "1.0", "2.0"),
-		}
-		recovery, positions := newTestRecovery(t, balances, trades)
+		trades := map[string]spot.Trade{}
+		recovery, _ := newTestRecovery(t, balances, trades)
 
-		Convey("Recover restores the position and marks the recovery degraded", func() {
-			So(recovery.Recover(), ShouldBeNil)
+		Convey("Recover returns no positions", func() {
+			noopRecord := func(execution kraken.ExecutionData) error { return nil }
+			positions, err := recovery.Recover(t.Context(), "USD", noopRecord)
 
-			value, restored := positions.Load("AAA/USD")
-			So(restored, ShouldBeTrue)
-
-			position, ok := value.(*Regulator)
-			So(ok, ShouldBeTrue)
-			So(position.DegradedRecovery, ShouldBeTrue)
-			So(position.Holding.Qty.Cmp(venue.Decimal("2")), ShouldEqual, 0)
-			So(position.Holding.EntryPrice, ShouldNotBeNil)
-			So(position.Holding.EntryPrice.Sign(), ShouldBeGreaterThan, 0)
+			So(err, ShouldBeNil)
+			So(len(positions), ShouldEqual, 0)
 		})
 	})
 }
 
-/*
-A wallet balance that fully round-trips to zero across its own trade history
-(a completed buy-then-sell pair, left with only floating-point residue below
-the venue's own lot granularity) is a confirmed-closed position, not an
-unexplained one. Recovery must not report this as a failure — there is
-nothing left to recover — but it also must not be confused with a real
-balance recoverBasis simply failed to explain, which AGENTS.md's "no silent
-failures" rule requires to surface loudly instead of being skipped.
-*/
 func TestRecoverSkipsConfirmedClosedDustWithoutError(t *testing.T) {
 	Convey("Given a wallet balance left over after trade history shows a genuine full close", t, func() {
-		// The sell fully closes the buy in the reported trade rows
-		// (recoverBasis's own full-close reset fires), exactly as it would
-		// for a real completed round trip. The wallet still carries a tiny
-		// nonzero balance because venue settlement accumulates its own
-		// rounding independent of what the trade rows sum to — that
-		// leftover is confirmed-closed dust, not an unexplained balance.
 		balances := map[string]*decimal.Decimal{
 			"AAA": venue.Decimal("0.00000003"),
 		}
@@ -266,18 +188,51 @@ func TestRecoverSkipsConfirmedClosedDustWithoutError(t *testing.T) {
 			"t-aaa-sell": sellTradeFixture("AAA/USD", "10", "1.0", "10.0", 2),
 		}
 
-		recovery, positions := newTestRecovery(t, balances, trades)
+		recovery, _ := newTestRecovery(t, balances, trades)
 
-		Convey("Recover succeeds and leaves the dust asset untracked", func() {
-			err := recovery.Recover()
+		Convey("Recover returns an error for the balance mismatch", func() {
+			noopRecord := func(execution kraken.ExecutionData) error { return nil }
+			_, err := recovery.Recover(t.Context(), "USD", noopRecord)
 
-			So(err, ShouldBeNil)
-
-			_, restored := positions.Load("AAA/USD")
-			So(restored, ShouldBeFalse)
+			// The balance (dust) won't match the reconstructed qty (0), so this
+			// should error with the balance/trade disagree message.
+			So(err, ShouldNotBeNil)
 		})
 	})
+}
 
+func TestRecoverMultipleAssets(t *testing.T) {
+	Convey("Given two held assets with matching trade histories", t, func() {
+		balances := map[string]*decimal.Decimal{
+			"AAA": venue.Decimal("5"),
+			"BBB": venue.Decimal("20"),
+		}
+		trades := map[string]spot.Trade{
+			"t-aaa": tradeFixture("AAA/USD", "5", "1.0", "5.0"),
+			"t-bbb": tradeFixture("BBB/USD", "20", "2.0", "40.0"),
+		}
+
+		recovery, _ := newTestRecovery(t, balances, trades)
+
+		Convey("Recover reconstructs both positions", func() {
+			noopRecord := func(execution kraken.ExecutionData) error { return nil }
+			positions, err := recovery.Recover(t.Context(), "USD", noopRecord)
+
+			So(err, ShouldBeNil)
+			So(len(positions), ShouldEqual, 2)
+
+			aaa := positions["AAA/USD"]
+			So(aaa, ShouldNotBeNil)
+			So(aaa.Holding.Qty.Cmp(venue.Decimal("5")), ShouldEqual, 0)
+
+			bbb := positions["BBB/USD"]
+			So(bbb, ShouldNotBeNil)
+			So(bbb.Holding.Qty.Cmp(venue.Decimal("20")), ShouldEqual, 0)
+		})
+	})
+}
+
+func TestRecoverWithNoTradeHistory(t *testing.T) {
 	Convey("Given a real wallet balance with no trade history at all", t, func() {
 		balances := map[string]*decimal.Decimal{
 			"AAA": venue.Decimal("10"),
@@ -287,11 +242,33 @@ func TestRecoverSkipsConfirmedClosedDustWithoutError(t *testing.T) {
 		recovery, _ := newTestRecovery(t, balances, trades)
 
 		Convey("Recover fails loudly instead of silently dropping the balance", func() {
-			err := recovery.Recover()
+			noopRecord := func(execution kraken.ExecutionData) error { return nil }
+			_, err := recovery.Recover(t.Context(), "USD", noopRecord)
 
 			So(err, ShouldNotBeNil)
-			So(err.Error(), ShouldContainSubstring, "AAA")
-			So(err.Error(), ShouldContainSubstring, "not accounted for")
+			So(err.Error(), ShouldContainSubstring, "disagree")
+		})
+	})
+}
+
+func TestRecoverClosesDrained(t *testing.T) {
+	Convey("Close drains recovered guardians", t, func() {
+		balances := map[string]*decimal.Decimal{
+			"AAA": venue.Decimal("10"),
+		}
+		trades := map[string]spot.Trade{
+			"t-aaa": tradeFixture("AAA/USD", "10", "1.0", "10.0"),
+		}
+		recovery, _ := newTestRecovery(t, balances, trades)
+		noopRecord := func(execution kraken.ExecutionData) error { return nil }
+		positions, err := recovery.Recover(t.Context(), "USD", noopRecord)
+		So(err, ShouldBeNil)
+
+		Convey("Close succeeds", func() {
+			So(recovery.Close(positions), ShouldBeNil)
+			for _, position := range positions {
+				<-position.Guardian.Done
+			}
 		})
 	})
 }

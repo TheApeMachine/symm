@@ -4,8 +4,6 @@ import (
 	"maps"
 	"time"
 
-	"github.com/theapemachine/symm/broker"
-
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/hindsight"
@@ -18,7 +16,6 @@ type portfolioPosition struct {
 	complete  bool
 	pending   LearningAction
 	requested *decimal.Decimal
-	ladder    broker.DepthLadder
 }
 
 /* VirtualPortfolio is one finite shared wallet; its symbols never own separate cash. */
@@ -70,7 +67,7 @@ func (portfolio *VirtualPortfolio) Step(local *LocalLearning, market *learningMa
 		}
 		position.wallet.cash = portfolio.cash
 		portfolio.scratch = position.wallet.quantity
-		if _, _, _, err := position.wallet.fill(book, candidate.action, candidate.quantity, &candidate.ladder); err != nil {
+		if _, _, _, err := position.wallet.fill(book, candidate.action, candidate.quantity); err != nil {
 			return err
 		}
 		result := hindsight.AllocationResult{State: "aborted", At: market.at, Detail: "no surviving executable depth filled the virtual allocation"}
@@ -91,7 +88,7 @@ func (portfolio *VirtualPortfolio) Step(local *LocalLearning, market *learningMa
 	}
 
 	if position.requested != nil {
-		if _, _, _, err := position.wallet.fill(book, position.pending, position.requested, &position.ladder); err != nil {
+		if _, _, _, err := position.wallet.fill(book, position.pending, position.requested); err != nil {
 			return err
 		}
 		portfolio.cash = portfolio.cash.Add(position.wallet.cash)
@@ -150,7 +147,7 @@ func (portfolio *VirtualPortfolio) Step(local *LocalLearning, market *learningMa
 
 	if action.Reduce {
 		position.pending = action
-		position.requested, err = position.wallet.request(book, action, 1, &position.ladder)
+		position.requested, err = position.wallet.request(book, action, 1)
 
 		if err != nil {
 			return err

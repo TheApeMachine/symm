@@ -5,65 +5,70 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
 closeFillPosition builds a minimal open lot whose realized exit economics can be
-asserted without a live exchange, desk, or database. sellable is the complete
+asserted without a live exchange or database. sellable is the complete
 filled inventory; entryPrice and entryFee are the authoritative entry basis.
 */
 func closeFillPosition(sellable string, entryPrice string, entryFee string) *Regulator {
 	quantity, _ := decimal.NewFromString(sellable)
 	price, _ := decimal.NewFromString(entryPrice)
 	fee, _ := decimal.NewFromString(entryFee)
+	cost := price.SetScale(decimal.DefaultScale).Mul(quantity)
 
-	position := &Regulator{
-		pair: kraken.InstrumentPair{Symbol: "SHAPE/USD"},
-		Decision: types.Decision{
-			ID:     "shape-decision",
-			Symbol: "SHAPE/USD",
-		},
-		Holding: &types.Holding{
-			Symbol:      "SHAPE/USD",
-			Qty:         quantity,
-			SellableQty: quantity,
-			EntryPrice:  price,
-			EntryFee:    fee,
-		},
+	holding := &types.Holding{
+		Symbol:      "SHAPE/USD",
+		Status:      types.OPEN,
+		Qty:         quantity,
+		SellableQty: quantity,
+		Basis:       cost,
+		EntryCost:   cost,
+		EntryPrice:  price,
+		EntryFee:    fee,
+		EntryFees:   fee,
+		EntryQty:    quantity,
+		ExitCost:    decimal.NewFromInt64(0),
+		ExitFees:    decimal.NewFromInt64(0),
+		ExitQty:     decimal.NewFromInt64(0),
+		RealizedPnL: decimal.NewFromInt64(0),
 	}
 
-	position.Increase = &Increase{position: position}
-	position.Reduction = &Reduction{position: position}
-	position.Exit = &Exit{position: position}
-	position.Guardian = NewGuardian(position)
-	position.setStatus(types.OPEN)
+	instrument := broker.NewInstrumentWithQuote("USD")
+	priceSvc := broker.NewPrice(nil, instrument)
 
-	return position
+	regulator := &Regulator{
+		Holding: holding,
+		price:   priceSvc,
+		pending: &spot.AddOrderRequest{
+			ClOrdId: "shape-exit",
+			Pair:    "SHAPE/USD",
+			Type:    "sell",
+			Volume:  sellable,
+		},
+	}
+	regulator.Guardian = NewGuardian(regulator)
+	return regulator
 }
 
 func TestPositionWire(t *testing.T) {
-	Convey("Given an open position retaining its entry decision", t, func() {
+	Convey("Given an open position", t, func() {
 		position := closeFillPosition("100000", "0.000490", "0.04")
-		position.Decision.Action = types.ActionEnter
-		position.Decision.Reason = "forecast clears fee-inclusive break-even"
-		position.Decision.Confidence = 0.73
-		position.decisionWire = types.DecisionWire(&position.Decision)
 
-		Convey("the wire snapshot includes that exact frozen decision", func() {
+		Convey("the wire snapshot includes status and holding facts", func() {
 			encoded := position.Wire()
 
-			So(encoded.Decision, ShouldNotBeNil)
-			So(encoded.Decision.Id, ShouldEqual, "shape-decision")
-			So(encoded.Decision.Action, ShouldEqual, "enter")
-			So(encoded.Decision.Reason, ShouldEqual, "forecast clears fee-inclusive break-even")
-			So(encoded.Decision.Confidence, ShouldEqual, 0.73)
+			So(encoded, ShouldNotBeNil)
+			So(encoded.Status, ShouldEqual, "open")
+			So(encoded.Holding, ShouldNotBeNil)
+			So(encoded.Holding.Symbol, ShouldEqual, "SHAPE/USD")
 		})
 	})
 }
@@ -72,8 +77,7 @@ func TestPositionWire(t *testing.T) {
 executionFixture builds a Kraken ExecutionData with a last individual fill whose
 LastPrice is materially different from the whole-order AvgPrice, so a
 close-fill path that marks the exit by the last fill would diverge from the
-authoritative whole-order realized VWAP. All figures are exact decimal strings
-so float64 representation error never leaks into the assertion.
+authoritative whole-order realized VWAP.
 */
 func executionFixture(
 	lastPrice string,
@@ -83,42 +87,37 @@ func executionFixture(
 	feeUsd string,
 ) kraken.ExecutionData {
 	return kraken.ExecutionData{
-		ExecID:      "exit-1",
-		LastQty:     venue.Decimal(cumQty),
-		LastPrice:   venue.Decimal(lastPrice),
-		CumQty:      venue.Decimal(cumQty),
-		CumCost:     venue.Decimal(cumCost),
-		AvgPrice:    venue.Decimal(avgPrice),
-		FeeUsdEquiv: venue.Decimal(feeUsd),
-		Timestamp:   time.Now(),
-		OrderStatus: "filled",
+		ExecID:        "exit-1",
+		ClientOrderID: "shape-exit",
+		Side:          "sell",
+		LastQty:       venue.Decimal(cumQty),
+		LastPrice:     venue.Decimal(lastPrice),
+		CumQty:        venue.Decimal(cumQty),
+		CumCost:       venue.Decimal(cumCost),
+		AvgPrice:      venue.Decimal(avgPrice),
+		FeeUsdEquiv:   venue.Decimal(feeUsd),
+		Timestamp:     time.Now(),
+		OrderStatus:   "filled",
 	}
 }
 
 func TestCloseFillWholeOrderVWAP(t *testing.T) {
 	Convey("Given a multi-fill exit where the last fill differs from the whole-order average", t, func() {
-		// Whole-order realized VWAP 0.000506, final individual fill 0.000520:
-		// marking the exit by LastPrice would overstate proceeds and fake a
-		// profit the realized economics do not support.
 		position := closeFillPosition("100000", "0.000490", "0.04")
 		execution := executionFixture("0.000520", "0.000506", "100000", "50.6", "0.40")
 		sellable := venue.Decimal("100000")
 		avgPrice := venue.Decimal("0.000506")
 
-		Convey("the exit price is the whole-order realized VWAP, not the last fill", func() {
-			err := position.Exit.Apply(execution)
+		err := position.Apply(execution)
+		So(err, ShouldBeNil)
 
-			So(err, ShouldBeNil)
+		Convey("the exit price is the whole-order realized VWAP, not the last fill", func() {
 			So(position.Holding.ExitVWAP.Cmp(avgPrice), ShouldEqual, 0)
 			So(position.Holding.ExitPrice.Cmp(avgPrice), ShouldEqual, 0)
 			So(position.Holding.ExitQty.Cmp(sellable), ShouldEqual, 0)
 		})
 
 		Convey("PnL and ReturnPct reconcile from the same realized economics", func() {
-			err := position.Exit.Apply(execution)
-
-			So(err, ShouldBeNil)
-
 			// entry basis 0.000490 × 100000 = 49, + entry fee 0.04 = 49.04
 			// exit proceeds 50.6 − exit fee 0.40 = 50.2
 			// realized PnL = 50.2 − 49.04 = 1.16
@@ -128,17 +127,11 @@ func TestCloseFillWholeOrderVWAP(t *testing.T) {
 			expectedReturn := 1.16 / 49.04 * 100
 			So(position.Holding.ReturnPct, ShouldAlmostEqual, expectedReturn, 1e-9)
 
-			// RealizedReturn is the fee-inclusive fraction derived from the same
-			// realized economics; it reconciles with ReturnPct to within the
-			// decimal library's scale.
 			realizedPct := position.Holding.RealizedReturn.Float64() * 100
 			So(realizedPct-expectedReturn < 1e-8 && expectedReturn-realizedPct < 1e-8, ShouldBeTrue)
 		})
 
 		Convey("exit fees are the exchange's authoritative total", func() {
-			err := position.Exit.Apply(execution)
-
-			So(err, ShouldBeNil)
 			So(position.Holding.ExitFees.Cmp(venue.Decimal("0.40")), ShouldEqual, 0)
 			So(position.Holding.ExitFee.Cmp(venue.Decimal("0.40")), ShouldEqual, 0)
 		})
@@ -152,7 +145,7 @@ func TestCloseFillAvgPriceFallback(t *testing.T) {
 		execution.AvgPrice = nil
 
 		Convey("the exit VWAP falls back to the cumulative CumCost/CumQty equivalent", func() {
-			err := position.Exit.Apply(execution)
+			err := position.Apply(execution)
 
 			So(err, ShouldBeNil)
 			So(position.Holding.ExitVWAP.Cmp(venue.Decimal("0.000506")), ShouldEqual, 0)
@@ -160,55 +153,39 @@ func TestCloseFillAvgPriceFallback(t *testing.T) {
 	})
 }
 
-/*
-partialFillPosition builds a lot mid-exit: the ExitOrder is already submitted and
-the sellable inventory is complete, so onExecution routes exit executions to the
-close path.
-*/
-func partialFillPosition(sellable string, entryPrice string, entryFee string) *Regulator {
-	position := closeFillPosition(sellable, entryPrice, entryFee)
-	position.Exit.Order = &spot.AddOrderRequest{
-		ClOrdId: "shape-entry-exit",
-		Type:    "sell",
-		Volume:  sellable,
-		Pair:    "SHAPE/USD",
-	}
-
-	return position
-}
-
 func TestPartialFillExitAccumulatesWholeOrder(t *testing.T) {
 	Convey("Given a multi-fill exit with a duplicate terminal fill", t, func() {
-		position := partialFillPosition("100000", "0.000490", "0.04")
+		position := closeFillPosition("100000", "0.000490", "0.04")
 
 		partialOne := executionFixture("0.000510", "0.000510", "40000", "20.4", "0.10")
 		partialOne.ExecID = "exit-partial-1"
 		partialOne.OrderStatus = "partially_filled"
-		partialOne.ClientOrderID = "shape-entry-exit"
 
 		partialTwo := executionFixture("0.000505", "0.000505", "60000", "30.3", "0.15")
 		partialTwo.ExecID = "exit-partial-2"
 		partialTwo.OrderStatus = "partially_filled"
-		partialTwo.ClientOrderID = "shape-entry-exit"
 
 		terminal := executionFixture("0.000502", "0.000504", "100000", "50.4", "0.25")
 		terminal.ExecID = "exit-terminal"
-		terminal.ClientOrderID = "shape-entry-exit"
 		terminal.OrderStatus = "filled"
 
 		dupe := terminal
 		dupe.ExecID = "exit-terminal"
 
-		Convey("the terminal fill's cumulative whole-order VWAP is the exit price, and duplicates do not double-count", func() {
-			finished := position.onExecution(kraken.Execution{
-				Channel: "executions",
-				Type:    "update",
-				Data: []kraken.ExecutionData{
-					partialOne, partialTwo, terminal, dupe,
-				},
-			})
+		Convey("the terminal fill cumulative whole-order VWAP is the exit price, and duplicates do not double-count", func() {
+			err := position.Apply(partialOne)
+			So(err, ShouldBeNil)
 
-			So(finished, ShouldBeTrue)
+			err = position.Apply(partialTwo)
+			So(err, ShouldBeNil)
+
+			err = position.Apply(terminal)
+			So(err, ShouldBeNil)
+
+			// Terminal fill cleared pending order, so duplicate does nothing
+			err = position.Apply(dupe)
+			So(err, ShouldBeNil)
+
 			So(position.Holding.ExitVWAP.Cmp(venue.Decimal("0.000504")), ShouldEqual, 0)
 			So(position.Holding.ExitQty.Cmp(venue.Decimal("100000")), ShouldEqual, 0)
 			So(position.Holding.SellableQty.Sign(), ShouldEqual, 0)
@@ -216,39 +193,30 @@ func TestPartialFillExitAccumulatesWholeOrder(t *testing.T) {
 			// 0.000490 × 100000 = 49, + 0.04 fee = 49.04 basis.
 			// 50.4 − 0.25 = 50.15 proceeds. PnL = 1.11.
 			So(position.Holding.PnL.Float64(), ShouldAlmostEqual, 1.11, 1e-9)
+			So(position.Status(), ShouldEqual, types.CLOSED)
 		})
 	})
 }
 
 func TestPositionOnExecutionTerminalPartialEntry(t *testing.T) {
-	Convey("Given a live entry that partially fills before Kraken cancels its remainder", t, func() {
-		conn := venue.NewExecuting(nil)
-		desk, workload := newDeliveryDesk(t, conn)
-		conn.Workload = workload
-		desk.Collection.Price.fees.Store("TEST/USD", kraken.TradeVolumeFee{Fee: venue.Decimal("0.25")})
-		decision := types.Decision{
-			ID:               uuid.NewString(),
-			Action:           types.ActionEnter,
-			Symbol:           "TEST/USD",
-			At:               time.Now(),
-			ProposedQuantity: venue.Decimal("100"),
-			ProposedNotional: venue.Decimal("200.00"),
-			ForecastHorizon:  1,
-			Mark:             venue.Decimal("2.00"),
-		}
-		position := desk.Collection.New(
-			kraken.InstrumentPair{
-				Symbol:   "TEST/USD",
-				Base:     "TEST",
-				Quote:    "USD",
-				TickSize: *venue.Decimal("0.01"),
+	Convey("Given an entry that partially fills before Kraken cancels its remainder", t, func() {
+		instrument := broker.NewInstrumentWithQuote("USD")
+		priceSvc := broker.NewPrice(nil, instrument)
+		position := &Regulator{
+			Holding: types.NewHolding("TEST/USD"),
+			price:   priceSvc,
+			pending: &spot.AddOrderRequest{
+				ClOrdId: "entry-order",
+				Pair:    "TEST/USD",
+				Type:    "buy",
+				Volume:  "100",
 			},
-			decision,
-		)
-		position.setStatus(types.PENDING)
+		}
+		position.Holding.Status = types.PENDING
+
 		execution := kraken.ExecutionData{
 			OrderID:       "venue-entry",
-			ClientOrderID: decision.ID,
+			ClientOrderID: "entry-order",
 			ExecID:        "entry-terminal-partial",
 			ExecType:      "canceled",
 			Symbol:        "TEST/USD",
@@ -264,130 +232,85 @@ func TestPositionOnExecutionTerminalPartialEntry(t *testing.T) {
 		}
 
 		Convey("the filled inventory remains open and owned", func() {
-			finished := position.onExecution(kraken.Execution{
-				Channel: "executions",
-				Type:    "update",
-				Data:    []kraken.ExecutionData{execution},
-			})
+			err := position.Apply(execution)
 
-			So(finished, ShouldBeFalse)
-			So(position.status(), ShouldEqual, types.OPEN)
+			So(err, ShouldBeNil)
+			So(position.Status(), ShouldEqual, types.OPEN)
 			So(position.Holding.Status, ShouldEqual, types.OPEN)
 			So(position.Holding.Qty.Cmp(venue.Decimal("40")), ShouldEqual, 0)
 			So(position.Holding.SellableQty.Cmp(venue.Decimal("40")), ShouldEqual, 0)
 			So(position.Holding.EntryPrice.Cmp(venue.Decimal("2.00")), ShouldEqual, 0)
 			So(position.Holding.EntryFee.Cmp(venue.Decimal("0.20")), ShouldEqual, 0)
 		})
-
-		Convey("a later terminal status without trade fields retains the prior partial fill", func() {
-			execution.OrderStatus = "partially_filled"
-			execution.ExecID = "entry-partial"
-			So(position.onExecution(kraken.Execution{
-				Channel: "executions",
-				Type:    "update",
-				Data:    []kraken.ExecutionData{execution},
-			}), ShouldBeFalse)
-
-			terminal := kraken.ExecutionData{
-				OrderID:       execution.OrderID,
-				ClientOrderID: decision.ID,
-				ExecID:        "entry-canceled",
-				ExecType:      "canceled",
-				Symbol:        "TEST/USD",
-				Side:          "buy",
-				Timestamp:     time.Now(),
-				OrderStatus:   "canceled",
-			}
-
-			So(position.onExecution(kraken.Execution{
-				Channel: "executions",
-				Type:    "update",
-				Data:    []kraken.ExecutionData{terminal},
-			}), ShouldBeFalse)
-			So(position.status(), ShouldEqual, types.OPEN)
-			So(position.Holding.Status, ShouldEqual, types.OPEN)
-			So(position.Holding.Qty.Cmp(venue.Decimal("40")), ShouldEqual, 0)
-			So(position.Holding.SellableQty.Cmp(venue.Decimal("40")), ShouldEqual, 0)
-		})
 	})
 }
 
 func TestPositionOnExecutionActionCorrelation(t *testing.T) {
-	Convey("Given a lot with distinct entry, reduction and exit orders", t, func() {
+	Convey("Given a lot with distinct reduction and exit orders", t, func() {
 		position := closeFillPosition("10", "100", "0")
-		position.EntryOrder = &spot.AddOrderRequest{ClOrdId: "entry"}
-		position.Reduction.Order = &spot.AddOrderRequest{ClOrdId: "reduce"}
 		var terminalIDs []string
-		position.recordFill = func(kind string, execution kraken.ExecutionData) {
-			if kind == "execution_terminal" {
+		position.record = func(execution kraken.ExecutionData) error {
+			if execution.OrderStatus == "filled" {
 				terminalIDs = append(terminalIDs, execution.ClientOrderID)
 			}
+			return nil
 		}
-		execution := executionFixture("120", "120", "2", "240", "0")
-		execution.ClientOrderID, execution.ExecID, execution.OrderStatus = "reduce", "reduce-fill", "filled"
-		So(position.onExecution(kraken.Execution{Data: []kraken.ExecutionData{execution}}), ShouldBeFalse)
+
+		// First: a reduction of 2
+		position.pending = &spot.AddOrderRequest{
+			ClOrdId: "reduce-order",
+			Pair:    "SHAPE/USD",
+			Type:    "sell",
+			Volume:  "2",
+		}
+		reduceExec := executionFixture("120", "120", "2", "240", "0")
+		reduceExec.ClientOrderID = "reduce-order"
+		reduceExec.OrderStatus = "filled"
+
+		err := position.Apply(reduceExec)
+		So(err, ShouldBeNil)
 		So(position.Holding.Qty.Cmp(venue.Decimal("8")), ShouldEqual, 0)
-		So(position.Reduction.Order, ShouldBeNil)
-		position.Exit.Order = &spot.AddOrderRequest{ClOrdId: "exit"}
-		execution = executionFixture("80", "80", "8", "640", "0")
-		execution.ClientOrderID, execution.ExecID, execution.OrderStatus = "exit", "exit-fill", "filled"
-		So(position.onExecution(kraken.Execution{Data: []kraken.ExecutionData{execution}}), ShouldBeTrue)
-		So(terminalIDs, ShouldResemble, []string{"reduce", "exit"})
-		So(position.Decision.ID, ShouldEqual, "shape-decision")
+		So(position.Pending(), ShouldBeNil)
+
+		// Second: an exit of remaining 8
+		position.pending = &spot.AddOrderRequest{
+			ClOrdId: "exit-order",
+			Pair:    "SHAPE/USD",
+			Type:    "sell",
+			Volume:  "8",
+		}
+		exitExec := executionFixture("80", "80", "8", "640", "0")
+		exitExec.ClientOrderID = "exit-order"
+		exitExec.OrderStatus = "filled"
+
+		err = position.Apply(exitExec)
+		So(err, ShouldBeNil)
+		So(position.Holding.Qty.Sign(), ShouldEqual, 0)
+		So(position.Status(), ShouldEqual, types.CLOSED)
+		So(terminalIDs, ShouldResemble, []string{"reduce-order", "exit-order"})
 	})
 }
 
-func TestPositionHandleGuardianActionCorrelation(t *testing.T) {
-	Convey("Given policy commands serialized with execution reports", t, func() {
-		conn := venue.NewConn()
-		position := closeFillPosition("10", "100", "0")
-		position.api = websocket.NewAPI(t.Context(), conn, conn)
-		position.EntryOrder = &spot.AddOrderRequest{ClOrdId: uuid.NewString()}
-		reduceID, exitID := uuid.NewString(), uuid.NewString()
-		position.Guardian.dispatch(types.Decision{ID: reduceID, Action: types.ActionScale, Reduce: true, ProposedQuantity: venue.Decimal("2")})
-		So(position.Reduction.Order.ClOrdId, ShouldEqual, reduceID)
-		position.Reduction.Apply(kraken.ExecutionData{OrderStatus: "canceled"})
-		position.Guardian.dispatch(types.Decision{ID: exitID, Action: types.ActionExit})
-		So(position.Exit.Order.ClOrdId, ShouldEqual, exitID)
-		Convey("a competing command is rejected with its own identity", func() {
-			var failedID string
-			position.recordFill = func(kind string, execution kraken.ExecutionData) {
-				if kind == "execution_refused" {
-					failedID = execution.ClientOrderID
-				}
-			}
-			position.Guardian.dispatch(types.Decision{ID: "competing", Action: types.ActionExit})
-			So(failedID, ShouldEqual, "competing")
-			So(position.Exit.Order.ClOrdId, ShouldEqual, exitID)
-		})
-	})
-}
-
-func BenchmarkPositionOnExecution(b *testing.B) {
+func BenchmarkPositionApply(b *testing.B) {
 	position := closeFillPosition("10", "100", "0")
-	order := &spot.AddOrderRequest{ClOrdId: "reduction"}
-	message := kraken.Execution{Data: []kraken.ExecutionData{{ClientOrderID: "reduction", OrderStatus: "canceled"}}}
-	position.recordFill = func(string, kraken.ExecutionData) {}
+	execution := kraken.ExecutionData{
+		ClientOrderID: "shape-exit",
+		Side:          "sell",
+		CumQty:        venue.Decimal("10"),
+		CumCost:       venue.Decimal("1000"),
+		FeeUsdEquiv:   venue.Decimal("0"),
+		OrderStatus:   "filled",
+	}
 	b.ReportAllocs()
 	for b.Loop() {
-		position.Reduction.Order = order
-		position.onExecution(message)
+		position.pending = &spot.AddOrderRequest{ClOrdId: "shape-exit"}
+		_ = position.Apply(execution)
 	}
 }
 
 func BenchmarkPositionWire(b *testing.B) {
 	position := closeFillPosition("100000", "0.000490", "0.04")
-	position.Decision.Action = types.ActionEnter
-	position.Decision.Reason = "forecast clears fee-inclusive break-even"
-	position.Decision.Confidence = 0.73
-	position.Decision.Alternatives = map[string]float64{
-		"probability:profitable": 0.73,
-		"probability:up":         0.81,
-		"return:break_even_log":  0.005,
-		"return:expected_log":    0.018,
-	}
-	position.decisionWire = types.DecisionWire(&position.Decision)
-
+	b.ReportAllocs()
 	for b.Loop() {
 		_ = position.Wire()
 	}

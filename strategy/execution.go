@@ -159,7 +159,8 @@ func (execution *Execution) Propose(local *LocalLearning, market *learningMarket
 		return nil
 	}
 	lane := &market.lanes[len(market.lanes)-1]
-	quantity, gross, err := local.price.Sweep(book, requested, lane.wallet.cash, broker.BUY, nil, nil)
+	_ = lane
+	quantity, gross, err := local.price.Walk(book, requested, broker.BUY)
 
 	if err != nil {
 		return err
@@ -187,9 +188,6 @@ func (execution *Execution) Propose(local *LocalLearning, market *learningMarket
 		record.AccountEquity = decimal.NewFromFloat64(state.Mark.Equity).String()
 	}
 	candidate := &EntryCandidate{Record: record, action: action, quantity: requested, cost: cost, bid: book.Bids.High.Price}
-	if _, _, err := local.price.Sweep(book, requested, lane.wallet.cash, broker.BUY, &candidate.ladder, nil); err != nil {
-		return err
-	}
 	candidate.Intent = ExecutionIntent{CorrelationID: record.ID, Symbol: market.symbol, At: market.at, MarketAt: marketAt,
 		Kind: action.Kind, Quantity: requested, Reference: book.Asks.Low.Price,
 		Mode: execution.Mode(), Skill: execution.Skill.Reading(), Candidate: candidate, MaximumCost: cost, Allowed: &execution.allowed}
@@ -435,7 +433,7 @@ func (execution *Execution) Reduce(local *LocalLearning, market *learningMarket,
 	if !action.Reduce {
 		return nil
 	}
-	requested, err := wallet.request(book, action, 1, nil)
+	requested, err := wallet.request(book, action, 1)
 
 	if err != nil {
 		return err

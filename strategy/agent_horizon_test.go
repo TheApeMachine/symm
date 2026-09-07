@@ -161,7 +161,7 @@ func TestAgentRecyclesSpentAccounts(t *testing.T) {
 
 				if lane.episodes > 0 {
 					So(recycled, ShouldBeGreaterThan, 0)
-					So(lane.wallet.cash.Cmp(agent.initial.Rat()), ShouldBeLessThanOrEqualTo, 0)
+					So(lane.wallet.cash.Cmp(agent.initial), ShouldBeLessThanOrEqualTo, 0)
 				}
 			}
 		})

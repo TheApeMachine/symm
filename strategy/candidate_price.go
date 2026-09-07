@@ -24,8 +24,8 @@ func (candidate *EntryCandidate) Reprice(books LearningBook, price *broker.Price
 			!price.Tradable(candidate.Record.Symbol, candidate.quantity, book.BestAsk().Price) {
 			return
 		}
-		quantity, gross, sweepErr := price.Sweep(book, candidate.quantity, candidate.cost, broker.BUY, nil, nil)
-		err = sweepErr
+		quantity, gross, walkErr := price.Walk(book, candidate.quantity, broker.BUY)
+		err = walkErr
 
 		if err != nil || quantity.Cmp(candidate.quantity) != 0 {
 			return

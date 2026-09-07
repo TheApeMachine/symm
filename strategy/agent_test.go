@@ -11,6 +11,7 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -47,12 +48,25 @@ func (books *agentBooks) update(message kraken.Level3Data) {
 
 func agentFixture(testingTB testing.TB, record func(hindsight.LearningEvent) error) (*Agent, *agentBooks) {
 	testingTB.Helper()
-	wallet, book := virtualFixture()
+	book := spotbook.New()
+	book.NoBookCrossing = false
+
+	for _, level := range []struct {
+		direction       spotbook.BookDirection
+		id              string
+		price, quantity int64
+	}{
+		{spotbook.Bid, "bid", 100, 10}, {spotbook.Ask, "ask", 101, 3}, {spotbook.Ask, "deep", 102, 10},
+	} {
+		book.Update(&spotbook.UpdateOptions{Direction: level.direction, ID: level.id,
+			Price: decimal.NewFromInt64(level.price), Quantity: decimal.NewFromInt64(level.quantity), Silent: true})
+	}
 	books := &agentBooks{current: book}
+	instrument := broker.NewInstrumentWithQuote("USD")
+	price := broker.NewPrice(nil, instrument)
+	price.SetFee("TEST/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromInt64(1)})
 	agent, err := NewAgent(testingTB.Context(), learning.NewGrid(), books,
-		func(string) kraken.InstrumentPair { return wallet.pair },
-		func(string) *kraken.TradeVolumeFee { return &kraken.TradeVolumeFee{Fee: decimal.NewFromInt64(1)} },
-		decimal.NewFromInt64(200), record)
+		price, decimal.NewFromInt64(200), record)
 
 	if err != nil {
 		testingTB.Fatal(err)
@@ -155,7 +169,7 @@ func TestAgentStep(t *testing.T) {
 
 func TestNewAgent(t *testing.T) {
 	Convey("Missing execution or recording dependencies cannot invent a working agent", t, func() {
-		_, err := NewAgent(context.Background(), nil, nil, nil, nil, nil, nil)
+		_, err := NewAgent(context.Background(), nil, nil, nil, nil, nil)
 		So(err, ShouldNotBeNil)
 	})
 }
@@ -292,17 +306,10 @@ func TestPolicyLaneUpdatesVirtualModel(t *testing.T) {
 	})
 }
 
-type testDesk struct{}
-
-func (desk *testDesk) Submit(ExecutionIntent) error {
-	return nil
-}
-
 func TestLearningViewRealizationObservability(t *testing.T) {
 	Convey("Given an agent with attached execution and realization", t, func() {
 		agent, _ := agentFixture(t, func(hindsight.LearningEvent) error { return nil })
-		desk := &testDesk{}
-		agent.SetExecution(desk, AccountPaper)
+		agent.Skill = NewSkillMeter(AccountPaper, time.Now())
 
 		Convey("Under normal operation, view reports realization allowed and matching mode", func() {
 			v := agent.view("TEST/USD")

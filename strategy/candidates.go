@@ -1,12 +1,10 @@
 package strategy
 
 import (
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"sync/atomic"
 	"time"
 
-	"github.com/theapemachine/symm/broker"
-
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 )
@@ -18,7 +16,6 @@ type EntryCandidate struct {
 	action         LearningAction
 	quantity, cost *decimal.Decimal
 	bid            *decimal.Decimal
-	ladder         broker.DepthLadder
 	valid          atomic.Bool
 	selected       bool
 	State          string

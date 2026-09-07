@@ -39,14 +39,29 @@ type Price struct {
 }
 
 func NewPrice(api *websocket.API, instrument *Instrument) *Price {
+	var normalizer *spot.Normalizer
+
+	if api != nil {
+		normalizer = api.Normalizer()
+	}
+
+	if normalizer == nil {
+		normalizer = spot.NewNormalizer()
+	}
+
 	return &Price{
 		Instrument: instrument,
 		api:        api,
-		normalizer: api.Normalizer(),
+		normalizer: normalizer,
 		fees:       &sync.Map{},
 		tickers:    &sync.Map{},
 		status:     types.PENDING,
 	}
+}
+
+/* SetFee registers an authoritative fee for a symbol. */
+func (price *Price) SetFee(symbol string, fee kraken.TradeVolumeFee) {
+	price.fees.Store(price.normalizer.Name(symbol), fee)
 }
 
 func (price *Price) Status() types.Status { return price.status }
@@ -190,8 +205,8 @@ func (price *Price) Affordable(
 	return quantity, nil
 }
 
-/* walk executes a loop over book levels until requested quantity is satisfied. */
-func (price *Price) walk(
+/* Walk executes a loop over book levels until requested quantity is satisfied. */
+func (price *Price) Walk(
 	book *spotbook.Book,
 	requested *decimal.Decimal,
 	side Direction,
@@ -259,7 +274,7 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*types.
 			return
 		}
 
-		filled, gross, walkErr := price.walk(book, quantity, BUY)
+		filled, gross, walkErr := price.Walk(book, quantity, BUY)
 
 		if walkErr != nil {
 			err = walkErr
@@ -334,7 +349,7 @@ func (price *Price) Surface(
 			surface.ExecutableQty = surface.ExecutableQty.Add(bid.Quantity)
 		}
 
-		filled, gross, walkErr := price.walk(book, quantity, SELL)
+		filled, gross, walkErr := price.Walk(book, quantity, SELL)
 
 		if walkErr != nil {
 			err = walkErr
@@ -606,13 +621,20 @@ func (price *Price) ApplyFill(
 	holding.ExitQty = holding.ExitQty.Add(quantity)
 	holding.ExitFees = holding.ExitFees.Add(fee)
 	holding.ExitFee = holding.ExitFees
+	holdingCost := cost.SetScale(decimal.DefaultScale)
 	holding.RealizedPnL = holding.RealizedPnL.Add(
-		cost.Sub(fee).Sub(basis).Sub(entryFee),
+		holdingCost.Sub(fee).Sub(basis).Sub(entryFee),
 	)
-	holding.ExitPrice = execution.AvgPrice
+	if execution.AvgPrice != nil {
+		holding.ExitPrice = execution.AvgPrice
+	}
 
 	if holding.ExitQty.Sign() > 0 {
 		holding.ExitVWAP = holding.ExitCost.Div(holding.ExitQty)
+
+		if holding.ExitPrice == nil {
+			holding.ExitPrice = holding.ExitVWAP
+		}
 	}
 
 	entryTotal := holding.EntryCost.Add(holding.EntryFees)
@@ -624,6 +646,10 @@ func (price *Price) ApplyFill(
 	if holding.Qty.Sign() == 0 {
 		holding.ExitAt = &execution.Timestamp
 		holding.PnL = holding.RealizedPnL
+
+		if holding.RealizedReturn != nil {
+			holding.ReturnPct = holding.RealizedReturn.Float64() * 100
+		}
 	}
 
 	return nil

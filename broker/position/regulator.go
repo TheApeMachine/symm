@@ -157,7 +157,7 @@ func (position *Regulator) Pending() *spot.AddOrderRequest {
 }
 
 /* Status returns the current lifecycle status of the position. */
-func (position *Regulator) Status() types.Stage {
+func (position *Regulator) Status() types.Status {
 	position.mu.RLock()
 	defer position.mu.RUnlock()
 	return position.Holding.Status
@@ -189,6 +189,7 @@ func (position *Regulator) Apply(execution kraken.ExecutionData) error {
 	switch execution.OrderStatus {
 	case "filled", "iceberg_filled", "canceled", "expired", "rejected":
 		position.pending = nil
+		position.executed = kraken.ExecutionData{}
 	default:
 		return nil
 	}
@@ -213,7 +214,7 @@ func (position *Regulator) Apply(execution kraken.ExecutionData) error {
 
 /* Mark uses executable liquidation depth and never submits an order. */
 func (position *Regulator) Mark(at time.Time) error {
-	if position.Holding.Qty.Sign() == 0 {
+	if position.Holding == nil || position.Holding.Qty == nil || position.Holding.Qty.Sign() == 0 || position.price == nil {
 		return nil
 	}
 	surface, err := position.price.Surface(

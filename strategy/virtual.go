@@ -43,7 +43,7 @@ func (wallet *virtualWallet) mark(book *spotbook.Book) (*decimal.Decimal, bool, 
 	if wallet.quantity.Sign() == 0 {
 		return wallet.cash, true, nil
 	}
-	quantity, gross, err := wallet.price.Sweep(book, wallet.quantity, nil, broker.SELL, nil, nil)
+	quantity, gross, err := wallet.price.Walk(book, wallet.quantity, broker.SELL)
 
 	if err != nil || quantity.Cmp(wallet.quantity) != 0 {
 		return nil, false, err
@@ -60,7 +60,7 @@ func (wallet *virtualWallet) maximum(book *spotbook.Book, buy bool) (*decimal.De
 	if err != nil {
 		return nil, err
 	}
-	quantity, _, err := wallet.price.Sweep(book, requested, wallet.cash, broker.BUY, nil, nil)
+	quantity, _, err := wallet.price.Walk(book, requested, broker.BUY)
 	return quantity, err
 }
 
@@ -103,9 +103,9 @@ func (wallet *virtualWallet) actions(book *spotbook.Book, output []LearningActio
 	return output, nil
 }
 
-/* request fixes quantity and observed depth before later execution evidence. */
+/* request fixes quantity before later execution evidence. */
 func (wallet *virtualWallet) request(
-	book *spotbook.Book, action LearningAction, authority float64, observed *broker.DepthLadder,
+	book *spotbook.Book, action LearningAction, authority float64,
 ) (*decimal.Decimal, error) {
 	if action.Kind == types.ActionHold {
 		return zero, nil
@@ -124,22 +124,12 @@ func (wallet *virtualWallet) request(
 	if !action.Reduce {
 		quantity = quantity.Mul(decimal.NewFromFloat64(authority)).SetSize(pair.QtyIncrement)
 	}
-
-	if observed != nil {
-		observed.Count = 0
-		side := broker.BUY
-
-		if action.Reduce {
-			side = broker.SELL
-		}
-		_, _, err = wallet.price.Sweep(book, quantity, wallet.cash, side, observed, nil)
-	}
-	return quantity, err
+	return quantity, nil
 }
 
 /* fill cancels unfilled IOC quantity and accounts only for surviving depth. */
 func (wallet *virtualWallet) fill(
-	book *spotbook.Book, action LearningAction, requested *decimal.Decimal, observed *broker.DepthLadder,
+	book *spotbook.Book, action LearningAction, requested *decimal.Decimal,
 ) (quantity, gross, fee *decimal.Decimal, err error) {
 	unit, side := book.BestAsk().Price, broker.BUY
 
@@ -150,7 +140,7 @@ func (wallet *virtualWallet) fill(
 	if action.Kind == types.ActionHold || !wallet.price.Tradable(wallet.symbol, requested, unit) {
 		return zero, zero, zero, nil
 	}
-	quantity, gross, err = wallet.price.Sweep(book, requested, wallet.cash, side, nil, observed)
+	quantity, gross, err = wallet.price.Walk(book, requested, side)
 
 	if err != nil {
 		return nil, nil, nil, err

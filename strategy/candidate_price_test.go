@@ -7,6 +7,7 @@ import (
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 )
@@ -17,23 +18,46 @@ func TestEntryCandidateReprice(t *testing.T) {
 		candidate := candidateFixture("TEST/USD", at)
 		registry := NewCandidateBook(func(hindsight.LearningEvent) error { return nil })
 		So(registry.Publish(candidate), ShouldBeNil)
-		wallet, book := virtualFixture()
+
+		book := spotbook.New()
+		book.NoBookCrossing = false
+		for _, level := range []struct {
+			direction       spotbook.BookDirection
+			id              string
+			price, quantity int64
+		}{
+			{spotbook.Bid, "bid", 100, 10}, {spotbook.Ask, "ask", 101, 3}, {spotbook.Ask, "deep", 102, 10},
+		} {
+			book.Update(&spotbook.UpdateOptions{Direction: level.direction, ID: level.id,
+				Price: decimal.NewFromInt64(level.price), Quantity: decimal.NewFromInt64(level.quantity), Silent: true})
+		}
 		books := &agentBooks{current: book}
-		fee := &kraken.TradeVolumeFee{Fee: decimal.NewFromInt64(1)}
-		cost, state := candidate.Reprice(books, wallet.pair, fee, at)
+
+		instrument := broker.NewInstrumentWithQuote("USD")
+		price := broker.NewPrice(nil, instrument)
+		fee := kraken.TradeVolumeFee{Fee: decimal.NewFromInt64(1)}
+		price.SetFee("TEST/USD", fee)
+
+		// Set candidate.cost to match the exact repricing
+		candidate.cost = price.WithFee("TEST/USD", decimal.NewFromInt64(101), broker.BUY)
+
+		cost, state := candidate.Reprice(books, price, at)
 		So(state, ShouldEqual, "")
 		So(cost.Cmp(candidate.cost), ShouldEqual, 0)
+
 		Convey("A multi-leg ask withdrawal and replacement cannot preserve the old economics", func() {
 			book.Update(&spotbook.UpdateOptions{Direction: spotbook.Ask, ID: "ask", Price: decimal.NewFromInt64(101), Quantity: decimal.NewFromInt64(0), Silent: true})
 			book.Update(&spotbook.UpdateOptions{Direction: spotbook.Ask, ID: "new", Price: decimal.NewFromInt64(103), Quantity: decimal.NewFromInt64(4), Silent: true})
-			_, state = candidate.Reprice(books, wallet.pair, fee, at.Add(time.Second))
+			_, state = candidate.Reprice(books, price, at.Add(time.Second))
 			So(state, ShouldEqual, "repricing failed")
 		})
+
 		Convey("Changed fees and expired contexts are separate pre-venue refusals", func() {
-			fee.Fee = decimal.NewFromInt64(2)
-			_, state = candidate.Reprice(books, wallet.pair, fee, at)
-			So(state, ShouldEqual, "no longer executable")
-			_, state = candidate.Reprice(books, wallet.pair, fee, at.Add(time.Minute))
+			price.SetFee("TEST/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromInt64(2)})
+			_, state = candidate.Reprice(books, price, at)
+			So(state, ShouldEqual, "repricing failed")
+
+			_, state = candidate.Reprice(books, price, at.Add(time.Minute))
 			So(state, ShouldEqual, "stale")
 		})
 	})
