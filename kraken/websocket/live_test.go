@@ -112,6 +112,13 @@ func TestLiveReconnect(t *testing.T) {
 					return
 				}
 
+				if strings.Contains(string(payload), `"channel":"level3"`) {
+					if err := connection.WriteMessage(gorillawebsocket.TextMessage, []byte(`{"channel":"level3","type":"snapshot","data":[{"symbol":"BTC/USD","bids":[],"asks":[]}]}`)); err != nil {
+						serverErrors <- err
+						return
+					}
+				}
+
 				frames <- struct {
 					connection int64
 					payload    []byte
@@ -121,6 +128,9 @@ func TestLiveReconnect(t *testing.T) {
 		defer server.Close()
 
 		endpoint := "ws" + strings.TrimPrefix(server.URL, "http")
+		previousEndpoint := system.Cfg.WebSocket.Endpoints.Level3
+		system.Cfg.WebSocket.Endpoints.Level3 = endpoint
+		defer func() { system.Cfg.WebSocket.Endpoints.Level3 = previousEndpoint }()
 		client := spot.NewWebSocket()
 		client.URL = endpoint
 		client.ReconnectWait = 10 * time.Millisecond
@@ -217,6 +227,7 @@ func TestLiveReconnect(t *testing.T) {
 			}
 
 			So(awaitChannels(3, "level3"), ShouldBeTrue)
+			So(live.waitReady(), ShouldBeNil)
 			So(live.Client() != client, ShouldBeTrue)
 			So(tokenRequests.Load(), ShouldEqual, 3)
 			So(live.Client().Token, ShouldEqual, "token-3")
@@ -227,13 +238,13 @@ func TestLiveReconnect(t *testing.T) {
 }
 
 func TestLiveSubTicker(t *testing.T) {
-	Convey("Given a connected spot session whose consumers are not ready", t, func() {
+	Convey("Given an unconnected spot session", t, func() {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		live := &Live{
 			ctx:    ctx,
 			cancel: cancel,
-			status: runtime.NewStatus().Transition(runtime.BUSY),
+			status: runtime.NewStatus(),
 		}
 
 		Convey("A ticker subscription should fail before writing to the socket", func() {
@@ -247,13 +258,13 @@ func TestLiveSubTicker(t *testing.T) {
 }
 
 func TestLiveSubTrades(t *testing.T) {
-	Convey("Given a connected spot session whose consumers are not ready", t, func() {
+	Convey("Given an unconnected spot session", t, func() {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		live := &Live{
 			ctx:    ctx,
 			cancel: cancel,
-			status: runtime.NewStatus().Transition(runtime.BUSY),
+			status: runtime.NewStatus(),
 		}
 
 		Convey("A trade subscription should fail before writing to the socket", func() {
@@ -267,13 +278,13 @@ func TestLiveSubTrades(t *testing.T) {
 }
 
 func TestLiveSubL3(t *testing.T) {
-	Convey("Given a connected Level3 parent whose consumers are not ready", t, func() {
+	Convey("Given an unconnected Level3 parent", t, func() {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		live := &Live{
 			ctx:    ctx,
 			cancel: cancel,
-			status: runtime.NewStatus().Transition(runtime.BUSY),
+			status: runtime.NewStatus(),
 		}
 
 		Convey("A Level3 subscription should fail before creating a child", func() {
@@ -411,6 +422,20 @@ func TestNewWithClient(t *testing.T) {
 	Convey("Given a live Level3 transport with a resident book", t, func() {
 		fixture := newLiveFixture(t)
 		live, client, ingress := fixture.live, fixture.client, fixture.ingress
+
+		Convey("BUSY seeds the book without releasing market observations", func() {
+			live.status.Transition(runtime.BUSY)
+			live.book.Expect([]string{"TEST/USD"})
+			client.OnReceived.Call(sdk.NewWebSocketMessage([]byte(`{"channel":"level3","type":"snapshot","data":[{"symbol":"TEST/USD","timestamp":"2026-09-05T10:00:00Z","bids":[{"order_id":"bid","limit_price":100,"order_qty":3}],"asks":[{"order_id":"ask","limit_price":101,"order_qty":4}]}]}`)))
+			So(live.book.Wait(), ShouldBeNil)
+			So(live.Status(), ShouldEqual, runtime.BUSY)
+			So(len(ingress.frames), ShouldEqual, 0)
+			live.book.Book("TEST/USD", func(current *spotbook.Book) { So(current.BestBid().Price.String(), ShouldEqual, "100") })
+			live.MarkReady()
+			client.OnReceived.Call(sdk.NewWebSocketMessage([]byte(`{"channel":"level3","type":"update","data":[{"symbol":"TEST/USD","timestamp":"2026-09-05T10:00:01Z","bids":[{"event":"modify","order_id":"bid","limit_price":100,"order_qty":4}],"asks":[]}]}`)))
+			So(live.Status(), ShouldEqual, runtime.READY)
+			So(len(ingress.frames), ShouldEqual, 1)
+		})
 
 		Convey("Overlapping receive callbacks preserve whole-frame order and symbol identity", func() {
 			// A replaced SDK session shares callbacks with its predecessor. Model

@@ -756,10 +756,10 @@ func (futures *FuturesLive) SubFuturesTicker(productIDs []string) error {
 		return err
 	}
 
-	if futures.Status() != runtime.READY {
+	if futures.Status() != runtime.BUSY && futures.Status() != runtime.READY {
 		err := errnie.Err(
 			errnie.NotAcceptable,
-			"futures: ticker subscription requires a ready session",
+			"futures: ticker subscription requires a connected session",
 			nil,
 		)
 		futures.fail(err)
@@ -790,10 +790,10 @@ func (futures *FuturesLive) SubFuturesTrades(productIDs []string) error {
 		return err
 	}
 
-	if futures.Status() != runtime.READY {
+	if futures.Status() != runtime.BUSY && futures.Status() != runtime.READY {
 		err := errnie.Err(
 			errnie.NotAcceptable,
-			"futures: trade subscription requires a ready session",
+			"futures: trade subscription requires a connected session",
 			nil,
 		)
 		futures.fail(err)
@@ -824,10 +824,10 @@ func (futures *FuturesLive) SubFuturesBook(productIDs []string) error {
 		return err
 	}
 
-	if futures.Status() != runtime.READY {
+	if futures.Status() != runtime.BUSY && futures.Status() != runtime.READY {
 		err := errnie.Err(
 			errnie.NotAcceptable,
-			"futures: book subscription requires a ready session",
+			"futures: book subscription requires a connected session",
 			nil,
 		)
 		futures.fail(err)

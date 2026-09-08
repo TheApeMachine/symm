@@ -1,10 +1,20 @@
 package recording
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"gocloud.dev/blob"
+	"gocloud.dev/blob/driver"
 	"gocloud.dev/blob/memblob"
+	"gocloud.dev/gcerrors"
+	"golang.design/x/lockfree/lf"
+	"strings"
+	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -119,7 +129,7 @@ func TestSessionCapture(t *testing.T) {
 func newSessionFixture(t *testing.T, run hindsight.RunID) (*Session, *blob.Bucket) {
 	t.Helper()
 	bucket := memblob.OpenBucket(nil)
-	writer, err := NewSession(context.Background(), bucket, hindsight.Run{ID: run, StartedAt: time.Unix(1, 0)}, 64, 8, time.Hour)
+	writer, err := NewSession(context.Background(), bucket, hindsight.Run{ID: run, StartedAt: time.Unix(1, 0)}, 8, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,4 +142,195 @@ func newSessionFixture(t *testing.T, run hindsight.RunID) (*Session, *blob.Bucke
 		}
 	})
 	return writer, bucket
+}
+
+// delayedBucket exercises the real recorder and blob writer with upload latency
+// longer than the flush interval. It retains the exact uploaded bytes.
+type delayedBucket struct {
+	driver.Bucket
+	mutex   sync.Mutex
+	objects [][]byte
+	started chan struct{}
+	release chan struct{}
+	err     error
+}
+
+func (bucket *delayedBucket) NewTypedWriter(ctx context.Context, key, contentType string, opts *driver.WriterOptions) (driver.Writer, error) {
+	return &delayedWriter{bucket: bucket}, nil
+}
+
+func (bucket *delayedBucket) Close() error { return nil }
+
+func (bucket *delayedBucket) ErrorCode(err error) gcerrors.ErrorCode {
+	return gcerrors.Unknown
+}
+
+type delayedWriter struct {
+	bytes.Buffer
+	bucket *delayedBucket
+}
+
+func (writer *delayedWriter) Close() error {
+	if writer.bucket.release != nil {
+		select {
+		case writer.bucket.started <- struct{}{}:
+		default:
+		}
+		<-writer.bucket.release
+	}
+
+	if writer.bucket.err != nil {
+		return writer.bucket.err
+	}
+	time.Sleep(15 * time.Millisecond) // Fixture upload exceeds the 1ms batching interval.
+	writer.bucket.mutex.Lock()
+	defer writer.bucket.mutex.Unlock()
+	writer.bucket.objects = append(writer.bucket.objects, bytes.Clone(writer.Bytes()))
+	return nil
+}
+
+func TestSessionPersist(t *testing.T) {
+	Convey("Given queued records and uploads slower than the flush interval", t, func() {
+		synctest.Test(t, func(t *testing.T) {
+			storage := &delayedBucket{}
+			bucket := blob.NewBucket(storage)
+			session := &Session{bucket: bucket, queue: lf.NewQueue[pending](), done: make(chan struct{})}
+			for index := range 82 {
+				session.queue.Enqueue(pending{key: "learning/run/record.json", data: []byte(fmt.Sprintf("%d", index))})
+			}
+			session.closed = true
+			session.persist(context.Background(), 8, time.Millisecond)
+			if len(storage.objects) != 11 {
+				t.Fatalf("82 records must use ten full batches and one partial batch; got %d uploads", len(storage.objects))
+			}
+			records := strings.Split(string(bytes.Join(storage.objects, []byte("\n"))), "\n")
+			for index, record := range records {
+				if record != fmt.Sprint(index) {
+					t.Fatalf("record %d: got %q", index, record)
+				}
+			}
+			if err := bucket.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	})
+}
+
+func BenchmarkSessionPersist(b *testing.B) {
+	bucket := memblob.OpenBucket(nil)
+	defer func() {
+		if err := bucket.Close(); err != nil {
+			b.Fatal(err)
+		}
+	}()
+	payload := bytes.Repeat([]byte("x"), 1024) // 1KiB original transition records.
+	b.ReportAllocs()
+	for index := 0; index < b.N; index++ {
+		session := &Session{bucket: bucket, queue: lf.NewQueue[pending](), done: make(chan struct{})}
+		for range 1024 {
+			session.queue.Enqueue(pending{key: "learning/run/record.json", data: payload})
+		}
+		session.closed = true
+		session.persist(context.Background(), 256, time.Second)
+	}
+}
+
+func TestSessionWriteLearning(t *testing.T) {
+	Convey("Given an S3 upload held while producers continue", t, func() {
+		synctest.Test(t, func(t *testing.T) {
+			storage := &delayedBucket{started: make(chan struct{}, 1), release: make(chan struct{})}
+			bucket := blob.NewBucket(storage)
+			session := &Session{
+				bucket: bucket, run: hindsight.Run{ID: "burst"},
+				queue: lf.NewQueue[pending](), wake: make(chan struct{}, 1),
+				done: make(chan struct{}), Errors: make(chan error, 1),
+			}
+			go session.persist(context.Background(), 256, time.Millisecond)
+			type event struct {
+				Producer int
+				Sequence int
+				Payload  []byte
+			}
+			if err := session.WriteLearning(event{Producer: -1}); err != nil {
+				t.Fatal(err)
+			}
+			<-storage.started
+			// Four producers exceed the former 8192-record capacity during one upload.
+			var producers sync.WaitGroup
+			for producer := range 4 {
+				producers.Go(func() {
+					record := event{Producer: producer, Payload: []byte("original")}
+					for sequence := range 4096 {
+						record.Sequence = sequence
+						if err := session.WriteLearning(record); err != nil {
+							t.Error(err)
+							return
+						}
+					}
+					copy(record.Payload, "mutated!")
+				})
+			}
+			producers.Wait()
+			closed := make(chan error, 1)
+			go func() { closed <- session.Close() }()
+			synctest.Wait()
+			select {
+			case err := <-closed:
+				t.Fatalf("close returned before the upload completed: %v", err)
+			default:
+			}
+			close(storage.release)
+			if err := <-closed; err != nil {
+				t.Fatal(err)
+			}
+			next := make([]int, 4)
+			records := strings.Split(string(bytes.Join(storage.objects, []byte("\n"))), "\n")
+			if len(records) != 1+4*4096 {
+				t.Fatalf("accepted records lost or duplicated: %d", len(records))
+			}
+			for _, raw := range records[1:] {
+				var record event
+				if err := json.Unmarshal([]byte(raw), &record); err != nil {
+					t.Fatal(err)
+				}
+				if record.Sequence != next[record.Producer] || string(record.Payload) != "original" {
+					t.Fatalf("out of order or mutated record: %+v", record)
+				}
+				next[record.Producer]++
+			}
+			if err := session.WriteLearning(event{}); err == nil {
+				t.Fatal("closed session accepted a record")
+			}
+			if err := bucket.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	})
+	Convey("Given an S3 write failure", t, func() {
+		synctest.Test(t, func(t *testing.T) {
+			failure := errors.New("fixture S3 failure")
+			bucket := blob.NewBucket(&delayedBucket{err: failure})
+			session := &Session{
+				bucket: bucket, run: hindsight.Run{ID: "failure"},
+				queue: lf.NewQueue[pending](), wake: make(chan struct{}, 1),
+				done: make(chan struct{}), Errors: make(chan error, 1),
+			}
+			go session.persist(context.Background(), 1, time.Hour)
+			if err := session.WriteLearning("accepted"); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-session.Errors; !errors.Is(err, failure) {
+				t.Fatalf("missing upload failure: %v", err)
+			}
+			if err := session.WriteLearning("rejected"); !errors.Is(err, failure) {
+				t.Fatalf("admission did not report upload failure: %v", err)
+			}
+			if err := session.Close(); !errors.Is(err, failure) {
+				t.Fatalf("close did not report upload failure: %v", err)
+			}
+			if err := bucket.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	})
 }

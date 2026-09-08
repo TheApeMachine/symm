@@ -251,9 +251,9 @@ func (instrument *Instrument) Subscribe() error {
 	errnie.Info("subscribing to instruments")
 
 	subscribers := []func([]string){
-		instrument.api.SubTrades,
-		instrument.api.SubTicker,
 		instrument.api.SubL3,
+		instrument.api.SubTicker,
+		instrument.api.SubTrades,
 	}
 
 	for batch := range slices.Chunk(

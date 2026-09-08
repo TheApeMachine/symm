@@ -1,7 +1,9 @@
 package websocket
 
 import (
+	"context"
 	"fmt"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"strings"
 	"testing"
 	"time"
@@ -531,4 +533,40 @@ func BenchmarkBookUpdate(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func TestBookWait(t *testing.T) {
+	Convey("Given a boot that requires two symbol snapshots", t, func() {
+		managed := newBookFixture(t, "BTC/USD", 0, 0)
+		managed.Expect([]string{"BTC/USD", "ETH/USD"})
+		event := &callback.Event[*sdk.WebSocketMessage]{Data: sdk.NewWebSocketMessage([]byte(`{"channel":"level3"}`))}
+		apply := func(kind, symbol string) {
+			So(managed.Update(event, &kraken.Level3{Type: kind, Data: []kraken.Level3Data{{Symbol: symbol}}}), ShouldBeNil)
+		}
+		Convey("Creating a book and receiving a delta do not count as seeding", func() {
+			managed.Create("BTC/USD", 10)
+			apply("update", "BTC/USD")
+			So(managed.Status(), ShouldEqual, runtime.WAITING)
+		})
+		Convey("All snapshots and their consumers must finish before READY", func() {
+			observed := 0
+			managed.SetNotify(func(_ string, _ time.Time) {
+				So(managed.Status(), ShouldEqual, runtime.WAITING)
+				observed++
+			})
+			apply("snapshot", "BTC/USD")
+			So(managed.Status(), ShouldEqual, runtime.WAITING)
+			apply("snapshot", "ETH/USD")
+			So(observed, ShouldEqual, 2)
+			So(managed.Wait(), ShouldBeNil)
+			So(managed.Status(), ShouldEqual, runtime.READY)
+		})
+		Convey("Interrupted seeding is an error and never READY", func() {
+			ctx, cancel := context.WithCancel(t.Context())
+			managed.ctx = ctx
+			cancel()
+			So(managed.Wait(), ShouldNotBeNil)
+			So(managed.Status(), ShouldEqual, runtime.WAITING)
+		})
+	})
 }

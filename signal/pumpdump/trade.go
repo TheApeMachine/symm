@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/adaptive"
@@ -138,9 +139,14 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 	var hasMidpoint bool
 
 	trade.api.Book(tick.Symbol, func(spotbook *book.Book) {
-  if spotbook == nil || spotbook.BestBid() == nil || spotbook.BestAsk() == nil { return }
+		if spotbook == nil || spotbook.BestBid() == nil || spotbook.BestAsk() == nil {
+			return
+		}
 
-		currentMidpoint = spotbook.Midpoint().Float64()
+		// SDK Midpoint rounds its 0.5 multiplier to the bid scale; an
+		// integral-price book therefore needs working decimal precision.
+		currentMidpoint = spotbook.BestBid().Price.SetScale(decimal.DefaultScale).
+			Add(spotbook.BestAsk().Price).Div(decimal.NewFromInt64(2)).Float64()
 		hasMidpoint = true
 	})
 

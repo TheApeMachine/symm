@@ -165,13 +165,13 @@ func TestFuturesFrameIdentity(t *testing.T) {
 }
 
 func TestFuturesLiveSubFuturesTicker(t *testing.T) {
-	Convey("Given a connected futures session whose consumers are not ready", t, func() {
+	Convey("Given an unconnected futures session", t, func() {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		futures := &FuturesLive{
 			ctx:    ctx,
 			cancel: cancel,
-			status: runtime.NewStatus().Transition(runtime.BUSY),
+			status: runtime.NewStatus(),
 		}
 
 		Convey("A ticker subscription should fail before writing to the socket", func() {
@@ -185,13 +185,13 @@ func TestFuturesLiveSubFuturesTicker(t *testing.T) {
 }
 
 func TestFuturesLiveSubFuturesTrades(t *testing.T) {
-	Convey("Given a connected futures session whose consumers are not ready", t, func() {
+	Convey("Given an unconnected futures session", t, func() {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		futures := &FuturesLive{
 			ctx:    ctx,
 			cancel: cancel,
-			status: runtime.NewStatus().Transition(runtime.BUSY),
+			status: runtime.NewStatus(),
 		}
 
 		Convey("A trade subscription should fail before writing to the socket", func() {
@@ -205,13 +205,13 @@ func TestFuturesLiveSubFuturesTrades(t *testing.T) {
 }
 
 func TestFuturesLiveSubFuturesBook(t *testing.T) {
-	Convey("Given a connected futures session whose consumers are not ready", t, func() {
+	Convey("Given an unconnected futures session", t, func() {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		futures := &FuturesLive{
 			ctx:    ctx,
 			cancel: cancel,
-			status: runtime.NewStatus().Transition(runtime.BUSY),
+			status: runtime.NewStatus(),
 		}
 
 		Convey("A book subscription should fail before writing to the socket", func() {

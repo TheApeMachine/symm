@@ -156,6 +156,8 @@ func TestRecoverSingleAssetFromBalance(t *testing.T) {
 			So(position.Holding.Qty.Cmp(venue.Decimal("10")), ShouldEqual, 0)
 			So(position.Holding.Status, ShouldEqual, types.OPEN)
 			So(position.Recovered, ShouldBeTrue)
+			So(position.Guardian, ShouldNotBeNil)
+			So(position.Guardian.started, ShouldBeTrue)
 		})
 	})
 }

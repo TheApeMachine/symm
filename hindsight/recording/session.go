@@ -6,30 +6,31 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/bytedance/sonic"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/types"
 	"gocloud.dev/blob"
+	"golang.design/x/lockfree/lf"
 	"golang.org/x/sync/errgroup"
 )
 
-// Session records the original Hindsight records. The bounded queue holds only
-// their encoded bytes, so transport and workspace objects can be reused safely.
-// A failed write or full queue is terminal and is reported through Errors.
+// Session queues encoded Hindsight records for asynchronous S3 persistence.
+// Producers retain no mutable state in the queue. Write failures reach Errors.
 type Session struct {
 	Errors        chan error
- Durable chan struct{}
+	Durable       chan struct{}
 	bucket        *blob.Bucket
 	run           hindsight.Run
 	sequencer     *hindsight.Sequencer
 	mutex         sync.Mutex
-	queue         chan pending
+	queue         *lf.Queue[pending]
+	wake          chan struct{}
 	done          chan struct{}
 	err           error
 	closed        bool
@@ -47,18 +48,30 @@ type opportunityWitnessKey struct {
 	archetype types.OpportunityArchetype
 }
 
-func NewSession(ctx context.Context, bucket *blob.Bucket, run hindsight.Run, capacity, batchSize int, flushInterval time.Duration) (*Session, error) {
-	if capacity <= 0 || batchSize <= 0 || batchSize > capacity || flushInterval <= 0 {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "recording: require positive capacity, batch size within capacity, and flush interval", nil))
+func NewSession(
+	ctx context.Context, bucket *blob.Bucket, run hindsight.Run,
+	batchSize int, flushInterval time.Duration,
+) (*Session, error) {
+	if batchSize <= 0 || flushInterval <= 0 {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "recording: require positive batch size and flush interval", nil))
 	}
 	sequencer, err := hindsight.NewSequencer(run.ID)
+
 	if err != nil {
 		return nil, err
 	}
+
 	if err := store.Write(ctx, bucket, run.ID.Prefix("runs")+"run.json", run); err != nil {
 		return nil, err
 	}
-	session := &Session{Durable: make(chan struct{}, 1), bucket: bucket, run: run, sequencer: sequencer, queue: make(chan pending, capacity), done: make(chan struct{}), Errors: make(chan error, 1), phases: make(map[opportunityWitnessKey]types.OpportunityPhase), lastWitnessed: make(map[string]time.Time)}
+	session := &Session{
+		Durable: make(chan struct{}, 1), Errors: make(chan error, 1),
+		bucket: bucket, run: run, sequencer: sequencer,
+		queue: lf.NewQueue[pending](), wake: make(chan struct{}, 1),
+		done:          make(chan struct{}),
+		phases:        make(map[opportunityWitnessKey]types.OpportunityPhase),
+		lastWitnessed: make(map[string]time.Time),
+	}
 	go session.persist(context.WithoutCancel(ctx), batchSize, flushInterval)
 	return session, nil
 }
@@ -66,10 +79,12 @@ func NewSession(ctx context.Context, bucket *blob.Bucket, run hindsight.Run, cap
 func (session *Session) Capture(kind, endpoint string, payload []byte, receivedAt time.Time, ref hindsight.StreamRef) (hindsight.CaptureIdentity, error) {
 	session.mutex.Lock()
 	defer session.mutex.Unlock()
+
 	if ref.Stream == "" || ref.Epoch == 0 || ref.Sequence == 0 {
 		return hindsight.CaptureIdentity{}, errnie.Error(errnie.Err(errnie.Validation, "recording: capture requires transport identity", nil))
 	}
 	identity, err := session.sequencer.Assign(ref.Stream)
+
 	if err != nil {
 		return identity, err
 	}
@@ -105,19 +120,21 @@ func (session *Session) enqueue(key string, value any) error {
 	if session.err != nil {
 		return session.err
 	}
+
 	if session.closed {
 		return errnie.Error(errnie.Err(errnie.IO, "recording: session closed", nil))
 	}
 	data, err := sonic.Marshal(value)
+
 	if err != nil {
 		return session.fail(errnie.Error(errnie.Err(errnie.Validation, "recording: encode "+key, err)))
 	}
+	session.queue.Enqueue(pending{key: key, data: data})
 	select {
-	case session.queue <- pending{key: key, data: data}:
-		return nil
+	case session.wake <- struct{}{}:
 	default:
-		return session.fail(errnie.Error(errnie.Err(errnie.IO, "recording: persistence queue full", nil)))
-	}
+	} // Wakeups coalesce; records remain in the queue.
+	return nil
 }
 
 // fail is called with mutex held and preserves the first failure.
@@ -133,42 +150,60 @@ func (session *Session) fail(err error) error {
 // is JSONL; no record is converted into a second storage representation.
 func (session *Session) persist(ctx context.Context, batchSize int, interval time.Duration) {
 	defer close(session.done)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 	batch := make([]pending, 0, batchSize)
 	var sequence uint64
 	for {
-		select {
-		case record, open := <-session.queue:
-			if open {
-				batch = append(batch, record)
-			}
-			if !open || len(batch) == batchSize {
-				sequence++
-				if err := session.flush(ctx, batch, sequence); err != nil {
-					return
-				}
-				batch = batch[:0]
-			}
+		for len(batch) < batchSize {
+			record, open := session.queue.Dequeue()
+
 			if !open {
-				return
+				break
 			}
-		case <-ticker.C:
+			batch = append(batch, record)
+		}
+		session.mutex.Lock()
+		drained := session.closed && session.queue.Length() == 0
+		session.mutex.Unlock()
+
+		if len(batch) == batchSize || drained {
 			sequence++
+
 			if err := session.flush(ctx, batch, sequence); err != nil {
 				return
 			}
 			batch = batch[:0]
+			timer.Reset(interval)
+
+			if drained {
+				return
+			}
+			continue
+		}
+
+		select {
+		case <-session.wake:
+		case <-timer.C:
+			sequence++
+
+			if err := session.flush(ctx, batch, sequence); err != nil {
+				return
+			}
+			batch = batch[:0]
+			timer.Reset(interval)
 		}
 	}
 }
 
 func (session *Session) flush(ctx context.Context, batch []pending, sequence uint64) error {
+
 	groups := make(map[string][][]byte)
 	prefixes := []string{}
 	for _, record := range batch {
 		parts := strings.SplitN(record.key, "/", 3)
 		prefix := parts[0] + "/" + parts[1] + "/"
+
 		if _, found := groups[prefix]; !found {
 			prefixes = append(prefixes, prefix)
 		}
@@ -180,20 +215,26 @@ func (session *Session) flush(ctx context.Context, batch []pending, sequence uin
 	for _, prefix := range prefixes {
 		uploads.Go(func() error {
 			key := fmt.Sprintf("%s%020d.jsonl", prefix, sequence)
+
 			if err := session.bucket.WriteAll(ctx, key, bytes.Join(groups[prefix], []byte("\n")), nil); err != nil {
 				return errnie.Error(errnie.Err(errnie.IO, "recording: write batch "+key, err))
 			}
 			return nil
 		})
 	}
+
 	if err := uploads.Wait(); err != nil {
 		session.mutex.Lock()
 		defer session.mutex.Unlock()
 		return session.fail(err)
 	}
+
 	if len(groups[session.run.ID.Prefix("captures")]) > 0 {
-  select { case session.Durable <- struct{}{}: default: } // Coalesced wakeup; captures themselves remain durable.
- }
+		select {
+		case session.Durable <- struct{}{}:
+		default:
+		} // Coalesced wakeup; captures themselves remain durable.
+	}
 	clear(batch)
 	return nil
 }
@@ -202,9 +243,13 @@ func (session *Session) flush(ctx context.Context, batch []pending, sequence uin
 // or returns the write failure. The connection remains owned by the application.
 func (session *Session) Close() error {
 	session.mutex.Lock()
+
 	if !session.closed {
 		session.closed = true
-		close(session.queue)
+		select {
+		case session.wake <- struct{}{}:
+		default:
+		}
 	}
 	session.mutex.Unlock()
 	<-session.done

@@ -260,9 +260,8 @@ func (api *API) Normalizer() *spot.Normalizer {
 
 /*
 MarkReady releases every configured market-data session after the complete
-consumer graph has been admitted. Market subscriptions are issued only after
-this boundary, so their authoritative snapshots cannot arrive while an ingress
-workload is still waiting.
+consumer graph has been seeded and admitted. Subscription snapshots seed their
+owners while transports are BUSY; READY releases subsequent observations.
 */
 func (api *API) MarkReady() {
 	if api == nil {

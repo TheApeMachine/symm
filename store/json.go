@@ -30,7 +30,7 @@ func Write(ctx context.Context, bucket *blob.Bucket, key string, value any) erro
 // can distinguish them using gcerrors.Code(err) == gcerrors.NotFound.
 func Read[Value any](ctx context.Context, bucket *blob.Bucket, key string) (Value, error) {
 	var value Value
-	data, err := bucket.ReadAll(ctx, key)
+	data, err := ReadAll(ctx, bucket, key)
 
 	if gcerrors.Code(err) == gcerrors.NotFound {
 		return value, err
@@ -67,7 +67,7 @@ func Scan[Value any](
 			return errnie.Error(errnie.Err(errnie.IO, "store: list "+prefix, err))
 		}
 
-		data, err := bucket.ReadAll(ctx, object.Key)
+		data, err := ReadAll(ctx, bucket, object.Key)
 		if err != nil {
 			return errnie.Error(errnie.Err(errnie.IO, "store: read "+object.Key, err))
 		}

@@ -9,7 +9,7 @@ import {
 } from "./visualizer";
 
 describe("EdgeDistributionPlot", () => {
-	it("renders observed signs and negative mean without an invented distribution", () => {
+	it("renders the recovered normal curve using measured outcome moments", () => {
 		const skill: Skill = {
 			mode: "learning",
 			account: "sim",
@@ -19,16 +19,8 @@ describe("EdgeDistributionPlot", () => {
 			support: 150.5,
 			defined: true,
 			varianceDefined: true,
-			qualified: false,
 			mean: -0.00074,
 			variance: 0.000002,
-			standardError: 0.00014,
-			lowerBound: -0.00116,
-			confidence: 0.02,
-			sigma: 3.0,
-			memory: 50,
-			promotions: 0,
-			demotions: 0,
 			wins: 450,
 			losses: 550,
 		};
@@ -36,9 +28,46 @@ describe("EdgeDistributionPlot", () => {
 		const markup = renderToStaticMarkup(<EdgeDistributionPlot skill={skill} />);
 
 		expect(markup).toContain("Mean -7.4 bp");
-  expect(markup).toContain("450 positive");
-  expect(markup).toContain("550 negative");
-  expect(markup).not.toContain("3σ Bound");
+		expect(markup).toContain("450 positive");
+		expect(markup).toContain("550 negative");
+		expect(markup).toContain("Observed SD 14.1 bp");
+		expect(markup).toContain("0.0 bp (Breakeven)");
+		expect(markup).not.toContain("Confidence:");
+		expect(markup).not.toContain("live gate");
+		expect(markup).toContain('data-edge-curve="normal-fit"');
+		for (const mean of [-0.00074, 0, 0.00074]) {
+			const fitted = renderToStaticMarkup(
+				<EdgeDistributionPlot skill={{ ...skill, mean }} />,
+			);
+			const curve = fitted.match(/data-edge-curve="normal-fit" d="([^"]+)"/);
+			expect(curve).not.toBeNull();
+			const points = [...curve![1].matchAll(/[ML] ([\d.]+) ([\d.]+)/g)].map(
+				(point) => ({ x: Number(point[1]), y: Number(point[2]) }),
+			);
+			const peak = points.reduce((highest, point) =>
+				point.y < highest.y ? point : highest,
+			);
+			expect(peak.y).toBeLessThan(points[0].y);
+			expect(peak.y).toBeLessThan(points.at(-1)!.y);
+			// The retained symmetric axis places breakeven at SVG x=265.
+			expect(Math.sign(peak.x - 265)).toBe(Math.sign(mean));
+		}
+		for (const mean of [-0.00074, 0, 0.00074]) {
+			const varied = renderToStaticMarkup(
+				<EdgeDistributionPlot skill={{ ...skill, mean, variance: 0 }} />,
+			);
+			expect(varied).toContain("Observed SD 0.0 bp");
+			expect(varied).not.toMatch(/NaN|Infinity/);
+			expect(varied).not.toContain('data-edge-curve="normal-fit"');
+			expect(varied).toContain("Zero observed spread");
+		}
+		const immature = renderToStaticMarkup(
+			<EdgeDistributionPlot skill={{ ...skill, varianceDefined: false }} />,
+		);
+		expect(immature).toContain("Spread not yet measured");
+		expect(immature).not.toContain('data-edge-curve="normal-fit"');
+		const empty = renderToStaticMarkup(<EdgeDistributionPlot />);
+		expect(empty).toContain("No completed tape outcomes yet.");
 	});
 });
 
@@ -108,8 +137,6 @@ describe("LearningTrajectoryPlot", () => {
 				authority: 0.8,
 				profit: -20,
 				target: 0.00025,
-				complete: true,
-				episode: 1,
 				horizonNs: 100000000,
 				prior: {
 					Samples: 1,
@@ -135,7 +162,7 @@ describe("LearningTrajectoryPlot", () => {
 			/>,
 		);
 
-		expect(markup).toContain("Policy wallet profit");
+		expect(markup).toContain("Consolidated wallet profit");
 		expect(markup).toContain("2 valuations");
 		expect(markup).toContain("-500.0");
 		expect(markup).not.toContain("+5.0 bp net");
@@ -164,16 +191,8 @@ describe("LearningVisualizer", () => {
 				support: 20,
 				defined: true,
 				varianceDefined: true,
-				qualified: false,
 				mean: 0.0003,
 				variance: 0.000001,
-				standardError: 0.00005,
-				lowerBound: 0.00015,
-				confidence: 0.95,
-				sigma: 3.0,
-				memory: 50,
-				promotions: 0,
-				demotions: 0,
 				wins: 60,
 				losses: 40,
 			},

@@ -1,7 +1,6 @@
 package position
 
 import (
-	"context"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"slices"
 	"sync"
@@ -24,7 +23,7 @@ type Regulator struct {
 	ID        string
 	Recovered bool
 	Orders    Orders
- Surface *types.ExecutionSurface
+	Surface   *types.ExecutionSurface
 
 	api      *websocket.API
 	price    *broker.Price
@@ -42,7 +41,6 @@ type Orders interface {
 }
 
 func NewRegulator(
-	ctx context.Context,
 	api *websocket.API,
 	price *broker.Price,
 	symbol string,
@@ -55,8 +53,6 @@ func NewRegulator(
 		record:  record,
 		Holding: types.NewHolding(symbol),
 	}
-	position.Guardian = NewGuardian(position)
-	position.Guardian.Start(ctx)
 	return position
 }
 
@@ -237,10 +233,12 @@ func (position *Regulator) Mark(at time.Time) error {
 	defer position.mu.Unlock()
 	position.Holding.Mark = surface.ExecutableVWAP
 	position.Surface = surface
- position.Holding.PnL = surface.ExecutableValue.Sub(position.Holding.Basis).Sub(position.Holding.EntryFee)
+	position.Holding.PnL = surface.ExecutableValue.Sub(position.Holding.Basis).Sub(position.Holding.EntryFee)
 	basis := position.Holding.Basis.Add(position.Holding.EntryFee)
 
- if basis.Sign() > 0 { position.Holding.ReturnPct = position.Holding.PnL.Div(basis).Mul(decimal.NewFromInt64(100)).Float64() }
+	if basis.Sign() > 0 {
+		position.Holding.ReturnPct = position.Holding.PnL.Div(basis).Mul(decimal.NewFromInt64(100)).Float64()
+	}
 	return nil
 }
 

@@ -1,10 +1,6 @@
 import { useSelector } from "@tanstack/react-store";
-import {
-	measurementSourcesStore,
-	positionStore,
-	strategyStore,
-	tickCountStore,
-} from "#/collections/app";
+import { learningStore } from "#/collections/learning";
+import { onlineStore } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
 import { Panel } from "#/components/ui/panel";
 
@@ -22,43 +18,39 @@ const Row = ({
 );
 
 export const Engine = () => {
-	const tick = useSelector(tickCountStore, (state) => state);
-	const lastStrategy = useSelector(strategyStore, (state) =>
-		state.findLast((f) => !!f.outcome() || f.decisionsLength() > 0),
-	);
-	const measurementCount = useSelector(
-		measurementSourcesStore,
-		(state) => state.length,
-	);
-	const lastPositions = useSelector(positionStore, (state) =>
-		state.findLast(() => true),
-	);
+	const learning = useSelector(learningStore, (state) => state);
+	const online = useSelector(onlineStore, (state) => state === "ONLINE");
+	const policy = learning?.agents[0];
 
 	return (
 		<Panel size="bare" className="p-2.5 font-mono text-[11px] leading-[1.7]">
-			<Row label="seq">
+			<Row label="observations">
 				<Flex data-e="seq" className="text-(--f1)">
-					{tick}
+					{String(learning?.steps ?? "—")}
 				</Flex>
 			</Row>
 			<Row label="phase">
 				<Flex data-e="phase" className="min-w-0 truncate text-(--acc)">
-					{lastStrategy?.outcome() ?? "—"}
+					{online ? (learning?.status ?? "waiting") : "offline"}
 				</Flex>
 			</Row>
-			<Row label="cand">
+			<Row label="decisions">
 				<Flex data-e="cand" className="text-(--f1)">
-					{String(lastStrategy ? lastStrategy.decisionsLength() : "—")}
+					{String(learning?.decisions ?? "—")}
 				</Flex>
 			</Row>
-			<Row label="meas">
+			<Row label="graded">
 				<Flex data-e="meas" className="text-(--f1)">
-					{String(measurementCount)}
+					{String(learning?.resolved ?? "—")}
 				</Flex>
 			</Row>
 			<Row label="open">
 				<Flex data-e="open" className="text-(--f1)">
-					{String(lastPositions ? lastPositions.rowsLength() : 0)}
+					{String(
+						policy?.positions.filter(
+							(position) => Number(position.holding?.qty) > 0,
+						).length ?? "—",
+					)}
 				</Flex>
 			</Row>
 		</Panel>

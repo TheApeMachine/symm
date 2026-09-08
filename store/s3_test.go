@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -39,7 +41,7 @@ func TestNewS3(t *testing.T) {
 		})
 
 		Convey("The real client writes and reads exact bytes over HTTP", func() {
-			client := newS3Fixture(t)
+			client := newS3Fixture(t, 0)
 			ctx := context.Background()
 
 			for _, payload := range [][]byte{{0, 255, 1, 0}, []byte("replacement"), {}} {
@@ -77,7 +79,7 @@ func TestNewS3(t *testing.T) {
 
 // newS3Fixture exercises Datura and the S3 SDK against a local HTTP fixture.
 // It is not verification of a deployed S3 service.
-func newS3Fixture(t testing.TB) *s3.Client {
+func newS3Fixture(t testing.TB, interruptions int) *s3.Client {
 	t.Helper()
 	t.Setenv("AWS_ACCESS_KEY_ID", "test-key")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
@@ -109,6 +111,16 @@ func newS3Fixture(t testing.TB) *s3.Client {
 
 		if !found {
 			http.Error(response, "<Error><Code>NoSuchKey</Code></Error>", http.StatusNotFound)
+			return
+		}
+
+		response.Header().Set("Content-Length", fmt.Sprint(len(payload)))
+
+		if interruptions > 0 {
+			interruptions--
+			if _, err := response.Write(payload[:len(payload)/2]); err != nil {
+				t.Errorf("serve interrupted body: %v", err)
+			}
 			return
 		}
 
@@ -148,7 +160,7 @@ func newS3Fixture(t testing.TB) *s3.Client {
 }
 
 func BenchmarkNewS3(b *testing.B) {
-	client := newS3Fixture(b)
+	client := newS3Fixture(b, 0)
 	ctx := context.Background()
 	// A 64 KiB binary object models raw capture data; no market threshold is used.
 	payload := bytes.Repeat([]byte{0, 255, 1, 0}, 16384)
@@ -169,6 +181,60 @@ func BenchmarkNewS3(b *testing.B) {
 
 		if !bytes.Equal(actual, payload) {
 			b.Fatal("object bytes changed")
+		}
+	}
+}
+
+func TestReadAll(t *testing.T) {
+	Convey("Interrupted S3 response bodies are retried before decoding", t, func() {
+		for _, interruptions := range []int{1, 2, 3} {
+			Convey(fmt.Sprintf("With %d truncated downloads", interruptions), func() {
+				client := newS3Fixture(t, interruptions)
+				payload := []byte(`{"original":"complete capture"}`)
+				So(client.Bucket().WriteAll(t.Context(), "capture", payload, nil), ShouldBeNil)
+				actual, err := ReadAll(t.Context(), client.Bucket(), "capture")
+
+				if interruptions < retry.NewStandard().MaxAttempts() {
+					So(err, ShouldBeNil)
+					So(actual, ShouldResemble, payload)
+					return
+				}
+				So(errors.Is(err, io.ErrUnexpectedEOF), ShouldBeTrue)
+				So(actual, ShouldBeNil)
+			})
+		}
+		Convey("Missing keys and cancellation retain their original meaning", func() {
+			client := newS3Fixture(t, 0)
+			_, err := ReadAll(t.Context(), client.Bucket(), "missing")
+			So(gcerrors.Code(err), ShouldEqual, gcerrors.NotFound)
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			_, err = ReadAll(ctx, client.Bucket(), "capture")
+			So(errors.Is(err, context.Canceled), ShouldBeTrue)
+		})
+	})
+}
+
+func BenchmarkReadAll(b *testing.B) {
+	client := newS3Fixture(b, 0)
+	payload := bytes.Repeat([]byte("capture"), 8192) // A 56KiB capture object.
+
+	if err := client.Bucket().WriteAll(b.Context(), "capture", payload, nil); err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(int64(len(payload)))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		actual, err := ReadAll(b.Context(), client.Bucket(), "capture")
+
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		if !bytes.Equal(actual, payload) {
+			b.Fatal("download bytes changed")
 		}
 	}
 }

@@ -12,11 +12,21 @@ export const PriorFacts = ({ prior }: { prior: Prior }) => (
 );
 
 export const KnowledgePanel = ({ view }: { view: LearningView | null }) => (
- <Section fit="content">
-  <Section.Header title="Learned context evidence" meta="Readings used for the selected symbol" />
-  {view?.candidates?.map(candidate => <Section.Body className="p-3" key={`${candidate.kind}-${candidate.power}-${candidate.reduce}`}>
-   <Typography.Mono>{action(candidate.kind, candidate.power, candidate.reduce)}</Typography.Mono>
-   <PriorFacts prior={candidate.prior} />
-  </Section.Body>)}
- </Section>
+	<Section fit="content">
+		<Section.Header
+			title="Learned context evidence"
+			meta="Readings used for the selected symbol"
+		/>
+		{view?.candidates?.map((candidate) => (
+			<Section.Body
+				className="p-3"
+				key={`${candidate.kind}-${candidate.power}-${candidate.reduce}`}
+			>
+				<Typography.Mono>
+					{action(candidate.kind, candidate.power, candidate.reduce)}
+				</Typography.Mono>
+				<PriorFacts prior={candidate.prior} />
+			</Section.Body>
+		))}
+	</Section>
 );

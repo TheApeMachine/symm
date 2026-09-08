@@ -4,8 +4,8 @@ import {
 	onlineStore,
 	resonanceTransportDetailStore,
 	resonanceTransportStore,
-	tickCountStore,
 } from "#/collections/app";
+import { learningStore } from "#/collections/learning";
 import { terminalStore } from "#/collections/terminal";
 import { Balance } from "#/components/balance";
 import { Count } from "#/components/count";
@@ -39,17 +39,17 @@ const SymmLogo = () => (
 	</svg>
 );
 
-const TickCounter = () => {
-	const tick = useSelector(tickCountStore, (state) => state);
+const ObservationCounter = () => {
+	const tick = useSelector(learningStore, (state) => state?.steps);
 
 	return (
 		<Flex.Row align="center" gap={6}>
 			<Flex.Column className="items-end gap-px">
 				<Typography.Label size="s" tone="f4" weight="normal">
-					Tick
+					Observations
 				</Typography.Label>
 				<Typography.Mono size="lg" tone="f1" data-tick="true">
-					{tick}
+					{String(tick ?? "—")}
 				</Typography.Mono>
 			</Flex.Column>
 		</Flex.Row>
@@ -168,7 +168,7 @@ export const TerminalTopBar = () => {
 			<Rule />
 
 			<Toolbar.Group>
-				<TickCounter />
+				<ObservationCounter />
 			</Toolbar.Group>
 		</Toolbar>
 	);

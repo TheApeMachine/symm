@@ -2,6 +2,8 @@ import * as flatbuffers from "flatbuffers";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
 import { equityStore } from "#/collections/app";
+import { learningStore } from "#/collections/learning";
+import { learningFixture } from "#/components/learning/fixture";
 import { Balance } from "#/components/balance";
 import { EnvelopeState } from "#/providers/telemetry/telemetry/envelope-state";
 import { EquityFrame } from "#/providers/telemetry/telemetry/equity-frame";
@@ -43,6 +45,20 @@ const encodeStateWithEquity = (
 describe("Balance", () => {
 	beforeEach(() => {
 		equityStore.state.clear();
+		learningStore.setState(() => null);
+	});
+
+	it("labels and mutes the learning wallet and clears that label with the learning state", () => {
+		learningStore.setState(() => learningFixture());
+		const learning = renderToStaticMarkup(<Balance />);
+		expect(learning).toContain("Learning · simulated");
+		expect(learning).toContain('data-wallet="learning"');
+		expect(learning).toContain("198.00");
+		expect(learning).toContain("text-(--f3)");
+		learningStore.setState(() => null);
+		const account = renderToStaticMarkup(<Balance />);
+		expect(account).not.toContain("Learning · simulated");
+		expect(account).toContain('data-wallet="account"');
 	});
 
 	it("renders a placeholder before any valuation has arrived", () => {

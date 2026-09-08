@@ -7,9 +7,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/theapemachine/symm/strategy"
- "net/http/pprof"
 	"log"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -160,7 +160,7 @@ var (
 
 			rawCapture, err := recording.NewSession(runtimeCtx, bucket, hindsight.RunIdentity{
 				StartedAt: processStartedAt, CodeCommit: buildCodeCommit(), BuildID: buildBuildID(), ConfigDigest: configDigest(), SchemaVersions: hindsightSchemaVersions(),
-			}.Resolve(runID), viper.GetInt("hindsight.capture.queue_depth"), viper.GetInt("hindsight.capture.batch_size"), viper.GetDuration("hindsight.capture.flush_interval"))
+			}.Resolve(runID), viper.GetInt("hindsight.capture.batch_size"), viper.GetDuration("hindsight.capture.flush_interval"))
 			if err != nil {
 				return err
 			}
@@ -288,6 +288,10 @@ var (
 			if err := price.GetFees(instrument.Symbols()); err != nil {
 				return err
 			}
+			if balance.Status() != types.READY {
+				return errnie.Error(errnie.Err(errnie.NotAcceptable, "symm: initial balance is not ready", nil))
+			}
+
 			learner, err := strategy.NewLearner(runtimeCtx, api, price, balance, system.Cfg.Learning.Traders, bucket, runID, rawCapture)
 
 			if err != nil {
@@ -417,10 +421,19 @@ var (
 			futuresIngress["ticker"] = futuresTicker
 			futuresIngress["trade"] = futuresTrade
 
-			// Every consumer must be able to accept an envelope before any market
-			// subscription is written. The connected transports remain BUSY and
-			// deliberately discard market frames until both runtime layers have
-			// crossed their READY boundary.
+			// Subscribe and seed while transports remain BUSY. Only a complete
+			// instrument universe and restored learner may open the workspace.
+			if err := instrument.Subscribe(); err != nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: subscribe to instrument universe",
+					err,
+				))
+			}
+			if instrument.Status() != nmruntime.READY {
+				return errnie.Error(errnie.Err(errnie.NotAcceptable, "symm: instrument universe is not seeded", nil))
+			}
+
 			workspace.Admit()
 
 			if workspace.Status() == nil ||
@@ -447,16 +460,6 @@ var (
 					errnie.NotAcceptable,
 					"symm: required transports did not reach ready",
 					nil,
-				))
-			}
-
-			// Subscribe after READY so every accepted book update can publish its
-			// measurements and lightweight notification to the running workspace.
-			if err := instrument.Subscribe(); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: subscribe to instrument universe",
-					err,
 				))
 			}
 

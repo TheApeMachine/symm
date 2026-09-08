@@ -38,7 +38,7 @@ describe("KnowledgePanel", () => {
 			warmup: { resolved: 12, unconditioned: 2, portfolioUnavailable: 12 },
 		} as unknown as LearningView;
 		const html = renderToStaticMarkup(<KnowledgePanel view={view} />);
-  expect(html).toContain("Learned context evidence");
-  expect(html).toContain("No completed evidence");
+		expect(html).toContain("Learned context evidence");
+		expect(html).toContain("No completed evidence");
 	});
 });

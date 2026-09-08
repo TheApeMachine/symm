@@ -46,7 +46,7 @@ each further power halves it.
 */
 export const action = (kind: string, power: number, reduce: boolean) => {
 	if (!kind) return "unissued";
- if (kind === "hold" || kind === "wait") return kind;
+	if (kind === "hold" || kind === "wait") return kind;
 
 	return `${kind}${reduce ? " ↓" : ""} ·1/${2 ** power}`;
 };

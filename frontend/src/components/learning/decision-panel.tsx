@@ -1,4 +1,3 @@
-import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
@@ -11,13 +10,28 @@ import {
 import { action, amount, basis, duration, percent } from "./format";
 import type { LearningView } from "./state";
 
-export const ForwardPanel = ({ view }: { view: LearningView | null }) => <Section fit="content">
- <Section.Header title="Forward evaluation" meta={`${view?.resolved ?? 0} completed decisions`} />
- <Section.Body className="space-y-2 p-3">
- {view?.agents.map(member => <Typography.Mono key={member.id}>Agent {member.id+1} · {String(member.reading?.samples ?? 0n)} graded · {String(member.wins)} positive · {String(member.losses)} negative · {String(member.pending)} pending</Typography.Mono>)}
- <Typography.Mono>Each decision retains its issue-time context and economics until the durable tape can evaluate it. Wallet changes and elapsed time supply interim feedback.</Typography.Mono>
- </Section.Body>
-</Section>;
+export const ForwardPanel = ({ view }: { view: LearningView | null }) => (
+	<Section fit="content">
+		<Section.Header
+			title="Forward evaluation"
+			meta={`${view?.resolved ?? 0} completed decisions`}
+		/>
+		<Section.Body className="space-y-2 p-3">
+			{view?.agents.map((member) => (
+				<Typography.Mono key={member.id}>
+					Agent {member.id + 1} · {String(member.reading?.samples ?? 0n)} graded
+					· {String(member.wins)} positive · {String(member.losses)} negative ·{" "}
+					{String(member.pending)} pending
+				</Typography.Mono>
+			))}
+			<Typography.Mono>
+				Each decision retains its issue-time context and economics until the
+				durable tape can evaluate it. Wallet changes and elapsed time supply
+				interim feedback.
+			</Typography.Mono>
+		</Section.Body>
+	</Section>
+);
 
 export const ImpulsePanel = ({ view }: { view: LearningView | null }) => (
 	<Section fit="content">
@@ -85,23 +99,67 @@ evidence recalled for each, so a chosen action can be read against the ones it
 beat. An undefined prior is not a zero: it means this action has never
 completed here, which is exactly why exploration reaches for it.
 */
-export const CandidatePanel = ({view}: {view: LearningView | null}) => <Section fit="content">
- <Section.Header title="Feasible actions at this impulse" meta={`${view?.candidates?.length ?? 0} candidates · policy lane context`} />
- <Section.Body className="overflow-x-auto">
- <table className="w-full text-left font-mono text-xs">
-  <thead><tr>{["Action", "Benefit", "Dispersion", "Support", "Authority", "Samples", "Evidence"].map(label => <th className="p-3" key={label}>{label}</th>)}</tr></thead>
-  <tbody>{view?.candidates?.map(candidate => <tr key={`${candidate.kind}-${candidate.power}-${candidate.reduce}`}>
-   <td className="p-3">{action(candidate.kind, candidate.power, candidate.reduce)} {candidate.selected ? "· chosen" : ""}</td>
-   <td className="p-3">{candidate.prior.Defined ? basis(candidate.prior.Mean) : "unmeasured"}</td>
-   <td className="p-3">{candidate.prior.VarianceDefined ? basis(Math.sqrt(candidate.prior.Variance)) : "unmeasured"}</td>
-   <td className="p-3">{amount(candidate.prior.Support)}</td>
-   <td className="p-3">{percent(candidate.prior.Authority)}</td>
-   <td className="p-3">{candidate.prior.Samples}</td>
-   <td className="p-3">{candidate.prior.Provisional ? "interim wallet feedback" : candidate.prior.Defined ? "completed tape" : "unmeasured"}</td>
-  </tr>)}</tbody>
- </table>
- </Section.Body>
-</Section>;
+export const CandidatePanel = ({ view }: { view: LearningView | null }) => (
+	<Section fit="content">
+		<Section.Header
+			title="Feasible actions at this impulse"
+			meta={`${view?.candidates?.length ?? 0} candidates · policy lane context`}
+		/>
+		<Section.Body className="overflow-x-auto">
+			<table className="w-full text-left font-mono text-xs">
+				<thead>
+					<tr>
+						{[
+							"Action",
+							"Benefit",
+							"Dispersion",
+							"Support",
+							"Authority",
+							"Samples",
+							"Evidence",
+						].map((label) => (
+							<th className="p-3" key={label}>
+								{label}
+							</th>
+						))}
+					</tr>
+				</thead>
+				<tbody>
+					{view?.candidates?.map((candidate) => (
+						<tr
+							key={`${candidate.kind}-${candidate.power}-${candidate.reduce}`}
+						>
+							<td className="p-3">
+								{action(candidate.kind, candidate.power, candidate.reduce)}{" "}
+								{candidate.selected ? "· chosen" : ""}
+							</td>
+							<td className="p-3">
+								{candidate.prior.Defined
+									? basis(candidate.prior.Mean)
+									: "unmeasured"}
+							</td>
+							<td className="p-3">
+								{candidate.prior.VarianceDefined
+									? basis(Math.sqrt(candidate.prior.Variance))
+									: "unmeasured"}
+							</td>
+							<td className="p-3">{amount(candidate.prior.Support)}</td>
+							<td className="p-3">{percent(candidate.prior.Authority)}</td>
+							<td className="p-3">{candidate.prior.Samples}</td>
+							<td className="p-3">
+								{candidate.prior.Provisional
+									? "interim wallet feedback"
+									: candidate.prior.Defined
+										? "completed tape"
+										: "unmeasured"}
+							</td>
+						</tr>
+					))}
+				</tbody>
+			</table>
+		</Section.Body>
+	</Section>
+);
 
 export const InfluencePanel = ({ view }: { view: LearningView | null }) => {
 	const influence = (view?.influence ?? [])
@@ -214,7 +272,9 @@ export const DeskPanel = ({ view }: { view: LearningView | null }) => (
 					{view?.desk?.traders.map((trader) => (
 						<tr key={trader.id} className="border-(--line) border-t">
 							<td className="p-3">
-								<Typography.Mono tone="accent">trader {trader.id + 1}</Typography.Mono>
+								<Typography.Mono tone="accent">
+									trader {trader.id + 1}
+								</Typography.Mono>
 							</td>
 							<td
 								className={`p-3 ${trader.wealth < 0 ? "text-error" : "text-success"}`}
@@ -245,10 +305,10 @@ export const DeskPanel = ({ view }: { view: LearningView | null }) => (
 		</Section.Body>
 		<Typography.Mono className="px-3 pb-3 text-(--f4)">
 			Wealth is the trader's own wallet marked against the current executable
-			book. Quality only moves when the tape settles a decision, so the two
-			can disagree while a position is still open. Trader 1 follows the
-			shared memory; the others spread across the rest of what is feasible
-			so every move is tried by somebody.
+			book. Quality only moves when the tape settles a decision, so the two can
+			disagree while a position is still open. Trader 1 follows the shared
+			memory; the others spread across the rest of what is feasible so every
+			move is tried by somebody.
 		</Typography.Mono>
 	</Section>
 );
@@ -293,9 +353,6 @@ export const LanePanel = ({ view }: { view: LearningView | null }) => (
 									<Typography.Mono tone="accent">
 										{lane.mode} {lane.lane + 1}
 									</Typography.Mono>
-									{lane.exhausted && (
-										<Badge label="spent" variant="warning" size="xxs" />
-									)}
 								</Flex.Row>
 							</td>
 							<td className="p-3">
@@ -304,7 +361,6 @@ export const LanePanel = ({ view }: { view: LearningView | null }) => (
 									lane.action.power,
 									lane.action.reduce,
 								)}
-								{lane.pending ? " · pending" : ""}
 							</td>
 							<td className="p-3">{amount(Number(lane.cash))}</td>
 							<td className="p-3">{amount(Number(lane.quantity))}</td>
@@ -312,7 +368,7 @@ export const LanePanel = ({ view }: { view: LearningView | null }) => (
 							<td
 								className={`p-3 ${lane.profit < 0 ? "text-error" : "text-success"}`}
 							>
-								{lane.complete ? amount(lane.profit) : "unvalued"}
+								{amount(lane.profit)}
 							</td>
 							<td className="p-3">{lane.fills}</td>
 							<td className="p-3">
@@ -325,9 +381,8 @@ export const LanePanel = ({ view }: { view: LearningView | null }) => (
 		</Section.Body>
 		<Typography.Mono className="px-3 pb-3 text-(--f4)">
 			P&L includes entry fees and liquidation at displayed bids, including exit
-			fees. Each lane owns its capital of the same known balance — episodes are separate accounts in
-			sequence, never a balance anyone holds. The policy lane trades on
-			completed exploration evidence.
+			fees. Each agent retains its own capital and positions. Positive completed
+			exploration experience also trains the consolidated agent.
 		</Typography.Mono>
 	</Section>
 );

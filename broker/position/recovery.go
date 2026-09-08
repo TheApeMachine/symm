@@ -49,7 +49,7 @@ func (recovery *Recovery) Recover(
 			continue
 		}
 		symbol := asset + "/" + quote
-		position := NewRegulator(ctx, recovery.API, recovery.Price, symbol, record)
+		position := NewRegulator(recovery.API, recovery.Price, symbol, record)
 		position.Recovered = true
 		position.Holding.Qty = amount
 		position.Holding.SellableQty = amount
@@ -80,7 +80,7 @@ func (recovery *Recovery) Recover(
 		position := positions[symbol]
 
 		if position == nil {
-			position = NewRegulator(ctx, recovery.API, recovery.Price, symbol, record)
+			position = NewRegulator(recovery.API, recovery.Price, symbol, record)
 			position.Recovered = true
 			positions[symbol] = position
 		}
@@ -110,6 +110,10 @@ func (recovery *Recovery) Recover(
 			FeeUsdEquiv: order.Fee,
 		}
 		position.Holding.Status = types.PENDING
+	}
+	for _, position := range positions {
+		position.Guardian = NewGuardian(position)
+		position.Guardian.Start(ctx)
 	}
 	return positions, nil
 }

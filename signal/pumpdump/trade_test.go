@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
- "github.com/krakenfx/api-go/v2/pkg/book"
- "github.com/theapemachine/symm/kraken/websocket"
- "github.com/theapemachine/symm/tests/venue"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/tests/venue"
 )
 
 func spotTrade(symbol string, price float64, qty float64, at time.Time) kraken.TradeData {
@@ -100,7 +100,7 @@ func TestTradeStep(t *testing.T) {
 			So(opening.Metrics["completed_volume_bar_ordinal"].Raw, ShouldEqual, 0.0)
 
 			midpoint = 90
-   conn.Mark(midpoint)
+			conn.Mark(midpoint)
 			downside := entity.Step(spotTrade(
 				"BTC/USD", 90, 1, at.Add(5*time.Second),
 			))
@@ -121,7 +121,7 @@ func TestTradeStep(t *testing.T) {
 			So(barOpening.Metrics["completed_volume_bar_ordinal"].Raw, ShouldEqual, 1.0)
 
 			midpoint = 95
-   conn.Mark(midpoint)
+			conn.Mark(midpoint)
 			insideBar := entity.Step(spotTrade(
 				"BTC/USD", 95, 0.25, at.Add(7*time.Second),
 			))
@@ -131,7 +131,7 @@ func TestTradeStep(t *testing.T) {
 			So(hasIntraBarReturn, ShouldBeFalse)
 
 			midpoint = 105
-   conn.Mark(midpoint)
+			conn.Mark(midpoint)
 			recovery := entity.Step(spotTrade(
 				"BTC/USD", 105, 1, at.Add(10*time.Second),
 			))
@@ -160,13 +160,11 @@ func BenchmarkTradeStep(b *testing.B) {
 	}
 	quoteIndex := 0
 
-
-
 	b.ReportAllocs()
 
 	for iteration := 0; b.Loop(); iteration++ {
 		quoteIndex = iteration % len(quotes)
-  conn.Mark(100 + float64(quoteIndex))
+		conn.Mark(100 + float64(quoteIndex))
 		measurement := entity.Step(spotTrade(
 			"BTC/USD",
 			100+float64(quoteIndex),
@@ -181,15 +179,19 @@ func BenchmarkTradeStep(b *testing.B) {
 }
 
 // tradeBook supplies an actual SDK book through the same API.Book boundary.
-type tradeBook struct { *venue.Conn; current *book.Book }
+type tradeBook struct {
+	*venue.Conn
+	current *book.Book
+}
+
 func (source *tradeBook) Book(_ string, read func(*book.Book)) { read(source.current) }
 func (source *tradeBook) Mark(midpoint float64) {
- source.current = book.New()
- source.current.Update(&book.UpdateOptions{Direction: book.Bid, Price: decimal.NewFromFloat64(midpoint-1), Quantity: decimal.NewFromInt64(10)})
- source.current.Update(&book.UpdateOptions{Direction: book.Ask, Price: decimal.NewFromFloat64(midpoint+1), Quantity: decimal.NewFromInt64(10)})
+	source.current = book.New()
+	source.current.Update(&book.UpdateOptions{Direction: book.Bid, Price: decimal.NewFromFloat64(midpoint - 1), Quantity: decimal.NewFromInt64(10)})
+	source.current.Update(&book.UpdateOptions{Direction: book.Ask, Price: decimal.NewFromFloat64(midpoint + 1), Quantity: decimal.NewFromInt64(10)})
 }
 func tradeFixture(t testing.TB) (*Trade, *tradeBook) {
- t.Helper()
- source := &tradeBook{Conn: venue.NewConn()}
- return NewTrade(websocket.NewAPI(t.Context(), source, source)), source
+	t.Helper()
+	source := &tradeBook{Conn: venue.NewConn()}
+	return NewTrade(websocket.NewAPI(t.Context(), source, source)), source
 }

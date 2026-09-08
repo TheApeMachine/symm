@@ -145,14 +145,17 @@ Encoding owns the state lock; durable I/O runs after releasing it.
 func (population *Population[Action]) Save(ctx context.Context, checkpoint Checkpoint) error {
 	population.checkpoint.Lock()
 	defer population.checkpoint.Unlock()
+
 	var data bytes.Buffer
 	encoder := gob.NewEncoder(&data)
+	
 	population.mutex.Lock()
 	err := encoder.Encode(population.Grid.Columns)
 
 	if err == nil {
 		err = encoder.Encode(population.Agents[0].Model)
 	}
+	
 	population.mutex.Unlock()
 
 	if err != nil {

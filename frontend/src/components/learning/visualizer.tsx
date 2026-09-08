@@ -8,19 +8,283 @@ import { EventRhythm, LearningProgress, PipelineFunnel } from "./charts";
 import { action, basis, clock } from "./format";
 import type { Candidate, LearningEvent, LearningView, Skill } from "./state";
 
-/* The observed outcome signs and mean make no distributional assumption. */
+/* Recovered from 9ec57aadd: normal curve, shading, axes and mean marker.
+The fit uses measured outcome moments, not uncertainty in the mean. */
 export const EdgeDistributionPlot = ({ skill }: { skill?: Skill }) => {
- if (!skill?.defined) return <Typography.Mono className="p-4">No completed tape outcomes yet.</Typography.Mono>;
- const total = skill.samples;
- return <Flex.Column className="gap-3 p-4">
-  <Typography.Mono>Mean {basis(skill.mean)} · {total} completed decisions</Typography.Mono>
-  <Flex.Row className="h-10 w-full" aria-label="Observed outcome signs">
-   <div className="bg-(--up)" style={{width: `${total > 0 ? 100 * skill.wins / total : 0}%`}} />
-   <div className="bg-(--down)" style={{width: `${total > 0 ? 100 * skill.losses / total : 0}%`}} />
-  </Flex.Row>
-  <Typography.Mono>{skill.wins} positive · {skill.losses} negative · {total - skill.wins - skill.losses} zero</Typography.Mono>
-  <Typography.Mono>Observed tape benefits. Overlapping decisions are not independent trials; no probability curve or promotion boundary is inferred.</Typography.Mono>
- </Flex.Column>;
+	if (!skill?.defined) {
+		return (
+			<Typography.Mono className="p-4">
+				No completed tape outcomes yet.
+			</Typography.Mono>
+		);
+	}
+	const defined = skill.defined;
+	const meanBp = skill.mean * 10000;
+	const dispersionBp = skill.varianceDefined
+		? Math.sqrt(skill.variance) * 10000
+		: undefined;
+	// The recovered renderer shows 3.8 SD on either side of the mean.
+	// This sets the drawing viewport, not a statistical decision boundary.
+	const lowerBp =
+		dispersionBp === undefined ? meanBp : meanBp - 3.8 * dispersionBp;
+	const upperBp =
+		dispersionBp === undefined ? meanBp : meanBp + 3.8 * dispersionBp;
+	const extent = Math.max(Math.abs(lowerBp), Math.abs(upperBp));
+	// One basis point is the display span only when all measured values are zero.
+	const minBp = extent === 0 ? -1 : -extent;
+	const maxBp = extent === 0 ? 1 : extent;
+	const rangeBp = maxBp - minBp;
+
+	const viewWidth = 520;
+	const viewHeight = 180;
+	const padding = { left: 45, right: 35, top: 25, bottom: 35 };
+	const plotWidth = viewWidth - padding.left - padding.right;
+	const plotHeight = viewHeight - padding.top - padding.bottom;
+
+	const toSvgX = (valueBp: number) =>
+		padding.left + ((valueBp - minBp) / rangeBp) * plotWidth;
+	const zeroSvgX = toSvgX(0);
+	const meanSvgX = toSvgX(meanBp);
+
+	// Generate normal PDF curve points
+	const steps = 80;
+	const curvePoints: Array<{ x: number; y: number; bp: number }> = [];
+	for (
+		let index = 0;
+		dispersionBp !== undefined && dispersionBp > 0 && index <= steps;
+		index++
+	) {
+		const bp = minBp + (index / steps) * rangeBp;
+		const exponent = -0.5 * ((bp - meanBp) / dispersionBp) ** 2;
+		const density = Math.exp(exponent);
+		const svgX = toSvgX(bp);
+		const svgY = padding.top + plotHeight - density * (plotHeight * 0.88);
+		curvePoints.push({ x: svgX, y: svgY, bp });
+	}
+
+	if (dispersionBp !== undefined && dispersionBp > 0) {
+		curvePoints.push({
+			x: meanSvgX,
+			y: padding.top + plotHeight * (1 - 0.88),
+			bp: meanBp,
+		});
+		curvePoints.sort((left, right) => left.bp - right.bp);
+	}
+
+	const fullCurveD = curvePoints.reduce(
+		(accumulator, point, index) =>
+			index === 0
+				? `M ${point.x.toFixed(1)} ${point.y.toFixed(1)}`
+				: `${accumulator} L ${point.x.toFixed(1)} ${point.y.toFixed(1)}`,
+		"",
+	);
+
+	// Profit zone (bp > 0) shaded area
+	const positivePoints = curvePoints.filter((point) => point.bp >= 0);
+	let profitAreaD = "";
+	if (positivePoints.length > 0) {
+		const firstPoint = positivePoints[0];
+		const lastPoint = positivePoints[positivePoints.length - 1];
+		const baselineY = padding.top + plotHeight;
+		profitAreaD = `M ${firstPoint.x.toFixed(1)} ${baselineY} L ${firstPoint.x.toFixed(1)} ${firstPoint.y.toFixed(1)}`;
+		for (const point of positivePoints) {
+			profitAreaD += ` L ${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
+		}
+		profitAreaD += ` L ${lastPoint.x.toFixed(1)} ${baselineY} Z`;
+	}
+
+	const wins = skill.wins;
+	const losses = skill.losses;
+	const totalOutcomes = skill.samples;
+	const zero = totalOutcomes - wins - losses;
+
+	return (
+		<Flex.Column className="h-full w-full justify-between gap-2 px-3">
+			<div className="relative h-44 w-full overflow-hidden rounded bg-(--sunken) border border-(--line)">
+				<svg
+					viewBox={`0 0 ${viewWidth} ${viewHeight}`}
+					className="h-full w-full select-none"
+					preserveAspectRatio="none"
+					role="img"
+					aria-label="Normal fit to completed decision outcomes"
+				>
+					<title>Normal fit to completed decision outcomes</title>
+					<defs>
+						<linearGradient id="profitAreaGradient" x1="0" y1="0" x2="0" y2="1">
+							<stop offset="0%" stopColor="var(--up)" stopOpacity="0.4" />
+							<stop offset="100%" stopColor="var(--up)" stopOpacity="0.05" />
+						</linearGradient>
+					</defs>
+
+					{/* Loss zone subtle background tint */}
+					<rect
+						x={padding.left}
+						y={padding.top}
+						width={Math.max(0, zeroSvgX - padding.left)}
+						height={plotHeight}
+						fill="var(--error)"
+						opacity="0.04"
+					/>
+
+					{/* Profit zone subtle background tint */}
+					<rect
+						x={zeroSvgX}
+						y={padding.top}
+						width={Math.max(0, viewWidth - padding.right - zeroSvgX)}
+						height={plotHeight}
+						fill="var(--up)"
+						opacity="0.05"
+					/>
+
+					{/* Baseline grid */}
+					<line
+						x1={padding.left}
+						y1={padding.top + plotHeight}
+						x2={viewWidth - padding.right}
+						y2={padding.top + plotHeight}
+						stroke="var(--line)"
+						strokeWidth="1"
+					/>
+
+					{/* Positive portion of the fitted curve */}
+					{profitAreaD && (
+						<path d={profitAreaD} fill="url(#profitAreaGradient)" />
+					)}
+
+					{/* Normal PDF curve stroke */}
+					{fullCurveD && (
+						<path
+							data-edge-curve="normal-fit"
+							d={fullCurveD}
+							fill="none"
+							stroke="var(--info)"
+							strokeWidth="2.2"
+						/>
+					)}
+
+					{/* Breakeven zero line */}
+					<line
+						x1={zeroSvgX}
+						y1={padding.top - 5}
+						x2={zeroSvgX}
+						y2={padding.top + plotHeight}
+						stroke="var(--line2)"
+						strokeWidth="1.5"
+						strokeDasharray="3,3"
+					/>
+					<text
+						x={zeroSvgX}
+						y={padding.top - 8}
+						textAnchor="middle"
+						fill="var(--f3)"
+						fontSize="9.5"
+						fontFamily="monospace"
+					>
+						0.0 bp (Breakeven)
+					</text>
+
+					{/* Mean marker */}
+					{defined && (
+						<g>
+							<line
+								x1={meanSvgX}
+								y1={padding.top + 10}
+								x2={meanSvgX}
+								y2={padding.top + plotHeight}
+								stroke="var(--f2)"
+								strokeWidth="1"
+								strokeDasharray="2,2"
+							/>
+							<circle
+								cx={meanSvgX}
+								cy={padding.top + 10}
+								r="3"
+								fill="var(--f1)"
+							/>
+							<text
+								x={meanSvgX}
+								y={padding.top + 22}
+								textAnchor="middle"
+								fill="var(--f1)"
+								fontSize="9"
+								fontFamily="monospace"
+							>
+								μ {meanBp.toFixed(1)} bp
+							</text>
+						</g>
+					)}
+
+					{/* Axis labels */}
+					<text
+						x={padding.left}
+						y={padding.top + plotHeight + 16}
+						textAnchor="start"
+						fill="var(--f4)"
+						fontSize="9"
+						fontFamily="monospace"
+					>
+						{minBp.toFixed(0)} bp
+					</text>
+					<text
+						x={viewWidth - padding.right}
+						y={padding.top + plotHeight + 16}
+						textAnchor="end"
+						fill="var(--f4)"
+						fontSize="9"
+						fontFamily="monospace"
+					>
+						+{maxBp.toFixed(0)} bp
+					</text>
+				</svg>
+			</div>
+
+			<Flex.Row className="justify-between gap-3 rounded px-3 py-1.5 border border-(--line) bg-(--sunken)">
+				<Typography.Mono size="s" tone="f2">
+					Mean {basis(skill.mean)}
+				</Typography.Mono>
+				<Typography.Mono size="s" tone="f3">
+					{dispersionBp === undefined
+						? "Spread not yet measured"
+						: `Observed SD ${dispersionBp.toFixed(1)} bp`}
+				</Typography.Mono>
+			</Flex.Row>
+			<Typography.Mono size="s" tone="f4">
+				{dispersionBp === 0
+					? "Zero observed spread; the outcomes have no bell-shaped density."
+					: "Normal fit to the authority-weighted mean and variance of completed outcomes."}
+			</Typography.Mono>
+			<Flex.Column className="gap-1">
+				<Flex.Row
+					align="center"
+					className="justify-between text-[10px] font-mono text-(--f4)"
+				>
+					<span>Outcomes ({totalOutcomes.toLocaleString()} total)</span>
+					<span>
+						<span className="text-(--up)">{wins} positive</span> ·{" "}
+						<span className="text-(--error)">{losses} negative</span> · {zero}{" "}
+						zero
+					</span>
+				</Flex.Row>
+				<Flex.Row
+					className="h-2 w-full overflow-hidden rounded-[3px] bg-(--line)"
+					aria-label="Observed outcome signs"
+				>
+					<div
+						className="h-full bg-(--up) transition-all duration-300"
+						style={{ width: `${(100 * wins) / totalOutcomes}%` }}
+					/>
+					<div
+						className="h-full bg-(--error) transition-all duration-300"
+						style={{ width: `${(100 * losses) / totalOutcomes}%` }}
+					/>
+					<div
+						className="h-full bg-(--f4) transition-all duration-300"
+						style={{ width: `${(100 * zero) / totalOutcomes}%` }}
+					/>
+				</Flex.Row>
+			</Flex.Column>
+		</Flex.Column>
+	);
 };
 
 /*
@@ -153,7 +417,7 @@ export const ActionSpectrumPlot = ({
 	);
 };
 
-/* LearningTrajectoryPlot shows one policy wallet's recorded episode profit. */
+/* LearningTrajectoryPlot shows the consolidated wallet's actual valuations. */
 export const LearningTrajectoryPlot = ({
 	events,
 	initialCapital,
@@ -163,21 +427,13 @@ export const LearningTrajectoryPlot = ({
 }) => {
 	const marks = useMemo(() => {
 		const policy = events
-			.filter(
-				(event) =>
-					event.mode === "policy" &&
-					event.complete &&
-					event.kind === "valued",
-			)
+			.filter((event) => event.mode === "policy" && event.kind === "valued")
 			.sort(
 				(left, right) =>
 					Date.parse(left.at) - Date.parse(right.at) || left.id - right.id,
 			);
-		const latest = policy.at(-1);
 		return policy.filter(
-			(event, index) =>
-				event.episode === latest?.episode &&
-				(index === 0 || event.at !== policy[index - 1].at),
+			(event, index) => index === 0 || event.at !== policy[index - 1].at,
 		);
 	}, [events]);
 	const capital = Number(initialCapital);
@@ -234,8 +490,7 @@ export const LearningTrajectoryPlot = ({
 		<Flex.Column className="h-full w-full justify-between gap-2 px-3">
 			<Flex.Row align="center" className="justify-between text-xs font-mono">
 				<span className="text-(--f3)">
-					Policy wallet profit · episode {marks.at(-1)?.episode} ({marks.length}{" "}
-					valuations)
+					Consolidated wallet profit ({marks.length} valuations)
 				</span>
 				<span
 					className={`font-bold ${trendingUp ? "text-(--up)" : "text-(--warn)"}`}

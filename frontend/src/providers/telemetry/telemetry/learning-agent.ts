@@ -103,90 +103,70 @@ pending():bigint {
   return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
 }
 
-samples():number {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-mean():number {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-variance():number {
-  const offset = this.bb!.__offset(this.bb_pos, 32);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
-varianceDefined():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 34);
-  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-}
-
 wins():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 36);
+  const offset = this.bb!.__offset(this.bb_pos, 28);
   return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
 }
 
 losses():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 38);
+  const offset = this.bb!.__offset(this.bb_pos, 30);
   return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
 }
 
 status():string|null
 status(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
 status(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 40);
+  const offset = this.bb!.__offset(this.bb_pos, 32);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
 positions(index: number, obj?:Position):Position|null {
-  const offset = this.bb!.__offset(this.bb_pos, 42);
+  const offset = this.bb!.__offset(this.bb_pos, 34);
   return offset ? (obj || new Position()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 positionsLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 42);
+  const offset = this.bb!.__offset(this.bb_pos, 34);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 last(obj?:LearningDecision):LearningDecision|null {
-  const offset = this.bb!.__offset(this.bb_pos, 44);
+  const offset = this.bb!.__offset(this.bb_pos, 36);
   return offset ? (obj || new LearningDecision()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 alternatives(index: number, obj?:LearningAction):LearningAction|null {
-  const offset = this.bb!.__offset(this.bb_pos, 46);
+  const offset = this.bb!.__offset(this.bb_pos, 38);
   return offset ? (obj || new LearningAction()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 alternativesLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 46);
+  const offset = this.bb!.__offset(this.bb_pos, 38);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 reading(obj?:LearningPrior):LearningPrior|null {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
+  const offset = this.bb!.__offset(this.bb_pos, 40);
   return offset ? (obj || new LearningPrior()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 reward():number {
-  const offset = this.bb!.__offset(this.bb_pos, 50);
+  const offset = this.bb!.__offset(this.bb_pos, 42);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 elapsedNs():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 52);
+  const offset = this.bb!.__offset(this.bb_pos, 44);
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
 outcome(obj?:LearningDecision):LearningDecision|null {
-  const offset = this.bb!.__offset(this.bb_pos, 54);
+  const offset = this.bb!.__offset(this.bb_pos, 46);
   return offset ? (obj || new LearningDecision()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
 static startLearningAgent(builder:flatbuffers.Builder) {
-  builder.startObject(26);
+  builder.startObject(22);
 }
 
 static addId(builder:flatbuffers.Builder, id:number) {
@@ -237,36 +217,20 @@ static addPending(builder:flatbuffers.Builder, pending:bigint) {
   builder.addFieldInt64(11, pending, BigInt('0'));
 }
 
-static addSamples(builder:flatbuffers.Builder, samples:number) {
-  builder.addFieldFloat64(12, samples, 0.0);
-}
-
-static addMean(builder:flatbuffers.Builder, mean:number) {
-  builder.addFieldFloat64(13, mean, 0.0);
-}
-
-static addVariance(builder:flatbuffers.Builder, variance:number) {
-  builder.addFieldFloat64(14, variance, 0.0);
-}
-
-static addVarianceDefined(builder:flatbuffers.Builder, varianceDefined:boolean) {
-  builder.addFieldInt8(15, +varianceDefined, +false);
-}
-
 static addWins(builder:flatbuffers.Builder, wins:bigint) {
-  builder.addFieldInt64(16, wins, BigInt('0'));
+  builder.addFieldInt64(12, wins, BigInt('0'));
 }
 
 static addLosses(builder:flatbuffers.Builder, losses:bigint) {
-  builder.addFieldInt64(17, losses, BigInt('0'));
+  builder.addFieldInt64(13, losses, BigInt('0'));
 }
 
 static addStatus(builder:flatbuffers.Builder, statusOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(18, statusOffset, 0);
+  builder.addFieldOffset(14, statusOffset, 0);
 }
 
 static addPositions(builder:flatbuffers.Builder, positionsOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(19, positionsOffset, 0);
+  builder.addFieldOffset(15, positionsOffset, 0);
 }
 
 static createPositionsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -282,11 +246,11 @@ static startPositionsVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addLast(builder:flatbuffers.Builder, lastOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(20, lastOffset, 0);
+  builder.addFieldOffset(16, lastOffset, 0);
 }
 
 static addAlternatives(builder:flatbuffers.Builder, alternativesOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(21, alternativesOffset, 0);
+  builder.addFieldOffset(17, alternativesOffset, 0);
 }
 
 static createAlternativesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -302,19 +266,19 @@ static startAlternativesVector(builder:flatbuffers.Builder, numElems:number) {
 }
 
 static addReading(builder:flatbuffers.Builder, readingOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(22, readingOffset, 0);
+  builder.addFieldOffset(18, readingOffset, 0);
 }
 
 static addReward(builder:flatbuffers.Builder, reward:number) {
-  builder.addFieldFloat64(23, reward, 0.0);
+  builder.addFieldFloat64(19, reward, 0.0);
 }
 
 static addElapsedNs(builder:flatbuffers.Builder, elapsedNs:bigint) {
-  builder.addFieldInt64(24, elapsedNs, BigInt('0'));
+  builder.addFieldInt64(20, elapsedNs, BigInt('0'));
 }
 
 static addOutcome(builder:flatbuffers.Builder, outcomeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(25, outcomeOffset, 0);
+  builder.addFieldOffset(21, outcomeOffset, 0);
 }
 
 static endLearningAgent(builder:flatbuffers.Builder):flatbuffers.Offset {
@@ -337,10 +301,6 @@ unpack(): LearningAgentT {
     this.decisions(),
     this.fills(),
     this.pending(),
-    this.samples(),
-    this.mean(),
-    this.variance(),
-    this.varianceDefined(),
     this.wins(),
     this.losses(),
     this.status(),
@@ -368,10 +328,6 @@ unpackTo(_o: LearningAgentT): void {
   _o.decisions = this.decisions();
   _o.fills = this.fills();
   _o.pending = this.pending();
-  _o.samples = this.samples();
-  _o.mean = this.mean();
-  _o.variance = this.variance();
-  _o.varianceDefined = this.varianceDefined();
   _o.wins = this.wins();
   _o.losses = this.losses();
   _o.status = this.status();
@@ -399,10 +355,6 @@ constructor(
   public decisions: bigint = BigInt('0'),
   public fills: bigint = BigInt('0'),
   public pending: bigint = BigInt('0'),
-  public samples: number = 0.0,
-  public mean: number = 0.0,
-  public variance: number = 0.0,
-  public varianceDefined: boolean = false,
   public wins: bigint = BigInt('0'),
   public losses: bigint = BigInt('0'),
   public status: string|Uint8Array|null = null,
@@ -444,10 +396,6 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   LearningAgent.addDecisions(builder, this.decisions);
   LearningAgent.addFills(builder, this.fills);
   LearningAgent.addPending(builder, this.pending);
-  LearningAgent.addSamples(builder, this.samples);
-  LearningAgent.addMean(builder, this.mean);
-  LearningAgent.addVariance(builder, this.variance);
-  LearningAgent.addVarianceDefined(builder, this.varianceDefined);
   LearningAgent.addWins(builder, this.wins);
   LearningAgent.addLosses(builder, this.losses);
   LearningAgent.addStatus(builder, status);

@@ -7,6 +7,7 @@ import (
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/logic/category"
 )
 
 func futuresTrade(
@@ -135,6 +136,32 @@ func TestTradeStep_LateTrade(t *testing.T) {
 			So(hasVelocity, ShouldBeFalse)
 		})
 
+		Convey("a reconnect trade predating the interval remains valid through Category", func() {
+			historical := futuresTrade("PF_XBTUSD", 100, 3, "buy", "liquidation", at.Add(-30*time.Second))
+			measurement := entity.Step(historical)
+			So(measurement.Err, ShouldBeNil)
+			So(measurement.From.Equal(historical.Timestamp), ShouldBeTrue)
+			So(measurement.At.Equal(at.Add(10*time.Second)), ShouldBeTrue)
+			So(measurement.Metrics["gross_liquidation_notional"].Raw, ShouldEqual, 600)
+			_, hasRate := measurement.Metrics["liquidation_notional_rate"]
+			So(hasRate, ShouldBeFalse)
+			_, hasVelocity := measurement.Metrics["liquidation_share_velocity"]
+			So(hasVelocity, ShouldBeFalse)
+
+			solver := category.NewSolver(t.Context())
+			defer func() { So(solver.Close(), ShouldBeNil) }()
+			solver.StepMeasurement(measurement)
+			So(solver.Error(), ShouldBeNil)
+
+			resumed := entity.Step(futuresTrade("PF_XBTUSD", 100, 1, "sell", "liquidation", at.Add(20*time.Second)))
+			So(resumed.From.Equal(historical.Timestamp), ShouldBeTrue)
+			So(resumed.At.Equal(at.Add(20*time.Second)), ShouldBeTrue)
+			// 700 notional across the full retained interval [-30s, +20s].
+			So(resumed.Metrics["liquidation_notional_rate"].Raw, ShouldAlmostEqual, 14)
+			solver.StepMeasurement(resumed)
+			So(solver.Error(), ShouldBeNil)
+		})
+
 		Convey("a later in-order trade still advances the clock normally", func() {
 			entity.Step(futuresTrade("PF_XBTUSD", 100, 3, "buy", "liquidation", at.Add(5*time.Second)))
 
@@ -194,4 +221,35 @@ func TestTradeStep_PerSymbolTimeline(t *testing.T) {
 			So(measurement.Metrics["liquidation_notional_rate"].Raw, ShouldAlmostEqual, 300.0, 1e-9)
 		})
 	})
+}
+
+func BenchmarkTradeStep(b *testing.B) {
+	entity := NewTrade()
+	defer func() {
+		if err := entity.Close(); err != nil {
+			b.Fatal(err)
+		}
+	}()
+	at := time.Unix(1_700_000_000, 0)
+	// Live buy/sell legs interleaved with historical reconnect trades.
+	sequence := []kraken.FuturesTradeData{
+		futuresTrade("PF_XBTUSD", 100, 2, "buy", "liquidation", at),
+		futuresTrade("PF_XBTUSD", 110, 1, "sell", "trade", at.Add(10*time.Second)),
+		futuresTrade("PF_XBTUSD", 90, 3, "sell", "liquidation", at.Add(-30*time.Second)),
+		futuresTrade("PF_XBTUSD", 105, 1, "buy", "trade", at.Add(20*time.Second)),
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for index := 0; index < b.N; index++ {
+		for _, original := range sequence {
+			point := original
+			point.Timestamp = point.Timestamp.Add(time.Duration(index) * time.Minute)
+			measurement := entity.Step(point)
+
+			if measurement.Err != nil {
+				b.Fatal(measurement.Err)
+			}
+		}
+	}
 }

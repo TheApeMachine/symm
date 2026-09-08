@@ -23,11 +23,21 @@ import { SkillPanel } from "./skill-panel";
 import { type LearningEvent, useLearning } from "./state";
 import { LearningVisualizer } from "./visualizer";
 
-const JournalEntry = ({event}: {event: LearningEvent}) => <Flex.Column className="gap-1 border-(--line) border-b p-3">
- <Typography.Mono>{clock(event.at)} · {event.mode} {event.lane + 1} · {event.kind}</Typography.Mono>
- <Typography.Mono>{action(event.action, event.power, event.reduce)}</Typography.Mono>
- <Typography.Mono>{event.kind === "resolved" ? `Tape benefit ${basis(event.target ?? 0)}` : `Wallet P&L ${amount(event.profit)}`}</Typography.Mono>
-</Flex.Column>;
+const JournalEntry = ({ event }: { event: LearningEvent }) => (
+	<Flex.Column className="gap-1 border-(--line) border-b p-3">
+		<Typography.Mono>
+			{clock(event.at)} · {event.mode} {event.lane + 1} · {event.kind}
+		</Typography.Mono>
+		<Typography.Mono>
+			{action(event.action, event.power, event.reduce)}
+		</Typography.Mono>
+		<Typography.Mono>
+			{event.kind === "resolved"
+				? `Tape benefit ${basis(event.target ?? 0)}`
+				: `Wallet P&L ${amount(event.profit)}`}
+		</Typography.Mono>
+	</Flex.Column>
+);
 
 type Tab = "decision" | "capital" | "influence" | "forward" | "wallets";
 
@@ -89,28 +99,32 @@ export const LearningDashboard = () => {
 					*/}
 					<Section.Header
 						title={view?.symbol || "Waiting for market observations"}
-						meta={view?.status}
+						meta={error || view?.status}
 					>
 						<Badge
 							label={
-								view?.skill?.mode === "trading"
-									? `trading · ${view.skill.account}`
-									: "learning"
+								error
+									? "offline"
+									: view?.skill?.mode === "trading"
+										? `trading · ${view.skill.account}`
+										: "learning"
 							}
 							variant={
-								view?.skill?.mode !== "trading"
-									? "info"
-									: view.skill.account === "real"
-										? "error"
-										: "success"
+								error
+									? "error"
+									: view?.skill?.mode !== "trading"
+										? "info"
+										: view.skill.account === "real"
+											? "error"
+											: "success"
 							}
 							dot
 						/>
 						<Typography.Mono size="s" tone="f3" className="truncate">
 							Window {duration(view?.horizonNs ?? 0)}
 							{view?.horizonCapped ? " (at ceiling)" : ""} ·{" "}
-							{view?.epochs?.toLocaleString() ?? 0} impulse epochs observed ·
-							grid v{view?.gridVersion ?? 0}
+							{view?.epochs?.toLocaleString() ?? 0} decisions · grid v
+							{view?.gridVersion ?? 0}
 						</Typography.Mono>
 					</Section.Header>
 					<div className="flex min-h-[340px] border-(--line) border-b max-xl:flex-col">
@@ -186,7 +200,10 @@ export const LearningDashboard = () => {
 						</Flex.Column>
 					</Section>
 					<Section>
-						<Section.Header title="Recent learning activity" meta="live display history" />
+						<Section.Header
+							title="Recent learning activity"
+							meta="live display history"
+						/>
 						<Section.Body>
 							{events.map((event) => (
 								<JournalEntry

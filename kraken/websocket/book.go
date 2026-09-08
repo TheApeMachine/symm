@@ -3,6 +3,8 @@ package websocket
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -23,6 +25,8 @@ type Book struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	status     *runtime.Status
+	pending    map[string]struct{}
+	seeded     chan struct{}
 	mu         sync.RWMutex
 	manager    *spot.BookManager
 	normalizer *spot.Normalizer
@@ -56,6 +60,7 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 		ctx:        ctx,
 		cancel:     cancel,
 		status:     runtime.NewStatus(),
+		seeded:     make(chan struct{}, 1),
 		manager:    spot.NewBookManager(),
 		normalizer: normalizer,
 		diverging:  map[string]struct{}{},
@@ -79,7 +84,6 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 		// can delete a newly added order before the later orders in that same
 		// frame resolve the transient cross.
 		managed.NoBookCrossing = false
-		book.status.Transition(runtime.READY)
 
 		managed.OnChecksummed.Recurring(func(
 			bookEvent *callback.Event[*spotbook.ChecksumResult],
@@ -105,6 +109,39 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 
 func (book *Book) Status() runtime.Stage {
 	return book.status.Current()
+}
+
+/*
+	Expect keeps the book owner WAITING until every requested snapshot has
+
+been applied and its observation consumers have been seeded.
+*/
+func (book *Book) Expect(symbols []string) {
+	book.mu.Lock()
+	defer book.mu.Unlock()
+	book.pending = make(map[string]struct{}, len(symbols))
+	for _, symbol := range symbols {
+		book.pending[symbol] = struct{}{}
+	}
+	book.status.Transition(runtime.WAITING)
+}
+
+/* Wait blocks boot on the owner's readiness, never on elapsed market time. */
+func (book *Book) Wait() error {
+	book.mu.RLock()
+	pending := slices.Sorted(maps.Keys(book.pending))
+	book.mu.RUnlock()
+	if len(pending) > 0 {
+		errnie.Info(fmt.Sprintf("book: waiting for seed snapshots: %v", pending))
+	}
+	for book.Status() != runtime.READY {
+		select {
+		case <-book.ctx.Done():
+			return errnie.Error(errnie.Err(errnie.IO, "book: seed interrupted", book.ctx.Err()))
+		case <-book.seeded:
+		}
+	}
+	return nil
 }
 
 func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
@@ -201,6 +238,19 @@ func (book *Book) Update(
 	for _, data := range accepted {
 		if notify != nil {
 			notify(data.Symbol, data.Timestamp)
+		}
+
+		if payload.Type == "snapshot" {
+			book.mu.Lock()
+			delete(book.pending, data.Symbol)
+			if len(book.pending) == 0 {
+				book.status.Transition(runtime.READY)
+				select {
+				case book.seeded <- struct{}{}:
+				default:
+				}
+			}
+			book.mu.Unlock()
 		}
 	}
 

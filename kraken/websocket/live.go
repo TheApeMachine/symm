@@ -438,10 +438,6 @@ func NewWithClient(
 			}
 		})
 		live.book.SetNotify(func(symbol string, at time.Time) {
-			if live.Status() != runtime.READY {
-				return
-			}
-
 			envelope := types.NewEnvelope(types.EnvelopeLevel3)
 			envelope.Level3Data = kraken.Level3Data{Symbol: symbol, Timestamp: at}
 			envelope.Stream, envelope.CaptureID = bookStream, bookCapture
@@ -460,6 +456,10 @@ func NewWithClient(
 					live.fail(failure.Error())
 					return
 				}
+			}
+
+			if live.Status() != runtime.READY {
+				return
 			}
 
 			envelope.Level3Data = kraken.Level3Data{Symbol: symbol, Timestamp: at}
@@ -826,10 +826,6 @@ func (live *Live) resume() error {
 		errnie.Info(fmt.Sprintf("websocket: authenticated to %s", live.Client().URL))
 	}
 
-	if live.released.Load() {
-		live.status.Transition(runtime.READY)
-	}
-
 	if live.endpoint == system.Cfg.WebSocket.Endpoints.Private {
 		if err := live.subscribeAccount(live.Client().Token); err != nil {
 			return errnie.Err(
@@ -839,6 +835,9 @@ func (live *Live) resume() error {
 			)
 		}
 
+		if live.released.Load() {
+			live.status.Transition(runtime.READY)
+		}
 		return nil
 	}
 
@@ -846,7 +845,11 @@ func (live *Live) resume() error {
 		return nil
 	}
 
-	return live.restoreSubscriptions()
+	if err := live.restoreSubscriptions(); err != nil {
+		return err
+	}
+	live.status.Transition(runtime.READY)
+	return nil
 }
 
 /*
@@ -947,9 +950,8 @@ func (live *Live) subscribeAccount(token string) error {
 		return err
 	}
 
-	// A replacement session is already READY, so restore executions in this
-	// attempt and let reconnect retry the whole fresh session if the write fails.
-	if live.Status() == runtime.READY {
+	// A previously admitted account restores executions before READY returns.
+	if live.released.Load() {
 		return live.Write(kraken.NewExecutionSubscription(token))
 	}
 
@@ -1125,10 +1127,10 @@ func (live *Live) SubTicker(symbols []string) {
 		return
 	}
 
-	if live.Status() != runtime.READY {
+	if live.Status() != runtime.BUSY && live.Status() != runtime.READY {
 		live.fail(errnie.Err(
 			errnie.NotAcceptable,
-			"websocket: ticker subscription requires a ready session",
+			"websocket: ticker subscription requires a connected session",
 			nil,
 		))
 
@@ -1155,10 +1157,10 @@ func (live *Live) SubTrades(symbols []string) {
 		return
 	}
 
-	if live.Status() != runtime.READY {
+	if live.Status() != runtime.BUSY && live.Status() != runtime.READY {
 		live.fail(errnie.Err(
 			errnie.NotAcceptable,
-			"websocket: trade subscription requires a ready session",
+			"websocket: trade subscription requires a connected session",
 			nil,
 		))
 
@@ -1312,10 +1314,10 @@ func (live *Live) SubL3(symbols []string) {
 		return
 	}
 
-	if live.Status() != runtime.READY {
+	if live.Status() != runtime.BUSY && live.Status() != runtime.READY {
 		live.fail(errnie.Err(
 			errnie.NotAcceptable,
-			"websocket: level3 subscription requires a ready session",
+			"websocket: level3 subscription requires a connected session",
 			nil,
 		))
 
@@ -1411,15 +1413,16 @@ func (live *Live) subscribeLevel3Group(conn *Live) error {
 		return nil
 	}
 
-	if conn.Status() != runtime.READY {
+	if conn.Status() != runtime.BUSY && conn.Status() != runtime.READY {
 		return errnie.Err(
 			errnie.NotAcceptable,
-			"websocket: level3 child subscription requires a ready session",
+			"websocket: level3 child subscription requires a connected session",
 			nil,
 		)
 	}
 
 	for group := range slices.Chunk(conn.symbols, 40) {
+		conn.book.Expect(group)
 		if err := conn.Client().SubPrivate("level3", map[string]any{
 			"params": map[string]any{"symbol": group, "depth": viper.GetInt("market.l3_depth"), "snapshot": true},
 		}); err != nil {
@@ -1429,6 +1432,10 @@ func (live *Live) subscribeLevel3Group(conn *Live) error {
 				err,
 			)
 
+			return err
+		}
+
+		if err := conn.book.Wait(); err != nil {
 			return err
 		}
 

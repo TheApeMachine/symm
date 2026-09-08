@@ -11,12 +11,18 @@ import (
 )
 
 /* Agent owns action learning; Environment owns the resources those actions affect. */
-type Choice[Action comparable] struct { Action Action; Prior prior.Reading }
+type Choice[Action comparable] struct {
+	Action Action
+	Prior  prior.Reading
+}
 
-type Activation[Action comparable] struct { Decision *Decision[Action]; Choices []Choice[Action] }
+type Activation[Action comparable] struct {
+	Decision *Decision[Action]
+	Choices  []Choice[Action]
+}
 
 type Agent[Action comparable] struct {
- Activations map[string]*Activation[Action]
+	Activations map[string]*Activation[Action]
 	Model       *model.Model[string, Action]
 	Environment Environment[Action]
 	Explore     bool
@@ -67,11 +73,11 @@ func (agent *Agent[Action]) Activate(
 	conditioned = append(conditioned, state...)
 	conditioned = append(conditioned, context...)
 	choices := make([]Choice[Action], 0, len(actions))
- action, selected, err := agent.Model.Select(label, conditioned, actions, agent.Explore, func(label string, context []uint64, action Action) prior.Reading {
- reading := agent.Model.Recall(label, context, action)
- choices = append(choices, Choice[Action]{Action: action, Prior: reading})
- return reading
- })
+	action, selected, err := agent.Model.Select(label, conditioned, actions, agent.Explore, func(label string, context []uint64, action Action) prior.Reading {
+		reading := agent.Model.Recall(label, context, action)
+		choices = append(choices, Choice[Action]{Action: action, Prior: reading})
+		return reading
+	})
 
 	if err != nil {
 		return errnie.Error(err)
@@ -87,7 +93,7 @@ func (agent *Agent[Action]) Activate(
 	}
 	agent.Pending[identity], agent.Last, agent.Selected = decision, decision, selected
 	agent.Activations[label] = &Activation[Action]{Decision: decision, Choices: choices}
- agent.Decisions++
+	agent.Decisions++
 	return errnie.Error(agent.Environment.Execute(decision))
 }
 

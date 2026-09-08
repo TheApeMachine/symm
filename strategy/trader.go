@@ -1,7 +1,6 @@
 package strategy
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -43,17 +42,15 @@ type Trader struct {
 	Status                                        string
 	Alternatives                                  []Action
 	Quantities                                    map[Action]*decimal.Decimal
-	Evaluations                                   map[uint64]*Evaluation
+	Evaluations                                   map[string]map[uint64]*Evaluation
 	LastEvaluation                                *Evaluation
 	Recorder                                      *recording.Session
 	ID                                            int
 	Fees                                          *decimal.Decimal
-	ctx                                           context.Context
 	api                                           *websocket.API
 }
 
 func NewTrader(
-	ctx context.Context,
 	api *websocket.API,
 	price *broker.Price,
 	quote string,
@@ -62,15 +59,10 @@ func NewTrader(
 	balance, err := broker.NewFundedBalance(quote, cash)
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation,
-			"[trader] failed to get balance",
-			err,
-		))
+		return nil, err
 	}
 
 	return &Trader{
-		ctx:     ctx,
 		api:     api,
 		Balance: balance,
 		Execution: Execution{
@@ -84,7 +76,7 @@ func NewTrader(
 		Fees:        decimal.NewFromInt64(0),
 		Profit:      decimal.NewFromInt64(0),
 		Positions:   make(map[string]*position.Regulator),
-		Evaluations: make(map[uint64]*Evaluation),
+		Evaluations: make(map[string]map[uint64]*Evaluation),
 	}, nil
 }
 
@@ -214,18 +206,21 @@ The retained evaluation points to the original decision, never a second model.
 */
 func (trader *Trader) Execute(decision *agent.Decision[Action]) error {
 	evaluation := &Evaluation{Decision: decision, Trader: trader.ID, Initial: trader.Initial}
-	trader.Evaluations[decision.ID] = evaluation
+	if trader.Evaluations[decision.Label] == nil {
+		trader.Evaluations[decision.Label] = make(map[uint64]*Evaluation)
+	}
+	trader.Evaluations[decision.Label][decision.ID] = evaluation
 	regulator := trader.Positions[decision.Label]
 	evaluation.Quantity = decimal.NewFromInt64(0)
 
 	if regulator != nil {
 		evaluation.Quantity = regulator.Holding.Qty
 	}
-	tick := trader.Execution.Price.Tick(decision.Label)
-
-	if tick != nil {
-		evaluation.Reference = tick.Last
-	}
+	trader.api.Book(decision.Label, func(current *book.Book) {
+		if current != nil && current.BestBid() != nil {
+			evaluation.Reference = current.BestBid().Price
+		}
+	})
 
 	if decision.Action.Kind == "wait" || decision.Action.Kind == "hold" {
 		for _, action := range trader.Alternatives {
@@ -237,7 +232,7 @@ func (trader *Trader) Execute(decision *agent.Decision[Action]) error {
 	}
 
 	if regulator == nil {
-		regulator = position.NewRegulator(trader.ctx, trader.api, trader.Execution.Price, decision.Label, nil)
+		regulator = position.NewRegulator(trader.api, trader.Execution.Price, decision.Label, nil)
 		regulator.Orders = &trader.Execution
 		trader.Positions[decision.Label] = regulator
 	}
@@ -269,7 +264,7 @@ func (trader *Trader) Execute(decision *agent.Decision[Action]) error {
 unit is a fraction of initial funding; the core owns elapsed-time feedback.
 */
 func (trader *Trader) Objective() (reward.Mark, error) {
-	equity := trader.Balance.Cash()
+	equity := trader.Balance.Cash().SetScale(decimal.DefaultScale)
 	realized := decimal.NewFromInt64(0)
 
 	for _, regulator := range trader.Positions {

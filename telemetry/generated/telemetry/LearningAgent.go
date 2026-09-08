@@ -19,10 +19,6 @@ type LearningAgentT struct {
 	Decisions uint64 `json:"decisions"`
 	Fills uint64 `json:"fills"`
 	Pending uint64 `json:"pending"`
-	Samples float64 `json:"samples"`
-	Mean float64 `json:"mean"`
-	Variance float64 `json:"variance"`
-	VarianceDefined bool `json:"varianceDefined"`
 	Wins uint64 `json:"wins"`
 	Losses uint64 `json:"losses"`
 	Status string `json:"status"`
@@ -113,10 +109,6 @@ func (t *LearningAgentT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	LearningAgentAddDecisions(builder, t.Decisions)
 	LearningAgentAddFills(builder, t.Fills)
 	LearningAgentAddPending(builder, t.Pending)
-	LearningAgentAddSamples(builder, t.Samples)
-	LearningAgentAddMean(builder, t.Mean)
-	LearningAgentAddVariance(builder, t.Variance)
-	LearningAgentAddVarianceDefined(builder, t.VarianceDefined)
 	LearningAgentAddWins(builder, t.Wins)
 	LearningAgentAddLosses(builder, t.Losses)
 	LearningAgentAddStatus(builder, statusOffset)
@@ -143,10 +135,6 @@ func (rcv *LearningAgent) UnPackTo(t *LearningAgentT) {
 	t.Decisions = rcv.Decisions()
 	t.Fills = rcv.Fills()
 	t.Pending = rcv.Pending()
-	t.Samples = rcv.Samples()
-	t.Mean = rcv.Mean()
-	t.Variance = rcv.Variance()
-	t.VarianceDefined = rcv.VarianceDefined()
 	t.Wins = rcv.Wins()
 	t.Losses = rcv.Losses()
 	t.Status = string(rcv.Status())
@@ -331,56 +319,8 @@ func (rcv *LearningAgent) MutatePending(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(26, n)
 }
 
-func (rcv *LearningAgent) Samples() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *LearningAgent) MutateSamples(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(28, n)
-}
-
-func (rcv *LearningAgent) Mean() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *LearningAgent) MutateMean(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(30, n)
-}
-
-func (rcv *LearningAgent) Variance() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *LearningAgent) MutateVariance(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(32, n)
-}
-
-func (rcv *LearningAgent) VarianceDefined() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
-	if o != 0 {
-		return rcv._tab.GetBool(o + rcv._tab.Pos)
-	}
-	return false
-}
-
-func (rcv *LearningAgent) MutateVarianceDefined(n bool) bool {
-	return rcv._tab.MutateBoolSlot(34, n)
-}
-
 func (rcv *LearningAgent) Wins() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
@@ -388,11 +328,11 @@ func (rcv *LearningAgent) Wins() uint64 {
 }
 
 func (rcv *LearningAgent) MutateWins(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(36, n)
+	return rcv._tab.MutateUint64Slot(28, n)
 }
 
 func (rcv *LearningAgent) Losses() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
 	if o != 0 {
 		return rcv._tab.GetUint64(o + rcv._tab.Pos)
 	}
@@ -400,11 +340,11 @@ func (rcv *LearningAgent) Losses() uint64 {
 }
 
 func (rcv *LearningAgent) MutateLosses(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(38, n)
+	return rcv._tab.MutateUint64Slot(30, n)
 }
 
 func (rcv *LearningAgent) Status() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(32))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
 	}
@@ -412,7 +352,7 @@ func (rcv *LearningAgent) Status() []byte {
 }
 
 func (rcv *LearningAgent) Positions(obj *Position, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -424,7 +364,7 @@ func (rcv *LearningAgent) Positions(obj *Position, j int) bool {
 }
 
 func (rcv *LearningAgent) PositionsLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -432,7 +372,7 @@ func (rcv *LearningAgent) PositionsLength() int {
 }
 
 func (rcv *LearningAgent) Last(obj *LearningDecision) *LearningDecision {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -445,7 +385,7 @@ func (rcv *LearningAgent) Last(obj *LearningDecision) *LearningDecision {
 }
 
 func (rcv *LearningAgent) Alternatives(obj *LearningAction, j int) bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -457,7 +397,7 @@ func (rcv *LearningAgent) Alternatives(obj *LearningAction, j int) bool {
 }
 
 func (rcv *LearningAgent) AlternativesLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -465,7 +405,7 @@ func (rcv *LearningAgent) AlternativesLength() int {
 }
 
 func (rcv *LearningAgent) Reading(obj *LearningPrior) *LearningPrior {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -478,7 +418,7 @@ func (rcv *LearningAgent) Reading(obj *LearningPrior) *LearningPrior {
 }
 
 func (rcv *LearningAgent) Reward() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(42))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -486,11 +426,11 @@ func (rcv *LearningAgent) Reward() float64 {
 }
 
 func (rcv *LearningAgent) MutateReward(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(50, n)
+	return rcv._tab.MutateFloat64Slot(42, n)
 }
 
 func (rcv *LearningAgent) ElapsedNs() int64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(44))
 	if o != 0 {
 		return rcv._tab.GetInt64(o + rcv._tab.Pos)
 	}
@@ -498,11 +438,11 @@ func (rcv *LearningAgent) ElapsedNs() int64 {
 }
 
 func (rcv *LearningAgent) MutateElapsedNs(n int64) bool {
-	return rcv._tab.MutateInt64Slot(52, n)
+	return rcv._tab.MutateInt64Slot(44, n)
 }
 
 func (rcv *LearningAgent) Outcome(obj *LearningDecision) *LearningDecision {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(54))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(46))
 	if o != 0 {
 		x := rcv._tab.Indirect(o + rcv._tab.Pos)
 		if obj == nil {
@@ -515,7 +455,7 @@ func (rcv *LearningAgent) Outcome(obj *LearningDecision) *LearningDecision {
 }
 
 func LearningAgentStart(builder *flatbuffers.Builder) {
-	builder.StartObject(26)
+	builder.StartObject(22)
 }
 func LearningAgentAddId(builder *flatbuffers.Builder, id int32) {
 	builder.PrependInt32Slot(0, id, 0)
@@ -553,53 +493,41 @@ func LearningAgentAddFills(builder *flatbuffers.Builder, fills uint64) {
 func LearningAgentAddPending(builder *flatbuffers.Builder, pending uint64) {
 	builder.PrependUint64Slot(11, pending, 0)
 }
-func LearningAgentAddSamples(builder *flatbuffers.Builder, samples float64) {
-	builder.PrependFloat64Slot(12, samples, 0.0)
-}
-func LearningAgentAddMean(builder *flatbuffers.Builder, mean float64) {
-	builder.PrependFloat64Slot(13, mean, 0.0)
-}
-func LearningAgentAddVariance(builder *flatbuffers.Builder, variance float64) {
-	builder.PrependFloat64Slot(14, variance, 0.0)
-}
-func LearningAgentAddVarianceDefined(builder *flatbuffers.Builder, varianceDefined bool) {
-	builder.PrependBoolSlot(15, varianceDefined, false)
-}
 func LearningAgentAddWins(builder *flatbuffers.Builder, wins uint64) {
-	builder.PrependUint64Slot(16, wins, 0)
+	builder.PrependUint64Slot(12, wins, 0)
 }
 func LearningAgentAddLosses(builder *flatbuffers.Builder, losses uint64) {
-	builder.PrependUint64Slot(17, losses, 0)
+	builder.PrependUint64Slot(13, losses, 0)
 }
 func LearningAgentAddStatus(builder *flatbuffers.Builder, status flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(18, flatbuffers.UOffsetT(status), 0)
+	builder.PrependUOffsetTSlot(14, flatbuffers.UOffsetT(status), 0)
 }
 func LearningAgentAddPositions(builder *flatbuffers.Builder, positions flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(19, flatbuffers.UOffsetT(positions), 0)
+	builder.PrependUOffsetTSlot(15, flatbuffers.UOffsetT(positions), 0)
 }
 func LearningAgentStartPositionsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func LearningAgentAddLast(builder *flatbuffers.Builder, last flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(20, flatbuffers.UOffsetT(last), 0)
+	builder.PrependUOffsetTSlot(16, flatbuffers.UOffsetT(last), 0)
 }
 func LearningAgentAddAlternatives(builder *flatbuffers.Builder, alternatives flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(21, flatbuffers.UOffsetT(alternatives), 0)
+	builder.PrependUOffsetTSlot(17, flatbuffers.UOffsetT(alternatives), 0)
 }
 func LearningAgentStartAlternativesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func LearningAgentAddReading(builder *flatbuffers.Builder, reading flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(22, flatbuffers.UOffsetT(reading), 0)
+	builder.PrependUOffsetTSlot(18, flatbuffers.UOffsetT(reading), 0)
 }
 func LearningAgentAddReward(builder *flatbuffers.Builder, reward float64) {
-	builder.PrependFloat64Slot(23, reward, 0.0)
+	builder.PrependFloat64Slot(19, reward, 0.0)
 }
 func LearningAgentAddElapsedNs(builder *flatbuffers.Builder, elapsedNs int64) {
-	builder.PrependInt64Slot(24, elapsedNs, 0)
+	builder.PrependInt64Slot(20, elapsedNs, 0)
 }
 func LearningAgentAddOutcome(builder *flatbuffers.Builder, outcome flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(25, flatbuffers.UOffsetT(outcome), 0)
+	builder.PrependUOffsetTSlot(21, flatbuffers.UOffsetT(outcome), 0)
 }
 func LearningAgentEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

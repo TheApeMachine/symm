@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative"
 	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/types"
 	"gocloud.dev/blob"
 )
@@ -46,7 +48,7 @@ func NewLearner(ctx context.Context, api *websocket.API, price *broker.Price, ba
 	environments := make([]agent.Environment[Action], 0, count)
 
 	for range count {
-		trader, err := NewTrader(ctx, api, price, balance.Quote, balance.Cash())
+		trader, err := NewTrader(api, price, balance.Quote, balance.Cash())
 
 		if err != nil {
 			return nil, err
@@ -113,6 +115,7 @@ func (learner *Learner) observe(symbol string, readings []*data.Measurement[floa
 		learner.Developments[symbol] = development
 	}
 	history := development.Context(learner.At, readings)
+	previousDecisions := learner.Decisions
 
 	for _, trader := range learner.Traders {
 		trader.At, trader.Version = learner.At, trader.Version+1
@@ -127,6 +130,7 @@ func (learner *Learner) observe(symbol string, readings []*data.Measurement[floa
 	for _, member := range learner.Population.Agents {
 		learner.Decisions += member.Decisions
 	}
+	development.Decisions += learner.Decisions - previousDecisions
 	return development.Advance(learner.At, learner.Population.Grid)
 }
 
@@ -137,28 +141,40 @@ on its issuing model; Population owns positive-experience consolidation.
 */
 func (learner *Learner) Review(ctx context.Context) error {
 	return learner.Tape.Read(ctx, learner.Checkpoint.Bucket, learner.run, func(leg hindsight.Leg) error {
-		learner.mutex.Lock()
-		defer learner.mutex.Unlock()
+		evaluations, err := learner.resolve(leg)
 
-		for index, trader := range learner.Traders {
-			for identity, evaluation := range trader.Evaluations {
-				if !evaluation.Resolve(leg) {
-					continue
-				}
-
-				if err := learner.Population.Resolve(index, identity, evaluation.Value); err != nil {
-					return err
-				}
-				if err := trader.Recorder.WriteLearning(evaluation); err != nil {
-					return err
-				}
-				trader.LastEvaluation = evaluation
-				learner.Resolved++
-				delete(trader.Evaluations, identity)
-			}
+		if err != nil || len(evaluations) == 0 {
+			return err
 		}
-		return nil
+		first := evaluations[0]
+		key := fmt.Sprintf("%s%d-%020d.json", learner.run.Prefix("outcomes"), first.Trader, first.ID)
+		return store.Write(ctx, learner.Checkpoint.Bucket, key, evaluations)
 	})
+}
+
+// resolve completes original decision records under the learning lock. Once
+// resolved they are immutable; Review persists them after releasing the lock.
+func (learner *Learner) resolve(leg hindsight.Leg) ([]*Evaluation, error) {
+	learner.mutex.Lock()
+	defer learner.mutex.Unlock()
+	var evaluations []*Evaluation
+
+	for index, trader := range learner.Traders {
+		for identity, evaluation := range trader.Evaluations[leg.Symbol] {
+			if !evaluation.Resolve(leg) {
+				continue
+			}
+
+			if err := learner.Population.Resolve(index, identity, evaluation.Value); err != nil {
+				return nil, err
+			}
+			trader.LastEvaluation = evaluation
+			learner.Resolved++
+			delete(trader.Evaluations[leg.Symbol], identity)
+			evaluations = append(evaluations, evaluation)
+		}
+	}
+	return evaluations, nil
 }
 
 /*

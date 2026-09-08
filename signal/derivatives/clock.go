@@ -39,8 +39,8 @@ stamp folds one event onto the symbol's causal timeline.
 
 It returns the event time to use and whether the timeline advanced. A false
 `advanced` means the caller holds a genuinely late event: its facts are still
-real and should still be accounted, but no interval origin, window, or
-derivative may treat it as the newest observation.
+real and should still be accounted, but must not advance the latest event time
+or event-time derivatives. Cumulative accounting may extend its earliest boundary.
 
 A zero timestamp is never stamped: it would read as a regression after any real
 observation, poisoning the first valid event.

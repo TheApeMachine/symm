@@ -78,8 +78,7 @@ describe("EventRhythm", () => {
 				inventory: "0",
 				authority: 1,
 				profit: 0,
-				complete: false,
-				episode: 1,
+
 				horizonNs: 1e9,
 				prior: prior({}),
 			},
@@ -96,8 +95,7 @@ describe("EventRhythm", () => {
 				inventory: "0",
 				authority: 1,
 				profit: 0,
-				complete: true,
-				episode: 1,
+
 				horizonNs: 1e9,
 				prior: prior({}),
 			},
@@ -114,11 +112,18 @@ describe("EventRhythm", () => {
 describe("OutcomeRange", () => {
 	it("shows the actual signed mean on a labeled axis", () => {
 		const skill = {
+			mode: "learning",
+			account: "sim",
+			since: "",
+			reason: "",
+			varianceDefined: true,
+			variance: 0,
+			wins: 0,
+			losses: 100,
 			defined: true,
-			qualified: true,
+
 			mean: -0.0002,
-			lowerBound: -0.0005,
-			sigma: 3,
+
 			support: 12.5,
 			samples: 100,
 		} as Skill;
@@ -185,17 +190,16 @@ describe("InfluenceGrid", () => {
 	});
 });
 
-
 describe("WalletBars", () => {
-	it("leaves an unvalued wallet as a gap rather than a bar at zero", () => {
+	it("shows positive and negative account values on the same axis", () => {
 		const lanes = [
-			{ lane: 0, mode: "policy", profit: 12, realized: 12, complete: true },
-			{ lane: 1, mode: "explore", profit: 0, realized: 0, complete: false },
+			{ lane: 0, mode: "policy", profit: 12, realized: 12 },
+			{ lane: 1, mode: "explore", profit: -4, realized: -4 },
 		] as Wallet[];
 
 		const markup = renderToStaticMarkup(<WalletBars lanes={lanes} />);
 
-		expect(markup).toContain("not valued yet");
+		expect(markup).toContain("-4");
 		expect(markup).toContain("policy 1");
 	});
 });

@@ -19,7 +19,7 @@ const tone = (mode: string) => {
 	return "success" as const;
 };
 
-const percent = (value: number) => `${(100 * value).toFixed(1)}%`;
+const percent = (value: number) => `${(100 * value).toFixed(4)}%`;
 const basis = (value: number) => `${(10000 * value).toFixed(1)} bp`;
 
 /*
@@ -27,9 +27,10 @@ skillTitle states the whole measurement in one hover: the estimate, the bar it
 has to clear, and what the agent is currently allowed to do. Every number here
 is measured; none of them is a score invented for display.
 */
-const skillTitle = (skill: Skill) => skill.defined
- ? `Mean completed decision benefit ${basis(skill.mean)} · ${skill.samples} outcomes · ${skill.wins} positive / ${skill.losses} negative. Overlapping decisions are not independent trials.`
- : "Waiting for completed tape outcomes";
+const skillTitle = (skill: Skill) =>
+	skill.defined
+		? `Mean completed decision benefit ${basis(skill.mean)} · ${skill.samples} outcomes · ${skill.wins} positive / ${skill.losses} negative. Overlapping decisions are not independent trials.`
+		: "Waiting for completed tape outcomes";
 
 export const AgentSkill = () => {
 	const { state, error } = useAgentSkill();
@@ -39,7 +40,9 @@ export const AgentSkill = () => {
 		<Flex.Row align="center" gap={6}>
 			<Badge
 				label="Agent"
-				variant={skill ? tone(state?.authorizedMode ?? "learning") : "error"}
+				variant={
+					skill && !error ? tone(state?.authorizedMode ?? "learning") : "error"
+				}
 				dot
 				pulse={state?.authorizedMode === "trading" && skill?.account === "real"}
 				title={
@@ -70,7 +73,7 @@ export const AgentSkill = () => {
 					size="lg"
 					tone={!skill?.defined ? "f1" : skill.mean > 0 ? "accent" : "f2"}
 					data-agent-edge={skill?.defined ? String(skill.mean) : ""}
-					title="Mean completed decision benefit relative to leaving the wallet unchanged, as a fraction of starting capital"
+					title="Mean completed tape evaluation, as a fraction of starting capital"
 				>
 					{skill?.defined ? basis(skill.mean) : "—"}
 				</Typography.Mono>

@@ -70,53 +70,25 @@ action(obj?:LearningAction):LearningAction|null {
   return offset ? (obj || new LearningAction()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-before():string|null
-before(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-before(optionalEncoding?:any):string|Uint8Array|null {
+quantity():string|null
+quantity(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+quantity(optionalEncoding?:any):string|Uint8Array|null {
   const offset = this.bb!.__offset(this.bb_pos, 18);
   return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
 }
 
-quantity():string|null
-quantity(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-quantity(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-cashChange():string|null
-cashChange(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-cashChange(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-reference():string|null
-reference(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-reference(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 24);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
-fee():string|null
-fee(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
-fee(optionalEncoding?:any):string|Uint8Array|null {
-  const offset = this.bb!.__offset(this.bb_pos, 26);
-  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
-}
-
 tape():number {
-  const offset = this.bb!.__offset(this.bb_pos, 28);
+  const offset = this.bb!.__offset(this.bb_pos, 20);
   return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
 }
 
 hasTape():boolean {
-  const offset = this.bb!.__offset(this.bb_pos, 30);
+  const offset = this.bb!.__offset(this.bb_pos, 22);
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
 static startLearningDecision(builder:flatbuffers.Builder) {
-  builder.startObject(14);
+  builder.startObject(10);
 }
 
 static addId(builder:flatbuffers.Builder, id:bigint) {
@@ -159,32 +131,16 @@ static addAction(builder:flatbuffers.Builder, actionOffset:flatbuffers.Offset) {
   builder.addFieldOffset(6, actionOffset, 0);
 }
 
-static addBefore(builder:flatbuffers.Builder, beforeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(7, beforeOffset, 0);
-}
-
 static addQuantity(builder:flatbuffers.Builder, quantityOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(8, quantityOffset, 0);
-}
-
-static addCashChange(builder:flatbuffers.Builder, cashChangeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(9, cashChangeOffset, 0);
-}
-
-static addReference(builder:flatbuffers.Builder, referenceOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(10, referenceOffset, 0);
-}
-
-static addFee(builder:flatbuffers.Builder, feeOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(11, feeOffset, 0);
+  builder.addFieldOffset(7, quantityOffset, 0);
 }
 
 static addTape(builder:flatbuffers.Builder, tape:number) {
-  builder.addFieldFloat64(12, tape, 0.0);
+  builder.addFieldFloat64(8, tape, 0.0);
 }
 
 static addHasTape(builder:flatbuffers.Builder, hasTape:boolean) {
-  builder.addFieldInt8(13, +hasTape, +false);
+  builder.addFieldInt8(9, +hasTape, +false);
 }
 
 static endLearningDecision(builder:flatbuffers.Builder):flatbuffers.Offset {
@@ -202,11 +158,7 @@ unpack(): LearningDecisionT {
     this.throughNs(),
     this.bb!.createScalarList<string>(this.context.bind(this), this.contextLength()),
     (this.action() !== null ? this.action()!.unpack() : null),
-    this.before(),
     this.quantity(),
-    this.cashChange(),
-    this.reference(),
-    this.fee(),
     this.tape(),
     this.hasTape()
   );
@@ -221,11 +173,7 @@ unpackTo(_o: LearningDecisionT): void {
   _o.throughNs = this.throughNs();
   _o.context = this.bb!.createScalarList<string>(this.context.bind(this), this.contextLength());
   _o.action = (this.action() !== null ? this.action()!.unpack() : null);
-  _o.before = this.before();
   _o.quantity = this.quantity();
-  _o.cashChange = this.cashChange();
-  _o.reference = this.reference();
-  _o.fee = this.fee();
   _o.tape = this.tape();
   _o.hasTape = this.hasTape();
 }
@@ -240,11 +188,7 @@ constructor(
   public throughNs: bigint = BigInt('0'),
   public context: (string)[] = [],
   public action: LearningActionT|null = null,
-  public before: string|Uint8Array|null = null,
   public quantity: string|Uint8Array|null = null,
-  public cashChange: string|Uint8Array|null = null,
-  public reference: string|Uint8Array|null = null,
-  public fee: string|Uint8Array|null = null,
   public tape: number = 0.0,
   public hasTape: boolean = false
 ){}
@@ -254,11 +198,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const symbol = (this.symbol !== null ? builder.createString(this.symbol!) : 0);
   const context = LearningDecision.createContextVector(builder, builder.createObjectOffsetList(this.context));
   const action = (this.action !== null ? this.action!.pack(builder) : 0);
-  const before = (this.before !== null ? builder.createString(this.before!) : 0);
   const quantity = (this.quantity !== null ? builder.createString(this.quantity!) : 0);
-  const cashChange = (this.cashChange !== null ? builder.createString(this.cashChange!) : 0);
-  const reference = (this.reference !== null ? builder.createString(this.reference!) : 0);
-  const fee = (this.fee !== null ? builder.createString(this.fee!) : 0);
 
   LearningDecision.startLearningDecision(builder);
   LearningDecision.addId(builder, this.id);
@@ -268,11 +208,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   LearningDecision.addThroughNs(builder, this.throughNs);
   LearningDecision.addContext(builder, context);
   LearningDecision.addAction(builder, action);
-  LearningDecision.addBefore(builder, before);
   LearningDecision.addQuantity(builder, quantity);
-  LearningDecision.addCashChange(builder, cashChange);
-  LearningDecision.addReference(builder, reference);
-  LearningDecision.addFee(builder, fee);
   LearningDecision.addTape(builder, this.tape);
   LearningDecision.addHasTape(builder, this.hasTape);
 

@@ -30,16 +30,50 @@ const Reading = ({
 );
 
 export const SkillPanel = ({ view }: { view: LearningView | null }) => {
- const skill = view?.skill;
- return <Section fit="content">
-  <Section.Header title="Agent skill" meta={skill ? `${skill.samples} completed decisions` : "waiting for observations"} />
-  <OutcomeRange skill={skill} />
-  <Reading label="Mean completed decision benefit" value={skill?.defined ? basis(skill.mean) : "unmeasured"}
-   note="Benefit relative to leaving the position unchanged. Negative outcomes remain negative." />
-  <Reading label="Outcome signs" value={skill ? `${skill.wins} positive · ${skill.losses} negative` : "unmeasured"}
-   note="These decisions can overlap in time; the count is not independent statistical evidence." />
-  <Reading label="Wallet performance" value={view?.lanes?.find(lane => lane.mode === "policy") ? String(view.lanes.find(lane => lane.mode === "policy")?.profit) : "unmeasured"}
-   note="Net change in the consolidated-model agent's wallet, including fees." />
-  <Reading label="Status" value={view?.status ?? "waiting"} note="All agents continue learning. No statistical promotion gate is applied." />
- </Section>;
+	const skill = view?.skill;
+	return (
+		<Section fit="content">
+			<Section.Header
+				title="Agent skill"
+				meta={
+					skill
+						? `${skill.samples} completed decisions`
+						: "waiting for observations"
+				}
+			/>
+			<OutcomeRange skill={skill} />
+			<Reading
+				label="Mean completed decision benefit"
+				value={skill?.defined ? basis(skill.mean) : "unmeasured"}
+				note="Completed tape evaluations as a fraction of starting capital. Negative outcomes remain negative."
+			/>
+			<Reading
+				label="Outcome signs"
+				value={
+					skill
+						? `${skill.wins} positive · ${skill.losses} negative`
+						: "unmeasured"
+				}
+				note="These decisions can overlap in time; the count is not independent statistical evidence."
+			/>
+			<Reading
+				label="Wallet performance"
+				value={
+					view?.lanes?.find((lane) => lane.mode === "policy")
+						? String(view.lanes.find((lane) => lane.mode === "policy")?.profit)
+						: "unmeasured"
+				}
+				note="Net change in the consolidated-model agent's wallet, including fees."
+			/>
+			<Reading
+				label="Status"
+				value={view?.status ?? "waiting"}
+				note={
+					view?.restored
+						? "Saved model loaded into every agent; learning continues."
+						: "Learning from a new model."
+				}
+			/>
+		</Section>
+	);
 };

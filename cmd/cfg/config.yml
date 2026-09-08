@@ -58,9 +58,7 @@ system:
 
 hindsight:
   capture:
-    # Accepted records are encoded before the producer returns. A full queue
-    # reports a persistence failure; it does not block the transport callback.
-    queue_depth: 8192
+    # Encoded records queue in memory while the S3 writer drains them.
     # Maximum original records collected before writing a batch to S3.
     batch_size: 256
     # Flush a partial batch even when no further observations arrive.

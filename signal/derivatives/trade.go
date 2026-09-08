@@ -14,7 +14,6 @@ type tradeState struct {
 	liqSellTotal     float64
 	grossTradeTotal  float64
 	startTime        time.Time
-	hasStartTime     bool
 	tradeCount       float64
 	prevLiqShare     float64
 	hasPrevLiqShare  bool
@@ -44,6 +43,9 @@ func (trade *Trade) Close() error {
 }
 
 func (trade *Trade) Step(point kraken.FuturesTradeData) *data.Measurement[float64] {
+	trade.mu.Lock()
+	defer trade.mu.Unlock()
+
 	stamped, advanced := trade.clock.stamp(
 		point.Symbol, point.Timestamp, point.SyntheticTimestamp,
 	)
@@ -53,48 +55,42 @@ func (trade *Trade) Step(point kraken.FuturesTradeData) *data.Measurement[float6
 	qty := point.Qty
 	notional := price * qty
 
-	trade.mu.Lock()
-	defer trade.mu.Unlock()
-
 	state, found := trade.states[point.Symbol]
 
 	if !found {
-		state = &tradeState{}
+		state = &tradeState{startTime: stamped}
 		trade.states[point.Symbol] = state
 	}
 
 	state.grossTradeTotal += notional
 
 	if point.Type == "liquidation" {
-		if point.Side == "buy" {
+		switch point.Side {
+		case "buy":
 			state.liqBuyTotal += notional
-		} else if point.Side == "sell" {
+		case "sell":
 			state.liqSellTotal += notional
 		}
 	}
 
+	// Totals include every received trade, including historical reconnect data.
+	// Their interval is the earliest through latest accounted event time.
+	if stamped.Before(state.startTime) {
+		state.startTime = stamped
+	}
+
 	if advanced {
 		state.tradeCount++
-
-		if !state.hasStartTime {
-			state.startTime = stamped
-			state.hasStartTime = true
-		}
-
 		state.lastAdvancedTime = stamped
 	}
 
 	grossLiq := state.liqBuyTotal + state.liqSellTotal
 	netLiq := state.liqBuyTotal - state.liqSellTotal
 
-	from := point.Timestamp
-
-	if state.hasStartTime {
-		from = state.startTime
-	}
-
 	id := fmt.Sprintf("derivatives:%s:%d", point.Symbol, point.Timestamp.UnixNano())
-	measurement := data.NewMeasurement[float64](id, point.Symbol, "derivatives", point.Timestamp, from)
+	measurement := data.NewMeasurement[float64](
+		id, point.Symbol, "derivatives", state.lastAdvancedTime, state.startTime,
+	)
 	measurement.Metadata = make(map[string]float64)
 
 	putDerivMetric(measurement, "liquidation_notional:buy", state.liqBuyTotal, data.UnitRate)
@@ -115,12 +111,9 @@ func (trade *Trade) Step(point kraken.FuturesTradeData) *data.Measurement[float6
 		putDerivMetric(measurement, "liquidation_share", currentShare, data.UnitDimensionless)
 	}
 
-	// A rate divides by an interval this event may not have advanced. A late
-	// trade accumulates its notional but cannot state a rate: re-stamping it
-	// forward would shorten the interval and inflate the rate, and publishing
-	// the established interval would republish the previous frame's number
-	// under this event's identity. The slot is absent instead.
-	if state.hasStartTime && advanced {
+	// Late trades revise totals and the earliest boundary, but do not emit a
+	// rate or share change until the live event-time clock advances again.
+	if advanced {
 		duration := state.lastAdvancedTime.Sub(state.startTime).Seconds()
 
 		if duration > 0 {
@@ -141,8 +134,8 @@ func (trade *Trade) Step(point kraken.FuturesTradeData) *data.Measurement[float6
 	return measurement
 }
 
-func putDerivMetric(m *data.Measurement[float64], name string, val float64, unit data.Unit) {
-	m.PutMetric(data.NewMetric(
-		name, val, nil, nil, unit, data.TimescaleInstantaneous,
+func putDerivMetric(measurement *data.Measurement[float64], name string, value float64, unit data.Unit) {
+	measurement.PutMetric(data.NewMetric(
+		name, value, nil, nil, unit, data.TimescaleInstantaneous,
 	))
 }

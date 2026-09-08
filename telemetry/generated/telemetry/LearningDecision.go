@@ -14,11 +14,7 @@ type LearningDecisionT struct {
 	ThroughNs int64 `json:"throughNs"`
 	Context []string `json:"context"`
 	Action *LearningActionT `json:"action"`
-	Before string `json:"before"`
 	Quantity string `json:"quantity"`
-	CashChange string `json:"cashChange"`
-	Reference string `json:"reference"`
-	Fee string `json:"fee"`
 	Tape float64 `json:"tape"`
 	HasTape bool `json:"hasTape"`
 }
@@ -45,25 +41,9 @@ func (t *LearningDecisionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffs
 		contextOffset = builder.EndVector(contextLength)
 	}
 	actionOffset := t.Action.Pack(builder)
-	beforeOffset := flatbuffers.UOffsetT(0)
-	if t.Before != "" {
-		beforeOffset = builder.CreateString(t.Before)
-	}
 	quantityOffset := flatbuffers.UOffsetT(0)
 	if t.Quantity != "" {
 		quantityOffset = builder.CreateString(t.Quantity)
-	}
-	cashChangeOffset := flatbuffers.UOffsetT(0)
-	if t.CashChange != "" {
-		cashChangeOffset = builder.CreateString(t.CashChange)
-	}
-	referenceOffset := flatbuffers.UOffsetT(0)
-	if t.Reference != "" {
-		referenceOffset = builder.CreateString(t.Reference)
-	}
-	feeOffset := flatbuffers.UOffsetT(0)
-	if t.Fee != "" {
-		feeOffset = builder.CreateString(t.Fee)
 	}
 	LearningDecisionStart(builder)
 	LearningDecisionAddId(builder, t.Id)
@@ -73,11 +53,7 @@ func (t *LearningDecisionT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffs
 	LearningDecisionAddThroughNs(builder, t.ThroughNs)
 	LearningDecisionAddContext(builder, contextOffset)
 	LearningDecisionAddAction(builder, actionOffset)
-	LearningDecisionAddBefore(builder, beforeOffset)
 	LearningDecisionAddQuantity(builder, quantityOffset)
-	LearningDecisionAddCashChange(builder, cashChangeOffset)
-	LearningDecisionAddReference(builder, referenceOffset)
-	LearningDecisionAddFee(builder, feeOffset)
 	LearningDecisionAddTape(builder, t.Tape)
 	LearningDecisionAddHasTape(builder, t.HasTape)
 	return LearningDecisionEnd(builder)
@@ -95,11 +71,7 @@ func (rcv *LearningDecision) UnPackTo(t *LearningDecisionT) {
 		t.Context[j] = string(rcv.Context(j))
 	}
 	t.Action = rcv.Action(nil).UnPack()
-	t.Before = string(rcv.Before())
 	t.Quantity = string(rcv.Quantity())
-	t.CashChange = string(rcv.CashChange())
-	t.Reference = string(rcv.Reference())
-	t.Fee = string(rcv.Fee())
 	t.Tape = rcv.Tape()
 	t.HasTape = rcv.HasTape()
 }
@@ -234,7 +206,7 @@ func (rcv *LearningDecision) Action(obj *LearningAction) *LearningAction {
 	return nil
 }
 
-func (rcv *LearningDecision) Before() []byte {
+func (rcv *LearningDecision) Quantity() []byte {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(18))
 	if o != 0 {
 		return rcv._tab.ByteVector(o + rcv._tab.Pos)
@@ -242,40 +214,8 @@ func (rcv *LearningDecision) Before() []byte {
 	return nil
 }
 
-func (rcv *LearningDecision) Quantity() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *LearningDecision) CashChange() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *LearningDecision) Reference() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
-func (rcv *LearningDecision) Fee() []byte {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(26))
-	if o != 0 {
-		return rcv._tab.ByteVector(o + rcv._tab.Pos)
-	}
-	return nil
-}
-
 func (rcv *LearningDecision) Tape() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(28))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
 	if o != 0 {
 		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
 	}
@@ -283,11 +223,11 @@ func (rcv *LearningDecision) Tape() float64 {
 }
 
 func (rcv *LearningDecision) MutateTape(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(28, n)
+	return rcv._tab.MutateFloat64Slot(20, n)
 }
 
 func (rcv *LearningDecision) HasTape() bool {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(30))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(22))
 	if o != 0 {
 		return rcv._tab.GetBool(o + rcv._tab.Pos)
 	}
@@ -295,11 +235,11 @@ func (rcv *LearningDecision) HasTape() bool {
 }
 
 func (rcv *LearningDecision) MutateHasTape(n bool) bool {
-	return rcv._tab.MutateBoolSlot(30, n)
+	return rcv._tab.MutateBoolSlot(22, n)
 }
 
 func LearningDecisionStart(builder *flatbuffers.Builder) {
-	builder.StartObject(14)
+	builder.StartObject(10)
 }
 func LearningDecisionAddId(builder *flatbuffers.Builder, id uint64) {
 	builder.PrependUint64Slot(0, id, 0)
@@ -325,26 +265,14 @@ func LearningDecisionStartContextVector(builder *flatbuffers.Builder, numElems i
 func LearningDecisionAddAction(builder *flatbuffers.Builder, action flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(6, flatbuffers.UOffsetT(action), 0)
 }
-func LearningDecisionAddBefore(builder *flatbuffers.Builder, before flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(before), 0)
-}
 func LearningDecisionAddQuantity(builder *flatbuffers.Builder, quantity flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(8, flatbuffers.UOffsetT(quantity), 0)
-}
-func LearningDecisionAddCashChange(builder *flatbuffers.Builder, cashChange flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(9, flatbuffers.UOffsetT(cashChange), 0)
-}
-func LearningDecisionAddReference(builder *flatbuffers.Builder, reference flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(reference), 0)
-}
-func LearningDecisionAddFee(builder *flatbuffers.Builder, fee flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(11, flatbuffers.UOffsetT(fee), 0)
+	builder.PrependUOffsetTSlot(7, flatbuffers.UOffsetT(quantity), 0)
 }
 func LearningDecisionAddTape(builder *flatbuffers.Builder, tape float64) {
-	builder.PrependFloat64Slot(12, tape, 0.0)
+	builder.PrependFloat64Slot(8, tape, 0.0)
 }
 func LearningDecisionAddHasTape(builder *flatbuffers.Builder, hasTape bool) {
-	builder.PrependBoolSlot(13, hasTape, false)
+	builder.PrependBoolSlot(9, hasTape, false)
 }
 func LearningDecisionEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

@@ -183,7 +183,7 @@ export const EventRhythm = ({ events }: { events: LearningEvent[] }) => {
 								{ticks.map((entry) => (
 									<div
 										key={`${entry.event.lane}-${entry.event.id}-${entry.at}`}
-										className="absolute top-[3px] bottom-[3px] w-px"
+										className="absolute top-0.75 bottom-0.75 w-px"
 										style={{
 											left: `${span > 0 ? ((entry.at - first) / span) * 100 : 50}%`,
 											background: RHYTHM_TONE[kind] ?? "var(--f3)",
@@ -213,17 +213,29 @@ export const EventRhythm = ({ events }: { events: LearningEvent[] }) => {
 
 /* OutcomeRange locates the signed empirical mean relative to zero. */
 export const OutcomeRange = ({ skill }: { skill?: Skill }) => {
- if (!skill?.defined) return <Typography.Mono>No completed outcomes yet.</Typography.Mono>;
- const extent = Math.abs(skill.mean);
- const width = extent > 0 ? 50 : 0;
- return <Flex.Column className="gap-2 p-3">
-  <Typography.Label>Completed decision benefit</Typography.Label>
-  <div className="relative h-8 bg-(--sunken)">
-   <div className="absolute left-1/2 h-full border-l border-(--line)" />
-   <div className="absolute h-full" style={{ left: skill.mean < 0 ? `${50-width}%` : "50%", width: `${width}%`, background: skill.mean < 0 ? "var(--down)" : "var(--up)" }} />
-  </div>
-  <Typography.Mono>{basis(-extent)} ← 0 → {basis(extent)} · mean {basis(skill.mean)}</Typography.Mono>
- </Flex.Column>;
+	if (!skill?.defined)
+		return <Typography.Mono>No completed outcomes yet.</Typography.Mono>;
+	const extent = Math.abs(skill.mean);
+	const width = extent > 0 ? 50 : 0;
+	return (
+		<Flex.Column className="gap-2 p-3">
+			<Typography.Label>Completed decision benefit</Typography.Label>
+			<div className="relative h-8 bg-(--sunken)">
+				<div className="absolute left-1/2 h-full border-l border-(--line)" />
+				<div
+					className="absolute h-full"
+					style={{
+						left: skill.mean < 0 ? `${50 - width}%` : "50%",
+						width: `${width}%`,
+						background: skill.mean < 0 ? "var(--down)" : "var(--up)",
+					}}
+				/>
+			</div>
+			<Typography.Mono>
+				{basis(-extent)} ← 0 → {basis(extent)} · mean {basis(skill.mean)}
+			</Typography.Mono>
+		</Flex.Column>
+	);
 };
 
 /*
@@ -397,7 +409,7 @@ export const InfluenceGrid = ({
 									}}
 								/>
 								<div
-									className="absolute bottom-0 left-0 h-[3px] bg-(--f1) opacity-70"
+									className="absolute bottom-0 left-0 h-0.75 bg-(--f1) opacity-70"
 									style={{ width: `${cell.prior.Authority * 100}%` }}
 								/>
 							</div>
@@ -420,7 +432,7 @@ export const WalletBars = ({ lanes }: { lanes: Wallet[] | null }) => {
 	if (wallets.length === 0) return null;
 
 	const extent = Math.max(
-		...wallets.map((wallet) => (wallet.complete ? Math.abs(wallet.profit) : 0)),
+		...wallets.map((wallet) => Math.abs(wallet.profit)),
 		...wallets.map((wallet) => Math.abs(wallet.realized)),
 		1e-9,
 	);
@@ -428,7 +440,7 @@ export const WalletBars = ({ lanes }: { lanes: Wallet[] | null }) => {
 	return (
 		<Flex.Column className="gap-1 border-(--line) border-b p-3">
 			{wallets.map((wallet) => {
-				const value = wallet.complete ? wallet.profit : undefined;
+				const value = wallet.profit;
 				const magnitude =
 					value === undefined ? 0 : share(Math.abs(value), extent) * 50;
 				const positive = (value ?? 0) >= 0;
@@ -440,7 +452,6 @@ export const WalletBars = ({ lanes }: { lanes: Wallet[] | null }) => {
 							className="w-28 shrink-0 truncate"
 						>
 							{wallet.mode} {wallet.lane + 1}
-							{wallet.exhausted ? " · spent" : ""}
 						</Typography.Mono>
 						<div className="relative h-4 flex-1 rounded-[3px] bg-(--sunken) border border-(--line)">
 							<div className="absolute top-0 bottom-0 left-1/2 w-px bg-(--line2)" />
@@ -471,31 +482,27 @@ export const WalletBars = ({ lanes }: { lanes: Wallet[] | null }) => {
 				);
 			})}
 			<Typography.Mono size="s" tone="f4">
-				This run's profit for each wallet, on one shared axis. Each wallet
-				owns its own capital. Losses remain in that wallet.
+				This run's profit for each wallet, on one shared axis. Each wallet owns
+				its own capital. Losses remain in that wallet.
 			</Typography.Mono>
 		</Flex.Column>
 	);
 };
 
-export const MeasurementWindow = ({ view }: { view: LearningView | null }) => <Flex.Column className="gap-2 p-3">
- <Typography.Label>Observation history</Typography.Label>
- <Typography.Mono>{duration(view?.horizonNs ?? 0)} of producer-supplied temporal context</Typography.Mono>
- <Typography.Mono>Decision outcomes wait for a completed, persisted trade leg. There is no spread-crossing or promotion gate.</Typography.Mono>
-</Flex.Column>;
+export const MeasurementWindow = ({ view }: { view: LearningView | null }) => (
+	<Flex.Column className="gap-2 p-3">
+		<Typography.Label>Observation history</Typography.Label>
+		<Typography.Mono>
+			{duration(view?.horizonNs ?? 0)} of producer-supplied temporal context
+		</Typography.Mono>
+		<Typography.Mono>
+			Decision outcomes wait for a completed, persisted trade leg. There is no
+			spread-crossing or promotion gate.
+		</Typography.Mono>
+	</Flex.Column>
+);
 
-/*
-LearningProgress is the answer to "is this thing actually learning right now".
-
-Everything else on this surface reports what the agent has become — its edge,
-its skill, whether it may trade. Those stay at zero for a long time, and a
-surface made only of them looks broken while the system underneath is working.
-
-This reports what it is doing: every confirmed move the tape hands it becomes
-evidence, and the count climbs whether or not the agent has yet earned the right
-to act on any of it. The line is accumulated here, from successive readings, so
-it moves at the rate the learning actually happens.
-*/
+/* LearningProgress plots the actual completed and pending decision counts. */
 export const LearningProgress = ({ view }: { view: LearningView | null }) => {
 	const trained = view?.forward?.trained ?? 0;
 	const pending = view ? view.decisions - view.resolved : 0;
@@ -503,19 +510,21 @@ export const LearningProgress = ({ view }: { view: LearningView | null }) => {
 	const [, redraw] = useState(0);
 
 	useEffect(() => {
+		if (!view) return;
 		const samples = history.current;
 		const latest = samples.at(-1);
 
 		if (latest?.trained === trained) {
 			return;
 		}
-		samples.push({ at: Date.now(), trained });
+		if (latest && trained < latest.trained) samples.length = 0;
+		samples.push({ at: Date.parse(view.at), trained });
 
 		if (samples.length > 600) {
 			samples.splice(0, samples.length - 600);
 		}
 		redraw((tick) => tick + 1);
-	}, [trained]);
+	}, [trained, view]);
 
 	const samples = history.current;
 	const first = samples[0];
@@ -584,9 +593,9 @@ export const LearningProgress = ({ view }: { view: LearningView | null }) => {
 			</div>
 
 			<Typography.Mono size="s" tone="f4">
-				Each of these is a move the market actually made, found after it
-				completed, matched back to what the agent was looking at when it began.
-				Nobody labelled them — the tape did. Learning continues while completed tape outcomes arrive.
+				Completed decisions graded against persisted trade legs, using the
+				original observations and action. Learning continues as tape outcomes
+				arrive.
 			</Typography.Mono>
 		</Flex.Column>
 	);

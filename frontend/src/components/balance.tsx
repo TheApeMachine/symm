@@ -2,6 +2,7 @@ import { learningStore } from "#/collections/learning";
 import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
 import { equityStore } from "#/collections/app";
+import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 
@@ -42,7 +43,7 @@ const Reading = ({
 	children,
 }: {
 	label: string;
-	tone: "f1" | "f2" | "accent";
+	tone: "f1" | "f2" | "f3" | "accent";
 	weight: "medium" | "semibold";
 	which: string;
 	value: string;
@@ -71,7 +72,7 @@ const Reading = ({
 );
 
 export const Balance = () => {
- const policy = useSelector(learningStore, state => state?.agents[0]);
+	const policy = useSelector(learningStore, (state) => state?.agents[0]);
 	const lastWithCash = useSelector(equityStore, (state) =>
 		state.findLast((f) => f.cash() !== null && f.cash() !== ""),
 	);
@@ -87,28 +88,43 @@ export const Balance = () => {
 		right now, not for the account being larger than nothing. Equity is above
 		zero the moment the wallet is funded, which would leave it permanently on.
 	*/
-	const unrealized = Number(policy ? policy.unrealized : lastWithUnrealized?.unrealized());
+	const unrealized = Number(
+		policy ? policy.unrealized : lastWithUnrealized?.unrealized(),
+	);
 	const inProfit = Number.isFinite(unrealized) && unrealized > 0;
 
 	return (
-		<Flex.Row align="center" gap={6}>
+		<Flex.Row
+			align="center"
+			gap={6}
+			data-wallet={policy ? "learning" : "account"}
+		>
+			{policy && (
+				<Badge
+					label="Learning · simulated"
+					variant="disabled"
+					title="Consolidated-model learning wallet. Orders are simulated against the market book."
+				/>
+			)}
 			<Reading
 				label="Cash"
-				tone="f1"
+				tone={policy ? "f3" : "f1"}
 				weight="medium"
 				which="cash"
 				value={fmt(policy ? String(policy.cash) : lastWithCash?.cash())}
 			/>
 			<Reading
 				label="Unrealized"
-				tone="f2"
+				tone={policy ? "f3" : "f2"}
 				weight="medium"
 				which="unrealized"
-				value={fmt(policy ? String(policy.unrealized) : lastWithUnrealized?.unrealized())}
+				value={fmt(
+					policy ? String(policy.unrealized) : lastWithUnrealized?.unrealized(),
+				)}
 			/>
 			<Reading
 				label="Equity"
-				tone="accent"
+				tone={policy ? "f3" : "accent"}
 				weight="semibold"
 				which="equity"
 				value={fmt(policy ? String(policy.equity) : lastWithEquity?.equity())}

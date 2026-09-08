@@ -1224,14 +1224,13 @@ table LearningAction { kind:string; power:int; reduce:bool; prior:LearningPrior;
 table LearningDecision {
  id:ulong; agent:int; symbol:string; atNs:long; throughNs:long;
  context:[string]; action:LearningAction;
- before:string; quantity:string; cashChange:string; reference:string; fee:string;
+ quantity:string;
  tape:double; hasTape:bool;
 }
 table LearningAgent {
  id:int; initial:string; cash:string; equity:string; fees:string;
  profit:string; wealth:double; realized:string; unrealized:string;
  decisions:ulong; fills:ulong; pending:ulong;
- samples:double; mean:double; variance:double; varianceDefined:bool;
  wins:ulong; losses:ulong; status:string;
  positions:[Position]; last:LearningDecision; alternatives:[LearningAction]; reading:LearningPrior; reward:double; elapsedNs:long; outcome:LearningDecision;
 }

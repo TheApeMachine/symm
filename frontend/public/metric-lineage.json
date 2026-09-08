@@ -308,7 +308,7 @@
       "metric": "gross_derivative_trade_notional",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 104,
+      "line": 100,
       "unit": "data.UnitRate",
       "consumers": [],
       "dead": true,
@@ -320,7 +320,7 @@
       "metric": "gross_liquidation_notional",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 102,
+      "line": 98,
       "unit": "data.UnitRate",
       "consumers": [],
       "dead": true,
@@ -345,7 +345,7 @@
       "side": "buy",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 100,
+      "line": 96,
       "unit": "data.UnitRate",
       "consumers": [],
       "dead": true,
@@ -358,7 +358,7 @@
       "side": "sell",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 101,
+      "line": 97,
       "unit": "data.UnitRate",
       "consumers": [],
       "dead": true,
@@ -370,7 +370,7 @@
       "metric": "liquidation_notional_rate",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 127,
+      "line": 120,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -390,7 +390,7 @@
       "metric": "liquidation_share",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 115,
+      "line": 111,
       "unit": "data.UnitDimensionless",
       "consumers": [
         {
@@ -410,7 +410,7 @@
       "metric": "liquidation_share_velocity",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 131,
+      "line": 124,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -430,7 +430,7 @@
       "metric": "liquidation_signed_fraction",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 108,
+      "line": 104,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -454,7 +454,7 @@
       "metric": "net_liquidation_notional",
       "package": "github.com/theapemachine/symm/signal/derivatives",
       "file": "signal/derivatives/trade.go",
-      "line": 103,
+      "line": 99,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -2032,7 +2032,7 @@
       "metric": "completed_volume_bar_ordinal",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 142,
+      "line": 135,
       "unit": "data.UnitCount",
       "consumers": [],
       "dead": true,
@@ -2065,7 +2065,7 @@
       "side": "at",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 216,
+      "line": 207,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -2086,7 +2086,7 @@
       "side": "from",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 219,
+      "line": 210,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -2106,7 +2106,7 @@
       "metric": "midpoint_log_return",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 223,
+      "line": 214,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -2118,7 +2118,7 @@
       "metric": "midpoint_return_baseline",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 244,
+      "line": 235,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -2130,7 +2130,7 @@
       "metric": "midpoint_return_divergence",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 245,
+      "line": 236,
       "consumers": [],
       "dead": true,
       "kernelOnly": false
@@ -2141,7 +2141,7 @@
       "metric": "midpoint_return_rate",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 224,
+      "line": 215,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -2153,7 +2153,7 @@
       "metric": "midpoint_return_rate_divergence",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 246,
+      "line": 237,
       "consumers": [
         {
           "kind": "bound",
@@ -2172,7 +2172,7 @@
       "metric": "midpoint_return_rate_zscore",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 246,
+      "line": 237,
       "consumers": [
         {
           "kind": "bound",
@@ -2191,7 +2191,7 @@
       "metric": "midpoint_return_velocity",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 262,
+      "line": 253,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -2203,7 +2203,7 @@
       "metric": "midpoint_return_zscore",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 245,
+      "line": 236,
       "consumers": [
         {
           "kind": "bound",
@@ -2229,7 +2229,7 @@
       "metric": "negative_midpoint_return",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 258,
+      "line": 249,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -2241,7 +2241,7 @@
       "metric": "notional_rate",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 177,
+      "line": 168,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -2253,7 +2253,7 @@
       "metric": "notional_rate_baseline",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 190,
+      "line": 181,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -2273,7 +2273,7 @@
       "metric": "notional_rate_divergence",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 197,
+      "line": 188,
       "consumers": [
         {
           "kind": "bound",
@@ -2292,7 +2292,7 @@
       "metric": "notional_rate_ratio",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 191,
+      "line": 182,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -2304,7 +2304,7 @@
       "metric": "notional_rate_velocity",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 205,
+      "line": 196,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -2316,7 +2316,7 @@
       "metric": "notional_rate_zscore",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 197,
+      "line": 188,
       "consumers": [
         {
           "kind": "bound",
@@ -2335,7 +2335,7 @@
       "metric": "positive_midpoint_return",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 257,
+      "line": 248,
       "unit": "data.UnitDimensionless",
       "consumers": [],
       "dead": true,
@@ -2451,7 +2451,7 @@
       "metric": "trade_interval_seconds",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 139,
+      "line": 132,
       "unit": "data.UnitSecond",
       "consumers": [
         {
@@ -2471,7 +2471,7 @@
       "metric": "trade_notional",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 131,
+      "line": 124,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -2491,7 +2491,7 @@
       "metric": "trade_price",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 129,
+      "line": 122,
       "unit": "data.UnitRate",
       "consumers": [
         {
@@ -2511,7 +2511,7 @@
       "metric": "trade_quantity",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 130,
+      "line": 123,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -2531,7 +2531,7 @@
       "metric": "trade_rate",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 178,
+      "line": 169,
       "unit": "data.UnitPerSecond",
       "consumers": [],
       "dead": true,
@@ -2543,7 +2543,7 @@
       "metric": "volume_bar_duration",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 136,
+      "line": 129,
       "unit": "data.UnitSecond",
       "consumers": [
         {
@@ -2563,7 +2563,7 @@
       "metric": "volume_bar_notional",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 134,
+      "line": 127,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -2583,7 +2583,7 @@
       "metric": "volume_bar_quantity",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 133,
+      "line": 126,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -2617,7 +2617,7 @@
       "metric": "volume_bar_target_quantity",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 132,
+      "line": 125,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -2637,7 +2637,7 @@
       "metric": "volume_bar_trade_count",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 135,
+      "line": 128,
       "unit": "data.UnitCount",
       "consumers": [
         {
@@ -2657,7 +2657,7 @@
       "metric": "volume_rate",
       "package": "github.com/theapemachine/symm/signal/pumpdump",
       "file": "signal/pumpdump/trade.go",
-      "line": 176,
+      "line": 167,
       "unit": "data.UnitPerSecond",
       "consumers": [
         {
@@ -5388,6 +5388,12 @@
   ],
   "unresolved": [
     {
+      "package": "github.com/theapemachine/symm/hindsight",
+      "file": "hindsight/tape.go",
+      "line": 54,
+      "reason": "Labelled node wraps a reporter whose readings are not statically known"
+    },
+    {
       "package": "github.com/theapemachine/symm/logic/cognition",
       "file": "logic/cognition/solver.go",
       "line": 870,
@@ -5396,19 +5402,19 @@
     {
       "package": "github.com/theapemachine/symm/store",
       "file": "store/s3.go",
-      "line": 15,
+      "line": 21,
       "reason": "Labelled node wraps a reporter whose readings are not statically known"
     },
     {
       "package": "github.com/theapemachine/symm/store",
       "file": "store/json.go",
-      "line": 50,
+      "line": 57,
       "reason": "Labelled node wraps a reporter whose readings are not statically known"
     },
     {
       "package": "github.com/theapemachine/symm/types",
       "file": "types/envelope.go",
-      "line": 528,
+      "line": 532,
       "reason": "Labelled node wraps a reporter whose readings are not statically known"
     }
   ],
@@ -5422,6 +5428,6 @@
     "learnedConsumerEdges": 0,
     "kernelConsumerEdges": 0,
     "genericConsumerEdges": 0,
-    "unresolved": 4
+    "unresolved": 5
   }
 }
