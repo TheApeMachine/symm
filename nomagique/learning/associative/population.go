@@ -181,9 +181,10 @@ func (population *Population[Action]) Save(ctx context.Context, checkpoint Check
 	err := encoder.Encode(population.Grid.Columns)
 
 	if err == nil {
-		err = encoder.Encode(population.Agents[0].Model)
+		// Identities and evidence form one checkpoint. A replay admission must
+		// not introduce model tokens after their dictionary was encoded.
+		err = population.Agents[0].Model.Encode(encoder)
 	}
-
 	population.mutex.Unlock()
 
 	if err != nil {
@@ -242,4 +243,51 @@ func (population *Population[Action]) Restore(ctx context.Context, checkpoint Ch
 	}
 
 	return true, nil
+}
+
+/*
+Learn interns a worker's named quantities before training the consolidated
+model. Local column numbers have no meaning in another grid. Structural history
+markers pass through unchanged; condition signs stay attached to their source
+and metric name. The worker's context is never mutated.
+*/
+func (population *Population[Action]) Learn(
+	label string, columns [][2]string, context []uint64,
+	action Action, value, authority float64,
+) error {
+	population.mutex.Lock()
+	defer population.mutex.Unlock()
+
+	mapped := make([]uint64, len(context))
+
+	for index, token := range context {
+		if token&(uint64(1)<<63) != 0 {
+			mapped[index] = token
+			continue
+		}
+
+		quantity := grid.ConditionQuantity(token)
+
+		if quantity == 0 || quantity > uint64(len(columns)) {
+			return errnie.Error(errnie.Err(errnie.Validation, "population: rehearsal quantity has no identity", nil))
+		}
+
+		identity := columns[quantity-1]
+		column := population.Grid.Column(identity[0], identity[1])
+		mapped[index] = grid.RemapCondition(token, uint64(column+1))
+	}
+
+	return errnie.Error(population.Agents[0].Model.Observe(label, mapped, action, value, authority))
+}
+
+/*
+Read scopes access to borrowed grid storage. Live observation, historical
+identity admission and checkpointing all share this lock; callers must not
+retain mutable grid slices beyond the callback.
+*/
+func (population *Population[Action]) Read(read func(*grid.Space) error) error {
+	population.mutex.Lock()
+	defer population.mutex.Unlock()
+
+	return errnie.Error(read(population.Grid))
 }

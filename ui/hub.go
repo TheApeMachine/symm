@@ -153,7 +153,7 @@ func NewHub(ctx context.Context) *Hub {
 
 		after := parseUintQuery(c.Query("after"))
 
-		rows, err := hub.store.CapturesAfter(hub.ctx, c.Query("run"), int64(after))
+		rows, err := hub.store.Captures(hub.ctx, c.Query("run"), int64(after))
 
 		if err != nil {
 			return err
@@ -220,7 +220,7 @@ func NewHub(ctx context.Context) *Hub {
 		// external input; the frame read answers with the complete identity
 		// rather than requiring the caller to already hold the transport
 		// fields it came here to look up.
-		rows, err := hub.store.Captures(hub.ctx, run)
+		rows, err := hub.store.Captures(hub.ctx, run, 0)
 
 		if err != nil {
 			return err

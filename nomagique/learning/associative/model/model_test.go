@@ -283,9 +283,50 @@ func TestModelAbort(t *testing.T) {
 		}
 		So(model.Contexts["symbol"].Epoch, ShouldEqual, 0)
 		So(model.Contexts["global"].Epoch, ShouldEqual, 0)
+		So(len(model.Contexts["symbol"].Children), ShouldEqual, 0)
+		So(len(model.Contexts["global"].Children), ShouldEqual, 0)
+		So(len(model.Contexts["symbol"].Priors), ShouldEqual, 0)
+
 		So(model.Abort(ticket), ShouldNotBeNil)
 		_, err = model.Resolve(ticket, 99)
 		So(err, ShouldNotBeNil)
+	})
+	Convey("Shared prefixes retain outstanding tickets and actual evidence", t, func() {
+		learned := New[string, string]()
+		context := []uint64{1, 2, 3}
+		first, err := learned.Issue("symbol", context, "enter", 1)
+		So(err, ShouldBeNil)
+		second, err := learned.Issue("symbol", context, "enter", 1)
+		So(err, ShouldBeNil)
+		other, err := learned.Issue("symbol", []uint64{1, 2, 4}, "wait", 1)
+		So(err, ShouldBeNil)
+
+		So(learned.Abort(first), ShouldBeNil)
+		So(learned.Recall("symbol", context, "enter").Pending, ShouldEqual, 1)
+
+		Convey("A measured zero survives another action's abort", func() {
+			_, err := learned.Resolve(second, 0)
+			So(err, ShouldBeNil)
+			So(learned.Abort(other), ShouldBeNil)
+			So(learned.Recall("symbol", context, "enter").Samples, ShouldEqual, 1)
+			So(learned.Contexts["symbol"].Children[1].Children[2].Children[4], ShouldBeNil)
+		})
+
+		Convey("Provisional feedback also survives its ticket's abort", func() {
+			So(learned.Feedback(second, -1), ShouldBeNil)
+			So(learned.Abort(second), ShouldBeNil)
+			So(learned.Abort(other), ShouldBeNil)
+			reading := learned.Recall("symbol", context, "enter")
+			So(reading.Provisional, ShouldBeTrue)
+			So(reading.Mean, ShouldEqual, -1)
+		})
+
+		Convey("Aborting every unobserved ticket empties the whole path", func() {
+			So(learned.Abort(second), ShouldBeNil)
+			So(learned.Recall("symbol", []uint64{1, 2, 4}, "wait").Pending, ShouldEqual, 1)
+			So(learned.Abort(other), ShouldBeNil)
+			So(len(learned.Contexts["symbol"].Children), ShouldEqual, 0)
+		})
 	})
 }
 
@@ -387,5 +428,28 @@ func BenchmarkModelRecall(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		model.Recall("market", query, 1)
+	}
+}
+
+func BenchmarkModelAbort(b *testing.B) {
+	learned := New[string, string]()
+	context := []uint64{1, 2, 3, 4}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		context[3]++ // Each forced decision introduces a different unlearned suffix.
+		identity, err := learned.Issue("symbol", context, "wait", 1)
+
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		if err := learned.Abort(identity); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	if len(learned.Contexts["symbol"].Children) != 0 {
+		b.Fatal("aborted decisions retained unlearned branches")
 	}
 }

@@ -14,10 +14,10 @@ import (
 	"github.com/theapemachine/symm/hindsight/recording"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative"
 	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -76,14 +76,17 @@ func NewLearner(ctx context.Context, api *websocket.API, price *broker.Price, ba
 	if err != nil {
 		return nil, err
 	}
+	if count == 1 {
+		return learner, nil
+	}
+
 	learner.Rehearsal = NewRehearsal(
 		count-1,
 		catalog,
 		run,
 		hindsight.DefaultDiscoveryPolicy(),
 		price,
-		population.Agents[0].Model,
-		cognition.NewEngine(cognition.DefaultConfig()),
+		population,
 	)
 	return learner, nil
 }
@@ -142,6 +145,10 @@ func (learner *Learner) observe(symbol string, readings []*data.Measurement[floa
 	if err := learner.Population.Step(agent.Observation{At: learner.At, Measurements: readings, History: history}); err != nil {
 		return err
 	}
+	if err := learner.releaseForced(symbol); err != nil {
+		return errnie.Error(err)
+	}
+
 	learner.Steps++
 	learner.Decisions = 0
 
@@ -149,7 +156,9 @@ func (learner *Learner) observe(symbol string, readings []*data.Measurement[floa
 		learner.Decisions += member.Decisions
 	}
 	development.Decisions += learner.Decisions - previousDecisions
-	return development.Advance(learner.At, learner.Population.Grid)
+	return learner.Population.Read(func(space *grid.Space) error {
+		return development.Advance(learner.At, space)
+	})
 }
 
 /*
@@ -257,18 +266,6 @@ func (learner *Learner) resolve(leg hindsight.Leg) ([]*Evaluation, error) {
 				continue
 			}
 
-			// A decision with no alternative is released, not graded. Training
-			// it would answer "what is waiting worth" with the return of a
-			// market the wallet had no means to act on.
-			if evaluation.Forced {
-				if err := learner.Population.Abort(index, identity); err != nil {
-					return nil, err
-				}
-				learner.Forced++
-				delete(trader.Evaluations[leg.Symbol], identity)
-				continue
-			}
-
 			if err := learner.Population.Resolve(index, identity, evaluation.Value); err != nil {
 				return nil, err
 			}
@@ -345,4 +342,30 @@ func (learner *Learner) fail(err error) {
 	learner.mutex.Lock()
 	defer learner.mutex.Unlock()
 	learner.Err = errnie.Error(err)
+}
+
+// releaseForced discards a non-choice immediately after successful execution.
+// It cannot become training evidence, so waiting for a future tape leg only
+// retains an unbounded number of useless tickets when cash or a book is absent.
+func (learner *Learner) releaseForced(symbol string) error {
+	for index, member := range learner.Population.Agents {
+		if member.Last == nil {
+			continue
+		}
+
+		evaluations := learner.Traders[index].Evaluations[symbol]
+		evaluation := evaluations[member.Last.ID]
+
+		if evaluation == nil || !evaluation.Forced {
+			continue
+		}
+
+		if err := learner.Population.Abort(index, evaluation.ID); err != nil {
+			return errnie.Error(err)
+		}
+
+		delete(evaluations, evaluation.ID)
+		learner.Forced++
+	}
+	return nil
 }

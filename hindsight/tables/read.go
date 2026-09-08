@@ -1,6 +1,7 @@
 package tables
 
 import (
+	"bytes"
 	"context"
 	"iter"
 	"sort"
@@ -16,7 +17,8 @@ import (
 
 /*
 scan reads one table, optionally restricted to a single run, and yields its
-record batches.
+record batches. Batches are borrowed for the duration of each yield; retained
+values must be copied before advancing the iterator.
 
 Iceberg guarantees no row order: a scan returns files in plan order and rows in
 file order. Callers that need capture order sort explicitly rather than relying
@@ -31,13 +33,13 @@ func (c *Catalog) scan(
 		return nil, err
 	}
 
-	options := []icetable.ScanOption{}
+	predicate := iceberg.BooleanExpression(iceberg.AlwaysTrue{})
 
 	for _, filter := range filters {
-		options = append(options, icetable.WithRowFilter(filter))
+		predicate = iceberg.NewAnd(predicate, filter)
 	}
 
-	_, batches, err := loaded.Scan(options...).ToArrowRecords(ctx)
+	_, batches, err := loaded.Scan(icetable.WithRowFilter(predicate)).ToArrowRecords(ctx)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(
@@ -47,7 +49,19 @@ func (c *Catalog) scan(
 		))
 	}
 
-	return batches, nil
+	return func(yield func(arrow.RecordBatch, error) bool) {
+		for batch, err := range batches {
+			more := yield(batch, err)
+
+			if batch != nil {
+				batch.Release()
+			}
+
+			if !more {
+				return
+			}
+		}
+	}, nil
 }
 
 // forRun restricts a scan to one run.
@@ -61,7 +75,7 @@ func str(column arrow.Array, row int) string {
 		return ""
 	}
 
-	return column.(*array.String).Value(row)
+	return strings.Clone(column.(*array.String).Value(row))
 }
 
 // num reads an optional int64 column, returning 0 for null.
@@ -88,18 +102,18 @@ func bin(column arrow.Array, row int) []byte {
 		return nil
 	}
 
-	return column.(*array.Binary).Value(row)
+	return bytes.Clone(column.(*array.Binary).Value(row))
 }
 
 /*
-Captures yields every raw input of one run in capture sequence order.
-
-The rows are collected before sorting, which bounds memory by the run rather
-than streaming. That matches the readers: replay and observation decoding both
-need the whole run in order, and neither can act on a prefix.
+Captures returns a run's captures strictly after the consumed sequence, sorted
+in capture order. Sequences start at one; after zero reads the whole run.
+Both predicates reach Iceberg before reading payloads, so tail followers avoid
+reloading consumed files. Only the selected suffix is collected for sorting.
 */
-func (c *Catalog) Captures(ctx context.Context, run string) ([]CaptureRow, error) {
-	batches, err := c.scan(ctx, Captures, forRun(run))
+func (c *Catalog) Captures(ctx context.Context, run string, after int64) ([]CaptureRow, error) {
+	batches, err := c.scan(ctx, Captures, forRun(run),
+		iceberg.GreaterThan(iceberg.Reference("sequence"), after))
 
 	if err != nil {
 		return nil, err
@@ -380,26 +394,6 @@ func (c *Catalog) Gaps(ctx context.Context, run string) ([]GapRow, error) {
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Sequence < rows[j].Sequence })
 
 	return rows, nil
-}
-
-/*
-CapturesAfter yields a run's captures whose sequence is strictly greater than
-after, in sequence order.
-
-This is the incremental read: a tail follower keeps the last sequence it
-consumed and asks only for what has landed since, so the predicate prunes at
-the file level rather than pulling the run forward every poll.
-*/
-func (c *Catalog) CapturesAfter(ctx context.Context, run string, after int64) ([]CaptureRow, error) {
-	rows, err := c.Captures(ctx, run)
-
-	if err != nil {
-		return nil, err
-	}
-
-	index := sort.Search(len(rows), func(i int) bool { return rows[i].Sequence > after })
-
-	return rows[index:], nil
 }
 
 /*

@@ -265,13 +265,40 @@ export { GraphMetadata, GraphMetadataT } from "./telemetry/graph-metadata.js";
 export { GraphNode, GraphNodeT } from "./telemetry/graph-node.js";
 export { Holding, HoldingT } from "./telemetry/holding.js";
 export { Hydrodynamics, HydrodynamicsT } from "./telemetry/hydrodynamics.js";
+export {
+	LearningAction,
+	LearningActionT,
+} from "./telemetry/learning-action.js";
+export { LearningAgent, LearningAgentT } from "./telemetry/learning-agent.js";
+export {
+	LearningDecision,
+	LearningDecisionT,
+} from "./telemetry/learning-decision.js";
+export {
+	LearningDevelopment,
+	LearningDevelopmentT,
+} from "./telemetry/learning-development.js";
+export { LearningPrior, LearningPriorT } from "./telemetry/learning-prior.js";
+export {
+	LearningQuantity,
+	LearningQuantityT,
+} from "./telemetry/learning-quantity.js";
+export {
+	LearningRegion,
+	LearningRegionT,
+} from "./telemetry/learning-region.js";
+export {
+	LearningRehearsal,
+	LearningRehearsalT,
+} from "./telemetry/learning-rehearsal.js";
+export { LearningState, LearningStateT } from "./telemetry/learning-state.js";
+export { MCTSBranch, MCTSBranchT } from "./telemetry/mctsbranch.js";
+export { MCTSNode, MCTSNodeT } from "./telemetry/mctsnode.js";
 export { ManifoldFrame, ManifoldFrameT } from "./telemetry/manifold-frame.js";
 export {
 	ManifoldReading,
 	ManifoldReadingT,
 } from "./telemetry/manifold-reading.js";
-export { MCTSBranch, MCTSBranchT } from "./telemetry/mctsbranch.js";
-export { MCTSNode, MCTSNodeT } from "./telemetry/mctsnode.js";
 export { Measurement, MeasurementT } from "./telemetry/measurement.js";
 export {
 	MeasurementsFrame,

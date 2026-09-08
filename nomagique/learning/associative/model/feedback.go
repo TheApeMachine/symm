@@ -8,6 +8,9 @@ Completed outcomes take precedence over provisional evidence for that action.
 Repeated feedback is correlated trajectory evidence, not independent trials.
 */
 func (model *Model[Key, Action]) Feedback(identity uint64, value float64) error {
+	model.mutex.Lock()
+	defer model.mutex.Unlock()
+
 	pending, exists := model.pending[identity]
 
 	if !exists {

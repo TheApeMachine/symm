@@ -112,6 +112,7 @@ export type DeskView = {
 	settled: number;
 };
 export type LearningView = {
+	rehearsal?: LearningStateT["rehearsal"];
 	agents: LearningAgentT[];
 	restored: boolean;
 	desk?: DeskView;
@@ -311,7 +312,8 @@ export const useAgentSkill = () => {
 					resolved: view.resolved,
 					symbols: view.universe?.length ?? 0,
 					authorizedMode: online ? view.status : "offline",
-					realizationReason: "Independent simulated accounts",
+					realizationReason:
+						"One live simulated account; historical workers have no wallets",
 				}
 			: null,
 		error: !online
@@ -375,6 +377,7 @@ export const projectLearning = (
 	);
 	return {
 		agents: state.agents,
+		rehearsal: state.rehearsal,
 		restored: state.restored,
 		at,
 		symbol: String(market?.symbol ?? ""),

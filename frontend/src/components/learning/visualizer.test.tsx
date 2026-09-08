@@ -1,5 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { learningFixture } from "./fixture";
+import { projectLearning } from "./state";
 import type { Candidate, LearningEvent, LearningView, Skill } from "./state";
 import {
 	ActionSpectrumPlot,
@@ -181,7 +183,8 @@ describe("LearningTrajectoryPlot unavailable inputs", () => {
 
 describe("LearningVisualizer", () => {
 	it("renders the visualizer frame with tabs and footer stats", () => {
-		const view: Partial<LearningView> = {
+		const view: LearningView = {
+			...projectLearning(learningFixture(), ""),
 			skill: {
 				mode: "learning",
 				account: "sim",
@@ -217,7 +220,7 @@ describe("LearningVisualizer", () => {
 		};
 
 		const markup = renderToStaticMarkup(
-			<LearningVisualizer view={view as LearningView} events={[]} />,
+			<LearningVisualizer view={view} events={[]} />,
 		);
 
 		expect(markup).toContain("Learning visualizer");

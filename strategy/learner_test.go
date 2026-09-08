@@ -206,7 +206,7 @@ func TestLearnerReview(t *testing.T) {
 	})
 }
 
-func TestLearnerReleasesForcedDecisions(t *testing.T) {
+func TestLearnerReleaseForced(t *testing.T) {
 	Convey("A decision with no alternative is released instead of graded", t, func() {
 		learner, _ := learningFixture(t)
 
@@ -221,13 +221,9 @@ func TestLearnerReleasesForcedDecisions(t *testing.T) {
 		}
 		So(learner.Decisions, ShouldBeGreaterThan, 0)
 
-		for _, trader := range learner.Traders {
-			for _, evaluations := range trader.Evaluations {
-				for _, evaluation := range evaluations {
-					So(evaluation.Forced, ShouldBeTrue)
-				}
-			}
-		}
+		So(learner.Forced, ShouldEqual, learner.Decisions)
+		So(learner.Population.Agents[0].Pending, ShouldBeEmpty)
+		So(learner.Traders[0].Evaluations["BTC/USD"], ShouldBeEmpty)
 		writeCaptures(t, learner, []int64{100, 130, 95})
 		So(learner.Review(t.Context()), ShouldBeNil)
 

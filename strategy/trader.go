@@ -34,6 +34,9 @@ the wallet physically cannot sustain; none of them scores a symbol, forecasts a
 price, or vetoes an entry the account could actually fund.
 */
 const (
+	// FlatPositionContext is the structural context for an unheld, non-stale position.
+	FlatPositionContext uint64 = 1 << 63
+
 	// MinimumOrderValue is the venue's smallest accepted order in quote
 	// currency. A wallet below it cannot act at all — no size it could name
 	// would be admitted — so its agent sits issuing waits and stops
@@ -151,7 +154,7 @@ func (trader *Trader) Feasible(symbol string) ([]Action, []uint64, error) {
 			bid, ask = book.BestBid().Price, book.BestAsk().Price
 		}
 	})
-	state := []uint64{uint64(1) << 63}
+	state := []uint64{FlatPositionContext}
 
 	if held.Sign() > 0 {
 		state[0]++
@@ -317,7 +320,7 @@ func (trader *Trader) Execute(decision *agent.Decision[Action]) error {
 
 	// A decision taken from a single feasible action was not a choice, and the
 	// outcome it collects is evidence about the market rather than about the
-	// action. Learner releases these instead of training them.
+	// action. Learner releases these immediately after execution instead of training them.
 	evaluation.Forced = len(trader.Alternatives) < 2
 
 	if decision.Action.Kind == "wait" || decision.Action.Kind == "hold" {

@@ -7,6 +7,7 @@ import * as flatbuffers from 'flatbuffers';
 
 import { LearningAgent, LearningAgentT } from '../telemetry/learning-agent.js';
 import { LearningDevelopment, LearningDevelopmentT } from '../telemetry/learning-development.js';
+import { LearningRehearsal, LearningRehearsalT } from '../telemetry/learning-rehearsal.js';
 
 
 export class LearningState implements flatbuffers.IUnpackableObject<LearningStateT> {
@@ -89,8 +90,13 @@ forced():bigint {
   return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
 }
 
+rehearsal(obj?:LearningRehearsal):LearningRehearsal|null {
+  const offset = this.bb!.__offset(this.bb_pos, 24);
+  return offset ? (obj || new LearningRehearsal()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
+}
+
 static startLearningState(builder:flatbuffers.Builder) {
-  builder.startObject(10);
+  builder.startObject(11);
 }
 
 static addAtNs(builder:flatbuffers.Builder, atNs:bigint) {
@@ -157,25 +163,15 @@ static addForced(builder:flatbuffers.Builder, forced:bigint) {
   builder.addFieldInt64(9, forced, BigInt('0'));
 }
 
+static addRehearsal(builder:flatbuffers.Builder, rehearsalOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(10, rehearsalOffset, 0);
+}
+
 static endLearningState(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createLearningState(builder:flatbuffers.Builder, atNs:bigint, steps:bigint, decisions:bigint, resolved:bigint, statusOffset:flatbuffers.Offset, agentsOffset:flatbuffers.Offset, marketsOffset:flatbuffers.Offset, restored:boolean, episodes:bigint, forced:bigint):flatbuffers.Offset {
-  LearningState.startLearningState(builder);
-  LearningState.addAtNs(builder, atNs);
-  LearningState.addSteps(builder, steps);
-  LearningState.addDecisions(builder, decisions);
-  LearningState.addResolved(builder, resolved);
-  LearningState.addStatus(builder, statusOffset);
-  LearningState.addAgents(builder, agentsOffset);
-  LearningState.addMarkets(builder, marketsOffset);
-  LearningState.addRestored(builder, restored);
-  LearningState.addEpisodes(builder, episodes);
-  LearningState.addForced(builder, forced);
-  return LearningState.endLearningState(builder);
-}
 
 unpack(): LearningStateT {
   return new LearningStateT(
@@ -188,7 +184,8 @@ unpack(): LearningStateT {
     this.bb!.createObjList<LearningDevelopment, LearningDevelopmentT>(this.markets.bind(this), this.marketsLength()),
     this.restored(),
     this.episodes(),
-    this.forced()
+    this.forced(),
+    (this.rehearsal() !== null ? this.rehearsal()!.unpack() : null)
   );
 }
 
@@ -204,6 +201,7 @@ unpackTo(_o: LearningStateT): void {
   _o.restored = this.restored();
   _o.episodes = this.episodes();
   _o.forced = this.forced();
+  _o.rehearsal = (this.rehearsal() !== null ? this.rehearsal()!.unpack() : null);
 }
 }
 
@@ -218,7 +216,8 @@ constructor(
   public markets: (LearningDevelopmentT)[] = [],
   public restored: boolean = false,
   public episodes: bigint = BigInt('0'),
-  public forced: bigint = BigInt('0')
+  public forced: bigint = BigInt('0'),
+  public rehearsal: LearningRehearsalT|null = null
 ){}
 
 
@@ -226,18 +225,21 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const status = (this.status !== null ? builder.createString(this.status!) : 0);
   const agents = LearningState.createAgentsVector(builder, builder.createObjectOffsetList(this.agents));
   const markets = LearningState.createMarketsVector(builder, builder.createObjectOffsetList(this.markets));
+  const rehearsal = (this.rehearsal !== null ? this.rehearsal!.pack(builder) : 0);
 
-  return LearningState.createLearningState(builder,
-    this.atNs,
-    this.steps,
-    this.decisions,
-    this.resolved,
-    status,
-    agents,
-    markets,
-    this.restored,
-    this.episodes,
-    this.forced
-  );
+  LearningState.startLearningState(builder);
+  LearningState.addAtNs(builder, this.atNs);
+  LearningState.addSteps(builder, this.steps);
+  LearningState.addDecisions(builder, this.decisions);
+  LearningState.addResolved(builder, this.resolved);
+  LearningState.addStatus(builder, status);
+  LearningState.addAgents(builder, agents);
+  LearningState.addMarkets(builder, markets);
+  LearningState.addRestored(builder, this.restored);
+  LearningState.addEpisodes(builder, this.episodes);
+  LearningState.addForced(builder, this.forced);
+  LearningState.addRehearsal(builder, rehearsal);
+
+  return LearningState.endLearningState(builder);
 }
 }

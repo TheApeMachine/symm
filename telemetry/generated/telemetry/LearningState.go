@@ -17,6 +17,7 @@ type LearningStateT struct {
 	Restored bool `json:"restored"`
 	Episodes uint64 `json:"episodes"`
 	Forced uint64 `json:"forced"`
+	Rehearsal *LearningRehearsalT `json:"rehearsal"`
 }
 
 func (t *LearningStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -53,6 +54,7 @@ func (t *LearningStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 		}
 		marketsOffset = builder.EndVector(marketsLength)
 	}
+	rehearsalOffset := t.Rehearsal.Pack(builder)
 	LearningStateStart(builder)
 	LearningStateAddAtNs(builder, t.AtNs)
 	LearningStateAddSteps(builder, t.Steps)
@@ -64,6 +66,7 @@ func (t *LearningStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	LearningStateAddRestored(builder, t.Restored)
 	LearningStateAddEpisodes(builder, t.Episodes)
 	LearningStateAddForced(builder, t.Forced)
+	LearningStateAddRehearsal(builder, rehearsalOffset)
 	return LearningStateEnd(builder)
 }
 
@@ -90,6 +93,7 @@ func (rcv *LearningState) UnPackTo(t *LearningStateT) {
 	t.Restored = rcv.Restored()
 	t.Episodes = rcv.Episodes()
 	t.Forced = rcv.Forced()
+	t.Rehearsal = rcv.Rehearsal(nil).UnPack()
 }
 
 func (rcv *LearningState) UnPack() *LearningStateT {
@@ -268,8 +272,21 @@ func (rcv *LearningState) MutateForced(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(22, n)
 }
 
+func (rcv *LearningState) Rehearsal(obj *LearningRehearsal) *LearningRehearsal {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(24))
+	if o != 0 {
+		x := rcv._tab.Indirect(o + rcv._tab.Pos)
+		if obj == nil {
+			obj = new(LearningRehearsal)
+		}
+		obj.Init(rcv._tab.Bytes, x)
+		return obj
+	}
+	return nil
+}
+
 func LearningStateStart(builder *flatbuffers.Builder) {
-	builder.StartObject(10)
+	builder.StartObject(11)
 }
 func LearningStateAddAtNs(builder *flatbuffers.Builder, atNs int64) {
 	builder.PrependInt64Slot(0, atNs, 0)
@@ -306,6 +323,9 @@ func LearningStateAddEpisodes(builder *flatbuffers.Builder, episodes uint64) {
 }
 func LearningStateAddForced(builder *flatbuffers.Builder, forced uint64) {
 	builder.PrependUint64Slot(9, forced, 0)
+}
+func LearningStateAddRehearsal(builder *flatbuffers.Builder, rehearsal flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(10, flatbuffers.UOffsetT(rehearsal), 0)
 }
 func LearningStateEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

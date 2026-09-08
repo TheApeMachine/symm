@@ -2,6 +2,7 @@ package model
 
 import (
 	"slices"
+	"sync"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/learning/associative/prior"
@@ -22,10 +23,24 @@ mutable grid coordinates or a copied input vector. One owner serializes access.
 */
 type Model[Key comparable, Action comparable] struct {
 	Contexts map[Key]*modelContext[Action]
-	pending  map[uint64]pendingAction
+	pending  map[uint64]pendingAction[Action]
 	Sequence uint64
 	Memory   float64
 	Ordered  bool
+
+	/*
+		mutex makes the trie its own owner of concurrent access.
+
+		The live agent resolves decisions on the observation path while replay
+		workers train the same policy from their own goroutines and checkpoints
+		encode it from a third. Leaving that to callers gave the trie two
+		coordinators and one unguarded writer, which is a torn read of a Go map,
+		not a stale value: it aborts the process.
+
+		Locking is on the leaf operations only. Select never holds it, because
+		the caller supplies the recall function and would re-enter through it.
+	*/
+	mutex sync.RWMutex
 }
 
 /* modelContext owns the actions and continuations of one context prefix. */
@@ -40,23 +55,26 @@ pendingAction holds only the evidence fixed when an action was issued. It
 retains one record per context depth, because a decision is evidence about
 every prefix of the context it was taken under, not only the longest one.
 */
-type pendingAction struct {
-	priors    []scopedPrior
+type pendingAction[Action comparable] struct {
+	priors    []scopedPrior[Action]
 	authority float64
 	depth     int
+	action    Action
 }
 
 /* scopedPrior binds a prefix's evidence to its root key's resolution clock. */
-type scopedPrior struct {
+type scopedPrior[Action comparable] struct {
 	*modelPrior
 	epoch *uint64
+	node  *modelContext[Action]
+	token uint64
 }
 
 /* New constructs a keyed prior model with an optional exponential memory window. */
 func New[Key comparable, Action comparable](memory ...float64) *Model[Key, Action] {
 	model := &Model[Key, Action]{
 		Contexts: make(map[Key]*modelContext[Action]),
-		pending:  make(map[uint64]pendingAction),
+		pending:  make(map[uint64]pendingAction[Action]),
 	}
 
 	if len(memory) > 0 && memory[0] > 1 {
@@ -83,11 +101,14 @@ yields when broader evidence is stronger or fresher.
 func (model *Model[Key, Action]) Issue(
 	key Key, context []uint64, action Action, authority float64, related ...Key,
 ) (uint64, error) {
+	model.mutex.Lock()
+	defer model.mutex.Unlock()
+
 	if !(authority >= 0 && authority <= 1) {
 		return 0, errnie.Err(errnie.Validation, "model: authority must be in [0, 1]", nil)
 	}
 
-	priors := make([]scopedPrior, 0, (len(context)+1)*(len(related)+1))
+	priors := make([]scopedPrior[Action], 0, (len(context)+1)*(len(related)+1))
 	for index, scope := range related {
 		if scope == key || slices.Contains(related[:index], scope) {
 			return 0, errnie.Err(errnie.Validation, "model: related scope must differ from primary scope", nil)
@@ -104,15 +125,15 @@ func (model *Model[Key, Action]) Issue(
 		record.pending++
 	}
 
-	model.pending[model.Sequence] = pendingAction{
-		priors: priors, authority: authority, depth: len(context),
+	model.pending[model.Sequence] = pendingAction[Action]{
+		priors: priors, authority: authority, depth: len(context), action: action,
 	}
 
 	return model.Sequence, nil
 }
 
 /* bind interns one scope's ordered prefixes into the supplied evidence path. */
-func (model *Model[Key, Action]) bind(key Key, context []uint64, action Action, priors []scopedPrior) []scopedPrior {
+func (model *Model[Key, Action]) bind(key Key, context []uint64, action Action, priors []scopedPrior[Action]) []scopedPrior[Action] {
 	node := model.Contexts[key]
 
 	if node == nil {
@@ -121,7 +142,7 @@ func (model *Model[Key, Action]) bind(key Key, context []uint64, action Action, 
 	}
 
 	epoch := &node.Epoch
-	priors = append(priors, scopedPrior{node.record(action, model.Memory), epoch})
+	priors = append(priors, scopedPrior[Action]{modelPrior: node.record(action, model.Memory), epoch: epoch, node: node})
 
 	for _, token := range context {
 		if node.Children == nil {
@@ -136,7 +157,7 @@ func (model *Model[Key, Action]) bind(key Key, context []uint64, action Action, 
 		}
 
 		node = next
-		priors = append(priors, scopedPrior{node.record(action, model.Memory), epoch})
+		priors = append(priors, scopedPrior[Action]{modelPrior: node.record(action, model.Memory), epoch: epoch, node: node, token: token})
 	}
 
 	return priors
@@ -166,6 +187,9 @@ returns are correlated targets, not independent evidence of each action's
 causal effect. This method estimates assigned targets, not causality.
 */
 func (model *Model[Key, Action]) Resolve(identity uint64, outcome float64) (prior.Reading, error) {
+	model.mutex.Lock()
+	defer model.mutex.Unlock()
+
 	pending, exists := model.pending[identity]
 
 	if !exists {
@@ -200,16 +224,36 @@ func (model *Model[Key, Action]) Resolve(identity uint64, outcome float64) (prio
 	return reading, nil
 }
 
-/* Abort releases an unrealized action without creating samples or advancing evidence age. */
+/*
+Abort releases an unrealized action without creating samples or advancing
+age. It removes only empty, unreferenced priors and branches on that ticket's
+path; measured zeros, provisional evidence and other pending tickets survive.
+*/
 func (model *Model[Key, Action]) Abort(identity uint64) error {
+	model.mutex.Lock()
+	defer model.mutex.Unlock()
+
 	pending, exists := model.pending[identity]
 
 	if !exists {
 		return errnie.Err(errnie.Validation, "model: action was not issued or is already finished", nil)
 	}
 
-	for _, record := range pending.priors {
+	for index := len(pending.priors) - 1; index >= 0; index-- {
+		record := pending.priors[index]
 		record.pending--
+
+		if record.pending == 0 && record.State.Samples == 0 && record.Provisional.Samples == 0 {
+			delete(record.node.Priors, pending.action)
+		}
+
+		if index == 0 || record.epoch != pending.priors[index-1].epoch {
+			continue
+		}
+
+		if len(record.node.Priors) == 0 && len(record.node.Children) == 0 {
+			delete(pending.priors[index-1].node.Children, record.token)
+		}
 	}
 
 	delete(model.pending, identity)
@@ -233,6 +277,12 @@ lookup first tries the token at the current depth, then scans unused supplied
 	Lookup creates no evidence.
 */
 func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action) prior.Reading {
+	// Recall takes the write lock despite reading: a reading ages the prior's
+	// weight to the current epoch in place, so lookup discounts evidence as a
+	// side effect. It creates no samples, but it is not a read.
+	model.mutex.Lock()
+	defer model.mutex.Unlock()
+
 	node := model.Contexts[key]
 
 	if node == nil {
@@ -325,11 +375,14 @@ across process restarts while preserving prefix-tree evidence structure.
 func (model *Model[Key, Action]) Observe(
 	key Key, context []uint64, action Action, outcome, authority float64, related ...Key,
 ) error {
+	model.mutex.Lock()
+	defer model.mutex.Unlock()
+
 	if !(authority >= 0 && authority <= 1) {
 		return errnie.Err(errnie.Validation, "model: authority must be in [0, 1]", nil)
 	}
 
-	priors := make([]scopedPrior, 0, (len(context)+1)*(len(related)+1))
+	priors := make([]scopedPrior[Action], 0, (len(context)+1)*(len(related)+1))
 	for index, scope := range related {
 		if scope == key || slices.Contains(related[:index], scope) {
 			return errnie.Err(errnie.Validation, "model: related scope must differ from primary scope", nil)

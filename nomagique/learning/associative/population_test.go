@@ -12,6 +12,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/learning/associative/reward"
 )
 
@@ -466,4 +467,40 @@ func TestPopulationAbort(t *testing.T) {
 			So(population.Abort(1, decision.ID), ShouldNotBeNil)
 		})
 	})
+}
+
+func TestPopulationLearn(t *testing.T) {
+	Convey("Worker quantity identities are remapped before teaching the live model", t, func() {
+		population, _ := newPopulationFixture(t)
+		population.Grid.Column("live", "unrelated")
+		columns := [][2]string{{"tape", "ask"}}
+		marker := uint64(1)<<63 | 2
+		context := []uint64{marker, grid.ConditionToken(1, 1, -1)}
+		action := operation{Kind: "allocate"}
+		So(population.Learn("task", columns, context, action, -0.2, 0.5), ShouldBeNil)
+		So(population.Grid.Columns[1], ShouldResemble, columns[0])
+		So(context[1], ShouldEqual, grid.ConditionToken(1, 1, -1))
+		mapped := []uint64{marker, grid.ConditionToken(2, 1, -1)}
+		reading := population.Agents[0].Model.Recall("task", mapped, action)
+		So(reading.Mean, ShouldEqual, -0.2)
+		So(reading.Depth, ShouldEqual, 2)
+
+		Convey("An identity outside the worker dictionary is rejected", func() {
+			So(population.Learn("task", nil, context, action, 1, 1), ShouldNotBeNil)
+		})
+	})
+}
+
+func BenchmarkPopulationLearn(b *testing.B) {
+	population, _ := newPopulationFixture(b)
+	columns := [][2]string{{"tape", "bid"}, {"tape", "ask"}}
+	context := []uint64{1<<63 | 2, grid.ConditionToken(1, 1, -1), grid.ConditionToken(2, -1, 1)}
+	action := operation{Kind: "allocate"}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		if err := population.Learn("task", columns, context, action, -0.2, 0.5); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

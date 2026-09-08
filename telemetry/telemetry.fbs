@@ -1251,12 +1251,19 @@ table LearningDevelopment {
  // counts tokens rather than transitions.
  depth:int;
 }
+// Original rehearsal counters: pool counts are per pass, trained is cumulative.
+table LearningRehearsal {
+ status:string; workers:int; episodes:ulong; profitable:ulong; subfriction:ulong;
+ declining:ulong; ungraded:ulong; unsupported:ulong; perWorker:ulong;
+ decisions:ulong; trained:ulong; passes:ulong;
+ lastSymbol:string; lastAction:string; lastReturn:double;
+}
 table LearningState {
  atNs:long; steps:ulong; decisions:ulong; resolved:ulong;
  status:string; agents:[LearningAgent]; markets:[LearningDevelopment]; restored:bool;
  // episodes totals the explorer wallet renewals across the swarm. forced counts
  // decisions released instead of trained because only one action was feasible.
- episodes:ulong; forced:ulong;
+ episodes:ulong; forced:ulong; rehearsal:LearningRehearsal;
 }
 
 table EnvelopeState {

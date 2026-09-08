@@ -6,6 +6,7 @@ import (
 
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -29,6 +30,10 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 		Forced:    learner.Forced,
 	}
 
+	if learner.Rehearsal != nil {
+		state.Rehearsal = learner.Rehearsal.Wire()
+	}
+
 	if learner.Err != nil {
 		state.Status = learner.Err.Error()
 	}
@@ -39,64 +44,71 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 		entry.Id = int32(index)
 		state.Agents = append(state.Agents, entry)
 	}
-	space := learner.Population.Grid
+	err := learner.Population.Read(func(space *grid.Space) error {
 
-	for row, symbol := range space.Rows {
-		development := learner.Developments[symbol]
-		activity, quality, err := space.Activity(symbol)
+		for row, symbol := range space.Rows {
+			development := learner.Developments[symbol]
+			activity, quality, err := space.Activity(symbol)
 
-		if err != nil {
-			panic(err)
-		} // Rows and Activity share the same grid identity dictionary.
+			if err != nil {
+				panic(err)
+			} // Rows and Activity share the same grid identity dictionary.
 
-		entry := &wire.LearningDevelopmentT{
-			Symbol:    symbol,
-			AtNs:      development.At.UnixNano(),
-			FromNs:    development.From.UnixNano(),
-			Status:    "learning",
-			Decisions: development.Decisions,
-			// Retained state transitions, not tokens: Context below flattens
-			// each transition's conditions into one list.
-			Depth: int32(len(development.History)),
-		}
-
-		if focus != "" && focus != symbol {
-			state.Markets = append(state.Markets, entry)
-			continue
-		}
-
-		for _, context := range development.History {
-			for _, condition := range context.Conditions {
-				entry.Context = append(entry.Context, strconv.FormatUint(condition, 10))
+			entry := &wire.LearningDevelopmentT{
+				Symbol:    symbol,
+				AtNs:      development.At.UnixNano(),
+				FromNs:    development.From.UnixNano(),
+				Status:    "learning",
+				Decisions: development.Decisions,
+				// Retained state transitions, not tokens: Context below flattens
+				// each transition's conditions into one list.
+				Depth: int32(len(development.History)),
 			}
+
+			if focus != "" && focus != symbol {
+				state.Markets = append(state.Markets, entry)
+				continue
+			}
+
+			for _, context := range development.History {
+				for _, condition := range context.Conditions {
+					entry.Context = append(entry.Context, strconv.FormatUint(condition, 10))
+				}
+			}
+
+			for _, region := range development.Regions {
+				entry.Regions = append(entry.Regions, &wire.LearningRegionT{
+					Id:        region.ID,
+					Condition: region.Condition,
+					Level:     region.Level,
+					Change:    region.Change,
+					Strength:  region.Strength,
+					Authority: region.Authority,
+					Members:   int32(region.Members),
+				})
+			}
+
+			for column, identity := range space.Columns {
+				entry.Quantities = append(entry.Quantities, &wire.LearningQuantityT{
+					Source:   identity[0],
+					Label:    identity[1],
+					X:        space.Coordinates[column][0],
+					Y:        space.Coordinates[column][1],
+					Value:    space.Values[row][column],
+					Present:  space.Present[row][column],
+					Activity: activity[column],
+					Quality:  quality[column],
+				})
+			}
+
+			state.Markets = append(state.Markets, entry)
 		}
 
-		for _, region := range development.Regions {
-			entry.Regions = append(entry.Regions, &wire.LearningRegionT{
-				Id:        region.ID,
-				Condition: region.Condition,
-				Level:     region.Level,
-				Change:    region.Change,
-				Strength:  region.Strength,
-				Authority: region.Authority,
-				Members:   int32(region.Members),
-			})
-		}
+		return nil
+	})
 
-		for column, identity := range space.Columns {
-			entry.Quantities = append(entry.Quantities, &wire.LearningQuantityT{
-				Source:   identity[0],
-				Label:    identity[1],
-				X:        space.Coordinates[column][0],
-				Y:        space.Coordinates[column][1],
-				Value:    space.Values[row][column],
-				Present:  space.Present[row][column],
-				Activity: activity[column],
-				Quality:  quality[column],
-			})
-		}
-
-		state.Markets = append(state.Markets, entry)
+	if err != nil {
+		state.Status = err.Error()
 	}
 
 	builder := flatbuffers.NewBuilder(0)
@@ -204,4 +216,17 @@ func (trader *Trader) Wire(member *agent.Agent[Action], focus string) *wire.Lear
 		state.Outcome = &wire.LearningDecisionT{Id: evaluation.ID, Agent: int32(trader.ID), Symbol: evaluation.Label, AtNs: evaluation.At.UnixNano(), ThroughNs: evaluation.Through.UnixNano(), Action: &wire.LearningActionT{Kind: evaluation.Action.Kind, Power: int32(evaluation.Action.Power), Reduce: evaluation.Action.Reduce}, Tape: evaluation.Value, HasTape: true, Quantity: evaluation.Quantity.String()}
 	}
 	return state
+}
+
+// Wire copies rehearsal counters while the workers continue independently.
+func (rehearsal *Rehearsal) Wire() *wire.LearningRehearsalT {
+	rehearsal.mutex.Lock()
+	defer rehearsal.mutex.Unlock()
+	state := rehearsal.progress
+
+	if rehearsal.err != nil {
+		state.Status = rehearsal.err.Error()
+	}
+
+	return &state
 }

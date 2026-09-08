@@ -505,7 +505,9 @@ export const MeasurementWindow = ({ view }: { view: LearningView | null }) => (
 /* LearningProgress plots the actual completed and pending decision counts. */
 export const LearningProgress = ({ view }: { view: LearningView | null }) => {
 	const trained = view?.forward?.trained ?? 0;
-	const pending = view ? view.decisions - view.resolved : 0;
+	const pending =
+		view?.agents.reduce((total, member) => total + Number(member.pending), 0) ??
+		0;
 	const history = useRef<Array<{ at: number; trained: number }>>([]);
 	const [, redraw] = useState(0);
 

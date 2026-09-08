@@ -19,7 +19,7 @@ guarantees no row order, so the reader sorts rather than trusting the order
 files happen to arrive in.
 */
 func ReadObservations(ctx context.Context, catalog *tables.Catalog, run RunID) ([]Observation, error) {
-	rows, err := catalog.Captures(ctx, string(run))
+	rows, err := catalog.Captures(ctx, string(run), 0)
 
 	if err != nil {
 		return nil, err

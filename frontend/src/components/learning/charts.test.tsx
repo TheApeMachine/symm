@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
+	LearningProgress,
 	DecisionRing,
 	DrivingActions,
 	EventRhythm,
@@ -11,6 +12,8 @@ import {
 	TraderQuality,
 	WalletBars,
 } from "./charts";
+import { learningFixture } from "./fixture";
+import { projectLearning } from "./state";
 import type {
 	Influence,
 	LearningEvent,
@@ -320,5 +323,20 @@ describe("DrivingActions", () => {
 	it("reports an absence of evidence instead of an empty chart", () => {
 		const markup = renderToStaticMarkup(<DrivingActions influence={[]} />);
 		expect(markup).toContain("No action has accumulated evidence yet");
+	});
+});
+
+describe("LearningProgress", () => {
+	it("uses retained pending decisions rather than counting discarded forced waits", () => {
+		const state = learningFixture();
+		state.decisions = 100000n;
+		state.resolved = 10n;
+		state.agents[0].pending = 3n;
+		const html = renderToStaticMarkup(
+			<LearningProgress view={projectLearning(state, "")} />,
+		);
+		expect(html).toContain("3");
+		expect(html).toContain("awaiting a completed grade");
+		expect(html).not.toContain("99,990");
 	});
 });

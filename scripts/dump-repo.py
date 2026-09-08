@@ -70,6 +70,8 @@ ALLOWED_SUFFIXES: tuple[str, ...] = (
     ".mm",
     ".m",
     ".h",
+    "cuh",
+    ".cu",
 )
 
 

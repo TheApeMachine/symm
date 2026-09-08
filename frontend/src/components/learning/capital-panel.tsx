@@ -29,8 +29,8 @@ export const CapitalPanel = ({ view }: { view: LearningView | null }) => {
 					{member ? basis(member.wealth) : "unmeasured"}
 				</Typography.Mono>
 				<Typography.Mono>
-					Positive explorer experience is consolidated into this model. Its own
-					completed decisions measure its performance.
+					Signed historical exercise results train this model. Its own completed
+					decisions measure its performance.
 				</Typography.Mono>
 				{positions.map((position) => (
 					<Typography.Mono key={String(position.holding?.symbol)}>

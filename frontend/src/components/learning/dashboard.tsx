@@ -7,6 +7,7 @@ import { Section } from "#/components/ui/section";
 import { Tabs } from "#/components/ui/tabs";
 import { Typography } from "#/components/ui/typography";
 import { CandidateReview } from "./candidate-review";
+import { RehearsalPanel } from "./rehearsal-panel";
 import { CapitalPanel } from "./capital-panel";
 import {
 	CandidatePanel,
@@ -57,7 +58,7 @@ export const LearningDashboard = () => {
 	return (
 		<Flex.Column className="h-full min-h-0 w-full">
 			<Section.Header
-				title="Forward learning"
+				title="Historical practice and live learning"
 				meta={
 					view
 						? `${view.steps.toLocaleString()} observations · ${view.decisions.toLocaleString()} decisions · ${view.resolved.toLocaleString()} outcomes · ${view.columns} numeric quantities`
@@ -65,6 +66,7 @@ export const LearningDashboard = () => {
 				}
 			/>
 			{error && <Alert>{error} · Last successful state remains visible.</Alert>}
+			<RehearsalPanel view={view} />
 			<Flex className="min-h-0 flex-1 max-lg:flex-col">
 				<Section className="w-52 shrink-0 border-(--line) border-r max-lg:h-36 max-lg:w-full">
 					<Section.Header
@@ -127,8 +129,8 @@ export const LearningDashboard = () => {
 							{view?.gridVersion ?? 0}
 						</Typography.Mono>
 					</Section.Header>
-					<div className="flex min-h-[340px] border-(--line) border-b max-xl:flex-col">
-						<div className="w-[380px] shrink-0 border-(--line) border-r max-xl:w-full max-xl:border-r-0 max-xl:border-b">
+					<div className="flex min-h-[340px] border-(--line) border-b max-2xl:flex-col">
+						<div className="w-[380px] shrink-0 border-(--line) border-r max-2xl:w-full max-2xl:border-r-0 max-2xl:border-b">
 							<ImpulseMap
 								points={view?.points ?? []}
 								regions={view?.regions ?? []}
@@ -145,7 +147,7 @@ export const LearningDashboard = () => {
 					</div>
 
 					<Flex.Row gap={2} className="border-(--line) border-b px-3 py-2">
-						<Tabs size="m">
+						<Tabs size="m" className="flex-wrap">
 							{TABS.map((entry) => (
 								<Tabs.Tab
 									key={entry.key}

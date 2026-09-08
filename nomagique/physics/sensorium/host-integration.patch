@@ -1,0 +1,51 @@
+--- a/nomagique/physics/sensorium/bridge.h
++++ b/nomagique/physics/sensorium/bridge.h
+@@ -550,6 +550,15 @@
+         ManifoldBuffer *random_props,
+         ParticleGenParams prm);
+ 
++
++    // CUDA backend extensions. A context and its buffers require a serialized
++    // host owner. CPU views are valid only while its stream is idle. A pointer
++    // returned earlier does not automatically synchronize later launches.
++    ManifoldContext *manifold_create_cuda_context(int device, char *error, uint64_t error_capacity);
++    bool manifold_synchronize_checked(ManifoldContext *ctx);
++    const char *manifold_last_error(ManifoldContext *ctx);
++    int manifold_cuda_device(ManifoldContext *ctx);
++
+ #ifdef __cplusplus
+ }
+ #endif
+--- a/nomagique/physics/sensorium/metallib.go
++++ b/nomagique/physics/sensorium/metallib.go
+@@ -1,3 +1,5 @@
++//go:build darwin && cgo
++
+ package sensorium
+ 
+ import (
+--- a/nomagique/physics/sensorium/manifold_stub.go
++++ b/nomagique/physics/sensorium/manifold_stub.go
+@@ -1,4 +1,4 @@
+-//go:build !darwin || !cgo
++//go:build (!darwin && (!linux || !cuda)) || !cgo
+ 
+ package sensorium
+ 
+@@ -18,7 +18,7 @@
+ type Buffer struct{}
+ 
+ func NewEngine(metallibPath string, gx, gy, gz int, spacing float32) (*Engine, error) {
+-	return nil, errnie.Error(errnie.Err(errnie.Internal, "sensorium: Metal engine requires Darwin with CGo", nil))
++	return nil, errnie.Error(errnie.Err(errnie.Internal, "sensorium: GPU engine requires Darwin with CGo or Linux with CGo and -tags cuda", nil))
+ }
+ 
+ func (engine *Engine) Close() {}
+--- a/nomagique/physics/sensorium/manifold_stub_test.go
++++ b/nomagique/physics/sensorium/manifold_stub_test.go
+@@ -1,4 +1,4 @@
+-//go:build !darwin || !cgo
++//go:build (!darwin && (!linux || !cuda)) || !cgo
+ 
+ package sensorium
+ 

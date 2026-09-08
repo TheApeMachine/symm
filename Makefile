@@ -27,7 +27,7 @@ ADVISOR_FLAGS ?=
 
 DUMP_OUTPUT ?= symm.txt
 
-.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map goodindahood
+.PHONY: build test test-go test-race test-cover test-e2e test-frontend bench run optimize dump profile profile-stack profile-report strip-trailing-newlines debug debug-inspect backtest generate-telemetry physics-metallib physics-manifold-metallib experimental metric-lineage metric-map goodindahood build-cuda
 
 generate-telemetry:
 	flatc --no-warnings --go --gen-object-api -o telemetry/generated telemetry/telemetry.fbs
@@ -112,6 +112,15 @@ physics-manifold-metallib:
 build: physics-metallib
 	@mkdir -p bin
 	go build $(LDFLAGS) -race -o $(SYMM_BIN) .
+
+build-cuda:
+	p=nomagique/physics/sensorium
+	cmake -S "$p/cuda" -B "$p/cuda/build" \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_CUDA_ARCHITECTURES=native
+	cmake --build "$p/cuda/build" --parallel
+	ctest --test-dir "$p/cuda/build" --output-on-failure
+	go test -tags cuda ./nomagique/physics/sensorium
 
 optimize: goodindahood
 

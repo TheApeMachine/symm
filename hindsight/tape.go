@@ -87,7 +87,7 @@ func (tape *Tape) retracement() float64 {
 A failed read or visitor stops advancement and is returned to the owner.
 */
 func (tape *Tape) Read(ctx context.Context, catalog *tables.Catalog, run RunID, visit func(Leg) error) error {
-	rows, err := catalog.CapturesAfter(ctx, string(run), tape.LastSequence)
+	rows, err := catalog.Captures(ctx, string(run), tape.LastSequence)
 
 	if err != nil {
 		return err

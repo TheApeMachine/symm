@@ -1,6 +1,9 @@
 package strategy
 
 import (
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
+	"golang.org/x/sync/errgroup"
+	"strconv"
 	"testing"
 	"time"
 
@@ -60,4 +63,54 @@ func BenchmarkLearnerMarshalFlatbuffer(b *testing.B) {
 	for b.Loop() {
 		learner.MarshalFlatbuffer("BTC/USD")
 	}
+}
+
+func TestRehearsalWire(t *testing.T) {
+	Convey("Historical counters travel separately from live decisions and outcomes", t, func() {
+		learner, _ := learningFixture(t)
+		learner.Rehearsal.progress.Decisions = 20
+		learner.Rehearsal.progress.Trained = 19
+		learner.Rehearsal.progress.Ungraded = 3
+		learner.Rehearsal.progress.LastReturn = -0.02
+		state := wire.GetRootAsLearningState(learner.MarshalFlatbuffer("BTC/USD"), 0).UnPack()
+		So(state.Rehearsal.Decisions, ShouldEqual, 20)
+		So(state.Rehearsal.Trained, ShouldEqual, 19)
+		So(state.Rehearsal.Ungraded, ShouldEqual, 3)
+		So(state.Rehearsal.LastReturn, ShouldEqual, -0.02)
+		So(state.Decisions, ShouldEqual, 0)
+		So(state.Resolved, ShouldEqual, 0)
+	})
+}
+
+func TestLearnerMarshalFlatbufferConcurrent(t *testing.T) {
+	Convey("Live updates, replay identity admission and telemetry share grid ownership", t, func() {
+		learner, _ := learningFixture(t)
+		var workers errgroup.Group
+		workers.Go(func() error {
+			for index := range 32 {
+				measurement := data.NewMeasurement[float64]("wire", "BTC/USD", "signal", time.Now(), time.Now())
+				measurement.PutMetric(data.Metric[float64]{Label: "change", Raw: float64(index % 3)})
+				learner.Step(&types.Envelope{CVD: measurement})
+			}
+			return learner.Error()
+		})
+		workers.Go(func() error {
+			for index := range 32 {
+				columns := [][2]string{{"replay", strconv.Itoa(index)}}
+
+				if err := learner.Population.Learn("BTC/USD", columns,
+					[]uint64{FlatPositionContext, grid.ConditionToken(1, 1, -1)}, Action{Kind: "enter"}, -0.01, 0.5); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		workers.Go(func() error {
+			for range 32 {
+				wire.GetRootAsLearningState(learner.MarshalFlatbuffer("BTC/USD"), 0).UnPack()
+			}
+			return nil
+		})
+		So(workers.Wait(), ShouldBeNil)
+	})
 }

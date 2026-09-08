@@ -97,7 +97,7 @@ func TestSessionCapture(t *testing.T) {
 
 			// 6. From persisted identities alone, traverse back to the exact
 			// exchange bytes. The raw frame is stored alongside its identity.
-			captures, err := engine.Captures(context.Background(), string(captureID.Run))
+			captures, err := engine.Captures(context.Background(), string(captureID.Run), 0)
 			So(err, ShouldBeNil)
 			So(captures, ShouldHaveLength, 1)
 			So(captures[0].Sequence, ShouldEqual, int64(captureID.Sequence))
@@ -167,7 +167,7 @@ func TestSessionPersist(t *testing.T) {
 		session.persist(context.Background(), 8, time.Millisecond)
 
 		Convey("Every record is persisted exactly once and in order", func() {
-			rows, err := catalog.Captures(context.Background(), "persist")
+			rows, err := catalog.Captures(context.Background(), "persist", 0)
 
 			So(err, ShouldBeNil)
 			So(rows, ShouldHaveLength, 82)
