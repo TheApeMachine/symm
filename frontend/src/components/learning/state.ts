@@ -1,4 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
+import { useSelector } from "@tanstack/react-store";
+import { focusStore } from "#/collections/app";
+import { learningStore } from "#/collections/learning";
+import type { LearningStateT } from "#/providers/telemetry/telemetry/learning-state";
+import type { LearningPriorT } from "#/providers/telemetry/telemetry/learning-prior";
+import type { LearningAgentT } from "#/providers/telemetry/telemetry/learning-agent";
 
 export type Region = {
 	id: number;
@@ -18,6 +24,7 @@ export type Point = {
 	present: boolean;
 };
 export type Prior = {
+ Provisional?: boolean;
 	Depth?: number;
 	ContextLength?: number;
 	Pending?: number;
@@ -40,33 +47,13 @@ export type Token = {
 	authority: number;
 	members: number;
 };
-export type EconomicReading = {
-	depth: number;
-	contextLength: number;
-	pending: number;
-	samples: number;
-	defined: boolean;
-	varianceDefined: boolean;
-	growthMean: number;
-	growthVariance: number;
-	timeMean: number;
-	totalGrowth: number;
-	totalTime: number;
-	rate: number;
-	support: number;
-	maturity: number;
-	evidenceAuthority: number;
-	authority: number;
-	memory: number;
-};
+
 export type Candidate = {
-	knowledge?: Knowledge;
 	kind: string;
 	power: number;
 	reduce: boolean;
 	selected: boolean;
 	prior: Prior;
-	economic?: EconomicReading;
 };
 export type Influence = {
 	token: number;
@@ -75,17 +62,7 @@ export type Influence = {
 	action: string;
 	prior: Prior;
 };
-export type ExecutionStatus = {
-	refused?: number;
-	lastRefusal?: string;
-	submitted: number;
-	unsupported: number;
-	diverged: number;
-	dropped: number;
-	failed: number;
-	queued: number;
-	lastFailure?: string;
-};
+
 export type Skill = {
 	mode: string;
 	account: string;
@@ -95,16 +72,8 @@ export type Skill = {
 	support: number;
 	defined: boolean;
 	varianceDefined: boolean;
-	qualified: boolean;
 	mean: number;
 	variance: number;
-	standardError: number;
-	lowerBound: number;
-	confidence: number;
-	sigma: number;
-	memory: number;
-	promotions: number;
-	demotions: number;
 	wins: number;
 	losses: number;
 };
@@ -131,31 +100,8 @@ export type Wallet = {
 	spent: number;
 	exhausted: boolean;
 };
-export type MissedOpportunity = {
-	symbol: string;
-	kind: string;
-	fromAt: string;
-	toAt: string;
-	excursion: number;
-	observations: number;
-	exposed: boolean;
-	unreviewable: boolean;
-	trained?: boolean;
-	untrainable?: string;
-};
-export type ForwardReview = {
-	reviewed: number;
-	exposed?: number;
-	unexposed?: number;
-	captured: number;
-	missed: number;
-	unreviewable: number;
-	trained?: number;
-	untrained?: number;
-	lastUntrainable?: string;
-	at: string;
-	recent: MissedOpportunity[] | null;
-};
+
+export type ForwardReview = { trained: number; at: string; };
 export type DeskTrader = {
 	id: number;
 	decisions: number;
@@ -170,11 +116,9 @@ export type DeskTrader = {
 export type DeskView = {
 	traders: DeskTrader[];
 	settled: number;
-	agreed: number;
-	disputed: number;
 };
 export type LearningView = {
-	capital?: CapitalView;
+ agents: LearningAgentT[];
 	desk?: DeskView;
 	warmup?: {
 		resolved: number;
@@ -197,10 +141,7 @@ export type LearningView = {
 	realizationAllowed?: boolean;
 	realizationReason?: string;
 	dispatched: number;
-	rejected: number;
 	rejection?: string;
-	execution: ExecutionStatus;
-	hasExecution: boolean;
 	forward: ForwardReview;
 	precursorDepth?: number;
 	precursorHistory?: Token[][] | null;
@@ -220,13 +161,8 @@ export type LearningView = {
 	candidates: Candidate[] | null;
 	influence: Influence[] | null;
 };
-export type AllocationResult = {
-	state: "submitted" | "filled" | "aborted";
-	at: string;
-	detail?: string;
-};
+
 export type LearningEvent = {
-	allocation?: AllocationResult;
 	horizonSource?: string;
 	targetUnit?: string;
 	absoluteSkillTarget?: number;
@@ -234,7 +170,6 @@ export type LearningEvent = {
 	scope?: string;
 	candidateId?: string;
 	portfolioId?: string;
-	candidateResult?: CandidateOutcome;
 	id: number;
 	lane: number;
 	mode: string;
@@ -274,182 +209,75 @@ export const baseUrl = () => {
 };
 
 export const useLearning = (symbol: string) => {
-	const [view, setView] = useState<LearningView | null>(null);
-	const [events, setEvents] = useState<LearningEvent[]>([]);
-	const [error, setError] = useState("");
-
-	useEffect(() => {
-		const controller = new AbortController();
-		let timer: ReturnType<typeof setTimeout>;
-		const update = async () => {
-			try {
-				const response = await fetch(
-					`${baseUrl()}/learning?symbol=${encodeURIComponent(symbol)}`,
-					{ signal: controller.signal },
-				);
-				if (!response.ok)
-					throw new Error(
-						`Learning state: ${response.status} ${await response.text()}`,
-					);
-				const next: LearningView = await response.json();
-				const journal = await fetch(
-					`${baseUrl()}/learning/events?symbol=${encodeURIComponent(next.symbol)}`,
-					{ signal: controller.signal },
-				);
-				if (!journal.ok)
-					throw new Error(
-						`Learning journal: ${journal.status} ${await journal.text()}`,
-					);
-				setEvents(await journal.json());
-				setView(next);
-				setError("");
-			} catch (err) {
-				if (!controller.signal.aborted) setError(String(err));
-			} finally {
-				// One-second display refresh; the backend learns on its own incoming events.
-				if (!controller.signal.aborted) timer = setTimeout(update, 1000);
-			}
-		};
-		void update();
-		return () => {
-			controller.abort();
-			clearTimeout(timer);
-		};
-	}, [symbol]);
-	return { view, events, error };
+ useEffect(() => { if (symbol) focusStore.setState(() => symbol); }, [symbol]);
+ const state = useSelector(learningStore, state => state);
+ const view = useMemo(() => state ? projectLearning(state, symbol) : null, [state, symbol]);
+ const [events, setEvents] = useState<LearningEvent[]>([]);
+ useEffect(() => {
+  if (!state) return;
+  setEvents(previous => {
+   // Display history is bounded by the 200-point chart budget, not a learning horizon.
+   const next = [...previous];
+   for (const member of state.agents) {
+    const at = date(state.atNs);
+    const last = member.last;
+    if (last && (!symbol || String(last.symbol) === symbol)) {
+     next.push({id: Number(state.steps), lane: member.id, mode: member.id === 0 ? "policy" : "virtual", kind: "valued", at, action: String(last.action?.kind ?? ""), power: last.action?.power ?? 0, reduce: last.action?.reduce ?? false, cash: String(member.cash), inventory: "", authority: 0, profit: Number(member.profit), complete: true, episode: 0, horizonNs: 0, prior: prior(member.reading)});
+    }
+    const outcome = member.outcome;
+    if (outcome && !next.some(event => event.lane === member.id && event.id === Number(outcome.id) && event.kind === "resolved")) {
+     next.push({id: Number(outcome.id), lane: member.id, mode: member.id === 0 ? "policy" : "virtual", kind: "resolved", at: date(outcome.throughNs), action: String(outcome.action?.kind ?? ""), power: outcome.action?.power ?? 0, reduce: outcome.action?.reduce ?? false, cash: String(member.cash), inventory: "", authority: 0, profit: Number(member.profit), complete: true, target: outcome.tape, episode: 0, horizonNs: Number(outcome.throughNs - outcome.atNs), prior: prior(member.reading)});
+    }
+   }
+   return next.slice(-200);
+  });
+ }, [state, symbol]);
+ return { view, events, error: state && state.status !== "learning" ? String(state.status) : "" };
 };
 
-export type AgentSkill = {
-	authorizedMode?: string;
-	realizationAllowed?: boolean;
-	realizationReason?: string;
-	skill: Skill;
-	dispatched: number;
-	decisions: number;
-	resolved: number;
-	symbols: number;
-};
 
-/*
-useAgentSkill polls the small projection of the same coherent snapshot the
-learning surface reads, so the top bar can never disagree with it. A failed
-poll leaves the last reading in place rather than presenting a fabricated one.
-*/
+
 export const useAgentSkill = () => {
-	const [state, setState] = useState<AgentSkill | null>(null);
-	const [error, setError] = useState("");
-
-	useEffect(() => {
-		const controller = new AbortController();
-		let timer: ReturnType<typeof setTimeout>;
-		const update = async () => {
-			try {
-				const response = await fetch(`${baseUrl()}/learning/skill`, {
-					signal: controller.signal,
-				});
-				if (!response.ok) throw new Error(`Agent skill: ${response.status}`);
-				setState(await response.json());
-				setError("");
-			} catch (err) {
-				if (!controller.signal.aborted) setError(String(err));
-			} finally {
-				if (!controller.signal.aborted) timer = setTimeout(update, 1000);
-			}
-		};
-		void update();
-		return () => {
-			controller.abort();
-			clearTimeout(timer);
-		};
-	}, []);
-	return { state, error };
+ const data = useSelector(learningStore, state => state);
+ const view = data ? projectLearning(data, "") : null;
+ return {state: view ? {skill: view.skill, dispatched: view.dispatched, decisions: view.decisions, resolved: view.resolved, symbols: view.universe?.length ?? 0, authorizedMode: "learning", realizationReason: "Independent simulated accounts"} : null, error: data && data.status !== "learning" ? String(data.status) : ""};
 };
 
-export type Knowledge = {
-	scope: string;
-	global: Prior;
-	symbol: Prior;
-	selected: Prior;
-};
-export type AccountMark = {
-	at: string;
-	version: number;
-	equity: number;
-	netFunding: number;
-	hasFunding: boolean;
-};
-export type AccountLearning = {
-	aborted: number;
-	execution?: AllocationResult;
-	pendingState?: string;
-	horizonNs?: number;
-	horizonSource?: string;
-	state: {
-		mark: AccountMark;
-		cash: string;
-		actualCash: string;
-		committed: string;
-		positions: Record<string, string> | null;
-		complete: boolean;
-		reason?: string;
-	};
-	outcome: { totalReward: number; rate: number; hasRate: boolean };
-	target: number;
-	resolved: number;
-	mfe: number;
-	mae: number;
-	timeToPositiveNs: number;
-	timeToBreakevenNs: number;
-	holdingNs: number;
-	trajectory: AccountMark[] | null;
-	pending: string;
-};
-export type EntryClaim = {
-	id: string;
-	decision: number;
-	symbol: string;
-	action: string;
-	power: number;
-	at: string;
-	marketAt: string;
-	gridVersion: number;
-	context: number[];
-	scope: string;
-	global: Prior;
-	symbolPrior: Prior;
-	prior: Prior;
-	authority: number;
-	quantity: string;
-	notional: string;
-	reference: string;
-	horizonNs: number;
-	feeRate: string;
-	state: string;
-	current: boolean;
-	ageNs: number;
-};
-export type CandidateOutcome = {
-	id: string;
-	state: string;
-	at: string;
-	portfolioId?: string;
-	detail?: string;
-};
-export type CapitalView = {
-	warmupUnverified: number;
-	evidence: {
-		source: string;
-		scope: string;
-		virtual: Knowledge;
-		actual: Knowledge;
-		selected: Prior;
-	};
-	choice: { symbol: string; kind: string; power: number };
-	prior: Prior;
-	decisions: number;
-	actual: AccountLearning;
-	exploration: AccountLearning;
-	candidates: EntryClaim[] | null;
-	outcomes: CandidateOutcome[] | null;
-	demand: string;
+
+
+
+
+
+
+
+const date = (ns: bigint) => new Date(Number(ns / 1000000n)).toISOString();
+const prior = (reading: LearningPriorT | null): Prior => ({
+ Defined: reading?.defined ?? false, Mean: reading?.mean ?? 0,
+ Variance: reading?.variance ?? 0, VarianceDefined: reading?.varianceDefined ?? false,
+ Samples: Number(reading?.samples ?? 0n), Support: reading?.support ?? 0,
+ Provisional: reading?.provisional, Authority: reading?.authority ?? 0, Maturity: reading?.maturity ?? 0, EvidenceAuthority: reading?.evidenceAuthority, Depth: reading?.depth, ContextLength: reading?.contextLength, Pending: Number(reading?.pending ?? 0n), Memory: reading?.memory,
+});
+
+// Only field selection, unit conversion, and display grouping happen here.
+export const projectLearning = (state: LearningStateT, symbol: string): LearningView => {
+ const member = state.agents[0];
+ const market = state.markets.find(row => String(row.symbol) === symbol) ?? state.markets.find(row => row.quantities.length > 0) ?? state.markets[0];
+ const reading = member?.reading;
+ const at = date(state.atNs);
+ const points = (market?.quantities ?? []).map((quantity, index) => ({id: index + 1, source: String(quantity.source), label: String(quantity.label), x: quantity.x, y: quantity.y, value: quantity.value, energy: quantity.activity, authority: quantity.quality, present: quantity.present}));
+ const regions = (market?.regions ?? []).map(region => ({id: Number(region.id), strength: region.strength, authority: region.authority, members: region.members}));
+ const fills = state.agents.reduce((total, member) => total + Number(member.fills), 0);
+ return {
+  agents: state.agents, at, symbol: String(market?.symbol ?? ""), status: String(state.status), steps: Number(state.steps), decisions: Number(state.decisions), resolved: Number(state.resolved), gridVersion: Number(state.steps), columns: points.length, initialCapital: String(member?.initial ?? ""),
+  skill: {mode: "learning", account: "simulated", since: at, reason: String(state.status), samples: Number(reading?.samples ?? 0n), support: reading?.support ?? 0, defined: reading?.defined ?? false, varianceDefined: reading?.varianceDefined ?? false, mean: reading?.mean ?? 0, variance: reading?.variance ?? 0, wins: Number(member?.wins ?? 0n), losses: Number(member?.losses ?? 0n)},
+  dispatched: fills,
+  forward: {trained: Number(state.resolved), at},
+  universe: state.markets.map(row => ({symbol: String(row.symbol), status: String(row.status), decisions: Number(row.decisions)})), points, regions,
+  horizonNs: market ? Number(market.atNs - market.fromNs) : undefined, epochs: Number(market?.decisions ?? 0n),
+  impulse: (market?.regions ?? []).map(region => ({token: Number(region.condition), source: points[Number(region.id)-1]?.source ?? "", label: points[Number(region.id)-1]?.label ?? "", strength: region.strength, authority: region.authority, members: region.members})),
+  candidates: member?.last?.symbol === market?.symbol ? member.alternatives.map(choice => ({kind: String(choice.kind), power: choice.power, reduce: choice.reduce, prior: prior(choice.prior), selected: choice.kind === member.last?.action?.kind && choice.power === member.last?.action?.power && choice.reduce === member.last?.action?.reduce})) : [],
+  influence: member?.last?.symbol === market?.symbol ? member.alternatives.map(choice => ({token: choice.prior?.depth ?? 0, source: "Context", label: `prefix ${choice.prior?.depth ?? 0}/${choice.prior?.contextLength ?? 0}`, action: `${choice.kind}${choice.reduce ? " ↓" : ""} ·1/${2 ** choice.power}`, prior: prior(choice.prior)})) : [],
+  desk: {settled: Number(state.resolved), traders: state.agents.map(member => ({id: member.id, decisions: Number(member.decisions), fills: Number(member.fills), graded: Number(member.reading?.samples ?? 0n), observed: member.reading?.defined ? Number(member.reading.samples) : 0, quality: member.reading?.mean ?? 0, wealth: member.wealth, open: Number(member.pending), holding: member.positions.filter(position => Number(position.holding?.qty) > 0).length}))},
+  lanes: state.agents.map(member => ({lane: member.id, mode: member.id === 0 ? "policy" : "virtual", cash: String(member.cash), quantity: String(member.positions.find(position => position.holding?.symbol === market?.symbol)?.holding?.qty ?? "0"), fees: String(member.fees), equity: Number(member.equity), profit: Number(member.profit), rate: member.reward, at, complete: true, action: {kind: String(member.last?.action?.kind ?? ""), power: member.last?.action?.power ?? 0, reduce: member.last?.action?.reduce ?? false}, pending: false, issued: Number(member.decisions), fills: Number(member.fills), resolved: Number(member.reading?.samples ?? 0n), unresolved: Number(member.pending), prior: prior(member.reading), episodes: 0, realized: Number(member.realized), spent: 0, exhausted: Number(member.cash) === 0})),
+ };
 };

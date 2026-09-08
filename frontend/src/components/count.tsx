@@ -1,3 +1,4 @@
+import { learningStore } from "#/collections/learning";
 import { useSelector } from "@tanstack/react-store";
 import { positionStore } from "#/collections/app";
 import { Flex } from "#/components/ui/flex";
@@ -9,6 +10,7 @@ label-over-value form the cash readings use, so the top bar's right-hand side is
 one row of readouts rather than a sentence sitting among them.
 */
 export const Count = () => {
+ const policy = useSelector(learningStore, state => state?.agents[0]);
 	const last = useSelector(positionStore, (state) =>
 		state.findLast(() => true),
 	);
@@ -19,7 +21,7 @@ export const Count = () => {
 				Positions
 			</Typography.Label>
 			<Typography.Mono size="lg" tone="f1" weight="medium" data-count>
-				{String(last ? last.rowsLength() : 0)}
+				{String(policy ? policy.positions.filter(position => Number(position.holding?.qty) > 0).length : last ? last.rowsLength() : 0)}
 			</Typography.Mono>
 		</Flex.Column>
 	);

@@ -1,6 +1,7 @@
 package ui
 
 import (
+ "time"
 	"context"
 	"errors"
 	"net"
@@ -20,7 +21,6 @@ import (
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 	"gocloud.dev/blob"
-	"gocloud.dev/gcerrors"
 	"slices"
 )
 
@@ -52,6 +52,8 @@ type Hub struct {
 	tradeStore TradeJournalSource
 	timelines  *timelineCache
 	fluid      *FluidRTC
+ learningInterval time.Duration
+ lastLearning time.Time
 }
 
 /*
@@ -59,11 +61,12 @@ NewHub constructs the dashboard hub from its queue-backed system boundaries and
 registers it on the workspace so live frames reach it through Step.
 */
 func NewHub(ctx context.Context) *Hub {
+ viper.SetDefault("ui.websocket.learning_interval", "250ms")
 	ctx, cancel := context.WithCancel(ctx)
 	viper.SetDefault("ui.addr", "127.0.0.1:8765")
 	viper.SetDefault("ui.websocket.max_message_bytes", 4*1024*1024)
 
-	hub := &Hub{
+	hub := &Hub{learningInterval: viper.GetDuration("ui.websocket.learning_interval"),
 		ctx:        ctx,
 		cancel:     cancel,
 		listenAddr: viper.GetString("ui.addr"),
@@ -203,7 +206,7 @@ func NewHub(ctx context.Context) *Hub {
 
 	// /hindsight/envelope returns a single EnvelopeRef's full inspection record:
 	// the exact CaptureIdentity, raw payload, its manifests, and its artifact
-	// witnesses — fetched by identity, not by scanning a whole run.
+	// witnesses — matched by identity within the stored batches.
 	hub.app.Get("/hindsight/envelope", func(c fiber.Ctx) error {
 		if hub.store == nil {
 			return c.JSON(map[string]any{})
@@ -217,30 +220,48 @@ func NewHub(ctx context.Context) *Hub {
 		// rather than requiring the caller to already hold the transport
 		// fields it came here to look up.
 		identity := hindsight.CaptureIdentity{Run: hindsight.RunID(run), Sequence: hindsight.CaptureSequence(sequence)}
-		capture, err := store.Read[hindsight.RawFrame](hub.ctx, hub.store, identity.Key())
-		if gcerrors.Code(err) == gcerrors.NotFound {
+		capture, found, err := store.Find(hub.ctx, hub.store, identity.Run.Prefix("captures"), func(frame hindsight.RawFrame) bool { return frame.Identity.Sequence == identity.Sequence })
+
+		if err != nil {
+			return err
+		}
+
+		if !found {
 			return c.JSON(map[string]any{})
 		}
-
-		if err != nil {
-			return err
-		}
-
 		payload := capture.Payload
 		capture.Payload = nil
-		manifests, err := store.List[hindsight.EnvelopeManifest](hub.ctx, hub.store, fmt.Sprintf("%s%020d/", hindsight.RunID(run).Prefix("manifests"), sequence))
+		manifests := []hindsight.EnvelopeManifest{}
+		err = store.Scan(hub.ctx, hub.store, hindsight.RunID(run).Prefix("manifests"), func(record hindsight.EnvelopeManifest) (bool, error) {
+			if uint64(record.Envelope.Origin.Sequence) == sequence {
+				manifests = append(manifests, record)
+			}
+			return true, nil
+		})
 
 		if err != nil {
 			return err
 		}
 
-		witnesses, err := store.List[hindsight.ArtifactWitness](hub.ctx, hub.store, fmt.Sprintf("%s%020d/", hindsight.RunID(run).Prefix("witnesses"), sequence))
+		witnesses := []hindsight.ArtifactWitness{}
+		err = store.Scan(hub.ctx, hub.store, hindsight.RunID(run).Prefix("witnesses"), func(record hindsight.ArtifactWitness) (bool, error) {
+			if uint64(record.Envelope.Origin.Sequence) == sequence {
+				witnesses = append(witnesses, record)
+			}
+			return true, nil
+		})
 
 		if err != nil {
 			return err
 		}
 
-		stateWitnesses, err := store.List[hindsight.ArtifactWitness](hub.ctx, hub.store, fmt.Sprintf("%s%020d/", hindsight.RunID(run).Prefix("states"), sequence))
+		stateWitnesses := []hindsight.ArtifactWitness{}
+		err = store.Scan(hub.ctx, hub.store, hindsight.RunID(run).Prefix("states"), func(record hindsight.ArtifactWitness) (bool, error) {
+			if uint64(record.Envelope.Origin.Sequence) == sequence {
+				stateWitnesses = append(stateWitnesses, record)
+			}
+			return true, nil
+		})
 		if err != nil {
 			return err
 		}
@@ -283,15 +304,17 @@ func NewHub(ctx context.Context) *Hub {
 		ordinal := parseUintQuery(c.Query("ordinal"))
 
 		ref := hindsight.EnvelopeRef{Origin: hindsight.CaptureIdentity{Run: hindsight.RunID(run), Sequence: hindsight.CaptureSequence(sequence)}, Ordinal: ordinal}
-		state, err := store.Read[hindsight.ArtifactWitness](hub.ctx, hub.store, ref.Key("states"))
-		if gcerrors.Code(err) == gcerrors.NotFound {
-			return c.JSON(map[string]any{})
-		}
+		state, found, err := store.Find(hub.ctx, hub.store, ref.Origin.Run.Prefix("states"), func(witness hindsight.ArtifactWitness) bool {
+			return witness.Envelope.Origin.Sequence == ref.Origin.Sequence && witness.Envelope.Ordinal == ref.Ordinal
+		})
 
 		if err != nil {
 			return err
 		}
 
+		if !found {
+			return c.JSON(map[string]any{})
+		}
 		return c.JSON(state)
 	})
 
@@ -428,7 +451,10 @@ func (hub *Hub) writeFrontend(envelope *types.Envelope) {
 		return
 	}
 
-	payload := envelope.EncodeWebsocket()
+	includeLearning := envelope.Learning != nil && time.Since(hub.lastLearning) >= hub.learningInterval
+
+ if includeLearning { hub.lastLearning = time.Now() }
+ payload := envelope.EncodeWebsocket(includeLearning)
 
 	if len(payload) == 0 {
 		return
@@ -603,12 +629,11 @@ func (hub *Hub) Close() error {
 // ReadStatePayload supplies the original stored witness to the resident-state inspector.
 func (hub *Hub) ReadStatePayload(run string, sequence, ordinal uint64) ([]byte, bool, error) {
 	ref := hindsight.EnvelopeRef{Origin: hindsight.CaptureIdentity{Run: hindsight.RunID(run), Sequence: hindsight.CaptureSequence(sequence)}, Ordinal: ordinal}
-	witness, err := store.Read[hindsight.ArtifactWitness](hub.ctx, hub.store, ref.Key("states"))
-	if gcerrors.Code(err) == gcerrors.NotFound {
-		return nil, false, nil
-	}
+	witness, found, err := store.Find(hub.ctx, hub.store, ref.Origin.Run.Prefix("states"), func(witness hindsight.ArtifactWitness) bool {
+		return witness.Envelope.Origin.Sequence == ref.Origin.Sequence && witness.Envelope.Ordinal == ref.Ordinal
+	})
 	if err != nil {
 		return nil, false, err
 	}
-	return witness.Payload, true, nil
+	return witness.Payload, found, nil
 }

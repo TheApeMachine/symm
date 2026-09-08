@@ -37,6 +37,8 @@ system:
     # Lower costs idle broadcasts; higher lengthens the worst-case recovery.
     heartbeat: 250ms
   websocket:
+    # UI delivery budget only; does not control decisions or tape maturity.
+    learning_interval: 250ms
     endpoints:
       public: "wss://ws.kraken.com/v2"
       private: "wss://ws-auth.kraken.com/v2"
@@ -56,15 +58,12 @@ system:
 
 hindsight:
   capture:
-    # Raw frames and their manifests share one ordered, non-dropping queue.
-    # Producers only block if storage consumes this full bounded allowance.
+    # Accepted records are encoded before the producer returns. A full queue
+    # reports a persistence failure; it does not block the transport callback.
     queue_depth: 8192
-    # Maximum ordered records per S3 journal batch.
+    # Maximum original records collected before writing a batch to S3.
     batch_size: 256
-  witness:
-    # Phase transitions and actions are the bounded decision moments retained
-    # for counterfactual evaluation. Overflow marks the run GAPPED.
-    queue_depth: 4096
+    # Flush a partial batch even when no further observations arrive.
     flush_interval: 50ms
 
 resonance:
@@ -157,6 +156,8 @@ ui:
     # Flow control waits for capacity before enqueueing the next segment.
     buffered_segments: 64
   websocket:
+    # UI delivery budget only; does not control decisions or tape maturity.
+    learning_interval: 250ms
     # Upper bound for one ordered dashboard batch. Later frames remain queued
     # for the next message; no telemetry record is truncated or discarded.
     max_message_bytes: 4194304
@@ -174,32 +175,9 @@ trading:
     max_fraction: 0.50
 
 learning:
-  # How many past impulse states a decision is conditioned on. The past is
-  # bounded on purpose: a context carrying the whole run is unique to the
-  # moment it was built, so it trains a path nothing ever revisits while the
-  # cost of binding and recalling it grows with uptime.
-  precursor_frames: 8
-  # The longest window an outcome may still be attributed to the decision that
-  # opened it. The window itself is not configured: it is derived per
-  # instrument as the time that instrument's own movement needs to cover the
-  # round trip the decision paid. This is only the ceiling on that derivation.
-  # An instrument that needs longer than this to cover its own friction is
-  # telling you it cannot be traded profitably at this size.
-  maximum_horizon: 10m
-  # How much of what the agent conditioned on is kept, so a move the tape
-  # confirms later can be trained against the state that actually preceded it.
-  # Grid regions are read from running estimators and cannot be recomputed at a
-  # past coordinate, so this memory is the only way back to it.
-  retained_contexts: 4096
-  # The weight carried by evidence learned from a confirmed move rather than
-  # from a decision the agent itself made and lived through. Below one on
-  # purpose: the move is real, but the agent did not act on it.
-  episode_authority: 0.5
-  # How far back the boot-time warmup reads. Discovery walks the captured tape,
-  # so an unbounded walk at startup would compete with the capture writer on
-  # the same database it is still writing to.
-  warmup_runs: 3
-  warmup_contexts: 250000
+  # Resource allocation, including the consolidated-model evaluator.
+  traders: 8
+  checkpoint_interval: 1m
 
 cognition:
   # A binary confidence of 0.5 is exactly indifferent. Cognition must exceed

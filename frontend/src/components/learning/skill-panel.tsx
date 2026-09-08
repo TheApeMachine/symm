@@ -1,9 +1,8 @@
-import { Badge } from "#/components/ui/badge";
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
-import { PromotionLadder } from "./charts";
-import { basis, clock, percent } from "./format";
+import { OutcomeRange } from "./charts";
+import { basis } from "./format";
 import type { LearningView } from "./state";
 
 const Reading = ({
@@ -30,154 +29,17 @@ const Reading = ({
 	</Flex.Column>
 );
 
-/*
-SkillPanel shows the promotion machinery in full: the estimate, the bar it has
-to clear, and the authority it currently justifies. The bar is deliberately
-visible — an operator should never have to guess what "good enough to trade"
-means, and the asymmetry between promotion and demotion is stated rather than
-inferred from behaviour.
-*/
 export const SkillPanel = ({ view }: { view: LearningView | null }) => {
-	const skill = view?.skill;
-
-	if (!skill) {
-		return (
-			<Section fit="content">
-				<Section.Header title="Agent skill" meta="waiting for the workspace" />
-			</Section>
-		);
-	}
-
-	const promotable = skill.qualified && skill.lowerBound > 0;
-
-	return (
-		<Section fit="content">
-			<Section.Header
-				title="Agent skill"
-				meta={`${skill.samples.toLocaleString()} resolved policy decisions`}
-			/>
-			{/*
-				The status line wraps rather than widening. This panel lives in a
-				fixed-width scrolling column, so a long veto reason on one
-				unwrapped row gave the whole column a horizontal scrollbar and
-				pushed every reading below it out of view. The badges wrap among
-				themselves and the reason takes its own full-width line.
-			*/}
-			<Flex.Column className="min-w-0 gap-2 border-(--line) border-b p-3">
-				<Flex.Row className="flex-wrap items-center gap-2">
-					<Badge
-						label={skill.mode === "trading" ? "trading" : "learning"}
-						variant={
-							skill.mode !== "trading"
-								? "info"
-								: skill.account === "real"
-									? "error"
-									: "success"
-						}
-						dot
-						size="m"
-					/>
-					<Badge
-						label={`account · ${skill.account}`}
-						variant="disabled"
-						size="m"
-					/>
-					{view?.realizationAllowed === false && (
-						<Badge label="realization vetoed" variant="error" size="m" />
-					)}
-				</Flex.Row>
-				<Typography.Mono
-					size="s"
-					tone={view?.realizationAllowed === false ? "down" : "f3"}
-					className="min-w-0 break-words"
-				>
-					{view?.realizationAllowed === false && view?.realizationReason
-						? `${view.realizationReason} (authority revoked to ${view.authorizedMode ?? "learning"})`
-						: `${skill.reason} · since ${clock(skill.since)}`}
-				</Typography.Mono>
-			</Flex.Column>
-			<PromotionLadder skill={skill} />
-			<Flex.Column>
-				<Reading
-					label="Mean forward return per decision"
-					value={skill.defined ? basis(skill.mean) : "no evidence"}
-					note="Account change over one disjoint measurement window, as a fraction of starting capital"
-					tone={skill.defined && skill.mean > 0 ? "accent" : "f1"}
-				/>
-				<Reading
-					label={`Lower bound at ${skill.sigma}σ`}
-					value={
-						skill.qualified
-							? basis(skill.lowerBound)
-							: skill.varianceDefined
-								? "evidence below the confidence floor"
-								: "dispersion not estimable"
-					}
-					note="Promotion requires this above zero: the edge must exceed its own measurement error"
-					tone={promotable ? "accent" : "f1"}
-				/>
-				<Reading
-					label="Confidence the edge is positive"
-					value={skill.qualified ? percent(skill.confidence) : "—"}
-					note="Empirical normal probability over these observations — not a calibrated forecast, and not a win rate"
-				/>
-				<Reading
-					label="Evidence"
-					value={
-						skill.defined
-							? `${skill.support.toFixed(1)} effective of ${skill.samples.toLocaleString()}`
-							: "none"
-					}
-					note={`Disjoint forward windows only — decisions issue far faster than a window closes, and overlapping ones are not independent evidence. Kish effective size under issue-time authority · ${skill.memory} window retention`}
-				/>
-				<Reading
-					label="Outcome sign"
-					value={`${skill.wins.toLocaleString()} positive · ${skill.losses.toLocaleString()} negative`}
-					note="Counts of admitted windows by sign; the mean above is what promotion reads, not this tally"
-				/>
-				<Reading
-					label="Transitions"
-					value={`${skill.promotions} went live · ${skill.demotions} fell back`}
-					note="Going live needs a positive lower bound; falling back needs only a non-positive mean. It falls back to learning, never to nothing"
-				/>
-				<Reading
-					label={`Intents sent to the ${skill.account} account`}
-					value={view.dispatched.toLocaleString()}
-					note="Zero while calibrating. The policy lane's own wallet is a simulation running alongside, not this account"
-				/>
-				{view.hasExecution ? (
-					<>
-						<Reading
-							label="Intents the account acted on"
-							value={view.execution.submitted.toLocaleString()}
-							note={`${view.execution.queued} waiting on the venue · orders are placed off the deciding path, so a slow venue cannot stall the pipeline`}
-						/>
-						<Reading
-							label="Disagreed with the account"
-							value={view.execution.diverged.toLocaleString()}
-							note="The agent decides from its simulated wallet. An entry on a symbol the account already holds, or an exit on one it never opened, is left alone rather than forced"
-						/>
-						<Reading
-							label="Dropped and refused"
-							value={`${view.execution.dropped.toLocaleString()} dropped · ${view.execution.failed.toLocaleString()} refused`}
-							note={
-								view.execution.lastFailure ||
-								"Dropped means the venue was slower than the agent was deciding, so an intent went stale before it could be placed. Refused means an order was actually rejected"
-							}
-							tone={view.execution.failed > 0 ? "f2" : "f1"}
-						/>
-					</>
-				) : (
-					<Reading
-						label="Intents the account did not accept"
-						value={view.rejected.toLocaleString()}
-						note={
-							view.rejection ||
-							"No account is attached, so nothing is being placed"
-						}
-					/>
-				)}
-			</Flex.Column>
-		</Section>
-	);
+ const skill = view?.skill;
+ return <Section fit="content">
+  <Section.Header title="Agent skill" meta={skill ? `${skill.samples} completed decisions` : "waiting for observations"} />
+  <OutcomeRange skill={skill} />
+  <Reading label="Mean completed decision benefit" value={skill?.defined ? basis(skill.mean) : "unmeasured"}
+   note="Benefit relative to leaving the position unchanged. Negative outcomes remain negative." />
+  <Reading label="Outcome signs" value={skill ? `${skill.wins} positive · ${skill.losses} negative` : "unmeasured"}
+   note="These decisions can overlap in time; the count is not independent statistical evidence." />
+  <Reading label="Wallet performance" value={view?.lanes?.find(lane => lane.mode === "policy") ? String(view.lanes.find(lane => lane.mode === "policy")?.profit) : "unmeasured"}
+   note="Net change in the consolidated-model agent's wallet, including fees." />
+  <Reading label="Status" value={view?.status ?? "waiting"} note="All agents continue learning. No statistical promotion gate is applied." />
+ </Section>;
 };

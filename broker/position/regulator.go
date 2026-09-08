@@ -23,6 +23,8 @@ type Regulator struct {
 	Holding   *types.Holding
 	ID        string
 	Recovered bool
+	Orders    Orders
+ Surface *types.ExecutionSurface
 
 	api      *websocket.API
 	price    *broker.Price
@@ -31,6 +33,12 @@ type Regulator struct {
 	executed kraken.ExecutionData
 	exitID   string
 	record   func(kraken.ExecutionData) error
+}
+
+/* Orders is the replaceable order transport; accounting stays on Regulator. */
+type Orders interface {
+	AddOrder(*spot.AddOrderRequest) (spot.AddOrderResult, error)
+	CancelOrder(*spot.CancelOrderRequest) (spot.CancelResult, error)
 }
 
 func NewRegulator(
@@ -42,6 +50,7 @@ func NewRegulator(
 ) *Regulator {
 	position := &Regulator{
 		api:     api,
+		Orders:  api,
 		price:   price,
 		record:  record,
 		Holding: types.NewHolding(symbol),
@@ -70,7 +79,7 @@ func (position *Regulator) Submit(
 		position.exitID = identity
 
 		for _, identity := range position.result.ID {
-			if _, err := position.api.CancelOrder(&spot.CancelOrderRequest{
+			if _, err := position.Orders.CancelOrder(&spot.CancelOrderRequest{
 				TxID: identity,
 			}); err != nil {
 				return errnie.Error(errnie.Err(
@@ -113,7 +122,7 @@ func (position *Regulator) Submit(
 		CumCost:     decimal.NewFromInt64(0),
 		FeeUsdEquiv: decimal.NewFromInt64(0),
 	}
-	position.result, err = position.api.AddOrder(position.pending)
+	position.result, err = position.Orders.AddOrder(position.pending)
 
 	if err != nil {
 		position.pending = nil
@@ -227,12 +236,11 @@ func (position *Regulator) Mark(at time.Time) error {
 	position.mu.Lock()
 	defer position.mu.Unlock()
 	position.Holding.Mark = surface.ExecutableVWAP
-	position.Holding.PnL = position.price.PnL(
-		position.Holding.Symbol, position.Holding,
-	)
-	position.Holding.ReturnPct = position.price.ReturnPct(
-		position.Holding.Symbol, position.Holding,
-	)
+	position.Surface = surface
+ position.Holding.PnL = surface.ExecutableValue.Sub(position.Holding.Basis).Sub(position.Holding.EntryFee)
+	basis := position.Holding.Basis.Add(position.Holding.EntryFee)
+
+ if basis.Sign() > 0 { position.Holding.ReturnPct = position.Holding.PnL.Div(basis).Mul(decimal.NewFromInt64(100)).Float64() }
 	return nil
 }
 

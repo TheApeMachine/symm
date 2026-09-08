@@ -1,11 +1,13 @@
 package recording
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"github.com/bytedance/sonic"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/types"
 	"gocloud.dev/blob"
+	"golang.org/x/sync/errgroup"
 )
 
 // Session records the original Hindsight records. The bounded queue holds only
@@ -21,6 +24,7 @@ import (
 // A failed write or full queue is terminal and is reported through Errors.
 type Session struct {
 	Errors        chan error
+ Durable chan struct{}
 	bucket        *blob.Bucket
 	run           hindsight.Run
 	sequencer     *hindsight.Sequencer
@@ -43,9 +47,9 @@ type opportunityWitnessKey struct {
 	archetype types.OpportunityArchetype
 }
 
-func NewSession(ctx context.Context, bucket *blob.Bucket, run hindsight.Run, capacity int) (*Session, error) {
-	if capacity <= 0 {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "recording: queue capacity must be positive", nil))
+func NewSession(ctx context.Context, bucket *blob.Bucket, run hindsight.Run, capacity, batchSize int, flushInterval time.Duration) (*Session, error) {
+	if capacity <= 0 || batchSize <= 0 || batchSize > capacity || flushInterval <= 0 {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "recording: require positive capacity, batch size within capacity, and flush interval", nil))
 	}
 	sequencer, err := hindsight.NewSequencer(run.ID)
 	if err != nil {
@@ -54,8 +58,8 @@ func NewSession(ctx context.Context, bucket *blob.Bucket, run hindsight.Run, cap
 	if err := store.Write(ctx, bucket, run.ID.Prefix("runs")+"run.json", run); err != nil {
 		return nil, err
 	}
-	session := &Session{bucket: bucket, run: run, sequencer: sequencer, queue: make(chan pending, capacity), done: make(chan struct{}), Errors: make(chan error, 1), phases: make(map[opportunityWitnessKey]types.OpportunityPhase), lastWitnessed: make(map[string]time.Time)}
-	go session.persist(context.WithoutCancel(ctx))
+	session := &Session{Durable: make(chan struct{}, 1), bucket: bucket, run: run, sequencer: sequencer, queue: make(chan pending, capacity), done: make(chan struct{}), Errors: make(chan error, 1), phases: make(map[opportunityWitnessKey]types.OpportunityPhase), lastWitnessed: make(map[string]time.Time)}
+	go session.persist(context.WithoutCancel(ctx), batchSize, flushInterval)
 	return session, nil
 }
 
@@ -81,10 +85,9 @@ func (session *Session) WriteManifest(manifest hindsight.EnvelopeManifest) error
 	return session.enqueue(manifest.Envelope.Key("manifests"), manifest)
 }
 
-func (session *Session) WriteLearning(event hindsight.LearningEvent) error {
+func (session *Session) WriteLearning(event any) error {
 	session.mutex.Lock()
 	defer session.mutex.Unlock()
-	event.Run = session.run.ID
 	session.next++
 	return session.enqueue(fmt.Sprintf("%s%020d.json", session.run.ID.Prefix("learning"), session.next), event)
 }
@@ -105,7 +108,7 @@ func (session *Session) enqueue(key string, value any) error {
 	if session.closed {
 		return errnie.Error(errnie.Err(errnie.IO, "recording: session closed", nil))
 	}
-	data, err := json.Marshal(value)
+	data, err := sonic.Marshal(value)
 	if err != nil {
 		return session.fail(errnie.Error(errnie.Err(errnie.Validation, "recording: encode "+key, err)))
 	}
@@ -126,16 +129,73 @@ func (session *Session) fail(err error) error {
 	return session.err
 }
 
-func (session *Session) persist(ctx context.Context) {
+// persist batches encoded originals by record family and run. Each S3 object
+// is JSONL; no record is converted into a second storage representation.
+func (session *Session) persist(ctx context.Context, batchSize int, interval time.Duration) {
 	defer close(session.done)
-	for record := range session.queue {
-		if err := session.bucket.WriteAll(ctx, record.key, record.data, nil); err != nil {
-			session.mutex.Lock()
-			session.fail(errnie.Error(errnie.Err(errnie.IO, "recording: write "+record.key, err)))
-			session.mutex.Unlock()
-			return
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	batch := make([]pending, 0, batchSize)
+	var sequence uint64
+	for {
+		select {
+		case record, open := <-session.queue:
+			if open {
+				batch = append(batch, record)
+			}
+			if !open || len(batch) == batchSize {
+				sequence++
+				if err := session.flush(ctx, batch, sequence); err != nil {
+					return
+				}
+				batch = batch[:0]
+			}
+			if !open {
+				return
+			}
+		case <-ticker.C:
+			sequence++
+			if err := session.flush(ctx, batch, sequence); err != nil {
+				return
+			}
+			batch = batch[:0]
 		}
 	}
+}
+
+func (session *Session) flush(ctx context.Context, batch []pending, sequence uint64) error {
+	groups := make(map[string][][]byte)
+	prefixes := []string{}
+	for _, record := range batch {
+		parts := strings.SplitN(record.key, "/", 3)
+		prefix := parts[0] + "/" + parts[1] + "/"
+		if _, found := groups[prefix]; !found {
+			prefixes = append(prefixes, prefix)
+		}
+		groups[prefix] = append(groups[prefix], record.data)
+	}
+	// A batch's independent record families upload concurrently. The next
+	// batch waits for all of them, preserving per-family order with bounded work.
+	var uploads errgroup.Group
+	for _, prefix := range prefixes {
+		uploads.Go(func() error {
+			key := fmt.Sprintf("%s%020d.jsonl", prefix, sequence)
+			if err := session.bucket.WriteAll(ctx, key, bytes.Join(groups[prefix], []byte("\n")), nil); err != nil {
+				return errnie.Error(errnie.Err(errnie.IO, "recording: write batch "+key, err))
+			}
+			return nil
+		})
+	}
+	if err := uploads.Wait(); err != nil {
+		session.mutex.Lock()
+		defer session.mutex.Unlock()
+		return session.fail(err)
+	}
+	if len(groups[session.run.ID.Prefix("captures")]) > 0 {
+  select { case session.Durable <- struct{}{}: default: } // Coalesced wakeup; captures themselves remain durable.
+ }
+	clear(batch)
+	return nil
 }
 
 // Close stops admission and waits until accepted records have been persisted,

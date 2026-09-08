@@ -3,8 +3,6 @@ import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 import { amount, basis, clock, duration, percent } from "./format";
 import type {
-	AccountLearning,
-	ForwardReview,
 	Influence,
 	LearningEvent,
 	LearningView,
@@ -43,7 +41,6 @@ the honest number — what fraction of the stage above survives — is written o
 each row in full.
 */
 export const PipelineFunnel = ({ view }: { view: LearningView | null }) => {
-	const execution = view?.execution;
 	const stages = [
 		{
 			key: "observed",
@@ -61,23 +58,14 @@ export const PipelineFunnel = ({ view }: { view: LearningView | null }) => {
 			key: "dispatched",
 			label: "Intents sent to the account",
 			count: view?.dispatched ?? 0,
-			note: "Nothing is sent while the agent is still calibrating",
+			note: "Simulated orders filled through the normal position regulator",
 		},
-		...(view?.hasExecution
-			? [
-					{
-						key: "submitted",
-						label: "Orders the account placed",
-						count: execution?.submitted ?? 0,
-						note: `${execution?.dropped ?? 0} went stale · ${execution?.failed ?? 0} refused · ${execution?.diverged ?? 0} disagreed`,
-					},
-				]
-			: []),
+
 		{
 			key: "resolved",
 			label: "Outcomes measured",
 			count: view?.resolved ?? 0,
-			note: "A decision becomes evidence only once its window closes",
+			note: "A trade leg must close and be persisted before it supplies a completed grade",
 		},
 	];
 
@@ -223,87 +211,19 @@ export const EventRhythm = ({ events }: { events: LearningEvent[] }) => {
 	);
 };
 
-/*
-PromotionLadder is the promotion rule drawn as one picture: the measured range
-of the edge, and the line it has to clear before the agent is allowed to trade.
-
-The bar is the conservative bound, not the mean. That is deliberate — the rule
-reads the bound, so the picture reads the bound, and an operator watching this
-shape sees exactly the quantity the machine is waiting on.
-*/
-export const PromotionLadder = ({ skill }: { skill?: Skill }) => {
-	if (!skill?.defined) {
-		return (
-			<Flex.Column className="gap-1 border-(--line) border-b p-3">
-				<Typography.Label size="s" tone="f4" weight="normal">
-					Distance to trading
-				</Typography.Label>
-				<Typography.Mono size="s" tone="f3">
-					No resolved evidence yet — there is nothing to measure a distance
-					against.
-				</Typography.Mono>
-			</Flex.Column>
-		);
-	}
-
-	const boundBp = skill.lowerBound * 10000;
-	const meanBp = skill.mean * 10000;
-	const extent = Math.max(Math.abs(boundBp), Math.abs(meanBp), 1) * 1.2;
-	const place = (valueBp: number) => 50 + (valueBp / extent) * 50;
-	const cleared = skill.qualified && skill.lowerBound > 0;
-
-	return (
-		<Flex.Column className="gap-2 border-(--line) border-b p-3">
-			<Typography.Label size="s" tone="f4" weight="normal">
-				Distance to trading
-			</Typography.Label>
-			<div className="relative h-8 w-full rounded bg-(--sunken) border border-(--line)">
-				<div className="absolute top-0 bottom-0 left-1/2 w-px bg-(--line2)" />
-				{/* The measured range: conservative bound up to the mean. */}
-				<div
-					className="absolute top-2 bottom-2 rounded-xs opacity-40"
-					style={{
-						left: `${Math.min(place(boundBp), place(meanBp))}%`,
-						width: `${Math.abs(place(meanBp) - place(boundBp))}%`,
-						background: cleared ? "var(--up)" : "var(--info)",
-					}}
-				/>
-				{/* The bound itself, which is what the promotion rule reads. */}
-				<div
-					className="absolute top-1 bottom-1 w-[2px]"
-					style={{
-						left: `${place(boundBp)}%`,
-						background: cleared ? "var(--up)" : "var(--warn)",
-					}}
-					title={`Conservative bound ${basis(skill.lowerBound)} at ${skill.sigma}σ`}
-				/>
-			</div>
-			<Flex.Row className="justify-between font-mono text-[9px] text-(--f4)">
-				<span>worse</span>
-				<span>the line it must cross</span>
-				<span>better</span>
-			</Flex.Row>
-			<Typography.Mono size="s" tone={cleared ? "accent" : "f3"}>
-				{cleared
-					? `Cleared by ${basis(skill.lowerBound)} — the worst credible reading is still a profit.`
-					: `Short of the line by ${basis(Math.abs(skill.lowerBound))} — the worst credible reading is still a loss.`}
-			</Typography.Mono>
-			<Flex.Column className="gap-1 pt-1">
-				<Flex.Row className="justify-between font-mono text-[9px] text-(--f4)">
-					<span>Evidence actually independent</span>
-					<span>
-						{skill.support.toFixed(1)} of {skill.samples.toLocaleString()}
-					</span>
-				</Flex.Row>
-				<div className="h-1.5 w-full overflow-hidden rounded-[3px] bg-(--line)">
-					<div
-						className="h-full bg-(--info)"
-						style={{ width: `${share(skill.support, skill.samples) * 100}%` }}
-					/>
-				</div>
-			</Flex.Column>
-		</Flex.Column>
-	);
+/* OutcomeRange locates the signed empirical mean relative to zero. */
+export const OutcomeRange = ({ skill }: { skill?: Skill }) => {
+ if (!skill?.defined) return <Typography.Mono>No completed outcomes yet.</Typography.Mono>;
+ const extent = Math.abs(skill.mean);
+ const width = extent > 0 ? 50 : 0;
+ return <Flex.Column className="gap-2 p-3">
+  <Typography.Label>Completed decision benefit</Typography.Label>
+  <div className="relative h-8 bg-(--sunken)">
+   <div className="absolute left-1/2 h-full border-l border-(--line)" />
+   <div className="absolute h-full" style={{ left: skill.mean < 0 ? `${50-width}%` : "50%", width: `${width}%`, background: skill.mean < 0 ? "var(--down)" : "var(--up)" }} />
+  </div>
+  <Typography.Mono>{basis(-extent)} ← 0 → {basis(extent)} · mean {basis(skill.mean)}</Typography.Mono>
+ </Flex.Column>;
 };
 
 /*
@@ -362,7 +282,7 @@ export const ImpulseBars = ({ impulse }: { impulse: Token[] | null }) => {
 };
 
 /*
-InfluenceGrid is the discovery table as a matrix: one row per measured quantity,
+InfluenceGrid is the discovery table as a matrix: one row per observed context prefix,
 one column per action it has evidence for. Colour direction says whether the
 outcome that followed was up or down, opacity says how strong, and the small
 inner square says how much authority stands behind it.
@@ -466,7 +386,7 @@ export const InfluenceGrid = ({
 							<div
 								key={label}
 								className="relative h-6 flex-1 overflow-hidden rounded-[3px] border border-(--line)"
-								title={`${row.source} / ${row.label} · ${label}\nMean outcome ${basis(cell.prior.Mean)}/s\nAuthority ${percent(cell.prior.Authority)}\n${cell.prior.Samples} samples`}
+								title={`${row.source} / ${row.label} · ${label}\nMean outcome ${basis(cell.prior.Mean)}\nAuthority ${percent(cell.prior.Authority)}\n${cell.prior.Samples} samples`}
 							>
 								<div
 									className="absolute inset-0"
@@ -495,129 +415,6 @@ export const InfluenceGrid = ({
 	);
 };
 
-/*
-ExposureRing shows the forward test as one shape: of the excursions the tape
-actually offered, how many the policy was in for. "Unexposed" is not an error —
-the excursion only became visible after the decision was due — so it is drawn
-as a neutral slice, not a red one.
-*/
-export const ExposureRing = ({ forward }: { forward?: ForwardReview }) => {
-	const exposed = forward?.exposed ?? forward?.captured ?? 0;
-	const unexposed = forward?.unexposed ?? forward?.missed ?? 0;
-	const unknown = forward?.unreviewable ?? 0;
-	const total = exposed + unexposed + unknown;
-
-	const slices = [
-		{
-			key: "exposed",
-			label: "held through it",
-			value: exposed,
-			tone: "var(--up)",
-		},
-		{
-			key: "unexposed",
-			label: "sat it out",
-			value: unexposed,
-			tone: "var(--warn)",
-		},
-		{
-			key: "unknown",
-			label: "not reviewable",
-			value: unknown,
-			tone: "var(--f4)",
-		},
-	];
-
-	const radius = 52;
-	const circumference = 2 * Math.PI * radius;
-	let offset = 0;
-
-	return (
-		<Flex.Row align="center" gap={4} className="flex-wrap p-3">
-			<svg
-				viewBox="0 0 140 140"
-				className="h-32 w-32 shrink-0"
-				role="img"
-				aria-label="Confirmed excursions the policy was exposed to"
-			>
-				<title>Confirmed excursions the policy was exposed to</title>
-				<circle
-					cx="70"
-					cy="70"
-					r={radius}
-					fill="none"
-					stroke="var(--line)"
-					strokeWidth="14"
-				/>
-				{total > 0 &&
-					slices.map((slice) => {
-						const length = (slice.value / total) * circumference;
-						const dash = `${length} ${circumference - length}`;
-						const rotation = (offset / circumference) * 360 - 90;
-						offset += length;
-						return (
-							<circle
-								key={slice.key}
-								cx="70"
-								cy="70"
-								r={radius}
-								fill="none"
-								stroke={slice.tone}
-								strokeWidth="14"
-								strokeDasharray={dash}
-								transform={`rotate(${rotation} 70 70)`}
-							>
-								<title>{`${slice.label}: ${slice.value}`}</title>
-							</circle>
-						);
-					})}
-				<text
-					x="70"
-					y="68"
-					textAnchor="middle"
-					fill="var(--f1)"
-					fontSize="20"
-					fontFamily="monospace"
-				>
-					{total > 0 ? percent(exposed / total) : "—"}
-				</text>
-				<text
-					x="70"
-					y="84"
-					textAnchor="middle"
-					fill="var(--f4)"
-					fontSize="9"
-					fontFamily="monospace"
-				>
-					in for it
-				</text>
-			</svg>
-			<Flex.Column className="min-w-0 gap-1">
-				{slices.map((slice) => (
-					<Flex.Row key={slice.key} align="center" gap={2}>
-						<span
-							className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
-							style={{ background: slice.tone }}
-						/>
-						<Typography.Mono size="s" tone="f2">
-							{slice.value.toLocaleString()} {slice.label}
-						</Typography.Mono>
-					</Flex.Row>
-				))}
-				<Typography.Mono size="s" tone="f4" className="max-w-72">
-					Of the {total.toLocaleString()} moves the tape confirmed after the
-					fact, this is how many the policy happened to be holding through.
-				</Typography.Mono>
-			</Flex.Column>
-		</Flex.Row>
-	);
-};
-
-/*
-WalletBars puts every cloned wallet on one axis so the spread between them is
-visible without reading a column of figures. A wallet that has not been valued
-yet is drawn as a gap on the axis rather than as a bar at zero.
-*/
 export const WalletBars = ({ lanes }: { lanes: Wallet[] | null }) => {
 	const wallets = lanes ?? [];
 	if (wallets.length === 0) return null;
@@ -674,169 +471,18 @@ export const WalletBars = ({ lanes }: { lanes: Wallet[] | null }) => {
 				);
 			})}
 			<Typography.Mono size="s" tone="f4">
-				This episode's profit for each wallet, on one shared axis. Each wallet
-				owns its own capital; a spent one restarts as a fresh clone rather than
-				carrying a balance forward.
+				This run's profit for each wallet, on one shared axis. Each wallet
+				owns its own capital. Losses remain in that wallet.
 			</Typography.Mono>
 		</Flex.Column>
 	);
 };
 
-/*
-ExcursionBar draws how far an allocation ran in each direction before it was
-measured: the worst it looked, the best it looked, and where it actually
-finished. Three numbers that only mean something in relation to each other, so
-they are shown in relation to each other.
-*/
-export const ExcursionBar = ({ account }: { account: AccountLearning }) => {
-	const best = Math.max(account.mfe, 0);
-	const worst = Math.min(account.mae, 0);
-	const extent = Math.max(best, Math.abs(worst), 1e-9);
-	const place = (value: number) => 50 + (value / extent) * 50;
-	const finished = account.state.mark.version
-		? account.outcome.totalReward
-		: undefined;
-
-	if (best === 0 && worst === 0) return null;
-
-	return (
-		<Flex.Column className="gap-1">
-			<div className="relative h-7 w-full rounded bg-(--sunken) border border-(--line)">
-				<div className="absolute top-0 bottom-0 left-1/2 w-px bg-(--line2)" />
-				<div
-					className="absolute top-2 bottom-2 rounded-xs opacity-30 bg-(--down)"
-					style={{ left: `${place(worst)}%`, width: `${50 - place(worst)}%` }}
-					title={`Worst it looked: ${amount(worst)}`}
-				/>
-				<div
-					className="absolute top-2 bottom-2 rounded-xs opacity-30 bg-(--up)"
-					style={{ left: "50%", width: `${place(best) - 50}%` }}
-					title={`Best it looked: ${amount(best)}`}
-				/>
-				{finished !== undefined && (
-					<div
-						className="absolute top-0.5 bottom-0.5 w-[2px] bg-(--f1)"
-						style={{ left: `${place(finished)}%` }}
-						title={`Where it finished: ${amount(finished)}`}
-					/>
-				)}
-			</div>
-			<Flex.Row className="justify-between font-mono text-[9px] text-(--f4)">
-				<span>worst {amount(worst)}</span>
-				<span>
-					{finished === undefined
-						? "no authoritative mark"
-						: `finished ${amount(finished)}`}
-				</span>
-				<span>best {amount(best)}</span>
-			</Flex.Row>
-			{account.timeToPositiveNs > 0 && (
-				<Typography.Mono size="s" tone="f4">
-					First went positive after {duration(account.timeToPositiveNs)} · held{" "}
-					{duration(account.holdingNs)}
-				</Typography.Mono>
-			)}
-		</Flex.Column>
-	);
-};
-
-/*
-MeasurementWindow explains the one number that decides whether this market can
-be learned from at all: how long the agent waits before scoring a decision.
-
-It is not a setting. It is a race between two measured quantities — how far the
-price moves on its own, and how much it costs to get in and out — and the
-window is the point where the first can plausibly cover the second. Drawing
-them against each other says why the wait is what it is, so a window of four
-seconds and a window of four minutes read as facts about two different markets
-rather than as a knob someone turned.
-*/
-export const MeasurementWindow = ({ view }: { view: LearningView | null }) => {
-	const cost = view?.roundTrip ?? 0;
-	const movement = view?.movement ?? 0;
-	const measured = (view?.hasMovement ?? false) && cost > 0;
-
-	if (!measured) {
-		return (
-			<Flex.Column className="gap-1 border-(--line) border-b p-3">
-				<Typography.Label size="s" tone="f4" weight="normal">
-					Measurement window
-				</Typography.Label>
-				<Typography.Mono size="s" tone="f3">
-					Not measurable yet — this market's own movement has not been observed
-					often enough to say how long an outcome needs. Until it has, nothing
-					here is scored: a window that was guessed at would answer every
-					decision with the spread it just paid.
-				</Typography.Mono>
-			</Flex.Column>
-		);
-	}
-
-	const extent = Math.max(cost, movement);
-	const observations = Math.max(1, Math.round(view?.horizonObservations ?? 0));
-
-	return (
-		<Flex.Column className="gap-2 border-(--line) border-b p-3">
-			<Flex.Row align="center" className="justify-between">
-				<Typography.Label size="s" tone="f4" weight="normal">
-					Measurement window
-				</Typography.Label>
-				<Typography.Mono
-					size="s"
-					tone={view?.horizonCapped ? "down" : "accent"}
-				>
-					{duration(view?.horizonNs ?? 0)}
-					{view?.horizonCapped ? " · at the ceiling" : ""}
-				</Typography.Mono>
-			</Flex.Row>
-
-			<Flex.Column className="gap-1">
-				<Flex.Row align="center" gap={2}>
-					<Typography.Mono size="s" tone="f3" className="w-40 shrink-0">
-						costs to round-trip
-					</Typography.Mono>
-					<div className="h-3 flex-1 overflow-hidden rounded-[3px] bg-(--line)">
-						<div
-							className="h-full bg-(--down)"
-							style={{ width: `${share(cost, extent) * 100}%` }}
-						/>
-					</div>
-					<Typography.Mono
-						size="s"
-						tone="f4"
-						className="w-20 shrink-0 text-right"
-					>
-						{percent(cost)}
-					</Typography.Mono>
-				</Flex.Row>
-				<Flex.Row align="center" gap={2}>
-					<Typography.Mono size="s" tone="f3" className="w-40 shrink-0">
-						moves per observation
-					</Typography.Mono>
-					<div className="h-3 flex-1 overflow-hidden rounded-[3px] bg-(--line)">
-						<div
-							className="h-full bg-(--up)"
-							style={{ width: `${share(movement, extent) * 100}%` }}
-						/>
-					</div>
-					<Typography.Mono
-						size="s"
-						tone="f4"
-						className="w-20 shrink-0 text-right"
-					>
-						{percent(movement)}
-					</Typography.Mono>
-				</Flex.Row>
-			</Flex.Column>
-
-			<Typography.Mono size="s" tone="f4">
-				{view?.horizonCapped
-					? `This market moves ${percent(movement)} at a time and costs ${percent(cost)} to get in and out, so covering that cost takes longer than an outcome can still be credited to the decision that opened it. It is reporting that it cannot be traded profitably at this size.`
-					: `This market moves ${percent(movement)} at a time and costs ${percent(cost)} to get in and out, so it takes about ${observations.toLocaleString()} observations — ${duration(view?.horizonNs ?? 0)} — before a move is big enough to say whether the decision was any good.`}
-			</Typography.Mono>
-		</Flex.Column>
-	);
-};
+export const MeasurementWindow = ({ view }: { view: LearningView | null }) => <Flex.Column className="gap-2 p-3">
+ <Typography.Label>Observation history</Typography.Label>
+ <Typography.Mono>{duration(view?.horizonNs ?? 0)} of producer-supplied temporal context</Typography.Mono>
+ <Typography.Mono>Decision outcomes wait for a completed, persisted trade leg. There is no spread-crossing or promotion gate.</Typography.Mono>
+</Flex.Column>;
 
 /*
 LearningProgress is the answer to "is this thing actually learning right now".
@@ -852,7 +498,7 @@ it moves at the rate the learning actually happens.
 */
 export const LearningProgress = ({ view }: { view: LearningView | null }) => {
 	const trained = view?.forward?.trained ?? 0;
-	const untrained = view?.forward?.untrained ?? 0;
+	const pending = view ? view.decisions - view.resolved : 0;
 	const history = useRef<Array<{ at: number; trained: number }>>([]);
 	const [, redraw] = useState(0);
 
@@ -905,10 +551,10 @@ export const LearningProgress = ({ view }: { view: LearningView | null }) => {
 				</Flex.Column>
 				<Flex.Column className="items-end gap-0">
 					<Typography.Mono size="s" tone="f3">
-						{untrained.toLocaleString()} could not be used
+						{pending.toLocaleString()} awaiting a completed grade
 					</Typography.Mono>
 					<Typography.Mono size="s" tone="f4" className="max-w-64 truncate">
-						{view?.forward?.lastUntrainable || "—"}
+						{view?.status || "—"}
 					</Typography.Mono>
 				</Flex.Column>
 			</Flex.Row>
@@ -940,8 +586,7 @@ export const LearningProgress = ({ view }: { view: LearningView | null }) => {
 			<Typography.Mono size="s" tone="f4">
 				Each of these is a move the market actually made, found after it
 				completed, matched back to what the agent was looking at when it began.
-				Nobody labelled them — the tape did. This climbs long before the agent
-				is allowed to trade, and it is what the edge above is waiting on.
+				Nobody labelled them — the tape did. Learning continues while completed tape outcomes arrive.
 			</Typography.Mono>
 		</Flex.Column>
 	);

@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
+ "github.com/krakenfx/api-go/v2/pkg/book"
+ "github.com/theapemachine/symm/kraken/websocket"
+ "github.com/theapemachine/symm/tests/venue"
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/kraken"
 )
@@ -21,7 +24,7 @@ func spotTrade(symbol string, price float64, qty float64, at time.Time) kraken.T
 
 func TestTradeStep(t *testing.T) {
 	Convey("Given a multi-leg volume-clock sequence", t, func() {
-		entity := NewTrade()
+		entity, _ := tradeFixture(t)
 		at := time.Unix(1_700_000_000, 0)
 
 		Convey("the opening trade seeds an open bar", func() {
@@ -85,16 +88,11 @@ func TestTradeStep(t *testing.T) {
 	})
 
 	Convey("Given completed volume bars backed by executable quotes", t, func() {
-		entity := NewTrade()
+		entity, conn := tradeFixture(t)
 		midpoint := 100.0
 		at := time.Unix(1_700_000_000, 0)
 
-		entity.SetQuote(func(symbol string) (bid, ask *decimal.Decimal) {
-			bidValue := decimal.NewFromFloat64(midpoint - 1)
-			askValue := decimal.NewFromFloat64(midpoint + 1)
-
-			return bidValue, askValue
-		})
+		conn.Mark(midpoint)
 
 		Convey("the ordinal advances only when a bar closes and the midpoint records downside then recovery", func() {
 			opening := entity.Step(spotTrade("BTC/USD", 100, 2, at))
@@ -102,6 +100,7 @@ func TestTradeStep(t *testing.T) {
 			So(opening.Metrics["completed_volume_bar_ordinal"].Raw, ShouldEqual, 0.0)
 
 			midpoint = 90
+   conn.Mark(midpoint)
 			downside := entity.Step(spotTrade(
 				"BTC/USD", 90, 1, at.Add(5*time.Second),
 			))
@@ -122,6 +121,7 @@ func TestTradeStep(t *testing.T) {
 			So(barOpening.Metrics["completed_volume_bar_ordinal"].Raw, ShouldEqual, 1.0)
 
 			midpoint = 95
+   conn.Mark(midpoint)
 			insideBar := entity.Step(spotTrade(
 				"BTC/USD", 95, 0.25, at.Add(7*time.Second),
 			))
@@ -131,6 +131,7 @@ func TestTradeStep(t *testing.T) {
 			So(hasIntraBarReturn, ShouldBeFalse)
 
 			midpoint = 105
+   conn.Mark(midpoint)
 			recovery := entity.Step(spotTrade(
 				"BTC/USD", 105, 1, at.Add(10*time.Second),
 			))
@@ -149,7 +150,7 @@ func TestTradeStep(t *testing.T) {
 }
 
 func BenchmarkTradeStep(b *testing.B) {
-	entity := NewTrade()
+	entity, conn := tradeFixture(b)
 	quotes := [2]struct {
 		bid *decimal.Decimal
 		ask *decimal.Decimal
@@ -159,14 +160,13 @@ func BenchmarkTradeStep(b *testing.B) {
 	}
 	quoteIndex := 0
 
-	entity.SetQuote(func(symbol string) (bid, ask *decimal.Decimal) {
-		return quotes[quoteIndex].bid, quotes[quoteIndex].ask
-	})
+
 
 	b.ReportAllocs()
 
 	for iteration := 0; b.Loop(); iteration++ {
 		quoteIndex = iteration % len(quotes)
+  conn.Mark(100 + float64(quoteIndex))
 		measurement := entity.Step(spotTrade(
 			"BTC/USD",
 			100+float64(quoteIndex),
@@ -178,4 +178,18 @@ func BenchmarkTradeStep(b *testing.B) {
 			b.Fatal(measurement.Err)
 		}
 	}
+}
+
+// tradeBook supplies an actual SDK book through the same API.Book boundary.
+type tradeBook struct { *venue.Conn; current *book.Book }
+func (source *tradeBook) Book(_ string, read func(*book.Book)) { read(source.current) }
+func (source *tradeBook) Mark(midpoint float64) {
+ source.current = book.New()
+ source.current.Update(&book.UpdateOptions{Direction: book.Bid, Price: decimal.NewFromFloat64(midpoint-1), Quantity: decimal.NewFromInt64(10)})
+ source.current.Update(&book.UpdateOptions{Direction: book.Ask, Price: decimal.NewFromFloat64(midpoint+1), Quantity: decimal.NewFromInt64(10)})
+}
+func tradeFixture(t testing.TB) (*Trade, *tradeBook) {
+ t.Helper()
+ source := &tradeBook{Conn: venue.NewConn()}
+ return NewTrade(websocket.NewAPI(t.Context(), source, source)), source
 }

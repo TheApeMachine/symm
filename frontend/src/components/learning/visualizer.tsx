@@ -5,333 +5,22 @@ import { Flex } from "#/components/ui/flex";
 import { Tabs } from "#/components/ui/tabs";
 import { Typography } from "#/components/ui/typography";
 import { EventRhythm, LearningProgress, PipelineFunnel } from "./charts";
-import { action, basis, clock, percent } from "./format";
+import { action, basis, clock } from "./format";
 import type { Candidate, LearningEvent, LearningView, Skill } from "./state";
 
-/*
-EdgeDistributionPlot renders a continuous probability density curve of the agent's
-forward return. A visual operator can instantly see whether the distribution has
-shifted past the zero breakeven line into the positive profit zone and whether the
-conservative 3-sigma lower bound has cleared the promotion threshold.
-*/
+/* The observed outcome signs and mean make no distributional assumption. */
 export const EdgeDistributionPlot = ({ skill }: { skill?: Skill }) => {
-	const defined = skill?.defined ?? false;
-	const measured = defined && (skill?.standardError ?? 0) > 0;
-	const meanBp = defined ? (skill?.mean ?? 0) * 10000 : 0;
-	const lbBp = defined ? (skill?.lowerBound ?? 0) * 10000 : 0;
-
-	/*
-		Without a measured dispersion there is no distribution to draw. Assuming
-		one and rendering the curve anyway produces a picture of a bell that
-		nothing measured — the most confident-looking thing on the surface,
-		drawn from no evidence at all.
-	*/
-	if (!measured) {
-		return (
-			<Flex.Column className="h-full w-full items-center justify-center gap-2 px-6 text-center">
-				<Typography.Label size="s" tone="f4" weight="normal">
-					No edge distribution yet
-				</Typography.Label>
-				<Typography.Mono size="s" tone="f3" className="max-w-md">
-					{(skill?.samples ?? 0) === 0
-						? "No policy decision has resolved yet, so there is nothing to plot."
-						: `${(skill?.samples ?? 0).toLocaleString()} decisions have resolved and every one returned exactly zero — the policy has not entered a position, so its account never changed. A distribution needs outcomes that differ from each other.`}
-				</Typography.Mono>
-				<Typography.Mono size="s" tone="f4" className="max-w-md">
-					This stays empty until the policy acts. What it is learning from in
-					the meantime is on the Forward test tab.
-				</Typography.Mono>
-			</Flex.Column>
-		);
-	}
-	const seBp = (skill?.standardError ?? 0) * 10000;
-	const sigma = skill?.sigma ?? 3.0;
-	const confidence = skill?.confidence ?? 0;
-	const promotable = (skill?.qualified ?? false) && lbBp > 0;
-
-	// Establish horizontal domain centered around 0 and mean
-	const minBp = Math.min(-18, meanBp - 3.8 * seBp, lbBp - 2);
-	const maxBp = Math.max(18, meanBp + 3.8 * seBp, 6);
-	const rangeBp = maxBp - minBp || 1;
-
-	const viewWidth = 520;
-	const viewHeight = 180;
-	const padding = { left: 45, right: 35, top: 25, bottom: 35 };
-	const plotWidth = viewWidth - padding.left - padding.right;
-	const plotHeight = viewHeight - padding.top - padding.bottom;
-
-	const toSvgX = (valueBp: number) =>
-		padding.left + ((valueBp - minBp) / rangeBp) * plotWidth;
-	const zeroSvgX = toSvgX(0);
-	const meanSvgX = toSvgX(meanBp);
-	const lbSvgX = toSvgX(lbBp);
-
-	// Generate normal PDF curve points
-	const steps = 80;
-	const curvePoints: Array<{ x: number; y: number; bp: number }> = [];
-	for (let index = 0; index <= steps; index++) {
-		const bp = minBp + (index / steps) * rangeBp;
-		const exponent = -0.5 * ((bp - meanBp) / seBp) ** 2;
-		const density = Math.exp(exponent);
-		const svgX = toSvgX(bp);
-		const svgY = padding.top + plotHeight - density * (plotHeight * 0.88);
-		curvePoints.push({ x: svgX, y: svgY, bp });
-	}
-
-	const fullCurveD = curvePoints.reduce(
-		(accumulator, point, index) =>
-			index === 0
-				? `M ${point.x.toFixed(1)} ${point.y.toFixed(1)}`
-				: `${accumulator} L ${point.x.toFixed(1)} ${point.y.toFixed(1)}`,
-		"",
-	);
-
-	// Profit zone (bp > 0) shaded area
-	const positivePoints = curvePoints.filter((point) => point.bp >= 0);
-	let profitAreaD = "";
-	if (positivePoints.length > 0) {
-		const firstPoint = positivePoints[0];
-		const lastPoint = positivePoints[positivePoints.length - 1];
-		const baselineY = padding.top + plotHeight;
-		profitAreaD = `M ${firstPoint.x.toFixed(1)} ${baselineY} L ${firstPoint.x.toFixed(1)} ${firstPoint.y.toFixed(1)}`;
-		for (const point of positivePoints) {
-			profitAreaD += ` L ${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
-		}
-		profitAreaD += ` L ${lastPoint.x.toFixed(1)} ${baselineY} Z`;
-	}
-
-	// Win / Loss bar
-	const wins = skill?.wins ?? 0;
-	const losses = skill?.losses ?? 0;
-	const totalOutcomes = wins + losses;
-	/*
-		An empty tally has no rate. Drawing it as an even split renders a bar
-		that says the agent wins half the time, which is a claim nothing has
-		measured — and the one thing this panel exists to avoid.
-	*/
-	const winRate = totalOutcomes > 0 ? (wins / totalOutcomes) * 100 : null;
-
-	return (
-		<Flex.Column className="h-full w-full justify-between gap-2 px-3">
-			<div className="relative h-44 w-full overflow-hidden rounded bg-(--sunken) border border-(--line)">
-				<svg
-					viewBox={`0 0 ${viewWidth} ${viewHeight}`}
-					className="h-full w-full select-none"
-					preserveAspectRatio="none"
-					role="img"
-					aria-label="Statistical Edge Probability Density Distribution"
-				>
-					<title>Statistical Edge Probability Density Distribution</title>
-					<defs>
-						<linearGradient id="profitAreaGradient" x1="0" y1="0" x2="0" y2="1">
-							<stop offset="0%" stopColor="var(--up)" stopOpacity="0.4" />
-							<stop offset="100%" stopColor="var(--up)" stopOpacity="0.05" />
-						</linearGradient>
-					</defs>
-
-					{/* Loss zone subtle background tint */}
-					<rect
-						x={padding.left}
-						y={padding.top}
-						width={Math.max(0, zeroSvgX - padding.left)}
-						height={plotHeight}
-						fill="var(--error)"
-						opacity="0.04"
-					/>
-
-					{/* Profit zone subtle background tint */}
-					<rect
-						x={zeroSvgX}
-						y={padding.top}
-						width={Math.max(0, viewWidth - padding.right - zeroSvgX)}
-						height={plotHeight}
-						fill="var(--up)"
-						opacity="0.05"
-					/>
-
-					{/* Baseline grid */}
-					<line
-						x1={padding.left}
-						y1={padding.top + plotHeight}
-						x2={viewWidth - padding.right}
-						y2={padding.top + plotHeight}
-						stroke="var(--line)"
-						strokeWidth="1"
-					/>
-
-					{/* Profit Area (Confidence that edge > 0) */}
-					{profitAreaD && (
-						<path d={profitAreaD} fill="url(#profitAreaGradient)" />
-					)}
-
-					{/* Normal PDF curve stroke */}
-					<path
-						d={fullCurveD}
-						fill="none"
-						stroke={promotable ? "var(--up)" : "var(--info)"}
-						strokeWidth="2.2"
-					/>
-
-					{/* Breakeven zero line */}
-					<line
-						x1={zeroSvgX}
-						y1={padding.top - 5}
-						x2={zeroSvgX}
-						y2={padding.top + plotHeight}
-						stroke="var(--line2)"
-						strokeWidth="1.5"
-						strokeDasharray="3,3"
-					/>
-					<text
-						x={zeroSvgX}
-						y={padding.top - 8}
-						textAnchor="middle"
-						fill="var(--f3)"
-						fontSize="9.5"
-						fontFamily="monospace"
-					>
-						0.0 bp (Breakeven)
-					</text>
-
-					{/* Mean marker */}
-					{defined && (
-						<g>
-							<line
-								x1={meanSvgX}
-								y1={padding.top + 10}
-								x2={meanSvgX}
-								y2={padding.top + plotHeight}
-								stroke="var(--f2)"
-								strokeWidth="1"
-								strokeDasharray="2,2"
-							/>
-							<circle
-								cx={meanSvgX}
-								cy={padding.top + 10}
-								r="3"
-								fill="var(--f1)"
-							/>
-							<text
-								x={meanSvgX}
-								y={padding.top + 22}
-								textAnchor="middle"
-								fill="var(--f1)"
-								fontSize="9"
-								fontFamily="monospace"
-							>
-								μ {meanBp.toFixed(1)} bp
-							</text>
-						</g>
-					)}
-
-					{/* Conservative Lower Bound Pin */}
-					{defined && (
-						<g>
-							<line
-								x1={lbSvgX}
-								y1={padding.top}
-								x2={lbSvgX}
-								y2={padding.top + plotHeight}
-								stroke={promotable ? "var(--up)" : "var(--warn)"}
-								strokeWidth="2"
-							/>
-							<circle
-								cx={lbSvgX}
-								cy={padding.top}
-								r="4"
-								fill={promotable ? "var(--up)" : "var(--warn)"}
-							/>
-							<text
-								x={lbSvgX}
-								y={padding.top + plotHeight - 8}
-								textAnchor={lbSvgX < zeroSvgX ? "end" : "start"}
-								dx={lbSvgX < zeroSvgX ? -6 : 6}
-								fill={promotable ? "var(--up)" : "var(--warn)"}
-								fontSize="9.5"
-								fontWeight="bold"
-								fontFamily="monospace"
-							>
-								{sigma}σ Bound ({lbBp.toFixed(1)} bp)
-							</text>
-						</g>
-					)}
-
-					{/* Axis labels */}
-					<text
-						x={padding.left}
-						y={padding.top + plotHeight + 16}
-						textAnchor="start"
-						fill="var(--f4)"
-						fontSize="9"
-						fontFamily="monospace"
-					>
-						{minBp.toFixed(0)} bp
-					</text>
-					<text
-						x={viewWidth - padding.right}
-						y={padding.top + plotHeight + 16}
-						textAnchor="end"
-						fill="var(--f4)"
-						fontSize="9"
-						fontFamily="monospace"
-					>
-						+{maxBp.toFixed(0)} bp
-					</text>
-				</svg>
-			</div>
-
-			{/* Promotion status banner */}
-			<div
-				className={`flex items-center justify-between rounded px-3 py-1.5 border text-xs font-mono ${
-					promotable
-						? "border-(--up)/40 bg-(--up)/10 text-(--up)"
-						: "border-(--line) bg-(--sunken) text-(--f3)"
-				}`}
-			>
-				<span>
-					{promotable
-						? "✓ PROMOTED: Edge exceeds conservative 3σ threshold"
-						: `CALIBRATING: Needs +${Math.abs(lbBp).toFixed(1)} bp to clear the 0 bp live gate`}
-				</span>
-				<span>Confidence: {percent(confidence)}</span>
-			</div>
-
-			{/* Win / Loss ratio bar */}
-			<Flex.Column className="gap-1">
-				<Flex.Row
-					align="center"
-					className="justify-between text-[10px] font-mono text-(--f4)"
-				>
-					<span>Outcomes ({totalOutcomes.toLocaleString()} total)</span>
-					<span className="text-(--f2)">
-						{winRate === null ? (
-							"nothing resolved either way yet"
-						) : (
-							<>
-								<span className="text-(--up)">{wins}W</span> (
-								{winRate.toFixed(1)}%) ·{" "}
-								<span className="text-(--error)">{losses}L</span>
-							</>
-						)}
-					</span>
-				</Flex.Row>
-				{winRate === null ? (
-					<div className="h-2 w-full rounded-[3px] border border-(--line) border-dashed" />
-				) : (
-					<div className="h-2 w-full overflow-hidden rounded-[3px] bg-(--line) flex">
-						<div
-							className="h-full bg-(--up) transition-all duration-300"
-							style={{ width: `${winRate}%` }}
-						/>
-						<div
-							className="h-full bg-(--error) transition-all duration-300"
-							style={{ width: `${100 - winRate}%` }}
-						/>
-					</div>
-				)}
-			</Flex.Column>
-		</Flex.Column>
-	);
+ if (!skill?.defined) return <Typography.Mono className="p-4">No completed tape outcomes yet.</Typography.Mono>;
+ const total = skill.samples;
+ return <Flex.Column className="gap-3 p-4">
+  <Typography.Mono>Mean {basis(skill.mean)} · {total} completed decisions</Typography.Mono>
+  <Flex.Row className="h-10 w-full" aria-label="Observed outcome signs">
+   <div className="bg-(--up)" style={{width: `${total > 0 ? 100 * skill.wins / total : 0}%`}} />
+   <div className="bg-(--down)" style={{width: `${total > 0 ? 100 * skill.losses / total : 0}%`}} />
+  </Flex.Row>
+  <Typography.Mono>{skill.wins} positive · {skill.losses} negative · {total - skill.wins - skill.losses} zero</Typography.Mono>
+  <Typography.Mono>Observed tape benefits. Overlapping decisions are not independent trials; no probability curve or promotion boundary is inferred.</Typography.Mono>
+ </Flex.Column>;
 };
 
 /*
@@ -438,7 +127,7 @@ export const ActionSpectrumPlot = ({
 											: "text-(--f4)"
 									}
 								>
-									{defined ? `${basis(candidate.prior.Mean)}/s` : "—"}
+									{defined ? `${basis(candidate.prior.Mean)}` : "—"}
 								</span>
 								<span className="text-[10px] text-(--f4)">
 									{candidate.prior.Samples} obs
@@ -457,7 +146,7 @@ export const ActionSpectrumPlot = ({
 
 			<div className="flex justify-between border-(--line) border-t pt-1 font-mono text-[9px] text-(--f4)">
 				<span>← Negative return expectation</span>
-				<span>0.0 bp/s</span>
+				<span>0.0 bp</span>
 				<span>Positive return expectation →</span>
 			</div>
 		</Flex.Column>
@@ -478,7 +167,7 @@ export const LearningTrajectoryPlot = ({
 				(event) =>
 					event.mode === "policy" &&
 					event.complete &&
-					event.kind !== "recycled",
+					event.kind === "valued",
 			)
 			.sort(
 				(left, right) =>
@@ -669,7 +358,7 @@ export const LearningVisualizer = ({
 	return (
 		<Canvas
 			title="Learning visualizer"
-			meta="intuitive diagnostics · statistical edge · action divergence · pipeline flow"
+			meta="intuitive diagnostics · observed edge · action divergence · pipeline flow"
 			className={`h-full w-full min-h-80 ${className ?? ""}`}
 			topRight={
 				<Tabs size="xs" className="pointer-events-auto relative z-10">

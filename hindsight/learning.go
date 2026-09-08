@@ -1,7 +1,7 @@
 package hindsight
 
 import (
-	"github.com/theapemachine/symm/nomagique/learning"
+	"github.com/theapemachine/symm/nomagique/learning/associative/prior"
 	"time"
 )
 
@@ -34,42 +34,42 @@ type LearningEvent struct {
 	Candidate       *CandidateRecord `json:"candidate,omitempty"`
 	CandidateResult *CandidateResult `json:"candidateResult,omitempty"`
 
-	Run                 RunID                 `json:"run,omitempty"`
-	Capture             CaptureIdentity       `json:"capture"`
-	Quantities          [][2]string           `json:"quantities,omitempty"`
-	Scope               string                `json:"scope,omitempty"`
-	GlobalPrior         learning.PriorReading `json:"globalPrior"`
-	SymbolPrior         learning.PriorReading `json:"symbolPrior"`
-	AbsoluteSkillTarget *float64              `json:"absoluteSkillTarget,omitempty"`
-	BaselineRate        float64               `json:"baselineRate"`
-	CandidateID         string                `json:"candidateId,omitempty"`
-	PortfolioID         string                `json:"portfolioId,omitempty"`
+	Run                 RunID           `json:"run,omitempty"`
+	Capture             CaptureIdentity `json:"capture"`
+	Quantities          [][2]string     `json:"quantities,omitempty"`
+	Scope               string          `json:"scope,omitempty"`
+	GlobalPrior         prior.Reading   `json:"globalPrior"`
+	SymbolPrior         prior.Reading   `json:"symbolPrior"`
+	AbsoluteSkillTarget *float64        `json:"absoluteSkillTarget,omitempty"`
+	BaselineRate        float64         `json:"baselineRate"`
+	CandidateID         string          `json:"candidateId,omitempty"`
+	PortfolioID         string          `json:"portfolioId,omitempty"`
 
-	ID          uint64                `json:"id"`
-	Symbol      string                `json:"symbol"`
-	Lane        int                   `json:"lane"`
-	Mode        string                `json:"mode"`
-	Kind        string                `json:"kind"`
-	At          time.Time             `json:"at"`
-	MarketAt    time.Time             `json:"marketAt"`
-	GridVersion uint64                `json:"gridVersion"`
-	Context     []uint64              `json:"context,omitempty"`
-	Action      string                `json:"action"`
-	Power       uint16                `json:"power"`
-	Reduce      bool                  `json:"reduce"`
-	Quantity    string                `json:"quantity,omitempty"`
-	Gross       string                `json:"gross,omitempty"`
-	Fee         string                `json:"fee,omitempty"`
-	Cash        string                `json:"cash"`
-	Inventory   string                `json:"inventory"`
-	Authority   float64               `json:"authority"`
-	Target      float64               `json:"target,omitempty"`
-	Profit      float64               `json:"profit"`
-	Episode     uint64                `json:"episode"`
-	Truncated   bool                  `json:"truncated,omitempty"`
-	Horizon     time.Duration         `json:"horizonNs"`
-	Authorized  string                `json:"authorized,omitempty"`
-	Complete    bool                  `json:"complete"`
-	ValuedAt    time.Time             `json:"valuedAt"`
-	Prior       learning.PriorReading `json:"prior"`
+	ID          uint64        `json:"id"`
+	Symbol      string        `json:"symbol"`
+	Lane        int           `json:"lane"`
+	Mode        string        `json:"mode"`
+	Kind        string        `json:"kind"`
+	At          time.Time     `json:"at"`
+	MarketAt    time.Time     `json:"marketAt"`
+	GridVersion uint64        `json:"gridVersion"`
+	Context     []uint64      `json:"context,omitempty"`
+	Action      string        `json:"action"`
+	Power       uint16        `json:"power"`
+	Reduce      bool          `json:"reduce"`
+	Quantity    string        `json:"quantity,omitempty"`
+	Gross       string        `json:"gross,omitempty"`
+	Fee         string        `json:"fee,omitempty"`
+	Cash        string        `json:"cash"`
+	Inventory   string        `json:"inventory"`
+	Authority   float64       `json:"authority"`
+	Target      float64       `json:"target,omitempty"`
+	Profit      float64       `json:"profit"`
+	Episode     uint64        `json:"episode"`
+	Truncated   bool          `json:"truncated,omitempty"`
+	Horizon     time.Duration `json:"horizonNs"`
+	Authorized  string        `json:"authorized,omitempty"`
+	Complete    bool          `json:"complete"`
+	ValuedAt    time.Time     `json:"valuedAt"`
+	Prior       prior.Reading `json:"prior"`
 }

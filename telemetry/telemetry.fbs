@@ -1218,6 +1218,34 @@ table EnvelopeBoundaryStamp {
   stage:int;
 }
 
+// Live learning owners serialized directly; no independently computed view state.
+table LearningPrior { defined:bool; mean:double; variance:double; varianceDefined:bool; samples:ulong; support:double; authority:double; provisional:bool; maturity:double; evidenceAuthority:double; depth:int; contextLength:int; pending:ulong; memory:double; }
+table LearningAction { kind:string; power:int; reduce:bool; prior:LearningPrior; }
+table LearningDecision {
+ id:ulong; agent:int; symbol:string; atNs:long; throughNs:long;
+ context:[string]; action:LearningAction;
+ before:string; quantity:string; cashChange:string; reference:string; fee:string;
+ tape:double; hasTape:bool;
+}
+table LearningAgent {
+ id:int; initial:string; cash:string; equity:string; fees:string;
+ profit:string; wealth:double; realized:string; unrealized:string;
+ decisions:ulong; fills:ulong; pending:ulong;
+ samples:double; mean:double; variance:double; varianceDefined:bool;
+ wins:ulong; losses:ulong; status:string;
+ positions:[Position]; last:LearningDecision; alternatives:[LearningAction]; reading:LearningPrior; reward:double; elapsedNs:long; outcome:LearningDecision;
+}
+table LearningRegion { id:ulong; condition:ulong; level:double; change:double; strength:double; authority:double; members:int; }
+table LearningQuantity { source:string; label:string; x:double; y:double; value:double; activity:double; quality:double; present:bool; }
+table LearningDevelopment {
+ symbol:string; atNs:long; status:string; decisions:ulong;
+ context:[string]; regions:[LearningRegion]; quantities:[LearningQuantity]; fromNs:long;
+}
+table LearningState {
+ atNs:long; steps:ulong; decisions:ulong; resolved:ulong;
+ status:string; agents:[LearningAgent]; markets:[LearningDevelopment]; restored:bool;
+}
+
 table EnvelopeState {
   key:string;
   typeId:ubyte;
@@ -1279,6 +1307,7 @@ table EnvelopeState {
   // perspectiveFrames above remains live: it is the persisted metric-bucket
   // representation Hindsight analyzers still read out of stored history.
   perspectives:[EnvelopePerspective] (deprecated);
+  learning:[ubyte] (nested_flatbuffer: "LearningState");
 }
 
 table EnvelopeStateFrame { state:EnvelopeState (required); }

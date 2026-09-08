@@ -32,21 +32,13 @@ describe("KnowledgePanel", () => {
 					kind: "buy",
 					power: 0,
 					reduce: false,
-					knowledge: {
-						scope: "symbol",
-						global: prior,
-						symbol: prior,
-						selected: prior,
-					},
+					prior,
 				},
 			],
 			warmup: { resolved: 12, unconditioned: 2, portfolioUnavailable: 12 },
 		} as unknown as LearningView;
 		const html = renderToStaticMarkup(<KnowledgePanel view={view} />);
-		expect(html).toContain("selected symbol");
-		expect(html).toContain("12 complete experiences");
-		expect(html).toContain(
-			"Historical knowledge grants no live entry authority",
-		);
+  expect(html).toContain("Learned context evidence");
+  expect(html).toContain("No completed evidence");
 	});
 });

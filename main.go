@@ -5,6 +5,5 @@ import (
 )
 
 func main() {
-	cmd.Register(cmd.ExperimentalCommand())
 	cmd.Execute()
 }

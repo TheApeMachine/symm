@@ -23,103 +23,17 @@ import { SkillPanel } from "./skill-panel";
 import { type LearningEvent, useLearning } from "./state";
 import { LearningVisualizer } from "./visualizer";
 
-const KIND_TONE: Record<
-	string,
-	"info" | "success" | "warning" | "error" | "disabled"
-> = {
-	issued: "info",
-	filled: "success",
-	waited: "disabled",
-	rejected: "warning",
-	resolved: "success",
-	recycled: "error",
-};
-
-/*
-JournalEntry writes one persisted decision boundary. Each kind carries the
-facts that kind actually has: a resolved record has a return target, a filled
-record has an executed quantity and its fee, and a recycled record marks an
-account that ran out of capital to act with.
-*/
-const JournalEntry = ({ event }: { event: LearningEvent }) => (
-	<Flex.Column className="gap-1 border-(--line) border-b p-3">
-		<Flex.Row align="center" gap={4} className="justify-between">
-			<Typography.Mono size="s">
-				{clock(event.at)} · {event.mode} {event.lane + 1}
-			</Typography.Mono>
-			<Badge
-				label={event.kind}
-				variant={KIND_TONE[event.kind] ?? "info"}
-				size="xxs"
-			/>
-		</Flex.Row>
-		<Typography.Mono tone="f1">
-			#{event.id} {action(event.action, event.power, event.reduce)}
-		</Typography.Mono>
-		{event.kind === "issued" && (
-			<Typography.Mono size="s" tone="f3">
-				Requested {event.quantity} · authority {percent(event.authority)} ·
-				horizon {duration(event.horizonNs)}
-			</Typography.Mono>
-		)}
-		{event.kind === "filled" && (
-			<Typography.Mono size="s" tone="f3">
-				Filled {event.quantity} · fee {event.fee}
-			</Typography.Mono>
-		)}
-		{event.kind === "rejected" && (
-			<Typography.Mono size="s" tone="f3">
-				No executable depth for {event.quantity}
-			</Typography.Mono>
-		)}
-		{event.kind === "resolved" && (
-			<Typography.Mono
-				size="s"
-				tone={(event.target ?? 0) >= 0 ? "accent" : "f2"}
-			>
-				Advantage {basis(event.target ?? 0)}
-				{event.targetUnit === "return_per_second" ? "/s" : ""}{" "}
-				{event.truncated
-					? "over a window cut short by a spent account"
-					: `over ${duration(event.horizonNs)}`}{" "}
-				· prior now{" "}
-				{event.prior?.Defined ? basis(event.prior.Mean) : "undefined"} on{" "}
-				{event.prior?.Samples ?? 0}
-			</Typography.Mono>
-		)}
-		{event.candidateId && (
-			<Typography.Mono size="s">
-				Candidate {event.candidateId} ·{" "}
-				{event.candidateResult?.state || event.scope}
-			</Typography.Mono>
-		)}
-		{event.portfolioId && (
-			<Typography.Mono size="s">Allocation {event.portfolioId}</Typography.Mono>
-		)}
-		{event.kind === "resolved" && (
-			<Typography.Mono size="s">
-				Absolute Skill return {basis(event.absoluteSkillTarget ?? 0)} · issue
-				baseline {event.baselineRate}/s
-			</Typography.Mono>
-		)}
-		{event.kind === "recycled" && (
-			<Typography.Mono size="s" tone="f3">
-				Account spent · episode {event.episode} begins on a fresh clone
-			</Typography.Mono>
-		)}
-		{event.authorized && event.authorized !== "learning" && (
-			<Typography.Mono size="s" tone="f4">
-				Authority {event.authorized}
-			</Typography.Mono>
-		)}
-	</Flex.Column>
-);
+const JournalEntry = ({event}: {event: LearningEvent}) => <Flex.Column className="gap-1 border-(--line) border-b p-3">
+ <Typography.Mono>{clock(event.at)} · {event.mode} {event.lane + 1} · {event.kind}</Typography.Mono>
+ <Typography.Mono>{action(event.action, event.power, event.reduce)}</Typography.Mono>
+ <Typography.Mono>{event.kind === "resolved" ? `Tape benefit ${basis(event.target ?? 0)}` : `Wallet P&L ${amount(event.profit)}`}</Typography.Mono>
+</Flex.Column>;
 
 type Tab = "decision" | "capital" | "influence" | "forward" | "wallets";
 
 const TABS: Array<{ key: Tab; label: string }> = [
 	{ key: "decision", label: "Decision" },
-	{ key: "capital", label: "Shared capital" },
+	{ key: "capital", label: "Consolidated account" },
 	{ key: "influence", label: "Discovery" },
 	{ key: "forward", label: "Forward test" },
 	{ key: "wallets", label: "Wallets" },
@@ -272,7 +186,7 @@ export const LearningDashboard = () => {
 						</Flex.Column>
 					</Section>
 					<Section>
-						<Section.Header title="Decision journal" meta="persisted" />
+						<Section.Header title="Recent learning activity" meta="live display history" />
 						<Section.Body>
 							{events.map((event) => (
 								<JournalEntry

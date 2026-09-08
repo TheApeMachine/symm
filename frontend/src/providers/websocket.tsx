@@ -1,3 +1,4 @@
+import { receiveLearning } from "#/collections/learning";
 import { batch as storeBatch } from "@tanstack/react-store";
 import * as flatbuffers from "flatbuffers";
 import { useEffect } from "react";
@@ -52,6 +53,8 @@ on here — every populated field is pushed to its own store directly.
 */
 function dispatchEnvelopeState(state: EnvelopeState) {
 	const symbol = state.key() ?? "";
+ const learning = state.learningArray();
+ if (learning?.length) receiveLearning(learning);
 
 	// The engine tick is a whole-market fact, but only Ticker envelopes carry a
 	// stamped tick — trade/level3/futures envelopes serialize tick=0. A zero

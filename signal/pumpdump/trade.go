@@ -4,11 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sync"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/adaptive"
 	"github.com/theapemachine/symm/nomagique/core"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -44,13 +44,13 @@ It accumulates trades into volume bars sized adaptively by median transaction si
 measuring throughput rates and response price dynamics without Frame or Wire blocks.
 */
 type Trade struct {
+	api    *websocket.API
 	states map[string]*tradeState
-	quote  func(symbol string) (bid, ask *decimal.Decimal)
-	mu     sync.RWMutex
 }
 
-func NewTrade() *Trade {
+func NewTrade(api *websocket.API) *Trade {
 	return &Trade{
+		api:    api,
 		states: make(map[string]*tradeState),
 	}
 }
@@ -59,23 +59,15 @@ func (trade *Trade) Close() error {
 	return nil
 }
 
-func (trade *Trade) SetQuote(quote func(symbol string) (bid, ask *decimal.Decimal)) {
-	trade.mu.Lock()
-	defer trade.mu.Unlock()
-
-	trade.quote = quote
-}
-
 func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 	price := tick.Price.Float64()
 	qty := tick.Qty
 
-	if price <= 0 || qty <= 0 || math.IsNaN(price) || math.IsInf(price, 0) || math.IsNaN(qty) || math.IsInf(qty, 0) || math.IsInf(price*qty, 0) {
-		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: non-positive trade (price=%f, qty=%f)", price, qty)}
+	if price <= 0 || qty <= 0 {
+		return &data.Measurement[float64]{Err: fmt.Errorf(
+			"pumpdump: non-positive trade (price=%f, qty=%f)", price, qty,
+		)}
 	}
-
-	trade.mu.Lock()
-	defer trade.mu.Unlock()
 
 	state, found := trade.states[tick.Symbol]
 
@@ -98,7 +90,7 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 	if err != nil {
 		return &data.Measurement[float64]{Err: err}
 	}
-	if targetQty <= 0 || math.IsNaN(targetQty) || math.IsInf(targetQty, 0) {
+	if targetQty <= 0 {
 		return &data.Measurement[float64]{Err: fmt.Errorf("pumpdump: invalid observed quantity target %g", targetQty)}
 	}
 
@@ -145,19 +137,12 @@ func (trade *Trade) Step(tick kraken.TradeData) *data.Measurement[float64] {
 	var currentMidpoint float64
 	var hasMidpoint bool
 
-	if trade.quote != nil {
-		bid, ask := trade.quote(tick.Symbol)
+	trade.api.Book(tick.Symbol, func(spotbook *book.Book) {
+  if spotbook == nil || spotbook.BestBid() == nil || spotbook.BestAsk() == nil { return }
 
-		if bid != nil && ask != nil {
-			bidVal := bid.Float64()
-			askVal := ask.Float64()
-
-			if bidVal > 0 && askVal > bidVal {
-				currentMidpoint = (bidVal + askVal) / 2.0
-				hasMidpoint = true
-			}
-		}
-	}
+		currentMidpoint = spotbook.Midpoint().Float64()
+		hasMidpoint = true
+	})
 
 	if hasMidpoint && !state.hasBarOpenMidpoint {
 		state.barOpenMidpoint = currentMidpoint

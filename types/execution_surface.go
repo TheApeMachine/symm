@@ -26,6 +26,7 @@ type ExecutionSurface struct {
 	// ExecutableVWAP is the full-lot liquidation-equivalent GROSS price (raw
 	// filled VWAP in price coordinate), comparable to the stoploss's gross
 	// break-even geometry. The fee-net proceeds are ExecutableValue.
+	Gross *decimal.Decimal
 	ExecutableVWAP *decimal.Decimal
 	// ExecutableValue is the fee-net liquidation proceeds in dollar/economic
 	// coordinate (gross proceeds minus the sell fee). It is never divided into

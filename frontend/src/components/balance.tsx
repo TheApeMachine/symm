@@ -1,3 +1,4 @@
+import { learningStore } from "#/collections/learning";
 import { useSelector } from "@tanstack/react-store";
 import type { ReactNode } from "react";
 import { equityStore } from "#/collections/app";
@@ -70,6 +71,7 @@ const Reading = ({
 );
 
 export const Balance = () => {
+ const policy = useSelector(learningStore, state => state?.agents[0]);
 	const lastWithCash = useSelector(equityStore, (state) =>
 		state.findLast((f) => f.cash() !== null && f.cash() !== ""),
 	);
@@ -85,7 +87,7 @@ export const Balance = () => {
 		right now, not for the account being larger than nothing. Equity is above
 		zero the moment the wallet is funded, which would leave it permanently on.
 	*/
-	const unrealized = Number(lastWithUnrealized?.unrealized());
+	const unrealized = Number(policy ? policy.unrealized : lastWithUnrealized?.unrealized());
 	const inProfit = Number.isFinite(unrealized) && unrealized > 0;
 
 	return (
@@ -95,21 +97,21 @@ export const Balance = () => {
 				tone="f1"
 				weight="medium"
 				which="cash"
-				value={fmt(lastWithCash?.cash())}
+				value={fmt(policy ? String(policy.cash) : lastWithCash?.cash())}
 			/>
 			<Reading
 				label="Unrealized"
 				tone="f2"
 				weight="medium"
 				which="unrealized"
-				value={fmt(lastWithUnrealized?.unrealized())}
+				value={fmt(policy ? String(policy.unrealized) : lastWithUnrealized?.unrealized())}
 			/>
 			<Reading
 				label="Equity"
 				tone="accent"
 				weight="semibold"
 				which="equity"
-				value={fmt(lastWithEquity?.equity())}
+				value={fmt(policy ? String(policy.equity) : lastWithEquity?.equity())}
 			>
 				{inProfit ? <Lambo /> : null}
 			</Reading>

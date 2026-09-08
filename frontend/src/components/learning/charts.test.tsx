@@ -2,11 +2,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
 	EventRhythm,
-	ExposureRing,
 	ImpulseBars,
 	InfluenceGrid,
 	PipelineFunnel,
-	PromotionLadder,
+	OutcomeRange,
 	WalletBars,
 } from "./charts";
 import type {
@@ -112,8 +111,8 @@ describe("EventRhythm", () => {
 	});
 });
 
-describe("PromotionLadder", () => {
-	it("states the distance still to cover when the bound is below the line", () => {
+describe("OutcomeRange", () => {
+	it("shows the actual signed mean on a labeled axis", () => {
 		const skill = {
 			defined: true,
 			qualified: true,
@@ -124,17 +123,17 @@ describe("PromotionLadder", () => {
 			samples: 100,
 		} as Skill;
 
-		const markup = renderToStaticMarkup(<PromotionLadder skill={skill} />);
+		const markup = renderToStaticMarkup(<OutcomeRange skill={skill} />);
 
-		expect(markup).toContain("Short of the line by 5.0 bp");
-		expect(markup).toContain("12.5 of 100");
+		expect(markup).toContain("-2.0 bp");
+		expect(markup).toContain("← 0 →");
 	});
 
 	it("does not draw a distance without resolved evidence", () => {
 		const markup = renderToStaticMarkup(
-			<PromotionLadder skill={{ defined: false } as Skill} />,
+			<OutcomeRange skill={{ defined: false } as Skill} />,
 		);
-		expect(markup).toContain("No resolved evidence yet");
+		expect(markup).toContain("No completed outcomes yet");
 	});
 });
 
@@ -186,27 +185,6 @@ describe("InfluenceGrid", () => {
 	});
 });
 
-describe("ExposureRing", () => {
-	it("reports the share of confirmed excursions the policy held through", () => {
-		const markup = renderToStaticMarkup(
-			<ExposureRing
-				forward={{
-					reviewed: 4,
-					exposed: 1,
-					unexposed: 2,
-					captured: 1,
-					missed: 2,
-					unreviewable: 1,
-					at: "2026-09-07T12:00:00Z",
-					recent: null,
-				}}
-			/>,
-		);
-
-		expect(markup).toContain("25.0%");
-		expect(markup).toContain("sat it out");
-	});
-});
 
 describe("WalletBars", () => {
 	it("leaves an unvalued wallet as a gap rather than a bar at zero", () => {

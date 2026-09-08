@@ -6,13 +6,10 @@ import (
 	"embed"
 	"encoding/hex"
 	"fmt"
+	"github.com/theapemachine/symm/strategy"
+ "net/http/pprof"
 	"log"
 	"net/http"
-
-	// Registers the /debug/pprof handlers on http.DefaultServeMux, which is
-	// the mux startPprof serves. Without it the profiling endpoint answers
-	// 404 and the server is dead weight.
-	_ "net/http/pprof"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -21,7 +18,7 @@ import (
 	"time"
 
 	"github.com/grafana/pyroscope-go"
-	pyroscopepprof "github.com/grafana/pyroscope-go/http/pprof"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
@@ -33,7 +30,6 @@ import (
 	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
-	"github.com/theapemachine/symm/nomagique/learning"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
@@ -47,7 +43,6 @@ import (
 	"github.com/theapemachine/symm/signal/sentiment"
 	"github.com/theapemachine/symm/signal/toxicity"
 	"github.com/theapemachine/symm/store"
-	"github.com/theapemachine/symm/strategy"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
@@ -165,7 +160,7 @@ var (
 
 			rawCapture, err := recording.NewSession(runtimeCtx, bucket, hindsight.RunIdentity{
 				StartedAt: processStartedAt, CodeCommit: buildCodeCommit(), BuildID: buildBuildID(), ConfigDigest: configDigest(), SchemaVersions: hindsightSchemaVersions(),
-			}.Resolve(runID), viper.GetInt("hindsight.capture.queue_depth"))
+			}.Resolve(runID), viper.GetInt("hindsight.capture.queue_depth"), viper.GetInt("hindsight.capture.batch_size"), viper.GetDuration("hindsight.capture.flush_interval"))
 			if err != nil {
 				return err
 			}
@@ -273,7 +268,7 @@ var (
 			manifoldSolver.SetViewer(hub)
 			manifoldSolver.Start()
 
-			pumpdumpSolver := pumpdump.NewSignal(runtimeCtx, cvdQuoteProvider(price))
+			pumpdumpSolver := pumpdump.NewSignal(runtimeCtx, api)
 			toxicitySolver := toxicity.NewSignal(runtimeCtx)
 			derivativesSolver := derivatives.NewSignal(runtimeCtx)
 
@@ -290,67 +285,20 @@ var (
 				}
 			}
 
-			// The configured model names the account the agent trades once it
-			// has earned it. It is not a rung the agent climbs: paper and real
-			// are the same behaviour against different accounts, and the agent
-			// starts calibrating either way.
-			account := strategy.ParseAccount(viper.GetString("trading.model"))
-
-			if account == strategy.AccountNone {
-				return errnie.Err(errnie.Validation,
-					"symm: trading.model must name the account to trade — paper or real", nil)
+			if err := price.GetFees(instrument.Symbols()); err != nil {
+				return err
 			}
-
-			// The account is live from the first tick, whether or not the agent
-			// has earned the right to trade it. An operator watching a
-			// calibrating agent is still watching a real balance, and a desk
-			// mounted only on promotion would show nothing until then.
-			grid := &gridNode{Grid: learning.NewGrid(), cognition: cognitionSolver}
-			learner, err := strategy.NewAgent(runtimeCtx, grid.Grid, api,
-				price, balance.Cash(),
-				rawCapture.WriteLearning,
-			)
+			learner, err := strategy.NewLearner(runtimeCtx, api, price, balance, system.Cfg.Learning.Traders, bucket, runID, rawCapture)
 
 			if err != nil {
 				return err
 			}
-
-			if err := price.GetFees(instrument.Symbols()); err != nil {
-				return err
-			}
-
-			if err := learner.SetExecution(api, price, balance, account,
-				rawCapture.WriteLifecycle,
-			); err != nil {
-				return err
-			}
-
 			defer func() {
-				if err := store.Write(context.Background(), bucket, strategy.CheckpointKey, learner.Checkpoint()); err != nil {
-					errnie.Error(err)
-				}
-				if err := learner.Close(); err != nil {
+				if err := learner.Population.Save(context.Background(), learner.Checkpoint); err != nil {
 					errnie.Error(err)
 				}
 			}()
-			if err := learner.LoadCheckpoint(runtimeCtx, bucket); err != nil {
-				return err
-			}
-			go learner.Persist(runtimeCtx, bucket, system.Cfg.Learning.CheckpointInterval)
-			go learner.PolicyReview.Run(runtimeCtx, bucket, runID, system.Cfg.Learning.CheckpointInterval)
-
-			hub.SetLearner(learner, runID)
-			grid.learner = learner
-			// Same reason as the Level3 observers: these run inside the grid
-			// node's own turn rather than as declared stages, and would
-			// otherwise never appear on the topology graph.
-			grid.prepare = []nmruntime.Node[*types.Envelope]{
-				system.NewTraced("logic.pumpdump", pumpdumpSolver),
-				system.NewTraced("logic.toxicity", toxicitySolver),
-				system.NewTraced("logic.derivatives", derivativesSolver),
-				system.NewTraced("logic.category", categorySolver),
-			}
-			grid.publish = []nmruntime.Node[*types.Envelope]{rawCapture, uiSink}
+			go learner.Run(runtimeCtx, system.Cfg.Learning.CheckpointInterval)
 
 			// The workspace owns the complete forward-learning loop. Signal and
 			// logic producers finish before the shared grid and action owner run.
@@ -359,7 +307,7 @@ var (
 				"ticker",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("ticker.ingress")},
-					{&learningTickNode{price: price, learner: learner}},
+
 					{
 						system.NewTraced("ticker.correlation", correlation.NewSignal(runtimeCtx)),
 						system.NewTraced("ticker.leadlag", leadlag.NewSignal(runtimeCtx)),
@@ -376,7 +324,13 @@ var (
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("trade.ingress")},
 					{
-						system.NewTraced("trade.cvd", cvd.NewSignal(runtimeCtx, cvdQuoteProvider(price))),
+						system.NewTraced("trade.cvd", cvd.NewSignal(runtimeCtx, func(symbol string) (*decimal.Decimal, *decimal.Decimal) {
+							tick := price.Tick(symbol)
+							if tick == nil {
+								return nil, nil
+							}
+							return tick.Bid, tick.Ask
+						})),
 						system.NewTraced("trade.hawkes", hawkes.NewSignal(runtimeCtx)),
 					},
 					{
@@ -390,7 +344,7 @@ var (
 				"level3",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("level3.ingress")},
-					{level3Node{learner: learner}},
+
 					{
 						system.NewTraced("level3.manifold", manifoldSolver),
 					},
@@ -404,7 +358,6 @@ var (
 				"executions",
 				[][]nmruntime.Node[*types.Envelope]{
 					{system.NewDiagnostic("executions.ingress")},
-					{executionNode{learner: learner}},
 				},
 			)
 
@@ -439,7 +392,11 @@ var (
 					// These dependent numerical steps share one event turn. Separate
 					// polling barriers otherwise spend more time scheduling these
 					// short steps than processing them under sustained backpressure.
-					{system.NewTraced("logic.cognition.learning", grid)},
+					{system.NewTraced("logic.pumpdump", pumpdumpSolver), system.NewTraced("logic.toxicity", toxicitySolver), system.NewTraced("logic.derivatives", derivativesSolver)},
+					{system.NewTraced("logic.category", categorySolver)},
+					{system.NewTraced("logic.cognition", cognitionSolver)},
+					{system.NewTraced("learning", learner)},
+					{uiSink},
 				},
 			)
 
@@ -578,7 +535,7 @@ func startPprof() {
 	mux := http.NewServeMux()
 	mux.Handle("/debug/pprof/", http.DefaultServeMux)
 	// Pyroscope owns CPU sampling; its handler coordinates a foreground capture.
-	mux.HandleFunc("/debug/pprof/cpu", pyroscopepprof.Profile)
+	mux.HandleFunc("/debug/pprof/cpu", pprof.Profile)
 
 	go func() {
 		errnie.Error(http.ListenAndServe(addr, mux))

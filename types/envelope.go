@@ -147,7 +147,11 @@ const (
 	EnvelopeLegacyMCTS    // Reserved persisted TypeID; no live MCTS envelope exists.
 )
 
+// LearningState is the live owner's FlatBuffers serialization contract.
+type LearningState interface { MarshalFlatbuffer(string) []byte }
+
 type Envelope struct {
+ Learning LearningState
 	Key    string
 	TypeID TypeID
 
@@ -1265,7 +1269,7 @@ ride their own WebRTC channels, so the dashboard socket carries only the
 latency-relevant state and none of the volumetric fields. It shares the base
 projection with Encode so their ordinary fields cannot drift.
 */
-func (envelope *Envelope) EncodeWebsocket() []byte {
+func (envelope *Envelope) EncodeWebsocket(includeLearning bool) []byte {
 	if envelope == nil {
 		return nil
 	}
@@ -1277,7 +1281,10 @@ func (envelope *Envelope) EncodeWebsocket() []byte {
 		envelopeBuilders.Put(builder)
 	}()
 
-	offset := envelope.encodeBase(measurementForFocus).Pack(builder)
+	state := envelope.encodeBase(measurementForFocus)
+
+ if includeLearning && envelope.Learning != nil { state.Learning = envelope.Learning.MarshalFlatbuffer(Focus()) }
+ offset := state.Pack(builder)
 	telemetry.FinishEnvelopeStateBuffer(builder, offset)
 
 	encoded := builder.FinishedBytes()

@@ -45,9 +45,8 @@ depth, not an allocation percentage: power 0 is the whole executable range,
 each further power halves it.
 */
 export const action = (kind: string, power: number, reduce: boolean) => {
-	if (!kind || kind === "hold") {
-		return "wait";
-	}
+	if (!kind) return "unissued";
+ if (kind === "hold" || kind === "wait") return kind;
 
 	return `${kind}${reduce ? " ↓" : ""} ·1/${2 ** power}`;
 };

@@ -9,7 +9,7 @@ import {
 } from "./visualizer";
 
 describe("EdgeDistributionPlot", () => {
-	it("renders normal PDF distribution and lower bound for defined skill", () => {
+	it("renders observed signs and negative mean without an invented distribution", () => {
 		const skill: Skill = {
 			mode: "learning",
 			account: "sim",
@@ -35,12 +35,10 @@ describe("EdgeDistributionPlot", () => {
 
 		const markup = renderToStaticMarkup(<EdgeDistributionPlot skill={skill} />);
 
-		expect(markup).toContain("0.0 bp (Breakeven)");
-		expect(markup).toContain("3σ Bound (-11.6 bp)");
-		expect(markup).toContain("μ -7.4 bp");
-		expect(markup).toContain("450W");
-		expect(markup).toContain("550L");
-		expect(markup).toContain("CALIBRATING");
+		expect(markup).toContain("Mean -7.4 bp");
+  expect(markup).toContain("450 positive");
+  expect(markup).toContain("550 negative");
+  expect(markup).not.toContain("3σ Bound");
 	});
 });
 
@@ -100,7 +98,7 @@ describe("LearningTrajectoryPlot", () => {
 				id: 1,
 				lane: 0,
 				mode: "policy",
-				kind: "resolved",
+				kind: "valued",
 				at: "2026-09-05T12:01:00Z",
 				action: "buy",
 				power: 0,

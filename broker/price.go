@@ -368,6 +368,7 @@ func (price *Price) Surface(
 			return
 		}
 
+		surface.Gross = gross
 		surface.FullyExecutable = true
 		surface.ExecutableVWAP = gross.Div(filled)
 		surface.ExecutableValue = price.WithFee(symbol, gross, SELL)

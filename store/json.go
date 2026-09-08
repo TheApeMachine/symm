@@ -1,12 +1,14 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"io"
 
 	"github.com/bytedance/sonic"
 	"github.com/theapemachine/errnie"
 	"gocloud.dev/blob"
+	"gocloud.dev/gcerrors"
 )
 
 // Write stores the supplied value as JSON at its logical object key.
@@ -30,6 +32,10 @@ func Read[Value any](ctx context.Context, bucket *blob.Bucket, key string) (Valu
 	var value Value
 	data, err := bucket.ReadAll(ctx, key)
 
+	if gcerrors.Code(err) == gcerrors.NotFound {
+		return value, err
+	}
+
 	if err != nil {
 		return value, errnie.Error(errnie.Err(errnie.IO, "store: read "+key, err))
 	}
@@ -41,7 +47,8 @@ func Read[Value any](ctx context.Context, bucket *blob.Bucket, key string) (Valu
 	return value, nil
 }
 
-// Scan reads one JSON object at a time under a prefix. Returning false stops
+// Scan reads original JSON records under a prefix, including JSONL batches.
+// Returning false stops
 // the traversal. Listing, reading, decoding, and visitor failures are returned.
 func Scan[Value any](
 	ctx context.Context, bucket *blob.Bucket, prefix string,
@@ -60,20 +67,27 @@ func Scan[Value any](
 			return errnie.Error(errnie.Err(errnie.IO, "store: list "+prefix, err))
 		}
 
-		value, err := Read[Value](ctx, bucket, object.Key)
-
+		data, err := bucket.ReadAll(ctx, object.Key)
 		if err != nil {
-			return err
+			return errnie.Error(errnie.Err(errnie.IO, "store: read "+object.Key, err))
 		}
-
-		more, err := visit(value)
-
-		if err != nil {
-			return errnie.Error(errnie.Err(errnie.Internal, "store: visit "+object.Key, err))
-		}
-
-		if !more {
-			return nil
+		decoder := sonic.ConfigDefault.NewDecoder(bytes.NewReader(data))
+		for {
+			var value Value
+			err := decoder.Decode(&value)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return errnie.Error(errnie.Err(errnie.Validation, "store: decode "+object.Key, err))
+			}
+			more, err := visit(value)
+			if err != nil {
+				return errnie.Error(errnie.Err(errnie.Internal, "store: visit "+object.Key, err))
+			}
+			if !more {
+				return nil
+			}
 		}
 	}
 }
@@ -87,4 +101,18 @@ func List[Value any](ctx context.Context, bucket *blob.Bucket, prefix string) ([
 	})
 
 	return values, err
+}
+
+// Find returns the first original record matching its caller's identity query.
+func Find[Value any](ctx context.Context, bucket *blob.Bucket, prefix string, match func(Value) bool) (Value, bool, error) {
+	var result Value
+	found := false
+	err := Scan(ctx, bucket, prefix, func(value Value) (bool, error) {
+		if !match(value) {
+			return true, nil
+		}
+		result, found = value, true
+		return false, nil
+	})
+	return result, found, err
 }

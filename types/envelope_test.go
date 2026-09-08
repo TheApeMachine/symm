@@ -156,7 +156,7 @@ func TestEnvelopeEncodeWebsocketLean(t *testing.T) {
 		}
 
 		Convey("the websocket encoding carries only lean state", func() {
-			decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeWebsocket(), 0)
+			decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeWebsocket(true), 0)
 
 			So(decoded, ShouldNotBeNil)
 			So(decoded.Resonance(nil), ShouldBeNil)
@@ -243,7 +243,7 @@ func TestEnvelopeMeasurementFocusGate(t *testing.T) {
 		}
 
 		Convey("the websocket mirror keeps the focused measurement and equity", func() {
-			decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeWebsocket(), 0)
+			decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeWebsocket(true), 0)
 
 			So(decoded, ShouldNotBeNil)
 
@@ -256,7 +256,7 @@ func TestEnvelopeMeasurementFocusGate(t *testing.T) {
 		})
 
 		Convey("the websocket mirror drops the non-focused measurement", func() {
-			decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeWebsocket(), 0)
+			decoded := telemetry.GetRootAsEnvelopeState(envelope.EncodeWebsocket(true), 0)
 
 			So(decoded, ShouldNotBeNil)
 

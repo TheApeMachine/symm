@@ -40,7 +40,10 @@ func TestSessionStep(t *testing.T) {
 			So(node.Step(envelope), ShouldEqual, envelope)
 
 			So(writer.Close(), ShouldBeNil)
-			stateWitness, err := store.Read[hindsight.ArtifactWitness](context.Background(), engine, (hindsight.EnvelopeRef{Origin: capture}).Key("states"))
+			stateWitness, found, err := store.Find(context.Background(), engine, capture.Run.Prefix("states"), func(witness hindsight.ArtifactWitness) bool {
+				return witness.Envelope == (hindsight.EnvelopeRef{Origin: capture})
+			})
+			So(found, ShouldBeTrue)
 			So(err, ShouldBeNil)
 			So(stateWitness.Artifact.Kind, ShouldEqual, "state")
 			So(stateWitness.Payload, ShouldNotBeEmpty)

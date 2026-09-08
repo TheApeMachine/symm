@@ -95,7 +95,8 @@ func TestSessionCapture(t *testing.T) {
 
 			// 6. From persisted identities alone, traverse back to the exact
 			// exchange bytes. The raw frame is stored alongside its identity.
-			stored, err := store.Read[hindsight.RawFrame](context.Background(), engine, captureID.Key())
+			stored, found, err := store.Find(context.Background(), engine, captureID.Run.Prefix("captures"), func(frame hindsight.RawFrame) bool { return frame.Identity == captureID })
+			So(found, ShouldBeTrue)
 			So(err, ShouldBeNil)
 			So(string(stored.Payload), ShouldEqual, string(raw))
 
@@ -118,7 +119,7 @@ func TestSessionCapture(t *testing.T) {
 func newSessionFixture(t *testing.T, run hindsight.RunID) (*Session, *blob.Bucket) {
 	t.Helper()
 	bucket := memblob.OpenBucket(nil)
-	writer, err := NewSession(context.Background(), bucket, hindsight.Run{ID: run, StartedAt: time.Unix(1, 0)}, 64)
+	writer, err := NewSession(context.Background(), bucket, hindsight.Run{ID: run, StartedAt: time.Unix(1, 0)}, 64, 8, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,167 +3,22 @@ import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
 import {
-	ExposureRing,
 	ImpulseBars,
 	InfluenceGrid,
 	MeasurementWindow,
 	WalletBars,
 } from "./charts";
-import { action, amount, basis, clock, duration, percent } from "./format";
+import { action, amount, basis, duration, percent } from "./format";
 import type { LearningView } from "./state";
 
-/*
-ForwardPanel is the system's forward test. Instead of replaying history against
-the current model — which would let it see what came next — the reviewer runs
-behind the tape and asks what the market actually offered while the agent was
-deciding without that knowledge.
+export const ForwardPanel = ({ view }: { view: LearningView | null }) => <Section fit="content">
+ <Section.Header title="Forward evaluation" meta={`${view?.resolved ?? 0} completed decisions`} />
+ <Section.Body className="space-y-2 p-3">
+ {view?.agents.map(member => <Typography.Mono key={member.id}>Agent {member.id+1} · {String(member.reading?.samples ?? 0n)} graded · {String(member.wins)} positive · {String(member.losses)} negative · {String(member.pending)} pending</Typography.Mono>)}
+ <Typography.Mono>Each decision retains its issue-time context and economics until the durable tape can evaluate it. Wallet changes and elapsed time supply interim feedback.</Typography.Mono>
+ </Section.Body>
+</Section>;
 
-"Missed" is not a mistake. An excursion is only an excursion once price has
-turned back, and the decision had to be made before that. A policy that is
-never exposed to any of them has no path to an edge, and that is what this
-panel is for.
-*/
-export const ForwardPanel = ({ view }: { view: LearningView | null }) => {
-	const forward = view?.forward;
-	const recent = forward?.recent ?? [];
-
-	return (
-		<Section fit="content">
-			<Section.Header
-				title="What the tape offered"
-				meta={
-					forward?.at && !forward.at.startsWith("0001-")
-						? `reviewed behind the tape · last pass ${clock(forward.at)}`
-						: "waiting for the first confirmed excursion"
-				}
-			/>
-			<ExposureRing forward={forward} />
-			<Flex.Column className="gap-1 border-(--line) border-b p-3">
-				<Flex.Row align="center" className="justify-between">
-					<Typography.Label size="s" tone="f4" weight="normal">
-						Learned from the tape
-					</Typography.Label>
-					<Typography.Mono
-						size="s"
-						tone={(forward?.trained ?? 0) > 0 ? "accent" : "f3"}
-					>
-						{(forward?.trained ?? 0).toLocaleString()} of{" "}
-						{(
-							(forward?.trained ?? 0) + (forward?.untrained ?? 0)
-						).toLocaleString()}{" "}
-						became evidence
-					</Typography.Mono>
-				</Flex.Row>
-				<Typography.Mono size="s" tone="f4">
-					{(forward?.trained ?? 0) > 0
-						? "Each confirmed move teaches what followed the state the agent was holding when it began — entering where it started, leaving where it exhausted. The tape labels itself, so this needs nobody to mark it up."
-						: forward?.lastUntrainable
-							? `Nothing has been learned from these yet: ${forward.lastUntrainable}.`
-							: "No confirmed move has been learned from yet."}
-				</Typography.Mono>
-			</Flex.Column>
-			<Flex.Row className="flex-wrap gap-3 border-(--line) border-b p-3">
-				<Badge
-					label={`${forward?.exposed ?? forward?.captured ?? 0} exposed`}
-					variant="success"
-					size="m"
-				/>
-				<Badge
-					label={`${forward?.unexposed ?? forward?.missed ?? 0} unexposed`}
-					variant="warning"
-					size="m"
-				/>
-				<Badge
-					label={`${forward?.unreviewable ?? 0} unknown`}
-					variant="disabled"
-					size="m"
-				/>
-			</Flex.Row>
-			<Section.Body className="overflow-x-auto">
-				<table className="w-full text-left font-mono text-xs">
-					<thead className="text-(--f4)">
-						<tr>
-							{[
-								"Symbol",
-								"Excursion",
-								"Move",
-								"Window",
-								"Policy lane",
-								"Learned",
-							].map((label) => (
-								<th key={label} className="p-3 font-normal">
-									{label}
-								</th>
-							))}
-						</tr>
-					</thead>
-					<tbody>
-						{recent.map((entry) => (
-							<tr
-								key={`${entry.symbol}-${entry.fromAt}-${entry.kind}`}
-								className="border-(--line) border-t"
-							>
-								<td className="p-3 text-(--acc)">{entry.symbol}</td>
-								<td className="p-3">{percent(entry.excursion)}</td>
-								<td className="p-3">{entry.kind.replace("_", " ")}</td>
-								<td className="p-3">
-									{clock(entry.fromAt)} → {clock(entry.toAt)}
-								</td>
-								<td className="p-3">
-									{entry.unreviewable ? (
-										<Badge
-											label="not reviewable"
-											variant="disabled"
-											size="xs"
-										/>
-									) : entry.exposed ? (
-										<Badge
-											label="held through it"
-											variant="success"
-											size="xs"
-										/>
-									) : (
-										<Badge label="sat it out" variant="warning" size="xs" />
-									)}
-								</td>
-								<td className="p-3">
-									{entry.trained ? (
-										<Badge label="trained on" variant="info" size="xs" />
-									) : (
-										<Typography.Mono size="s" tone="f4">
-											{entry.untrainable || "—"}
-										</Typography.Mono>
-									)}
-								</td>
-							</tr>
-						))}
-						{recent.length === 0 && (
-							<tr>
-								<td className="p-3 text-(--f3)" colSpan={6}>
-									No excursion has completed on the captured tape yet. An
-									excursion is only confirmed once price turns back from its
-									extremum.
-								</td>
-							</tr>
-						)}
-					</tbody>
-				</table>
-			</Section.Body>
-			<Typography.Mono className="px-3 pb-3 text-(--f4)">
-				An episode older than the retained exposure history is reported as not
-				reviewable rather than as a miss. Sitting one out is not evidence of a
-				mistake — the excursion was not visible when the decision was made.
-			</Typography.Mono>
-		</Section>
-	);
-};
-
-/*
-ImpulsePanel names the quantities that are hot right now, in the order the
-next decision is conditioned on. A region's identity is the strongest
-contributing quantity at its peak cell: it names where the basin peaked, and
-the other members of that basin are not listed individually.
-*/
 export const ImpulsePanel = ({ view }: { view: LearningView | null }) => (
 	<Section fit="content">
 		<Section.Header
@@ -185,7 +40,7 @@ export const ImpulsePanel = ({ view }: { view: LearningView | null }) => (
 						{[
 							"Rank",
 							"Token",
-							"Quantity",
+							"Context prefix",
 							"Strength",
 							"Authority",
 							"Cells",
@@ -230,114 +85,24 @@ evidence recalled for each, so a chosen action can be read against the ones it
 beat. An undefined prior is not a zero: it means this action has never
 completed here, which is exactly why exploration reaches for it.
 */
-export const CandidatePanel = ({ view }: { view: LearningView | null }) => (
-	<Section fit="content">
-		<Section.Header
-			title="Feasible actions at this impulse"
-			meta={`${view?.candidates?.length ?? 0} candidates · policy lane context`}
-		/>
-		<Section.Body className="overflow-x-auto">
-			<table className="w-full text-left font-mono text-xs">
-				<thead className="text-(--f4)">
-					<tr>
-						{[
-							"Action",
-							"Rate",
-							"Wealth / Time",
-							"Dispersion",
-							"Support",
-							"Authority",
-							"Samples",
-							"State",
-						].map((label) => (
-							<th key={label} className="p-3 font-normal">
-								{label}
-							</th>
-						))}
-					</tr>
-				</thead>
-				<tbody>
-					{view?.candidates?.map((candidate) => {
-						const hasRate =
-							candidate.economic?.defined || candidate.prior?.Defined;
-						const rateVal =
-							candidate.economic?.rate ?? candidate.prior?.Mean ?? 0;
-						return (
-							<tr
-								key={`${candidate.kind}-${candidate.power}-${candidate.reduce}`}
-								className={`border-(--line) border-t ${candidate.selected ? "bg-[color-mix(in_srgb,var(--acc)_8%,transparent)]" : ""}`}
-							>
-								<td className="p-3 text-(--acc)">
-									{action(candidate.kind, candidate.power, candidate.reduce)}
-								</td>
-								<td className="p-3">
-									{hasRate ? `${basis(rateVal)}/s` : "no evidence"}
-								</td>
-								<td className="p-3 text-(--f3)">
-									{candidate.economic?.defined
-										? `${percent(candidate.economic.growthMean)} / ${(candidate.economic.timeMean).toFixed(1)}s`
-										: "—"}
-								</td>
-								<td className="p-3">
-									{candidate.economic?.varianceDefined ||
-									candidate.prior?.VarianceDefined
-										? `${basis(Math.sqrt(candidate.economic?.growthVariance ?? candidate.prior.Variance))}`
-										: "unestimable"}
-								</td>
-								<td className="p-3">
-									{amount(
-										candidate.economic?.support ?? candidate.prior.Support,
-									)}
-								</td>
-								<td className="p-3">
-									{percent(
-										candidate.economic?.authority ?? candidate.prior.Authority,
-									)}
-								</td>
-								<td className="p-3">
-									{candidate.economic?.samples ?? candidate.prior.Samples}
-								</td>
-								<td className="p-3">
-									{candidate.selected ? (
-										<Badge label="policy choice" variant="success" size="xs" />
-									) : (candidate.economic?.varianceDefined ??
-										candidate.prior.VarianceDefined) ? (
-										<Badge label="estimated" variant="info" size="xs" />
-									) : (
-										<Badge
-											label="exploration target"
-											variant="warning"
-											size="xs"
-										/>
-									)}
-								</td>
-							</tr>
-						);
-					})}
-					{!view?.candidates?.length && (
-						<tr>
-							<td className="p-3 text-(--f3)" colSpan={8}>
-								No executable action set yet — the book has not offered a
-								feasible quantity.
-							</td>
-						</tr>
-					)}
-				</tbody>
-			</table>
-		</Section.Body>
-		<Typography.Mono className="px-3 pb-3 text-(--f4)">
-			Power is a bisection depth of the currently executable range, down to
-			venue lot and cost minimums — not a chosen allocation percentage.
-		</Typography.Mono>
-	</Section>
-);
+export const CandidatePanel = ({view}: {view: LearningView | null}) => <Section fit="content">
+ <Section.Header title="Feasible actions at this impulse" meta={`${view?.candidates?.length ?? 0} candidates · policy lane context`} />
+ <Section.Body className="overflow-x-auto">
+ <table className="w-full text-left font-mono text-xs">
+  <thead><tr>{["Action", "Benefit", "Dispersion", "Support", "Authority", "Samples", "Evidence"].map(label => <th className="p-3" key={label}>{label}</th>)}</tr></thead>
+  <tbody>{view?.candidates?.map(candidate => <tr key={`${candidate.kind}-${candidate.power}-${candidate.reduce}`}>
+   <td className="p-3">{action(candidate.kind, candidate.power, candidate.reduce)} {candidate.selected ? "· chosen" : ""}</td>
+   <td className="p-3">{candidate.prior.Defined ? basis(candidate.prior.Mean) : "unmeasured"}</td>
+   <td className="p-3">{candidate.prior.VarianceDefined ? basis(Math.sqrt(candidate.prior.Variance)) : "unmeasured"}</td>
+   <td className="p-3">{amount(candidate.prior.Support)}</td>
+   <td className="p-3">{percent(candidate.prior.Authority)}</td>
+   <td className="p-3">{candidate.prior.Samples}</td>
+   <td className="p-3">{candidate.prior.Provisional ? "interim wallet feedback" : candidate.prior.Defined ? "completed tape" : "unmeasured"}</td>
+  </tr>)}</tbody>
+ </table>
+ </Section.Body>
+</Section>;
 
-/*
-InfluencePanel is the discovery answer: which measured quantities have
-accumulated outcome evidence for which actions. Ranking is by the prior's own
-authority, so a large mean built on one observation cannot outrank a smaller
-one that has been measured repeatedly.
-*/
 export const InfluencePanel = ({ view }: { view: LearningView | null }) => {
 	const influence = (view?.influence ?? [])
 		.filter((entry) => entry.prior.Defined)
@@ -355,7 +120,7 @@ export const InfluencePanel = ({ view }: { view: LearningView | null }) => {
 					<thead className="text-(--f4)">
 						<tr>
 							{[
-								"Quantity",
+								"Context prefix",
 								"Action",
 								"Mean outcome",
 								"Support",
@@ -381,7 +146,7 @@ export const InfluencePanel = ({ view }: { view: LearningView | null }) => {
 									<Typography.Mono tone="f3"> / {entry.label}</Typography.Mono>
 								</td>
 								<td className="p-3 text-(--acc)">{entry.action}</td>
-								<td className="p-3">{basis(entry.prior.Mean)}/s</td>
+								<td className="p-3">{basis(entry.prior.Mean)}</td>
 								<td className="p-3">{amount(entry.prior.Support)}</td>
 								<td className="p-3">{percent(entry.prior.Authority)}</td>
 								<td className="p-3">{entry.prior.Samples}</td>
@@ -421,7 +186,7 @@ export const DeskPanel = ({ view }: { view: LearningView | null }) => (
 			title="Parallel traders"
 			meta={
 				view?.desk
-					? `${view.desk.traders.length} wallets · ${view.desk.settled} verdicts settled · ${view.desk.agreed} agreed / ${view.desk.disputed} disputed`
+					? `${view.desk.traders.length} wallets · ${view.desk.settled} verdicts settled · completed tape evaluations`
 					: "Awaiting the desk"
 			}
 		/>
@@ -436,7 +201,7 @@ export const DeskPanel = ({ view }: { view: LearningView | null }) => (
 							"Decisions",
 							"Fills",
 							"Graded",
-							"Open",
+							"Pending grades",
 							"Holding",
 						].map((label) => (
 							<th key={label} className="p-3 font-normal">
@@ -508,12 +273,9 @@ export const LanePanel = ({ view }: { view: LearningView | null }) => (
 							"Lane",
 							"Action",
 							"Cash",
-							"Inventory",
-							"Episode fees",
-							"Episode P&L",
-							"Episodes",
-							"Realized",
-							"Lifetime fees",
+							"Selected-symbol quantity",
+							"Fees",
+							"P&L",
 							"Fills",
 							"Learned / pending",
 						].map((label) => (
@@ -552,13 +314,6 @@ export const LanePanel = ({ view }: { view: LearningView | null }) => (
 							>
 								{lane.complete ? amount(lane.profit) : "unvalued"}
 							</td>
-							<td className="p-3">{lane.episodes}</td>
-							<td
-								className={`p-3 ${lane.realized < 0 ? "text-error" : "text-success"}`}
-							>
-								{amount(lane.realized)}
-							</td>
-							<td className="p-3">{amount(lane.spent + Number(lane.fees))}</td>
 							<td className="p-3">{lane.fills}</td>
 							<td className="p-3">
 								{lane.resolved} / {lane.unresolved}
@@ -570,8 +325,7 @@ export const LanePanel = ({ view }: { view: LearningView | null }) => (
 		</Section.Body>
 		<Typography.Mono className="px-3 pb-3 text-(--f4)">
 			P&L includes entry fees and liquidation at displayed bids, including exit
-			fees. Each lane owns its capital and a spent lane restarts on a fresh
-			clone of the same known balance — episodes are separate accounts in
+			fees. Each lane owns its capital of the same known balance — episodes are separate accounts in
 			sequence, never a balance anyone holds. The policy lane trades on
 			completed exploration evidence.
 		</Typography.Mono>

@@ -3,9 +3,9 @@ package pumpdump
 import (
 	"context"
 
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/kraken"
+	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/types"
@@ -36,11 +36,10 @@ contemporaneous executable touch used for completed-bar midpoint response.
 */
 func NewSignal(
 	ctx context.Context,
-	quote func(symbol string) (bid, ask *decimal.Decimal),
+	api *websocket.API,
 ) *Signal {
 	ctx, cancel := context.WithCancel(ctx)
-	trade := NewTrade()
-	trade.SetQuote(quote)
+	trade := NewTrade(api)
 
 	return &Signal{
 		ctx:    ctx,
