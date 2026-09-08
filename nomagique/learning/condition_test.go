@@ -32,3 +32,25 @@ func BenchmarkConditionToken(b *testing.B) {
 		ConditionToken(1, -1, 1)
 	}
 }
+
+func TestConditionQuantity(t *testing.T) {
+	Convey("Conditioned quantities preserve their identity in every directional regime", t, func() {
+		for _, quantity := range []uint64{1, 793, (1 << 48) - 1} {
+			So(ConditionQuantity(quantity), ShouldEqual, quantity)
+			for _, level := range []float64{-1, 0, 1} {
+				for _, change := range []float64{-1, 0, 1} {
+					So(ConditionQuantity(ConditionToken(quantity, level, change)), ShouldEqual, quantity)
+				}
+			}
+		}
+	})
+}
+
+func BenchmarkConditionQuantity(b *testing.B) {
+	token := ConditionToken(793, -1, 1)
+	for b.Loop() {
+		if ConditionQuantity(token) != 793 {
+			b.Fatal("quantity identity changed")
+		}
+	}
+}

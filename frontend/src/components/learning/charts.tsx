@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
 import { amount, basis, clock, duration, percent } from "./format";
@@ -832,6 +833,115 @@ export const MeasurementWindow = ({ view }: { view: LearningView | null }) => {
 				{view?.horizonCapped
 					? `This market moves ${percent(movement)} at a time and costs ${percent(cost)} to get in and out, so covering that cost takes longer than an outcome can still be credited to the decision that opened it. It is reporting that it cannot be traded profitably at this size.`
 					: `This market moves ${percent(movement)} at a time and costs ${percent(cost)} to get in and out, so it takes about ${observations.toLocaleString()} observations — ${duration(view?.horizonNs ?? 0)} — before a move is big enough to say whether the decision was any good.`}
+			</Typography.Mono>
+		</Flex.Column>
+	);
+};
+
+/*
+LearningProgress is the answer to "is this thing actually learning right now".
+
+Everything else on this surface reports what the agent has become — its edge,
+its skill, whether it may trade. Those stay at zero for a long time, and a
+surface made only of them looks broken while the system underneath is working.
+
+This reports what it is doing: every confirmed move the tape hands it becomes
+evidence, and the count climbs whether or not the agent has yet earned the right
+to act on any of it. The line is accumulated here, from successive readings, so
+it moves at the rate the learning actually happens.
+*/
+export const LearningProgress = ({ view }: { view: LearningView | null }) => {
+	const trained = view?.forward?.trained ?? 0;
+	const untrained = view?.forward?.untrained ?? 0;
+	const history = useRef<Array<{ at: number; trained: number }>>([]);
+	const [, redraw] = useState(0);
+
+	useEffect(() => {
+		const samples = history.current;
+		const latest = samples.at(-1);
+
+		if (latest?.trained === trained) {
+			return;
+		}
+		samples.push({ at: Date.now(), trained });
+
+		if (samples.length > 600) {
+			samples.splice(0, samples.length - 600);
+		}
+		redraw((tick) => tick + 1);
+	}, [trained]);
+
+	const samples = history.current;
+	const first = samples[0];
+	const last = samples.at(-1);
+	const span = first && last ? (last.at - first.at) / 1000 : 0;
+	const rate =
+		span > 0 && last ? ((last.trained - first.trained) / span) * 60 : null;
+	const peak = Math.max(...samples.map((sample) => sample.trained), 1);
+
+	const width = 520;
+	const height = 150;
+	const path = samples
+		.map((sample, index) => {
+			const x = (index / Math.max(samples.length - 1, 1)) * width;
+			const y = height - (sample.trained / peak) * (height - 8);
+
+			return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+		})
+		.join(" ");
+
+	return (
+		<Flex.Column className="h-full w-full gap-2 px-3">
+			<Flex.Row align="center" className="justify-between">
+				<Flex.Column className="gap-0">
+					<Typography.Mono size="lg" tone="accent">
+						{trained.toLocaleString()} moves learned from
+					</Typography.Mono>
+					<Typography.Mono size="s" tone="f4">
+						{rate === null
+							? "measuring the rate"
+							: `${rate.toFixed(1)} per minute over the last ${duration(span * 1e9)}`}
+					</Typography.Mono>
+				</Flex.Column>
+				<Flex.Column className="items-end gap-0">
+					<Typography.Mono size="s" tone="f3">
+						{untrained.toLocaleString()} could not be used
+					</Typography.Mono>
+					<Typography.Mono size="s" tone="f4" className="max-w-64 truncate">
+						{view?.forward?.lastUntrainable || "—"}
+					</Typography.Mono>
+				</Flex.Column>
+			</Flex.Row>
+
+			<div className="relative h-36 w-full overflow-hidden rounded bg-(--sunken) border border-(--line)">
+				{samples.length < 2 ? (
+					<span className="absolute inset-0 flex items-center justify-center font-mono text-[10px] text-(--f4)">
+						Watching. The line appears as soon as the count changes.
+					</span>
+				) : (
+					<svg
+						viewBox={`0 0 ${width} ${height}`}
+						className="h-full w-full select-none"
+						preserveAspectRatio="none"
+						role="img"
+						aria-label="Confirmed moves the agent has learned from"
+					>
+						<title>Confirmed moves the agent has learned from</title>
+						<path
+							d={`${path} L ${width} ${height} L 0 ${height} Z`}
+							fill="var(--acc)"
+							opacity="0.15"
+						/>
+						<path d={path} fill="none" stroke="var(--acc)" strokeWidth="2" />
+					</svg>
+				)}
+			</div>
+
+			<Typography.Mono size="s" tone="f4">
+				Each of these is a move the market actually made, found after it
+				completed, matched back to what the agent was looking at when it began.
+				Nobody labelled them — the tape did. This climbs long before the agent
+				is allowed to trade, and it is what the edge above is waiting on.
 			</Typography.Mono>
 		</Flex.Column>
 	);

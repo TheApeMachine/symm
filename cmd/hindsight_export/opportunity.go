@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"context"
 	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/store"
+	"gocloud.dev/blob"
 )
 
 /* opportunityRecord carries one canonical Hindsight price episode. */
@@ -19,11 +20,11 @@ type opportunityRecord struct {
 
 /* writeOpportunityRecords exports the same price geometry the Hindsight UI shows. */
 func writeOpportunityRecords(
-	engine *store.SQLite,
+	engine *blob.Bucket,
 	runID string,
 	encoder *json.Encoder,
 ) (int, error) {
-	observations, err := engine.ListMarketObservations(runID)
+	observations, err := hindsight.ReadObservations(context.Background(), engine, hindsight.RunID(runID))
 
 	if err != nil {
 		return 0, fmt.Errorf("list market observations: %w", err)

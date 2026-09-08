@@ -2,7 +2,6 @@ package position
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"time"
 
@@ -158,14 +157,4 @@ func (recovery *Recovery) reconstruct(
 		}
 	}
 	return ledger, nil
-}
-
-/* Close drains every recovered guardian when startup cannot proceed. */
-func (recovery *Recovery) Close(positions map[string]*Regulator) error {
-	var err error
-
-	for _, position := range positions {
-		err = errors.Join(err, position.Guardian.Close())
-	}
-	return errnie.Error(err)
 }

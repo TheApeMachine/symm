@@ -17,7 +17,7 @@ field cannot silently omit it. Manifold spectral components and particle
 moments are projected once per producer version, without retaining grid fields.
 */
 func (node *gridNode) project(envelope *types.Envelope, output []*data.Measurement[float64]) error {
-	key := envelopeSymbol(envelope)
+	key := envelope.Symbol()
 
 	if key == "" {
 		return nil

@@ -24,8 +24,9 @@ type LearningInspector struct {
 
 /* learningRequest crosses into the workspace owner; it never reads live maps. */
 type learningRequest struct {
-	symbol string
-	reply  chan LearningView
+	symbol     string
+	reply      chan LearningView
+	checkpoint chan Checkpoint
 }
 
 /* Snapshot asks the single writer for a coherent copy, only on operator demand. */
@@ -51,6 +52,30 @@ func (inspector *LearningInspector) Snapshot(ctx context.Context, symbol string)
 		return LearningView{}, ctx.Err()
 	case <-inspector.ctx.Done():
 		return LearningView{}, inspector.ctx.Err()
+	}
+}
+
+/*
+	SnapshotCheckpoint copies model state on its existing workspace owner.
+
+The returned checkpoint is detached before the background writer performs storage I/O.
+*/
+func (inspector *LearningInspector) SnapshotCheckpoint(ctx context.Context) (Checkpoint, error) {
+	request := learningRequest{checkpoint: make(chan Checkpoint, 1)}
+	select {
+	case inspector.requests <- request:
+	case <-ctx.Done():
+		return Checkpoint{}, ctx.Err()
+	case <-inspector.ctx.Done():
+		return Checkpoint{}, inspector.ctx.Err()
+	}
+	select {
+	case checkpoint := <-request.checkpoint:
+		return checkpoint, nil
+	case <-ctx.Done():
+		return Checkpoint{}, ctx.Err()
+	case <-inspector.ctx.Done():
+		return Checkpoint{}, inspector.ctx.Err()
 	}
 }
 
@@ -116,6 +141,29 @@ func (inspector *LearningInspector) view(symbol string) LearningView {
 	view.Forward = inspector.forward
 	view.Forward.Recent = append([]MissedOpportunity(nil), inspector.forward.Recent...)
 
+	if inspector.Desk != nil {
+		inspector.Desk.Mark(inspector.books)
+		view.Desk.Settled, view.Desk.Agreed, view.Desk.Disputed =
+			inspector.Desk.Settled, inspector.Desk.Agreed, inspector.Desk.Disputed
+
+		for _, trader := range inspector.Desk.Traders {
+			holding := 0
+
+			for _, position := range trader.Positions {
+				if position.quantity.Sign() > 0 {
+					holding++
+				}
+			}
+
+			view.Desk.Traders = append(view.Desk.Traders, LearningTrader{
+				ID: trader.ID, Decisions: trader.Decisions, Fills: trader.Fills,
+				Graded: trader.Graded, Observed: trader.Observed,
+				Quality: trader.Quality, Wealth: trader.Wealth,
+				Open: len(trader.Open), Holding: holding,
+			})
+		}
+	}
+
 	if inspector.lastRejection != nil {
 		view.Rejection = inspector.lastRejection.Error()
 	}
@@ -170,7 +218,7 @@ func (inspector *LearningInspector) view(symbol string) LearningView {
 		var pastTokens []LearningToken
 
 		for _, conditionToken := range pastState {
-			rawID := int(conditionToken & 0xFFFF)
+			rawID := int(learning.ConditionQuantity(conditionToken))
 			token := LearningToken{Token: conditionToken}
 
 			if rawID > 0 && rawID <= len(inspector.Grid.Columns) {
@@ -202,10 +250,14 @@ func (inspector *LearningInspector) view(symbol string) LearningView {
 	}
 
 	if len(market.context) > 0 {
-		selected, _, err := inspector.Knowledge.Select(symbol, accountState, market.context, market.actions, false)
+		selected, selectedReading, err := inspector.Knowledge.Select(symbol, accountState, market.context, market.actions, false)
 
+		evidenceState := accountState
+		if selectedReading.Source == "tape" {
+			evidenceState = "tape:" + accountState
+		}
 		for _, candidate := range market.actions {
-			reading := inspector.Knowledge.Reading(symbol, accountState, market.context, candidate)
+			reading := inspector.Knowledge.Reading(symbol, evidenceState, market.context, candidate)
 			view.Candidates = append(view.Candidates, LearningCandidate{
 				Kind:      string(candidate.Kind),
 				Power:     candidate.Power,

@@ -408,6 +408,86 @@ export const InfluencePanel = ({ view }: { view: LearningView | null }) => {
 	);
 };
 
+/*
+DeskPanel is the parallel trader population the shared memory is consolidated
+from. Each trader owns a wallet and makes its own choices on the same
+development; the tape later settles which of them read it right. This is the
+"multiple agents, one model" surface: the wallets are separate, the memory they
+write into is not.
+*/
+export const DeskPanel = ({ view }: { view: LearningView | null }) => (
+	<Section fit="content">
+		<Section.Header
+			title="Parallel traders"
+			meta={
+				view?.desk
+					? `${view.desk.traders.length} wallets · ${view.desk.settled} verdicts settled · ${view.desk.agreed} agreed / ${view.desk.disputed} disputed`
+					: "Awaiting the desk"
+			}
+		/>
+		<Section.Body className="overflow-x-auto">
+			<table className="w-full text-left font-mono text-xs">
+				<thead className="text-(--f4)">
+					<tr>
+						{[
+							"Trader",
+							"Wealth",
+							"Quality",
+							"Decisions",
+							"Fills",
+							"Graded",
+							"Open",
+							"Holding",
+						].map((label) => (
+							<th key={label} className="p-3 font-normal">
+								{label}
+							</th>
+						))}
+					</tr>
+				</thead>
+				<tbody>
+					{view?.desk?.traders.map((trader) => (
+						<tr key={trader.id} className="border-(--line) border-t">
+							<td className="p-3">
+								<Typography.Mono tone="accent">trader {trader.id + 1}</Typography.Mono>
+							</td>
+							<td
+								className={`p-3 ${trader.wealth < 0 ? "text-error" : "text-success"}`}
+							>
+								{trader.observed > 0 || trader.fills > 0
+									? basis(trader.wealth)
+									: "unvalued"}
+							</td>
+							<td className="p-3">
+								{trader.observed > 0 ? basis(trader.quality) : "—"}
+							</td>
+							<td className="p-3">{trader.decisions}</td>
+							<td className="p-3">{trader.fills}</td>
+							<td className="p-3">{trader.graded}</td>
+							<td className="p-3">{trader.open}</td>
+							<td className="p-3">{trader.holding}</td>
+						</tr>
+					))}
+					{!view?.desk?.traders.length && (
+						<tr>
+							<td className="p-3 text-(--f3)" colSpan={8}>
+								No traders have been woken by the market yet.
+							</td>
+						</tr>
+					)}
+				</tbody>
+			</table>
+		</Section.Body>
+		<Typography.Mono className="px-3 pb-3 text-(--f4)">
+			Wealth is the trader's own wallet marked against the current executable
+			book. Quality only moves when the tape settles a decision, so the two
+			can disagree while a position is still open. Trader 1 follows the
+			shared memory; the others spread across the rest of what is feasible
+			so every move is tried by somebody.
+		</Typography.Mono>
+	</Section>
+);
+
 /* LanePanel keeps every cloned account's economics separate and legible. */
 export const LanePanel = ({ view }: { view: LearningView | null }) => (
 	<Section fit="content">

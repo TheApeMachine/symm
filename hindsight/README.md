@@ -2,32 +2,17 @@
 
 ## 1. Purpose
 
-Hindsight is SYMM's retrospective system-inspection and mathematical-validation
-engine.
+**Maximize the wallet. Minimize the time to do so.**
 
-It exists to answer:
+Hindsight supplies completed market outcomes for evaluating and improving the
+agent's decisions. It also retains the evidence needed to inspect what the
+system observed, decided, and produced.
 
-> When the market entered an objectively interesting historical condition, what
-> exactly did SYMM know, calculate, retain, infer, and produce at that moment,
-> and was that machinery mathematically, semantically, numerically, temporally,
-> and causally sane?
+Completed tape outcomes are the strongest feedback. Wallet changes and elapsed
+time provide weaker feedback while those outcomes are still developing.
 
-Hindsight is NOT:
-
-- a strategy tuner;
-- a threshold optimizer;
-- a parameter search engine;
-- a profit simulator;
-- a regret calculator;
-- a "what should we have done?" engine;
-- a system for finding changes that would have captured historical returns.
-
-Future market data may tell Hindsight where an interesting historical moment
-was.
-
-Future market data may never alter what SYMM knew at that moment.
-
-The core purpose is inspection.
+Future outcomes train subsequent decisions. They do not change the observations
+that were available when an earlier decision was made.
 
 ---
 
@@ -58,20 +43,12 @@ Timestamp proximity is not provenance.
 
 ---
 
-### Law 3 — Correctness, Not Profit
+### Law 3 — Evaluate Decisions Against Actual Outcomes
 
-> Hindsight judges whether the machinery was sane.
-> It never claims that sane machinery would have captured the observed outcome.
-
-A mathematically valid system may select CASH immediately before a +40% market
-move.
-
-If all component contracts were satisfied, Hindsight reports no defect.
-
-A profitable live trade may contain broken mathematics.
-
-If a component contract was violated, Hindsight reports the defect regardless
-of the trade outcome.
+Evaluate entry, exit, waiting, holding, and scaling against the completed tape,
+including whether the action was early, late, or unrelated to a real opportunity.
+Keep wallet results and elapsed time visible, including negative performance.
+Mathematical validation and decision quality are both relevant to learning.
 
 ---
 
@@ -120,11 +97,12 @@ Later:
                        v
                    Validation
 
-Episode discovery does not feed the trading system.
+Completed Episode + recorded decision and its observation history
+    -> evaluation of the decision
+    -> model update
+    -> subsequent decisions
 
-Hindsight validation does not feed the trading system.
-
-There is no feedback edge.
+Wallet changes and elapsed time also feed learning while tape outcomes mature.
 
 ---
 
@@ -778,9 +756,8 @@ Examples:
 - reconnect;
 - observer startup during an active move.
 
-An Episode describes market or operational reality.
-
-It does not describe what SYMM should have done.
+An Episode describes market or operational reality against which the agent's
+decisions are evaluated.
 
 ---
 
@@ -806,29 +783,9 @@ This avoids selecting evidence that already agrees with the system.
 
 ## 28. Reference Points
 
-An Episode contains one or more ReferencePoints.
-
-Examples:
-
-    Anchor
-    Trough
-    Peak
-    Reversal
-    ExitAnchor
-    ShockOnset
-
-A ReferencePoint is retrospective geometry.
-
-It is NOT a recommendation.
-
-For example:
-
-> Anchor is the retrospectively optimal start of the selected +20% price
-> excursion.
-
-does not mean:
-
-> SYMM should have bought at Anchor.
+An Episode contains reference points such as its anchor, trough, peak, reversal,
+exit anchor, or shock onset. Once developed, these points provide the temporal
+coordinates for evaluating entries, exits, holds, and scaling decisions.
 
 ---
 
@@ -861,36 +818,11 @@ It does not imply:
 
 ---
 
-## 30. Do Not Call Market Excursion Profit
+## 30. Report What Was Measured
 
-The Hindsight domain vocabulary SHOULD avoid terminology that implies a trading
-counterfactual.
-
-Avoid concepts such as:
-
-    missed profit
-    missed trade
-    regret
-    profit ceiling
-    capture percentage
-    money left on table
-    should-have-entered
-    threshold improvement
-
-Prefer:
-
-    ObservedExcursion
-    Episode
-    ReferencePoint
-    SystemSnapshot
-    Artifact
-    ValidationFinding
-    InvariantViolation
-    Undefined
-    Unavailable
-    NotReady
-
-Language is part of the safety boundary of the architecture.
+Report decision quality, missed opportunities, action timing, wallet results,
+and elapsed time using the evidence available. An observed price excursion and
+an actual wallet profit are different measurements; label them accordingly.
 
 ---
 
@@ -1111,26 +1043,11 @@ They must never share a label implying equivalence.
 
 ---
 
-## 39. Inspection Does Not Tune
+## 39. Feedback Updates the Model
 
-Hindsight validators must never emit advice such as:
-
-    lower threshold X
-    increase weight Y
-    loosen gate Z
-    increase confidence
-    decrease admission requirement
-    change Planner admission rule
-
-A finding says what contract failed.
-
-Example:
-
-    liquidity.depth_divergence violated identity with depth_ratio
-
-not:
-
-    loosen liquidity gate to capture this move
+Completed tape outcomes evaluate the agent's recorded choices and update its
+decision-making model. Validation findings also expose calculations that need
+correction. Feedback is part of the running learning system.
 
 ---
 
@@ -1577,24 +1494,11 @@ The UI should make provenance navigable:
 
 ---
 
-## 56. UI Must Not Imply Tuning
+## 56. UI Shows Actual Learning and Performance
 
-Do not display:
-
-    missed profit
-    parameter recommendation
-    gate to loosen
-    threshold to change
-    score that should have been higher
-
-Do display:
-
-    observed market outcome
-    exact system state
-    component readiness
-    provenance
-    validation findings
-    state evolution around reference points
+Connect the existing visualizations to the recorded observations, decisions,
+completed evaluations, wallet changes, and elapsed time. Show current agent
+skill and edge, including negative values. Show pending outcomes as pending.
 
 ---
 
@@ -1635,20 +1539,20 @@ That is hindsight bias inside the Hindsight engine itself.
 
 ---
 
-## 59. Reference Episodes Are Not Labels for Learning
+## 59. Completed Outcomes Train the Agent
 
-Episode labels such as:
+Evaluate each agent's actions as soon as the relevant tape outcome is fully
+developed. Include action timing and missed opportunities. Supply prior
+observations with each decision so the model can learn temporal development.
 
-    +20% excursion
-    reversal
-    liquidity shock
+Parallel agents have independent wallets and may hold multiple positions within
+their available capital. Filter actions by feasibility: entry, exit, wait/hold,
+and scaling up or down. Do not impose authored market beliefs or require a
+price-prediction or spread-crossing guarantee before an agent can choose.
 
-must not automatically become production training labels.
-
-Using Hindsight data for an explicit research or learning experiment is a
-separate system with a separate specification.
-
-Hindsight itself is inspection.
+Consolidate positive experience into one final model. Run and evaluate that model
+with an agent as well. Persist it to S3, load it into each agent after a restart,
+and resume learning from the saved collective experience.
 
 ---
 
@@ -1731,7 +1635,8 @@ Optionally:
 
     10. validate that build separately
 
-At no point does the workflow generate strategy-tuning recommendations.
+Completed outcomes also evaluate recorded decisions and feed subsequent model
+updates.
 
 ---
 
@@ -1771,7 +1676,7 @@ Suppose it finds:
     liquidity.depth_ratio = 1.4142
     liquidity.depth_divergence = 0.6931
 
-Those are consistent:
+These values disagree with the stated identity:
 
     log(1.4142) ~= 0.3466
 
@@ -1790,9 +1695,8 @@ It does NOT report:
 
     this bug cost us 20%
 
-and it does NOT recommend:
-
-    change liquidity threshold to X.
+Decision evaluation separately uses the completed tape and recorded actions to
+update the model.
 
 ---
 
@@ -2000,10 +1904,6 @@ The following violate the Hindsight design:
 
     call observed market excursion profit
 
-    call CASH before a rally a mistake
-
-    recommend threshold changes from historical outcome
-
     let replay overwrite historical witness
 
     use SQLite row ID as permanent domain identity
@@ -2011,8 +1911,6 @@ The following violate the Hindsight design:
     silently ignore capture gaps
 
     select the strongest later state to explain an earlier Episode
-
-    use Hindsight output as a production control input
 
 ---
 
@@ -2042,7 +1940,8 @@ The replacement Hindsight system is correctly founded when:
 
 11. capture gaps make inspection uncertainty explicit;
 
-12. no component emits tuning recommendations;
+12. completed tape outcomes train the agent, with wallet and time feedback
+    available while outcomes develop;
 
 13. profitable outcomes do not hide mathematical defects;
 
@@ -2066,26 +1965,7 @@ without using fuzzy timestamp correlation.
 
 ## 68. Final Definition
 
-Hindsight is a microscope over a captured running system.
-
-The market tells us which slides are interesting.
-
-Capture tells us what reality reached SYMM.
-
-Witnesses tell us what SYMM actually produced.
-
-Provenance tells us exactly why each fact existed.
-
-Validators tell us whether the mathematics satisfied its own contracts.
-
-Replay lets us inspect corrected machinery against the same historical reality.
-
-Nothing in Hindsight says:
-
-> tune this and get fat stacks.
-
-The strongest statement it is allowed to make is:
-
-> At this exact historical boundary, under these exact causally available
-> observations, this component was valid, invalid, undefined, not ready, or
-> unavailable — and here is the evidence.
+Hindsight retains what the market did and what the agent did. Completed outcomes
+evaluate those decisions and improve the model. The existing UI shows that
+learning and its actual results. The objective is to maximize the wallet and
+minimize the time required.

@@ -61,7 +61,6 @@ func buildRound(
 		}
 	}
 
-
 	if includeMetrics && state != nil {
 		record.Metrics = extractAllMetrics(state)
 	}
@@ -174,4 +173,3 @@ func put(target map[string]float64, key string, value float64) map[string]float6
 
 	return target
 }
-

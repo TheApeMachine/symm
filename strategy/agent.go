@@ -43,8 +43,19 @@ func NewAgent(
 	initial *decimal.Decimal,
 	record func(hindsight.LearningEvent) error,
 ) (*Agent, error) {
-	if grid == nil || books == nil || price == nil || initial == nil || record == nil {
-		return nil, errnie.Err(errnie.Validation, "agent: missing required dependencies", nil)
+	if err := errnie.Require(map[string]any{
+		"ctx":     ctx,
+		"grid":    grid,
+		"books":   books,
+		"price":   price,
+		"initial": initial,
+		"record":  record,
+	}); err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[agent] not all requirements met",
+			err,
+		))
 	}
 
 	execution := &Execution{
@@ -65,6 +76,8 @@ func NewAgent(
 		now:       time.Now,
 		execution: execution,
 	}
+
+	local.Desk = NewDesk(local.Knowledge, price, initial)
 
 	capital := NewCapitalLearner(local)
 	execution.Candidates = capital.Candidates
@@ -102,7 +115,9 @@ func (agent *Agent) Step(envelope *types.Envelope) *types.Envelope {
 		agent.err = agent.Refresh(agent.now())
 	}
 
-	if candidate := agent.Capital.Candidates.current[agent.Grid.UpdatedLabel]; agent.err == nil && candidate != nil && candidate.Record.GridVersion != agent.Grid.Version {
+	if candidate := agent.Capital.Candidates.current[agent.Grid.UpdatedLabel]; agent.err == nil &&
+		candidate != nil &&
+		candidate.Record.GridVersion != agent.Grid.Version {
 		agent.err = agent.Capital.Candidates.Invalidate(
 			agent.Grid.UpdatedLabel, agent.now(), "originating Grid row updated",
 		)
@@ -124,6 +139,11 @@ func (agent *Agent) Step(envelope *types.Envelope) *types.Envelope {
 
 	select {
 	case request := <-agent.requests:
+		if request.checkpoint != nil {
+			request.checkpoint <- agent.Knowledge.Model.Checkpoint()
+			break
+		}
+
 		request.reply <- agent.view(request.symbol)
 	case episodes := <-agent.reviews:
 		agent.review(episodes)
@@ -156,3 +176,25 @@ func (agent *Agent) RoundTripFees(symbol string) float64 {
 
 	return 2 * fee.Fee.Float64() / 100
 }
+
+/*
+Checkpoint captures the shared memory the desk has built, for persistence.
+*/
+func (agent *Agent) Checkpoint() Checkpoint {
+	return agent.Knowledge.Model.Checkpoint()
+}
+
+/*
+Restore loads a previously saved memory into the desk, so every trader begins
+from what the desk collectively learned rather than from nothing.
+
+The system still returns to learning after a restart. What changes is where it
+starts from: the traders open with the memory the tape has already taught, and
+develop it further rather than rediscovering it.
+*/
+func (agent *Agent) Restore(checkpoint Checkpoint) error {
+	return agent.Knowledge.Model.Restore(checkpoint)
+}
+
+/* Desk exposes the traders for inspection. */
+func (agent *Agent) Desk() *Desk { return agent.LocalLearning.Desk }

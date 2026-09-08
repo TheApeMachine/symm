@@ -1,7 +1,9 @@
-package cmd
+package recording
 
 import (
 	"context"
+	"gocloud.dev/blob"
+	"gocloud.dev/blob/memblob"
 	"testing"
 	"time"
 
@@ -15,34 +17,21 @@ import (
 )
 
 /*
-TestCaptureProvenanceIntegrationTest exercises the real production capture →
+TestSessionCapture exercises the real production capture →
 envelope → semantic → witness → persisted-record chain. One raw Kraken trade
-frame yielding two trades is captured through the real SQLite store + sequencer
+frame yielding two trades is captured through the real Archive store + sequencer
 + writer, parsed by the real ingest path into two envelopes with deterministic
 ordinals, advanced through the real category solver, and its artifacts witnessed
 and persisted. The test then answers, from persisted identities alone: what
 exact exchange bytes, parsed envelope, and processing transition caused a
 resulting semantic artifact.
 */
-func TestCaptureProvenanceIntegrationTest(t *testing.T) {
+func TestSessionCapture(t *testing.T) {
 	Convey("Given the real capture and semantic stack", t, func() {
-		path := t.TempDir() + "/events.sqlite"
-
-		engine, err := store.NewSQLite(path)
-		So(err, ShouldBeNil)
 
 		runID, err := hindsight.NewRunID(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
 		So(err, ShouldBeNil)
-
-		sequencer, err := hindsight.NewSequencer(runID)
-		So(err, ShouldBeNil)
-
-		writer, err := store.NewWriter(engine, sequencer, 16, 8)
-		So(err, ShouldBeNil)
-		Reset(func() {
-			_ = writer.Close()
-			_ = engine.Close()
-		})
+		writer, engine := newSessionFixture(t, runID)
 
 		Convey("One raw frame yielding two trades is captured, ingested, witnessed, and traversable by identity", func() {
 			raw := []byte(`{"channel":"trade","type":"update","data":[
@@ -75,8 +64,6 @@ func TestCaptureProvenanceIntegrationTest(t *testing.T) {
 				So(writer.WriteManifest(manifest), ShouldBeNil)
 			}
 
-			So(writer.Sync(), ShouldBeNil)
-
 			// 4. Advance one envelope through the real category solver to produce
 			// a semantic artifact (a Measurement is the category solver's input).
 			solver := category.NewSolver(context.Background())
@@ -98,22 +85,25 @@ func TestCaptureProvenanceIntegrationTest(t *testing.T) {
 			// envelope, exactly as the live witnessNode records it.
 			ref := hindsight.EnvelopeRef{Origin: captureID, Ordinal: 0}
 
-			So(writer.WriteWitness(hindsight.ArtifactWitness{
+			writer.record(hindsight.ArtifactWitness{
 				Envelope:         ref,
 				Boundary:         "after-signals",
 				Artifact:         hindsight.ArtifactID{Kind: "measurement", Identity: "cvd-1"},
 				ImmediateParents: []hindsight.EnvelopeRef{ref},
-			}), ShouldBeNil)
+			})
+			So(writer.Close(), ShouldBeNil)
 
 			// 6. From persisted identities alone, traverse back to the exact
 			// exchange bytes. The raw frame is stored alongside its identity.
-			storedBytes, err := engine.ReadCapture(captureID)
+			stored, err := store.Read[hindsight.RawFrame](context.Background(), engine, captureID.Key())
 			So(err, ShouldBeNil)
-			So(string(storedBytes), ShouldEqual, string(raw))
+			So(string(stored.Payload), ShouldEqual, string(raw))
 
 			// The witness is persisted, keyed by the same origin so a consumer
 			// can walk witness → EnvelopeRef → raw frame without any timestamp.
-			witness, err := engine.ReadWitness(captureID, "cvd-1")
+			witnesses, err := store.List[hindsight.ArtifactWitness](context.Background(), engine, runID.Prefix("witnesses"))
+			So(witnesses, ShouldHaveLength, 1)
+			witness := witnesses[0]
 			So(err, ShouldBeNil)
 			So(witness.Artifact.Kind, ShouldEqual, "measurement")
 			So(witness.Artifact.Identity, ShouldEqual, "cvd-1")
@@ -123,4 +113,22 @@ func TestCaptureProvenanceIntegrationTest(t *testing.T) {
 			So(witness.ImmediateParents[0], ShouldResemble, ref)
 		})
 	})
+}
+
+func newSessionFixture(t *testing.T, run hindsight.RunID) (*Session, *blob.Bucket) {
+	t.Helper()
+	bucket := memblob.OpenBucket(nil)
+	writer, err := NewSession(context.Background(), bucket, hindsight.Run{ID: run, StartedAt: time.Unix(1, 0)}, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := writer.Close(); err != nil {
+			t.Errorf("close recorder: %v", err)
+		}
+		if err := bucket.Close(); err != nil {
+			t.Errorf("close bucket: %v", err)
+		}
+	})
+	return writer, bucket
 }

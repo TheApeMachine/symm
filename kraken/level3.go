@@ -275,3 +275,34 @@ func NewLevel3(buf []byte) *Level3 {
 func (level3 *Level3) Action() string {
 	return "level3"
 }
+
+/*
+Level3Touch is the executable top of book at the moment a Level 3 frame was
+accepted, recorded as its own observation.
+
+It exists because the venue's ticker stream cannot serve as a price series for
+most of the universe. Kraken publishes spot ticker on change, which for an
+illiquid pair is a handful of frames across an entire session — far under what
+any estimator needs before it will look at a symbol at all. The Level 3 book
+carries the same price continuously, and it is the price the desk would
+actually trade at rather than a summary of it.
+
+The touch is only meaningful once the local book has matched the venue's own
+checksum for that frame. Before that the state is unverified, and a price taken
+from unverified depth is not a reading of the market.
+*/
+type Level3Touch struct {
+	Symbol    string           `json:"symbol"`
+	Timestamp time.Time        `json:"timestamp"`
+	Bid       *decimal.Decimal `json:"bid"`
+	BidQty    *decimal.Decimal `json:"bid_qty"`
+	Ask       *decimal.Decimal `json:"ask"`
+	AskQty    *decimal.Decimal `json:"ask_qty"`
+}
+
+/* Level3TouchFrame is one batch of touches carried by a single accepted frame. */
+type Level3TouchFrame struct {
+	Channel string        `json:"channel"`
+	Type    string        `json:"type"`
+	Data    []Level3Touch `json:"data"`
+}

@@ -1,3 +1,14 @@
+storage:
+  s3:
+    # Set bucket_url for an S3-compatible cluster, e.g.:
+    # s3://symm?region=us-east-1&endpoint=http://localhost:9000&use_path_style=true
+    # Alternatively set bucket and region, leaving bucket_url empty.
+    # Credentials: AWS_PROFILE or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+    bucket_url: "s3://symm?region=us-east-1&awssdk=v2&endpoint=http://192.168.0.163:32552&anonymous=true&s3ForcePathStyle=true"
+    bucket: ""
+    region: ""
+    prefix: symm/
+
 experimental:
   # Presentation and diagnostic experiments are opt-in and paper-only.
   enabled: false
@@ -48,7 +59,7 @@ hindsight:
     # Raw frames and their manifests share one ordered, non-dropping queue.
     # Producers only block if storage consumes this full bounded allowance.
     queue_depth: 8192
-    # SQLite commits at most this many ordered records per transaction.
+    # Maximum ordered records per S3 journal batch.
     batch_size: 256
   witness:
     # Phase transitions and actions are the bounded decision moments retained

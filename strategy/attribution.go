@@ -99,7 +99,7 @@ func (store *attribution) report(columns [][2]string) []MetricInfluence {
 			Token: key.token, Action: string(key.kind), Prior: reading,
 		}
 
-		if index := int(key.token) - 1; index >= 0 && index < len(columns) {
+		if index := int(learning.ConditionQuantity(key.token)) - 1; index >= 0 && index < len(columns) {
 			influence.Source, influence.Label = columns[index][0], columns[index][1]
 		}
 

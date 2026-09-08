@@ -412,6 +412,31 @@ func NewWithClient(
 		live.level3 = &sync.Map{}
 		live.book = NewBook(ctx, live.normalizer)
 		live.book.SetResync(live.resyncLevel3)
+
+		/*
+			The verified top of book is captured as its own observation.
+
+			Discovery needs a price series, and the venue's spot ticker cannot
+			be one for most of this universe: it publishes on change, which for
+			an illiquid pair is a handful of frames across a whole session. The
+			book carries the same price continuously and is the price the desk
+			would actually trade at, so it is recorded once the venue's own
+			checksum has confirmed the state it was read from.
+		*/
+		live.book.SetTouch(func(touches []kraken.Level3Touch) {
+			payload, err := json.Marshal(kraken.Level3TouchFrame{
+				Channel: "level3", Type: "touch", Data: touches,
+			})
+
+			if err != nil {
+				live.fail(errnie.Err(errnie.Internal, "websocket: encode level3 touch", err))
+				return
+			}
+
+			if err := live.captureFrame("l3_touch", endpoint, payload); err != nil {
+				live.fail(err)
+			}
+		})
 		live.book.SetNotify(func(symbol string, at time.Time) {
 			if live.Status() != runtime.READY {
 				return

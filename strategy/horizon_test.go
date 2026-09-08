@@ -137,62 +137,6 @@ func TestPrecursorHistoryIsBounded(t *testing.T) {
 	})
 }
 
-func TestPolicyAdmission(t *testing.T) {
-	Convey("The policy lane admits an action on comparative evidence", t, func() {
-		grid := learning.NewGrid()
-		knowledge := NewKnowledge(grid)
-		local := &LocalLearning{Knowledge: knowledge}
-		market := &learningMarket{symbol: "TEST/USD", context: []uint64{101}}
-		lane := &learningLane{paper: true}
-
-		enter := LearningAction{Kind: types.ActionEnter}
-		hold := LearningAction{Kind: types.ActionHold}
-
-		observe := func(action LearningAction, growth float64) {
-			So(knowledge.Model.Observe(
-				[2]string{"TEST/USD", "flat"}, market.context, action,
-				growth, 1.0, 1.0, [2]string{"", "flat"},
-			), ShouldBeNil)
-		}
-
-		Convey("An action with no completed evidence is held rather than guessed", func() {
-			reading := knowledge.Reading("TEST/USD", "flat", market.context, enter)
-			So(reading.Economic.Defined, ShouldBeFalse)
-			So(lane.admit(local, market, "flat", enter, reading).Kind, ShouldEqual, types.ActionHold)
-		})
-
-		/*
-			Waiting earns exactly zero by construction, so refusing every action
-			whose rate is not positive is a comparison against waiting on a tape
-			where acting always pays a spread first. It vetoes everything
-			permanently. The gate compares like with like instead.
-		*/
-		Convey("An action the evidence prefers to holding is admitted", func() {
-			observe(enter, 0.004)
-			observe(hold, 0.001)
-
-			reading := knowledge.Reading("TEST/USD", "flat", market.context, enter)
-			So(reading.Economic.Defined, ShouldBeTrue)
-			So(lane.admit(local, market, "flat", enter, reading), ShouldResemble, enter)
-		})
-
-		Convey("An action holding beats is refused", func() {
-			observe(enter, -0.004)
-			observe(hold, 0.001)
-
-			reading := knowledge.Reading("TEST/USD", "flat", market.context, enter)
-			So(lane.admit(local, market, "flat", enter, reading).Kind, ShouldEqual, types.ActionHold)
-		})
-
-		Convey("A genuine reduction is never refused on entry evidence", func() {
-			observe(LearningAction{Kind: types.ActionExit, Reduce: true}, -0.004)
-			exit := LearningAction{Kind: types.ActionExit, Reduce: true}
-			reading := knowledge.Reading("TEST/USD", "holding", market.context, exit)
-			So(lane.admit(local, market, "holding", exit, reading), ShouldResemble, exit)
-		})
-	})
-}
-
 /*
 The retained journal is written by one build and read back by the next, so the
 unit the resolver stamps and the units warmup knows how to read have to agree.
@@ -249,5 +193,64 @@ func TestWarmupSurvivesAnUnknownUnit(t *testing.T) {
 		So(err, ShouldBeNil)
 		So(report.Resolved, ShouldEqual, 1)
 		So(report.TargetUnavailable, ShouldEqual, 1)
+	})
+}
+
+/*
+Four counterfactual lanes explore a feasible set that is usually larger than
+four. Assigning them to the head of that list leaves every action past the
+fourth with no evidence for the life of the run — and the policy refuses an
+action it has no evidence for, so those actions become unreachable rather than
+merely under-explored. That was visible on the surface as one lane permanently
+waiting while the policy asked for a size nothing had ever tried.
+*/
+func TestExplorationCoversTheFeasibleSet(t *testing.T) {
+	Convey("Exploration reaches every feasible action, not just the first few", t, func() {
+		enter := func(power uint16) LearningAction {
+			return LearningAction{Kind: types.ActionEnter, Power: power}
+		}
+		market := &learningMarket{symbol: "TEST/USD"}
+		market.actions = []LearningAction{
+			{Kind: types.ActionHold},
+			enter(0), enter(1), enter(2), enter(3), enter(4),
+			{Kind: types.ActionExit, Reduce: true},
+		}
+		lanes := 4
+		reached := map[LearningAction]int{}
+
+		// Each impulse change advances the offset, so successive states hand
+		// the lanes different actions.
+		for range len(market.actions) {
+			market.AdvanceImpulse([]learning.Region{
+				{Condition: market.exploration + 1, Strength: 1, Authority: 1},
+			})
+
+			for index := range lanes {
+				reach := (index + int(market.exploration)) % len(market.actions)
+				reached[market.actions[reach]]++
+			}
+		}
+
+		So(len(reached), ShouldEqual, len(market.actions))
+
+		Convey("Including the deep bisections and the reduction", func() {
+			So(reached[enter(4)], ShouldBeGreaterThan, 0)
+			So(reached[LearningAction{Kind: types.ActionExit, Reduce: true}], ShouldBeGreaterThan, 0)
+		})
+
+		Convey("And no lane is pinned to one action forever", func() {
+			first := &learningMarket{symbol: "TEST/USD"}
+			first.actions = market.actions
+			seen := map[LearningAction]struct{}{}
+
+			for range 6 {
+				first.AdvanceImpulse([]learning.Region{
+					{Condition: first.exploration + 1, Strength: 1, Authority: 1},
+				})
+				seen[first.actions[(0+int(first.exploration))%len(first.actions)]] = struct{}{}
+			}
+
+			So(len(seen), ShouldBeGreaterThan, 1)
+		})
 	})
 }

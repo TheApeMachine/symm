@@ -8,7 +8,7 @@ behaviour is a much smaller thing: for each planning round, the gate it stopped
 at, the council distribution it stopped on, and the search it ran when it got
 that far. This reads exactly that and nothing else.
 
-	hindsight_export <events.sqlite> [flags]
+	hindsight_export <config.yml> [flags]
 
 	-run     run id (default: the most recent run in the database)
 	-out     output file (default: stdout)
@@ -24,14 +24,19 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/spf13/viper"
 	"os"
 	"strings"
 
+	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
+	"gocloud.dev/blob"
+	"slices"
 )
 
 /*
@@ -137,15 +142,18 @@ func main() {
 	metrics := flag.Bool("metrics", false, "include signal metric measurements on each round")
 	summarize := flag.Bool("summary", false, "emit one aggregate object instead of per-round lines")
 	trainingClock := flag.String("training-clock", "", "also export retained metric observations when this clock advances")
+	runsOnly := flag.Bool("runs", false, "list retained run metadata")
+	frames := flag.Bool("frames", false, "export exact public-market capture frames")
+	through := flag.Uint64("through-sequence", 0, "last capture sequence for frame export (0 = all)")
 	opportunities := flag.Bool("opportunities", false, "also export canonical Hindsight price episodes")
 	// Go's flag package stops at the first positional argument, so parse the
 	// database path out of the arguments first and let flags appear on either
-	// side of it. Without this, `hindsight_export db.sqlite -limit 3` silently
+	// side of it. Without this, `hindsight_export config.yml -limit 3` silently
 	// ignores every flag.
 	database, rest := splitDatabase(os.Args[1:])
 
 	if database == "" {
-		fmt.Fprintln(os.Stderr, "usage: hindsight_export <events.sqlite> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: hindsight_export <config.yml> [flags]")
 		flag.PrintDefaults()
 		os.Exit(1)
 	}
@@ -154,14 +162,30 @@ func main() {
 		os.Exit(1)
 	}
 
-	engine, err := store.NewSQLite(database)
+	viper.SetConfigFile(database)
+	if err := viper.ReadInConfig(); err != nil {
+		panic(err)
+	}
+	client, err := store.NewS3(context.Background())
 
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "open capture:", err)
 		os.Exit(1)
 	}
 
-	defer engine.Close()
+	defer client.Close()
+	engine := client.Bucket()
+
+	if *runsOnly {
+		runs, err := store.List[hindsight.Run](context.Background(), engine, "runs/")
+		if err != nil {
+			panic(err)
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(runs); err != nil {
+			panic(err)
+		}
+		return
+	}
 
 	selected := *runID
 
@@ -172,13 +196,6 @@ func main() {
 			fmt.Fprintln(os.Stderr, "resolve run:", err)
 			os.Exit(1)
 		}
-	}
-
-	states, err := engine.ListStates(selected)
-
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "list states:", err)
-		os.Exit(1)
 	}
 
 	writer := os.Stdout
@@ -198,6 +215,20 @@ func main() {
 	defer buffered.Flush()
 
 	encoder := json.NewEncoder(buffered)
+	if *frames {
+		if err := exportFrames(engine, selected, *through, buffered); err != nil {
+			panic(err)
+		}
+		return
+	}
+
+	states, err := store.List[hindsight.ArtifactWitness](context.Background(), engine, hindsight.RunID(selected).Prefix("states"))
+
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "list states:", err)
+		os.Exit(1)
+	}
+
 	wanted := statusSet(*status)
 	written := 0
 
@@ -376,8 +407,8 @@ func splitDatabase(arguments []string) (string, []string) {
 }
 
 /* latestRun returns the most recently started run in the capture. */
-func latestRun(engine *store.SQLite) (string, error) {
-	runs, err := engine.ListRuns()
+func latestRun(engine *blob.Bucket) (string, error) {
+	runs, err := store.List[hindsight.Run](context.Background(), engine, "runs/")
 
 	if err != nil {
 		return "", err
@@ -387,6 +418,7 @@ func latestRun(engine *store.SQLite) (string, error) {
 		return "", fmt.Errorf("capture contains no runs")
 	}
 
+	slices.SortFunc(runs, func(left, right hindsight.Run) int { return right.StartedAt.Compare(left.StartedAt) })
 	return string(runs[0].ID), nil
 }
 

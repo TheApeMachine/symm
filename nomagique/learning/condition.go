@@ -35,3 +35,15 @@ func RemapCondition(token, quantity uint64) uint64 {
 	}
 	return 1<<52 | quantity<<4 | token&15
 }
+
+/*
+	ConditionQuantity recovers the quantity identity without its directional bits.
+
+Unconditioned quantity IDs pass through unchanged.
+*/
+func ConditionQuantity(token uint64) uint64 {
+	if token&(1<<52) == 0 {
+		return token
+	}
+	return (token & ((1 << 52) - 1)) >> 4
+}

@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"math"
+	"strings"
 	"time"
 
 	"github.com/theapemachine/errnie"
@@ -15,6 +16,7 @@ const knowledgeMemory = 2048.0
 
 /* KnowledgeReading exposes alternative specificity levels and economic sufficient statistics. */
 type KnowledgeReading struct {
+	Source   string                `json:"source"`
 	Scope    string                `json:"scope"`
 	Global   learning.PriorReading `json:"global"`
 	Symbol   learning.PriorReading `json:"symbol"`
@@ -87,6 +89,10 @@ func (knowledge *Knowledge) Reading(
 		Symbol:   symbolEconomic.Prior(),
 		Economic: globalEconomic,
 	}
+	reading.Source = "wallet"
+	if strings.HasPrefix(accountState, "tape:") {
+		reading.Source = "tape"
+	}
 	reading.Selected = reading.Global
 
 	local, global := symbolEconomic, globalEconomic
@@ -114,6 +120,17 @@ func (knowledge *Knowledge) Select(
 ) (LearningAction, KnowledgeReading, error) {
 	if accountState == "" {
 		accountState = "flat"
+	}
+
+	// Compare one evidence family at a time. Completed tape evidence takes
+	// precedence; untried actions remain untried within that same family.
+	tapeState := "tape:" + accountState
+	for _, candidate := range actions {
+		tape := knowledge.Reading(symbol, tapeState, context, candidate)
+		if tape.Economic.Defined {
+			accountState = tapeState
+			break
+		}
 	}
 
 	action, _, err := knowledge.Model.Select(

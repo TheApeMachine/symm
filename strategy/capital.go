@@ -133,7 +133,7 @@ func (capital *CapitalLearner) allocate(local *LocalLearning, teacher *AccountTe
 		contexts[action] = append(append([]uint64(nil), candidate.Record.Context...), contexts[actions[0]]...)
 		claims[action] = candidate
 	}
-	horizon, horizonSource := capital.horizon(local, teacher, candidates, at)
+	horizon, horizonSource := capital.horizon(teacher, candidates, at)
 
 	if horizon <= 0 {
 		return nil
@@ -229,7 +229,7 @@ horizon ends WAIT at the first known candidate expiry or held-exposure review.
 Without either, the shared account's measured observation interval defines its
 next evaluation. The triggering symbol contributes no special clock.
 */
-func (capital *CapitalLearner) horizon(local *LocalLearning, teacher *AccountTeacher, candidates []*EntryCandidate, at time.Time) (time.Duration, string) {
+func (capital *CapitalLearner) horizon(teacher *AccountTeacher, candidates []*EntryCandidate, at time.Time) (time.Duration, string) {
 	var horizon time.Duration
 	source := "account observation interval"
 	for _, candidate := range candidates {

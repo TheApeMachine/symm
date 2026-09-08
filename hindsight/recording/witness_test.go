@@ -1,6 +1,7 @@
-package cmd
+package recording
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -10,28 +11,18 @@ import (
 	"github.com/theapemachine/symm/types"
 )
 
-func TestWitnessNodeStep(t *testing.T) {
+func TestSessionStep(t *testing.T) {
 	Convey("Given a non-action opportunity phase transition", t, func() {
-		engine, err := store.NewSQLite(t.TempDir() + "/hindsight.sqlite")
-		So(err, ShouldBeNil)
+		writer, engine := newSessionFixture(t, "recording-witness")
 
-		runID, err := hindsight.NewRunID(time.Unix(1, 0))
-		So(err, ShouldBeNil)
-		sequencer, err := hindsight.NewSequencer(runID)
-		So(err, ShouldBeNil)
-		writer, err := store.NewWriter(engine, sequencer, 16, 8)
-		So(err, ShouldBeNil)
-		Reset(func() {
-			_ = writer.Close()
-			_ = engine.Close()
-		})
 		capture, err := writer.Capture(
 			"ticker", "public", []byte(`{"channel":"ticker"}`), time.Unix(2, 0),
 			hindsight.StreamRef{Stream: "public:ticker", Epoch: 1, Sequence: 1},
 		)
 		So(err, ShouldBeNil)
 
-		decision := types.NewDecision(types.ActionNothing, "TEST/USD")
+		decision := &types.Decision{Action: types.ActionNothing, Symbol: "TEST/USD"}
+		decision.EnsureID()
 		decision.At = time.Unix(2, 0)
 		envelope := types.NewEnvelope(types.EnvelopeTicker)
 		envelope.CaptureID = capture
@@ -43,18 +34,20 @@ func TestWitnessNodeStep(t *testing.T) {
 			Symbol: "TEST/USD", Evaluated: true,
 			Decisions: []*types.Decision{decision},
 		}
-		node := newWitnessNode(writer, nil)
+		node := writer
 
 		Convey("the phase and its non-action decision are persisted for evaluation", func() {
 			So(node.Step(envelope), ShouldEqual, envelope)
 
-			stateID := string(capture.Run) + ":1:0"
-			stateWitness, err := engine.ReadWitness(capture, stateID)
+			So(writer.Close(), ShouldBeNil)
+			stateWitness, err := store.Read[hindsight.ArtifactWitness](context.Background(), engine, (hindsight.EnvelopeRef{Origin: capture}).Key("states"))
 			So(err, ShouldBeNil)
 			So(stateWitness.Artifact.Kind, ShouldEqual, "state")
 			So(stateWitness.Payload, ShouldNotBeEmpty)
 
-			decisionWitness, err := engine.ReadWitness(capture, decision.ID)
+			decisions, err := store.List[hindsight.ArtifactWitness](context.Background(), engine, capture.Run.Prefix("witnesses"))
+			So(decisions, ShouldHaveLength, 1)
+			decisionWitness := decisions[0]
 			So(err, ShouldBeNil)
 			So(decisionWitness.Artifact.Kind, ShouldEqual, "decision")
 		})

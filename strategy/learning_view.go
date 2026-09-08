@@ -58,6 +58,13 @@ type LearningView struct {
 	Forward ForwardReview `json:"forward"`
 
 	/*
+		Desk is the independent traders sharing this memory, each carrying its
+		own wallet against the same market. It is reported so an operator can
+		see the parallel participants the memory is being consolidated from.
+	*/
+	Desk LearningDesk `json:"desk"`
+
+	/*
 		Precursor represents the temporal history of Impulse state changes
 		leading to the current decision.
 	*/
@@ -130,6 +137,27 @@ type LearningCandidate struct {
 	Selected  bool                  `json:"selected"`
 	Prior     learning.PriorReading `json:"prior"`
 	Economic  EconomicReading       `json:"economic"`
+}
+
+/* LearningDesk is the parallel trader population the shared memory learns from. */
+type LearningDesk struct {
+	Traders  []LearningTrader `json:"traders"`
+	Settled  uint64           `json:"settled"`
+	Agreed   uint64           `json:"agreed"`
+	Disputed uint64           `json:"disputed"`
+}
+
+/* LearningTrader is one independent wallet and how the tape has judged it. */
+type LearningTrader struct {
+	ID        int     `json:"id"`
+	Decisions uint64  `json:"decisions"`
+	Fills     uint64  `json:"fills"`
+	Graded    uint64  `json:"graded"`
+	Observed  float64 `json:"observed"`
+	Quality   float64 `json:"quality"`
+	Wealth    float64 `json:"wealth"`
+	Open      int     `json:"open"`
+	Holding   int     `json:"holding"`
 }
 
 /* LearningSummary locates active independent contexts without combining capital. */

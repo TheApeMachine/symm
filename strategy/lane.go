@@ -230,56 +230,6 @@ func (lane *learningLane) recycle(
 }
 
 /*
-admit is the policy lane's final check on a selected action. It refuses one
-only when the evidence for it is missing, or when the evidence says holding
-does better in this same context.
-
-It deliberately does not test the rate against zero. Waiting earns exactly
-zero by construction, so a sign test is a comparison against waiting on a tape
-where every action pays a spread before it can earn anything — it vetoes every
-action permanently, and the lane has no way back out: it stops acting, its
-equity stops changing, and the competence estimate it feeds reads exactly zero
-for the rest of the run. Comparing like with like admits an action the
-evidence actually prefers to holding, and still refuses one that is merely
-less bad than nothing.
-
-An action with no completed evidence is held rather than guessed. That is not
-a deadlock: the exploratory lanes cover the feasible set on their own capital,
-so the evidence this lane waits for is being produced alongside it.
-*/
-func (lane *learningLane) admit(
-	local *LocalLearning,
-	market *learningMarket,
-	accountState string,
-	action LearningAction,
-	reading KnowledgeReading,
-) LearningAction {
-	hold := LearningAction{Kind: types.ActionHold}
-
-	if action.Kind == types.ActionHold {
-		return action
-	}
-
-	// A genuine reduction is always permitted: refusing to close a position is
-	// not a neutral act, and the evidence for entering does not govern it.
-	if action.Reduce {
-		return action
-	}
-
-	if !reading.Economic.Defined {
-		return hold
-	}
-
-	holding := local.Knowledge.Reading(market.symbol, accountState, market.context, hold)
-
-	if holding.Economic.Defined && reading.Economic.Rate <= holding.Economic.Rate {
-		return hold
-	}
-
-	return action
-}
-
-/*
 issue conditions the next decision on the temporal precursor context and the
 account's own state (flat vs holding). Independent exploratory lanes explore
 counterfactual actions; the policy lane selects the best supported action.
@@ -318,10 +268,20 @@ func (lane *learningLane) issue(
 		))
 	}
 
-	// Exploratory lanes balance counterfactual actions across the feasible set.
+	/*
+		Exploratory lanes balance counterfactual actions across the feasible set.
+
+		The offset rotates with the impulse, so a lane reaches for a different
+		action each time the state changes and the whole feasible set is covered
+		over successive states. Assigning lanes to the list head instead would
+		leave every action past the fourth with no evidence for the life of the
+		run, and an action with no evidence has no measured support for the
+		policy to prefer over the ones that do — so those would be permanently
+		under-explored rather than merely explored thinly.
+	*/
 	if !lane.paper && len(market.actions) > 0 {
-		candidateAction := market.actions[index%len(market.actions)]
-		action = candidateAction
+		reach := (index + int(market.exploration)) % len(market.actions)
+		action = market.actions[reach]
 		reading = local.Knowledge.Reading(market.symbol, accountState, market.context, action)
 	}
 
@@ -331,7 +291,6 @@ func (lane *learningLane) issue(
 
 	if lane.paper {
 		influence = prior.Authority
-		action = lane.admit(local, market, accountState, action, reading)
 	}
 
 	if len(lane.trace) != 0 && action == lane.action {

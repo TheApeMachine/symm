@@ -4,7 +4,7 @@ import { Canvas } from "#/components/ui/canvas";
 import { Flex } from "#/components/ui/flex";
 import { Tabs } from "#/components/ui/tabs";
 import { Typography } from "#/components/ui/typography";
-import { EventRhythm, PipelineFunnel } from "./charts";
+import { EventRhythm, LearningProgress, PipelineFunnel } from "./charts";
 import { action, basis, clock, percent } from "./format";
 import type { Candidate, LearningEvent, LearningView, Skill } from "./state";
 
@@ -16,12 +16,35 @@ conservative 3-sigma lower bound has cleared the promotion threshold.
 */
 export const EdgeDistributionPlot = ({ skill }: { skill?: Skill }) => {
 	const defined = skill?.defined ?? false;
+	const measured = defined && (skill?.standardError ?? 0) > 0;
 	const meanBp = defined ? (skill?.mean ?? 0) * 10000 : 0;
-	const seBp =
-		defined && (skill?.standardError ?? 0) > 0
-			? (skill?.standardError ?? 0) * 10000
-			: 2.0;
 	const lbBp = defined ? (skill?.lowerBound ?? 0) * 10000 : 0;
+
+	/*
+		Without a measured dispersion there is no distribution to draw. Assuming
+		one and rendering the curve anyway produces a picture of a bell that
+		nothing measured — the most confident-looking thing on the surface,
+		drawn from no evidence at all.
+	*/
+	if (!measured) {
+		return (
+			<Flex.Column className="h-full w-full items-center justify-center gap-2 px-6 text-center">
+				<Typography.Label size="s" tone="f4" weight="normal">
+					No edge distribution yet
+				</Typography.Label>
+				<Typography.Mono size="s" tone="f3" className="max-w-md">
+					{(skill?.samples ?? 0) === 0
+						? "No policy decision has resolved yet, so there is nothing to plot."
+						: `${(skill?.samples ?? 0).toLocaleString()} decisions have resolved and every one returned exactly zero — the policy has not entered a position, so its account never changed. A distribution needs outcomes that differ from each other.`}
+				</Typography.Mono>
+				<Typography.Mono size="s" tone="f4" className="max-w-md">
+					This stays empty until the policy acts. What it is learning from in
+					the meantime is on the Forward test tab.
+				</Typography.Mono>
+			</Flex.Column>
+		);
+	}
+	const seBp = (skill?.standardError ?? 0) * 10000;
 	const sigma = skill?.sigma ?? 3.0;
 	const confidence = skill?.confidence ?? 0;
 	const promotable = (skill?.qualified ?? false) && lbBp > 0;
@@ -611,6 +634,7 @@ export const LearningTrajectoryPlot = ({
 };
 
 type VisualInsightMode =
+	| "learning"
 	| "edge"
 	| "actions"
 	| "trajectory"
@@ -630,7 +654,13 @@ export const LearningVisualizer = ({
 	events: LearningEvent[];
 	className?: string;
 }) => {
-	const [mode, setMode] = useState<VisualInsightMode>("edge");
+	/*
+		Learning opens first. The edge is the headline measurement, but it stays
+		at zero for a long time while the agent is still earning one — so a
+		surface that opens on it shows nothing moving and reads as broken, while
+		what is actually happening has no place on the screen at all.
+	*/
+	const [mode, setMode] = useState<VisualInsightMode>("learning");
 	const skill = view?.skill;
 
 	const meanBp = skill?.defined ? (skill?.mean ?? 0) * 10000 : 0;
@@ -643,6 +673,13 @@ export const LearningVisualizer = ({
 			className={`h-full w-full min-h-80 ${className ?? ""}`}
 			topRight={
 				<Tabs size="xs" className="pointer-events-auto relative z-10">
+					<Tabs.Tab
+						size="xs"
+						active={mode === "learning"}
+						onClick={() => setMode("learning")}
+					>
+						Learning
+					</Tabs.Tab>
 					<Tabs.Tab
 						size="xs"
 						active={mode === "edge"}
@@ -704,10 +741,17 @@ export const LearningVisualizer = ({
 								: "wait"}
 						</strong>
 					</span>
+					<span>
+						Learned from:{" "}
+						<strong className="text-(--acc)">
+							{(view?.forward?.trained ?? 0).toLocaleString()} moves
+						</strong>
+					</span>
 				</Flex.Row>
 			}
 		>
 			<div className="h-full w-full pt-12 pb-7">
+				{mode === "learning" && <LearningProgress view={view} />}
 				{mode === "edge" && <EdgeDistributionPlot skill={skill} />}
 				{mode === "actions" && (
 					<ActionSpectrumPlot candidates={view?.candidates} />

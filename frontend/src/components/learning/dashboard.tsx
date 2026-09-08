@@ -10,6 +10,7 @@ import { CandidateReview } from "./candidate-review";
 import { CapitalPanel } from "./capital-panel";
 import {
 	CandidatePanel,
+	DeskPanel,
 	ForwardPanel,
 	ImpulsePanel,
 	InfluencePanel,
@@ -244,7 +245,12 @@ export const LearningDashboard = () => {
 							<CandidateReview view={view} />
 						</>
 					)}
-					{tab === "wallets" && <LanePanel view={view} />}
+					{tab === "wallets" && (
+						<>
+							<DeskPanel view={view} />
+							<LanePanel view={view} />
+						</>
+					)}
 					{tab === "capital" && <CapitalPanel view={view} />}
 				</Flex.Column>
 

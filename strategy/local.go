@@ -27,6 +27,13 @@ type LocalLearning struct {
 	now                        func() time.Time
 	steps, decisions, resolved uint64
 	execution                  *Execution
+
+	/*
+		Desk is the set of independent traders learning to recognise a
+		development. They share this learner's market view and its books, and
+		one memory between them.
+	*/
+	Desk *Desk
 }
 
 /* advance uses one coherent current book for all independent virtual wallets. */
@@ -76,6 +83,11 @@ func (local *LocalLearning) advance(message kraken.Level3Data, capture hindsight
 		}
 		market.status = "learning"
 		local.measure(market, book)
+		err = local.wake(market, book, changed)
+
+		if err != nil {
+			return
+		}
 		err = local.transition(market, book, message.Timestamp, changed)
 
 		if err == nil {
@@ -94,6 +106,32 @@ func (local *LocalLearning) advance(message kraken.Level3Data, capture hindsight
 	}
 
 	return local.flush()
+}
+
+/*
+wake hands this instrument's development to the desk when its state has actually
+changed, and lets every trader decide what to do about it.
+
+A trader is woken by the market moving, not by the clock. An unchanged state is
+the same claim it already answered, so re-asking would fill the record with
+repetitions of one decision and let a single moment outvote every other.
+*/
+func (local *LocalLearning) wake(
+	market *learningMarket, book *spotbook.Book, changed bool,
+) error {
+	if local.Desk == nil || !changed {
+		return nil
+	}
+	development := market.PrecursorContext()
+
+	if len(development) == 0 {
+		return nil
+	}
+	_, err := local.Desk.Observe(
+		market.symbol, book, development, market.at, market.seq,
+	)
+
+	return err
 }
 
 /*

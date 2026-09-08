@@ -81,6 +81,41 @@ type Learning struct {
 	*/
 	WarmupRuns     int
 	WarmupContexts int
+
+	/*
+		Traders is how many independent wallets meet the market at once.
+
+		They exist to disagree. One trader following the shared memory only ever
+		confirms what that memory already prefers, and learns nothing about the
+		moves it is passing over; several reaching differently at the same
+		instant let the tape settle which reading was right. More of them
+		explores the feasible set faster and costs proportionally more memory
+		and work per observation.
+	*/
+	Traders int
+
+	/*
+		Development is how many past states a trader is shown along with the
+		present one.
+
+		A single instant cannot express "this is starting" — that is a claim
+		about a transition, so what a trader is given has to span one. This is
+		how far back that view reaches.
+	*/
+	Development int
+
+	/*
+		CheckpointInterval is how often the shared model is written to the
+		retained database.
+
+		The memory is the one thing a restart must not lose, so it is flushed
+		periodically rather than only at shutdown — a crash must not take the
+		entire learned edge with it. It is a declared operating cadence, not a
+		market horizon: the interval bounds how much learned memory can be lost
+		in the worst case, and every write is a full snapshot of the current
+		model.
+	*/
+	CheckpointInterval time.Duration
 }
 
 func NewLearning() *Learning {
@@ -90,6 +125,9 @@ func NewLearning() *Learning {
 	viper.SetDefault("learning.episode_authority", 0.5)
 	viper.SetDefault("learning.warmup_runs", 3)
 	viper.SetDefault("learning.warmup_contexts", 250000)
+	viper.SetDefault("learning.traders", 8)
+	viper.SetDefault("learning.development", 8)
+	viper.SetDefault("learning.checkpoint_interval", "1m")
 
 	frames := viper.GetInt("learning.precursor_frames")
 
@@ -114,12 +152,21 @@ func NewLearning() *Learning {
 		authority = 0.5
 	}
 
+	checkpointInterval := viper.GetDuration("learning.checkpoint_interval")
+
+	if checkpointInterval <= 0 {
+		checkpointInterval = time.Minute
+	}
+
 	return &Learning{
-		PrecursorFrames:  frames,
-		MaximumHorizon:   ceiling,
-		RetainedContexts: contexts,
-		EpisodeAuthority: authority,
-		WarmupRuns:       max(viper.GetInt("learning.warmup_runs"), 0),
-		WarmupContexts:   max(viper.GetInt("learning.warmup_contexts"), 1),
+		PrecursorFrames:    frames,
+		MaximumHorizon:     ceiling,
+		RetainedContexts:   contexts,
+		EpisodeAuthority:   authority,
+		WarmupRuns:         max(viper.GetInt("learning.warmup_runs"), 0),
+		WarmupContexts:     max(viper.GetInt("learning.warmup_contexts"), 1),
+		Traders:            max(viper.GetInt("learning.traders"), 1),
+		Development:        max(viper.GetInt("learning.development"), 2),
+		CheckpointInterval: checkpointInterval,
 	}
 }

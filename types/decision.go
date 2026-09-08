@@ -81,19 +81,6 @@ type Decision struct {
 }
 
 /*
-NewDecision creates a Decision with a durable UUID assigned and the action
-and symbol set. Callers fill remaining fields after construction.
-*/
-func NewDecision(action Action, symbol string) *Decision {
-	return &Decision{
-		ID:     uuid.NewString(),
-		Action: action,
-		Symbol: symbol,
-		At:     time.Now().UTC(),
-	}
-}
-
-/*
 EnsureID assigns one UUID when the decision does not already carry its durable
 position-link identifier.
 */

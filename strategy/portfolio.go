@@ -132,8 +132,7 @@ func (portfolio *VirtualPortfolio) Step(local *LocalLearning, market *learningMa
 	portfolio.marked = portfolio.marked.Sub(position.value)
 	position.value = mark
 	portfolio.marked = portfolio.marked.Add(position.value)
-	state := portfolio.Snapshot(market.at)
-	context := position.wallet.context(market.PrecursorContext(), book, state.Mark.Equity, nil)
+	context := append([]uint64(nil), market.PrecursorContext()...)
 	actions, err := position.wallet.actions(book, nil)
 
 	if err != nil {

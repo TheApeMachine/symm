@@ -32,12 +32,12 @@ and the payload bytes exactly as received. The payload must never be a
 reconstructed or normalized equivalent.
 */
 type RawFrame struct {
-	Identity    CaptureIdentity
-	ReceivedAt  time.Time
-	Endpoint    string
-	Kind        string
-	PayloadHash string
-	Payload     []byte
+	Identity    CaptureIdentity `json:"identity"`
+	ReceivedAt  time.Time       `json:"receivedAt"`
+	Endpoint    string          `json:"endpoint"`
+	Kind        string          `json:"kind"`
+	PayloadHash string          `json:"payloadHash"`
+	Payload     []byte          `json:"payload,omitempty"`
 }
 
 /*

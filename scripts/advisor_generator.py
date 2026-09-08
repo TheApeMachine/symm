@@ -131,7 +131,7 @@ def load_raw_hindsight_records(
         return records
 
     if not database_path or not os.path.isfile(database_path):
-        raise ValueError(f"Hindsight database not found: {database_path}")
+        raise ValueError(f"S3 configuration not found: {database_path}")
 
     binary = None
     for candidate_bin in ("./bin/hindsight_export", "hindsight_export"):
@@ -808,9 +808,9 @@ def optimize_single_advisor(
 def main():
     parser = argparse.ArgumentParser(description="Optimize SYMM Advisors with Optuna")
     parser.add_argument(
-        "--db",
-        default=os.path.expanduser("~/.symm/data/events.sqlite"),
-        help="Hindsight SQLite database",
+        "--config",
+        default="cmd/cfg/config.yml",
+        help="S3 connection config.yml",
     )
     parser.add_argument(
         "--jsonl",
@@ -880,7 +880,7 @@ def main():
 
     training_clock = next(iter(clocks))
     print(f"Loading Hindsight records for clock '{training_clock}'...")
-    raw_records = load_raw_hindsight_records(args.db, args.jsonl, None, training_clock, 0)
+    raw_records = load_raw_hindsight_records(args.config, args.jsonl, None, training_clock, 0)
     print(f"Loaded {len(raw_records)} records.")
 
     optimized_config = copy.deepcopy(full_config)

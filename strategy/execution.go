@@ -159,7 +159,20 @@ func (execution *Execution) Propose(local *LocalLearning, market *learningMarket
 		return nil
 	}
 	lane := &market.lanes[len(market.lanes)-1]
-	_ = lane
+	requested = execution.atAccountScale(local, market, lane, book, requested)
+
+	if requested == nil {
+		return nil
+	}
+
+	// A prospective claim needs the instrument's own measured window before it
+	// can be priced as a decision. Until that window exists the honest answer
+	// is that there is no candidate yet, not an error that halts the lane.
+	horizon := market.horizon()
+
+	if horizon <= 0 {
+		return nil
+	}
 	quantity, gross, err := local.price.Walk(book, requested, broker.BUY)
 
 	if quantity == nil || quantity.Cmp(requested) != 0 {
@@ -170,8 +183,13 @@ func (execution *Execution) Propose(local *LocalLearning, market *learningMarket
 		return err
 	}
 	cost := local.price.WithFee(market.symbol, gross, broker.BUY)
+
+	if cost == nil || cost.Sign() <= 0 {
+		return nil
+	}
 	record := hindsight.CandidateRecord{ID: uuid.NewString(), Decision: identity, Symbol: market.symbol,
-		Action: string(action.Kind), Power: action.Power, At: market.at, MarketAt: marketAt, Capture: market.capture,
+		Horizon: horizon,
+		Action:  string(action.Kind), Power: action.Power, At: market.at, MarketAt: marketAt, Capture: market.capture,
 		GridVersion: market.gridVersion, Context: append([]uint64(nil), market.context...),
 		Scope: reading.Scope, Global: reading.Global, SymbolPrior: reading.Symbol, Prior: reading.Selected,
 		Quantity: requested.String(), Notional: cost.String(), Reference: book.Asks.Low.Price.String()}
@@ -348,6 +366,70 @@ func (execution *Execution) observe(fill kraken.ExecutionData) error {
 }
 
 /* Account projects the current balance into the capital learner's inputs. */
+/*
+atAccountScale restates a policy decision at the size the account would
+actually trade it.
+
+The policy lane decides on its own cloned capital, and what it decides is a
+fraction of that capital — a bisection depth of what its cash could buy. The
+fraction is the decision; the quantity is only that fraction expressed against
+two hundred units of simulated cash. Publishing it unchanged would hand the
+account a size derived from a wallet it does not have.
+
+That mattered most where it is least visible. The candidate is only published
+if the book can fill it completely, and depth that exists for the simulated
+size may not exist for the real one — so verifying at the wallet's scale
+confirmed executability of an order nobody was going to place, and the order
+that was actually placed walked deeper into the book than anything the evidence
+had measured.
+
+An account that cannot be read leaves the decision at its own scale rather than
+guessing at one, and a decision whose real size the book cannot fill is refused
+here instead of being discovered at the venue.
+*/
+func (execution *Execution) atAccountScale(
+	local *LocalLearning,
+	market *learningMarket,
+	lane *learningLane,
+	book *spotbook.Book,
+	requested *decimal.Decimal,
+) *decimal.Decimal {
+	if execution.Balance == nil || lane == nil || lane.wallet.cash == nil {
+		return requested
+	}
+	state := execution.Account()
+	cash, err := decimal.NewFromString(state.Cash)
+
+	if !state.Complete || err != nil || cash == nil || cash.Sign() <= 0 ||
+		lane.wallet.cash.Sign() <= 0 {
+		return requested
+	}
+	scaled := requested.Mul(cash).Div(lane.wallet.cash)
+	pair := local.price.Instrument.Pair(market.symbol)
+
+	if pair.QtyIncrement == nil || pair.QtyIncrement.Sign() <= 0 {
+		return requested
+	}
+	scaled = scaled.SetSize(pair.QtyIncrement)
+
+	// The account cannot spend more than it holds, whatever the ratio says.
+	affordable, err := local.price.Affordable(market.symbol, cash, book.BestAsk().Price)
+
+	if err != nil || affordable == nil {
+		return nil
+	}
+
+	if scaled.Cmp(affordable) > 0 {
+		scaled = affordable
+	}
+
+	if !local.price.Tradable(market.symbol, scaled, book.BestAsk().Price) {
+		return nil
+	}
+
+	return scaled
+}
+
 func (execution *Execution) Account() AccountState {
 	reading := execution.Balance.Reading.Load()
 
@@ -421,7 +503,7 @@ func (execution *Execution) Reduce(local *LocalLearning, market *learningMarket,
 	}
 	wallet.cash = zero
 	wallet.quantity = quantity
-	context := wallet.context(market.PrecursorContext(), book, state.Mark.Equity, nil)
+	context := append([]uint64(nil), market.PrecursorContext()...)
 	actions, err := wallet.actions(book, nil)
 
 	if err != nil {

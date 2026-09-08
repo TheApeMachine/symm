@@ -2,7 +2,11 @@
 // mathematical-validation engine, as specified in hindsight/README.md.
 package hindsight
 
-import "strings"
+import (
+	"fmt"
+	"net/url"
+	"strings"
+)
 
 /*
 RunID is the identity of one process capture session. It is a stable opaque
@@ -10,6 +14,11 @@ string assigned before any capture and independent of any storage backend's
 row identity.
 */
 type RunID string
+
+// Prefix groups one record family for a run without interpreting its identity.
+func (run RunID) Prefix(family string) string {
+	return family + "/" + url.PathEscape(string(run)) + "/"
+}
 
 /*
 Stream identifies one transport stream. It is a stable logical name (spot
@@ -59,6 +68,12 @@ type CaptureIdentity struct {
 	StreamSequence uint64          `json:"streamSequence"`
 }
 
+// Key names the original raw frame. Twenty decimal digits preserve uint64
+// sequence ordering in the S3 key order.
+func (identity CaptureIdentity) Key() string {
+	return fmt.Sprintf("%s%020d.json", identity.Run.Prefix("captures"), identity.Sequence)
+}
+
 /*
 Valid reports whether every field pinning the identity to a distinct external
 input is populated. A zero Run, an empty Stream, a zero epoch, or a zero
@@ -101,6 +116,11 @@ deterministic parser order.
 type EnvelopeRef struct {
 	Origin  CaptureIdentity `json:"origin"`
 	Ordinal uint64          `json:"ordinal"`
+}
+
+// Key names an envelope record in its original record family.
+func (ref EnvelopeRef) Key(family string) string {
+	return fmt.Sprintf("%s%020d/%020d.json", ref.Origin.Run.Prefix(family), ref.Origin.Sequence, ref.Ordinal)
 }
 
 /*

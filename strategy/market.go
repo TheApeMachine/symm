@@ -42,6 +42,20 @@ type learningMarket struct {
 	epochs    uint64
 
 	/*
+		exploration rotates which feasible action each counterfactual lane
+		reaches for.
+
+		There are four of them and usually more feasible actions than that, so a
+		fixed lane-to-action assignment explores only the first four of the list
+		and never the rest. That is not a thin spot in the evidence, it is a
+		permanent hole: the deeper size bisections and every reduction would
+		carry zero samples for the life of the run, and an action with no
+		evidence has no measured support for the policy to prefer — so the
+		actions nobody explores stay permanently unmeasurable.
+	*/
+	exploration uint64
+
+	/*
 		movement is this instrument's own dispersion of log midpoint return per
 		observation, and observationMean is how much wall time one observation
 		actually spans. Together with the round trip a decision pays, they give
@@ -67,6 +81,19 @@ type learningMarket struct {
 	// exposure is the policy lane's inventory history, used to judge episodes
 	// the delay line confirms after the fact.
 	exposure []exposureSpan
+
+	/*
+		observedFrom is when this market began watching its own inventory.
+
+		A lane that has never taken a position leaves no spans behind, and that
+		emptiness is not ignorance: from this point onward the desk demonstrably
+		held nothing, so every episode inside the watched window was sat out.
+		Without this the two are indistinguishable, and a policy that took no
+		position at all reports every move it missed as unknowable.
+	*/
+	observedFromSeq hindsight.CaptureSequence
+	observedFrom    time.Time
+	observing       bool
 
 	/*
 		trail is what the agent actually saw, kept so an episode confirmed
@@ -282,6 +309,7 @@ func (market *learningMarket) AdvanceImpulse(regions []learning.Region) bool {
 
 	market.currentConditions = conditions
 	market.regions = append(market.regions[:0], regions...)
+	market.exploration++
 
 	market.authority = 0
 	strength := 0.0

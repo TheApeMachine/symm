@@ -1,6 +1,7 @@
 package strategy
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -16,8 +17,19 @@ into evidence the agent can act on — the loop whose absence meant the system
 discovered every real mover and learned nothing at all from any of them.
 */
 
+/*
+episodeFixture builds one episode whose priced coordinates agree with the leg it
+claims: the anchor at 100 and the extremum at 100*(1+excursion). The training
+path reads those prices, never the net excursion field, so a fixture that
+disagreed with itself would prove nothing.
+*/
 func episodeFixture(excursion float64, kind hindsight.EpisodeKind) hindsight.Episode {
 	at := time.Unix(1000, 0)
+	endpoint := hindsight.ReferencePeak
+
+	if excursion < 0 {
+		endpoint = hindsight.ReferenceTrough
+	}
 
 	return hindsight.Episode{
 		ID: "episode-1", Symbol: "TEST/USD", Kind: kind, Confirmed: true,
@@ -31,14 +43,49 @@ func episodeFixture(excursion float64, kind hindsight.EpisodeKind) hindsight.Epi
 				VenueAt: at, Value: 100, HasValue: true,
 			},
 			{
-				Role:    hindsight.ReferencePeak,
+				Role:    endpoint,
 				Capture: hindsight.CaptureIdentity{Sequence: 200},
-				VenueAt: at.Add(2 * time.Minute), Value: 140, HasValue: true,
+				VenueAt: at.Add(2 * time.Minute), Value: 100 * (1 + excursion), HasValue: true,
 			},
 			{
 				Role:    hindsight.ReferenceReversal,
 				Capture: hindsight.CaptureIdentity{Sequence: 260},
-				VenueAt: at.Add(3 * time.Minute), Value: 120, HasValue: true,
+				VenueAt: at.Add(3 * time.Minute), Value: 100 * (1 + excursion/2), HasValue: true,
+			},
+		},
+	}
+}
+
+/*
+reversalFixture is the episode kind that carries a whole trade: a run up into a
+turning point, then the give-back. Its net excursion is near zero — it ends
+close to where it began — while the leg into the turn was seventeen percent.
+Training must read the leg, never the net.
+*/
+func reversalFixture() hindsight.Episode {
+	at := time.Unix(1000, 0)
+
+	return hindsight.Episode{
+		ID: "reversal-1", Symbol: "TEST/USD", Kind: hindsight.EpisodeReversal, Confirmed: true,
+		FromSequence: 100, ToSequence: 260,
+		FromAt: at, ToAt: at.Add(3 * time.Minute),
+		ObservedExcursion: 0.001, HasObservedExcursion: true,
+		Traversed: 0.34, HasTraversed: true,
+		References: []hindsight.ReferencePoint{
+			{
+				Role:    hindsight.ReferenceAnchor,
+				Capture: hindsight.CaptureIdentity{Sequence: 100},
+				VenueAt: at, Value: 100, HasValue: true,
+			},
+			{
+				Role:    hindsight.ReferenceReversal,
+				Capture: hindsight.CaptureIdentity{Sequence: 190},
+				VenueAt: at.Add(2 * time.Minute), Value: 117, HasValue: true,
+			},
+			{
+				Role:    hindsight.ReferenceExitAnchor,
+				Capture: hindsight.CaptureIdentity{Sequence: 260},
+				VenueAt: at.Add(3 * time.Minute), Value: 100.1, HasValue: true,
 			},
 		},
 	}
@@ -115,12 +162,38 @@ func TestEpisodeTraining(t *testing.T) {
 
 		context := []uint64{11, FrameDelimiter, 12}
 		hold := knowledge.Reading("TEST/USD", "flat", context, LearningAction{Kind: types.ActionHold})
-		exit := knowledge.Reading("TEST/USD", "flat", context, LearningAction{Kind: types.ActionExit, Reduce: true})
 		enter := knowledge.Reading("TEST/USD", "flat", context, LearningAction{Kind: types.ActionEnter})
 
+		So(hold.Economic.Defined, ShouldBeTrue)
 		So(hold.Economic.GrowthMean, ShouldBeLessThan, 0)
-		So(exit.Economic.Rate, ShouldBeGreaterThan, hold.Economic.Rate)
 		So(enter.Economic.Defined, ShouldBeFalse)
+
+		/*
+			The desk was flat here, and a flat desk cannot exit. Crediting an
+			exit on this context would put weight on an action that was never in
+			its feasible set, and every later recall would read it as a real
+			alternative to waiting.
+		*/
+		Convey("Exiting is not credited to a desk that held nothing", func() {
+			So(knowledge.Reading("TEST/USD", "flat", context,
+				LearningAction{Kind: types.ActionExit, Reduce: true}).Economic.Defined, ShouldBeFalse)
+		})
+
+		Convey("A desk that was holding does learn that leaving was worth it", func() {
+			reviewer, market, knowledge := reviewerFixture()
+			market.trail[0].accountState = "holding"
+
+			trained, _ := reviewer.train(market, episodeFixture(-0.30, hindsight.EpisodeDownwardExcursion))
+			So(trained, ShouldBeTrue)
+
+			exit := knowledge.Reading("TEST/USD", "holding", context,
+				LearningAction{Kind: types.ActionExit, Reduce: true})
+			hold := knowledge.Reading("TEST/USD", "holding", context,
+				LearningAction{Kind: types.ActionHold})
+
+			So(exit.Economic.Defined, ShouldBeTrue)
+			So(exit.Economic.Rate, ShouldBeGreaterThan, hold.Economic.Rate)
+		})
 	})
 
 	Convey("Evidence the agent cannot honestly recover is refused, not invented", t, func() {
@@ -145,13 +218,47 @@ func TestEpisodeTraining(t *testing.T) {
 			So(reason, ShouldEqual, "no anchor reference")
 		})
 
-		Convey("An episode with no measured excursion trains nothing", func() {
+		Convey("An episode with no priced coordinates trains nothing", func() {
 			episode := episodeFixture(0.40, hindsight.EpisodeUpwardExcursion)
-			episode.HasObservedExcursion = false
+			episode.References[1].HasValue = false
 			trained, reason := reviewer.train(market, episode)
 
 			So(trained, ShouldBeFalse)
-			So(reason, ShouldEqual, "no observed excursion")
+			So(reason, ShouldEqual, "no priced anchor and extremum")
+		})
+
+		/*
+			The net excursion field is not what is read. A reversal reports a
+			net near zero while its leg covered seventeen percent, so a trainer
+			that read the net would learn that nothing happened.
+		*/
+		Convey("A reversal is trained on its leg, not on its near-zero net", func() {
+			reviewer, market, knowledge := reviewerFixture()
+			episode := reversalFixture()
+
+			trained, reason := reviewer.train(market, episode)
+			So(reason, ShouldBeBlank)
+			So(trained, ShouldBeTrue)
+
+			enter := knowledge.Reading("TEST/USD", "flat", []uint64{11, FrameDelimiter, 12},
+				LearningAction{Kind: types.ActionEnter})
+
+			So(enter.Economic.Defined, ShouldBeTrue)
+			So(enter.Economic.GrowthMean, ShouldAlmostEqual, math.Log(1.17)-0.016, 0.002)
+			So(enter.Economic.GrowthMean, ShouldBeGreaterThan, 0.1)
+		})
+
+		Convey("Holding past the turn is trained on the give-back it cost", func() {
+			reviewer, market, knowledge := reviewerFixture()
+
+			trained, _ := reviewer.train(market, reversalFixture())
+			So(trained, ShouldBeTrue)
+
+			hold := knowledge.Reading("TEST/USD", "holding", []uint64{21, FrameDelimiter, 22},
+				LearningAction{Kind: types.ActionHold})
+
+			So(hold.Economic.Defined, ShouldBeTrue)
+			So(hold.Economic.GrowthMean, ShouldAlmostEqual, math.Log(100.1/117), 0.002)
 		})
 	})
 }

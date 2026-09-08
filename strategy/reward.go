@@ -2,8 +2,9 @@ package strategy
 
 import (
 	"fmt"
-	"github.com/theapemachine/symm/hindsight"
 	"math"
+
+	"github.com/theapemachine/symm/hindsight"
 
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/learning"
@@ -58,7 +59,9 @@ func (reward *AccountReward) Measure(mark EquityMark) (learning.RewardOutcome, e
 			mark.NetFunding != reward.last.NetFunding) {
 
 		return learning.RewardOutcome{}, errnie.Error(errnie.Err(
-			errnie.Validation, "account reward: a producer valuation cannot be rewritten", nil,
+			errnie.Validation, 
+			"account reward: a producer valuation cannot be rewritten", 
+			nil,
 		))
 	}
 
@@ -71,12 +74,23 @@ func (reward *AccountReward) Measure(mark EquityMark) (learning.RewardOutcome, e
 	if mark.At.IsZero() || mark.Version == 0 ||
 		(reward.last.Version != 0 && (mark.Version < reward.last.Version || mark.At.Before(reward.last.At))) ||
 		math.IsNaN(mark.Equity) || math.IsInf(mark.Equity, 0) || math.IsNaN(mark.NetFunding) || math.IsInf(mark.NetFunding, 0) {
-		return learning.RewardOutcome{}, errnie.Error(errnie.Err(errnie.Validation, "account reward: finite, chronologically ordered, identified valuation required", nil))
+		return learning.RewardOutcome{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"account reward: finite, chronologically ordered, identified valuation required",
+			nil,
+		))
 	}
+
 	value := (mark.Equity - initial.Equity) - (mark.NetFunding - initial.NetFunding)
+
 	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return learning.RewardOutcome{}, errnie.Error(errnie.Err(errnie.Validation, "account reward: objective is not representable", nil))
+		return learning.RewardOutcome{}, errnie.Error(errnie.Err(
+			errnie.Validation,
+			"account reward: objective is not representable",
+			nil,
+		))
 	}
+
 	outcome, err := reward.ledger.Measure(learning.RewardMark{
 		At: mark.At, Version: mark.Version, Value: value,
 	})
@@ -84,7 +98,10 @@ func (reward *AccountReward) Measure(mark EquityMark) (learning.RewardOutcome, e
 	if err != nil {
 		return learning.RewardOutcome{}, errnie.Error(errnie.Err(
 			errnie.Internal,
-			fmt.Sprintf("account reward: failed to measure valuation: mark=%+v last=%+v initial=%+v", mark, reward.last, initial),
+			fmt.Sprintf(
+				"account reward: failed to measure valuation: mark=%+v last=%+v initial=%+v",
+				mark, reward.last, initial,
+			),
 			err,
 		))
 	}

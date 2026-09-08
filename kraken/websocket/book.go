@@ -28,7 +28,20 @@ type Book struct {
 	normalizer *spot.Normalizer
 	notify     func(string, time.Time)
 	resync     func(string)
+	touch      func([]kraken.Level3Touch)
 	diverging  map[string]struct{}
+
+	/*
+		touches collects the verified top of book for the frame being applied,
+		and lastTouch remembers what was last reported per symbol.
+
+		Only a changed touch is reported. Most Level 3 deltas move depth behind
+		the touch and leave the executable price exactly where it was, so
+		reporting every accepted frame would record the same price over and over
+		while adding nothing a price series could read.
+	*/
+	touches   []kraken.Level3Touch
+	lastTouch map[string][2]float64
 }
 
 func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
@@ -46,6 +59,7 @@ func NewBook(ctx context.Context, normalizer *spot.Normalizer) *Book {
 		manager:    spot.NewBookManager(),
 		normalizer: normalizer,
 		diverging:  map[string]struct{}{},
+		lastTouch:  map[string][2]float64{},
 	}
 
 	book.manager.OnCreateBook.Recurring(func(
@@ -152,7 +166,16 @@ func (book *Book) Update(
 	accepted, resynced, applyErr := book.apply(payload)
 	notify := book.notify
 	resync := book.resync
+	touch := book.touch
+	touches := book.touches
 	book.mu.Unlock()
+
+	// Reported after the lock is released, for the same reason transport
+	// publication is: recording a frame must never hold the book against the
+	// ingestion that is still filling it.
+	if touch != nil && len(touches) > 0 {
+		touch(touches)
+	}
 
 	if len(resynced) > 0 && resync != nil {
 		group, ctx := errgroup.WithContext(book.ctx)
@@ -198,6 +221,7 @@ once, for the owning transport to resubscribe.
 func (book *Book) apply(
 	payload *kraken.Level3,
 ) (accepted []kraken.Level3Data, resynced []string, err error) {
+	book.touches = book.touches[:0]
 	accepted = make([]kraken.Level3Data, 0, len(payload.Data))
 
 	for index, data := range payload.Data {
@@ -367,9 +391,55 @@ func (book *Book) apply(
 		}
 
 		accepted = append(accepted, data)
+		book.recordTouch(symbolBook, data)
 	}
 
 	return accepted, resynced, nil
+}
+
+/*
+SetTouch connects verified top-of-book reporting to the owning transport.
+*/
+func (book *Book) SetTouch(touch func([]kraken.Level3Touch)) {
+	book.mu.Lock()
+	defer book.mu.Unlock()
+	book.touch = touch
+}
+
+/*
+recordTouch stages this symbol's executable top of book if it moved.
+
+The frame reaching here has already matched the venue's checksum, so the levels
+are the venue's own. A crossed or one-sided book is not a touch: there is no
+price at which both sides could trade, and reporting one would put a number
+into the price series that the market never offered.
+*/
+func (book *Book) recordTouch(symbolBook *spotbook.Book, data kraken.Level3Data) {
+	if book.touch == nil || symbolBook == nil {
+		return
+	}
+	bid, ask := symbolBook.BestBid(), symbolBook.BestAsk()
+
+	if bid == nil || ask == nil || bid.Price == nil || ask.Price == nil {
+		return
+	}
+	bidPrice, askPrice := bid.Price.Float64(), ask.Price.Float64()
+
+	if bidPrice <= 0 || askPrice <= 0 || bidPrice >= askPrice {
+		return
+	}
+
+	if previous, seen := book.lastTouch[data.Symbol]; seen &&
+		previous[0] == bidPrice && previous[1] == askPrice {
+		return
+	}
+	book.lastTouch[data.Symbol] = [2]float64{bidPrice, askPrice}
+
+	book.touches = append(book.touches, kraken.Level3Touch{
+		Symbol: data.Symbol, Timestamp: data.Timestamp,
+		Bid: bid.Price, BidQty: bid.Quantity,
+		Ask: ask.Price, AskQty: ask.Quantity,
+	})
 }
 
 func (book *Book) All() *sync.Map {

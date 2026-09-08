@@ -5394,6 +5394,18 @@
       "reason": "Labelled node wraps a reporter whose readings are not statically known"
     },
     {
+      "package": "github.com/theapemachine/symm/store",
+      "file": "store/s3.go",
+      "line": 15,
+      "reason": "Labelled node wraps a reporter whose readings are not statically known"
+    },
+    {
+      "package": "github.com/theapemachine/symm/store",
+      "file": "store/json.go",
+      "line": 50,
+      "reason": "Labelled node wraps a reporter whose readings are not statically known"
+    },
+    {
       "package": "github.com/theapemachine/symm/types",
       "file": "types/envelope.go",
       "line": 528,
@@ -5410,6 +5422,6 @@
     "learnedConsumerEdges": 0,
     "kernelConsumerEdges": 0,
     "genericConsumerEdges": 0,
-    "unresolved": 2
+    "unresolved": 4
   }
 }

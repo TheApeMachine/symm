@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"gocloud.dev/blob/memblob"
 	"testing"
 	"time"
 
@@ -14,12 +16,11 @@ import (
 
 func TestWriteOpportunityRecords(t *testing.T) {
 	Convey("Given a captured ticker tape with a completed upward leg", t, func() {
-		engine, err := store.NewSQLite(t.TempDir() + "/opportunities.sqlite")
-		So(err, ShouldBeNil)
+		engine := memblob.OpenBucket(nil)
 		Reset(func() { So(engine.Close(), ShouldBeNil) })
 
 		runID := "run-opportunities"
-		So(engine.WriteRun(hindsight.Run{
+		So(store.Write(context.Background(), engine, hindsight.RunID("run-opportunities").Prefix("runs")+"run.json", hindsight.Run{
 			ID:        hindsight.RunID(runID),
 			StartedAt: time.Unix(1, 0),
 		}), ShouldBeNil)
@@ -47,13 +48,9 @@ func TestWriteOpportunityRecords(t *testing.T) {
 				StreamEpoch:    1,
 				StreamSequence: uint64(index),
 			}
-			So(engine.WriteCapture(
-				identity,
-				"wss://ws.kraken.com/v2",
-				"ticker",
-				payload,
-				time.Unix(int64(index), 0),
-			), ShouldBeNil)
+			So(store.Write(context.Background(), engine, identity.Key(), hindsight.RawFrame{
+				Identity: identity, Endpoint: "wss://ws.kraken.com/v2", Kind: "ticker", Payload: payload, ReceivedAt: time.Unix(int64(index), 0),
+			}), ShouldBeNil)
 		}
 
 		var output bytes.Buffer

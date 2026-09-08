@@ -250,25 +250,3 @@ func TestRecoverWithNoTradeHistory(t *testing.T) {
 		})
 	})
 }
-
-func TestRecoverClosesDrained(t *testing.T) {
-	Convey("Close drains recovered guardians", t, func() {
-		balances := map[string]*decimal.Decimal{
-			"AAA": venue.Decimal("10"),
-		}
-		trades := map[string]spot.Trade{
-			"t-aaa": tradeFixture("AAA/USD", "10", "1.0", "10.0"),
-		}
-		recovery, _ := newTestRecovery(t, balances, trades)
-		noopRecord := func(execution kraken.ExecutionData) error { return nil }
-		positions, err := recovery.Recover(t.Context(), "USD", noopRecord)
-		So(err, ShouldBeNil)
-
-		Convey("Close succeeds", func() {
-			So(recovery.Close(positions), ShouldBeNil)
-			for _, position := range positions {
-				<-position.Guardian.Done
-			}
-		})
-	})
-}

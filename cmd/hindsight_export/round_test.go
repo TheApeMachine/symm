@@ -73,4 +73,3 @@ func TestExtractAllMetrics(t *testing.T) {
 		})
 	})
 }
-

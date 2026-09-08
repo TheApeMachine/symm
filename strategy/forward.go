@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
@@ -105,6 +106,10 @@ are recorded.
 func (market *learningMarket) markExposure(
 	exposed bool, seq hindsight.CaptureSequence, at time.Time,
 ) {
+	if !market.observing {
+		market.observing = true
+		market.observedFromSeq, market.observedFrom = seq, at
+	}
 	last := len(market.exposure) - 1
 
 	if exposed {
@@ -142,8 +147,22 @@ whenever positive sequence values are present.
 func (market *learningMarket) heldDuring(
 	fromSeq, toSeq hindsight.CaptureSequence, from, to time.Time,
 ) (held, known bool) {
+	/*
+		No span at all is an answer whenever the desk was watching. It means the
+		lane held nothing for the whole window, which is exactly "sat it out" —
+		reporting it as unknowable would hide every missed move behind the same
+		label as a move that predates the record.
+	*/
 	if len(market.exposure) == 0 {
-		return false, false
+		if !market.observing {
+			return false, false
+		}
+
+		if fromSeq > 0 && market.observedFromSeq > 0 {
+			return false, fromSeq >= market.observedFromSeq
+		}
+
+		return false, !from.Before(market.observedFrom)
 	}
 
 	// Use causal sequence order if both boundaries carry positive sequences.
@@ -220,6 +239,20 @@ func (reviewer *PolicyReview) Review(ctx context.Context, episodes []hindsight.E
 /* review runs exclusively on the workspace owner, off the ordinary hot path. */
 func (reviewer *PolicyReview) review(episodes []hindsight.Episode) {
 	reviewer.forward.At = reviewer.local.now()
+
+	/*
+		The desk is settled against the same confirmed moves. This is the
+		strongest feedback any trader gets — the tape saying what actually
+		happened around a decision — so it runs before anything derived from
+		the traders' own wallets.
+	*/
+	if reviewer.local.Desk != nil {
+		if err := reviewer.local.Desk.Settle(
+			episodes,
+		); err != nil {
+			errnie.Error(err)
+		}
+	}
 
 	for _, episode := range episodes {
 		if !episode.Confirmed || episode.ID == "" || reviewer.local.markets[episode.Symbol] == nil {
@@ -459,14 +492,15 @@ func (knowledge *Knowledge) trainEpisode(
 	if ratio < 1 {
 		/*
 			A fall is not an entry the desk could have taken. What it teaches is
-			that holding through this context lost exactly this much, and that
-			leaving was worth the give-back it avoided.
+			that holding through this context lost exactly this much, and — only
+			if the desk was holding — that leaving was worth the give-back it
+			avoided.
 		*/
 		if err := knowledge.observe(symbol, begun, hold, growth, elapsed, authority); err != nil {
 			return false, err.Error()
 		}
 
-		if err := knowledge.observe(symbol, begun, exit, -growth, elapsed, authority); err != nil {
+		if err := knowledge.observeHolding(symbol, begun, exit, -growth, elapsed, authority); err != nil {
 			return false, err.Error()
 		}
 
@@ -485,7 +519,7 @@ func (knowledge *Knowledge) trainEpisode(
 
 	// Leaving where it exhausted realised the move. Holding past it earned the
 	// give-back instead, so the exit is trained against what staying cost.
-	if err := knowledge.observe(symbol, exhausted, exit, growth, elapsed, authority); err != nil {
+	if err := knowledge.observeHolding(symbol, exhausted, exit, growth, elapsed, authority); err != nil {
 		return false, err.Error()
 	}
 
@@ -507,13 +541,24 @@ that holding was free.
 func episodeGiveBack(
 	episode hindsight.Episode, extremum hindsight.ReferencePoint,
 ) (float64, bool) {
-	end, found := episodeReference(episode, hindsight.ReferenceReversal)
+	/*
+		The give-back is measured to a point after the turn, so the end can
+		never be the extremum itself. On a reversal the turning point is the
+		extremum, and reading it as the end would measure the cost of holding
+		as exactly zero — the one answer that is certainly wrong about a move
+		that gave its ground back.
+	*/
+	end, found := episodeReference(episode, hindsight.ReferenceExitAnchor)
 
-	if !found {
-		end, found = episodeReference(episode, hindsight.ReferenceExitAnchor)
+	if !found || end.Capture.Sequence == extremum.Capture.Sequence {
+		end, found = episodeReference(episode, hindsight.ReferenceReversal)
 	}
 
-	if !found || !end.HasValue || !extremum.HasValue || extremum.Value <= 0 || end.Value <= 0 {
+	if !found || end.Capture.Sequence == extremum.Capture.Sequence {
+		return 0, false
+	}
+
+	if !end.HasValue || !extremum.HasValue || extremum.Value <= 0 || end.Value <= 0 {
 		return 0, false
 	}
 
@@ -526,6 +571,29 @@ shared one, exactly as a resolved decision does. The account state is the one
 the agent was actually in when it held this context, so evidence about entering
 never lands on the scope for a desk that was already holding.
 */
+/*
+observeHolding trains an action that only exists for a desk that holds
+inventory. A flat desk cannot exit, so crediting an exit on a flat context
+would put weight on an action that was never in that context's feasible set —
+and every later recall of that context would read it as a real alternative to
+waiting.
+
+The account state is the one the journal recorded, so this is a fact about the
+desk at that moment rather than an assumption about it.
+*/
+func (knowledge *Knowledge) observeHolding(
+	symbol string,
+	observed observedContext,
+	action LearningAction,
+	growth, elapsed, authority float64,
+) error {
+	if observed.accountState != "holding" {
+		return nil
+	}
+
+	return knowledge.observe(symbol, observed, action, growth, elapsed, authority)
+}
+
 func (knowledge *Knowledge) observe(
 	symbol string,
 	observed observedContext,
@@ -550,12 +618,20 @@ is a fact about recoverable evidence, never a score: an episode whose context
 was never journalled is unlearnable, not a miss.
 */
 type EpisodeWarmup struct {
-	Runs        int    `json:"runs"`
-	Episodes    int    `json:"episodes"`
-	Trained     int    `json:"trained"`
-	Uncontexted int    `json:"uncontexted"`
-	Unusable    int    `json:"unusable"`
-	LastReason  string `json:"lastReason,omitempty"`
+	Runs        int `json:"runs"`
+	Episodes    int `json:"episodes"`
+	Trained     int `json:"trained"`
+	Uncontexted int `json:"uncontexted"`
+	Unusable    int `json:"unusable"`
+
+	/*
+		Truncated counts runs whose journalled contexts hit the read budget.
+		Those runs are missing their tail, so episodes late in them are counted
+		as uncontexted when the truth is that the read stopped early. Without
+		this the two are indistinguishable.
+	*/
+	Truncated  int    `json:"truncated"`
+	LastReason string `json:"lastReason,omitempty"`
 }
 
 /*
@@ -666,4 +742,20 @@ func contextIn(trail []observedContext, seq hindsight.CaptureSequence) (observed
 	}
 
 	return found, ok
+}
+
+/*
+TrainableEpisode names the episode kinds that describe a price move the desk
+could have been in.
+
+Reversals are included, and they matter most: a reversal is a run into a turning
+point followed by the give-back, so it carries the entry, the exhaustion and the
+cost of staying too long in one record. The regime kinds — volatility, spread,
+depth, arrival — describe conditions rather than a move, and have no anchor to
+extremum leg to price.
+*/
+func TrainableEpisode(kind hindsight.EpisodeKind) bool {
+	return kind == hindsight.EpisodeUpwardExcursion ||
+		kind == hindsight.EpisodeDownwardExcursion ||
+		kind == hindsight.EpisodeReversal
 }

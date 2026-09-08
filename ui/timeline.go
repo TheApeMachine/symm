@@ -6,10 +6,11 @@ import (
 	"sync"
 	"time"
 
+	"context"
 	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/signal"
-	"github.com/theapemachine/symm/store"
+	"gocloud.dev/blob"
 )
 
 /*
@@ -54,7 +55,7 @@ index returns the RunIndex for one Run, reading the raw capture tape when the
 cached projection is absent or stale.
 */
 func (cache *timelineCache) index(
-	engine *store.SQLite,
+	engine *blob.Bucket,
 	run hindsight.RunID,
 ) (*hindsight.RunIndex, error) {
 	cache.mutex.Lock()
@@ -66,7 +67,7 @@ func (cache *timelineCache) index(
 		return entry.index, nil
 	}
 
-	observations, err := engine.ListMarketObservations(string(run))
+	observations, err := hindsight.ReadObservations(context.Background(), engine, run)
 
 	if err != nil {
 		return nil, err
@@ -164,7 +165,7 @@ func (hub *Hub) registerTimeline() {
 			target,
 			at,
 			index.CapturesBefore(symbol, target, budget),
-			hub.store,
+			hub,
 			budget,
 		)
 

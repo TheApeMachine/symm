@@ -258,9 +258,3 @@ func (wallet *virtualWallet) state() string {
 
 	return "holding"
 }
-
-/* context passes through the precursor context tokens. */
-func (wallet *virtualWallet) context(sequence []uint64, book *spotbook.Book, equity float64, output []uint64) []uint64 {
-	output = append(output[:0], sequence...)
-	return output
-}

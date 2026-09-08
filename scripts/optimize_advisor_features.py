@@ -18,7 +18,6 @@ import copy
 import json
 import math
 import os
-import sqlite3
 import subprocess
 import sys
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -288,12 +287,12 @@ def capture_runs(database_path: str, requested: Optional[str]) -> List[str]:
     if requested and requested != "all":
         return [requested]
 
-    with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True) as database:
-        rows = database.execute(
-            "SELECT id FROM runs ORDER BY started_at ASC"
-        ).fetchall()
-
-    runs = [str(row[0]) for row in rows if row[0]]
+    completed = subprocess.run(
+        ["go", "run", "./cmd/hindsight_export", database_path, "-runs"],
+        check=True, capture_output=True, text=True,
+    )
+    metadata = json.loads(completed.stdout)
+    runs = [str(run["id"]) for run in sorted(metadata, key=lambda run: run["startedAt"])]
 
     if not runs:
         raise ValueError("Hindsight database contains no captured runs")
@@ -312,7 +311,7 @@ def load_opportunity_tape(
         return load_jsonl(jsonl_path)
 
     if not database_path or not os.path.isfile(database_path):
-        raise ValueError(f"Hindsight database not found: {database_path}")
+        raise ValueError(f"S3 configuration not found: {database_path}")
 
     records: List[Dict[str, Any]] = []
 
@@ -949,7 +948,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Generate advisors against canonical Hindsight opportunities"
     )
-    parser.add_argument("--db", default=os.path.expanduser("~/.symm/data/events.sqlite"))
+    parser.add_argument("--config", default="cmd/cfg/config.yml")
     parser.add_argument("--jsonl", help="Pre-exported observation and episode JSONL")
     parser.add_argument("--run", default="all", help="Captured run identity or all")
     parser.add_argument("--config", default="config/advisors.json")
@@ -1013,7 +1012,7 @@ def main() -> int:
             catalog,
         )
         records = load_opportunity_tape(
-            args.db, args.jsonl, args.run, next(iter(clocks))
+            args.config, args.jsonl, args.run, next(iter(clocks))
         )
         values, metadata = build_opportunity_dataset(records, candidates)
         training, validation = opportunity_split(
@@ -1051,7 +1050,7 @@ def main() -> int:
         }
         report = {
             "source": {
-                "database": args.db if not args.jsonl else None,
+                "database": args.config if not args.jsonl else None,
                 "jsonl": args.jsonl,
                 "requestedRun": args.run,
                 "runs": sorted(set(metadata["run"])),
@@ -1110,7 +1109,7 @@ def main() -> int:
 
         return 0
     except (
-        OSError, ValueError, sqlite3.Error, subprocess.SubprocessError,
+        OSError, ValueError, subprocess.SubprocessError,
     ) as err:
         print(f"Error: {err}", file=sys.stderr)
 

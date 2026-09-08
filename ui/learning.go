@@ -6,6 +6,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/strategy"
 )
 
@@ -49,7 +50,20 @@ func (hub *Hub) SetLearner(learner *strategy.Agent, runID hindsight.RunID) {
 	})
 	hub.app.Get("/learning/events", func(request fiber.Ctx) error {
 		// One operator inspection page. Learning itself has no history limit.
-		events, err := hub.store.LearningEvents(runID, request.Query("symbol"), request.Query("candidate"), 200)
+		events := []hindsight.LearningEvent{}
+		err := store.Scan(hub.ctx, hub.store, runID.Prefix("learning"), func(event hindsight.LearningEvent) (bool, error) {
+			if symbol := request.Query("symbol"); symbol != "" && event.Symbol != symbol {
+				return true, nil
+			}
+			if candidate := request.Query("candidate"); candidate != "" && event.CandidateID != candidate {
+				return true, nil
+			}
+			events = append(events, event)
+			if len(events) > 200 {
+				events = events[1:]
+			}
+			return true, nil
+		})
 
 		if err != nil {
 			return err

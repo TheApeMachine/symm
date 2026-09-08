@@ -1,44 +1,17 @@
-package cmd
+package recording
 
 import (
-	"strconv"
-	"time"
-
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/types"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
 )
 
-/*
-witnessNode records what the live pipeline observed and produced. It never
-feeds a value back into trading.
-*/
-type witnessNode struct {
-	writer        *store.Writer
-	asyncWriter   *store.AsyncWitnessWriter
-	phases        map[opportunityWitnessKey]types.OpportunityPhase
-	lastWitnessed map[string]time.Time
-}
-
-type opportunityWitnessKey struct {
-	symbol    string
-	archetype types.OpportunityArchetype
-}
-
-func newWitnessNode(
-	writer *store.Writer,
-	asyncWriter *store.AsyncWitnessWriter,
-) *witnessNode {
-	return &witnessNode{
-		writer:        writer,
-		asyncWriter:   asyncWriter,
-		phases:        make(map[opportunityWitnessKey]types.OpportunityPhase),
-		lastWitnessed: make(map[string]time.Time),
-	}
-}
-
-func (node *witnessNode) Step(envelope *types.Envelope) *types.Envelope {
-	if envelope == nil || (node.writer == nil && node.asyncWriter == nil) {
+func (node *Session) Step(envelope *types.Envelope) *types.Envelope {
+	if envelope == nil || node == nil {
 		return envelope
 	}
 
@@ -55,7 +28,7 @@ func (node *witnessNode) Step(envelope *types.Envelope) *types.Envelope {
 		return envelope
 	}
 
-	node.write(hindsight.ArtifactWitness{
+	node.record(hindsight.ArtifactWitness{
 		Envelope: ref,
 		Boundary: "after-strategy",
 		Artifact: hindsight.ArtifactID{
@@ -76,8 +49,8 @@ func (node *witnessNode) Step(envelope *types.Envelope) *types.Envelope {
 	return envelope
 }
 
-func (node *witnessNode) shouldWitness(envelope *types.Envelope) bool {
-	symbol := envelopeSymbol(envelope)
+func (node *Session) shouldWitness(envelope *types.Envelope) bool {
+	symbol := envelope.Symbol()
 
 	if hasActionableDecision(envelope.StrategyRound) {
 		if symbol != "" {
@@ -137,38 +110,6 @@ func (node *witnessNode) shouldWitness(envelope *types.Envelope) bool {
 	return false
 }
 
-func envelopeSymbol(envelope *types.Envelope) string {
-	if envelope == nil {
-		return ""
-	}
-
-	if envelope.Key != "" {
-		return envelope.Key
-	}
-
-	if envelope.TickerData.Symbol != "" {
-		return envelope.TickerData.Symbol
-	}
-
-	if envelope.TradeData.Symbol != "" {
-		return envelope.TradeData.Symbol
-	}
-
-	if envelope.Level3Data.Symbol != "" {
-		return envelope.Level3Data.Symbol
-	}
-
-	if envelope.StrategyRound != nil && envelope.StrategyRound.Symbol != "" {
-		return envelope.StrategyRound.Symbol
-	}
-
-	if len(envelope.Opportunities) > 0 && envelope.Opportunities[0] != nil && envelope.Opportunities[0].Symbol != "" {
-		return envelope.Opportunities[0].Symbol
-	}
-
-	return ""
-}
-
 func hasActionableDecision(round *types.StrategyRound) bool {
 	if round == nil {
 		return false
@@ -183,12 +124,12 @@ func hasActionableDecision(round *types.StrategyRound) bool {
 	return false
 }
 
-func (node *witnessNode) recordDecision(ref hindsight.EnvelopeRef, decision *types.Decision) {
+func (node *Session) recordDecision(ref hindsight.EnvelopeRef, decision *types.Decision) {
 	if decision == nil || decision.ID == "" {
 		return
 	}
 
-	node.write(hindsight.ArtifactWitness{
+	node.record(hindsight.ArtifactWitness{
 		Envelope:              ref,
 		Boundary:              "after-strategy",
 		Artifact:              hindsight.ArtifactID{Kind: "decision", Identity: decision.ID},
@@ -198,11 +139,18 @@ func (node *witnessNode) recordDecision(ref hindsight.EnvelopeRef, decision *typ
 	})
 }
 
-func (node *witnessNode) write(witness hindsight.ArtifactWitness) {
-	if node.asyncWriter != nil {
-		node.asyncWriter.Enqueue(witness)
-		return
+func (node *Session) record(witness hindsight.ArtifactWitness) {
+	node.mutex.Lock()
+	defer node.mutex.Unlock()
+	family := "witnesses"
+	if witness.Artifact.Kind == "state" {
+		family = "states"
 	}
-
-	_ = node.writer.WriteWitness(witness)
+	key := witness.Envelope.Key(family)
+	if family == "witnesses" {
+		key = strings.TrimSuffix(key, ".json") + "/" + url.PathEscape(witness.Artifact.Identity) + ".json"
+	}
+	if err := node.enqueue(key, witness); err != nil {
+		errnie.Error(err)
+	}
 }

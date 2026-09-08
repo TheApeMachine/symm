@@ -156,8 +156,26 @@ export type ForwardReview = {
 	at: string;
 	recent: MissedOpportunity[] | null;
 };
+export type DeskTrader = {
+	id: number;
+	decisions: number;
+	fills: number;
+	graded: number;
+	observed: number;
+	quality: number;
+	wealth: number;
+	open: number;
+	holding: number;
+};
+export type DeskView = {
+	traders: DeskTrader[];
+	settled: number;
+	agreed: number;
+	disputed: number;
+};
 export type LearningView = {
 	capital?: CapitalView;
+	desk?: DeskView;
 	warmup?: {
 		resolved: number;
 		unconditioned: number;

@@ -27,6 +27,7 @@ import (
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/hindsight/recording"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/cognition"
@@ -50,7 +51,6 @@ import (
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 	"github.com/theapemachine/symm/ui"
-	"github.com/theapemachine/symm/utils"
 )
 
 /*
@@ -119,10 +119,6 @@ var (
 			privateIngress := map[string]nmruntime.Ingress[*types.Envelope]{}
 			futuresIngress := map[string]nmruntime.Ingress[*types.Envelope]{}
 
-			// dataPath resolves ~ and cwd so there is exactly one durable path,
-			// in the configured location, not a stray literal-~ directory.
-			dataPath := utils.ResolveDataPath()
-
 			// The storage writer is the single CaptureSink for every raw
 			// websocket stream (public/private/futures). Each frame is accepted
 			// exactly once, byte-for-byte as it left the wire, tagged with its
@@ -130,11 +126,8 @@ var (
 			// here — raw capture is the irreducible stream, not a re-serialized
 			// copy of pipeline state.
 			storageStarted := time.Now()
-			errnie.Info("store: opening retained database " + filepath.Join(dataPath, "events.sqlite"))
-			storageEngine, err := store.NewSQLite(filepath.Join(
-				dataPath,
-				"events.sqlite",
-			))
+			errnie.Info("store: opening S3 archive")
+			storageEngine, err := store.NewS3(cmd.Context())
 
 			if err != nil {
 				return errnie.Error(errnie.Err(
@@ -144,12 +137,17 @@ var (
 				))
 			}
 
-			errnie.Info(fmt.Sprintf("store: database ready after %s", time.Since(storageStarted)))
-			defer storageEngine.Close()
+			errnie.Info(fmt.Sprintf("store: S3 archive ready after %s", time.Since(storageStarted)))
+			defer func() {
+				if err := storageEngine.Close(); err != nil {
+					errnie.Error(err)
+				}
+			}()
+			bucket := storageEngine.Bucket()
 
 			// The Hindsight inspection reads (runs / captures / persisted states)
 			// are served by the hub over this store.
-			hub.SetHindsightStore(storageEngine)
+			hub.SetHindsightStore(bucket)
 
 			// The Hindsight Run identity distinguishes this process capture
 			// session from every other run. It is derived from the process start
@@ -165,67 +163,17 @@ var (
 				))
 			}
 
-			if err := storageEngine.WriteRun(hindsight.RunIdentity{
-				StartedAt:      processStartedAt,
-				CodeCommit:     buildCodeCommit(),
-				BuildID:        buildBuildID(),
-				ConfigDigest:   configDigest(),
-				SchemaVersions: hindsightSchemaVersions(),
-			}.Resolve(runID)); err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: persist run identity",
-					err,
-				))
-			}
-
-			// The capture Sequencer mints a stable CaptureIdentity for every
-			// raw frame, and the storage writer accepts each frame together with
-			// that identity before parsing. Raw capture and semantic ingress are
-			// joinable by identity, never by timestamp; the writer persists the
-			// ordered queue away from the transport callback.
-			captureSequencer, err := hindsight.NewSequencer(runID)
-
+			rawCapture, err := recording.NewSession(runtimeCtx, bucket, hindsight.RunIdentity{
+				StartedAt: processStartedAt, CodeCommit: buildCodeCommit(), BuildID: buildBuildID(), ConfigDigest: configDigest(), SchemaVersions: hindsightSchemaVersions(),
+			}.Resolve(runID), viper.GetInt("hindsight.capture.queue_depth"))
 			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: construct capture sequencer",
-					err,
-				))
+				return err
 			}
-
-			rawCapture, err := store.NewWriter(
-				storageEngine,
-				captureSequencer,
-				viper.GetInt("hindsight.capture.queue_depth"),
-				viper.GetInt("hindsight.capture.batch_size"),
-			)
-
-			if err != nil {
-				return errnie.Error(errnie.Err(
-					errnie.Internal,
-					"symm: construct capture writer",
-					err,
-				))
-			}
-
 			defer func() {
-				errnie.Error(rawCapture.Close())
+				if err := rawCapture.Close(); err != nil {
+					errnie.Error(err)
+				}
 			}()
-
-			// Witness persistence runs on its own worker: the Disruptor consumer
-			// thread enqueues witnesses and never waits on SQLite writes. The
-			// bounded queue drops with observability under sustained overflow
-			// rather than stalling frame processing.
-			asyncWitness := store.NewAsyncWitnessWriter(
-				runtimeCtx,
-				storageEngine,
-				viper.GetInt("hindsight.witness.queue_depth"),
-				viper.GetDuration("hindsight.witness.flush_interval"),
-			)
-
-			defer asyncWitness.Close()
-			witness := newWitnessNode(rawCapture, asyncWitness)
 
 			publicSession := websocket.New(
 				runtimeCtx,
@@ -360,7 +308,7 @@ var (
 			grid := &gridNode{Grid: learning.NewGrid(), cognition: cognitionSolver}
 			learner, err := strategy.NewAgent(runtimeCtx, grid.Grid, api,
 				price, balance.Cash(),
-				func(event hindsight.LearningEvent) error { return rawCapture.WriteLearning(runID, event) },
+				rawCapture.WriteLearning,
 			)
 
 			if err != nil {
@@ -372,67 +320,25 @@ var (
 			}
 
 			if err := learner.SetExecution(api, price, balance, account,
-				func(event hindsight.LifecycleEvent) error {
-					return rawCapture.WriteLifecycle(runID, event)
-				},
+				rawCapture.WriteLifecycle,
 			); err != nil {
 				return err
 			}
 
 			defer func() {
+				if err := store.Write(context.Background(), bucket, strategy.CheckpointKey, learner.Checkpoint()); err != nil {
+					errnie.Error(err)
+				}
 				if err := learner.Close(); err != nil {
 					errnie.Error(err)
 				}
 			}()
-
-			if storageEngine != nil {
-				pastEvents, err := storageEngine.LearningExperiences("resolved", learner.RetainedExperiences())
-
-				if err != nil {
-					return errnie.Err(errnie.IO, "agent: read complete warmup experiences", err)
-				}
-
-				warmed, err := learner.Warmup(pastEvents)
-
-				if err != nil {
-					return err
-				}
-
-				errnie.Info(fmt.Sprintf(
-					"agent: warmup complete=%d unconditioned=%d unpaired=%d portfolio-unavailable=%d target-unavailable=%d",
-					warmed.Resolved, warmed.Unconditioned, warmed.Unpaired, warmed.PortfolioUnavailable, warmed.TargetUnavailable,
-				))
-
-				capitalEvents, err := storageEngine.LearningExperiences("portfolio_resolved", learner.RetainedExperiences())
-
-				if err != nil {
-					return err
-				}
-
-				capitalWarmed, err := learner.Capital.History.Warmup(capitalEvents)
-
-				if err != nil {
-					return err
-				}
-
-				errnie.Info(fmt.Sprintf(
-					"capital: warmed %d complete allocation experiences; skipped %d without confirmed execution; account authority remains cold",
-					capitalWarmed, learner.Capital.History.Unverified,
-				))
-
-				episodes := warmupEpisodes(storageEngine, learner)
-
-				errnie.Info(fmt.Sprintf(
-					"agent: episode warmup runs=%d episodes=%d trained=%d uncontexted=%d unusable=%d %s",
-					episodes.Runs, episodes.Episodes, episodes.Trained,
-					episodes.Uncontexted, episodes.Unusable, episodes.LastReason,
-				))
+			if err := learner.LoadCheckpoint(runtimeCtx, bucket); err != nil {
+				return err
 			}
+			go learner.Persist(runtimeCtx, bucket, system.Cfg.Learning.CheckpointInterval)
+			go learner.PolicyReview.Run(runtimeCtx, bucket, runID, system.Cfg.Learning.CheckpointInterval)
 
-			// Forward testing, not back testing: the reviewer runs behind the
-			// tape and reports what the market actually offered while the agent
-			// was deciding without that knowledge.
-			go newForwardReviewer(storageEngine, learner, runID).Run(runtimeCtx)
 			hub.SetLearner(learner, runID)
 			grid.learner = learner
 			// Same reason as the Level3 observers: these run inside the grid
@@ -444,7 +350,7 @@ var (
 				system.NewTraced("logic.derivatives", derivativesSolver),
 				system.NewTraced("logic.category", categorySolver),
 			}
-			grid.publish = []nmruntime.Node[*types.Envelope]{witness, uiSink}
+			grid.publish = []nmruntime.Node[*types.Envelope]{rawCapture, uiSink}
 
 			// The workspace owns the complete forward-learning loop. Signal and
 			// logic producers finish before the shared grid and action owner run.
@@ -604,11 +510,11 @@ var (
 			}()
 
 			select {
-			case <-rawCapture.Failed():
+			case err := <-rawCapture.Errors:
 				return errnie.Error(errnie.Err(
 					errnie.IO,
 					"symm: capture storage failed",
-					rawCapture.Error(),
+					err,
 				))
 			case err := <-transportErrors:
 
