@@ -2,9 +2,12 @@ import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
 import {
+	DecisionRing,
+	DrivingActions,
 	ImpulseBars,
 	InfluenceGrid,
 	MeasurementWindow,
+	TraderQuality,
 	WalletBars,
 } from "./charts";
 import { action, amount, basis, duration, percent } from "./format";
@@ -16,8 +19,10 @@ export const ForwardPanel = ({ view }: { view: LearningView | null }) => (
 			title="Forward evaluation"
 			meta={`${view?.resolved ?? 0} completed decisions`}
 		/>
+		<DecisionRing view={view} />
+		<TraderQuality view={view} />
 		<Section.Body className="space-y-2 p-3">
-			{view?.agents.map((member) => (
+			{view?.agents?.map((member) => (
 				<Typography.Mono key={member.id}>
 					Agent {member.id + 1} · {String(member.reading?.samples ?? 0n)} graded
 					· {String(member.wins)} positive · {String(member.losses)} negative ·{" "}
@@ -172,6 +177,7 @@ export const InfluencePanel = ({ view }: { view: LearningView | null }) => {
 				title="What is driving which action"
 				meta={`${view?.influence?.length ?? 0} measured associations`}
 			/>
+			<DrivingActions influence={view?.influence ?? null} />
 			<InfluenceGrid influence={view?.influence ?? null} />
 			<Section.Body className="overflow-x-auto">
 				<table className="w-full text-left font-mono text-xs">

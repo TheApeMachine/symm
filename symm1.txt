@@ -6943,6 +6943,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"strings"
 	"time"
 
@@ -6954,10 +6955,16 @@ import (
 )
 
 /*
-	Leg is an observed directional run of spot trades, closed only when the
+	Leg is an observed directional run of spot trades, running from its origin
 
-next different trade reverses direction. It describes tape geometry, not an
-execution guarantee. Constant prices do not invent a completed opportunity.
+to the extremum it reached, and confirmed only once price retraces away from
+that extremum. It describes tape geometry, not an execution guarantee. Constant
+prices do not invent a completed opportunity.
+
+Start and End are the origin and the extremum, so a leg reports the whole
+excursion that was available. Through is when the extremum printed and
+ConfirmedAt is when the retracement made it observable; the gap between them is
+the geometry's cost, and it is stated rather than hidden.
 */
 type Leg struct {
 	Symbol                     string
@@ -6965,12 +6972,30 @@ type Leg struct {
 	Start, End                 *decimal.Decimal
 }
 
+/*
+DefaultRetraceFraction is the share of a leg's own excursion that price must
+give back before the leg counts as finished. It is proportional, not a fixed
+percentage of price, for the same reason excursionEpisodes in episode.go is: a
+fixed floor is meaningless across instruments of different volatility, and any
+floor above an instrument's typical move confirms nothing at all. Half the
+excursion is a reversal; anything less is a pullback inside a move that is still
+developing.
+*/
+const DefaultRetraceFraction = 0.5
+
+/*
+tapePoint is one symbol's leg in progress: where it began, the extremum it has
+reached so far, and the last price seen. direction is the sign of the leg, and
+is zero until the first price that differs from the origin establishes it.
+*/
 type tapePoint struct {
-	at        time.Time
-	price     *decimal.Decimal
-	direction int
-	start     time.Time
-	initial   *decimal.Decimal
+	at         time.Time
+	price      *decimal.Decimal
+	direction  int
+	start      time.Time
+	initial    *decimal.Decimal
+	extremumAt time.Time
+	extremum   *decimal.Decimal
 }
 
 /*
@@ -6980,7 +7005,18 @@ only the current leg per symbol; the raw historical record remains in S3.
 */
 type Tape struct {
 	LastKey string
+	// Retrace overrides DefaultRetraceFraction when set in (0, 1).
+	Retrace float64
 	points  map[string]*tapePoint
+}
+
+/* retracement reports the configured share of a leg's excursion, or the default. */
+func (tape *Tape) retracement() float64 {
+	if tape.Retrace > 0 && tape.Retrace < 1 {
+		return tape.Retrace
+	}
+
+	return DefaultRetraceFraction
 }
 
 /*
@@ -7059,29 +7095,79 @@ func (tape *Tape) Step(frame RawFrame, visit func(Leg) error) error {
 	return nil
 }
 
+/*
+observe advances one symbol's leg. A leg extends through every price that moves
+it further from its origin, and survives every pullback that does not give back
+the configured share of the excursion it has accumulated. It closes only on a
+retracement of that size, which is what separates a reversal from noise inside a
+move still developing — a single opposite print used to end a leg, so a
+breakout was cut at its first pullback and graded as the few ticks before it
+rather than the whole excursion.
+
+The completed leg reports origin to extremum, and the price that confirmed it
+becomes the origin of the next one.
+*/
 func (tape *Tape) observe(symbol string, at time.Time, price *decimal.Decimal, visit func(Leg) error) error {
 	point := tape.points[symbol]
 
 	if point == nil {
-		tape.points[symbol] = &tapePoint{at: at, start: at, price: price, initial: price}
-		return nil
-	}
-	direction := price.Cmp(point.price)
-
-	if direction == 0 {
-		return nil
-	}
-
-	if point.direction != 0 && direction != point.direction {
-		leg := Leg{Symbol: symbol, From: point.start, Through: point.at, ConfirmedAt: at, Start: point.initial, End: point.price}
-
-		if err := visit(leg); err != nil {
-			return errnie.Error(err)
+		tape.points[symbol] = &tapePoint{
+			at: at, start: at, price: price,
+			initial: price, extremum: price, extremumAt: at,
 		}
-		point.start, point.initial = point.at, point.price
+		return nil
 	}
-	point.at, point.price, point.direction = at, price, direction
+	point.at, point.price = at, price
+	direction := price.Cmp(point.extremum)
+
+	if point.direction == 0 {
+		// The leg has no sign yet; the first price away from the origin gives
+		// it one, and that price is by construction the extremum so far.
+		if direction != 0 {
+			point.direction, point.extremum, point.extremumAt = direction, price, at
+		}
+
+		return nil
+	}
+
+	if direction == point.direction {
+		point.extremum, point.extremumAt = price, at
+		return nil
+	}
+
+	if direction == 0 || !tape.retraced(point, price) {
+		return nil
+	}
+	leg := Leg{
+		Symbol: symbol, From: point.start, Through: point.extremumAt, ConfirmedAt: at,
+		Start: point.initial, End: point.extremum,
+	}
+
+	if err := visit(leg); err != nil {
+		return errnie.Error(err)
+	}
+	// The confirmed extremum is the pivot: the next leg runs from there, in the
+	// direction the retracement just established.
+	point.start, point.initial = point.extremumAt, point.extremum
+	point.direction, point.extremum, point.extremumAt = direction, price, at
 	return nil
+}
+
+/*
+retraced reports whether price has given back the required share of the move
+the leg has accumulated. Both sides are measured against the same excursion, so
+the fraction reads directly as "half the move handed back". A leg that has not
+moved has nothing to retrace and can never confirm on its own.
+*/
+func (tape *Tape) retraced(point *tapePoint, price *decimal.Decimal) bool {
+	origin, extremum := point.initial.Float64(), point.extremum.Float64()
+	excursion := math.Abs(extremum - origin)
+
+	if excursion <= 0 {
+		return false
+	}
+
+	return math.Abs(price.Float64()-extremum)/excursion >= tape.retracement()
 }
 
 ---
@@ -10159,6 +10245,9 @@ func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 	book.mu.RLock()
 	defer book.mu.RUnlock()
 
+	if _, diverging := book.diverging[symbol]; diverging {
+		return
+	}
 	managed := book.manager.GetBook(symbol)
 
 	if managed != nil {
@@ -10254,7 +10343,8 @@ func (book *Book) Update(
 		if payload.Type == "snapshot" {
 			book.mu.Lock()
 			delete(book.pending, data.Symbol)
-			if len(book.pending) == 0 {
+
+			if len(book.pending) == 0 && len(book.diverging) == 0 {
 				book.status.Transition(runtime.READY)
 				select {
 				case book.seeded <- struct{}{}:
@@ -12423,6 +12513,8 @@ type Live struct {
 	status       *runtime.Status
 	err          error
 	client       atomic.Pointer[spot.WebSocket]
+	receiveMu    sync.Mutex
+	receive      callback.Action[*sdkkraken.WebSocketMessage]
 	endpoint     string
 	quote        string
 	ingress      map[string]runtime.Ingress[*types.Envelope]
@@ -12761,10 +12853,6 @@ func NewWithClient(
 		live.Client().REST.Nonce = live.nonce.Next
 	}
 
-	// Replacement and retiring SDK sessions share this callback. Serialize the
-	// complete receive turn so Book.Update notifications and numeric observers
-	// always consume the frame whose stream/capture identity they publish.
-	var receiveMu sync.Mutex
 	var bookFrame *kraken.Level3
 	var bookStream hindsight.StreamRef
 	var bookCapture hindsight.CaptureIdentity
@@ -12850,10 +12938,7 @@ func NewWithClient(
 		})
 	}
 
-	client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
-		receiveMu.Lock()
-		defer receiveMu.Unlock()
-
+	live.receive = func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
 		if live.operationalError() != nil {
 			return
 		}
@@ -13035,35 +13120,9 @@ func NewWithClient(
 				workload.Push(envelope)
 			}
 		}
-	})
+	}
 
-	client.OnConnected.Recurring(func(event *callback.Event[any]) {
-		if live.operationalError() != nil {
-			return
-		}
-
-		errnie.Info(fmt.Sprintf("websocket: connected to %s", live.Client().URL))
-
-		live.connected.Store(true)
-		live.status.Transition(runtime.BUSY)
-		live.pinger.Start(live.ctx)
-	})
-
-	client.OnDisconnected.Recurring(func(event *callback.Event[error]) {
-		live.connected.Store(false)
-
-		if live.closing.Load() {
-			return
-		}
-
-		select {
-		case <-live.ctx.Done():
-			return
-		default:
-		}
-
-		go live.reconnect(event.Data)
-	})
+	live.bind(client)
 
 	errnie.Info(fmt.Sprintf("websocket: connecting to %s", live.Client().URL))
 	live.status.Transition(runtime.WAITING)
@@ -13130,6 +13189,63 @@ capture and semantic ingress are persisted together and joinable by identity.
 */
 type ManifestSink interface {
 	WriteManifest(manifest hindsight.EnvelopeManifest) error
+}
+
+/*
+	bind admits callbacks only from the current SDK session. Retired sockets cannot
+
+apply old frames to replacement books or change the replacement's readiness.
+*/
+func (live *Live) bind(client *spot.WebSocket) {
+	client.OnDisconnected.Reset()
+	client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
+		live.receiveMu.Lock()
+		defer live.receiveMu.Unlock()
+
+		if live.Client() != client {
+			return
+		}
+
+		live.receive(event)
+	})
+
+	client.OnConnected.Recurring(func(event *callback.Event[any]) {
+		if live.Client() != client {
+			return
+		}
+
+		if live.operationalError() != nil {
+			return
+		}
+
+		errnie.Info(fmt.Sprintf("websocket: connected to %s", live.Client().URL))
+
+		live.connected.Store(true)
+		live.status.Transition(runtime.BUSY)
+		live.pinger.Start(live.ctx)
+	})
+
+	client.OnDisconnected.Recurring(func(event *callback.Event[error]) {
+		live.receiveMu.Lock()
+		defer live.receiveMu.Unlock()
+
+		if live.Client() != client {
+			return
+		}
+		live.connected.Store(false)
+
+		if live.closing.Load() {
+			return
+		}
+
+		select {
+		case <-live.ctx.Done():
+			return
+		default:
+		}
+
+		go live.reconnect(event.Data)
+	})
 }
 
 func (live *Live) Status() runtime.Stage {
@@ -13240,7 +13356,6 @@ func (live *Live) reconnect(err error) {
 	))
 
 	for live.ctx.Err() == nil {
-		live.streams.Advance()
 		client := live.Client()
 		replacement := spot.NewWebSocket()
 		replacement.REST = client.REST
@@ -13249,11 +13364,20 @@ func (live *Live) reconnect(err error) {
 		replacement.ReconnectWait = client.ReconnectWait
 		replacement.Insecure = client.Insecure
 		replacement.OnAuthenticated = client.OnAuthenticated
-		replacement.OnConnected = client.OnConnected
-		replacement.OnDisconnected = client.OnDisconnected
 		replacement.OnSent = client.OnSent
-		replacement.OnReceived = client.OnReceived
+		live.bind(replacement)
+		live.receiveMu.Lock()
 		live.client.Store(replacement)
+		live.streams.Advance()
+		live.receiveMu.Unlock()
+
+		// Ask a still-readable retired peer to close. SDK Disconnect cannot be
+		// used after a failed write: v2.0.0 leaves a callback sending to a closed
+		// channel on that error path. Session identity already rejects its data.
+		if err := client.WriteMessage(gorillawebsocket.CloseMessage,
+			gorillawebsocket.FormatCloseMessage(gorillawebsocket.CloseNormalClosure, "")); err != nil {
+			errnie.Warn("websocket: retired session close: " + err.Error())
+		}
 
 		err = replacement.Connect()
 		established := err == nil
@@ -13274,10 +13398,6 @@ func (live *Live) reconnect(err error) {
 			fmt.Sprintf("websocket %s fresh-session reconnect failed", live.endpoint),
 			err,
 		))
-
-		if established {
-			_ = replacement.Disconnect()
-		}
 
 		retry := time.NewTimer(retryWait)
 
@@ -13878,7 +13998,7 @@ func (live *Live) Book(symbol string, read func(*book.Book)) {
 	live.level3.Range(func(_, value any) bool {
 		conn, ok := value.(*Live)
 
-		if !ok || conn.book == nil {
+		if !ok || conn.book == nil || conn.Status() != runtime.READY {
 			return true
 		}
 
@@ -30052,8 +30172,12 @@ func (agent *Agent[Action]) Measure() (err error) {
 	if err != nil {
 		return errnie.Error(err)
 	}
+
+	if mark == nil {
+		return nil
+	}
 	previous := agent.Reward.Through.Version
-	outcome, err := agent.ledger.Measure(mark)
+	outcome, err := agent.ledger.Measure(*mark)
 
 	if err != nil {
 		return errnie.Error(err)
@@ -30150,12 +30274,16 @@ only operations possible in the current state, including an explicit no-op when
 appropriate. Context contains agent-specific state identities, not outcomes.
 Execute accepts a decision once; an error may leave acceptance uncertain, so
 the agent retains its ticket until Resolve or an explicit Abort.
+Objective returns nil while the objective cannot be measured; this supplies no
+feedback and does not replace the last measured value. Errors remain failures.
 Methods consume resident state; network and durable storage run outside Step.
+Population calls different environments concurrently; shared resources must be
+synchronized by their owner. Calls on one environment remain sequential.
 */
 type Environment[Action comparable] interface {
 	Feasible(label string) (actions []Action, context []uint64, err error)
 	Execute(decision *Decision[Action]) error
-	Objective() (reward.Mark, error)
+	Objective() (*reward.Mark, error)
 }
 
 /*
@@ -31525,6 +31653,8 @@ import (
 	"encoding/gob"
 	"sync"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
@@ -31540,8 +31670,9 @@ type Checkpoint interface {
 /*
 Population shares one grid across independent agents. Agent zero runs and learns
 with the consolidated model; remaining agents explore in their own environments.
-Steps serialize state transitions, not domain I/O. The environment decides which
-resources and concurrent operations each agent may own. No domain limits live here.
+Steps serialize observations, resolution and checkpoints. Within each step,
+independent agents measure concurrently, then activate concurrently after every
+measurement succeeds. Environments own synchronization for any shared resources. No domain limits live here.
 */
 type Population[Action comparable] struct {
 	Grid       *grid.Space
@@ -31590,10 +31721,14 @@ func (population *Population[Action]) Step(observation agent.Observation) error 
 		return errnie.Error(err)
 	}
 
+	var measurements errgroup.Group
+
 	for _, member := range population.Agents {
-		if err := member.Measure(); err != nil {
-			return err
-		}
+		measurements.Go(member.Measure)
+	}
+
+	if err := measurements.Wait(); err != nil {
+		return errnie.Error(err)
 	}
 
 	if population.Grid.Version == version {
@@ -31619,13 +31754,16 @@ func (population *Population[Action]) Step(observation agent.Observation) error 
 		authority += region.Strength * region.Authority
 	}
 
+	var activations errgroup.Group
+
 	for _, member := range population.Agents {
-		if err := member.Activate(label, observation.At, context, authority/strength); err != nil {
-			return err
-		}
+		activations.Go(func() error {
+			return member.Activate(label, observation.At, context, authority/strength)
+		})
 	}
 
-	return nil
+	// Join every issued action even on failure: acceptance may be uncertain.
+	return errnie.Error(activations.Wait())
 }
 
 /*
@@ -31657,6 +31795,24 @@ func (population *Population[Action]) Resolve(member int, identity uint64, value
 }
 
 /*
+Abort releases an issued decision without training it. The domain uses this when
+an outcome arrived for an action that carried no alternative: the environment
+offered exactly one operation, so the result measures what happened rather than
+what the choice was worth, and counting it would bury genuine evidence under
+samples no decision produced.
+*/
+func (population *Population[Action]) Abort(member int, identity uint64) error {
+	population.mutex.Lock()
+	defer population.mutex.Unlock()
+
+	if member < 0 || member >= len(population.Agents) {
+		return errnie.Error(errnie.Err(errnie.Validation, "population: unknown agent", nil))
+	}
+
+	return errnie.Error(population.Agents[member].Abort(identity))
+}
+
+/*
 Save encodes the grid's identity dictionary and the actual consolidated model.
 Other agents, mutable environments and inflight decisions are not checkpoints.
 Encoding owns the state lock; durable I/O runs after releasing it.
@@ -31667,14 +31823,14 @@ func (population *Population[Action]) Save(ctx context.Context, checkpoint Check
 
 	var data bytes.Buffer
 	encoder := gob.NewEncoder(&data)
-	
+
 	population.mutex.Lock()
 	err := encoder.Encode(population.Grid.Columns)
 
 	if err == nil {
 		err = encoder.Encode(population.Agents[0].Model)
 	}
-	
+
 	population.mutex.Unlock()
 
 	if err != nil {
@@ -36101,4 +36257,174 @@ Issue records predictions and feature state for delayed evaluation. Predictions
 holds one issued forecast per horizon, indexed by horizon minus one; the caller
 retains its own authoritative sequence for the horizon parameter, which is kept
 for outcome telemetry. The ledger assigns its own strictly increasing sequence
-so resolut
+so resolution order is unambiguous.
+*/
+func (tl *TemporalLedger) Issue(
+	step int64,
+	reference float64,
+	features []float64,
+	predictions []float64,
+	horizon int,
+) {
+	if !finite(reference) || len(features) == 0 {
+		return
+	}
+
+	tl.seq++
+	if horizon < 1 {
+		horizon = 1
+	}
+	if horizon > tl.maxHorizon {
+		horizon = tl.maxHorizon
+	}
+
+	featCopy := append([]float64(nil), features...)
+	predCopy := append([]float64(nil), predictions...)
+	tl.pending[tl.seq] = &PendingReference{
+		Seq:         tl.seq,
+		Reference:   reference,
+		Features:    featCopy,
+		Predictions: predCopy,
+		Horizon:     horizon,
+	}
+	tl.references[tl.seq] = reference
+	tl.prune()
+}
+
+/*
+Resolve observes the current reference and supervises every pending prediction
+against each horizon whose subsequent reference has arrived, in issue order.
+A row issued at sequence s trains horizon h once the reference at s+h exists,
+so one sample per horizon is generated per step regardless of how the external
+step numbers jump or repeat. The outcome reports the row's own chosen horizon
+once its delayed target arrives.
+*/
+func (tl *TemporalLedger) Resolve(
+	manifold *ResonanceManifold,
+	currentStep int64,
+	currentReference float64,
+) (*ResolutionOutcome, error) {
+	if manifold == nil || !finite(currentReference) || tl.seq == 0 || tl.maxHorizon < 1 {
+		return nil, nil
+	}
+
+	var outcome *ResolutionOutcome
+
+	for key := tl.oldest; key <= tl.seq; key++ {
+		item, found := tl.pending[key]
+		if !found {
+			continue
+		}
+
+		// References are stored for every issued sequence; the row can be
+		// supervised up to the horizon whose reference has already arrived.
+		available := tl.seq - item.Seq
+
+		if available > int64(tl.maxHorizon) {
+			available = int64(tl.maxHorizon)
+		}
+
+		if available <= int64(item.Resolved) {
+			break
+		}
+
+		for horizon := item.Resolved + 1; horizon <= int(available); horizon++ {
+			current, found := tl.references[item.Seq+int64(horizon)]
+
+			if !found {
+				break
+			}
+
+			target, valid := tl.transform(current, item.Reference)
+
+			if !valid {
+				continue
+			}
+
+			prediction := 0.0
+
+			if horizon-1 < len(item.Predictions) {
+				prediction = item.Predictions[horizon-1]
+			}
+
+			if err := manifold.ObserveTask(
+				horizon,
+				item.Features,
+				prediction,
+				target,
+			); err != nil {
+				return nil, fmt.Errorf("ledger: resolve failed for horizon %d: %w", horizon, err)
+			}
+
+			item.Resolved = horizon
+
+			if horizon == item.Horizon {
+				outcome = &ResolutionOutcome{
+					Horizon:    item.Horizon,
+					Prediction: prediction,
+					Target:     target,
+					Error:      target - prediction,
+					Step:       currentStep,
+				}
+				tl.last = outcome
+			}
+		}
+
+		if item.Resolved >= tl.maxHorizon {
+			delete(tl.pending, key)
+			delete(tl.references, key)
+			tl.resolvedCount++
+		}
+	}
+
+	tl.oldest = tl.seq - int64(tl.maxHorizon) + 1
+	if tl.oldest < 1 {
+		tl.oldest = 1
+	}
+
+	return outcome, nil
+}
+
+func (tl *TemporalLedger) prune() {
+	if tl.seq-tl.oldest <= int64(tl.maxHorizon) {
+		return
+	}
+
+	purgeBelow := tl.seq - int64(tl.maxHorizon)
+
+	for key := tl.oldest; key < purgeBelow; key++ {
+		delete(tl.pending, key)
+		delete(tl.references, key)
+	}
+
+	tl.oldest = purgeBelow
+}
+
+func (tl *TemporalLedger) ResolvedCount() int {
+	return tl.resolvedCount
+}
+
+func (tl *TemporalLedger) LastResolution() *ResolutionOutcome {
+	return tl.last
+}
+
+---
+
+---
+File: /nomagique/learning/weight.go
+---
+
+package learning
+
+import (
+	"github.com/theapemachine/symm/nomagique/calculus"
+	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/equation"
+	"github.com/theapemachine/symm/nomagique/logic"
+	"github.com/theapemachine/symm/nomagique/store"
+	"github.com/theapemachine/symm/nomagique/transport"
+)
+
+// NewTrustWeight composes the source's residual-range trust update. No clipping
+// is added to the trust recurrence; rate greater than one retains the original
+// extrapolating behav

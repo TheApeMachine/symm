@@ -329,7 +329,7 @@ func TestBookUpdate(t *testing.T) {
 			So(managed.Update(event, diverged), ShouldNotBeNil)
 			So(<-resynced, ShouldEqual, "CELR/USD")
 			managed.Book("CELR/USD", func(book *spotbook.Book) {
-				So(book.Bids.Levels, ShouldBeEmpty)
+				t.Fatal("diverging book was exposed to a reader")
 			})
 
 			// Deltas for a diverged symbol are dropped without touching the
@@ -343,7 +343,7 @@ func TestBookUpdate(t *testing.T) {
 			}
 
 			managed.Book("CELR/USD", func(book *spotbook.Book) {
-				So(book.Bids.Levels, ShouldBeEmpty)
+				t.Fatal("diverging book was exposed to a reader")
 			})
 
 			// The resubscription snapshot is authoritative again.
@@ -550,8 +550,11 @@ func TestBookWait(t *testing.T) {
 		})
 		Convey("All snapshots and their consumers must finish before READY", func() {
 			observed := 0
-			managed.SetNotify(func(_ string, _ time.Time) {
+			managed.SetNotify(func(symbol string, _ time.Time) {
 				So(managed.Status(), ShouldEqual, runtime.WAITING)
+				readable := false
+				managed.Book(symbol, func(book *spotbook.Book) { readable = true })
+				So(readable, ShouldBeTrue)
 				observed++
 			})
 			apply("snapshot", "BTC/USD")

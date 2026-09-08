@@ -214,61 +214,7 @@ export const useLearning = (symbol: string) => {
 	const [events, setEvents] = useState<LearningEvent[]>([]);
 	useEffect(() => {
 		if (!state) return;
-		setEvents((previous) => {
-			// Display history is bounded by the 200-point chart budget, not a learning horizon.
-			const next = [...previous];
-			for (const member of state.agents) {
-				const at = date(state.atNs);
-				const last = member.last;
-				if (last && (!symbol || String(last.symbol) === symbol)) {
-					next.push({
-						id: Number(state.steps),
-						lane: member.id,
-						mode: member.id === 0 ? "policy" : "virtual",
-						kind: "valued",
-						at,
-						action: String(last.action?.kind ?? ""),
-						power: last.action?.power ?? 0,
-						reduce: last.action?.reduce ?? false,
-						cash: String(member.cash),
-						inventory: "",
-						authority: 0,
-						profit: Number(member.profit),
-						horizonNs: 0,
-						prior: prior(member.reading),
-					});
-				}
-				const outcome = member.outcome;
-				if (
-					outcome &&
-					!next.some(
-						(event) =>
-							event.lane === member.id &&
-							event.id === Number(outcome.id) &&
-							event.kind === "resolved",
-					)
-				) {
-					next.push({
-						id: Number(outcome.id),
-						lane: member.id,
-						mode: member.id === 0 ? "policy" : "virtual",
-						kind: "resolved",
-						at: date(outcome.throughNs),
-						action: String(outcome.action?.kind ?? ""),
-						power: outcome.action?.power ?? 0,
-						reduce: outcome.action?.reduce ?? false,
-						cash: String(member.cash),
-						inventory: "",
-						authority: 0,
-						profit: Number(member.profit),
-						target: outcome.tape,
-						horizonNs: Number(outcome.throughNs - outcome.atNs),
-						prior: prior(member.reading),
-					});
-				}
-			}
-			return next.slice(-200);
-		});
+		setEvents((previous) => updateLearningEvents(previous, state, symbol));
 	}, [state, symbol]);
 	return {
 		view,
@@ -279,6 +225,77 @@ export const useLearning = (symbol: string) => {
 				? String(state.status)
 				: "",
 	};
+};
+
+// Repeated telemetry snapshots must not append the same display event twice.
+export const updateLearningEvents = (
+	previous: LearningEvent[],
+	state: LearningStateT,
+	symbol: string,
+): LearningEvent[] => {
+	// Display history is bounded by the 200-point chart budget, not a learning horizon.
+	const next = [...previous];
+	for (const member of state.agents) {
+		const at = date(state.atNs);
+		const last = member.last;
+		if (
+			last &&
+			(!symbol || String(last.symbol) === symbol) &&
+			!next.some(
+				(event) =>
+					event.lane === member.id &&
+					event.id === Number(state.steps) &&
+					event.kind === "valued" &&
+					event.at === at,
+			)
+		) {
+			next.push({
+				id: Number(state.steps),
+				lane: member.id,
+				mode: member.id === 0 ? "policy" : "virtual",
+				kind: "valued",
+				at,
+				action: String(last.action?.kind ?? ""),
+				power: last.action?.power ?? 0,
+				reduce: last.action?.reduce ?? false,
+				cash: String(member.cash),
+				inventory: "",
+				authority: 0,
+				profit: Number(member.profit),
+				horizonNs: 0,
+				prior: prior(member.reading),
+			});
+		}
+		const outcome = member.outcome;
+		if (
+			outcome &&
+			!next.some(
+				(event) =>
+					event.lane === member.id &&
+					event.id === Number(outcome.id) &&
+					event.kind === "resolved",
+			)
+		) {
+			next.push({
+				id: Number(outcome.id),
+				lane: member.id,
+				mode: member.id === 0 ? "policy" : "virtual",
+				kind: "resolved",
+				at: date(outcome.throughNs),
+				action: String(outcome.action?.kind ?? ""),
+				power: outcome.action?.power ?? 0,
+				reduce: outcome.action?.reduce ?? false,
+				cash: String(member.cash),
+				inventory: "",
+				authority: 0,
+				profit: Number(member.profit),
+				target: outcome.tape,
+				horizonNs: Number(outcome.throughNs - outcome.atNs),
+				prior: prior(member.reading),
+			});
+		}
+	}
+	return next.slice(-200);
 };
 
 export const useAgentSkill = () => {

@@ -3,27 +3,19 @@ package recording
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"gocloud.dev/blob"
-	"gocloud.dev/blob/driver"
-	"gocloud.dev/blob/memblob"
-	"gocloud.dev/gcerrors"
-	"golang.design/x/lockfree/lf"
-	"strings"
 	"sync"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/hindsight/tables/tablestest"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/store"
+	"golang.design/x/lockfree/lf"
 )
 
 /*
@@ -105,31 +97,34 @@ func TestSessionCapture(t *testing.T) {
 
 			// 6. From persisted identities alone, traverse back to the exact
 			// exchange bytes. The raw frame is stored alongside its identity.
-			stored, found, err := store.Find(context.Background(), engine, captureID.Run.Prefix("captures"), func(frame hindsight.RawFrame) bool { return frame.Identity == captureID })
-			So(found, ShouldBeTrue)
+			captures, err := engine.Captures(context.Background(), string(captureID.Run))
 			So(err, ShouldBeNil)
-			So(string(stored.Payload), ShouldEqual, string(raw))
+			So(captures, ShouldHaveLength, 1)
+			So(captures[0].Sequence, ShouldEqual, int64(captureID.Sequence))
+			So(string(captures[0].Payload), ShouldEqual, string(raw))
 
 			// The witness is persisted, keyed by the same origin so a consumer
 			// can walk witness → EnvelopeRef → raw frame without any timestamp.
-			witnesses, err := store.List[hindsight.ArtifactWitness](context.Background(), engine, runID.Prefix("witnesses"))
-			So(witnesses, ShouldHaveLength, 1)
-			witness := witnesses[0]
+			witnesses, err := engine.Witnesses(context.Background(), string(runID), "")
 			So(err, ShouldBeNil)
-			So(witness.Artifact.Kind, ShouldEqual, "measurement")
-			So(witness.Artifact.Identity, ShouldEqual, "cvd-1")
-			So(witness.Envelope.Origin, ShouldResemble, captureID)
-			So(witness.Envelope.Ordinal, ShouldEqual, uint64(0))
+			So(witnesses, ShouldHaveLength, 1)
+
+			witness := witnesses[0]
+			So(witness.ArtifactKind, ShouldEqual, "measurement")
+			So(witness.ArtifactIdentity, ShouldEqual, "cvd-1")
+			So(witness.Envelope.Run, ShouldEqual, string(captureID.Run))
+			So(witness.Envelope.Sequence, ShouldEqual, int64(captureID.Sequence))
+			So(witness.Envelope.Ordinal, ShouldEqual, int64(0))
 			So(witness.ImmediateParents, ShouldHaveLength, 1)
-			So(witness.ImmediateParents[0], ShouldResemble, ref)
+			So(witness.ImmediateParents[0].Sequence, ShouldEqual, int64(ref.Origin.Sequence))
 		})
 	})
 }
 
-func newSessionFixture(t *testing.T, run hindsight.RunID) (*Session, *blob.Bucket) {
+func newSessionFixture(t *testing.T, run hindsight.RunID) (*Session, *tables.Catalog) {
 	t.Helper()
-	bucket := memblob.OpenBucket(nil)
-	writer, err := NewSession(context.Background(), bucket, hindsight.Run{ID: run, StartedAt: time.Unix(1, 0)}, 8, time.Hour)
+	catalog := tablestest.New(t)
+	writer, err := NewSession(context.Background(), tables.NewWriter(catalog), hindsight.Run{ID: run, StartedAt: time.Unix(1, 0)}, 8, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,200 +132,162 @@ func newSessionFixture(t *testing.T, run hindsight.RunID) (*Session, *blob.Bucke
 		if err := writer.Close(); err != nil {
 			t.Errorf("close recorder: %v", err)
 		}
-		if err := bucket.Close(); err != nil {
-			t.Errorf("close bucket: %v", err)
-		}
 	})
-	return writer, bucket
+
+	return writer, catalog
 }
 
-// delayedBucket exercises the real recorder and blob writer with upload latency
-// longer than the flush interval. It retains the exact uploaded bytes.
-type delayedBucket struct {
-	driver.Bucket
-	mutex   sync.Mutex
-	objects [][]byte
-	started chan struct{}
-	release chan struct{}
-	err     error
-}
+/*
+TestSessionPersist asserts that batching loses nothing.
 
-func (bucket *delayedBucket) NewTypedWriter(ctx context.Context, key, contentType string, opts *driver.WriterOptions) (driver.Writer, error) {
-	return &delayedWriter{bucket: bucket}, nil
-}
-
-func (bucket *delayedBucket) Close() error { return nil }
-
-func (bucket *delayedBucket) ErrorCode(err error) gcerrors.ErrorCode {
-	return gcerrors.Unknown
-}
-
-type delayedWriter struct {
-	bytes.Buffer
-	bucket *delayedBucket
-}
-
-func (writer *delayedWriter) Close() error {
-	if writer.bucket.release != nil {
-		select {
-		case writer.bucket.started <- struct{}{}:
-		default:
-		}
-		<-writer.bucket.release
-	}
-
-	if writer.bucket.err != nil {
-		return writer.bucket.err
-	}
-	time.Sleep(15 * time.Millisecond) // Fixture upload exceeds the 1ms batching interval.
-	writer.bucket.mutex.Lock()
-	defer writer.bucket.mutex.Unlock()
-	writer.bucket.objects = append(writer.bucket.objects, bytes.Clone(writer.Bytes()))
-	return nil
-}
-
+The old fixture counted uploaded objects, because a batch was an object. A
+batch is now an Iceberg commit spanning whatever families it touched, so the
+property worth asserting is the one that always mattered: every accepted record
+reaches the table, exactly once, in the order its producer emitted it.
+*/
 func TestSessionPersist(t *testing.T) {
-	Convey("Given queued records and uploads slower than the flush interval", t, func() {
-		synctest.Test(t, func(t *testing.T) {
-			storage := &delayedBucket{}
-			bucket := blob.NewBucket(storage)
-			session := &Session{bucket: bucket, queue: lf.NewQueue[pending](), done: make(chan struct{})}
-			for index := range 82 {
-				session.queue.Enqueue(pending{key: "learning/run/record.json", data: []byte(fmt.Sprintf("%d", index))})
-			}
-			session.closed = true
-			session.persist(context.Background(), 8, time.Millisecond)
-			if len(storage.objects) != 11 {
-				t.Fatalf("82 records must use ten full batches and one partial batch; got %d uploads", len(storage.objects))
-			}
-			records := strings.Split(string(bytes.Join(storage.objects, []byte("\n"))), "\n")
-			for index, record := range records {
-				if record != fmt.Sprint(index) {
-					t.Fatalf("record %d: got %q", index, record)
-				}
-			}
-			if err := bucket.Close(); err != nil {
-				t.Fatal(err)
+	Convey("Given more queued records than one batch holds", t, func() {
+		catalog := tablestest.New(t)
+		session := &Session{
+			writer: tables.NewWriter(catalog),
+			run:    hindsight.Run{ID: "persist"},
+			queue:  lf.NewQueue[pending](),
+			done:   make(chan struct{}),
+		}
+
+		for index := range 82 {
+			session.queue.Enqueue(pending{family: tables.Captures, row: tables.CaptureRow{
+				Run: "persist", Sequence: int64(index + 1), Stream: "spot",
+				StreamEpoch: 1, StreamSequence: int64(index + 1),
+				ReceivedAt: time.Unix(int64(index), 0), Kind: "trade", PayloadHash: "hash",
+			}})
+		}
+
+		session.closed = true
+		session.persist(context.Background(), 8, time.Millisecond)
+
+		Convey("Every record is persisted exactly once and in order", func() {
+			rows, err := catalog.Captures(context.Background(), "persist")
+
+			So(err, ShouldBeNil)
+			So(rows, ShouldHaveLength, 82)
+
+			for index, row := range rows {
+				So(row.Sequence, ShouldEqual, int64(index+1))
 			}
 		})
 	})
 }
 
 func BenchmarkSessionPersist(b *testing.B) {
-	bucket := memblob.OpenBucket(nil)
-	defer func() {
-		if err := bucket.Close(); err != nil {
-			b.Fatal(err)
-		}
-	}()
-	payload := bytes.Repeat([]byte("x"), 1024) // 1KiB original transition records.
+	catalog := tablestest.New(&testing.T{})
 	b.ReportAllocs()
-	for index := 0; index < b.N; index++ {
-		session := &Session{bucket: bucket, queue: lf.NewQueue[pending](), done: make(chan struct{})}
-		for range 1024 {
-			session.queue.Enqueue(pending{key: "learning/run/record.json", data: payload})
+
+	for b.Loop() {
+		session := &Session{
+			writer: tables.NewWriter(catalog),
+			run:    hindsight.Run{ID: "bench"},
+			queue:  lf.NewQueue[pending](),
+			done:   make(chan struct{}),
 		}
+
+		for sequence := range 1024 {
+			session.queue.Enqueue(pending{family: tables.Captures, row: tables.CaptureRow{
+				Run: "bench", Sequence: int64(sequence + 1), Stream: "spot",
+				StreamEpoch: 1, StreamSequence: int64(sequence + 1),
+				ReceivedAt: time.Unix(int64(sequence), 0), Kind: "trade", PayloadHash: "hash",
+				Payload: bytes.Repeat([]byte("x"), 1024),
+			}})
+		}
+
 		session.closed = true
 		session.persist(context.Background(), 256, time.Second)
 	}
 }
 
-func TestSessionWriteLearning(t *testing.T) {
-	Convey("Given an S3 upload held while producers continue", t, func() {
-		synctest.Test(t, func(t *testing.T) {
-			storage := &delayedBucket{started: make(chan struct{}, 1), release: make(chan struct{})}
-			bucket := blob.NewBucket(storage)
-			session := &Session{
-				bucket: bucket, run: hindsight.Run{ID: "burst"},
-				queue: lf.NewQueue[pending](), wake: make(chan struct{}, 1),
-				done: make(chan struct{}), Errors: make(chan error, 1),
-			}
-			go session.persist(context.Background(), 256, time.Millisecond)
-			type event struct {
-				Producer int
-				Sequence int
-				Payload  []byte
-			}
-			if err := session.WriteLearning(event{Producer: -1}); err != nil {
-				t.Fatal(err)
-			}
-			<-storage.started
-			// Four producers exceed the former 8192-record capacity during one upload.
-			var producers sync.WaitGroup
-			for producer := range 4 {
-				producers.Go(func() {
-					record := event{Producer: producer, Payload: []byte("original")}
-					for sequence := range 4096 {
-						record.Sequence = sequence
-						if err := session.WriteLearning(record); err != nil {
-							t.Error(err)
-							return
-						}
+/*
+TestSessionWriteOutcome asserts that concurrent producers neither lose records
+nor observe each other's, and that a persistence failure latches.
+*/
+func TestSessionWriteOutcome(t *testing.T) {
+	Convey("Given many producers writing at once", t, func() {
+		catalog := tablestest.New(t)
+		session, err := NewSession(
+			context.Background(), tables.NewWriter(catalog),
+			hindsight.Run{ID: "burst", StartedAt: time.Unix(1, 0)}, 256, time.Millisecond,
+		)
+
+		So(err, ShouldBeNil)
+
+		var producers sync.WaitGroup
+
+		for producer := range 4 {
+			producers.Go(func() {
+				for sequence := range 256 {
+					if err := session.WriteOutcome(tables.OutcomeRow{
+						DecisionID: int64(sequence), Trader: int32(producer),
+						Label: "BTC/USD", At: time.Unix(int64(sequence), 0),
+						ActionKind: "enter", Authority: 1, Value: 1, Complete: true,
+					}); err != nil {
+						t.Error(err)
+
+						return
 					}
-					copy(record.Payload, "mutated!")
-				})
-			}
-			producers.Wait()
-			closed := make(chan error, 1)
-			go func() { closed <- session.Close() }()
-			synctest.Wait()
-			select {
-			case err := <-closed:
-				t.Fatalf("close returned before the upload completed: %v", err)
-			default:
-			}
-			close(storage.release)
-			if err := <-closed; err != nil {
-				t.Fatal(err)
-			}
-			next := make([]int, 4)
-			records := strings.Split(string(bytes.Join(storage.objects, []byte("\n"))), "\n")
-			if len(records) != 1+4*4096 {
-				t.Fatalf("accepted records lost or duplicated: %d", len(records))
-			}
-			for _, raw := range records[1:] {
-				var record event
-				if err := json.Unmarshal([]byte(raw), &record); err != nil {
-					t.Fatal(err)
 				}
-				if record.Sequence != next[record.Producer] || string(record.Payload) != "original" {
-					t.Fatalf("out of order or mutated record: %+v", record)
+			})
+		}
+
+		producers.Wait()
+		So(session.Close(), ShouldBeNil)
+
+		Convey("Every accepted record is persisted exactly once", func() {
+			rows, err := catalog.Outcomes(context.Background(), "burst")
+
+			So(err, ShouldBeNil)
+			So(rows, ShouldHaveLength, 4*256)
+
+			seen := map[int32]map[int64]bool{}
+
+			for _, row := range rows {
+				if seen[row.Trader] == nil {
+					seen[row.Trader] = map[int64]bool{}
 				}
-				next[record.Producer]++
+
+				So(seen[row.Trader][row.DecisionID], ShouldBeFalse)
+				seen[row.Trader][row.DecisionID] = true
 			}
-			if err := session.WriteLearning(event{}); err == nil {
-				t.Fatal("closed session accepted a record")
-			}
-			if err := bucket.Close(); err != nil {
-				t.Fatal(err)
-			}
+
+			So(len(seen), ShouldEqual, 4)
+		})
+
+		Convey("A closed session accepts nothing further", func() {
+			So(session.WriteOutcome(tables.OutcomeRow{}), ShouldNotBeNil)
 		})
 	})
-	Convey("Given an S3 write failure", t, func() {
-		synctest.Test(t, func(t *testing.T) {
-			failure := errors.New("fixture S3 failure")
-			bucket := blob.NewBucket(&delayedBucket{err: failure})
-			session := &Session{
-				bucket: bucket, run: hindsight.Run{ID: "failure"},
-				queue: lf.NewQueue[pending](), wake: make(chan struct{}, 1),
-				done: make(chan struct{}), Errors: make(chan error, 1),
-			}
-			go session.persist(context.Background(), 1, time.Hour)
-			if err := session.WriteLearning("accepted"); err != nil {
-				t.Fatal(err)
-			}
-			if err := <-session.Errors; !errors.Is(err, failure) {
-				t.Fatalf("missing upload failure: %v", err)
-			}
-			if err := session.WriteLearning("rejected"); !errors.Is(err, failure) {
-				t.Fatalf("admission did not report upload failure: %v", err)
-			}
-			if err := session.Close(); !errors.Is(err, failure) {
-				t.Fatalf("close did not report upload failure: %v", err)
-			}
-			if err := bucket.Close(); err != nil {
-				t.Fatal(err)
-			}
+
+	Convey("Given a catalog whose tables do not exist", t, func() {
+		// Wrapping without Ensure leaves every append with no table to write
+		// to, which is the closest reproduction of a persistence failure that
+		// does not require faking the storage layer.
+		catalog := tablestest.Empty(t)
+		session := &Session{
+			writer: tables.NewWriter(catalog),
+			run:    hindsight.Run{ID: "failure"},
+			queue:  lf.NewQueue[pending](),
+			wake:   make(chan struct{}, 1),
+			done:   make(chan struct{}),
+			Errors: make(chan error, 1),
+		}
+
+		go session.persist(context.Background(), 1, time.Hour)
+
+		So(session.WriteOutcome(tables.OutcomeRow{Label: "accepted"}), ShouldBeNil)
+
+		Convey("The failure is reported and latches admission", func() {
+			So(<-session.Errors, ShouldNotBeNil)
+
+			So(session.WriteOutcome(tables.OutcomeRow{Label: "rejected"}), ShouldNotBeNil)
+			So(session.Close(), ShouldNotBeNil)
 		})
 	})
 }

@@ -2,32 +2,38 @@ package strategy
 
 import (
 	"context"
-
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/store"
-	"gocloud.dev/blob"
-	"gocloud.dev/gcerrors"
 )
 
-/* Checkpoint stores the associative model's original encoded state in S3. */
-type Checkpoint struct{ Bucket *blob.Bucket }
+// modelKey names the associative model's encoded state in the object store.
+const modelKey = "models/agent.gob"
 
-func (checkpoint Checkpoint) Load(ctx context.Context) ([]byte, bool, error) {
-	data, err := store.ReadAll(ctx, checkpoint.Bucket, "models/agent.gob")
+/*
+Checkpoint stores the associative model's encoded state.
 
-	if gcerrors.Code(err) == gcerrors.NotFound {
-		return nil, false, nil
-	}
+The model is a gob blob rather than a set of rows, so it stays in object
+storage while every Hindsight record family lives in an Iceberg table.
+*/
+type Checkpoint struct{ Store Blobs }
 
-	if err != nil {
-		return nil, false, errnie.Error(errnie.Err(errnie.IO, "learning: load model", err))
-	}
-	return data, true, nil
+/*
+Blobs is the whole-object storage the checkpoint needs.
+
+It is an interface rather than the concrete store so a test can supply memory
+instead of a live bucket: the model is the only thing left in object storage,
+and standing up S3 to exercise save-and-restore would test the venue rather
+than the learner.
+*/
+type Blobs interface {
+	Read(ctx context.Context, key string) ([]byte, bool, error)
+	Write(ctx context.Context, key string, data []byte) error
 }
 
+// Load returns the saved model, reporting found=false on a first run.
+func (checkpoint Checkpoint) Load(ctx context.Context) ([]byte, bool, error) {
+	return checkpoint.Store.Read(ctx, modelKey)
+}
+
+// Save writes the model, waiting for the write to be acknowledged.
 func (checkpoint Checkpoint) Save(ctx context.Context, data []byte) error {
-	if err := checkpoint.Bucket.WriteAll(ctx, "models/agent.gob", data, nil); err != nil {
-		return errnie.Error(errnie.Err(errnie.IO, "learning: save model", err))
-	}
-	return nil
+	return checkpoint.Store.Write(ctx, modelKey, data)
 }

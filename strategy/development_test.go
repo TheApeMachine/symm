@@ -28,3 +28,28 @@ func TestDevelopmentContext(t *testing.T) {
 		})
 	})
 }
+
+func TestDevelopmentContextDepth(t *testing.T) {
+	Convey("Retained context is bounded by the model's addressable depth", t, func() {
+		at := time.Unix(1000, 0)
+		development := &Development{Symbol: "BTC/USD"}
+
+		for index := range MaxTemporalContextDepth * 3 {
+			development.History = append(development.History, Context{
+				At:         at.Add(time.Duration(index) * time.Second),
+				Conditions: []uint64{uint64(index)},
+			})
+		}
+		last := development.History[len(development.History)-1]
+		measurement := data.NewMeasurement[float64]("fixture", "BTC/USD", "signal", at, at)
+		tokens := development.Context(at, []*data.Measurement[float64]{measurement})
+
+		So(development.History, ShouldHaveLength, MaxTemporalContextDepth)
+		So(tokens, ShouldHaveLength, MaxTemporalContextDepth*2)
+
+		Convey("The most recent transitions are the ones retained", func() {
+			So(development.History[len(development.History)-1], ShouldResemble, last)
+			So(tokens[len(tokens)-1], ShouldEqual, last.Conditions[0])
+		})
+	})
+}

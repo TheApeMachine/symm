@@ -1,11 +1,14 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
+	DecisionRing,
+	DrivingActions,
 	EventRhythm,
 	ImpulseBars,
 	InfluenceGrid,
-	PipelineFunnel,
 	OutcomeRange,
+	PipelineFunnel,
+	TraderQuality,
 	WalletBars,
 } from "./charts";
 import type {
@@ -201,5 +204,121 @@ describe("WalletBars", () => {
 
 		expect(markup).toContain("-4");
 		expect(markup).toContain("policy 1");
+	});
+});
+
+describe("DecisionRing", () => {
+	it("reports the share the tape has already answered", () => {
+		const view = {
+			desk: {
+				settled: 0,
+				traders: [
+					{
+						id: 0,
+						decisions: 10,
+						fills: 0,
+						graded: 5,
+						observed: 5,
+						quality: 0,
+						wealth: 0,
+						open: 3,
+						holding: 0,
+					},
+					{
+						id: 1,
+						decisions: 10,
+						fills: 0,
+						graded: 5,
+						observed: 5,
+						quality: 0,
+						wealth: 0,
+						open: 3,
+						holding: 0,
+					},
+				],
+			},
+		} as unknown as LearningView;
+
+		const markup = renderToStaticMarkup(<DecisionRing view={view} />);
+
+		expect(markup).toContain("50.0%");
+		expect(markup).toContain("graded by the tape");
+		expect(markup).toContain("superseded");
+	});
+
+	/*
+		An empty ring must say nothing has happened rather than draw a shape
+		implying something has.
+	*/
+	it("says so when no decision has been made", () => {
+		const markup = renderToStaticMarkup(<DecisionRing view={null} />);
+		expect(markup).toContain("No decision has been made yet");
+	});
+});
+
+describe("TraderQuality", () => {
+	it("marks a wallet with nothing graded rather than drawing it at zero", () => {
+		const view = {
+			desk: {
+				settled: 0,
+				traders: [
+					{
+						id: 0,
+						decisions: 4,
+						fills: 0,
+						graded: 4,
+						observed: 4,
+						quality: -0.0002,
+						wealth: 0,
+						open: 0,
+						holding: 0,
+					},
+					{
+						id: 1,
+						decisions: 1,
+						fills: 0,
+						graded: 0,
+						observed: 0,
+						quality: 0,
+						wealth: 0,
+						open: 1,
+						holding: 0,
+					},
+				],
+			},
+		} as unknown as LearningView;
+
+		const markup = renderToStaticMarkup(<TraderQuality view={view} />);
+
+		expect(markup).toContain("wallet 1");
+		expect(markup).toContain("nothing graded yet");
+		expect(markup).toContain("-2.0 bp");
+	});
+});
+
+describe("DrivingActions", () => {
+	it("draws each action against centre with its evidence beneath", () => {
+		const influence: Influence[] = [
+			{
+				token: 2,
+				source: "Context",
+				label: "prefix 2/14",
+				action: "enter ·1/1",
+				prior: prior({ Mean: 0.0006, Samples: 40, Support: 12 }),
+			},
+		];
+
+		const markup = renderToStaticMarkup(
+			<DrivingActions influence={influence} />,
+		);
+
+		expect(markup).toContain("enter ·1/1");
+		expect(markup).toContain("6.0 bp");
+		expect(markup).toContain("40 obs");
+	});
+
+	it("reports an absence of evidence instead of an empty chart", () => {
+		const markup = renderToStaticMarkup(<DrivingActions influence={[]} />);
+		expect(markup).toContain("No action has accumulated evidence yet");
 	});
 });

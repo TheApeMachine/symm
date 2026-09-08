@@ -1,4 +1,4 @@
-package runtime
+package pool
 
 import (
 	"sync/atomic"
@@ -27,12 +27,12 @@ func awaitWorkers[T any](elasticPool *Pool[T], predicate func(int) bool, timeout
 	}
 }
 
-func NewPoolTest(t *testing.T) {
+func NewTest(t *testing.T) {
 	Convey("Given a handler function", t, func() {
 		handlerFunc := func(task int) {}
 
 		Convey("A fresh pool defaults to a one second idle lifetime", func() {
-			loadPool := NewPool(handlerFunc)
+			loadPool := New(handlerFunc)
 
 			So(loadPool.handlerFunc, ShouldNotBeNil)
 			So(loadPool.idleWorkerLifetime, ShouldEqual, time.Second)
@@ -42,7 +42,7 @@ func NewPoolTest(t *testing.T) {
 
 func SetIdleWorkerLifetimeTest(t *testing.T) {
 	Convey("Given an elastic pool", t, func() {
-		loadPool := NewPool(func(task int) {})
+		loadPool := New(func(task int) {})
 		loadPool.Start()
 
 		Convey("A positive lifetime is honored", func() {
@@ -65,7 +65,7 @@ func SetIdleWorkerLifetimeTest(t *testing.T) {
 
 func GetSpawnedWorkersTest(t *testing.T) {
 	Convey("Given a freshly started pool", t, func() {
-		loadPool := NewPool(func(task int) {
+		loadPool := New(func(task int) {
 			time.Sleep(20 * time.Millisecond)
 		})
 		loadPool.SetIdleWorkerLifetime(40 * time.Millisecond)
@@ -99,7 +99,7 @@ func GetSpawnedWorkersTest(t *testing.T) {
 
 func StartTest(t *testing.T) {
 	Convey("Given an unstarted pool", t, func() {
-		loadPool := NewPool(func(task int) {})
+		loadPool := New(func(task int) {})
 
 		Convey("Submitting before Start is rejected", func() {
 			err := loadPool.AddTask(1)
@@ -122,7 +122,7 @@ func StartTest(t *testing.T) {
 func AddTaskTest(t *testing.T) {
 	Convey("Given a started elastic pool", t, func() {
 		processed := make(chan int, 256)
-		loadPool := NewPool(func(task int) {
+		loadPool := New(func(task int) {
 			processed <- task
 		})
 		loadPool.SetIdleWorkerLifetime(40 * time.Millisecond)
@@ -174,7 +174,7 @@ func AddTaskTest(t *testing.T) {
 func AddTaskWithBlockingTest(t *testing.T) {
 	Convey("Given a started elastic pool", t, func() {
 		var executed int64
-		loadPool := NewPool(func(task int) {
+		loadPool := New(func(task int) {
 			atomic.AddInt64(&executed, 1)
 		})
 		loadPool.Start()
@@ -193,7 +193,7 @@ func AddTaskWithBlockingTest(t *testing.T) {
 
 func StopTest(t *testing.T) {
 	Convey("Given a started pool with no traffic", t, func() {
-		loadPool := NewPool(func(task int) {})
+		loadPool := New(func(task int) {})
 		loadPool.Start()
 
 		Convey("StopAndWait returns promptly even with zero live workers", func() {
@@ -208,7 +208,7 @@ func StopTest(t *testing.T) {
 func StopAndWaitTest(t *testing.T) {
 	Convey("Given a started pool", t, func() {
 		var executed atomic.Int64
-		loadPool := NewPool(func(task int) {
+		loadPool := New(func(task int) {
 			executed.Add(1)
 		})
 		loadPool.SetIdleWorkerLifetime(40 * time.Millisecond)
@@ -233,7 +233,7 @@ func StopAndWaitTest(t *testing.T) {
 
 func StopWithTimeoutTest(t *testing.T) {
 	Convey("Given a started pool", t, func() {
-		loadPool := NewPool(func(task int) {})
+		loadPool := New(func(task int) {})
 		loadPool.Start()
 
 		Convey("StopWithTimeout reports a clean drain", func() {

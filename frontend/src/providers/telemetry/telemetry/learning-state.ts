@@ -79,8 +79,18 @@ restored():boolean {
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
+episodes():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
+forced():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
+
 static startLearningState(builder:flatbuffers.Builder) {
-  builder.startObject(8);
+  builder.startObject(10);
 }
 
 static addAtNs(builder:flatbuffers.Builder, atNs:bigint) {
@@ -139,12 +149,20 @@ static addRestored(builder:flatbuffers.Builder, restored:boolean) {
   builder.addFieldInt8(7, +restored, +false);
 }
 
+static addEpisodes(builder:flatbuffers.Builder, episodes:bigint) {
+  builder.addFieldInt64(8, episodes, BigInt('0'));
+}
+
+static addForced(builder:flatbuffers.Builder, forced:bigint) {
+  builder.addFieldInt64(9, forced, BigInt('0'));
+}
+
 static endLearningState(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createLearningState(builder:flatbuffers.Builder, atNs:bigint, steps:bigint, decisions:bigint, resolved:bigint, statusOffset:flatbuffers.Offset, agentsOffset:flatbuffers.Offset, marketsOffset:flatbuffers.Offset, restored:boolean):flatbuffers.Offset {
+static createLearningState(builder:flatbuffers.Builder, atNs:bigint, steps:bigint, decisions:bigint, resolved:bigint, statusOffset:flatbuffers.Offset, agentsOffset:flatbuffers.Offset, marketsOffset:flatbuffers.Offset, restored:boolean, episodes:bigint, forced:bigint):flatbuffers.Offset {
   LearningState.startLearningState(builder);
   LearningState.addAtNs(builder, atNs);
   LearningState.addSteps(builder, steps);
@@ -154,6 +172,8 @@ static createLearningState(builder:flatbuffers.Builder, atNs:bigint, steps:bigin
   LearningState.addAgents(builder, agentsOffset);
   LearningState.addMarkets(builder, marketsOffset);
   LearningState.addRestored(builder, restored);
+  LearningState.addEpisodes(builder, episodes);
+  LearningState.addForced(builder, forced);
   return LearningState.endLearningState(builder);
 }
 
@@ -166,7 +186,9 @@ unpack(): LearningStateT {
     this.status(),
     this.bb!.createObjList<LearningAgent, LearningAgentT>(this.agents.bind(this), this.agentsLength()),
     this.bb!.createObjList<LearningDevelopment, LearningDevelopmentT>(this.markets.bind(this), this.marketsLength()),
-    this.restored()
+    this.restored(),
+    this.episodes(),
+    this.forced()
   );
 }
 
@@ -180,6 +202,8 @@ unpackTo(_o: LearningStateT): void {
   _o.agents = this.bb!.createObjList<LearningAgent, LearningAgentT>(this.agents.bind(this), this.agentsLength());
   _o.markets = this.bb!.createObjList<LearningDevelopment, LearningDevelopmentT>(this.markets.bind(this), this.marketsLength());
   _o.restored = this.restored();
+  _o.episodes = this.episodes();
+  _o.forced = this.forced();
 }
 }
 
@@ -192,7 +216,9 @@ constructor(
   public status: string|Uint8Array|null = null,
   public agents: (LearningAgentT)[] = [],
   public markets: (LearningDevelopmentT)[] = [],
-  public restored: boolean = false
+  public restored: boolean = false,
+  public episodes: bigint = BigInt('0'),
+  public forced: bigint = BigInt('0')
 ){}
 
 
@@ -209,7 +235,9 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     status,
     agents,
     markets,
-    this.restored
+    this.restored,
+    this.episodes,
+    this.forced
   );
 }
 }

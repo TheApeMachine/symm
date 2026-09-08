@@ -1,13 +1,25 @@
 storage:
   s3:
-    # Set bucket_url for an S3-compatible cluster, e.g.:
-    # s3://symm?region=us-east-1&endpoint=http://localhost:9000&use_path_style=true
-    # Alternatively set bucket and region, leaving bucket_url empty.
-    # Credentials: AWS_PROFILE or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
-    bucket_url: "s3://symm?region=us-east-1&awssdk=v2&endpoint=http://192.168.0.163:32552&anonymous=true&s3ForcePathStyle=true"
-    bucket: ""
-    region: ""
-    prefix: symm/
+    # Object storage for whole-blob artifacts. Hindsight's record families are
+    # Iceberg tables and do not pass through here; what remains is the
+    # associative model's encoded state.
+    bucket: symm
+    region: us-east-1
+    endpoint: http://s3.seaweed.home.arpa
+    # SeaweedFS serves this cluster unauthenticated. Signing with empty
+    # credentials fails, so anonymous access is declared rather than inferred
+    # from the absence of a key.
+    anonymous: true
+    max_idle_conns: 64
+    max_idle_conns_per_host: 64
+    max_conns_per_host: 64
+  iceberg:
+    # SeaweedFS serves one Iceberg catalog per table bucket, so warehouse
+    # selects the catalog rather than naming a directory inside a shared one.
+    # A table bucket is an ordinary bucket carrying an s3tables.metadata
+    # attribute, so it cannot be the same bucket as storage.s3.bucket above.
+    uri: http://iceberg.seaweed.home.arpa
+    warehouse: s3://symmtables/
 
 experimental:
   # Presentation and diagnostic experiments are opt-in and paper-only.
@@ -58,11 +70,18 @@ system:
 
 hindsight:
   capture:
-    # Encoded records queue in memory while the S3 writer drains them.
-    # Maximum original records collected before writing a batch to S3.
+    # Records queue in memory while the writer drains them into the tables.
+    # Maximum records collected before one drain of the queue.
     batch_size: 256
-    # Flush a partial batch even when no further observations arrive.
+    # Drain a partial batch even when no further observations arrive.
     flush_interval: 50ms
+    # Commit cadence is deliberately far coarser than the drain above. An
+    # Iceberg commit writes a snapshot, a manifest, a manifest list and a new
+    # metadata file, so committing per drain produced three metadata objects
+    # per data file and left the table in thousands of tiny fragments.
+    # Buffered rows stay in memory until one of these is reached.
+    commit_rows: 20000
+    commit_interval: 30s
 
 resonance:
   learning_rate: 0.01

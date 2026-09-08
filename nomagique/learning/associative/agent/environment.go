@@ -13,12 +13,16 @@ only operations possible in the current state, including an explicit no-op when
 appropriate. Context contains agent-specific state identities, not outcomes.
 Execute accepts a decision once; an error may leave acceptance uncertain, so
 the agent retains its ticket until Resolve or an explicit Abort.
+Objective returns nil while the objective cannot be measured; this supplies no
+feedback and does not replace the last measured value. Errors remain failures.
 Methods consume resident state; network and durable storage run outside Step.
+Population calls different environments concurrently; shared resources must be
+synchronized by their owner. Calls on one environment remain sequential.
 */
 type Environment[Action comparable] interface {
 	Feasible(label string) (actions []Action, context []uint64, err error)
 	Execute(decision *Decision[Action]) error
-	Objective() (reward.Mark, error)
+	Objective() (*reward.Mark, error)
 }
 
 /*

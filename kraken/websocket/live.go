@@ -62,6 +62,8 @@ type Live struct {
 	status       *runtime.Status
 	err          error
 	client       atomic.Pointer[spot.WebSocket]
+	receiveMu    sync.Mutex
+	receive      callback.Action[*sdkkraken.WebSocketMessage]
 	endpoint     string
 	quote        string
 	ingress      map[string]runtime.Ingress[*types.Envelope]
@@ -400,10 +402,6 @@ func NewWithClient(
 		live.Client().REST.Nonce = live.nonce.Next
 	}
 
-	// Replacement and retiring SDK sessions share this callback. Serialize the
-	// complete receive turn so Book.Update notifications and numeric observers
-	// always consume the frame whose stream/capture identity they publish.
-	var receiveMu sync.Mutex
 	var bookFrame *kraken.Level3
 	var bookStream hindsight.StreamRef
 	var bookCapture hindsight.CaptureIdentity
@@ -489,10 +487,7 @@ func NewWithClient(
 		})
 	}
 
-	client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
-		receiveMu.Lock()
-		defer receiveMu.Unlock()
-
+	live.receive = func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
 		if live.operationalError() != nil {
 			return
 		}
@@ -674,35 +669,9 @@ func NewWithClient(
 				workload.Push(envelope)
 			}
 		}
-	})
+	}
 
-	client.OnConnected.Recurring(func(event *callback.Event[any]) {
-		if live.operationalError() != nil {
-			return
-		}
-
-		errnie.Info(fmt.Sprintf("websocket: connected to %s", live.Client().URL))
-
-		live.connected.Store(true)
-		live.status.Transition(runtime.BUSY)
-		live.pinger.Start(live.ctx)
-	})
-
-	client.OnDisconnected.Recurring(func(event *callback.Event[error]) {
-		live.connected.Store(false)
-
-		if live.closing.Load() {
-			return
-		}
-
-		select {
-		case <-live.ctx.Done():
-			return
-		default:
-		}
-
-		go live.reconnect(event.Data)
-	})
+	live.bind(client)
 
 	errnie.Info(fmt.Sprintf("websocket: connecting to %s", live.Client().URL))
 	live.status.Transition(runtime.WAITING)
@@ -769,6 +738,63 @@ capture and semantic ingress are persisted together and joinable by identity.
 */
 type ManifestSink interface {
 	WriteManifest(manifest hindsight.EnvelopeManifest) error
+}
+
+/*
+	bind admits callbacks only from the current SDK session. Retired sockets cannot
+
+apply old frames to replacement books or change the replacement's readiness.
+*/
+func (live *Live) bind(client *spot.WebSocket) {
+	client.OnDisconnected.Reset()
+	client.OnReceived.Recurring(func(event *callback.Event[*sdkkraken.WebSocketMessage]) {
+		live.receiveMu.Lock()
+		defer live.receiveMu.Unlock()
+
+		if live.Client() != client {
+			return
+		}
+
+		live.receive(event)
+	})
+
+	client.OnConnected.Recurring(func(event *callback.Event[any]) {
+		if live.Client() != client {
+			return
+		}
+
+		if live.operationalError() != nil {
+			return
+		}
+
+		errnie.Info(fmt.Sprintf("websocket: connected to %s", live.Client().URL))
+
+		live.connected.Store(true)
+		live.status.Transition(runtime.BUSY)
+		live.pinger.Start(live.ctx)
+	})
+
+	client.OnDisconnected.Recurring(func(event *callback.Event[error]) {
+		live.receiveMu.Lock()
+		defer live.receiveMu.Unlock()
+
+		if live.Client() != client {
+			return
+		}
+		live.connected.Store(false)
+
+		if live.closing.Load() {
+			return
+		}
+
+		select {
+		case <-live.ctx.Done():
+			return
+		default:
+		}
+
+		go live.reconnect(event.Data)
+	})
 }
 
 func (live *Live) Status() runtime.Stage {
@@ -879,7 +905,6 @@ func (live *Live) reconnect(err error) {
 	))
 
 	for live.ctx.Err() == nil {
-		live.streams.Advance()
 		client := live.Client()
 		replacement := spot.NewWebSocket()
 		replacement.REST = client.REST
@@ -888,11 +913,20 @@ func (live *Live) reconnect(err error) {
 		replacement.ReconnectWait = client.ReconnectWait
 		replacement.Insecure = client.Insecure
 		replacement.OnAuthenticated = client.OnAuthenticated
-		replacement.OnConnected = client.OnConnected
-		replacement.OnDisconnected = client.OnDisconnected
 		replacement.OnSent = client.OnSent
-		replacement.OnReceived = client.OnReceived
+		live.bind(replacement)
+		live.receiveMu.Lock()
 		live.client.Store(replacement)
+		live.streams.Advance()
+		live.receiveMu.Unlock()
+
+		// Ask a still-readable retired peer to close. SDK Disconnect cannot be
+		// used after a failed write: v2.0.0 leaves a callback sending to a closed
+		// channel on that error path. Session identity already rejects its data.
+		if err := client.WriteMessage(gorillawebsocket.CloseMessage,
+			gorillawebsocket.FormatCloseMessage(gorillawebsocket.CloseNormalClosure, "")); err != nil {
+			errnie.Warn("websocket: retired session close: " + err.Error())
+		}
 
 		err = replacement.Connect()
 		established := err == nil
@@ -913,10 +947,6 @@ func (live *Live) reconnect(err error) {
 			fmt.Sprintf("websocket %s fresh-session reconnect failed", live.endpoint),
 			err,
 		))
-
-		if established {
-			_ = replacement.Disconnect()
-		}
 
 		retry := time.NewTimer(retryWait)
 
@@ -1517,7 +1547,7 @@ func (live *Live) Book(symbol string, read func(*book.Book)) {
 	live.level3.Range(func(_, value any) bool {
 		conn, ok := value.(*Live)
 
-		if !ok || conn.book == nil {
+		if !ok || conn.book == nil || conn.Status() != runtime.READY {
 			return true
 		}
 

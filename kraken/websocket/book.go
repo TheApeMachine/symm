@@ -148,6 +148,9 @@ func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 	book.mu.RLock()
 	defer book.mu.RUnlock()
 
+	if _, diverging := book.diverging[symbol]; diverging {
+		return
+	}
 	managed := book.manager.GetBook(symbol)
 
 	if managed != nil {
@@ -243,7 +246,8 @@ func (book *Book) Update(
 		if payload.Type == "snapshot" {
 			book.mu.Lock()
 			delete(book.pending, data.Symbol)
-			if len(book.pending) == 0 {
+
+			if len(book.pending) == 0 && len(book.diverging) == 0 {
 				book.status.Transition(runtime.READY)
 				select {
 				case book.seeded <- struct{}{}:

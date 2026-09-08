@@ -110,8 +110,12 @@ func (agent *Agent[Action]) Measure() (err error) {
 	if err != nil {
 		return errnie.Error(err)
 	}
+
+	if mark == nil {
+		return nil
+	}
 	previous := agent.Reward.Through.Version
-	outcome, err := agent.ledger.Measure(mark)
+	outcome, err := agent.ledger.Measure(*mark)
 
 	if err != nil {
 		return errnie.Error(err)

@@ -28,6 +28,20 @@ func (stream *IO) Next(core.Primitive) core.Primitive {
 }
 func (stream *IO) Read() any { return append([]core.Primitive(nil), stream.values...) }
 
+/*
+Reset rewinds the stream over a new set of endpoints, releasing the previous
+run's references while retaining buffer capacity.
+
+An owner that delivers many runs would otherwise construct one stream per run,
+which is where the graph spends most of its allocation. Reuse is the owner's
+call: it must have drained the previous run, since the cursor and the values
+both move here.
+*/
+func (stream *IO) Reset(values ...core.Primitive) {
+	stream.reset()
+	stream.values = append(stream.values, values...)
+}
+
 // reset releases the previous run's references while retaining buffer capacity.
 // Errors have already been collected by the owner before this run is reused.
 func (stream *IO) reset() {

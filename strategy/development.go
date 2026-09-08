@@ -10,6 +10,18 @@ import (
 )
 
 /*
+MaxTemporalContextDepth bounds how many distinct grid states one decision is
+conditioned on. A market develops through stages — a precursor state, an
+ignition, an exhaustion — and the agent needs enough of that progression to
+recognize which stage it is in. It does not need all of it: an unbounded window
+produces a token sequence that occurs exactly once, so the model trie interns a
+branch no later observation can ever match and no record reaches a second
+sample. Six retained transitions keep A to B to C addressable while leaving the
+sequence short enough to recur.
+*/
+const MaxTemporalContextDepth = 6
+
+/*
 Context retains changes of grid condition within the input producers' actual
 observation horizon. Repeated identical conditions do not add model depth.
 */
@@ -47,6 +59,13 @@ func (development *Development) Context(
 	}
 
 	development.History = slices.Delete(development.History, 0, first)
+
+	// The producer's horizon is the outer bound; the retained depth is the
+	// inner one. Advance already collapses repeated identical states, so a
+	// stagnant market spends no depth and cannot push a precursor out of view.
+	if excess := len(development.History) - MaxTemporalContextDepth; excess > 0 {
+		development.History = slices.Delete(development.History, 0, excess)
+	}
 	var tokens []uint64
 
 	for _, context := range development.History {
@@ -85,5 +104,11 @@ func (development *Development) Advance(at time.Time, space *grid.Space) error {
 	}
 
 	development.History = append(development.History, Context{At: at, Conditions: conditions})
+
+	// Retention is bounded here as well so the history cannot grow past the
+	// model's addressable depth regardless of how the owner interleaves calls.
+	if excess := len(development.History) - MaxTemporalContextDepth; excess > 0 {
+		development.History = slices.Delete(development.History, 0, excess)
+	}
 	return nil
 }

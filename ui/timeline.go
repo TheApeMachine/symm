@@ -9,8 +9,8 @@ import (
 	"context"
 	"github.com/gofiber/fiber/v3"
 	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/signal"
-	"gocloud.dev/blob"
 )
 
 /*
@@ -55,7 +55,7 @@ index returns the RunIndex for one Run, reading the raw capture tape when the
 cached projection is absent or stale.
 */
 func (cache *timelineCache) index(
-	engine *blob.Bucket,
+	engine *tables.Catalog,
 	run hindsight.RunID,
 ) (*hindsight.RunIndex, error) {
 	cache.mutex.Lock()

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,15 +14,14 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/recording"
+	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/hindsight/tables/tablestest"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/tests/market"
 	"github.com/theapemachine/symm/tests/venue"
 	"github.com/theapemachine/symm/types"
-	"gocloud.dev/blob"
-	"gocloud.dev/blob/memblob"
 )
 
 // learningFixture supplies the real book reducer, pricing, positions, balance,
@@ -75,9 +74,9 @@ func learningFixture(t testing.TB) (*Learner, *venue.Conn) {
 		Ask:    venue.Decimal("101"),
 	})
 
-	archive := memblob.OpenBucket(nil)
+	catalog := tablestest.New(t)
 	recorder, err := recording.NewSession(
-		t.Context(), archive, hindsight.Run{
+		t.Context(), tables.NewWriter(catalog), hindsight.Run{
 			ID:        "integration",
 			StartedAt: time.Now(),
 		}, 128, time.Hour,
@@ -91,17 +90,13 @@ func learningFixture(t testing.TB) (*Learner, *venue.Conn) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	learner, err := NewLearner(t.Context(), api, price, balance, 3, archive, "integration", recorder)
+	learner, err := NewLearner(t.Context(), api, price, balance, 3, catalog, newMemoryBlobs(), "integration", recorder)
 
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		if err := recorder.Close(); err != nil {
-			t.Error(err)
-		}
-
-		if err := archive.Close(); err != nil {
 			t.Error(err)
 		}
 	})
@@ -128,16 +123,17 @@ func TestLearnerStep(t *testing.T) {
 			So(learner.Steps, ShouldEqual, index+1)
 		}
 		So(learner.Decisions, ShouldBeGreaterThan, 0)
-		So(learner.Traders[0].Balance, ShouldNotEqual, learner.Traders[1].Balance)
-		So(learner.Population.Agents[0].Model == learner.Population.Agents[1].Model, ShouldBeFalse)
+		So(len(learner.Traders), ShouldEqual, 1)
+		So(len(learner.Population.Agents), ShouldEqual, 1)
+		So(learner.Rehearsal, ShouldNotBeNil)
 
 		Convey("The consolidated model checkpoints and restores into every member", func() {
 			So(learner.Population.Save(context.Background(), learner.Checkpoint), ShouldBeNil)
-			fresh, err := NewLearner(t.Context(), learner.Traders[0].api, learner.price, learner.Traders[0].Balance, 3, learner.Checkpoint.Bucket, "next", learner.recorder)
+			fresh, err := NewLearner(t.Context(), learner.Traders[0].api, learner.price, learner.Traders[0].Balance, 3, learner.catalog, learner.Checkpoint.Store, "next", learner.recorder)
 			So(err, ShouldBeNil)
 			So(fresh.Restored, ShouldBeTrue)
 			So(fresh.Population.Grid.Columns, ShouldResemble, learner.Population.Grid.Columns)
-			So(fresh.Population.Agents[0].Model == fresh.Population.Agents[1].Model, ShouldBeFalse)
+			So(len(fresh.Population.Agents), ShouldEqual, 1)
 		})
 	})
 }
@@ -182,23 +178,23 @@ func TestLearnerReview(t *testing.T) {
 		So(original, ShouldNotBeNil)
 		So(learner.Review(t.Context()), ShouldBeNil)
 		So(learner.Resolved, ShouldEqual, 0)
-		var captures bytes.Buffer
-		for index, price := range []int64{100, 110, 105, 115, 108} {
-			payload, err := json.Marshal(kraken.Trade{Data: []kraken.TradeData{{Symbol: "BTC/USD", Price: *decimal.NewFromInt64(price)}}})
-			So(err, ShouldBeNil)
-			So(json.NewEncoder(&captures).Encode(hindsight.RawFrame{Kind: "trade", ReceivedAt: learner.At.Add(time.Duration(index+1) * time.Second), Payload: payload}), ShouldBeNil)
-		}
-		So(learner.Checkpoint.Bucket.WriteAll(t.Context(), learner.run.Prefix("captures")+fmt.Sprintf("%020d.jsonl", 1), captures.Bytes(), nil), ShouldBeNil)
+		// The intermediate dips are pullbacks inside one developing move; only
+		// the final print gives back half the excursion, so the confirmed leg
+		// runs all the way to 130 rather than stopping at the first dip.
+		writeCaptures(t, learner, []int64{100, 110, 106, 130, 122, 95})
 		So(learner.Review(t.Context()), ShouldBeNil)
 		So(learner.Resolved, ShouldEqual, learner.Decisions)
 		So(original.Outcome, ShouldNotBeNil)
 		So(learner.Population.Agents[0].Negative, ShouldBeGreaterThan, 0)
-		objects := learner.Checkpoint.Bucket.List(&blob.ListOptions{Prefix: learner.run.Prefix("outcomes")})
-		object, err := objects.Next(t.Context())
-		So(err, ShouldBeNil)
-		persisted, err := store.Read[[]Evaluation](t.Context(), learner.Checkpoint.Bucket, object.Key)
+
+		// Graded decisions reach the outcomes table through the recorder, so
+		// the batch has to be flushed before they can be read back.
+		So(learner.recorder.Close(), ShouldBeNil)
+
+		persisted, err := learner.catalog.Outcomes(t.Context(), string(learner.run))
 		So(err, ShouldBeNil)
 		So(len(persisted), ShouldEqual, learner.Resolved)
+
 		for _, evaluation := range persisted {
 			So(evaluation.Complete, ShouldBeTrue)
 			So(evaluation.Outcome, ShouldNotBeNil)
@@ -208,4 +204,103 @@ func TestLearnerReview(t *testing.T) {
 		So(learner.Review(t.Context()), ShouldBeNil)
 		So(learner.Resolved, ShouldEqual, settled)
 	})
+}
+
+func TestLearnerReleasesForcedDecisions(t *testing.T) {
+	Convey("A decision with no alternative is released instead of graded", t, func() {
+		learner, _ := learningFixture(t)
+
+		// No book was applied, so every symbol offers waiting and nothing else.
+		for index := range 6 {
+			at := time.Now()
+			measurement := data.NewMeasurement[float64]("test", "BTC/USD", "context", at, at)
+			measurement.Maturity = 1
+			measurement.PutMetric(data.Metric[float64]{Label: "change", Raw: float64(index % 3)})
+			learner.Step(&types.Envelope{TypeID: types.EnvelopeTrade, CVD: measurement})
+			So(learner.Error(), ShouldBeNil)
+		}
+		So(learner.Decisions, ShouldBeGreaterThan, 0)
+
+		for _, trader := range learner.Traders {
+			for _, evaluations := range trader.Evaluations {
+				for _, evaluation := range evaluations {
+					So(evaluation.Forced, ShouldBeTrue)
+				}
+			}
+		}
+		writeCaptures(t, learner, []int64{100, 130, 95})
+		So(learner.Review(t.Context()), ShouldBeNil)
+
+		Convey("None of them became training evidence", func() {
+			So(learner.Forced, ShouldEqual, learner.Decisions)
+			So(learner.Resolved, ShouldEqual, 0)
+
+			for _, member := range learner.Population.Agents {
+				So(member.Positive, ShouldEqual, 0)
+				So(member.Negative, ShouldEqual, 0)
+				So(member.Pending, ShouldBeEmpty)
+			}
+		})
+	})
+}
+
+/*
+memoryBlobs is the checkpoint's object storage held in memory. The model is the
+only artifact left outside the tables, so save-and-restore needs somewhere to
+put one object and nothing more.
+*/
+type memoryBlobs struct {
+	mutex   sync.Mutex
+	objects map[string][]byte
+}
+
+func newMemoryBlobs() *memoryBlobs {
+	return &memoryBlobs{objects: map[string][]byte{}}
+}
+
+func (blobs *memoryBlobs) Read(_ context.Context, key string) ([]byte, bool, error) {
+	blobs.mutex.Lock()
+	defer blobs.mutex.Unlock()
+
+	data, found := blobs.objects[key]
+
+	return data, found, nil
+}
+
+func (blobs *memoryBlobs) Write(_ context.Context, key string, data []byte) error {
+	blobs.mutex.Lock()
+	defer blobs.mutex.Unlock()
+
+	blobs.objects[key] = bytes.Clone(data)
+
+	return nil
+}
+
+// writeCaptures persists trade captures for the learner's run, so Review has a
+// durable tape to consume.
+func writeCaptures(t *testing.T, learner *Learner, prices []int64) {
+	t.Helper()
+
+	writer := tables.NewWriter(learner.catalog)
+
+	for index, price := range prices {
+		payload, err := json.Marshal(kraken.Trade{Data: []kraken.TradeData{
+			{Symbol: "BTC/USD", Price: *decimal.NewFromInt64(price)},
+		}})
+
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		writer.AddCapture(tables.CaptureRow{
+			Run: string(learner.run), Sequence: int64(index + 1), Stream: "spot",
+			StreamEpoch: 1, StreamSequence: int64(index + 1),
+			ReceivedAt: learner.At.Add(time.Duration(index+1) * time.Second),
+			Kind:       "trade", PayloadHash: "hash", Payload: payload,
+		})
+	}
+
+	if err := writer.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 }

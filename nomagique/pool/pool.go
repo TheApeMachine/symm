@@ -1,4 +1,4 @@
-package runtime
+package pool
 
 import (
 	"errors"
@@ -63,9 +63,9 @@ type Pool[T any] struct {
 	stopped atomic.Bool
 }
 
-// NewPool creates a new elastic Pool for the given task handling function. Call
+// New creates a new elastic Pool for the given task handling function. Call
 // Start before submitting tasks.
-func NewPool[T any](handlerFunc TaskHandlerFunc[T]) *Pool[T] {
+func New[T any](handlerFunc TaskHandlerFunc[T]) *Pool[T] {
 	return &Pool[T]{
 		handlerFunc:        handlerFunc,
 		idleWorkerLifetime: time.Second,
@@ -159,7 +159,7 @@ func (wp *Pool[T]) AddTask(task T) *errnie.ErrnieError {
 		wp.workMu.Unlock()
 		return errnie.Err(
 			errnie.NotFound,
-			"runtime: pool stopped",
+			"pool: stopped",
 			nil,
 		)
 	}
@@ -203,7 +203,7 @@ func (wp *Pool[T]) AddTaskWithBlocking(task T) error {
 	for {
 		select {
 		case <-wp.stopChan:
-			return errors.New("runtime: pool stopped")
+			return errors.New("pool: stopped")
 		case <-time.After(time.Millisecond):
 		}
 

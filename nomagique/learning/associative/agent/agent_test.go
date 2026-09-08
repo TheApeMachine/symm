@@ -12,11 +12,12 @@ import (
 
 // choiceEnvironment exercises the agent protocol independently of any resource accounting.
 type choiceEnvironment struct {
-	actions  []string
-	context  []uint64
-	decision Decision[string]
-	mark     reward.Mark
-	err      error
+	actions     []string
+	context     []uint64
+	decision    Decision[string]
+	mark        reward.Mark
+	err         error
+	unavailable bool
 }
 
 func (environment *choiceEnvironment) Feasible(string) ([]string, []uint64, error) {
@@ -26,8 +27,12 @@ func (environment *choiceEnvironment) Execute(decision *Decision[string]) error 
 	environment.decision = *decision
 	return environment.err
 }
-func (environment *choiceEnvironment) Objective() (reward.Mark, error) {
-	return environment.mark, environment.err
+func (environment *choiceEnvironment) Objective() (*reward.Mark, error) {
+	if environment.unavailable {
+		return nil, environment.err
+	}
+
+	return &environment.mark, environment.err
 }
 
 func newAgentFixture(t testing.TB) (*Agent[string], *choiceEnvironment) {
@@ -94,6 +99,21 @@ func TestAgentMeasure(t *testing.T) {
 		So(member.Measure(), ShouldBeNil)
 		So(member.Model.Recall("task", member.Last.Context, member.Last.Action), ShouldResemble, reading)
 
+		Convey("Unavailable observations do not train or advance the reward clock", func() {
+			before := member.Reward
+			environment.unavailable = true
+			environment.mark = reward.Mark{At: time.Unix(106, 0), Version: 4, Value: -100}
+			So(member.Measure(), ShouldBeNil)
+			So(member.Reward, ShouldResemble, before)
+			So(member.Model.Recall("task", member.Last.Context, member.Last.Action), ShouldResemble, reading)
+			environment.unavailable = false
+			environment.mark = reward.Mark{At: time.Unix(108, 0), Version: 5, Value: 10}
+			So(member.Measure(), ShouldBeNil)
+			So(member.Reward.Reward, ShouldEqual, -4)
+			So(member.Reward.Elapsed, ShouldEqual, 4*time.Second)
+			So(member.Reward.Transitions, ShouldEqual, before.Transitions+1)
+		})
+
 		Convey("Regressed marks do not rewrite the reward or evidence", func() {
 			before := member.Reward
 			environment.mark.Version--
@@ -134,4 +154,19 @@ func TestAgentAbort(t *testing.T) {
 		So(reading.Defined, ShouldBeFalse)
 		So(member.Abort(member.Last.ID), ShouldNotBeNil)
 	})
+}
+
+func BenchmarkAgentMeasure(b *testing.B) {
+	member, environment := newAgentFixture(b)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		environment.mark.Version++
+		environment.mark.At = environment.mark.At.Add(time.Second)
+		environment.unavailable = environment.mark.Version%2 == 0
+
+		if err := member.Measure(); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

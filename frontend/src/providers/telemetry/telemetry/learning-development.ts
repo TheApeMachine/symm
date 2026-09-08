@@ -88,8 +88,13 @@ fromNs():bigint {
   return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
 }
 
+depth():number {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
+}
+
 static startLearningDevelopment(builder:flatbuffers.Builder) {
-  builder.startObject(8);
+  builder.startObject(9);
 }
 
 static addSymbol(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset) {
@@ -160,12 +165,16 @@ static addFromNs(builder:flatbuffers.Builder, fromNs:bigint) {
   builder.addFieldInt64(7, fromNs, BigInt('0'));
 }
 
+static addDepth(builder:flatbuffers.Builder, depth:number) {
+  builder.addFieldInt32(8, depth, 0);
+}
+
 static endLearningDevelopment(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createLearningDevelopment(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset, atNs:bigint, statusOffset:flatbuffers.Offset, decisions:bigint, contextOffset:flatbuffers.Offset, regionsOffset:flatbuffers.Offset, quantitiesOffset:flatbuffers.Offset, fromNs:bigint):flatbuffers.Offset {
+static createLearningDevelopment(builder:flatbuffers.Builder, symbolOffset:flatbuffers.Offset, atNs:bigint, statusOffset:flatbuffers.Offset, decisions:bigint, contextOffset:flatbuffers.Offset, regionsOffset:flatbuffers.Offset, quantitiesOffset:flatbuffers.Offset, fromNs:bigint, depth:number):flatbuffers.Offset {
   LearningDevelopment.startLearningDevelopment(builder);
   LearningDevelopment.addSymbol(builder, symbolOffset);
   LearningDevelopment.addAtNs(builder, atNs);
@@ -175,6 +184,7 @@ static createLearningDevelopment(builder:flatbuffers.Builder, symbolOffset:flatb
   LearningDevelopment.addRegions(builder, regionsOffset);
   LearningDevelopment.addQuantities(builder, quantitiesOffset);
   LearningDevelopment.addFromNs(builder, fromNs);
+  LearningDevelopment.addDepth(builder, depth);
   return LearningDevelopment.endLearningDevelopment(builder);
 }
 
@@ -187,7 +197,8 @@ unpack(): LearningDevelopmentT {
     this.bb!.createScalarList<string>(this.context.bind(this), this.contextLength()),
     this.bb!.createObjList<LearningRegion, LearningRegionT>(this.regions.bind(this), this.regionsLength()),
     this.bb!.createObjList<LearningQuantity, LearningQuantityT>(this.quantities.bind(this), this.quantitiesLength()),
-    this.fromNs()
+    this.fromNs(),
+    this.depth()
   );
 }
 
@@ -201,6 +212,7 @@ unpackTo(_o: LearningDevelopmentT): void {
   _o.regions = this.bb!.createObjList<LearningRegion, LearningRegionT>(this.regions.bind(this), this.regionsLength());
   _o.quantities = this.bb!.createObjList<LearningQuantity, LearningQuantityT>(this.quantities.bind(this), this.quantitiesLength());
   _o.fromNs = this.fromNs();
+  _o.depth = this.depth();
 }
 }
 
@@ -213,7 +225,8 @@ constructor(
   public context: (string)[] = [],
   public regions: (LearningRegionT)[] = [],
   public quantities: (LearningQuantityT)[] = [],
-  public fromNs: bigint = BigInt('0')
+  public fromNs: bigint = BigInt('0'),
+  public depth: number = 0
 ){}
 
 
@@ -232,7 +245,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     context,
     regions,
     quantities,
-    this.fromNs
+    this.fromNs,
+    this.depth
   );
 }
 }

@@ -1,0 +1,508 @@
+package tables
+
+import (
+	"context"
+	"iter"
+	"sort"
+	"strings"
+
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/iceberg-go"
+	icetable "github.com/apache/iceberg-go/table"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
+)
+
+/*
+scan reads one table, optionally restricted to a single run, and yields its
+record batches.
+
+Iceberg guarantees no row order: a scan returns files in plan order and rows in
+file order. Callers that need capture order sort explicitly rather than relying
+on the layout, because a compaction or a re-append would silently change it.
+*/
+func (c *Catalog) scan(
+	ctx context.Context, name string, filters ...iceberg.BooleanExpression,
+) (iter.Seq2[arrow.RecordBatch, error], error) {
+	loaded, err := c.Load(ctx, name)
+
+	if err != nil {
+		return nil, err
+	}
+
+	options := []icetable.ScanOption{}
+
+	for _, filter := range filters {
+		options = append(options, icetable.WithRowFilter(filter))
+	}
+
+	_, batches, err := loaded.Scan(options...).ToArrowRecords(ctx)
+
+	if err != nil {
+		return nil, errnie.Error(errnie.Err(
+			errnie.BadGateway,
+			"[iceberg] failed to scan "+name,
+			err,
+		))
+	}
+
+	return batches, nil
+}
+
+// forRun restricts a scan to one run.
+func forRun(run string) iceberg.BooleanExpression {
+	return iceberg.EqualTo(iceberg.Reference("run"), run)
+}
+
+// str reads an optional string column, returning "" for null.
+func str(column arrow.Array, row int) string {
+	if column.IsNull(row) {
+		return ""
+	}
+
+	return column.(*array.String).Value(row)
+}
+
+// num reads an optional int64 column, returning 0 for null.
+func num(column arrow.Array, row int) int64 {
+	if column.IsNull(row) {
+		return 0
+	}
+
+	return column.(*array.Int64).Value(row)
+}
+
+// when reads an optional timestamp column as a UTC time, zero for null.
+func when(column arrow.Array, row int) (value arrow.Timestamp, ok bool) {
+	if column.IsNull(row) {
+		return 0, false
+	}
+
+	return column.(*array.Timestamp).Value(row), true
+}
+
+// bin reads an optional binary column, returning nil for null.
+func bin(column arrow.Array, row int) []byte {
+	if column.IsNull(row) {
+		return nil
+	}
+
+	return column.(*array.Binary).Value(row)
+}
+
+/*
+Captures yields every raw input of one run in capture sequence order.
+
+The rows are collected before sorting, which bounds memory by the run rather
+than streaming. That matches the readers: replay and observation decoding both
+need the whole run in order, and neither can act on a prefix.
+*/
+func (c *Catalog) Captures(ctx context.Context, run string) ([]CaptureRow, error) {
+	batches, err := c.scan(ctx, Captures, forRun(run))
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []CaptureRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] captures batch", err))
+		}
+
+		for index := range int(batch.NumRows()) {
+			row := CaptureRow{
+				Run:            str(batch.Column(0), index),
+				Sequence:       num(batch.Column(1), index),
+				Stream:         str(batch.Column(2), index),
+				StreamEpoch:    num(batch.Column(3), index),
+				StreamSequence: num(batch.Column(4), index),
+				Endpoint:       str(batch.Column(6), index),
+				Kind:           str(batch.Column(7), index),
+				PayloadHash:    str(batch.Column(8), index),
+				Payload:        bin(batch.Column(9), index),
+			}
+
+			if micros, ok := when(batch.Column(5), index); ok {
+				row.ReceivedAt = micros.ToTime(arrow.Microsecond).UTC()
+			}
+
+			rows = append(rows, row)
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Sequence < rows[j].Sequence })
+
+	return rows, nil
+}
+
+// Runs yields every recorded process capture session, newest first.
+func (c *Catalog) Runs(ctx context.Context) ([]RunRow, error) {
+	batches, err := c.scan(ctx, Runs)
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []RunRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] runs batch", err))
+		}
+
+		for index := range int(batch.NumRows()) {
+			row := RunRow{
+				ID:           str(batch.Column(0), index),
+				CodeCommit:   str(batch.Column(2), index),
+				BuildID:      str(batch.Column(3), index),
+				ConfigDigest: str(batch.Column(4), index),
+				Integrity:    str(batch.Column(5), index),
+			}
+
+			if !batch.Column(6).IsNull(index) {
+				row.Positions = batch.Column(6).(*array.Int32).Value(index)
+			}
+
+			if micros, ok := when(batch.Column(1), index); ok {
+				row.StartedAt = micros.ToTime(arrow.Microsecond).UTC()
+			}
+
+			rows = append(rows, row)
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].StartedAt.After(rows[j].StartedAt) })
+
+	return rows, nil
+}
+
+// ref reads a nested envelope reference column.
+func ref(column arrow.Array, row int) EnvelopeRefRow {
+	if column.IsNull(row) {
+		return EnvelopeRefRow{}
+	}
+
+	fields := column.(*array.Struct)
+
+	return EnvelopeRefRow{
+		Run:      str(fields.Field(0), row),
+		Sequence: num(fields.Field(1), row),
+		Ordinal:  num(fields.Field(2), row),
+	}
+}
+
+// listBounds returns the half-open element range one list row occupies in the
+// list's flattened value array.
+func listBounds(column *array.List, row int) (start, end int) {
+	if column.IsNull(row) {
+		return 0, 0
+	}
+
+	offsets := column.Offsets()
+
+	return int(offsets[row]), int(offsets[row+1])
+}
+
+/*
+Witnesses yields the artifact witnesses of one run.
+
+Passing a non-empty kind selects a single artifact family; "state" reproduces
+what the old states/ key prefix held, which is now a predicate rather than a
+separate table.
+*/
+func (c *Catalog) Witnesses(ctx context.Context, run, kind string) ([]WitnessRow, error) {
+	filters := []iceberg.BooleanExpression{forRun(run)}
+
+	if kind != "" {
+		filters = append(filters, iceberg.EqualTo(iceberg.Reference("artifact_kind"), kind))
+	}
+
+	batches, err := c.scan(ctx, Witnesses, filters...)
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []WitnessRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] witnesses batch", err))
+		}
+
+		parents, _ := batch.Column(9).(*array.List)
+		semantic, _ := batch.Column(10).(*array.List)
+
+		for index := range int(batch.NumRows()) {
+			row := WitnessRow{
+				Run:                   str(batch.Column(0), index),
+				Envelope:              ref(batch.Column(1), index),
+				Boundary:              str(batch.Column(2), index),
+				ArtifactKind:          str(batch.Column(3), index),
+				ArtifactIdentity:      str(batch.Column(4), index),
+				ArtifactKindLabel:     str(batch.Column(5), index),
+				Component:             str(batch.Column(7), index),
+				ComponentStateVersion: num(batch.Column(8), index),
+				Payload:               bin(batch.Column(11), index),
+			}
+
+			if micros, ok := when(batch.Column(6), index); ok {
+				row.ProducedAt = micros.ToTime(arrow.Microsecond).UTC()
+			}
+
+			if parents != nil {
+				start, end := listBounds(parents, index)
+				values := parents.ListValues()
+
+				for element := start; element < end; element++ {
+					row.ImmediateParents = append(row.ImmediateParents, ref(values, element))
+				}
+			}
+
+			if semantic != nil {
+				start, end := listBounds(semantic, index)
+				values := semantic.ListValues()
+
+				for element := start; element < end; element++ {
+					row.SemanticParents = append(row.SemanticParents, str(values, element))
+				}
+			}
+
+			rows = append(rows, row)
+		}
+	}
+
+	return rows, nil
+}
+
+// Manifests yields the envelope manifests of one run.
+func (c *Catalog) Manifests(ctx context.Context, run string) ([]ManifestRow, error) {
+	batches, err := c.scan(ctx, Manifests, forRun(run))
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []ManifestRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] manifests batch", err))
+		}
+
+		for index := range int(batch.NumRows()) {
+			row := ManifestRow{
+				Run:           str(batch.Column(0), index),
+				Envelope:      ref(batch.Column(1), index),
+				Workload:      str(batch.Column(2), index),
+				DomainKind:    str(batch.Column(3), index),
+				Symbol:        str(batch.Column(4), index),
+				VenueSequence: str(batch.Column(6), index),
+			}
+
+			if micros, ok := when(batch.Column(5), index); ok {
+				row.VenueAt = micros.ToTime(arrow.Microsecond).UTC()
+			}
+
+			rows = append(rows, row)
+		}
+	}
+
+	return rows, nil
+}
+
+// Lifecycle yields the position and order transitions of one run, in time order.
+func (c *Catalog) Lifecycle(ctx context.Context, run string) ([]LifecycleRow, error) {
+	batches, err := c.scan(ctx, Lifecycle, forRun(run))
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []LifecycleRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] lifecycle batch", err))
+		}
+
+		for index := range int(batch.NumRows()) {
+			row := LifecycleRow{
+				Run:                 str(batch.Column(0), index),
+				DecisionID:          str(batch.Column(1), index),
+				ActionCorrelationID: str(batch.Column(2), index),
+				Symbol:              str(batch.Column(3), index),
+				Kind:                str(batch.Column(4), index),
+				Action:              str(batch.Column(5), index),
+				CaptureSeq:          num(batch.Column(7), index),
+			}
+
+			if micros, ok := when(batch.Column(6), index); ok {
+				row.At = micros.ToTime(arrow.Microsecond).UTC()
+			}
+
+			rows = append(rows, row)
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].At.Before(rows[j].At) })
+
+	return rows, nil
+}
+
+// Gaps yields the capture-integrity gaps recorded for one run.
+func (c *Catalog) Gaps(ctx context.Context, run string) ([]GapRow, error) {
+	batches, err := c.scan(ctx, Gaps, forRun(run))
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []GapRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] gaps batch", err))
+		}
+
+		for index := range int(batch.NumRows()) {
+			rows = append(rows, GapRow{
+				Run:      str(batch.Column(0), index),
+				Sequence: num(batch.Column(1), index),
+				Encoding: str(batch.Column(2), index),
+			})
+		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Sequence < rows[j].Sequence })
+
+	return rows, nil
+}
+
+/*
+CapturesAfter yields a run's captures whose sequence is strictly greater than
+after, in sequence order.
+
+This is the incremental read: a tail follower keeps the last sequence it
+consumed and asks only for what has landed since, so the predicate prunes at
+the file level rather than pulling the run forward every poll.
+*/
+func (c *Catalog) CapturesAfter(ctx context.Context, run string, after int64) ([]CaptureRow, error) {
+	rows, err := c.Captures(ctx, run)
+
+	if err != nil {
+		return nil, err
+	}
+
+	index := sort.Search(len(rows), func(i int) bool { return rows[i].Sequence > after })
+
+	return rows[index:], nil
+}
+
+/*
+dec reads an optional decimal column back into a Kraken decimal.
+
+The value is reconstructed through its decimal text rather than through
+NewFromBigInt, which treats its argument as a whole number and would rescale
+it: what Arrow hands back is an unscaled integer at DecimalScale, so the point
+has to be placed explicitly.
+*/
+func dec(column arrow.Array, row int) *decimal.Decimal {
+	if column.IsNull(row) {
+		return nil
+	}
+
+	unscaled := column.(*array.Decimal128).Value(row).BigInt()
+	digits := unscaled.String()
+	sign := ""
+
+	if strings.HasPrefix(digits, "-") {
+		sign, digits = "-", digits[1:]
+	}
+
+	for int64(len(digits)) <= DecimalScale {
+		digits = "0" + digits
+	}
+
+	point := int64(len(digits)) - DecimalScale
+	value, err := decimal.NewFromString(sign + digits[:point] + "." + digits[point:])
+
+	if err != nil {
+		errnie.Error(errnie.Err(errnie.Validation, "[iceberg] decode decimal", err))
+
+		return nil
+	}
+
+	return value
+}
+
+// Outcomes yields the graded decisions of one run.
+func (c *Catalog) Outcomes(ctx context.Context, run string) ([]OutcomeRow, error) {
+	batches, err := c.scan(ctx, Outcomes, forRun(run))
+
+	if err != nil {
+		return nil, err
+	}
+
+	rows := []OutcomeRow{}
+
+	for batch, err := range batches {
+		if err != nil {
+			return nil, errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] outcomes batch", err))
+		}
+
+		context, _ := batch.Column(10).(*array.List)
+
+		for index := range int(batch.NumRows()) {
+			row := OutcomeRow{
+				Run:          str(batch.Column(0), index),
+				DecisionID:   num(batch.Column(1), index),
+				Label:        str(batch.Column(3), index),
+				ActionKind:   str(batch.Column(5), index),
+				ActionReduce: batch.Column(7).(*array.Boolean).Value(index),
+				Authority:    batch.Column(8).(*array.Float64).Value(index),
+				Value:        batch.Column(12).(*array.Float64).Value(index),
+				Complete:     batch.Column(13).(*array.Boolean).Value(index),
+				Forced:       batch.Column(14).(*array.Boolean).Value(index),
+				Initial:      dec(batch.Column(15), index),
+				Reference:    dec(batch.Column(16), index),
+				Quantity:     dec(batch.Column(17), index),
+				Cost:         dec(batch.Column(18), index),
+				Fee:          dec(batch.Column(19), index),
+				Opportunity:  dec(batch.Column(20), index),
+			}
+
+			row.Trader = batch.Column(2).(*array.Int32).Value(index)
+			row.ActionPower = batch.Column(6).(*array.Int32).Value(index)
+
+			if !batch.Column(9).IsNull(index) {
+				outcome := batch.Column(9).(*array.Float64).Value(index)
+				row.Outcome = &outcome
+			}
+
+			if micros, ok := when(batch.Column(4), index); ok {
+				row.At = micros.ToTime(arrow.Microsecond).UTC()
+			}
+
+			if micros, ok := when(batch.Column(11), index); ok {
+				row.Through = micros.ToTime(arrow.Microsecond).UTC()
+			}
+
+			if context != nil {
+				start, end := listBounds(context, index)
+				values := context.ListValues()
+
+				for element := start; element < end; element++ {
+					row.Context = append(row.Context, num(values, element))
+				}
+			}
+
+			rows = append(rows, row)
+		}
+	}
+
+	return rows, nil
+}

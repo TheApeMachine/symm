@@ -4,7 +4,14 @@ import { basis } from "./format";
 import type { LearningView } from "./state";
 
 export const CapitalPanel = ({ view }: { view: LearningView | null }) => {
-	const member = view?.agents[0];
+	/*
+		The optional chain has to reach the index, not just the view. A state
+		that arrived without agents is a state this panel has nothing to say
+		about, and indexing it took the whole surface down rather than
+		reporting the absence.
+	*/
+	const member = view?.agents?.[0];
+	const positions = member?.positions ?? [];
 	return (
 		<Section fit="content">
 			<Section.Header
@@ -25,7 +32,7 @@ export const CapitalPanel = ({ view }: { view: LearningView | null }) => {
 					Positive explorer experience is consolidated into this model. Its own
 					completed decisions measure its performance.
 				</Typography.Mono>
-				{member?.positions.map((position) => (
+				{positions.map((position) => (
 					<Typography.Mono key={String(position.holding?.symbol)}>
 						{String(position.holding?.symbol)} · {position.status} · quantity{" "}
 						{String(position.holding?.qty)} · mark{" "}
@@ -33,8 +40,13 @@ export const CapitalPanel = ({ view }: { view: LearningView | null }) => {
 						{String(position.holding?.pnl ?? "unmeasured")}
 					</Typography.Mono>
 				))}
-				{member?.positions.length === 0 && (
+				{member && positions.length === 0 && (
 					<Typography.Mono>No positions.</Typography.Mono>
+				)}
+				{!member && (
+					<Typography.Mono>
+						No agent has reported yet, so there is no account to show.
+					</Typography.Mono>
 				)}
 			</Section.Body>
 		</Section>

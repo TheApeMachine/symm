@@ -6,24 +6,57 @@ import (
 	"strings"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/store"
-	"gocloud.dev/blob"
 )
 
-// ReadObservations decodes market facts from the original captured frames in
-// capture order. It never reads the agent's decisions or reconstructed state.
-func ReadObservations(ctx context.Context, bucket *blob.Bucket, run RunID) ([]Observation, error) {
+/*
+ReadObservations decodes market facts from the original captured frames in
+capture order. It never reads the agent's decisions or reconstructed state.
+
+Capture order comes from the sequence column, not from storage layout: Iceberg
+guarantees no row order, so the reader sorts rather than trusting the order
+files happen to arrive in.
+*/
+func ReadObservations(ctx context.Context, catalog *tables.Catalog, run RunID) ([]Observation, error) {
+	rows, err := catalog.Captures(ctx, string(run))
+
+	if err != nil {
+		return nil, err
+	}
+
 	observations := []Observation{}
-	err := store.Scan(ctx, bucket, run.Prefix("captures"), func(frame RawFrame) (bool, error) {
-		decoded, err := frame.Observations()
+
+	for _, row := range rows {
+		decoded, err := FrameFromRow(row).Observations()
+
 		if err != nil {
-			return false, err
+			return nil, err
 		}
+
 		observations = append(observations, decoded...)
-		return true, nil
-	})
-	return observations, err
+	}
+
+	return observations, nil
+}
+
+// FrameFromRow rebuilds a RawFrame from its stored row, so the decoders below
+// keep working against the record shape they were written for.
+func FrameFromRow(row tables.CaptureRow) RawFrame {
+	return RawFrame{
+		Identity: CaptureIdentity{
+			Run:            RunID(row.Run),
+			Sequence:       CaptureSequence(row.Sequence),
+			Stream:         Stream(row.Stream),
+			StreamEpoch:    StreamEpoch(row.StreamEpoch),
+			StreamSequence: uint64(row.StreamSequence),
+		},
+		ReceivedAt:  row.ReceivedAt,
+		Endpoint:    row.Endpoint,
+		Kind:        row.Kind,
+		PayloadHash: row.PayloadHash,
+		Payload:     row.Payload,
+	}
 }
 
 // Observations uses the protocol's existing data types; the stored RawFrame is

@@ -1,8 +1,9 @@
+import { LearningDecisionT } from "#/providers/telemetry/telemetry/learning-decision";
 import { describe, expect, it } from "vitest";
 import { Builder } from "flatbuffers";
 import { learningStore, receiveLearning } from "#/collections/learning";
 import { learningFixture } from "./fixture";
-import { projectLearning } from "./state";
+import { projectLearning, updateLearningEvents } from "./state";
 
 describe("projectLearning", () => {
 	it("decodes real FlatBuffers into the same signed reading for the dashboard and toolbar", () => {
@@ -23,5 +24,53 @@ describe("projectLearning", () => {
 		source.agents[0].reading = null;
 		const view = projectLearning(source, "");
 		expect(view.skill.defined).toBe(false);
+	});
+});
+
+describe("updateLearningEvents", () => {
+	it("retains distinct lanes, steps and event kinds while ignoring repeated snapshots", () => {
+		const source = learningFixture();
+		const decision = new LearningDecisionT();
+		decision.id = source.steps;
+		decision.symbol = "BTC/USD";
+		decision.throughNs = source.atNs;
+		source.agents = [0, 1, 2, 3, 4].map((id) =>
+			Object.assign(learningFixture().agents[0], {
+				id,
+				last: decision,
+				outcome: decision,
+			}),
+		);
+		const first = updateLearningEvents([], source, "BTC/USD");
+		expect(first).toHaveLength(10);
+		const repeated = updateLearningEvents(first, source, "BTC/USD");
+		expect(repeated).toEqual(first);
+		expect(first).toHaveLength(10);
+
+		source.steps += 1n;
+		const advanced = updateLearningEvents(repeated, source, "BTC/USD");
+		expect(advanced).toHaveLength(15);
+		expect(advanced.filter((event) => event.kind === "resolved")).toHaveLength(
+			5,
+		);
+		expect(updateLearningEvents(advanced, source, "BTC/USD")).toEqual(advanced);
+	});
+
+	it("filters valuations by symbol and retains the display budget across updates", () => {
+		const source = learningFixture();
+		source.agents[0].last = new LearningDecisionT();
+		source.agents[0].last.symbol = "BTC/USD";
+		expect(updateLearningEvents([], source, "ETH/USD")).toEqual([]);
+		let events = updateLearningEvents([], source, "BTC/USD");
+
+		for (let step = 0; step < 210; step += 1) {
+			source.steps += 1n;
+			events = updateLearningEvents(events, source, "BTC/USD");
+		}
+
+		expect(events).toHaveLength(200);
+		expect(events[0].id).toBe(111);
+		expect(events.at(-1)?.id).toBe(310);
+		expect(updateLearningEvents(events, source, "BTC/USD")).toEqual(events);
 	});
 });

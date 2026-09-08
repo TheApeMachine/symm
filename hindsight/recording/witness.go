@@ -1,13 +1,13 @@
 package recording
 
 import (
+	"strconv"
+	"time"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/types"
-	"net/url"
-	"strconv"
-	"strings"
-	"time"
 )
 
 func (node *Session) Step(envelope *types.Envelope) *types.Envelope {
@@ -139,18 +139,37 @@ func (node *Session) recordDecision(ref hindsight.EnvelopeRef, decision *types.D
 	})
 }
 
+/*
+record persists one artifact witness.
+
+Witnesses and resident state were previously split across two key prefixes,
+because a prefix was the only cheap way to tell them apart on read. Both now
+land in the same table with artifact_kind as a column, so the split is a
+predicate at read time rather than a routing decision here.
+*/
 func (node *Session) record(witness hindsight.ArtifactWitness) {
 	node.mutex.Lock()
 	defer node.mutex.Unlock()
-	family := "witnesses"
-	if witness.Artifact.Kind == "state" {
-		family = "states"
+
+	row := tables.WitnessRow{
+		Run:                   string(witness.Envelope.Origin.Run),
+		Envelope:              envelopeRow(witness.Envelope),
+		Boundary:              witness.Boundary,
+		ArtifactKind:          witness.Artifact.Kind,
+		ArtifactIdentity:      witness.Artifact.Identity,
+		ArtifactKindLabel:     witness.ArtifactKind,
+		ProducedAt:            witness.ProducedAt,
+		Component:             witness.Component,
+		ComponentStateVersion: int64(witness.ComponentStateVersion),
+		SemanticParents:       witness.SemanticParents,
+		Payload:               witness.Payload,
 	}
-	key := witness.Envelope.Key(family)
-	if family == "witnesses" {
-		key = strings.TrimSuffix(key, ".json") + "/" + url.PathEscape(witness.Artifact.Identity) + ".json"
+
+	for _, parent := range witness.ImmediateParents {
+		row.ImmediateParents = append(row.ImmediateParents, envelopeRow(parent))
 	}
-	if err := node.enqueue(key, witness); err != nil {
+
+	if err := node.enqueue(tables.Witnesses, row); err != nil {
 		errnie.Error(err)
 	}
 }

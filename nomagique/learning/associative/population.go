@@ -6,6 +6,8 @@ import (
 	"encoding/gob"
 	"sync"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
@@ -21,8 +23,9 @@ type Checkpoint interface {
 /*
 Population shares one grid across independent agents. Agent zero runs and learns
 with the consolidated model; remaining agents explore in their own environments.
-Steps serialize state transitions, not domain I/O. The environment decides which
-resources and concurrent operations each agent may own. No domain limits live here.
+Steps serialize observations, resolution and checkpoints. Within each step,
+independent agents measure concurrently, then activate concurrently after every
+measurement succeeds. Environments own synchronization for any shared resources. No domain limits live here.
 */
 type Population[Action comparable] struct {
 	Grid       *grid.Space
@@ -71,10 +74,14 @@ func (population *Population[Action]) Step(observation agent.Observation) error 
 		return errnie.Error(err)
 	}
 
+	var measurements errgroup.Group
+
 	for _, member := range population.Agents {
-		if err := member.Measure(); err != nil {
-			return err
-		}
+		measurements.Go(member.Measure)
+	}
+
+	if err := measurements.Wait(); err != nil {
+		return errnie.Error(err)
 	}
 
 	if population.Grid.Version == version {
@@ -100,13 +107,16 @@ func (population *Population[Action]) Step(observation agent.Observation) error 
 		authority += region.Strength * region.Authority
 	}
 
+	var activations errgroup.Group
+
 	for _, member := range population.Agents {
-		if err := member.Activate(label, observation.At, context, authority/strength); err != nil {
-			return err
-		}
+		activations.Go(func() error {
+			return member.Activate(label, observation.At, context, authority/strength)
+		})
 	}
 
-	return nil
+	// Join every issued action even on failure: acceptance may be uncertain.
+	return errnie.Error(activations.Wait())
 }
 
 /*
@@ -138,6 +148,24 @@ func (population *Population[Action]) Resolve(member int, identity uint64, value
 }
 
 /*
+Abort releases an issued decision without training it. The domain uses this when
+an outcome arrived for an action that carried no alternative: the environment
+offered exactly one operation, so the result measures what happened rather than
+what the choice was worth, and counting it would bury genuine evidence under
+samples no decision produced.
+*/
+func (population *Population[Action]) Abort(member int, identity uint64) error {
+	population.mutex.Lock()
+	defer population.mutex.Unlock()
+
+	if member < 0 || member >= len(population.Agents) {
+		return errnie.Error(errnie.Err(errnie.Validation, "population: unknown agent", nil))
+	}
+
+	return errnie.Error(population.Agents[member].Abort(identity))
+}
+
+/*
 Save encodes the grid's identity dictionary and the actual consolidated model.
 Other agents, mutable environments and inflight decisions are not checkpoints.
 Encoding owns the state lock; durable I/O runs after releasing it.
@@ -148,14 +176,14 @@ func (population *Population[Action]) Save(ctx context.Context, checkpoint Check
 
 	var data bytes.Buffer
 	encoder := gob.NewEncoder(&data)
-	
+
 	population.mutex.Lock()
 	err := encoder.Encode(population.Grid.Columns)
 
 	if err == nil {
 		err = encoder.Encode(population.Agents[0].Model)
 	}
-	
+
 	population.mutex.Unlock()
 
 	if err != nil {

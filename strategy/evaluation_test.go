@@ -25,7 +25,7 @@ func TestEvaluationResolve(t *testing.T) {
 			{"holding captures a rise", "hold", "110", false, .05},
 			{"holding suffers a decline", "hold", "90", false, -.05},
 			{"waiting misses a rise", "wait", "110", false, -.05},
-			{"waiting avoids a decline", "wait", "90", false, 0},
+			{"waiting avoids a decline", "wait", "90", false, .05},
 			{"increasing captures a rise", "scale", "110", false, .045},
 			{"reducing avoids a decline", "scale", "90", true, .045},
 		} {

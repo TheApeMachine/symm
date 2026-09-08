@@ -1,174 +1,4 @@
-ion order is unambiguous.
-*/
-func (tl *TemporalLedger) Issue(
-	step int64,
-	reference float64,
-	features []float64,
-	predictions []float64,
-	horizon int,
-) {
-	if !finite(reference) || len(features) == 0 {
-		return
-	}
-
-	tl.seq++
-	if horizon < 1 {
-		horizon = 1
-	}
-	if horizon > tl.maxHorizon {
-		horizon = tl.maxHorizon
-	}
-
-	featCopy := append([]float64(nil), features...)
-	predCopy := append([]float64(nil), predictions...)
-	tl.pending[tl.seq] = &PendingReference{
-		Seq:         tl.seq,
-		Reference:   reference,
-		Features:    featCopy,
-		Predictions: predCopy,
-		Horizon:     horizon,
-	}
-	tl.references[tl.seq] = reference
-	tl.prune()
-}
-
-/*
-Resolve observes the current reference and supervises every pending prediction
-against each horizon whose subsequent reference has arrived, in issue order.
-A row issued at sequence s trains horizon h once the reference at s+h exists,
-so one sample per horizon is generated per step regardless of how the external
-step numbers jump or repeat. The outcome reports the row's own chosen horizon
-once its delayed target arrives.
-*/
-func (tl *TemporalLedger) Resolve(
-	manifold *ResonanceManifold,
-	currentStep int64,
-	currentReference float64,
-) (*ResolutionOutcome, error) {
-	if manifold == nil || !finite(currentReference) || tl.seq == 0 || tl.maxHorizon < 1 {
-		return nil, nil
-	}
-
-	var outcome *ResolutionOutcome
-
-	for key := tl.oldest; key <= tl.seq; key++ {
-		item, found := tl.pending[key]
-		if !found {
-			continue
-		}
-
-		// References are stored for every issued sequence; the row can be
-		// supervised up to the horizon whose reference has already arrived.
-		available := tl.seq - item.Seq
-
-		if available > int64(tl.maxHorizon) {
-			available = int64(tl.maxHorizon)
-		}
-
-		if available <= int64(item.Resolved) {
-			break
-		}
-
-		for horizon := item.Resolved + 1; horizon <= int(available); horizon++ {
-			current, found := tl.references[item.Seq+int64(horizon)]
-
-			if !found {
-				break
-			}
-
-			target, valid := tl.transform(current, item.Reference)
-
-			if !valid {
-				continue
-			}
-
-			prediction := 0.0
-
-			if horizon-1 < len(item.Predictions) {
-				prediction = item.Predictions[horizon-1]
-			}
-
-			if err := manifold.ObserveTask(
-				horizon,
-				item.Features,
-				prediction,
-				target,
-			); err != nil {
-				return nil, fmt.Errorf("ledger: resolve failed for horizon %d: %w", horizon, err)
-			}
-
-			item.Resolved = horizon
-
-			if horizon == item.Horizon {
-				outcome = &ResolutionOutcome{
-					Horizon:    item.Horizon,
-					Prediction: prediction,
-					Target:     target,
-					Error:      target - prediction,
-					Step:       currentStep,
-				}
-				tl.last = outcome
-			}
-		}
-
-		if item.Resolved >= tl.maxHorizon {
-			delete(tl.pending, key)
-			delete(tl.references, key)
-			tl.resolvedCount++
-		}
-	}
-
-	tl.oldest = tl.seq - int64(tl.maxHorizon) + 1
-	if tl.oldest < 1 {
-		tl.oldest = 1
-	}
-
-	return outcome, nil
-}
-
-func (tl *TemporalLedger) prune() {
-	if tl.seq-tl.oldest <= int64(tl.maxHorizon) {
-		return
-	}
-
-	purgeBelow := tl.seq - int64(tl.maxHorizon)
-
-	for key := tl.oldest; key < purgeBelow; key++ {
-		delete(tl.pending, key)
-		delete(tl.references, key)
-	}
-
-	tl.oldest = purgeBelow
-}
-
-func (tl *TemporalLedger) ResolvedCount() int {
-	return tl.resolvedCount
-}
-
-func (tl *TemporalLedger) LastResolution() *ResolutionOutcome {
-	return tl.last
-}
-
----
-
----
-File: /nomagique/learning/weight.go
----
-
-package learning
-
-import (
-	"github.com/theapemachine/symm/nomagique/calculus"
-	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/logic"
-	"github.com/theapemachine/symm/nomagique/store"
-	"github.com/theapemachine/symm/nomagique/transport"
-)
-
-// NewTrustWeight composes the source's residual-range trust update. No clipping
-// is added to the trust recurrence; rate greater than one retains the original
-// extrapolating behavior. Invalid inputs fail before entering retained state.
+ior. Invalid inputs fail before entering retained state.
 func NewTrustWeight() core.Primitive {
 	memory := store.NewRetained(
 		core.From(
@@ -20703,8 +20533,8 @@ stamp folds one event onto the symbol's causal timeline.
 
 It returns the event time to use and whether the timeline advanced. A false
 `advanced` means the caller holds a genuinely late event: its facts are still
-real and should still be accounted, but no interval origin, window, or
-derivative may treat it as the newest observation.
+real and should still be accounted, but must not advance the latest event time
+or event-time derivatives. Cumulative accounting may extend its earliest boundary.
 
 A zero timestamp is never stamped: it would read as a regression after any real
 observation, poisoning the first valid event.
@@ -21103,7 +20933,6 @@ type tradeState struct {
 	liqSellTotal     float64
 	grossTradeTotal  float64
 	startTime        time.Time
-	hasStartTime     bool
 	tradeCount       float64
 	prevLiqShare     float64
 	hasPrevLiqShare  bool
@@ -21133,6 +20962,9 @@ func (trade *Trade) Close() error {
 }
 
 func (trade *Trade) Step(point kraken.FuturesTradeData) *data.Measurement[float64] {
+	trade.mu.Lock()
+	defer trade.mu.Unlock()
+
 	stamped, advanced := trade.clock.stamp(
 		point.Symbol, point.Timestamp, point.SyntheticTimestamp,
 	)
@@ -21142,48 +20974,42 @@ func (trade *Trade) Step(point kraken.FuturesTradeData) *data.Measurement[float6
 	qty := point.Qty
 	notional := price * qty
 
-	trade.mu.Lock()
-	defer trade.mu.Unlock()
-
 	state, found := trade.states[point.Symbol]
 
 	if !found {
-		state = &tradeState{}
+		state = &tradeState{startTime: stamped}
 		trade.states[point.Symbol] = state
 	}
 
 	state.grossTradeTotal += notional
 
 	if point.Type == "liquidation" {
-		if point.Side == "buy" {
+		switch point.Side {
+		case "buy":
 			state.liqBuyTotal += notional
-		} else if point.Side == "sell" {
+		case "sell":
 			state.liqSellTotal += notional
 		}
 	}
 
+	// Totals include every received trade, including historical reconnect data.
+	// Their interval is the earliest through latest accounted event time.
+	if stamped.Before(state.startTime) {
+		state.startTime = stamped
+	}
+
 	if advanced {
 		state.tradeCount++
-
-		if !state.hasStartTime {
-			state.startTime = stamped
-			state.hasStartTime = true
-		}
-
 		state.lastAdvancedTime = stamped
 	}
 
 	grossLiq := state.liqBuyTotal + state.liqSellTotal
 	netLiq := state.liqBuyTotal - state.liqSellTotal
 
-	from := point.Timestamp
-
-	if state.hasStartTime {
-		from = state.startTime
-	}
-
 	id := fmt.Sprintf("derivatives:%s:%d", point.Symbol, point.Timestamp.UnixNano())
-	measurement := data.NewMeasurement[float64](id, point.Symbol, "derivatives", point.Timestamp, from)
+	measurement := data.NewMeasurement[float64](
+		id, point.Symbol, "derivatives", state.lastAdvancedTime, state.startTime,
+	)
 	measurement.Metadata = make(map[string]float64)
 
 	putDerivMetric(measurement, "liquidation_notional:buy", state.liqBuyTotal, data.UnitRate)
@@ -21204,12 +21030,9 @@ func (trade *Trade) Step(point kraken.FuturesTradeData) *data.Measurement[float6
 		putDerivMetric(measurement, "liquidation_share", currentShare, data.UnitDimensionless)
 	}
 
-	// A rate divides by an interval this event may not have advanced. A late
-	// trade accumulates its notional but cannot state a rate: re-stamping it
-	// forward would shorten the interval and inflate the rate, and publishing
-	// the established interval would republish the previous frame's number
-	// under this event's identity. The slot is absent instead.
-	if state.hasStartTime && advanced {
+	// Late trades revise totals and the earliest boundary, but do not emit a
+	// rate or share change until the live event-time clock advances again.
+	if advanced {
 		duration := state.lastAdvancedTime.Sub(state.startTime).Seconds()
 
 		if duration > 0 {
@@ -21230,9 +21053,9 @@ func (trade *Trade) Step(point kraken.FuturesTradeData) *data.Measurement[float6
 	return measurement
 }
 
-func putDerivMetric(m *data.Measurement[float64], name string, val float64, unit data.Unit) {
-	m.PutMetric(data.NewMetric(
-		name, val, nil, nil, unit, data.TimescaleInstantaneous,
+func putDerivMetric(measurement *data.Measurement[float64], name string, value float64, unit data.Unit) {
+	measurement.PutMetric(data.NewMetric(
+		name, value, nil, nil, unit, data.TimescaleInstantaneous,
 	))
 }
 
@@ -24759,6 +24582,18 @@ import (
 )
 
 /*
+MaxTemporalContextDepth bounds how many distinct grid states one decision is
+conditioned on. A market develops through stages — a precursor state, an
+ignition, an exhaustion — and the agent needs enough of that progression to
+recognize which stage it is in. It does not need all of it: an unbounded window
+produces a token sequence that occurs exactly once, so the model trie interns a
+branch no later observation can ever match and no record reaches a second
+sample. Six retained transitions keep A to B to C addressable while leaving the
+sequence short enough to recur.
+*/
+const MaxTemporalContextDepth = 6
+
+/*
 Context retains changes of grid condition within the input producers' actual
 observation horizon. Repeated identical conditions do not add model depth.
 */
@@ -24796,6 +24631,13 @@ func (development *Development) Context(
 	}
 
 	development.History = slices.Delete(development.History, 0, first)
+
+	// The producer's horizon is the outer bound; the retained depth is the
+	// inner one. Advance already collapses repeated identical states, so a
+	// stagnant market spends no depth and cannot push a precursor out of view.
+	if excess := len(development.History) - MaxTemporalContextDepth; excess > 0 {
+		development.History = slices.Delete(development.History, 0, excess)
+	}
 	var tokens []uint64
 
 	for _, context := range development.History {
@@ -24834,6 +24676,12 @@ func (development *Development) Advance(at time.Time, space *grid.Space) error {
 	}
 
 	development.History = append(development.History, Context{At: at, Conditions: conditions})
+
+	// Retention is bounded here as well so the history cannot grow past the
+	// model's addressable depth regardless of how the owner interleaves calls.
+	if excess := len(development.History) - MaxTemporalContextDepth; excess > 0 {
+		development.History = slices.Delete(development.History, 0, excess)
+	}
 	return nil
 }
 
@@ -24870,6 +24718,8 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 		Resolved:  learner.Resolved,
 		Status:    "learning",
 		Restored:  learner.Restored,
+		Episodes:  learner.Episodes,
+		Forced:    learner.Forced,
 	}
 
 	if learner.Err != nil {
@@ -24898,6 +24748,9 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 			FromNs:    development.From.UnixNano(),
 			Status:    "learning",
 			Decisions: development.Decisions,
+			// Retained state transitions, not tokens: Context below flattens
+			// each transition's conditions into one list.
+			Depth: int32(len(development.History)),
 		}
 
 		if focus != "" && focus != symbol {
@@ -24965,6 +24818,9 @@ func (trader *Trader) Wire(member *agent.Agent[Action], focus string) *wire.Lear
 		Status:     trader.Status,
 		Reward:     member.Reward.TotalReward,
 		ElapsedNs:  int64(member.Reward.TotalElapsed),
+		Episode:    trader.Episode,
+		Carried:    trader.Carried,
+		Open:       int32(trader.open()),
 	}
 
 	state.Reading = &wire.LearningPriorT{
@@ -25072,19 +24928,26 @@ type Evaluation struct {
 	Through                                              time.Time
 	Value                                                float64
 	Complete                                             bool
+	// Forced marks a decision that had no alternative. Its outcome describes
+	// what the market did, not what the action was worth, so it is released
+	// rather than trained.
+	Forced bool
 }
 
 /*
-	Resolve measures buys against their actual cost, sales against the retained
+	Resolve grades the decision against the excursion the tape actually
 
-inventory alternative, holds against their issue price, and waits against the
-positive opportunity they left unused. A flat or falling tape does not penalize
-waiting. All values use fractions of original account funding.
+developed. Every action family reports the same unit: a fraction of original
+account funding. Waiting and holding are symmetric readings of one leg return —
+holding through a decline costs what waiting through it saved — so a falling
+tape neither excuses waiting nor forgives holding. Entries and exits are graded
+on the costs recorded at fill time, not on a hypothetical round trip.
 */
 func (evaluation *Evaluation) Resolve(leg hindsight.Leg) bool {
 	if evaluation.Complete || leg.Symbol != evaluation.Label || !leg.Through.After(evaluation.At) {
 		return false
 	}
+	end := leg.End.SetScale(decimal.DefaultScale)
 	value := decimal.NewFromInt64(0)
 
 	switch evaluation.Action.Kind {
@@ -25096,24 +24959,33 @@ func (evaluation *Evaluation) Resolve(leg hindsight.Leg) bool {
 		if evaluation.Reference == nil {
 			return false
 		}
-		gain := leg.End.SetScale(decimal.DefaultScale).Sub(evaluation.Reference)
 
-		if gain.Sign() > 0 {
-			value = gain.Mul(evaluation.Opportunity).Mul(decimal.NewFromInt64(-1))
-		}
+		// legReturn scaled by the notional the agent declined to commit. A
+		// falling leg pays the drawdown avoided; a rising one charges the move
+		// missed. Reference cancels between the return and the notional, so the
+		// account fraction is one division of the excursion by initial funding.
+		value = end.Sub(evaluation.Reference).Mul(evaluation.Opportunity).Mul(decimal.NewFromInt64(-1))
 	case "hold":
 		if evaluation.Reference == nil {
 			return false
 		}
-		value = leg.End.SetScale(decimal.DefaultScale).Sub(evaluation.Reference).Mul(evaluation.Quantity)
+
+		// The retained position captures the leg return over its own notional.
+		value = end.Sub(evaluation.Reference).Mul(evaluation.Quantity)
 	default:
 		if evaluation.Cost == nil {
 			return false
 		}
-		value = leg.End.SetScale(decimal.DefaultScale).Mul(evaluation.Quantity).Sub(evaluation.Cost).Sub(evaluation.Fee)
+
+		// Entries and increases realize the developed leg against their actual
+		// recorded execution cost and fee.
+		value = end.Mul(evaluation.Quantity).Sub(evaluation.Cost).Sub(evaluation.Fee)
 
 		if evaluation.Action.Reduce {
-			value = evaluation.Cost.Sub(evaluation.Fee).Sub(leg.End.SetScale(decimal.DefaultScale).Mul(evaluation.Quantity))
+			// Exits and reductions are graded against the alternative they gave
+			// up: the proceeds booked, net of fee, less what the same inventory
+			// would have been worth at the end of the leg.
+			value = evaluation.Cost.Sub(evaluation.Fee).Sub(end.Mul(evaluation.Quantity))
 		}
 	}
 	evaluation.Value = value.SetScale(decimal.DefaultScale).Div(evaluation.Initial).Float64()
@@ -25209,6 +25081,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
@@ -25234,10 +25107,13 @@ type Learner struct {
 	Tape                       hindsight.Tape
 	At                         time.Time
 	Steps, Decisions, Resolved uint64
+	Forced                     uint64
 	Err                        error
 	Restored                   bool
 	mutex                      sync.Mutex
 	Checkpoint                 Checkpoint
+	Episodes                   uint64
+	funding                    *decimal.Decimal
 	run                        hindsight.RunID
 	price                      *broker.Price
 	recorder                   *recording.Session
@@ -25247,7 +25123,7 @@ func NewLearner(ctx context.Context, api *websocket.API, price *broker.Price, ba
 	if count < 1 {
 		return nil, errnie.Error(errnie.Err(errnie.Validation, "learning: population must contain an agent", nil))
 	}
-	learner := &Learner{Developments: make(map[string]*Development), Checkpoint: Checkpoint{Bucket: archive}, run: run, price: price, recorder: recorder}
+	learner := &Learner{Developments: make(map[string]*Development), Checkpoint: Checkpoint{Bucket: archive}, run: run, price: price, recorder: recorder, funding: balance.Cash()}
 	environments := make([]agent.Environment[Action], 0, count)
 
 	for range count {
@@ -25320,8 +25196,17 @@ func (learner *Learner) observe(symbol string, readings []*data.Measurement[floa
 	history := development.Context(learner.At, readings)
 	previousDecisions := learner.Decisions
 
-	for _, trader := range learner.Traders {
+	for index, trader := range learner.Traders {
 		trader.At, trader.Version = learner.At, trader.Version+1
+
+		// Explorers spend their capital discovering behaviour, so an exhausted
+		// wallet is an expected outcome rather than a failure. Renewing it here
+		// keeps the swarm generating experience. Agent zero is never renewed:
+		// its wallet is the honest record of the consolidated policy, and
+		// refunding it would erase the result being measured.
+		if index > 0 && trader.CheckAndReset(learner.funding) {
+			learner.Episodes++
+		}
 	}
 
 	if err := learner.Population.Step(agent.Observation{At: learner.At, Measurements: readings, History: history}); err != nil {
@@ -25365,6 +25250,18 @@ func (learner *Learner) resolve(leg hindsight.Leg) ([]*Evaluation, error) {
 	for index, trader := range learner.Traders {
 		for identity, evaluation := range trader.Evaluations[leg.Symbol] {
 			if !evaluation.Resolve(leg) {
+				continue
+			}
+
+			// A decision with no alternative is released, not graded. Training
+			// it would answer "what is waiting worth" with the return of a
+			// market the wallet had no means to act on.
+			if evaluation.Forced {
+				if err := learner.Population.Abort(index, identity); err != nil {
+					return nil, err
+				}
+				learner.Forced++
+				delete(trader.Evaluations[leg.Symbol], identity)
 				continue
 			}
 
@@ -25432,6 +25329,8 @@ import (
 	"fmt"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
@@ -25455,6 +25354,39 @@ type Action struct {
 }
 
 /*
+These bound an explorer's capacity, not its opinion. Each one removes an option
+the wallet physically cannot sustain; none of them scores a symbol, forecasts a
+price, or vetoes an entry the account could actually fund.
+*/
+const (
+	// MinimumOrderValue is the venue's smallest accepted order in quote
+	// currency. A wallet below it cannot act at all — no size it could name
+	// would be admitted — so its agent sits issuing waits and stops
+	// contributing experience. It bounds renewal, never entry.
+	MinimumOrderValue = 5.0
+
+	// MaxConcurrentPositions caps how many symbols one wallet may be long at
+	// once. Without it an explorer sprays its whole balance across every symbol
+	// that ever looked interesting, ends at zero cash holding a dozen unrelated
+	// tokens, and can no longer take any action but waiting — it stops
+	// exploring precisely when its evidence is worst. The cap is what forces
+	// capital to be recycled rather than merely allocated.
+	MaxConcurrentPositions = 4
+
+	// StalePositionHorizon is how long a position may sit before holding it
+	// stops being one of the feasible things to do. An entry is a bet that a
+	// move is developing; if the move has not developed by now the bet has been
+	// answered, and the capital belongs back in the wallet. This withdraws the
+	// hold option — it never submits an order on the agent's behalf.
+	StalePositionHorizon = 12 * time.Minute
+
+	// MaximumHoldingTime is the renewal backstop, not a trading rule. Past the
+	// stale horizon the agent is already being made to choose an exit, so
+	// inventory only survives this long when no exit was ever executable.
+	MaximumHoldingTime = time.Hour
+)
+
+/*
 	Trader adapts an independent account and its normal position regulators to
 
 associative learning. It is owned by Learner's serialized state transitions.
@@ -25464,16 +25396,18 @@ type Trader struct {
 	Positions                                     map[string]*position.Regulator
 	Execution                                     Execution
 	Initial, Equity, Profit, Realized, Unrealized *decimal.Decimal
-	Wealth                                        float64
+	Wealth, Carried                               float64
 	At                                            time.Time
 	Version, Fills                                uint64
 	Status                                        string
 	Alternatives                                  []Action
 	Quantities                                    map[Action]*decimal.Decimal
 	Evaluations                                   map[string]map[uint64]*Evaluation
+	Opened                                        map[string]time.Time
 	LastEvaluation                                *Evaluation
 	Recorder                                      *recording.Session
 	ID                                            int
+	Episode                                       uint64
 	Fees                                          *decimal.Decimal
 	api                                           *websocket.API
 }
@@ -25504,6 +25438,7 @@ func NewTrader(
 		Fees:        decimal.NewFromInt64(0),
 		Profit:      decimal.NewFromInt64(0),
 		Positions:   make(map[string]*position.Regulator),
+		Opened:      make(map[string]time.Time),
 		Evaluations: make(map[string]map[uint64]*Evaluation),
 	}, nil
 }
@@ -25512,6 +25447,13 @@ func NewTrader(
 	Feasible filters only available resources, venue minima and executable depth.
 
 Book absence permits waiting; it is reported rather than invented as a price.
+
+Two capacity limits join the wallet's own: a new symbol is only enterable while
+the wallet is under MaxConcurrentPositions, and a position past
+StalePositionHorizon loses its hold and scale-up options so the agent must
+choose among the moves that return capital. Neither invents a price, predicts
+one, or submits an order — they narrow what is possible, and the agent still
+decides. Nothing here consults spread or a round-trip crossing cost.
 */
 func (trader *Trader) Feasible(symbol string) ([]Action, []uint64, error) {
 	idle := Action{Kind: "wait"}
@@ -25520,9 +25462,10 @@ func (trader *Trader) Feasible(symbol string) ([]Action, []uint64, error) {
 	if regulator := trader.Positions[symbol]; regulator != nil {
 		held = regulator.Holding.Qty
 	}
+	stale := false
 
 	if held.Sign() > 0 {
-		idle.Kind = "hold"
+		idle.Kind, stale = "hold", trader.stale(symbol)
 	}
 	trader.Alternatives = []Action{idle}
 	trader.Quantities = make(map[Action]*decimal.Decimal)
@@ -25539,6 +25482,12 @@ func (trader *Trader) Feasible(symbol string) ([]Action, []uint64, error) {
 		state[0]++
 	}
 
+	// Staleness is part of the state the decision is conditioned on, so the
+	// agent can learn what a position that stopped developing is worth.
+	if stale {
+		state[0] += 2
+	}
+
 	if bid == nil || ask == nil || trader.Execution.Price.FeeIfAvailable(symbol) == nil {
 		return trader.Alternatives, state, nil
 	}
@@ -25548,25 +25497,66 @@ func (trader *Trader) Feasible(symbol string) ([]Action, []uint64, error) {
 		if err := trader.sizes(symbol, Action{Kind: "exit", Reduce: true}, held, bid); err != nil {
 			return nil, nil, err
 		}
+
+		// Holding is withdrawn only once an executable exit actually exists. A
+		// stale position no venue will take back still has to be held, and
+		// saying otherwise would leave the agent nothing it could do.
+		if stale && len(trader.Alternatives) > 1 {
+			trader.Status = "stale position"
+			trader.Alternatives = trader.Alternatives[1:]
+			return trader.Alternatives, state, nil
+		}
 	}
 
-	if trader.Balance.Cash().Sign() > 0 {
-		quantity, err := trader.Execution.Price.Affordable(symbol, trader.Balance.Cash(), ask)
+	if trader.Balance.Cash().Sign() <= 0 {
+		return trader.Alternatives, state, nil
+	}
+	kind := "enter"
 
-		if err != nil {
-			return nil, nil, err
-		}
-		kind := "enter"
+	if held.Sign() > 0 {
+		kind = "scale"
+	}
 
-		if held.Sign() > 0 {
-			kind = "scale"
-		}
+	// Adding to a symbol already held commits no new position, so it is bounded
+	// by cash alone; opening a new one is bounded by the concurrency cap.
+	if held.Sign() == 0 && trader.open() >= MaxConcurrentPositions {
+		trader.Status = "position capacity"
+		return trader.Alternatives, state, nil
+	}
+	quantity, err := trader.Execution.Price.Affordable(symbol, trader.Balance.Cash(), ask)
 
-		if err := trader.sizes(symbol, Action{Kind: kind}, quantity, ask); err != nil {
-			return nil, nil, err
-		}
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := trader.sizes(symbol, Action{Kind: kind}, quantity, ask); err != nil {
+		return nil, nil, err
 	}
 	return trader.Alternatives, state, nil
+}
+
+/* open counts the symbols this wallet currently holds inventory in. */
+func (trader *Trader) open() int {
+	count := 0
+
+	for _, regulator := range trader.Positions {
+		if regulator.Holding.Qty.Sign() > 0 {
+			count++
+		}
+	}
+
+	return count
+}
+
+/*
+stale reports whether the current position in a symbol has been held past
+StalePositionHorizon. Opened is stamped by this trader when a position is
+established and cleared when it goes flat, so a re-entry is measured from its
+own fill rather than inheriting the age of the position that preceded it.
+*/
+func (trader *Trader) stale(symbol string) bool {
+	opened, exists := trader.Opened[symbol]
+	return exists && trader.At.Sub(opened) >= StalePositionHorizon
 }
 
 /*
@@ -25650,6 +25640,11 @@ func (trader *Trader) Execute(decision *agent.Decision[Action]) error {
 		}
 	})
 
+	// A decision taken from a single feasible action was not a choice, and the
+	// outcome it collects is evidence about the market rather than about the
+	// action. Learner releases these instead of training them.
+	evaluation.Forced = len(trader.Alternatives) < 2
+
 	if decision.Action.Kind == "wait" || decision.Action.Kind == "hold" {
 		for _, action := range trader.Alternatives {
 			if action.Kind == "enter" && evaluation.Opportunity == nil {
@@ -25681,36 +25676,202 @@ func (trader *Trader) Execute(decision *agent.Decision[Action]) error {
 	evaluation.Quantity = trader.Execution.Fill.CumQty
 	evaluation.Cost = trader.Execution.Fill.CumCost
 	evaluation.Fee = trader.Execution.Fill.FeeUsdEquiv
+	trader.mark(decision.Label, regulator, decision.At)
 	trader.Fills++
 	trader.Fees = trader.Fees.Add(evaluation.Fee)
 	return trader.Recorder.WriteLearning(evaluation)
 }
 
 /*
+mark tracks when the current position in a symbol was established. It is stamped
+on the fill that opens one and cleared when the symbol goes flat, so holding age
+belongs to the position actually held rather than to the symbol's whole history.
+*/
+func (trader *Trader) mark(symbol string, regulator *position.Regulator, at time.Time) {
+	if regulator.Holding.Qty.Sign() == 0 {
+		delete(trader.Opened, symbol)
+		return
+	}
+
+	if _, exists := trader.Opened[symbol]; !exists {
+		trader.Opened[symbol] = at
+	}
+}
+
+/*
 	Objective values the whole wallet with the existing price owner. The return
 
 unit is a fraction of initial funding; the core owns elapsed-time feedback.
+A missing held book leaves the mark absent and the last valuation unchanged.
 */
-func (trader *Trader) Objective() (reward.Mark, error) {
-	equity := trader.Balance.Cash().SetScale(decimal.DefaultScale)
-	realized := decimal.NewFromInt64(0)
+func (trader *Trader) Objective() (*reward.Mark, error) {
+	// Each worker owns one regulator and result slot. Wallet state is committed
+	// only after all workers finish, including when a book cannot be valued.
+	marks := make([]struct {
+		regulator *position.Regulator
+		status    string
+	}, len(trader.Positions))
+	index := 0
 
 	for _, regulator := range trader.Positions {
-		realized = realized.Add(regulator.Holding.RealizedPnL)
+		marks[index].regulator = regulator
+		index++
+	}
+	var group errgroup.Group
+
+	for index := range marks {
+		regulator := marks[index].regulator
 
 		if regulator.Holding.Qty.Sign() == 0 {
 			continue
 		}
+		group.Go(func() error {
+			available := false
+			trader.api.Book(regulator.Holding.Symbol, func(book *book.Book) {
+				available = book != nil && book.BestBid() != nil && book.BestAsk() != nil
+			})
 
-		if err := regulator.Mark(trader.At); err != nil {
-			return reward.Mark{}, err
+			if !available {
+				marks[index].status = "awaiting book: " + regulator.Holding.Symbol
+				return nil
+			}
+
+			if err := regulator.Mark(trader.At); err != nil {
+				// Missing, crossed or insufficient depth leaves valuation absent.
+				// Unexpected failures still fail the whole measurement phase.
+				if errnie.IsNotFound(err) || errnie.IsUnprocessableContent(err) || errnie.IsValidation(err) {
+					marks[index].status = "unmarkable: " + regulator.Holding.Symbol
+					return nil
+				}
+				return errnie.Error(err)
+			}
+
+			if regulator.Surface == nil {
+				marks[index].status = "unmarkable: " + regulator.Holding.Symbol
+			}
+			return nil
+		})
+	}
+
+	if err := group.Wait(); err != nil {
+		return nil, errnie.Error(err)
+	}
+	equity := trader.Balance.Cash().SetScale(decimal.DefaultScale)
+	realized := decimal.NewFromInt64(0)
+
+	for _, mark := range marks {
+		if mark.status != "" {
+			trader.Status = mark.status
+			return nil, nil
 		}
-		equity = equity.Add(regulator.Surface.ExecutableValue)
+		regulator := mark.regulator
+		realized = realized.Add(regulator.Holding.RealizedPnL)
+
+		if regulator.Holding.Qty.Sign() > 0 {
+			equity = equity.Add(regulator.Surface.ExecutableValue)
+		}
 	}
 	trader.Equity, trader.Profit = equity, equity.Sub(trader.Initial)
 	trader.Realized, trader.Unrealized = realized, trader.Profit.Sub(realized)
 	trader.Wealth = trader.Profit.Div(trader.Initial).Float64()
-	return reward.Mark{At: trader.At, Version: trader.Version, Value: trader.Wealth}, nil
+
+	trader.Status = "learning"
+
+	// Carried holds the wealth of episodes already closed. Reporting it with
+	// the current one keeps the objective continuous across a wallet renewal:
+	// without it a bankrupt explorer refunded to par would read as a large
+	// positive reward and train its last, losing decision as a success.
+	return &reward.Mark{
+		At: trader.At, Version: trader.Version, Value: trader.Carried + trader.Wealth,
+	}, nil
+}
+
+/*
+CheckAndReset renews an exhausted explorer wallet so the swarm keeps producing
+experience. Exploration spends capital by design, and a drawn-down wallet whose
+cash sits under the venue minimum has no feasible action left but waiting: it
+generates no fills, no evaluations and no evidence. Renewal is episodic rather
+than continuous — residual inventory is liquidated first, and a position still
+inside MaximumHoldingTime defers the reset rather than being cut short, so the
+episode that is being closed is graded on its own tape before the books reset.
+Holding age comes from Opened, this trader's own record of when the current
+position was established, because Holding.EntryAt survives a close and would
+report the age of a position that no longer exists.
+
+Realized history stays with the resolved evaluations already issued; only the
+account is renewed. It reports whether an episode actually turned over.
+*/
+func (trader *Trader) CheckAndReset(initialFunding *decimal.Decimal) bool {
+	if initialFunding == nil || initialFunding.Sign() <= 0 {
+		return false
+	}
+
+	if trader.Balance.Cash().Cmp(decimal.NewFromFloat64(MinimumOrderValue)) >= 0 {
+		return false
+	}
+
+	for symbol, regulator := range trader.Positions {
+		if regulator.Holding.Qty.Sign() == 0 {
+			continue
+		}
+		opened, tracked := trader.Opened[symbol]
+
+		if tracked && trader.At.Sub(opened) < MaximumHoldingTime {
+			return false
+		}
+	}
+	trader.liquidate()
+
+	// Value the closing episode after liquidation so its final proceeds and
+	// fees are inside the wealth that gets carried forward. Inventory that
+	// survived liquidation is by definition inventory no venue would price, so
+	// an absent mark cannot be allowed to block the renewal it exists to
+	// perform: the last measured wealth is carried instead.
+	if _, err := trader.Objective(); err != nil {
+		trader.Status = err.Error()
+		return false
+	}
+	balance, err := broker.NewFundedBalance(trader.Balance.Quote, initialFunding)
+
+	if err != nil {
+		trader.Status = err.Error()
+		return false
+	}
+	trader.Balance, trader.Execution.Balance = balance, balance
+	trader.Positions = make(map[string]*position.Regulator)
+	trader.Opened = make(map[string]time.Time)
+	trader.Initial, trader.Equity = initialFunding, initialFunding
+	trader.Realized, trader.Unrealized = decimal.NewFromInt64(0), decimal.NewFromInt64(0)
+	trader.Profit, trader.Fees = decimal.NewFromInt64(0), decimal.NewFromInt64(0)
+	trader.Carried, trader.Wealth = trader.Carried+trader.Wealth, 0
+	trader.Episode++
+	trader.Status = "replenished"
+	return true
+}
+
+/*
+liquidate sells whatever residual inventory the book will still take. A dust
+holding no venue will fill is left unsold rather than assumed away; the renewed
+account simply stops tracking it, because the position it describes belongs to
+the episode being closed.
+*/
+func (trader *Trader) liquidate() {
+	for symbol, regulator := range trader.Positions {
+		if regulator.Holding.Qty.Sign() == 0 {
+			continue
+		}
+		trader.Execution.At = trader.At
+
+		if err := regulator.Exit(fmt.Sprintf("reset-%d-%d-%s", trader.ID, trader.Episode, symbol)); err != nil {
+			continue
+		}
+
+		if err := regulator.Apply(trader.Execution.Fill); err != nil {
+			continue
+		}
+		trader.Fills++
+		trader.Fees = trader.Fees.Add(trader.Execution.Fill.FeeUsdEquiv)
+	}
 }
 
 ---

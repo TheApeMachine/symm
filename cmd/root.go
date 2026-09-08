@@ -25,6 +25,7 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/recording"
+	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/logic/category"
 	"github.com/theapemachine/symm/logic/cognition"
@@ -138,11 +139,28 @@ var (
 					errnie.Error(err)
 				}
 			}()
-			bucket := storageEngine.Bucket()
+			// Hindsight's record families are Iceberg tables. The object store
+			// above keeps only genuine blobs, the model checkpoint chief among
+			// them; everything a reader queries lives in the catalog.
+			catalog := tables.Open(cmd.Context())
+
+			if catalog == nil {
+				return errnie.Error(errnie.Err(
+					errnie.Internal,
+					"symm: open iceberg catalog",
+					nil,
+				))
+			}
+
+			if err := catalog.Ensure(cmd.Context()); err != nil {
+				return err
+			}
+
+			writer := tables.NewWriter(catalog)
 
 			// The Hindsight inspection reads (runs / captures / persisted states)
-			// are served by the hub over this store.
-			hub.SetHindsightStore(bucket)
+			// are served by the hub over this catalog.
+			hub.SetHindsightStore(catalog)
 
 			// The Hindsight Run identity distinguishes this process capture
 			// session from every other run. It is derived from the process start
@@ -158,7 +176,7 @@ var (
 				))
 			}
 
-			rawCapture, err := recording.NewSession(runtimeCtx, bucket, hindsight.RunIdentity{
+			rawCapture, err := recording.NewSession(runtimeCtx, writer, hindsight.RunIdentity{
 				StartedAt: processStartedAt, CodeCommit: buildCodeCommit(), BuildID: buildBuildID(), ConfigDigest: configDigest(), SchemaVersions: hindsightSchemaVersions(),
 			}.Resolve(runID), viper.GetInt("hindsight.capture.batch_size"), viper.GetDuration("hindsight.capture.flush_interval"))
 			if err != nil {
@@ -292,7 +310,7 @@ var (
 				return errnie.Error(errnie.Err(errnie.NotAcceptable, "symm: initial balance is not ready", nil))
 			}
 
-			learner, err := strategy.NewLearner(runtimeCtx, api, price, balance, system.Cfg.Learning.Traders, bucket, runID, rawCapture)
+			learner, err := strategy.NewLearner(runtimeCtx, api, price, balance, system.Cfg.Learning.Traders, catalog, storageEngine, runID, rawCapture)
 
 			if err != nil {
 				return err

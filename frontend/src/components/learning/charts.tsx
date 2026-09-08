@@ -182,7 +182,7 @@ export const EventRhythm = ({ events }: { events: LearningEvent[] }) => {
 							<div className="relative h-5 flex-1 rounded-[3px] bg-(--sunken) border border-(--line)">
 								{ticks.map((entry) => (
 									<div
-										key={`${entry.event.lane}-${entry.event.id}-${entry.at}`}
+										key={`${entry.event.lane}-${entry.event.id}-${entry.event.kind}-${entry.at}`}
 										className="absolute top-0.75 bottom-0.75 w-px"
 										style={{
 											left: `${span > 0 ? ((entry.at - first) / span) * 100 : 50}%`,
@@ -596,6 +596,326 @@ export const LearningProgress = ({ view }: { view: LearningView | null }) => {
 				Completed decisions graded against persisted trade legs, using the
 				original observations and action. Learning continues as tape outcomes
 				arrive.
+			</Typography.Mono>
+		</Flex.Column>
+	);
+};
+
+/*
+DecisionRing shows what has become of the decisions this desk has made.
+
+Every decision is in exactly one of three states, and which one dominates says
+something different about the system. A ring full of settled decisions means the
+tape is teaching; a ring full of waiting ones means decisions are being made
+faster than they can be answered; an empty ring means nothing is happening at
+all. Three counts side by side say the same thing, but the shape says it without
+having to be read.
+*/
+export const DecisionRing = ({ view }: { view: LearningView | null }) => {
+	const traders = view?.desk?.traders ?? [];
+	const graded = traders.reduce((total, trader) => total + trader.graded, 0);
+	const open = traders.reduce((total, trader) => total + trader.open, 0);
+	const decisions = traders.reduce(
+		(total, trader) => total + trader.decisions,
+		0,
+	);
+
+	/*
+		Whatever is neither settled nor waiting was made and then superseded.
+		It is shown rather than folded into one of the other two, because a desk
+		losing most of its decisions this way looks identical to a healthy one
+		if the difference is hidden.
+	*/
+	const dropped = Math.max(0, decisions - graded - open);
+	const total = graded + open + dropped;
+
+	const slices = [
+		{
+			key: "graded",
+			label: "graded by the tape",
+			value: graded,
+			tone: "var(--up)",
+		},
+		{
+			key: "open",
+			label: "awaiting a grade",
+			value: open,
+			tone: "var(--info)",
+		},
+		{ key: "dropped", label: "superseded", value: dropped, tone: "var(--f4)" },
+	];
+
+	const radius = 52;
+	const circumference = 2 * Math.PI * radius;
+	let offset = 0;
+
+	return (
+		<Flex.Row align="center" gap={4} className="flex-wrap p-3">
+			<svg
+				viewBox="0 0 140 140"
+				className="h-32 w-32 shrink-0"
+				role="img"
+				aria-label="What became of the decisions this desk has made"
+			>
+				<title>What became of the decisions this desk has made</title>
+				<circle
+					cx="70"
+					cy="70"
+					r={radius}
+					fill="none"
+					stroke="var(--line)"
+					strokeWidth="14"
+				/>
+				{total > 0 &&
+					slices.map((slice) => {
+						const length = (slice.value / total) * circumference;
+						const dash = `${length} ${circumference - length}`;
+						const rotation = (offset / circumference) * 360 - 90;
+						offset += length;
+
+						return (
+							<circle
+								key={slice.key}
+								cx="70"
+								cy="70"
+								r={radius}
+								fill="none"
+								stroke={slice.tone}
+								strokeWidth="14"
+								strokeDasharray={dash}
+								transform={`rotate(${rotation} 70 70)`}
+							>
+								<title>{`${slice.label}: ${slice.value}`}</title>
+							</circle>
+						);
+					})}
+				<text
+					x="70"
+					y="68"
+					textAnchor="middle"
+					fill="var(--f1)"
+					fontSize="20"
+					fontFamily="monospace"
+				>
+					{total > 0 ? percent(graded / total) : "—"}
+				</text>
+				<text
+					x="70"
+					y="84"
+					textAnchor="middle"
+					fill="var(--f4)"
+					fontSize="9"
+					fontFamily="monospace"
+				>
+					answered
+				</text>
+			</svg>
+			<Flex.Column className="min-w-0 gap-1">
+				{slices.map((slice) => (
+					<Flex.Row key={slice.key} align="center" gap={2}>
+						<span
+							className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+							style={{ background: slice.tone }}
+						/>
+						<Typography.Mono size="s" tone="f2">
+							{slice.value.toLocaleString()} {slice.label}
+						</Typography.Mono>
+					</Flex.Row>
+				))}
+				<Typography.Mono size="s" tone="f4" className="max-w-72">
+					{total === 0
+						? "No decision has been made yet, so there is nothing to have become of."
+						: `Of ${total.toLocaleString()} decisions across every wallet, this is how many the tape has already answered.`}
+				</Typography.Mono>
+			</Flex.Column>
+		</Flex.Row>
+	);
+};
+
+/*
+TraderQuality puts every wallet on one axis, so the disagreement between them is
+visible as a shape rather than as a column of signed numbers.
+
+They are meant to disagree — that is why there is more than one. What matters is
+whether any of them is consistently finding something the others are not, and
+that is a comparison, not a reading.
+*/
+export const TraderQuality = ({ view }: { view: LearningView | null }) => {
+	const traders = view?.desk?.traders ?? [];
+
+	if (traders.length === 0) {
+		return null;
+	}
+	const extent = Math.max(
+		...traders.map((trader) => Math.abs(trader.quality)),
+		Number.MIN_VALUE,
+	);
+
+	return (
+		<Flex.Column className="gap-1 border-(--line) border-b p-3">
+			{traders.map((trader) => {
+				const measured = trader.observed > 0;
+				const magnitude = measured
+					? share(Math.abs(trader.quality), extent) * 50
+					: 0;
+				const positive = trader.quality >= 0;
+
+				return (
+					<Flex.Row key={trader.id} align="center" gap={2}>
+						<Typography.Mono
+							size="s"
+							tone={trader.id === 0 ? "accent" : "f3"}
+							className="w-24 shrink-0 truncate"
+						>
+							wallet {trader.id + 1}
+						</Typography.Mono>
+						<div className="relative h-4 flex-1 rounded-[3px] bg-(--sunken) border border-(--line)">
+							<div className="absolute top-0 bottom-0 left-1/2 w-px bg-(--line2)" />
+							{measured ? (
+								<div
+									className="absolute top-1 bottom-1 rounded-xs"
+									style={{
+										width: `${magnitude}%`,
+										left: positive ? "50%" : undefined,
+										right: positive ? undefined : "50%",
+										background: positive ? "var(--up)" : "var(--down)",
+									}}
+								/>
+							) : (
+								<span className="absolute inset-0 flex items-center justify-center font-mono text-[9px] text-(--f4)">
+									nothing graded yet
+								</span>
+							)}
+						</div>
+						<Typography.Mono
+							size="s"
+							tone="f4"
+							className="w-28 shrink-0 text-right"
+						>
+							{measured ? basis(trader.quality) : "—"} · {trader.graded}
+						</Typography.Mono>
+					</Flex.Row>
+				);
+			})}
+			<Typography.Mono size="s" tone="f4">
+				Mean graded outcome per wallet, on one shared axis, with how many
+				decisions stand behind each. They hold their own capital and are meant
+				to disagree — a wallet consistently to the right of the others has found
+				something the rest have not.
+			</Typography.Mono>
+		</Flex.Column>
+	);
+};
+
+/*
+DrivingActions redraws what the evidence says about each action the agent could
+take, as a comparison instead of a table.
+
+The question this answers is "which action does the evidence prefer, and how
+much should I believe it" — and that is two quantities per row, not six. The bar
+is the measured outcome and which side of the centre it falls on; the strip
+beneath it is how much evidence stands behind that, so a confident-looking bar
+with nothing under it is visibly different from the same bar with a run of
+observations behind it.
+*/
+export const DrivingActions = ({
+	influence,
+}: {
+	influence: Influence[] | null;
+}) => {
+	const measured = (influence ?? []).filter((entry) => entry.prior.Defined);
+
+	if (measured.length === 0) {
+		return (
+			<Flex.Column className="gap-1 border-(--line) border-b p-3">
+				<Typography.Mono size="s" tone="f3">
+					No action has accumulated evidence yet. A row appears here once a
+					decision has been graded, not when one is made.
+				</Typography.Mono>
+			</Flex.Column>
+		);
+	}
+	const extent = Math.max(
+		...measured.map((entry) => Math.abs(entry.prior.Mean)),
+		Number.MIN_VALUE,
+	);
+	const strongest = Math.max(
+		...measured.map((entry) => entry.prior.Support),
+		Number.MIN_VALUE,
+	);
+
+	return (
+		<Flex.Column className="gap-2 border-(--line) border-b p-3">
+			{measured.map((entry) => {
+				const positive = entry.prior.Mean >= 0;
+				const magnitude = share(Math.abs(entry.prior.Mean), extent) * 50;
+
+				return (
+					<Flex.Column key={`${entry.token}-${entry.action}`} className="gap-1">
+						<Flex.Row align="center" gap={2}>
+							<Typography.Mono
+								size="s"
+								tone="accent"
+								className="w-28 shrink-0 truncate"
+								title={entry.action}
+							>
+								{entry.action}
+							</Typography.Mono>
+							<div className="relative h-5 flex-1 rounded-[3px] bg-(--sunken) border border-(--line)">
+								<div className="absolute top-0 bottom-0 left-1/2 w-px bg-(--line2)" />
+								<div
+									className="absolute top-1 bottom-1 rounded-xs"
+									style={{
+										width: `${magnitude}%`,
+										left: positive ? "50%" : undefined,
+										right: positive ? undefined : "50%",
+										background: positive ? "var(--up)" : "var(--down)",
+									}}
+									title={`${basis(entry.prior.Mean)} over ${entry.prior.Samples} observations`}
+								/>
+							</div>
+							<Typography.Mono
+								size="s"
+								tone={positive ? "accent" : "f2"}
+								className="w-20 shrink-0 text-right"
+							>
+								{basis(entry.prior.Mean)}
+							</Typography.Mono>
+						</Flex.Row>
+						<Flex.Row align="center" gap={2}>
+							<Typography.Mono
+								size="s"
+								tone="f4"
+								className="w-28 shrink-0 truncate"
+								title={`${entry.source} / ${entry.label}`}
+							>
+								{entry.label}
+							</Typography.Mono>
+							<div className="h-1.5 flex-1 overflow-hidden rounded-[3px] bg-(--line)">
+								<div
+									className="h-full bg-(--info)"
+									style={{
+										width: `${share(entry.prior.Support, strongest) * 100}%`,
+									}}
+									title={`${amount(entry.prior.Support)} effective observations`}
+								/>
+							</div>
+							<Typography.Mono
+								size="s"
+								tone="f4"
+								className="w-20 shrink-0 text-right"
+							>
+								{entry.prior.Samples.toLocaleString()} obs
+							</Typography.Mono>
+						</Flex.Row>
+					</Flex.Column>
+				);
+			})}
+			<Typography.Mono size="s" tone="f4">
+				The bar is what followed this action and which way. The strip under it
+				is how much evidence stands behind that — a long bar over a short strip
+				is a strong claim on thin ground. Left of centre is against, right is
+				for.
 			</Typography.Mono>
 		</Flex.Column>
 	);

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -30,6 +31,8 @@ type resourceEnvironment struct {
 	executed         []agent.Decision[operation]
 	failure          error
 	objectiveFailure error
+	beforeObjective  func()
+	beforeExecute    func()
 }
 
 func (environment *resourceEnvironment) Feasible(label string) ([]operation, []uint64, error) {
@@ -48,6 +51,10 @@ func (environment *resourceEnvironment) Feasible(label string) ([]operation, []u
 }
 
 func (environment *resourceEnvironment) Execute(decision *agent.Decision[operation]) error {
+	if environment.beforeExecute != nil {
+		environment.beforeExecute()
+	}
+
 	if environment.failure != nil {
 		return environment.failure
 	}
@@ -63,8 +70,12 @@ func (environment *resourceEnvironment) Execute(decision *agent.Decision[operati
 	return nil
 }
 
-func (environment *resourceEnvironment) Objective() (reward.Mark, error) {
-	return environment.mark, environment.objectiveFailure
+func (environment *resourceEnvironment) Objective() (*reward.Mark, error) {
+	if environment.beforeObjective != nil {
+		environment.beforeObjective()
+	}
+
+	return &environment.mark, environment.objectiveFailure
 }
 
 type memoryCheckpoint struct {
@@ -146,6 +157,8 @@ func TestNewPopulation(t *testing.T) {
 }
 
 func TestPopulationStep(t *testing.T) {
+	testPopulationPhases(t)
+
 	Convey("Grid activity drives domain-owned finite actions for every agent", t, func() {
 		population, environments := newPopulationFixture(t)
 		drivePopulation(t, population, environments)
@@ -213,6 +226,64 @@ func TestPopulationStep(t *testing.T) {
 			So(environments[0].held["queue-a"], ShouldEqual, before-1)
 		})
 	})
+}
+
+// These subtests block at the real Environment boundary, without timing sleeps.
+func testPopulationPhases(t *testing.T) {
+	for _, failure := range []string{"none", "measure", "execute"} {
+		t.Run(failure, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				Convey("Independent agents overlap and every phase is joined", t, func() {
+					population, environments := newPopulationFixture(t)
+					drivePopulation(t, population, environments)
+					measured := make(chan struct{}, len(environments))
+					executed := make(chan struct{}, len(environments))
+					measureRelease, executeRelease := make(chan struct{}), make(chan struct{})
+
+					for _, environment := range environments {
+						environment.beforeObjective = func() { measured <- struct{}{}; <-measureRelease }
+						environment.beforeExecute = func() { executed <- struct{}{}; <-executeRelease }
+					}
+
+					if failure == "measure" {
+						environments[0].objectiveFailure = errors.New("objective failed")
+					}
+
+					if failure == "execute" {
+						environments[0].failure = errors.New("execution failed")
+					}
+					done := make(chan error, 1)
+					go func() { done <- population.Step(observationFixture(25, "queue-a")) }()
+					synctest.Wait()
+					// Release barriers even if a regression makes the overlap assertion fail.
+					measuring, premature := len(measured), len(executed)
+					close(measureRelease)
+					synctest.Wait()
+					acting, returned := len(executed), len(done)
+					close(executeRelease)
+					err := <-done
+					So(measuring, ShouldEqual, len(environments))
+					So(premature, ShouldEqual, 0)
+
+					if failure == "measure" {
+						So(acting, ShouldEqual, 0)
+						So(err, ShouldNotBeNil)
+						return
+					}
+					So(acting, ShouldEqual, len(environments))
+					So(returned, ShouldEqual, 0)
+
+					if failure == "execute" {
+						So(err, ShouldNotBeNil)
+						So(population.Agents[0].Err, ShouldNotBeNil)
+						So(population.Agents[1].Err, ShouldBeNil)
+						return
+					}
+					So(err, ShouldBeNil)
+				})
+			})
+		})
+	}
 }
 
 func TestPopulationSave(t *testing.T) {
@@ -371,4 +442,28 @@ func BenchmarkPopulationSave(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func TestPopulationAbort(t *testing.T) {
+	Convey("A decision with no alternative is released, not trained", t, func() {
+		population, environments := newPopulationFixture(t)
+		drivePopulation(t, population, environments)
+		member := population.Agents[1]
+		decision := member.Last
+		So(decision, ShouldNotBeNil)
+		before := member.Model.Recall(decision.Label, decision.Context, decision.Action)
+
+		So(population.Abort(-1, decision.ID), ShouldNotBeNil)
+		So(population.Abort(len(population.Agents), decision.ID), ShouldNotBeNil)
+		So(population.Abort(1, decision.ID), ShouldBeNil)
+
+		Convey("Its evidence is unchanged and it cannot be resolved afterwards", func() {
+			after := member.Model.Recall(decision.Label, decision.Context, decision.Action)
+			So(after.Samples, ShouldEqual, before.Samples)
+			So(after.Mean, ShouldEqual, before.Mean)
+			So(member.Pending, ShouldNotContainKey, decision.ID)
+			So(population.Resolve(1, decision.ID, 1), ShouldNotBeNil)
+			So(population.Abort(1, decision.ID), ShouldNotBeNil)
+		})
+	})
 }

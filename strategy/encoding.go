@@ -25,6 +25,8 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 		Resolved:  learner.Resolved,
 		Status:    "learning",
 		Restored:  learner.Restored,
+		Episodes:  learner.Episodes,
+		Forced:    learner.Forced,
 	}
 
 	if learner.Err != nil {
@@ -53,6 +55,9 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 			FromNs:    development.From.UnixNano(),
 			Status:    "learning",
 			Decisions: development.Decisions,
+			// Retained state transitions, not tokens: Context below flattens
+			// each transition's conditions into one list.
+			Depth: int32(len(development.History)),
 		}
 
 		if focus != "" && focus != symbol {
@@ -120,6 +125,9 @@ func (trader *Trader) Wire(member *agent.Agent[Action], focus string) *wire.Lear
 		Status:     trader.Status,
 		Reward:     member.Reward.TotalReward,
 		ElapsedNs:  int64(member.Reward.TotalElapsed),
+		Episode:    trader.Episode,
+		Carried:    trader.Carried,
+		Open:       int32(trader.open()),
 	}
 
 	state.Reading = &wire.LearningPriorT{

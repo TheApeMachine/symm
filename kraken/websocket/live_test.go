@@ -16,6 +16,7 @@ import (
 
 	gorillawebsocket "github.com/gorilla/websocket"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/callback"
 	sdk "github.com/krakenfx/api-go/v2/pkg/kraken"
 	"github.com/krakenfx/api-go/v2/pkg/spot"
 	. "github.com/smartystreets/goconvey/convey"
@@ -211,29 +212,47 @@ func TestLiveReconnect(t *testing.T) {
 		firstConnection := <-connections
 		So(awaitChannels(1, "level3"), ShouldBeTrue)
 
-		Convey("An unexpected disconnect should retry fresh authentication and restore Level3", func() {
-			So(firstConnection.Close(), ShouldBeNil)
+		for _, failure := range []string{"reader disconnected", "ping failed while still readable"} {
+			Convey(failure+" restores a fresh authenticated and seeded session", func() {
+				switch failure {
+				case "reader disconnected":
+					So(firstConnection.Close(), ShouldBeNil)
+				case "ping failed while still readable":
+					go live.reconnect(errors.New("ping failed"))
+				}
 
-			select {
-			case <-connections:
-			case <-time.After(5 * time.Second):
-				So("first reconnect attempt", ShouldEqual, "timed out")
-			}
+				select {
+				case <-connections:
+				case <-time.After(5 * time.Second):
+					So("first reconnect attempt", ShouldEqual, "timed out")
+				}
 
-			select {
-			case <-connections:
-			case <-time.After(5 * time.Second):
-				So("authenticated reconnect", ShouldEqual, "timed out")
-			}
+				select {
+				case <-connections:
+				case <-time.After(5 * time.Second):
+					So("authenticated reconnect", ShouldEqual, "timed out")
+				}
 
-			So(awaitChannels(3, "level3"), ShouldBeTrue)
-			So(live.waitReady(), ShouldBeNil)
-			So(live.Client() != client, ShouldBeTrue)
-			So(tokenRequests.Load(), ShouldEqual, 3)
-			So(live.Client().Token, ShouldEqual, "token-3")
-			So(live.Error(), ShouldBeNil)
-			So(live.Status(), ShouldEqual, runtime.READY)
-		})
+				So(awaitChannels(3, "level3"), ShouldBeTrue)
+				So(live.waitReady(), ShouldBeNil)
+				So(live.Client() != client, ShouldBeTrue)
+				So(tokenRequests.Load(), ShouldEqual, 3)
+				So(live.Client().Token, ShouldEqual, "token-3")
+				So(live.Error(), ShouldBeNil)
+				So(live.Status(), ShouldEqual, runtime.READY)
+
+				Convey("Retired frames and disconnect callbacks cannot corrupt the replacement", func() {
+					client.OnReceived.Call(sdk.NewWebSocketMessage([]byte(`{"channel":"level3","type":"snapshot","data":[{"symbol":"BTC/USD","bids":[{"order_id":"retired","limit_price":123,"order_qty":1}],"asks":[]}]}`)))
+					client.OnDisconnected.Call(errors.New("late retired socket failure"))
+					live.book.Book("BTC/USD", func(managed *spotbook.Book) {
+						So(managed.BestBid(), ShouldBeNil)
+					})
+					So(live.connected.Load(), ShouldBeTrue)
+					So(live.Status(), ShouldEqual, runtime.READY)
+					So(tokenRequests.Load(), ShouldEqual, 3)
+				})
+			})
+		}
 	})
 }
 
@@ -604,5 +623,39 @@ func BenchmarkNewWithClient(b *testing.B) {
 
 	if err := fixture.live.Error(); err != nil {
 		b.Fatal(err)
+	}
+}
+
+func TestLiveBook(t *testing.T) {
+	Convey("Only a ready L3 session exposes its books for valuation", t, func() {
+		managed := newBookFixture(t, "BTC/USD", 2, 2)
+		managed.Create("BTC/USD", 10)
+		child := &Live{book: managed, status: runtime.NewStatus()}
+		parent := &Live{level3: &sync.Map{}}
+		parent.level3.Store("BTC/USD", child)
+
+		for _, stage := range []runtime.Stage{runtime.READY, runtime.WAITING, runtime.BUSY, runtime.READY} {
+			child.status.Transition(stage)
+			calls := 0
+			parent.Book("BTC/USD", func(book *spotbook.Book) {
+				calls++
+				So(book != nil, ShouldEqual, stage == runtime.READY)
+			})
+			So(calls, ShouldEqual, 1)
+		}
+	})
+}
+
+func BenchmarkLiveBind(b *testing.B) {
+	client := spot.NewWebSocket()
+	live := &Live{receive: func(*callback.Event[*sdk.WebSocketMessage]) {}}
+	live.client.Store(client)
+	live.bind(client)
+	message := sdk.NewWebSocketMessage([]byte(`{"channel":"heartbeat"}`))
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for b.Loop() {
+		client.OnReceived.Call(message)
 	}
 }

@@ -15,6 +15,7 @@ type LearningDevelopmentT struct {
 	Regions []*LearningRegionT `json:"regions"`
 	Quantities []*LearningQuantityT `json:"quantities"`
 	FromNs int64 `json:"fromNs"`
+	Depth int32 `json:"depth"`
 }
 
 func (t *LearningDevelopmentT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -77,6 +78,7 @@ func (t *LearningDevelopmentT) Pack(builder *flatbuffers.Builder) flatbuffers.UO
 	LearningDevelopmentAddRegions(builder, regionsOffset)
 	LearningDevelopmentAddQuantities(builder, quantitiesOffset)
 	LearningDevelopmentAddFromNs(builder, t.FromNs)
+	LearningDevelopmentAddDepth(builder, t.Depth)
 	return LearningDevelopmentEnd(builder)
 }
 
@@ -105,6 +107,7 @@ func (rcv *LearningDevelopment) UnPackTo(t *LearningDevelopmentT) {
 		t.Quantities[j] = x.UnPack()
 	}
 	t.FromNs = rcv.FromNs()
+	t.Depth = rcv.Depth()
 }
 
 func (rcv *LearningDevelopment) UnPack() *LearningDevelopmentT {
@@ -260,8 +263,20 @@ func (rcv *LearningDevelopment) MutateFromNs(n int64) bool {
 	return rcv._tab.MutateInt64Slot(18, n)
 }
 
+func (rcv *LearningDevelopment) Depth() int32 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(20))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *LearningDevelopment) MutateDepth(n int32) bool {
+	return rcv._tab.MutateInt32Slot(20, n)
+}
+
 func LearningDevelopmentStart(builder *flatbuffers.Builder) {
-	builder.StartObject(8)
+	builder.StartObject(9)
 }
 func LearningDevelopmentAddSymbol(builder *flatbuffers.Builder, symbol flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(symbol), 0)
@@ -295,6 +310,9 @@ func LearningDevelopmentStartQuantitiesVector(builder *flatbuffers.Builder, numE
 }
 func LearningDevelopmentAddFromNs(builder *flatbuffers.Builder, fromNs int64) {
 	builder.PrependInt64Slot(7, fromNs, 0)
+}
+func LearningDevelopmentAddDepth(builder *flatbuffers.Builder, depth int32) {
+	builder.PrependInt32Slot(8, depth, 0)
 }
 func LearningDevelopmentEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

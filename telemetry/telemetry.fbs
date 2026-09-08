@@ -1233,16 +1233,30 @@ table LearningAgent {
  decisions:ulong; fills:ulong; pending:ulong;
  wins:ulong; losses:ulong; status:string;
  positions:[Position]; last:LearningDecision; alternatives:[LearningAction]; reading:LearningPrior; reward:double; elapsedNs:long; outcome:LearningDecision;
+ // episode counts wallet renewals: an explorer whose cash fell under the venue
+ // minimum is refunded and keeps trading. carried is the wealth of the episodes
+ // already closed, so wealth + carried is the agent's whole record.
+ episode:ulong; carried:double;
+ // open is how many symbols this wallet currently holds, against
+ // MaxConcurrentPositions.
+ open:int;
 }
 table LearningRegion { id:ulong; condition:ulong; level:double; change:double; strength:double; authority:double; members:int; }
 table LearningQuantity { source:string; label:string; x:double; y:double; value:double; activity:double; quality:double; present:bool; }
 table LearningDevelopment {
  symbol:string; atNs:long; status:string; decisions:ulong;
  context:[string]; regions:[LearningRegion]; quantities:[LearningQuantity]; fromNs:long;
+ // depth is the number of distinct grid states the context spans, bounded by
+ // MaxTemporalContextDepth. context flattens their conditions, so its length
+ // counts tokens rather than transitions.
+ depth:int;
 }
 table LearningState {
  atNs:long; steps:ulong; decisions:ulong; resolved:ulong;
  status:string; agents:[LearningAgent]; markets:[LearningDevelopment]; restored:bool;
+ // episodes totals the explorer wallet renewals across the swarm. forced counts
+ // decisions released instead of trained because only one action was feasible.
+ episodes:ulong; forced:ulong;
 }
 
 table EnvelopeState {

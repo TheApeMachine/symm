@@ -5388,27 +5388,9 @@
   ],
   "unresolved": [
     {
-      "package": "github.com/theapemachine/symm/hindsight",
-      "file": "hindsight/tape.go",
-      "line": 54,
-      "reason": "Labelled node wraps a reporter whose readings are not statically known"
-    },
-    {
       "package": "github.com/theapemachine/symm/logic/cognition",
       "file": "logic/cognition/solver.go",
       "line": 870,
-      "reason": "Labelled node wraps a reporter whose readings are not statically known"
-    },
-    {
-      "package": "github.com/theapemachine/symm/store",
-      "file": "store/s3.go",
-      "line": 21,
-      "reason": "Labelled node wraps a reporter whose readings are not statically known"
-    },
-    {
-      "package": "github.com/theapemachine/symm/store",
-      "file": "store/json.go",
-      "line": 57,
       "reason": "Labelled node wraps a reporter whose readings are not statically known"
     },
     {
@@ -5428,6 +5410,6 @@
     "learnedConsumerEdges": 0,
     "kernelConsumerEdges": 0,
     "genericConsumerEdges": 0,
-    "unresolved": 5
+    "unresolved": 2
   }
 }

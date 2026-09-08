@@ -1,6 +1,11 @@
+import { LearningDecisionT } from "#/providers/telemetry/telemetry/learning-decision";
 import { bench } from "vitest";
 import { learningFixture } from "./fixture";
-import { projectLearning } from "./state";
+import {
+	projectLearning,
+	updateLearningEvents,
+	type LearningEvent,
+} from "./state";
 
 import { LearningDevelopmentT } from "#/providers/telemetry/telemetry/learning-development";
 import { LearningQuantityT } from "#/providers/telemetry/telemetry/learning-quantity";
@@ -26,4 +31,22 @@ source.markets = Array.from({ length: 450 }, (_, index) => {
 });
 bench("projectLearning eight agents and 450 markets", () => {
 	projectLearning(source, "");
+});
+
+// Exercise the full display budget with eight simultaneous account valuations.
+let events: LearningEvent[] = [];
+for (const member of source.agents) {
+	member.last = new LearningDecisionT();
+	member.last.symbol = "BTC/USD";
+}
+for (let step = 0; step < 25; step += 1) {
+	source.steps += 1n;
+	events = updateLearningEvents(events, source, "");
+}
+bench("updateLearningEvents repeated snapshot at display capacity", () => {
+	updateLearningEvents(events, source, "");
+});
+bench("updateLearningEvents advancing eight agents at display capacity", () => {
+	source.steps += 1n;
+	events = updateLearningEvents(events, source, "");
 });

@@ -7,7 +7,6 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -40,19 +39,19 @@ func TestSessionStep(t *testing.T) {
 			So(node.Step(envelope), ShouldEqual, envelope)
 
 			So(writer.Close(), ShouldBeNil)
-			stateWitness, found, err := store.Find(context.Background(), engine, capture.Run.Prefix("states"), func(witness hindsight.ArtifactWitness) bool {
-				return witness.Envelope == (hindsight.EnvelopeRef{Origin: capture})
-			})
-			So(found, ShouldBeTrue)
-			So(err, ShouldBeNil)
-			So(stateWitness.Artifact.Kind, ShouldEqual, "state")
-			So(stateWitness.Payload, ShouldNotBeEmpty)
 
-			decisions, err := store.List[hindsight.ArtifactWitness](context.Background(), engine, capture.Run.Prefix("witnesses"))
-			So(decisions, ShouldHaveLength, 1)
-			decisionWitness := decisions[0]
+			// Resident state and other witnesses share one table now, so both
+			// halves of this assertion are predicates on artifact_kind rather
+			// than reads of two separate key prefixes.
+			states, err := engine.Witnesses(context.Background(), string(capture.Run), "state")
 			So(err, ShouldBeNil)
-			So(decisionWitness.Artifact.Kind, ShouldEqual, "decision")
+			So(states, ShouldHaveLength, 1)
+			So(states[0].Envelope.Sequence, ShouldEqual, int64(capture.Sequence))
+			So(states[0].Payload, ShouldNotBeEmpty)
+
+			decisions, err := engine.Witnesses(context.Background(), string(capture.Run), "decision")
+			So(err, ShouldBeNil)
+			So(decisions, ShouldHaveLength, 1)
 		})
 
 		Convey("the same phase does not create repeated full-state witnesses", func() {

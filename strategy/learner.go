@@ -6,17 +6,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/book"
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/recording"
+	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken/websocket"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative"
 	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
-	"github.com/theapemachine/symm/store"
 	"github.com/theapemachine/symm/types"
-	"gocloud.dev/blob"
 )
 
 /*
@@ -27,37 +29,43 @@ protects the original state while the UI encodes it off the workspace ring.
 type Learner struct {
 	Population                 *associative.Population[Action]
 	Traders                    []*Trader
+	Rehearsal                  *Rehearsal
 	Developments               map[string]*Development
 	Tape                       hindsight.Tape
 	At                         time.Time
 	Steps, Decisions, Resolved uint64
+	Forced                     uint64
 	Err                        error
 	Restored                   bool
 	mutex                      sync.Mutex
 	Checkpoint                 Checkpoint
-	run                        hindsight.RunID
-	price                      *broker.Price
-	recorder                   *recording.Session
+	// catalog reads the durable tape and receives graded decisions. The model
+	// checkpoint is a blob and stays in Checkpoint; everything else is a table.
+	catalog  *tables.Catalog
+	Episodes uint64
+	funding  *decimal.Decimal
+	run      hindsight.RunID
+	price    *broker.Price
+	recorder *recording.Session
 }
 
-func NewLearner(ctx context.Context, api *websocket.API, price *broker.Price, balance *broker.Balance, count int, archive *blob.Bucket, run hindsight.RunID, recorder *recording.Session) (*Learner, error) {
+func NewLearner(ctx context.Context, api *websocket.API, price *broker.Price, balance *broker.Balance, count int, catalog *tables.Catalog, archive Blobs, run hindsight.RunID, recorder *recording.Session) (*Learner, error) {
 	if count < 1 {
 		return nil, errnie.Error(errnie.Err(errnie.Validation, "learning: population must contain an agent", nil))
 	}
-	learner := &Learner{Developments: make(map[string]*Development), Checkpoint: Checkpoint{Bucket: archive}, run: run, price: price, recorder: recorder}
-	environments := make([]agent.Environment[Action], 0, count)
+	learner := &Learner{Developments: make(map[string]*Development), Checkpoint: Checkpoint{Store: archive}, catalog: catalog, run: run, price: price, recorder: recorder, funding: balance.Cash()}
 
-	for range count {
-		trader, err := NewTrader(api, price, balance.Quote, balance.Cash())
+	// Agent zero is the live forward canary. It is the only member of the live
+	// population; every remaining worker replays balanced historical episodes
+	// instead of opening another wall-clock-throttled live wallet.
+	trader, err := NewTrader(api, price, balance.Quote, balance.Cash())
 
-		if err != nil {
-			return nil, err
-		}
-		trader.ID, trader.Recorder = len(learner.Traders), recorder
-		learner.Traders = append(learner.Traders, trader)
-		environments = append(environments, trader)
+	if err != nil {
+		return nil, err
 	}
-	population, err := associative.NewPopulation(environments...)
+	trader.ID, trader.Recorder = 0, recorder
+	learner.Traders = append(learner.Traders, trader)
+	population, err := associative.NewPopulation(trader)
 
 	if err != nil {
 		return nil, err
@@ -68,6 +76,15 @@ func NewLearner(ctx context.Context, api *websocket.API, price *broker.Price, ba
 	if err != nil {
 		return nil, err
 	}
+	learner.Rehearsal = NewRehearsal(
+		count-1,
+		catalog,
+		run,
+		hindsight.DefaultDiscoveryPolicy(),
+		price,
+		population.Agents[0].Model,
+		cognition.NewEngine(cognition.DefaultConfig()),
+	)
 	return learner, nil
 }
 
@@ -119,6 +136,7 @@ func (learner *Learner) observe(symbol string, readings []*data.Measurement[floa
 
 	for _, trader := range learner.Traders {
 		trader.At, trader.Version = learner.At, trader.Version+1
+		learner.killStale(trader, symbol)
 	}
 
 	if err := learner.Population.Step(agent.Observation{At: learner.At, Measurements: readings, History: history}); err != nil {
@@ -135,20 +153,94 @@ func (learner *Learner) observe(symbol string, readings []*data.Measurement[floa
 }
 
 /*
+killStale closes a canary position that stopped developing and grades the
+decision immediately at the executable bid. This is the live forward loop's
+forced-exit gate: instead of leaving an open trade waiting for a retracement
+leg that may never print, the wallet returns capital and the model records the
+stagnation outcome now.
+*/
+func (learner *Learner) killStale(trader *Trader, symbol string) {
+	if trader == nil {
+		return
+	}
+	regulator := trader.Positions[symbol]
+
+	if regulator == nil || regulator.Holding.Qty.Sign() == 0 || !trader.stale(symbol) {
+		return
+	}
+	// Close through the regulator directly: this is a forced canary exit, not
+	// a decision the agent issued, so it must not create an evaluation that
+	// later Review would mistake for a model-issued action.
+	trader.Execution.At = trader.At
+
+	if err := regulator.Exit(fmt.Sprintf("stale-%d-%s", trader.ID, symbol)); err != nil {
+		learner.Err = errnie.Error(err)
+		return
+	}
+
+	if err := regulator.Apply(trader.Execution.Fill); err != nil {
+		learner.Err = errnie.Error(err)
+		return
+	}
+	trader.Fills++
+	trader.Fees = trader.Fees.Add(trader.Execution.Fill.FeeUsdEquiv)
+	var bid *decimal.Decimal
+
+	trader.api.Book(symbol, func(current *book.Book) {
+		if current != nil && current.BestBid() != nil {
+			bid = current.BestBid().Price
+		}
+	})
+
+	if bid == nil {
+		return
+	}
+
+	for identity, evaluation := range trader.Evaluations[symbol] {
+		if evaluation.Complete || evaluation.Reference == nil {
+			continue
+		}
+		leg := hindsight.Leg{
+			Symbol: symbol, From: evaluation.At, Through: trader.At, ConfirmedAt: trader.At,
+			Start: evaluation.Reference, End: bid,
+		}
+
+		if !evaluation.Resolve(leg) {
+			continue
+		}
+
+		if err := learner.Population.Resolve(0, identity, evaluation.Value); err != nil {
+			learner.Err = errnie.Error(err)
+			return
+		}
+		learner.Resolved++
+		delete(trader.Evaluations[symbol], identity)
+	}
+}
+
+/*
 	Review consumes only durable tape. Each completed decision is resolved once
 
 on its issuing model; Population owns positive-experience consolidation.
 */
 func (learner *Learner) Review(ctx context.Context) error {
-	return learner.Tape.Read(ctx, learner.Checkpoint.Bucket, learner.run, func(leg hindsight.Leg) error {
+	return learner.Tape.Read(ctx, learner.catalog, learner.run, func(leg hindsight.Leg) error {
 		evaluations, err := learner.resolve(leg)
 
 		if err != nil || len(evaluations) == 0 {
 			return err
 		}
-		first := evaluations[0]
-		key := fmt.Sprintf("%s%d-%020d.json", learner.run.Prefix("outcomes"), first.Trader, first.ID)
-		return store.Write(ctx, learner.Checkpoint.Bucket, key, evaluations)
+
+		// Graded decisions go to the outcomes table through the recorder, so
+		// they batch with everything else rather than each becoming its own
+		// snapshot.
+		for _, evaluation := range evaluations {
+			if err := learner.recorder.WriteOutcome(evaluation.Row(string(learner.run))); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	})
 }
 
@@ -162,6 +254,18 @@ func (learner *Learner) resolve(leg hindsight.Leg) ([]*Evaluation, error) {
 	for index, trader := range learner.Traders {
 		for identity, evaluation := range trader.Evaluations[leg.Symbol] {
 			if !evaluation.Resolve(leg) {
+				continue
+			}
+
+			// A decision with no alternative is released, not graded. Training
+			// it would answer "what is waiting worth" with the return of a
+			// market the wallet had no means to act on.
+			if evaluation.Forced {
+				if err := learner.Population.Abort(index, identity); err != nil {
+					return nil, err
+				}
+				learner.Forced++
+				delete(trader.Evaluations[leg.Symbol], identity)
 				continue
 			}
 
@@ -183,6 +287,10 @@ func (learner *Learner) resolve(leg hindsight.Leg) ([]*Evaluation, error) {
 cadence only; completed trade legs determine evaluation maturity.
 */
 func (learner *Learner) Run(ctx context.Context, interval time.Duration) {
+	if learner.Rehearsal != nil {
+		go learner.runRehearsal(ctx, interval)
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -200,6 +308,28 @@ func (learner *Learner) Run(ctx context.Context, interval time.Duration) {
 				learner.fail(err)
 				return
 			}
+		}
+	}
+}
+
+/*
+runRehearsal retries the historical replay whenever the archive still has no
+replayable episodes. Once episodes exist the replay loop runs until shutdown.
+*/
+func (learner *Learner) runRehearsal(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		if err := learner.Rehearsal.Run(ctx); err != nil {
+			learner.fail(err)
+			return
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 		}
 	}
 }
