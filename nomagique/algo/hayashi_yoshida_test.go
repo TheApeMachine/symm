@@ -1,12 +1,17 @@
 package algo
 
 import (
+	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/nomagique/core"
+	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
+	"github.com/theapemachine/symm/tests/market"
 	"math"
 	"math/rand"
+	"slices"
 	"testing"
+	"time"
 )
 
 func path(at []int64, prices []float64) []core.Primitive {
@@ -108,4 +113,51 @@ func BenchmarkNewHayashiYoshida(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func TestHayashiYoshidaEstimate(t *testing.T) {
+	Convey("Prepared multi-leg paths preserve exact lagged overlap economics", t, func() {
+		tape := market.NewOpportunityTape("BTC/USD", time.Unix(1700000000, 0), 8)
+		times, shifted, prices := make([]int64, len(tape.Steps)), make([]int64, len(tape.Steps)), make([]float64, len(tape.Steps))
+		for index, step := range tape.Steps {
+			times[index], prices[index] = step.EventTime.UnixNano(), step.ExecutableBid
+			shifted[index] = times[index] + int64(43*time.Millisecond)
+		}
+		var left, right equation.LogReturns
+		So(left.Load(path(times, prices)), ShouldBeNil)
+		So(right.Load(path(shifted, prices)), ShouldBeNil)
+		original := slices.Clone(left.Intervals)
+		estimator := NewHayashiYoshida()
+		for _, lag := range []int64{-int64(time.Second), 0, int64(43 * time.Millisecond), int64(time.Second)} {
+			covariance, support := 0.0, 0.0
+			for _, leftReturn := range left.Intervals {
+				for _, rightReturn := range right.Intervals {
+					if leftReturn.From+lag < rightReturn.To && rightReturn.From < leftReturn.To+lag {
+						covariance += leftReturn.Value * rightReturn.Value
+						support++
+					}
+				}
+			}
+			fields, err := estimator.Estimate(&left, &right, lag)
+			So(err, ShouldBeNil)
+			So(core.To[float64](fields["support"]), ShouldEqual, support)
+			So(core.To[float64](fields["covariance"]), ShouldAlmostEqual, covariance)
+			So(core.To[float64](fields["correlation"]), ShouldAlmostEqual, covariance/math.Sqrt(left.Energy*right.Energy))
+			So(left.Intervals, ShouldResemble, original)
+		}
+
+		Convey("Later evaluations do not overwrite an earlier result", func() {
+			first, err := estimator.Estimate(&left, &right, 0)
+			So(err, ShouldBeNil)
+			covariance := core.To[float64](first["covariance"])
+			_, err = estimator.Estimate(&left, &right, int64(time.Hour))
+			So(err, ShouldBeNil)
+			So(core.To[float64](first["covariance"]), ShouldEqual, covariance)
+		})
+
+		Convey("Unrepresentable timestamp offsets fail explicitly", func() {
+			_, err := estimator.Estimate(&left, &right, math.MaxInt64)
+			So(err, ShouldNotBeNil)
+		})
+	})
 }

@@ -89,7 +89,7 @@ export type HindsightGap = {
 	runId: string;
 	encoding: string;
 	sequence: number;
-	detail: string;
+	detail?: string;
 };
 
 /*

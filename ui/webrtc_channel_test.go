@@ -228,3 +228,17 @@ func TestFluidChannelSenderDrainsLatestAfterPreemption(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkFluidChannelSendSegment(b *testing.B) {
+	transport := &fakeFluidTransport{}
+	channel := testFluidChannel(transport)
+	defer channel.close()
+	segment := encodeFluidChunk(1, 0, 1, []byte("diagnostic snapshot"))
+	b.ReportAllocs()
+	for b.Loop() {
+		transport.segments = transport.segments[:0]
+		if err := channel.sendSegment(segment, channel.sendGen.Load()); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

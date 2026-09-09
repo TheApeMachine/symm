@@ -471,7 +471,7 @@ func NewFuturesWithClient(
 					return
 				}
 
-				if workload.Status() == nil || workload.Status().Current() != runtime.READY {
+				if workload.Status() != runtime.READY {
 					futures.fail(errnie.Err(
 						errnie.NotAcceptable,
 						"futures: ingress is not ready for "+feed,
@@ -713,8 +713,7 @@ func (futures *FuturesLive) MarkReady() {
 	}
 
 	for feed, workload := range futures.ingress {
-		if workload != nil && workload.Status() != nil &&
-			workload.Status().Current() == runtime.READY {
+		if workload != nil && workload.Status() == runtime.READY {
 			continue
 		}
 

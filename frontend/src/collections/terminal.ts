@@ -15,7 +15,8 @@ export type TerminalSurface =
 	| "allocation"
 	| "regulator"
 	| "diagnostics"
-	| "hindsight";
+	| "hindsight"
+	| "workbench";
 
 export { DEFAULT_FOCUS_SYMBOL };
 

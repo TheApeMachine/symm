@@ -3,7 +3,8 @@ package agent
 import (
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/cognition"
+
 	"github.com/theapemachine/symm/nomagique/learning/associative/reward"
 )
 
@@ -16,25 +17,12 @@ the agent retains its ticket until Resolve or an explicit Abort.
 Objective returns nil while the objective cannot be measured; this supplies no
 feedback and does not replace the last measured value. Errors remain failures.
 Methods consume resident state; network and durable storage run outside Step.
-Population calls different environments concurrently; shared resources must be
-synchronized by their owner. Calls on one environment remain sequential.
+The workload serializes calls on one environment.
 */
 type Environment[Action comparable] interface {
 	Feasible(label string) (actions []Action, context []uint64, err error)
 	Execute(decision *Decision[Action]) error
 	Objective() (*reward.Mark, error)
-}
-
-/*
-Observation carries one context's measurements and ordered prior context tokens.
-The producer supplies History from its observed temporal horizon. Tokens must
-have stable identities across restarts and preserve sequence boundaries. The
-agent appends current grid conditions; it does not invent a history window.
-*/
-type Observation struct {
-	At           time.Time
-	Measurements []*data.Measurement[float64]
-	History      []uint64
 }
 
 /*
@@ -44,11 +32,13 @@ it contains identities, not a snapshot of observations or mutable grid values.
 Environment must treat Context as read-only.
 */
 type Decision[Action comparable] struct {
-	ID        uint64
-	Label     string
-	At        time.Time
-	Action    Action
-	Context   []uint64
-	Authority float64
-	Outcome   *float64
+	ID           uint64
+	Label        string
+	At           time.Time
+	Action       Action
+	Context      []uint64
+	Authority    float64
+	Outcome      *float64
+	Evaluation   cognition.Evaluation
+	Alternatives []Action
 }

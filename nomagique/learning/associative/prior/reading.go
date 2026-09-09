@@ -7,7 +7,7 @@ import (
 
 /*
 Reading projects the canonical PriorMoments summary. Pending and context
-depth belong to Model's issue/resolve lifecycle; projection does not estimate.
+depth come from the cognition query and agent lifecycle; projection does not estimate.
 */
 type Reading struct {
 	Provisional       bool

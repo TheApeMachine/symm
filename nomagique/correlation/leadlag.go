@@ -16,7 +16,7 @@ import (
 // x is seconds, spacing is nanoseconds. The winning nonzero lag is compared
 // with contemporaneous dependence. Empty searches are explicit undefined records.
 // The inherited search_scale is a policy quantity, not a calibrated p-value.
-func NewLeadLag(estimator core.Primitive) core.Primitive {
+func NewLeadLag(estimator equation.LagEstimator) core.Primitive {
 	context := store.NewRetained(nil)
 	profile := store.NewRetained(nil)
 	peak := store.NewRetained(nil)

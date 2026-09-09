@@ -11,6 +11,13 @@ const config = defineConfig({
 		tsconfigPaths: true,
 	},
 	assetsInclude: ["**/*.wasm"],
+	/*
+		Perspective's engine and viewer are WebAssembly modules built against
+		modern language features; anything below esnext fails to parse them.
+	*/
+	build: {
+		target: "esnext",
+	},
 	plugins: [devtools(), tailwindcss(), tanstackStart(), viteReact()],
 	server: {
 		watch: {

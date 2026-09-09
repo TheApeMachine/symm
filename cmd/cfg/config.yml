@@ -21,6 +21,13 @@ storage:
     uri: http://iceberg.seaweed.home.arpa
     warehouse: s3://symmtables/
 
+workbench:
+  # The Analytical Workbench's DuckDB runs inside this process. An unpivoted
+  # view is materialized in full before it is paged, so this is the ceiling on
+  # what an analyst's question may cost the run; beyond it the query is refused
+  # rather than spilled to disk or taken out of the trading path's memory.
+  memory_limit: 2GB
+
 experimental:
   # Presentation and diagnostic experiments are opt-in and paper-only.
   enabled: false

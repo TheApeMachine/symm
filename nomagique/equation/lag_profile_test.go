@@ -58,3 +58,65 @@ func TestNewLagProfile(t *testing.T) {
 	tests.EqualNumber(t, core.To[float64](point["x"]), 1)
 	tests.EqualNumber(t, core.To[float64](point["y"]), 1)
 }
+
+func BenchmarkNewLagProfile(b *testing.B) {
+	for _, count := range []int{16, 64} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			times, prices := make([]int64, count), make([]float64, count)
+			for index := range times {
+				times[index] = int64(index) * 1e9
+				prices[index] = 100 + float64(index%5)
+			}
+			input := tests.Observation(tests.Path(times, prices), tests.Path(times, prices))
+			node := equation.NewLagProfile(algo.NewHayashiYoshida(), transport.NewIO(core.From(1e9)), transport.NewIO(core.From(float64(count-2))))
+			b.ReportAllocs()
+			for b.Loop() {
+				produced := 0
+				for value := node.Next(input); value != nil; value = node.Next(input) {
+					produced++
+				}
+				if err := node.Error(); err != nil {
+					b.Fatal(err)
+				}
+				if produced != 2*count-3 {
+					b.Fatal("incomplete lag profile", produced)
+				}
+			}
+		})
+	}
+}
+
+// observedPoint counts boundary decoding without changing the source payload.
+type observedPoint struct {
+	core.Primitive
+	reads *int
+}
+
+func (point *observedPoint) Read() any {
+	*point.reads++
+	return point.Primitive.Read()
+}
+
+func TestLagProfileSearch(t *testing.T) {
+	Convey("Lag candidates share one decoding of each original path", t, func() {
+		left := tests.Path([]int64{0, 100, 230, 450}, []float64{100, 102, 99, 101})
+		right := tests.Path([]int64{20, 150, 310, 470}, []float64{100, 99, 103, 101})
+		reads := 0
+		for index := range left {
+			left[index] = &observedPoint{Primitive: left[index], reads: &reads}
+			right[index] = &observedPoint{Primitive: right[index], reads: &reads}
+		}
+		node := equation.NewLagProfile(algo.NewHayashiYoshida(), transport.NewIO(core.From(100.0)), transport.NewIO(core.From(3.0)))
+		first := tests.Drain(t, node, tests.Observation(left, right))
+		So(node.Error(), ShouldBeNil)
+		So(len(first), ShouldEqual, 7)
+		So(reads, ShouldEqual, len(left)+len(right))
+		firstFields := tests.Fields(t, first[0])
+		firstSupport := tests.Number(t, firstFields, "support")
+		second := tests.Drain(t, node, tests.Observation(left[:2], right[:2]))
+		So(node.Error(), ShouldBeNil)
+		So(len(second), ShouldEqual, 7)
+		So(reads, ShouldEqual, len(left)+len(right)+4)
+		So(tests.Number(t, firstFields, "support"), ShouldEqual, firstSupport)
+	})
+}

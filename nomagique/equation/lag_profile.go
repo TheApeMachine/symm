@@ -5,21 +5,34 @@ import (
 	"github.com/theapemachine/symm/nomagique/transport"
 )
 
+/*
+LagEstimator consumes borrowed, already decoded return paths for one timestamp
+offset. It must finish reading them before returning and publish owned result
+fields. Estimators and diagnostic compositions implement the same operation.
+*/
+type LagEstimator interface {
+	core.Primitive
+	Estimate(left, right *LogReturns, lag int64) (map[string]core.Primitive, error)
+}
+
 /* LagProfile owns the configured estimator and exact discrete search coordinates. */
 type LagProfile struct {
 	core.PrimitiveError
-	estimator, spacing, span core.Primitive
-	seed                     *transport.IO
-	current                  core.Primitive
+	estimator     LagEstimator
+	spacing, span core.Primitive
+	paths         [2]LogReturns
+	seed          *transport.IO
+	current       core.Primitive
 }
 
 /*
-NewLagProfile evaluates the opaque estimator at every lag. Spacing is nanoseconds;
+NewLagProfile evaluates the configured estimator at every lag over the same
+decoded paths. Spacing is nanoseconds;
 span counts steps on either side. Every candidate retains the complete estimator
 record and its own support. Index identity is retained before conversion to
 seconds, so boundary indices cannot be corrupted by floating-point round trips.
 */
-func NewLagProfile(estimator, spacing, span core.Primitive) core.Primitive {
+func NewLagProfile(estimator LagEstimator, spacing, span core.Primitive) core.Primitive {
 	return transport.NewPipe(
 		transport.NewMap(&LagProfile{
 			estimator: estimator, spacing: spacing, span: span,
@@ -63,28 +76,18 @@ func (profile *LagProfile) Search(fields map[string]core.Primitive) ([]core.Prim
 	if err != nil {
 		return nil, err
 	}
-	times := make([]int64, len(left))
-	values := make([]core.Primitive, len(left))
+	if err := profile.paths[0].Load(left); err != nil {
+		return nil, err
+	}
 
-	for index, observation := range left {
-		record := core.To[map[string]core.Primitive](observation)
-
-		if err := observation.Error(); err != nil {
-			return nil, err
-		}
-		point := core.NewDecoder(record)
-		times[index] = core.Decode[int64](point, "at")
-		values[index] = core.From(core.Decode[float64](point, "value"))
-
-		if err := point.Error(); err != nil {
-			return nil, err
-		}
+	if err := profile.paths[1].Load(right); err != nil {
+		return nil, err
 	}
 	// Range owns validation of the discrete count, including non-integral counts.
 	sequence := transport.NewRange(transport.NewIO(core.From(span*2 + 1)))
 	candidates := []core.Primitive{}
 	core.Yield(transport.NewIO(core.From(0.0)), sequence, func(held, index float64) float64 {
-		candidate, err := profile.Candidate(times, values, right, index, span, spacing)
+		candidate, err := profile.Candidate(index, span, spacing)
 		profile.Error(err)
 		candidates = append(candidates, candidate)
 		return held
@@ -92,21 +95,11 @@ func (profile *LagProfile) Search(fields map[string]core.Primitive) ([]core.Prim
 	return candidates, profile.Error()
 }
 
-/* Candidate shifts timestamps without rebuilding a scalar processing graph. */
-func (profile *LagProfile) Candidate(
-	times []int64, values, right []core.Primitive, index, span, spacing float64,
-) (core.Primitive, error) {
+/* Candidate applies one exact timestamp offset without copying either path. */
+func (profile *LagProfile) Candidate(index, span, spacing float64) (core.Primitive, error) {
 	lagIndex := index - span
 	lag := int64(lagIndex * spacing)
-	shifted := make([]core.Primitive, len(times))
-
-	for position, at := range times {
-		shifted[position] = core.From(map[string]core.Primitive{
-			"at": core.From(at + lag), "value": values[position],
-		})
-	}
-	estimate, err := transport.Evaluate[map[string]core.Primitive](profile.estimator,
-		core.Record(map[string]any{"left": shifted, "right": right}))
+	estimate, err := profile.estimator.Estimate(&profile.paths[0], &profile.paths[1], lag)
 
 	if err != nil {
 		return nil, err

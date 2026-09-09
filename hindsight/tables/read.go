@@ -112,8 +112,11 @@ Both predicates reach Iceberg before reading payloads, so tail followers avoid
 reloading consumed files. Only the selected suffix is collected for sorting.
 */
 func (c *Catalog) Captures(ctx context.Context, run string, after int64) ([]CaptureRow, error) {
-	batches, err := c.scan(ctx, Captures, forRun(run),
-		iceberg.GreaterThan(iceberg.Reference("sequence"), after))
+	return c.captures(ctx, run, iceberg.GreaterThan(iceberg.Reference("sequence"), after))
+}
+
+func (c *Catalog) captures(ctx context.Context, run string, filters ...iceberg.BooleanExpression) ([]CaptureRow, error) {
+	batches, err := c.scan(ctx, Captures, append(filters, forRun(run))...)
 
 	if err != nil {
 		return nil, err
@@ -180,6 +183,17 @@ func (c *Catalog) Runs(ctx context.Context) ([]RunRow, error) {
 				row.Positions = batch.Column(6).(*array.Int32).Value(index)
 			}
 
+			versions := batch.Column(7).(*array.Map)
+
+			if !versions.IsNull(index) {
+				start, end := versions.ValueOffsets(index)
+				row.SchemaVersions = make(map[string]string, end-start)
+
+				for element := int(start); element < int(end); element++ {
+					row.SchemaVersions[str(versions.Keys(), element)] = str(versions.Items(), element)
+				}
+			}
+
 			if micros, ok := when(batch.Column(1), index); ok {
 				row.StartedAt = micros.ToTime(arrow.Microsecond).UTC()
 			}
@@ -228,6 +242,10 @@ what the old states/ key prefix held, which is now a predicate rather than a
 separate table.
 */
 func (c *Catalog) Witnesses(ctx context.Context, run, kind string) ([]WitnessRow, error) {
+	return c.witnesses(ctx, run, kind, nil, nil, nil)
+}
+
+func (c *Catalog) witnesses(ctx context.Context, run, kind string, sequence, ordinal *int64, seen map[EnvelopeRefRow]bool) ([]WitnessRow, error) {
 	filters := []iceberg.BooleanExpression{forRun(run)}
 
 	if kind != "" {
@@ -251,6 +269,19 @@ func (c *Catalog) Witnesses(ctx context.Context, run, kind string) ([]WitnessRow
 		semantic, _ := batch.Column(10).(*array.List)
 
 		for index := range int(batch.NumRows()) {
+			reference := ref(batch.Column(1), index)
+
+			if seen[reference] {
+				continue
+			}
+
+			if sequence != nil && reference.Sequence != *sequence {
+				continue
+			}
+			if ordinal != nil && reference.Ordinal != *ordinal {
+				continue
+			}
+
 			row := WitnessRow{
 				Run:                   str(batch.Column(0), index),
 				Envelope:              ref(batch.Column(1), index),
@@ -294,6 +325,10 @@ func (c *Catalog) Witnesses(ctx context.Context, run, kind string) ([]WitnessRow
 
 // Manifests yields the envelope manifests of one run.
 func (c *Catalog) Manifests(ctx context.Context, run string) ([]ManifestRow, error) {
+	return c.manifests(ctx, run, nil)
+}
+
+func (c *Catalog) manifests(ctx context.Context, run string, sequence *int64) ([]ManifestRow, error) {
 	batches, err := c.scan(ctx, Manifests, forRun(run))
 
 	if err != nil {
@@ -308,6 +343,10 @@ func (c *Catalog) Manifests(ctx context.Context, run string) ([]ManifestRow, err
 		}
 
 		for index := range int(batch.NumRows()) {
+			if sequence != nil && ref(batch.Column(1), index).Sequence != *sequence {
+				continue
+			}
+
 			row := ManifestRow{
 				Run:           str(batch.Column(0), index),
 				Envelope:      ref(batch.Column(1), index),
@@ -356,6 +395,25 @@ func (c *Catalog) Lifecycle(ctx context.Context, run string) ([]LifecycleRow, er
 
 			if micros, ok := when(batch.Column(6), index); ok {
 				row.At = micros.ToTime(arrow.Microsecond).UTC()
+			}
+
+			// All execution columns are null for position-only transitions.
+			if hasExecution(batch, index) {
+				row.Exec = &ExecutionRow{
+					OrderID: str(batch.Column(8), index), ClientOrderID: str(batch.Column(9), index),
+					ExecID: str(batch.Column(10), index), ExecType: str(batch.Column(11), index),
+					TradeID: num(batch.Column(12), index), Side: str(batch.Column(13), index),
+					OrderType: str(batch.Column(14), index), OrderStatus: str(batch.Column(15), index),
+					LiquidityInd: str(batch.Column(16), index), LastQty: dec(batch.Column(18), index),
+					LastPrice: dec(batch.Column(19), index), Cost: dec(batch.Column(20), index),
+					CumQty: dec(batch.Column(21), index), CumCost: dec(batch.Column(22), index),
+					AvgPrice: dec(batch.Column(23), index), FeeUsdEquiv: dec(batch.Column(24), index),
+					Fees: str(batch.Column(25), index),
+				}
+
+				if micros, ok := when(batch.Column(17), index); ok {
+					row.Exec.At = micros.ToTime(arrow.Microsecond).UTC()
+				}
 			}
 
 			rows = append(rows, row)
@@ -499,4 +557,16 @@ func (c *Catalog) Outcomes(ctx context.Context, run string) ([]OutcomeRow, error
 	}
 
 	return rows, nil
+}
+
+// hasExecution distinguishes absent execution facts from present facts whose
+// optional order ID, trade ID or quantity was not supplied by the venue.
+func hasExecution(batch arrow.RecordBatch, row int) bool {
+	// Lifecycle schema columns 8 through 25 are the execution fact.
+	for column := 8; column <= 25; column++ {
+		if !batch.Column(column).IsNull(row) {
+			return true
+		}
+	}
+	return false
 }

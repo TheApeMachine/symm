@@ -411,6 +411,12 @@ func (channel *fluidChannel) sendSegment(segment []byte, generation uint64) erro
 		}
 	}
 
+	// Supersession and drainage can become ready together. Recheck after
+	// leaving the wait, regardless of which wake-up the select consumed.
+	if channel.sendGen.Load() != generation {
+		return errFrameSuperseded
+	}
+
 	return channel.transport.Send(segment)
 }
 

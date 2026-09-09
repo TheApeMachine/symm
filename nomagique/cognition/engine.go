@@ -14,8 +14,8 @@ import (
 const maxCandidates = 16
 
 type classAccumulator struct {
-	names  [maxCandidates][]byte
-	logits [maxCandidates]types.Scalar
+	names  [][]byte
+	logits []types.Scalar
 	count  int
 }
 
@@ -27,11 +27,9 @@ func (acc *classAccumulator) add(name []byte, logP types.Scalar) {
 		}
 	}
 
-	if acc.count < maxCandidates {
-		acc.names[acc.count] = name
-		acc.logits[acc.count] = logP
-		acc.count++
-	}
+	acc.names = append(acc.names, name)
+	acc.logits = append(acc.logits, logP)
+	acc.count++
 }
 
 type Engine struct {
@@ -52,40 +50,49 @@ func NewEngine(cfg Config) *Engine {
 }
 
 /*
-Observe registers an associative transition: context -> class (or next state).
+Observe registers context -> class in the existing packed basin. Without feedback,
+it observes a positive association. Optional signed feedback is a dimensionless
+reinforcement amount: positive strengthens, negative inhibits, zero only observes
+sensory context. It is not stored in a separate reward model.
 */
-func (e *Engine) Observe(context []byte, class []byte) {
+func (e *Engine) Observe(context []byte, class []byte, feedback ...float64) {
 	if len(context) == 0 {
 		return
 	}
-	step := e.stepCounter.Add(1)
 
 	// Keys are namespaced: b/<class>/<context> for basins; s/<context> for sensory transitions
 	basinKey := makeBasinKey(class, context)
 	sensoryKey := makeSensoryKey(context)
 
-	var valBuf [StateSize]byte
+	var valBuf [WeightSize]byte
 
 	for {
 		oldRoot := e.root.Load()
+		step := e.stepCounter.Add(1)
 		txn := oldRoot.Txn()
 
-		// 1. Update Attractor Basin
-		if len(class) > 0 {
-			bState := State{Count: 1, Probability: 1.0, WriteStep: step}
-			if existing, found := oldRoot.Get(basinKey); found {
-				prior := DecodeState(existing).Aged(step, e.decayFactor)
-				bState.Count = prior.Count + 1
-				bState.Probability = prior.Probability + (1.0-prior.Probability)/(float64(bState.Count)+1.0)
+		// A zero grade observes the context without reinforcing an action.
+		if len(class) > 0 && (len(feedback) == 0 || feedback[0] != 0) {
+			weight := PackedWeight{Probability: 1, WriteStep: step}
+
+			if len(feedback) > 0 {
+				weight.Probability = 0.5 // Neutral between reinforcement and inhibition.
 			}
-			bState.Encode(valBuf[:])
+
+			if existing, found := oldRoot.Get(basinKey); found {
+				weight = DecodeWeight(existing).Effective(step, e.decayFactor)
+			}
+			weight.Count++
+			weight.WriteStep = step
+			weight.Reinforce(feedback...)
+			weight.Encode(valBuf[:])
 			txn.Insert(basinKey, bytes.Clone(valBuf[:]))
 		}
 
 		// 2. Update Sensory Suffix Transition
-		sState := State{Count: 1, Probability: 1.0, WriteStep: step}
+		sState := PackedWeight{Count: 1, Probability: 1.0, WriteStep: step}
 		if existing, found := oldRoot.Get(sensoryKey); found {
-			prior := DecodeState(existing).Aged(step, e.decayFactor)
+			prior := DecodeWeight(existing).Effective(step, e.decayFactor)
 			sState.Count = prior.Count + 1
 			sState.Probability = prior.Probability + (1.0-prior.Probability)/(float64(sState.Count)+1.0)
 		}
@@ -113,7 +120,9 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 	// -------------------------------------------------------------
 	// 1. Attractor Basin Softmax & Contrast (Nomagique Probability)
 	// -------------------------------------------------------------
-	var acc classAccumulator
+	var names [maxCandidates][]byte
+	var logits [maxCandidates]types.Scalar
+	acc := classAccumulator{names: names[:0], logits: logits[:0]}
 	it := root.Root().Iterator()
 	basinPrefix := []byte("b/")
 	it.SeekPrefix(basinPrefix)
@@ -130,7 +139,7 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 		order := matchOrder(context, basinSeq, e.cfg.MaxBackoffOrder)
 
 		if order > 0 {
-			state := DecodeState(v).Aged(step, e.decayFactor)
+			state := DecodeWeight(v).Effective(step, e.decayFactor)
 			// Dirichlet pseudo-count prior: P = (Count + α) / (Total + α*K)
 			denom := float64(state.Count) + e.cfg.DirichletAlpha*float64(maxCandidates)
 			smoothedP := (float64(state.Count)*state.Probability + e.cfg.DirichletAlpha) / denom
@@ -195,7 +204,7 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 	// -------------------------------------------------------------
 	sensoryKey := makeSensoryKey(context)
 	if raw, found := root.Get(sensoryKey); found {
-		state := DecodeState(raw).Aged(step, e.decayFactor)
+		state := DecodeWeight(raw).Effective(step, e.decayFactor)
 		if state.Probability > 0 {
 			eval.Surprisal = -math.Log2(state.Probability)
 		} else {
@@ -242,7 +251,7 @@ func (e *Engine) beamSearch(root *iradix.Tree[[]byte], prefix []byte, width, hop
 					continue
 				}
 
-				state := DecodeState(v)
+				state := DecodeWeight(v)
 				prob := math.Max(state.Probability, 1e-4)
 				logP := math.Log(prob)
 

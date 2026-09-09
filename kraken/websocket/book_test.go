@@ -546,19 +546,19 @@ func TestBookWait(t *testing.T) {
 		Convey("Creating a book and receiving a delta do not count as seeding", func() {
 			managed.Create("BTC/USD", 10)
 			apply("update", "BTC/USD")
-			So(managed.Status(), ShouldEqual, runtime.WAITING)
+			So(managed.Status(), ShouldEqual, runtime.BUSY)
 		})
 		Convey("All snapshots and their consumers must finish before READY", func() {
 			observed := 0
 			managed.SetNotify(func(symbol string, _ time.Time) {
-				So(managed.Status(), ShouldEqual, runtime.WAITING)
+				So(managed.Status(), ShouldEqual, runtime.BUSY)
 				readable := false
 				managed.Book(symbol, func(book *spotbook.Book) { readable = true })
 				So(readable, ShouldBeTrue)
 				observed++
 			})
 			apply("snapshot", "BTC/USD")
-			So(managed.Status(), ShouldEqual, runtime.WAITING)
+			So(managed.Status(), ShouldEqual, runtime.BUSY)
 			apply("snapshot", "ETH/USD")
 			So(observed, ShouldEqual, 2)
 			So(managed.Wait(), ShouldBeNil)
@@ -569,7 +569,7 @@ func TestBookWait(t *testing.T) {
 			managed.ctx = ctx
 			cancel()
 			So(managed.Wait(), ShouldNotBeNil)
-			So(managed.Status(), ShouldEqual, runtime.WAITING)
+			So(managed.Status(), ShouldEqual, runtime.BUSY)
 		})
 	})
 }

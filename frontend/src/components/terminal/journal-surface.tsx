@@ -10,28 +10,9 @@ import { Decision } from "#/providers/telemetry/telemetry/decision";
 import { EntryCost } from "#/providers/telemetry/telemetry/entry-cost";
 import { Holding } from "#/providers/telemetry/telemetry/holding";
 import { Position } from "#/providers/telemetry/telemetry/position";
+import { hubBaseUrl } from "#/lib/hub";
 import { cn } from "@/lib/utils";
 
-/*
-journalBaseUrl locates the hub's REST endpoints, mirroring the websocket
-origin (env override with a localhost default).
-*/
-const journalBaseUrl = () => {
-	if (import.meta.env.VITE_SYMM_WS_URL) {
-		return import.meta.env.VITE_SYMM_WS_URL.replace(/^ws/, "http").replace(
-			/\/ws$/,
-			"",
-		);
-	}
-
-	const protocol = window.location.protocol === "https:" ? "https:" : "http:";
-	const host =
-		!window.location.hostname || window.location.hostname === "localhost"
-			? "127.0.0.1"
-			: window.location.hostname;
-
-	return `${protocol}//${host}:8765`;
-};
 
 const formatNumber = (value: unknown, digits: number): string =>
 	typeof value === "number"
@@ -181,7 +162,7 @@ export const JournalSurface = () => {
 
 		const loadHistory = async () => {
 			try {
-				const response = await fetch(`${journalBaseUrl()}/trades?limit=200`);
+				const response = await fetch(`${hubBaseUrl()}/trades?limit=200`);
 				if (!response.ok) return;
 
 				const trades = (await response.json()) as TradeRecord[] | null;

@@ -110,11 +110,6 @@ type Live struct {
 	// sessions leave it nil and push directly.
 	l3forward *level3Sequencer
 
-	// Level3Observers constructs numeric producers at each child book owner.
-	// Only their measurements cross the ingress ring; order arrays do not.
-	Level3Observers func() []runtime.Node[*types.Envelope]
-	level3Observers []runtime.Node[*types.Envelope]
-
 	// pingReqID is echoed back on the pong reply, so a response can be tied to
 	// the request that produced it.
 	pingReqID atomic.Int64
@@ -443,24 +438,13 @@ func NewWithClient(
 				return data.Symbol == symbol
 			}))
 
-			// Observe the accepted delta synchronously at its transport owner.
-			// Strip orders before either the sequencer or workload sees the value.
+			// The accepted delta travels through the signal Workload. The resident
+			// book remains owned by this transport; no full book snapshot is copied.
 			envelope.Level3Data = bookFrame.Data[envelope.CaptureOrdinal]
-
-			for _, observer := range live.level3Observers {
-				observer.Step(envelope)
-
-				if failure, ok := observer.(runtime.ErrorNode); ok && failure.Error() != nil {
-					live.fail(failure.Error())
-					return
-				}
-			}
 
 			if live.Status() != runtime.READY {
 				return
 			}
-
-			envelope.Level3Data = kraken.Level3Data{Symbol: symbol, Timestamp: at}
 
 			if live.manifestSink != nil {
 				if err := live.manifestSink.WriteManifest(manifestFor(
@@ -478,7 +462,7 @@ func NewWithClient(
 
 			workload := live.ingress["level3"]
 
-			if workload == nil || workload.Status() == nil || workload.Status().Current() != runtime.READY {
+			if workload == nil || workload.Status() != runtime.READY {
 				live.fail(errnie.Err(errnie.NotAcceptable, "websocket: book notification ingress is not ready", nil))
 				return
 			}
@@ -656,7 +640,7 @@ func NewWithClient(
 					return
 				}
 
-				if workload.Status() == nil || workload.Status().Current() != runtime.READY {
+				if workload.Status() != runtime.READY {
 					live.fail(errnie.Err(
 						errnie.NotAcceptable,
 						"websocket: ingress is not ready for "+channel,
@@ -1053,8 +1037,7 @@ func (live *Live) MarkReady() {
 	}
 
 	for channel, workload := range live.ingress {
-		if workload != nil && workload.Status() != nil &&
-			workload.Status().Current() == runtime.READY {
+		if workload != nil && workload.Status() == runtime.READY {
 			continue
 		}
 
@@ -1400,10 +1383,6 @@ func (live *Live) SubL3(symbols []string) {
 		}
 
 		conn.l3forward = live.l3forward
-
-		if live.Level3Observers != nil {
-			conn.level3Observers = live.Level3Observers()
-		}
 
 		conn.symbols = append([]string{}, groups...)
 		live.AttachLevel3(groupKey, conn)

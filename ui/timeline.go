@@ -67,7 +67,7 @@ func (cache *timelineCache) index(
 		return entry.index, nil
 	}
 
-	observations, err := hindsight.ReadObservations(context.Background(), engine, run)
+	observations, _, err := hindsight.ReadObservations(context.Background(), engine, run, 0)
 
 	if err != nil {
 		return nil, err

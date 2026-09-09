@@ -3,108 +3,92 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from "flatbuffers";
+import * as flatbuffers from 'flatbuffers';
 
-export class EnvelopeNamedTimeNs
-	implements flatbuffers.IUnpackableObject<EnvelopeNamedTimeNsT>
-{
-	bb: flatbuffers.ByteBuffer | null = null;
-	bb_pos = 0;
-	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeNamedTimeNs {
-		this.bb_pos = i;
-		this.bb = bb;
-		return this;
-	}
 
-	static getRootAsEnvelopeNamedTimeNs(
-		bb: flatbuffers.ByteBuffer,
-		obj?: EnvelopeNamedTimeNs,
-	): EnvelopeNamedTimeNs {
-		return (obj || new EnvelopeNamedTimeNs()).__init(
-			bb.readInt32(bb.position()) + bb.position(),
-			bb,
-		);
-	}
 
-	static getSizePrefixedRootAsEnvelopeNamedTimeNs(
-		bb: flatbuffers.ByteBuffer,
-		obj?: EnvelopeNamedTimeNs,
-	): EnvelopeNamedTimeNs {
-		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-		return (obj || new EnvelopeNamedTimeNs()).__init(
-			bb.readInt32(bb.position()) + bb.position(),
-			bb,
-		);
-	}
+export class EnvelopeNamedTimeNs implements flatbuffers.IUnpackableObject<EnvelopeNamedTimeNsT> {
+  bb: flatbuffers.ByteBuffer|null = null;
+  bb_pos = 0;
+  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeNamedTimeNs {
+  this.bb_pos = i;
+  this.bb = bb;
+  return this;
+}
 
-	name(): string | null;
-	name(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
-	name(optionalEncoding?: any): string | Uint8Array | null {
-		const offset = this.bb!.__offset(this.bb_pos, 4);
-		return offset
-			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
-			: null;
-	}
+static getRootAsEnvelopeNamedTimeNs(bb:flatbuffers.ByteBuffer, obj?:EnvelopeNamedTimeNs):EnvelopeNamedTimeNs {
+  return (obj || new EnvelopeNamedTimeNs()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-	valueNs(): bigint {
-		const offset = this.bb!.__offset(this.bb_pos, 6);
-		return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt("0");
-	}
+static getSizePrefixedRootAsEnvelopeNamedTimeNs(bb:flatbuffers.ByteBuffer, obj?:EnvelopeNamedTimeNs):EnvelopeNamedTimeNs {
+  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+  return (obj || new EnvelopeNamedTimeNs()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-	static startEnvelopeNamedTimeNs(builder: flatbuffers.Builder) {
-		builder.startObject(2);
-	}
+name():string|null
+name(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+name(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 4);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
 
-	static addName(builder: flatbuffers.Builder, nameOffset: flatbuffers.Offset) {
-		builder.addFieldOffset(0, nameOffset, 0);
-	}
+valueNs():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
+  return offset ? this.bb!.readInt64(this.bb_pos + offset) : BigInt('0');
+}
 
-	static addValueNs(builder: flatbuffers.Builder, valueNs: bigint) {
-		builder.addFieldInt64(1, valueNs, BigInt("0"));
-	}
+static startEnvelopeNamedTimeNs(builder:flatbuffers.Builder) {
+  builder.startObject(2);
+}
 
-	static endEnvelopeNamedTimeNs(
-		builder: flatbuffers.Builder,
-	): flatbuffers.Offset {
-		const offset = builder.endObject();
-		builder.requiredField(offset, 4); // name
-		return offset;
-	}
+static addName(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(0, nameOffset, 0);
+}
 
-	static createEnvelopeNamedTimeNs(
-		builder: flatbuffers.Builder,
-		nameOffset: flatbuffers.Offset,
-		valueNs: bigint,
-	): flatbuffers.Offset {
-		EnvelopeNamedTimeNs.startEnvelopeNamedTimeNs(builder);
-		EnvelopeNamedTimeNs.addName(builder, nameOffset);
-		EnvelopeNamedTimeNs.addValueNs(builder, valueNs);
-		return EnvelopeNamedTimeNs.endEnvelopeNamedTimeNs(builder);
-	}
+static addValueNs(builder:flatbuffers.Builder, valueNs:bigint) {
+  builder.addFieldInt64(1, valueNs, BigInt('0'));
+}
 
-	unpack(): EnvelopeNamedTimeNsT {
-		return new EnvelopeNamedTimeNsT(this.name(), this.valueNs());
-	}
+static endEnvelopeNamedTimeNs(builder:flatbuffers.Builder):flatbuffers.Offset {
+  const offset = builder.endObject();
+  builder.requiredField(offset, 4) // name
+  return offset;
+}
 
-	unpackTo(_o: EnvelopeNamedTimeNsT): void {
-		_o.name = this.name();
-		_o.valueNs = this.valueNs();
-	}
+static createEnvelopeNamedTimeNs(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset, valueNs:bigint):flatbuffers.Offset {
+  EnvelopeNamedTimeNs.startEnvelopeNamedTimeNs(builder);
+  EnvelopeNamedTimeNs.addName(builder, nameOffset);
+  EnvelopeNamedTimeNs.addValueNs(builder, valueNs);
+  return EnvelopeNamedTimeNs.endEnvelopeNamedTimeNs(builder);
+}
+
+unpack(): EnvelopeNamedTimeNsT {
+  return new EnvelopeNamedTimeNsT(
+    this.name(),
+    this.valueNs()
+  );
+}
+
+
+unpackTo(_o: EnvelopeNamedTimeNsT): void {
+  _o.name = this.name();
+  _o.valueNs = this.valueNs();
+}
 }
 
 export class EnvelopeNamedTimeNsT implements flatbuffers.IGeneratedObject {
-	constructor(
-		public name: string | Uint8Array | null = null,
-		public valueNs: bigint = BigInt("0"),
-	) {}
+constructor(
+  public name: string|Uint8Array|null = null,
+  public valueNs: bigint = BigInt('0')
+){}
 
-	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
-		const name = this.name !== null ? builder.createString(this.name!) : 0;
 
-		return EnvelopeNamedTimeNs.createEnvelopeNamedTimeNs(
-			builder,
-			name,
-			this.valueNs,
-		);
-	}
+pack(builder:flatbuffers.Builder): flatbuffers.Offset {
+  const name = (this.name !== null ? builder.createString(this.name!) : 0);
+
+  return EnvelopeNamedTimeNs.createEnvelopeNamedTimeNs(builder,
+    name,
+    this.valueNs
+  );
+}
 }

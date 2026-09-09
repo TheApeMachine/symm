@@ -131,7 +131,7 @@ export const PositionIndex = ({
 
 			{positions.length === 0 ? (
 				<p className="px-3 py-3 font-mono text-[10px] text-(--f4)">
-					The desk held no position on this run.
+					No position lifecycle was recorded for this run.
 				</p>
 			) : (
 				<>

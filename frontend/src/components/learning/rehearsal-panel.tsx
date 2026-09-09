@@ -35,6 +35,16 @@ export const RehearsalPanel = ({ view }: { view: LearningView | null }) => {
 			count: Number(replay.declining),
 			color: "var(--down)",
 		},
+		{
+			label: "Exit liquidity unavailable at the touch",
+			count: Number(replay.illiquid),
+			color: "var(--warn)",
+		},
+		{
+			label: "No price development",
+			count: Number(replay.quiet),
+			color: "var(--f3)",
+		},
 	];
 	const largest = Math.max(...classes.map((entry) => entry.count));
 	const present = classes.filter((entry) => entry.count > 0).length;
@@ -74,7 +84,7 @@ export const RehearsalPanel = ({ view }: { view: LearningView | null }) => {
 						Each worker draws {perClass} from each available class, shuffled
 						without repeats within its pass.
 					</Typography.Mono>
-					{present < 3 && (
+					{present < classes.length && (
 						<Typography.Mono>
 							Incomplete variety: missing classes cannot be practised yet.
 						</Typography.Mono>
@@ -102,18 +112,19 @@ export const RehearsalPanel = ({ view }: { view: LearningView | null }) => {
 						))}
 					</Flex>
 					<Typography.Mono>
-						{String(replay.decisions)} exercises graded →{" "}
+						{String(replay.decisions)} decisions graded →{" "}
 						{String(replay.trained)} absorbed by the shared policy
 					</Typography.Mono>
 					<Typography.Mono>
 						{String(replay.passes)} completed passes ·{" "}
-						{String(replay.unsupported)} exercises without active precursor
+						{String(replay.unsupported)} observations without active precursor
 						evidence
 					</Typography.Mono>
 					{replay.decisions > 0n && (
 						<Typography.Mono>
 							Latest: {String(replay.lastSymbol)} · {String(replay.lastAction)}{" "}
-							· {basis(replay.lastReturn)} exercise score
+							· {basis(replay.lastReturn)} timing feedback ·{" "}
+							{replay.lastFailure}
 						</Typography.Mono>
 					)}
 					<Typography.Mono tone="f3">
@@ -137,10 +148,10 @@ export const RehearsalPanel = ({ view }: { view: LearningView | null }) => {
 						{live ? String(live.profit) : "unmeasured"}
 					</Typography.Mono>
 					<Typography.Mono tone="f3">
-						Practice currently covers entry/wait at historical anchors, using
-						raw quote/trade observations. It does not replay the full live
-						signal pipeline or learn exit timing. Scores use captured touch
-						quotes and current fees; depth and slippage are unmeasured.
+						Practice follows captured precursor measurements through entry, hold
+						and exit. Feedback distinguishes timing, friction and unavailable
+						exits. Execution is limited to recorded touch quantities; missing
+						precursor captures remain unsupported.
 					</Typography.Mono>
 				</Flex.Column>
 			</Flex>

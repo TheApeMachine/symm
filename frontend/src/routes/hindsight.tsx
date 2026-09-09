@@ -129,6 +129,7 @@ const HindsightRoute = () => {
 	const [state, setState] = useState<EnvelopeState | null>(null);
 	const [resident, setResident] = useState<HindsightResident | null>(null);
 	const [loading, setLoading] = useState(false);
+	const [error, setError] = useState<string | null>(null);
 	const [semantics, setSemantics] = useState<HindsightMetricMap | null>(null);
 	const [position, setPosition] = useState<string | null>(null);
 	const [marks, setMarks] = useState<Mark[]>([]);
@@ -162,14 +163,24 @@ const HindsightRoute = () => {
 
 	const surface = useRef<HTMLDivElement | null>(null);
 
+	const failed = useCallback((cause: unknown) => {
+		setError(cause instanceof Error ? cause.message : String(cause));
+		setLoading(false);
+		setResolving(false);
+	}, []);
+
 	// The declared metric semantics are the same answer for every run and every
 	// capture, so they are read once per session.
 	useEffect(() => {
 		let cancelled = false;
 
-		fetchHindsightMetricMap().then((loaded) => {
-			if (!cancelled) setSemantics(loaded);
-		});
+		fetchHindsightMetricMap()
+			.then((loaded) => {
+				if (!cancelled) setSemantics(loaded);
+			})
+			.catch((cause: unknown) => {
+				if (!cancelled) failed(cause);
+			});
 
 		return () => {
 			cancelled = true;
@@ -179,12 +190,16 @@ const HindsightRoute = () => {
 	useEffect(() => {
 		let cancelled = false;
 
-		fetchHindsightRuns().then((loaded) => {
-			if (cancelled) return;
+		fetchHindsightRuns()
+			.then((loaded) => {
+				if (cancelled) return;
 
-			setRuns(loaded);
-			setRun((current) => current ?? loaded[0]?.id ?? null);
-		});
+				setRuns(loaded);
+				setRun((current) => current ?? loaded[0]?.id ?? null);
+			})
+			.catch((cause: unknown) => {
+				if (!cancelled) failed(cause);
+			});
 
 		return () => {
 			cancelled = true;
@@ -196,6 +211,11 @@ const HindsightRoute = () => {
 
 		let cancelled = false;
 
+		setError(null);
+		setOverview(null);
+		setDetail(null);
+		setLifecycle([]);
+		setGaps([]);
 		setSymbol(null);
 		setViewport(null);
 		setPlayhead(null);
@@ -209,13 +229,21 @@ const HindsightRoute = () => {
 		setResidents([]);
 		setPosition(null);
 
-		fetchHindsightGaps(run).then((loaded) => {
-			if (!cancelled) setGaps(loaded);
-		});
+		fetchHindsightGaps(run)
+			.then((loaded) => {
+				if (!cancelled) setGaps(loaded);
+			})
+			.catch((cause: unknown) => {
+				if (!cancelled) failed(cause);
+			});
 
-		fetchHindsightLifecycle(run).then((loaded) => {
-			if (!cancelled) setLifecycle(loaded);
-		});
+		fetchHindsightLifecycle(run)
+			.then((loaded) => {
+				if (!cancelled) setLifecycle(loaded);
+			})
+			.catch((cause: unknown) => {
+				if (!cancelled) failed(cause);
+			});
 
 		return () => {
 			cancelled = true;
@@ -238,16 +266,20 @@ const HindsightRoute = () => {
 			axis,
 			buckets: OVERVIEW_BUCKETS,
 			symbols: true,
-		}).then((loaded) => {
-			if (cancelled) return;
+		})
+			.then((loaded) => {
+				if (cancelled) return;
 
-			setOverview(loaded);
-			setLoading(false);
+				setOverview(loaded);
+				setLoading(false);
 
-			if (loaded !== null && symbol === null && loaded.symbol !== "") {
-				setSymbol(loaded.symbol);
-			}
-		});
+				if (loaded !== null && symbol === null && loaded.symbol !== "") {
+					setSymbol(loaded.symbol);
+				}
+			})
+			.catch((cause: unknown) => {
+				if (!cancelled) failed(cause);
+			});
 
 		return () => {
 			cancelled = true;
@@ -272,9 +304,13 @@ const HindsightRoute = () => {
 			buckets: DETAIL_BUCKETS,
 			from: viewport?.from,
 			to: viewport?.to,
-		}).then((loaded) => {
-			if (!cancelled) setDetail(loaded);
-		});
+		})
+			.then((loaded) => {
+				if (!cancelled) setDetail(loaded);
+			})
+			.catch((cause: unknown) => {
+				if (!cancelled) failed(cause);
+			});
 
 		return () => {
 			cancelled = true;
@@ -289,32 +325,42 @@ const HindsightRoute = () => {
 
 		let cancelled = false;
 		const from = Math.max(playhead.sequence - 24, 0);
+		setEnvelope(null);
 		setState(null);
 		setResident(null);
 
-		fetchHindsightCaptures(run, from).then((loaded) => {
-			if (!cancelled) setCaptures(loaded.slice(0, 48));
-		});
+		fetchHindsightCaptures(run, from)
+			.then((loaded) => {
+				if (!cancelled) setCaptures(loaded.slice(0, 48));
+			})
+			.catch((cause: unknown) => {
+				if (!cancelled) failed(cause);
+			});
 
-		fetchHindsightEnvelope(run, playhead.sequence).then((loaded) => {
-			if (!cancelled) setEnvelope(loaded);
-		});
+		fetchHindsightEnvelope(run, playhead.sequence)
+			.then((loaded) => {
+				if (!cancelled) setEnvelope(loaded);
+			})
+			.catch((cause: unknown) => {
+				if (!cancelled) failed(cause);
+			});
 
-		fetchHindsightState(run, playhead.sequence, playhead.ordinal).then(
-			(loaded) => {
+		fetchHindsightState(run, playhead.sequence, playhead.ordinal)
+			.then((loaded) => {
 				if (!cancelled) setState(decodeEnvelopeState(loaded?.payload));
-			},
-		);
+			})
+			.catch((cause: unknown) => {
+				if (!cancelled) failed(cause);
+			});
 
 		if (symbol !== null) {
-			fetchHindsightResident(
-				run,
-				symbol,
-				playhead.sequence,
-				playhead.ordinal,
-			).then((loaded) => {
-				if (!cancelled) setResident(loaded);
-			});
+			fetchHindsightResident(run, symbol, playhead.sequence, playhead.ordinal)
+				.then((loaded) => {
+					if (!cancelled) setResident(loaded);
+				})
+				.catch((cause: unknown) => {
+					if (!cancelled) failed(cause);
+				});
 		}
 
 		return () => {
@@ -347,9 +393,13 @@ const HindsightRoute = () => {
 					decodeEnvelopeState(loaded?.payload),
 				),
 			),
-		).then((loaded) => {
-			if (!cancelled) setMarkStates(loaded);
-		});
+		)
+			.then((loaded) => {
+				if (!cancelled) setMarkStates(loaded);
+			})
+			.catch((cause: unknown) => {
+				if (!cancelled) failed(cause);
+			});
 
 		return () => {
 			cancelled = true;
@@ -373,12 +423,16 @@ const HindsightRoute = () => {
 			marks.map((entry) =>
 				fetchHindsightResident(run, symbol, entry.sequence, entry.ordinal),
 			),
-		).then((loaded) => {
-			if (cancelled) return;
+		)
+			.then((loaded) => {
+				if (cancelled) return;
 
-			setResidents(loaded);
-			setResolving(false);
-		});
+				setResidents(loaded);
+				setResolving(false);
+			})
+			.catch((cause: unknown) => {
+				if (!cancelled) failed(cause);
+			});
 
 		return () => {
 			cancelled = true;
@@ -684,10 +738,19 @@ const HindsightRoute = () => {
 				onAxis={setAxis}
 			/>
 
+			{error !== null ? (
+				<Flex.Column
+					role="alert"
+					className="border-b border-(--down) p-4 font-mono text-sm text-(--down)"
+				>
+					Hindsight could not load the archive: {error}
+				</Flex.Column>
+			) : null}
+
 			{guide ? <Guide onClose={() => setGuide(false)} /> : null}
 
 			<div
-				className={`${guide ? "hidden" : "flex"} min-h-0 flex-1 overflow-hidden`}
+				className={`${guide || error !== null ? "hidden" : "flex"} min-h-0 flex-1 overflow-hidden`}
 			>
 				<div
 					className={`${focus ? "hidden" : "flex"} w-56 shrink-0 flex-col border-(--line) border-r`}
@@ -982,7 +1045,7 @@ const RunBar = ({
 					<Button
 						key={entry.id}
 						variant="bare"
-						title={`${entry.id}\ncommit ${entry.codeCommit || "—"} · build ${entry.buildId || "—"} · config ${entry.configDigest || "—"}\npositions held: ${entry.positions ?? 0}`}
+						title={`${entry.id}\ncommit ${entry.codeCommit || "—"} · build ${entry.buildId || "—"} · config ${entry.configDigest || "—"}\nrecorded positions: ${entry.positions ?? 0}`}
 						className={`shrink-0 rounded-[3px] border px-2 py-1 font-mono text-[9px] ${
 							active
 								? "border-(--acc) bg-(--raised) text-(--f1)"
@@ -1096,7 +1159,10 @@ const RunBar = ({
 					className="text-(--down)"
 					title={gaps
 						.slice(0, 8)
-						.map((gap) => `${gap.encoding} @ ${gap.sequence}: ${gap.detail}`)
+						.map(
+							(gap) =>
+								`${gap.encoding} @ ${gap.sequence}: ${gap.detail ?? "no additional detail recorded"}`,
+						)
 						.join("\n")}
 				>
 					{gaps.length} capture integrity defect{gaps.length === 1 ? "" : "s"} —

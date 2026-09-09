@@ -3,123 +3,94 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from "flatbuffers";
+import * as flatbuffers from 'flatbuffers';
 
-import { Cognition, type CognitionT } from "../telemetry/cognition.js";
+import { Cognition, CognitionT } from '../telemetry/cognition.js';
 
-export class CognitionFrame
-	implements flatbuffers.IUnpackableObject<CognitionFrameT>
-{
-	bb: flatbuffers.ByteBuffer | null = null;
-	bb_pos = 0;
-	__init(i: number, bb: flatbuffers.ByteBuffer): CognitionFrame {
-		this.bb_pos = i;
-		this.bb = bb;
-		return this;
-	}
 
-	static getRootAsCognitionFrame(
-		bb: flatbuffers.ByteBuffer,
-		obj?: CognitionFrame,
-	): CognitionFrame {
-		return (obj || new CognitionFrame()).__init(
-			bb.readInt32(bb.position()) + bb.position(),
-			bb,
-		);
-	}
+export class CognitionFrame implements flatbuffers.IUnpackableObject<CognitionFrameT> {
+  bb: flatbuffers.ByteBuffer|null = null;
+  bb_pos = 0;
+  __init(i:number, bb:flatbuffers.ByteBuffer):CognitionFrame {
+  this.bb_pos = i;
+  this.bb = bb;
+  return this;
+}
 
-	static getSizePrefixedRootAsCognitionFrame(
-		bb: flatbuffers.ByteBuffer,
-		obj?: CognitionFrame,
-	): CognitionFrame {
-		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-		return (obj || new CognitionFrame()).__init(
-			bb.readInt32(bb.position()) + bb.position(),
-			bb,
-		);
-	}
+static getRootAsCognitionFrame(bb:flatbuffers.ByteBuffer, obj?:CognitionFrame):CognitionFrame {
+  return (obj || new CognitionFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-	rows(index: number, obj?: Cognition): Cognition | null {
-		const offset = this.bb!.__offset(this.bb_pos, 4);
-		return offset
-			? (obj || new Cognition()).__init(
-					this.bb!.__indirect(
-						this.bb!.__vector(this.bb_pos + offset) + index * 4,
-					),
-					this.bb!,
-				)
-			: null;
-	}
+static getSizePrefixedRootAsCognitionFrame(bb:flatbuffers.ByteBuffer, obj?:CognitionFrame):CognitionFrame {
+  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+  return (obj || new CognitionFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-	rowsLength(): number {
-		const offset = this.bb!.__offset(this.bb_pos, 4);
-		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-	}
+rows(index: number, obj?:Cognition):Cognition|null {
+  const offset = this.bb!.__offset(this.bb_pos, 4);
+  return offset ? (obj || new Cognition()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
 
-	static startCognitionFrame(builder: flatbuffers.Builder) {
-		builder.startObject(1);
-	}
+rowsLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 4);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
 
-	static addRows(builder: flatbuffers.Builder, rowsOffset: flatbuffers.Offset) {
-		builder.addFieldOffset(0, rowsOffset, 0);
-	}
+static startCognitionFrame(builder:flatbuffers.Builder) {
+  builder.startObject(1);
+}
 
-	static createRowsVector(
-		builder: flatbuffers.Builder,
-		data: flatbuffers.Offset[],
-	): flatbuffers.Offset {
-		builder.startVector(4, data.length, 4);
-		for (let i = data.length - 1; i >= 0; i--) {
-			builder.addOffset(data[i]!);
-		}
-		return builder.endVector();
-	}
+static addRows(builder:flatbuffers.Builder, rowsOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(0, rowsOffset, 0);
+}
 
-	static startRowsVector(builder: flatbuffers.Builder, numElems: number) {
-		builder.startVector(4, numElems, 4);
-	}
+static createRowsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
 
-	static endCognitionFrame(builder: flatbuffers.Builder): flatbuffers.Offset {
-		const offset = builder.endObject();
-		builder.requiredField(offset, 4); // rows
-		return offset;
-	}
+static startRowsVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
 
-	static createCognitionFrame(
-		builder: flatbuffers.Builder,
-		rowsOffset: flatbuffers.Offset,
-	): flatbuffers.Offset {
-		CognitionFrame.startCognitionFrame(builder);
-		CognitionFrame.addRows(builder, rowsOffset);
-		return CognitionFrame.endCognitionFrame(builder);
-	}
+static endCognitionFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
+  const offset = builder.endObject();
+  builder.requiredField(offset, 4) // rows
+  return offset;
+}
 
-	unpack(): CognitionFrameT {
-		return new CognitionFrameT(
-			this.bb!.createObjList<Cognition, CognitionT>(
-				this.rows.bind(this),
-				this.rowsLength(),
-			),
-		);
-	}
+static createCognitionFrame(builder:flatbuffers.Builder, rowsOffset:flatbuffers.Offset):flatbuffers.Offset {
+  CognitionFrame.startCognitionFrame(builder);
+  CognitionFrame.addRows(builder, rowsOffset);
+  return CognitionFrame.endCognitionFrame(builder);
+}
 
-	unpackTo(_o: CognitionFrameT): void {
-		_o.rows = this.bb!.createObjList<Cognition, CognitionT>(
-			this.rows.bind(this),
-			this.rowsLength(),
-		);
-	}
+unpack(): CognitionFrameT {
+  return new CognitionFrameT(
+    this.bb!.createObjList<Cognition, CognitionT>(this.rows.bind(this), this.rowsLength())
+  );
+}
+
+
+unpackTo(_o: CognitionFrameT): void {
+  _o.rows = this.bb!.createObjList<Cognition, CognitionT>(this.rows.bind(this), this.rowsLength());
+}
 }
 
 export class CognitionFrameT implements flatbuffers.IGeneratedObject {
-	constructor(public rows: CognitionT[] = []) {}
+constructor(
+  public rows: (CognitionT)[] = []
+){}
 
-	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
-		const rows = CognitionFrame.createRowsVector(
-			builder,
-			builder.createObjectOffsetList(this.rows),
-		);
 
-		return CognitionFrame.createCognitionFrame(builder, rows);
-	}
+pack(builder:flatbuffers.Builder): flatbuffers.Offset {
+  const rows = CognitionFrame.createRowsVector(builder, builder.createObjectOffsetList(this.rows));
+
+  return CognitionFrame.createCognitionFrame(builder,
+    rows
+  );
+}
 }

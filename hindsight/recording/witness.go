@@ -24,13 +24,22 @@ func (node *Session) Step(envelope *types.Envelope) *types.Envelope {
 		Ordinal: envelope.CaptureOrdinal,
 	}
 
+	if payload := envelope.EncodePrecursor(); len(payload) > 0 {
+		node.record(hindsight.ArtifactWitness{
+			Envelope: ref, Boundary: "after-logic",
+			Artifact: hindsight.ArtifactID{Kind: "precursor", Identity: string(ref.Origin.Run) + ":" +
+				strconv.FormatUint(uint64(ref.Origin.Sequence), 10) + ":" + strconv.FormatUint(ref.Ordinal, 10)},
+			Payload: payload,
+		})
+	}
+
 	if !node.shouldWitness(envelope) {
 		return envelope
 	}
 
 	node.record(hindsight.ArtifactWitness{
 		Envelope: ref,
-		Boundary: "after-strategy",
+		Boundary: "after-logic",
 		Artifact: hindsight.ArtifactID{
 			Kind: "state",
 			Identity: string(ref.Origin.Run) + ":" +

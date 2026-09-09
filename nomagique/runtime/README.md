@@ -38,22 +38,20 @@ workspace := runtime.NewWorkspace(ctx, "workspace", [][]runtime.Node[*Envelope]{
 
 This is a ring of rings.
 
-The first Workspace stage declares independently pushed ingress Workloads.
-Each owns its input ring and processes only its own source stream. Its final
-handler calls the outer Workspace as a Node and remains inside that call until
-the complete downstream path finishes. The remaining Workspace stages are the
-outer ring's handler groups. They may contain ordinary Nodes or more Workload
-rings.
+Every Workspace stage uses the same handler-group semantics. Submit each
+observation to `workspace.Push`; all Workloads in the first stage receive it.
+Their final internal stages complete before the next Workspace stage advances.
+There is no special ingress stage or child-to-parent forwarding path.
 
 ```text
-ticker.Push ──> [ ticker workload ring ] ─┐
-trade.Push  ──> [ trade workload ring  ] ─┼─> [ logic ring ] ─> [ strategy ring ]
-level3.Push ──> [ level3 workload ring ] ─┘
+                       ┌─ [ signals → resonance ] ─┐
+workspace.Push ────────┤                           ├─ [ classification ] ─ [ grid ] ─ [ agents ]
+                       └─ [ CVD + Hawkes → manifold ]┘
 ```
 
-There is no public attachment protocol and no runtime type router. Passing the
-Workloads to `NewWorkspace` is the topology declaration. Workspace wires the
-declared ingress completions before admission.
+Category currently reads the same envelope's signal measurements, so the
+application places category/cognition after the signal/flow join. It cannot
+run concurrently with the producers whose outputs it consumes.
 
 ## Composition is reported, not inferred
 
@@ -112,15 +110,16 @@ This preserves pipeline overlap without locks or per-event model clones.
 ## Admission
 
 New Workloads and Workspaces begin in `WAITING`. `Workspace.Admit()` opens the
-outer and nested rings only after the complete subscription universe has been
+nested rings and then the outer ring only after the complete subscription universe has been
 constructed. Pushes before admission are rejected. This keeps partial startup
 streams from becoming trading input.
 
 ## Shutdown
 
-Shutdown closes and drains ingress rings first, then drains the outer Workspace
-ring, then closes nested downstream Workloads. This preserves every committed
-event's declared route while preventing new ingress.
+Shutdown stops new publication to the outer ring, waits for active publishers,
+drains its listeners, and then closes its children recursively. A committed
+nested Step waits for completion even if its context is cancelled. The ring
+slots are cleared after their final handlers finish, releasing envelope references.
 
 ## Backlog
 
@@ -131,7 +130,13 @@ being handled. This is actual ring pressure, not a rate estimate.
 ## Configuration
 
 Ring capacity comes from `runtime.workspace.buffer`. It must be a power of two;
-the corresponding mask is derived from that capacity. The outer ring's writer
-count is derived from the number of independently pushed ingress Workloads in
-the first Workspace stage. Nested Workloads have one outer handler as their
-writer.
+the corresponding mask is derived from that capacity. Each ring uses the
+library's shared sequencer (`WriterCount(2)` selects its multi-writer mode),
+so the public ingress API supports concurrent producers. Reservation under
+backpressure uses the library's `TryReserve`; cancellation can interrupt a
+producer before reservation. Every successful reservation is committed.
+
+`Step` waits with `runtime.Gosched` for the inner completion sequence. This
+synchronous per-observation handoff limits how far an outer consumer can feed
+an inner ring ahead. Benchmarks report that cost; this is not a claim that
+nested rings are faster than a single ring.

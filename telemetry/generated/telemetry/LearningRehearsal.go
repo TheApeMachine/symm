@@ -22,6 +22,9 @@ type LearningRehearsalT struct {
 	LastSymbol string `json:"lastSymbol"`
 	LastAction string `json:"lastAction"`
 	LastReturn float64 `json:"lastReturn"`
+	LastFailure string `json:"lastFailure"`
+	Illiquid uint64 `json:"illiquid"`
+	Quiet uint64 `json:"quiet"`
 }
 
 func (t *LearningRehearsalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -40,6 +43,10 @@ func (t *LearningRehearsalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOff
 	if t.LastAction != "" {
 		lastActionOffset = builder.CreateString(t.LastAction)
 	}
+	lastFailureOffset := flatbuffers.UOffsetT(0)
+	if t.LastFailure != "" {
+		lastFailureOffset = builder.CreateString(t.LastFailure)
+	}
 	LearningRehearsalStart(builder)
 	LearningRehearsalAddStatus(builder, statusOffset)
 	LearningRehearsalAddWorkers(builder, t.Workers)
@@ -56,6 +63,9 @@ func (t *LearningRehearsalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOff
 	LearningRehearsalAddLastSymbol(builder, lastSymbolOffset)
 	LearningRehearsalAddLastAction(builder, lastActionOffset)
 	LearningRehearsalAddLastReturn(builder, t.LastReturn)
+	LearningRehearsalAddLastFailure(builder, lastFailureOffset)
+	LearningRehearsalAddIlliquid(builder, t.Illiquid)
+	LearningRehearsalAddQuiet(builder, t.Quiet)
 	return LearningRehearsalEnd(builder)
 }
 
@@ -75,6 +85,9 @@ func (rcv *LearningRehearsal) UnPackTo(t *LearningRehearsalT) {
 	t.LastSymbol = string(rcv.LastSymbol())
 	t.LastAction = string(rcv.LastAction())
 	t.LastReturn = rcv.LastReturn()
+	t.LastFailure = string(rcv.LastFailure())
+	t.Illiquid = rcv.Illiquid()
+	t.Quiet = rcv.Quiet()
 }
 
 func (rcv *LearningRehearsal) UnPack() *LearningRehearsalT {
@@ -289,8 +302,40 @@ func (rcv *LearningRehearsal) MutateLastReturn(n float64) bool {
 	return rcv._tab.MutateFloat64Slot(32, n)
 }
 
+func (rcv *LearningRehearsal) LastFailure() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(34))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *LearningRehearsal) Illiquid() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(36))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *LearningRehearsal) MutateIlliquid(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(36, n)
+}
+
+func (rcv *LearningRehearsal) Quiet() uint64 {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(38))
+	if o != 0 {
+		return rcv._tab.GetUint64(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *LearningRehearsal) MutateQuiet(n uint64) bool {
+	return rcv._tab.MutateUint64Slot(38, n)
+}
+
 func LearningRehearsalStart(builder *flatbuffers.Builder) {
-	builder.StartObject(15)
+	builder.StartObject(18)
 }
 func LearningRehearsalAddStatus(builder *flatbuffers.Builder, status flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(status), 0)
@@ -336,6 +381,15 @@ func LearningRehearsalAddLastAction(builder *flatbuffers.Builder, lastAction fla
 }
 func LearningRehearsalAddLastReturn(builder *flatbuffers.Builder, lastReturn float64) {
 	builder.PrependFloat64Slot(14, lastReturn, 0.0)
+}
+func LearningRehearsalAddLastFailure(builder *flatbuffers.Builder, lastFailure flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(15, flatbuffers.UOffsetT(lastFailure), 0)
+}
+func LearningRehearsalAddIlliquid(builder *flatbuffers.Builder, illiquid uint64) {
+	builder.PrependUint64Slot(16, illiquid, 0)
+}
+func LearningRehearsalAddQuiet(builder *flatbuffers.Builder, quiet uint64) {
+	builder.PrependUint64Slot(17, quiet, 0)
 }
 func LearningRehearsalEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

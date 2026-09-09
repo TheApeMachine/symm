@@ -17,13 +17,16 @@ import (
 
 /* Regulator serializes one position's orders and cumulative execution facts. */
 type Regulator struct {
-	mu        sync.RWMutex
-	Guardian  *Guardian
-	Holding   *types.Holding
-	ID        string
-	Recovered bool
-	Orders    Orders
-	Surface   *types.ExecutionSurface
+	mu            sync.RWMutex
+	Guardian      *Guardian
+	Holding       *types.Holding
+	ID            string
+	Recovered     bool
+	Orders        Orders
+	Surface       *types.ExecutionSurface
+	At            time.Time
+	LastExecution kraken.ExecutionData
+	paper         *paperExecution
 
 	api      *websocket.API
 	price    *broker.Price
@@ -54,6 +57,15 @@ func NewRegulator(
 		Holding: types.NewHolding(symbol),
 	}
 	return position
+}
+
+// NewPaperRegulator keeps the paper transport and cumulative accounting
+// inside the position owner. It never sends an order to the venue.
+func NewPaperRegulator(api *websocket.API, price *broker.Price, balance *broker.Balance, symbol string) *Regulator {
+	regulator := NewRegulator(api, price, symbol, nil)
+	regulator.paper = &paperExecution{Price: price, Balance: balance}
+	regulator.Orders = regulator.paper
+	return regulator
 }
 
 /*
@@ -118,6 +130,9 @@ func (position *Regulator) Submit(
 		CumCost:     decimal.NewFromInt64(0),
 		FeeUsdEquiv: decimal.NewFromInt64(0),
 	}
+	if position.paper != nil {
+		position.paper.At = position.At
+	}
 	position.result, err = position.Orders.AddOrder(position.pending)
 
 	if err != nil {
@@ -133,6 +148,9 @@ func (position *Regulator) Submit(
 	position.mu.Lock()
 	position.Holding.Status = types.PENDING
 	position.mu.Unlock()
+	if position.paper != nil {
+		return position.Apply(position.paper.Fill)
+	}
 	return nil
 }
 
@@ -183,6 +201,7 @@ func (position *Regulator) Apply(execution kraken.ExecutionData) error {
 			return err
 		}
 		position.executed = execution
+		position.LastExecution = execution
 	}
 
 	if position.record != nil {

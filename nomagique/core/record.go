@@ -1,6 +1,9 @@
 package core
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 /* Record lifts named Go boundary values without introducing a second record type. */
 func Record(values map[string]any) Primitive {
@@ -20,18 +23,18 @@ func Field[Value any](fields map[string]Primitive, path ...string) (Value, error
 	for index, name := range path {
 		field, exists := fields[name]
 		if !exists || field == nil {
-			return zero, fmt.Errorf("primitive record: required field %q is absent", path[:index+1])
+			return zero, fmt.Errorf("primitive record: required field %q is absent", strings.Join(path[:index+1], "."))
 		}
 		if index == len(path)-1 {
 			value := To[Value](field)
 			if err := field.Error(); err != nil {
-				return zero, fmt.Errorf("primitive record %q: %w", path, err)
+				return zero, fmt.Errorf("primitive record %q: %w", strings.Join(path, "."), err)
 			}
 			return value, nil
 		}
 		fields = To[map[string]Primitive](field)
 		if err := field.Error(); err != nil {
-			return zero, fmt.Errorf("primitive record %q: %w", path[:index+1], err)
+			return zero, fmt.Errorf("primitive record %q: %w", strings.Join(path[:index+1], "."), err)
 		}
 	}
 	panic("unreachable")

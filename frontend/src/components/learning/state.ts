@@ -188,20 +188,6 @@ export type LearningEvent = {
 	prior: Prior;
 };
 
-export const baseUrl = () => {
-	if (import.meta.env.VITE_SYMM_WS_URL) {
-		return import.meta.env.VITE_SYMM_WS_URL.replace(/^ws/, "http").replace(
-			/\/ws$/,
-			"",
-		);
-	}
-	const host =
-		window.location.hostname === "localhost"
-			? "127.0.0.1"
-			: window.location.hostname;
-	return `${window.location.protocol}//${host}:8765`;
-};
-
 export const useLearning = (symbol: string) => {
 	const online = useSelector(onlineStore, (state) => state === "ONLINE");
 	useEffect(() => {

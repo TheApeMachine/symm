@@ -21,7 +21,6 @@ type Baseline struct {
 
 /* BaselineReading fixes causal scores and the post-observation moments. */
 type BaselineReading struct {
-	core.PrimitiveError
 	equation.MomentReading
 	HasPrior                                                                bool
 	Baseline, PriorVariance, ScoreScale, Residual, ZScore, Maturity, Retain float64
@@ -31,7 +30,7 @@ type BaselineReading struct {
 func NewBaseline(window *Window) *Baseline {
 	baseline := &Baseline{window: window}
 	baseline.Map = transport.NewMap(&baselineStep{
-		baseline: baseline, seed: transport.NewIO(&BaselineReading{}),
+		baseline: baseline, seed: transport.NewIO(core.From[any](nil)),
 	})
 	return baseline
 }
@@ -68,8 +67,8 @@ func (baseline *Baseline) Observe(value float64) BaselineReading {
 	return reading
 }
 
-/* Read materializes the named record only for a generic Primitive consumer. */
-func (reading *BaselineReading) Read() any {
+/* Fields materializes one immutable delivery at the Primitive boundary. */
+func (reading BaselineReading) Fields() map[string]core.Primitive {
 	fields := reading.MomentReading.Fields()
 	fields["has_prior"] = core.From(reading.HasPrior)
 	fields["baseline"] = core.From(reading.Baseline)
@@ -82,7 +81,6 @@ func (reading *BaselineReading) Read() any {
 	fields["noise_variance"] = core.From(reading.Variance)
 	return fields
 }
-func (reading *BaselineReading) Next(core.Primitive) core.Primitive { return nil }
 
 /* baselineStep owns Primitive delivery for a configured typed baseline. */
 type baselineStep struct {
@@ -94,7 +92,7 @@ type baselineStep struct {
 func (step *baselineStep) Next(input core.Primitive) core.Primitive {
 	return core.Yield(step.seed, input, func(_ core.Primitive, value float64) core.Primitive {
 		reading := step.baseline.Observe(value)
-		return &reading
+		return core.From(reading.Fields())
 	}, step)
 }
-func (step *baselineStep) Read() any { return step.baseline.Reading.Read() }
+func (step *baselineStep) Read() any { return step.baseline.Reading.Fields() }

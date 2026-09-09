@@ -3,6 +3,7 @@ package hindsight
 import (
 	"math"
 	"time"
+"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
@@ -50,6 +51,9 @@ Each quantity carries an explicit Has* presence flag, so an absent bid stays
 absent instead of collapsing into a convenient zero (§43).
 */
 type Observation struct {
+	// Measurements are joined from the exact numerical witness for rehearsal.
+	// Episode selection and public market-coordinate serialization ignore them.
+	Measurements []*data.Measurement[float64] `json:"-"`
 	Domain     string          `json:"domain"`
 	Capture    CaptureIdentity `json:"capture"`
 	Ordinal    uint64          `json:"ordinal"`

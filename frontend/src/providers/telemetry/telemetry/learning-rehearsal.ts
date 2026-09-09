@@ -3,331 +3,324 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from "flatbuffers";
+import * as flatbuffers from 'flatbuffers';
 
-export class LearningRehearsal
-	implements flatbuffers.IUnpackableObject<LearningRehearsalT>
-{
-	bb: flatbuffers.ByteBuffer | null = null;
-	bb_pos = 0;
-	__init(i: number, bb: flatbuffers.ByteBuffer): LearningRehearsal {
-		this.bb_pos = i;
-		this.bb = bb;
-		return this;
-	}
 
-	static getRootAsLearningRehearsal(
-		bb: flatbuffers.ByteBuffer,
-		obj?: LearningRehearsal,
-	): LearningRehearsal {
-		return (obj || new LearningRehearsal()).__init(
-			bb.readInt32(bb.position()) + bb.position(),
-			bb,
-		);
-	}
 
-	static getSizePrefixedRootAsLearningRehearsal(
-		bb: flatbuffers.ByteBuffer,
-		obj?: LearningRehearsal,
-	): LearningRehearsal {
-		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-		return (obj || new LearningRehearsal()).__init(
-			bb.readInt32(bb.position()) + bb.position(),
-			bb,
-		);
-	}
+export class LearningRehearsal implements flatbuffers.IUnpackableObject<LearningRehearsalT> {
+  bb: flatbuffers.ByteBuffer|null = null;
+  bb_pos = 0;
+  __init(i:number, bb:flatbuffers.ByteBuffer):LearningRehearsal {
+  this.bb_pos = i;
+  this.bb = bb;
+  return this;
+}
 
-	status(): string | null;
-	status(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
-	status(optionalEncoding?: any): string | Uint8Array | null {
-		const offset = this.bb!.__offset(this.bb_pos, 4);
-		return offset
-			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
-			: null;
-	}
+static getRootAsLearningRehearsal(bb:flatbuffers.ByteBuffer, obj?:LearningRehearsal):LearningRehearsal {
+  return (obj || new LearningRehearsal()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-	workers(): number {
-		const offset = this.bb!.__offset(this.bb_pos, 6);
-		return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
-	}
+static getSizePrefixedRootAsLearningRehearsal(bb:flatbuffers.ByteBuffer, obj?:LearningRehearsal):LearningRehearsal {
+  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+  return (obj || new LearningRehearsal()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-	episodes(): bigint {
-		const offset = this.bb!.__offset(this.bb_pos, 8);
-		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
-	}
+status():string|null
+status(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+status(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 4);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
 
-	profitable(): bigint {
-		const offset = this.bb!.__offset(this.bb_pos, 10);
-		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
-	}
+workers():number {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
+  return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
+}
 
-	subfriction(): bigint {
-		const offset = this.bb!.__offset(this.bb_pos, 12);
-		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
-	}
+episodes():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 8);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
 
-	declining(): bigint {
-		const offset = this.bb!.__offset(this.bb_pos, 14);
-		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
-	}
+profitable():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 10);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
 
-	ungraded(): bigint {
-		const offset = this.bb!.__offset(this.bb_pos, 16);
-		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
-	}
+subfriction():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 12);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
 
-	unsupported(): bigint {
-		const offset = this.bb!.__offset(this.bb_pos, 18);
-		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
-	}
+declining():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 14);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
 
-	perWorker(): bigint {
-		const offset = this.bb!.__offset(this.bb_pos, 20);
-		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
-	}
+ungraded():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 16);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
 
-	decisions(): bigint {
-		const offset = this.bb!.__offset(this.bb_pos, 22);
-		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
-	}
+unsupported():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 18);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
 
-	trained(): bigint {
-		const offset = this.bb!.__offset(this.bb_pos, 24);
-		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
-	}
+perWorker():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 20);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
 
-	passes(): bigint {
-		const offset = this.bb!.__offset(this.bb_pos, 26);
-		return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt("0");
-	}
+decisions():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 22);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
 
-	lastSymbol(): string | null;
-	lastSymbol(
-		optionalEncoding: flatbuffers.Encoding,
-	): string | Uint8Array | null;
-	lastSymbol(optionalEncoding?: any): string | Uint8Array | null {
-		const offset = this.bb!.__offset(this.bb_pos, 28);
-		return offset
-			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
-			: null;
-	}
+trained():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 24);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
 
-	lastAction(): string | null;
-	lastAction(
-		optionalEncoding: flatbuffers.Encoding,
-	): string | Uint8Array | null;
-	lastAction(optionalEncoding?: any): string | Uint8Array | null {
-		const offset = this.bb!.__offset(this.bb_pos, 30);
-		return offset
-			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
-			: null;
-	}
+passes():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 26);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
 
-	lastReturn(): number {
-		const offset = this.bb!.__offset(this.bb_pos, 32);
-		return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-	}
+lastSymbol():string|null
+lastSymbol(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+lastSymbol(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 28);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
 
-	static startLearningRehearsal(builder: flatbuffers.Builder) {
-		builder.startObject(15);
-	}
+lastAction():string|null
+lastAction(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+lastAction(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 30);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
 
-	static addStatus(
-		builder: flatbuffers.Builder,
-		statusOffset: flatbuffers.Offset,
-	) {
-		builder.addFieldOffset(0, statusOffset, 0);
-	}
+lastReturn():number {
+  const offset = this.bb!.__offset(this.bb_pos, 32);
+  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
+}
 
-	static addWorkers(builder: flatbuffers.Builder, workers: number) {
-		builder.addFieldInt32(1, workers, 0);
-	}
+lastFailure():string|null
+lastFailure(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+lastFailure(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 34);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
 
-	static addEpisodes(builder: flatbuffers.Builder, episodes: bigint) {
-		builder.addFieldInt64(2, episodes, BigInt("0"));
-	}
+illiquid():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 36);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
 
-	static addProfitable(builder: flatbuffers.Builder, profitable: bigint) {
-		builder.addFieldInt64(3, profitable, BigInt("0"));
-	}
+quiet():bigint {
+  const offset = this.bb!.__offset(this.bb_pos, 38);
+  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
+}
 
-	static addSubfriction(builder: flatbuffers.Builder, subfriction: bigint) {
-		builder.addFieldInt64(4, subfriction, BigInt("0"));
-	}
+static startLearningRehearsal(builder:flatbuffers.Builder) {
+  builder.startObject(18);
+}
 
-	static addDeclining(builder: flatbuffers.Builder, declining: bigint) {
-		builder.addFieldInt64(5, declining, BigInt("0"));
-	}
+static addStatus(builder:flatbuffers.Builder, statusOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(0, statusOffset, 0);
+}
 
-	static addUngraded(builder: flatbuffers.Builder, ungraded: bigint) {
-		builder.addFieldInt64(6, ungraded, BigInt("0"));
-	}
+static addWorkers(builder:flatbuffers.Builder, workers:number) {
+  builder.addFieldInt32(1, workers, 0);
+}
 
-	static addUnsupported(builder: flatbuffers.Builder, unsupported: bigint) {
-		builder.addFieldInt64(7, unsupported, BigInt("0"));
-	}
+static addEpisodes(builder:flatbuffers.Builder, episodes:bigint) {
+  builder.addFieldInt64(2, episodes, BigInt('0'));
+}
 
-	static addPerWorker(builder: flatbuffers.Builder, perWorker: bigint) {
-		builder.addFieldInt64(8, perWorker, BigInt("0"));
-	}
+static addProfitable(builder:flatbuffers.Builder, profitable:bigint) {
+  builder.addFieldInt64(3, profitable, BigInt('0'));
+}
 
-	static addDecisions(builder: flatbuffers.Builder, decisions: bigint) {
-		builder.addFieldInt64(9, decisions, BigInt("0"));
-	}
+static addSubfriction(builder:flatbuffers.Builder, subfriction:bigint) {
+  builder.addFieldInt64(4, subfriction, BigInt('0'));
+}
 
-	static addTrained(builder: flatbuffers.Builder, trained: bigint) {
-		builder.addFieldInt64(10, trained, BigInt("0"));
-	}
+static addDeclining(builder:flatbuffers.Builder, declining:bigint) {
+  builder.addFieldInt64(5, declining, BigInt('0'));
+}
 
-	static addPasses(builder: flatbuffers.Builder, passes: bigint) {
-		builder.addFieldInt64(11, passes, BigInt("0"));
-	}
+static addUngraded(builder:flatbuffers.Builder, ungraded:bigint) {
+  builder.addFieldInt64(6, ungraded, BigInt('0'));
+}
 
-	static addLastSymbol(
-		builder: flatbuffers.Builder,
-		lastSymbolOffset: flatbuffers.Offset,
-	) {
-		builder.addFieldOffset(12, lastSymbolOffset, 0);
-	}
+static addUnsupported(builder:flatbuffers.Builder, unsupported:bigint) {
+  builder.addFieldInt64(7, unsupported, BigInt('0'));
+}
 
-	static addLastAction(
-		builder: flatbuffers.Builder,
-		lastActionOffset: flatbuffers.Offset,
-	) {
-		builder.addFieldOffset(13, lastActionOffset, 0);
-	}
+static addPerWorker(builder:flatbuffers.Builder, perWorker:bigint) {
+  builder.addFieldInt64(8, perWorker, BigInt('0'));
+}
 
-	static addLastReturn(builder: flatbuffers.Builder, lastReturn: number) {
-		builder.addFieldFloat64(14, lastReturn, 0.0);
-	}
+static addDecisions(builder:flatbuffers.Builder, decisions:bigint) {
+  builder.addFieldInt64(9, decisions, BigInt('0'));
+}
 
-	static endLearningRehearsal(
-		builder: flatbuffers.Builder,
-	): flatbuffers.Offset {
-		const offset = builder.endObject();
-		return offset;
-	}
+static addTrained(builder:flatbuffers.Builder, trained:bigint) {
+  builder.addFieldInt64(10, trained, BigInt('0'));
+}
 
-	static createLearningRehearsal(
-		builder: flatbuffers.Builder,
-		statusOffset: flatbuffers.Offset,
-		workers: number,
-		episodes: bigint,
-		profitable: bigint,
-		subfriction: bigint,
-		declining: bigint,
-		ungraded: bigint,
-		unsupported: bigint,
-		perWorker: bigint,
-		decisions: bigint,
-		trained: bigint,
-		passes: bigint,
-		lastSymbolOffset: flatbuffers.Offset,
-		lastActionOffset: flatbuffers.Offset,
-		lastReturn: number,
-	): flatbuffers.Offset {
-		LearningRehearsal.startLearningRehearsal(builder);
-		LearningRehearsal.addStatus(builder, statusOffset);
-		LearningRehearsal.addWorkers(builder, workers);
-		LearningRehearsal.addEpisodes(builder, episodes);
-		LearningRehearsal.addProfitable(builder, profitable);
-		LearningRehearsal.addSubfriction(builder, subfriction);
-		LearningRehearsal.addDeclining(builder, declining);
-		LearningRehearsal.addUngraded(builder, ungraded);
-		LearningRehearsal.addUnsupported(builder, unsupported);
-		LearningRehearsal.addPerWorker(builder, perWorker);
-		LearningRehearsal.addDecisions(builder, decisions);
-		LearningRehearsal.addTrained(builder, trained);
-		LearningRehearsal.addPasses(builder, passes);
-		LearningRehearsal.addLastSymbol(builder, lastSymbolOffset);
-		LearningRehearsal.addLastAction(builder, lastActionOffset);
-		LearningRehearsal.addLastReturn(builder, lastReturn);
-		return LearningRehearsal.endLearningRehearsal(builder);
-	}
+static addPasses(builder:flatbuffers.Builder, passes:bigint) {
+  builder.addFieldInt64(11, passes, BigInt('0'));
+}
 
-	unpack(): LearningRehearsalT {
-		return new LearningRehearsalT(
-			this.status(),
-			this.workers(),
-			this.episodes(),
-			this.profitable(),
-			this.subfriction(),
-			this.declining(),
-			this.ungraded(),
-			this.unsupported(),
-			this.perWorker(),
-			this.decisions(),
-			this.trained(),
-			this.passes(),
-			this.lastSymbol(),
-			this.lastAction(),
-			this.lastReturn(),
-		);
-	}
+static addLastSymbol(builder:flatbuffers.Builder, lastSymbolOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(12, lastSymbolOffset, 0);
+}
 
-	unpackTo(_o: LearningRehearsalT): void {
-		_o.status = this.status();
-		_o.workers = this.workers();
-		_o.episodes = this.episodes();
-		_o.profitable = this.profitable();
-		_o.subfriction = this.subfriction();
-		_o.declining = this.declining();
-		_o.ungraded = this.ungraded();
-		_o.unsupported = this.unsupported();
-		_o.perWorker = this.perWorker();
-		_o.decisions = this.decisions();
-		_o.trained = this.trained();
-		_o.passes = this.passes();
-		_o.lastSymbol = this.lastSymbol();
-		_o.lastAction = this.lastAction();
-		_o.lastReturn = this.lastReturn();
-	}
+static addLastAction(builder:flatbuffers.Builder, lastActionOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(13, lastActionOffset, 0);
+}
+
+static addLastReturn(builder:flatbuffers.Builder, lastReturn:number) {
+  builder.addFieldFloat64(14, lastReturn, 0.0);
+}
+
+static addLastFailure(builder:flatbuffers.Builder, lastFailureOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(15, lastFailureOffset, 0);
+}
+
+static addIlliquid(builder:flatbuffers.Builder, illiquid:bigint) {
+  builder.addFieldInt64(16, illiquid, BigInt('0'));
+}
+
+static addQuiet(builder:flatbuffers.Builder, quiet:bigint) {
+  builder.addFieldInt64(17, quiet, BigInt('0'));
+}
+
+static endLearningRehearsal(builder:flatbuffers.Builder):flatbuffers.Offset {
+  const offset = builder.endObject();
+  return offset;
+}
+
+static createLearningRehearsal(builder:flatbuffers.Builder, statusOffset:flatbuffers.Offset, workers:number, episodes:bigint, profitable:bigint, subfriction:bigint, declining:bigint, ungraded:bigint, unsupported:bigint, perWorker:bigint, decisions:bigint, trained:bigint, passes:bigint, lastSymbolOffset:flatbuffers.Offset, lastActionOffset:flatbuffers.Offset, lastReturn:number, lastFailureOffset:flatbuffers.Offset, illiquid:bigint, quiet:bigint):flatbuffers.Offset {
+  LearningRehearsal.startLearningRehearsal(builder);
+  LearningRehearsal.addStatus(builder, statusOffset);
+  LearningRehearsal.addWorkers(builder, workers);
+  LearningRehearsal.addEpisodes(builder, episodes);
+  LearningRehearsal.addProfitable(builder, profitable);
+  LearningRehearsal.addSubfriction(builder, subfriction);
+  LearningRehearsal.addDeclining(builder, declining);
+  LearningRehearsal.addUngraded(builder, ungraded);
+  LearningRehearsal.addUnsupported(builder, unsupported);
+  LearningRehearsal.addPerWorker(builder, perWorker);
+  LearningRehearsal.addDecisions(builder, decisions);
+  LearningRehearsal.addTrained(builder, trained);
+  LearningRehearsal.addPasses(builder, passes);
+  LearningRehearsal.addLastSymbol(builder, lastSymbolOffset);
+  LearningRehearsal.addLastAction(builder, lastActionOffset);
+  LearningRehearsal.addLastReturn(builder, lastReturn);
+  LearningRehearsal.addLastFailure(builder, lastFailureOffset);
+  LearningRehearsal.addIlliquid(builder, illiquid);
+  LearningRehearsal.addQuiet(builder, quiet);
+  return LearningRehearsal.endLearningRehearsal(builder);
+}
+
+unpack(): LearningRehearsalT {
+  return new LearningRehearsalT(
+    this.status(),
+    this.workers(),
+    this.episodes(),
+    this.profitable(),
+    this.subfriction(),
+    this.declining(),
+    this.ungraded(),
+    this.unsupported(),
+    this.perWorker(),
+    this.decisions(),
+    this.trained(),
+    this.passes(),
+    this.lastSymbol(),
+    this.lastAction(),
+    this.lastReturn(),
+    this.lastFailure(),
+    this.illiquid(),
+    this.quiet()
+  );
+}
+
+
+unpackTo(_o: LearningRehearsalT): void {
+  _o.status = this.status();
+  _o.workers = this.workers();
+  _o.episodes = this.episodes();
+  _o.profitable = this.profitable();
+  _o.subfriction = this.subfriction();
+  _o.declining = this.declining();
+  _o.ungraded = this.ungraded();
+  _o.unsupported = this.unsupported();
+  _o.perWorker = this.perWorker();
+  _o.decisions = this.decisions();
+  _o.trained = this.trained();
+  _o.passes = this.passes();
+  _o.lastSymbol = this.lastSymbol();
+  _o.lastAction = this.lastAction();
+  _o.lastReturn = this.lastReturn();
+  _o.lastFailure = this.lastFailure();
+  _o.illiquid = this.illiquid();
+  _o.quiet = this.quiet();
+}
 }
 
 export class LearningRehearsalT implements flatbuffers.IGeneratedObject {
-	constructor(
-		public status: string | Uint8Array | null = null,
-		public workers: number = 0,
-		public episodes: bigint = BigInt("0"),
-		public profitable: bigint = BigInt("0"),
-		public subfriction: bigint = BigInt("0"),
-		public declining: bigint = BigInt("0"),
-		public ungraded: bigint = BigInt("0"),
-		public unsupported: bigint = BigInt("0"),
-		public perWorker: bigint = BigInt("0"),
-		public decisions: bigint = BigInt("0"),
-		public trained: bigint = BigInt("0"),
-		public passes: bigint = BigInt("0"),
-		public lastSymbol: string | Uint8Array | null = null,
-		public lastAction: string | Uint8Array | null = null,
-		public lastReturn: number = 0.0,
-	) {}
+constructor(
+  public status: string|Uint8Array|null = null,
+  public workers: number = 0,
+  public episodes: bigint = BigInt('0'),
+  public profitable: bigint = BigInt('0'),
+  public subfriction: bigint = BigInt('0'),
+  public declining: bigint = BigInt('0'),
+  public ungraded: bigint = BigInt('0'),
+  public unsupported: bigint = BigInt('0'),
+  public perWorker: bigint = BigInt('0'),
+  public decisions: bigint = BigInt('0'),
+  public trained: bigint = BigInt('0'),
+  public passes: bigint = BigInt('0'),
+  public lastSymbol: string|Uint8Array|null = null,
+  public lastAction: string|Uint8Array|null = null,
+  public lastReturn: number = 0.0,
+  public lastFailure: string|Uint8Array|null = null,
+  public illiquid: bigint = BigInt('0'),
+  public quiet: bigint = BigInt('0')
+){}
 
-	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
-		const status =
-			this.status !== null ? builder.createString(this.status!) : 0;
-		const lastSymbol =
-			this.lastSymbol !== null ? builder.createString(this.lastSymbol!) : 0;
-		const lastAction =
-			this.lastAction !== null ? builder.createString(this.lastAction!) : 0;
 
-		return LearningRehearsal.createLearningRehearsal(
-			builder,
-			status,
-			this.workers,
-			this.episodes,
-			this.profitable,
-			this.subfriction,
-			this.declining,
-			this.ungraded,
-			this.unsupported,
-			this.perWorker,
-			this.decisions,
-			this.trained,
-			this.passes,
-			lastSymbol,
-			lastAction,
-			this.lastReturn,
-		);
-	}
+pack(builder:flatbuffers.Builder): flatbuffers.Offset {
+  const status = (this.status !== null ? builder.createString(this.status!) : 0);
+  const lastSymbol = (this.lastSymbol !== null ? builder.createString(this.lastSymbol!) : 0);
+  const lastAction = (this.lastAction !== null ? builder.createString(this.lastAction!) : 0);
+  const lastFailure = (this.lastFailure !== null ? builder.createString(this.lastFailure!) : 0);
+
+  return LearningRehearsal.createLearningRehearsal(builder,
+    status,
+    this.workers,
+    this.episodes,
+    this.profitable,
+    this.subfriction,
+    this.declining,
+    this.ungraded,
+    this.unsupported,
+    this.perWorker,
+    this.decisions,
+    this.trained,
+    this.passes,
+    lastSymbol,
+    lastAction,
+    this.lastReturn,
+    lastFailure,
+    this.illiquid,
+    this.quiet
+  );
+}
 }

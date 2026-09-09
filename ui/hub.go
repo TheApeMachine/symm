@@ -20,7 +20,7 @@ import (
 	"github.com/theapemachine/symm/hindsight/tables"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
-	"slices"
+	"github.com/theapemachine/symm/workbench"
 )
 
 /*
@@ -48,6 +48,7 @@ type Hub struct {
 	frontend         *websocket.Conn
 	frontendMu       sync.Mutex
 	store            *tables.Catalog
+	warehouse        *workbench.Warehouse
 	tradeStore       TradeJournalSource
 	timelines        *timelineCache
 	fluid            *FluidRTC
@@ -77,6 +78,7 @@ func NewHub(ctx context.Context) *Hub {
 			WriteBufferSize: 4194304,
 		}),
 		timelines: newTimelineCache(),
+		warehouse: workbench.New(),
 		fluid:     NewFluidRTC(ctx, "hub"),
 	}
 
@@ -134,7 +136,7 @@ func NewHub(ctx context.Context) *Hub {
 	// historical EnvelopeStates, joined by identity for scrub-and-inspect.
 	hub.app.Get("/hindsight/runs", func(c fiber.Ctx) error {
 		if hub.store == nil {
-			return c.JSON([]any{})
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
 		runs, err := hub.store.Runs(hub.ctx)
@@ -143,12 +145,25 @@ func NewHub(ctx context.Context) *Hub {
 			return err
 		}
 
+		for index := range runs {
+			events, err := hub.store.Lifecycle(hub.ctx, runs[index].ID)
+			if err != nil {
+				return err
+			}
+			positions := make(map[string]struct{})
+			for _, event := range events {
+				if event.Kind == "position_open" {
+					positions[event.DecisionID] = struct{}{}
+				}
+			}
+			runs[index].Positions = int32(len(positions))
+		}
 		return c.JSON(runs)
 	})
 
 	hub.app.Get("/hindsight/captures", func(c fiber.Ctx) error {
 		if hub.store == nil {
-			return c.JSON([]any{})
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
 		after := parseUintQuery(c.Query("after"))
@@ -177,7 +192,7 @@ func NewHub(ctx context.Context) *Hub {
 	// them with the same EnvelopeState class it uses for the live stream.
 	hub.app.Get("/hindsight/states", func(c fiber.Ctx) error {
 		if hub.store == nil {
-			return c.JSON([]any{})
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
 		states, err := hub.store.Witnesses(hub.ctx, c.Query("run"), "state")
@@ -186,14 +201,23 @@ func NewHub(ctx context.Context) *Hub {
 			return err
 		}
 
-		return c.JSON(states)
+		reader := newInspection(hub.ctx, hub.store)
+		projected := make([]hindsight.ArtifactWitness, 0, len(states))
+		for _, row := range states {
+			witness, err := reader.witness(row)
+			if err != nil {
+				return err
+			}
+			projected = append(projected, witness)
+		}
+		return c.JSON(projected)
 	})
 
 	// /hindsight/gaps returns every concrete capture/integrity defect recorded
 	// for a run, so the UI can show why a run is not COMPLETE.
 	hub.app.Get("/hindsight/gaps", func(c fiber.Ctx) error {
 		if hub.store == nil {
-			return c.JSON([]any{})
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
 		gaps, err := hub.store.Gaps(hub.ctx, c.Query("run"))
@@ -210,7 +234,7 @@ func NewHub(ctx context.Context) *Hub {
 	// witnesses — matched by identity within the stored batches.
 	hub.app.Get("/hindsight/envelope", func(c fiber.Ctx) error {
 		if hub.store == nil {
-			return c.JSON(map[string]any{})
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
 		run := c.Query("run")
@@ -220,52 +244,50 @@ func NewHub(ctx context.Context) *Hub {
 		// external input; the frame read answers with the complete identity
 		// rather than requiring the caller to already hold the transport
 		// fields it came here to look up.
-		rows, err := hub.store.Captures(hub.ctx, run, 0)
-
+		row, found, err := hub.store.Capture(hub.ctx, run, int64(sequence))
 		if err != nil {
 			return err
 		}
-
-		index := slices.IndexFunc(rows, func(row tables.CaptureRow) bool {
-			return uint64(row.Sequence) == sequence
-		})
-
-		if index < 0 {
-			return c.JSON(map[string]any{})
+		if !found {
+			return fiber.ErrNotFound
 		}
-
-		capture := hindsight.FrameFromRow(rows[index])
+		capture := hindsight.FrameFromRow(row)
 		payload := capture.Payload
 		capture.Payload = nil
 
-		manifestRows, err := hub.store.Manifests(hub.ctx, run)
+		manifestRows, err := hub.store.ManifestsAt(hub.ctx, run, int64(sequence))
 
 		if err != nil {
 			return err
 		}
 
-		manifests := []tables.ManifestRow{}
-
+		reader := newInspection(hub.ctx, hub.store)
+		reader.captures[tables.EnvelopeRefRow{Run: run, Sequence: int64(sequence)}] = capture.Identity
+		manifests := make([]hindsight.EnvelopeManifest, 0, len(manifestRows))
 		for _, record := range manifestRows {
-			if uint64(record.Envelope.Sequence) == sequence {
-				manifests = append(manifests, record)
+			manifest, err := reader.manifest(record)
+			if err != nil {
+				return err
 			}
+			manifests = append(manifests, manifest)
 		}
 
 		// Witnesses and resident state are one table now, distinguished by
 		// artifact_kind, so a single read covers what used to be two prefixes.
-		witnessRows, err := hub.store.Witnesses(hub.ctx, run, "")
+		witnessRows, err := hub.store.WitnessesAt(hub.ctx, run, "", int64(sequence), nil)
 
 		if err != nil {
 			return err
 		}
 
-		witnesses := []tables.WitnessRow{}
-
+		witnesses := make([]hindsight.ArtifactWitness, 0, len(witnessRows))
 		for _, record := range witnessRows {
-			if uint64(record.Envelope.Sequence) == sequence {
-				witnesses = append(witnesses, record)
+			record.Payload = nil
+			witness, err := reader.witness(record)
+			if err != nil {
+				return err
 			}
+			witnesses = append(witnesses, witness)
 		}
 
 		// The provenance view needs the shape of what was witnessed, not the
@@ -277,12 +299,12 @@ func NewHub(ctx context.Context) *Hub {
 		}
 
 		return c.JSON(struct {
-			Run       string               `json:"run"`
-			Sequence  uint64               `json:"sequence"`
-			Capture   hindsight.RawFrame   `json:"capture"`
-			Payload   []byte               `json:"payload"`
-			Manifests []tables.ManifestRow `json:"manifests"`
-			Witnesses []tables.WitnessRow  `json:"witnesses"`
+			Run       string                       `json:"run"`
+			Sequence  uint64                       `json:"sequence"`
+			Capture   hindsight.RawFrame           `json:"capture"`
+			Payload   []byte                       `json:"payload"`
+			Manifests []hindsight.EnvelopeManifest `json:"manifests"`
+			Witnesses []hindsight.ArtifactWitness  `json:"witnesses"`
 		}{
 			Run:       run,
 			Sequence:  sequence,
@@ -297,7 +319,7 @@ func NewHub(ctx context.Context) *Hub {
 	// + ordinal, instead of shipping every state of the run.
 	hub.app.Get("/hindsight/state", func(c fiber.Ctx) error {
 		if hub.store == nil {
-			return c.JSON(map[string]any{})
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
 		run := c.Query("run")
@@ -311,17 +333,21 @@ func NewHub(ctx context.Context) *Hub {
 		}
 
 		if !found {
-			return c.JSON(map[string]any{})
+			return fiber.ErrNotFound
 		}
 
-		return c.JSON(state)
+		projected, err := newInspection(hub.ctx, hub.store).witness(state)
+		if err != nil {
+			return err
+		}
+		return c.JSON(projected)
 	})
 
 	// /hindsight/lifecycle returns every trading-lifecycle transition of a run,
 	// correlated by decision ID.
 	hub.app.Get("/hindsight/lifecycle", func(c fiber.Ctx) error {
 		if hub.store == nil {
-			return c.JSON([]any{})
+			return fiber.NewError(fiber.StatusServiceUnavailable, "capture store unavailable")
 		}
 
 		events, err := hub.store.Lifecycle(hub.ctx, c.Query("run"))
@@ -334,6 +360,7 @@ func NewHub(ctx context.Context) *Hub {
 	})
 
 	hub.registerTimeline()
+	hub.registerWorkbench()
 
 	hub.app.Get("/ws", websocket.New(func(conn *websocket.Conn) {
 		hub.frontendMu.Lock()
@@ -620,6 +647,10 @@ func (hub *Hub) Close() error {
 		err = errors.Join(err, hub.app.Shutdown())
 	}
 
+	if hub.warehouse != nil {
+		err = errors.Join(err, hub.warehouse.Close())
+	}
+
 	if errors.Is(err, net.ErrClosed) {
 		return nil
 	}
@@ -634,7 +665,8 @@ Resident state is the witnesses table restricted to artifact_kind = 'state',
 which is what the separate states/ key prefix used to express.
 */
 func (hub *Hub) findState(run string, sequence, ordinal uint64) (tables.WitnessRow, bool, error) {
-	rows, err := hub.store.Witnesses(hub.ctx, run, "state")
+	requestedOrdinal := int64(ordinal)
+	rows, err := hub.store.WitnessesAt(hub.ctx, run, "state", int64(sequence), &requestedOrdinal)
 
 	if err != nil {
 		return tables.WitnessRow{}, false, err

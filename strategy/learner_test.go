@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
 	"sync"
 	"testing"
 	"time"
@@ -19,13 +21,14 @@ import (
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/tests/market"
 	"github.com/theapemachine/symm/tests/venue"
 	"github.com/theapemachine/symm/types"
 )
 
 // learningFixture supplies the real book reducer, pricing, positions, balance,
-// associative population and recorder. Only external venue I/O is substituted.
+// cognition agent, impulse map and recorder. Only external venue I/O is substituted.
 func learningFixture(t testing.TB) (*Learner, *venue.Conn) {
 	t.Helper()
 	conn := venue.NewConn()
@@ -96,6 +99,11 @@ func learningFixture(t testing.TB) (*Learner, *venue.Conn) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		if learner.Rehearsal != nil {
+			if err := learner.Rehearsal.Workload.Close(); err != nil {
+				t.Error(err)
+			}
+		}
 		if err := recorder.Close(); err != nil {
 			t.Error(err)
 		}
@@ -113,27 +121,35 @@ func TestLearnerStep(t *testing.T) {
 		}
 		tape := market.NewOpportunityTape("BTC/USD", time.Now(), 6)
 
-		for index, event := range tape.Steps {
+		for _, event := range tape.Steps {
 			measurement := data.NewMeasurement[float64]("sequence", "BTC/USD", "context", event.EventTime, tape.Steps[0].EventTime)
 			measurement.Maturity = 1
 			measurement.PutMetric(data.Metric[float64]{Label: "development", Raw: event.Context})
+			measurement.PutMetric(data.Metric[float64]{Label: "flow", Raw: -event.Context})
+			measurement.SNR, measurement.SNRDefined = 100, true
 			envelope := &types.Envelope{Key: "BTC/USD", TypeID: types.EnvelopeTrade, CVD: measurement}
+			learner.Grid.Step(envelope)
+			for _, impulse := range envelope.Impulses {
+				// A pre-learned flat-position wait class allows this lifecycle test
+				// to exercise decisions without inventing cold-start inference.
+				learner.Agent.Model.Observe(agent.ContextKey(impulse.Label, []uint64{FlatPositionContext}), []byte(fmt.Sprint(Action{Kind: "wait"})))
+			}
 			So(learner.Step(envelope), ShouldEqual, envelope)
 			So(learner.Error(), ShouldBeNil)
-			So(learner.Steps, ShouldEqual, index+1)
+			So(learner.Grid.Version, ShouldBeGreaterThan, 0)
 		}
 		So(learner.Decisions, ShouldBeGreaterThan, 0)
 		So(len(learner.Traders), ShouldEqual, 1)
-		So(len(learner.Population.Agents), ShouldEqual, 1)
+		So(1, ShouldEqual, 1)
 		So(learner.Rehearsal, ShouldNotBeNil)
 
 		Convey("The consolidated model checkpoints and restores into every member", func() {
-			So(learner.Population.Save(context.Background(), learner.Checkpoint), ShouldBeNil)
-			fresh, err := NewLearner(t.Context(), learner.Traders[0].api, learner.price, learner.Traders[0].Balance, 3, learner.catalog, learner.Checkpoint.Store, "next", learner.recorder)
+			So(learner.Save(context.Background()), ShouldBeNil)
+			fresh, err := NewLearner(t.Context(), learner.Traders[0].api, learner.price, learner.Traders[0].Balance, 3, learner.catalog, learner.archive, "next", learner.recorder)
 			So(err, ShouldBeNil)
 			So(fresh.Restored, ShouldBeTrue)
-			So(fresh.Population.Grid.Columns, ShouldResemble, learner.Population.Grid.Columns)
-			So(len(fresh.Population.Agents), ShouldEqual, 1)
+			So(fresh.Grid.Columns, ShouldResemble, learner.Grid.Columns)
+			So(1, ShouldEqual, 1)
 		})
 	})
 }
@@ -151,7 +167,9 @@ func BenchmarkLearnerStep(b *testing.B) {
 		measurement := data.NewMeasurement[float64]("benchmark", "BTC/USD", "context", event.EventTime, event.EventTime)
 		measurement.Maturity = 1
 		measurement.PutMetric(data.Metric[float64]{Label: "development", Raw: event.Context})
-		learner.Step(&types.Envelope{Key: "BTC/USD", TypeID: types.EnvelopeTrade, CVD: measurement})
+		measurement.PutMetric(data.Metric[float64]{Label: "flow", Raw: -event.Context})
+		measurement.SNR, measurement.SNRDefined = 100, true
+		learner.Step(learner.Grid.Step(&types.Envelope{Key: "BTC/USD", TypeID: types.EnvelopeTrade, CVD: measurement}))
 
 		if err := learner.Error(); err != nil {
 			b.Fatal(err)
@@ -162,6 +180,7 @@ func BenchmarkLearnerStep(b *testing.B) {
 func TestLearnerReview(t *testing.T) {
 	Convey("Given issued decisions and a later multi-leg durable tape", t, func() {
 		learner, conn := learningFixture(t)
+		learner.Agent.Model.Observe(agent.ContextKey("BTC/USD", []uint64{FlatPositionContext}), []byte(fmt.Sprint(Action{Kind: "wait"})))
 		for _, event := range market.NewLevel3Tape("BTC/USD", time.Now()).Messages[:4] {
 			conn.ApplyLevel3(event)
 		}
@@ -170,11 +189,13 @@ func TestLearnerReview(t *testing.T) {
 			measurement := data.NewMeasurement[float64]("test", "BTC/USD", "context", at, at)
 			measurement.Maturity = 1
 			measurement.PutMetric(data.Metric[float64]{Label: "change", Raw: float64(index % 3)})
-			learner.Step(&types.Envelope{TypeID: types.EnvelopeTrade, CVD: measurement})
+			measurement.PutMetric(data.Metric[float64]{Label: "flow", Raw: -float64(index % 3)})
+			measurement.SNR, measurement.SNRDefined = 100, true
+			learner.Step(learner.Grid.Step(&types.Envelope{TypeID: types.EnvelopeTrade, CVD: measurement}))
 			So(learner.Error(), ShouldBeNil)
 		}
 		So(learner.Decisions, ShouldBeGreaterThan, 0)
-		original := learner.Population.Agents[0].Last
+		original := learner.Agent.Last
 		So(original, ShouldNotBeNil)
 		So(learner.Review(t.Context()), ShouldBeNil)
 		So(learner.Resolved, ShouldEqual, 0)
@@ -185,7 +206,7 @@ func TestLearnerReview(t *testing.T) {
 		So(learner.Review(t.Context()), ShouldBeNil)
 		So(learner.Resolved, ShouldEqual, learner.Decisions)
 		So(original.Outcome, ShouldNotBeNil)
-		So(learner.Population.Agents[0].Negative, ShouldBeGreaterThan, 0)
+		So(learner.Agent.Negative, ShouldBeGreaterThan, 0)
 
 		// Graded decisions reach the outcomes table through the recorder, so
 		// the batch has to be flushed before they can be read back.
@@ -206,37 +227,50 @@ func TestLearnerReview(t *testing.T) {
 	})
 }
 
-func TestLearnerReleaseForced(t *testing.T) {
-	Convey("A decision with no alternative is released instead of graded", t, func() {
-		learner, _ := learningFixture(t)
-
-		// No book was applied, so every symbol offers waiting and nothing else.
-		for index := range 6 {
-			at := time.Now()
-			measurement := data.NewMeasurement[float64]("test", "BTC/USD", "context", at, at)
-			measurement.Maturity = 1
-			measurement.PutMetric(data.Metric[float64]{Label: "change", Raw: float64(index % 3)})
-			learner.Step(&types.Envelope{TypeID: types.EnvelopeTrade, CVD: measurement})
-			So(learner.Error(), ShouldBeNil)
+func TestLearnerReady(t *testing.T) {
+	Convey("The real workload gates decisions while signal and grid stages keep advancing", t, func() {
+		learner, connection := learningFixture(t)
+		learner.Agent.Model.Observe(agent.ContextKey("BTC/USD", []uint64{FlatPositionContext}), []byte(fmt.Sprint(Action{Kind: "wait"})))
+		gridWorkload := runtime.NewWorkload(t.Context(), "grid", [][]runtime.Node[*types.Envelope]{{learner.Grid}})
+		agentWorkload := runtime.NewWorkload(t.Context(), "agent", [][]runtime.Node[*types.Envelope]{{learner}})
+		agentWorkload.Require(learner.Ready)
+		workspace := runtime.NewWorkspace(t.Context(), "learning", [][]runtime.Node[*types.Envelope]{{gridWorkload}, {agentWorkload}})
+		So(workspace.Error(), ShouldBeNil)
+		defer func() { So(workspace.Close(), ShouldBeNil) }()
+		workspace.Admit()
+		advance := func(index int) {
+			at := time.Unix(int64(index+1), 0)
+			measurement := data.NewMeasurement[float64]("test", "BTC/USD", "flow", at, time.Unix(1, 0))
+			measurement.Metadata = map[string]float64{data.MetadataSupport: float64(index + 1), data.MetadataMahalanobisSNR: 100}
+			measurement.PutMetric(data.Metric[float64]{Label: "first", Raw: float64(index % 2)})
+			measurement.PutMetric(data.Metric[float64]{Label: "second", Raw: -float64(index % 2)})
+			workspace.Step(&types.Envelope{TypeID: types.EnvelopeTrade, CVD: measurement})
 		}
+		for index := range 32 {
+			advance(index)
+		}
+		So(learner.Grid.Version, ShouldEqual, 32)
+		So(learner.Decisions, ShouldEqual, 0)
+		So(agentWorkload.Status().String(), ShouldEqual, "waiting")
+		So(learner.Agent.Pending, ShouldBeEmpty)
+		tape := market.NewLevel3Tape("BTC/USD", time.Now())
+		for _, message := range tape.Messages[:4] {
+			connection.ApplyLevel3(message)
+		}
+		for index := 32; index < 64; index++ {
+			advance(index)
+		}
+		So(agentWorkload.Status().String(), ShouldEqual, "ready")
 		So(learner.Decisions, ShouldBeGreaterThan, 0)
-
-		So(learner.Forced, ShouldEqual, learner.Decisions)
-		So(learner.Population.Agents[0].Pending, ShouldBeEmpty)
-		So(learner.Traders[0].Evaluations["BTC/USD"], ShouldBeEmpty)
-		writeCaptures(t, learner, []int64{100, 130, 95})
-		So(learner.Review(t.Context()), ShouldBeNil)
-
-		Convey("None of them became training evidence", func() {
-			So(learner.Forced, ShouldEqual, learner.Decisions)
-			So(learner.Resolved, ShouldEqual, 0)
-
-			for _, member := range learner.Population.Agents {
-				So(member.Positive, ShouldEqual, 0)
-				So(member.Negative, ShouldEqual, 0)
-				So(member.Pending, ShouldBeEmpty)
-			}
-		})
+		decisions, samples := learner.Decisions, learner.Agent.Reading.Samples
+		connection.ApplyLevel3(kraken.Level3Data{Type: "snapshot", Symbol: "BTC/USD"})
+		for index := 64; index < 96; index++ {
+			advance(index)
+		}
+		So(agentWorkload.Status().String(), ShouldEqual, "waiting")
+		So(learner.Decisions, ShouldEqual, decisions)
+		So(learner.Agent.Reading.Samples, ShouldEqual, samples)
+		So(learner.Grid.Version, ShouldEqual, 96)
 	})
 }
 

@@ -290,19 +290,6 @@ var (
 			toxicitySolver := toxicity.NewSignal(runtimeCtx)
 			derivativesSolver := derivatives.NewSignal(runtimeCtx)
 
-			// These producers run synchronously at their transport owner rather
-			// than as workload stages, so they are traced explicitly: an
-			// untraced node stamps no boundary and is invisible in the
-			// diagnostics topology even while it is producing measurements.
-			privateSession.Level3Observers = func() []nmruntime.Node[*types.Envelope] {
-				return []nmruntime.Node[*types.Envelope]{
-					system.NewTraced("level3.depthflow", depthflow.NewSignal(runtimeCtx)),
-					system.NewTraced("level3.morphology", morphology.NewSignal(runtimeCtx)),
-					system.NewTraced("level3.pumpdump", pumpdumpSolver),
-					system.NewTraced("level3.toxicity", toxicitySolver),
-				}
-			}
-
 			if err := price.GetFees(instrument.Symbols()); err != nil {
 				return err
 			}
@@ -316,113 +303,75 @@ var (
 				return err
 			}
 			defer func() {
-				if err := learner.Population.Save(context.Background(), learner.Checkpoint); err != nil {
+				if err := learner.Save(context.Background()); err != nil {
 					errnie.Error(err)
 				}
 			}()
 			go learner.Run(runtimeCtx, system.Cfg.Learning.CheckpointInterval)
 
-			// The workspace owns the complete forward-learning loop. Signal and
-			// logic producers finish before the shared grid and action owner run.
-			publicTicker := nmruntime.NewWorkload(
-				runtimeCtx,
-				"ticker",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("ticker.ingress")},
-
-					{
-						system.NewTraced("ticker.correlation", correlation.NewSignal(runtimeCtx)),
-						system.NewTraced("ticker.leadlag", leadlag.NewSignal(runtimeCtx)),
-						system.NewTraced("ticker.liquidity", liquidity.NewSignal(runtimeCtx)),
-						system.NewTraced("ticker.sentiment", sentiment.NewSignal(runtimeCtx)),
-						system.NewTraced("ticker.resonance", resonanceSolver),
-					},
+			signals := nmruntime.NewWorkload(runtimeCtx, "signals", [][]nmruntime.Node[*types.Envelope]{
+				{
+					system.NewTraced("signal.correlation", correlation.NewSignal(runtimeCtx)),
+					system.NewTraced("signal.depthflow", depthflow.NewSignal(runtimeCtx)),
+					system.NewTraced("signal.derivatives", derivativesSolver),
+					system.NewTraced("signal.leadlag", leadlag.NewSignal(runtimeCtx)),
+					system.NewTraced("signal.liquidity", liquidity.NewSignal(runtimeCtx)),
+					system.NewTraced("signal.morphology", morphology.NewSignal(runtimeCtx)),
+					system.NewTraced("signal.pumpdump", pumpdumpSolver),
+					system.NewTraced("signal.sentiment", sentiment.NewSignal(runtimeCtx)),
+					system.NewTraced("signal.toxicity", toxicitySolver),
 				},
-			)
+				{system.NewTraced("logic.resonance", resonanceSolver)},
+			})
+			flow := nmruntime.NewWorkload(runtimeCtx, "flow", [][]nmruntime.Node[*types.Envelope]{
+				{
+					system.NewTraced("signal.cvd", cvd.NewSignal(runtimeCtx, func(symbol string) (*decimal.Decimal, *decimal.Decimal) {
+						tick := price.Tick(symbol)
 
-			publicTrade := nmruntime.NewWorkload(
-				runtimeCtx,
-				"trade",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("trade.ingress")},
-					{
-						system.NewTraced("trade.cvd", cvd.NewSignal(runtimeCtx, func(symbol string) (*decimal.Decimal, *decimal.Decimal) {
-							tick := price.Tick(symbol)
-							if tick == nil {
-								return nil, nil
-							}
-							return tick.Bid, tick.Ask
-						})),
-						system.NewTraced("trade.hawkes", hawkes.NewSignal(runtimeCtx)),
-					},
-					{
-						system.NewTraced("trade.manifold", manifoldSolver),
-					},
+						if tick == nil {
+							return nil, nil
+						}
+						return tick.Bid, tick.Ask
+					})),
+					system.NewTraced("signal.hawkes", hawkes.NewSignal(runtimeCtx)),
 				},
-			)
+				{system.NewTraced("logic.manifold", manifoldSolver)},
+			})
+			classification := nmruntime.NewWorkload(runtimeCtx, "classification", [][]nmruntime.Node[*types.Envelope]{
+				{system.NewTraced("logic.category", categorySolver)},
+				{system.NewTraced("logic.cognition", cognitionSolver)},
+			})
+			// Category consumes the current envelope's signal measurements. Its ring
+			// follows their join; all numerical output is complete before Grid runs.
+			observations := nmruntime.NewWorkload(runtimeCtx, "observations", [][]nmruntime.Node[*types.Envelope]{
+				{signals, flow},
+				{classification},
+				{rawCapture},
+			})
+			gridWorkload := nmruntime.NewWorkload(runtimeCtx, "grid", [][]nmruntime.Node[*types.Envelope]{
+				{system.NewTraced("logic.impulse", learner.Grid)},
+			})
+			agentWorkload := nmruntime.NewWorkload(runtimeCtx, "agent", [][]nmruntime.Node[*types.Envelope]{
+				{system.NewTraced("learning", learner)},
+			})
+			agentWorkload.Require(learner.Ready)
+			agents := []nmruntime.Node[*types.Envelope]{agentWorkload}
 
-			privateLevel3 := nmruntime.NewWorkload(
-				runtimeCtx,
-				"level3",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("level3.ingress")},
+			if learner.Rehearsal != nil {
+				agents = append(agents, learner.Rehearsal.Workload)
+			}
+			workspace := nmruntime.NewWorkspace(runtimeCtx, "workspace", [][]nmruntime.Node[*types.Envelope]{
+				{observations},
+				{gridWorkload},
+				agents,
+				{uiSink},
+			})
 
-					{
-						system.NewTraced("level3.manifold", manifoldSolver),
-					},
-				},
-			)
-
-			// Account execution notifications remain observable. The learning
-			// wallets execute independently against the shared displayed book.
-			privateExecutions := nmruntime.NewWorkload(
-				runtimeCtx,
-				"executions",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("executions.ingress")},
-				},
-			)
-
-			futuresTicker := nmruntime.NewWorkload(
-				runtimeCtx,
-				"futures.ticker",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("futures.ticker.ingress")},
-				},
-			)
-
-			futuresTrade := nmruntime.NewWorkload(
-				runtimeCtx,
-				"futures.trade",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("futures.trade.ingress")},
-				},
-			)
-
-			workspace := nmruntime.NewWorkspace(
-				runtimeCtx,
-				"workspace",
-				[][]nmruntime.Node[*types.Envelope]{
-					{
-						publicTicker,
-						publicTrade,
-						privateLevel3,
-						privateExecutions,
-						futuresTicker,
-						futuresTrade,
-					},
-					// These dependent numerical steps share one event turn. Separate
-					// polling barriers otherwise spend more time scheduling these
-					// short steps than processing them under sustained backpressure.
-					{system.NewTraced("logic.pumpdump", pumpdumpSolver), system.NewTraced("logic.toxicity", toxicitySolver), system.NewTraced("logic.derivatives", derivativesSolver)},
-					{system.NewTraced("logic.category", categorySolver)},
-					{system.NewTraced("logic.cognition", cognitionSolver)},
-					{system.NewTraced("learning", learner)},
-					{uiSink},
-				},
-			)
-
-			defer workspace.Close()
+			defer func() {
+				if err := workspace.Close(); err != nil {
+					errnie.Error(err)
+				}
+			}()
 
 			if err := workspace.Error(); err != nil {
 				return errnie.Error(errnie.Err(
@@ -432,12 +381,12 @@ var (
 				))
 			}
 
-			publicIngress["ticker"] = publicTicker
-			publicIngress["trade"] = publicTrade
-			privateIngress["level3"] = privateLevel3
-			privateIngress["executions"] = privateExecutions
-			futuresIngress["ticker"] = futuresTicker
-			futuresIngress["trade"] = futuresTrade
+			publicIngress["ticker"] = workspace
+			publicIngress["trade"] = workspace
+			privateIngress["level3"] = workspace
+			privateIngress["executions"] = workspace
+			futuresIngress["ticker"] = workspace
+			futuresIngress["trade"] = workspace
 
 			// Subscribe and seed while transports remain BUSY. Only a complete
 			// instrument universe and restored learner may open the workspace.
@@ -454,8 +403,7 @@ var (
 
 			workspace.Admit()
 
-			if workspace.Status() == nil ||
-				workspace.Status().Current() != nmruntime.READY {
+			if workspace.Status() != nmruntime.READY {
 				return errnie.Error(errnie.Err(
 					errnie.NotAcceptable,
 					"symm: workspace did not reach ready",

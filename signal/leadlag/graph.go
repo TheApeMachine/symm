@@ -55,9 +55,9 @@ func (pipeline *pipeline) Observe(pair map[string]core.Primitive, at int64) erro
 func (pipeline *pipeline) Fields(pair map[string]core.Primitive) map[string]core.Primitive {
 	return map[string]core.Primitive{
 		"pair":                core.From(pair),
-		"lag_history":         &pipeline.histories[lagHistory].Reading,
-		"gain_history":        &pipeline.histories[gainHistory].Reading,
-		"correlation_history": &pipeline.histories[correlationHistory].Reading,
+		"lag_history":         core.From(pipeline.histories[lagHistory].Reading.Fields()),
+		"gain_history":        core.From(pipeline.histories[gainHistory].Reading.Fields()),
+		"correlation_history": core.From(pipeline.histories[correlationHistory].Reading.Fields()),
 		"lag_velocity":        &pipeline.velocities[lagHistory].Reading,
 		"gain_velocity":       &pipeline.velocities[gainHistory].Reading,
 	}

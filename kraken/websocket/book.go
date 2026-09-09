@@ -112,7 +112,7 @@ func (book *Book) Status() runtime.Stage {
 }
 
 /*
-	Expect keeps the book owner WAITING until every requested snapshot has
+	Expect keeps the book owner BUSY until every requested snapshot has
 
 been applied and its observation consumers have been seeded.
 */
@@ -123,7 +123,7 @@ func (book *Book) Expect(symbols []string) {
 	for _, symbol := range symbols {
 		book.pending[symbol] = struct{}{}
 	}
-	book.status.Transition(runtime.WAITING)
+	book.status.Transition(runtime.BUSY)
 }
 
 /* Wait blocks boot on the owner's readiness, never on elapsed market time. */
@@ -147,6 +147,10 @@ func (book *Book) Wait() error {
 func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 	book.mu.RLock()
 	defer book.mu.RUnlock()
+
+	if _, pending := book.pending[symbol]; pending {
+		return
+	}
 
 	if _, diverging := book.diverging[symbol]; diverging {
 		return
@@ -239,13 +243,18 @@ func (book *Book) Update(
 	}
 
 	for _, data := range accepted {
+		if payload.Type == "snapshot" {
+			book.mu.Lock()
+			delete(book.pending, data.Symbol)
+			book.mu.Unlock()
+		}
+
 		if notify != nil {
 			notify(data.Symbol, data.Timestamp)
 		}
 
 		if payload.Type == "snapshot" {
 			book.mu.Lock()
-			delete(book.pending, data.Symbol)
 
 			if len(book.pending) == 0 && len(book.diverging) == 0 {
 				book.status.Transition(runtime.READY)

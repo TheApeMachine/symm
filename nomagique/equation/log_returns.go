@@ -25,12 +25,14 @@ type LogReturns struct {
 	Energy        float64
 	From, Through int64
 	rates         []float64
+	sorted        bool
 }
 
 /* Load decodes each observation once and computes its adjacent log difference. */
 func (returns *LogReturns) Load(observations []core.Primitive) error {
 	returns.Intervals = returns.Intervals[:0]
 	returns.rates = returns.rates[:0]
+	returns.sorted = false
 	returns.Energy, returns.From, returns.Through = 0, 0, 0
 	previousLog := 0.0
 
@@ -72,7 +74,10 @@ func (returns *LogReturns) MedianEnergyRate() float64 {
 	if len(returns.rates) == 0 {
 		return math.NaN()
 	}
-	slices.Sort(returns.rates)
+	if !returns.sorted {
+		slices.Sort(returns.rates)
+		returns.sorted = true
+	}
 	// Match the generic median's undefined result when any rate is undefined.
 	if math.IsNaN(returns.rates[0]) {
 		return returns.rates[0]

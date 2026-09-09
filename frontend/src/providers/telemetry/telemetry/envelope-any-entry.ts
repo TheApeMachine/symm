@@ -3,178 +3,122 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from "flatbuffers";
+import * as flatbuffers from 'flatbuffers';
 
-import {
-	EnvelopeAnyValue,
-	unionListToEnvelopeAnyValue,
-	unionToEnvelopeAnyValue,
-} from "../telemetry/envelope-any-value.js";
-import {
-	EnvelopeNamedFloatMatrix,
-	type EnvelopeNamedFloatMatrixT,
-} from "../telemetry/envelope-named-float-matrix.js";
-import {
-	EnvelopeNamedInt,
-	type EnvelopeNamedIntT,
-} from "../telemetry/envelope-named-int.js";
-import {
-	EnvelopeNamedTimeNs,
-	type EnvelopeNamedTimeNsT,
-} from "../telemetry/envelope-named-time-ns.js";
-import { NamedNumber, type NamedNumberT } from "../telemetry/named-number.js";
-import { NamedString, type NamedStringT } from "../telemetry/named-string.js";
+import { EnvelopeAnyValue, unionToEnvelopeAnyValue, unionListToEnvelopeAnyValue } from '../telemetry/envelope-any-value.js';
+import { EnvelopeNamedFloatMatrix, EnvelopeNamedFloatMatrixT } from '../telemetry/envelope-named-float-matrix.js';
+import { EnvelopeNamedInt, EnvelopeNamedIntT } from '../telemetry/envelope-named-int.js';
+import { EnvelopeNamedTimeNs, EnvelopeNamedTimeNsT } from '../telemetry/envelope-named-time-ns.js';
+import { NamedNumber, NamedNumberT } from '../telemetry/named-number.js';
+import { NamedString, NamedStringT } from '../telemetry/named-string.js';
 
-export class EnvelopeAnyEntry
-	implements flatbuffers.IUnpackableObject<EnvelopeAnyEntryT>
-{
-	bb: flatbuffers.ByteBuffer | null = null;
-	bb_pos = 0;
-	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeAnyEntry {
-		this.bb_pos = i;
-		this.bb = bb;
-		return this;
-	}
 
-	static getRootAsEnvelopeAnyEntry(
-		bb: flatbuffers.ByteBuffer,
-		obj?: EnvelopeAnyEntry,
-	): EnvelopeAnyEntry {
-		return (obj || new EnvelopeAnyEntry()).__init(
-			bb.readInt32(bb.position()) + bb.position(),
-			bb,
-		);
-	}
+export class EnvelopeAnyEntry implements flatbuffers.IUnpackableObject<EnvelopeAnyEntryT> {
+  bb: flatbuffers.ByteBuffer|null = null;
+  bb_pos = 0;
+  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeAnyEntry {
+  this.bb_pos = i;
+  this.bb = bb;
+  return this;
+}
 
-	static getSizePrefixedRootAsEnvelopeAnyEntry(
-		bb: flatbuffers.ByteBuffer,
-		obj?: EnvelopeAnyEntry,
-	): EnvelopeAnyEntry {
-		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-		return (obj || new EnvelopeAnyEntry()).__init(
-			bb.readInt32(bb.position()) + bb.position(),
-			bb,
-		);
-	}
+static getRootAsEnvelopeAnyEntry(bb:flatbuffers.ByteBuffer, obj?:EnvelopeAnyEntry):EnvelopeAnyEntry {
+  return (obj || new EnvelopeAnyEntry()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-	key(): string | null;
-	key(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
-	key(optionalEncoding?: any): string | Uint8Array | null {
-		const offset = this.bb!.__offset(this.bb_pos, 4);
-		return offset
-			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
-			: null;
-	}
+static getSizePrefixedRootAsEnvelopeAnyEntry(bb:flatbuffers.ByteBuffer, obj?:EnvelopeAnyEntry):EnvelopeAnyEntry {
+  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+  return (obj || new EnvelopeAnyEntry()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-	valueType(): EnvelopeAnyValue {
-		const offset = this.bb!.__offset(this.bb_pos, 6);
-		return offset
-			? this.bb!.readUint8(this.bb_pos + offset)
-			: EnvelopeAnyValue.NONE;
-	}
+key():string|null
+key(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+key(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 4);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
 
-	value<T extends flatbuffers.Table>(obj: any): any | null {
-		const offset = this.bb!.__offset(this.bb_pos, 8);
-		return offset ? this.bb!.__union(obj, this.bb_pos + offset) : null;
-	}
+valueType():EnvelopeAnyValue {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
+  return offset ? this.bb!.readUint8(this.bb_pos + offset) : EnvelopeAnyValue.NONE;
+}
 
-	static startEnvelopeAnyEntry(builder: flatbuffers.Builder) {
-		builder.startObject(3);
-	}
+value<T extends flatbuffers.Table>(obj:any):any|null {
+  const offset = this.bb!.__offset(this.bb_pos, 8);
+  return offset ? this.bb!.__union(obj, this.bb_pos + offset) : null;
+}
 
-	static addKey(builder: flatbuffers.Builder, keyOffset: flatbuffers.Offset) {
-		builder.addFieldOffset(0, keyOffset, 0);
-	}
+static startEnvelopeAnyEntry(builder:flatbuffers.Builder) {
+  builder.startObject(3);
+}
 
-	static addValueType(
-		builder: flatbuffers.Builder,
-		valueType: EnvelopeAnyValue,
-	) {
-		builder.addFieldInt8(1, valueType, EnvelopeAnyValue.NONE);
-	}
+static addKey(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(0, keyOffset, 0);
+}
 
-	static addValue(
-		builder: flatbuffers.Builder,
-		valueOffset: flatbuffers.Offset,
-	) {
-		builder.addFieldOffset(2, valueOffset, 0);
-	}
+static addValueType(builder:flatbuffers.Builder, valueType:EnvelopeAnyValue) {
+  builder.addFieldInt8(1, valueType, EnvelopeAnyValue.NONE);
+}
 
-	static endEnvelopeAnyEntry(builder: flatbuffers.Builder): flatbuffers.Offset {
-		const offset = builder.endObject();
-		builder.requiredField(offset, 4); // key
-		builder.requiredField(offset, 8); // value
-		return offset;
-	}
+static addValue(builder:flatbuffers.Builder, valueOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(2, valueOffset, 0);
+}
 
-	static createEnvelopeAnyEntry(
-		builder: flatbuffers.Builder,
-		keyOffset: flatbuffers.Offset,
-		valueType: EnvelopeAnyValue,
-		valueOffset: flatbuffers.Offset,
-	): flatbuffers.Offset {
-		EnvelopeAnyEntry.startEnvelopeAnyEntry(builder);
-		EnvelopeAnyEntry.addKey(builder, keyOffset);
-		EnvelopeAnyEntry.addValueType(builder, valueType);
-		EnvelopeAnyEntry.addValue(builder, valueOffset);
-		return EnvelopeAnyEntry.endEnvelopeAnyEntry(builder);
-	}
+static endEnvelopeAnyEntry(builder:flatbuffers.Builder):flatbuffers.Offset {
+  const offset = builder.endObject();
+  builder.requiredField(offset, 4) // key
+  builder.requiredField(offset, 8) // value
+  return offset;
+}
 
-	unpack(): EnvelopeAnyEntryT {
-		return new EnvelopeAnyEntryT(
-			this.key(),
-			this.valueType(),
-			(() => {
-				const temp = unionToEnvelopeAnyValue(
-					this.valueType(),
-					this.value.bind(this),
-				);
-				if (temp === null) {
-					return null;
-				}
-				return temp.unpack();
-			})(),
-		);
-	}
+static createEnvelopeAnyEntry(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset, valueType:EnvelopeAnyValue, valueOffset:flatbuffers.Offset):flatbuffers.Offset {
+  EnvelopeAnyEntry.startEnvelopeAnyEntry(builder);
+  EnvelopeAnyEntry.addKey(builder, keyOffset);
+  EnvelopeAnyEntry.addValueType(builder, valueType);
+  EnvelopeAnyEntry.addValue(builder, valueOffset);
+  return EnvelopeAnyEntry.endEnvelopeAnyEntry(builder);
+}
 
-	unpackTo(_o: EnvelopeAnyEntryT): void {
-		_o.key = this.key();
-		_o.valueType = this.valueType();
-		_o.value = (() => {
-			const temp = unionToEnvelopeAnyValue(
-				this.valueType(),
-				this.value.bind(this),
-			);
-			if (temp === null) {
-				return null;
-			}
-			return temp.unpack();
-		})();
-	}
+unpack(): EnvelopeAnyEntryT {
+  return new EnvelopeAnyEntryT(
+    this.key(),
+    this.valueType(),
+    (() => {
+      const temp = unionToEnvelopeAnyValue(this.valueType(), this.value.bind(this));
+      if(temp === null) { return null; }
+      return temp.unpack()
+  })()
+  );
+}
+
+
+unpackTo(_o: EnvelopeAnyEntryT): void {
+  _o.key = this.key();
+  _o.valueType = this.valueType();
+  _o.value = (() => {
+      const temp = unionToEnvelopeAnyValue(this.valueType(), this.value.bind(this));
+      if(temp === null) { return null; }
+      return temp.unpack()
+  })();
+}
 }
 
 export class EnvelopeAnyEntryT implements flatbuffers.IGeneratedObject {
-	constructor(
-		public key: string | Uint8Array | null = null,
-		public valueType: EnvelopeAnyValue = EnvelopeAnyValue.NONE,
-		public value:
-			| EnvelopeNamedFloatMatrixT
-			| EnvelopeNamedIntT
-			| EnvelopeNamedTimeNsT
-			| NamedNumberT
-			| NamedStringT
-			| null = null,
-	) {}
+constructor(
+  public key: string|Uint8Array|null = null,
+  public valueType: EnvelopeAnyValue = EnvelopeAnyValue.NONE,
+  public value: EnvelopeNamedFloatMatrixT|EnvelopeNamedIntT|EnvelopeNamedTimeNsT|NamedNumberT|NamedStringT|null = null
+){}
 
-	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
-		const key = this.key !== null ? builder.createString(this.key!) : 0;
-		const value = builder.createObjectOffset(this.value);
 
-		return EnvelopeAnyEntry.createEnvelopeAnyEntry(
-			builder,
-			key,
-			this.valueType,
-			value,
-		);
-	}
+pack(builder:flatbuffers.Builder): flatbuffers.Offset {
+  const key = (this.key !== null ? builder.createString(this.key!) : 0);
+  const value = builder.createObjectOffset(this.value);
+
+  return EnvelopeAnyEntry.createEnvelopeAnyEntry(builder,
+    key,
+    this.valueType,
+    value
+  );
+}
 }

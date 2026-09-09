@@ -22,8 +22,7 @@ import (
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/spf13/viper"
 	"github.com/theapemachine/symm/nomagique/runtime"
-	"github.com/theapemachine/symm/signal/depthflow"
-	"github.com/theapemachine/symm/signal/morphology"
+
 	"github.com/theapemachine/symm/system"
 	"github.com/theapemachine/symm/types"
 )
@@ -40,7 +39,7 @@ func (ingress *testIngress) Push(envelope *types.Envelope) {
 	}
 }
 
-func (ingress *testIngress) Status() *runtime.Status { return ingress.status }
+func (ingress *testIngress) Status() runtime.Stage { return ingress.status.Current() }
 
 func readyTestIngress(channels ...string) map[string]runtime.Ingress[*types.Envelope] {
 	ingress := make(map[string]runtime.Ingress[*types.Envelope], len(channels))
@@ -433,7 +432,6 @@ func newLiveFixture(t testing.TB) liveFixture {
 		t.Fatal(err)
 	}
 	live.MarkReady()
-	live.level3Observers = []runtime.Node[*types.Envelope]{depthflow.NewSignal(t.Context()), morphology.NewSignal(t.Context())}
 	return liveFixture{live: live, client: client, ingress: ingress}
 }
 
@@ -482,9 +480,9 @@ func TestNewWithClient(t *testing.T) {
 					case envelope := <-ingress.frames:
 						So(envelope.Stream.Sequence, ShouldEqual, sequence)
 						So(envelope.CaptureOrdinal, ShouldEqual, ordinal)
-						So(envelope.DepthFlow, ShouldNotBeNil)
-						So(envelope.Level3Data.Bids, ShouldBeNil)
-						So(envelope.Level3Data.Asks, ShouldBeNil)
+						So(envelope.DepthFlow, ShouldBeNil)
+						So(len(envelope.Level3Data.Bids), ShouldEqual, 1)
+						So(len(envelope.Level3Data.Asks), ShouldEqual, 1)
 
 						if ordinal == 0 {
 							firstSymbol = envelope.Level3Data.Symbol
@@ -500,7 +498,7 @@ func TestNewWithClient(t *testing.T) {
 			So(live.Error(), ShouldBeNil)
 		})
 
-		Convey("Snapshots, modifications and deletions should publish only book notifications", func() {
+		Convey("Snapshots, modifications and deletions publish accepted deltas for the signal workload", func() {
 			for index, operation := range []string{"add", "modify", "delete"} {
 				payload := fmt.Sprintf(`{"channel":"level3","type":"update","data":[{"symbol":"TEST/USD","timestamp":"2026-09-05T10:00:0%dZ","bids":[{"event":"%s","order_id":"bid","limit_price":100,"order_qty":3,"timestamp":"2026-09-05T10:00:0%dZ"}],"asks":[{"event":"add","order_id":"ask","limit_price":101,"order_qty":4,"timestamp":"2026-09-05T10:00:0%dZ"}]}]}`,
 					index, operation, index, index)
@@ -512,12 +510,12 @@ func TestNewWithClient(t *testing.T) {
 					So(envelope.TypeID, ShouldEqual, types.EnvelopeLevel3)
 					So(envelope.Level3Data.Symbol, ShouldEqual, "TEST/USD")
 					So(envelope.Level3Data.Timestamp.IsZero(), ShouldBeFalse)
-					So(envelope.Level3Data.Bids, ShouldBeNil)
-					So(envelope.Level3Data.Asks, ShouldBeNil)
-					So(envelope.DepthFlow, ShouldNotBeNil)
+					So(len(envelope.Level3Data.Bids), ShouldEqual, 1)
+					So(len(envelope.Level3Data.Asks), ShouldEqual, 1)
+					So(envelope.DepthFlow, ShouldBeNil)
 
 					if operation != "delete" {
-						So(envelope.Morphology, ShouldNotBeNil)
+						So(envelope.Morphology, ShouldBeNil)
 					}
 
 					So(envelope.Stream.Sequence, ShouldEqual, index+1)

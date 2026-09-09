@@ -12,17 +12,19 @@ import (
 
 /*
 ReadObservations decodes market facts from the original captured frames in
-capture order. It never reads the agent's decisions or reconstructed state.
+capture order after the supplied sequence. The returned cursor includes frames
+with no market projection and advances only after every selected frame decodes.
+It never reads the agent's decisions or reconstructed state.
 
 Capture order comes from the sequence column, not from storage layout: Iceberg
 guarantees no row order, so the reader sorts rather than trusting the order
 files happen to arrive in.
 */
-func ReadObservations(ctx context.Context, catalog *tables.Catalog, run RunID) ([]Observation, error) {
-	rows, err := catalog.Captures(ctx, string(run), 0)
+func ReadObservations(ctx context.Context, catalog *tables.Catalog, run RunID, after int64) ([]Observation, int64, error) {
+	rows, err := catalog.Captures(ctx, string(run), after)
 
 	if err != nil {
-		return nil, err
+		return nil, after, err
 	}
 
 	observations := []Observation{}
@@ -31,13 +33,17 @@ func ReadObservations(ctx context.Context, catalog *tables.Catalog, run RunID) (
 		decoded, err := FrameFromRow(row).Observations()
 
 		if err != nil {
-			return nil, err
+			return nil, after, err
 		}
 
 		observations = append(observations, decoded...)
 	}
 
-	return observations, nil
+	if len(rows) > 0 {
+		after = rows[len(rows)-1].Sequence
+	}
+
+	return observations, after, nil
 }
 
 // FrameFromRow rebuilds a RawFrame from its stored row, so the decoders below

@@ -44,6 +44,7 @@ type EnvelopeStateT struct {
 	Equity *EquityFrameT `json:"equity"`
 	Positions *PositionsFrameT `json:"positions"`
 	Learning []byte `json:"learning"`
+	LearningObservations []*EnvelopeMeasurementT `json:"learningObservations"`
 }
 
 func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -141,6 +142,19 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	if t.Learning != nil {
 		learningOffset = builder.CreateByteString(t.Learning)
 	}
+	learningObservationsOffset := flatbuffers.UOffsetT(0)
+	if t.LearningObservations != nil {
+		learningObservationsLength := len(t.LearningObservations)
+		learningObservationsOffsets := make([]flatbuffers.UOffsetT, learningObservationsLength)
+		for j := 0; j < learningObservationsLength; j++ {
+			learningObservationsOffsets[j] = t.LearningObservations[j].Pack(builder)
+		}
+		EnvelopeStateStartLearningObservationsVector(builder, learningObservationsLength)
+		for j := learningObservationsLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(learningObservationsOffsets[j])
+		}
+		learningObservationsOffset = builder.EndVector(learningObservationsLength)
+	}
 	EnvelopeStateStart(builder)
 	EnvelopeStateAddKey(builder, keyOffset)
 	EnvelopeStateAddTypeId(builder, t.TypeId)
@@ -179,6 +193,7 @@ func (t *EnvelopeStateT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	EnvelopeStateAddEquity(builder, equityOffset)
 	EnvelopeStateAddPositions(builder, positionsOffset)
 	EnvelopeStateAddLearning(builder, learningOffset)
+	EnvelopeStateAddLearningObservations(builder, learningObservationsOffset)
 	return EnvelopeStateEnd(builder)
 }
 
@@ -244,6 +259,13 @@ func (rcv *EnvelopeState) UnPackTo(t *EnvelopeStateT) {
 	t.Equity = rcv.Equity(nil).UnPack()
 	t.Positions = rcv.Positions(nil).UnPack()
 	t.Learning = rcv.LearningBytes()
+	learningObservationsLength := rcv.LearningObservationsLength()
+	t.LearningObservations = make([]*EnvelopeMeasurementT, learningObservationsLength)
+	for j := 0; j < learningObservationsLength; j++ {
+		x := EnvelopeMeasurement{}
+		rcv.LearningObservations(&x, j)
+		t.LearningObservations[j] = x.UnPack()
+	}
 }
 
 func (rcv *EnvelopeState) UnPack() *EnvelopeStateT {
@@ -799,8 +821,28 @@ func (rcv *EnvelopeState) MutateLearning(j int, n byte) bool {
 	return false
 }
 
+func (rcv *EnvelopeState) LearningObservations(obj *EnvelopeMeasurement, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(82))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *EnvelopeState) LearningObservationsLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(82))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
 func EnvelopeStateStart(builder *flatbuffers.Builder) {
-	builder.StartObject(39)
+	builder.StartObject(40)
 }
 func EnvelopeStateAddKey(builder *flatbuffers.Builder, key flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(key), 0)
@@ -927,6 +969,12 @@ func EnvelopeStateAddLearning(builder *flatbuffers.Builder, learning flatbuffers
 }
 func EnvelopeStateStartLearningVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(1, numElems, 1)
+}
+func EnvelopeStateAddLearningObservations(builder *flatbuffers.Builder, learningObservations flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(39, flatbuffers.UOffsetT(learningObservations), 0)
+}
+func EnvelopeStateStartLearningObservationsVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
 func EnvelopeStateEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

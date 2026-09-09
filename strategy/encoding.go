@@ -6,7 +6,7 @@ import (
 
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
-	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
+
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -24,10 +24,8 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 		Steps:     learner.Steps,
 		Decisions: learner.Decisions,
 		Resolved:  learner.Resolved,
-		Status:    "learning",
+		Status:    learner.Traders[0].Status,
 		Restored:  learner.Restored,
-		Episodes:  learner.Episodes,
-		Forced:    learner.Forced,
 	}
 
 	if learner.Rehearsal != nil {
@@ -39,15 +37,17 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 	}
 
 	for index, trader := range learner.Traders {
-		member := learner.Population.Agents[index]
+		member := learner.Agent
 		entry := trader.Wire(member, focus)
 		entry.Id = int32(index)
 		state.Agents = append(state.Agents, entry)
 	}
-	err := learner.Population.Read(func(space *grid.Space) error {
+	learner.Grid.Mutex.Lock()
+	space := learner.Grid.Space
+	func() {
 
 		for row, symbol := range space.Rows {
-			development := learner.Developments[symbol]
+			impulse := learner.Grid.Latest[symbol]
 			activity, quality, err := space.Activity(symbol)
 
 			if err != nil {
@@ -56,13 +56,13 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 
 			entry := &wire.LearningDevelopmentT{
 				Symbol:    symbol,
-				AtNs:      development.At.UnixNano(),
-				FromNs:    development.From.UnixNano(),
+				AtNs:      impulse.At.UnixNano(),
+				FromNs:    impulse.From.UnixNano(),
 				Status:    "learning",
-				Decisions: development.Decisions,
+				Decisions: 0,
 				// Retained state transitions, not tokens: Context below flattens
 				// each transition's conditions into one list.
-				Depth: int32(len(development.History)),
+				Depth: 0,
 			}
 
 			if focus != "" && focus != symbol {
@@ -70,13 +70,17 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 				continue
 			}
 
-			for _, context := range development.History {
-				for _, condition := range context.Conditions {
+			if !impulse.Ready {
+				entry.Status = "waiting for regions"
+			}
+			if activation := learner.Agent.Activations[symbol]; activation != nil {
+				entry.Depth = int32(len(activation.Context))
+				for _, condition := range activation.Context {
 					entry.Context = append(entry.Context, strconv.FormatUint(condition, 10))
 				}
 			}
 
-			for _, region := range development.Regions {
+			for _, region := range impulse.Regions {
 				entry.Regions = append(entry.Regions, &wire.LearningRegionT{
 					Id:        region.ID,
 					Condition: region.Condition,
@@ -104,12 +108,8 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 			state.Markets = append(state.Markets, entry)
 		}
 
-		return nil
-	})
-
-	if err != nil {
-		state.Status = err.Error()
-	}
+	}()
+	learner.Grid.Mutex.Unlock()
 
 	builder := flatbuffers.NewBuilder(0)
 	builder.Finish(state.Pack(builder))
@@ -137,8 +137,6 @@ func (trader *Trader) Wire(member *agent.Agent[Action], focus string) *wire.Lear
 		Status:     trader.Status,
 		Reward:     member.Reward.TotalReward,
 		ElapsedNs:  int64(member.Reward.TotalElapsed),
-		Episode:    trader.Episode,
-		Carried:    trader.Carried,
 		Open:       int32(trader.open()),
 	}
 
@@ -165,7 +163,7 @@ func (trader *Trader) Wire(member *agent.Agent[Action], focus string) *wire.Lear
 	activation := member.Activations[focus]
 
 	if activation != nil {
-		last := activation.Decision
+		last := activation
 		state.Last = &wire.LearningDecisionT{
 			Id:     last.ID,
 			Symbol: last.Label,
@@ -187,31 +185,13 @@ func (trader *Trader) Wire(member *agent.Agent[Action], focus string) *wire.Lear
 	}
 
 	if activation != nil {
-		for _, choice := range activation.Choices {
-			reading := choice.Prior
+		for _, action := range activation.Alternatives {
 			state.Alternatives = append(state.Alternatives, &wire.LearningActionT{
-				Kind:   choice.Action.Kind,
-				Power:  int32(choice.Action.Power),
-				Reduce: choice.Action.Reduce,
-				Prior: &wire.LearningPriorT{
-					Defined:           reading.Defined,
-					Mean:              reading.Mean,
-					Variance:          reading.Variance,
-					VarianceDefined:   reading.VarianceDefined,
-					Samples:           reading.Samples,
-					Support:           reading.Support,
-					Authority:         reading.Authority,
-					Provisional:       reading.Provisional,
-					Maturity:          reading.Maturity,
-					EvidenceAuthority: reading.EvidenceAuthority,
-					Depth:             int32(reading.Depth),
-					ContextLength:     int32(reading.ContextLength),
-					Pending:           reading.Pending,
-					Memory:            reading.Memory,
-				},
+				Kind: action.Kind, Power: int32(action.Power), Reduce: action.Reduce,
 			})
 		}
 	}
+
 	if evaluation := trader.LastEvaluation; evaluation != nil {
 		state.Outcome = &wire.LearningDecisionT{Id: evaluation.ID, Agent: int32(trader.ID), Symbol: evaluation.Label, AtNs: evaluation.At.UnixNano(), ThroughNs: evaluation.Through.UnixNano(), Action: &wire.LearningActionT{Kind: evaluation.Action.Kind, Power: int32(evaluation.Action.Power), Reduce: evaluation.Action.Reduce}, Tape: evaluation.Value, HasTape: true, Quantity: evaluation.Quantity.String()}
 	}

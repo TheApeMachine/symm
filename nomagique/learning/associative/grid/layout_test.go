@@ -87,3 +87,47 @@ func TestSpaceRestructure(t *testing.T) {
 		}
 	})
 }
+
+func TestSpaceLayoutFailure(t *testing.T) {
+	Convey("A solver failure retains the submitted matrix after LAPACK overwrites its workspace", t, func() {
+		grid := NewSpace()
+		grid.Rows = []string{"BTC/USD"}
+		grid.Values = [][]float64{nil}
+		grid.Present = [][]bool{nil}
+		grid.activations = [][]float64{nil}
+		grid.qualities = [][]float64{nil}
+		grid.Version = 23
+		// A three-dimensional symmetric matrix has six independent entries.
+		original := [gridDirections * gridDirections]float64{1, 2, 3, 0, 4, 5, 0, 0, 6}
+		grid.gram = [gridDirections * gridDirections]float64{9, 9, 9, 9, 9, 9, 9, 9, 9}
+		err := grid.layoutFailure(0, original)
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, `context="BTC/USD" committed_version=23`)
+		So(err.Error(), ShouldContainSubstring, "gram_upper=[1 2 3 4 5 6]")
+		So(grid.Version, ShouldEqual, 23)
+	})
+}
+
+func BenchmarkSpaceRestructure(b *testing.B) {
+	// Match the 404-coordinate workload used by BenchmarkSpaceStep while
+	// measuring the sketch update independently of producer/estimator costs.
+	grid := NewSpace()
+
+	for column := range 404 {
+		grid.Column("source", strconv.Itoa(column))
+	}
+	grid.activations = [][]float64{make([]float64, len(grid.Columns))}
+	b.ReportAllocs()
+	step := 0
+
+	for b.Loop() {
+		for column := range grid.Columns {
+			grid.activations[0][column] = float64((column+step)%3) - 1
+		}
+
+		if err := grid.restructure(0); err != nil {
+			b.Fatal(err)
+		}
+		step++
+	}
+}

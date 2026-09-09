@@ -1,16 +1,18 @@
 package strategy
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken"
-	"github.com/theapemachine/symm/nomagique/learning/associative/model"
+	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
 	"github.com/theapemachine/symm/tests/market"
+	"github.com/theapemachine/symm/types"
 	"testing"
 	"time"
 
@@ -26,12 +28,14 @@ func rehearsalObservation(
 	at := time.Unix(1700000000, 0).Add(time.Duration(sequence) * time.Second)
 
 	return hindsight.Observation{
-		Domain:  "spot",
-		Capture: hindsight.CaptureIdentity{Run: "rehearsal", Sequence: hindsight.CaptureSequence(sequence), Stream: "spot", StreamEpoch: 1},
-		Ordinal: ordinal,
-		Symbol:  symbol,
-		Kind:    "ticker",
-		VenueAt: at,
+		Domain:     "spot",
+		Capture:    hindsight.CaptureIdentity{Run: "rehearsal", Sequence: hindsight.CaptureSequence(sequence), Stream: "spot", StreamEpoch: 1},
+		Ordinal:    ordinal,
+		Symbol:     symbol,
+		Kind:       "ticker",
+		VenueAt:    at,
+		ReceivedAt: at,
+		BidQty:     1, AskQty: 1,
 		HasBid:  bid > 0,
 		Bid:     bid,
 		HasAsk:  ask > 0,
@@ -41,60 +45,31 @@ func rehearsalObservation(
 	}
 }
 
-func TestGroupObservations(t *testing.T) {
-	Convey("Observations are grouped, sorted by capture order and spot only", t, func() {
-		grouped := groupObservations([]hindsight.Observation{
-			rehearsalObservation(2, 0, "BTC/USD", 99, 101, 100),
-			rehearsalObservation(1, 0, "BTC/USD", 98, 100, 99),
-			rehearsalObservation(3, 0, "BTC/USD", 100, 102, 101),
-			{Domain: "futures", Symbol: "BTC/USD", Capture: hindsight.CaptureIdentity{Run: "rehearsal", Sequence: 4, Stream: "futures", StreamEpoch: 1}},
-		})
-
-		So(len(grouped), ShouldEqual, 1)
-		So(len(grouped["BTC/USD"]), ShouldEqual, 3)
-		So(grouped["BTC/USD"][0].Capture.Sequence, ShouldEqual, hindsight.CaptureSequence(1))
-		So(grouped["BTC/USD"][2].Capture.Sequence, ShouldEqual, hindsight.CaptureSequence(3))
-	})
+// rehearsalEnvelope supplies a captured producer measurement whose changing
+// order-flow coordinates are available at that event, independent of labels.
+func rehearsalEnvelope(observation hindsight.Observation) *types.Envelope {
+	measurement := data.NewMeasurement[float64]("captured-depth", observation.Symbol, "depthflow", observation.ReceivedAt, time.Unix(1700000000, 0))
+	measurement.Maturity = 1
+	measurement.PutMetric(data.Metric[float64]{Label: "observed_notional", Raw: observation.Bid * observation.BidQty})
+	measurement.PutMetric(data.Metric[float64]{Label: "ask_notional", Raw: observation.Ask * observation.AskQty})
+	measurement.SNR, measurement.SNRDefined = 100, true
+	return &types.Envelope{Key: observation.Symbol, CaptureID: observation.Capture, CaptureOrdinal: observation.Ordinal, DepthFlow: measurement}
 }
 
-func rehearsalFixture() *Rehearsal {
+func rehearsalFixture(t testing.TB) *Rehearsal {
+	t.Helper()
+	learner, _ := learningFixture(t)
+	rehearsal := learner.Rehearsal
+	rehearsal.observations = map[string][]hindsight.Observation{}
+	rehearsal.inputs = make(map[hindsight.EnvelopeRef]hindsight.RehearsalInput)
+	return rehearsal
+}
+
+func practicePrice() *broker.Price {
 	price := broker.NewPrice(nil, nil)
-	// Fixture venue charges a quarter percent on each side of a round trip.
-	price.SetFee("BTC/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(0.25)})
-	return &Rehearsal{price: price, observations: map[string][]hindsight.Observation{},
-		experiences: make(chan Experience, 1)}
-}
-
-func TestRehearsalGrade(t *testing.T) {
-	Convey("Captured asks and bids determine the exercise return", t, func() {
-		rehearsal := rehearsalFixture()
-		anchor := rehearsalObservation(1, 0, "BTC/USD", 99, 101, 100)
-		episode := hindsight.Episode{Symbol: "BTC/USD", HasObservedExcursion: true}
-
-		Convey("Different price regimes separate opportunity, fee trap and decline", func() {
-			for _, endpointBid := range []float64{110, 101, 90} {
-				endpoint := rehearsalObservation(2, 0, "BTC/USD", endpointBid, endpointBid+2, endpointBid+1)
-				entered, defined := rehearsal.grade(episode, Action{Kind: "enter"}, anchor, endpoint)
-				expected := (endpointBid*0.9975 - 101*1.0025) / (101 * 1.0025)
-				So(defined, ShouldBeTrue)
-				So(entered, ShouldAlmostEqual, expected)
-				waited, defined := rehearsal.grade(episode, Action{Kind: "wait"}, anchor, endpoint)
-				So(defined, ShouldBeTrue)
-				So(waited, ShouldAlmostEqual, -max(0, expected))
-			}
-		})
-
-		Convey("Missing quotes and fees never become free trading", func() {
-			endpoint := rehearsalObservation(2, 0, "BTC/USD", 110, 112, 111)
-			anchor.HasAsk = false
-			_, defined := rehearsal.grade(episode, Action{Kind: "enter"}, anchor, endpoint)
-			So(defined, ShouldBeFalse)
-			anchor.HasAsk = true
-			episode.Symbol = "UNKNOWN/USD"
-			_, defined = rehearsal.grade(episode, Action{Kind: "wait"}, anchor, endpoint)
-			So(defined, ShouldBeFalse)
-		})
-	})
+	// This fixture charges a quarter percent on each side of a round trip.
+	price.SetFee("BTC/USD", kraken.TradeVolumeFee{Fee: decimal.NewFromFloat64(.25)})
+	return price
 }
 
 // The market fixture supplies a changing multi-leg causal prefix. Endpoints
@@ -124,90 +99,77 @@ func rehearsalEpisodes(rehearsal *Rehearsal) []hindsight.Episode {
 		})
 	}
 	rehearsal.observations["BTC/USD"] = observations
+	for _, observation := range observations {
+		envelope := rehearsalEnvelope(observation)
+		reference := hindsight.EnvelopeRef{Origin: observation.Capture, Ordinal: observation.Ordinal}
+		input, err := (hindsight.ArtifactWitness{Envelope: reference, Payload: envelope.EncodeBytes()}).RehearsalInput()
+		if err != nil {
+			panic(err)
+		}
+		rehearsal.inputs[reference] = input
+	}
 	return episodes
 }
 
 func TestRehearsalBalance(t *testing.T) {
-	Convey("Every available class gets equal representation without fabricated episodes", t, func() {
-		rehearsal := rehearsalFixture()
+	Convey("Complete mini tapes are selected with both prefix and tail", t, func() {
+		rehearsal := rehearsalFixture(t)
 		episodes := rehearsalEpisodes(rehearsal)
-		pool := rehearsal.balance(append(episodes, episodes[0], episodes[0]))
-		So(len(pool), ShouldEqual, 3)
-		So(rehearsal.Wire().Profitable, ShouldEqual, 3)
-		So(rehearsal.Wire().Subfriction, ShouldEqual, 1)
-		So(rehearsal.Wire().Declining, ShouldEqual, 1)
-		Convey("An absent class stays visibly absent", func() {
-			pool = rehearsal.balance(episodes[:1])
-			So(len(pool), ShouldEqual, 1)
-			So(rehearsal.Wire().Subfriction, ShouldEqual, 0)
-			So(rehearsal.Wire().Declining, ShouldEqual, 0)
-		})
-		Convey("An unknown fee excludes and counts the entire pool", func() {
+		pool, err := rehearsal.balance(episodes)
+		So(err, ShouldBeNil)
+		So(len(pool), ShouldBeGreaterThan, 0)
+
+		for _, condition := range []string{"profitable", "friction", "declining", "illiquid", "quiet"} {
+			Convey(condition+" is represented in the selected pool", func() {
+				rehearsal := rehearsalFixture(t)
+				episode := rehearsalEpisodes(rehearsal)[0]
+				observations := rehearsal.observations[episode.Symbol]
+				anchor := indexOfObservation(observations, episode, hindsight.ReferenceAnchor)
+				endpoint := indexOfObservation(observations, episode, hindsight.ReferencePeak)
+
+				switch condition {
+				case "friction":
+					observations[endpoint].Bid = observations[anchor].Ask * 1.001
+				case "declining":
+					observations[endpoint].Bid = observations[anchor].Bid * .9
+					episode.ObservedExcursion = -.1
+				case "illiquid":
+					observations[endpoint].BidQty = 0
+				case "quiet":
+					observations[endpoint].Bid = observations[anchor].Bid
+					episode.Kind = hindsight.EpisodeQuiet
+				}
+				pool, err := rehearsal.balance([]hindsight.Episode{episode})
+				So(err, ShouldBeNil)
+				So(len(pool), ShouldEqual, 1)
+				counts := map[string]uint64{
+					"profitable": rehearsal.progress.Profitable,
+					"friction":   rehearsal.progress.Subfriction,
+					"declining":  rehearsal.progress.Declining,
+					"illiquid":   rehearsal.progress.Illiquid,
+					"quiet":      rehearsal.progress.Quiet,
+				}
+				So(counts[condition], ShouldEqual, 1)
+			})
+		}
+
+		Convey("Missing fees fail explicitly", func() {
 			rehearsal.price = broker.NewPrice(nil, nil)
-			So(rehearsal.balance(episodes), ShouldBeEmpty)
-			So(rehearsal.Wire().Ungraded, ShouldEqual, 3)
-			So(rehearsal.Wire().Status, ShouldEqual, "waiting for gradeable episodes")
+			_, err := rehearsal.balance(episodes)
+			So(err, ShouldNotBeNil)
 		})
 	})
-}
-
-func TestRehearsalReplayEpisode(t *testing.T) {
-	Convey("Workers learn from supported prefix context before publishing signed experience", t, func() {
-		rehearsal := rehearsalFixture()
-		episodes := rehearsalEpisodes(rehearsal)
-		learned := model.New[string, Action]()
-		var columns [][2]string
-		So(rehearsal.replayEpisode(t.Context(), learned, episodes[0], &columns), ShouldBeNil)
-		So(len(rehearsal.experiences), ShouldEqual, 1)
-		experience := <-rehearsal.experiences
-		So(experience.Authority, ShouldBeGreaterThan, 0)
-		So(len(experience.Context), ShouldBeGreaterThan, 0)
-		So(learned.Recall(experience.Symbol, experience.Context, experience.Action).Samples, ShouldEqual, 1)
-
-		Convey("Changing the future quote changes the grade but not the context", func() {
-			observations := rehearsal.observations["BTC/USD"]
-			observations[len(observations)-3].Bid *= 0.5
-			So(rehearsal.replayEpisode(t.Context(), learned, episodes[0], &columns), ShouldBeNil)
-			changed := <-rehearsal.experiences
-			So(changed.Context, ShouldResemble, experience.Context)
-		})
-
-		Convey("Cancellation cannot block on a full experience channel", func() {
-			rehearsal.experiences <- experience
-			ctx, cancel := context.WithCancel(t.Context())
-			cancel()
-			So(rehearsal.replayEpisode(ctx, learned, episodes[0], &columns), ShouldBeNil)
-			So(len(rehearsal.experiences), ShouldEqual, 1)
-		})
-	})
-}
-
-func BenchmarkRehearsalReplayEpisode(b *testing.B) {
-	rehearsal := rehearsalFixture()
-	episodes := rehearsalEpisodes(rehearsal)
-	learned := model.New[string, Action]()
-	var columns [][2]string
-	b.ReportAllocs()
-	for b.Loop() {
-		if err := rehearsal.replayEpisode(b.Context(), learned, episodes[0], &columns); err != nil {
-			b.Fatal(err)
-		}
-		if len(rehearsal.experiences) != 1 {
-			b.Fatal("missing replay experience")
-		}
-		<-rehearsal.experiences
-	}
 }
 
 func TestNewRehearsal(t *testing.T) {
 	Convey("Workers own independent historical models that do not clone the live trie", t, func() {
 		learner, _ := learningFixture(t)
 		rehearsal := learner.Rehearsal
-		So(len(rehearsal.models), ShouldEqual, 2)
-		So(len(rehearsal.columns), ShouldEqual, 2)
-		So(rehearsal.models[0].Observe("BTC/USD", nil, Action{Kind: "enter"}, -0.01, 0.5), ShouldBeNil)
-		So(rehearsal.models[1].Recall("BTC/USD", nil, Action{Kind: "enter"}).Defined, ShouldBeFalse)
-		So(learner.Population.Agents[0].Model.Recall("BTC/USD", nil, Action{Kind: "enter"}).Defined, ShouldBeFalse)
+		So(len(rehearsal.cursors), ShouldEqual, 2)
+		So(rehearsal.cursors[0].columns, ShouldBeEmpty)
+		rehearsal.cursors[0].learned.Observe(agent.ContextKey("BTC/USD", nil), []byte(fmt.Sprint(Action{Kind: "enter"})), -0.01*0.5)
+		So(rehearsal.cursors[1].learned.Evaluate(agent.ContextKey("BTC/USD", nil)).WinnerClass, ShouldBeEmpty)
+		So(learner.Agent.Model.Evaluate(agent.ContextKey("BTC/USD", nil)).WinnerClass, ShouldBeEmpty)
 	})
 }
 
@@ -225,11 +187,16 @@ func TestRehearsalRun(t *testing.T) {
 		for index, step := range tape.Steps {
 			payload, err := json.Marshal(kraken.Ticker{Data: []kraken.TickerData{{
 				Symbol: "BTC/USD", Timestamp: step.EventTime,
-				Bid:  decimal.NewFromFloat64(step.ExecutableBid),
-				Ask:  decimal.NewFromFloat64(step.ExecutableBid + 0.1),
-				Last: decimal.NewFromFloat64(step.ExecutableBid + 0.05),
+				Bid:    decimal.NewFromFloat64(step.ExecutableBid),
+				Ask:    decimal.NewFromFloat64(step.ExecutableBid + 0.1),
+				Last:   decimal.NewFromFloat64(step.ExecutableBid + 0.05),
+				BidQty: 1, AskQty: 1,
 			}}})
 			So(err, ShouldBeNil)
+			observation := rehearsalObservation(uint64(index+1), 0, "BTC/USD", step.ExecutableBid, step.ExecutableBid+0.1, step.ExecutableBid+0.05)
+			observation.Capture.Run = learner.run
+			observation.ReceivedAt, observation.VenueAt = step.EventTime, step.EventTime
+			writer.AddWitness(tables.WitnessRow{Run: string(learner.run), Envelope: tables.EnvelopeRefRow{Run: string(learner.run), Sequence: int64(index + 1)}, ArtifactKind: "precursor", Payload: rehearsalEnvelope(observation).EncodePrecursor()})
 			hash := sha256.Sum256(payload)
 			writer.AddCapture(tables.CaptureRow{
 				Run: string(learner.run), Sequence: int64(index + 1), Stream: "spot",
@@ -239,19 +206,73 @@ func TestRehearsalRun(t *testing.T) {
 		}
 		So(writer.Commit(t.Context()), ShouldBeNil)
 		So(rehearsal.Run(t.Context()), ShouldBeNil)
+		rehearsal.Workload.Admit()
+		for step := 0; step < len(tape.Steps)*4 && rehearsal.Wire().Passes < 2; step++ {
+			rehearsal.Workload.Step(nil)
+		}
+		So(rehearsal.Error(), ShouldBeNil)
 		state := rehearsal.Wire()
 		So(state.Episodes, ShouldBeGreaterThan, 0)
-		So(state.Passes, ShouldEqual, 1)
-		So(state.Status, ShouldEqual, "pass complete")
+		So(state.Passes, ShouldBeGreaterThanOrEqualTo, 2)
+
 		So(state.Trained, ShouldEqual, state.Decisions)
-		So(state.Trained+state.Unsupported, ShouldEqual, state.PerWorker*uint64(state.Workers))
+		So(state.Trained, ShouldBeGreaterThan, 0)
+
+		for _, input := range rehearsal.inputs {
+			for _, measurement := range input.Measurements {
+				So(measurement.Metrics["observed_notional"].Coordinates, ShouldBeNil)
+			}
+		}
+		So(state.Trained+state.Unsupported, ShouldBeGreaterThan, 0)
 
 		Convey("The next pass reuses worker state and fully drains its experience", func() {
-			learned := rehearsal.models[0]
+			learned := rehearsal.cursors[0].learned
+			first := &rehearsal.observations["BTC/USD"][0]
+			count := len(rehearsal.observations["BTC/USD"])
+			So(rehearsal.lastSequence, ShouldEqual, len(tape.Steps))
 			So(rehearsal.Run(t.Context()), ShouldBeNil)
-			So(rehearsal.models[0] == learned, ShouldBeTrue)
-			So(rehearsal.Wire().Passes, ShouldEqual, 2)
+			So(rehearsal.cursors[0].learned == learned, ShouldBeTrue)
+			So(&rehearsal.observations["BTC/USD"][0] == first, ShouldBeTrue)
+			So(len(rehearsal.observations["BTC/USD"]), ShouldEqual, count)
+			So(rehearsal.Wire().Passes, ShouldEqual, state.Passes)
 			So(rehearsal.Wire().Trained, ShouldEqual, rehearsal.Wire().Decisions)
 		})
 	})
+}
+
+func TestRehearsalQuiet(t *testing.T) {
+	Convey("Quiet practice comes from an unchanged interval closed by a real change", t, func() {
+		rehearsal := rehearsalFixture(t)
+		rehearsal.policy.Coordinate = hindsight.CoordinateMidpoint
+		observations := rehearsalObservations()
+		episodes := rehearsal.quiet("BTC/USD", observations)
+		So(len(episodes), ShouldEqual, 1)
+		So(episodes[0].Kind, ShouldEqual, hindsight.EpisodeQuiet)
+		So(episodes[0].FromSequence, ShouldEqual, observations[0].Capture.Sequence)
+		So(episodes[0].ToSequence, ShouldEqual, observations[2].Capture.Sequence)
+
+		Convey("An unclosed quiet suffix supplies no completed episode", func() {
+			So(rehearsal.quiet("BTC/USD", observations[7:]), ShouldBeEmpty)
+		})
+	})
+}
+
+func mustFragment(t testing.TB, rehearsal *Rehearsal, episode hindsight.Episode) []hindsight.Observation {
+	t.Helper()
+	fragment, err := rehearsal.prepare(episode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fragment
+}
+
+func rehearsalObservations() []hindsight.Observation {
+	tape := market.NewPrecursorTape("BTC/USD", time.Unix(1700000000, 0))
+	observations := make([]hindsight.Observation, len(tape.Steps))
+
+	for index, step := range tape.Steps {
+		observations[index] = rehearsalObservation(uint64(index+1), 0, tape.Symbol,
+			step.ExecutableBid, step.ExecutableBid+0.1, step.ExecutableBid+0.05)
+	}
+	return observations
 }

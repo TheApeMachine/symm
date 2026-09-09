@@ -29,6 +29,7 @@ type regions struct {
 	heat, authority                    []float64
 	count, peak, parent, uphill, index []int
 	output                             []Region
+	cells                              []int
 }
 
 /* Activity exposes borrowed quality-conditioned values for one context. */
@@ -84,6 +85,11 @@ func (regions *regions) step(grid *Space, row int) []Region {
 		regions.parent, regions.uphill, regions.index = make([]int, area), make([]int, area), make([]int, area)
 	}
 
+	regions.cells = slices.Grow(regions.cells, len(grid.Columns)-len(regions.cells))
+	regions.cells = regions.cells[:len(grid.Columns)]
+	for column := range regions.cells {
+		regions.cells[column] = -1
+	}
 	clear(regions.heat)
 	clear(regions.authority)
 	clear(regions.count)
@@ -114,6 +120,7 @@ func (regions *regions) step(grid *Space, row int) []Region {
 		}
 
 		index := cell[1]*width + cell[0]
+		regions.cells[column] = index
 		previous := regions.peak[index]
 
 		if regions.count[index] == 0 || energy > grid.activations[row][previous]*grid.activations[row][previous] {

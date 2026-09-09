@@ -19,7 +19,8 @@ type TerminalRoutePath =
 	| "/cortex"
 	| "/allocation"
 	| "/diagnostics"
-	| "/hindsight";
+	| "/hindsight"
+	| "/workbench";
 
 export const SURFACE_ITEMS: Array<{
 	key: TerminalSurface;
@@ -54,6 +55,12 @@ export const SURFACE_ITEMS: Array<{
 	{ key: "cortex", label: "Cognitive tree", icon: "cortex", to: "/cortex" },
 	{ key: "allocation", label: "Allocation", icon: "bars", to: "/allocation" },
 	{ key: "hindsight", label: "Hindsight", icon: "lanes", to: "/hindsight" },
+	{
+		key: "workbench",
+		label: "Analytical workbench",
+		icon: "grid",
+		to: "/workbench",
+	},
 ];
 
 export const TerminalNav = ({ active }: { active: TerminalSurface }) => {

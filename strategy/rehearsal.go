@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"context"
+	"fmt"
 	"math/rand/v2"
 	"sort"
 	"sync"
@@ -11,67 +12,53 @@ import (
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
-	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/learning/associative"
-	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
-	"github.com/theapemachine/symm/nomagique/learning/associative/model"
+	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
-	"golang.org/x/sync/errgroup"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
-Experience is one completed historical decision, already graded net of the
-episode's own friction. The issuing worker owns the context tokens and their
-grid identities; the consolidated model only ever observes them through the
-single drainer below, never through a racing worker.
-*/
-type Experience struct {
-	Symbol    string
-	Columns   [][2]string
-	Context   []uint64
-	Action    Action
-	Outcome   float64
-	Authority float64
-}
-
-/*
-Rehearsal owns the offline replay workers. It samples historical episodes in
-random order, grades each decision at the episode's known end, and streams the
-resulting experience to the consolidated model through one drainer. The workers
+Rehearsal owns the offline replay workers. It discovers completed episodes and appends them to each worker's ring.
+The mounted workload advances workers one historical observation or grade per event. The workers
 never touch the live grid, the live book, or a live wallet.
 */
 type Rehearsal struct {
 	workers      int
-	models       []*model.Model[string, Action]
-	columns      [][][2]string
+	cursors      []*replayCursor
+	Workload     *runtime.Workload[*types.Envelope]
+	prepared     map[string]bool
 	catalog      *tables.Catalog
 	run          hindsight.RunID
 	policy       hindsight.DiscoveryPolicy
 	price        *broker.Price
-	population   *associative.Population[Action]
-	experiences  chan Experience
+	learner      *Learner
 	observations map[string][]hindsight.Observation
+	lastSequence int64
+	inputs       map[hindsight.EnvelopeRef]hindsight.RehearsalInput
+	witnessed    map[tables.EnvelopeRefRow]bool
 	progress     wire.LearningRehearsalT
 	err          error
 	mutex        sync.Mutex
 }
 
-/* NewRehearsal creates offline workers with the shared policy model. */
+/* NewRehearsal creates workers that retain their own historical evidence. */
 func NewRehearsal(
+	ctx context.Context,
 	workers int,
 	catalog *tables.Catalog,
 	run hindsight.RunID,
 	policy hindsight.DiscoveryPolicy,
 	price *broker.Price,
-	population *associative.Population[Action],
+	learner *Learner,
 ) *Rehearsal {
 	if err := errnie.Require(map[string]any{
-		"workers":    workers,
-		"population": population,
-		"price":      price,
-		"catalog":    catalog,
-		"policy":     policy,
-		"run":        run,
+		"workers": workers,
+		"learner": learner,
+		"price":   price,
+		"catalog": catalog,
+		"policy":  policy,
+		"run":     run,
 	}); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Validation, "learning: rehearsal", err,
@@ -80,24 +67,20 @@ func NewRehearsal(
 		return nil
 	}
 
-	models := make([]*model.Model[string, Action], workers)
-
-	for index := range models {
-		models[index] = model.New[string, Action]()
-		models[index].Ordered = true
+	rehearsal := &Rehearsal{
+		observations: make(map[string][]hindsight.Observation),
+		prepared:     make(map[string]bool), workers: workers,
+		catalog: catalog, run: run, policy: policy, price: price, learner: learner,
+		progress: wire.LearningRehearsalT{Workers: int32(workers), Status: "waiting for archive"},
 	}
-
-	return &Rehearsal{
-		models:     models,
-		columns:    make([][][2]string, workers),
-		workers:    workers,
-		catalog:    catalog,
-		run:        run,
-		policy:     policy,
-		price:      price,
-		population: population,
-		progress:   wire.LearningRehearsalT{Workers: int32(workers), Status: "waiting for archive"},
+	nodes := make([]runtime.Node[*types.Envelope], workers)
+	for index := range nodes {
+		cursor := &replayCursor{ctx: ctx, rehearsal: rehearsal, learned: cognition.NewEngine(cognition.DefaultConfig())}
+		rehearsal.cursors = append(rehearsal.cursors, cursor)
+		nodes[index] = cursor
 	}
+	rehearsal.Workload = runtime.NewWorkload(ctx, "learners", [][]runtime.Node[*types.Envelope]{nodes})
+	return rehearsal
 }
 
 /* Error exposes the rehearsal failure through the runtime node protocol. */
@@ -114,126 +97,62 @@ func (rehearsal *Rehearsal) fail(err error) {
 }
 
 /*
-Run replays the historical record already present in the archive. A missing or
-empty archive is a valid first-run state, not a failure: the live forward loop
-remains the only source of experience until captures exist.
+Run refreshes the durable fragment pool; the mounted workload owns replay. An empty
+archive is a valid first-run state: practice waits for captured precursors while
+the live stages continue recording observations and evaluating the policy.
 */
 func (rehearsal *Rehearsal) Run(ctx context.Context) error {
 	rehearsal.mutex.Lock()
 	rehearsal.progress.Status = "reading archive"
 	rehearsal.mutex.Unlock()
 
-	observations, err := hindsight.ReadObservations(
-		ctx, rehearsal.catalog, rehearsal.run,
-	)
+	if err := rehearsal.read(ctx); err != nil {
+		rehearsal.fail(err)
+		return rehearsal.Error()
+	}
+
+	if len(rehearsal.inputs) == 0 {
+		rehearsal.mutex.Lock()
+		rehearsal.progress.Status = "waiting for captured precursors"
+		rehearsal.mutex.Unlock()
+		return nil
+	}
+
+	episodes := rehearsal.episodes()
+	pool, err := rehearsal.balance(episodes)
 
 	if err != nil {
 		rehearsal.fail(err)
 		return rehearsal.Error()
 	}
 
-	if len(observations) == 0 {
-		rehearsal.mutex.Lock()
-		rehearsal.progress.Status = "waiting for archive"
-		rehearsal.mutex.Unlock()
-		return nil
-	}
-
-	rehearsal.observations = groupObservations(observations)
-	episodes := rehearsal.episodes()
-	pool := rehearsal.balance(episodes)
-
 	if len(pool) == 0 {
 		return nil
 	}
 
-	// One in-flight completed fact per worker; backpressure bounds replay memory.
-	rehearsal.experiences = make(chan Experience, rehearsal.workers)
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	var prepared [][]hindsight.Observation
+	for _, episode := range pool {
+		identity := fmt.Sprint(episode.Symbol, episode.Kind, episode.References)
 
-	// Workers retain only their own historical evidence and local dictionary.
-	// Copying the live trie per worker stalls live processing and multiplies
-	// its memory footprint without adding historical observations.
-	var drain sync.WaitGroup
-	drain.Add(1)
-
-	go func() {
-		defer drain.Done()
-
-		for experience := range rehearsal.experiences {
-			if err := rehearsal.population.Learn(
-				experience.Symbol,
-				experience.Columns,
-				experience.Context,
-				experience.Action,
-				experience.Outcome,
-				experience.Authority,
-			); err != nil {
-				rehearsal.fail(err)
-				cancel()
-				return
-			}
-
-			rehearsal.mutex.Lock()
-			rehearsal.progress.Trained++
-			rehearsal.mutex.Unlock()
+		if rehearsal.prepared[identity] {
+			continue
 		}
-	}()
+		fragment, err := rehearsal.prepare(episode)
 
-	group, workerContext := errgroup.WithContext(ctx)
-
-	for index, workerModel := range rehearsal.models {
-		group.Go(func() error {
-			return rehearsal.replayWorker(workerContext, pool, workerModel, &rehearsal.columns[index])
-		})
-	}
-
-	err = group.Wait()
-	close(rehearsal.experiences)
-	drain.Wait()
-
-	if err != nil {
-		rehearsal.fail(err)
-	}
-
-	rehearsal.mutex.Lock()
-	rehearsal.progress.Passes++
-	rehearsal.progress.Status = "pass complete"
-
-	if ctx.Err() != nil {
-		rehearsal.progress.Status = "stopped"
-	}
-	rehearsal.mutex.Unlock()
-
-	return rehearsal.Error()
-}
-
-/*
-replayWorker runs one full shuffled pass over the current episode pool. The
-learner's retry loop calls Run again after the persistence interval, so each
-pass re-reads the archive and discovers episodes that arrived since the last
-pass instead of pinning the workers to a stale snapshot.
-*/
-func (rehearsal *Rehearsal) replayWorker(
-	ctx context.Context,
-	episodes []hindsight.Episode,
-	learned *model.Model[string, Action],
-	columns *[][2]string,
-) error {
-	order := shuffledEpisodes(episodes)
-
-	for _, episode := range order {
-		if ctx.Err() != nil {
-			return nil
-		}
-
-		if err := rehearsal.replayEpisode(ctx, learned, episode, columns); err != nil {
+		if err != nil {
 			return errnie.Error(err)
 		}
+		rehearsal.prepared[identity] = true
+		prepared = append(prepared, fragment)
 	}
-
-	return nil
+	for _, cursor := range rehearsal.cursors {
+		cursor.mutex.Lock()
+		for _, selected := range rand.Perm(len(prepared)) {
+			cursor.pending = append(cursor.pending, prepared[selected])
+		}
+		cursor.mutex.Unlock()
+	}
+	return rehearsal.Error()
 }
 
 func shuffledEpisodes(episodes []hindsight.Episode) []hindsight.Episode {
@@ -245,109 +164,19 @@ func shuffledEpisodes(episodes []hindsight.Episode) []hindsight.Episode {
 	return shuffled
 }
 
-// replayEpisode selects from prefix observations only. The endpoint quote is
-// used solely to grade a completed entry/wait exercise, never as a selection input.
-func (rehearsal *Rehearsal) replayEpisode(
-	ctx context.Context,
-	learned *model.Model[string, Action],
-	episode hindsight.Episode,
-	columns *[][2]string,
-) error {
-	observations, anchor, endpoint, ok := rehearsal.slice(episode)
-
-	if !ok || ctx.Err() != nil {
-		return nil
-	}
-
-	space := grid.NewSpace()
-	for _, identity := range *columns {
-		space.Column(identity[0], identity[1])
-	}
-	defer func() { *columns = space.Columns }()
-	development := &Development{Symbol: episode.Symbol}
-
-	for _, observation := range observations {
-		if ctx.Err() != nil {
-			return nil
-		}
-
-		measurement := measurementFromObservation(observation)
-		// The available causal lead-in is the observation horizon, not the
-		// selector's retrospective outcome duration.
-		measurement.From = observations[0].At()
-		history := development.Context(observation.At(), []*data.Measurement[float64]{measurement})
-
-		if err := space.Step([]*data.Measurement[float64]{measurement}); err != nil {
-			return errnie.Error(err)
-		}
-
-		if err := development.Advance(observation.At(), space); err != nil {
-			return errnie.Error(err)
-		}
-
-		if observation.Capture != anchor.Capture || observation.Ordinal != anchor.Ordinal {
-			continue
-		}
-
-		conditions := append([]uint64{FlatPositionContext}, history...)
-		conditions = append(conditions, regionConditions(development.Regions)...)
-		action, _, err := learned.Select(
-			episode.Symbol, conditions, []Action{{Kind: "enter"}, {Kind: "wait"}}, true,
-		)
-
-		if err != nil {
-			return errnie.Error(err)
-		}
-
-		value, defined := rehearsal.grade(episode, action, anchor, endpoint)
-
-		if !defined {
-			return errnie.Error(errnie.Err(errnie.Validation, "rehearsal: graded pool lost its quote or fee", nil))
-		}
-
-		strength, authority := 0.0, 0.0
-
-		for _, region := range development.Regions {
-			strength += region.Strength
-			authority += region.Strength * region.Authority
-		}
-
-		if strength == 0 {
-			rehearsal.mutex.Lock()
-			rehearsal.progress.Unsupported++
-			rehearsal.mutex.Unlock()
-			return nil
-		}
-
-		experience := Experience{Symbol: episode.Symbol, Columns: space.Columns, Context: conditions,
-			Action: action, Outcome: value, Authority: authority / strength}
-
-		if err := learned.Observe(experience.Symbol, conditions, action, value, experience.Authority); err != nil {
-			return errnie.Error(err)
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil
-		case rehearsal.experiences <- experience:
-			rehearsal.mutex.Lock()
-			rehearsal.progress.Decisions++
-			rehearsal.progress.LastSymbol = episode.Symbol
-			rehearsal.progress.LastAction = action.Kind
-			rehearsal.progress.LastReturn = value
-			rehearsal.mutex.Unlock()
-		}
-
-		return nil
-	}
-
-	return errnie.Error(errnie.Err(errnie.Validation, "rehearsal: decision anchor missing from prefix", nil))
-}
-
 func (rehearsal *Rehearsal) episodes() []hindsight.Episode {
 	episodes := make([]hindsight.Episode, 0, len(rehearsal.observations))
 
-	for symbol, symbolObservations := range rehearsal.observations {
+	for symbol, observations := range rehearsal.observations {
+		// Inserted precursor decision coordinates carry an as-of quote. They are
+		// not additional market observations for episode discovery.
+		symbolObservations := make([]hindsight.Observation, 0, len(observations))
+		for _, observation := range observations {
+			if observation.Kind != "precursor" {
+				symbolObservations = append(symbolObservations, observation)
+			}
+		}
+		episodes = append(episodes, rehearsal.quiet(symbol, symbolObservations)...)
 		discovery := hindsight.DiscoverEpisodes(
 			symbol, symbolObservations, rehearsal.policy,
 		)
@@ -372,9 +201,9 @@ func (rehearsal *Rehearsal) episodes() []hindsight.Episode {
 }
 
 /*
-slice returns the warmup plus decision observation span for one episode. The
-lead-in begins at the first captured observation for this symbol. This rebuilds
-the observation grid causally; it does not reproduce the live signal pipeline.
+slice returns a complete mini tape with lead-in and post-extremum observations.
+Its extent comes from the captured leg duration. The observation grid is rebuilt
+from the original captured signal measurements.
 */
 func (rehearsal *Rehearsal) slice(
 	episode hindsight.Episode,
@@ -406,7 +235,29 @@ func (rehearsal *Rehearsal) slice(
 		return nil, hindsight.Observation{}, hindsight.Observation{}, false
 	}
 
-	return observations[:anchorIndex+1], observations[anchorIndex], observations[endpointIndex], true
+	// The completed leg's own duration supplies the lead-in and tail. Keep
+	// the full intervening tape, including quiet periods and failed rebounds.
+	span := observations[endpointIndex].ReceivedAt.Sub(observations[anchorIndex].ReceivedAt)
+
+	if span <= 0 {
+		return nil, hindsight.Observation{}, hindsight.Observation{}, false
+	}
+	from, through := anchorIndex, endpointIndex
+	start := observations[anchorIndex].ReceivedAt.Add(-span)
+	end := observations[endpointIndex].ReceivedAt.Add(span)
+
+	for from > 0 && observations[from].ReceivedAt.After(start) {
+		from--
+	}
+
+	for through+1 < len(observations) && observations[through].ReceivedAt.Before(end) {
+		through++
+	}
+
+	if from == anchorIndex || through == endpointIndex {
+		return nil, hindsight.Observation{}, hindsight.Observation{}, false
+	}
+	return observations[from : through+1], observations[anchorIndex], observations[endpointIndex], true
 }
 
 func indexOfObservation(
@@ -430,75 +281,27 @@ func indexOfObservation(
 	return -1
 }
 
-func groupObservations(
-	observations []hindsight.Observation,
-) map[string][]hindsight.Observation {
-	grouped := make(map[string][]hindsight.Observation)
+func (rehearsal *Rehearsal) read(ctx context.Context) error {
+	observations, through, err := hindsight.ReadObservations(
+		ctx, rehearsal.catalog, rehearsal.run, rehearsal.lastSequence,
+	)
 
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	// The catalog owns capture ordering; decoding preserves each frame's
+	// ordinal order. Appending a committed suffix needs no history sort/copy.
 	for _, observation := range observations {
 		if observation.Symbol == "" || observation.Domain != "spot" {
 			continue
 		}
-
-		grouped[observation.Symbol] = append(
-			grouped[observation.Symbol], observation,
+		rehearsal.observations[observation.Symbol] = append(
+			rehearsal.observations[observation.Symbol], observation,
 		)
 	}
-
-	for symbol := range grouped {
-		sort.SliceStable(grouped[symbol], func(left, right int) bool {
-			if grouped[symbol][left].Capture.Sequence != grouped[symbol][right].Capture.Sequence {
-				return grouped[symbol][left].Capture.Sequence < grouped[symbol][right].Capture.Sequence
-			}
-
-			return grouped[symbol][left].Ordinal < grouped[symbol][right].Ordinal
-		})
-	}
-
-	return grouped
-}
-
-func regionConditions(regions []grid.Region) []uint64 {
-	conditions := make([]uint64, 0, len(regions))
-
-	for _, region := range regions {
-		conditions = append(conditions, region.Condition)
-	}
-
-	return conditions
-}
-
-/*
-grade reports a top-of-book exercise return using captured entry ask and endpoint
-bid with the current venue fee schedule. It is not a fill simulation: depth,
-slippage and historical fee tiers are not present in Observation. Waiting has
-zero return when no positive net opportunity was missed.
-*/
-func (rehearsal *Rehearsal) grade(
-	episode hindsight.Episode, action Action,
-	anchor, endpoint hindsight.Observation,
-) (float64, bool) {
-	fee := rehearsal.price.FeeIfAvailable(episode.Symbol)
-
-	if !episode.HasObservedExcursion || fee == nil || fee.Fee == nil ||
-		!anchor.HasAsk || !anchor.HasBid || !endpoint.HasBid ||
-		anchor.Bid <= 0 || anchor.Ask < anchor.Bid || endpoint.Bid <= 0 {
-		return 0, false
-	}
-
-	entry := rehearsal.price.WithFee(episode.Symbol, decimal.NewFromFloat64(anchor.Ask), broker.BUY)
-	exit := rehearsal.price.WithFee(episode.Symbol, decimal.NewFromFloat64(endpoint.Bid), broker.SELL)
-	value := exit.Sub(entry).Div(entry).Float64()
-
-	if action.Kind == "enter" {
-		return value, true
-	}
-
-	if action.Kind == "wait" {
-		return -max(0, value), true
-	}
-
-	return 0, false
+	rehearsal.lastSequence = through
+	return rehearsal.readInputs(ctx)
 }
 
 /*
@@ -507,26 +310,49 @@ is repeated within a worker's pass. Missing classes stay absent; counts expose
 that limitation. Reversal descriptors are excluded to avoid counting the same
 legs again under a second label.
 */
-func (rehearsal *Rehearsal) balance(episodes []hindsight.Episode) []hindsight.Episode {
-	var classes [3][]hindsight.Episode
+func (rehearsal *Rehearsal) balance(episodes []hindsight.Episode) ([]hindsight.Episode, error) {
+	var classes [5][]hindsight.Episode
 	ungraded := uint64(0)
 
 	for _, episode := range episodes {
-		_, anchor, endpoint, ok := rehearsal.slice(episode)
-		value, defined := rehearsal.grade(episode, Action{Kind: "enter"}, anchor, endpoint)
-
-		if !ok || !defined {
+		observations, anchor, endpoint, ok := rehearsal.slice(episode)
+		if !ok {
 			ungraded++
 			continue
 		}
+		anchorIndex, endpointIndex := -1, -1
 
+		for index, observation := range observations {
+			if observation.Capture == anchor.Capture && observation.Ordinal == anchor.Ordinal {
+				anchorIndex = index
+			}
+
+			if observation.Capture == endpoint.Capture && observation.Ordinal == endpoint.Ordinal {
+				endpointIndex = index
+			}
+		}
+		entryQuote, exitQuote := observations[anchorIndex], observations[endpointIndex]
+		executable := entryQuote.HasAsk && exitQuote.HasBid && entryQuote.AskQty > 0 && exitQuote.BidQty >= entryQuote.AskQty
+		value := 0.0
+
+		if executable {
+			if rehearsal.price.FeeIfAvailable(episode.Symbol) == nil {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "rehearsal: recorded symbol requires fees", nil))
+			}
+			cost := rehearsal.price.WithFee(episode.Symbol, decimal.NewFromFloat64(entryQuote.Ask), broker.BUY)
+			proceeds := rehearsal.price.WithFee(episode.Symbol, decimal.NewFromFloat64(exitQuote.Bid), broker.SELL)
+			value = proceeds.Sub(cost).Div(cost).Float64()
+		}
 		class := 0
 
-		if episode.ObservedExcursion < 0 {
+		switch {
+		case episode.Kind == hindsight.EpisodeQuiet:
+			class = 4
+		case !executable:
+			class = 3
+		case episode.ObservedExcursion < 0:
 			class = 2
-		}
-
-		if episode.ObservedExcursion >= 0 && value <= 0 {
+		case value <= 0:
 			class = 1
 		}
 
@@ -555,6 +381,8 @@ func (rehearsal *Rehearsal) balance(episodes []hindsight.Episode) []hindsight.Ep
 	rehearsal.progress.Profitable = uint64(len(classes[0]))
 	rehearsal.progress.Subfriction = uint64(len(classes[1]))
 	rehearsal.progress.Declining = uint64(len(classes[2]))
+	rehearsal.progress.Illiquid = uint64(len(classes[3]))
+	rehearsal.progress.Quiet = uint64(len(classes[4]))
 	rehearsal.progress.Ungraded = ungraded
 	rehearsal.progress.PerWorker = uint64(len(balanced))
 	rehearsal.progress.Status = "replaying"
@@ -563,5 +391,56 @@ func (rehearsal *Rehearsal) balance(episodes []hindsight.Episode) []hindsight.Ep
 		rehearsal.progress.Status = "waiting for gradeable episodes"
 	}
 
-	return balanced
+	return balanced, nil
+}
+
+// quiet adds observed unchanged-price spans closed by a subsequent change.
+// Two endpoints are needed to measure a span; this is not a market threshold.
+func (rehearsal *Rehearsal) quiet(symbol string, observations []hindsight.Observation) []hindsight.Episode {
+	var episodes []hindsight.Episode
+	first, last := -1, -1
+	var previous float64
+
+	for index, observation := range observations {
+		value, defined := observation.Value(rehearsal.policy.Coordinate)
+
+		if !defined {
+			continue
+		}
+
+		if first >= 0 && value != previous {
+			if last > first {
+				anchor, endpoint := observations[first], observations[last]
+				episodes = append(episodes, hindsight.Episode{Symbol: symbol, Kind: hindsight.EpisodeQuiet, Confirmed: true,
+					HasObservedExcursion: true, FromSequence: anchor.Capture.Sequence, ToSequence: endpoint.Capture.Sequence,
+					FromAt: anchor.At(), ToAt: endpoint.At(), References: []hindsight.ReferencePoint{
+						{Role: hindsight.ReferenceAnchor, Capture: anchor.Capture, Ordinal: anchor.Ordinal},
+						{Role: hindsight.ReferencePeak, Capture: endpoint.Capture, Ordinal: endpoint.Ordinal},
+					}})
+			}
+			first = -1
+		}
+
+		if first < 0 {
+			first = index
+		}
+		last, previous = index, value
+	}
+	return episodes
+}
+
+// prepare joins numerical witnesses onto the existing captured observations.
+// The slice itself is the ring value; no fragment or practice wrapper exists.
+func (rehearsal *Rehearsal) prepare(episode hindsight.Episode) ([]hindsight.Observation, error) {
+	observations, _, _, complete := rehearsal.slice(episode)
+
+	if !complete {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "rehearsal: tape requires lead-in and tail", nil))
+	}
+	captured := append([]hindsight.Observation(nil), observations...)
+	for index := range captured {
+		reference := hindsight.EnvelopeRef{Origin: captured[index].Capture, Ordinal: captured[index].Ordinal}
+		captured[index].Measurements = rehearsal.inputs[reference].Measurements
+	}
+	return captured, nil
 }

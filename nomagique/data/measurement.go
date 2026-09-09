@@ -88,6 +88,7 @@ Finalize can derive Maturity and SNR without any caller-supplied numbers.
 */
 const (
 	MetadataSupport        = "support"
+	MetadataMaturity       = "maturity"
 	MetadataDivergence     = "divergence"
 	MetadataNoiseVariance  = "noise_variance"
 	MetadataMahalanobisSNR = "mahalanobis_snr"

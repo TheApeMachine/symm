@@ -3,7 +3,6 @@ package strategy
 import (
 	"fmt"
 	spotbook "github.com/krakenfx/api-go/v2/pkg/book"
-	"github.com/theapemachine/symm/kraken/websocket"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -83,81 +82,6 @@ func TestTraderExecute(t *testing.T) {
 	})
 }
 
-func TestTraderCheckAndReset(t *testing.T) {
-	Convey("An exhausted explorer wallet is renewed into a new episode", t, func() {
-		learner, conn := learningFixture(t)
-		tape := market.NewLevel3Tape("BTC/USD", time.Now())
-
-		for _, message := range tape.Messages[:4] {
-			conn.ApplyLevel3(message)
-		}
-		trader := extraTrader(t, learner)
-		trader.At, trader.Version = time.Now(), 1
-		funding := trader.Initial
-
-		Convey("A funded wallet is left alone", func() {
-			So(trader.CheckAndReset(funding), ShouldBeFalse)
-			So(trader.Episode, ShouldEqual, 0)
-		})
-
-		Convey("Given a position opened with the whole account", func() {
-			_, _, err := trader.Feasible("BTC/USD")
-			So(err, ShouldBeNil)
-			So(trader.Execute(&agent.Decision[Action]{
-				ID: 1, Label: "BTC/USD", At: trader.At, Action: Action{Kind: "enter", Power: 1},
-			}), ShouldBeNil)
-			_, err = trader.Objective()
-			So(err, ShouldBeNil)
-			So(trader.Wealth, ShouldBeLessThan, 0)
-
-			// Drain the remaining cash so no feasible order size is left.
-			So(trader.Balance.Settle(kraken.ExecutionData{
-				Side: "buy", Timestamp: trader.At,
-				CumCost: trader.Balance.Cash(), FeeUsdEquiv: decimal.NewFromInt64(0),
-			}), ShouldBeNil)
-			So(trader.Balance.Cash().Sign(), ShouldEqual, 0)
-			holding := trader.Positions["BTC/USD"].Holding
-			So(holding.Qty.Sign(), ShouldEqual, 1)
-
-			Convey("Inventory still inside its holding time defers the renewal", func() {
-				So(trader.CheckAndReset(funding), ShouldBeFalse)
-				So(trader.Episode, ShouldEqual, 0)
-				So(holding.Qty.Sign(), ShouldEqual, 1)
-			})
-
-			Convey("Inventory past its holding time is liquidated and the wallet refunded", func() {
-				// Opened, not Holding.EntryAt, is the clock: EntryAt survives a
-				// close and would age a position that no longer exists.
-				trader.Opened["BTC/USD"] = trader.At.Add(-MaximumHoldingTime - time.Second)
-				fills := trader.Fills
-
-				So(trader.CheckAndReset(funding), ShouldBeTrue)
-				So(trader.Fills, ShouldEqual, fills+1)
-				So(holding.Qty.Sign(), ShouldEqual, 0)
-				So(trader.Episode, ShouldEqual, 1)
-				So(trader.Status, ShouldEqual, "replenished")
-				So(trader.Balance.Cash().Cmp(funding), ShouldEqual, 0)
-				So(trader.Positions, ShouldBeEmpty)
-				So(trader.Wealth, ShouldEqual, 0)
-
-				Convey("The objective stays continuous across the renewal", func() {
-					So(trader.Carried, ShouldBeLessThan, 0)
-					mark, err := trader.Objective()
-					So(err, ShouldBeNil)
-					So(mark.Value, ShouldEqual, trader.Carried)
-
-					Convey("And the renewed wallet trades again", func() {
-						actions, _, err := trader.Feasible("BTC/USD")
-						So(err, ShouldBeNil)
-						So(len(actions), ShouldBeGreaterThan, 1)
-						So(trader.Execution.Balance, ShouldEqual, trader.Balance)
-					})
-				})
-			})
-		})
-	})
-}
-
 func TestTraderObjective(t *testing.T) {
 	testConcurrentObjective(t)
 
@@ -169,7 +93,7 @@ func TestTraderObjective(t *testing.T) {
 			conn.ApplyLevel3(message)
 		}
 		trader := learner.Traders[0]
-		member := learner.Population.Agents[0]
+		member := learner.Agent
 		trader.At, trader.Version = time.Now(), 1
 		_, _, err := trader.Feasible("BTC/USD")
 		So(err, ShouldBeNil)
@@ -237,7 +161,7 @@ func testConcurrentObjective(t *testing.T) {
 					expected := trader.Balance.Cash()
 
 					for _, regulator := range trader.Positions {
-						surface, err := trader.Execution.Price.Surface(regulator.Holding.Symbol, regulator.Holding.Qty, trader.At)
+						surface, err := trader.price.Surface(regulator.Holding.Symbol, regulator.Holding.Qty, trader.At)
 						So(err, ShouldBeNil)
 						expected = expected.Add(surface.ExecutableValue)
 					}
@@ -248,7 +172,7 @@ func testConcurrentObjective(t *testing.T) {
 						boundary.missing = "ASSET0/USD"
 						workers--
 					}
-					trader.api = websocket.NewAPI(t.Context(), boundary, boundary)
+					trader.price.Books = boundary
 					previous := trader.Equity
 					done := make(chan error, 1)
 					var mark *reward.Mark
@@ -333,100 +257,84 @@ func BenchmarkTraderObjective(b *testing.B) {
 	}
 }
 
-func TestTraderPositionCapacity(t *testing.T) {
-	Convey("A wallet may only open as many symbols as it can sustain", t, func() {
+func TestTraderFeasible(t *testing.T) {
+	Convey("Only owned resources and venue rules constrain choices", t, func() {
 		learner, conn := learningFixture(t)
-
 		for _, message := range market.NewLevel3Tape("BTC/USD", time.Now()).Messages[:4] {
 			conn.ApplyLevel3(message)
 		}
 		trader := extraTrader(t, learner)
-		trader.At, trader.Version = time.Now(), 1
-
-		kinds := func(symbol string) map[string]bool {
-			actions, _, err := trader.Feasible(symbol)
-			So(err, ShouldBeNil)
-			found := map[string]bool{}
-
-			for _, action := range actions {
-				found[action.Kind] = true
+		trader.At = time.Now()
+		Convey("Ten other positions do not prohibit another entry", func() {
+			for index := range 10 {
+				symbol := fmt.Sprintf("HELD%d/USD", index)
+				regulator := position.NewRegulator(trader.api, trader.price, symbol, nil)
+				regulator.Holding.Qty = venue.Decimal("1")
+				trader.Positions[symbol] = regulator
 			}
-
-			return found
-		}
-		So(kinds("BTC/USD")["enter"], ShouldBeTrue)
-
-		// Stand in for positions the wallet already carries in other symbols.
-		for index := range MaxConcurrentPositions {
-			symbol := fmt.Sprintf("HELD%d/USD", index)
-			regulator := position.NewRegulator(trader.api, trader.Execution.Price, symbol, nil)
-			regulator.Holding.Qty = venue.Decimal("1")
-			trader.Positions[symbol] = regulator
-		}
-		So(trader.open(), ShouldEqual, MaxConcurrentPositions)
-
-		Convey("A new symbol is no longer enterable", func() {
-			available := kinds("BTC/USD")
-			So(available["enter"], ShouldBeFalse)
-			So(available["wait"], ShouldBeTrue)
-			So(trader.Status, ShouldEqual, "position capacity")
+			actions, _, err := trader.Feasible("BTC/USD")
+			So(err, ShouldBeNil)
+			So(actions, ShouldContain, Action{Kind: "enter"})
 		})
-
-		Convey("Closing one frees the capacity again", func() {
-			trader.Positions["HELD0/USD"].Holding.Qty = venue.Decimal("0")
-			So(trader.open(), ShouldEqual, MaxConcurrentPositions-1)
-			So(kinds("BTC/USD")["enter"], ShouldBeTrue)
+		Convey("A position may develop beyond twenty minutes without forced liquidation", func() {
+			_, _, err := trader.Feasible("BTC/USD")
+			So(err, ShouldBeNil)
+			So(trader.Execute(&agent.Decision[Action]{ID: 1, Label: "BTC/USD", At: trader.At, Action: Action{Kind: "enter", Power: 1}}), ShouldBeNil)
+			quantity := trader.Positions["BTC/USD"].Holding.Qty
+			trader.At = trader.At.Add(21 * time.Minute)
+			actions, state, err := trader.Feasible("BTC/USD")
+			So(err, ShouldBeNil)
+			So(actions, ShouldContain, Action{Kind: "hold"})
+			So(actions, ShouldContain, Action{Kind: "scale"})
+			So(actions, ShouldContain, Action{Kind: "exit", Reduce: true})
+			So(state, ShouldResemble, []uint64{FlatPositionContext + 1})
+			So(trader.Positions["BTC/USD"].Holding.Qty.Cmp(quantity), ShouldEqual, 0)
+		})
+		Convey("Missing book does not manufacture wait evidence", func() {
+			conn.ApplyLevel3(kraken.Level3Data{Type: "snapshot", Symbol: "BTC/USD"})
+			So(trader.Ready("BTC/USD"), ShouldBeFalse)
+			actions, _, err := trader.Feasible("BTC/USD")
+			So(err, ShouldNotBeNil)
+			So(actions, ShouldBeNil)
 		})
 	})
 }
 
-func TestTraderStalePosition(t *testing.T) {
-	Convey("A position that stopped developing loses the option to sit on it", t, func() {
-		learner, conn := learningFixture(t)
-
-		for _, message := range market.NewLevel3Tape("BTC/USD", time.Now()).Messages[:4] {
-			conn.ApplyLevel3(message)
+func TestTraderEnd(t *testing.T) {
+	Convey("Evaluation ends the owned position using a real executable book", t, func() {
+		learner, connection := learningFixture(t)
+		tape := market.NewLevel3Tape("BTC/USD", time.Now())
+		for _, message := range tape.Messages[:4] {
+			connection.ApplyLevel3(message)
 		}
 		trader := extraTrader(t, learner)
-		trader.At, trader.Version = time.Now(), 1
+		trader.At = time.Now()
 		_, _, err := trader.Feasible("BTC/USD")
 		So(err, ShouldBeNil)
-		So(trader.Execute(&agent.Decision[Action]{
-			ID: 1, Label: "BTC/USD", At: trader.At, Action: Action{Kind: "enter", Power: 1},
-		}), ShouldBeNil)
+		So(trader.Execute(&agent.Decision[Action]{ID: 1, Label: "BTC/USD", At: trader.At,
+			Action: Action{Kind: "enter", Power: 1}}), ShouldBeNil)
+		quantity := trader.Positions["BTC/USD"].Holding.Qty
+		through := trader.At.Add(time.Second)
 
-		opened, tracked := trader.Opened["BTC/USD"]
-		So(tracked, ShouldBeTrue)
-
-		Convey("A fresh position may still be held", func() {
-			actions, state, err := trader.Feasible("BTC/USD")
-			So(err, ShouldBeNil)
-			So(actions[0].Kind, ShouldEqual, "hold")
-			So(state[0], ShouldEqual, uint64(1)<<63|1)
+		Convey("An older completed opportunity cannot close a newer position", func() {
+			So(trader.End("BTC/USD", trader.At.Add(-time.Second)), ShouldBeNil)
+			So(trader.Positions["BTC/USD"].Holding.Qty.Cmp(quantity), ShouldEqual, 0)
 		})
-
-		Convey("Past the horizon only capital-returning moves remain", func() {
-			trader.At = opened.Add(StalePositionHorizon)
-			actions, state, err := trader.Feasible("BTC/USD")
-			So(err, ShouldBeNil)
-			So(trader.Status, ShouldEqual, "stale position")
-			So(len(actions), ShouldBeGreaterThan, 0)
-
-			for _, action := range actions {
-				So(action.Reduce, ShouldBeTrue)
-				So(action.Kind, ShouldNotEqual, "hold")
+		Convey("Missing book defers release without a fill or a learning decision", func() {
+			connection.ApplyLevel3(kraken.Level3Data{Type: "snapshot", Symbol: "BTC/USD"})
+			So(trader.End("BTC/USD", through), ShouldBeNil)
+			So(trader.Ending["BTC/USD"], ShouldEqual, through)
+			So(trader.Fills, ShouldEqual, 1)
+			for _, message := range tape.Messages[:4] {
+				connection.ApplyLevel3(message)
 			}
-			So(state[0], ShouldEqual, uint64(1)<<63|3) // held and stale
-
-			Convey("Exiting clears the age so a re-entry starts fresh", func() {
-				So(trader.Execute(&agent.Decision[Action]{
-					ID: 2, Label: "BTC/USD", At: trader.At, Action: actions[0],
-				}), ShouldBeNil)
-				So(trader.Positions["BTC/USD"].Holding.Qty.Sign(), ShouldEqual, 0)
-				_, tracked := trader.Opened["BTC/USD"]
-				So(tracked, ShouldBeFalse)
-				So(trader.stale("BTC/USD"), ShouldBeFalse)
-			})
+			So(trader.End("BTC/USD", through), ShouldBeNil)
+			So(trader.Positions["BTC/USD"].Holding.Qty.Sign(), ShouldEqual, 0)
+			So(trader.Ending, ShouldBeEmpty)
+			So(trader.Fills, ShouldEqual, 2)
+			So(len(trader.Evaluations["BTC/USD"]), ShouldEqual, 1)
+			So(trader.End("BTC/USD", through), ShouldBeNil)
+			So(trader.Fills, ShouldEqual, 2)
 		})
 	})
 }

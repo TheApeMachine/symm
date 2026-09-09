@@ -74,7 +74,10 @@ func NewQuality() core.Primitive {
 			supported,
 			store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("maturity"))),
 		),
-		store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewConstant(core.From(1.0)), store.NewKey("maturity"))),
+		logic.NewGate(store.NewHas("maturity"),
+			transport.NewPipe(),
+			store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewConstant(core.From(1.0)), store.NewKey("maturity"))),
+		),
 	)
 	finite := equation.NewAll(
 		logic.NewGate(

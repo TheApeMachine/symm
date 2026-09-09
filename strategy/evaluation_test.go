@@ -1,44 +1,68 @@
 package strategy
 
 import (
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/theapemachine/symm/broker"
 	"testing"
 	"time"
-
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
-	"github.com/theapemachine/symm/tests/venue"
 )
 
-func TestEvaluationResolve(t *testing.T) {
-	Convey("Completed tape legs grade each feasible action in account-return units", t, func() {
-		for _, scenario := range []struct {
-			name, kind, end string
-			reduce          bool
-			expected        float64
-		}{
-			{"entry captures a rise", "enter", "110", false, .045},
-			{"entry loses fees on flat tape", "enter", "100", false, -.005},
-			{"late entry loses money", "enter", "90", false, -.055},
-			{"exit avoids a decline", "exit", "90", true, .045},
-			{"early exit misses a rise", "exit", "110", true, -.055},
-			{"holding captures a rise", "hold", "110", false, .05},
-			{"holding suffers a decline", "hold", "90", false, -.05},
-			{"waiting misses a rise", "wait", "110", false, -.05},
-			{"waiting avoids a decline", "wait", "90", false, .05},
-			{"increasing captures a rise", "scale", "110", false, .045},
-			{"reducing avoids a decline", "scale", "90", true, .045},
-		} {
-			Convey(scenario.name, func() {
-				at := time.Unix(100, 0)
-				evaluation := &Evaluation{Decision: &agent.Decision[Action]{ID: 1, Label: "BTC/USD", At: at, Action: Action{Kind: scenario.kind, Reduce: scenario.reduce}}, Initial: venue.Decimal("200"), Quantity: venue.Decimal("1"), Reference: venue.Decimal("100"), Cost: venue.Decimal("100"), Fee: venue.Decimal("1"), Opportunity: venue.Decimal("1")}
-				leg := hindsight.Leg{Symbol: "BTC/USD", Through: at, End: venue.Decimal(scenario.end)}
-				So(evaluation.Resolve(leg), ShouldBeFalse)
-				leg.Through = at.Add(time.Second)
-				So(evaluation.Resolve(leg), ShouldBeTrue)
-				So(evaluation.Value, ShouldAlmostEqual, scenario.expected)
-				So(evaluation.Resolve(leg), ShouldBeFalse)
-			})
-		}
+func TestEvaluationGrade(t *testing.T) {
+	Convey("Replay feedback measures secured profit and unproductive time", t, func() {
+		tape := rehearsalObservations()
+		price := practicePrice()
+		evaluation := Evaluation{Initial: decimal.NewFromInt64(200), Quantity: decimal.NewFromInt64(1), Secured: decimal.NewFromInt64(10)}
+		So(evaluation.Grade(tape, price), ShouldBeNil)
+		So(evaluation.Value, ShouldAlmostEqual, .05)
+		So(evaluation.Potential.Sign(), ShouldEqual, 1)
+		So(evaluation.CaptureFraction, ShouldBeGreaterThan, 0)
+		earned := evaluation.Value
+
+		Convey("Equal profit earned with less idle time scores higher", func() {
+			evaluation.Idle = time.Second
+			So(evaluation.Grade(tape, price), ShouldBeNil)
+			So(evaluation.Value, ShouldBeLessThan, earned)
+			So(evaluation.Value, ShouldBeGreaterThan, 0)
+		})
+		Convey("Waiting forever misses a payable opportunity", func() {
+			evaluation.Secured = decimal.NewFromInt64(0)
+			evaluation.Idle = tape[len(tape)-1].ReceivedAt.Sub(tape[0].ReceivedAt)
+			So(evaluation.Grade(tape, price), ShouldBeNil)
+			So(evaluation.Value, ShouldBeLessThan, 0)
+		})
+		Convey("Time does not excuse capital loss", func() {
+			evaluation.Secured = decimal.NewFromInt64(-10)
+			evaluation.Idle = time.Second
+			So(evaluation.Grade(tape, price), ShouldBeNil)
+			So(evaluation.Value, ShouldAlmostEqual, -.05)
+		})
+		Convey("An unexecutable tape does not reward or punish staying flat", func() {
+			for index := range tape {
+				tape[index].HasBid = false
+			}
+			evaluation.Secured = decimal.NewFromInt64(0)
+			evaluation.Idle = time.Second
+			So(evaluation.Grade(tape, price), ShouldBeNil)
+			So(evaluation.Potential, ShouldBeNil)
+			So(evaluation.Value, ShouldEqual, 0)
+		})
+		Convey("Missing fees and regressed clocks fail explicitly", func() {
+			So(evaluation.Grade(tape, broker.NewPrice(nil, nil)), ShouldNotBeNil)
+			tape[1].ReceivedAt = tape[0].ReceivedAt.Add(-time.Second)
+			So(evaluation.Grade(tape, price), ShouldNotBeNil)
+		})
 	})
+}
+
+func BenchmarkEvaluationGrade(b *testing.B) {
+	tape := rehearsalObservations()
+	price := practicePrice()
+	evaluation := Evaluation{Initial: decimal.NewFromInt64(200), Quantity: decimal.NewFromInt64(1), Secured: decimal.NewFromInt64(10)}
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := evaluation.Grade(tape, price); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

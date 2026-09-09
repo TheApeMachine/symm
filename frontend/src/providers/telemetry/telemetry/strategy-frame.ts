@@ -3,169 +3,124 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from "flatbuffers";
+import * as flatbuffers from 'flatbuffers';
 
-import { Decision, type DecisionT } from "../telemetry/decision.js";
+import { Decision, DecisionT } from '../telemetry/decision.js';
 
-export class StrategyFrame
-	implements flatbuffers.IUnpackableObject<StrategyFrameT>
-{
-	bb: flatbuffers.ByteBuffer | null = null;
-	bb_pos = 0;
-	__init(i: number, bb: flatbuffers.ByteBuffer): StrategyFrame {
-		this.bb_pos = i;
-		this.bb = bb;
-		return this;
-	}
 
-	static getRootAsStrategyFrame(
-		bb: flatbuffers.ByteBuffer,
-		obj?: StrategyFrame,
-	): StrategyFrame {
-		return (obj || new StrategyFrame()).__init(
-			bb.readInt32(bb.position()) + bb.position(),
-			bb,
-		);
-	}
+export class StrategyFrame implements flatbuffers.IUnpackableObject<StrategyFrameT> {
+  bb: flatbuffers.ByteBuffer|null = null;
+  bb_pos = 0;
+  __init(i:number, bb:flatbuffers.ByteBuffer):StrategyFrame {
+  this.bb_pos = i;
+  this.bb = bb;
+  return this;
+}
 
-	static getSizePrefixedRootAsStrategyFrame(
-		bb: flatbuffers.ByteBuffer,
-		obj?: StrategyFrame,
-	): StrategyFrame {
-		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-		return (obj || new StrategyFrame()).__init(
-			bb.readInt32(bb.position()) + bb.position(),
-			bb,
-		);
-	}
+static getRootAsStrategyFrame(bb:flatbuffers.ByteBuffer, obj?:StrategyFrame):StrategyFrame {
+  return (obj || new StrategyFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-	evaluated(): boolean {
-		const offset = this.bb!.__offset(this.bb_pos, 4);
-		return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
-	}
+static getSizePrefixedRootAsStrategyFrame(bb:flatbuffers.ByteBuffer, obj?:StrategyFrame):StrategyFrame {
+  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+  return (obj || new StrategyFrame()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-	outcome(): string | null;
-	outcome(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
-	outcome(optionalEncoding?: any): string | Uint8Array | null {
-		const offset = this.bb!.__offset(this.bb_pos, 6);
-		return offset
-			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
-			: null;
-	}
+evaluated():boolean {
+  const offset = this.bb!.__offset(this.bb_pos, 4);
+  return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
+}
 
-	decisions(index: number, obj?: Decision): Decision | null {
-		const offset = this.bb!.__offset(this.bb_pos, 8);
-		return offset
-			? (obj || new Decision()).__init(
-					this.bb!.__indirect(
-						this.bb!.__vector(this.bb_pos + offset) + index * 4,
-					),
-					this.bb!,
-				)
-			: null;
-	}
+outcome():string|null
+outcome(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+outcome(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
 
-	decisionsLength(): number {
-		const offset = this.bb!.__offset(this.bb_pos, 8);
-		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-	}
+decisions(index: number, obj?:Decision):Decision|null {
+  const offset = this.bb!.__offset(this.bb_pos, 8);
+  return offset ? (obj || new Decision()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
 
-	static startStrategyFrame(builder: flatbuffers.Builder) {
-		builder.startObject(3);
-	}
+decisionsLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 8);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
 
-	static addEvaluated(builder: flatbuffers.Builder, evaluated: boolean) {
-		builder.addFieldInt8(0, +evaluated, +false);
-	}
+static startStrategyFrame(builder:flatbuffers.Builder) {
+  builder.startObject(3);
+}
 
-	static addOutcome(
-		builder: flatbuffers.Builder,
-		outcomeOffset: flatbuffers.Offset,
-	) {
-		builder.addFieldOffset(1, outcomeOffset, 0);
-	}
+static addEvaluated(builder:flatbuffers.Builder, evaluated:boolean) {
+  builder.addFieldInt8(0, +evaluated, +false);
+}
 
-	static addDecisions(
-		builder: flatbuffers.Builder,
-		decisionsOffset: flatbuffers.Offset,
-	) {
-		builder.addFieldOffset(2, decisionsOffset, 0);
-	}
+static addOutcome(builder:flatbuffers.Builder, outcomeOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(1, outcomeOffset, 0);
+}
 
-	static createDecisionsVector(
-		builder: flatbuffers.Builder,
-		data: flatbuffers.Offset[],
-	): flatbuffers.Offset {
-		builder.startVector(4, data.length, 4);
-		for (let i = data.length - 1; i >= 0; i--) {
-			builder.addOffset(data[i]!);
-		}
-		return builder.endVector();
-	}
+static addDecisions(builder:flatbuffers.Builder, decisionsOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(2, decisionsOffset, 0);
+}
 
-	static startDecisionsVector(builder: flatbuffers.Builder, numElems: number) {
-		builder.startVector(4, numElems, 4);
-	}
+static createDecisionsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
 
-	static endStrategyFrame(builder: flatbuffers.Builder): flatbuffers.Offset {
-		const offset = builder.endObject();
-		return offset;
-	}
+static startDecisionsVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
 
-	static createStrategyFrame(
-		builder: flatbuffers.Builder,
-		evaluated: boolean,
-		outcomeOffset: flatbuffers.Offset,
-		decisionsOffset: flatbuffers.Offset,
-	): flatbuffers.Offset {
-		StrategyFrame.startStrategyFrame(builder);
-		StrategyFrame.addEvaluated(builder, evaluated);
-		StrategyFrame.addOutcome(builder, outcomeOffset);
-		StrategyFrame.addDecisions(builder, decisionsOffset);
-		return StrategyFrame.endStrategyFrame(builder);
-	}
+static endStrategyFrame(builder:flatbuffers.Builder):flatbuffers.Offset {
+  const offset = builder.endObject();
+  return offset;
+}
 
-	unpack(): StrategyFrameT {
-		return new StrategyFrameT(
-			this.evaluated(),
-			this.outcome(),
-			this.bb!.createObjList<Decision, DecisionT>(
-				this.decisions.bind(this),
-				this.decisionsLength(),
-			),
-		);
-	}
+static createStrategyFrame(builder:flatbuffers.Builder, evaluated:boolean, outcomeOffset:flatbuffers.Offset, decisionsOffset:flatbuffers.Offset):flatbuffers.Offset {
+  StrategyFrame.startStrategyFrame(builder);
+  StrategyFrame.addEvaluated(builder, evaluated);
+  StrategyFrame.addOutcome(builder, outcomeOffset);
+  StrategyFrame.addDecisions(builder, decisionsOffset);
+  return StrategyFrame.endStrategyFrame(builder);
+}
 
-	unpackTo(_o: StrategyFrameT): void {
-		_o.evaluated = this.evaluated();
-		_o.outcome = this.outcome();
-		_o.decisions = this.bb!.createObjList<Decision, DecisionT>(
-			this.decisions.bind(this),
-			this.decisionsLength(),
-		);
-	}
+unpack(): StrategyFrameT {
+  return new StrategyFrameT(
+    this.evaluated(),
+    this.outcome(),
+    this.bb!.createObjList<Decision, DecisionT>(this.decisions.bind(this), this.decisionsLength())
+  );
+}
+
+
+unpackTo(_o: StrategyFrameT): void {
+  _o.evaluated = this.evaluated();
+  _o.outcome = this.outcome();
+  _o.decisions = this.bb!.createObjList<Decision, DecisionT>(this.decisions.bind(this), this.decisionsLength());
+}
 }
 
 export class StrategyFrameT implements flatbuffers.IGeneratedObject {
-	constructor(
-		public evaluated: boolean = false,
-		public outcome: string | Uint8Array | null = null,
-		public decisions: DecisionT[] = [],
-	) {}
+constructor(
+  public evaluated: boolean = false,
+  public outcome: string|Uint8Array|null = null,
+  public decisions: (DecisionT)[] = []
+){}
 
-	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
-		const outcome =
-			this.outcome !== null ? builder.createString(this.outcome!) : 0;
-		const decisions = StrategyFrame.createDecisionsVector(
-			builder,
-			builder.createObjectOffsetList(this.decisions),
-		);
 
-		return StrategyFrame.createStrategyFrame(
-			builder,
-			this.evaluated,
-			outcome,
-			decisions,
-		);
-	}
+pack(builder:flatbuffers.Builder): flatbuffers.Offset {
+  const outcome = (this.outcome !== null ? builder.createString(this.outcome!) : 0);
+  const decisions = StrategyFrame.createDecisionsVector(builder, builder.createObjectOffsetList(this.decisions));
+
+  return StrategyFrame.createStrategyFrame(builder,
+    this.evaluated,
+    outcome,
+    decisions
+  );
+}
 }

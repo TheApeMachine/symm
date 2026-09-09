@@ -21,16 +21,18 @@ describe("RehearsalPanel", () => {
 			lastSymbol: "BTC/USD",
 			lastAction: "enter",
 			lastReturn: -0.02,
+			lastFailure: "entry too early",
 		});
 		const view = projectLearning(state, "");
 		expect(view.rehearsal).toBe(state.rehearsal);
 		const html = renderToStaticMarkup(<RehearsalPanel view={view} />);
 		expect(html).toContain("12 available, 2 selected per worker");
 		expect(html).toContain("5 available, 2 selected per worker");
-		expect(html).toContain("11 exercises graded → 10 absorbed");
+		expect(html).toContain("11 decisions graded → 10 absorbed");
 		expect(html).toContain("-200.0 bp");
+		expect(html).toContain("entry too early");
 		expect(html).toContain("wallet P&amp;L -2");
-		expect(html).toContain("does not replay the full live signal pipeline");
+		expect(html).toContain("captured precursor measurements");
 	});
 
 	it("keeps missing classes and unavailable economics visible", () => {

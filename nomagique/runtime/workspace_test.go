@@ -10,34 +10,10 @@ import (
 
 type workspaceProbe struct {
 	steps     atomic.Uint32
+	visits    atomic.Int64
 	violation atomic.Bool
 	done      chan uint32
 	ingress   uint32
-}
-
-type workspaceJoinNode struct {
-	mark uint32
-	done bool
-}
-
-func (node workspaceJoinNode) Step(probe *workspaceProbe) *workspaceProbe {
-	requires := probe.ingress
-
-	if node.done {
-		requires |= 8
-	}
-
-	if probe.steps.Load()&requires != requires {
-		probe.violation.Store(true)
-	}
-
-	probe.steps.Or(node.mark)
-
-	if node.done {
-		probe.done <- probe.steps.Load()
-	}
-
-	return probe
 }
 
 type workspaceProbeNode struct {
@@ -47,6 +23,7 @@ type workspaceProbeNode struct {
 }
 
 func (node workspaceProbeNode) Step(probe *workspaceProbe) *workspaceProbe {
+	probe.visits.Add(1)
 	if probe.steps.Load()&node.requires != node.requires {
 		probe.violation.Store(true)
 	}
@@ -70,17 +47,21 @@ func TestNewWorkspace(t *testing.T) {
 			{workspaceProbeNode{mark: 4}},
 		})
 		logic := NewWorkload(t.Context(), "logic", [][]Node[*workspaceProbe]{
-			{workspaceJoinNode{mark: 8}},
+			{workspaceProbeNode{mark: 8, requires: 7}},
 		})
 		strategy := NewWorkload(t.Context(), "strategy", [][]Node[*workspaceProbe]{
-			{workspaceJoinNode{mark: 16, done: true}},
+			{workspaceProbeNode{mark: 16, requires: 15, done: true}},
 		})
 		workspace := NewWorkspace(t.Context(), "workspace", [][]Node[*workspaceProbe]{
 			{left, right},
 			{logic},
 			{strategy},
 		})
-		defer workspace.Close()
+		defer func() {
+			if err := workspace.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
 
 		So(workspace.Error(), ShouldBeNil)
 		workspace.Admit()
@@ -88,8 +69,8 @@ func TestNewWorkspace(t *testing.T) {
 		done := make(chan uint32, 2)
 		leftProbe := &workspaceProbe{done: done, ingress: 1 | 2}
 		rightProbe := &workspaceProbe{done: done, ingress: 4}
-		left.Push(leftProbe)
-		right.Push(rightProbe)
+		workspace.Push(leftProbe)
+		workspace.Push(rightProbe)
 
 		for range 2 {
 			select {
@@ -99,8 +80,8 @@ func TestNewWorkspace(t *testing.T) {
 			}
 		}
 
-		So(leftProbe.steps.Load(), ShouldEqual, uint32(1|2|8|16))
-		So(rightProbe.steps.Load(), ShouldEqual, uint32(4|8|16))
+		So(leftProbe.steps.Load(), ShouldEqual, uint32(1|2|4|8|16))
+		So(rightProbe.steps.Load(), ShouldEqual, uint32(1|2|4|8|16))
 		So(leftProbe.violation.Load(), ShouldBeFalse)
 		So(rightProbe.violation.Load(), ShouldBeFalse)
 	})
@@ -114,10 +95,14 @@ func TestWorkspaceAdmit(t *testing.T) {
 			{workspaceProbeNode{mark: 1, done: true}},
 		})
 		workspace := NewWorkspace(t.Context(), "workspace", [][]Node[*workspaceProbe]{{workload}})
-		defer workspace.Close()
+		defer func() {
+			if err := workspace.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
 		probe := &workspaceProbe{done: stepped}
 
-		workload.Push(probe)
+		workspace.Push(probe)
 
 		Convey("it rejects input before admission", func() {
 			select {
@@ -129,7 +114,7 @@ func TestWorkspaceAdmit(t *testing.T) {
 
 		Convey("admission opens the outer and nested rings", func() {
 			workspace.Admit()
-			workload.Push(probe)
+			workspace.Push(probe)
 
 			select {
 			case steps := <-stepped:
@@ -139,4 +124,45 @@ func TestWorkspaceAdmit(t *testing.T) {
 			}
 		})
 	})
+}
+
+func TestWorkspaceStep(t *testing.T) {
+	Convey("Both nested workloads must finish before Grid starts", t, func() {
+		leftEntered, rightEntered := make(chan struct{}), make(chan struct{})
+		leftRelease, rightRelease := make(chan struct{}), make(chan struct{})
+		left := NewWorkload(t.Context(), "left", [][]Node[int]{{workloadBarrierNode{leftEntered, leftRelease}}})
+		right := NewWorkload(t.Context(), "right", [][]Node[int]{{workloadBarrierNode{rightEntered, rightRelease}}})
+		count, done := &atomic.Int64{}, make(chan struct{})
+		grid := NewWorkload(t.Context(), "grid", [][]Node[int]{{workloadCountNode{count, 1, done}}})
+		workspace := NewWorkspace(t.Context(), "workspace", [][]Node[int]{{left, right}, {grid}})
+		defer func() { So(workspace.Close(), ShouldBeNil) }()
+		workspace.Admit()
+		returned := make(chan struct{})
+		go func() { workspace.Step(1); close(returned) }()
+		<-leftEntered
+		<-rightEntered
+		So(count.Load(), ShouldEqual, 0)
+		close(leftRelease)
+		So(count.Load(), ShouldEqual, 0)
+		close(rightRelease)
+		<-returned
+		So(count.Load(), ShouldEqual, 1)
+	})
+}
+
+func BenchmarkWorkspaceStep(b *testing.B) {
+	left := NewWorkload(b.Context(), "left", [][]Node[int]{{plainProbe{}}, {plainProbe{}}})
+	right := NewWorkload(b.Context(), "right", [][]Node[int]{{plainProbe{}}, {plainProbe{}}})
+	grid := NewWorkload(b.Context(), "grid", [][]Node[int]{{plainProbe{}}})
+	workspace := NewWorkspace(b.Context(), "workspace", [][]Node[int]{{left, right}, {grid}})
+	defer func() {
+		if err := workspace.Close(); err != nil {
+			b.Fatal(err)
+		}
+	}()
+	workspace.Admit()
+	b.ReportAllocs()
+	for b.Loop() {
+		workspace.Step(1)
+	}
 }

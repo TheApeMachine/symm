@@ -17,6 +17,12 @@ func TestLogReturnsLoad(t *testing.T) {
 		observations := tests.Path(times, values)
 		So(returns.Load(observations), ShouldBeNil)
 		So(returns.Energy, ShouldAlmostEqual, 6)
+		Convey("Reloading a same-sized path allocates no heap objects", func() {
+			var err error
+			allocations := testing.AllocsPerRun(100, func() { err = returns.Load(observations) })
+			So(err, ShouldBeNil)
+			So(allocations, ShouldEqual, 0)
+		})
 
 		Convey("Every signed return retains its exact adjacent coordinates", func() {
 			So(len(returns.Intervals), ShouldEqual, 3)

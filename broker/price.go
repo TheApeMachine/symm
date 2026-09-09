@@ -31,11 +31,26 @@ var (
 /* Price owns fee state and economic calculations using the SDK's decimals. */
 type Price struct {
 	Instrument *Instrument
+	Books      BookSource
 	status     types.Status
 	api        *websocket.API
 	fees       *sync.Map
 	tickers    *sync.Map
 	normalizer *spot.Normalizer
+}
+
+// BookSource is the resident book boundary shared by live and captured tapes.
+// Both supply SDK books; pricing, fees, sizing and accounting stay on Price.
+type BookSource interface {
+	Book(string, func(*spotbook.Book))
+}
+
+// NewRecordedPrice reuses venue facts and fees while reading only the supplied
+// captured book. A replay cannot accidentally price against a live book.
+func NewRecordedPrice(authoritative *Price, books BookSource) *Price {
+	return &Price{Instrument: authoritative.Instrument, Books: books,
+		normalizer: authoritative.normalizer, fees: authoritative.fees,
+		tickers: &sync.Map{}, status: types.READY}
 }
 
 func NewPrice(api *websocket.API, instrument *Instrument) *Price {
@@ -52,6 +67,7 @@ func NewPrice(api *websocket.API, instrument *Instrument) *Price {
 	return &Price{
 		Instrument: instrument,
 		api:        api,
+		Books:      api,
 		normalizer: normalizer,
 		fees:       &sync.Map{},
 		tickers:    &sync.Map{},
@@ -159,7 +175,7 @@ func (price *Price) Quantity(symbol string, cash *decimal.Decimal) (*decimal.Dec
 	var quantity *decimal.Decimal
 	var err error
 
-	price.api.Book(symbol, func(book *spotbook.Book) {
+	price.Books.Book(symbol, func(book *spotbook.Book) {
 		if book == nil || book.BestAsk() == nil {
 			err = errnie.Err(errnie.NotFound, "price: ask book unavailable for "+symbol, nil)
 			return
@@ -275,7 +291,7 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*types.
 	var cost *types.EntryCost
 	var err error
 
-	price.api.Book(symbol, func(book *spotbook.Book) {
+	price.Books.Book(symbol, func(book *spotbook.Book) {
 		if book == nil || book.BestAsk() == nil || book.BestBid() == nil {
 			err = errnie.Err(errnie.NotFound, "entry cost: book unavailable for "+symbol, nil)
 			return
@@ -342,7 +358,7 @@ func (price *Price) Surface(
 	surface := &types.ExecutionSurface{Symbol: symbol, At: at, SellableQty: quantity}
 	var err error
 
-	price.api.Book(symbol, func(book *spotbook.Book) {
+	price.Books.Book(symbol, func(book *spotbook.Book) {
 		if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
 			err = errnie.Err(errnie.NotFound, "price: book unavailable for "+symbol, nil)
 			return
@@ -550,44 +566,22 @@ func (price *Price) ApplyFill(
 		))
 	}
 
-	if holding.Qty == nil {
-		holding.Qty = decimalZero
-	}
-
-	if holding.Basis == nil {
-		holding.Basis = decimalZero
-	}
-
-	if holding.EntryCost == nil {
-		holding.EntryCost = decimalZero
-	}
-
-	if holding.EntryFee == nil {
-		holding.EntryFee = decimalZero
-	}
-
-	if holding.EntryFees == nil {
-		holding.EntryFees = decimalZero
-	}
-
-	if holding.EntryQty == nil {
-		holding.EntryQty = decimalZero
-	}
-
-	if holding.ExitCost == nil {
-		holding.ExitCost = decimalZero
-	}
-
-	if holding.ExitQty == nil {
-		holding.ExitQty = decimalZero
-	}
-
-	if holding.ExitFees == nil {
-		holding.ExitFees = decimalZero
-	}
-
-	if holding.RealizedPnL == nil {
-		holding.RealizedPnL = decimalZero
+	for _, field := range []**decimal.Decimal{
+		&holding.Qty,
+		&holding.Basis,
+		&holding.EntryCost,
+		&holding.EntryFee,
+		&holding.EntryFees,
+		&holding.EntryQty,
+		&holding.ExitCost,
+		&holding.ExitQty,
+		&holding.ExitFees,
+		&holding.RealizedPnL,
+		&holding.RealizedReturn,
+	} {
+		if *field == nil {
+			*field = decimalZero
+		}
 	}
 
 	if execution.Side == "buy" {

@@ -80,16 +80,6 @@ restored():boolean {
   return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false;
 }
 
-episodes():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 20);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
-
-forced():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 22);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
-
 rehearsal(obj?:LearningRehearsal):LearningRehearsal|null {
   const offset = this.bb!.__offset(this.bb_pos, 24);
   return offset ? (obj || new LearningRehearsal()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
@@ -155,14 +145,6 @@ static addRestored(builder:flatbuffers.Builder, restored:boolean) {
   builder.addFieldInt8(7, +restored, +false);
 }
 
-static addEpisodes(builder:flatbuffers.Builder, episodes:bigint) {
-  builder.addFieldInt64(8, episodes, BigInt('0'));
-}
-
-static addForced(builder:flatbuffers.Builder, forced:bigint) {
-  builder.addFieldInt64(9, forced, BigInt('0'));
-}
-
 static addRehearsal(builder:flatbuffers.Builder, rehearsalOffset:flatbuffers.Offset) {
   builder.addFieldOffset(10, rehearsalOffset, 0);
 }
@@ -183,8 +165,6 @@ unpack(): LearningStateT {
     this.bb!.createObjList<LearningAgent, LearningAgentT>(this.agents.bind(this), this.agentsLength()),
     this.bb!.createObjList<LearningDevelopment, LearningDevelopmentT>(this.markets.bind(this), this.marketsLength()),
     this.restored(),
-    this.episodes(),
-    this.forced(),
     (this.rehearsal() !== null ? this.rehearsal()!.unpack() : null)
   );
 }
@@ -199,8 +179,6 @@ unpackTo(_o: LearningStateT): void {
   _o.agents = this.bb!.createObjList<LearningAgent, LearningAgentT>(this.agents.bind(this), this.agentsLength());
   _o.markets = this.bb!.createObjList<LearningDevelopment, LearningDevelopmentT>(this.markets.bind(this), this.marketsLength());
   _o.restored = this.restored();
-  _o.episodes = this.episodes();
-  _o.forced = this.forced();
   _o.rehearsal = (this.rehearsal() !== null ? this.rehearsal()!.unpack() : null);
 }
 }
@@ -215,8 +193,6 @@ constructor(
   public agents: (LearningAgentT)[] = [],
   public markets: (LearningDevelopmentT)[] = [],
   public restored: boolean = false,
-  public episodes: bigint = BigInt('0'),
-  public forced: bigint = BigInt('0'),
   public rehearsal: LearningRehearsalT|null = null
 ){}
 
@@ -236,8 +212,6 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   LearningState.addAgents(builder, agents);
   LearningState.addMarkets(builder, markets);
   LearningState.addRestored(builder, this.restored);
-  LearningState.addEpisodes(builder, this.episodes);
-  LearningState.addForced(builder, this.forced);
   LearningState.addRehearsal(builder, rehearsal);
 
   return LearningState.endLearningState(builder);

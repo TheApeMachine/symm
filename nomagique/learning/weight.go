@@ -16,7 +16,12 @@ func NewTrustWeight() core.Primitive {
 	memory := store.NewRetained(
 		core.From(
 			map[string]core.Primitive{
-				"count": core.From(0.0), "minimum": core.From(0.0), "maximum": core.From(0.0), "prev": core.From(0.0), "trust": core.From(1.0), "rate": core.From(0.0),
+				"count":   core.From(0.0),
+				"minimum": core.From(0.0),
+				"maximum": core.From(0.0),
+				"prev":    core.From(0.0),
+				"trust":   core.From(1.0),
+				"rate":    core.From(0.0),
 			},
 		),
 	)
@@ -27,7 +32,12 @@ func NewTrustWeight() core.Primitive {
 			transport.NewPipe(
 				store.NewRecord(
 					transport.NewPipe(),
-					transport.NewPipe(equation.NewDifference[float64](store.NewGet("actual"), store.NewGet("predicted")), store.NewKey("residual")),
+					transport.NewPipe(
+						equation.NewDifference[float64](
+							store.NewGet("actual"),
+							store.NewGet("predicted"),
+						), store.NewKey("residual"),
+					),
 				),
 				state,
 				equation.NewResidualSpan(),
@@ -40,7 +50,10 @@ func NewTrustWeight() core.Primitive {
 								transport.NewPipe(),
 								transport.NewPipe(
 									equation.NewRatio[float64](
-										transport.NewPipe(store.NewGet("residual"), calculus.NewAbsolute(transport.NewIO(core.From(0.0)))),
+										transport.NewPipe(
+											store.NewGet("residual"),
+											calculus.NewAbsolute(transport.NewIO(core.From(0.0))),
+										),
 										store.NewGet("span"),
 									),
 									store.NewKey("rate"),
@@ -54,7 +67,9 @@ func NewTrustWeight() core.Primitive {
 											transport.NewPipe(store.NewGet("trust"), store.NewKey("left")),
 											transport.NewPipe(
 												transport.NewPipe(
-													equation.NewDifference[float64](store.NewConstant(core.From(1.0)), store.NewGet("rate")),
+													equation.NewDifference[float64](
+														store.NewConstant(core.From(1.0)), store.NewGet("rate"),
+													),
 													calculus.NewMaximum(transport.NewIO(core.From(0.0))),
 												),
 												store.NewKey("right"),
@@ -72,7 +87,10 @@ func NewTrustWeight() core.Primitive {
 					),
 					transport.NewPipe(),
 				),
-				store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewGet("trust"), store.NewKey("value"))),
+				store.NewRecord(
+					transport.NewPipe(),
+					transport.NewPipe(store.NewGet("trust"), store.NewKey("value")),
+				),
 				state,
 			),
 			logic.NewReject(core.ErrDomain),

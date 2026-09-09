@@ -7,6 +7,7 @@ import (
 
 	. "github.com/smartystreets/goconvey/convey"
 	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -54,6 +55,21 @@ func TestSessionStep(t *testing.T) {
 			So(decisions, ShouldHaveLength, 1)
 		})
 
+		Convey("Every precursor survives even when full-state witnesses are sampled", func() {
+			envelope.CVD = data.NewMeasurement[float64]("flow", "TEST/USD", "cvd", time.Unix(2, 0), time.Unix(1, 0))
+			for index := range 3 {
+				envelope.CaptureOrdinal = uint64(index)
+				envelope.CVD.PutMetric(data.Metric[float64]{Label: "change", Raw: float64(index)})
+				node.Step(envelope)
+			}
+			So(writer.Close(), ShouldBeNil)
+			precursors, err := engine.Witnesses(t.Context(), string(capture.Run), "precursor")
+			So(err, ShouldBeNil)
+			So(len(precursors), ShouldEqual, 3)
+			for _, precursor := range precursors {
+				So(precursor.Boundary, ShouldEqual, "after-logic")
+			}
+		})
 		Convey("the same phase does not create repeated full-state witnesses", func() {
 			So(node.shouldWitness(envelope), ShouldBeTrue)
 			So(node.shouldWitness(envelope), ShouldBeFalse)

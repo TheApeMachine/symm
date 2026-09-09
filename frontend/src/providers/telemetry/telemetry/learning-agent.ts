@@ -165,16 +165,6 @@ outcome(obj?:LearningDecision):LearningDecision|null {
   return offset ? (obj || new LearningDecision()).__init(this.bb!.__indirect(this.bb_pos + offset), this.bb!) : null;
 }
 
-episode():bigint {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
-  return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
-}
-
-carried():number {
-  const offset = this.bb!.__offset(this.bb_pos, 50);
-  return offset ? this.bb!.readFloat64(this.bb_pos + offset) : 0.0;
-}
-
 open():number {
   const offset = this.bb!.__offset(this.bb_pos, 52);
   return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
@@ -296,14 +286,6 @@ static addOutcome(builder:flatbuffers.Builder, outcomeOffset:flatbuffers.Offset)
   builder.addFieldOffset(21, outcomeOffset, 0);
 }
 
-static addEpisode(builder:flatbuffers.Builder, episode:bigint) {
-  builder.addFieldInt64(22, episode, BigInt('0'));
-}
-
-static addCarried(builder:flatbuffers.Builder, carried:number) {
-  builder.addFieldFloat64(23, carried, 0.0);
-}
-
 static addOpen(builder:flatbuffers.Builder, open:number) {
   builder.addFieldInt32(24, open, 0);
 }
@@ -338,8 +320,6 @@ unpack(): LearningAgentT {
     this.reward(),
     this.elapsedNs(),
     (this.outcome() !== null ? this.outcome()!.unpack() : null),
-    this.episode(),
-    this.carried(),
     this.open()
   );
 }
@@ -368,8 +348,6 @@ unpackTo(_o: LearningAgentT): void {
   _o.reward = this.reward();
   _o.elapsedNs = this.elapsedNs();
   _o.outcome = (this.outcome() !== null ? this.outcome()!.unpack() : null);
-  _o.episode = this.episode();
-  _o.carried = this.carried();
   _o.open = this.open();
 }
 }
@@ -398,8 +376,6 @@ constructor(
   public reward: number = 0.0,
   public elapsedNs: bigint = BigInt('0'),
   public outcome: LearningDecisionT|null = null,
-  public episode: bigint = BigInt('0'),
-  public carried: number = 0.0,
   public open: number = 0
 ){}
 
@@ -442,8 +418,6 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   LearningAgent.addReward(builder, this.reward);
   LearningAgent.addElapsedNs(builder, this.elapsedNs);
   LearningAgent.addOutcome(builder, outcome);
-  LearningAgent.addEpisode(builder, this.episode);
-  LearningAgent.addCarried(builder, this.carried);
   LearningAgent.addOpen(builder, this.open);
 
   return LearningAgent.endLearningAgent(builder);

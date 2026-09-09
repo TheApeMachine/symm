@@ -29,8 +29,6 @@ type LearningAgentT struct {
 	Reward float64 `json:"reward"`
 	ElapsedNs int64 `json:"elapsedNs"`
 	Outcome *LearningDecisionT `json:"outcome"`
-	Episode uint64 `json:"episode"`
-	Carried float64 `json:"carried"`
 	Open int32 `json:"open"`
 }
 
@@ -122,8 +120,6 @@ func (t *LearningAgentT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT
 	LearningAgentAddReward(builder, t.Reward)
 	LearningAgentAddElapsedNs(builder, t.ElapsedNs)
 	LearningAgentAddOutcome(builder, outcomeOffset)
-	LearningAgentAddEpisode(builder, t.Episode)
-	LearningAgentAddCarried(builder, t.Carried)
 	LearningAgentAddOpen(builder, t.Open)
 	return LearningAgentEnd(builder)
 }
@@ -163,8 +159,6 @@ func (rcv *LearningAgent) UnPackTo(t *LearningAgentT) {
 	t.Reward = rcv.Reward()
 	t.ElapsedNs = rcv.ElapsedNs()
 	t.Outcome = rcv.Outcome(nil).UnPack()
-	t.Episode = rcv.Episode()
-	t.Carried = rcv.Carried()
 	t.Open = rcv.Open()
 }
 
@@ -463,30 +457,6 @@ func (rcv *LearningAgent) Outcome(obj *LearningDecision) *LearningDecision {
 	return nil
 }
 
-func (rcv *LearningAgent) Episode() uint64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
-	if o != 0 {
-		return rcv._tab.GetUint64(o + rcv._tab.Pos)
-	}
-	return 0
-}
-
-func (rcv *LearningAgent) MutateEpisode(n uint64) bool {
-	return rcv._tab.MutateUint64Slot(48, n)
-}
-
-func (rcv *LearningAgent) Carried() float64 {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
-	if o != 0 {
-		return rcv._tab.GetFloat64(o + rcv._tab.Pos)
-	}
-	return 0.0
-}
-
-func (rcv *LearningAgent) MutateCarried(n float64) bool {
-	return rcv._tab.MutateFloat64Slot(50, n)
-}
-
 func (rcv *LearningAgent) Open() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
@@ -573,12 +543,6 @@ func LearningAgentAddElapsedNs(builder *flatbuffers.Builder, elapsedNs int64) {
 }
 func LearningAgentAddOutcome(builder *flatbuffers.Builder, outcome flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(21, flatbuffers.UOffsetT(outcome), 0)
-}
-func LearningAgentAddEpisode(builder *flatbuffers.Builder, episode uint64) {
-	builder.PrependUint64Slot(22, episode, 0)
-}
-func LearningAgentAddCarried(builder *flatbuffers.Builder, carried float64) {
-	builder.PrependFloat64Slot(23, carried, 0.0)
 }
 func LearningAgentAddOpen(builder *flatbuffers.Builder, open int32) {
 	builder.PrependInt32Slot(24, open, 0)

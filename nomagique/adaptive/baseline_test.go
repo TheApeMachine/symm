@@ -67,3 +67,22 @@ func BenchmarkBaselineNext(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkBaselineNextProjection(b *testing.B) {
+	baseline := adaptive.NewBaseline(adaptive.NewWindow())
+	input := transport.NewIO(core.From(3.0))
+	b.ReportAllocs()
+	for b.Loop() {
+		value := baseline.Next(input)
+		// Different downstream consumers read the same immutable delivery.
+		for range 8 {
+			fields := core.To[map[string]core.Primitive](value)
+			if len(fields) != 20 {
+				b.Fatal("incomplete baseline record", len(fields))
+			}
+		}
+		if baseline.Next(input) != nil || baseline.Error() != nil {
+			b.Fatal("invalid baseline delivery", baseline.Error())
+		}
+	}
+}

@@ -2,7 +2,6 @@ package algo
 
 import (
 	"github.com/theapemachine/symm/nomagique/core"
-	"github.com/theapemachine/symm/nomagique/correlation"
 	"github.com/theapemachine/symm/nomagique/equation"
 	"github.com/theapemachine/symm/nomagique/tests"
 	"github.com/theapemachine/symm/nomagique/transport"
@@ -14,7 +13,7 @@ func TestLagProfileSupportAndUnits(t *testing.T) {
 	times := []int64{0, 1e9, 2e9, 3e9, 4e9, 5e9}
 	left := path(times, []float64{1, 2, 1.5, 3, 2.2, 4})
 	right := path([]int64{1e9, 2e9, 3e9, 4e9, 5e9, 6e9}, []float64{1, 2, 1.5, 3, 2.2, 4})
-	node := correlation.NewLagProfile(NewHayashiYoshida(), transport.NewIO(core.From(1e9)), transport.NewIO(core.From(2.0)))
+	node := equation.NewLagProfile(NewHayashiYoshida(), transport.NewIO(core.From(1e9)), transport.NewIO(core.From(2.0)))
 	profile := tests.Drain(t, node, observation(left, right))
 	if node.Error() != nil {
 		t.Fatal(node.Error())

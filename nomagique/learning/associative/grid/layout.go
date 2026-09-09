@@ -1,7 +1,9 @@
 package grid
 
 import (
+	"fmt"
 	"math"
+	"strings"
 
 	"github.com/theapemachine/errnie"
 	"gonum.org/v1/gonum/blas"
@@ -55,12 +57,12 @@ func (grid *Space) restructure(row int) error {
 		grid.work = make([]float64, int(query[0]))
 	}
 
+	// Syev overwrites its input, including on failure. Preserve the original
+	// upper triangle so an error describes the matrix actually submitted.
+	original := grid.gram
+
 	if !lapack64.Syev(lapack.EVCompute, matrix, grid.eigenvalues[:], grid.work, len(grid.work)) {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"grid: co-activation eigendecomposition did not converge",
-			nil,
-		))
+		return grid.layoutFailure(row, original)
 	}
 
 	// A Gram matrix is positive semidefinite; a negative eigenvalue from
@@ -87,4 +89,30 @@ func (grid *Space) restructure(row int) error {
 	}
 
 	return nil
+}
+
+// layoutFailure captures numerical provenance only after the solver fails.
+// No value is replaced or skipped; the original failure remains fatal.
+func (grid *Space) layoutFailure(row int, original [gridDirections * gridDirections]float64) error {
+	details := []string{fmt.Sprintf(
+		"grid: co-activation eigendecomposition did not converge; context=%q committed_version=%d gram_upper=%v",
+		grid.Rows[row], grid.Version,
+		[6]float64{original[0], original[1], original[2], original[4], original[5], original[8]},
+	)}
+
+	for column, identity := range grid.Columns {
+		if !grid.Present[row][column] {
+			continue
+		}
+		detail := fmt.Sprintf("source=%q metric=%q raw=%g activation=%g quality=%g",
+			identity[0], identity[1], grid.Values[row][column],
+			grid.activations[row][column], grid.qualities[row][column],
+		)
+
+		if baseline := grid.baselines[row][column]; baseline != nil {
+			detail += fmt.Sprintf(" baseline=%+v", baseline.Reading)
+		}
+		details = append(details, detail)
+	}
+	return errnie.Error(errnie.Err(errnie.Internal, strings.Join(details, "; "), nil))
 }

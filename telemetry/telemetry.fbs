@@ -1236,7 +1236,7 @@ table LearningAgent {
  // episode counts wallet renewals: an explorer whose cash fell under the venue
  // minimum is refunded and keeps trading. carried is the wealth of the episodes
  // already closed, so wealth + carried is the agent's whole record.
- episode:ulong; carried:double;
+ episode:ulong (deprecated); carried:double (deprecated);
  // open is how many symbols this wallet currently holds, against
  // MaxConcurrentPositions.
  open:int;
@@ -1257,13 +1257,15 @@ table LearningRehearsal {
  declining:ulong; ungraded:ulong; unsupported:ulong; perWorker:ulong;
  decisions:ulong; trained:ulong; passes:ulong;
  lastSymbol:string; lastAction:string; lastReturn:double;
+  lastFailure:string;
+ illiquid:ulong; quiet:ulong;
 }
 table LearningState {
  atNs:long; steps:ulong; decisions:ulong; resolved:ulong;
  status:string; agents:[LearningAgent]; markets:[LearningDevelopment]; restored:bool;
  // episodes totals the explorer wallet renewals across the swarm. forced counts
  // decisions released instead of trained because only one action was feasible.
- episodes:ulong; forced:ulong; rehearsal:LearningRehearsal;
+ episodes:ulong (deprecated); forced:ulong (deprecated); rehearsal:LearningRehearsal;
 }
 
 table EnvelopeState {
@@ -1328,6 +1330,8 @@ table EnvelopeState {
   // representation Hindsight analyzers still read out of stored history.
   perspectives:[EnvelopePerspective] (deprecated);
   learning:[ubyte] (nested_flatbuffer: "LearningState");
+  // Exact numerical logic input to the impulse map, retained for replay parity.
+  learningObservations:[EnvelopeMeasurement];
 }
 
 table EnvelopeStateFrame { state:EnvelopeState (required); }

@@ -1,10 +1,10 @@
 package runtime
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -40,11 +40,17 @@ func TestWorkloadStep(t *testing.T) {
 		entered := make(chan struct{})
 		release := make(chan struct{})
 		returned := make(chan struct{})
-		workload := NewWorkload(t.Context(), "barrier", [][]Node[int]{
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		workload := NewWorkload(ctx, "barrier", [][]Node[int]{
 			{workloadBarrierNode{entered: entered, release: release}},
 		})
-		defer workload.Close()
-		workload.admit()
+		defer func() {
+			if err := workload.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+		workload.Admit()
 
 		go func() {
 			workload.Step(1)
@@ -62,7 +68,41 @@ func TestWorkloadStep(t *testing.T) {
 			close(release)
 			<-returned
 		})
+		Convey("Cancellation does not release an accepted observation before completion", func() {
+			cancel()
+			select {
+			case <-returned:
+				So("Step returned while its handler was still processing", ShouldBeEmpty)
+			default:
+			}
+			close(release)
+			<-returned
+		})
+
 	})
+}
+
+func BenchmarkWorkloadPush(b *testing.B) {
+	count := &atomic.Int64{}
+	done := make(chan struct{})
+	workload := NewWorkload(b.Context(), "push", [][]Node[int]{
+		{workloadCountNode{count: count, target: int64(b.N), done: done}},
+	})
+	defer func() {
+		if err := workload.Close(); err != nil {
+			b.Error(err)
+		}
+	}()
+	workload.Admit()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for index := 0; index < b.N; index++ {
+		workload.Push(index)
+	}
+
+	<-done
 }
 
 /*
@@ -98,7 +138,11 @@ func TestWorkloadComposesItsNodes(t *testing.T) {
 			{first},
 			{second, sibling, plainProbe{}},
 		})
-		defer workload.Close()
+		defer func() {
+			if err := workload.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
 
 		Convey("Every node that asks is told the ring it runs in", func() {
 			So(first.group, ShouldEqual, "ticker")
@@ -124,47 +168,52 @@ func TestWorkloadComposesItsNodes(t *testing.T) {
 }
 
 func TestWorkloadPush(t *testing.T) {
-	Convey("Given concurrent writers wrapping the ring repeatedly", t, func() {
-		const writers, events = 4, 1024
-		count, done := &atomic.Int64{}, make(chan struct{})
-		workload := newWorkload(t.Context(), "concurrent", [][]Node[int]{
-			{workloadCountNode{count: count, target: writers * events, done: done}},
-		}, writers)
-		workload.admit()
-		var producers sync.WaitGroup
-		for writer := range writers {
-			producers.Go(func() {
-				for event := range events {
-					workload.Push(writer*events + event)
+	Convey("Concurrent producers survive ring wrap without lost or duplicated observations", t, func() {
+		const producers, perProducer = 4, 256
+		observations := make([]workspaceProbe, producers*perProducer)
+		workload := NewWorkload(t.Context(), "writers", [][]Node[*workspaceProbe]{
+			{workspaceProbeNode{mark: 1}},
+			{workspaceProbeNode{mark: 2, requires: 1}},
+		})
+		workload.Admit()
+		var writers sync.WaitGroup
+		for producer := range producers {
+			writers.Add(1)
+			go func() {
+				defer writers.Done()
+				for index := range perProducer {
+					workload.Push(&observations[producer*perProducer+index])
 				}
-			})
+			}()
 		}
-		producers.Wait()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			t.Fatal("ring stopped making progress")
-		}
+		writers.Wait()
 		So(workload.Close(), ShouldBeNil)
-		So(count.Load(), ShouldEqual, writers*events)
+		for index := range observations {
+			So(observations[index].steps.Load(), ShouldEqual, 3)
+			So(observations[index].visits.Load(), ShouldEqual, 2)
+			So(observations[index].violation.Load(), ShouldBeFalse)
+		}
 	})
 }
 
-func BenchmarkWorkloadPush(b *testing.B) {
-	count := &atomic.Int64{}
-	done := make(chan struct{})
-	workload := NewWorkload(b.Context(), "push", [][]Node[int]{
-		{workloadCountNode{count: count, target: int64(b.N), done: done}},
+func TestWorkloadClose(t *testing.T) {
+	Convey("Closing a parent drains accepted nested work before closing its children", t, func() {
+		entered, release := make(chan struct{}), make(chan struct{})
+		child := NewWorkload(t.Context(), "child", [][]Node[int]{{workloadBarrierNode{entered, release}}})
+		parent := NewWorkload(t.Context(), "parent", [][]Node[int]{{child}})
+		parent.Admit()
+		parent.Push(1)
+		<-entered
+		finished := make(chan error, 1)
+		go func() { finished <- parent.Close() }()
+		select {
+		case <-finished:
+			So("Close returned before processing finished", ShouldBeEmpty)
+		default:
+		}
+		close(release)
+		So(<-finished, ShouldBeNil)
+		So(parent.Close(), ShouldBeNil)
+		So(child.status.Current(), ShouldEqual, DONE)
 	})
-	defer workload.Close()
-	workload.admit()
-
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	for index := 0; index < b.N; index++ {
-		workload.Push(index)
-	}
-
-	<-done
 }

@@ -181,6 +181,23 @@ func TestSpaceStep(t *testing.T) {
 		})
 	})
 
+	Convey("Arithmetic overflow reports its source and baseline without committing a version", t, func() {
+		grid := NewSpace()
+		measurement := data.NewMeasurement[float64]("overflow-fixture", "context", "source", time.Time{}, time.Time{})
+		// Both observations are representable. Their difference is not. This
+		// exercises a numerical failure, not a missing-value fallback.
+		measurement.PutMetric(data.Metric[float64]{Label: "signed-extreme", Raw: math.MaxFloat64})
+		So(grid.Step([]*data.Measurement[float64]{measurement}), ShouldBeNil)
+		measurement.PutMetric(data.Metric[float64]{Label: "signed-extreme", Raw: -math.MaxFloat64})
+		err := grid.Step([]*data.Measurement[float64]{measurement})
+		So(err, ShouldNotBeNil)
+		So(grid.Version, ShouldEqual, 1)
+		So(err.Error(), ShouldContainSubstring, `context="context" committed_version=1`)
+		So(err.Error(), ShouldContainSubstring, `source="source" metric="signed-extreme"`)
+		So(err.Error(), ShouldContainSubstring, "gram_upper=")
+		So(err.Error(), ShouldContainSubstring, "baseline=")
+	})
+
 	Convey("Given a rejected or mixed-context update", t, func() {
 		grid := NewSpace()
 		failure := errors.New("unavailable input")

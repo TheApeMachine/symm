@@ -26,14 +26,14 @@ type EnvelopeRefRow struct {
 
 // RunRow is one process capture session.
 type RunRow struct {
-	ID             string
-	StartedAt      time.Time
-	CodeCommit     string
-	BuildID        string
-	ConfigDigest   string
-	Integrity      string
-	Positions      int32
-	SchemaVersions map[string]string
+	ID             string            `json:"id"`
+	StartedAt      time.Time         `json:"startedAt"`
+	CodeCommit     string            `json:"codeCommit"`
+	BuildID        string            `json:"buildId"`
+	ConfigDigest   string            `json:"configDigest"`
+	Integrity      string            `json:"integrity"`
+	Positions      int32             `json:"positions"`
+	SchemaVersions map[string]string `json:"schemaVersions,omitempty"`
 }
 
 // CaptureRow is one raw external input exactly as it arrived.
@@ -79,38 +79,38 @@ type WitnessRow struct {
 
 // ExecutionRow carries the venue's authoritative economics for one execution.
 type ExecutionRow struct {
-	OrderID       string
-	ClientOrderID string
-	ExecID        string
-	ExecType      string
-	TradeID       int64
-	Side          string
-	OrderType     string
-	OrderStatus   string
-	LiquidityInd  string
-	At            time.Time
-	LastQty       *decimal.Decimal
-	LastPrice     *decimal.Decimal
-	Cost          *decimal.Decimal
-	CumQty        *decimal.Decimal
-	CumCost       *decimal.Decimal
-	AvgPrice      *decimal.Decimal
-	FeeUsdEquiv   *decimal.Decimal
-	Fees          string
+	OrderID       string           `json:"orderId"`
+	ClientOrderID string           `json:"clientOrderId"`
+	ExecID        string           `json:"execId"`
+	ExecType      string           `json:"execType"`
+	TradeID       int64            `json:"tradeId"`
+	Side          string           `json:"side"`
+	OrderType     string           `json:"orderType"`
+	OrderStatus   string           `json:"orderStatus"`
+	LiquidityInd  string           `json:"liquidityInd"`
+	At            time.Time        `json:"fillAt"`
+	LastQty       *decimal.Decimal `json:"lastQty,omitempty"`
+	LastPrice     *decimal.Decimal `json:"lastPrice,omitempty"`
+	Cost          *decimal.Decimal `json:"cost,omitempty"`
+	CumQty        *decimal.Decimal `json:"cumQty,omitempty"`
+	CumCost       *decimal.Decimal `json:"cumCost,omitempty"`
+	AvgPrice      *decimal.Decimal `json:"avgPrice,omitempty"`
+	FeeUsdEquiv   *decimal.Decimal `json:"feeUsdEquiv,omitempty"`
+	Fees          string           `json:"fees,omitempty"`
 }
 
 // LifecycleRow is one position or order transition. Exec is nil for position
 // open and close events, which carry no execution fact.
 type LifecycleRow struct {
-	Run                 string
-	DecisionID          string
-	ActionCorrelationID string
-	Symbol              string
-	Kind                string
-	Action              string
-	At                  time.Time
-	CaptureSeq          int64
-	Exec                *ExecutionRow
+	Run                 string        `json:"run"`
+	DecisionID          string        `json:"decisionId"`
+	ActionCorrelationID string        `json:"actionCorrelationId"`
+	Symbol              string        `json:"symbol"`
+	Kind                string        `json:"kind"`
+	Action              string        `json:"action"`
+	At                  time.Time     `json:"at"`
+	CaptureSeq          int64         `json:"captureSeq"`
+	Exec                *ExecutionRow `json:"execution,omitempty"`
 }
 
 // OutcomeRow is one graded decision.
@@ -140,7 +140,7 @@ type OutcomeRow struct {
 
 // GapRow marks one place where a run's capture is known to be incomplete.
 type GapRow struct {
-	Run      string
-	Sequence int64
-	Encoding string
+	Run      string `json:"runId"`
+	Sequence int64  `json:"sequence"`
+	Encoding string `json:"encoding"`
 }

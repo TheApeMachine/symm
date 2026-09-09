@@ -16,6 +16,7 @@ consulting a SYMM trading output (§27).
 type EpisodeKind string
 
 const (
+	EpisodeQuiet                 EpisodeKind = "quiet"
 	EpisodeUpwardExcursion       EpisodeKind = "upward_excursion"
 	EpisodeDownwardExcursion     EpisodeKind = "downward_excursion"
 	EpisodeReversal              EpisodeKind = "reversal"

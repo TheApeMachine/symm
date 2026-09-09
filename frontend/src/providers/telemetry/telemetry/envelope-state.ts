@@ -263,8 +263,18 @@ learningArray():Uint8Array|null {
   return offset ? new Uint8Array(this.bb!.bytes().buffer, this.bb!.bytes().byteOffset + this.bb!.__vector(this.bb_pos + offset), this.bb!.__vector_len(this.bb_pos + offset)) : null;
 }
 
+learningObservations(index: number, obj?:EnvelopeMeasurement):EnvelopeMeasurement|null {
+  const offset = this.bb!.__offset(this.bb_pos, 82);
+  return offset ? (obj || new EnvelopeMeasurement()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+learningObservationsLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 82);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
 static startEnvelopeState(builder:flatbuffers.Builder) {
-  builder.startObject(39);
+  builder.startObject(40);
 }
 
 static addKey(builder:flatbuffers.Builder, keyOffset:flatbuffers.Offset) {
@@ -475,6 +485,22 @@ static startLearningVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(1, numElems, 1);
 }
 
+static addLearningObservations(builder:flatbuffers.Builder, learningObservationsOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(39, learningObservationsOffset, 0);
+}
+
+static createLearningObservationsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startLearningObservationsVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
 static endEnvelopeState(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
@@ -519,7 +545,8 @@ unpack(): EnvelopeStateT {
     this.tick(),
     (this.equity() !== null ? this.equity()!.unpack() : null),
     (this.positions() !== null ? this.positions()!.unpack() : null),
-    this.bb!.createScalarList<number>(this.learning.bind(this), this.learningLength())
+    this.bb!.createScalarList<number>(this.learning.bind(this), this.learningLength()),
+    this.bb!.createObjList<EnvelopeMeasurement, EnvelopeMeasurementT>(this.learningObservations.bind(this), this.learningObservationsLength())
   );
 }
 
@@ -562,6 +589,7 @@ unpackTo(_o: EnvelopeStateT): void {
   _o.equity = (this.equity() !== null ? this.equity()!.unpack() : null);
   _o.positions = (this.positions() !== null ? this.positions()!.unpack() : null);
   _o.learning = this.bb!.createScalarList<number>(this.learning.bind(this), this.learningLength());
+  _o.learningObservations = this.bb!.createObjList<EnvelopeMeasurement, EnvelopeMeasurementT>(this.learningObservations.bind(this), this.learningObservationsLength());
 }
 }
 
@@ -603,7 +631,8 @@ constructor(
   public tick: bigint = BigInt('0'),
   public equity: EquityFrameT|null = null,
   public positions: PositionsFrameT|null = null,
-  public learning: (number)[] = []
+  public learning: (number)[] = [],
+  public learningObservations: (EnvelopeMeasurementT)[] = []
 ){}
 
 
@@ -639,6 +668,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const equity = (this.equity !== null ? this.equity!.pack(builder) : 0);
   const positions = (this.positions !== null ? this.positions!.pack(builder) : 0);
   const learning = EnvelopeState.createLearningVector(builder, this.learning);
+  const learningObservations = EnvelopeState.createLearningObservationsVector(builder, builder.createObjectOffsetList(this.learningObservations));
 
   EnvelopeState.startEnvelopeState(builder);
   EnvelopeState.addKey(builder, key);
@@ -678,6 +708,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   EnvelopeState.addEquity(builder, equity);
   EnvelopeState.addPositions(builder, positions);
   EnvelopeState.addLearning(builder, learning);
+  EnvelopeState.addLearningObservations(builder, learningObservations);
 
   return EnvelopeState.endEnvelopeState(builder);
 }

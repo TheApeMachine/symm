@@ -27,17 +27,17 @@ func TestLearnerMarshalFlatbuffer(t *testing.T) {
 				Raw:   float64(index),
 			})
 
-			learner.Step(&types.Envelope{CVD: measurement})
+			learner.Step(learner.Grid.Step(&types.Envelope{CVD: measurement}))
 		}
 
-		learner.Population.Agents[0].Reading.Defined = true
-		learner.Population.Agents[0].Reading.Mean = -.125
+		learner.Agent.Reading.Defined = true
+		learner.Agent.Reading.Mean = -.125
 
 		state := wire.GetRootAsLearningState(
 			learner.MarshalFlatbuffer("BTC/USD"), 0,
 		).UnPack()
 
-		So(state.Steps, ShouldEqual, 2)
+		So(state.Steps, ShouldEqual, 0) // A grid can be displayed before agents are ready.
 		So(state.Markets, ShouldHaveLength, 2)
 		So(state.Markets[0].Quantities, ShouldHaveLength, 2)
 		So(state.Markets[1].Quantities, ShouldBeEmpty)
@@ -57,7 +57,7 @@ func BenchmarkLearnerMarshalFlatbuffer(b *testing.B) {
 		})
 	}
 
-	learner.Step(&types.Envelope{CVD: measurement})
+	learner.Step(learner.Grid.Step(&types.Envelope{CVD: measurement}))
 	b.ReportAllocs()
 
 	for b.Loop() {
@@ -90,7 +90,7 @@ func TestLearnerMarshalFlatbufferConcurrent(t *testing.T) {
 			for index := range 32 {
 				measurement := data.NewMeasurement[float64]("wire", "BTC/USD", "signal", time.Now(), time.Now())
 				measurement.PutMetric(data.Metric[float64]{Label: "change", Raw: float64(index % 3)})
-				learner.Step(&types.Envelope{CVD: measurement})
+				learner.Step(learner.Grid.Step(&types.Envelope{CVD: measurement}))
 			}
 			return learner.Error()
 		})
@@ -98,7 +98,7 @@ func TestLearnerMarshalFlatbufferConcurrent(t *testing.T) {
 			for index := range 32 {
 				columns := [][2]string{{"replay", strconv.Itoa(index)}}
 
-				if err := learner.Population.Learn("BTC/USD", columns,
+				if err := learner.Learn("BTC/USD", columns,
 					[]uint64{FlatPositionContext, grid.ConditionToken(1, 1, -1)}, Action{Kind: "enter"}, -0.01, 0.5); err != nil {
 					return err
 				}

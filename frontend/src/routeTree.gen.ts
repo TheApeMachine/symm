@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as XrayRouteImport } from './routes/xray'
+import { Route as WorkbenchRouteImport } from './routes/workbench'
 import { Route as SignalsRouteImport } from './routes/signals'
 import { Route as RegulatorRouteImport } from './routes/regulator'
 import { Route as LineageRouteImport } from './routes/lineage'
@@ -27,6 +28,11 @@ import { Route as IndexRouteImport } from './routes/index'
 const XrayRoute = XrayRouteImport.update({
   id: '/xray',
   path: '/xray',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WorkbenchRoute = WorkbenchRouteImport.update({
+  id: '/workbench',
+  path: '/workbench',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignalsRoute = SignalsRouteImport.update({
@@ -109,6 +115,7 @@ export interface FileRoutesByFullPath {
   '/lineage': typeof LineageRoute
   '/regulator': typeof RegulatorRoute
   '/signals': typeof SignalsRoute
+  '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
 }
 export interface FileRoutesByTo {
@@ -125,6 +132,7 @@ export interface FileRoutesByTo {
   '/lineage': typeof LineageRoute
   '/regulator': typeof RegulatorRoute
   '/signals': typeof SignalsRoute
+  '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
 }
 export interface FileRoutesById {
@@ -142,6 +150,7 @@ export interface FileRoutesById {
   '/lineage': typeof LineageRoute
   '/regulator': typeof RegulatorRoute
   '/signals': typeof SignalsRoute
+  '/workbench': typeof WorkbenchRoute
   '/xray': typeof XrayRoute
 }
 export interface FileRouteTypes {
@@ -160,6 +169,7 @@ export interface FileRouteTypes {
     | '/lineage'
     | '/regulator'
     | '/signals'
+    | '/workbench'
     | '/xray'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -176,6 +186,7 @@ export interface FileRouteTypes {
     | '/lineage'
     | '/regulator'
     | '/signals'
+    | '/workbench'
     | '/xray'
   id:
     | '__root__'
@@ -192,6 +203,7 @@ export interface FileRouteTypes {
     | '/lineage'
     | '/regulator'
     | '/signals'
+    | '/workbench'
     | '/xray'
   fileRoutesById: FileRoutesById
 }
@@ -209,6 +221,7 @@ export interface RootRouteChildren {
   LineageRoute: typeof LineageRoute
   RegulatorRoute: typeof RegulatorRoute
   SignalsRoute: typeof SignalsRoute
+  WorkbenchRoute: typeof WorkbenchRoute
   XrayRoute: typeof XrayRoute
 }
 
@@ -219,6 +232,13 @@ declare module '@tanstack/react-router' {
       path: '/xray'
       fullPath: '/xray'
       preLoaderRoute: typeof XrayRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/workbench': {
+      id: '/workbench'
+      path: '/workbench'
+      fullPath: '/workbench'
+      preLoaderRoute: typeof WorkbenchRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signals': {
@@ -329,6 +349,7 @@ const rootRouteChildren: RootRouteChildren = {
   LineageRoute: LineageRoute,
   RegulatorRoute: RegulatorRoute,
   SignalsRoute: SignalsRoute,
+  WorkbenchRoute: WorkbenchRoute,
   XrayRoute: XrayRoute,
 }
 export const routeTree = rootRouteImport

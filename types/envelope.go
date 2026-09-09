@@ -9,6 +9,7 @@ import (
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
@@ -148,12 +149,13 @@ const (
 )
 
 // LearningState is the live owner's FlatBuffers serialization contract.
-type LearningState interface { MarshalFlatbuffer(string) []byte }
+type LearningState interface{ MarshalFlatbuffer(string) []byte }
 
 type Envelope struct {
- Learning LearningState
-	Key    string
-	TypeID TypeID
+	Impulses []grid.Impulse
+	Learning LearningState
+	Key      string
+	TypeID   TypeID
 
 	// Tick is the engine clock at which this envelope was produced: the
 	// monotonic thesis counter, stamped when the ingress observation commits.
@@ -1054,6 +1056,9 @@ func (envelope *Envelope) Encode() *telemetry.EnvelopeStateT {
 	}
 
 	state := envelope.encodeBase(envelopeMeasurementIdentity)
+	for _, measurement := range envelope.Measurements() {
+		state.LearningObservations = append(state.LearningObservations, encodeMeasurement(measurement))
+	}
 	state.Resonance = encodeResonanceArtifact(envelope.Resonance)
 	state.Manifold = encodeManifoldState(envelope.Manifold)
 	state.Boundaries = encodeBoundaries(envelope.Boundaries)
@@ -1283,8 +1288,10 @@ func (envelope *Envelope) EncodeWebsocket(includeLearning bool) []byte {
 
 	state := envelope.encodeBase(measurementForFocus)
 
- if includeLearning && envelope.Learning != nil { state.Learning = envelope.Learning.MarshalFlatbuffer(Focus()) }
- offset := state.Pack(builder)
+	if includeLearning && envelope.Learning != nil {
+		state.Learning = envelope.Learning.MarshalFlatbuffer(Focus())
+	}
+	offset := state.Pack(builder)
 	telemetry.FinishEnvelopeStateBuffer(builder, offset)
 
 	encoded := builder.FinishedBytes()

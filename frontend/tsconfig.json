@@ -6,6 +6,16 @@
     "jsx": "react-jsx",
     "module": "ESNext",
     "paths": {
+      /*
+        The chart and datagrid plugins' type declarations reach into the
+        viewer's TypeScript source rather than its built declarations, which
+        drags the dependency's own source through this project's compiler
+        settings. The mapping points those imports back at the declarations
+        the viewer publishes.
+      */
+      "@perspective-dev/viewer/src/ts/*": [
+        "./node_modules/@perspective-dev/viewer/dist/esm/*"
+      ],
       "#/*": ["./src/*"],
       "@/*": ["./src/*"]
     },

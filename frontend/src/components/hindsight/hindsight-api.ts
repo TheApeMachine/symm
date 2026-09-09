@@ -10,37 +10,35 @@ import type {
 	HindsightTimeline,
 	HindsightTimelineQuery,
 } from "./hindsight-types";
+import { hubBaseUrl } from "#/lib/hub";
 
-/*
-hindsightBaseUrl mirrors the other REST readers: derive the hub origin from the
-websocket URL (env override with a localhost default), then hit the read-only
-/hindsight/* endpoints the hub serves from the persisted store.
-*/
-const hindsightBaseUrl = () => {
-	if (import.meta.env.VITE_SYMM_WS_URL) {
-		return import.meta.env.VITE_SYMM_WS_URL.replace(/^ws/, "http").replace(
-			/\/ws$/,
-			"",
+
+export const fetchHindsightRuns = async (): Promise<HindsightRun[]> => {
+	const response = await fetch(`${hubBaseUrl()}/hindsight/runs`);
+
+	if (!response.ok) {
+		throw new Error(
+			`Hindsight request failed (${response.status}): ${await response.text()}`,
 		);
 	}
 
-	const protocol = window.location.protocol === "https:" ? "https:" : "http:";
-	const host =
-		!window.location.hostname || window.location.hostname === "localhost"
-			? "127.0.0.1"
-			: window.location.hostname;
+	const runs: HindsightRun[] = await response.json();
 
-	return `${protocol}//${host}:8765`;
-};
+	if (!Array.isArray(runs))
+		throw new Error("Hindsight returned invalid run metadata");
 
-export const fetchHindsightRuns = async (): Promise<HindsightRun[]> => {
-	const response = await fetch(`${hindsightBaseUrl()}/hindsight/runs`);
-
-	if (!response.ok) {
-		return [];
+	for (const run of runs) {
+		if (
+			typeof run?.id !== "string" ||
+			run.id === "" ||
+			typeof run.startedAt !== "string"
+		) {
+			throw new Error("Hindsight returned invalid run metadata");
+		}
+		// The date formatter must never receive an unparseable timestamp.
+		new Date(run.startedAt).toISOString();
 	}
-
-	return (await response.json()) as HindsightRun[];
+	return runs;
 };
 
 export const fetchHindsightCaptures = async (
@@ -48,11 +46,13 @@ export const fetchHindsightCaptures = async (
 	after = 0,
 ): Promise<HindsightCapture[]> => {
 	const response = await fetch(
-		`${hindsightBaseUrl()}/hindsight/captures?run=${encodeURIComponent(run)}&after=${after}`,
+		`${hubBaseUrl()}/hindsight/captures?run=${encodeURIComponent(run)}&after=${after}`,
 	);
 
 	if (!response.ok) {
-		return [];
+		throw new Error(
+			`Hindsight request failed (${response.status}): ${await response.text()}`,
+		);
 	}
 
 	return (await response.json()) as HindsightCapture[];
@@ -62,11 +62,13 @@ export const fetchHindsightStates = async (
 	run: string,
 ): Promise<HindsightState[]> => {
 	const response = await fetch(
-		`${hindsightBaseUrl()}/hindsight/states?run=${encodeURIComponent(run)}`,
+		`${hubBaseUrl()}/hindsight/states?run=${encodeURIComponent(run)}`,
 	);
 
 	if (!response.ok) {
-		return [];
+		throw new Error(
+			`Hindsight request failed (${response.status}): ${await response.text()}`,
+		);
 	}
 
 	return (await response.json()) as HindsightState[];
@@ -78,11 +80,15 @@ export const fetchHindsightState = async (
 	ordinal: number,
 ): Promise<HindsightState | null> => {
 	const response = await fetch(
-		`${hindsightBaseUrl()}/hindsight/state?run=${encodeURIComponent(run)}&seq=${sequence}&ordinal=${ordinal}`,
+		`${hubBaseUrl()}/hindsight/state?run=${encodeURIComponent(run)}&seq=${sequence}&ordinal=${ordinal}`,
 	);
 
+	if (response.status === 404) return null;
+
 	if (!response.ok) {
-		return null;
+		throw new Error(
+			`Hindsight request failed (${response.status}): ${await response.text()}`,
+		);
 	}
 
 	const state = (await response.json()) as HindsightState;
@@ -95,11 +101,15 @@ export const fetchHindsightEnvelope = async (
 	sequence: number,
 ): Promise<HindsightEnvelope | null> => {
 	const response = await fetch(
-		`${hindsightBaseUrl()}/hindsight/envelope?run=${encodeURIComponent(run)}&seq=${sequence}`,
+		`${hubBaseUrl()}/hindsight/envelope?run=${encodeURIComponent(run)}&seq=${sequence}`,
 	);
 
+	if (response.status === 404) return null;
+
 	if (!response.ok) {
-		return null;
+		throw new Error(
+			`Hindsight request failed (${response.status}): ${await response.text()}`,
+		);
 	}
 
 	return (await response.json()) as HindsightEnvelope;
@@ -109,11 +119,13 @@ export const fetchHindsightGaps = async (
 	run: string,
 ): Promise<HindsightGap[]> => {
 	const response = await fetch(
-		`${hindsightBaseUrl()}/hindsight/gaps?run=${encodeURIComponent(run)}`,
+		`${hubBaseUrl()}/hindsight/gaps?run=${encodeURIComponent(run)}`,
 	);
 
 	if (!response.ok) {
-		return [];
+		throw new Error(
+			`Hindsight request failed (${response.status}): ${await response.text()}`,
+		);
 	}
 
 	return (await response.json()) as HindsightGap[];
@@ -123,11 +135,13 @@ export const fetchHindsightLifecycle = async (
 	run: string,
 ): Promise<HindsightLifecycleEvent[]> => {
 	const response = await fetch(
-		`${hindsightBaseUrl()}/hindsight/lifecycle?run=${encodeURIComponent(run)}`,
+		`${hubBaseUrl()}/hindsight/lifecycle?run=${encodeURIComponent(run)}`,
 	);
 
 	if (!response.ok) {
-		return [];
+		throw new Error(
+			`Hindsight request failed (${response.status}): ${await response.text()}`,
+		);
 	}
 
 	return (await response.json()) as HindsightLifecycleEvent[];
@@ -154,11 +168,13 @@ export const fetchHindsightTimeline = async (
 	if (query.symbols) params.set("symbols", "1");
 
 	const response = await fetch(
-		`${hindsightBaseUrl()}/hindsight/timeline?${params.toString()}`,
+		`${hubBaseUrl()}/hindsight/timeline?${params.toString()}`,
 	);
 
 	if (!response.ok) {
-		return null;
+		throw new Error(
+			`Hindsight request failed (${response.status}): ${await response.text()}`,
+		);
 	}
 
 	return (await response.json()) as HindsightTimeline;
@@ -171,10 +187,12 @@ once per session rather than per inspected frame.
 */
 export const fetchHindsightMetricMap =
 	async (): Promise<HindsightMetricMap | null> => {
-		const response = await fetch(`${hindsightBaseUrl()}/hindsight/metric-map`);
+		const response = await fetch(`${hubBaseUrl()}/hindsight/metric-map`);
 
 		if (!response.ok) {
-			return null;
+			throw new Error(
+				`Hindsight request failed (${response.status}): ${await response.text()}`,
+			);
 		}
 
 		return (await response.json()) as HindsightMetricMap;
@@ -204,11 +222,13 @@ export const fetchHindsightResident = async (
 	});
 
 	const response = await fetch(
-		`${hindsightBaseUrl()}/hindsight/resident?${params.toString()}`,
+		`${hubBaseUrl()}/hindsight/resident?${params.toString()}`,
 	);
 
 	if (!response.ok) {
-		return null;
+		throw new Error(
+			`Hindsight request failed (${response.status}): ${await response.text()}`,
+		);
 	}
 
 	return (await response.json()) as HindsightResident;

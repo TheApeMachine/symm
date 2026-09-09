@@ -3,154 +3,112 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, @typescript-eslint/no-non-null-assertion */
 
-import * as flatbuffers from "flatbuffers";
+import * as flatbuffers from 'flatbuffers';
 
-import {
-	EnvelopeFloatRow,
-	type EnvelopeFloatRowT,
-} from "../telemetry/envelope-float-row.js";
+import { EnvelopeFloatRow, EnvelopeFloatRowT } from '../telemetry/envelope-float-row.js';
 
-export class EnvelopeNamedFloatMatrix
-	implements flatbuffers.IUnpackableObject<EnvelopeNamedFloatMatrixT>
-{
-	bb: flatbuffers.ByteBuffer | null = null;
-	bb_pos = 0;
-	__init(i: number, bb: flatbuffers.ByteBuffer): EnvelopeNamedFloatMatrix {
-		this.bb_pos = i;
-		this.bb = bb;
-		return this;
-	}
 
-	static getRootAsEnvelopeNamedFloatMatrix(
-		bb: flatbuffers.ByteBuffer,
-		obj?: EnvelopeNamedFloatMatrix,
-	): EnvelopeNamedFloatMatrix {
-		return (obj || new EnvelopeNamedFloatMatrix()).__init(
-			bb.readInt32(bb.position()) + bb.position(),
-			bb,
-		);
-	}
+export class EnvelopeNamedFloatMatrix implements flatbuffers.IUnpackableObject<EnvelopeNamedFloatMatrixT> {
+  bb: flatbuffers.ByteBuffer|null = null;
+  bb_pos = 0;
+  __init(i:number, bb:flatbuffers.ByteBuffer):EnvelopeNamedFloatMatrix {
+  this.bb_pos = i;
+  this.bb = bb;
+  return this;
+}
 
-	static getSizePrefixedRootAsEnvelopeNamedFloatMatrix(
-		bb: flatbuffers.ByteBuffer,
-		obj?: EnvelopeNamedFloatMatrix,
-	): EnvelopeNamedFloatMatrix {
-		bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
-		return (obj || new EnvelopeNamedFloatMatrix()).__init(
-			bb.readInt32(bb.position()) + bb.position(),
-			bb,
-		);
-	}
+static getRootAsEnvelopeNamedFloatMatrix(bb:flatbuffers.ByteBuffer, obj?:EnvelopeNamedFloatMatrix):EnvelopeNamedFloatMatrix {
+  return (obj || new EnvelopeNamedFloatMatrix()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-	name(): string | null;
-	name(optionalEncoding: flatbuffers.Encoding): string | Uint8Array | null;
-	name(optionalEncoding?: any): string | Uint8Array | null {
-		const offset = this.bb!.__offset(this.bb_pos, 4);
-		return offset
-			? this.bb!.__string(this.bb_pos + offset, optionalEncoding)
-			: null;
-	}
+static getSizePrefixedRootAsEnvelopeNamedFloatMatrix(bb:flatbuffers.ByteBuffer, obj?:EnvelopeNamedFloatMatrix):EnvelopeNamedFloatMatrix {
+  bb.setPosition(bb.position() + flatbuffers.SIZE_PREFIX_LENGTH);
+  return (obj || new EnvelopeNamedFloatMatrix()).__init(bb.readInt32(bb.position()) + bb.position(), bb);
+}
 
-	rows(index: number, obj?: EnvelopeFloatRow): EnvelopeFloatRow | null {
-		const offset = this.bb!.__offset(this.bb_pos, 6);
-		return offset
-			? (obj || new EnvelopeFloatRow()).__init(
-					this.bb!.__indirect(
-						this.bb!.__vector(this.bb_pos + offset) + index * 4,
-					),
-					this.bb!,
-				)
-			: null;
-	}
+name():string|null
+name(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+name(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 4);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
 
-	rowsLength(): number {
-		const offset = this.bb!.__offset(this.bb_pos, 6);
-		return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
-	}
+rows(index: number, obj?:EnvelopeFloatRow):EnvelopeFloatRow|null {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
+  return offset ? (obj || new EnvelopeFloatRow()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
 
-	static startEnvelopeNamedFloatMatrix(builder: flatbuffers.Builder) {
-		builder.startObject(2);
-	}
+rowsLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 6);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
 
-	static addName(builder: flatbuffers.Builder, nameOffset: flatbuffers.Offset) {
-		builder.addFieldOffset(0, nameOffset, 0);
-	}
+static startEnvelopeNamedFloatMatrix(builder:flatbuffers.Builder) {
+  builder.startObject(2);
+}
 
-	static addRows(builder: flatbuffers.Builder, rowsOffset: flatbuffers.Offset) {
-		builder.addFieldOffset(1, rowsOffset, 0);
-	}
+static addName(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(0, nameOffset, 0);
+}
 
-	static createRowsVector(
-		builder: flatbuffers.Builder,
-		data: flatbuffers.Offset[],
-	): flatbuffers.Offset {
-		builder.startVector(4, data.length, 4);
-		for (let i = data.length - 1; i >= 0; i--) {
-			builder.addOffset(data[i]!);
-		}
-		return builder.endVector();
-	}
+static addRows(builder:flatbuffers.Builder, rowsOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(1, rowsOffset, 0);
+}
 
-	static startRowsVector(builder: flatbuffers.Builder, numElems: number) {
-		builder.startVector(4, numElems, 4);
-	}
+static createRowsVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
 
-	static endEnvelopeNamedFloatMatrix(
-		builder: flatbuffers.Builder,
-	): flatbuffers.Offset {
-		const offset = builder.endObject();
-		builder.requiredField(offset, 4); // name
-		builder.requiredField(offset, 6); // rows
-		return offset;
-	}
+static startRowsVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
 
-	static createEnvelopeNamedFloatMatrix(
-		builder: flatbuffers.Builder,
-		nameOffset: flatbuffers.Offset,
-		rowsOffset: flatbuffers.Offset,
-	): flatbuffers.Offset {
-		EnvelopeNamedFloatMatrix.startEnvelopeNamedFloatMatrix(builder);
-		EnvelopeNamedFloatMatrix.addName(builder, nameOffset);
-		EnvelopeNamedFloatMatrix.addRows(builder, rowsOffset);
-		return EnvelopeNamedFloatMatrix.endEnvelopeNamedFloatMatrix(builder);
-	}
+static endEnvelopeNamedFloatMatrix(builder:flatbuffers.Builder):flatbuffers.Offset {
+  const offset = builder.endObject();
+  builder.requiredField(offset, 4) // name
+  builder.requiredField(offset, 6) // rows
+  return offset;
+}
 
-	unpack(): EnvelopeNamedFloatMatrixT {
-		return new EnvelopeNamedFloatMatrixT(
-			this.name(),
-			this.bb!.createObjList<EnvelopeFloatRow, EnvelopeFloatRowT>(
-				this.rows.bind(this),
-				this.rowsLength(),
-			),
-		);
-	}
+static createEnvelopeNamedFloatMatrix(builder:flatbuffers.Builder, nameOffset:flatbuffers.Offset, rowsOffset:flatbuffers.Offset):flatbuffers.Offset {
+  EnvelopeNamedFloatMatrix.startEnvelopeNamedFloatMatrix(builder);
+  EnvelopeNamedFloatMatrix.addName(builder, nameOffset);
+  EnvelopeNamedFloatMatrix.addRows(builder, rowsOffset);
+  return EnvelopeNamedFloatMatrix.endEnvelopeNamedFloatMatrix(builder);
+}
 
-	unpackTo(_o: EnvelopeNamedFloatMatrixT): void {
-		_o.name = this.name();
-		_o.rows = this.bb!.createObjList<EnvelopeFloatRow, EnvelopeFloatRowT>(
-			this.rows.bind(this),
-			this.rowsLength(),
-		);
-	}
+unpack(): EnvelopeNamedFloatMatrixT {
+  return new EnvelopeNamedFloatMatrixT(
+    this.name(),
+    this.bb!.createObjList<EnvelopeFloatRow, EnvelopeFloatRowT>(this.rows.bind(this), this.rowsLength())
+  );
+}
+
+
+unpackTo(_o: EnvelopeNamedFloatMatrixT): void {
+  _o.name = this.name();
+  _o.rows = this.bb!.createObjList<EnvelopeFloatRow, EnvelopeFloatRowT>(this.rows.bind(this), this.rowsLength());
+}
 }
 
 export class EnvelopeNamedFloatMatrixT implements flatbuffers.IGeneratedObject {
-	constructor(
-		public name: string | Uint8Array | null = null,
-		public rows: EnvelopeFloatRowT[] = [],
-	) {}
+constructor(
+  public name: string|Uint8Array|null = null,
+  public rows: (EnvelopeFloatRowT)[] = []
+){}
 
-	pack(builder: flatbuffers.Builder): flatbuffers.Offset {
-		const name = this.name !== null ? builder.createString(this.name!) : 0;
-		const rows = EnvelopeNamedFloatMatrix.createRowsVector(
-			builder,
-			builder.createObjectOffsetList(this.rows),
-		);
 
-		return EnvelopeNamedFloatMatrix.createEnvelopeNamedFloatMatrix(
-			builder,
-			name,
-			rows,
-		);
-	}
+pack(builder:flatbuffers.Builder): flatbuffers.Offset {
+  const name = (this.name !== null ? builder.createString(this.name!) : 0);
+  const rows = EnvelopeNamedFloatMatrix.createRowsVector(builder, builder.createObjectOffsetList(this.rows));
+
+  return EnvelopeNamedFloatMatrix.createEnvelopeNamedFloatMatrix(builder,
+    name,
+    rows
+  );
+}
 }
