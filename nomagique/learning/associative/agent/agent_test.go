@@ -99,6 +99,24 @@ func TestAgentActivate(t *testing.T) {
 	})
 }
 
+func TestAgentActivateExplore(t *testing.T) {
+	Convey("A single learned action cannot eliminate replay exploration", t, func() {
+		member, environment := newAgentFixture(t)
+		member.Explore = true
+		member.Model.Observe(ContextKey("task", []uint64{13, 1}), []byte("wait"))
+		seen := map[string]bool{}
+		// 256 independent draws from two feasible choices exercises the cold
+		// comparison case without any wall-clock or market threshold.
+		for range 256 {
+			So(member.Activate("task", environment.mark.At, []uint64{1}, 1), ShouldBeNil)
+			seen[member.Last.Action] = true
+			So(member.Abort(member.Last.ID), ShouldBeNil)
+		}
+		So(seen["work"], ShouldBeTrue)
+		So(seen["wait"], ShouldBeTrue)
+	})
+}
+
 func TestAgentStep(t *testing.T) {
 	Convey("Only ready regions reach the agent and breaks reset its active sequence", t, func() {
 		member, environment := newAgentFixture(t)
@@ -114,6 +132,10 @@ func TestAgentStep(t *testing.T) {
 		So(member.Last.Context, ShouldResemble, []uint64{13, uint64(1)<<63 | 2, 11})
 		So(member.Last.Evaluation.IsBreak, ShouldBeTrue)
 		So(member.histories["task"], ShouldBeEmpty)
+		environment.unavailable = true
+		member.Step(impulse)
+		So(member.Status(), ShouldEqual, runtime.WAITING)
+		So(member.Decisions, ShouldEqual, 1)
 		environment.err = errors.New("objective unavailable")
 		member.Step(impulse)
 		So(member.Error(), ShouldNotBeNil)

@@ -1,75 +1,4 @@
-loat_as_uint(c);
-    dbg_words[base + 5u] = __float_as_uint(d);
-}
-
-// -----------------------------------------------------------------------------
-// Parameter structs
-// -----------------------------------------------------------------------------
-// Host/device POD layouts have one declaration in ../bridge.h.
-
-// =============================================================================
-// Adaptive Thermodynamics: Fast reduction for global energy statistics
-// =============================================================================
-// We use a 2-pass reduction to compute:
-//   mean_abs = mean(|x|), mean = mean(x), std = std(x)
-// entirely on-GPU, so downstream kernels can do adaptive renormalization without
-// CPU sync or "magic number" damping.
-//
-// Output format (single float4 in `out_stats`):
-//   x: mean_abs
-//   y: mean
-//   z: std
-//   w: count (as float)
-//
-// NOTE: Host must dispatch pass1 with exactly 256 threads/threadgroup and
-//       num_threadgroups = ceil(N / 256).
-// -----------------------------------------------------------------------------
-
-// Fixed block size required by these reduction kernels.
-constexpr uint kReduceThreads = 256;
-
-__global__ void reduce_float_stats_pass1(
-    const float* x,
-    float* group_stats,
-    uint  N
-) {
-    const uint tid = threadIdx.x;
-    const uint tg_id = blockIdx.x;
-
-    uint idx = tg_id * kReduceThreads + tid;
-    float v = (idx < N) ? x[idx] : 0.0f;
-    float4 acc = make_float4(fabsf(v), v, v * v, (idx < N) ? 1.0f : 0.0f);
-
-    __shared__ float4 scratch[kReduceThreads];
-    scratch[tid] = acc;
-    __syncthreads();
-
-    // Parallel reduction in shared memory.
-    for (uint offset = kReduceThreads / 2; offset > 0; offset >>= 1) {
-        if (tid < offset) {
-            scratch[tid] += scratch[tid + offset];
-        }
-        __syncthreads();
-    }
-
-    if (tid == 0) {
-        group_stats[tg_id * 4 + 0] = scratch[0].x;
-        group_stats[tg_id * 4 + 1] = scratch[0].y;
-        group_stats[tg_id * 4 + 2] = scratch[0].z;
-        group_stats[tg_id * 4 + 3] = scratch[0].w;
-    }
-}
-
-__global__ void reduce_float_stats_finalize(
-    const float* group_stats,
-    float* out_stats,
-    uint  num_groups
-) {
-    const uint tid = threadIdx.x;
-
-    // One threadgroup (kReduceThreads) reduces all group_stats.
-    float4 acc = make_float4(0.0f);
-    for (uint i = tid; i < num_groups; i += kReduceThreads) {
+for (uint i = tid; i < num_groups; i += kReduceThreads) {
         float sum_abs = group_stats[i * 4 + 0];
         float sum = group_stats[i * 4 + 1];
         float sum_sq = group_stats[i * 4 + 2];
@@ -16008,159 +15937,6 @@ func (consumer *Consumer[T]) haltOnError() {
 ---
 
 ---
-File: /nomagique/runtime/ring.go
----
-
-package runtime
-
-import (
-	"context"
-	"errors"
-	"sync"
-	"sync/atomic"
-
-	"github.com/smarty/go-disruptor"
-)
-
-/*
-ring owns bounded slots and the publication/completion barriers for staged
-consumers. Cursor changes and wakeups share one lock. Waiting consumers therefore
-park without polling or losing a notification between checking and sleeping.
-Processing itself runs outside the lock, concurrently within each stage.
-*/
-type ring[T any] struct {
-	ctx             context.Context
-	changed         *sync.Cond
-	buffer          []T
-	head, completed atomic.Int64
-	closed          bool
-	workers         sync.WaitGroup
-	stopWake        func() bool
-}
-
-/* ringReader owns one consumer cursor and the prior stage's dependency barrier. */
-type ringReader struct {
-	handler      disruptor.Handler
-	dependencies []*ringReader
-	sequence     int64
-	final        bool
-}
-
-func newRing[T any](ctx context.Context, capacity uint32) (*ring[T], error) {
-	if capacity == 0 || capacity&(capacity-1) != 0 {
-		return nil, errors.New("runtime: ring capacity must be a positive power of two")
-	}
-	ring := &ring[T]{ctx: ctx, changed: sync.NewCond(&sync.Mutex{}), buffer: make([]T, capacity)}
-	ring.head.Store(-1)
-	ring.completed.Store(-1)
-	ring.stopWake = context.AfterFunc(ctx, func() {
-		ring.changed.L.Lock()
-		ring.changed.Broadcast()
-		ring.changed.L.Unlock()
-	})
-	return ring, nil
-}
-
-/* Start wires stage dependencies before starting any consumer. */
-func (ring *ring[T]) Start(groups [][]disruptor.Handler) {
-	if len(groups) == 0 || len(groups[len(groups)-1]) != 1 {
-		panic("runtime: ring requires one final completion consumer")
-	}
-
-	var previous []*ringReader
-
-	for index, group := range groups {
-		readers := make([]*ringReader, len(group))
-
-		for member, handler := range group {
-			reader := &ringReader{handler: handler, dependencies: previous, sequence: -1, final: index == len(groups)-1}
-			readers[member] = reader
-			ring.workers.Go(func() { ring.consume(reader) })
-		}
-		previous = readers
-	}
-}
-
-/* Publish reserves and commits one slot atomically, blocking only at capacity. */
-func (ring *ring[T]) Publish(payload T) (int64, bool) {
-	ring.changed.L.Lock()
-	defer ring.changed.L.Unlock()
-
-	for !ring.closed && ring.ctx.Err() == nil && ring.head.Load()-ring.completed.Load() >= int64(len(ring.buffer)) {
-		ring.changed.Wait()
-	}
-
-	if ring.closed || ring.ctx.Err() != nil {
-		return 0, false
-	}
-	sequence := ring.head.Load() + 1
-	ring.buffer[sequence&int64(len(ring.buffer)-1)] = payload
-	ring.head.Store(sequence)
-	ring.changed.Broadcast()
-	return sequence, true
-}
-
-/* consume drains the available prefix after every upstream sibling completes it. */
-func (ring *ring[T]) consume(reader *ringReader) {
-	for {
-		ring.changed.L.Lock()
-		lower := reader.sequence + 1
-		upper := ring.available(reader)
-
-		for lower > upper {
-			if ring.closed && lower > ring.head.Load() {
-				ring.changed.L.Unlock()
-				return
-			}
-			ring.changed.Wait()
-			upper = ring.available(reader)
-		}
-		ring.changed.L.Unlock()
-		reader.handler.Handle(lower, upper)
-		ring.changed.L.Lock()
-		reader.sequence = upper
-
-		if reader.final {
-			ring.completed.Store(upper)
-		}
-		ring.changed.Broadcast()
-		ring.changed.L.Unlock()
-	}
-}
-
-/* available reads the minimum upstream cursor while the publication lock is held. */
-func (ring *ring[T]) available(reader *ringReader) int64 {
-	upper := ring.head.Load()
-
-	for _, dependency := range reader.dependencies {
-		upper = min(upper, dependency.sequence)
-	}
-	return upper
-}
-
-/* Await gives a nested Workload completion semantics without a spin loop. */
-func (ring *ring[T]) Await(sequence int64) {
-	ring.changed.L.Lock()
-	defer ring.changed.L.Unlock()
-
-	for ring.completed.Load() < sequence && ring.ctx.Err() == nil {
-		ring.changed.Wait()
-	}
-}
-
-/* Close refuses new publications and joins every consumer after draining its prefix. */
-func (ring *ring[T]) Close() {
-	ring.changed.L.Lock()
-	ring.closed = true
-	ring.changed.Broadcast()
-	ring.changed.L.Unlock()
-	ring.workers.Wait()
-	ring.stopWake()
-}
-
----
-
----
 File: /nomagique/runtime/sink.go
 ---
 
@@ -16375,7 +16151,7 @@ func (status *Status) Current() Stage {
 ---
 
 ---
-File: /nomagique/runtime/workload.go
+File: /nomagique/runtime/system.go
 ---
 
 package runtime
@@ -16384,25 +16160,99 @@ import (
 	"context"
 	"errors"
 
+	"github.com/theapemachine/errnie"
+)
+
+type System struct {
+	ctx     context.Context
+	cancel  context.CancelFunc
+	name    string
+	err     error
+	status  *Status
+	closers []func() error
+}
+
+func NewSystem(
+	ctx context.Context,
+	name string,
+	closers ...func() error,
+) *System {
+	ctx, cancel := context.WithCancel(ctx)
+
+	return &System{
+		ctx:     ctx,
+		cancel:  cancel,
+		name:    name,
+		status:  NewStatus(),
+		closers: closers,
+	}
+}
+
+func (system *System) Name() string           { return system.name }
+func (system *System) Transition(stage Stage) { system.status.Transition(stage) }
+func (system *System) Status() Stage          { return system.status.Current() }
+func (system *System) Error() error           { return system.err }
+func (system *System) Close() error {
+	system.cancel()
+
+	for _, closer := range system.closers {
+		system.err = errors.Join(system.err, closer())
+	}
+
+	return system.err
+}
+
+// Fail retains the stage failure on the runtime owner. Processing must stop
+// until the owner is replaced or explicitly recovered.
+func (system *System) Fail(err error) {
+	if err == nil {
+		return
+	}
+	system.err = errnie.Error(err)
+	system.Transition(ERROR)
+}
+
+---
+
+---
+File: /nomagique/runtime/workload.go
+---
+
+package runtime
+
+import (
+	"context"
+	"errors"
+	"runtime"
+	"slices"
+	"sync/atomic"
+
 	"github.com/smarty/go-disruptor"
+	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/system"
 )
 
 /*
-Workload owns one bounded ring whose handler groups are declared as Node stages.
+Workload owns one disruptor whose handler groups are declared as Node stages.
 
-Nodes in one stage run concurrently. The ring barrier completes the whole
+Nodes in one stage run concurrently. The disruptor barrier completes the whole
 stage before the next stage advances. Workload also implements Node, allowing
 the same staged composition to be nested in a Workspace.
 */
 type Workload[T any] struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	name   string
-	err    error
-	status *Status
-	ring   *ring[T]
-	output Node[T]
+	*System
+	channel    disruptor.Disruptor
+	buffer     []T
+	headSeq    atomic.Int64
+	completed  atomic.Int64
+	children   []*Workload[T]
+	required   func(T) bool
+	admitted   atomic.Bool
+	closed     atomic.Bool
+	publishers atomic.Int64
+	listening  chan struct{}
+	finished   chan struct{}
+	closeErr   error
 }
 
 /*
@@ -16416,48 +16266,56 @@ func NewWorkload[T any](
 	name string,
 	stages [][]Node[T],
 ) *Workload[T] {
-	return newWorkload(ctx, name, stages, 1)
-}
-
-func newWorkload[T any](
-	ctx context.Context,
-	name string,
-	stages [][]Node[T],
-	writers uint8,
-) *Workload[T] {
-	ctx, cancel := context.WithCancel(ctx)
 	workload := &Workload[T]{
-		ctx:    ctx,
-		cancel: cancel,
-		name:   name,
-		status: NewStatus(),
+		System:    NewSystem(ctx, name),
+		buffer:    make([]T, system.Cfg.Runtime.Workspace.Buffer),
+		listening: make(chan struct{}),
+		finished:  make(chan struct{}),
 	}
-	workload.ring, workload.err = newRing[T](ctx, system.Cfg.Runtime.Workspace.Buffer)
-	workload.status.Transition(WAITING)
-	workload.start(stages, writers)
+
+	workload.headSeq.Store(-1)
+	workload.completed.Store(-1)
+	workload.Transition(WAITING)
+	workload.start(stages)
 
 	return workload
 }
 
-func (workload *Workload[T]) start(stages [][]Node[T], writers uint8) {
-	if workload.err != nil {
+func (workload *Workload[T]) start(stages [][]Node[T]) {
+	if len(stages) == 0 {
+		workload.err = errnie.Error(errnie.Err(errnie.Validation, "workload: at least one stage required", nil))
 		return
 	}
-
-	if writers < 1 {
-		workload.err = errors.New("runtime: workload requires at least one writer")
-
-		return
-	}
-
-	groups := [][]disruptor.Handler{}
+	options := optionList(
+		disruptor.Options.BufferCapacity(system.Cfg.Runtime.Workspace.Buffer),
+		disruptor.Options.WriterCount(2), // Public ingress permits concurrent producers.
+	)
 
 	for index, stage := range stages {
+		if len(stage) == 0 {
+			workload.err = errnie.Error(errnie.Err(errnie.Validation, "workload: empty stage", nil))
+			return
+		}
 		group := make([]disruptor.Handler, 0, len(stage))
 
 		for _, node := range stage {
 			if node == nil {
-				continue
+				workload.err = errnie.Error(errnie.Err(errnie.Validation, "workload: nil stage node", nil))
+				return
+			}
+			child, nested := node.(*Workload[T])
+
+			if workspace, ok := node.(*Workspace[T]); ok {
+				child, nested = workspace.Workload, true
+			}
+
+			if nested {
+				if slices.Contains(workload.children, child) {
+					workload.err = errnie.Error(errnie.Err(errnie.Validation, "workload: duplicate child", nil))
+					return
+				}
+				workload.children = append(workload.children, child)
+				workload.err = errors.Join(workload.err, child.Error())
 			}
 
 			// Composition is declared here and nowhere else: this loop is the
@@ -16467,110 +16325,160 @@ func (workload *Workload[T]) start(stages [][]Node[T], writers uint8) {
 				composed.Compose(workload.name, index)
 			}
 
-			group = append(group, NewConsumer(node, workload.ring.buffer, &workload.ring.head))
+			group = append(group, NewConsumer(node, workload.buffer, &workload.headSeq))
 		}
 
 		if len(group) > 0 {
-			groups = append(groups, group)
+			options = append(options, disruptor.Options.NewHandlerGroup(group...))
 		}
 	}
 
-	groups = append(groups, []disruptor.Handler{&completionConsumer[T]{workload: workload}})
-	workload.ring.Start(groups)
-}
+	options = append(options, disruptor.Options.NewHandlerGroup(
+		workload,
+	))
 
-type completionConsumer[T any] struct {
-	workload *Workload[T]
-}
-
-func (consumer *completionConsumer[T]) Handle(lower, upper int64) {
-	if consumer.workload.output == nil {
+	if workload.err != nil {
 		return
 	}
+	workload.channel, workload.err = disruptor.New(options...)
 
-	if ingress, ok := consumer.workload.output.(Ingress[T]); ok {
-		for sequence := lower; sequence <= upper; sequence++ {
-			ingress.Push(
-				consumer.workload.ring.buffer[sequence&system.Cfg.Runtime.Workspace.Mask],
-			)
-		}
-
-		return
+	if workload.err == nil {
+		go func() {
+			workload.channel.Listen()
+			close(workload.listening)
+		}()
 	}
+}
+
+func optionList[Option any](initial ...Option) []Option {
+	return initial
+}
+
+// Handle records completion after all declared handler groups have returned.
+func (workload *Workload[T]) Handle(lower, upper int64) {
+	var empty T
 
 	for sequence := lower; sequence <= upper; sequence++ {
-		consumer.workload.output.Step(
-			consumer.workload.ring.buffer[sequence&system.Cfg.Runtime.Workspace.Mask],
-		)
+		workload.buffer[sequence&system.Cfg.Runtime.Workspace.Mask] = empty
 	}
+	workload.completed.Store(upper)
+}
+
+// Require declares the data readiness needed to process an observation.
+// Configure it before admission. Unready observations produce no inner steps.
+func (workload *Workload[T]) Require(ready func(T) bool) {
+	workload.required = ready
 }
 
 /*
 Step submits one value and returns only after this ring's final handler group
-has completed it. This makes Workload an honest Node: an enclosing ring's
-barrier represents completion of the nested ring, not merely its enqueue.
+has completed it. Returning releases the enclosing stage barrier. Cancellation
+does not release an observation that is already being processed.
 */
 func (workload *Workload[T]) Step(payload T) T {
-	sequence, committed := workload.commit(payload)
+	sequence, committed := workload.commit(payload, false)
 
 	if !committed {
 		return payload
 	}
 
-	workload.ring.Await(sequence)
+	for workload.completed.Load() < sequence {
+		runtime.Gosched()
+	}
+
 	return payload
 }
 
 /* Push submits one value without waiting for its consumers. */
 func (workload *Workload[T]) Push(payload T) {
-	workload.commit(payload)
+	workload.commit(payload, true)
 }
 
-func (workload *Workload[T]) commit(payload T) (int64, bool) {
-	if workload == nil || workload.status.Current() != READY || workload.ring == nil {
+func (workload *Workload[T]) commit(payload T, interruptible bool) (int64, bool) {
+	if workload == nil || !workload.admitted.Load() || workload.closed.Load() || workload.channel == nil {
 		return 0, false
 	}
-	return workload.ring.Publish(payload)
+
+	workload.publishers.Add(1)
+	defer workload.publishers.Add(-1)
+
+	if workload.closed.Load() || (interruptible && workload.ctx.Err() != nil) {
+		return 0, false
+	}
+
+	if workload.required != nil && !workload.required(payload) {
+		workload.status.Transition(WAITING)
+		return 0, false
+	}
+	workload.status.Transition(READY)
+	sequence := workload.channel.TryReserve(1)
+
+	for sequence == disruptor.ErrCapacityUnavailable {
+		if workload.closed.Load() || (interruptible && workload.ctx.Err() != nil) {
+			return 0, false
+		}
+		runtime.Gosched()
+		sequence = workload.channel.TryReserve(1)
+	}
+
+	workload.buffer[sequence&system.Cfg.Runtime.Workspace.Mask] = payload
+	workload.advanceHead(sequence)
+	workload.channel.Commit(sequence, sequence)
+
+	return sequence, true
 }
 
-func (workload *Workload[T]) admit() {
-	if workload != nil && workload.err == nil && workload.ring != nil {
-		workload.status.Transition(READY)
+func (workload *Workload[T]) advanceHead(sequence int64) {
+	for {
+		current := workload.headSeq.Load()
+
+		if sequence <= current || workload.headSeq.CompareAndSwap(current, sequence) {
+			return
+		}
 	}
 }
 
-func (workload *Workload[T]) connect(output Node[T]) {
-	workload.output = output
+// Admit opens children before the ring that publishes to them.
+func (workload *Workload[T]) Admit() {
+	if workload == nil || workload.err != nil || workload.closed.Load() {
+		return
+	}
+
+	for _, child := range workload.children {
+		child.Admit()
+	}
+	workload.admitted.Store(true)
+	workload.status.Transition(READY)
 }
 
+// Close stops publication, drains accepted work, then closes the nested rings.
 func (workload *Workload[T]) Close() error {
 	if workload == nil {
 		return nil
 	}
 
-	workload.status.Transition(DONE)
+	if !workload.closed.CompareAndSwap(false, true) {
+		<-workload.finished
+		return workload.closeErr
+	}
 
-	if workload.ring != nil {
-		workload.ring.Close()
+	for workload.publishers.Load() != 0 {
+		runtime.Gosched()
+	}
+	workload.closeErr = workload.err
+
+	if workload.channel != nil {
+		workload.closeErr = errors.Join(workload.closeErr, workload.channel.Close())
+		<-workload.listening
+	}
+
+	for _, child := range workload.children {
+		workload.closeErr = errors.Join(workload.closeErr, child.Close())
 	}
 	workload.cancel()
-	return workload.err
-}
-
-func (workload *Workload[T]) Error() error {
-	if workload == nil {
-		return errors.New("runtime: workload is nil")
-	}
-
-	return workload.err
-}
-
-func (workload *Workload[T]) Status() *Status {
-	if workload == nil {
-		return nil
-	}
-
-	return workload.status
+	workload.status.Transition(DONE)
+	close(workload.finished)
+	return workload.closeErr
 }
 
 ---
@@ -16581,160 +16489,22 @@ File: /nomagique/runtime/workspace.go
 
 package runtime
 
-import (
-	"context"
-	"errors"
-	"slices"
-)
+import "context"
 
-/* Ingress accepts values from a streaming producer under an explicit lifecycle. */
+// Ingress accepts values from streaming producers under an explicit lifecycle.
 type Ingress[T any] interface {
 	Push(T)
-	Status() *Status
+	Status() Stage
 }
 
-/*
-Workspace is a ring whose staged Nodes may themselves be Workload rings.
-
-The outer ring supplies concurrency and stage barriers. A nested Workload
-does not need an attachment, forwarding graph, or scheduler: it is simply a
-Node in the Workspace stage declaration.
-*/
+// Workspace composes Workloads with the same stages and barriers as a Workload.
+// Every stage, including the first, processes the same submitted observation.
 type Workspace[T any] struct {
 	*Workload[T]
-	ingress  []*Workload[T]
-	children []*Workload[T]
-	err      error
 }
 
-/* NewWorkspace constructs the outer ring from the declared Node stages. */
-func NewWorkspace[T any](
-	ctx context.Context,
-	name string,
-	stages [][]Node[T],
-) *Workspace[T] {
-	workspace := &Workspace[T]{}
-
-	if len(stages) == 0 || len(stages[0]) == 0 {
-		workspace.err = errors.New("runtime: workspace requires at least one ingress node")
-
-		return workspace
-	}
-
-	if len(stages[0]) > 255 {
-		workspace.err = errors.New("runtime: workspace exceeds 255 concurrent writers")
-
-		return workspace
-	}
-
-	seen := map[*Workload[T]]bool{}
-
-	for stageIndex, stage := range stages {
-		if len(stage) == 0 {
-			workspace.err = errors.Join(
-				workspace.err,
-				errors.New("runtime: workspace stage is empty"),
-			)
-
-			continue
-		}
-
-		for _, node := range stage {
-			workload, nested := node.(*Workload[T])
-
-			if !nested && stageIndex == 0 {
-				workspace.err = errors.Join(
-					workspace.err,
-					errors.New("runtime: workspace ingress node must be a workload"),
-				)
-
-				continue
-			}
-
-			if !nested {
-				continue
-			}
-
-			if seen[workload] {
-				workspace.err = errors.Join(
-					workspace.err,
-					errors.New("runtime: workload appears more than once"),
-				)
-
-				continue
-			}
-
-			seen[workload] = true
-			workspace.children = append(workspace.children, workload)
-			workspace.err = errors.Join(workspace.err, workload.Error())
-
-			if stageIndex == 0 {
-				workspace.ingress = append(workspace.ingress, workload)
-			}
-		}
-	}
-
-	// stages[0] holds the ingress Workloads, which are this ring's writers
-	// rather than its handler groups — so the outer ring is built from the
-	// remainder. A Composed node declared directly in a Workspace stage
-	// therefore reports a stage index one lower than its position in the
-	// declaration above; the ordering between such nodes is unaffected, which
-	// is all a stage index is read for.
-	workspace.Workload = newWorkload(ctx, name, stages[1:], uint8(len(stages[0])))
-	workspace.err = errors.Join(workspace.err, workspace.Workload.Error())
-
-	for _, ingress := range workspace.ingress {
-		ingress.connect(workspace.Workload)
-	}
-
-	return workspace
-}
-
-/* Admit opens every inner ring before opening the outer ingress ring. */
-func (workspace *Workspace[T]) Admit() {
-	if workspace == nil || workspace.err != nil {
-		return
-	}
-
-	workspace.Workload.admit()
-
-	for _, child := range workspace.children {
-		child.admit()
-	}
-}
-
-func (workspace *Workspace[T]) Close() error {
-	if workspace == nil {
-		return nil
-	}
-
-	err := workspace.err
-
-	for _, ingress := range workspace.ingress {
-		err = errors.Join(err, ingress.Close())
-	}
-
-	if workspace.Workload != nil {
-		err = errors.Join(err, workspace.Workload.Close())
-	}
-
-	for _, child := range workspace.children {
-		if slices.Contains(workspace.ingress, child) {
-			continue
-		}
-
-		err = errors.Join(err, child.Close())
-	}
-
-	return err
-}
-
-func (workspace *Workspace[T]) Error() error {
-	if workspace == nil {
-		return errors.New("runtime: workspace is nil")
-	}
-
-	return workspace.err
+func NewWorkspace[T any](ctx context.Context, name string, stages [][]Node[T]) *Workspace[T] {
+	return &Workspace[T]{Workload: NewWorkload(ctx, name, stages)}
 }
 
 ---
@@ -27663,19 +27433,19 @@ File: /strategy/checkpoint.go
 package strategy
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
+	"fmt"
+
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 )
 
-// modelKey names the associative model's encoded state in the object store.
-const modelKey = "models/agent.gob"
-
-/*
-Checkpoint stores the associative model's encoded state.
-
-The model is a gob blob rather than a set of rows, so it stays in object
-storage while every Hindsight record family lives in an Iceberg table.
-*/
-type Checkpoint struct{ Store Blobs }
+// modelKey names the cognition engine's encoded state in the object store.
+const modelKey = "models/cognition.gob"
 
 /*
 Blobs is the whole-object storage the checkpoint needs.
@@ -27690,133 +27460,102 @@ type Blobs interface {
 	Write(ctx context.Context, key string, data []byte) error
 }
 
-// Load returns the saved model, reporting found=false on a first run.
-func (checkpoint Checkpoint) Load(ctx context.Context) ([]byte, bool, error) {
-	return checkpoint.Store.Read(ctx, modelKey)
-}
+// Save persists identities and cognition in one coherent checkpoint. Storage
+// runs after releasing the processing locks.
+func (learner *Learner) Save(ctx context.Context) error {
+	var buffer bytes.Buffer
+	encoder := gob.NewEncoder(&buffer)
+	learner.mutex.Lock()
+	learner.Grid.Mutex.Lock()
+	err := encoder.Encode(learner.Grid.Columns)
 
-// Save writes the model, waiting for the write to be acknowledged.
-func (checkpoint Checkpoint) Save(ctx context.Context, data []byte) error {
-	return checkpoint.Store.Write(ctx, modelKey, data)
-}
+	if err == nil {
+		var encoded []byte
+		encoded, err = learner.Agent.Model.Encode()
 
----
-
----
-File: /strategy/development.go
----
-
-package strategy
-
-import (
-	"slices"
-	"time"
-
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
-)
-
-/*
-MaxTemporalContextDepth bounds how many distinct grid states one decision is
-conditioned on. A market develops through stages — a precursor state, an
-ignition, an exhaustion — and the agent needs enough of that progression to
-recognize which stage it is in. It does not need all of it: an unbounded window
-produces a token sequence that occurs exactly once, so the model trie interns a
-branch no later observation can ever match and no record reaches a second
-sample. Six retained transitions keep A to B to C addressable while leaving the
-sequence short enough to recur.
-*/
-const MaxTemporalContextDepth = 6
-
-/*
-Context retains changes of grid condition within the input producers' actual
-observation horizon. Repeated identical conditions do not add model depth.
-*/
-type Context struct {
-	At         time.Time
-	Conditions []uint64
-}
-
-type Development struct {
-	Symbol    string
-	At        time.Time
-	From      time.Time
-	Updates   uint64
-	Decisions uint64
-	Regions   []grid.Region
-	History   []Context
-}
-
-func (development *Development) Context(
-	at time.Time, measurements []*data.Measurement[float64],
-) []uint64 {
-	from := at
-
-	for _, measurement := range measurements {
-		if !measurement.From.IsZero() && measurement.From.Before(from) {
-			from = measurement.From
+		if err == nil {
+			err = encoder.Encode(encoded)
 		}
 	}
-
-	development.From = from
-	first := 0
-
-	for first < len(development.History) && development.History[first].At.Before(from) {
-		first++
-	}
-
-	development.History = slices.Delete(development.History, 0, first)
-
-	// The producer's horizon is the outer bound; the retained depth is the
-	// inner one. Advance already collapses repeated identical states, so a
-	// stagnant market spends no depth and cannot push a precursor out of view.
-	if excess := len(development.History) - MaxTemporalContextDepth; excess > 0 {
-		development.History = slices.Delete(development.History, 0, excess)
-	}
-	var tokens []uint64
-
-	for _, context := range development.History {
-		tokens = append(tokens, uint64(1)<<63|2) // Structural boundary between observation contexts.
-		tokens = append(tokens, context.Conditions...)
-	}
-
-	return tokens
-}
-
-func (development *Development) Advance(at time.Time, space *grid.Space) error {
-	regions, _, err := space.Regions(development.Symbol)
+	learner.Grid.Mutex.Unlock()
+	learner.mutex.Unlock()
 
 	if err != nil {
-		return errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[development] failed to get regions",
-			err,
-		))
+		return errnie.Error(errnie.Err(errnie.IO, "learning: encode cognition checkpoint", err))
+	}
+	return errnie.Error(learner.archive.Write(ctx, modelKey, buffer.Bytes()))
+}
+
+// Restore applies a cognition checkpoint only before processing starts. The
+// distinct storage key prevents interpreting the retired model's bytes as cognition.
+func (learner *Learner) Restore(ctx context.Context) (bool, error) {
+	data, found, err := learner.archive.Read(ctx, modelKey)
+
+	if err != nil || !found {
+		return found, errnie.Error(err)
+	}
+	decoder := gob.NewDecoder(bytes.NewReader(data))
+	var columns [][2]string
+
+	if err := decoder.Decode(&columns); err != nil {
+		return false, errnie.Error(err)
+	}
+	learned := cognition.NewEngine(cognition.DefaultConfig())
+	var encoded []byte
+
+	if err := decoder.Decode(&encoded); err != nil {
+		return false, errnie.Error(err)
 	}
 
-	development.Regions = regions
-	conditions := make([]uint64, 0, len(regions))
+	if err := learned.Decode(encoded); err != nil {
+		return false, errnie.Error(err)
+	}
+	learner.mutex.Lock()
+	defer learner.mutex.Unlock()
+	learner.Grid.Mutex.Lock()
+	defer learner.Grid.Mutex.Unlock()
 
-	for _, region := range regions {
-		conditions = append(conditions, region.Condition)
+	if learner.Grid.Version != 0 || learner.Agent.Decisions != 0 {
+		return false, errnie.Error(errnie.Err(errnie.Conflict, "learning: restore requires fresh owners", nil))
+	}
+	for index, identity := range columns {
+		if learner.Grid.Column(identity[0], identity[1]) != index {
+			return false, errnie.Error(errnie.Err(errnie.Validation, "learning: duplicate checkpoint quantity", nil))
+		}
+	}
+	learner.Agent.Model = learned
+	return true, nil
+}
+
+// Learn admits signed historical experience under the original named
+// quantities. This preserves the existing consolidation path; agent renewal
+// and cross-agent knowledge policies are not changed here.
+func (learner *Learner) Learn(label string, columns [][2]string, context []uint64, action Action, value, authority float64) error {
+	learner.mutex.Lock()
+	defer learner.mutex.Unlock()
+	learner.Grid.Mutex.Lock()
+	defer learner.Grid.Mutex.Unlock()
+	mapped := make([]uint64, len(context))
+	for index, token := range context {
+		if token&(uint64(1)<<63) != 0 {
+			mapped[index] = token
+			continue
+		}
+		quantity := grid.ConditionQuantity(token)
+
+		if quantity == 0 || quantity > uint64(len(columns)) {
+			return errnie.Error(errnie.Err(errnie.Validation, "learning: rehearsal quantity has no identity", nil))
+		}
+		identity := columns[quantity-1]
+		column := learner.Grid.Column(identity[0], identity[1])
+		mapped[index] = grid.RemapCondition(token, uint64(column+1))
+	}
+	if authority < 0 || authority > 1 {
+		return errnie.Error(errnie.Err(errnie.Validation, "learning: feedback authority must be in [0, 1]", nil))
 	}
 
-	development.At, development.Updates = at, development.Updates+1
-
-	if len(development.History) > 0 && slices.Equal(
-		development.History[len(development.History)-1].Conditions, conditions,
-	) {
-
-		return nil
-	}
-
-	development.History = append(development.History, Context{At: at, Conditions: conditions})
-
-	// Retention is bounded here as well so the history cannot grow past the
-	// model's addressable depth regardless of how the owner interleaves calls.
-	if excess := len(development.History) - MaxTemporalContextDepth; excess > 0 {
-		development.History = slices.Delete(development.History, 0, excess)
+	if authority > 0 {
+		learner.Agent.Model.Observe(agent.ContextKey(label, mapped), []byte(fmt.Sprint(action)), value*authority)
 	}
 	return nil
 }
@@ -27835,7 +27574,7 @@ import (
 
 	flatbuffers "github.com/google/flatbuffers/go"
 	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
-	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
+
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
 
@@ -27853,10 +27592,8 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 		Steps:     learner.Steps,
 		Decisions: learner.Decisions,
 		Resolved:  learner.Resolved,
-		Status:    "learning",
+		Status:    learner.Traders[0].Status,
 		Restored:  learner.Restored,
-		Episodes:  learner.Episodes,
-		Forced:    learner.Forced,
 	}
 
 	if learner.Rehearsal != nil {
@@ -27868,15 +27605,17 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 	}
 
 	for index, trader := range learner.Traders {
-		member := learner.Population.Agents[index]
+		member := learner.Agent
 		entry := trader.Wire(member, focus)
 		entry.Id = int32(index)
 		state.Agents = append(state.Agents, entry)
 	}
-	err := learner.Population.Read(func(space *grid.Space) error {
+	learner.Grid.Mutex.Lock()
+	space := learner.Grid.Space
+	func() {
 
 		for row, symbol := range space.Rows {
-			development := learner.Developments[symbol]
+			impulse := learner.Grid.Latest[symbol]
 			activity, quality, err := space.Activity(symbol)
 
 			if err != nil {
@@ -27885,13 +27624,13 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 
 			entry := &wire.LearningDevelopmentT{
 				Symbol:    symbol,
-				AtNs:      development.At.UnixNano(),
-				FromNs:    development.From.UnixNano(),
+				AtNs:      impulse.At.UnixNano(),
+				FromNs:    impulse.From.UnixNano(),
 				Status:    "learning",
-				Decisions: development.Decisions,
+				Decisions: 0,
 				// Retained state transitions, not tokens: Context below flattens
 				// each transition's conditions into one list.
-				Depth: int32(len(development.History)),
+				Depth: 0,
 			}
 
 			if focus != "" && focus != symbol {
@@ -27899,13 +27638,17 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 				continue
 			}
 
-			for _, context := range development.History {
-				for _, condition := range context.Conditions {
+			if !impulse.Ready {
+				entry.Status = "waiting for regions"
+			}
+			if activation := learner.Agent.Activations[symbol]; activation != nil {
+				entry.Depth = int32(len(activation.Context))
+				for _, condition := range activation.Context {
 					entry.Context = append(entry.Context, strconv.FormatUint(condition, 10))
 				}
 			}
 
-			for _, region := range development.Regions {
+			for _, region := range impulse.Regions {
 				entry.Regions = append(entry.Regions, &wire.LearningRegionT{
 					Id:        region.ID,
 					Condition: region.Condition,
@@ -27933,12 +27676,8 @@ func (learner *Learner) MarshalFlatbuffer(focus string) []byte {
 			state.Markets = append(state.Markets, entry)
 		}
 
-		return nil
-	})
-
-	if err != nil {
-		state.Status = err.Error()
-	}
+	}()
+	learner.Grid.Mutex.Unlock()
 
 	builder := flatbuffers.NewBuilder(0)
 	builder.Finish(state.Pack(builder))
@@ -27966,8 +27705,6 @@ func (trader *Trader) Wire(member *agent.Agent[Action], focus string) *wire.Lear
 		Status:     trader.Status,
 		Reward:     member.Reward.TotalReward,
 		ElapsedNs:  int64(member.Reward.TotalElapsed),
-		Episode:    trader.Episode,
-		Carried:    trader.Carried,
 		Open:       int32(trader.open()),
 	}
 
@@ -27994,7 +27731,7 @@ func (trader *Trader) Wire(member *agent.Agent[Action], focus string) *wire.Lear
 	activation := member.Activations[focus]
 
 	if activation != nil {
-		last := activation.Decision
+		last := activation
 		state.Last = &wire.LearningDecisionT{
 			Id:     last.ID,
 			Symbol: last.Label,
@@ -28016,31 +27753,13 @@ func (trader *Trader) Wire(member *agent.Agent[Action], focus string) *wire.Lear
 	}
 
 	if activation != nil {
-		for _, choice := range activation.Choices {
-			reading := choice.Prior
+		for _, action := range activation.Alternatives {
 			state.Alternatives = append(state.Alternatives, &wire.LearningActionT{
-				Kind:   choice.Action.Kind,
-				Power:  int32(choice.Action.Power),
-				Reduce: choice.Action.Reduce,
-				Prior: &wire.LearningPriorT{
-					Defined:           reading.Defined,
-					Mean:              reading.Mean,
-					Variance:          reading.Variance,
-					VarianceDefined:   reading.VarianceDefined,
-					Samples:           reading.Samples,
-					Support:           reading.Support,
-					Authority:         reading.Authority,
-					Provisional:       reading.Provisional,
-					Maturity:          reading.Maturity,
-					EvidenceAuthority: reading.EvidenceAuthority,
-					Depth:             int32(reading.Depth),
-					ContextLength:     int32(reading.ContextLength),
-					Pending:           reading.Pending,
-					Memory:            reading.Memory,
-				},
+				Kind: action.Kind, Power: int32(action.Power), Reduce: action.Reduce,
 			})
 		}
 	}
+
 	if evaluation := trader.LastEvaluation; evaluation != nil {
 		state.Outcome = &wire.LearningDecisionT{Id: evaluation.ID, Agent: int32(trader.ID), Symbol: evaluation.Label, AtNs: evaluation.At.UnixNano(), ThroughNs: evaluation.Through.UnixNano(), Action: &wire.LearningActionT{Kind: evaluation.Action.Kind, Power: int32(evaluation.Action.Power), Reduce: evaluation.Action.Reduce}, Tape: evaluation.Value, HasTape: true, Quantity: evaluation.Quantity.String()}
 	}
@@ -28069,6 +27788,8 @@ File: /strategy/evaluation.go
 package strategy
 
 import (
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -28084,6 +27805,11 @@ durable trade leg closes. It reports tape opportunity return, not hypothetical
 executable PnL. Actual wallet PnL remains on Balance and Holding.
 */
 type Evaluation struct {
+	Index, Entry                 int
+	Baseline, Secured, Potential *decimal.Decimal
+	Idle                         time.Duration
+	CaptureFraction              float64
+	Failure                      string
 	*agent.Decision[Action]
 	Trader                                               int
 	Initial, Reference, Quantity, Cost, Fee, Opportunity *decimal.Decimal
@@ -28198,78 +27924,84 @@ func (evaluation *Evaluation) Row(run string) tables.OutcomeRow {
 	return row
 }
 
----
-
----
-File: /strategy/execution.go
----
-
-package strategy
-
-import (
-	"time"
-
-	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/krakenfx/api-go/v2/pkg/spot"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
-	"github.com/theapemachine/symm/kraken"
-)
-
-/*
-	Execution replaces only order submission during learning. Price supplies
-
-book walks and fees; Balance and Regulator retain their normal accounting.
-*/
-type Execution struct {
-	Price   *broker.Price
-	Balance *broker.Balance
-	At      time.Time
-	Fill    kraken.ExecutionData
-}
-
-/* AddOrder fills against the resident book without sending anything to a venue. */
-func (execution *Execution) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, error) {
-	quantity, err := decimal.NewFromString(order.Volume)
-
-	if err != nil {
-		return spot.AddOrderResult{}, errnie.Error(err)
+// Grade scores completed replay decisions using secured wallet profit. Potential
+// is the best single round trip supported by this tape's quotes for the available
+// quantity and initial funding; future quotes are used only after replay ends.
+// Idle time discounts a gain by captured-span/(captured-span+idle).
+// It never discounts a loss. A flat missed opportunity receives an idle debit;
+// waiting on a tape without executable profit receives no fabricated reward.
+func (evaluation *Evaluation) Grade(observations []hindsight.Observation, price *broker.Price) error {
+	if len(observations) < 2 || evaluation.Initial == nil || evaluation.Initial.Sign() <= 0 || evaluation.Secured == nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "evaluation: complete tape, funding and secured result required", nil))
 	}
-	fill := kraken.ExecutionData{ClientOrderID: order.ClOrdId, OrderID: order.ClOrdId, Symbol: order.Pair, Side: order.Type, OrderStatus: "filled", Timestamp: execution.At, CumQty: quantity}
+	span := observations[len(observations)-1].ReceivedAt.Sub(observations[0].ReceivedAt)
 
-	switch order.Type {
-	case "buy":
-		cost, err := execution.Price.EntryCost(order.Pair, quantity)
+	if span <= 0 || evaluation.Idle < 0 || evaluation.Idle > span {
+		return errnie.Error(errnie.Err(errnie.Validation, "evaluation: invalid captured duration or idle time", nil))
+	}
+	fee := price.FeeIfAvailable(observations[0].Symbol)
 
-		if err != nil {
-			return spot.AddOrderResult{}, err
+	if fee == nil || fee.Fee == nil {
+		return errnie.Error(errnie.Err(errnie.Validation, "evaluation: symbol fee required", nil))
+	}
+	quantity := evaluation.Quantity
+
+	if quantity == nil || quantity.Sign() == 0 {
+		quantity = evaluation.Opportunity
+	}
+	evaluation.Potential = nil
+	var cheapest *decimal.Decimal
+
+	for index, observation := range observations {
+		if observation.Symbol != observations[0].Symbol || (index > 0 && !observation.ReceivedAt.After(observations[index-1].ReceivedAt)) {
+			return errnie.Error(errnie.Err(errnie.Validation, "evaluation: mixed symbols or non-increasing capture clock", nil))
 		}
-		fill.CumCost, fill.FeeUsdEquiv, fill.AvgPrice = cost.GrossNotional, cost.EntryFee, cost.EntryPrice
-	case "sell":
-		surface, err := execution.Price.Surface(order.Pair, quantity, execution.At)
 
-		if err != nil {
-			return spot.AddOrderResult{}, err
+		if quantity == nil || quantity.Sign() <= 0 {
+			continue // No executable size was available at the decision.
 		}
-		fill.CumCost = surface.Gross
-		fill.FeeUsdEquiv = fill.CumCost.Sub(surface.ExecutableValue)
-		fill.AvgPrice = surface.ExecutableVWAP
-	default:
-		return spot.AddOrderResult{}, errnie.Error(errnie.Err(errnie.Validation, "execution: buy or sell required", nil))
+
+		if cheapest != nil && observation.HasBid && decimal.NewFromFloat64(observation.BidQty).Cmp(quantity) >= 0 {
+			proceeds := price.WithFee(observation.Symbol, decimal.NewFromFloat64(observation.Bid).Mul(quantity), broker.SELL)
+			profit := proceeds.Sub(cheapest)
+
+			if evaluation.Potential == nil || profit.Cmp(evaluation.Potential) > 0 {
+				evaluation.Potential = profit
+			}
+		}
+
+		if observation.HasAsk && decimal.NewFromFloat64(observation.AskQty).Cmp(quantity) >= 0 {
+			cost := price.WithFee(observation.Symbol, decimal.NewFromFloat64(observation.Ask).Mul(quantity), broker.BUY)
+
+			if cost.Cmp(evaluation.Initial) <= 0 && (cheapest == nil || cost.Cmp(cheapest) < 0) {
+				cheapest = cost
+			}
+		}
+	}
+	evaluation.Value = evaluation.Secured.Div(evaluation.Initial).Float64()
+	evaluation.Failure = "capital loss"
+	idleFraction := float64(evaluation.Idle) / (float64(span) + float64(evaluation.Idle))
+
+	if evaluation.Secured.Sign() > 0 {
+		evaluation.Value *= 1 - idleFraction
+		evaluation.Failure = "profit secured"
 	}
 
-	if err := execution.Balance.Settle(fill); err != nil {
-		return spot.AddOrderResult{}, err
-	}
-	execution.Fill = fill
-	result := spot.AddOrderResult{}
-	result.ID = []string{order.ClOrdId}
-	return result, nil
-}
+	if evaluation.Secured.Sign() == 0 {
+		evaluation.Failure = "no executable profit secured"
 
-/* CancelOrder rejects cancellation because simulated orders finish synchronously. */
-func (execution *Execution) CancelOrder(*spot.CancelOrderRequest) (spot.CancelResult, error) {
-	return spot.CancelResult{}, errnie.Error(errnie.Err(errnie.Conflict, "execution: no simulated order remains pending", nil))
+		if evaluation.Potential != nil && evaluation.Potential.Sign() > 0 {
+			evaluation.Value = -evaluation.Potential.Div(evaluation.Initial).Float64() * idleFraction
+			evaluation.Failure = "opportunity missed"
+		}
+	}
+
+	if evaluation.Potential != nil && evaluation.Potential.Sign() > 0 {
+		evaluation.CaptureFraction = evaluation.Secured.Div(evaluation.Potential).Float64()
+	}
+	evaluation.Through = observations[len(observations)-1].ReceivedAt
+	evaluation.Complete = true
+	return nil
 }
 
 ---
@@ -28282,11 +28014,9 @@ package strategy
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
-	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
@@ -28294,35 +28024,32 @@ import (
 	"github.com/theapemachine/symm/hindsight/recording"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken/websocket"
-	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/learning/associative"
+	"github.com/theapemachine/symm/logic/impulse"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
-	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/types"
 )
 
 /*
-	Learner wires the market environment to the associative population. Its lock
+	Learner consumes ready grid impulses and owns the live decision lifecycle. Its lock
 
 protects the original state while the UI encodes it off the workspace ring.
 */
 type Learner struct {
-	Population                 *associative.Population[Action]
+	Grid                       *impulse.Solver
+	Agent                      *agent.Agent[Action]
 	Traders                    []*Trader
 	Rehearsal                  *Rehearsal
-	Developments               map[string]*Development
 	Tape                       hindsight.Tape
 	At                         time.Time
 	Steps, Decisions, Resolved uint64
-	Forced                     uint64
 	Err                        error
 	Restored                   bool
 	mutex                      sync.Mutex
-	Checkpoint                 Checkpoint
+	archive                    Blobs
 	// catalog reads the durable tape and receives graded decisions. The model
-	// checkpoint is a blob and stays in Checkpoint; everything else is a table.
+	// checkpoint is a blob and stays in archive; everything else is a table.
 	catalog  *tables.Catalog
-	Episodes uint64
 	funding  *decimal.Decimal
 	run      hindsight.RunID
 	price    *broker.Price
@@ -28333,7 +28060,7 @@ func NewLearner(ctx context.Context, api *websocket.API, price *broker.Price, ba
 	if count < 1 {
 		return nil, errnie.Error(errnie.Err(errnie.Validation, "learning: population must contain an agent", nil))
 	}
-	learner := &Learner{Developments: make(map[string]*Development), Checkpoint: Checkpoint{Store: archive}, catalog: catalog, run: run, price: price, recorder: recorder, funding: balance.Cash()}
+	learner := &Learner{Grid: impulse.NewSolver(), archive: archive, catalog: catalog, run: run, price: price, recorder: recorder, funding: balance.Cash()}
 
 	// Agent zero is the live forward canary. It is the only member of the live
 	// population; every remaining worker replays balanced historical episodes
@@ -28345,172 +28072,102 @@ func NewLearner(ctx context.Context, api *websocket.API, price *broker.Price, ba
 	}
 	trader.ID, trader.Recorder = 0, recorder
 	learner.Traders = append(learner.Traders, trader)
-	population, err := associative.NewPopulation(trader)
+	learner.Agent, err = agent.New(ctx, trader, cognition.NewEngine(cognition.DefaultConfig()), false)
 
 	if err != nil {
 		return nil, err
 	}
-	learner.Population = population
-	learner.Restored, err = population.Restore(ctx, learner.Checkpoint)
+	learner.Restored, err = learner.Restore(ctx)
 
 	if err != nil {
 		return nil, err
 	}
+
 	if count == 1 {
 		return learner, nil
 	}
 
 	learner.Rehearsal = NewRehearsal(
+		ctx,
 		count-1,
 		catalog,
 		run,
 		hindsight.DefaultDiscoveryPolicy(),
 		price,
-		population,
+		learner,
 	)
 	return learner, nil
 }
 
-/*
-	Step consumes all published signal observations, regardless of transport kind.
-
-Future tape grades and S3 I/O never run on this path.
-*/
-func (learner *Learner) Step(envelope *types.Envelope) *types.Envelope {
+// Ready supplies the agent workload's event-local dependency gate. Invalid
+// market data never becomes an idle choice or a learning sample.
+func (learner *Learner) Ready(envelope *types.Envelope) bool {
 	learner.mutex.Lock()
 	defer learner.mutex.Unlock()
 	envelope.Learning = learner
-	learner.At = time.Now().UTC()
 
 	if envelope.TypeID == types.EnvelopeTicker {
 		learner.price.Update(&envelope.TickerData)
 	}
+	trader := learner.Traders[0]
+	for symbol, through := range trader.Ending {
+		trader.At = time.Now()
+
+		if err := trader.End(symbol, through); err != nil {
+			learner.Err = errnie.Error(err)
+			return true
+		}
+	}
+	for _, impulse := range envelope.Impulses {
+		trader.Status = "waiting for regions"
+
+		if !impulse.Ready {
+			continue
+		}
+		trader.Status = "waiting for book or fees"
+
+		if trader.Ready(impulse.Label) {
+			trader.Status = "learning"
+			return true
+		}
+	}
+	return false
+}
+
+// Step consumes reduced grid output after the workload barrier. It never
+// rebuilds the grid or grades against a future observation.
+func (learner *Learner) Step(envelope *types.Envelope) *types.Envelope {
+	learner.mutex.Lock()
+	defer learner.mutex.Unlock()
+	envelope.Learning = learner
 
 	if learner.Err != nil {
 		return envelope
 	}
-	measurements := envelope.SignalMeasurements()
-	grouped := make(map[string][]*data.Measurement[float64])
-
-	for _, measurement := range measurements {
-		if measurement != nil {
-			grouped[measurement.Label] = append(grouped[measurement.Label], measurement)
+	for _, impulse := range envelope.Impulses {
+		if !impulse.Ready || !learner.Traders[0].Ready(impulse.Label) {
+			continue
 		}
-	}
 
-	for symbol, readings := range grouped {
-		if err := learner.observe(symbol, readings); err != nil {
+		learner.At = impulse.At
+		trader := learner.Traders[0]
+		trader.At, trader.Version = impulse.At, trader.Version+1
+		learner.Agent.Step(impulse)
+
+		if err := learner.Agent.Error(); err != nil {
 			learner.Err = errnie.Error(err)
 			return envelope
 		}
+		learner.Steps++
+		learner.Decisions = learner.Agent.Decisions
 	}
 	return envelope
-}
-
-func (learner *Learner) observe(symbol string, readings []*data.Measurement[float64]) error {
-	development := learner.Developments[symbol]
-
-	if development == nil {
-		development = &Development{Symbol: symbol}
-		learner.Developments[symbol] = development
-	}
-	history := development.Context(learner.At, readings)
-	previousDecisions := learner.Decisions
-
-	for _, trader := range learner.Traders {
-		trader.At, trader.Version = learner.At, trader.Version+1
-		learner.killStale(trader, symbol)
-	}
-
-	if err := learner.Population.Step(agent.Observation{At: learner.At, Measurements: readings, History: history}); err != nil {
-		return err
-	}
-	if err := learner.releaseForced(symbol); err != nil {
-		return errnie.Error(err)
-	}
-
-	learner.Steps++
-	learner.Decisions = 0
-
-	for _, member := range learner.Population.Agents {
-		learner.Decisions += member.Decisions
-	}
-	development.Decisions += learner.Decisions - previousDecisions
-	return learner.Population.Read(func(space *grid.Space) error {
-		return development.Advance(learner.At, space)
-	})
-}
-
-/*
-killStale closes a canary position that stopped developing and grades the
-decision immediately at the executable bid. This is the live forward loop's
-forced-exit gate: instead of leaving an open trade waiting for a retracement
-leg that may never print, the wallet returns capital and the model records the
-stagnation outcome now.
-*/
-func (learner *Learner) killStale(trader *Trader, symbol string) {
-	if trader == nil {
-		return
-	}
-	regulator := trader.Positions[symbol]
-
-	if regulator == nil || regulator.Holding.Qty.Sign() == 0 || !trader.stale(symbol) {
-		return
-	}
-	// Close through the regulator directly: this is a forced canary exit, not
-	// a decision the agent issued, so it must not create an evaluation that
-	// later Review would mistake for a model-issued action.
-	trader.Execution.At = trader.At
-
-	if err := regulator.Exit(fmt.Sprintf("stale-%d-%s", trader.ID, symbol)); err != nil {
-		learner.Err = errnie.Error(err)
-		return
-	}
-
-	if err := regulator.Apply(trader.Execution.Fill); err != nil {
-		learner.Err = errnie.Error(err)
-		return
-	}
-	trader.Fills++
-	trader.Fees = trader.Fees.Add(trader.Execution.Fill.FeeUsdEquiv)
-	var bid *decimal.Decimal
-
-	trader.api.Book(symbol, func(current *book.Book) {
-		if current != nil && current.BestBid() != nil {
-			bid = current.BestBid().Price
-		}
-	})
-
-	if bid == nil {
-		return
-	}
-
-	for identity, evaluation := range trader.Evaluations[symbol] {
-		if evaluation.Complete || evaluation.Reference == nil {
-			continue
-		}
-		leg := hindsight.Leg{
-			Symbol: symbol, From: evaluation.At, Through: trader.At, ConfirmedAt: trader.At,
-			Start: evaluation.Reference, End: bid,
-		}
-
-		if !evaluation.Resolve(leg) {
-			continue
-		}
-
-		if err := learner.Population.Resolve(0, identity, evaluation.Value); err != nil {
-			learner.Err = errnie.Error(err)
-			return
-		}
-		learner.Resolved++
-		delete(trader.Evaluations[symbol], identity)
-	}
 }
 
 /*
 	Review consumes only durable tape. Each completed decision is resolved once
 
-on its issuing model; Population owns positive-experience consolidation.
+on its issuing cognition engine.
 */
 func (learner *Learner) Review(ctx context.Context) error {
 	return learner.Tape.Read(ctx, learner.catalog, learner.run, func(leg hindsight.Leg) error {
@@ -28540,19 +28197,29 @@ func (learner *Learner) resolve(leg hindsight.Leg) ([]*Evaluation, error) {
 	defer learner.mutex.Unlock()
 	var evaluations []*Evaluation
 
-	for index, trader := range learner.Traders {
+	for _, trader := range learner.Traders {
 		for identity, evaluation := range trader.Evaluations[leg.Symbol] {
 			if !evaluation.Resolve(leg) {
 				continue
 			}
 
-			if err := learner.Population.Resolve(index, identity, evaluation.Value); err != nil {
+			if _, err := learner.Agent.Resolve(identity, evaluation.Value); err != nil {
 				return nil, err
 			}
 			trader.LastEvaluation = evaluation
 			learner.Resolved++
 			delete(trader.Evaluations[leg.Symbol], identity)
 			evaluations = append(evaluations, evaluation)
+		}
+
+		if len(evaluations) > 0 {
+			if leg.ConfirmedAt.After(trader.At) {
+				trader.At = leg.ConfirmedAt
+			}
+
+			if err := trader.End(leg.Symbol, leg.Through); err != nil {
+				return nil, errnie.Error(err)
+			}
 		}
 	}
 	return evaluations, nil
@@ -28581,7 +28248,7 @@ func (learner *Learner) Run(ctx context.Context, interval time.Duration) {
 				return
 			}
 		case <-ticker.C:
-			if err := learner.Population.Save(ctx, learner.Checkpoint); err != nil {
+			if err := learner.Save(ctx); err != nil {
 				learner.fail(err)
 				return
 			}
@@ -28624,275 +28291,41 @@ func (learner *Learner) fail(err error) {
 	learner.Err = errnie.Error(err)
 }
 
-// releaseForced discards a non-choice immediately after successful execution.
-// It cannot become training evidence, so waiting for a future tape leg only
-// retains an unbounded number of useless tickets when cash or a book is absent.
-func (learner *Learner) releaseForced(symbol string) error {
-	for index, member := range learner.Population.Agents {
-		if member.Last == nil {
-			continue
-		}
-
-		evaluations := learner.Traders[index].Evaluations[symbol]
-		evaluation := evaluations[member.Last.ID]
-
-		if evaluation == nil || !evaluation.Forced {
-			continue
-		}
-
-		if err := learner.Population.Abort(index, evaluation.ID); err != nil {
-			return errnie.Error(err)
-		}
-
-		delete(evaluations, evaluation.ID)
-		learner.Forced++
-	}
-	return nil
-}
-
 ---
 
 ---
-File: /strategy/practice.go
+File: /strategy/recorded_book.go
 ---
 
 package strategy
 
 import (
+	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 )
 
-// Practice owns one complete historical exercise and its retrospective grades.
-// Quotes are captured touch quotes, with their recorded quantities. A grade is
-// action advantage in attainable net return. Equal-return early entries
-// additionally report the return foregone by occupying capital before ignition.
-// Future quotes participate only in grading, never in Actions or context.
-// Unrecovered commitment is a liquidity-completion debit: the exercise commits
-// one unit of entry cost, so no executable liquidation leaves that entire unit
-// blocked at the tape boundary. This is NOT a mark of the remaining inventory
-// or a realized wallet loss. No wallet, live book, or model is owned here.
-type Practice struct {
-	Observations []hindsight.Observation
-	entry        int
-	quantity     *decimal.Decimal
-	buys, sells  []*decimal.Decimal
-	returns      []float64
-	exits        []int
+// recordedBook exposes exactly the captured touch depth. No deeper liquidity
+// is manufactured. The replay workload exclusively owns this mutable cursor.
+type recordedBook struct{ current *book.Book }
+
+func (source *recordedBook) Step(observation hindsight.Observation) {
+	current := &book.Book{Name: observation.Symbol, Bids: &book.Side{}, Asks: &book.Side{}}
+
+	if observation.HasBid && observation.Bid > 0 {
+		current.Bids.High = &book.Level{Price: decimal.NewFromFloat64(observation.Bid), Quantity: decimal.NewFromFloat64(observation.BidQty)}
+	}
+
+	if observation.HasAsk && observation.Ask > 0 {
+		current.Asks.Low = &book.Level{Price: decimal.NewFromFloat64(observation.Ask), Quantity: decimal.NewFromFloat64(observation.AskQty)}
+	}
+	source.current = current
 }
 
-// NewPractice prepares executable entry continuations once per short tape.
-// The return objective compares attainable proceeds first. Equal-return entries
-// prefer the later commitment, using the opportunity's measured return rate
-// to debit the otherwise wasted capital time.
-func NewPractice(observations []hindsight.Observation, price *broker.Price) (*Practice, error) {
-	if len(observations) < 2 {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "practice: complete tape required", nil))
+func (source *recordedBook) Book(symbol string, read func(*book.Book)) {
+	if source.current != nil && source.current.Name == symbol {
+		read(source.current)
 	}
-	practice := &Practice{Observations: observations, entry: -1,
-		buys: make([]*decimal.Decimal, len(observations)), sells: make([]*decimal.Decimal, len(observations)),
-		returns: make([]float64, len(observations)), exits: make([]int, len(observations))}
-	elapsed := observations[len(observations)-1].ReceivedAt.Sub(observations[0].ReceivedAt)
-
-	if elapsed <= 0 {
-		return nil, errnie.Error(errnie.Err(errnie.Validation, "practice: positive captured duration required", nil))
-	}
-
-	for index, observation := range observations {
-		if observation.Symbol != observations[0].Symbol || (index > 0 && observation.ReceivedAt.Before(observations[index-1].ReceivedAt)) {
-			return nil, errnie.Error(errnie.Err(errnie.Validation, "practice: mixed symbols or regressed capture time", nil))
-		}
-		fee := price.FeeIfAvailable(observation.Symbol)
-
-		if fee == nil || fee.Fee == nil {
-			return nil, errnie.Error(errnie.Err(errnie.Validation, "practice: recorded symbol requires a fee", nil))
-		}
-
-		if observation.HasAsk && observation.Ask > 0 && observation.AskQty > 0 {
-			practice.buys[index] = price.WithFee(observation.Symbol, decimal.NewFromFloat64(observation.Ask), broker.BUY)
-		}
-
-		if observation.HasBid && observation.Bid > 0 && observation.BidQty > 0 {
-			practice.sells[index] = price.WithFee(observation.Symbol, decimal.NewFromFloat64(observation.Bid), broker.SELL)
-		}
-	}
-
-	for index := range observations {
-		practice.returns[index], practice.exits[index] = practice.continuation(index, index+1)
-	}
-	return practice, nil
-}
-
-// Actions exposes only the current captured quote and exercise inventory.
-// Absence of an executable bid does not silently liquidate an open exercise.
-func (practice *Practice) Actions(index int) ([]Action, uint64) {
-	if practice.entry < 0 {
-		actions := []Action{{Kind: "wait"}}
-
-		if practice.buys[index] != nil {
-			actions = append(actions, Action{Kind: "enter"})
-		}
-		return actions, FlatPositionContext
-	}
-	actions := []Action{{Kind: "hold"}}
-
-	if practice.sells[index] != nil && decimal.NewFromFloat64(practice.Observations[index].BidQty).Cmp(practice.quantity) >= 0 {
-		actions = append(actions, Action{Kind: "exit", Reduce: true})
-	}
-	return actions, FlatPositionContext + 1
-}
-
-// Apply advances only the exercise inventory; it never selects or grades an action.
-func (practice *Practice) Apply(index int, action Action) error {
-	actions, _ := practice.Actions(index)
-	allowed := false
-
-	for _, candidate := range actions {
-		allowed = allowed || candidate == action
-	}
-
-	if !allowed {
-		return errnie.Error(errnie.Err(errnie.Validation, "practice: action is not executable on this captured quote", nil))
-	}
-
-	if action.Kind == "enter" {
-		practice.entry, practice.quantity = index, decimal.NewFromFloat64(practice.Observations[index].AskQty)
-	}
-
-	if action.Kind == "exit" {
-		practice.entry, practice.quantity = -1, nil
-	}
-	return nil
-}
-
-// continuation measures the best remaining executable net return for one
-// entry. An unavailable exit stays explicitly absent (index -1), not a zero bid.
-func (practice *Practice) continuation(entry, from int) (float64, int) {
-	best, exit := 0.0, -1
-
-	if practice.buys[entry] == nil {
-		return best, exit
-	}
-
-	for index := from; index < len(practice.Observations); index++ {
-		if practice.sells[index] == nil || practice.Observations[index].BidQty < practice.Observations[entry].AskQty ||
-			!practice.Observations[index].ReceivedAt.After(practice.Observations[entry].ReceivedAt) {
-			continue
-		}
-
-		if exit < 0 || practice.sells[index].Cmp(practice.sells[exit]) > 0 {
-			exit = index
-		}
-	}
-
-	if exit >= 0 {
-		best, _ = practice.netReturn(entry, exit)
-	}
-	return best, exit
-}
-
-func (practice *Practice) netReturn(entry, exit int) (float64, bool) {
-	if practice.sells[exit] == nil || practice.Observations[exit].BidQty < practice.Observations[entry].AskQty {
-		return 0, false
-	}
-	elapsed := practice.Observations[exit].ReceivedAt.Sub(practice.Observations[entry].ReceivedAt)
-
-	if elapsed <= 0 || practice.buys[entry] == nil {
-		return 0, false
-	}
-	value := practice.sells[exit].Sub(practice.buys[entry]).Div(practice.buys[entry]).Float64()
-	return value, true
-}
-
-// Grade assigns feedback to the choice at its original context. Entry is
-// compared with waiting for a later entry; exit with continuing the SAME entry.
-// This preserves credit for a correct exit following an incorrect entry.
-// A no-exit result reports blocked capital, not a fictitious realized loss.
-func (practice *Practice) Grade(index, entry int, action Action) (float64, string) {
-	if entry >= 0 {
-		return practice.gradeExit(index, entry, action)
-	}
-	current, future, next := practice.returns[index], 0.0, -1
-
-	for candidate := index + 1; candidate < len(practice.returns); candidate++ {
-		if practice.exits[candidate] >= 0 && practice.returns[candidate] > 0 && practice.returns[candidate] >= future {
-			future, next = practice.returns[candidate], candidate
-		}
-	}
-	failure := "entry on development"
-
-	if practice.exits[index] < 0 {
-		// The committed fraction remains inaccessible through the tape's end.
-		// This is a completion signal, explicitly labelled, not a wallet mark.
-		current = -1
-		failure = "entry without executable exit"
-	}
-
-	if practice.exits[index] >= 0 && current <= 0 {
-		failure = "entry cannot clear friction"
-	}
-
-	if current > 0 && next >= 0 && future > current {
-		failure = "entry too early"
-	}
-	value := current - future
-
-	if current > 0 && next >= 0 && current == future {
-		waiting := practice.Observations[next].ReceivedAt.Sub(practice.Observations[index].ReceivedAt).Seconds()
-		developing := practice.Observations[practice.exits[next]].ReceivedAt.Sub(practice.Observations[next].ReceivedAt).Seconds()
-		value = -current * waiting / developing
-		failure = "entry too early"
-	}
-
-	if action.Kind == "enter" && current > 0 {
-		for previous := 0; previous < index; previous++ {
-			if practice.exits[previous] >= index && practice.returns[previous] > current {
-				value = min(value, current-practice.returns[previous])
-				failure = "entry too late"
-			}
-		}
-	}
-
-	if action.Kind == "wait" {
-		failure = "wait for development"
-
-		if value > 0 {
-			failure = "entry missed or delayed"
-		}
-		return -value, failure
-	}
-	return value, failure
-}
-
-func (practice *Practice) gradeExit(index, entry int, action Action) (float64, string) {
-	current, executable := practice.netReturn(entry, index)
-	future, next := practice.continuation(entry, index+1)
-
-	if !executable {
-		return 0, "exit unavailable"
-	}
-
-	if next < 0 {
-		future = -1
-	}
-	value := current - future
-	failure := "exit on exhaustion"
-
-	if value < 0 {
-		failure = "exit too early"
-	}
-
-	if action.Kind == "hold" {
-		failure = "hold through development"
-
-		if value > 0 {
-			failure = "exit missed or delayed"
-		}
-		return -value, failure
-	}
-	return value, failure
 }
 
 ---
@@ -28905,60 +28338,37 @@ package strategy
 
 import (
 	"context"
-	"maps"
+	"fmt"
 	"math/rand/v2"
 	"sort"
 	"sync"
-	"time"
 
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
-
-	"github.com/theapemachine/symm/nomagique/data"
-	"github.com/theapemachine/symm/nomagique/learning/associative"
-	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
-	"github.com/theapemachine/symm/nomagique/learning/associative/model"
+	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/runtime"
 	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
-	"golang.org/x/sync/errgroup"
+	"github.com/theapemachine/symm/types"
 )
 
 /*
-Experience is one completed historical decision, graded for entry/exit timing
-against the complete recorded quote trajectory, including friction and touch
-quantities. The issuing worker owns the context tokens and their grid identities; the consolidated model only ever observes them through the
-single drainer below, never through a racing worker.
-*/
-type Experience struct {
-	Symbol       string
-	Columns      [][2]string
-	Context      []uint64
-	Action       Action
-	Outcome      float64
-	Authority    float64
-	Identity     uint64
-	Index, Entry int
-	At           time.Time
-	Failure      string
-}
-
-/*
-Rehearsal owns the offline replay workers. It samples historical episodes in
-random order, grades each decision at the episode's known end, and streams the
-resulting experience to the consolidated model through one drainer. The workers
+Rehearsal owns the offline replay workers. It discovers completed episodes and appends them to each worker's ring.
+The mounted workload advances workers one historical observation or grade per event. The workers
 never touch the live grid, the live book, or a live wallet.
 */
 type Rehearsal struct {
 	workers      int
-	models       []*model.Model[string, Action]
-	columns      [][][2]string
+	cursors      []*replayCursor
+	Workload     *runtime.Workload[*types.Envelope]
+	prepared     map[string]bool
 	catalog      *tables.Catalog
 	run          hindsight.RunID
 	policy       hindsight.DiscoveryPolicy
 	price        *broker.Price
-	population   *associative.Population[Action]
-	experiences  chan Experience
+	learner      *Learner
 	observations map[string][]hindsight.Observation
 	lastSequence int64
 	inputs       map[hindsight.EnvelopeRef]hindsight.RehearsalInput
@@ -28968,22 +28378,23 @@ type Rehearsal struct {
 	mutex        sync.Mutex
 }
 
-/* NewRehearsal creates offline workers with the shared policy model. */
+/* NewRehearsal creates workers that retain their own historical evidence. */
 func NewRehearsal(
+	ctx context.Context,
 	workers int,
 	catalog *tables.Catalog,
 	run hindsight.RunID,
 	policy hindsight.DiscoveryPolicy,
 	price *broker.Price,
-	population *associative.Population[Action],
+	learner *Learner,
 ) *Rehearsal {
 	if err := errnie.Require(map[string]any{
-		"workers":    workers,
-		"population": population,
-		"price":      price,
-		"catalog":    catalog,
-		"policy":     policy,
-		"run":        run,
+		"workers": workers,
+		"learner": learner,
+		"price":   price,
+		"catalog": catalog,
+		"policy":  policy,
+		"run":     run,
 	}); err != nil {
 		errnie.Error(errnie.Err(
 			errnie.Validation, "learning: rehearsal", err,
@@ -28992,25 +28403,20 @@ func NewRehearsal(
 		return nil
 	}
 
-	models := make([]*model.Model[string, Action], workers)
-
-	for index := range models {
-		models[index] = model.New[string, Action]()
-		models[index].Ordered = true
-	}
-
-	return &Rehearsal{
-		models:       models,
+	rehearsal := &Rehearsal{
 		observations: make(map[string][]hindsight.Observation),
-		columns:      make([][][2]string, workers),
-		workers:      workers,
-		catalog:      catalog,
-		run:          run,
-		policy:       policy,
-		price:        price,
-		population:   population,
-		progress:     wire.LearningRehearsalT{Workers: int32(workers), Status: "waiting for archive"},
+		prepared:     make(map[string]bool), workers: workers,
+		catalog: catalog, run: run, policy: policy, price: price, learner: learner,
+		progress: wire.LearningRehearsalT{Workers: int32(workers), Status: "waiting for archive"},
 	}
+	nodes := make([]runtime.Node[*types.Envelope], workers)
+	for index := range nodes {
+		cursor := &replayCursor{ctx: ctx, rehearsal: rehearsal, learned: cognition.NewEngine(cognition.DefaultConfig())}
+		rehearsal.cursors = append(rehearsal.cursors, cursor)
+		nodes[index] = cursor
+	}
+	rehearsal.Workload = runtime.NewWorkload(ctx, "learners", [][]runtime.Node[*types.Envelope]{nodes})
+	return rehearsal
 }
 
 /* Error exposes the rehearsal failure through the runtime node protocol. */
@@ -29027,9 +28433,9 @@ func (rehearsal *Rehearsal) fail(err error) {
 }
 
 /*
-Run replays the historical record already present in the archive. A missing or
-empty archive is a valid first-run state, not a failure: the live forward loop
-remains the only source of experience until captures exist.
+Run refreshes the durable fragment pool; the mounted workload owns replay. An empty
+archive is a valid first-run state: practice waits for captured precursors while
+the live stages continue recording observations and evaluating the policy.
 */
 func (rehearsal *Rehearsal) Run(ctx context.Context) error {
 	rehearsal.mutex.Lock()
@@ -29060,93 +28466,29 @@ func (rehearsal *Rehearsal) Run(ctx context.Context) error {
 		return nil
 	}
 
-	// One in-flight completed fact per worker; backpressure bounds replay memory.
-	rehearsal.experiences = make(chan Experience, rehearsal.workers)
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	var prepared [][]hindsight.Observation
+	for _, episode := range pool {
+		identity := fmt.Sprint(episode.Symbol, episode.Kind, episode.References)
 
-	// Workers retain only their own historical evidence and local dictionary.
-	// Copying the live trie per worker stalls live processing and multiplies
-	// its memory footprint without adding historical observations.
-	var drain sync.WaitGroup
-	drain.Add(1)
-
-	go func() {
-		defer drain.Done()
-
-		for experience := range rehearsal.experiences {
-			if err := rehearsal.population.Learn(
-				experience.Symbol,
-				experience.Columns,
-				experience.Context,
-				experience.Action,
-				experience.Outcome,
-				experience.Authority,
-			); err != nil {
-				rehearsal.fail(err)
-				cancel()
-				return
-			}
-
-			rehearsal.mutex.Lock()
-			rehearsal.progress.Trained++
-			rehearsal.mutex.Unlock()
+		if rehearsal.prepared[identity] {
+			continue
 		}
-	}()
+		fragment, err := rehearsal.prepare(episode)
 
-	group, workerContext := errgroup.WithContext(ctx)
-
-	for index, workerModel := range rehearsal.models {
-		group.Go(func() error {
-			return rehearsal.replayWorker(workerContext, pool, workerModel, &rehearsal.columns[index])
-		})
-	}
-
-	err = group.Wait()
-	close(rehearsal.experiences)
-	drain.Wait()
-
-	if err != nil {
-		rehearsal.fail(err)
-	}
-
-	rehearsal.mutex.Lock()
-	rehearsal.progress.Passes++
-	rehearsal.progress.Status = "pass complete"
-
-	if ctx.Err() != nil {
-		rehearsal.progress.Status = "stopped"
-	}
-	rehearsal.mutex.Unlock()
-
-	return rehearsal.Error()
-}
-
-/*
-replayWorker runs one full shuffled pass over the current episode pool. The
-learner's retry loop calls Run again after the persistence interval, so each
-pass reads only the newly committed archive suffix, then discovers episodes
-from the retained tape. Repeating a pass does not re-decode earlier captures.
-*/
-func (rehearsal *Rehearsal) replayWorker(
-	ctx context.Context,
-	episodes []hindsight.Episode,
-	learned *model.Model[string, Action],
-	columns *[][2]string,
-) error {
-	order := shuffledEpisodes(episodes)
-
-	for _, episode := range order {
-		if ctx.Err() != nil {
-			return nil
-		}
-
-		if err := rehearsal.replayEpisode(ctx, learned, episode, columns); err != nil {
+		if err != nil {
 			return errnie.Error(err)
 		}
+		rehearsal.prepared[identity] = true
+		prepared = append(prepared, fragment)
 	}
-
-	return nil
+	for _, cursor := range rehearsal.cursors {
+		cursor.mutex.Lock()
+		for _, selected := range rand.Perm(len(prepared)) {
+			cursor.pending = append(cursor.pending, prepared[selected])
+		}
+		cursor.mutex.Unlock()
+	}
+	return rehearsal.Error()
 }
 
 func shuffledEpisodes(episodes []hindsight.Episode) []hindsight.Episode {
@@ -29156,140 +28498,6 @@ func shuffledEpisodes(episodes []hindsight.Episode) []hindsight.Episode {
 		shuffled[left], shuffled[right] = shuffled[right], shuffled[left]
 	})
 	return shuffled
-}
-
-// replayEpisode walks the entire mini tape before grading any of its choices.
-// Workers retain learning across episodes; inventory and temporal state reset.
-func (rehearsal *Rehearsal) replayEpisode(
-	ctx context.Context, learned *model.Model[string, Action],
-	episode hindsight.Episode, columns *[][2]string,
-) error {
-	observations, _, _, ok := rehearsal.slice(episode)
-
-	if !ok || ctx.Err() != nil {
-		return nil
-	}
-	practice, err := NewPractice(observations, rehearsal.price)
-
-	if err != nil {
-		return errnie.Error(err)
-	}
-	space := grid.NewSpace()
-
-	for _, identity := range *columns {
-		space.Column(identity[0], identity[1])
-	}
-	defer func() { *columns = space.Columns }()
-	development := &Development{Symbol: episode.Symbol}
-	experiences := make([]Experience, 0, len(observations))
-	// Pending selections are aborted on cancellation/error, so repeated passes
-	// cannot accumulate abandoned tickets or fictitious completed experience.
-	defer func() {
-		for _, experience := range experiences {
-			if err := learned.Abort(experience.Identity); err != nil {
-				rehearsal.fail(err)
-			}
-		}
-	}()
-
-	for index, observation := range observations {
-		if err := ctx.Err(); err != nil {
-			return errnie.Error(err)
-		}
-		input, available := rehearsal.inputs[hindsight.EnvelopeRef{Origin: observation.Capture, Ordinal: observation.Ordinal}]
-
-		if !available || len(input.Measurements) == 0 {
-			rehearsal.mutex.Lock()
-			rehearsal.progress.Unsupported++
-			rehearsal.mutex.Unlock()
-			continue
-		}
-		// Grid finalizes quality and writes metric coordinates. Each decision
-		// owns those mutable projections; the captured input stays immutable.
-		measurements := make([]*data.Measurement[float64], 0, len(input.Measurements))
-
-		for _, captured := range input.Measurements {
-			if captured.Label != episode.Symbol {
-				continue // Other symbols follow their own exercise, as in live learning.
-			}
-			measurement := *captured
-			measurement.Metrics = maps.Clone(captured.Metrics)
-			measurements = append(measurements, &measurement)
-		}
-		history := development.Context(observation.ReceivedAt, measurements)
-
-		if err := space.Step(measurements); err != nil {
-			return errnie.Error(err)
-		}
-
-		if err := development.Advance(observation.ReceivedAt, space); err != nil {
-			return errnie.Error(err)
-		}
-		actions, state := practice.Actions(index)
-
-		if len(actions) < 2 || index == len(observations)-1 {
-			continue // Forced choices and tape-end choices have no comparison to grade.
-		}
-		strength, authority := 0.0, 0.0
-
-		for _, region := range development.Regions {
-			strength += region.Strength
-			authority += region.Strength * region.Authority
-		}
-
-		if strength == 0 {
-			rehearsal.mutex.Lock()
-			rehearsal.progress.Unsupported++
-			rehearsal.mutex.Unlock()
-			continue
-		}
-		conditions := append([]uint64{state}, history...)
-		conditions = append(conditions, regionConditions(development.Regions)...)
-		action, _, err := learned.Select(episode.Symbol, conditions, actions, true)
-
-		if err != nil {
-			return errnie.Error(err)
-		}
-		identity, err := learned.Issue(episode.Symbol, conditions, action, authority/strength)
-
-		if err != nil {
-			return errnie.Error(err)
-		}
-		experiences = append(experiences, Experience{
-			Symbol: episode.Symbol, Context: conditions, Action: action,
-			Authority: authority / strength, Identity: identity,
-			Index: index, Entry: practice.entry, At: observation.ReceivedAt,
-		})
-
-		if err := practice.Apply(index, action); err != nil {
-			return errnie.Error(err)
-		}
-	}
-
-	for len(experiences) > 0 {
-		experience := experiences[0]
-		experience.Columns = space.Columns
-		experience.Outcome, experience.Failure = practice.Grade(experience.Index, experience.Entry, experience.Action)
-
-		if _, err := learned.Resolve(experience.Identity, experience.Outcome); err != nil {
-			return errnie.Error(err)
-		}
-		experiences = experiences[1:]
-
-		select {
-		case <-ctx.Done():
-			return errnie.Error(ctx.Err())
-		case rehearsal.experiences <- experience:
-			rehearsal.mutex.Lock()
-			rehearsal.progress.Decisions++
-			rehearsal.progress.LastSymbol = episode.Symbol
-			rehearsal.progress.LastAction = experience.Action.Kind
-			rehearsal.progress.LastReturn = experience.Outcome
-			rehearsal.progress.LastFailure = experience.Failure
-			rehearsal.mutex.Unlock()
-		}
-	}
-	return nil
 }
 
 func (rehearsal *Rehearsal) episodes() []hindsight.Episode {
@@ -29432,16 +28640,6 @@ func (rehearsal *Rehearsal) read(ctx context.Context) error {
 	return rehearsal.readInputs(ctx)
 }
 
-func regionConditions(regions []grid.Region) []uint64 {
-	conditions := make([]uint64, 0, len(regions))
-
-	for _, region := range regions {
-		conditions = append(conditions, region.Condition)
-	}
-
-	return conditions
-}
-
 /*
 balance takes an equally sized random subset of each available class. No episode
 is repeated within a worker's pass. Missing classes stay absent; counts expose
@@ -29454,15 +28652,6 @@ func (rehearsal *Rehearsal) balance(episodes []hindsight.Episode) ([]hindsight.E
 
 	for _, episode := range episodes {
 		observations, anchor, endpoint, ok := rehearsal.slice(episode)
-		var practice *Practice
-		var err error
-
-		if ok {
-			practice, err = NewPractice(observations, rehearsal.price)
-		}
-		if err != nil {
-			return nil, errnie.Error(err)
-		}
 		if !ok {
 			ungraded++
 			continue
@@ -29473,11 +28662,23 @@ func (rehearsal *Rehearsal) balance(episodes []hindsight.Episode) ([]hindsight.E
 			if observation.Capture == anchor.Capture && observation.Ordinal == anchor.Ordinal {
 				anchorIndex = index
 			}
+
 			if observation.Capture == endpoint.Capture && observation.Ordinal == endpoint.Ordinal {
 				endpointIndex = index
 			}
 		}
-		value, executable := practice.netReturn(anchorIndex, endpointIndex)
+		entryQuote, exitQuote := observations[anchorIndex], observations[endpointIndex]
+		executable := entryQuote.HasAsk && exitQuote.HasBid && entryQuote.AskQty > 0 && exitQuote.BidQty >= entryQuote.AskQty
+		value := 0.0
+
+		if executable {
+			if rehearsal.price.FeeIfAvailable(episode.Symbol) == nil {
+				return nil, errnie.Error(errnie.Err(errnie.Validation, "rehearsal: recorded symbol requires fees", nil))
+			}
+			cost := rehearsal.price.WithFee(episode.Symbol, decimal.NewFromFloat64(entryQuote.Ask), broker.BUY)
+			proceeds := rehearsal.price.WithFee(episode.Symbol, decimal.NewFromFloat64(exitQuote.Bid), broker.SELL)
+			value = proceeds.Sub(cost).Div(cost).Float64()
+		}
 		class := 0
 
 		switch {
@@ -29564,6 +28765,22 @@ func (rehearsal *Rehearsal) quiet(symbol string, observations []hindsight.Observ
 	return episodes
 }
 
+// prepare joins numerical witnesses onto the existing captured observations.
+// The slice itself is the ring value; no fragment or practice wrapper exists.
+func (rehearsal *Rehearsal) prepare(episode hindsight.Episode) ([]hindsight.Observation, error) {
+	observations, _, _, complete := rehearsal.slice(episode)
+
+	if !complete {
+		return nil, errnie.Error(errnie.Err(errnie.Validation, "rehearsal: tape requires lead-in and tail", nil))
+	}
+	captured := append([]hindsight.Observation(nil), observations...)
+	for index := range captured {
+		reference := hindsight.EnvelopeRef{Origin: captured[index].Capture, Ordinal: captured[index].Ordinal}
+		captured[index].Measurements = rehearsal.inputs[reference].Measurements
+	}
+	return captured, nil
+}
+
 ---
 
 ---
@@ -29590,7 +28807,7 @@ func (rehearsal *Rehearsal) readInputs(ctx context.Context) error {
 		rehearsal.inputs = make(map[hindsight.EnvelopeRef]hindsight.RehearsalInput)
 		rehearsal.witnessed = make(map[tables.EnvelopeRefRow]bool)
 	}
-	witnesses, err := rehearsal.catalog.WitnessesUnseen(ctx, string(rehearsal.run), "state", rehearsal.witnessed)
+	witnesses, err := rehearsal.catalog.WitnessesUnseen(ctx, string(rehearsal.run), "precursor", rehearsal.witnessed)
 
 	if err != nil {
 		return errnie.Error(err)
@@ -29685,6 +28902,273 @@ func (rehearsal *Rehearsal) admitObservation(reference hindsight.EnvelopeRef, sy
 ---
 
 ---
+File: /strategy/replay_cursor.go
+---
+
+package strategy
+
+import (
+	"container/ring"
+	"context"
+	"maps"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/nomagique/cognition"
+	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
+	"github.com/theapemachine/symm/types"
+)
+
+// replayCursor owns one learner's ring and in-progress exercise. One Step
+// advances one captured observation or resolves one completed decision.
+// Pending additions enter the circular list only between complete exercises.
+type replayCursor struct {
+	rehearsal    *Rehearsal
+	ctx          context.Context
+	mutex        sync.Mutex
+	pending      [][]hindsight.Observation
+	fragments    *ring.Ring
+	learned      *cognition.Engine
+	columns      [][2]string
+	observations []hindsight.Observation
+	space        *grid.Space
+	source       *recordedBook
+	trader       *Trader
+	member       *agent.Agent[Action]
+	evaluations  []*Evaluation
+	index        int
+	idle         time.Duration
+	lastProfit   *decimal.Decimal
+	lastAt       time.Time
+	settled      bool
+}
+
+func (cursor *replayCursor) Step(envelope *types.Envelope) *types.Envelope {
+	if cursor.ctx.Err() != nil || cursor.rehearsal.Error() != nil {
+		return envelope
+	}
+
+	if cursor.observations == nil {
+		cursor.link()
+
+		if cursor.fragments == nil {
+			return envelope
+		}
+
+		if err := cursor.begin(); err != nil {
+			cursor.rehearsal.fail(err)
+			return envelope
+		}
+	}
+	var err error
+
+	if cursor.index < len(cursor.observations) {
+		err = cursor.advance()
+	}
+
+	if err == nil && cursor.index == len(cursor.observations) {
+		err = cursor.finish()
+	}
+
+	if err != nil {
+		cursor.rehearsal.fail(err)
+	}
+	return envelope
+}
+
+func (cursor *replayCursor) link() {
+	cursor.mutex.Lock()
+	defer cursor.mutex.Unlock()
+
+	if len(cursor.pending) == 0 {
+		return
+	}
+	addition := ring.New(len(cursor.pending))
+	for _, fragment := range cursor.pending {
+		addition.Value = fragment
+		addition = addition.Next()
+	}
+
+	if cursor.fragments != nil {
+		cursor.fragments.Link(addition)
+	}
+
+	if cursor.fragments == nil {
+		cursor.fragments = addition
+	}
+	cursor.pending = nil
+}
+
+func (cursor *replayCursor) begin() error {
+	cursor.observations = cursor.fragments.Value.([]hindsight.Observation)
+	cursor.space = grid.NewSpace()
+	for _, identity := range cursor.columns {
+		cursor.space.Column(identity[0], identity[1])
+	}
+	cursor.source = &recordedBook{}
+	price := broker.NewRecordedPrice(cursor.rehearsal.price, cursor.source)
+	trader, err := NewTrader(cursor.rehearsal.learner.Traders[0].api, price,
+		cursor.rehearsal.learner.Traders[0].Balance.Quote, cursor.rehearsal.learner.funding)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+	cursor.trader = trader
+	cursor.member, err = agent.New(cursor.ctx, trader, cursor.learned, true)
+	cursor.index, cursor.idle, cursor.settled = 0, 0, false
+	cursor.lastProfit, cursor.lastAt = nil, time.Time{}
+	return errnie.Error(err)
+}
+
+func (cursor *replayCursor) advance() error {
+	index := cursor.index
+	cursor.index++
+	observation := cursor.observations[index]
+	cursor.source.Step(observation)
+	cursor.trader.At, cursor.trader.Version = observation.ReceivedAt, uint64(index+1)
+	input := observation
+	measurements := make([]*data.Measurement[float64], 0, len(input.Measurements))
+	from := observation.ReceivedAt
+	for _, captured := range input.Measurements {
+		if captured.Label != observation.Symbol {
+			continue
+		}
+		measurement := *captured
+		measurement.Metrics = maps.Clone(captured.Metrics)
+		measurements = append(measurements, &measurement)
+
+		if !measurement.From.IsZero() && measurement.From.Before(from) {
+			from = measurement.From
+		}
+	}
+
+	if err := cursor.space.Step(measurements); err != nil {
+		return errnie.Error(err)
+	}
+	impulse, err := cursor.space.Impulse(observation.Symbol, observation.ReceivedAt, from)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
+	if !cursor.trader.Ready(observation.Symbol) {
+		cursor.lastProfit = nil // Missing valuation cannot establish an idle interval.
+		return nil
+	}
+	mark, err := cursor.trader.Objective()
+
+	if err != nil || mark == nil {
+		cursor.lastProfit = nil
+		return errnie.Error(err)
+	}
+
+	if cursor.lastProfit != nil && cursor.trader.Profit.Cmp(cursor.lastProfit) <= 0 {
+		cursor.idle += observation.ReceivedAt.Sub(cursor.lastAt)
+	}
+	cursor.lastProfit, cursor.lastAt = cursor.trader.Profit, observation.ReceivedAt
+
+	if !impulse.Ready || index == len(cursor.observations)-1 {
+		cursor.rehearsal.mutex.Lock()
+		cursor.rehearsal.progress.Unsupported++
+		cursor.rehearsal.mutex.Unlock()
+		return nil
+	}
+	before, entry := cursor.member.Decisions, -1
+	baseline, realized := cursor.trader.Profit, cursor.trader.Realized
+
+	if opened, holding := cursor.trader.Opened[observation.Symbol]; holding {
+		entry = sort.Search(len(cursor.observations), func(index int) bool {
+			return !cursor.observations[index].ReceivedAt.Before(opened)
+		})
+	}
+
+	cursor.member.Step(impulse)
+
+	if err := cursor.member.Error(); err != nil {
+		return errnie.Error(err)
+	}
+
+	if cursor.member.Decisions == before {
+		return nil
+	}
+	decision := cursor.member.Last
+	evaluation := cursor.trader.Evaluations[observation.Symbol][decision.ID]
+	evaluation.Index, evaluation.Entry = index, entry
+	evaluation.Baseline, evaluation.Idle = baseline, cursor.idle
+
+	if decision.Action.Reduce {
+		evaluation.Secured = cursor.trader.Positions[observation.Symbol].Holding.RealizedPnL.Sub(realized)
+	}
+	cursor.evaluations = append(cursor.evaluations, evaluation)
+	return nil
+}
+
+func (cursor *replayCursor) finish() error {
+	if !cursor.settled {
+		last := cursor.observations[len(cursor.observations)-1]
+		if err := cursor.trader.End(last.Symbol, last.ReceivedAt); err != nil {
+			return errnie.Error(err)
+		}
+		cursor.settled = true
+	}
+
+	if len(cursor.evaluations) == 0 {
+		cursor.columns = cursor.space.Columns
+		cursor.observations = nil
+		cursor.fragments = cursor.fragments.Next()
+		cursor.rehearsal.mutex.Lock()
+		cursor.rehearsal.progress.Passes++
+		cursor.rehearsal.mutex.Unlock()
+		return nil
+	}
+	evaluation := cursor.evaluations[0]
+
+	if evaluation.Secured == nil && cursor.trader.open() == 0 {
+		evaluation.Secured = cursor.trader.Balance.Cash().Sub(cursor.trader.Initial).Sub(evaluation.Baseline)
+	}
+
+	if evaluation.Secured == nil {
+		// Unreleased basis is explicitly a capital-completion debit. It is not
+		// a fabricated zero mark or a realized loss on remaining inventory.
+		holding := cursor.trader.Positions[evaluation.Label].Holding
+		evaluation.Secured = decimal.NewFromInt64(0).Sub(holding.Basis).Sub(holding.EntryFee)
+	}
+	evaluation.Idle = cursor.idle - evaluation.Idle
+
+	if err := evaluation.Grade(cursor.observations, cursor.rehearsal.price); err != nil {
+		return errnie.Error(err)
+	}
+
+	if _, err := cursor.member.Resolve(evaluation.ID, evaluation.Value); err != nil {
+		return errnie.Error(err)
+	}
+
+	if err := cursor.rehearsal.learner.Learn(evaluation.Label, cursor.space.Columns, evaluation.Context,
+		evaluation.Action, evaluation.Value, evaluation.Authority); err != nil {
+		return errnie.Error(err)
+	}
+	cursor.evaluations = cursor.evaluations[1:]
+	cursor.rehearsal.mutex.Lock()
+	defer cursor.rehearsal.mutex.Unlock()
+	cursor.rehearsal.progress.Decisions++
+	cursor.rehearsal.progress.Trained++
+	cursor.rehearsal.progress.LastSymbol = evaluation.Label
+	cursor.rehearsal.progress.LastAction = evaluation.Action.Kind
+	cursor.rehearsal.progress.LastReturn = evaluation.Value
+	cursor.rehearsal.progress.LastFailure = evaluation.Failure
+	return nil
+}
+
+---
+
+---
 File: /strategy/trader.go
 ---
 
@@ -29694,17 +29178,17 @@ import (
 	"fmt"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
 	"github.com/krakenfx/api-go/v2/pkg/book"
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
 	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/broker"
 	"github.com/theapemachine/symm/broker/position"
 	"github.com/theapemachine/symm/hindsight/recording"
+	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/kraken/websocket"
 	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
 	"github.com/theapemachine/symm/nomagique/learning/associative/reward"
+	"golang.org/x/sync/errgroup"
 )
 
 /*
@@ -29718,41 +29202,8 @@ type Action struct {
 	Reduce bool
 }
 
-/*
-These bound an explorer's capacity, not its opinion. Each one removes an option
-the wallet physically cannot sustain; none of them scores a symbol, forecasts a
-price, or vetoes an entry the account could actually fund.
-*/
-const (
-	// FlatPositionContext is the structural context for an unheld, non-stale position.
-	FlatPositionContext uint64 = 1 << 63
-
-	// MinimumOrderValue is the venue's smallest accepted order in quote
-	// currency. A wallet below it cannot act at all — no size it could name
-	// would be admitted — so its agent sits issuing waits and stops
-	// contributing experience. It bounds renewal, never entry.
-	MinimumOrderValue = 5.0
-
-	// MaxConcurrentPositions caps how many symbols one wallet may be long at
-	// once. Without it an explorer sprays its whole balance across every symbol
-	// that ever looked interesting, ends at zero cash holding a dozen unrelated
-	// tokens, and can no longer take any action but waiting — it stops
-	// exploring precisely when its evidence is worst. The cap is what forces
-	// capital to be recycled rather than merely allocated.
-	MaxConcurrentPositions = 4
-
-	// StalePositionHorizon is how long a position may sit before holding it
-	// stops being one of the feasible things to do. An entry is a bet that a
-	// move is developing; if the move has not developed by now the bet has been
-	// answered, and the capital belongs back in the wallet. This withdraws the
-	// hold option — it never submits an order on the agent's behalf.
-	StalePositionHorizon = 12 * time.Minute
-
-	// MaximumHoldingTime is the renewal backstop, not a trading rule. Past the
-	// stale horizon the agent is already being made to choose an exit, so
-	// inventory only survives this long when no exit was ever executable.
-	MaximumHoldingTime = time.Hour
-)
+// FlatPositionContext distinguishes an unheld position from held inventory.
+const FlatPositionContext uint64 = 1 << 63
 
 /*
 	Trader adapts an independent account and its normal position regulators to
@@ -29762,9 +29213,9 @@ associative learning. It is owned by Learner's serialized state transitions.
 type Trader struct {
 	Balance                                       *broker.Balance
 	Positions                                     map[string]*position.Regulator
-	Execution                                     Execution
+	price                                         *broker.Price
 	Initial, Equity, Profit, Realized, Unrealized *decimal.Decimal
-	Wealth, Carried                               float64
+	Wealth                                        float64
 	At                                            time.Time
 	Version, Fills                                uint64
 	Status                                        string
@@ -29772,10 +29223,10 @@ type Trader struct {
 	Quantities                                    map[Action]*decimal.Decimal
 	Evaluations                                   map[string]map[uint64]*Evaluation
 	Opened                                        map[string]time.Time
+	Ending                                        map[string]time.Time
 	LastEvaluation                                *Evaluation
 	Recorder                                      *recording.Session
 	ID                                            int
-	Episode                                       uint64
 	Fees                                          *decimal.Decimal
 	api                                           *websocket.API
 }
@@ -29793,12 +29244,10 @@ func NewTrader(
 	}
 
 	return &Trader{
-		api:     api,
-		Balance: balance,
-		Execution: Execution{
-			Price:   price,
-			Balance: balance,
-		},
+		Status:      "waiting for regions",
+		api:         api,
+		Balance:     balance,
+		price:       price,
 		Initial:     cash,
 		Equity:      cash,
 		Realized:    decimal.NewFromInt64(0),
@@ -29807,21 +29256,15 @@ func NewTrader(
 		Profit:      decimal.NewFromInt64(0),
 		Positions:   make(map[string]*position.Regulator),
 		Opened:      make(map[string]time.Time),
+		Ending:      make(map[string]time.Time),
 		Evaluations: make(map[string]map[uint64]*Evaluation),
 	}, nil
 }
 
 /*
-	Feasible filters only available resources, venue minima and executable depth.
+	Feasible enumerates choices constrained only by owned resources and venue
 
-Book absence permits waiting; it is reported rather than invented as a price.
-
-Two capacity limits join the wallet's own: a new symbol is only enterable while
-the wallet is under MaxConcurrentPositions, and a position past
-StalePositionHorizon loses its hold and scale-up options so the agent must
-choose among the moves that return capital. Neither invents a price, predicts
-one, or submits an order — they narrow what is possible, and the agent still
-decides. Nothing here consults spread or a round-trip crossing cost.
+execution requirements. Unavailable inputs are errors, never wait/hold evidence.
 */
 func (trader *Trader) Feasible(symbol string) ([]Action, []uint64, error) {
 	idle := Action{Kind: "wait"}
@@ -29830,16 +29273,15 @@ func (trader *Trader) Feasible(symbol string) ([]Action, []uint64, error) {
 	if regulator := trader.Positions[symbol]; regulator != nil {
 		held = regulator.Holding.Qty
 	}
-	stale := false
 
 	if held.Sign() > 0 {
-		idle.Kind, stale = "hold", trader.stale(symbol)
+		idle.Kind = "hold"
 	}
 	trader.Alternatives = []Action{idle}
 	trader.Quantities = make(map[Action]*decimal.Decimal)
 	trader.Status = "book unavailable"
 	var bid, ask *decimal.Decimal
-	trader.api.Book(symbol, func(book *book.Book) {
+	trader.price.Books.Book(symbol, func(book *book.Book) {
 		if book != nil && book.BestBid() != nil && book.BestAsk() != nil {
 			bid, ask = book.BestBid().Price, book.BestAsk().Price
 		}
@@ -29850,14 +29292,8 @@ func (trader *Trader) Feasible(symbol string) ([]Action, []uint64, error) {
 		state[0]++
 	}
 
-	// Staleness is part of the state the decision is conditioned on, so the
-	// agent can learn what a position that stopped developing is worth.
-	if stale {
-		state[0] += 2
-	}
-
-	if bid == nil || ask == nil || trader.Execution.Price.FeeIfAvailable(symbol) == nil {
-		return trader.Alternatives, state, nil
+	if bid == nil || ask == nil || trader.price.FeeIfAvailable(symbol) == nil {
+		return nil, nil, errnie.Error(errnie.Err(errnie.Conflict, "trader: market dependencies are not ready", nil))
 	}
 	trader.Status = "learning"
 
@@ -29866,14 +29302,6 @@ func (trader *Trader) Feasible(symbol string) ([]Action, []uint64, error) {
 			return nil, nil, err
 		}
 
-		// Holding is withdrawn only once an executable exit actually exists. A
-		// stale position no venue will take back still has to be held, and
-		// saying otherwise would leave the agent nothing it could do.
-		if stale && len(trader.Alternatives) > 1 {
-			trader.Status = "stale position"
-			trader.Alternatives = trader.Alternatives[1:]
-			return trader.Alternatives, state, nil
-		}
 	}
 
 	if trader.Balance.Cash().Sign() <= 0 {
@@ -29885,13 +29313,7 @@ func (trader *Trader) Feasible(symbol string) ([]Action, []uint64, error) {
 		kind = "scale"
 	}
 
-	// Adding to a symbol already held commits no new position, so it is bounded
-	// by cash alone; opening a new one is bounded by the concurrency cap.
-	if held.Sign() == 0 && trader.open() >= MaxConcurrentPositions {
-		trader.Status = "position capacity"
-		return trader.Alternatives, state, nil
-	}
-	quantity, err := trader.Execution.Price.Affordable(symbol, trader.Balance.Cash(), ask)
+	quantity, err := trader.price.Affordable(symbol, trader.Balance.Cash(), ask)
 
 	if err != nil {
 		return nil, nil, err
@@ -29917,27 +29339,16 @@ func (trader *Trader) open() int {
 }
 
 /*
-stale reports whether the current position in a symbol has been held past
-StalePositionHorizon. Opened is stamped by this trader when a position is
-established and cleared when it goes flat, so a re-entry is measured from its
-own fill rather than inheriting the age of the position that preceded it.
-*/
-func (trader *Trader) stale(symbol string) bool {
-	opened, exists := trader.Opened[symbol]
-	return exists && trader.At.Sub(opened) >= StalePositionHorizon
-}
-
-/*
 	sizes enumerates the binary resource fractions down to the venue's minimum.
 
 No fixed exposure cap or prediction threshold participates.
 */
 func (trader *Trader) sizes(symbol string, action Action, quantity, unit *decimal.Decimal) error {
-	for trader.Execution.Price.Tradable(symbol, quantity, unit) {
+	for trader.price.Tradable(symbol, quantity, unit) {
 		usable := false
 
 		if action.Reduce {
-			surface, err := trader.Execution.Price.Surface(symbol, quantity, trader.At)
+			surface, err := trader.price.Surface(symbol, quantity, trader.At)
 			usable = err == nil && surface.FullyExecutable
 
 			if err != nil {
@@ -29950,7 +29361,7 @@ func (trader *Trader) sizes(symbol string, action Action, quantity, unit *decima
 		}
 
 		if !action.Reduce {
-			cost, err := trader.Execution.Price.EntryCost(symbol, quantity)
+			cost, err := trader.price.EntryCost(symbol, quantity)
 			usable = err == nil && cost.Total.Cmp(trader.Balance.Cash()) <= 0
 
 			if err != nil {
@@ -29992,6 +29403,7 @@ The retained evaluation points to the original decision, never a second model.
 */
 func (trader *Trader) Execute(decision *agent.Decision[Action]) error {
 	evaluation := &Evaluation{Decision: decision, Trader: trader.ID, Initial: trader.Initial}
+
 	if trader.Evaluations[decision.Label] == nil {
 		trader.Evaluations[decision.Label] = make(map[uint64]*Evaluation)
 	}
@@ -30002,16 +29414,11 @@ func (trader *Trader) Execute(decision *agent.Decision[Action]) error {
 	if regulator != nil {
 		evaluation.Quantity = regulator.Holding.Qty
 	}
-	trader.api.Book(decision.Label, func(current *book.Book) {
+	trader.price.Books.Book(decision.Label, func(current *book.Book) {
 		if current != nil && current.BestBid() != nil {
 			evaluation.Reference = current.BestBid().Price
 		}
 	})
-
-	// A decision taken from a single feasible action was not a choice, and the
-	// outcome it collects is evidence about the market rather than about the
-	// action. Learner releases these immediately after execution instead of training them.
-	evaluation.Forced = len(trader.Alternatives) < 2
 
 	if decision.Action.Kind == "wait" || decision.Action.Kind == "hold" {
 		for _, action := range trader.Alternatives {
@@ -30019,12 +29426,15 @@ func (trader *Trader) Execute(decision *agent.Decision[Action]) error {
 				evaluation.Opportunity = trader.Quantities[action]
 			}
 		}
-		return trader.Recorder.WriteDecision(evaluation.Row(""))
+
+		if trader.Recorder != nil {
+			return trader.Recorder.WriteDecision(evaluation.Row(""))
+		}
+		return nil
 	}
 
 	if regulator == nil {
-		regulator = position.NewRegulator(trader.api, trader.Execution.Price, decision.Label, nil)
-		regulator.Orders = &trader.Execution
+		regulator = position.NewPaperRegulator(trader.api, trader.price, trader.Balance, decision.Label)
 		trader.Positions[decision.Label] = regulator
 	}
 	side := broker.BUY
@@ -30032,22 +29442,23 @@ func (trader *Trader) Execute(decision *agent.Decision[Action]) error {
 	if decision.Action.Reduce {
 		side = broker.SELL
 	}
-	trader.Execution.At = decision.At
+	regulator.At = decision.At
 
 	if err := regulator.Submit(fmt.Sprint(decision.ID), side, trader.Quantities[decision.Action]); err != nil {
 		return err
 	}
 
-	if err := regulator.Apply(trader.Execution.Fill); err != nil {
-		return err
-	}
-	evaluation.Quantity = trader.Execution.Fill.CumQty
-	evaluation.Cost = trader.Execution.Fill.CumCost
-	evaluation.Fee = trader.Execution.Fill.FeeUsdEquiv
+	evaluation.Quantity = regulator.LastExecution.CumQty
+	evaluation.Cost = regulator.LastExecution.CumCost
+	evaluation.Fee = regulator.LastExecution.FeeUsdEquiv
 	trader.mark(decision.Label, regulator, decision.At)
 	trader.Fills++
 	trader.Fees = trader.Fees.Add(evaluation.Fee)
-	return trader.Recorder.WriteDecision(evaluation.Row(""))
+
+	if trader.Recorder != nil {
+		return trader.Recorder.WriteDecision(evaluation.Row(""))
+	}
+	return nil
 }
 
 /*
@@ -30095,7 +29506,7 @@ func (trader *Trader) Objective() (*reward.Mark, error) {
 		}
 		group.Go(func() error {
 			available := false
-			trader.api.Book(regulator.Holding.Symbol, func(book *book.Book) {
+			trader.price.Books.Book(regulator.Holding.Symbol, func(book *book.Book) {
 				available = book != nil && book.BestBid() != nil && book.BestAsk() != nil
 			})
 
@@ -30145,101 +29556,69 @@ func (trader *Trader) Objective() (*reward.Mark, error) {
 
 	trader.Status = "learning"
 
-	// Carried holds the wealth of episodes already closed. Reporting it with
-	// the current one keeps the objective continuous across a wallet renewal:
-	// without it a bankrupt explorer refunded to par would read as a large
-	// positive reward and train its last, losing decision as a success.
 	return &reward.Mark{
-		At: trader.At, Version: trader.Version, Value: trader.Carried + trader.Wealth,
+		At: trader.At, Version: trader.Version, Value: trader.Wealth,
 	}, nil
 }
 
-/*
-CheckAndReset renews an exhausted explorer wallet so the swarm keeps producing
-experience. Exploration spends capital by design, and a drawn-down wallet whose
-cash sits under the venue minimum has no feasible action left but waiting: it
-generates no fills, no evaluations and no evidence. Renewal is episodic rather
-than continuous — residual inventory is liquidated first, and a position still
-inside MaximumHoldingTime defers the reset rather than being cut short, so the
-episode that is being closed is graded on its own tape before the books reset.
-Holding age comes from Opened, this trader's own record of when the current
-position was established, because Holding.EntryAt survives a close and would
-report the age of a position that no longer exists.
-
-Realized history stays with the resolved evaluations already issued; only the
-account is renewed. It reports whether an episode actually turned over.
-*/
-func (trader *Trader) CheckAndReset(initialFunding *decimal.Decimal) bool {
-	if initialFunding == nil || initialFunding.Sign() <= 0 {
-		return false
-	}
-
-	if trader.Balance.Cash().Cmp(decimal.NewFromFloat64(MinimumOrderValue)) >= 0 {
-		return false
-	}
-
-	for symbol, regulator := range trader.Positions {
-		if regulator.Holding.Qty.Sign() == 0 {
-			continue
-		}
-		opened, tracked := trader.Opened[symbol]
-
-		if tracked && trader.At.Sub(opened) < MaximumHoldingTime {
-			return false
-		}
-	}
-	trader.liquidate()
-
-	// Value the closing episode after liquidation so its final proceeds and
-	// fees are inside the wealth that gets carried forward. Inventory that
-	// survived liquidation is by definition inventory no venue would price, so
-	// an absent mark cannot be allowed to block the renewal it exists to
-	// perform: the last measured wealth is carried instead.
-	if _, err := trader.Objective(); err != nil {
-		trader.Status = err.Error()
-		return false
-	}
-	balance, err := broker.NewFundedBalance(trader.Balance.Quote, initialFunding)
-
-	if err != nil {
-		trader.Status = err.Error()
-		return false
-	}
-	trader.Balance, trader.Execution.Balance = balance, balance
-	trader.Positions = make(map[string]*position.Regulator)
-	trader.Opened = make(map[string]time.Time)
-	trader.Initial, trader.Equity = initialFunding, initialFunding
-	trader.Realized, trader.Unrealized = decimal.NewFromInt64(0), decimal.NewFromInt64(0)
-	trader.Profit, trader.Fees = decimal.NewFromInt64(0), decimal.NewFromInt64(0)
-	trader.Carried, trader.Wealth = trader.Carried+trader.Wealth, 0
-	trader.Episode++
-	trader.Status = "replenished"
-	return true
+// Ready tests the resident dependencies used by Feasible without issuing any
+// decision or mutating learning state. Reseeding books are hidden by API.Book.
+func (trader *Trader) Ready(symbol string) bool {
+	ready := false
+	trader.price.Books.Book(symbol, func(current *book.Book) {
+		ready = current != nil && current.BestBid() != nil && current.BestAsk() != nil
+	})
+	return ready && trader.price.FeeIfAvailable(symbol) != nil
 }
 
-/*
-liquidate sells whatever residual inventory the book will still take. A dust
-holding no venue will fill is left unsold rather than assumed away; the renewed
-account simply stops tracking it, because the position it describes belongs to
-the episode being closed.
-*/
-func (trader *Trader) liquidate() {
-	for symbol, regulator := range trader.Positions {
-		if regulator.Holding.Qty.Sign() == 0 {
-			continue
-		}
-		trader.Execution.At = trader.At
+// End releases inventory whose opportunity has been evaluated. This is an
+// environment boundary, never another agent choice or a learned timeout.
+// Unavailable depth leaves the release pending until a later ready book.
+func (trader *Trader) End(symbol string, through time.Time) error {
+	opened, held := trader.Opened[symbol]
 
-		if err := regulator.Exit(fmt.Sprintf("reset-%d-%d-%s", trader.ID, trader.Episode, symbol)); err != nil {
-			continue
-		}
-
-		if err := regulator.Apply(trader.Execution.Fill); err != nil {
-			continue
-		}
-		trader.Fills++
-		trader.Fees = trader.Fees.Add(trader.Execution.Fill.FeeUsdEquiv)
+	if !held || opened.After(through) {
+		delete(trader.Ending, symbol)
+		return nil
 	}
+	trader.Ending[symbol] = through
+
+	if !trader.Ready(symbol) {
+		return nil
+	}
+	regulator := trader.Positions[symbol]
+	surface, err := trader.price.Surface(symbol, regulator.Holding.Qty, trader.At)
+
+	if err != nil {
+		if errnie.IsNotFound(err) || errnie.IsUnprocessableContent(err) {
+			return nil
+		}
+		return errnie.Error(err)
+	}
+
+	if !surface.FullyExecutable {
+		return nil
+	}
+	regulator.At = trader.At
+
+	if err := regulator.Submit("evaluation/"+through.Format(time.RFC3339Nano), broker.SELL, regulator.Holding.Qty); err != nil {
+		return errnie.Error(err)
+	}
+	fill := regulator.LastExecution
+	trader.Fills++
+	trader.Fees = trader.Fees.Add(fill.FeeUsdEquiv)
+	trader.mark(symbol, regulator, trader.At)
+	delete(trader.Ending, symbol)
+
+	if trader.Recorder != nil {
+		return trader.Recorder.WriteDecision(tables.OutcomeRow{
+			Trader: int32(trader.ID), DecisionID: -through.UnixNano(), Label: symbol,
+			At: trader.At, Through: through, ActionKind: "evaluation_exit", ActionReduce: true,
+			Forced: true, Initial: trader.Initial, Quantity: fill.CumQty,
+			Cost: fill.CumCost, Fee: fill.FeeUsdEquiv,
+		})
+	}
+	return nil
 }
 
 ---
@@ -33754,6 +33133,7 @@ import (
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/physics/sensorium"
 	"github.com/theapemachine/symm/telemetry/generated/telemetry"
 )
@@ -33893,12 +33273,13 @@ const (
 )
 
 // LearningState is the live owner's FlatBuffers serialization contract.
-type LearningState interface { MarshalFlatbuffer(string) []byte }
+type LearningState interface{ MarshalFlatbuffer(string) []byte }
 
 type Envelope struct {
- Learning LearningState
-	Key    string
-	TypeID TypeID
+	Impulses []grid.Impulse
+	Learning LearningState
+	Key      string
+	TypeID   TypeID
 
 	// Tick is the engine clock at which this envelope was produced: the
 	// monotonic thesis counter, stamped when the ingress observation commits.
@@ -34799,6 +34180,9 @@ func (envelope *Envelope) Encode() *telemetry.EnvelopeStateT {
 	}
 
 	state := envelope.encodeBase(envelopeMeasurementIdentity)
+	for _, measurement := range envelope.Measurements() {
+		state.LearningObservations = append(state.LearningObservations, encodeMeasurement(measurement))
+	}
 	state.Resonance = encodeResonanceArtifact(envelope.Resonance)
 	state.Manifold = encodeManifoldState(envelope.Manifold)
 	state.Boundaries = encodeBoundaries(envelope.Boundaries)
@@ -35028,8 +34412,10 @@ func (envelope *Envelope) EncodeWebsocket(includeLearning bool) []byte {
 
 	state := envelope.encodeBase(measurementForFocus)
 
- if includeLearning && envelope.Learning != nil { state.Learning = envelope.Learning.MarshalFlatbuffer(Focus()) }
- offset := state.Pack(builder)
+	if includeLearning && envelope.Learning != nil {
+		state.Learning = envelope.Learning.MarshalFlatbuffer(Focus())
+	}
+	offset := state.Pack(builder)
 	telemetry.FinishEnvelopeStateBuffer(builder, offset)
 
 	encoded := builder.FinishedBytes()
@@ -35572,6 +34958,126 @@ func entryCostWire(cost *EntryCost) *wire.EntryCostT {
 		Impact:             decimalString(cost.Impact),
 		BreakEven:          decimalString(cost.BreakEven),
 	}
+}
+
+---
+
+---
+File: /types/observation.go
+---
+
+package types
+
+import (
+	"bytes"
+	"strconv"
+
+	"github.com/google/flatbuffers/go"
+	"github.com/theapemachine/symm/nomagique/data"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
+)
+
+// Measurements exposes signal and logic observations to the grid through one
+// boundary. Category fields retain their measured meanings and maturity.
+func (envelope *Envelope) Measurements() []*data.Measurement[float64] {
+	signals := envelope.SignalMeasurements()
+	output := make([]*data.Measurement[float64], 0, len(signals)+len(envelope.Categories)+1)
+	for _, measurement := range signals {
+		if measurement != nil {
+			output = append(output, measurement)
+		}
+	}
+	output = append(output, envelope.LogicMeasurements()...)
+	return output
+}
+
+// LogicMeasurements preserves the numeric outputs of downstream solvers.
+func (envelope *Envelope) LogicMeasurements() []*data.Measurement[float64] {
+	var output []*data.Measurement[float64]
+	for _, category := range envelope.Categories {
+		measurement := data.NewMeasurement[float64](string(category.Type), category.Symbol, "category/"+string(category.Type), category.At, category.At)
+		measurement.Metadata = map[string]float64{data.MetadataMaturity: category.Maturity}
+		for label, value := range map[string]float64{"strength": category.Strength, "confidence": category.Confidence,
+			"surprisal": category.Surprisal, "uncertainty": category.Uncertainty, "freshness": category.Freshness} {
+			measurement.PutMetric(data.Metric[float64]{Label: label, Raw: value})
+		}
+		output = append(output, measurement)
+	}
+
+	if reading := envelope.Cognition; reading != nil {
+		measurement := data.NewMeasurement[float64](reading.Sequence, reading.Symbol, "cognition", reading.At, reading.At)
+		// Cohort is the producer's observed sequence support, retained as a
+		// sufficient statistic so Finalize applies the canonical maturity rule.
+		measurement.Metadata = map[string]float64{data.MetadataSupport: float64(reading.Cohort)}
+		for label, value := range map[string]float64{"confidence": reading.Confidence, "contrast": reading.Contrast,
+			"surprisal": reading.InterpolatedSurprisal, "lookahead_score": reading.LookaheadScore} {
+			measurement.PutMetric(data.Metric[float64]{Label: label, Raw: value})
+		}
+
+		if reading.EntropyBits != nil {
+			measurement.PutMetric(data.Metric[float64]{Label: "entropy_bits", Raw: *reading.EntropyBits})
+		}
+		output = append(output, measurement)
+	}
+
+	if reading := envelope.Resonance; reading != nil {
+		measurement := data.NewMeasurement[float64]("resonance", reading.Symbol, "resonance", reading.At, reading.At)
+		measurement.Metadata = map[string]float64{data.MetadataSupport: float64(reading.ResolvedSteps)}
+		measurement.PutMetric(data.Metric[float64]{Label: "confidence", Raw: reading.Confidence})
+		for index, value := range reading.Readout {
+			measurement.PutMetric(data.Metric[float64]{Label: "readout/" + strconv.Itoa(index), Raw: value})
+		}
+		for index, value := range reading.ForwardCurve {
+			measurement.PutMetric(data.Metric[float64]{Label: "forward/" + strconv.Itoa(index), Raw: value})
+		}
+		for index, value := range reading.ForwardRetention {
+			measurement.PutMetric(data.Metric[float64]{Label: "retention/" + strconv.Itoa(index), Raw: value})
+		}
+
+		if forecast := reading.Forecast; forecast != nil {
+			measurement.PutMetric(data.Metric[float64]{Label: "call", Raw: forecast.Call})
+			measurement.PutMetric(data.Metric[float64]{Label: "switch_confidence", Raw: forecast.SwitchConfidence})
+		}
+		output = append(output, measurement)
+	}
+
+	if reading := envelope.Manifold; reading != nil && envelope.Symbol() != "" {
+		// These are the field observations available to this symbol's event.
+		// Particle buffers remain owned by the manifold and are never copied to the grid.
+		measurement := data.NewMeasurement[float64]("field", envelope.Symbol(), "manifold", reading.At, reading.At)
+		for label, value := range map[string]float64{
+			"divergence": reading.Divergence, "guidance_speed": reading.GuidanceSpeed,
+			"coherence_mag2": reading.CoherenceMag2, "pressure_gradient_norm": reading.PressureGradNorm,
+			"viscosity_proxy": reading.ViscosityProxy, "kuramoto_r": reading.KuramotoR,
+		} {
+			measurement.PutMetric(data.Metric[float64]{Label: label, Raw: value})
+		}
+		output = append(output, measurement)
+	}
+	return output
+}
+
+// EncodePrecursor persists every numerical input at its capture coordinate.
+// It omits wallet state, graph trees and resident particle/volume buffers.
+func (envelope *Envelope) EncodePrecursor() []byte {
+	measurements := envelope.Measurements()
+
+	if len(measurements) == 0 {
+		return nil
+	}
+	state := &wire.EnvelopeStateT{
+		Key: envelope.Key, TypeId: byte(envelope.TypeID), Tick: envelope.Tick,
+		CaptureRun: string(envelope.CaptureID.Run), CaptureSeq: uint64(envelope.CaptureID.Sequence),
+		CaptureStream: string(envelope.CaptureID.Stream), CaptureEpoch: uint64(envelope.CaptureID.StreamEpoch),
+		CaptureStreamSeq: envelope.CaptureID.StreamSequence, CaptureOrdinal: envelope.CaptureOrdinal,
+	}
+	for _, measurement := range measurements {
+		state.LearningObservations = append(state.LearningObservations, encodeMeasurement(measurement))
+	}
+	builder := envelopeBuilders.Get().(*flatbuffers.Builder)
+	defer func() { builder.Reset(); envelopeBuilders.Put(builder) }()
+	wire.FinishEnvelopeStateBuffer(builder, state.Pack(builder))
+	return bytes.Clone(builder.FinishedBytes())
 }
 
 ---
@@ -38336,7 +37842,11 @@ type Column struct {
 /*
 New constructs the engine without connecting.
 */
-func New() *Warehouse { return &Warehouse{} }
+func New() *Warehouse {
+	viper.SetDefault("workbench.memory_limit", "2GB")
+
+	return &Warehouse{}
+}
 
 /*
 Wrap adapts an already-open DuckDB. Production connects through connect; tests
@@ -38468,6 +37978,21 @@ func (warehouse *Warehouse) boot(uri, location, catalog string) []string {
 	secure := strings.HasPrefix(endpoint, "https://")
 
 	return []string{
+		/*
+			The engine shares a process with the trading path, and DuckDB's
+			default ceiling is most of the machine's memory. An unpivoted view
+			of a table is materialized in full before it is paged, and the tape
+			tables run to tens of millions of rows carrying a payload each, so
+			an analyst opening one would otherwise take the run's memory with
+			it. The ceiling is declared instead, and overflowing it is refused
+			rather than spilled: a query that will not fit is the analyst's to
+			narrow, and a run that is holding positions is not the thing that
+			should pay for it.
+		*/
+		fmt.Sprintf("SET GLOBAL memory_limit=%s", literal(
+			viper.GetString("workbench.memory_limit"),
+		)),
+		"SET GLOBAL max_temp_directory_size='0B'",
 		// The viewer orders an unpivoted view by a row identity, and an
 		// Iceberg table has none to offer: its rows have no order the catalog
 		// guarantees, so the handler asks for `ORDER BY NULL` instead. DuckDB

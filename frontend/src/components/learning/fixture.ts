@@ -1,6 +1,6 @@
-import { LearningStateT } from "#/providers/telemetry/telemetry/learning-state";
 import { LearningAgentT } from "#/providers/telemetry/telemetry/learning-agent";
 import { LearningPriorT } from "#/providers/telemetry/telemetry/learning-prior";
+import { LearningStateT } from "#/providers/telemetry/telemetry/learning-state";
 
 // A funded account with a measured loss; wire constructors own optional fields.
 export const learningFixture = () => {

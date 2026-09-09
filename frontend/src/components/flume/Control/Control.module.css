@@ -1,0 +1,14 @@
+.wrapper {
+	width: 100%;
+	min-width: 0;
+	padding: 0;
+}
+.label {
+	font-size: 14px;
+}
+.controlLabel {
+	font-size: 13px;
+	font-weight: 500;
+	display: block;
+	margin: 0 0 4px;
+}

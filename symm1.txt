@@ -6,6 +6,7 @@ Directory Structure:
     │   ├── instrument.go
     │   ├── position
     │   │   ├── guardian.go
+    │   │   ├── paper.go
     │   │   ├── recovery.go
     │   │   └── regulator.go
     │   └── price.go
@@ -81,6 +82,8 @@ Directory Structure:
     │   │   └── solver.go
     │   ├── cognition
     │   │   └── solver.go
+    │   ├── impulse
+    │   │   └── solver.go
     │   ├── manifold
     │   │   ├── dataset.go
     │   │   ├── frame.go
@@ -137,11 +140,11 @@ Directory Structure:
     │   │   └── table.go
     │   ├── cognition
     │   │   ├── config.go
+    │   │   ├── encoding.go
     │   │   ├── engine.go
     │   │   ├── evaluation.go
     │   │   ├── primitive.go
     │   │   ├── scratch.go
-    │   │   ├── state.go
     │   │   └── weight.go
     │   ├── collection
     │   │   ├── append.go
@@ -284,20 +287,15 @@ Directory Structure:
     │   │   ├── associative
     │   │   │   ├── agent
     │   │   │   │   ├── agent.go
+    │   │   │   │   ├── context.go
     │   │   │   │   └── environment.go
     │   │   │   ├── grid
     │   │   │   │   ├── condition.go
+    │   │   │   │   ├── impulse.go
     │   │   │   │   ├── layout.go
     │   │   │   │   ├── regions.go
     │   │   │   │   ├── relaxation.go
     │   │   │   │   └── space.go
-    │   │   │   ├── model
-    │   │   │   │   ├── clone.go
-    │   │   │   │   ├── feedback.go
-    │   │   │   │   ├── model.go
-    │   │   │   │   ├── prior.go
-    │   │   │   │   └── selection.go
-    │   │   │   ├── population.go
     │   │   │   ├── prior
     │   │   │   │   ├── primitive.go
     │   │   │   │   └── reading.go
@@ -407,10 +405,10 @@ Directory Structure:
     │   │   └── store.go
     │   ├── runtime
     │   │   ├── node.go
-    │   │   ├── ring.go
     │   │   ├── sink.go
     │   │   ├── slot.go
     │   │   ├── status.go
+    │   │   ├── system.go
     │   │   ├── workload.go
     │   │   └── workspace.go
     │   ├── statistic
@@ -540,14 +538,13 @@ Directory Structure:
     │   └── s3.go
     ├── strategy
     │   ├── checkpoint.go
-    │   ├── development.go
     │   ├── encoding.go
     │   ├── evaluation.go
-    │   ├── execution.go
     │   ├── learner.go
-    │   ├── practice.go
+    │   ├── recorded_book.go
     │   ├── rehearsal.go
     │   ├── rehearsal_input.go
+    │   ├── replay_cursor.go
     │   └── trader.go
     ├── system
     │   ├── config.go
@@ -585,6 +582,7 @@ Directory Structure:
     │   ├── focus.go
     │   ├── holding.go
     │   ├── holding_wire.go
+    │   ├── observation.go
     │   ├── opportunity.go
     │   ├── phase.go
     │   ├── prediction.go
@@ -1614,6 +1612,85 @@ func (guardian *Guardian) dispatch(value any) {
 ---
 
 ---
+File: /broker/position/paper.go
+---
+
+package position
+
+import (
+	"time"
+
+	"github.com/krakenfx/api-go/v2/pkg/decimal"
+	"github.com/krakenfx/api-go/v2/pkg/spot"
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/broker"
+	"github.com/theapemachine/symm/kraken"
+)
+
+/*
+	paperExecution is the position-owned paper transport. Price supplies
+
+book walks and fees; Balance and Regulator retain their normal accounting.
+*/
+type paperExecution struct {
+	Price   *broker.Price
+	Balance *broker.Balance
+	At      time.Time
+	Fill    kraken.ExecutionData
+}
+
+/* AddOrder fills against the resident book without sending anything to a venue. */
+func (execution *paperExecution) AddOrder(order *spot.AddOrderRequest) (spot.AddOrderResult, error) {
+	quantity, err := decimal.NewFromString(order.Volume)
+
+	if err != nil {
+		return spot.AddOrderResult{}, errnie.Error(err)
+	}
+	fill := kraken.ExecutionData{ClientOrderID: order.ClOrdId, OrderID: order.ClOrdId, Symbol: order.Pair, Side: order.Type, OrderStatus: "filled", Timestamp: execution.At, CumQty: quantity}
+
+	switch order.Type {
+	case "buy":
+		cost, err := execution.Price.EntryCost(order.Pair, quantity)
+
+		if err != nil {
+			return spot.AddOrderResult{}, err
+		}
+		fill.CumCost, fill.FeeUsdEquiv, fill.AvgPrice = cost.GrossNotional, cost.EntryFee, cost.EntryPrice
+	case "sell":
+		surface, err := execution.Price.Surface(order.Pair, quantity, execution.At)
+
+		if err != nil {
+			return spot.AddOrderResult{}, err
+		}
+		if !surface.FullyExecutable {
+			return spot.AddOrderResult{}, errnie.Error(errnie.Err(
+				errnie.UnprocessableContent, "position: paper sale exceeds resident depth", nil,
+			))
+		}
+		fill.CumCost = surface.Gross
+		fill.FeeUsdEquiv = fill.CumCost.Sub(surface.ExecutableValue)
+		fill.AvgPrice = surface.ExecutableVWAP
+	default:
+		return spot.AddOrderResult{}, errnie.Error(errnie.Err(errnie.Validation, "execution: buy or sell required", nil))
+	}
+
+	if err := execution.Balance.Settle(fill); err != nil {
+		return spot.AddOrderResult{}, err
+	}
+	execution.Fill = fill
+	result := spot.AddOrderResult{}
+	result.ID = []string{order.ClOrdId}
+	return result, nil
+}
+
+/* CancelOrder rejects cancellation because simulated orders finish synchronously. */
+func (execution *paperExecution) CancelOrder(*spot.CancelOrderRequest) (spot.CancelResult, error) {
+	return spot.CancelResult{}, errnie.Error(errnie.Err(errnie.Conflict, "execution: no simulated order remains pending", nil))
+}
+
+---
+
+---
 File: /broker/position/recovery.go
 ---
 
@@ -1807,13 +1884,16 @@ import (
 
 /* Regulator serializes one position's orders and cumulative execution facts. */
 type Regulator struct {
-	mu        sync.RWMutex
-	Guardian  *Guardian
-	Holding   *types.Holding
-	ID        string
-	Recovered bool
-	Orders    Orders
-	Surface   *types.ExecutionSurface
+	mu            sync.RWMutex
+	Guardian      *Guardian
+	Holding       *types.Holding
+	ID            string
+	Recovered     bool
+	Orders        Orders
+	Surface       *types.ExecutionSurface
+	At            time.Time
+	LastExecution kraken.ExecutionData
+	paper         *paperExecution
 
 	api      *websocket.API
 	price    *broker.Price
@@ -1844,6 +1924,15 @@ func NewRegulator(
 		Holding: types.NewHolding(symbol),
 	}
 	return position
+}
+
+// NewPaperRegulator keeps the paper transport and cumulative accounting
+// inside the position owner. It never sends an order to the venue.
+func NewPaperRegulator(api *websocket.API, price *broker.Price, balance *broker.Balance, symbol string) *Regulator {
+	regulator := NewRegulator(api, price, symbol, nil)
+	regulator.paper = &paperExecution{Price: price, Balance: balance}
+	regulator.Orders = regulator.paper
+	return regulator
 }
 
 /*
@@ -1908,6 +1997,9 @@ func (position *Regulator) Submit(
 		CumCost:     decimal.NewFromInt64(0),
 		FeeUsdEquiv: decimal.NewFromInt64(0),
 	}
+	if position.paper != nil {
+		position.paper.At = position.At
+	}
 	position.result, err = position.Orders.AddOrder(position.pending)
 
 	if err != nil {
@@ -1923,6 +2015,9 @@ func (position *Regulator) Submit(
 	position.mu.Lock()
 	position.Holding.Status = types.PENDING
 	position.mu.Unlock()
+	if position.paper != nil {
+		return position.Apply(position.paper.Fill)
+	}
 	return nil
 }
 
@@ -1973,6 +2068,7 @@ func (position *Regulator) Apply(execution kraken.ExecutionData) error {
 			return err
 		}
 		position.executed = execution
+		position.LastExecution = execution
 	}
 
 	if position.record != nil {
@@ -2081,11 +2177,26 @@ var (
 /* Price owns fee state and economic calculations using the SDK's decimals. */
 type Price struct {
 	Instrument *Instrument
+	Books      BookSource
 	status     types.Status
 	api        *websocket.API
 	fees       *sync.Map
 	tickers    *sync.Map
 	normalizer *spot.Normalizer
+}
+
+// BookSource is the resident book boundary shared by live and captured tapes.
+// Both supply SDK books; pricing, fees, sizing and accounting stay on Price.
+type BookSource interface {
+	Book(string, func(*spotbook.Book))
+}
+
+// NewRecordedPrice reuses venue facts and fees while reading only the supplied
+// captured book. A replay cannot accidentally price against a live book.
+func NewRecordedPrice(authoritative *Price, books BookSource) *Price {
+	return &Price{Instrument: authoritative.Instrument, Books: books,
+		normalizer: authoritative.normalizer, fees: authoritative.fees,
+		tickers: &sync.Map{}, status: types.READY}
 }
 
 func NewPrice(api *websocket.API, instrument *Instrument) *Price {
@@ -2102,6 +2213,7 @@ func NewPrice(api *websocket.API, instrument *Instrument) *Price {
 	return &Price{
 		Instrument: instrument,
 		api:        api,
+		Books:      api,
 		normalizer: normalizer,
 		fees:       &sync.Map{},
 		tickers:    &sync.Map{},
@@ -2209,7 +2321,7 @@ func (price *Price) Quantity(symbol string, cash *decimal.Decimal) (*decimal.Dec
 	var quantity *decimal.Decimal
 	var err error
 
-	price.api.Book(symbol, func(book *spotbook.Book) {
+	price.Books.Book(symbol, func(book *spotbook.Book) {
 		if book == nil || book.BestAsk() == nil {
 			err = errnie.Err(errnie.NotFound, "price: ask book unavailable for "+symbol, nil)
 			return
@@ -2325,7 +2437,7 @@ func (price *Price) EntryCost(symbol string, quantity *decimal.Decimal) (*types.
 	var cost *types.EntryCost
 	var err error
 
-	price.api.Book(symbol, func(book *spotbook.Book) {
+	price.Books.Book(symbol, func(book *spotbook.Book) {
 		if book == nil || book.BestAsk() == nil || book.BestBid() == nil {
 			err = errnie.Err(errnie.NotFound, "entry cost: book unavailable for "+symbol, nil)
 			return
@@ -2392,7 +2504,7 @@ func (price *Price) Surface(
 	surface := &types.ExecutionSurface{Symbol: symbol, At: at, SellableQty: quantity}
 	var err error
 
-	price.api.Book(symbol, func(book *spotbook.Book) {
+	price.Books.Book(symbol, func(book *spotbook.Book) {
 		if book == nil || book.BestBid() == nil || book.BestAsk() == nil {
 			err = errnie.Err(errnie.NotFound, "price: book unavailable for "+symbol, nil)
 			return
@@ -2600,44 +2712,22 @@ func (price *Price) ApplyFill(
 		))
 	}
 
-	if holding.Qty == nil {
-		holding.Qty = decimalZero
-	}
-
-	if holding.Basis == nil {
-		holding.Basis = decimalZero
-	}
-
-	if holding.EntryCost == nil {
-		holding.EntryCost = decimalZero
-	}
-
-	if holding.EntryFee == nil {
-		holding.EntryFee = decimalZero
-	}
-
-	if holding.EntryFees == nil {
-		holding.EntryFees = decimalZero
-	}
-
-	if holding.EntryQty == nil {
-		holding.EntryQty = decimalZero
-	}
-
-	if holding.ExitCost == nil {
-		holding.ExitCost = decimalZero
-	}
-
-	if holding.ExitQty == nil {
-		holding.ExitQty = decimalZero
-	}
-
-	if holding.ExitFees == nil {
-		holding.ExitFees = decimalZero
-	}
-
-	if holding.RealizedPnL == nil {
-		holding.RealizedPnL = decimalZero
+	for _, field := range []**decimal.Decimal{
+		&holding.Qty,
+		&holding.Basis,
+		&holding.EntryCost,
+		&holding.EntryFee,
+		&holding.EntryFees,
+		&holding.EntryQty,
+		&holding.ExitCost,
+		&holding.ExitQty,
+		&holding.ExitFees,
+		&holding.RealizedPnL,
+		&holding.RealizedReturn,
+	} {
+		if *field == nil {
+			*field = decimalZero
+		}
 	}
 
 	if execution.Side == "buy" {
@@ -2746,6 +2836,13 @@ storage:
     # attribute, so it cannot be the same bucket as storage.s3.bucket above.
     uri: http://iceberg.seaweed.home.arpa
     warehouse: s3://symmtables/
+
+workbench:
+  # The Analytical Workbench's DuckDB runs inside this process. An unpivoted
+  # view is materialized in full before it is paged, so this is the ceiling on
+  # what an analyst's question may cost the run; beyond it the query is refused
+  # rather than spilled to disk or taken out of the trading path's memory.
+  memory_limit: 2GB
 
 experimental:
   # Presentation and diagnostic experiments are opt-in and paper-only.
@@ -3240,19 +3337,6 @@ var (
 			toxicitySolver := toxicity.NewSignal(runtimeCtx)
 			derivativesSolver := derivatives.NewSignal(runtimeCtx)
 
-			// These producers run synchronously at their transport owner rather
-			// than as workload stages, so they are traced explicitly: an
-			// untraced node stamps no boundary and is invisible in the
-			// diagnostics topology even while it is producing measurements.
-			privateSession.Level3Observers = func() []nmruntime.Node[*types.Envelope] {
-				return []nmruntime.Node[*types.Envelope]{
-					system.NewTraced("level3.depthflow", depthflow.NewSignal(runtimeCtx)),
-					system.NewTraced("level3.morphology", morphology.NewSignal(runtimeCtx)),
-					system.NewTraced("level3.pumpdump", pumpdumpSolver),
-					system.NewTraced("level3.toxicity", toxicitySolver),
-				}
-			}
-
 			if err := price.GetFees(instrument.Symbols()); err != nil {
 				return err
 			}
@@ -3266,113 +3350,75 @@ var (
 				return err
 			}
 			defer func() {
-				if err := learner.Population.Save(context.Background(), learner.Checkpoint); err != nil {
+				if err := learner.Save(context.Background()); err != nil {
 					errnie.Error(err)
 				}
 			}()
 			go learner.Run(runtimeCtx, system.Cfg.Learning.CheckpointInterval)
 
-			// The workspace owns the complete forward-learning loop. Signal and
-			// logic producers finish before the shared grid and action owner run.
-			publicTicker := nmruntime.NewWorkload(
-				runtimeCtx,
-				"ticker",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("ticker.ingress")},
-
-					{
-						system.NewTraced("ticker.correlation", correlation.NewSignal(runtimeCtx)),
-						system.NewTraced("ticker.leadlag", leadlag.NewSignal(runtimeCtx)),
-						system.NewTraced("ticker.liquidity", liquidity.NewSignal(runtimeCtx)),
-						system.NewTraced("ticker.sentiment", sentiment.NewSignal(runtimeCtx)),
-						system.NewTraced("ticker.resonance", resonanceSolver),
-					},
+			signals := nmruntime.NewWorkload(runtimeCtx, "signals", [][]nmruntime.Node[*types.Envelope]{
+				{
+					system.NewTraced("signal.correlation", correlation.NewSignal(runtimeCtx)),
+					system.NewTraced("signal.depthflow", depthflow.NewSignal(runtimeCtx)),
+					system.NewTraced("signal.derivatives", derivativesSolver),
+					system.NewTraced("signal.leadlag", leadlag.NewSignal(runtimeCtx)),
+					system.NewTraced("signal.liquidity", liquidity.NewSignal(runtimeCtx)),
+					system.NewTraced("signal.morphology", morphology.NewSignal(runtimeCtx)),
+					system.NewTraced("signal.pumpdump", pumpdumpSolver),
+					system.NewTraced("signal.sentiment", sentiment.NewSignal(runtimeCtx)),
+					system.NewTraced("signal.toxicity", toxicitySolver),
 				},
-			)
+				{system.NewTraced("logic.resonance", resonanceSolver)},
+			})
+			flow := nmruntime.NewWorkload(runtimeCtx, "flow", [][]nmruntime.Node[*types.Envelope]{
+				{
+					system.NewTraced("signal.cvd", cvd.NewSignal(runtimeCtx, func(symbol string) (*decimal.Decimal, *decimal.Decimal) {
+						tick := price.Tick(symbol)
 
-			publicTrade := nmruntime.NewWorkload(
-				runtimeCtx,
-				"trade",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("trade.ingress")},
-					{
-						system.NewTraced("trade.cvd", cvd.NewSignal(runtimeCtx, func(symbol string) (*decimal.Decimal, *decimal.Decimal) {
-							tick := price.Tick(symbol)
-							if tick == nil {
-								return nil, nil
-							}
-							return tick.Bid, tick.Ask
-						})),
-						system.NewTraced("trade.hawkes", hawkes.NewSignal(runtimeCtx)),
-					},
-					{
-						system.NewTraced("trade.manifold", manifoldSolver),
-					},
+						if tick == nil {
+							return nil, nil
+						}
+						return tick.Bid, tick.Ask
+					})),
+					system.NewTraced("signal.hawkes", hawkes.NewSignal(runtimeCtx)),
 				},
-			)
+				{system.NewTraced("logic.manifold", manifoldSolver)},
+			})
+			classification := nmruntime.NewWorkload(runtimeCtx, "classification", [][]nmruntime.Node[*types.Envelope]{
+				{system.NewTraced("logic.category", categorySolver)},
+				{system.NewTraced("logic.cognition", cognitionSolver)},
+			})
+			// Category consumes the current envelope's signal measurements. Its ring
+			// follows their join; all numerical output is complete before Grid runs.
+			observations := nmruntime.NewWorkload(runtimeCtx, "observations", [][]nmruntime.Node[*types.Envelope]{
+				{signals, flow},
+				{classification},
+				{rawCapture},
+			})
+			gridWorkload := nmruntime.NewWorkload(runtimeCtx, "grid", [][]nmruntime.Node[*types.Envelope]{
+				{system.NewTraced("logic.impulse", learner.Grid)},
+			})
+			agentWorkload := nmruntime.NewWorkload(runtimeCtx, "agent", [][]nmruntime.Node[*types.Envelope]{
+				{system.NewTraced("learning", learner)},
+			})
+			agentWorkload.Require(learner.Ready)
+			agents := []nmruntime.Node[*types.Envelope]{agentWorkload}
 
-			privateLevel3 := nmruntime.NewWorkload(
-				runtimeCtx,
-				"level3",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("level3.ingress")},
+			if learner.Rehearsal != nil {
+				agents = append(agents, learner.Rehearsal.Workload)
+			}
+			workspace := nmruntime.NewWorkspace(runtimeCtx, "workspace", [][]nmruntime.Node[*types.Envelope]{
+				{observations},
+				{gridWorkload},
+				agents,
+				{uiSink},
+			})
 
-					{
-						system.NewTraced("level3.manifold", manifoldSolver),
-					},
-				},
-			)
-
-			// Account execution notifications remain observable. The learning
-			// wallets execute independently against the shared displayed book.
-			privateExecutions := nmruntime.NewWorkload(
-				runtimeCtx,
-				"executions",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("executions.ingress")},
-				},
-			)
-
-			futuresTicker := nmruntime.NewWorkload(
-				runtimeCtx,
-				"futures.ticker",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("futures.ticker.ingress")},
-				},
-			)
-
-			futuresTrade := nmruntime.NewWorkload(
-				runtimeCtx,
-				"futures.trade",
-				[][]nmruntime.Node[*types.Envelope]{
-					{system.NewDiagnostic("futures.trade.ingress")},
-				},
-			)
-
-			workspace := nmruntime.NewWorkspace(
-				runtimeCtx,
-				"workspace",
-				[][]nmruntime.Node[*types.Envelope]{
-					{
-						publicTicker,
-						publicTrade,
-						privateLevel3,
-						privateExecutions,
-						futuresTicker,
-						futuresTrade,
-					},
-					// These dependent numerical steps share one event turn. Separate
-					// polling barriers otherwise spend more time scheduling these
-					// short steps than processing them under sustained backpressure.
-					{system.NewTraced("logic.pumpdump", pumpdumpSolver), system.NewTraced("logic.toxicity", toxicitySolver), system.NewTraced("logic.derivatives", derivativesSolver)},
-					{system.NewTraced("logic.category", categorySolver)},
-					{system.NewTraced("logic.cognition", cognitionSolver)},
-					{system.NewTraced("learning", learner)},
-					{uiSink},
-				},
-			)
-
-			defer workspace.Close()
+			defer func() {
+				if err := workspace.Close(); err != nil {
+					errnie.Error(err)
+				}
+			}()
 
 			if err := workspace.Error(); err != nil {
 				return errnie.Error(errnie.Err(
@@ -3382,12 +3428,12 @@ var (
 				))
 			}
 
-			publicIngress["ticker"] = publicTicker
-			publicIngress["trade"] = publicTrade
-			privateIngress["level3"] = privateLevel3
-			privateIngress["executions"] = privateExecutions
-			futuresIngress["ticker"] = futuresTicker
-			futuresIngress["trade"] = futuresTrade
+			publicIngress["ticker"] = workspace
+			publicIngress["trade"] = workspace
+			privateIngress["level3"] = workspace
+			privateIngress["executions"] = workspace
+			futuresIngress["ticker"] = workspace
+			futuresIngress["trade"] = workspace
 
 			// Subscribe and seed while transports remain BUSY. Only a complete
 			// instrument universe and restored learner may open the workspace.
@@ -3404,8 +3450,7 @@ var (
 
 			workspace.Admit()
 
-			if workspace.Status() == nil ||
-				workspace.Status().Current() != nmruntime.READY {
+			if workspace.Status() != nmruntime.READY {
 				return errnie.Error(errnie.Err(
 					errnie.NotAcceptable,
 					"symm: workspace did not reach ready",
@@ -3837,6 +3882,7 @@ package hindsight
 import (
 	"math"
 	"time"
+"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
@@ -3884,6 +3930,9 @@ Each quantity carries an explicit Has* presence flag, so an absent bid stays
 absent instead of collapsing into a convenient zero (§43).
 */
 type Observation struct {
+	// Measurements are joined from the exact numerical witness for rehearsal.
+	// Episode selection and public market-coordinate serialization ignore them.
+	Measurements []*data.Measurement[float64] `json:"-"`
 	Domain     string          `json:"domain"`
 	Capture    CaptureIdentity `json:"capture"`
 	Ordinal    uint64          `json:"ordinal"`
@@ -5579,10 +5628,6 @@ type RehearsalInput struct {
 	Capture      CaptureIdentity              `json:"capture"`
 	Symbol       string                       `json:"symbol"`
 	At           time.Time                    `json:"at"`
-	GridVersion  uint64                       `json:"gridVersion"`
-	Context      []uint64                     `json:"context"`
-	Quantities   [][2]string                  `json:"quantities"`
-	Authority    float64                      `json:"authority"`
 	Measurements []*data.Measurement[float64] `json:"measurements"`
 }
 
@@ -5603,14 +5648,29 @@ func (witness ArtifactWitness) RehearsalInput() (input RehearsalInput, err error
 		state.CaptureOrdinal() != witness.Envelope.Ordinal {
 		return input, errnie.Error(errnie.Err(errnie.Validation, "rehearsal: precursor capture identity mismatch", nil))
 	}
+	if state.LearningObservationsLength() == 0 &&
+		(state.CategoriesLength() > 0 || state.Cognition(nil) != nil || state.Resonance(nil) != nil || state.Manifold(nil) != nil) {
+		return input, errnie.Error(errnie.Err(errnie.Validation,
+			"rehearsal: legacy witness lacks captured numerical logic observations; recapture required", nil))
+	}
 	input.Capture, input.Symbol = witness.Envelope.Origin, string(state.Key())
 
-	for _, source := range residentSources {
-		encoded := measurementOf(state, source)
-
-		if encoded == nil {
-			continue
+	encodedMeasurements := make([]*wire.EnvelopeMeasurement, 0, len(residentSources)+state.LearningObservationsLength())
+	if state.LearningObservationsLength() == 0 {
+		for _, source := range residentSources {
+			if encoded := measurementOf(state, source); encoded != nil {
+				encodedMeasurements = append(encodedMeasurements, encoded)
+			}
 		}
+	}
+	for index := range state.LearningObservationsLength() {
+		encoded := new(wire.EnvelopeMeasurement)
+		if !state.LearningObservations(encoded, index) {
+			return input, errnie.Error(errnie.Err(errnie.Validation, "rehearsal: absent numerical logic record", nil))
+		}
+		encodedMeasurements = append(encodedMeasurements, encoded)
+	}
+	for _, encoded := range encodedMeasurements {
 		reading := encoded.UnPack()
 		from := time.Time{}
 
@@ -6368,13 +6428,22 @@ func (node *Session) Step(envelope *types.Envelope) *types.Envelope {
 		Ordinal: envelope.CaptureOrdinal,
 	}
 
+	if payload := envelope.EncodePrecursor(); len(payload) > 0 {
+		node.record(hindsight.ArtifactWitness{
+			Envelope: ref, Boundary: "after-logic",
+			Artifact: hindsight.ArtifactID{Kind: "precursor", Identity: string(ref.Origin.Run) + ":" +
+				strconv.FormatUint(uint64(ref.Origin.Sequence), 10) + ":" + strconv.FormatUint(ref.Ordinal, 10)},
+			Payload: payload,
+		})
+	}
+
 	if !node.shouldWitness(envelope) {
 		return envelope
 	}
 
 	node.record(hindsight.ArtifactWitness{
 		Envelope: ref,
-		Boundary: "after-strategy",
+		Boundary: "after-logic",
 		Artifact: hindsight.ArtifactID{
 			Kind: "state",
 			Identity: string(ref.Origin.Run) + ":" +
@@ -12749,7 +12818,7 @@ func (book *Book) Status() runtime.Stage {
 }
 
 /*
-	Expect keeps the book owner WAITING until every requested snapshot has
+	Expect keeps the book owner BUSY until every requested snapshot has
 
 been applied and its observation consumers have been seeded.
 */
@@ -12760,7 +12829,7 @@ func (book *Book) Expect(symbols []string) {
 	for _, symbol := range symbols {
 		book.pending[symbol] = struct{}{}
 	}
-	book.status.Transition(runtime.WAITING)
+	book.status.Transition(runtime.BUSY)
 }
 
 /* Wait blocks boot on the owner's readiness, never on elapsed market time. */
@@ -12784,6 +12853,10 @@ func (book *Book) Wait() error {
 func (book *Book) Book(symbol string, read func(*spotbook.Book)) {
 	book.mu.RLock()
 	defer book.mu.RUnlock()
+
+	if _, pending := book.pending[symbol]; pending {
+		return
+	}
 
 	if _, diverging := book.diverging[symbol]; diverging {
 		return
@@ -12876,13 +12949,18 @@ func (book *Book) Update(
 	}
 
 	for _, data := range accepted {
+		if payload.Type == "snapshot" {
+			book.mu.Lock()
+			delete(book.pending, data.Symbol)
+			book.mu.Unlock()
+		}
+
 		if notify != nil {
 			notify(data.Symbol, data.Timestamp)
 		}
 
 		if payload.Type == "snapshot" {
 			book.mu.Lock()
-			delete(book.pending, data.Symbol)
 
 			if len(book.pending) == 0 && len(book.diverging) == 0 {
 				book.status.Transition(runtime.READY)
@@ -14229,7 +14307,7 @@ func NewFuturesWithClient(
 					return
 				}
 
-				if workload.Status() == nil || workload.Status().Current() != runtime.READY {
+				if workload.Status() != runtime.READY {
 					futures.fail(errnie.Err(
 						errnie.NotAcceptable,
 						"futures: ingress is not ready for "+feed,
@@ -14471,8 +14549,7 @@ func (futures *FuturesLive) MarkReady() {
 	}
 
 	for feed, workload := range futures.ingress {
-		if workload != nil && workload.Status() != nil &&
-			workload.Status().Current() == runtime.READY {
+		if workload != nil && workload.Status() == runtime.READY {
 			continue
 		}
 
@@ -15101,11 +15178,6 @@ type Live struct {
 	// sessions leave it nil and push directly.
 	l3forward *level3Sequencer
 
-	// Level3Observers constructs numeric producers at each child book owner.
-	// Only their measurements cross the ingress ring; order arrays do not.
-	Level3Observers func() []runtime.Node[*types.Envelope]
-	level3Observers []runtime.Node[*types.Envelope]
-
 	// pingReqID is echoed back on the pong reply, so a response can be tied to
 	// the request that produced it.
 	pingReqID atomic.Int64
@@ -15434,24 +15506,13 @@ func NewWithClient(
 				return data.Symbol == symbol
 			}))
 
-			// Observe the accepted delta synchronously at its transport owner.
-			// Strip orders before either the sequencer or workload sees the value.
+			// The accepted delta travels through the signal Workload. The resident
+			// book remains owned by this transport; no full book snapshot is copied.
 			envelope.Level3Data = bookFrame.Data[envelope.CaptureOrdinal]
-
-			for _, observer := range live.level3Observers {
-				observer.Step(envelope)
-
-				if failure, ok := observer.(runtime.ErrorNode); ok && failure.Error() != nil {
-					live.fail(failure.Error())
-					return
-				}
-			}
 
 			if live.Status() != runtime.READY {
 				return
 			}
-
-			envelope.Level3Data = kraken.Level3Data{Symbol: symbol, Timestamp: at}
 
 			if live.manifestSink != nil {
 				if err := live.manifestSink.WriteManifest(manifestFor(
@@ -15469,7 +15530,7 @@ func NewWithClient(
 
 			workload := live.ingress["level3"]
 
-			if workload == nil || workload.Status() == nil || workload.Status().Current() != runtime.READY {
+			if workload == nil || workload.Status() != runtime.READY {
 				live.fail(errnie.Err(errnie.NotAcceptable, "websocket: book notification ingress is not ready", nil))
 				return
 			}
@@ -15647,7 +15708,7 @@ func NewWithClient(
 					return
 				}
 
-				if workload.Status() == nil || workload.Status().Current() != runtime.READY {
+				if workload.Status() != runtime.READY {
 					live.fail(errnie.Err(
 						errnie.NotAcceptable,
 						"websocket: ingress is not ready for "+channel,
@@ -16044,8 +16105,7 @@ func (live *Live) MarkReady() {
 	}
 
 	for channel, workload := range live.ingress {
-		if workload != nil && workload.Status() != nil &&
-			workload.Status().Current() == runtime.READY {
+		if workload != nil && workload.Status() == runtime.READY {
 			continue
 		}
 
@@ -16391,10 +16451,6 @@ func (live *Live) SubL3(symbols []string) {
 		}
 
 		conn.l3forward = live.l3forward
-
-		if live.Level3Observers != nil {
-			conn.level3Observers = live.Level3Observers()
-		}
 
 		conn.symbols = append([]string{}, groups...)
 		live.AttachLevel3(groupKey, conn)
@@ -19973,6 +20029,80 @@ Close cleans up the solver.
 func (solver *Solver) Close() error {
 	solver.cancel()
 	return nil
+}
+
+---
+
+---
+File: /logic/impulse/solver.go
+---
+
+package impulse
+
+import (
+	"sync"
+
+	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
+	"github.com/theapemachine/symm/types"
+)
+
+// Solver owns the live impulse map. The workload calls it after signal and
+// logic producers and before the agent. Its lock protects read-only UI snapshots.
+type Solver struct {
+	*grid.Space
+	Mutex  sync.Mutex
+	Latest map[string]grid.Impulse
+	err    error
+}
+
+func NewSolver() *Solver {
+	return &Solver{Space: grid.NewSpace(), Latest: make(map[string]grid.Impulse)}
+}
+
+func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
+	solver.Mutex.Lock()
+	defer solver.Mutex.Unlock()
+	envelope.Impulses = envelope.Impulses[:0]
+	groups := make(map[string][]*data.Measurement[float64])
+	for _, measurement := range envelope.Measurements() {
+		if measurement != nil {
+			groups[measurement.Label] = append(groups[measurement.Label], measurement)
+		}
+	}
+	for label, measurements := range groups {
+		at, from := measurements[0].At, measurements[0].From
+		for _, measurement := range measurements {
+			if measurement.At.After(at) {
+				at = measurement.At
+			}
+
+			if !measurement.From.IsZero() && (from.IsZero() || measurement.From.Before(from)) {
+				from = measurement.From
+			}
+		}
+
+		if err := solver.Space.Step(measurements); err != nil {
+			solver.err = errnie.Error(err)
+			return envelope
+		}
+		impulse, err := solver.Space.Impulse(label, at, from)
+
+		if err != nil {
+			solver.err = errnie.Error(err)
+			return envelope
+		}
+		solver.Latest[label] = impulse
+		envelope.Impulses = append(envelope.Impulses, impulse)
+	}
+	return envelope
+}
+
+func (solver *Solver) Error() error {
+	solver.Mutex.Lock()
+	defer solver.Mutex.Unlock()
+	return solver.err
 }
 
 ---
@@ -24790,6 +24920,116 @@ func (c Config) DecayFactor() float64 {
 ---
 
 ---
+File: /nomagique/cognition/encoding.go
+---
+
+package cognition
+
+import (
+	"bytes"
+	"encoding/gob"
+	"io"
+
+	iradix "github.com/hashicorp/go-immutable-radix/v2"
+	"github.com/theapemachine/errnie"
+)
+
+// Encode serializes one immutable trie snapshot, its configuration and clock.
+// There is no checkpoint model: the values are the same packed weights read
+// by Evaluate. Storage I/O belongs to the caller.
+func (engine *Engine) Encode() ([]byte, error) {
+	root := engine.root.Load()
+	var buffer bytes.Buffer
+	encoder := gob.NewEncoder(&buffer)
+	for _, value := range []any{"cognition/packed-weight/1", engine.cfg, engine.stepCounter.Load(), root.Len()} {
+		if err := encoder.Encode(value); err != nil {
+			return nil, errnie.Error(err)
+		}
+	}
+	iterator := root.Root().Iterator()
+	for key, value, found := iterator.Next(); found; key, value, found = iterator.Next() {
+		if err := encoder.Encode(key); err != nil {
+			return nil, errnie.Error(err)
+		}
+
+		if err := encoder.Encode(value); err != nil {
+			return nil, errnie.Error(err)
+		}
+	}
+	return buffer.Bytes(), nil
+}
+
+// Decode restores into a fresh engine before it is shared. Invalid or retired
+// formats fail explicitly; neither partial state nor a replacement empty model
+// is published after a failed read.
+func (engine *Engine) Decode(encoded []byte) error {
+	if engine.root.Load().Len() != 0 || engine.stepCounter.Load() != 0 {
+		return errnie.Error(errnie.Err(errnie.Conflict, "cognition: restore requires a fresh engine", nil))
+	}
+	decoder := gob.NewDecoder(bytes.NewReader(encoded))
+	var format string
+	var config Config
+	var step uint64
+	var count int
+	for _, destination := range []any{&format, &config, &step, &count} {
+		if err := decoder.Decode(destination); err != nil {
+			return errnie.Error(errnie.Err(errnie.Validation, "cognition: invalid packed model header", err))
+		}
+	}
+
+	if format != "cognition/packed-weight/1" || count < 0 {
+		return errnie.Error(errnie.Err(errnie.Validation, "cognition: unsupported packed model format", nil))
+	}
+
+	if config.DirichletAlpha <= 0 || config.MaxBackoffOrder <= 0 || config.SurprisalBreakBits <= 0 {
+		return errnie.Error(errnie.Err(errnie.Validation, "cognition: invalid model configuration", nil))
+	}
+	transaction := iradix.New[[]byte]().Txn()
+	for range count {
+		var key, value []byte
+		for _, destination := range []any{&key, &value} {
+			if err := decoder.Decode(destination); err != nil {
+				return errnie.Error(errnie.Err(errnie.Validation, "cognition: incomplete packed model", err))
+			}
+		}
+
+		if err := engine.validate(key, value, step); err != nil {
+			return err
+		}
+
+		if _, replaced := transaction.Insert(key, value); replaced {
+			return errnie.Error(errnie.Err(errnie.Validation, "cognition: duplicate packed model key", nil))
+		}
+	}
+	var trailing any
+
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return errnie.Error(errnie.Err(errnie.Validation, "cognition: trailing packed model data", err))
+	}
+	engine.cfg, engine.decayFactor = config, config.DecayFactor()
+	engine.stepCounter.Store(step)
+	engine.root.Store(transaction.Commit())
+	return nil
+}
+
+func (engine *Engine) validate(key, value []byte, step uint64) error {
+	_, _, basin := parseBasinKey(key)
+	sensory := bytes.HasPrefix(key, []byte("s/")) && len(key) > len("s/")
+
+	if (!basin && !sensory) || len(value) != WeightSize {
+		return errnie.Error(errnie.Err(errnie.Validation, "cognition: invalid packed model record", nil))
+	}
+	weight := DecodeWeight(value)
+
+	if weight.Count == 0 || weight.WriteStep > step || weight.Probability < 0 || weight.Probability > 1 {
+		return errnie.Error(errnie.Err(errnie.Validation, "cognition: invalid packed model weight", nil))
+	}
+	return nil
+}
+
+---
+
+---
 File: /nomagique/cognition/engine.go
 ---
 
@@ -24809,8 +25049,8 @@ import (
 const maxCandidates = 16
 
 type classAccumulator struct {
-	names  [maxCandidates][]byte
-	logits [maxCandidates]types.Scalar
+	names  [][]byte
+	logits []types.Scalar
 	count  int
 }
 
@@ -24822,11 +25062,9 @@ func (acc *classAccumulator) add(name []byte, logP types.Scalar) {
 		}
 	}
 
-	if acc.count < maxCandidates {
-		acc.names[acc.count] = name
-		acc.logits[acc.count] = logP
-		acc.count++
-	}
+	acc.names = append(acc.names, name)
+	acc.logits = append(acc.logits, logP)
+	acc.count++
 }
 
 type Engine struct {
@@ -24847,40 +25085,49 @@ func NewEngine(cfg Config) *Engine {
 }
 
 /*
-Observe registers an associative transition: context -> class (or next state).
+Observe registers context -> class in the existing packed basin. Without feedback,
+it observes a positive association. Optional signed feedback is a dimensionless
+reinforcement amount: positive strengthens, negative inhibits, zero only observes
+sensory context. It is not stored in a separate reward model.
 */
-func (e *Engine) Observe(context []byte, class []byte) {
+func (e *Engine) Observe(context []byte, class []byte, feedback ...float64) {
 	if len(context) == 0 {
 		return
 	}
-	step := e.stepCounter.Add(1)
 
 	// Keys are namespaced: b/<class>/<context> for basins; s/<context> for sensory transitions
 	basinKey := makeBasinKey(class, context)
 	sensoryKey := makeSensoryKey(context)
 
-	var valBuf [StateSize]byte
+	var valBuf [WeightSize]byte
 
 	for {
 		oldRoot := e.root.Load()
+		step := e.stepCounter.Add(1)
 		txn := oldRoot.Txn()
 
-		// 1. Update Attractor Basin
-		if len(class) > 0 {
-			bState := State{Count: 1, Probability: 1.0, WriteStep: step}
-			if existing, found := oldRoot.Get(basinKey); found {
-				prior := DecodeState(existing).Aged(step, e.decayFactor)
-				bState.Count = prior.Count + 1
-				bState.Probability = prior.Probability + (1.0-prior.Probability)/(float64(bState.Count)+1.0)
+		// A zero grade observes the context without reinforcing an action.
+		if len(class) > 0 && (len(feedback) == 0 || feedback[0] != 0) {
+			weight := PackedWeight{Probability: 1, WriteStep: step}
+
+			if len(feedback) > 0 {
+				weight.Probability = 0.5 // Neutral between reinforcement and inhibition.
 			}
-			bState.Encode(valBuf[:])
+
+			if existing, found := oldRoot.Get(basinKey); found {
+				weight = DecodeWeight(existing).Effective(step, e.decayFactor)
+			}
+			weight.Count++
+			weight.WriteStep = step
+			weight.Reinforce(feedback...)
+			weight.Encode(valBuf[:])
 			txn.Insert(basinKey, bytes.Clone(valBuf[:]))
 		}
 
 		// 2. Update Sensory Suffix Transition
-		sState := State{Count: 1, Probability: 1.0, WriteStep: step}
+		sState := PackedWeight{Count: 1, Probability: 1.0, WriteStep: step}
 		if existing, found := oldRoot.Get(sensoryKey); found {
-			prior := DecodeState(existing).Aged(step, e.decayFactor)
+			prior := DecodeWeight(existing).Effective(step, e.decayFactor)
 			sState.Count = prior.Count + 1
 			sState.Probability = prior.Probability + (1.0-prior.Probability)/(float64(sState.Count)+1.0)
 		}
@@ -24908,7 +25155,9 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 	// -------------------------------------------------------------
 	// 1. Attractor Basin Softmax & Contrast (Nomagique Probability)
 	// -------------------------------------------------------------
-	var acc classAccumulator
+	var names [maxCandidates][]byte
+	var logits [maxCandidates]types.Scalar
+	acc := classAccumulator{names: names[:0], logits: logits[:0]}
 	it := root.Root().Iterator()
 	basinPrefix := []byte("b/")
 	it.SeekPrefix(basinPrefix)
@@ -24925,7 +25174,7 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 		order := matchOrder(context, basinSeq, e.cfg.MaxBackoffOrder)
 
 		if order > 0 {
-			state := DecodeState(v).Aged(step, e.decayFactor)
+			state := DecodeWeight(v).Effective(step, e.decayFactor)
 			// Dirichlet pseudo-count prior: P = (Count + α) / (Total + α*K)
 			denom := float64(state.Count) + e.cfg.DirichletAlpha*float64(maxCandidates)
 			smoothedP := (float64(state.Count)*state.Probability + e.cfg.DirichletAlpha) / denom
@@ -24990,7 +25239,7 @@ func (e *Engine) Evaluate(context []byte) Evaluation {
 	// -------------------------------------------------------------
 	sensoryKey := makeSensoryKey(context)
 	if raw, found := root.Get(sensoryKey); found {
-		state := DecodeState(raw).Aged(step, e.decayFactor)
+		state := DecodeWeight(raw).Effective(step, e.decayFactor)
 		if state.Probability > 0 {
 			eval.Surprisal = -math.Log2(state.Probability)
 		} else {
@@ -25037,7 +25286,7 @@ func (e *Engine) beamSearch(root *iradix.Tree[[]byte], prefix []byte, width, hop
 					continue
 				}
 
-				state := DecodeState(v)
+				state := DecodeWeight(v)
 				prob := math.Max(state.Probability, 1e-4)
 				logP := math.Log(prob)
 
@@ -25312,67 +25561,6 @@ func (s *Scratch) Softmax() {
 ---
 
 ---
-File: /nomagique/cognition/state.go
----
-
-package cognition
-
-import (
-	"encoding/binary"
-	"math"
-)
-
-const StateSize = 24
-
-/*
-State is the packed, unboxed 24-byte cognitive node stored in the trie.
-*/
-type State struct {
-	Count       uint64
-	Probability float64
-	WriteStep   uint64
-}
-
-func (s State) Encode(dst []byte) {
-	binary.LittleEndian.PutUint64(dst[0:8], s.Count)
-	binary.LittleEndian.PutUint64(dst[8:16], math.Float64bits(s.Probability))
-	binary.LittleEndian.PutUint64(dst[16:24], s.WriteStep)
-}
-
-func DecodeState(src []byte) State {
-	if len(src) < StateSize {
-		return State{}
-	}
-
-	return State{
-		Count:       binary.LittleEndian.Uint64(src[0:8]),
-		Probability: math.Float64frombits(binary.LittleEndian.Uint64(src[8:16])),
-		WriteStep:   binary.LittleEndian.Uint64(src[16:24]),
-	}
-}
-
-/*
-Aged applies continuous exponential forgetting up to currentStep.
-*/
-func (s State) Aged(currentStep uint64, decayFactor float64) State {
-	if s.WriteStep >= currentStep || decayFactor >= 1.0 || decayFactor <= 0.0 {
-		return s
-	}
-
-	elapsed := float64(currentStep - s.WriteStep)
-	retention := math.Pow(decayFactor, elapsed)
-	// Effective counts never truncate an observed state back to zero: a state
-	// that was seen at least once remains at least one effective observation.
-	// Ceiling preserves small counts that plain integer truncation would erase.
-	s.Count = uint64(math.Ceil(float64(s.Count) * retention))
-	s.Probability *= retention
-
-	return s
-}
-
----
-
----
 File: /nomagique/cognition/weight.go
 ---
 
@@ -25413,7 +25601,7 @@ func DecodeWeight(src []byte) PackedWeight {
 	if len(src) < WeightSize {
 		return PackedWeight{}
 	}
-	
+
 	return PackedWeight{
 		Count:       binary.LittleEndian.Uint64(src[0:8]),
 		Probability: math.Float64frombits(binary.LittleEndian.Uint64(src[8:16])),
@@ -25431,10 +25619,31 @@ func (w PackedWeight) Effective(currentStep uint64, decayFactor float64) PackedW
 
 	// w_eff = w * decay^(currentStep - writeStep)
 	multiplier := math.Pow(decayFactor, float64(currentStep-w.WriteStep))
-	w.Count = uint64(float64(w.Count) * multiplier)
+	w.Count = uint64(math.Ceil(float64(w.Count) * multiplier))
 	w.Probability *= multiplier
 
 	return w
+}
+
+/*
+Reinforce updates the association in place. Signed feedback contributes its
+absolute mass to the denominator, and positive mass to the numerator:
+(p + max(feedback, 0)) / (1 + abs(feedback)). One is the current unit of
+association mass. Thus losses inhibit, larger grades adjust more, and zero
+leaves the weight unchanged. Probability denotes association strength, not a
+calibrated probability of profit. Callers supply feedback in consistent units.
+*/
+func (weight *PackedWeight) Reinforce(feedback ...float64) {
+	if len(feedback) == 0 {
+		weight.Probability += (1 - weight.Probability) / (float64(weight.Count) + 1)
+		return
+	}
+	value := feedback[0]
+	weight.Probability /= 1 + math.Abs(value)
+
+	if value > 0 {
+		weight.Probability += value / (1 + value)
+	}
 }
 
 ---
@@ -27411,6 +27620,7 @@ Finalize can derive Maturity and SNR without any caller-supplied numbers.
 */
 const (
 	MetadataSupport        = "support"
+	MetadataMaturity       = "maturity"
 	MetadataDivergence     = "divergence"
 	MetadataNoiseVariance  = "noise_variance"
 	MetadataMahalanobisSNR = "mahalanobis_snr"
@@ -27797,7 +28007,10 @@ func NewQuality() core.Primitive {
 			supported,
 			store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewConstant(core.From(0.0)), store.NewKey("maturity"))),
 		),
-		store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewConstant(core.From(1.0)), store.NewKey("maturity"))),
+		logic.NewGate(store.NewHas("maturity"),
+			transport.NewPipe(),
+			store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewConstant(core.From(1.0)), store.NewKey("maturity"))),
+		),
 	)
 	finite := equation.NewAll(
 		logic.NewGate(
@@ -33276,110 +33489,147 @@ File: /nomagique/learning/associative/agent/agent.go
 package agent
 
 import (
+	"context"
+	"fmt"
+	"math/rand/v2"
+	"slices"
+	"strconv"
 	"time"
 
 	"github.com/theapemachine/errnie"
+	"github.com/theapemachine/symm/nomagique/cognition"
 	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/learning/associative/model"
-	"github.com/theapemachine/symm/nomagique/learning/associative/prior"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
 	"github.com/theapemachine/symm/nomagique/learning/associative/reward"
+	"github.com/theapemachine/symm/nomagique/runtime"
 )
 
-/* Agent owns action learning; Environment owns the resources those actions affect. */
-type Choice[Action comparable] struct {
-	Action Action
-	Prior  prior.Reading
-}
-
-type Activation[Action comparable] struct {
-	Decision *Decision[Action]
-	Choices  []Choice[Action]
-}
-
+/* Agent owns precursor inference and its unresolved actions. */
 type Agent[Action comparable] struct {
-	Activations map[string]*Activation[Action]
-	Model       *model.Model[string, Action]
+	*runtime.System
+	Activations map[string]*Decision[Action]
+	Model       *cognition.Engine
 	Environment Environment[Action]
 	Explore     bool
 	Pending     map[uint64]*Decision[Action]
 	Last        *Decision[Action]
-	Selected    prior.Reading
 	Reward      reward.Outcome
 	Outcomes    equation.PriorMoments
 	Reading     equation.PriorSummary
 	Decisions   uint64
 	Positive    uint64
 	Negative    uint64
-	Err         error
 	ledger      reward.Ledger
+	histories   map[string][]transition
+	sequence    uint64
 }
 
-/* New binds an independent model to one environment and an explicit selection mode. */
+/* New binds a model to a rehearsal explorer or the accumulated forward-test agent. */
 func New[Action comparable](
-	environment Environment[Action], learned *model.Model[string, Action], explore bool,
+	ctx context.Context, environment Environment[Action], learned *cognition.Engine, explore bool,
 ) (*Agent[Action], error) {
 	if environment == nil || learned == nil {
 		return nil, errnie.Error(errnie.Err(
 			errnie.Validation, "agent: environment and model required", nil,
 		))
 	}
-	learned.Ordered = true
 
 	return &Agent[Action]{
-		Model: learned, Environment: environment, Explore: explore,
-		Pending: make(map[uint64]*Decision[Action]), Activations: make(map[string]*Activation[Action]),
+		System: runtime.NewSystem(ctx, "agent"),
+		Model:  learned, Environment: environment, Explore: explore,
+		Pending: make(map[uint64]*Decision[Action]), Activations: make(map[string]*Decision[Action]),
 	}, nil
 }
 
-/*
-Activate selects and issues one feasible action under the current and prior
-observation context. Undefined evidence remains undefined in Selected.
-*/
+// Step consumes the grid's completed regions. Both live and replay paths use
+// this operation; market readiness remains the enclosing workload's dependency.
+func (agent *Agent[Action]) Step(impulse grid.Impulse) grid.Impulse {
+	if agent.Error() != nil {
+		return impulse
+	}
+
+	if !impulse.Ready {
+		agent.Transition(runtime.WAITING)
+		return impulse
+	}
+	conditions := make([]uint64, 0, len(impulse.Regions))
+	strength, authority := 0.0, 0.0
+	for _, region := range impulse.Regions {
+		conditions = append(conditions, region.Condition)
+		strength += region.Strength
+		authority += region.Strength * region.Authority
+	}
+
+	if strength == 0 {
+		agent.Transition(runtime.WAITING)
+		return impulse
+	}
+
+	if err := agent.Measure(); err != nil {
+		return impulse
+	}
+	sequence := agent.Context(impulse.Label, impulse.At, impulse.From, conditions)
+	agent.Fail(agent.Activate(impulse.Label, impulse.At, sequence, authority/strength))
+	return impulse
+}
+
+// Activate evaluates the original precursor sequence and issues one feasible
+// action. Explorers sample when evidence is uncertain; live inference abstains
+// when there is no supported feasible winner. Abstention is not a wait sample.
 func (agent *Agent[Action]) Activate(
 	label string, at time.Time, context []uint64, authority float64,
 ) (err error) {
-	defer func() { agent.Err = err }()
+	defer func() { agent.Fail(err) }()
 	actions, state, err := agent.Environment.Feasible(label)
 
 	if err != nil {
 		return errnie.Error(err)
 	}
-	conditioned := make([]uint64, 0, len(state)+len(context))
-	conditioned = append(conditioned, state...)
-	conditioned = append(conditioned, context...)
-	choices := make([]Choice[Action], 0, len(actions))
-	action, selected, err := agent.Model.Select(label, conditioned, actions, agent.Explore, func(label string, context []uint64, action Action) prior.Reading {
-		reading := agent.Model.Recall(label, context, action)
-		choices = append(choices, Choice[Action]{Action: action, Prior: reading})
-		return reading
-	})
 
-	if err != nil {
-		return errnie.Error(err)
+	if len(actions) < 2 {
+		agent.Transition(runtime.WAITING)
+		return nil
 	}
-	identity, err := agent.Model.Issue(label, conditioned, action, authority)
+	conditioned := append(append(make([]uint64, 0, len(state)+len(context)), state...), context...)
+	evaluation := agent.Model.Evaluate(ContextKey(label, conditioned))
 
-	if err != nil {
-		return errnie.Error(err)
+	if evaluation.IsBreak {
+		delete(agent.histories, label)
 	}
+	selected := -1
+	for index, action := range actions {
+		if fmt.Sprint(action) == evaluation.WinnerClass {
+			selected = index
+		}
+	}
+
+	if agent.Explore && (selected < 0 || evaluation.RunnerUp == "" || rand.Float64() < evaluation.Ambiguity) {
+		selected = rand.IntN(len(actions))
+	}
+
+	if selected < 0 || (!agent.Explore && evaluation.RunnerUp != "" && evaluation.Contrast == 0) {
+		agent.Transition(runtime.WAITING)
+		return nil
+	}
+	agent.sequence++
 	decision := &Decision[Action]{
-		ID: identity, Label: label, At: at, Action: action,
-		Context: conditioned, Authority: authority,
+		ID: agent.sequence, Label: label, At: at, Action: actions[selected],
+		Context: conditioned, Authority: authority, Evaluation: evaluation,
+		Alternatives: slices.Clone(actions),
 	}
-	agent.Pending[identity], agent.Last, agent.Selected = decision, decision, selected
-	agent.Activations[label] = &Activation[Action]{Decision: decision, Choices: choices}
+	agent.Pending[decision.ID], agent.Last = decision, decision
+	agent.Activations[label] = decision
 	agent.Decisions++
+	agent.Transition(runtime.READY)
 	return errnie.Error(agent.Environment.Execute(decision))
 }
 
 /*
-Measure feeds the latest unresolved action the objective change since the last
-mark, adjusted for elapsed time by Ledger's measured prior rate. This is weak
-account-level feedback, not a claim that the action caused the whole change.
-Identical redelivery never supplies another training sample.
+Measure records account economics for evaluation and telemetry. A wallet mark
+is not a causal grade and never updates cognition.
 */
 func (agent *Agent[Action]) Measure() (err error) {
-	defer func() { agent.Err = err }()
+	defer func() { agent.Fail(err) }()
 	mark, err := agent.Environment.Objective()
 
 	if err != nil {
@@ -33389,37 +33639,23 @@ func (agent *Agent[Action]) Measure() (err error) {
 	if mark == nil {
 		return nil
 	}
-	previous := agent.Reward.Through.Version
 	outcome, err := agent.ledger.Measure(*mark)
 
 	if err != nil {
 		return errnie.Error(err)
 	}
 	agent.Reward = outcome
-
-	if mark.Version == previous || outcome.Transitions == 0 || agent.Last == nil {
-		return nil
-	}
-
-	if _, pending := agent.Pending[agent.Last.ID]; !pending {
-		return nil
-	}
-	value := outcome.Reward
-
-	if outcome.HasPriorRate {
-		value = outcome.Differential
-	}
-
-	return agent.Model.Feedback(agent.Last.ID, value)
+	return nil
 }
 
 /*
-Resolve accepts a completed domain evaluation exactly once. Value uses the same
-objective units as provisional feedback; the evaluator owns opportunity maturity
-and action attribution. Negative and zero evaluations train this agent too.
+Resolve accepts a completed evaluation exactly once. Rehearsal explorers
+train from signed failure grades; the accumulated forward agent records its
+independent evaluation without teaching its different tape-return score back
+into the rehearsal policy. Wallet marks never update either model.
 */
 func (agent *Agent[Action]) Resolve(identity uint64, value float64) (resolved *Decision[Action], err error) {
-	defer func() { agent.Err = err }()
+	defer func() { agent.Fail(err) }()
 	decision, exists := agent.Pending[identity]
 
 	if !exists {
@@ -33428,12 +33664,13 @@ func (agent *Agent[Action]) Resolve(identity uint64, value float64) (resolved *D
 		))
 	}
 
-	if _, err := agent.Model.Resolve(identity, value); err != nil {
+	if err := agent.Outcomes.Observe(value, decision.Authority, 0); err != nil {
 		return nil, errnie.Error(err)
 	}
 
-	if err := agent.Outcomes.Observe(value, decision.Authority, 0); err != nil {
-		return nil, errnie.Error(err)
+	if agent.Explore && decision.Authority > 0 {
+		agent.Model.Observe(ContextKey(decision.Label, decision.Context),
+			[]byte(fmt.Sprint(decision.Action)), value*decision.Authority)
 	}
 	decision.Outcome = &value
 	agent.Reading = agent.Outcomes.Summary(0)
@@ -33452,18 +33689,71 @@ func (agent *Agent[Action]) Resolve(identity uint64, value float64) (resolved *D
 
 /* Abort is explicit confirmation that an issued operation did not take effect. */
 func (agent *Agent[Action]) Abort(identity uint64) (err error) {
-	defer func() { agent.Err = err }()
-	if _, exists := agent.Pending[identity]; !exists {
+	defer func() { agent.Fail(err) }()
+	_, exists := agent.Pending[identity]
+
+	if !exists {
 		return errnie.Error(errnie.Err(
 			errnie.Validation, "agent: abort requires an unresolved decision", nil,
 		))
 	}
 
-	if err := agent.Model.Abort(identity); err != nil {
-		return errnie.Error(err)
-	}
 	delete(agent.Pending, identity)
 	return nil
+}
+
+// ContextKey encodes a symbol and complete condition tokens without allowing
+// prefix matching inside a token. NUL terminates each identity.
+func ContextKey(label string, context []uint64) []byte {
+	result := append([]byte(label), 0)
+	for _, token := range context {
+		result = strconv.AppendUint(result, token, 16)
+		result = append(result, 0)
+	}
+	return result
+}
+
+---
+
+---
+File: /nomagique/learning/associative/agent/context.go
+---
+
+package agent
+
+import (
+	"slices"
+	"time"
+)
+
+type transition struct {
+	at         time.Time
+	conditions []uint64
+}
+
+// Context retains distinct preceding region states only inside the producer's
+// measured horizon. It is the agent's causal memory, not another runtime stage.
+func (agent *Agent[Action]) Context(label string, at, from time.Time, current []uint64) []uint64 {
+	if agent.histories == nil {
+		agent.histories = make(map[string][]transition)
+	}
+	history := agent.histories[label]
+	first := 0
+	for first < len(history) && history[first].at.Before(from) {
+		first++
+	}
+	history = slices.Delete(history, 0, first)
+
+	if len(history) == 0 || !slices.Equal(history[len(history)-1].conditions, current) {
+		history = append(history, transition{at: at, conditions: slices.Clone(current)})
+	}
+	agent.histories[label] = history
+	var context []uint64
+	for _, state := range history {
+		context = append(context, uint64(1)<<63|2)
+		context = append(context, state.conditions...)
+	}
+	return context
 }
 
 ---
@@ -33477,7 +33767,8 @@ package agent
 import (
 	"time"
 
-	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/nomagique/cognition"
+
 	"github.com/theapemachine/symm/nomagique/learning/associative/reward"
 )
 
@@ -33490,25 +33781,12 @@ the agent retains its ticket until Resolve or an explicit Abort.
 Objective returns nil while the objective cannot be measured; this supplies no
 feedback and does not replace the last measured value. Errors remain failures.
 Methods consume resident state; network and durable storage run outside Step.
-Population calls different environments concurrently; shared resources must be
-synchronized by their owner. Calls on one environment remain sequential.
+The workload serializes calls on one environment.
 */
 type Environment[Action comparable] interface {
 	Feasible(label string) (actions []Action, context []uint64, err error)
 	Execute(decision *Decision[Action]) error
 	Objective() (*reward.Mark, error)
-}
-
-/*
-Observation carries one context's measurements and ordered prior context tokens.
-The producer supplies History from its observed temporal horizon. Tokens must
-have stable identities across restarts and preserve sequence boundaries. The
-agent appends current grid conditions; it does not invent a history window.
-*/
-type Observation struct {
-	At           time.Time
-	Measurements []*data.Measurement[float64]
-	History      []uint64
 }
 
 /*
@@ -33518,13 +33796,15 @@ it contains identities, not a snapshot of observations or mutable grid values.
 Environment must treat Context as read-only.
 */
 type Decision[Action comparable] struct {
-	ID        uint64
-	Label     string
-	At        time.Time
-	Action    Action
-	Context   []uint64
-	Authority float64
-	Outcome   *float64
+	ID           uint64
+	Label        string
+	At           time.Time
+	Action       Action
+	Context      []uint64
+	Authority    float64
+	Outcome      *float64
+	Evaluation   cognition.Evaluation
+	Alternatives []Action
 }
 
 ---
@@ -33581,6 +33861,103 @@ func ConditionQuantity(token uint64) uint64 {
 		return token
 	}
 	return (token & ((1 << 52) - 1)) >> 4
+}
+
+---
+
+---
+File: /nomagique/learning/associative/grid/impulse.go
+---
+
+package grid
+
+import (
+	"math"
+	"slices"
+	"time"
+)
+
+// Impulse is the event-owned region output consumed after the grid barrier.
+// Ready means a multi-quantity basin has more shared energy than unresolved energy.
+type Impulse struct {
+	Label    string
+	At, From time.Time
+	Version  uint64
+	Ready    bool
+	Regions  []Region
+}
+
+// Impulse copies only reduced regions; later grid turns cannot rewrite a
+// decision already travelling through the downstream ring stage.
+func (grid *Space) Impulse(label string, at, from time.Time) (Impulse, error) {
+	regions, version, err := grid.Regions(label)
+
+	if err != nil {
+		return Impulse{}, err
+	}
+	row := grid.rowIndex[label]
+	return Impulse{Label: label, At: at, From: from, Version: version,
+		Ready: grid.reduced(row, regions), Regions: slices.Clone(regions)}, nil
+}
+
+// reduced admits an actual reduction only when its shared movement exceeds
+// its residual plus measured uncertainty. This is an energy-resolution test,
+// not a significance probability. Producer quality discounts unexplained
+// movement; the sketch's spectral error bound charges every basin member.
+// A hot singleton, immature input or unresolved lossy projection cannot qualify.
+func (grid *Space) reduced(row int, basins []Region) bool {
+	for _, basin := range basins {
+		if basin.Members < 2 {
+			continue
+		}
+
+		if grid.resolvedBasin(row, int(basin.ID)-1) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolvedBasin fits one sign-aligned centroid to the basin profiles. Squared
+// profile norms, residuals and the covariance error bound share the same units.
+// Consistent inverse movement contributes to the same centroid.
+func (grid *Space) resolvedBasin(row, peak int) bool {
+	var centroid [gridDimensions]float64
+	total, uncertainty, members := 0.0, 0.0, 0
+	for column := range grid.Columns {
+		if !grid.Present[row][column] || grid.regions[row].membership(column) != peak {
+			continue
+		}
+		product := grid.basis[0][peak]*grid.basis[0][column] + grid.basis[1][peak]*grid.basis[1][column]
+		sign := math.Copysign(1, product)
+		for dimension := range gridDimensions {
+			value := grid.basis[dimension][column]
+			centroid[dimension] += sign * value
+			total += value * value
+			uncertainty += value * value * (1 - grid.qualities[row][column])
+		}
+		members++
+	}
+
+	if members < 2 || total == 0 {
+		return false
+	}
+	shared := 0.0
+	for _, sum := range centroid {
+		shared += sum * sum / float64(members)
+	}
+	residual := total - shared
+	uncertainty += float64(members) * grid.discarded
+	return shared > residual+uncertainty
+}
+
+func (regions *regions) membership(column int) int {
+	cell := regions.cells[column]
+
+	if cell < 0 {
+		return -1
+	}
+	return regions.peak[regions.root(cell)]
 }
 
 ---
@@ -33745,6 +34122,7 @@ type regions struct {
 	heat, authority                    []float64
 	count, peak, parent, uphill, index []int
 	output                             []Region
+	cells                              []int
 }
 
 /* Activity exposes borrowed quality-conditioned values for one context. */
@@ -33800,6 +34178,11 @@ func (regions *regions) step(grid *Space, row int) []Region {
 		regions.parent, regions.uphill, regions.index = make([]int, area), make([]int, area), make([]int, area)
 	}
 
+	regions.cells = slices.Grow(regions.cells, len(grid.Columns)-len(regions.cells))
+	regions.cells = regions.cells[:len(grid.Columns)]
+	for column := range regions.cells {
+		regions.cells[column] = -1
+	}
 	clear(regions.heat)
 	clear(regions.authority)
 	clear(regions.count)
@@ -33830,6 +34213,7 @@ func (regions *regions) step(grid *Space, row int) []Region {
 		}
 
 		index := cell[1]*width + cell[0]
+		regions.cells[column] = index
 		previous := regions.peak[index]
 
 		if regions.count[index] == 0 || energy > grid.activations[row][previous]*grid.activations[row][previous] {
@@ -34321,964 +34705,6 @@ func (grid *Space) CovarianceError() float64 {
 ---
 
 ---
-File: /nomagique/learning/associative/model/clone.go
----
-
-package model
-
-import (
-	"encoding/gob"
-
-	"github.com/theapemachine/errnie"
-)
-
-/*
-Clone gives a new agent independent retained evidence and no inflight actions.
-The snapshot reads evidence under the model lock. Runtime tickets and pending
-counts are private and are never checkpointed.
-Branches carrying no completed or provisional samples are not learned state
-and are omitted, including empty branches from older checkpoints.
-*/
-func (model *Model[Key, Action]) Clone() *Model[Key, Action] {
-	model.mutex.RLock()
-	defer model.mutex.RUnlock()
-
-	cloned := New[Key, Action](model.Memory)
-	cloned.Sequence = model.Sequence
-	cloned.Ordered = model.Ordered
-
-	for key, node := range model.Contexts {
-		cloned.Contexts[key] = node.clone()
-	}
-
-	return cloned
-}
-
-func (node *modelContext[Action]) clone() *modelContext[Action] {
-	cloned := &modelContext[Action]{Epoch: node.Epoch}
-
-	for action, record := range node.Priors {
-		if record.State.Samples == 0 && record.Provisional.Samples == 0 {
-			continue
-		}
-
-		if cloned.Priors == nil {
-			cloned.Priors = make(map[Action]*modelPrior)
-		}
-
-		cloned.Priors[action] = &modelPrior{
-			State: record.State, Provisional: record.Provisional, Memory: record.Memory,
-		}
-	}
-
-	for token, child := range node.Children {
-		retained := child.clone()
-
-		if len(retained.Priors) == 0 && len(retained.Children) == 0 {
-			continue
-		}
-
-		if cloned.Children == nil {
-			cloned.Children = make(map[uint64]*modelContext[Action])
-		}
-
-		cloned.Children[token] = retained
-	}
-
-	return cloned
-}
-
-/*
-Encode writes the learned state through the trie's own read lock.
-
-A checkpoint reads the same maps the observation path writes, so encoding is
-the model's operation rather than something a caller performs on its fields.
-Only exported state is written; runtime tickets and pending counts are not
-checkpoints.
-*/
-func (model *Model[Key, Action]) Encode(encoder *gob.Encoder) error {
-	model.mutex.RLock()
-	defer model.mutex.RUnlock()
-
-	return errnie.Error(encoder.Encode(model))
-}
-
----
-
----
-File: /nomagique/learning/associative/model/feedback.go
----
-
-package model
-
-import "github.com/theapemachine/errnie"
-
-/*
-Feedback teaches a provisional objective increment without resolving the action.
-Completed outcomes take precedence over provisional evidence for that action.
-Repeated feedback is correlated trajectory evidence, not independent trials.
-*/
-func (model *Model[Key, Action]) Feedback(identity uint64, value float64) error {
-	model.mutex.Lock()
-	defer model.mutex.Unlock()
-
-	pending, exists := model.pending[identity]
-
-	if !exists {
-		return errnie.Error(errnie.Err(
-			errnie.Validation, "model: feedback requires an unresolved action", nil,
-		))
-	}
-
-	for _, record := range pending.priors {
-		if err := record.Provisional.Observe(value, pending.authority, record.Memory, *record.epoch); err != nil {
-			return errnie.Error(err)
-		}
-	}
-
-	return nil
-}
-
----
-
----
-File: /nomagique/learning/associative/model/model.go
----
-
-package model
-
-import (
-	"slices"
-	"sync"
-
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/learning/associative/prior"
-)
-
-/*
-Model keeps priors for keyed, ordered contexts and comparable actions. Context
-tokens are stable numerical identities supplied by the caller, in order. They
-may identify regions or previous-action context; the model interprets neither.
-Action includes its parameters in its comparable identity. Retention counts
-resolutions within each key, including other actions and contexts in that key.
-Unrelated keys cannot erase one another's evidence. A shared related key still
-ages on every observation that trains it.
-
-The context trie interns each distinct prefix once. Repeated decisions reuse
-its prior records, and pending decisions retain a node reference rather than
-mutable grid coordinates or a copied input vector. One owner serializes access.
-*/
-type Model[Key comparable, Action comparable] struct {
-	Contexts map[Key]*modelContext[Action]
-	pending  map[uint64]pendingAction[Action]
-	Sequence uint64
-	Memory   float64
-	Ordered  bool
-
-	/*
-		mutex makes the trie its own owner of concurrent access.
-
-		The live agent resolves decisions on the observation path while replay
-		workers train the same policy from their own goroutines and checkpoints
-		encode it from a third. Leaving that to callers gave the trie two
-		coordinators and one unguarded writer, which is a torn read of a Go map,
-		not a stale value: it aborts the process.
-
-		Locking is on the leaf operations only. Select never holds it, because
-		the caller supplies the recall function and would re-enter through it.
-	*/
-	mutex sync.RWMutex
-}
-
-/* modelContext owns the actions and continuations of one context prefix. */
-type modelContext[Action comparable] struct {
-	Epoch    uint64
-	Children map[uint64]*modelContext[Action]
-	Priors   map[Action]*modelPrior
-}
-
-/*
-pendingAction holds only the evidence fixed when an action was issued. It
-retains one record per context depth, because a decision is evidence about
-every prefix of the context it was taken under, not only the longest one.
-*/
-type pendingAction[Action comparable] struct {
-	priors    []scopedPrior[Action]
-	authority float64
-	depth     int
-	action    Action
-}
-
-/* scopedPrior binds a prefix's evidence to its root key's resolution clock. */
-type scopedPrior[Action comparable] struct {
-	*modelPrior
-	epoch *uint64
-	node  *modelContext[Action]
-	token uint64
-}
-
-/* New constructs a keyed prior model with an optional exponential memory window. */
-func New[Key comparable, Action comparable](memory ...float64) *Model[Key, Action] {
-	model := &Model[Key, Action]{
-		Contexts: make(map[Key]*modelContext[Action]),
-		pending:  make(map[uint64]pendingAction[Action]),
-	}
-
-	if len(memory) > 0 && memory[0] > 1 {
-		model.Memory = memory[0]
-	}
-
-	return model
-}
-
-/*
-Issue binds an action to its ordered context and numeric observation authority.
-The discovery producer supplies authority in [0, 1]; the model assigns no
-semantic meaning to its inputs. Unresolved actions do not train zero outcomes.
-Input reuse cannot rewrite the context or authority fixed at issue time.
-
-The outcome trains this action at every prefix of the context, from the empty
-one to the whole sequence. A long context is precise but rare: on its own, a
-context of several jittering identities almost never repeats, so no record ever
-reaches a second observation and the model can never leave exploration. Every
-prefix carries the same evidence at a coarser resolution, and Recall reads the
-deepest usable reading with competitive retained authority, so precision
-yields when broader evidence is stronger or fresher.
-*/
-func (model *Model[Key, Action]) Issue(
-	key Key, context []uint64, action Action, authority float64, related ...Key,
-) (uint64, error) {
-	model.mutex.Lock()
-	defer model.mutex.Unlock()
-
-	if !(authority >= 0 && authority <= 1) {
-		return 0, errnie.Err(errnie.Validation, "model: authority must be in [0, 1]", nil)
-	}
-
-	priors := make([]scopedPrior[Action], 0, (len(context)+1)*(len(related)+1))
-	for index, scope := range related {
-		if scope == key || slices.Contains(related[:index], scope) {
-			return 0, errnie.Err(errnie.Validation, "model: related scope must differ from primary scope", nil)
-		}
-	}
-	for _, scope := range related {
-		priors = model.bind(scope, context, action, priors)
-	}
-	priors = model.bind(key, context, action, priors)
-
-	model.Sequence++
-
-	for _, record := range priors {
-		record.pending++
-	}
-
-	model.pending[model.Sequence] = pendingAction[Action]{
-		priors: priors, authority: authority, depth: len(context), action: action,
-	}
-
-	return model.Sequence, nil
-}
-
-/* bind interns one scope's ordered prefixes into the supplied evidence path. */
-func (model *Model[Key, Action]) bind(key Key, context []uint64, action Action, priors []scopedPrior[Action]) []scopedPrior[Action] {
-	node := model.Contexts[key]
-
-	if node == nil {
-		node = &modelContext[Action]{}
-		model.Contexts[key] = node
-	}
-
-	epoch := &node.Epoch
-	priors = append(priors, scopedPrior[Action]{modelPrior: node.record(action, model.Memory), epoch: epoch, node: node})
-
-	for _, token := range context {
-		if node.Children == nil {
-			node.Children = make(map[uint64]*modelContext[Action])
-		}
-
-		next := node.Children[token]
-
-		if next == nil {
-			next = &modelContext[Action]{}
-			node.Children[token] = next
-		}
-
-		node = next
-		priors = append(priors, scopedPrior[Action]{modelPrior: node.record(action, model.Memory), epoch: epoch, node: node, token: token})
-	}
-
-	return priors
-}
-
-/* record returns this context's record for an action, creating it on first use. */
-func (node *modelContext[Action]) record(action Action, memory float64) *modelPrior {
-	if node.Priors == nil {
-		node.Priors = make(map[Action]*modelPrior)
-	}
-
-	record := node.Priors[action]
-
-	if record == nil {
-		record = &modelPrior{Memory: memory}
-		node.Priors[action] = record
-	}
-
-	return record
-}
-
-/*
-Resolve incorporates an issued action's outcome exactly once and releases its
-pending record. The caller supplies the numerical target assigned to this
-decision, for example its subsequent reward or return-to-go. Shared sequence
-returns are correlated targets, not independent evidence of each action's
-causal effect. This method estimates assigned targets, not causality.
-*/
-func (model *Model[Key, Action]) Resolve(identity uint64, outcome float64) (prior.Reading, error) {
-	model.mutex.Lock()
-	defer model.mutex.Unlock()
-
-	pending, exists := model.pending[identity]
-
-	if !exists {
-		return prior.Reading{}, errnie.Err(
-			errnie.Validation, "model: action was not issued or is already resolved", nil,
-		)
-	}
-
-	for index, record := range pending.priors {
-		// Each distinct scope occurs once and its prefixes are contiguous.
-		if index == 0 || record.epoch != pending.priors[index-1].epoch {
-			*record.epoch++
-		}
-
-		if err := record.State.Observe(outcome, pending.authority, record.Memory, *record.epoch); err != nil {
-			return prior.Reading{}, err
-		}
-
-		record.pending--
-	}
-
-	delete(model.pending, identity)
-
-	// The reading reported back is the longest context's, which is the one the
-	// caller asked about. Shorter prefixes were trained too, and Recall uses
-	// them while this one is still too sparse to say anything.
-	last := pending.priors[len(pending.priors)-1]
-	reading := last.reading(*last.epoch)
-	reading.Depth = pending.depth
-	reading.ContextLength = pending.depth
-
-	return reading, nil
-}
-
-/*
-Abort releases an unrealized action without creating samples or advancing
-age. It removes only empty, unreferenced priors and branches on that ticket's
-path; measured zeros, provisional evidence and other pending tickets survive.
-*/
-func (model *Model[Key, Action]) Abort(identity uint64) error {
-	model.mutex.Lock()
-	defer model.mutex.Unlock()
-
-	pending, exists := model.pending[identity]
-
-	if !exists {
-		return errnie.Err(errnie.Validation, "model: action was not issued or is already finished", nil)
-	}
-
-	for index := len(pending.priors) - 1; index >= 0; index-- {
-		record := pending.priors[index]
-		record.pending--
-
-		if record.pending == 0 && record.State.Samples == 0 && record.Provisional.Samples == 0 {
-			delete(record.node.Priors, pending.action)
-		}
-
-		if index == 0 || record.epoch != pending.priors[index-1].epoch {
-			continue
-		}
-
-		if len(record.node.Priors) == 0 && len(record.node.Children) == 0 {
-			delete(pending.priors[index-1].node.Children, record.token)
-		}
-	}
-
-	delete(model.pending, identity)
-	return nil
-}
-
-/*
-Recall prefers the deepest variance-defined reading whose retained input
-
-	authority is at least that of the selected shallower reading. Uniform aging
-	leaves Kish support unchanged, so retained input authority is compared separately
-	from dispersion and reward signal power. Fresh measured zero outcomes remain evidence.
-
-With Ordered enabled, lookup follows the supplied sequence strictly. Otherwise
-lookup first tries the token at the current depth, then scans unused supplied
-
-	tokens in input order for an existing child. This is greedy permutation/subset
-	recovery over learned ordered paths, intended to tolerate region-rank jitter;
-	it is not strict prefix matching or an exhaustive search of permutations.
-	Depth counts matched tokens, not an ordered prefix of the supplied context.
-	Lookup creates no evidence.
-*/
-func (model *Model[Key, Action]) Recall(key Key, context []uint64, action Action) prior.Reading {
-	// Recall takes the write lock despite reading: a reading ages the prior's
-	// weight to the current epoch in place, so lookup discounts evidence as a
-	// side effect. It creates no samples, but it is not a read.
-	model.mutex.Lock()
-	defer model.mutex.Unlock()
-
-	node := model.Contexts[key]
-
-	if node == nil {
-		return prior.Reading{ContextLength: len(context)}
-	}
-
-	epoch := node.Epoch
-	reading := prior.Reading{}
-
-	if record := node.Priors[action]; record != nil {
-		reading = record.reading(epoch)
-	}
-	reading.ContextLength = len(context)
-
-	used := make([]bool, len(context))
-	depth := 0
-
-	for depth < len(context) {
-		if node.Children == nil {
-			break
-		}
-
-		token := context[depth]
-		next := node.Children[token]
-		matchedIndex := depth
-
-		if model.Ordered && next == nil {
-			break
-		}
-
-		if next == nil || used[depth] {
-			next = nil
-
-			for candidateIndex, candidateToken := range context {
-				if used[candidateIndex] {
-					continue
-				}
-
-				if child := node.Children[candidateToken]; child != nil {
-					next = child
-					matchedIndex = candidateIndex
-					break
-				}
-			}
-		}
-
-		if next == nil {
-			break
-		}
-
-		used[matchedIndex] = true
-
-		node = next
-		depth++
-
-		record := node.Priors[action]
-
-		if record == nil {
-			continue
-		}
-
-		// Specificity wins ties in retained input authority.
-		deeper := record.reading(epoch)
-
-		if !deeper.Defined {
-			continue
-		}
-
-		if reading.Defined && !reading.Provisional && deeper.Provisional {
-			continue
-		}
-
-		if (reading.Provisional && !deeper.Provisional) ||
-			((deeper.VarianceDefined || !reading.VarianceDefined) &&
-				deeper.EvidenceAuthority >= reading.EvidenceAuthority) {
-			deeper.Depth = depth
-			deeper.ContextLength = len(context)
-			reading = deeper
-		}
-	}
-
-	return reading
-}
-
-/*
-Observe incorporates an action outcome directly into all context prefix priors
-without requiring an inflight pending ticket. This enables historical warmup
-across process restarts while preserving prefix-tree evidence structure.
-*/
-func (model *Model[Key, Action]) Observe(
-	key Key, context []uint64, action Action, outcome, authority float64, related ...Key,
-) error {
-	model.mutex.Lock()
-	defer model.mutex.Unlock()
-
-	if !(authority >= 0 && authority <= 1) {
-		return errnie.Err(errnie.Validation, "model: authority must be in [0, 1]", nil)
-	}
-
-	priors := make([]scopedPrior[Action], 0, (len(context)+1)*(len(related)+1))
-	for index, scope := range related {
-		if scope == key || slices.Contains(related[:index], scope) {
-			return errnie.Err(errnie.Validation, "model: related scope must differ from primary scope", nil)
-		}
-	}
-	for _, scope := range related {
-		priors = model.bind(scope, context, action, priors)
-	}
-	priors = model.bind(key, context, action, priors)
-	for index, record := range priors {
-		if index == 0 || record.epoch != priors[index-1].epoch {
-			*record.epoch++
-		}
-
-		if err := record.State.Observe(outcome, authority, record.Memory, *record.epoch); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
----
-
----
-File: /nomagique/learning/associative/model/prior.go
----
-
-package model
-
-import (
-	"github.com/theapemachine/symm/nomagique/equation"
-	"github.com/theapemachine/symm/nomagique/learning/associative/prior"
-)
-
-/* modelPrior owns a context's fixed numeric moments and unresolved tickets. */
-type modelPrior struct {
-	State       equation.PriorMoments
-	Provisional equation.PriorMoments
-	Memory      float64
-	pending     uint64
-}
-
-func (record *modelPrior) reading(epoch uint64) prior.Reading {
-	record.State.Age(epoch, record.Memory)
-	record.Provisional.Age(epoch, record.Memory)
-	summary := record.State.Summary(record.Memory)
-	provisional := !summary.Defined && record.Provisional.Samples > 0
-
-	if provisional {
-		summary = record.Provisional.Summary(record.Memory)
-	}
-	reading := prior.Reading{
-		Samples: summary.Samples, Defined: summary.Defined,
-		Mean: summary.Mean, Variance: summary.Variance, VarianceDefined: summary.VarianceDefined,
-		Support: summary.Support, Maturity: summary.Maturity,
-		EvidenceAuthority: summary.EvidenceAuthority, Authority: summary.Authority, Memory: summary.Memory,
-	}
-	reading.Pending = record.pending
-	reading.Provisional = provisional
-	return reading
-}
-
----
-
----
-File: /nomagique/learning/associative/model/selection.go
----
-
-package model
-
-import (
-	"math"
-
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/learning/associative/prior"
-	"math/rand/v2"
-)
-
-/*
-Select compares feasible actions using completed context matches. Exploration
-first observes actions whose variance is not estimable, balancing their issued
-counts so parallel callers do not all request the same unknown action. Once
-dispersion is estimable, Gaussian posterior sampling uses its measured standard
-error. This is an empirical sampling approximation, not a calibrated posterior
-or an independence claim for correlated inputs. There is no exploration bonus,
-temperature or selected warmup count. Without exploration it selects the
-authority-weighted mean. The caller supplies a zero-effect action if feasible.
-*/
-func (model *Model[Key, Action]) Select(
-	key Key, context []uint64, actions []Action, explore bool, recall ...func(Key, []uint64, Action) prior.Reading,
-) (Action, prior.Reading, error) {
-	var selected Action
-	var selectedPrior prior.Reading
-
-	if len(actions) == 0 {
-		return selected, selectedPrior, errnie.Err(errnie.Validation, "model: feasible actions are required", nil)
-	}
-
-	read := model.Recall
-
-	if len(recall) > 0 {
-		read = recall[0]
-	}
-
-	best := math.Inf(-1)
-	unsupported := false
-	least := ^uint64(0)
-	start := 0
-
-	if explore {
-		start = rand.IntN(len(actions))
-	}
-
-	for offset := range actions {
-		action := actions[(start+offset)%len(actions)]
-		record := read(key, context, action)
-		score := record.Mean * record.Authority
-
-		if explore && !record.VarianceDefined {
-			issued := record.Samples + record.Pending
-
-			if !unsupported || issued < least {
-				selected, selectedPrior, least = action, record, issued
-			}
-
-			unsupported = true
-			continue
-		}
-
-		if unsupported {
-			continue
-		}
-
-		if explore {
-			score += rand.NormFloat64() * math.Sqrt(record.SamplingVariance())
-		}
-
-		if score > best {
-			selected, selectedPrior, best = action, record, score
-		}
-	}
-
-	return selected, selectedPrior, nil
-}
-
----
-
----
-File: /nomagique/learning/associative/population.go
----
-
-package associative
-
-import (
-	"bytes"
-	"context"
-	"encoding/gob"
-	"sync"
-
-	"golang.org/x/sync/errgroup"
-
-	"github.com/theapemachine/errnie"
-	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
-	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
-	"github.com/theapemachine/symm/nomagique/learning/associative/model"
-)
-
-/* Checkpoint supplies durable bytes; found=false explicitly denotes a first run. */
-type Checkpoint interface {
-	Load(context.Context) (data []byte, found bool, err error)
-	Save(context.Context, []byte) error
-}
-
-/*
-Population shares one grid across independent agents. Agent zero runs and learns
-with the consolidated model; remaining agents explore in their own environments.
-Steps serialize observations, resolution and checkpoints. Within each step,
-independent agents measure concurrently, then activate concurrently after every
-measurement succeeds. Environments own synchronization for any shared resources. No domain limits live here.
-*/
-type Population[Action comparable] struct {
-	Grid       *grid.Space
-	Agents     []*agent.Agent[Action]
-	mutex      sync.Mutex
-	checkpoint sync.Mutex
-}
-
-/* NewPopulation creates a fresh learning population with independent environments. */
-func NewPopulation[Action comparable](environments ...agent.Environment[Action]) (*Population[Action], error) {
-	if len(environments) == 0 {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Validation, "population: at least one environment required", nil,
-		))
-	}
-	population := &Population[Action]{Grid: grid.NewSpace()}
-
-	for index, environment := range environments {
-		member, err := agent.New(environment, model.New[string, Action](), index != 0)
-
-		if err != nil {
-			return nil, err
-		}
-		population.Agents = append(population.Agents, member)
-	}
-
-	return population, nil
-}
-
-/*
-Step admits one observation, measures each objective and activates every agent
-when that context has hot regions. History precedes current conditions. Region
-authority is weighted by observed activation energy, the same weighting used
-within each basin. No new market threshold or observation horizon is selected.
-*/
-func (population *Population[Action]) Step(observation agent.Observation) error {
-	population.mutex.Lock()
-	defer population.mutex.Unlock()
-
-	if observation.At.IsZero() {
-		return errnie.Error(errnie.Err(errnie.Validation, "population: observation time required", nil))
-	}
-	version := population.Grid.Version
-
-	if err := population.Grid.Step(observation.Measurements); err != nil {
-		return errnie.Error(err)
-	}
-
-	var measurements errgroup.Group
-
-	for _, member := range population.Agents {
-		measurements.Go(member.Measure)
-	}
-
-	if err := measurements.Wait(); err != nil {
-		return errnie.Error(err)
-	}
-
-	if population.Grid.Version == version {
-		return nil
-	}
-	label := population.Grid.UpdatedLabel
-	regions, _, err := population.Grid.Regions(label)
-
-	if err != nil {
-		return errnie.Error(err)
-	}
-
-	if len(regions) == 0 {
-		return nil
-	}
-	context := make([]uint64, 0, len(observation.History)+len(regions))
-	context = append(context, observation.History...)
-	strength, authority := 0.0, 0.0
-
-	for _, region := range regions {
-		context = append(context, region.Condition)
-		strength += region.Strength
-		authority += region.Strength * region.Authority
-	}
-
-	var activations errgroup.Group
-
-	for _, member := range population.Agents {
-		activations.Go(func() error {
-			return member.Activate(label, observation.At, context, authority/strength)
-		})
-	}
-
-	// Join every issued action even on failure: acceptance may be uncertain.
-	return errnie.Error(activations.Wait())
-}
-
-/*
-Resolve accepts only a fully developed evaluation supplied by the domain.
-Every signed result trains its issuing agent. Positive explorer experience also
-trains the consolidated model under the original context, action and authority.
-The consolidated agent's own results are never counted twice.
-*/
-func (population *Population[Action]) Resolve(member int, identity uint64, value float64) error {
-	population.mutex.Lock()
-	defer population.mutex.Unlock()
-
-	if member < 0 || member >= len(population.Agents) {
-		return errnie.Error(errnie.Err(errnie.Validation, "population: unknown agent", nil))
-	}
-	decision, err := population.Agents[member].Resolve(identity, value)
-
-	if err != nil {
-		return err
-	}
-
-	if member == 0 || value <= 0 {
-		return nil
-	}
-
-	return errnie.Error(population.Agents[0].Model.Observe(
-		decision.Label, decision.Context, decision.Action, value, decision.Authority,
-	))
-}
-
-/*
-Abort releases an issued decision without training it. The domain uses this when
-an outcome arrived for an action that carried no alternative: the environment
-offered exactly one operation, so the result measures what happened rather than
-what the choice was worth, and counting it would bury genuine evidence under
-samples no decision produced.
-*/
-func (population *Population[Action]) Abort(member int, identity uint64) error {
-	population.mutex.Lock()
-	defer population.mutex.Unlock()
-
-	if member < 0 || member >= len(population.Agents) {
-		return errnie.Error(errnie.Err(errnie.Validation, "population: unknown agent", nil))
-	}
-
-	return errnie.Error(population.Agents[member].Abort(identity))
-}
-
-/*
-Save encodes the grid's identity dictionary and the actual consolidated model.
-Other agents, mutable environments and inflight decisions are not checkpoints.
-Encoding owns the state lock; durable I/O runs after releasing it.
-*/
-func (population *Population[Action]) Save(ctx context.Context, checkpoint Checkpoint) error {
-	population.checkpoint.Lock()
-	defer population.checkpoint.Unlock()
-
-	var data bytes.Buffer
-	encoder := gob.NewEncoder(&data)
-
-	population.mutex.Lock()
-	err := encoder.Encode(population.Grid.Columns)
-
-	if err == nil {
-		// Identities and evidence form one checkpoint. A replay admission must
-		// not introduce model tokens after their dictionary was encoded.
-		err = population.Agents[0].Model.Encode(encoder)
-	}
-	population.mutex.Unlock()
-
-	if err != nil {
-		return errnie.Error(errnie.Err(errnie.IO, "population: encode checkpoint", err))
-	}
-
-	return errnie.Error(checkpoint.Save(ctx, data.Bytes()))
-}
-
-/*
-Restore loads a checkpoint into a fresh population, retaining feature identities
-and cloning the learned evidence into every agent. Calling it after observations
-would discard current learning and is refused. Missing data is reported explicitly.
-*/
-func (population *Population[Action]) Restore(ctx context.Context, checkpoint Checkpoint) (bool, error) {
-	data, found, err := checkpoint.Load(ctx)
-
-	if err != nil || !found {
-		return found, errnie.Error(err)
-	}
-	decoder := gob.NewDecoder(bytes.NewReader(data))
-	var columns [][2]string
-	learned := model.New[string, Action]()
-
-	if err := decoder.Decode(&columns); err != nil {
-		return false, errnie.Error(errnie.Err(errnie.IO, "population: decode grid identities", err))
-	}
-
-	if err := decoder.Decode(learned); err != nil {
-		return false, errnie.Error(errnie.Err(errnie.IO, "population: decode model", err))
-	}
-	restored := grid.NewSpace()
-
-	for index, column := range columns {
-		if restored.Column(column[0], column[1]) != index {
-			return false, errnie.Error(errnie.Err(errnie.Validation, "population: duplicate checkpoint feature identity", nil))
-		}
-	}
-	population.mutex.Lock()
-	defer population.mutex.Unlock()
-
-	if population.Grid.Version != 0 {
-		return false, errnie.Error(errnie.Err(errnie.Conflict, "population: restore requires a fresh population", nil))
-	}
-
-	for _, member := range population.Agents {
-		if member.Decisions != 0 || member.Reward.Through.Version != 0 {
-			return false, errnie.Error(errnie.Err(errnie.Conflict, "population: restore requires fresh agents", nil))
-		}
-	}
-
-	population.Grid = restored
-
-	for _, member := range population.Agents {
-		member.Model = learned.Clone()
-	}
-
-	return true, nil
-}
-
-/*
-Learn interns a worker's named quantities before training the consolidated
-model. Local column numbers have no meaning in another grid. Structural history
-markers pass through unchanged; condition signs stay attached to their source
-and metric name. The worker's context is never mutated.
-*/
-func (population *Population[Action]) Learn(
-	label string, columns [][2]string, context []uint64,
-	action Action, value, authority float64,
-) error {
-	population.mutex.Lock()
-	defer population.mutex.Unlock()
-
-	mapped := make([]uint64, len(context))
-
-	for index, token := range context {
-		if token&(uint64(1)<<63) != 0 {
-			mapped[index] = token
-			continue
-		}
-
-		quantity := grid.ConditionQuantity(token)
-
-		if quantity == 0 || quantity > uint64(len(columns)) {
-			return errnie.Error(errnie.Err(errnie.Validation, "population: rehearsal quantity has no identity", nil))
-		}
-
-		identity := columns[quantity-1]
-		column := population.Grid.Column(identity[0], identity[1])
-		mapped[index] = grid.RemapCondition(token, uint64(column+1))
-	}
-
-	return errnie.Error(population.Agents[0].Model.Observe(label, mapped, action, value, authority))
-}
-
-/*
-Read scopes access to borrowed grid storage. Live observation, historical
-identity admission and checkpointing all share this lock; callers must not
-retain mutable grid slices beyond the callback.
-*/
-func (population *Population[Action]) Read(read func(*grid.Space) error) error {
-	population.mutex.Lock()
-	defer population.mutex.Unlock()
-
-	return errnie.Error(read(population.Grid))
-}
-
----
-
----
 File: /nomagique/learning/associative/prior/primitive.go
 ---
 
@@ -35426,7 +34852,7 @@ import (
 
 /*
 Reading projects the canonical PriorMoments summary. Pending and context
-depth belong to Model's issue/resolve lifecycle; projection does not estimate.
+depth come from the cognition query and agent lifecycle; projection does not estimate.
 */
 type Reading struct {
 	Provisional       bool
@@ -39817,7 +39243,12 @@ func NewTrustWeight() core.Primitive {
 	memory := store.NewRetained(
 		core.From(
 			map[string]core.Primitive{
-				"count": core.From(0.0), "minimum": core.From(0.0), "maximum": core.From(0.0), "prev": core.From(0.0), "trust": core.From(1.0), "rate": core.From(0.0),
+				"count":   core.From(0.0),
+				"minimum": core.From(0.0),
+				"maximum": core.From(0.0),
+				"prev":    core.From(0.0),
+				"trust":   core.From(1.0),
+				"rate":    core.From(0.0),
 			},
 		),
 	)
@@ -39828,7 +39259,12 @@ func NewTrustWeight() core.Primitive {
 			transport.NewPipe(
 				store.NewRecord(
 					transport.NewPipe(),
-					transport.NewPipe(equation.NewDifference[float64](store.NewGet("actual"), store.NewGet("predicted")), store.NewKey("residual")),
+					transport.NewPipe(
+						equation.NewDifference[float64](
+							store.NewGet("actual"),
+							store.NewGet("predicted"),
+						), store.NewKey("residual"),
+					),
 				),
 				state,
 				equation.NewResidualSpan(),
@@ -39841,7 +39277,10 @@ func NewTrustWeight() core.Primitive {
 								transport.NewPipe(),
 								transport.NewPipe(
 									equation.NewRatio[float64](
-										transport.NewPipe(store.NewGet("residual"), calculus.NewAbsolute(transport.NewIO(core.From(0.0)))),
+										transport.NewPipe(
+											store.NewGet("residual"),
+											calculus.NewAbsolute(transport.NewIO(core.From(0.0))),
+										),
 										store.NewGet("span"),
 									),
 									store.NewKey("rate"),
@@ -39855,7 +39294,9 @@ func NewTrustWeight() core.Primitive {
 											transport.NewPipe(store.NewGet("trust"), store.NewKey("left")),
 											transport.NewPipe(
 												transport.NewPipe(
-													equation.NewDifference[float64](store.NewConstant(core.From(1.0)), store.NewGet("rate")),
+													equation.NewDifference[float64](
+														store.NewConstant(core.From(1.0)), store.NewGet("rate"),
+													),
 													calculus.NewMaximum(transport.NewIO(core.From(0.0))),
 												),
 												store.NewKey("right"),
@@ -39873,7 +39314,10 @@ func NewTrustWeight() core.Primitive {
 					),
 					transport.NewPipe(),
 				),
-				store.NewRecord(transport.NewPipe(), transport.NewPipe(store.NewGet("trust"), store.NewKey("value"))),
+				store.NewRecord(
+					transport.NewPipe(),
+					transport.NewPipe(store.NewGet("trust"), store.NewKey("value")),
+				),
 				state,
 			),
 			logic.NewReject(core.ErrDomain),
@@ -42904,4 +42348,75 @@ __device__ __forceinline__ void dbg_log(
     dbg_words[base + 1u] = gid;
     dbg_words[base + 2u] = __float_as_uint(a);
     dbg_words[base + 3u] = __float_as_uint(b);
-    dbg_words[base + 4u] = __f
+    dbg_words[base + 4u] = __float_as_uint(c);
+    dbg_words[base + 5u] = __float_as_uint(d);
+}
+
+// -----------------------------------------------------------------------------
+// Parameter structs
+// -----------------------------------------------------------------------------
+// Host/device POD layouts have one declaration in ../bridge.h.
+
+// =============================================================================
+// Adaptive Thermodynamics: Fast reduction for global energy statistics
+// =============================================================================
+// We use a 2-pass reduction to compute:
+//   mean_abs = mean(|x|), mean = mean(x), std = std(x)
+// entirely on-GPU, so downstream kernels can do adaptive renormalization without
+// CPU sync or "magic number" damping.
+//
+// Output format (single float4 in `out_stats`):
+//   x: mean_abs
+//   y: mean
+//   z: std
+//   w: count (as float)
+//
+// NOTE: Host must dispatch pass1 with exactly 256 threads/threadgroup and
+//       num_threadgroups = ceil(N / 256).
+// -----------------------------------------------------------------------------
+
+// Fixed block size required by these reduction kernels.
+constexpr uint kReduceThreads = 256;
+
+__global__ void reduce_float_stats_pass1(
+    const float* x,
+    float* group_stats,
+    uint  N
+) {
+    const uint tid = threadIdx.x;
+    const uint tg_id = blockIdx.x;
+
+    uint idx = tg_id * kReduceThreads + tid;
+    float v = (idx < N) ? x[idx] : 0.0f;
+    float4 acc = make_float4(fabsf(v), v, v * v, (idx < N) ? 1.0f : 0.0f);
+
+    __shared__ float4 scratch[kReduceThreads];
+    scratch[tid] = acc;
+    __syncthreads();
+
+    // Parallel reduction in shared memory.
+    for (uint offset = kReduceThreads / 2; offset > 0; offset >>= 1) {
+        if (tid < offset) {
+            scratch[tid] += scratch[tid + offset];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        group_stats[tg_id * 4 + 0] = scratch[0].x;
+        group_stats[tg_id * 4 + 1] = scratch[0].y;
+        group_stats[tg_id * 4 + 2] = scratch[0].z;
+        group_stats[tg_id * 4 + 3] = scratch[0].w;
+    }
+}
+
+__global__ void reduce_float_stats_finalize(
+    const float* group_stats,
+    float* out_stats,
+    uint  num_groups
+) {
+    const uint tid = threadIdx.x;
+
+    // One threadgroup (kReduceThreads) reduces all group_stats.
+    float4 acc = make_float4(0.0f);
+    

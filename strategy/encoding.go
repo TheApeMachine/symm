@@ -198,11 +198,21 @@ func (trader *Trader) Wire(member *agent.Agent[Action], focus string) *wire.Lear
 	return state
 }
 
-// Wire copies rehearsal counters while the workers continue independently.
+/*
+Wire copies rehearsal counters and each worker's mounted track while the
+workers continue independently. Tracks are gathered before the rehearsal lock
+is taken: a worker takes its own lock first and the rehearsal lock second.
+*/
 func (rehearsal *Rehearsal) Wire() *wire.LearningRehearsalT {
+	tracks := make([]*wire.LearningTrackT, 0, len(rehearsal.cursors))
+
+	for index, cursor := range rehearsal.cursors {
+		tracks = append(tracks, cursor.wire(int32(index)))
+	}
 	rehearsal.mutex.Lock()
 	defer rehearsal.mutex.Unlock()
 	state := rehearsal.progress
+	state.Tracks = tracks
 
 	if rehearsal.err != nil {
 		state.Status = rehearsal.err.Error()

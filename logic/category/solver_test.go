@@ -2,6 +2,8 @@ package category
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -395,11 +397,53 @@ func TestSolverStep(t *testing.T) {
 }
 
 func BenchmarkSolverStepMeasurement(b *testing.B) {
-	solver := NewSolver(b.Context())
-	measurement := categoryMeasurement("BTC/USD", true, 0.8)
-	b.ReportAllocs()
+	for _, affinity := range []float64{0, 0.8} {
+		b.Run(fmt.Sprint(affinity), func(b *testing.B) {
+			solver := NewSolver(b.Context())
+			defer func() {
+				if err := solver.Close(); err != nil {
+					b.Fatal(err)
+				}
+			}()
+			measurement := categoryMeasurement("BTC/USD", true, affinity)
+			b.ReportAllocs()
 
-	for b.Loop() {
-		categoryBenchmark = solver.StepMeasurement(measurement)
+			for b.Loop() {
+				categoryBenchmark = solver.StepMeasurement(measurement)
+			}
+		})
 	}
+}
+
+func TestSolverBuildBatch(t *testing.T) {
+	Convey("Category competition includes the symmetric one-pseudocount prior from specification section 20", t, func() {
+		solver := NewSolver(t.Context())
+		count := len(solver.categories)
+		for _, strength := range []float64{0, 0.25, 1} {
+			strengths := make([]float64, count)
+			strengths[0] = strength
+			batch, err := solver.buildBatch("CCD/USD", time.Unix(100, 0), strengths, nil)
+			So(err, ShouldBeNil)
+			So(len(batch), ShouldEqual, count)
+			total := 0.0
+			for index, category := range batch {
+				expectedStrength := 0.0
+
+				if index == 0 {
+					expectedStrength = strength
+				}
+				expected := (expectedStrength + 1) / (float64(count) + strength)
+				So(category.Confidence, ShouldAlmostEqual, expected)
+				So(category.Surprisal, ShouldAlmostEqual, -math.Log2(expected))
+				So(category.Strength, ShouldEqual, expectedStrength)
+				So(category.Maturity, ShouldEqual, 0)
+				total += category.Confidence
+			}
+			So(total, ShouldAlmostEqual, 1)
+
+			if strength == 0 {
+				So(batch[0].Uncertainty, ShouldAlmostEqual, 1)
+			}
+		}
+	})
 }

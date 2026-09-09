@@ -25,6 +25,7 @@ type LearningRehearsalT struct {
 	LastFailure string `json:"lastFailure"`
 	Illiquid uint64 `json:"illiquid"`
 	Quiet uint64 `json:"quiet"`
+	Tracks []*LearningTrackT `json:"tracks"`
 }
 
 func (t *LearningRehearsalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -47,6 +48,19 @@ func (t *LearningRehearsalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOff
 	if t.LastFailure != "" {
 		lastFailureOffset = builder.CreateString(t.LastFailure)
 	}
+	tracksOffset := flatbuffers.UOffsetT(0)
+	if t.Tracks != nil {
+		tracksLength := len(t.Tracks)
+		tracksOffsets := make([]flatbuffers.UOffsetT, tracksLength)
+		for j := 0; j < tracksLength; j++ {
+			tracksOffsets[j] = t.Tracks[j].Pack(builder)
+		}
+		LearningRehearsalStartTracksVector(builder, tracksLength)
+		for j := tracksLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(tracksOffsets[j])
+		}
+		tracksOffset = builder.EndVector(tracksLength)
+	}
 	LearningRehearsalStart(builder)
 	LearningRehearsalAddStatus(builder, statusOffset)
 	LearningRehearsalAddWorkers(builder, t.Workers)
@@ -66,6 +80,7 @@ func (t *LearningRehearsalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOff
 	LearningRehearsalAddLastFailure(builder, lastFailureOffset)
 	LearningRehearsalAddIlliquid(builder, t.Illiquid)
 	LearningRehearsalAddQuiet(builder, t.Quiet)
+	LearningRehearsalAddTracks(builder, tracksOffset)
 	return LearningRehearsalEnd(builder)
 }
 
@@ -88,6 +103,13 @@ func (rcv *LearningRehearsal) UnPackTo(t *LearningRehearsalT) {
 	t.LastFailure = string(rcv.LastFailure())
 	t.Illiquid = rcv.Illiquid()
 	t.Quiet = rcv.Quiet()
+	tracksLength := rcv.TracksLength()
+	t.Tracks = make([]*LearningTrackT, tracksLength)
+	for j := 0; j < tracksLength; j++ {
+		x := LearningTrack{}
+		rcv.Tracks(&x, j)
+		t.Tracks[j] = x.UnPack()
+	}
 }
 
 func (rcv *LearningRehearsal) UnPack() *LearningRehearsalT {
@@ -334,8 +356,28 @@ func (rcv *LearningRehearsal) MutateQuiet(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(38, n)
 }
 
+func (rcv *LearningRehearsal) Tracks(obj *LearningTrack, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *LearningRehearsal) TracksLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(40))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
 func LearningRehearsalStart(builder *flatbuffers.Builder) {
-	builder.StartObject(18)
+	builder.StartObject(19)
 }
 func LearningRehearsalAddStatus(builder *flatbuffers.Builder, status flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(status), 0)
@@ -390,6 +432,12 @@ func LearningRehearsalAddIlliquid(builder *flatbuffers.Builder, illiquid uint64)
 }
 func LearningRehearsalAddQuiet(builder *flatbuffers.Builder, quiet uint64) {
 	builder.PrependUint64Slot(17, quiet, 0)
+}
+func LearningRehearsalAddTracks(builder *flatbuffers.Builder, tracks flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(18, flatbuffers.UOffsetT(tracks), 0)
+}
+func LearningRehearsalStartTracksVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
 }
 func LearningRehearsalEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
 	return builder.EndObject()

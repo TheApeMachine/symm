@@ -1,7 +1,7 @@
-import { LearningDecisionT } from "#/providers/telemetry/telemetry/learning-decision";
-import { describe, expect, it } from "vitest";
 import { Builder } from "flatbuffers";
+import { describe, expect, it } from "vitest";
 import { learningStore, receiveLearning } from "#/collections/learning";
+import { LearningDecisionT } from "#/providers/telemetry/telemetry/learning-decision";
 import { learningFixture } from "./fixture";
 import { projectLearning, updateLearningEvents } from "./state";
 

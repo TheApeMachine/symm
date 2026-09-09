@@ -16,6 +16,8 @@ import (
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/learning/associative/agent"
 	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
+	"github.com/theapemachine/symm/nomagique/runtime"
+	wire "github.com/theapemachine/symm/telemetry/generated/telemetry"
 	"github.com/theapemachine/symm/types"
 )
 
@@ -36,6 +38,7 @@ type replayCursor struct {
 	trader       *Trader
 	member       *agent.Agent[Action]
 	evaluations  []*Evaluation
+	track        wire.LearningTrackT
 	index        int
 	idle         time.Duration
 	lastProfit   *decimal.Decimal
@@ -100,6 +103,11 @@ func (cursor *replayCursor) link() {
 }
 
 func (cursor *replayCursor) begin() error {
+	if cursor.member != nil {
+		if err := cursor.member.Close(); err != nil {
+			return errnie.Error(err)
+		}
+	}
 	cursor.observations = cursor.fragments.Value.([]hindsight.Observation)
 	cursor.space = grid.NewSpace()
 	for _, identity := range cursor.columns {
@@ -117,12 +125,75 @@ func (cursor *replayCursor) begin() error {
 	cursor.member, err = agent.New(cursor.ctx, trader, cursor.learned, true)
 	cursor.index, cursor.idle, cursor.settled = 0, 0, false
 	cursor.lastProfit, cursor.lastAt = nil, time.Time{}
+	cursor.mount()
 	return errnie.Error(err)
+}
+
+// trackBudget bounds how many of a fragment's observations are delivered to a
+// viewer. It is a delivery budget only: index, length and every mark position
+// stay in the fragment's own observation coordinates.
+const trackBudget = 256
+
+/*
+mount publishes the fragment this worker just picked up: the captured series
+itself, read through the same market coordinate episode discovery selected.
+An observation that coordinate is undefined at is delivered as absent.
+*/
+func (cursor *replayCursor) mount() {
+	observations := cursor.observations
+	stride := 1 + len(observations)/trackBudget
+	steps := make([]*wire.LearningStepT, 0, len(observations)/stride+1)
+
+	for index := 0; index < len(observations); index += stride {
+		value, defined := observations[index].Value(cursor.rehearsal.policy.Coordinate)
+		steps = append(steps, &wire.LearningStepT{
+			AtNs: observations[index].At().UnixNano(), Value: value, Defined: defined,
+		})
+	}
+	symbol := ""
+
+	if len(observations) > 0 {
+		symbol = observations[0].Symbol
+	}
+	queued := 0
+
+	if cursor.fragments != nil {
+		queued = cursor.fragments.Len()
+	}
+	cursor.mutex.Lock()
+	defer cursor.mutex.Unlock()
+	cursor.track = wire.LearningTrackT{
+		Symbol: symbol, Length: int32(len(observations)), Stride: int32(stride),
+		Queued: int32(queued), Steps: steps,
+	}
+}
+
+/*
+wire copies this worker's mounted track. steps are fixed for the life of the
+fragment and are shared; marks are copied because a grade lands on an already
+published mark.
+*/
+func (cursor *replayCursor) wire(id int32) *wire.LearningTrackT {
+	cursor.mutex.Lock()
+	defer cursor.mutex.Unlock()
+	track := cursor.track
+	track.Id = id
+	track.Marks = make([]*wire.LearningMarkT, len(cursor.track.Marks))
+
+	for index, mark := range cursor.track.Marks {
+		copied := *mark
+		track.Marks[index] = &copied
+	}
+
+	return &track
 }
 
 func (cursor *replayCursor) advance() error {
 	index := cursor.index
 	cursor.index++
+	cursor.mutex.Lock()
+	cursor.track.Index = int32(cursor.index)
+	cursor.mutex.Unlock()
 	observation := cursor.observations[index]
 	cursor.source.Step(observation)
 	cursor.trader.At, cursor.trader.Version = observation.ReceivedAt, uint64(index+1)
@@ -142,22 +213,21 @@ func (cursor *replayCursor) advance() error {
 		}
 	}
 
-	if err := cursor.space.Step(measurements); err != nil {
-		return errnie.Error(err)
-	}
-	impulse, err := cursor.space.Impulse(observation.Symbol, observation.ReceivedAt, from)
-
-	if err != nil {
-		return errnie.Error(err)
+	if len(measurements) > 0 {
+		if err := cursor.space.Step(measurements); err != nil {
+			return errnie.Error(err)
+		}
 	}
 
 	if !cursor.trader.Ready(observation.Symbol) {
+		cursor.member.Transition(runtime.WAITING)
 		cursor.lastProfit = nil // Missing valuation cannot establish an idle interval.
 		return nil
 	}
 	mark, err := cursor.trader.Objective()
 
 	if err != nil || mark == nil {
+		cursor.member.Transition(runtime.WAITING)
 		cursor.lastProfit = nil
 		return errnie.Error(err)
 	}
@@ -167,7 +237,23 @@ func (cursor *replayCursor) advance() error {
 	}
 	cursor.lastProfit, cursor.lastAt = cursor.trader.Profit, observation.ReceivedAt
 
+	// Quotes advance the wallet clock even when no precursor was captured.
+	// They cannot activate an absent row or reuse a previous grid impulse.
+	if len(measurements) == 0 {
+		cursor.member.Transition(runtime.WAITING)
+		cursor.rehearsal.mutex.Lock()
+		cursor.rehearsal.progress.Unsupported++
+		cursor.rehearsal.mutex.Unlock()
+		return nil
+	}
+	impulse, err := cursor.space.Impulse(observation.Symbol, observation.ReceivedAt, from)
+
+	if err != nil {
+		return errnie.Error(err)
+	}
+
 	if !impulse.Ready || index == len(cursor.observations)-1 {
+		cursor.member.Transition(runtime.WAITING)
 		cursor.rehearsal.mutex.Lock()
 		cursor.rehearsal.progress.Unsupported++
 		cursor.rehearsal.mutex.Unlock()
@@ -200,6 +286,17 @@ func (cursor *replayCursor) advance() error {
 		evaluation.Secured = cursor.trader.Positions[observation.Symbol].Holding.RealizedPnL.Sub(realized)
 	}
 	cursor.evaluations = append(cursor.evaluations, evaluation)
+
+	// Waiting is the absence of an action and is already the whole rest of the
+	// track. Only decisions that reach the account are positioned on it.
+	if decision.Action.Kind != "wait" {
+		cursor.mutex.Lock()
+		cursor.track.Marks = append(cursor.track.Marks, &wire.LearningMarkT{
+			Id: decision.ID, Index: int32(index), Kind: decision.Action.Kind,
+			Power: int32(decision.Action.Power), Reduce: decision.Action.Reduce,
+		})
+		cursor.mutex.Unlock()
+	}
 	return nil
 }
 
@@ -247,6 +344,7 @@ func (cursor *replayCursor) finish() error {
 		evaluation.Action, evaluation.Value, evaluation.Authority); err != nil {
 		return errnie.Error(err)
 	}
+	cursor.grade(evaluation)
 	cursor.evaluations = cursor.evaluations[1:]
 	cursor.rehearsal.mutex.Lock()
 	defer cursor.rehearsal.mutex.Unlock()
@@ -257,4 +355,19 @@ func (cursor *replayCursor) finish() error {
 	cursor.rehearsal.progress.LastReturn = evaluation.Value
 	cursor.rehearsal.progress.LastFailure = evaluation.Failure
 	return nil
+}
+
+// grade returns a published mark's measured outcome to the track it was taken
+// on, so an arrow that has been answered reads differently from one that has
+// not. A mark whose fragment has already been replaced is simply absent.
+func (cursor *replayCursor) grade(evaluation *Evaluation) {
+	cursor.mutex.Lock()
+	defer cursor.mutex.Unlock()
+
+	for _, mark := range cursor.track.Marks {
+		if mark.Id == evaluation.ID {
+			mark.Value, mark.Graded = evaluation.Value, true
+			return
+		}
+	}
 }

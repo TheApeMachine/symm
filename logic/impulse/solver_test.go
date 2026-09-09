@@ -2,6 +2,11 @@ package impulse
 
 import (
 	"errors"
+	"github.com/theapemachine/symm/hindsight"
+	"github.com/theapemachine/symm/logic/category"
+	"github.com/theapemachine/symm/nomagique/learning/associative/grid"
+	"github.com/theapemachine/symm/tests/market"
+	"math"
 	"strconv"
 	"testing"
 	"time"
@@ -57,4 +62,54 @@ func BenchmarkSolverStep(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func TestSolverStepCategoryStartup(t *testing.T) {
+	Convey("Sparse category evidence remains usable through live and persisted grid inputs", t, func() {
+		classifier := category.NewSolver(t.Context())
+		defer func() { So(classifier.Close(), ShouldBeNil) }()
+		live, replay := NewSolver(), grid.NewSpace()
+		tape := market.NewOpportunityTape("CCD/USD", time.Unix(100, 0), 6)
+		for index, step := range tape.Steps {
+			// The fixture's alternating bipolar context maps to zero/one
+			// affinities, exercising support appearing and disappearing.
+			affinity := (step.Context + 1) / 2
+			measurement := data.NewMeasurement[float64]("startup", tape.Symbol, "cvd", step.EventTime, tape.Steps[0].EventTime)
+			measurement.Maturity = 1
+			measurement.PutMetric(data.Metric[float64]{Label: "signed_net_fraction_zscore", Raw: step.Context, Normalized: &affinity})
+			envelope := &types.Envelope{Key: tape.Symbol, CVD: measurement,
+				CaptureID: hindsight.CaptureIdentity{Run: "category-startup", Sequence: hindsight.CaptureSequence(index + 1)},
+			}
+			So(classifier.Step(envelope), ShouldEqual, envelope)
+			So(classifier.Error(), ShouldBeNil)
+			if affinity == 0 {
+				So(envelope.Categories, ShouldBeEmpty)
+			}
+
+			if affinity > 0 {
+				So(envelope.Categories, ShouldNotBeEmpty)
+			}
+			unsupported := 0
+			for _, reading := range envelope.Categories {
+				So(reading.Confidence, ShouldBeGreaterThan, 0)
+				So(reading.Surprisal, ShouldAlmostEqual, -math.Log2(reading.Confidence))
+
+				if reading.Strength == 0 {
+					unsupported++
+				}
+			}
+			if affinity > 0 {
+				So(unsupported, ShouldBeGreaterThan, 0)
+			}
+			captured, err := (hindsight.ArtifactWitness{
+				Envelope: hindsight.EnvelopeRef{Origin: envelope.CaptureID}, Payload: envelope.EncodePrecursor(),
+			}).RehearsalInput()
+			So(err, ShouldBeNil)
+			So(live.Step(envelope), ShouldEqual, envelope)
+			So(live.Error(), ShouldBeNil)
+			So(replay.Step(captured.Measurements), ShouldBeNil)
+			So(live.Version, ShouldEqual, index+1)
+			So(replay.Version, ShouldEqual, live.Version)
+		}
+	})
 }

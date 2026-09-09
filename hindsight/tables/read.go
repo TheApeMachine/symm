@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"iter"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/apache/arrow-go/v18/arrow"
@@ -24,10 +26,10 @@ Iceberg guarantees no row order: a scan returns files in plan order and rows in
 file order. Callers that need capture order sort explicitly rather than relying
 on the layout, because a compaction or a re-append would silently change it.
 */
-func (c *Catalog) scan(
+func (catalog *Catalog) scan(
 	ctx context.Context, name string, filters ...iceberg.BooleanExpression,
 ) (iter.Seq2[arrow.RecordBatch, error], error) {
-	loaded, err := c.Load(ctx, name)
+	loaded, err := catalog.Load(ctx, name)
 
 	if err != nil {
 		return nil, err
@@ -39,7 +41,54 @@ func (c *Catalog) scan(
 		predicate = iceberg.NewAnd(predicate, filter)
 	}
 
-	_, batches, err := loaded.Scan(icetable.WithRowFilter(predicate)).ToArrowRecords(ctx)
+	tasks, err := loaded.Scan(icetable.WithRowFilter(predicate)).PlanFiles(ctx)
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+	batchSize := int64(loaded.Metadata().Properties().GetInt(
+		icetable.ParquetBatchSizeKey, icetable.ParquetBatchSizeDefault,
+	))
+
+	if batchSize <= 0 {
+		return nil, errnie.Error(errnie.Err(errnie.Validation,
+			"[iceberg] Parquet read batch size must be positive", nil))
+	}
+
+	for _, task := range tasks {
+		bound, err := catalog.payloadBound(ctx, loaded, task)
+
+		if err != nil {
+			return nil, errnie.Error(err)
+		}
+
+		if bound > 0 {
+			// A column chunk bounds one flat payload, including dictionary
+			// entries. It does not bound a decoded batch of repeated entries.
+			batchSize = min(batchSize, max(1, math.MaxInt32/bound))
+		}
+	}
+
+	// Iceberg 0.6 reads batch size from table metadata, not scan options.
+	// Apply it to this scan's metadata copy without committing a table change.
+	metadata, err := icetable.MetadataBuilderFromBase(loaded.Metadata(), loaded.MetadataLocation())
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+
+	if err := metadata.SetProperties(iceberg.Properties{
+		icetable.ParquetBatchSizeKey: strconv.FormatInt(batchSize, 10),
+	}); err != nil {
+		return nil, errnie.Error(err)
+	}
+	bounded, err := metadata.Build()
+
+	if err != nil {
+		return nil, errnie.Error(err)
+	}
+	reader := icetable.New(loaded.Identifier(), bounded, loaded.MetadataLocation(), loaded.FS, nil)
+	_, batches, err := reader.Scan(icetable.WithRowFilter(predicate)).ReadTasks(ctx, tasks)
 
 	if err != nil {
 		return nil, errnie.Error(errnie.Err(

@@ -1259,6 +1259,24 @@ table LearningRehearsal {
  lastSymbol:string; lastAction:string; lastReturn:double;
   lastFailure:string;
  illiquid:ulong; quiet:ulong;
+ // One track per replay worker: the tape it is actually playing back now.
+ tracks:[LearningTrack];
+}
+// One retained observation of a mounted fragment. An observation the declared
+// market coordinate is undefined at is absent, never zero.
+table LearningStep { atNs:long; value:double; defined:bool; }
+// A decision the worker took on the mounted fragment, positioned by the
+// observation index it was taken at. value/graded arrive when the evaluation
+// resolves, so an ungraded mark stays visibly ungraded.
+table LearningMark { id:ulong; index:int; kind:string; power:int; reduce:bool; value:double; graded:bool; }
+/*
+LearningTrack is one worker's mounted tape fragment. steps is the captured
+series, decimated by stride only for delivery; index and length stay in the
+original observation coordinates, and marks position against them.
+*/
+table LearningTrack {
+ id:int; symbol:string; index:int; length:int; queued:int; stride:int;
+ steps:[LearningStep]; marks:[LearningMark];
 }
 table LearningState {
  atNs:long; steps:ulong; decisions:ulong; resolved:ulong;

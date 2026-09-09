@@ -80,6 +80,10 @@ func (agent *Agent[Action]) Step(impulse grid.Impulse) grid.Impulse {
 	if err := agent.Measure(); err != nil {
 		return impulse
 	}
+
+	if agent.Status() == runtime.WAITING {
+		return impulse
+	}
 	sequence := agent.Context(impulse.Label, impulse.At, impulse.From, conditions)
 	agent.Fail(agent.Activate(impulse.Label, impulse.At, sequence, authority/strength))
 	return impulse
@@ -149,6 +153,7 @@ func (agent *Agent[Action]) Measure() (err error) {
 	}
 
 	if mark == nil {
+		agent.Transition(runtime.WAITING)
 		return nil
 	}
 	outcome, err := agent.ledger.Measure(*mark)
@@ -157,6 +162,7 @@ func (agent *Agent[Action]) Measure() (err error) {
 		return errnie.Error(err)
 	}
 	agent.Reward = outcome
+	agent.Transition(runtime.READY)
 	return nil
 }
 

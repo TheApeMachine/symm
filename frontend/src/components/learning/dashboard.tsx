@@ -7,7 +7,6 @@ import { Section } from "#/components/ui/section";
 import { Tabs } from "#/components/ui/tabs";
 import { Typography } from "#/components/ui/typography";
 import { CandidateReview } from "./candidate-review";
-import { RehearsalPanel } from "./rehearsal-panel";
 import { CapitalPanel } from "./capital-panel";
 import {
 	CandidatePanel,
@@ -20,6 +19,7 @@ import {
 import { action, amount, basis, clock, duration, percent } from "./format";
 import { KnowledgePanel } from "./knowledge-panel";
 import { ImpulseMap } from "./map";
+import { RehearsalPanel } from "./rehearsal-panel";
 import { SkillPanel } from "./skill-panel";
 import { type LearningEvent, useLearning } from "./state";
 import { LearningVisualizer } from "./visualizer";

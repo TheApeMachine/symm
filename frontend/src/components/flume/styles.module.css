@@ -1,0 +1,28 @@
+.dragWrapper {
+	z-index: 9999;
+	position: absolute;
+	left: 0px;
+	top: 0px;
+	pointer-events: none;
+	overflow: visible;
+}
+.debugWrapper {
+	display: flex;
+	position: absolute;
+	left: 10px;
+	bottom: 10px;
+	gap: 15px;
+}
+.portLayer {
+	position: absolute;
+	left: 0px;
+	top: 0px;
+	width: 0px;
+	height: 0px;
+	z-index: 10000;
+	pointer-events: none;
+	overflow: visible;
+}
+.portLayer > * {
+	pointer-events: auto;
+}

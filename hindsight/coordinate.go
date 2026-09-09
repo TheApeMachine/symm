@@ -1,9 +1,9 @@
 package hindsight
 
 import (
+	"github.com/theapemachine/symm/nomagique/data"
 	"math"
 	"time"
-"github.com/theapemachine/symm/nomagique/data"
 )
 
 /*
@@ -54,13 +54,13 @@ type Observation struct {
 	// Measurements are joined from the exact numerical witness for rehearsal.
 	// Episode selection and public market-coordinate serialization ignore them.
 	Measurements []*data.Measurement[float64] `json:"-"`
-	Domain     string          `json:"domain"`
-	Capture    CaptureIdentity `json:"capture"`
-	Ordinal    uint64          `json:"ordinal"`
-	Symbol     string          `json:"symbol"`
-	Kind       string          `json:"kind"`
-	ReceivedAt time.Time       `json:"receivedAt"`
-	VenueAt    time.Time       `json:"venueAt"`
+	Domain       string                       `json:"domain"`
+	Capture      CaptureIdentity              `json:"capture"`
+	Ordinal      uint64                       `json:"ordinal"`
+	Symbol       string                       `json:"symbol"`
+	Kind         string                       `json:"kind"`
+	ReceivedAt   time.Time                    `json:"receivedAt"`
+	VenueAt      time.Time                    `json:"venueAt"`
 
 	HasBid  bool    `json:"hasBid"`
 	Bid     float64 `json:"bid"`
@@ -75,6 +75,23 @@ type Observation struct {
 	TradePrice float64 `json:"tradePrice"`
 	TradeQty   float64 `json:"tradeQty"`
 	TradeSide  string  `json:"tradeSide,omitempty"`
+}
+
+/*
+Before reports that this observation was captured before another.
+
+Capture sequence, then ordinal within the frame, is the record's ordering
+authority (§6, §52) — never the receive clock. One captured frame decodes into
+several observations, a batched trade or touch message being the ordinary case,
+and every one of them carries that frame's single receive instant. Equal
+receive times inside one tape are therefore normal and say nothing about order.
+*/
+func (observation Observation) Before(other Observation) bool {
+	if observation.Capture.Sequence != other.Capture.Sequence {
+		return observation.Capture.Sequence < other.Capture.Sequence
+	}
+
+	return observation.Ordinal < other.Ordinal
 }
 
 /*

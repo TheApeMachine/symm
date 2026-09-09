@@ -1,8 +1,8 @@
-import { bench } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { EdgeDistributionPlot } from "./visualizer";
+import { bench } from "vitest";
 import { learningFixture } from "./fixture";
 import { projectLearning } from "./state";
+import { EdgeDistributionPlot } from "./visualizer";
 
 const state = learningFixture();
 state.agents[0].reading!.varianceDefined = true;

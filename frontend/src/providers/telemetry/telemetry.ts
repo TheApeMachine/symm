@@ -92,11 +92,14 @@ export { LearningAction, LearningActionT } from './telemetry/learning-action.js'
 export { LearningAgent, LearningAgentT } from './telemetry/learning-agent.js';
 export { LearningDecision, LearningDecisionT } from './telemetry/learning-decision.js';
 export { LearningDevelopment, LearningDevelopmentT } from './telemetry/learning-development.js';
+export { LearningMark, LearningMarkT } from './telemetry/learning-mark.js';
 export { LearningPrior, LearningPriorT } from './telemetry/learning-prior.js';
 export { LearningQuantity, LearningQuantityT } from './telemetry/learning-quantity.js';
 export { LearningRegion, LearningRegionT } from './telemetry/learning-region.js';
 export { LearningRehearsal, LearningRehearsalT } from './telemetry/learning-rehearsal.js';
 export { LearningState, LearningStateT } from './telemetry/learning-state.js';
+export { LearningStep, LearningStepT } from './telemetry/learning-step.js';
+export { LearningTrack, LearningTrackT } from './telemetry/learning-track.js';
 export { MCTSBranch, MCTSBranchT } from './telemetry/mctsbranch.js';
 export { MCTSNode, MCTSNodeT } from './telemetry/mctsnode.js';
 export { ManifoldFrame, ManifoldFrameT } from './telemetry/manifold-frame.js';

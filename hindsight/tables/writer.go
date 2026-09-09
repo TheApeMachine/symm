@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/apache/arrow-go/v18/arrow/array"
-	"github.com/apache/iceberg-go"
 	"github.com/theapemachine/errnie"
 )
 
@@ -120,64 +119,68 @@ func (w *Writer) Commit(ctx context.Context) error {
 	w.mutex.Unlock()
 
 	if len(runs) > 0 {
-		if err := w.append(ctx, Runs, RunsSchema(), len(runs), func(b *array.RecordBuilder) {
-			fillRuns(b, runs)
+		if err := w.append(ctx, Runs, nil, len(runs), func(builder *array.RecordBuilder, start, end int) {
+			fillRuns(builder, runs[start:end])
 		}); err != nil {
 			return err
 		}
 	}
 
 	if len(captures) > 0 {
-		if err := w.append(ctx, Captures, CapturesSchema(), len(captures), func(b *array.RecordBuilder) {
-			fillCaptures(b, captures)
-		}); err != nil {
+		if err := w.append(ctx, Captures,
+			func(index int) int { return len(captures[index].Payload) }, len(captures),
+			func(builder *array.RecordBuilder, start, end int) {
+				fillCaptures(builder, captures[start:end])
+			}); err != nil {
 			return err
 		}
 	}
 
 	if len(manifests) > 0 {
-		if err := w.append(ctx, Manifests, ManifestsSchema(), len(manifests), func(b *array.RecordBuilder) {
-			fillManifests(b, manifests)
+		if err := w.append(ctx, Manifests, nil, len(manifests), func(builder *array.RecordBuilder, start, end int) {
+			fillManifests(builder, manifests[start:end])
 		}); err != nil {
 			return err
 		}
 	}
 
 	if len(witnesses) > 0 {
-		if err := w.append(ctx, Witnesses, WitnessesSchema(), len(witnesses), func(b *array.RecordBuilder) {
-			fillWitnesses(b, witnesses)
-		}); err != nil {
+		if err := w.append(ctx, Witnesses,
+			func(index int) int { return len(witnesses[index].Payload) }, len(witnesses),
+			func(builder *array.RecordBuilder, start, end int) {
+				fillWitnesses(builder, witnesses[start:end])
+			}); err != nil {
 			return err
 		}
 	}
 
 	if len(lifecycle) > 0 {
-		if err := w.append(ctx, Lifecycle, LifecycleSchema(), len(lifecycle), func(b *array.RecordBuilder) {
-			fillLifecycle(b, lifecycle)
+		if err := w.append(ctx, Lifecycle, nil, len(lifecycle), func(builder *array.RecordBuilder, start, end int) {
+			fillLifecycle(builder, lifecycle[start:end])
 		}); err != nil {
 			return err
 		}
 	}
 
 	if len(decisions) > 0 {
-		if err := w.append(ctx, Decisions, DecisionsSchema(), len(decisions), func(b *array.RecordBuilder) {
-			fillOutcomes(b, decisions)
+		if err := w.append(ctx, Decisions, nil, len(decisions), func(builder *array.RecordBuilder, start, end int) {
+			fillOutcomes(builder, decisions[start:end])
 		}); err != nil {
 			return err
 		}
 	}
 
 	if len(outcomes) > 0 {
-		if err := w.append(ctx, Outcomes, OutcomesSchema(), len(outcomes), func(b *array.RecordBuilder) {
-			fillOutcomes(b, outcomes)
+		if err := w.append(ctx, Outcomes, nil, len(outcomes), func(builder *array.RecordBuilder, start, end int) {
+			fillOutcomes(builder, outcomes[start:end])
 		}); err != nil {
 			return err
 		}
 	}
 
 	if len(gaps) > 0 {
-		if err := w.append(ctx, Gaps, GapsSchema(), len(gaps), func(b *array.RecordBuilder) {
-			fillGaps(b, gaps)
+		if err := w.append(ctx, Gaps, nil, len(gaps), func(builder *array.RecordBuilder, start, end int) {
+			fillGaps(builder, gaps[start:end])
 		}); err != nil {
 			return err
 		}
@@ -198,9 +201,9 @@ resolved against the wrong one entirely.
 func (w *Writer) append(
 	ctx context.Context,
 	name string,
-	_ *iceberg.Schema,
+	payloadSize func(int) int,
 	count int,
-	fill func(*array.RecordBuilder),
+	fill func(*array.RecordBuilder, int, int),
 ) error {
 	loaded, err := w.catalog.Load(ctx, name)
 
@@ -208,7 +211,7 @@ func (w *Writer) append(
 		return err
 	}
 
-	reader, err := records(loaded.Schema(), count, fill)
+	reader, err := records(loaded.Schema(), count, payloadSize, fill)
 
 	if err != nil {
 		return err

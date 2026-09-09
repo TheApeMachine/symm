@@ -1,0 +1,60 @@
+.transput {
+	display: flex;
+	align-items: center;
+	box-sizing: border-box;
+	width: 100%;
+	min-width: 0;
+	gap: 10px;
+	margin: 0;
+	border: none;
+	padding: 0;
+}
+.controls {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	width: 100%;
+	min-width: 0;
+	position: relative;
+	z-index: 1;
+}
+.portLabel {
+	font-size: 13px;
+	font-weight: 400;
+	flex-shrink: 0;
+}
+.port {
+	width: 12px;
+	height: 12px;
+	border: none;
+	padding: 0;
+	margin: 0;
+	cursor: pointer;
+	font: inherit;
+	color: inherit;
+	background: linear-gradient(to bottom, #acb1b4, #919699);
+	border-radius: 100%;
+	flex-shrink: 0;
+	box-shadow: 0px 2px 1px 0px rgba(0, 0, 0, 0.6);
+	&[data-port-color="red"] {
+		background: linear-gradient(to bottom, #fa4a6f, #c22e4d);
+	}
+	&[data-port-color="purple"] {
+		background: linear-gradient(to bottom, #9e55fb, #6024b6);
+	}
+	&[data-port-color="blue"] {
+		background: linear-gradient(to bottom, #4284f7, #2867d4);
+	}
+	&[data-port-color="green"] {
+		background: linear-gradient(to bottom, #31dd9f, #11ad7a);
+	}
+	&[data-port-color="yellow"] {
+		background: linear-gradient(to bottom, #d6bf47, #9d8923);
+	}
+	&[data-port-color="orange"] {
+		background: linear-gradient(to bottom, #fa7841, #c94b23);
+	}
+	&[data-port-color="pink"] {
+		background: linear-gradient(to bottom, #fe8aeb, #e046c3);
+	}
+}

@@ -1,19 +1,18 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
-	LearningProgress,
 	DecisionRing,
 	DrivingActions,
 	EventRhythm,
 	ImpulseBars,
 	InfluenceGrid,
+	LearningProgress,
 	OutcomeRange,
 	PipelineFunnel,
 	TraderQuality,
 	WalletBars,
 } from "./charts";
 import { learningFixture } from "./fixture";
-import { projectLearning } from "./state";
 import type {
 	Influence,
 	LearningEvent,
@@ -23,6 +22,7 @@ import type {
 	Token,
 	Wallet,
 } from "./state";
+import { projectLearning } from "./state";
 
 const prior = (over: Partial<Prior>): Prior => ({
 	Samples: 10,

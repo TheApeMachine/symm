@@ -1,10 +1,10 @@
-import { useEffect, useState, useMemo } from "react";
 import { useSelector } from "@tanstack/react-store";
+import { useEffect, useMemo, useState } from "react";
 import { focusStore, onlineStore } from "#/collections/app";
 import { learningStore } from "#/collections/learning";
-import type { LearningStateT } from "#/providers/telemetry/telemetry/learning-state";
-import type { LearningPriorT } from "#/providers/telemetry/telemetry/learning-prior";
 import type { LearningAgentT } from "#/providers/telemetry/telemetry/learning-agent";
+import type { LearningPriorT } from "#/providers/telemetry/telemetry/learning-prior";
+import type { LearningStateT } from "#/providers/telemetry/telemetry/learning-state";
 
 export type Region = {
 	id: number;

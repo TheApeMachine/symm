@@ -1,6 +1,50 @@
 {
   "producers": [
     {
+      "id": "cognition/call",
+      "source": "cognition",
+      "metric": "call",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 70,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/confidence",
+      "source": "cognition",
+      "metric": "confidence",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 58,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/entropy_bits",
+      "source": "cognition",
+      "metric": "entropy_bits",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 50,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "cognition/switch_confidence",
+      "source": "cognition",
+      "metric": "switch_confidence",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 71,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "correlation/last_price",
       "source": "correlation",
       "metric": "last_price",
@@ -1804,6 +1848,50 @@
       "kernelOnly": false
     },
     {
+      "id": "manifold/call",
+      "source": "manifold",
+      "metric": "call",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 70,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/confidence",
+      "source": "manifold",
+      "metric": "confidence",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 58,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/entropy_bits",
+      "source": "manifold",
+      "metric": "entropy_bits",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 50,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "manifold/switch_confidence",
+      "source": "manifold",
+      "metric": "switch_confidence",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 71,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
       "id": "morphology/book_shape_distance",
       "source": "morphology",
       "metric": "book_shape_distance",
@@ -2669,6 +2757,50 @@
         }
       ],
       "dead": false,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/call",
+      "source": "resonance",
+      "metric": "call",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 70,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/confidence",
+      "source": "resonance",
+      "metric": "confidence",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 58,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/entropy_bits",
+      "source": "resonance",
+      "metric": "entropy_bits",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 50,
+      "consumers": [],
+      "dead": true,
+      "kernelOnly": false
+    },
+    {
+      "id": "resonance/switch_confidence",
+      "source": "resonance",
+      "metric": "switch_confidence",
+      "package": "github.com/theapemachine/symm/types",
+      "file": "types/observation.go",
+      "line": 71,
+      "consumers": [],
+      "dead": true,
       "kernelOnly": false
     },
     {
@@ -5396,13 +5528,13 @@
     {
       "package": "github.com/theapemachine/symm/types",
       "file": "types/envelope.go",
-      "line": 532,
+      "line": 534,
       "reason": "Labelled node wraps a reporter whose readings are not statically known"
     }
   ],
   "summary": {
-    "totalProducers": 258,
-    "deadProducers": 70,
+    "totalProducers": 270,
+    "deadProducers": 82,
     "referencedProducers": 188,
     "kernelOnlyProducers": 0,
     "boundConsumerEdges": 313,

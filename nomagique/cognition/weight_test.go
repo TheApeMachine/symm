@@ -12,7 +12,7 @@ func TestPackedWeightEncode(t *testing.T) {
 		weight := PackedWeight{Count: 37, Probability: 0.625, WriteStep: 91}
 		var encoded [WeightSize]byte
 		weight.Encode(encoded[:])
-		So(unsafe.Sizeof(weight), ShouldEqual, WeightSize)
+		So(int(unsafe.Sizeof(weight)), ShouldEqual, WeightSize)
 		So(DecodeWeight(encoded[:]), ShouldResemble, weight)
 	})
 }

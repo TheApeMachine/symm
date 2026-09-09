@@ -24,7 +24,7 @@ export function unionToEnvelopeAnyValue(
   accessor: (obj:EnvelopeNamedFloatMatrix|EnvelopeNamedInt|EnvelopeNamedTimeNs|NamedNumber|NamedString) => EnvelopeNamedFloatMatrix|EnvelopeNamedInt|EnvelopeNamedTimeNs|NamedNumber|NamedString|null
 ): EnvelopeNamedFloatMatrix|EnvelopeNamedInt|EnvelopeNamedTimeNs|NamedNumber|NamedString|null {
   switch(EnvelopeAnyValue[type]) {
-    case 'NONE': return null;
+    case 'NONE': return null; 
     case 'NamedNumber': return accessor(new NamedNumber())! as NamedNumber;
     case 'NamedString': return accessor(new NamedString())! as NamedString;
     case 'EnvelopeNamedInt': return accessor(new EnvelopeNamedInt())! as EnvelopeNamedInt;
@@ -35,12 +35,12 @@ export function unionToEnvelopeAnyValue(
 }
 
 export function unionListToEnvelopeAnyValue(
-  type: EnvelopeAnyValue,
-  accessor: (index: number, obj:EnvelopeNamedFloatMatrix|EnvelopeNamedInt|EnvelopeNamedTimeNs|NamedNumber|NamedString) => EnvelopeNamedFloatMatrix|EnvelopeNamedInt|EnvelopeNamedTimeNs|NamedNumber|NamedString|null,
+  type: EnvelopeAnyValue, 
+  accessor: (index: number, obj:EnvelopeNamedFloatMatrix|EnvelopeNamedInt|EnvelopeNamedTimeNs|NamedNumber|NamedString) => EnvelopeNamedFloatMatrix|EnvelopeNamedInt|EnvelopeNamedTimeNs|NamedNumber|NamedString|null, 
   index: number
 ): EnvelopeNamedFloatMatrix|EnvelopeNamedInt|EnvelopeNamedTimeNs|NamedNumber|NamedString|null {
   switch(EnvelopeAnyValue[type]) {
-    case 'NONE': return null;
+    case 'NONE': return null; 
     case 'NamedNumber': return accessor(index, new NamedNumber())! as NamedNumber;
     case 'NamedString': return accessor(index, new NamedString())! as NamedString;
     case 'EnvelopeNamedInt': return accessor(index, new EnvelopeNamedInt())! as EnvelopeNamedInt;

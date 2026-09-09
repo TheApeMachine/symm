@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { learningFixture } from "./fixture";
-import { projectLearning } from "./state";
 import type { Candidate, LearningEvent, LearningView, Skill } from "./state";
+import { projectLearning } from "./state";
 import {
 	ActionSpectrumPlot,
 	EdgeDistributionPlot,

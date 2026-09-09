@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Flex } from "#/components/ui/flex";
 import { Typography } from "#/components/ui/typography";
-import { amount, basis, clock, duration, percent } from "./format";
+import type { LearningMarkT } from "#/providers/telemetry/telemetry/learning-mark";
+import type { LearningTrackT } from "#/providers/telemetry/telemetry/learning-track";
+import { action, amount, basis, clock, duration, percent } from "./format";
 import type {
 	Influence,
 	LearningEvent,
@@ -921,4 +923,153 @@ export const DrivingActions = ({
 			</Typography.Mono>
 		</Flex.Column>
 	);
+};
+
+/*
+RehearsalTracks gives each replay worker its own lane showing the tape it is
+actually playing back right now: the captured price series of the mounted
+fragment, a playhead at the observation it has reached, and one arrow for every
+decision it took that was not a wait.
+
+The series is drawn from the delivered observations only. Where the market
+coordinate was undefined the line breaks rather than crossing a value that was
+never quoted, and a worker with nothing mounted is drawn empty rather than flat
+at zero. An arrow is hollow until its decision has been graded; once the tape
+has answered it, its colour is the direction of that answer.
+*/
+export const RehearsalTracks = ({
+	tracks,
+}: {
+	tracks: LearningTrackT[] | null | undefined;
+}) => {
+	if (!tracks || tracks.length === 0) return null;
+
+	return (
+		<Flex.Column className="gap-1">
+			{tracks.map((track) => (
+				<WorkerTrack key={track.id} track={track} />
+			))}
+			<Typography.Mono tone="f3">
+				Each lane is one worker on its own fragment and its own price range. A
+				hollow arrow is a decision the tape has not answered yet; a filled one
+				carries the direction of its outcome.
+			</Typography.Mono>
+		</Flex.Column>
+	);
+};
+
+const WorkerTrack = ({ track }: { track: LearningTrackT }) => {
+	const steps = track.steps.filter((step) => step.defined);
+	const highest = Math.max(...steps.map((step) => step.value));
+	const lowest = Math.min(...steps.map((step) => step.value));
+	const span = highest - lowest;
+
+	// An unchanged price is a real reading, not an absent one: it sits on the
+	// centre of its own lane instead of being scaled by a zero range.
+	const height = (value: number) => (span > 0 ? (value - lowest) / span : 0.5);
+	const width = 1000;
+	const tall = 40;
+	const path = track.steps
+		.map((step, index) => {
+			if (!step.defined) return "";
+			const x = (index / Math.max(track.steps.length - 1, 1)) * width;
+			const y = tall - height(step.value) * (tall - 6) - 3;
+			const previous = track.steps[index - 1];
+
+			return `${index === 0 || !previous?.defined ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+		})
+		.filter(Boolean)
+		.join(" ");
+	const played = share(track.index, track.length);
+
+	return (
+		<Flex.Row align="center" gap={2}>
+			<Typography.Mono
+				size="s"
+				tone="f2"
+				className="w-32 shrink-0 truncate"
+				title={`Worker ${track.id + 1}`}
+			>
+				↻ {track.id + 1}{" "}
+				<span className="text-(--f4)">{String(track.symbol ?? "") || "—"}</span>
+			</Typography.Mono>
+			<div className="relative h-8 min-w-0 flex-1 overflow-hidden rounded border border-(--line) bg-(--sunken)">
+				{track.length === 0 ? (
+					<span className="absolute inset-0 flex items-center justify-center font-mono text-[10px] text-(--f4)">
+						No fragment mounted
+					</span>
+				) : (
+					<>
+						{steps.length > 1 && (
+							<svg
+								viewBox={`0 0 ${width} ${tall}`}
+								className="absolute inset-0 h-full w-full select-none"
+								preserveAspectRatio="none"
+								role="img"
+								aria-label={`Tape fragment worker ${track.id + 1} is replaying`}
+							>
+								<title>{`Tape fragment worker ${track.id + 1} is replaying`}</title>
+								<path
+									d={path}
+									fill="none"
+									stroke="var(--f3)"
+									strokeWidth="1.5"
+								/>
+							</svg>
+						)}
+						<div
+							className="absolute top-0 bottom-0 w-px bg-(--acc)"
+							style={{ left: `${played * 100}%` }}
+							title={`Observation ${track.index} of ${track.length}`}
+						/>
+						{track.marks.map((mark) => (
+							<span
+								key={String(mark.id)}
+								className="-translate-x-1/2 -translate-y-1/2 absolute font-mono text-[11px] leading-none"
+								style={{
+									left: `${share(mark.index, Math.max(track.length - 1, 1)) * 100}%`,
+									// Arrows are inset inside the lane so a decision taken at
+									// the fragment's own extreme is not clipped by its border.
+									top: `${(1 - markHeight(track, mark, height)) * 76 + 12}%`,
+									color: mark.graded
+										? mark.value >= 0
+											? "var(--up)"
+											: "var(--down)"
+										: "var(--f2)",
+									opacity: mark.graded ? 1 : 0.55,
+								}}
+								title={`${action(String(mark.kind), mark.power, mark.reduce)} at observation ${mark.index}${mark.graded ? ` · ${basis(mark.value)}` : " · not graded yet"}`}
+							>
+								{mark.reduce ? "▼" : "▲"}
+							</span>
+						))}
+					</>
+				)}
+			</div>
+			<Typography.Mono
+				size="s"
+				tone="f4"
+				className="w-28 shrink-0 text-right"
+				title={`Observation ${track.index} of ${track.length} · ${track.queued} fragments queued`}
+			>
+				{track.index}/{track.length} · {track.queued} queued
+			</Typography.Mono>
+		</Flex.Row>
+	);
+};
+
+/*
+markHeight positions an arrow at the price the decision was actually taken at.
+The delivered series is decimated for the socket, so the mark's own observation
+index selects the delivered sample it falls on. An undefined coordinate there
+leaves the arrow on the centre of the lane rather than at a fabricated price.
+*/
+const markHeight = (
+	track: LearningTrackT,
+	mark: LearningMarkT,
+	height: (value: number) => number,
+) => {
+	const step = track.steps[Math.round(mark.index / Math.max(track.stride, 1))];
+
+	return step?.defined ? height(step.value) : 0.5;
 };

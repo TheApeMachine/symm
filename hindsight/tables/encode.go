@@ -1,6 +1,7 @@
 package tables
 
 import (
+	"math"
 	"math/big"
 	"time"
 
@@ -103,15 +104,13 @@ func envelope(builder *array.StructBuilder, ref EnvelopeRefRow) {
 }
 
 /*
-records builds a single Arrow record for one table from n rows.
-
-Every append path is the same shape: convert the Iceberg schema, drive a
-RecordBuilder through fill, and hand the result back as a one-record reader.
-Batching is the caller's concern — Writer accumulates rows so that one commit
-covers many records rather than one snapshot per row.
+records builds Arrow batches without exceeding Binary's signed 32-bit offsets.
+All batches still belong to one Iceberg append. A row cannot be split across
+batches, so an individually unrepresentable payload is an explicit error.
 */
 func records(
-	schema *iceberg.Schema, count int, fill func(*array.RecordBuilder),
+	schema *iceberg.Schema, count int, payloadSize func(int) int,
+	fill func(*array.RecordBuilder, int, int),
 ) (array.RecordReader, error) {
 	converted, err := arrowSchemaFor(schema)
 
@@ -121,21 +120,45 @@ func records(
 
 	builder := array.NewRecordBuilder(memory.DefaultAllocator, converted)
 	defer builder.Release()
+	batches := []arrow.RecordBatch{}
+	defer func() {
+		for _, batch := range batches {
+			batch.Release()
+		}
+	}()
 
-	builder.Reserve(count)
-	fill(builder)
+	for start := 0; start < count; {
+		end, size := start, 0
 
-	record := builder.NewRecord()
-	defer record.Release()
+		for end < count {
+			length := 0
 
-	reader, err := array.NewRecordReader(converted, []arrow.RecordBatch{record})
+			if payloadSize != nil {
+				length = payloadSize(end)
+			}
+
+			if length > math.MaxInt32 {
+				return nil, errnie.Error(errnie.Err(errnie.Validation,
+					"[iceberg] one payload exceeds Arrow Binary's signed 32-bit offset limit", nil))
+			}
+
+			if length > math.MaxInt32-size {
+				break
+			}
+			size += length
+			end++
+		}
+		builder.Reserve(end - start)
+		fill(builder, start, end)
+		batches = append(batches, builder.NewRecord())
+		start = end
+	}
+
+	reader, err := array.NewRecordReader(converted, batches)
 
 	if err != nil {
-		return nil, errnie.Error(errnie.Err(
-			errnie.Internal,
-			"[iceberg] failed to build record reader",
-			err,
-		))
+		return nil, errnie.Error(errnie.Err(errnie.Internal,
+			"[iceberg] failed to build record reader", err))
 	}
 
 	return reader, nil

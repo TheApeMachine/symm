@@ -1,14 +1,14 @@
-import { LearningDecisionT } from "#/providers/telemetry/telemetry/learning-decision";
 import { bench } from "vitest";
-import { learningFixture } from "./fixture";
-import {
-	projectLearning,
-	updateLearningEvents,
-	type LearningEvent,
-} from "./state";
-
+import { LearningDecisionT } from "#/providers/telemetry/telemetry/learning-decision";
 import { LearningDevelopmentT } from "#/providers/telemetry/telemetry/learning-development";
 import { LearningQuantityT } from "#/providers/telemetry/telemetry/learning-quantity";
+import { learningFixture } from "./fixture";
+import {
+	type LearningEvent,
+	projectLearning,
+	updateLearningEvents,
+} from "./state";
+
 const source = learningFixture();
 source.agents = Array.from({ length: 8 }, (_, id) =>
 	Object.assign(learningFixture().agents[0], { id }),

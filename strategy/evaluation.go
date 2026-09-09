@@ -166,8 +166,21 @@ func (evaluation *Evaluation) Grade(observations []hindsight.Observation, price 
 	var cheapest *decimal.Decimal
 
 	for index, observation := range observations {
-		if observation.Symbol != observations[0].Symbol || (index > 0 && !observation.ReceivedAt.After(observations[index-1].ReceivedAt)) {
-			return errnie.Error(errnie.Err(errnie.Validation, "evaluation: mixed symbols or non-increasing capture clock", nil))
+		if observation.Symbol != observations[0].Symbol {
+			return errnie.Error(errnie.Err(errnie.Validation, "evaluation: mixed symbols on one tape", nil))
+		}
+
+		// Order is read from the capture coordinate, never from the receive
+		// clock: a batched trade or touch frame decodes into several
+		// observations that all carry that frame's single receive instant.
+		if index > 0 && !observations[index-1].Before(observation) {
+			return errnie.Error(errnie.Err(errnie.Validation, "evaluation: non-increasing capture order", nil))
+		}
+
+		// Idle time is measured against the receive clock below, so that clock
+		// must at least not run backwards across the tape.
+		if index > 0 && observation.ReceivedAt.Before(observations[index-1].ReceivedAt) {
+			return errnie.Error(errnie.Err(errnie.Validation, "evaluation: receive clock runs backwards", nil))
 		}
 
 		if quantity == nil || quantity.Sign() <= 0 {

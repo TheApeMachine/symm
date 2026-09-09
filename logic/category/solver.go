@@ -444,6 +444,12 @@ func (solver *Solver) buildBatch(
 	count := len(solver.categories)
 
 	evidence := lift(strengths)
+	// Category specification section 20 assigns one symmetric pseudocount
+	// to every declared category: P(c) = (strength(c)+1)/(sum(strength)+K).
+	// Keep raw strength and maturity unchanged; this is competition prior mass.
+	for index := range evidence {
+		evidence[index] += 1
+	}
 	confidences := make([]float64, count)
 
 	// The batch shares one uncertainty: how evenly the evidence is spread
