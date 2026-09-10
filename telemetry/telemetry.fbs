@@ -1267,6 +1267,10 @@ table LearningRehearsal {
  // What the archive actually supplied: how many recorded runs were read and
  // how many captured observations are resident against the budget.
  runs:int; observations:ulong; budget:ulong;
+ // Runs the record held but could not supply. A truncated parquet is skipped
+ // and counted here rather than becoming the learning phase: the walk carries
+ // on, and the dashboard reports what was missed instead of showing nothing.
+ skipped:int; lastSkip:string;
  // One track per replay worker: the tape it is actually playing back now.
  tracks:[LearningTrack];
 }
@@ -1316,6 +1320,10 @@ table LearningAnswer {
 // One learner. Links is everything it has committed to memory.
 table LearningLearner {
  id:int; links:int; moments:[LearningMoment]; answers:[LearningAnswer];
+ // What this learner actually holds, as the prefix tree Cortex draws: the
+ // moments it has learned about and, under each, the region sequences that
+ // ran into them. Same node shape as the sensory tree, same renderer.
+ branches:[CognitionBranch];
 }
 
 // The grid as the learners are being shown it.

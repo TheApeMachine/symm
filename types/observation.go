@@ -31,10 +31,11 @@ func (envelope *Envelope) LogicMeasurements() []*data.Measurement[float64] {
 	for _, category := range envelope.Categories {
 		measurement := data.NewMeasurement[float64](string(category.Type), category.Symbol, "category/"+string(category.Type), category.At, category.At)
 		measurement.Metadata = map[string]float64{data.MetadataMaturity: category.Maturity}
-		for label, value := range map[string]float64{"strength": category.Strength, "confidence": category.Confidence,
-			"surprisal": category.Surprisal, "uncertainty": category.Uncertainty, "freshness": category.Freshness} {
-			measurement.PutMetric(data.Metric[float64]{Label: label, Raw: value})
-		}
+		measurement.PutMetric(data.Metric[float64]{Label: "strength", Raw: category.Strength})
+		measurement.PutMetric(data.Metric[float64]{Label: "confidence", Raw: category.Confidence})
+		measurement.PutMetric(data.Metric[float64]{Label: "surprisal", Raw: category.Surprisal})
+		measurement.PutMetric(data.Metric[float64]{Label: "uncertainty", Raw: category.Uncertainty})
+		measurement.PutMetric(data.Metric[float64]{Label: "freshness", Raw: category.Freshness})
 		output = append(output, measurement)
 	}
 
@@ -43,10 +44,10 @@ func (envelope *Envelope) LogicMeasurements() []*data.Measurement[float64] {
 		// Cohort is the producer's observed sequence support, retained as a
 		// sufficient statistic so Finalize applies the canonical maturity rule.
 		measurement.Metadata = map[string]float64{data.MetadataSupport: float64(reading.Cohort)}
-		for label, value := range map[string]float64{"confidence": reading.Confidence, "contrast": reading.Contrast,
-			"surprisal": reading.InterpolatedSurprisal, "lookahead_score": reading.LookaheadScore} {
-			measurement.PutMetric(data.Metric[float64]{Label: label, Raw: value})
-		}
+		measurement.PutMetric(data.Metric[float64]{Label: "confidence", Raw: reading.Confidence})
+		measurement.PutMetric(data.Metric[float64]{Label: "contrast", Raw: reading.Contrast})
+		measurement.PutMetric(data.Metric[float64]{Label: "surprisal", Raw: reading.InterpolatedSurprisal})
+		measurement.PutMetric(data.Metric[float64]{Label: "lookahead_score", Raw: reading.LookaheadScore})
 
 		if reading.EntropyBits != nil {
 			measurement.PutMetric(data.Metric[float64]{Label: "entropy_bits", Raw: *reading.EntropyBits})
@@ -58,14 +59,17 @@ func (envelope *Envelope) LogicMeasurements() []*data.Measurement[float64] {
 		measurement := data.NewMeasurement[float64]("resonance", reading.Symbol, "resonance", reading.At, reading.At)
 		measurement.Metadata = map[string]float64{data.MetadataSupport: float64(reading.ResolvedSteps)}
 		measurement.PutMetric(data.Metric[float64]{Label: "confidence", Raw: reading.Confidence})
+
 		for index, value := range reading.Readout {
-			measurement.PutMetric(data.Metric[float64]{Label: "readout/" + strconv.Itoa(index), Raw: value})
+			measurement.PutMetric(data.Metric[float64]{Label: seriesLabel("readout/", index), Raw: value})
 		}
+
 		for index, value := range reading.ForwardCurve {
-			measurement.PutMetric(data.Metric[float64]{Label: "forward/" + strconv.Itoa(index), Raw: value})
+			measurement.PutMetric(data.Metric[float64]{Label: seriesLabel("forward/", index), Raw: value})
 		}
+
 		for index, value := range reading.ForwardRetention {
-			measurement.PutMetric(data.Metric[float64]{Label: "retention/" + strconv.Itoa(index), Raw: value})
+			measurement.PutMetric(data.Metric[float64]{Label: seriesLabel("retention/", index), Raw: value})
 		}
 
 		if forecast := reading.Forecast; forecast != nil {
@@ -79,21 +83,57 @@ func (envelope *Envelope) LogicMeasurements() []*data.Measurement[float64] {
 		// These are the field observations available to this symbol's event.
 		// Particle buffers remain owned by the manifold and are never copied to the grid.
 		measurement := data.NewMeasurement[float64]("field", envelope.Symbol(), "manifold", reading.At, reading.At)
-		for label, value := range map[string]float64{
-			"divergence": reading.Divergence, "guidance_speed": reading.GuidanceSpeed,
-			"coherence_mag2": reading.CoherenceMag2, "pressure_gradient_norm": reading.PressureGradNorm,
-			"viscosity_proxy": reading.ViscosityProxy, "kuramoto_r": reading.KuramotoR,
-		} {
-			measurement.PutMetric(data.Metric[float64]{Label: label, Raw: value})
-		}
+		measurement.PutMetric(data.Metric[float64]{Label: "divergence", Raw: reading.Divergence})
+		measurement.PutMetric(data.Metric[float64]{Label: "guidance_speed", Raw: reading.GuidanceSpeed})
+		measurement.PutMetric(data.Metric[float64]{Label: "coherence_mag2", Raw: reading.CoherenceMag2})
+		measurement.PutMetric(data.Metric[float64]{Label: "pressure_gradient_norm", Raw: reading.PressureGradNorm})
+		measurement.PutMetric(data.Metric[float64]{Label: "viscosity_proxy", Raw: reading.ViscosityProxy})
+		measurement.PutMetric(data.Metric[float64]{Label: "kuramoto_r", Raw: reading.KuramotoR})
 		output = append(output, measurement)
 	}
+
 	return output
+}
+
+func seriesLabel(prefix string, index int) string {
+	if index >= 0 && index < len(seriesIndex) {
+		return prefix + seriesIndex[index]
+	}
+
+	return prefix + strconv.Itoa(index)
+}
+
+var seriesIndex = [...]string{
+	"0", "1", "2", "3", "4", "5", "6", "7",
+	"8", "9", "10", "11", "12", "13", "14", "15",
+	"16", "17", "18", "19", "20", "21", "22", "23",
+	"24", "25", "26", "27", "28", "29", "30", "31",
+}
+
+func (envelope *Envelope) hasNumericalInput() bool {
+	if envelope == nil {
+		return false
+	}
+
+	for _, measurement := range envelope.SignalMeasurements() {
+		if measurement != nil {
+			return true
+		}
+	}
+
+	if len(envelope.Categories) > 0 || envelope.Cognition != nil || envelope.Resonance != nil {
+		return true
+	}
+
+	return envelope.Manifold != nil && envelope.Symbol() != ""
 }
 
 // EncodePrecursor persists every numerical input at its capture coordinate.
 // It omits wallet state, graph trees and resident particle/volume buffers.
 func (envelope *Envelope) EncodePrecursor() []byte {
+	if !envelope.hasNumericalInput() {
+		return nil
+	}
 	measurements := envelope.Measurements()
 
 	if len(measurements) == 0 {

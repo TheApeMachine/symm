@@ -429,11 +429,27 @@ envelope on the same raw capture with a greater ordinal was produced by that
 same capture and is future with respect to the target, never a predecessor.
 */
 func causalAfter(candidate, target EnvelopeRef) bool {
-	if candidate.Origin.Sequence != target.Origin.Sequence {
-		return candidate.Origin.Sequence > target.Origin.Sequence
+	return causalCmp(candidate, target) > 0
+}
+
+func causalCmp(left, right EnvelopeRef) int {
+	if left.Origin.Sequence != right.Origin.Sequence {
+		if left.Origin.Sequence < right.Origin.Sequence {
+			return -1
+		}
+
+		return 1
 	}
 
-	return candidate.Ordinal > target.Ordinal
+	if left.Ordinal < right.Ordinal {
+		return -1
+	}
+
+	if left.Ordinal > right.Ordinal {
+		return 1
+	}
+
+	return 0
 }
 
 /*
@@ -476,6 +492,64 @@ func (index *RunIndex) CapturesBefore(
 		if len(refs) >= limit {
 			break
 		}
+	}
+
+	return refs
+}
+
+/*
+CapturesAround returns one instrument's envelopes covering a confirmed move
+and the same length of tape on either side, in capture order.
+
+The lookback and aftermath are the move's own span: as many of the instrument's
+captures as the excursion itself occupied. That is the precursor the move
+emerged from and the retracement that made it observable, not a declared
+reach into quiet tape.
+*/
+func (index *RunIndex) CapturesAround(
+	symbol string,
+	from, through EnvelopeRef,
+) []EnvelopeRef {
+	observations := index.symbols[symbol]
+	start, end := -1, -1
+
+	for position, observation := range observations {
+		ref := EnvelopeRef{
+			Origin:  observation.Capture,
+			Ordinal: observation.Ordinal,
+		}
+
+		if start < 0 && causalCmp(ref, from) >= 0 {
+			start = position
+		}
+
+		if causalCmp(ref, through) <= 0 {
+			end = position
+		}
+	}
+
+	if start < 0 || end < 0 || end < start {
+		return nil
+	}
+	span := end - start + 1
+	fromIdx := start - span
+
+	if fromIdx < 0 {
+		fromIdx = 0
+	}
+	toIdx := end + span
+
+	if toIdx >= len(observations) {
+		toIdx = len(observations) - 1
+	}
+	refs := make([]EnvelopeRef, 0, toIdx-fromIdx+1)
+
+	for position := fromIdx; position <= toIdx; position++ {
+		observation := observations[position]
+		refs = append(refs, EnvelopeRef{
+			Origin:  observation.Capture,
+			Ordinal: observation.Ordinal,
+		})
 	}
 
 	return refs

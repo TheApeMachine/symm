@@ -3,7 +3,6 @@ package leadlag
 import (
 	"fmt"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
@@ -22,7 +21,6 @@ type pricePath struct {
 }
 
 type Ticker struct {
-	mutex      sync.Mutex
 	search     *nmcorrelation.LeadLag
 	fisher     *nmcorrelation.Fisher
 	projection *data.Projection
@@ -49,11 +47,8 @@ func (ticker *Ticker) Step(event kraken.TickerData) *data.Measurement[float64] {
 		return &data.Measurement[float64]{Err: fmt.Errorf("leadlag: ticker requires a last price")}
 	}
 	last := event.Last.Float64()
-	ok, err := transport.Evaluate(ticker.finite, transport.Values(last))
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-	if !ok || last < 0 {
+
+	if !ticker.finite.Holds(last) || last < 0 {
 		return &data.Measurement[float64]{Err: fmt.Errorf("leadlag: finite non-negative last price required")}
 	}
 	m := data.NewMeasurement[float64](event.Symbol+":leadlag:"+event.Timestamp.Format(time.RFC3339Nano), event.Symbol, "leadlag", event.Timestamp, event.Timestamp)
@@ -63,8 +58,7 @@ func (ticker *Ticker) Step(event kraken.TickerData) *data.Measurement[float64] {
 		m.Finalize()
 		return m
 	}
-	ticker.mutex.Lock()
-	defer ticker.mutex.Unlock()
+
 	focal := ticker.paths[event.Symbol]
 	if focal == nil {
 		focal = &pricePath{graph: adaptive.NewPath(adaptive.NewWindow())}

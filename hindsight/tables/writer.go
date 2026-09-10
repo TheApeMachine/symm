@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/spf13/viper"
 	"github.com/theapemachine/errnie"
 )
 
@@ -12,26 +13,33 @@ import (
 Writer accumulates rows per record family and commits them as Iceberg appends.
 
 Every append is a snapshot plus a metadata write, so rows are buffered rather
-than written as they arrive: one commit covers a whole batch across every
-family it touched. Callers decide the cadence; this type only guarantees that
-what it holds is written exactly once and in arrival order within a family.
+than written as they arrive. Callers decide the cadence; this type guarantees
+that a family is cleared only after its rows have been appended, that a
+payload bound keeps each snapshot inside the catalog's HTTP/object timeout,
+and that a family which never reached the catalog is still here afterwards.
 */
 type Writer struct {
 	catalog *Catalog
 
-	mutex     sync.Mutex
-	runs      []RunRow
-	captures  []CaptureRow
-	manifests []ManifestRow
-	witnesses []WitnessRow
-	lifecycle []LifecycleRow
-	decisions []OutcomeRow
-	outcomes  []OutcomeRow
-	gaps      []GapRow
+	mutex       sync.Mutex
+	appendBytes int
+	runs        []RunRow
+	captures    []CaptureRow
+	manifests   []ManifestRow
+	witnesses   []WitnessRow
+	lifecycle   []LifecycleRow
+	decisions   []OutcomeRow
+	outcomes    []OutcomeRow
+	gaps        []GapRow
 }
 
 // NewWriter returns a Writer appending into the given catalog.
-func NewWriter(catalog *Catalog) *Writer { return &Writer{catalog: catalog} }
+func NewWriter(catalog *Catalog) *Writer {
+	return &Writer{
+		catalog:     catalog,
+		appendBytes: viper.GetInt("storage.iceberg.append_bytes"),
+	}
+}
 
 // AddRun buffers one process capture session.
 func (w *Writer) AddRun(row RunRow) {
@@ -100,97 +108,127 @@ func (w *Writer) Pending() int {
 }
 
 /*
-Commit appends every buffered family and clears what it wrote.
+Commit appends every buffered family, one family at a time.
 
-The buffers are detached under the lock and written outside it, so producers
-are never blocked on S3. A family that fails leaves the remaining families
-unattempted and its own rows detached. Iceberg retries explicit commit conflicts
-using the table's configured budget. Other failures can have unknown commit
-outcomes; retrying the whole batch here could duplicate successful families.
+A family is detached only for the append, and only the suffix that has not
+been acknowledged is restored. Earlier families that already committed stay
+committed. Iceberg retries explicit commit conflicts using the table's
+configured budget. A timeout or other unknown outcome on a snapshot that was
+already sent is not retried here: repeating it could duplicate that snapshot.
 */
 func (w *Writer) Commit(ctx context.Context) error {
+	if w.appendBytes < 0 {
+		return errnie.Error(errnie.Err(
+			errnie.Validation,
+			"[iceberg] append_bytes must be nonnegative",
+			nil,
+		))
+	}
+
+	if err := commitFamily(w, ctx, Runs,
+		func() []RunRow { rows := w.runs; w.runs = nil; return rows },
+		func(rows []RunRow) { w.runs = append(rows, w.runs...) },
+		nil, fillRuns,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Captures,
+		func() []CaptureRow { rows := w.captures; w.captures = nil; return rows },
+		func(rows []CaptureRow) { w.captures = append(rows, w.captures...) },
+		func(row CaptureRow) int { return len(row.Payload) },
+		fillCaptures,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Manifests,
+		func() []ManifestRow { rows := w.manifests; w.manifests = nil; return rows },
+		func(rows []ManifestRow) { w.manifests = append(rows, w.manifests...) },
+		nil, fillManifests,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Witnesses,
+		func() []WitnessRow { rows := w.witnesses; w.witnesses = nil; return rows },
+		func(rows []WitnessRow) { w.witnesses = append(rows, w.witnesses...) },
+		func(row WitnessRow) int { return len(row.Payload) },
+		fillWitnesses,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Lifecycle,
+		func() []LifecycleRow { rows := w.lifecycle; w.lifecycle = nil; return rows },
+		func(rows []LifecycleRow) { w.lifecycle = append(rows, w.lifecycle...) },
+		nil, fillLifecycle,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Decisions,
+		func() []OutcomeRow { rows := w.decisions; w.decisions = nil; return rows },
+		func(rows []OutcomeRow) { w.decisions = append(rows, w.decisions...) },
+		nil, fillOutcomes,
+	); err != nil {
+		return err
+	}
+
+	if err := commitFamily(w, ctx, Outcomes,
+		func() []OutcomeRow { rows := w.outcomes; w.outcomes = nil; return rows },
+		func(rows []OutcomeRow) { w.outcomes = append(rows, w.outcomes...) },
+		nil, fillOutcomes,
+	); err != nil {
+		return err
+	}
+
+	return commitFamily(w, ctx, Gaps,
+		func() []GapRow { rows := w.gaps; w.gaps = nil; return rows },
+		func(rows []GapRow) { w.gaps = append(rows, w.gaps...) },
+		nil, fillGaps,
+	)
+}
+
+func commitFamily[T any](
+	w *Writer,
+	ctx context.Context,
+	name string,
+	take func() []T,
+	put func([]T),
+	payload func(T) int,
+	fill func(*array.RecordBuilder, []T),
+) error {
 	w.mutex.Lock()
-	runs, captures, manifests := w.runs, w.captures, w.manifests
-	witnesses, lifecycle, outcomes := w.witnesses, w.lifecycle, w.outcomes
-	decisions, gaps := w.decisions, w.gaps
-	w.runs, w.captures, w.manifests = nil, nil, nil
-	w.witnesses, w.lifecycle, w.outcomes = nil, nil, nil
-	w.decisions, w.gaps = nil, nil
+	rows := take()
 	w.mutex.Unlock()
 
-	if len(runs) > 0 {
-		if err := w.append(ctx, Runs, nil, len(runs), func(builder *array.RecordBuilder, start, end int) {
-			fillRuns(builder, runs[start:end])
-		}); err != nil {
-			return err
-		}
+	if len(rows) == 0 {
+		return nil
 	}
 
-	if len(captures) > 0 {
-		if err := w.append(ctx, Captures,
-			func(index int) int { return len(captures[index].Payload) }, len(captures),
-			func(builder *array.RecordBuilder, start, end int) {
-				fillCaptures(builder, captures[start:end])
-			}); err != nil {
-			return err
-		}
+	var sizeOf func(int) int
+
+	if payload != nil {
+		sizeOf = func(index int) int { return payload(rows[index]) }
 	}
 
-	if len(manifests) > 0 {
-		if err := w.append(ctx, Manifests, nil, len(manifests), func(builder *array.RecordBuilder, start, end int) {
-			fillManifests(builder, manifests[start:end])
-		}); err != nil {
-			return err
-		}
+	committed, err := w.append(ctx, name, sizeOf, len(rows), func(builder *array.RecordBuilder, start, end int) {
+		fill(builder, rows[start:end])
+	})
+
+	if committed < len(rows) {
+		w.mutex.Lock()
+		put(rows[committed:])
+		w.mutex.Unlock()
 	}
 
-	if len(witnesses) > 0 {
-		if err := w.append(ctx, Witnesses,
-			func(index int) int { return len(witnesses[index].Payload) }, len(witnesses),
-			func(builder *array.RecordBuilder, start, end int) {
-				fillWitnesses(builder, witnesses[start:end])
-			}); err != nil {
-			return err
-		}
-	}
-
-	if len(lifecycle) > 0 {
-		if err := w.append(ctx, Lifecycle, nil, len(lifecycle), func(builder *array.RecordBuilder, start, end int) {
-			fillLifecycle(builder, lifecycle[start:end])
-		}); err != nil {
-			return err
-		}
-	}
-
-	if len(decisions) > 0 {
-		if err := w.append(ctx, Decisions, nil, len(decisions), func(builder *array.RecordBuilder, start, end int) {
-			fillOutcomes(builder, decisions[start:end])
-		}); err != nil {
-			return err
-		}
-	}
-
-	if len(outcomes) > 0 {
-		if err := w.append(ctx, Outcomes, nil, len(outcomes), func(builder *array.RecordBuilder, start, end int) {
-			fillOutcomes(builder, outcomes[start:end])
-		}); err != nil {
-			return err
-		}
-	}
-
-	if len(gaps) > 0 {
-		if err := w.append(ctx, Gaps, nil, len(gaps), func(builder *array.RecordBuilder, start, end int) {
-			fillGaps(builder, gaps[start:end])
-		}); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return err
 }
 
 /*
-append writes one family's rows as a single Iceberg snapshot.
+append writes one family's rows as successive Iceberg snapshots, each small
+enough for the catalog HTTP call to finish.
 
 The record is built from the loaded table's schema, not from the local schema
 literal. A catalog assigns its own field IDs when it creates a table, and the
@@ -204,28 +242,69 @@ func (w *Writer) append(
 	payloadSize func(int) int,
 	count int,
 	fill func(*array.RecordBuilder, int, int),
-) error {
+) (int, error) {
+	committed := 0
+
+	for committed < count {
+		end, _, err := span(committed, count, w.appendBytes, payloadSize)
+
+		if err != nil {
+			return committed, err
+		}
+
+		sent, err := w.appendRange(ctx, name, payloadSize, committed, end, fill)
+
+		if err != nil {
+			if sent {
+				return end, err
+			}
+
+			return committed, err
+		}
+
+		committed = end
+	}
+
+	return committed, nil
+}
+
+func (w *Writer) appendRange(
+	ctx context.Context,
+	name string,
+	payloadSize func(int) int,
+	start, end int,
+	fill func(*array.RecordBuilder, int, int),
+) (bool, error) {
 	loaded, err := w.catalog.Load(ctx, name)
 
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	reader, err := records(loaded.Schema(), count, payloadSize, fill)
+	count := end - start
+	var sizeOf func(int) int
+
+	if payloadSize != nil {
+		sizeOf = func(index int) int { return payloadSize(start + index) }
+	}
+
+	reader, err := records(loaded.Schema(), count, sizeOf, func(builder *array.RecordBuilder, from, to int) {
+		fill(builder, start+from, start+to)
+	})
 
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	defer reader.Release()
 
 	if _, err := loaded.Append(ctx, reader, nil); err != nil {
-		return errnie.Error(errnie.Err(
+		return true, errnie.Error(errnie.Err(
 			errnie.BadGateway,
 			"[iceberg] failed to append to "+name,
 			err,
 		))
 	}
 
-	return nil
+	return true, nil
 }

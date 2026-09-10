@@ -117,6 +117,76 @@ func (competing *competingCatalog) CommitTable(
 	return metadata, location, nil
 }
 
+type refusingCatalog struct {
+	catalog.Catalog
+	name string
+}
+
+func (refusing *refusingCatalog) LoadTable(
+	ctx context.Context, identifier table.Identifier,
+) (*table.Table, error) {
+	if identifier[len(identifier)-1] == refusing.name {
+		return nil, errors.New("catalog refused " + refusing.name)
+	}
+
+	return refusing.Catalog.LoadTable(ctx, identifier)
+}
+
+func TestWriterCommitChunks(t *testing.T) {
+	Convey("Buffered rows become successive snapshots inside the catalog payload bound", t, func() {
+		previous := viper.Get("storage.iceberg.append_bytes")
+		t.Cleanup(func() { viper.Set("storage.iceberg.append_bytes", previous) })
+		viper.Set("storage.iceberg.append_bytes", 4096)
+		catalog := tablestest.New(t)
+		writer := tables.NewWriter(catalog)
+		payload := bytes.Repeat([]byte("w"), 2000)
+
+		for index := range 5 {
+			writer.AddWitness(tables.WitnessRow{
+				Run: "chunks", ArtifactKind: "precursor",
+				Envelope: tables.EnvelopeRefRow{Run: "chunks", Sequence: int64(index + 1)},
+				Payload:  payload,
+			})
+		}
+		So(writer.Commit(t.Context()), ShouldBeNil)
+		So(writer.Pending(), ShouldEqual, 0)
+		loaded, err := catalog.Load(t.Context(), tables.Witnesses)
+		So(err, ShouldBeNil)
+		So(len(loaded.Metadata().Snapshots()), ShouldEqual, 3)
+		rows, err := catalog.Witnesses(t.Context(), "chunks", "precursor")
+		So(err, ShouldBeNil)
+		So(len(rows), ShouldEqual, 5)
+	})
+}
+
+func TestWriterCommitRestores(t *testing.T) {
+	Convey("A family that never reached the catalog is still buffered", t, func() {
+		underlying := tablestest.Underlying(t)
+		peer := tables.Wrap(underlying)
+		So(peer.Ensure(t.Context()), ShouldBeNil)
+		writer := tables.NewWriter(tables.Wrap(&refusingCatalog{
+			Catalog: underlying, name: tables.Witnesses,
+		}))
+		writer.AddCapture(tables.CaptureRow{
+			Run: "restore", Sequence: 1, Payload: []byte("capture"),
+		})
+		writer.AddWitness(tables.WitnessRow{
+			Run: "restore", ArtifactKind: "precursor",
+			Envelope: tables.EnvelopeRefRow{Run: "restore", Sequence: 1},
+			Payload:  []byte("witness"),
+		})
+		So(writer.Commit(t.Context()), ShouldNotBeNil)
+		So(writer.Pending(), ShouldEqual, 1)
+		rows, err := peer.Captures(t.Context(), "restore", 0)
+		So(err, ShouldBeNil)
+		So(len(rows), ShouldEqual, 1)
+		So(string(rows[0].Payload), ShouldEqual, "capture")
+		witnesses, err := peer.Witnesses(t.Context(), "restore", "")
+		So(err, ShouldBeNil)
+		So(len(witnesses), ShouldEqual, 0)
+	})
+}
+
 func TestWriterAppend(t *testing.T) {
 	Convey("An append handles known conflicts without repeating a batch", t, func() {
 		previous := viper.Get("storage.iceberg.commit_retries")

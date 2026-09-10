@@ -144,6 +144,17 @@ func TestIsNaNNext(t *testing.T) {
 	)
 }
 
+func TestFiniteHolds(t *testing.T) {
+	Convey("Holds is the same predicate Next yields, without a streaming run", t, func() {
+		op := NewFinite[float64]()
+		So(op.Holds(1.5), ShouldBeTrue)
+		So(op.Holds(0), ShouldBeTrue)
+		So(op.Holds(math.NaN()), ShouldBeFalse)
+		So(op.Holds(math.Inf(1)), ShouldBeFalse)
+		So(op.Holds(math.Inf(-1)), ShouldBeFalse)
+	})
+}
+
 func TestFiniteNext(t *testing.T) {
 	tests.Check(
 		t, tests.Case[float64, bool]{

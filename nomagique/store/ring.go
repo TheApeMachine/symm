@@ -19,8 +19,61 @@ type Ring[T any] struct {
 	played int
 }
 
-func NewRing[T any](parent *container.Ring) *Ring[T] {
+/*
+NewRing begins an empty ring. Values are written into it in order, and the ring
+grows to hold exactly what was written — a ring sized up front would leave nil
+slots for anything the caller did not fill, and those are not values a run can
+carry.
+*/
+func NewRing[T any]() *Ring[T] {
+	return &Ring[T]{}
+}
+
+/*
+Held is the container this ring built, so one ring can be written into another.
+*/
+func (op *Ring[T]) Held() *container.Ring { return op.parent }
+
+/*
+NewRingOver plays out a ring that is already built, which is what a caller with
+its own container has.
+*/
+func NewRingOver[T any](parent *container.Ring) *Ring[T] {
 	return &Ring[T]{parent: parent}
+}
+
+/*
+Write appends one value, and leaves the ring pointing at what was written
+first.
+
+Position matters here: a ring has no beginning of its own, only the element a
+reader starts at, so the first value written is the one the first run plays.
+*/
+func (op *Ring[T]) Write(value any) {
+	held := container.New(1)
+
+	/*
+		A ring written into a ring is the container it built, not the primitive
+		that built it. That is what makes a ring of rings: the parent's every
+		element is a child ring, and Next reads it back as one.
+	*/
+	if child, nested := value.(interface{ Held() *container.Ring }); nested {
+		held.Value = child.Held()
+	}
+
+	if held.Value == nil {
+		held.Value = value
+	}
+
+	if op.parent == nil {
+		op.parent = held
+
+		return
+	}
+	// Link the new element in behind the current one, then step back to the
+	// first: Prev is where a ring's last element is, so writing there keeps
+	// the order the caller wrote in.
+	op.parent.Prev().Link(held)
 }
 
 func (op *Ring[T]) Next(

@@ -2,6 +2,7 @@ import { Builder } from "flatbuffers";
 import { describe, expect, it } from "vitest";
 import { learningStore, receiveLearning } from "#/collections/learning";
 import { LearningDecisionT } from "#/providers/telemetry/telemetry/learning-decision";
+import { LearningStateT } from "#/providers/telemetry/telemetry/learning-state";
 import { learningFixture } from "./fixture";
 import { projectLearning, updateLearningEvents } from "./state";
 
@@ -19,6 +20,19 @@ describe("projectLearning", () => {
 		expect(view.resolved).toBe(3);
 		expect(view.lanes?.[0].unresolved).toBe(17);
 	});
+
+	it("keeps a reading-the-record frame displayable before any tape arrives", () => {
+		const source = new LearningStateT();
+		source.status = "reading the record";
+		source.agents = undefined as unknown as LearningStateT["agents"];
+		source.markets = undefined as unknown as LearningStateT["markets"];
+		const view = projectLearning(source, "");
+		expect(view.status).toBe("reading the record");
+		expect(view.universe).toEqual([]);
+		expect(view.lanes).toEqual([]);
+		expect(view.skill.defined).toBe(false);
+	});
+
 	it("does not turn missing evidence into a measured zero", () => {
 		const source = learningFixture();
 		source.agents[0].reading = null;

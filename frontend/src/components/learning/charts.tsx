@@ -941,23 +941,19 @@ has answered it, its colour is the direction of that answer.
 */
 export const RehearsalTracks = ({
 	tracks,
+	onOpen,
 }: {
 	tracks: LearningTrackT[] | null | undefined;
+	onOpen?: (id: number) => void;
 }) => {
 	if (!tracks || tracks.length === 0) return null;
 
 	return (
 		<Flex.Column className="gap-1">
 			{tracks.map((track) => (
-				<WorkerTrack key={track.id} track={track} />
+				<WorkerTrack key={track.id} track={track} onOpen={onOpen} />
 			))}
-			<Typography.Mono tone="f3">
-				The tape runs past a fixed head. B is the observation the move ignited
-				at and C the one it ended at; the span between them is the move, shaded
-				by what the record says it did. An arrow is a call the worker made,
-				coloured by how well it named the moment it reached for.
-			</Typography.Mono>
-			<Flex className="flex-wrap gap-x-4 gap-y-1">
+			<Flex className="flex-wrap gap-x-3 gap-y-1">
 				{opportunityLegend.map((entry) => (
 					<Flex.Row key={entry.label} align="center" gap={1}>
 						<span
@@ -974,10 +970,16 @@ export const RehearsalTracks = ({
 	);
 };
 
-const WorkerTrack = ({ track }: { track: LearningTrackT }) => {
-	const steps = track.steps.filter((step) => step.defined);
-	const highest = Math.max(...steps.map((step) => step.value));
-	const lowest = Math.min(...steps.map((step) => step.value));
+const WorkerTrack = ({
+	track,
+	onOpen,
+}: {
+	track: LearningTrackT;
+	onOpen?: (id: number) => void;
+}) => {
+	const steps = (track.steps ?? []).filter((step) => step?.defined);
+	const highest = steps.length > 0 ? Math.max(...steps.map((step) => step.value)) : 0;
+	const lowest = steps.length > 0 ? Math.min(...steps.map((step) => step.value)) : 0;
 	const span = highest - lowest;
 
 	// An unchanged price is a real reading, not an absent one: it sits on the
@@ -1016,15 +1018,25 @@ const WorkerTrack = ({ track }: { track: LearningTrackT }) => {
 
 	return (
 		<Flex.Row align="center" gap={2}>
-			<Typography.Mono
-				size="s"
-				tone="f2"
-				className="w-32 shrink-0 truncate"
-				title={`Worker ${track.id + 1}`}
+			{/*
+				The name opens what this learner holds. It is the only part of a
+				lane that identifies the learner rather than the tape, so it is
+				where asking about the learner belongs.
+			*/}
+			<button
+				type="button"
+				onClick={onOpen ? () => onOpen(track.id) : undefined}
+				disabled={!onOpen}
+				className="w-32 shrink-0 cursor-pointer truncate text-left font-mono text-[10px] text-(--f2) tabular-nums transition-colors hover:text-(--acc) disabled:cursor-default disabled:hover:text-(--f2)"
+				title={
+					onOpen
+						? `Worker ${track.id + 1} · open what it has learned`
+						: `Worker ${track.id + 1}`
+				}
 			>
 				↻ {track.id + 1}{" "}
 				<span className="text-(--f4)">{String(track.symbol ?? "") || "—"}</span>
-			</Typography.Mono>
+			</button>
 			<div className="relative h-8 min-w-0 flex-1 overflow-hidden rounded border border-(--line) bg-(--sunken)">
 				{track.length === 0 ? (
 					<span className="absolute inset-0 flex items-center justify-center font-mono text-[10px] text-(--f4)">
@@ -1161,11 +1173,10 @@ is description, not approval: it says what the coordinate did, never that the
 worker should have wanted it.
 */
 const opportunityLegend = [
-	{ label: "rise clears costs", colour: "var(--up)" },
-	{ label: "rise eaten by costs", colour: "var(--warn)" },
+	{ label: "price rises", colour: "var(--up)" },
 	{ label: "price falls", colour: "var(--down)" },
-	{ label: "exit liquidity unavailable", colour: "var(--warn)" },
 	{ label: "no price development", colour: "var(--f3)" },
+	{ label: "never quoted", colour: "var(--warn)" },
 ];
 
 /* opportunityColour leaves an unnamed tape neutral rather than guessing at it. */

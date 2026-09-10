@@ -16,9 +16,22 @@ type Radix struct {
 	core.Base[map[string][]byte, *iradix.Tree[[]byte]]
 }
 
-func NewRadix(current *iradix.Tree[[]byte]) *Radix {
+/*
+NewRadix begins on an empty tree, or continues one already held.
+
+A composition declares its stages before it has a memory to put in them, so the
+tree is optional: given none, the store starts empty and grows as it is written
+to, which is what a fresh learner is.
+*/
+func NewRadix(current ...*iradix.Tree[[]byte]) *Radix {
 	op := &Radix{}
-	op.Carrier(current)
+	held := iradix.New[[]byte]()
+
+	if len(current) > 0 && current[0] != nil {
+		held = current[0]
+	}
+	op.Carrier(held)
+
 	return op
 }
 

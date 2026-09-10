@@ -263,3 +263,16 @@ func TestRunIndexConcurrentReadersTest(t *testing.T) {
 		})
 	})
 }
+
+func TestRunIndexCapturesAround(t *testing.T) {
+	Convey("A move is gathered with an equal precursor and aftermath", t, func() {
+		series := ramp(nil, 100, 100, 30, 0.05, 10)
+		index := NewRunIndex("run-test", series)
+		from := EnvelopeRef{Origin: series[14].Capture, Ordinal: series[14].Ordinal}
+		through := EnvelopeRef{Origin: series[16].Capture, Ordinal: series[16].Ordinal}
+		around := index.CapturesAround("TEST/USD", from, through)
+		So(len(around), ShouldEqual, 9)
+		So(around[0].Origin.Sequence, ShouldEqual, series[11].Capture.Sequence)
+		So(around[len(around)-1].Origin.Sequence, ShouldEqual, series[19].Capture.Sequence)
+	})
+}

@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/theapemachine/errnie"
 	"github.com/theapemachine/symm/hindsight"
 	"github.com/theapemachine/symm/hindsight/tables"
 	"github.com/theapemachine/symm/types"
@@ -24,14 +23,7 @@ func (node *Session) Step(envelope *types.Envelope) *types.Envelope {
 		Ordinal: envelope.CaptureOrdinal,
 	}
 
-	if payload := envelope.EncodePrecursor(); len(payload) > 0 {
-		node.record(hindsight.ArtifactWitness{
-			Envelope: ref, Boundary: "after-logic",
-			Artifact: hindsight.ArtifactID{Kind: "precursor", Identity: string(ref.Origin.Run) + ":" +
-				strconv.FormatUint(uint64(ref.Origin.Sequence), 10) + ":" + strconv.FormatUint(ref.Ordinal, 10)},
-			Payload: payload,
-		})
-	}
+	node.recordPrecursor(ref, envelope)
 
 	if !node.shouldWitness(envelope) {
 		return envelope
@@ -56,6 +48,26 @@ func (node *Session) Step(envelope *types.Envelope) *types.Envelope {
 	}
 
 	return envelope
+}
+
+func (node *Session) recordPrecursor(ref hindsight.EnvelopeRef, envelope *types.Envelope) {
+	switch envelope.TypeID {
+	case types.EnvelopeLevel3, types.EnvelopeManifold:
+		return
+	}
+
+	payload := envelope.EncodePrecursor()
+
+	if len(payload) == 0 {
+		return
+	}
+
+	node.record(hindsight.ArtifactWitness{
+		Envelope: ref, Boundary: "after-logic",
+		Artifact: hindsight.ArtifactID{Kind: "precursor", Identity: string(ref.Origin.Run) + ":" +
+			strconv.FormatUint(uint64(ref.Origin.Sequence), 10) + ":" + strconv.FormatUint(ref.Ordinal, 10)},
+		Payload: payload,
+	})
 }
 
 func (node *Session) shouldWitness(envelope *types.Envelope) bool {
@@ -179,6 +191,6 @@ func (node *Session) record(witness hindsight.ArtifactWitness) {
 	}
 
 	if err := node.enqueue(tables.Witnesses, row); err != nil {
-		errnie.Error(err)
+		return
 	}
 }

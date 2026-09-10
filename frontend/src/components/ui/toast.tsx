@@ -109,7 +109,7 @@ export const Toasts = ({ className }: { className?: string }) => {
 	return (
 		<div
 			className={cn(
-				"pointer-events-none fixed right-3 bottom-3 z-[9999] flex w-80 flex-col gap-2",
+				"pointer-events-none fixed right-3 bottom-3 z-9999 flex w-80 flex-col gap-2",
 				className,
 			)}
 		>

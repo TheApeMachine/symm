@@ -2,7 +2,6 @@ package cvd
 
 import (
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/krakenfx/api-go/v2/pkg/decimal"
@@ -23,7 +22,6 @@ type flowState struct {
 // Trade owns per-symbol event chronology and one retained execution graph per
 // symbol. The graph owns accumulation and estimator state, not mutable slots.
 type Trade struct {
-	mutex      sync.Mutex
 	states     map[string]*flowState
 	projection *data.Projection
 	quote      func(string) (*decimal.Decimal, *decimal.Decimal)
@@ -39,8 +37,6 @@ func NewTrade() *Trade {
 }
 
 func (trade *Trade) SetQuote(quote func(string) (*decimal.Decimal, *decimal.Decimal)) {
-	trade.mutex.Lock()
-	defer trade.mutex.Unlock()
 	trade.quote = quote
 }
 
@@ -48,24 +44,12 @@ func (trade *Trade) SetQuote(quote func(string) (*decimal.Decimal, *decimal.Deci
 // Primitive run. Quotes do not become response evidence until a prior exists.
 func (trade *Trade) Step(event kraken.TradeData) *data.Measurement[float64] {
 	price, quantity := event.Price.Float64(), event.Qty
-	priceOK, err := transport.Evaluate(trade.finite, transport.Values(price))
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-	qtyOK, err := transport.Evaluate(trade.finite, transport.Values(quantity))
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-	notionalOK, err := transport.Evaluate(trade.finite, transport.Values(price*quantity))
-	if err != nil {
-		return &data.Measurement[float64]{Err: err}
-	}
-	if !priceOK || !qtyOK || !notionalOK || price <= 0 || quantity <= 0 || (event.Side != "buy" && event.Side != "sell") {
+
+	if !trade.finite.Holds(price) || !trade.finite.Holds(quantity) || !trade.finite.Holds(price*quantity) ||
+		price <= 0 || quantity <= 0 || (event.Side != "buy" && event.Side != "sell") {
 		return &data.Measurement[float64]{Err: errUnmeasurable}
 	}
 
-	trade.mutex.Lock()
-	defer trade.mutex.Unlock()
 	state := trade.states[event.Symbol]
 	existing := state != nil
 

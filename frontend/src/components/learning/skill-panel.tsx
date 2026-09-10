@@ -1,8 +1,7 @@
 import { Flex } from "#/components/ui/flex";
 import { Section } from "#/components/ui/section";
 import { Typography } from "#/components/ui/typography";
-import { OutcomeRange } from "./charts";
-import { basis } from "./format";
+import { amount, basis } from "./format";
 import type { LearningView } from "./state";
 
 const Reading = ({
@@ -31,48 +30,73 @@ const Reading = ({
 
 export const SkillPanel = ({ view }: { view: LearningView | null }) => {
 	const skill = view?.skill;
+	const situations = view?.decisions ?? 0;
+	const hottest = view?.regions?.[0];
+
+	if (skill?.defined) {
+		return (
+			<Section fit="content">
+				<Section.Header
+					title="Agent skill"
+					meta={`${skill.samples} completed decisions`}
+				/>
+				<Reading
+					label="Mean completed decision benefit"
+					value={basis(skill.mean)}
+					note="Completed tape evaluations as a fraction of starting capital. Negative outcomes remain negative."
+				/>
+				<Reading
+					label="Outcome signs"
+					value={`${skill.wins} positive · ${skill.losses} negative`}
+					note="These decisions can overlap in time; the count is not independent statistical evidence."
+				/>
+				<Reading
+					label="Wallet performance"
+					value={
+						view?.lanes?.find((lane) => lane.mode === "policy")
+							? amount(
+									view.lanes.find((lane) => lane.mode === "policy")?.profit ?? 0,
+								)
+							: "unmeasured"
+					}
+					note="Net change in the consolidated-model agent's wallet, including fees."
+				/>
+			</Section>
+		);
+	}
+
 	return (
 		<Section fit="content">
 			<Section.Header
-				title="Agent skill"
+				title="Precursor memory"
 				meta={
-					skill
-						? `${skill.samples} completed decisions`
-						: "waiting for observations"
+					situations > 0
+						? `${situations.toLocaleString()} learned situations`
+						: "waiting for recognition"
 				}
 			/>
-			<OutcomeRange skill={skill} />
 			<Reading
-				label="Mean completed decision benefit"
-				value={skill?.defined ? basis(skill.mean) : "unmeasured"}
-				note="Completed tape evaluations as a fraction of starting capital. Negative outcomes remain negative."
+				label="Learned situations"
+				value={situations > 0 ? situations.toLocaleString() : "none yet"}
+				note="Associations stored across every learner. A situation is a sequence of regions the tape actually showed."
 			/>
 			<Reading
-				label="Outcome signs"
+				label="Hottest region"
 				value={
-					skill
-						? `${skill.wins} positive · ${skill.losses} negative`
-						: "unmeasured"
+					hottest
+						? `#${hottest.id} · ${hottest.members} cells`
+						: "none selected"
 				}
-				note="These decisions can overlap in time; the count is not independent statistical evidence."
-			/>
-			<Reading
-				label="Wallet performance"
-				value={
-					view?.lanes?.find((lane) => lane.mode === "policy")
-						? String(view.lanes.find((lane) => lane.mode === "policy")?.profit)
-						: "unmeasured"
+				note={
+					hottest
+						? `${hottest.strength.toFixed(2)} energy · ${(100 * hottest.authority).toFixed(1)}% authority`
+						: "The impulse map has not selected a community yet."
 				}
-				note="Net change in the consolidated-model agent's wallet, including fees."
 			/>
 			<Reading
 				label="Status"
 				value={view?.status ?? "waiting"}
-				note={
-					view?.restored
-						? "Saved model loaded into every agent; learning continues."
-						: "Learning from a new model."
-				}
+				note="The grid forms from co-activation on the tape. Recognition is what each learner answers when asked about a situation it has seen."
 			/>
 		</Section>
 	);

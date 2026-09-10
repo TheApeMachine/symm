@@ -3,7 +3,6 @@ package sentiment
 import (
 	"fmt"
 	"math"
-	"sync"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -26,7 +25,6 @@ Frame allocations or string intern table lookups.
 type Ticker struct {
 	section *data.CrossSection
 	symbols map[string]*symbolState
-	mu      sync.RWMutex
 }
 
 /*
@@ -69,7 +67,6 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 		return measurement
 	}
 
-	ticker.mu.Lock()
 	state, found := ticker.symbols[tick.Symbol]
 
 	if !found {
@@ -82,8 +79,6 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 
 	if state.hasPrice {
 		if tickSec < state.previousSec || (tickSec == state.previousSec && tickNsec < state.previousNsec) {
-			ticker.mu.Unlock()
-
 			return nil
 		}
 	}
@@ -96,7 +91,6 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 	state.previousSec = tickSec
 	state.previousNsec = tickNsec
 	state.hasPrice = true
-	ticker.mu.Unlock()
 
 	measurement := data.NewMeasurement[float64](id, tick.Symbol, "sentiment", tick.Timestamp, tick.Timestamp)
 	measurement.Metadata = make(map[string]float64)

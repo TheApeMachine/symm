@@ -12,9 +12,9 @@ own Primitive; the list is not itself a Primitive.
 */
 func Values[T any](values ...T) iter.Seq[core.Primitive[T, T]] {
 	return func(yield func(core.Primitive[T, T]) bool) {
-		for _, value := range values {
-			carrier := &core.Carrier[T]{}
+		carrier := &core.Carrier[T]{}
 
+		for _, value := range values {
 			if !yield(carrier.Carrier(value)) {
 				return
 			}

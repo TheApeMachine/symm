@@ -149,7 +149,12 @@ export type LearningView = {
 	hasMovement?: boolean;
 	epochMean?: number;
 	epochs?: number;
-	universe: { symbol: string; status: string; decisions: number }[] | null;
+	universe: {
+		symbol: string;
+		status: string;
+		present: number;
+		regions: number;
+	}[] | null;
 	regions: Region[] | null;
 	points: Point[] | null;
 	lanes: Wallet[] | null;
@@ -222,7 +227,7 @@ export const updateLearningEvents = (
 ): LearningEvent[] => {
 	// Display history is bounded by the 200-point chart budget, not a learning horizon.
 	const next = [...previous];
-	for (const member of state.agents) {
+	for (const member of state.agents ?? []) {
 		const at = date(state.atNs);
 		const last = member.last;
 		if (
@@ -340,11 +345,13 @@ export const projectLearning = (
 	state: LearningStateT,
 	symbol: string,
 ): LearningView => {
-	const member = state.agents[0];
+	const agents = state.agents ?? [];
+	const markets = state.markets ?? [];
+	const member = agents[0];
 	const market =
-		state.markets.find((row) => String(row.symbol) === symbol) ??
-		state.markets.find((row) => row.quantities.length > 0) ??
-		state.markets[0];
+		markets.find((row) => String(row.symbol) === symbol) ??
+		markets.find((row) => row.quantities.length > 0) ??
+		markets[0];
 	const reading = member?.reading;
 	const at = date(state.atNs);
 	const points = (market?.quantities ?? []).map((quantity, index) => ({
@@ -364,12 +371,12 @@ export const projectLearning = (
 		authority: region.authority,
 		members: region.members,
 	}));
-	const fills = state.agents.reduce(
+	const fills = agents.reduce(
 		(total, member) => total + Number(member.fills),
 		0,
 	);
 	return {
-		agents: state.agents,
+		agents,
 		rehearsal: state.rehearsal,
 		restored: state.restored,
 		at,
@@ -397,10 +404,12 @@ export const projectLearning = (
 		},
 		dispatched: fills,
 		forward: { trained: Number(state.resolved), at },
-		universe: state.markets.map((row) => ({
+		universe: markets.map((row) => ({
 			symbol: String(row.symbol),
 			status: String(row.status),
-			decisions: Number(row.decisions),
+			present: (row.quantities ?? []).filter((quantity) => quantity.present)
+				.length,
+			regions: row.regions?.length ?? 0,
 		})),
 		points,
 		regions,
@@ -441,7 +450,7 @@ export const projectLearning = (
 				: [],
 		desk: {
 			settled: Number(state.resolved),
-			traders: state.agents.map((member) => ({
+			traders: agents.map((member) => ({
 				id: member.id,
 				decisions: Number(member.decisions),
 				fills: Number(member.fills),
@@ -455,7 +464,7 @@ export const projectLearning = (
 				).length,
 			})),
 		},
-		lanes: state.agents.map((member) => ({
+		lanes: agents.map((member) => ({
 			lane: member.id,
 			mode: member.id === 0 ? "policy" : "virtual",
 			cash: String(member.cash),

@@ -2,17 +2,16 @@ package depthflow
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"sync"
-	"time"
 )
 
 // Level3 owns per-symbol chronology; its graphs consume only facts from the
 // current mutation message. No untouched book orders are carried forward.
 type Level3 struct {
-	mu         sync.Mutex
 	graphs     map[string]*Depth
 	lastTime   map[string]time.Time
 	projection *data.Projection
@@ -34,8 +33,7 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 	if err != nil {
 		return &data.Measurement[float64]{Err: err}
 	}
-	level3.mu.Lock()
-	defer level3.mu.Unlock()
+
 	last, hasLast := level3.lastTime[message.Symbol]
 	if hasLast && message.Timestamp.Before(last) {
 		return nil

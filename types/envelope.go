@@ -152,9 +152,13 @@ type LearningState interface{ MarshalFlatbuffer(string) []byte }
 
 type Envelope struct {
 	Impulses []grid.Impulse
-	Learning LearningState
-	Key      string
-	TypeID   TypeID
+	// Observations is the numerical frame this envelope carries into
+	// learning. A rehearsal frame writes the tape here; live named signal
+	// fields stay on their own slots.
+	Observations []*data.Measurement[float64]
+	Learning     LearningState
+	Key          string
+	TypeID       TypeID
 
 	// Tick is the engine clock at which this envelope was produced: the
 	// monotonic thesis counter, stamped when the ingress observation commits.
@@ -702,6 +706,12 @@ func encodeResonanceArtifact(resonance *ResonanceArtifact) *telemetry.EnvelopeRe
 	return encoded
 }
 
+/*
+encodeManifoldState persists the scalar field and spectral modes. Particle
+arrays and Eulerian grids are resident physics, reconstructed from the book;
+writing them into every state witness is what filled Iceberg with the whole
+market on each tick.
+*/
 func encodeManifoldState(manifold *ManifoldState) *telemetry.EnvelopeManifoldStateT {
 	if manifold == nil {
 		return nil
@@ -719,23 +729,6 @@ func encodeManifoldState(manifold *ManifoldState) *telemetry.EnvelopeManifoldSta
 	}
 
 	return &telemetry.EnvelopeManifoldStateT{
-		State: &telemetry.EnvelopeSensoriumStateT{
-			N:          int64(manifold.State.N),
-			Bytes:      manifold.State.Bytes,
-			Seqs:       manifold.State.Seqs,
-			TokenIds:   manifold.State.TokenIDs,
-			ContentIds: manifold.State.ContentIDs,
-			Phase:      manifold.State.Phase,
-			Omega:      manifold.State.Omega,
-			Energy:     manifold.State.Energy,
-			Mass:       manifold.State.Mass,
-			Heat:       manifold.State.Heat,
-			Amp:        manifold.State.Amp,
-			Pos:        manifold.State.Pos,
-			Vel:        manifold.State.Vel,
-			Clamped:    manifold.State.Clamped,
-			Dark:       manifold.State.Dark,
-		},
 		Reading: &telemetry.EnvelopeSensoriumReadingT{
 			Divergence:       manifold.Reading.Divergence,
 			GuidanceSpeed:    manifold.Reading.GuidanceSpeed,
@@ -744,21 +737,13 @@ func encodeManifoldState(manifold *ManifoldState) *telemetry.EnvelopeManifoldSta
 			ViscosityProxy:   manifold.Reading.ViscosityProxy,
 			KuramotoR:        manifold.Reading.KuramotoR,
 		},
-		GridX:         int64(manifold.GridX),
-		GridY:         int64(manifold.GridY),
-		GridZ:         int64(manifold.GridZ),
-		GridSpacing:   manifold.GridSpacing,
-		MomRho:        manifold.MomRho,
-		FieldEnergy:   manifold.FieldEnergy,
-		WaveReal:      manifold.WaveReal,
-		WaveImag:      manifold.WaveImag,
-		DensityScale:  manifold.DensityScale,
-		MomentumScale: manifold.MomentumScale,
-		EnergyScale:   manifold.EnergyScale,
-		WaveScale:     manifold.WaveScale,
-		Modes:         modes,
-		AtNs:          timeNs(manifold.At),
-		Version:       manifold.Version,
+		GridX:       int64(manifold.GridX),
+		GridY:       int64(manifold.GridY),
+		GridZ:       int64(manifold.GridZ),
+		GridSpacing: manifold.GridSpacing,
+		Modes:       modes,
+		AtNs:        timeNs(manifold.At),
+		Version:     manifold.Version,
 	}
 }
 

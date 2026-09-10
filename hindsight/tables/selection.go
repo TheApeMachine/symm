@@ -1,7 +1,9 @@
 package tables
 
 import (
+	"bytes"
 	"context"
+
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/iceberg-go"
 	"github.com/theapemachine/errnie"
@@ -71,6 +73,111 @@ func (catalog *Catalog) ManifestsAt(ctx context.Context, run string, sequence in
 // Exact identities, rather than a high-water sequence, preserve late witnesses.
 func (catalog *Catalog) WitnessesUnseen(ctx context.Context, run, kind string, seen map[EnvelopeRefRow]bool) ([]WitnessRow, error) {
 	return catalog.witnesses(ctx, run, kind, nil, nil, seen)
+}
+
+/*
+WitnessPayloads copies the payloads of one artifact family at the requested
+envelope identities, in a single scan of the run.
+
+Identities the run does not carry are absent from the result, not an error.
+Payloads of identities that were not requested are never copied, so a
+rehearsal walk does not resident the rest of the run. One scan replaces the
+per-identity WitnessesAt round trip, which re-planned the same files once per
+capture.
+*/
+func (catalog *Catalog) WitnessPayloads(
+	ctx context.Context, run, kind string, wanted []EnvelopeRefRow,
+) (map[EnvelopeRefRow][]byte, error) {
+	payloads := make(map[EnvelopeRefRow][]byte, len(wanted))
+
+	if err := catalog.EachWitnessPayload(ctx, run, kind, wanted, func(identity EnvelopeRefRow, payload []byte) error {
+		payloads[identity] = bytes.Clone(payload)
+
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return payloads, nil
+}
+
+/*
+EachWitnessPayload visits matching witness payloads without retaining them.
+
+The payload slice is borrowed from the Arrow batch and is invalid after visit
+returns. Callers that need the bytes must copy them inside visit.
+*/
+func (catalog *Catalog) EachWitnessPayload(
+	ctx context.Context, run, kind string, wanted []EnvelopeRefRow,
+	visit func(EnvelopeRefRow, []byte) error,
+) error {
+	if len(wanted) == 0 {
+		return nil
+	}
+	requested := make(map[EnvelopeRefRow]struct{}, len(wanted))
+
+	for _, identity := range wanted {
+		requested[identity] = struct{}{}
+	}
+	filters := []iceberg.BooleanExpression{forRun(run)}
+
+	if kind != "" {
+		filters = append(filters, iceberg.EqualTo(iceberg.Reference("artifact_kind"), kind))
+	}
+	batches, err := catalog.scan(ctx, Witnesses, []string{"envelope", "payload"}, filters...)
+
+	if err != nil {
+		return err
+	}
+
+	for batch, err := range batches {
+		if err != nil {
+			return errnie.Error(errnie.Err(errnie.BadGateway, "[iceberg] witnesses batch", err))
+		}
+		envelope, err := named(batch, "envelope")
+
+		if err != nil {
+			return err
+		}
+		payload, err := named(batch, "payload")
+
+		if err != nil {
+			return err
+		}
+
+		for index := range int(batch.NumRows()) {
+			identity := ref(envelope, index)
+
+			if _, known := requested[identity]; !known {
+				continue
+			}
+			held := rawBin(payload, index)
+
+			if len(held) == 0 {
+				continue
+			}
+
+			if err := visit(identity, held); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func named(batch arrow.RecordBatch, name string) (arrow.Array, error) {
+	for index, field := range batch.Schema().Fields() {
+		if field.Name == name {
+			return batch.Column(index), nil
+		}
+	}
+
+	return nil, errnie.Error(errnie.Err(
+		errnie.Validation,
+		"[iceberg] witnesses column "+name+" missing from projection",
+		nil,
+	))
 }
 
 // CaptureReferences batches exact identity/time joins without copying raw payloads.

@@ -65,7 +65,7 @@ const Learner = ({ learner }: { learner: LearningLearnerT }) => (
 			title={`Learner ${learner.id}`}
 			meta={`${learner.links} learned situations`}
 		/>
-		<Section.Body className="p-3">
+		<Section.Body scroll={false} className="p-3">
 			<Flex.Row className="flex-wrap gap-2">
 				{learner.moments?.length ? (
 					learner.moments.map((moment) => (
@@ -108,7 +108,7 @@ const Grid = ({ recognition }: { recognition: LearningRecognitionT }) => {
 						: "Still settling its layout"
 				}
 			/>
-			<Section.Body className="p-3">
+			<Section.Body scroll={false} className="p-3">
 				<Flex.Row className="gap-6">
 					<Stat label="Quantities" value={String(grid?.columns ?? 0)} />
 					<Stat label="Regions" value={String(regions.length)} />
@@ -170,7 +170,12 @@ export const RecognitionPanel = () => {
 	}
 
 	return (
-		<Flex.Column className="min-h-0 gap-3 overflow-auto p-3">
+		/*
+			No scroller of its own. This panel sits inside a column that already
+			scrolls, and a second one nested in it trapped the whole precursor
+			view inside whatever few pixels the band above had left over.
+		*/
+		<Flex.Column className="gap-3 p-3">
 			<Typography.Mono size="s" className="opacity-70">
 				{String(state?.status ?? "")}
 			</Typography.Mono>

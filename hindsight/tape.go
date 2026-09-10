@@ -68,9 +68,7 @@ type Tape struct {
 	// comparison, so it survives compaction rewriting the underlying files.
 	LastSequence int64
 	// Retrace overrides DefaultRetraceFraction when set in (0, 1).
-	Retrace float64
-	// Reach overrides DefaultReach: how far back a move's readings are gathered.
-	Reach    int
+	Retrace  float64
 	points   map[string]*tapePoint
 	selector Selector
 	catalog  *tables.Catalog

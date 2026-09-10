@@ -144,18 +144,30 @@ budget():bigint {
   return offset ? this.bb!.readUint64(this.bb_pos + offset) : BigInt('0');
 }
 
-tracks(index: number, obj?:LearningTrack):LearningTrack|null {
+skipped():number {
   const offset = this.bb!.__offset(this.bb_pos, 48);
+  return offset ? this.bb!.readInt32(this.bb_pos + offset) : 0;
+}
+
+lastSkip():string|null
+lastSkip(optionalEncoding:flatbuffers.Encoding):string|Uint8Array|null
+lastSkip(optionalEncoding?:any):string|Uint8Array|null {
+  const offset = this.bb!.__offset(this.bb_pos, 50);
+  return offset ? this.bb!.__string(this.bb_pos + offset, optionalEncoding) : null;
+}
+
+tracks(index: number, obj?:LearningTrack):LearningTrack|null {
+  const offset = this.bb!.__offset(this.bb_pos, 52);
   return offset ? (obj || new LearningTrack()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
 }
 
 tracksLength():number {
-  const offset = this.bb!.__offset(this.bb_pos, 48);
+  const offset = this.bb!.__offset(this.bb_pos, 52);
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
 static startLearningRehearsal(builder:flatbuffers.Builder) {
-  builder.startObject(23);
+  builder.startObject(25);
 }
 
 static addStatus(builder:flatbuffers.Builder, statusOffset:flatbuffers.Offset) {
@@ -246,8 +258,16 @@ static addBudget(builder:flatbuffers.Builder, budget:bigint) {
   builder.addFieldInt64(21, budget, BigInt('0'));
 }
 
+static addSkipped(builder:flatbuffers.Builder, skipped:number) {
+  builder.addFieldInt32(22, skipped, 0);
+}
+
+static addLastSkip(builder:flatbuffers.Builder, lastSkipOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(23, lastSkipOffset, 0);
+}
+
 static addTracks(builder:flatbuffers.Builder, tracksOffset:flatbuffers.Offset) {
-  builder.addFieldOffset(22, tracksOffset, 0);
+  builder.addFieldOffset(24, tracksOffset, 0);
 }
 
 static createTracksVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
@@ -267,7 +287,7 @@ static endLearningRehearsal(builder:flatbuffers.Builder):flatbuffers.Offset {
   return offset;
 }
 
-static createLearningRehearsal(builder:flatbuffers.Builder, statusOffset:flatbuffers.Offset, workers:number, episodes:bigint, profitable:bigint, subfriction:bigint, declining:bigint, ungraded:bigint, unsupported:bigint, perWorker:bigint, decisions:bigint, trained:bigint, passes:bigint, lastSymbolOffset:flatbuffers.Offset, lastActionOffset:flatbuffers.Offset, lastReturn:number, lastFailureOffset:flatbuffers.Offset, illiquid:bigint, quiet:bigint, warming:bigint, runs:number, observations:bigint, budget:bigint, tracksOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createLearningRehearsal(builder:flatbuffers.Builder, statusOffset:flatbuffers.Offset, workers:number, episodes:bigint, profitable:bigint, subfriction:bigint, declining:bigint, ungraded:bigint, unsupported:bigint, perWorker:bigint, decisions:bigint, trained:bigint, passes:bigint, lastSymbolOffset:flatbuffers.Offset, lastActionOffset:flatbuffers.Offset, lastReturn:number, lastFailureOffset:flatbuffers.Offset, illiquid:bigint, quiet:bigint, warming:bigint, runs:number, observations:bigint, budget:bigint, skipped:number, lastSkipOffset:flatbuffers.Offset, tracksOffset:flatbuffers.Offset):flatbuffers.Offset {
   LearningRehearsal.startLearningRehearsal(builder);
   LearningRehearsal.addStatus(builder, statusOffset);
   LearningRehearsal.addWorkers(builder, workers);
@@ -291,6 +311,8 @@ static createLearningRehearsal(builder:flatbuffers.Builder, statusOffset:flatbuf
   LearningRehearsal.addRuns(builder, runs);
   LearningRehearsal.addObservations(builder, observations);
   LearningRehearsal.addBudget(builder, budget);
+  LearningRehearsal.addSkipped(builder, skipped);
+  LearningRehearsal.addLastSkip(builder, lastSkipOffset);
   LearningRehearsal.addTracks(builder, tracksOffset);
   return LearningRehearsal.endLearningRehearsal(builder);
 }
@@ -319,6 +341,8 @@ unpack(): LearningRehearsalT {
     this.runs(),
     this.observations(),
     this.budget(),
+    this.skipped(),
+    this.lastSkip(),
     this.bb!.createObjList<LearningTrack, LearningTrackT>(this.tracks.bind(this), this.tracksLength())
   );
 }
@@ -347,6 +371,8 @@ unpackTo(_o: LearningRehearsalT): void {
   _o.runs = this.runs();
   _o.observations = this.observations();
   _o.budget = this.budget();
+  _o.skipped = this.skipped();
+  _o.lastSkip = this.lastSkip();
   _o.tracks = this.bb!.createObjList<LearningTrack, LearningTrackT>(this.tracks.bind(this), this.tracksLength());
 }
 }
@@ -375,6 +401,8 @@ constructor(
   public runs: number = 0,
   public observations: bigint = BigInt('0'),
   public budget: bigint = BigInt('0'),
+  public skipped: number = 0,
+  public lastSkip: string|Uint8Array|null = null,
   public tracks: (LearningTrackT)[] = []
 ){}
 
@@ -384,6 +412,7 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const lastSymbol = (this.lastSymbol !== null ? builder.createString(this.lastSymbol!) : 0);
   const lastAction = (this.lastAction !== null ? builder.createString(this.lastAction!) : 0);
   const lastFailure = (this.lastFailure !== null ? builder.createString(this.lastFailure!) : 0);
+  const lastSkip = (this.lastSkip !== null ? builder.createString(this.lastSkip!) : 0);
   const tracks = LearningRehearsal.createTracksVector(builder, builder.createObjectOffsetList(this.tracks));
 
   return LearningRehearsal.createLearningRehearsal(builder,
@@ -409,6 +438,8 @@ pack(builder:flatbuffers.Builder): flatbuffers.Offset {
     this.runs,
     this.observations,
     this.budget,
+    this.skipped,
+    lastSkip,
     tracks
   );
 }

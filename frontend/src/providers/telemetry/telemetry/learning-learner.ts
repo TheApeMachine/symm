@@ -5,6 +5,7 @@
 
 import * as flatbuffers from 'flatbuffers';
 
+import { CognitionBranch, CognitionBranchT } from '../telemetry/cognition-branch.js';
 import { LearningAnswer, LearningAnswerT } from '../telemetry/learning-answer.js';
 import { LearningMoment, LearningMomentT } from '../telemetry/learning-moment.js';
 
@@ -57,8 +58,18 @@ answersLength():number {
   return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
 }
 
+branches(index: number, obj?:CognitionBranch):CognitionBranch|null {
+  const offset = this.bb!.__offset(this.bb_pos, 12);
+  return offset ? (obj || new CognitionBranch()).__init(this.bb!.__indirect(this.bb!.__vector(this.bb_pos + offset) + index * 4), this.bb!) : null;
+}
+
+branchesLength():number {
+  const offset = this.bb!.__offset(this.bb_pos, 12);
+  return offset ? this.bb!.__vector_len(this.bb_pos + offset) : 0;
+}
+
 static startLearningLearner(builder:flatbuffers.Builder) {
-  builder.startObject(4);
+  builder.startObject(5);
 }
 
 static addId(builder:flatbuffers.Builder, id:number) {
@@ -101,17 +112,34 @@ static startAnswersVector(builder:flatbuffers.Builder, numElems:number) {
   builder.startVector(4, numElems, 4);
 }
 
+static addBranches(builder:flatbuffers.Builder, branchesOffset:flatbuffers.Offset) {
+  builder.addFieldOffset(4, branchesOffset, 0);
+}
+
+static createBranchesVector(builder:flatbuffers.Builder, data:flatbuffers.Offset[]):flatbuffers.Offset {
+  builder.startVector(4, data.length, 4);
+  for (let i = data.length - 1; i >= 0; i--) {
+    builder.addOffset(data[i]!);
+  }
+  return builder.endVector();
+}
+
+static startBranchesVector(builder:flatbuffers.Builder, numElems:number) {
+  builder.startVector(4, numElems, 4);
+}
+
 static endLearningLearner(builder:flatbuffers.Builder):flatbuffers.Offset {
   const offset = builder.endObject();
   return offset;
 }
 
-static createLearningLearner(builder:flatbuffers.Builder, id:number, links:number, momentsOffset:flatbuffers.Offset, answersOffset:flatbuffers.Offset):flatbuffers.Offset {
+static createLearningLearner(builder:flatbuffers.Builder, id:number, links:number, momentsOffset:flatbuffers.Offset, answersOffset:flatbuffers.Offset, branchesOffset:flatbuffers.Offset):flatbuffers.Offset {
   LearningLearner.startLearningLearner(builder);
   LearningLearner.addId(builder, id);
   LearningLearner.addLinks(builder, links);
   LearningLearner.addMoments(builder, momentsOffset);
   LearningLearner.addAnswers(builder, answersOffset);
+  LearningLearner.addBranches(builder, branchesOffset);
   return LearningLearner.endLearningLearner(builder);
 }
 
@@ -120,7 +148,8 @@ unpack(): LearningLearnerT {
     this.id(),
     this.links(),
     this.bb!.createObjList<LearningMoment, LearningMomentT>(this.moments.bind(this), this.momentsLength()),
-    this.bb!.createObjList<LearningAnswer, LearningAnswerT>(this.answers.bind(this), this.answersLength())
+    this.bb!.createObjList<LearningAnswer, LearningAnswerT>(this.answers.bind(this), this.answersLength()),
+    this.bb!.createObjList<CognitionBranch, CognitionBranchT>(this.branches.bind(this), this.branchesLength())
   );
 }
 
@@ -130,6 +159,7 @@ unpackTo(_o: LearningLearnerT): void {
   _o.links = this.links();
   _o.moments = this.bb!.createObjList<LearningMoment, LearningMomentT>(this.moments.bind(this), this.momentsLength());
   _o.answers = this.bb!.createObjList<LearningAnswer, LearningAnswerT>(this.answers.bind(this), this.answersLength());
+  _o.branches = this.bb!.createObjList<CognitionBranch, CognitionBranchT>(this.branches.bind(this), this.branchesLength());
 }
 }
 
@@ -138,19 +168,22 @@ constructor(
   public id: number = 0,
   public links: number = 0,
   public moments: (LearningMomentT)[] = [],
-  public answers: (LearningAnswerT)[] = []
+  public answers: (LearningAnswerT)[] = [],
+  public branches: (CognitionBranchT)[] = []
 ){}
 
 
 pack(builder:flatbuffers.Builder): flatbuffers.Offset {
   const moments = LearningLearner.createMomentsVector(builder, builder.createObjectOffsetList(this.moments));
   const answers = LearningLearner.createAnswersVector(builder, builder.createObjectOffsetList(this.answers));
+  const branches = LearningLearner.createBranchesVector(builder, builder.createObjectOffsetList(this.branches));
 
   return LearningLearner.createLearningLearner(builder,
     this.id,
     this.links,
     moments,
-    answers
+    answers,
+    branches
   );
 }
 }

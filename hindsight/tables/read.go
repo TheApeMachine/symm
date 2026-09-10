@@ -163,6 +163,15 @@ func bin(column arrow.Array, row int) []byte {
 	return bytes.Clone(column.(*array.Binary).Value(row))
 }
 
+// rawBin borrows the Arrow binary value. Valid only until the batch is released.
+func rawBin(column arrow.Array, row int) []byte {
+	if column.IsNull(row) {
+		return nil
+	}
+
+	return column.(*array.Binary).Value(row)
+}
+
 /*
 Captures returns a run's captures strictly after the consumed sequence, sorted
 in capture order. Sequences start at one; after zero reads the whole run.

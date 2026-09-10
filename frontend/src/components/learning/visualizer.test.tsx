@@ -223,9 +223,9 @@ describe("LearningVisualizer", () => {
 			<LearningVisualizer view={view} events={[]} />,
 		);
 
-		expect(markup).toContain("Learning visualizer");
-		expect(markup).toContain("Edge distribution");
-		expect(markup).toContain("Action spectrum");
+		expect(markup).toContain("Learning");
+		expect(markup).toContain("Edge");
+		expect(markup).toContain("Actions");
 		expect(markup).toContain("Trajectory");
 		expect(markup).toContain("pointer-events-auto");
 		expect(markup).toContain("3.0 bp");

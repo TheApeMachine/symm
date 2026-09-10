@@ -2,52 +2,38 @@ package strategy
 
 import (
 	"context"
-	"os"
 	"testing"
+	"time"
 
 	. "github.com/smartystreets/goconvey/convey"
-	"github.com/spf13/viper"
-	"github.com/theapemachine/symm/hindsight"
-	"github.com/theapemachine/symm/hindsight/tables"
+	"github.com/theapemachine/symm/nomagique/data"
+	"github.com/theapemachine/symm/types"
 )
 
-/*
-recordedArchive opens the capture catalog the inspection view reads. A run of
-these tests without one declared is skipped rather than passed: an absent
-archive is unavailable, not empty.
-*/
-func recordedArchive(t testing.TB) (context.Context, *tables.Catalog) {
-	t.Helper()
+func TestTrainingStep(t *testing.T) {
+	Convey("An empty pipeline returns the envelope without panicking", t, func() {
+		tape := make(chan [][]*data.Measurement[float64])
+		close(tape)
+		training := NewTraining(context.Background(), tape)
+		envelope := &types.Envelope{}
+		So(training.Step(envelope), ShouldEqual, envelope)
+		So(envelope.Learning, ShouldEqual, training)
+		So(training.Error(), ShouldBeNil)
+	})
 
-	if os.Getenv("SYMM_ARCHIVE") == "" {
-		t.Skip("set SYMM_ARCHIVE=1 to read the recorded archive")
-	}
-	viper.SetConfigType("yml")
-	viper.SetConfigFile("../cmd/cfg/config.yml")
-	So(viper.ReadInConfig(), ShouldBeNil)
-
-	ctx := context.Background()
-	catalog := tables.Open(ctx)
-	So(catalog, ShouldNotBeNil)
-
-	return ctx, catalog
-}
-
-func TestNewTraining(t *testing.T) {
-	Convey("Training retrieves the moves the inspection view draws", t, func() {
-		ctx, catalog := recordedArchive(t)
-		runs, err := catalog.Runs(ctx)
-		So(err, ShouldBeNil)
-		So(runs, ShouldNotBeEmpty)
-
-		chosen := runs[0].ID
-
-		if named := os.Getenv("SYMM_RUN"); named != "" {
-			chosen = named
-		}
-		training := NewTraining(
-			catalog, hindsight.RunID(chosen), hindsight.DefaultDiscoveryPolicy(), 4,
+	Convey("A tape frame flows through the envelope-typed composition", t, func() {
+		tape := make(chan [][]*data.Measurement[float64], 1)
+		measurement := data.NewMeasurement[float64](
+			"1", "BTC/USD", "cvd", time.Now().UTC(), time.Time{},
 		)
-		So(training, ShouldNotBeNil)
+		measurement.PutMetric(data.Metric[float64]{Label: "signed", Raw: 1.5})
+		tape <- [][]*data.Measurement[float64]{{measurement}}
+		close(tape)
+		training := NewTraining(context.Background(), tape)
+		envelope := &types.Envelope{}
+		So(training.Step(envelope), ShouldEqual, envelope)
+		So(len(envelope.Impulses), ShouldEqual, 1)
+		So(envelope.Impulses[0].Label, ShouldEqual, "BTC/USD")
+		So(training.Error(), ShouldBeNil)
 	})
 }

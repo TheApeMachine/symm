@@ -66,9 +66,8 @@ func (tape *Tape) Measurements() [][][]*data.Measurement[float64] {
 
 /*
 MeasurementsFrom derives the confirmed-move tape from observations already in
-hand. It is the same projection Measurements performs, split out so a bounded
-reader can accumulate pages and re-project them as each page arrives instead
-of waiting for a whole run to decode.
+hand. Discovery runs on those market facts; the numerical frames are then
+read from the precursor witnesses those facts name, in one scan of the run.
 */
 func (tape *Tape) MeasurementsFrom(
 	observations []Observation,
@@ -95,31 +94,71 @@ func (tape *Tape) measurements(
 		return nil
 	}
 	index := NewRunIndex(tape.run, observations)
-	legs := make([][][]*data.Measurement[float64], 0)
+	excursions := tape.excursions(index, live)
 
-	for _, summary := range index.Summaries(tape.policy) {
-		for _, move := range index.Discover(summary.Symbol, tape.policy).Episodes {
-			if leg := tape.move(index, summary.Symbol, move, live); len(leg) > 0 {
-				legs = append(legs, leg)
-			}
+	if len(excursions) == 0 {
+		return nil
+	}
+	decoded, err := tape.decode(identities(excursions))
+
+	if err != nil {
+		tape.err = errnie.Error(err)
+
+		return nil
+	}
+	legs := make([][][]*data.Measurement[float64], 0, len(excursions))
+
+	for _, window := range excursions {
+		if leg := tape.frames(window, decoded); len(leg) > 0 {
+			legs = append(legs, leg)
+		}
+
+		if tape.err != nil {
+			return nil
 		}
 	}
 
 	return legs
 }
 
-/*
-move is the readings held across one excursion.
+/* excursionWindow is one move's captures plus the equal-length precursor and aftermath. */
+type excursionWindow struct {
+	captures []EnvelopeRef
+	anchor   EnvelopeRef
+	extremum EnvelopeRef
+}
 
-The identities are the instrument's own captures at or before the extremum,
-which is the only tape that could have carried its signals, walked forwards.
-Historical callers pass live=false and only receive retraced (confirmed) moves;
-the live loader passes true so the current run's developing move is learned
-before its retracement has printed.
+/*
+excursions is each move's capture window, in capture order, before any payload
+is read. Collecting the identities first is what lets the record be opened once
+for the whole tape instead of once per capture.
 */
-func (tape *Tape) move(
+func (tape *Tape) excursions(index *RunIndex, live bool) []excursionWindow {
+	collected := make([]excursionWindow, 0)
+
+	for _, summary := range index.Summaries(tape.policy) {
+		for _, move := range index.Discover(summary.Symbol, tape.policy).Episodes {
+			if window := tape.window(index, summary.Symbol, move, live); len(window.captures) > 0 {
+				collected = append(collected, window)
+			}
+		}
+	}
+
+	return collected
+}
+
+/*
+window is the instrument's own captures covering one excursion: the move
+itself, the same length of tape before the anchor (the precursor), and the
+same length after the extremum (the retracement that confirmed it).
+
+Historical callers pass live=false and only receive retraced moves; the live
+loader passes true so the current run's developing move is learned before its
+retracement has printed.
+*/
+func (tape *Tape) window(
 	index *RunIndex, symbol string, move Episode, live bool,
-) [][]*data.Measurement[float64] {
+) excursionWindow {
 	endpoint := ReferencePeak
 
 	switch move.Kind {
@@ -127,66 +166,179 @@ func (tape *Tape) move(
 	case EpisodeDownwardExcursion:
 		endpoint = ReferenceTrough
 	default:
-		return nil
+		return excursionWindow{}
 	}
-	reached, named := move.Reference(endpoint)
+	anchor, hasAnchor := move.Reference(ReferenceAnchor)
+	extremum, hasExtremum := move.Reference(endpoint)
 
-	if (!live && !move.Confirmed) || !named {
-		return nil
+	if (!live && !move.Confirmed) || !hasAnchor || !hasExtremum {
+		return excursionWindow{}
 	}
-	candidates := index.CapturesBefore(symbol, EnvelopeRef{
-		Origin: reached.Capture, Ordinal: reached.Ordinal,
-	}, tape.reach())
-	frames := make([][]*data.Measurement[float64], 0, len(candidates))
+	from := EnvelopeRef{Origin: anchor.Capture, Ordinal: anchor.Ordinal}
+	through := EnvelopeRef{Origin: extremum.Capture, Ordinal: extremum.Ordinal}
 
-	for at := len(candidates) - 1; at >= 0; at-- {
-		payload, stored, err := tape.catalog.ReadStatePayload(
-			string(candidates[at].Origin.Run),
-			uint64(candidates[at].Origin.Sequence),
-			candidates[at].Ordinal,
-		)
-
-		if err != nil {
-			tape.err = errnie.Error(err)
-
-			return nil
-		}
-
-		if !stored {
-			continue
-		}
-		measurements, err := types.MeasurementsFromState(payload)
-
-		if err != nil {
-			tape.err = errnie.Error(err)
-
-			return nil
-		}
-
-		if len(measurements) == 0 {
-			continue
-		}
-		frames = append(frames, measurements)
+	return excursionWindow{
+		captures: index.CapturesAround(symbol, from, through),
+		anchor:   from,
+		extremum: through,
 	}
-
-	return frames
 }
 
-/* reach is how far back a move's readings are gathered from its extremum. */
-func (tape *Tape) reach() int {
-	if tape.Reach > 0 {
-		return tape.Reach
+func identities(excursions []excursionWindow) []tables.EnvelopeRefRow {
+	seen := make(map[tables.EnvelopeRefRow]struct{})
+	wanted := make([]tables.EnvelopeRefRow, 0)
+
+	for _, window := range excursions {
+		for _, candidate := range window.captures {
+			identity := envelopeRow(candidate)
+
+			if _, have := seen[identity]; have {
+				continue
+			}
+			seen[identity] = struct{}{}
+			wanted = append(wanted, identity)
+		}
 	}
 
-	return DefaultReach
+	return wanted
+}
+
+func envelopeRow(ref EnvelopeRef) tables.EnvelopeRefRow {
+	return tables.EnvelopeRefRow{
+		Run:      string(ref.Origin.Run),
+		Sequence: int64(ref.Origin.Sequence),
+		Ordinal:  int64(ref.Ordinal),
+	}
 }
 
 /*
-DefaultReach is how many of an instrument's own captures a move gathers when
-none is declared. It is a declared bound on the walk, reported with what it
-produced, not a claim about how long a move lasts.
+decode reads the numerical witness at each requested identity.
+
+The dedicated tape is the precursor artifact. A coordinate that only has a
+sampled full-state witness still yields that state's measurements. Payload
+bytes are decoded in the scan and not retained.
 */
-const DefaultReach = 256
+func (tape *Tape) decode(
+	wanted []tables.EnvelopeRefRow,
+) (map[tables.EnvelopeRefRow][]*data.Measurement[float64], error) {
+	held := make(map[tables.EnvelopeRefRow][]*data.Measurement[float64], len(wanted))
+	err := tape.catalog.EachWitnessPayload(
+		context.Background(), string(tape.run), "precursor", wanted,
+		func(identity tables.EnvelopeRefRow, payload []byte) error {
+			return keepMeasurements(held, identity, payload)
+		},
+	)
+
+	if err != nil {
+		return nil, err
+	}
+	missing := missingIdentities(wanted, held)
+
+	if len(missing) == 0 {
+		return held, nil
+	}
+
+	if err := tape.catalog.EachWitnessPayload(
+		context.Background(), string(tape.run), "state", missing,
+		func(identity tables.EnvelopeRefRow, payload []byte) error {
+			return keepMeasurements(held, identity, payload)
+		},
+	); err != nil {
+		return nil, err
+	}
+
+	return held, nil
+}
+
+func keepMeasurements(
+	held map[tables.EnvelopeRefRow][]*data.Measurement[float64],
+	identity tables.EnvelopeRefRow,
+	payload []byte,
+) error {
+	measurements, err := types.MeasurementsFromState(payload)
+
+	if err != nil {
+		return err
+	}
+
+	if len(measurements) == 0 {
+		return nil
+	}
+	held[identity] = measurements
+
+	return nil
+}
+
+func missingIdentities(
+	wanted []tables.EnvelopeRefRow,
+	have map[tables.EnvelopeRefRow][]*data.Measurement[float64],
+) []tables.EnvelopeRefRow {
+	missing := make([]tables.EnvelopeRefRow, 0)
+
+	for _, identity := range wanted {
+		if _, stored := have[identity]; stored {
+			continue
+		}
+		missing = append(missing, identity)
+	}
+
+	return missing
+}
+
+/*
+frames is the readings held across one excursion, in capture order.
+
+An identity the record stored no measurements for contributes no frame. Each
+frame is named with the moment the move itself occupies: the precursor before
+the anchor, the run into the extremum, the extremum, and the aftermath.
+*/
+func (tape *Tape) frames(
+	window excursionWindow,
+	decoded map[tables.EnvelopeRefRow][]*data.Measurement[float64],
+) [][]*data.Measurement[float64] {
+	held := make([][]*data.Measurement[float64], 0, len(window.captures))
+
+	for _, candidate := range window.captures {
+		measurements, stored := decoded[envelopeRow(candidate)]
+
+		if !stored || len(measurements) == 0 {
+			continue
+		}
+		stampMoment(measurements, momentAt(candidate, window.anchor, window.extremum))
+		held = append(held, measurements)
+	}
+
+	return held
+}
+
+func momentAt(candidate, anchor, extremum EnvelopeRef) string {
+	if causalCmp(candidate, anchor) < 0 {
+		return "enter"
+	}
+
+	if causalCmp(candidate, extremum) < 0 {
+		return "hold"
+	}
+
+	if causalCmp(candidate, extremum) == 0 {
+		return "exit"
+	}
+
+	return "wait"
+}
+
+func stampMoment(measurements []*data.Measurement[float64], moment string) {
+	for _, measurement := range measurements {
+		if measurement == nil {
+			continue
+		}
+
+		if measurement.Provenance == nil {
+			measurement.Provenance = make(map[string]string, 1)
+		}
+		measurement.Provenance["moment"] = moment
+	}
+}
 
 /* Error exposes what the record refused, if anything. */
 func (tape *Tape) Error() error { return tape.err }

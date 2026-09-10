@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/theapemachine/symm/logic/cognition"
 	"github.com/theapemachine/symm/logic/manifold"
 	"github.com/theapemachine/symm/logic/resonance"
+	"github.com/theapemachine/symm/nomagique/data"
 	nmruntime "github.com/theapemachine/symm/nomagique/runtime"
 	"github.com/theapemachine/symm/signal/correlation"
 	"github.com/theapemachine/symm/signal/cvd"
@@ -360,12 +362,33 @@ var (
 				},
 			)
 
+			/*
+				Seven trainings, declared as one stage.
+
+				Nodes in a stage run concurrently behind the ring's own barrier,
+				and each Training owns everything it writes — its ring, its
+				grid, its agent. They share only the tape they are read from, so
+				nothing between them needs a lock.
+
+				The tape arrives on a channel because walking the record is a
+				long read against an object store. Boot does not wait for it:
+				the trainings are composed over empty rings and fill in as the
+				reader recovers fragments behind them.
+			*/
+			tape := measurements(runtimeCtx, catalog, runID)
+
 			trainer := nmruntime.NewWorkload(
 				runtimeCtx,
 				"trainer",
-				[][]nmruntime.Node[*types.Envelope]{
-					{strategy.NewTraining(catalog, runID, hindsight.DiscoveryPolicy{}, 7)},
-				},
+				[][]nmruntime.Node[*types.Envelope]{{
+					strategy.NewTraining(runtimeCtx, tape),
+					strategy.NewTraining(runtimeCtx, tape),
+					strategy.NewTraining(runtimeCtx, tape),
+					strategy.NewTraining(runtimeCtx, tape),
+					strategy.NewTraining(runtimeCtx, tape),
+					strategy.NewTraining(runtimeCtx, tape),
+					strategy.NewTraining(runtimeCtx, tape),
+				}},
 			)
 
 			workspace := nmruntime.NewWorkspace(
@@ -687,6 +710,125 @@ func initConfig() {
 	system.Cfg = system.NewConfig()
 
 	// Live watching is disabled until an atomic config generation swap exists.
+}
+
+/*
+measurements is the recorded tape a training pipeline is shown: the frames the
+running binary held across every confirmed move the record kept.
+
+The record is walked newest run first. What an instrument did lately describes
+it better than what it did first, and the budget stops the walk part way, so
+which end it starts from decides what is learned from. A run is always read
+whole — stopping mid-run would end a tape at the budget rather than at the
+record — so the budget decides how many runs are opened, never how much of one
+is read.
+
+The run this process is starting is skipped. It has observed nothing yet, it is
+still being written, and its last leg has not retraced, so a pipeline pointed at
+it is shown an empty tape. What there is to learn from is what was captured
+before.
+
+Legs stay separate: the reading after a move's last is not its successor, and a
+composition replaying them as one sequence would learn a join that never
+happened. Each leg becomes one delivery run, which is the boundary the ring
+carries down to the agent.
+*/
+func measurements(
+	ctx context.Context, catalog *tables.Catalog, current hindsight.RunID,
+) <-chan [][]*data.Measurement[float64] {
+	tape := make(chan [][]*data.Measurement[float64])
+
+	if catalog == nil {
+		close(tape)
+
+		return tape
+	}
+
+	go readRecord(ctx, catalog, current, tape)
+
+	return tape
+}
+
+/*
+readRecord walks the record and publishes each run's confirmed moves as it
+recovers them.
+
+Publishing per run rather than at the end is what lets the universes begin on
+the earliest tape recovered instead of waiting for the whole archive. The
+channel is closed when the walk is done, which is how a reader learns there is
+no more tape rather than inferring it from a pause.
+*/
+func readRecord(
+	ctx context.Context,
+	catalog *tables.Catalog,
+	current hindsight.RunID,
+	tape chan<- [][]*data.Measurement[float64],
+) {
+	defer close(tape)
+	policy := hindsight.DefaultDiscoveryPolicy()
+	budget := viper.GetInt("hindsight.rehearsal.observation_budget")
+
+	if budget <= 0 {
+		budget = policy.MinObservations * policy.MaxEpisodesPerSet
+	}
+	runs, err := catalog.Runs(ctx)
+
+	if err != nil {
+		errnie.Error(err)
+
+		return
+	}
+
+	slices.SortFunc(runs, func(left, right tables.RunRow) int {
+		return right.StartedAt.Compare(left.StartedAt)
+	})
+	published, resident := 0, 0
+
+	for _, run := range runs {
+		if run.ID == string(current) || resident >= budget {
+			continue
+		}
+
+		// Read whole and in capture order. A bounded read is not an option
+		// here: Iceberg plans files in its own order, so a row limit returns an
+		// arbitrary slice of the run rather than its next rows, and a cursor
+		// taken from one skips everything the planner did not reach.
+		observations, _, err := hindsight.ReadObservations(
+			ctx, catalog, hindsight.RunID(run.ID), 0,
+		)
+
+		if err != nil {
+			errnie.Error(err)
+
+			continue
+		}
+		resident += len(observations)
+		recorded := hindsight.Query(
+			hindsight.Excursions, catalog, hindsight.RunID(run.ID), policy,
+		)
+		legs := recorded.MeasurementsFrom(observations)
+
+		if err := recorded.Error(); err != nil {
+			errnie.Error(err)
+
+			continue
+		}
+
+		// Each leg is published on its own. The reading after a move's last is
+		// not its successor, so a leg is the boundary the ring carries down to
+		// the agent, and handing them over one at a time is what lets a
+		// training begin on the first move recovered.
+		for _, leg := range legs {
+			select {
+			case tape <- leg:
+				published++
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+
+	errnie.Info(fmt.Sprintf("training: %d recorded moves", published))
 }
 
 const rootLong = `

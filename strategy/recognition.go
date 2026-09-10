@@ -60,17 +60,15 @@ without disturbing any of them.
 */
 func (training *Training) State() *Recognition {
 	at := time.Now().UTC().UnixNano()
-	held := training.mounted.Load()
+	held := training.snapshot()
 
-	// The record has not been read yet. Saying so is the reading: an unmounted
-	// tape is not a tape with nothing on it.
-	if held == nil {
+	if held.fragments == 0 && held.loading {
 		return &Recognition{state: &telemetry.LearningStateT{
 			AtNs: at, Status: "reading the record",
 		}}
 	}
 
-	return held.state(at, training.frames.Load())
+	return held.state(at, training.seen.Load())
 }
 
 /* state is what one mounted tape and its learners currently amount to. */

@@ -3,7 +3,6 @@ package derivatives
 import (
 	"fmt"
 	"math"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
@@ -38,7 +37,6 @@ v2 equations without Frame or Wire blocks.
 type Ticker struct {
 	states map[string]*tickerState
 	clock  causalClock
-	mu     sync.RWMutex
 }
 
 func NewTicker() *Ticker {
@@ -71,9 +69,6 @@ func (ticker *Ticker) Step(point kraken.FuturesTickerData) *data.Measurement[flo
 			Err: fmt.Errorf("derivatives: non-positive prices or oi (last=%f, index=%f, mark=%f, oi=%f)", last, index, mark, oi),
 		}
 	}
-
-	ticker.mu.Lock()
-	defer ticker.mu.Unlock()
 
 	state, found := ticker.states[point.Symbol]
 

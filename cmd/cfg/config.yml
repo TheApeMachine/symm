@@ -23,6 +23,12 @@ storage:
     # Operational retry budget for rejected concurrent catalog commits.
     # Iceberg refreshes and rebases the append; unknown commit outcomes fail.
     commit_retries: 4
+    # Maximum binary payload bytes in one Iceberg snapshot. Larger buffers
+    # become successive snapshots so the REST catalog call and the S3 object
+    # write finish inside Seaweed's idle timeout. This is a catalog transport
+    # bound, not a market horizon. Arrow's 2 GiB Binary offset remains the
+    # representation ceiling inside a snapshot.
+    append_bytes: 16777216
 
 workbench:
   # The Analytical Workbench's DuckDB runs inside this process. An unpivoted
@@ -37,7 +43,10 @@ experimental:
 
 runtime:
   workspace:
-    buffer: 64
+    # Disruptor slot count. A power of two, sized as a resource allocation so
+    # the nine observation stages can absorb a ticker/trade/L3 burst without
+    # spinning in TryReserve. It is not a market horizon.
+    buffer: 4096
 
 system:
   data_path: ~/.symm/data

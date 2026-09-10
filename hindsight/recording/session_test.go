@@ -285,6 +285,7 @@ func TestSessionWriteOutcome(t *testing.T) {
 
 		Convey("The failure is reported and latches admission", func() {
 			So(<-session.Errors, ShouldNotBeNil)
+			So(session.Failed(), ShouldBeTrue)
 
 			So(session.WriteOutcome(tables.OutcomeRow{Label: "rejected"}), ShouldNotBeNil)
 			So(session.Close(), ShouldNotBeNil)

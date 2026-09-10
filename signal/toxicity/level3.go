@@ -3,7 +3,6 @@ package toxicity
 import (
 	"fmt"
 	"math"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
@@ -38,7 +37,6 @@ Level3 is the book-touch market entity. It maintains an online toxicity model
 per symbol through explicit Primitive records and projects data.Measurement outputs.
 */
 type Level3 struct {
-	mu         sync.RWMutex
 	states     map[string]*level3State
 	symbol     string
 	at         time.Time
@@ -60,9 +58,6 @@ func (level3 *Level3) Close() error { return nil }
 Touch returns the last known touch for a symbol.
 */
 func (level3 *Level3) Touch(symbol string) (float64, float64, float64, float64, bool) {
-	level3.mu.RLock()
-	defer level3.mu.RUnlock()
-
 	state, found := level3.states[symbol]
 
 	if !found || !state.hasPrevTouch {
@@ -82,9 +77,6 @@ func (level3 *Level3) Step(message kraken.Level3Data) *data.Measurement[float64]
 	at := message.Timestamp
 	sec := float64(at.Unix())
 	nsec := float64(at.Nanosecond())
-
-	level3.mu.Lock()
-	defer level3.mu.Unlock()
 
 	state, found := level3.states[symbol]
 

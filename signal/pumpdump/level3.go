@@ -2,7 +2,6 @@ package pumpdump
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -20,7 +19,6 @@ Zero Wire blocks, zero Frame allocations.
 */
 type Level3 struct {
 	states map[string]*level3State
-	mu     sync.RWMutex
 }
 
 func NewLevel3() *Level3 {
@@ -34,9 +32,6 @@ func (l3 *Level3) Close() error {
 }
 
 func (l3 *Level3) Step(msg kraken.Level3Data) *data.Measurement[float64] {
-	l3.mu.Lock()
-	defer l3.mu.Unlock()
-
 	state, found := l3.states[msg.Symbol]
 
 	if !found {

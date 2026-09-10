@@ -2,7 +2,6 @@ package toxicity
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
@@ -31,7 +30,6 @@ Trade matches incoming trades against the symbol's retained book touch.
 It owns one Primitive graph per symbol.
 */
 type Trade struct {
-	mu         sync.Mutex
 	states     map[string]*tradeState
 	symbol     string
 	at         time.Time
@@ -59,11 +57,7 @@ func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQ
 	}
 
 	for _, value := range []float64{tick.Price.Float64(), tick.Qty, bidPrice, askPrice, bidQty, askQty} {
-		ok, err := transport.Evaluate(trade.finite, transport.Values(value))
-		if err != nil {
-			return &data.Measurement[float64]{Err: err}
-		}
-		if !ok || value < 0 {
+		if !trade.finite.Holds(value) || value < 0 {
 			return &data.Measurement[float64]{Err: fmt.Errorf("toxicity: finite non-negative trade and touch values required")}
 		}
 	}
@@ -72,9 +66,6 @@ func (trade *Trade) Step(tick kraken.TradeData, bidPrice, askPrice, bidQty, askQ
 	}
 	sec := float64(tick.Timestamp.Unix())
 	nsec := float64(tick.Timestamp.Nanosecond())
-
-	trade.mu.Lock()
-	defer trade.mu.Unlock()
 
 	state, found := trade.states[tick.Symbol]
 

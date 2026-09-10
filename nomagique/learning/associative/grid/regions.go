@@ -125,6 +125,13 @@ func (grid *Space) Regions(label string) ([]Region, uint64, error) {
 	}
 
 	for column, community := range regions.membership {
+		if community < 0 || community >= len(regions.output) {
+			return nil, 0, errnie.Error(errnie.Err(
+				errnie.Internal,
+				"grid: region membership does not match the formed partition",
+				nil,
+			))
+		}
 		region := &regions.output[community]
 		region.Members++
 

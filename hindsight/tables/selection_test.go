@@ -91,6 +91,70 @@ func TestCatalogWitnessesUnseen(t *testing.T) {
 	})
 }
 
+func TestCatalogWitnessPayloads(t *testing.T) {
+	Convey("One scan copies only the requested identities of one artifact family", t, func() {
+		catalog := selectionCatalog(t)
+		wanted := []tables.EnvelopeRefRow{
+			{Run: "selected", Sequence: 1, Ordinal: 0},
+			{Run: "selected", Sequence: 2, Ordinal: 1},
+			{Run: "selected", Sequence: 9, Ordinal: 0},
+		}
+		payloads, err := catalog.WitnessPayloads(t.Context(), "selected", "state", wanted)
+		So(err, ShouldBeNil)
+		So(len(payloads), ShouldEqual, 2)
+		So(payloads[tables.EnvelopeRefRow{Run: "selected", Sequence: 1, Ordinal: 0}], ShouldResemble, []byte{1, 0})
+		So(payloads[tables.EnvelopeRefRow{Run: "selected", Sequence: 2, Ordinal: 1}], ShouldResemble, []byte{2, 1})
+		_, other := payloads[tables.EnvelopeRefRow{Run: "other", Sequence: 1, Ordinal: 0}]
+		So(other, ShouldBeFalse)
+		_, missing := payloads[tables.EnvelopeRefRow{Run: "selected", Sequence: 9, Ordinal: 0}]
+		So(missing, ShouldBeFalse)
+
+		decisions, err := catalog.WitnessPayloads(t.Context(), "selected", "decision", wanted[:1])
+		So(err, ShouldBeNil)
+		So(len(decisions), ShouldEqual, 1)
+
+		empty, err := catalog.WitnessPayloads(t.Context(), "selected", "state", nil)
+		So(err, ShouldBeNil)
+		So(empty, ShouldBeEmpty)
+	})
+}
+
+func BenchmarkCatalogWitnessPayloads(b *testing.B) {
+	catalog := tablestest.New(b)
+	writer := tables.NewWriter(catalog)
+	payload := bytes.Repeat([]byte("precursor measurements"), 4096)
+	wanted := make([]tables.EnvelopeRefRow, 256)
+
+	for index := range 4096 {
+		identity := tables.EnvelopeRefRow{Run: "bench", Sequence: int64(index + 1), Ordinal: 0}
+		writer.AddWitness(tables.WitnessRow{
+			Run: "bench", Envelope: identity, ArtifactKind: "precursor",
+			Boundary: "after-logic", Payload: payload,
+		})
+
+		if index < len(wanted) {
+			wanted[index] = identity
+		}
+	}
+
+	if err := writer.Commit(b.Context()); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		payloads, err := catalog.WitnessPayloads(b.Context(), "bench", "precursor", wanted)
+
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		if len(payloads) != len(wanted) {
+			b.Fatal("batched witness read dropped requested identities")
+		}
+	}
+}
+
 func TestCatalogCaptureReferences(t *testing.T) {
 	Convey("Batched identity joins exclude other runs and never copy payload bytes", t, func() {
 		catalog := selectionCatalog(t)

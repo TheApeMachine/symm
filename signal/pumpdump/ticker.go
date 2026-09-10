@@ -2,7 +2,6 @@ package pumpdump
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -20,7 +19,6 @@ executable spread, and historical relative-spread baseline using an explicitly c
 */
 type Ticker struct {
 	states map[string]*tickerState
-	mu     sync.RWMutex
 }
 
 func NewTicker() *Ticker {
@@ -49,8 +47,6 @@ func (ticker *Ticker) Step(tick kraken.TickerData) *data.Measurement[float64] {
 	spread := ask - bid
 	relativeSpread := spread / midpoint
 
-	ticker.mu.Lock()
-	defer ticker.mu.Unlock()
 	state, found := ticker.states[tick.Symbol]
 
 	if !found {

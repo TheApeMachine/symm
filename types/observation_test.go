@@ -45,6 +45,10 @@ func TestEnvelopeMeasurements(t *testing.T) {
 }
 
 func TestEnvelopeEncodePrecursor(t *testing.T) {
+	Convey("An envelope with no numerical input is not encoded", t, func() {
+		So((&Envelope{Key: "BTC/USD"}).EncodePrecursor(), ShouldBeNil)
+	})
+
 	Convey("Every numerical input is durable without copying display or model state", t, func() {
 		at := time.Unix(100, 0)
 		envelope := &Envelope{Key: "BTC/USD", CaptureID: CaptureIdentity{Run: "precursor", Sequence: 1},

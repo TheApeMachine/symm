@@ -69,6 +69,18 @@ type Solver struct {
 
 	wake chan struct{}
 
+	// dirty names the symbols whose books moved since the last advance. The
+	// Level3 stream is a semaphore per symbol, so a full-market recopy is only
+	// required when that set is empty (a direct Advance, or a wake with no
+	// identity). Production ingress always marks the symbol before waking.
+	dirtyMu sync.Mutex
+	dirty   map[string]struct{}
+
+	// booksHeld is the last copied resting orders per symbol. The advance
+	// goroutine owns it: a dirty symbol is recopied into the same backing
+	// arrays, a quiet symbol is projected from what it already holds.
+	booksHeld map[string]heldBook
+
 	// loaded is the set of ContentIDs the physics domain holds, and dataset is
 	// the projector. Both are touched only by the advance goroutine, which is
 	// the whole point of reading the book instead of a message stream: there is
@@ -107,6 +119,14 @@ are the live books themselves, and walking one outside Book's lock is a race.
 type BookSource interface {
 	Books() *sync.Map
 	Book(symbol string, read func(*spotbook.Book))
+}
+
+/*
+heldBook is one symbol's last copied resting orders.
+*/
+type heldBook struct {
+	bids []restingOrder
+	asks []restingOrder
 }
 
 /*
@@ -151,13 +171,15 @@ func NewSolver(ctx context.Context) *Solver {
 	dataset := NewDataset()
 
 	solver := &Solver{
-		ctx:     ctx,
-		cancel:  cancel,
-		status:  runtime.NewStatus(),
-		dataset: dataset,
-		forcing: make(map[string]forcingState),
-		loaded:  make(map[int64]struct{}),
-		wake:    make(chan struct{}, 1),
+		ctx:       ctx,
+		cancel:    cancel,
+		status:    runtime.NewStatus(),
+		dataset:   dataset,
+		forcing:   make(map[string]forcingState),
+		loaded:    make(map[int64]struct{}),
+		dirty:     make(map[string]struct{}),
+		booksHeld: make(map[string]heldBook),
+		wake:      make(chan struct{}, 1),
 		physics: sensorium.NewManifold(
 			system.Cfg.Manifold.Grid.X,
 			system.Cfg.Manifold.Grid.Y,
@@ -199,6 +221,13 @@ costs resolution — more messages fold into one advance — never latency on th
 market pipeline and never an unbounded backlog.
 */
 func (solver *Solver) run() {
+	pause := time.NewTimer(0)
+
+	if !pause.Stop() {
+		<-pause.C
+	}
+	defer pause.Stop()
+
 	for {
 		select {
 		case <-solver.ctx.Done():
@@ -206,7 +235,35 @@ func (solver *Solver) run() {
 		case <-solver.wake:
 		}
 
+		started := time.Now()
 		solver.Advance()
+		spent := time.Since(started)
+
+		// A wake that arrived during the step is work still pending. Put it
+		// back and wait the duration the GPU actually occupied so the next
+		// field step cannot start before the previous one finished. An empty
+		// step already saw the books — dropping the extra wake avoids a
+		// tight loop. An idle stream waits on the next semaphore.
+		select {
+		case <-solver.wake:
+			if spent <= 0 {
+				continue
+			}
+
+			select {
+			case solver.wake <- struct{}{}:
+			default:
+			}
+
+			pause.Reset(spent)
+
+			select {
+			case <-solver.ctx.Done():
+				return
+			case <-pause.C:
+			}
+		default:
+		}
 	}
 }
 
@@ -281,12 +338,14 @@ func (solver *Solver) Step(envelope *types.Envelope) *types.Envelope {
 		// itself. Every message between two advances collapses into the one
 		// book state the next advance sees, which is what makes a field far
 		// slower than the firehose feeding it a non-problem.
+		solver.markDirty(envelope.Symbol())
+
 		select {
 		case solver.wake <- struct{}{}:
 		default:
 		}
 
-		envelope.Manifold = solver.Reading()
+		envelope.Manifold = solver.liveReading()
 
 		return envelope
 	}
@@ -364,6 +423,29 @@ only creates something that can disagree with it.
 The venue's lock is held for the copy of each symbol's orders and released
 before they are projected, so a book writer never waits on the projection math.
 */
+func (solver *Solver) markDirty(symbol string) {
+	if symbol == "" {
+		return
+	}
+
+	solver.dirtyMu.Lock()
+
+	if solver.dirty == nil {
+		solver.dirty = make(map[string]struct{})
+	}
+	solver.dirty[symbol] = struct{}{}
+	solver.dirtyMu.Unlock()
+}
+
+func (solver *Solver) takeDirty() map[string]struct{} {
+	solver.dirtyMu.Lock()
+	held := solver.dirty
+	solver.dirty = make(map[string]struct{})
+	solver.dirtyMu.Unlock()
+
+	return held
+}
+
 func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 	if solver.books == nil {
 		return nil, nil
@@ -377,24 +459,36 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 		return nil, nil
 	}
 
+	if solver.booksHeld == nil {
+		solver.booksHeld = make(map[string]heldBook)
+	}
+	dirty := solver.takeDirty()
+	refresh := len(dirty) == 0
+	present := make(map[string]struct{})
+
 	symbols.Range(func(key, _ any) bool {
 		symbol, ok := key.(string)
 
 		if !ok || symbol == "" {
 			return true
 		}
-
+		present[symbol] = struct{}{}
 		solver.forcingMu.RLock()
 		forcing := solver.latestForcing(symbol)
 		solver.forcingMu.RUnlock()
+		held := solver.booksHeld[symbol]
+		_, moved := dirty[symbol]
 
-		bids, asks := solver.readBook(symbol)
+		if refresh || moved || (len(held.bids) == 0 && len(held.asks) == 0) {
+			held.bids, held.asks = solver.readBook(symbol, held.bids, held.asks)
+			solver.booksHeld[symbol] = held
+		}
 
-		if len(bids) == 0 && len(asks) == 0 {
+		if len(held.bids) == 0 && len(held.asks) == 0 {
 			return true
 		}
 
-		for state := range solver.dataset.Step(symbol, bids, asks, forcing) {
+		for state := range solver.dataset.Step(symbol, held.bids, held.asks, forcing) {
 			if state == nil || state.N != 1 {
 				sensorium.StatePool.Put(state)
 				continue
@@ -406,6 +500,14 @@ func (solver *Solver) project() (departures []int64, batch *sensorium.State) {
 
 		return true
 	})
+
+	for symbol := range solver.booksHeld {
+		if _, still := present[symbol]; still {
+			continue
+		}
+
+		delete(solver.booksHeld, symbol)
+	}
 
 	if solver.dataset.Error() != nil {
 		for _, state := range states {
@@ -437,7 +539,9 @@ readBook copies one symbol's resting orders out from under the venue's read
 lock. Only the identity, price and size cross out: the projection runs on the
 copy, never inside the callback.
 */
-func (solver *Solver) readBook(symbol string) (bids, asks []restingOrder) {
+func (solver *Solver) readBook(symbol string, bids, asks []restingOrder) ([]restingOrder, []restingOrder) {
+	bids = bids[:0]
+	asks = asks[:0]
 	solver.books.Book(symbol, func(managed *spotbook.Book) {
 		if managed == nil {
 			return
@@ -542,7 +646,6 @@ func collectStates(states []*sensorium.State) *sensorium.State {
 		batch.Vel[index*3+2] = state.Vel[2]
 		batch.Clamped[index] = state.Clamped[0]
 		batch.Dark[index] = state.Dark[0]
-
 		sensorium.StatePool.Put(state)
 	}
 
@@ -648,6 +751,25 @@ func (solver *Solver) Reading() *State {
 }
 
 /*
+liveReading is the scalar field an L3 envelope may carry: version, time, and
+the producer reading. Particle arrays and Eulerian grids stay on the advance
+snapshot. Attaching them to every Level3 message is what packed the Iceberg
+state witness with the whole book on every tick.
+*/
+func (solver *Solver) liveReading() *State {
+	held := solver.reading.Load()
+
+	if held == nil {
+		return nil
+	}
+
+	return &State{
+		At: held.At, Version: held.Version,
+		Reading: held.Reading, Modes: held.Modes,
+	}
+}
+
+/*
 publish materializes the resident particles and fields into an envelope of their
 own and hands it to the viewer. The snapshot is only taken when a viewer is
 attached and its transport is ready for another frame, so a run nobody is
@@ -688,7 +810,7 @@ func (solver *Solver) Crystallize(
 		return nil, nil
 	}
 
-	bids, asks := solver.readBook(symbol)
+	bids, asks := solver.readBook(symbol, nil, nil)
 	states := make([]*sensorium.State, 0, len(bids)+len(asks))
 
 	for state := range solver.dataset.StepClamped(symbol, bids, asks, forcing) {

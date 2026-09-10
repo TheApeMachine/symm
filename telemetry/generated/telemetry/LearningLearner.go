@@ -11,6 +11,7 @@ type LearningLearnerT struct {
 	Links int32 `json:"links"`
 	Moments []*LearningMomentT `json:"moments"`
 	Answers []*LearningAnswerT `json:"answers"`
+	Branches []*CognitionBranchT `json:"branches"`
 }
 
 func (t *LearningLearnerT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffsetT {
@@ -43,11 +44,25 @@ func (t *LearningLearnerT) Pack(builder *flatbuffers.Builder) flatbuffers.UOffse
 		}
 		answersOffset = builder.EndVector(answersLength)
 	}
+	branchesOffset := flatbuffers.UOffsetT(0)
+	if t.Branches != nil {
+		branchesLength := len(t.Branches)
+		branchesOffsets := make([]flatbuffers.UOffsetT, branchesLength)
+		for j := 0; j < branchesLength; j++ {
+			branchesOffsets[j] = t.Branches[j].Pack(builder)
+		}
+		LearningLearnerStartBranchesVector(builder, branchesLength)
+		for j := branchesLength - 1; j >= 0; j-- {
+			builder.PrependUOffsetT(branchesOffsets[j])
+		}
+		branchesOffset = builder.EndVector(branchesLength)
+	}
 	LearningLearnerStart(builder)
 	LearningLearnerAddId(builder, t.Id)
 	LearningLearnerAddLinks(builder, t.Links)
 	LearningLearnerAddMoments(builder, momentsOffset)
 	LearningLearnerAddAnswers(builder, answersOffset)
+	LearningLearnerAddBranches(builder, branchesOffset)
 	return LearningLearnerEnd(builder)
 }
 
@@ -67,6 +82,13 @@ func (rcv *LearningLearner) UnPackTo(t *LearningLearnerT) {
 		x := LearningAnswer{}
 		rcv.Answers(&x, j)
 		t.Answers[j] = x.UnPack()
+	}
+	branchesLength := rcv.BranchesLength()
+	t.Branches = make([]*CognitionBranchT, branchesLength)
+	for j := 0; j < branchesLength; j++ {
+		x := CognitionBranch{}
+		rcv.Branches(&x, j)
+		t.Branches[j] = x.UnPack()
 	}
 }
 
@@ -178,8 +200,28 @@ func (rcv *LearningLearner) AnswersLength() int {
 	return 0
 }
 
+func (rcv *LearningLearner) Branches(obj *CognitionBranch, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		x := rcv._tab.Vector(o)
+		x += flatbuffers.UOffsetT(j) * 4
+		x = rcv._tab.Indirect(x)
+		obj.Init(rcv._tab.Bytes, x)
+		return true
+	}
+	return false
+}
+
+func (rcv *LearningLearner) BranchesLength() int {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(12))
+	if o != 0 {
+		return rcv._tab.VectorLen(o)
+	}
+	return 0
+}
+
 func LearningLearnerStart(builder *flatbuffers.Builder) {
-	builder.StartObject(4)
+	builder.StartObject(5)
 }
 func LearningLearnerAddId(builder *flatbuffers.Builder, id int32) {
 	builder.PrependInt32Slot(0, id, 0)
@@ -197,6 +239,12 @@ func LearningLearnerAddAnswers(builder *flatbuffers.Builder, answers flatbuffers
 	builder.PrependUOffsetTSlot(3, flatbuffers.UOffsetT(answers), 0)
 }
 func LearningLearnerStartAnswersVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
+	return builder.StartVector(4, numElems, 4)
+}
+func LearningLearnerAddBranches(builder *flatbuffers.Builder, branches flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(4, flatbuffers.UOffsetT(branches), 0)
+}
+func LearningLearnerStartBranchesVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)
 }
 func LearningLearnerEnd(builder *flatbuffers.Builder) flatbuffers.UOffsetT {

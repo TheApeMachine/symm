@@ -29,6 +29,8 @@ type LearningRehearsalT struct {
 	Runs int32 `json:"runs"`
 	Observations uint64 `json:"observations"`
 	Budget uint64 `json:"budget"`
+	Skipped int32 `json:"skipped"`
+	LastSkip string `json:"lastSkip"`
 	Tracks []*LearningTrackT `json:"tracks"`
 }
 
@@ -51,6 +53,10 @@ func (t *LearningRehearsalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOff
 	lastFailureOffset := flatbuffers.UOffsetT(0)
 	if t.LastFailure != "" {
 		lastFailureOffset = builder.CreateString(t.LastFailure)
+	}
+	lastSkipOffset := flatbuffers.UOffsetT(0)
+	if t.LastSkip != "" {
+		lastSkipOffset = builder.CreateString(t.LastSkip)
 	}
 	tracksOffset := flatbuffers.UOffsetT(0)
 	if t.Tracks != nil {
@@ -88,6 +94,8 @@ func (t *LearningRehearsalT) Pack(builder *flatbuffers.Builder) flatbuffers.UOff
 	LearningRehearsalAddRuns(builder, t.Runs)
 	LearningRehearsalAddObservations(builder, t.Observations)
 	LearningRehearsalAddBudget(builder, t.Budget)
+	LearningRehearsalAddSkipped(builder, t.Skipped)
+	LearningRehearsalAddLastSkip(builder, lastSkipOffset)
 	LearningRehearsalAddTracks(builder, tracksOffset)
 	return LearningRehearsalEnd(builder)
 }
@@ -115,6 +123,8 @@ func (rcv *LearningRehearsal) UnPackTo(t *LearningRehearsalT) {
 	t.Runs = rcv.Runs()
 	t.Observations = rcv.Observations()
 	t.Budget = rcv.Budget()
+	t.Skipped = rcv.Skipped()
+	t.LastSkip = string(rcv.LastSkip())
 	tracksLength := rcv.TracksLength()
 	t.Tracks = make([]*LearningTrackT, tracksLength)
 	for j := 0; j < tracksLength; j++ {
@@ -416,8 +426,28 @@ func (rcv *LearningRehearsal) MutateBudget(n uint64) bool {
 	return rcv._tab.MutateUint64Slot(46, n)
 }
 
-func (rcv *LearningRehearsal) Tracks(obj *LearningTrack, j int) bool {
+func (rcv *LearningRehearsal) Skipped() int32 {
 	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	if o != 0 {
+		return rcv._tab.GetInt32(o + rcv._tab.Pos)
+	}
+	return 0
+}
+
+func (rcv *LearningRehearsal) MutateSkipped(n int32) bool {
+	return rcv._tab.MutateInt32Slot(48, n)
+}
+
+func (rcv *LearningRehearsal) LastSkip() []byte {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(50))
+	if o != 0 {
+		return rcv._tab.ByteVector(o + rcv._tab.Pos)
+	}
+	return nil
+}
+
+func (rcv *LearningRehearsal) Tracks(obj *LearningTrack, j int) bool {
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
 		x := rcv._tab.Vector(o)
 		x += flatbuffers.UOffsetT(j) * 4
@@ -429,7 +459,7 @@ func (rcv *LearningRehearsal) Tracks(obj *LearningTrack, j int) bool {
 }
 
 func (rcv *LearningRehearsal) TracksLength() int {
-	o := flatbuffers.UOffsetT(rcv._tab.Offset(48))
+	o := flatbuffers.UOffsetT(rcv._tab.Offset(52))
 	if o != 0 {
 		return rcv._tab.VectorLen(o)
 	}
@@ -437,7 +467,7 @@ func (rcv *LearningRehearsal) TracksLength() int {
 }
 
 func LearningRehearsalStart(builder *flatbuffers.Builder) {
-	builder.StartObject(23)
+	builder.StartObject(25)
 }
 func LearningRehearsalAddStatus(builder *flatbuffers.Builder, status flatbuffers.UOffsetT) {
 	builder.PrependUOffsetTSlot(0, flatbuffers.UOffsetT(status), 0)
@@ -505,8 +535,14 @@ func LearningRehearsalAddObservations(builder *flatbuffers.Builder, observations
 func LearningRehearsalAddBudget(builder *flatbuffers.Builder, budget uint64) {
 	builder.PrependUint64Slot(21, budget, 0)
 }
+func LearningRehearsalAddSkipped(builder *flatbuffers.Builder, skipped int32) {
+	builder.PrependInt32Slot(22, skipped, 0)
+}
+func LearningRehearsalAddLastSkip(builder *flatbuffers.Builder, lastSkip flatbuffers.UOffsetT) {
+	builder.PrependUOffsetTSlot(23, flatbuffers.UOffsetT(lastSkip), 0)
+}
 func LearningRehearsalAddTracks(builder *flatbuffers.Builder, tracks flatbuffers.UOffsetT) {
-	builder.PrependUOffsetTSlot(22, flatbuffers.UOffsetT(tracks), 0)
+	builder.PrependUOffsetTSlot(24, flatbuffers.UOffsetT(tracks), 0)
 }
 func LearningRehearsalStartTracksVector(builder *flatbuffers.Builder, numElems int) flatbuffers.UOffsetT {
 	return builder.StartVector(4, numElems, 4)

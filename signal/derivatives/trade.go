@@ -2,7 +2,6 @@ package derivatives
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/theapemachine/symm/kraken"
@@ -28,7 +27,6 @@ and throughput rates across a causal timeline without Frame or Wire blocks.
 type Trade struct {
 	states map[string]*tradeState
 	clock  causalClock
-	mu     sync.RWMutex
 }
 
 func NewTrade() *Trade {
@@ -43,9 +41,6 @@ func (trade *Trade) Close() error {
 }
 
 func (trade *Trade) Step(point kraken.FuturesTradeData) *data.Measurement[float64] {
-	trade.mu.Lock()
-	defer trade.mu.Unlock()
-
 	stamped, advanced := trade.clock.stamp(
 		point.Symbol, point.Timestamp, point.SyntheticTimestamp,
 	)

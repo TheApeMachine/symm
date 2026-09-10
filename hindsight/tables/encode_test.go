@@ -2,11 +2,49 @@ package tables
 
 import (
 	"bytes"
+	"math"
+	"math/big"
 	"testing"
 
 	"github.com/apache/arrow-go/v18/arrow/array"
 	. "github.com/smartystreets/goconvey/convey"
 )
+
+func TestPow10Table(t *testing.T) {
+	Convey("Iceberg decimal rescale uses the exact power of ten for each exponent", t, func() {
+		for exp := int64(0); exp <= 38; exp++ {
+			So(pow10(exp).Cmp(new(big.Int).Exp(big.NewInt(10), big.NewInt(exp), nil)), ShouldEqual, 0)
+		}
+	})
+}
+
+func TestSpan(t *testing.T) {
+	Convey("A payload ceiling splits before Arrow's Binary offset limit", t, func() {
+		sizes := []int{3000, 3000, 3000}
+		end, size, err := span(0, len(sizes), 5000, func(index int) int { return sizes[index] })
+		So(err, ShouldBeNil)
+		So(end, ShouldEqual, 1)
+		So(size, ShouldEqual, 3000)
+
+		end, size, err = span(1, len(sizes), 5000, func(index int) int { return sizes[index] })
+		So(err, ShouldBeNil)
+		So(end, ShouldEqual, 2)
+		So(size, ShouldEqual, 3000)
+	})
+
+	Convey("A row larger than the ceiling is still one span", t, func() {
+		end, size, err := span(0, 2, 100, func(int) int { return 250 })
+		So(err, ShouldBeNil)
+		So(end, ShouldEqual, 1)
+		So(size, ShouldEqual, 250)
+	})
+
+	Convey("A payload that cannot be an Arrow Binary is an error", t, func() {
+		_, _, err := span(0, 1, 0, func(int) int { return math.MaxInt32 + 1 })
+		So(err, ShouldNotBeNil)
+		So(err.Error(), ShouldContainSubstring, "one payload exceeds Arrow Binary")
+	})
+}
 
 func TestRecords(t *testing.T) {
 	Convey("Arrow records preserve variable payload lengths and nulls", t, func() {

@@ -52,6 +52,32 @@ func timestamp(builder *array.TimestampBuilder, value time.Time) {
 	builder.Append(arrow.Timestamp(value.UTC().UnixMicro()))
 }
 
+var (
+	ten        = big.NewInt(10)
+	pow10Table = func() [39]*big.Int {
+		var table [39]*big.Int
+
+		for exp := int64(0); exp <= 38; exp++ {
+			table[exp] = new(big.Int).Exp(ten, big.NewInt(exp), nil)
+		}
+
+		return table
+	}()
+)
+
+/*
+pow10 is 10^exp for Iceberg decimal rescale. Exponents that fit the column's
+precision (0 through 38) are the precomputed table; anything else is the same
+identity computed on the spot, never a silent no-op.
+*/
+func pow10(exp int64) *big.Int {
+	if exp >= 0 && exp <= 38 {
+		return pow10Table[exp]
+	}
+
+	return new(big.Int).Exp(ten, big.NewInt(exp), nil)
+}
+
 /*
 money encodes a Kraken decimal into a fixed-scale Iceberg decimal.
 
@@ -67,17 +93,15 @@ func money(builder *array.Decimal128Builder, value *decimal.Decimal) {
 		return
 	}
 
-	unscaled := new(big.Int).Set(value.RawBigInt())
 	shift := DecimalScale - value.GetScale()
-
-	if shift < 0 {
-		// Scale exceeds the column's. Divide rather than silently emit a value
-		// that is 10^-shift times too large.
-		unscaled.Quo(unscaled, new(big.Int).Exp(big.NewInt(10), big.NewInt(-shift), nil))
-	}
+	unscaled := new(big.Int).Set(value.RawBigInt())
 
 	if shift > 0 {
-		unscaled.Mul(unscaled, new(big.Int).Exp(big.NewInt(10), big.NewInt(shift), nil))
+		unscaled.Mul(unscaled, pow10(shift))
+	}
+
+	if shift < 0 {
+		unscaled.Quo(unscaled, pow10(-shift))
 	}
 
 	builder.Append(decimal128.FromBigInt(unscaled))
@@ -101,6 +125,43 @@ func envelope(builder *array.StructBuilder, ref EnvelopeRefRow) {
 	builder.FieldBuilder(0).(*array.StringBuilder).Append(ref.Run)
 	builder.FieldBuilder(1).(*array.Int64Builder).Append(ref.Sequence)
 	builder.FieldBuilder(2).(*array.Int64Builder).Append(ref.Ordinal)
+}
+
+/*
+span is the next row range whose binary payloads fit in limit bytes and inside
+Arrow Binary's signed 32-bit offsets. A single row larger than the ceiling is
+still one span: a row cannot be split. limit 0 means only the Arrow ceiling.
+*/
+func span(start, count, limit int, payloadSize func(int) int) (int, int, error) {
+	ceiling := math.MaxInt32
+
+	if limit > 0 && limit < ceiling {
+		ceiling = limit
+	}
+
+	end, size := start, 0
+
+	for end < count {
+		length := 0
+
+		if payloadSize != nil {
+			length = payloadSize(end)
+		}
+
+		if length > math.MaxInt32 {
+			return start, 0, errnie.Error(errnie.Err(errnie.Validation,
+				"[iceberg] one payload exceeds Arrow Binary's signed 32-bit offset limit", nil))
+		}
+
+		if size > 0 && length > ceiling-size {
+			break
+		}
+
+		size += length
+		end++
+	}
+
+	return end, size, nil
 }
 
 /*
@@ -128,26 +189,12 @@ func records(
 	}()
 
 	for start := 0; start < count; {
-		end, size := start, 0
+		end, _, err := span(start, count, math.MaxInt32, payloadSize)
 
-		for end < count {
-			length := 0
-
-			if payloadSize != nil {
-				length = payloadSize(end)
-			}
-
-			if length > math.MaxInt32 {
-				return nil, errnie.Error(errnie.Err(errnie.Validation,
-					"[iceberg] one payload exceeds Arrow Binary's signed 32-bit offset limit", nil))
-			}
-
-			if length > math.MaxInt32-size {
-				break
-			}
-			size += length
-			end++
+		if err != nil {
+			return nil, err
 		}
+
 		builder.Reserve(end - start)
 		fill(builder, start, end)
 		batches = append(batches, builder.NewRecord())

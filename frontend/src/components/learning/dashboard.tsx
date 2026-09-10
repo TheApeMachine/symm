@@ -16,30 +16,46 @@ import {
 	InfluencePanel,
 	LanePanel,
 } from "./decision-panel";
-import { action, amount, basis, clock, duration, percent } from "./format";
+import { Explain } from "./explain";
+import { action, amount, basis, clock, percent } from "./format";
 import { KnowledgePanel } from "./knowledge-panel";
 import { ImpulseMap } from "./map";
 import { RecognitionPanel } from "./recognition-panel";
 import { RehearsalPanel } from "./rehearsal-panel";
 import { SkillPanel } from "./skill-panel";
-import { type LearningEvent, useLearning } from "./state";
+import { type LearningEvent, type Region, useLearning } from "./state";
 import { LearningVisualizer } from "./visualizer";
 
 const JournalEntry = ({ event }: { event: LearningEvent }) => (
-	<Flex.Column className="gap-1 border-(--line) border-b p-3">
-		<Typography.Mono>
-			{clock(event.at)} · {event.mode} {event.lane + 1} · {event.kind}
+	<Flex.Row
+		align="center"
+		gap={2}
+		className="border-(--line) border-b px-3 py-1.5"
+	>
+		<Typography.Mono size="s" tone="f4" className="shrink-0">
+			{clock(event.at)}
 		</Typography.Mono>
-		<Typography.Mono>
+		<Typography.Mono size="s" tone="f2" className="min-w-0 flex-1 truncate">
 			{action(event.action, event.power, event.reduce)}
 		</Typography.Mono>
-		<Typography.Mono>
+		<Typography.Mono
+			size="s"
+			tone={event.kind === "resolved" ? "accent" : "f3"}
+			className="shrink-0"
+			title={`${event.mode} ${event.lane + 1} · ${event.kind}`}
+		>
 			{event.kind === "resolved"
-				? `Tape benefit ${basis(event.target ?? 0)}`
-				: `Wallet P&L ${amount(event.profit)}`}
+				? basis(event.target ?? 0)
+				: amount(event.profit)}
 		</Typography.Mono>
-	</Flex.Column>
+	</Flex.Row>
 );
+
+const hottest = (regions: Region[] | null, region: Region) => {
+	const strongest = Math.max(...(regions ?? []).map((entry) => entry.strength), 0);
+
+	return strongest > 0 ? (region.strength / strongest) * 100 : 0;
+};
 
 type Tab =
 	| "decision"
@@ -60,16 +76,18 @@ const TABS: Array<{ key: Tab; label: string }> = [
 
 export const LearningDashboard = () => {
 	const [symbol, setSymbol] = useState("");
-	const [tab, setTab] = useState<Tab>("decision");
+	const [tab, setTab] = useState<Tab>("recognition");
 	const { view, events, error } = useLearning(symbol);
 
 	return (
 		<Flex.Column className="h-full min-h-0 w-full">
 			<Section.Header
-				title="Historical practice and live learning"
+				title="Precursor recognition"
 				meta={
 					view
-						? `${view.steps.toLocaleString()} observations · ${view.decisions.toLocaleString()} decisions · ${view.resolved.toLocaleString()} outcomes · ${view.columns} numeric quantities`
+						? view.status === "reading the record"
+							? `${view.status} · ${Number(view.rehearsal?.observations ?? 0).toLocaleString()} of ${Number(view.rehearsal?.budget ?? 0).toLocaleString()} captured observations`
+							: `${view.steps.toLocaleString()} frames · ${view.decisions.toLocaleString()} learned situations · ${view.columns} quantities`
 						: "Connecting to the workspace"
 				}
 			/>
@@ -82,6 +100,11 @@ export const LearningDashboard = () => {
 						meta={`${view?.universe?.length ?? 0} keys`}
 					/>
 					<Section.Body className="p-2">
+						{!view?.universe?.length && (
+							<Typography.Mono>
+								{view?.status || "Waiting for tape"}
+							</Typography.Mono>
+						)}
 						{view?.universe?.map((entry) => (
 							<Button
 								key={entry.symbol}
@@ -90,10 +113,13 @@ export const LearningDashboard = () => {
 								tone="accent"
 								onClick={() => setSymbol(entry.symbol)}
 								aria-pressed={view.symbol === entry.symbol}
-								className="mb-1 justify-between"
+								className="mb-0.5 justify-between py-1"
+								title={`${entry.present} quantities present · ${entry.regions} hot regions`}
 							>
 								{entry.symbol}
-								<Typography.Mono>{entry.decisions}</Typography.Mono>
+								<Typography.Mono size="s" tone="f4">
+									{entry.present}
+								</Typography.Mono>
 							</Button>
 						))}
 					</Section.Body>
@@ -131,30 +157,44 @@ export const LearningDashboard = () => {
 							dot
 						/>
 						<Typography.Mono size="s" tone="f3" className="truncate">
-							Window {duration(view?.horizonNs ?? 0)}
-							{view?.horizonCapped ? " (at ceiling)" : ""} ·{" "}
-							{view?.epochs?.toLocaleString() ?? 0} decisions · grid v
+							{view?.regions?.length ?? 0} hot regions · grid v
 							{view?.gridVersion ?? 0}
 						</Typography.Mono>
 					</Section.Header>
-					<div className="flex min-h-85 border-(--line) border-b max-2xl:flex-col">
-						<div className="w-95 shrink-0 border-(--line) border-r max-2xl:w-full max-2xl:border-r-0 max-2xl:border-b">
+					{/*
+						The band is resizable rather than a fixed height. It is the part
+						of the surface worth the most space, but it shares one scroller
+						with the panels underneath: pinned tall it left them a sliver to
+						scroll inside, and pinned short it wasted the screen. The reader
+						decides, and the browser's own resize handle does it without a
+						drag implementation of this surface's own.
+					*/}
+					<div className="flex h-100 max-h-[80vh] min-h-40 shrink-0 resize-y overflow-hidden border-(--line) border-b max-2xl:h-auto max-2xl:resize-none max-2xl:flex-col">
+						<div className="w-100 shrink-0 border-(--line) border-r max-2xl:h-85 max-2xl:w-full max-2xl:border-r-0 max-2xl:border-b">
 							<ImpulseMap
 								points={view?.points ?? []}
 								regions={view?.regions ?? []}
-								className="h-full w-full min-h-85"
+								className="h-full w-full"
 							/>
 						</div>
-						<div className="min-w-0 flex-1 bg-(--surface)">
+						<div className="min-w-0 flex-1 bg-(--surface) max-2xl:h-85">
 							<LearningVisualizer
 								view={view}
 								events={events}
-								className="h-full w-full min-h-85"
+								className="h-full w-full"
 							/>
 						</div>
 					</div>
 
-					<Flex.Row gap={2} className="border-(--line) border-b px-3 py-2">
+					{/*
+						Sticky, because it is the control for everything below it: once
+						the panels are long enough to scroll, a tab strip that scrolled
+						away with them left no way back without returning to the top.
+					*/}
+					<Flex.Row
+						gap={2}
+						className="sticky top-0 z-2 shrink-0 border-(--line) border-b bg-(--surface) px-3 py-2"
+					>
 						<Tabs size="m" className="flex-wrap">
 							{TABS.map((entry) => (
 								<Tabs.Tab
@@ -196,26 +236,58 @@ export const LearningDashboard = () => {
 				<Flex.Column className="w-96 shrink-0 overflow-auto border-(--line) border-l max-lg:w-full">
 					<SkillPanel view={view} />
 					<Section fit="content">
-						<Section.Header title="Hot regions" meta="strongest first" />
-						<Flex.Column className="gap-2 p-3">
+						<Section.Header title="Hot regions" meta="strongest first">
+							<Explain>
+								A region is a community of numeric cells the tape lights up
+								together. Bar length is its energy against the strongest region
+								currently lit; authority is how much of the map's evidence
+								stands behind it.
+							</Explain>
+						</Section.Header>
+						<Flex.Column className="gap-1.5 p-3">
 							{view?.regions?.map((region) => (
-								<Typography.Mono key={region.id}>
-									#{region.id} · {region.members} cells ·{" "}
-									{amount(region.strength)} energy · {percent(region.authority)}{" "}
-									authority
-								</Typography.Mono>
+								<Flex.Row key={region.id} align="center" gap={2}>
+									<Typography.Mono
+										size="s"
+										tone="f3"
+										className="w-16 shrink-0"
+										title={`${region.members} cells`}
+									>
+										#{region.id}
+									</Typography.Mono>
+									<div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-[3px] bg-(--line)">
+										<div
+											className="h-full bg-(--acc)"
+											style={{ width: `${hottest(view.regions, region)}%` }}
+										/>
+									</div>
+									<Typography.Mono
+										size="s"
+										tone="f4"
+										className="w-24 shrink-0 text-right"
+										title={`${amount(region.strength)} energy · ${percent(region.authority)} authority`}
+									>
+										{percent(region.authority)}
+									</Typography.Mono>
+								</Flex.Row>
 							))}
 							{!view?.regions?.length && (
-								<Typography.Mono>No evidenced activity yet.</Typography.Mono>
+								<Typography.Mono size="s" tone="f3">
+									No evidenced activity yet.
+								</Typography.Mono>
 							)}
 						</Flex.Column>
 					</Section>
 					<Section>
-						<Section.Header
-							title="Recent learning activity"
-							meta="live display history"
-						/>
-						<Section.Body>
+						<Section.Header title="Recent activity" meta="live history">
+							<Explain>
+								One row per recorded moment, newest last: the time, the call the
+								agent made, and what it came to — a tape benefit in basis points
+								once the record has answered it, the wallet's own change before
+								that.
+							</Explain>
+						</Section.Header>
+						<Section.Body scroll={false}>
 							{events.map((event) => (
 								<JournalEntry
 									key={`${event.lane}-${event.id}-${event.kind}-${event.at}`}

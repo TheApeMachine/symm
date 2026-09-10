@@ -130,6 +130,18 @@ const GLYPHS = {
 			<path d="M15.5 12H21" />
 		</>
 	),
+	/*
+		The explainer mark is a ringed lower-case i, not a question mark. A
+		question mark asks something of the reader; this glyph offers something
+		to them — the prose behind a reading that is already legible without it.
+	*/
+	about: (
+		<>
+			<circle cx="12" cy="12" r="9" />
+			<path d="M12 11v5.5" />
+			<path d="M12 7.6v0.1" />
+		</>
+	),
 	spark: (
 		<>
 			<circle cx="12" cy="12" r="2.2" />

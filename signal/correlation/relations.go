@@ -3,7 +3,6 @@ package correlation
 import (
 	"iter"
 	"math"
-	"sync"
 	"time"
 )
 
@@ -30,7 +29,6 @@ All exposes values under a read lock; consumers must not retain the lock while
 performing an embedding. The zero value is ready for use.
 */
 type Relations struct {
-	mutex sync.RWMutex
 	pairs map[[2]string]Relation
 }
 
@@ -40,18 +38,21 @@ func (relations *Relations) observe(left, right string, pair pairResult, leftAt,
 	if right < left {
 		left, right = right, left
 	}
+
 	value := Relation{Left: left, Right: right, Support: pair.dependence.Support, Defined: pair.dependence.Defined, At: time.Unix(0, min(leftAt, rightAt))}
+
 	if value.Defined {
 		value.Signed = pair.dependence.Correlation
 		value.Absolute = math.Abs(value.Signed)
 	}
+
 	value.FisherDefined = pair.fisher.Defined
+
 	if value.FisherDefined {
 		value.PValue = pair.fisher.PValue
 		value.StandardError = pair.fisher.StandardError
 	}
-	relations.mutex.Lock()
-	defer relations.mutex.Unlock()
+
 	if relations.pairs == nil {
 		relations.pairs = make(map[[2]string]Relation)
 	}
@@ -61,9 +62,6 @@ func (relations *Relations) observe(left, right string, pair pairResult, leftAt,
 
 func (relations *Relations) All() iter.Seq[Relation] {
 	return func(yield func(Relation) bool) {
-		relations.mutex.RLock()
-		defer relations.mutex.RUnlock()
-
 		for _, relation := range relations.pairs {
 			if !yield(relation) {
 				return

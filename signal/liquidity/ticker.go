@@ -2,12 +2,12 @@ package liquidity
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
 	"github.com/theapemachine/symm/nomagique/logic"
 	"github.com/theapemachine/symm/nomagique/transport"
-	"sync"
-	"time"
 )
 
 type liquidityState struct {
@@ -18,7 +18,6 @@ type liquidityState struct {
 // Ticker owns one causal Primitive liquidity model per symbol and serializes
 // each delivered observation with that model's exact event-time coordinate.
 type Ticker struct {
-	mu         sync.Mutex
 	states     map[string]*liquidityState
 	projection *data.Projection
 	finite     *logic.Finite[float64]
@@ -33,20 +32,16 @@ func (ticker *Ticker) Step(event kraken.TickerData) *data.Measurement[float64] {
 		return &data.Measurement[float64]{Err: fmt.Errorf("liquidity: ticker requires bid and ask")}
 	}
 	bid, ask := event.Bid.Float64(), event.Ask.Float64()
+
 	for _, value := range []float64{bid, ask, event.BidQty, event.AskQty, bid * event.BidQty, ask * event.AskQty} {
-		ok, err := transport.Evaluate(ticker.finite, transport.Values(value))
-		if err != nil {
-			return &data.Measurement[float64]{Err: err}
-		}
-		if !ok || value <= 0 {
+		if !ticker.finite.Holds(value) || value <= 0 {
 			return &data.Measurement[float64]{Err: fmt.Errorf("liquidity: finite positive prices and displayed quantities required")}
 		}
 	}
 	if ask <= bid {
 		return &data.Measurement[float64]{Err: fmt.Errorf("liquidity: positive order violated (%f <= %f)", ask, bid)}
 	}
-	ticker.mu.Lock()
-	defer ticker.mu.Unlock()
+
 	state := ticker.states[event.Symbol]
 	if state == nil {
 		state = &liquidityState{graph: newLiquidityGraph()}

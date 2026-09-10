@@ -9,7 +9,6 @@ package morphology
 import (
 	"fmt"
 	"sort"
-	"sync"
 
 	"github.com/theapemachine/symm/kraken"
 	"github.com/theapemachine/symm/nomagique/data"
@@ -34,7 +33,6 @@ shape per symbol — a single overwritten shape each, the same bounded-resident-
 state contract as the shared book — so structural change is measured causally.
 */
 type Book struct {
-	mu         sync.Mutex
 	previous   map[string][]distribution.WeightedPoint
 	lastBid    map[string]float64
 	lastAsk    map[string]float64
@@ -101,7 +99,6 @@ func (morphology *Book) Step(message kraken.Level3Data) *data.Measurement[float6
 		return measurement
 	}
 
-	morphology.mu.Lock()
 	state, found := morphology.states[message.Symbol]
 
 	if !found {
@@ -114,8 +111,6 @@ func (morphology *Book) Step(message kraken.Level3Data) *data.Measurement[float6
 
 	if state.hasTime {
 		if msgSec < state.previousSec || (msgSec == state.previousSec && msgNsec < state.previousNsec) {
-			morphology.mu.Unlock()
-
 			return nil
 		}
 	}
@@ -129,7 +124,6 @@ func (morphology *Book) Step(message kraken.Level3Data) *data.Measurement[float6
 
 	reading, err := transport.Evaluate(state.residual, state.moments.Next(transport.Values(morphologyChange)))
 	if err != nil {
-		morphology.mu.Unlock()
 		measurement.Err = err
 		return measurement
 	}
@@ -141,7 +135,6 @@ func (morphology *Book) Step(message kraken.Level3Data) *data.Measurement[float6
 			measurement.Metadata[data.MetadataNoiseVariance] = reading.PriorVariance
 		}
 	}
-	morphology.mu.Unlock()
 
 	measurement.Metadata[data.MetadataSupport] = float64(state.count)
 	measurement.Finalize()
@@ -162,11 +155,8 @@ The first observation of a symbol has no prior and reports no change. Ownership
 of the current slice transfers into the resident map, so no extra clone is made.
 */
 func (morphology *Book) recordChange(symbol string, current []distribution.WeightedPoint) (float64, bool) {
-	morphology.mu.Lock()
-
 	previous, hadPrevious := morphology.previous[symbol]
 	morphology.previous[symbol] = current
-	morphology.mu.Unlock()
 
 	if !hadPrevious {
 		return 0, false
@@ -183,8 +173,6 @@ side against the current touch so the shape reflects the resting book assumed
 unchanged on the absent side. See projectShape.
 */
 func (morphology *Book) projectShapeWithCache(message kraken.Level3Data) ([]distribution.WeightedPoint, []distribution.WeightedPoint, []distribution.WeightedPoint, bool) {
-	morphology.mu.Lock()
-
 	bidPrice := morphology.lastBid[message.Symbol]
 	askPrice := morphology.lastAsk[message.Symbol]
 
@@ -227,8 +215,6 @@ func (morphology *Book) projectShapeWithCache(message kraken.Level3Data) ([]dist
 			morphology.lastAskRaw[message.Symbol] = askRaw
 		}
 	}
-
-	morphology.mu.Unlock()
 
 	if bidPrice == 0 || askPrice == 0 || askPrice <= bidPrice {
 		return nil, nil, nil, false

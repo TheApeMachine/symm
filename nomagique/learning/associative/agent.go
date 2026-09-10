@@ -23,18 +23,30 @@ type Agent struct {
 	recall  *cognition.Evaluate
 }
 
-func NewAgent(memory *store.Retained[*iradix.Tree[[]byte]]) *Agent {
-	if memory == nil {
-		memory = NewMemory()
+/*
+NewAgent owns a memory of its own, or continues one it is given.
+
+A composition declares its agent before it has a memory to hand it, and an
+agent with nothing behind it is a learner that has not learned yet — which is
+where every learner starts.
+*/
+func NewAgent(memory ...*store.Retained[*iradix.Tree[[]byte]]) *Agent {
+	held := NewMemory()
+
+	if len(memory) > 0 && memory[0] != nil {
+		held = memory[0]
 	}
 
 	return &Agent{
-		memory:  memory,
+		memory:  held,
 		context: NewContext(),
 		observe: cognition.NewObserve(),
 		recall:  cognition.NewEvaluate(),
 	}
 }
+
+/* Memory is what this agent has learned, readable without disturbing it. */
+func (op *Agent) Memory() *store.Retained[*iradix.Tree[[]byte]] { return op.memory }
 
 func NewMemory() *store.Retained[*iradix.Tree[[]byte]] {
 	return store.NewRetained(iradix.New[[]byte]())
@@ -97,12 +109,27 @@ type Recall struct {
 	evaluate *cognition.Evaluate
 }
 
-func NewRecall(memory *store.Retained[*iradix.Tree[[]byte]]) *Recall {
-	if memory == nil {
-		memory = NewMemory()
+func NewRecall(memory ...*store.Retained[*iradix.Tree[[]byte]]) *Recall {
+	held := NewMemory()
+
+	if len(memory) > 0 && memory[0] != nil {
+		held = memory[0]
 	}
 
-	return &Recall{memory: memory, evaluate: cognition.NewEvaluate()}
+	return &Recall{memory: held, evaluate: cognition.NewEvaluate()}
+}
+
+/*
+Recall answers one question directly, for a caller composing around this rather
+than threading a run through it.
+*/
+func (op *Recall) Recall(
+	evaluation cognition.Evaluation,
+) (cognition.Evaluation, error) {
+	return op.evaluate.Recall(cognition.EvaluateInput{
+		Tree:       op.memory.Read(),
+		Evaluation: evaluation,
+	})
 }
 
 func (op *Recall) Next(

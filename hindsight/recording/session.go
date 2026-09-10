@@ -216,6 +216,13 @@ enqueue is called with mutex held. The caller has already converted its record
 into a row of value types, so nothing mutable crosses into the queue and the
 persist goroutine never observes a producer's later edits.
 */
+func (session *Session) Failed() bool {
+	session.mutex.Lock()
+	defer session.mutex.Unlock()
+
+	return session.err != nil
+}
+
 func (session *Session) enqueue(family string, row any) error {
 	if session.err != nil {
 		return session.err

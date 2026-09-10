@@ -585,6 +585,15 @@ type VisualInsightMode =
 	| "pipeline"
 	| "rhythm";
 
+const MODES: Array<{ key: VisualInsightMode; label: string }> = [
+	{ key: "learning", label: "Learning" },
+	{ key: "edge", label: "Edge" },
+	{ key: "actions", label: "Actions" },
+	{ key: "trajectory", label: "Trajectory" },
+	{ key: "pipeline", label: "Where it stops" },
+	{ key: "rhythm", label: "Rhythm" },
+];
+
 /*
 LearningVisualizer hosts the rich visual diagnostics suite next to the impulse map,
 empowering visual operators to intuitively grasp agent learning momentum and action reasoning.
@@ -612,53 +621,20 @@ export const LearningVisualizer = ({
 
 	return (
 		<Canvas
-			title="Learning visualizer"
-			meta="intuitive diagnostics · observed edge · action divergence · pipeline flow"
+			title="Learning"
 			className={`h-full w-full min-h-80 ${className ?? ""}`}
 			topRight={
 				<Tabs size="xs" className="pointer-events-auto relative z-10">
-					<Tabs.Tab
-						size="xs"
-						active={mode === "learning"}
-						onClick={() => setMode("learning")}
-					>
-						Learning
-					</Tabs.Tab>
-					<Tabs.Tab
-						size="xs"
-						active={mode === "edge"}
-						onClick={() => setMode("edge")}
-					>
-						Edge distribution
-					</Tabs.Tab>
-					<Tabs.Tab
-						size="xs"
-						active={mode === "actions"}
-						onClick={() => setMode("actions")}
-					>
-						Action spectrum
-					</Tabs.Tab>
-					<Tabs.Tab
-						size="xs"
-						active={mode === "trajectory"}
-						onClick={() => setMode("trajectory")}
-					>
-						Trajectory
-					</Tabs.Tab>
-					<Tabs.Tab
-						size="xs"
-						active={mode === "pipeline"}
-						onClick={() => setMode("pipeline")}
-					>
-						Where it stops
-					</Tabs.Tab>
-					<Tabs.Tab
-						size="xs"
-						active={mode === "rhythm"}
-						onClick={() => setMode("rhythm")}
-					>
-						Rhythm
-					</Tabs.Tab>
+					{MODES.map((entry) => (
+						<Tabs.Tab
+							key={entry.key}
+							size="xs"
+							active={mode === entry.key}
+							onClick={() => setMode(entry.key)}
+						>
+							{entry.label}
+						</Tabs.Tab>
+					))}
 				</Tabs>
 			}
 			footer={
@@ -694,7 +670,7 @@ export const LearningVisualizer = ({
 				</Flex.Row>
 			}
 		>
-			<div className="h-full w-full pt-12 pb-7">
+			<div className="h-full w-full pt-9 pb-7">
 				{mode === "learning" && <LearningProgress view={view} />}
 				{mode === "edge" && <EdgeDistributionPlot skill={skill} />}
 				{mode === "actions" && (
